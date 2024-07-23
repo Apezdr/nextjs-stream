@@ -20,8 +20,6 @@ import {
   updateLastSynced,
 } from 'src/utils/admin_frontend_database'
 
-const webhookID = process.env.VALID_WEBHOOK_IDS
-
 export async function GET(request, { params }) {
   const authResult = await isAdmin(request)
   if (authResult instanceof Response) {
@@ -76,13 +74,14 @@ export async function POST(request, { params }) {
   if (authResult instanceof Response) {
     return authResult
   }
+  const webhookId = request.headers.get('X-Webhook-ID')
 
   const slugs = params.admin
   const syncOperation = slugs.includes('sync') && slugs[0] === 'admin'
 
   if (syncOperation) {
     try {
-      const { missingMedia, missingMp4 } = await handleSync()
+      const { missingMedia, missingMp4 } = await handleSync(webhookId)
       return new Response(
         JSON.stringify({
           success: true,
@@ -114,14 +113,14 @@ export async function POST(request, { params }) {
   })
 }
 
-async function handleSync() {
+async function handleSync(webhookId) {
   try {
     // Fetch and process TV shows data
     let response
     try {
       response = await axios.get(buildURL('/api/authenticated/list'), {
         headers: {
-          'X-Webhook-ID': webhookID?.split(',')[1], // Example: Pass a valid webhook ID
+          'X-Webhook-ID': webhookId, // Example: Pass a valid webhook ID
         },
       })
     } catch (error) {
