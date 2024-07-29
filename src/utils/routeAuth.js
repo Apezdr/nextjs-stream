@@ -30,7 +30,7 @@ export async function isAdminOrWebhook(req) {
     return true
   }
   // First, check for webhook identifier
-  const webhookId = req.headers?.get('x-webhook-id') || req.query?.webhookId || false // Note: Header names are case-insensitive in HTTP
+  const webhookId = req.headers?.get('X-Webhook-ID') || req.query?.webhookId || false // Note: Header names are case-insensitive in HTTP
   if (webhookId) {
     const isValidWebhookId = await validateWebhookId(webhookId) // Implement this function to validate the webhookId
     if (isValidWebhookId) {
