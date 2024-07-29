@@ -74,14 +74,14 @@ export async function POST(request, { params }) {
   if (authResult instanceof Response) {
     return authResult
   }
-  const webhookId = request.headers.get('X-Webhook-ID')
+  const webhookId = request.headers.get('X-Webhook-ID') ?? null
 
   const slugs = params.admin
   const syncOperation = slugs.includes('sync') && slugs[0] === 'admin'
 
   if (syncOperation) {
     try {
-      const { missingMedia, missingMp4 } = await handleSync(webhookId)
+      const { missingMedia, missingMp4 } = await handleSync(webhookId, request)
       return new Response(
         JSON.stringify({
           success: true,
@@ -113,16 +113,17 @@ export async function POST(request, { params }) {
   })
 }
 
-async function handleSync(webhookId) {
+async function handleSync(webhookId, request) {
   try {
     // Fetch and process TV shows data
     let response
     try {
-      response = await axios.get(buildURL('/api/authenticated/list'), {
-        headers: {
-          'X-Webhook-ID': webhookId, // Example: Pass a valid webhook ID
-        },
-      })
+      const headers = webhookId ? { 'X-Webhook-ID': webhookId } : {}
+      const cookie = request.headers.get('cookie')
+      if (cookie) {
+        headers['cookie'] = cookie
+      }
+      response = await axios.get(buildURL('/api/authenticated/list'), { headers })
     } catch (error) {
       console.error('Error fetching data from API:', error)
       // Handle the error based on your requirements

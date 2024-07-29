@@ -1,5 +1,7 @@
+import { auth } from 'src/lib/auth'
 import { buildURL } from '.'
 import { adminUserEmails } from './config'
+import axios from 'axios'
 
 const webhookIds = process.env.VALID_WEBHOOK_IDS
 
@@ -17,8 +19,18 @@ export default async function isAuthenticated(req) {
 }
 
 export async function isAdminOrWebhook(req) {
+  // If webhook ID is not valid or not provided, attempt to authenticate as admin
+  const authResult = await isAdmin(req)
+  if (authResult instanceof Response) {
+    // Admin authentication failed, return the failure response
+    return authResult
+  }
+  else if (authResult) {
+    // Admin authentication succeeded, return the success response
+    return true
+  }
   // First, check for webhook identifier
-  const webhookId = req.headers?.get('x-webhook-id') || req.query?.webhookId // Note: Header names are case-insensitive in HTTP
+  const webhookId = req.headers?.get('x-webhook-id') || req.query?.webhookId || false // Note: Header names are case-insensitive in HTTP
   if (webhookId) {
     const isValidWebhookId = await validateWebhookId(webhookId) // Implement this function to validate the webhookId
     if (isValidWebhookId) {
@@ -36,16 +48,6 @@ export async function isAdminOrWebhook(req) {
       )
     }
   }
-
-  // If webhook ID is not valid or not provided, attempt to authenticate as admin
-  const authResult = await isAdmin(req)
-  if (authResult instanceof Response) {
-    // Admin authentication failed, return the failure response
-    return authResult
-  }
-
-  // Admin authenticated successfully
-  return true
 }
 
 async function validateWebhookId(webhookId) {
@@ -56,14 +58,23 @@ async function validateWebhookId(webhookId) {
 }
 
 export async function isAdmin(req) {
-  const sessionResponse = await fetch(buildURL(`/api/auth/session`), {
-    headers: {
-      cookie: req.headers.get('cookie') || '', // Forward the cookies from the original request
-    },
-  })
-  const session = await sessionResponse.json()
+  let sessionResponse
+  try {
+    sessionResponse = await axios.get(buildURL(`/api/auth/session`), {
+      headers: {
+        cookie: req.headers.get('cookie') || '', // Forward the cookies from the original request
+      },
+    })
+  } catch (error) {
+    return new Response('Failed to fetch session.', { status: 500 })
+  }
+
+  let session = sessionResponse.data
+  if (!session || !session.user) {
+    session = await auth()
+  }
   if (!session || !session.user || !adminUserEmails.includes(session.user.email)) {
-    throw new Response('You must be signed in as an admin.', { status: 401 })
+    return new Response('You must be signed in as an admin.', { status: 401, url: buildURL(`/api/auth/session`) })
   }
   return session.user
 }
