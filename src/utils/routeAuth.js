@@ -19,16 +19,6 @@ export default async function isAuthenticated(req) {
 }
 
 export async function isAdminOrWebhook(req) {
-  // If webhook ID is not valid or not provided, attempt to authenticate as admin
-  const authResult = await isAdmin(req)
-  if (authResult instanceof Response) {
-    // Admin authentication failed, return the failure response
-    return authResult
-  }
-  else if (authResult) {
-    // Admin authentication succeeded, return the success response
-    return true
-  }
   // First, check for webhook identifier
   const webhookId = req.headers?.get('X-Webhook-ID') || req.query?.webhookId || false // Note: Header names are case-insensitive in HTTP
   if (webhookId) {
@@ -46,6 +36,18 @@ export async function isAdminOrWebhook(req) {
           headers: { 'Content-Type': 'application/json' },
         }
       )
+    }
+  }
+  else {
+    // If webhook ID is not valid or not provided, attempt to authenticate as admin
+    const authResult = await isAdmin(req)
+    if (authResult instanceof Response) {
+      // Admin authentication failed, return the failure response
+      return authResult
+    }
+    else if (authResult) {
+      // Admin authentication succeeded, return the success response
+      return true
     }
   }
 }
