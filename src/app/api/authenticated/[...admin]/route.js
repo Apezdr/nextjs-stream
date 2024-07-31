@@ -6,7 +6,7 @@ import {
   getLastSynced,
   getRecentlyWatched,
 } from 'src/utils/admin_database'
-import { processMediaData, processUserData } from 'src/utils/admin_utils'
+import { extractEpisodeDetails, matchEpisodeFileName, processMediaData, processUserData } from 'src/utils/admin_utils'
 import axios from 'axios'
 import {
   syncCaptions,
@@ -166,18 +166,6 @@ function identifyMissingMedia(fileServer, currentDB) {
   // Keep track of titles (movie/tv) that don't have a url for the mp4 file
   const missingMp4 = { tv: [], movies: [] }
 
-  // Regular expression to extract episode number and title
-  /**
-   * Regular expression to extract episode number and title from a filename.
-   * Matches filenames in the format:
-   * - S01E02 - Episode Title.ext
-   * - 02 - Episode Title.ext
-   * And captures:
-   * - Episode number in capture group 1 or 2
-   * - Episode title in capture group 3
-   */
-  const episodeRegex = /(?:S\d+E(\d+)|(\d+)) - (.+?)\.[^.]+$/
-
   // Check for missing TV shows, seasons, and episodes
   Object.keys(fileServer.tv).forEach((showTitle) => {
     const foundShow = currentDB.tv.find((show) => show.title === showTitle)
@@ -222,11 +210,14 @@ function identifyMissingMedia(fileServer, currentDB) {
                  * Checks if the given episode file name matches the expected format
                  * and returns whether that episode already exists for the given season
                  */
-                const match = episodeFileName.match(episodeRegex)
+                const match = matchEpisodeFileName(episodeFileName)
                 if (match) {
-                  const episodeNumber = parseInt(match[1] || match[2])
-                  return !foundSeason.episodes.some((e) => e.episodeNumber === episodeNumber)
+                  const details = extractEpisodeDetails(match)
+                  return !foundSeason.episodes.some(
+                    (e) => e.episodeNumber === details.episodeNumber
+                  )
                 }
+
                 return false
               })
               .map((episodeFileName) => {

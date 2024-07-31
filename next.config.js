@@ -1,5 +1,9 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
 
+const withBundleAnalyzer = require('@next/bundle-analyzer')({
+  enabled: 'false',
+})
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -46,14 +50,15 @@ const nextConfig = {
   },
   // Additional Next.js configurations can be added here
   webpack(config) {
-    /* Object.defineProperty(config, 'devtool', {
+    Object.defineProperty(config, 'devtool', {
       get() {
         return 'source-map'
       },
       set() {},
-    }) */
+    })
     return config
   },
+  productionBrowserSourceMaps: true,
 }
 
-module.exports = nextConfig
+module.exports = withBundleAnalyzer(nextConfig)

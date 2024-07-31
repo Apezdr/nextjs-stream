@@ -597,230 +597,253 @@ export async function syncMissingMedia(missingMedia, fileServer) {
  *
  */
 export async function syncMetadata(currentDB, fileServer) {
-  const client = await clientPromise
-  // Sync Movies
-  for (const movie of currentDB.movies) {
-    // Set the file server movie data
-    const fileServer_movieData = fileServer.movies[movie.title]
-    // Set the current DB movie data
-    const currentDB_movieData = movie
-    // Make a GET request to retrieve movie-level metadata
-    const movieMetadata = await fetchMetadata(fileServer_movieData.urls.metadata)
+  try {
+    const client = await clientPromise
+    // Sync Movies
+    for (const movie of currentDB.movies) {
+      // Set the file server movie data
+      const fileServer_movieData = fileServer.movies[movie.title]
+      // Set the current DB movie data
+      const currentDB_movieData = movie
+      // Make a GET request to retrieve movie-level metadata
+      const movieMetadata = await fetchMetadata(fileServer_movieData.urls.metadata)
 
-    movieMetadata.release_date = new Date(movieMetadata.release_date)
-    // First check the last updated date of the movie metadata
-    if (movieMetadata.last_updated > currentDB_movieData.metadata?.last_updated) {
-      // Update movie metadata
-      console.log('Movie: Updating movie metadata', movie.title)
-      await client
-        .db('Media')
-        .collection('Movies')
-        .updateOne({ title: movie.title }, { $set: { metadata: movieMetadata } })
+      movieMetadata.release_date = new Date(movieMetadata.release_date)
+      // First check the last updated date of the movie metadata
+      if (movieMetadata.last_updated > currentDB_movieData.metadata?.last_updated) {
+        // Update movie metadata
+        console.log('Movie: Updating movie metadata', movie.title)
+        await client
+          .db('Media')
+          .collection('Movies')
+          .updateOne({ title: movie.title }, { $set: { metadata: movieMetadata } })
+      }
     }
-  }
-  // Sync TV
-  let tv_metadata = {
-    name: '',
-  }
-  for (const tv of currentDB.tv) {
-    // Set the file server show data
-    const fileServer_showData = fileServer.tv[tv.title]
-    // Set the current DB show data
-    const currentDB_showData = tv
-    // Make a GET request to retrieve show-level metadata
-    const mostRecent_showMetadata = await fetchMetadata(fileServer_showData.metadata)
-
-    if (mostRecent_showMetadata.name !== tv_metadata.name) {
-      tv_metadata = structuredClone(mostRecent_showMetadata)
+    // Sync TV
+    let tv_metadata = {
+      name: '',
     }
-    // Store the Current DB Season - Episode Data
-    var currentDB_memory_season = {}
+    for (const tv of currentDB.tv) {
+      // Set the file server show data
+      const fileServer_showData = fileServer.tv[tv.title]
+      // Set the current DB show data
+      const currentDB_showData = tv
+      // Make a GET request to retrieve show-level metadata
+      const mostRecent_showMetadata = await fetchMetadata(fileServer_showData.metadata)
 
-    // First check the last updated date of the show metadata
-    if (
-      new Date(mostRecent_showMetadata.last_updated) >
-      new Date(currentDB_showData.metadata?.last_updated ?? '2024-01-01T01:00:00.000000')
-    ) {
-      // Update show metadata
-      console.log('TV: Updating show metadata', tv.title)
-      await client
-        .db('Media')
-        .collection('TV')
-        .updateOne({ title: tv.title }, { $set: { metadata: mostRecent_showMetadata } })
-    }
+      if (mostRecent_showMetadata.name !== tv_metadata.name) {
+        tv_metadata = structuredClone(mostRecent_showMetadata)
+      }
+      // Store the Current DB Season - Episode Data
+      var currentDB_memory_season = {}
 
-    // Then check the last updated date of the season metadata
-    for await (const season of currentDB_showData.seasons) {
+      // First check the last updated date of the show metadata
       if (
-        Object.keys(currentDB_memory_season).length === 0 ||
-        currentDB_memory_season.seasonNumber !== season.seasonNumber
+        new Date(mostRecent_showMetadata.last_updated) >
+        new Date(currentDB_showData.metadata?.last_updated ?? '2024-01-01T01:00:00.000000')
       ) {
-        currentDB_memory_season = structuredClone(season)
+        // Update show metadata
+        console.log('TV: Updating show metadata', tv.title)
+        await client
+          .db('Media')
+          .collection('TV')
+          .updateOne({ title: tv.title }, { $set: { metadata: mostRecent_showMetadata } })
       }
 
-      const fileServer_seasonData =
-        fileServer_showData.seasons[`Season ${currentDB_memory_season.seasonNumber}`]
-
-      let seasonNeedsUpdate = false
-
-      // Create a Set to store the episode numbers of existing episodes in currentDB
-      const existingEpisodeNumbers = new Set(
-        currentDB_memory_season.metadata.episodes.map((episode) => episode.episode_number)
-      )
-
-      for await (const episodeFileName of fileServer_seasonData.fileNames) {
-        const episodeData = fileServer_seasonData.urls[episodeFileName]
-        const mostRecent_episodeMetadata = await fetchMetadata(episodeData.metadata)
-
-        if (!mostRecent_episodeMetadata) {
-          console.error('TV: Metadata fetch failed for', episodeFileName, episodeData.metadata)
-          continue
+      // Then check the last updated date of the season metadata
+      for await (const season of currentDB_showData.seasons) {
+        if (
+          Object.keys(currentDB_memory_season).length === 0 ||
+          currentDB_memory_season.seasonNumber !== season.seasonNumber
+        ) {
+          currentDB_memory_season = structuredClone(season)
         }
 
-        // Check if the episode exists in currentDB
-        const episodeExists = existingEpisodeNumbers.has(mostRecent_episodeMetadata.episode_number)
-
-        if (episodeExists) {
-          // Find the corresponding episode in currentDB
-          const currentDB_episode = currentDB_memory_season.metadata.episodes.find(
-            (e) => e.episode_number === mostRecent_episodeMetadata.episode_number
+        // Ensure currentDB_memory_season.metadata.episodes is defined and is an array
+        if (!Array.isArray(currentDB_memory_season.metadata.episodes)) {
+          console.error(
+            `${tv.title} - currentDB_memory_season.metadata.episodes is not an array or is undefined`
           )
-          const currentDB_episodeMetadata = currentDB_memory_season?.metadata?.episodes.find(
-            (e) =>
-              e.episode_number === currentDB_episode?.episode_number &&
-              e.season_number === currentDB_episode?.season_number
+          // Handle the error appropriately, e.g., throw an error or return a default value
+          throw new Error(
+            `Invalid data structure: ${tv.title} currentDB_memory_season.metadata.episodes is not an array or is undefined`
+          )
+        }
+
+        const fileServer_seasonData =
+          fileServer_showData.seasons[`Season ${currentDB_memory_season.seasonNumber}`]
+
+        let seasonNeedsUpdate = false
+
+        // Create a Set to store the episode numbers of existing episodes in currentDB
+        const existingEpisodeNumbers = new Set(
+          currentDB_memory_season.metadata.episodes.map((episode) => episode.episode_number)
+        )
+
+        for await (const episodeFileName of fileServer_seasonData.fileNames) {
+          const episodeData = fileServer_seasonData.urls[episodeFileName]
+          const mostRecent_episodeMetadata = await fetchMetadata(episodeData.metadata)
+
+          if (!mostRecent_episodeMetadata) {
+            console.error('TV: Metadata fetch failed for', episodeFileName, episodeData.metadata)
+            continue
+          }
+
+          // Check if the episode exists in currentDB
+          const episodeExists = existingEpisodeNumbers.has(
+            mostRecent_episodeMetadata.episode_number
           )
 
-          // Check if the File Server episode metadata is newer than the currentDB metadata
-          // for this episode
-          if (
-            currentDB_episode &&
-            new Date(mostRecent_episodeMetadata.last_updated) >
-              new Date(currentDB_episodeMetadata?.last_updated ?? '2024-01-01T01:00:00.000000')
-          ) {
-            // Logic to update this episode's metadata in currentDB
+          if (episodeExists) {
+            // Find the corresponding episode in currentDB
+            const currentDB_episode = currentDB_memory_season.metadata.episodes.find(
+              (e) => e.episode_number === mostRecent_episodeMetadata.episode_number
+            )
+            const currentDB_episodeMetadata = currentDB_memory_season?.metadata?.episodes.find(
+              (e) =>
+                e.episode_number === currentDB_episode?.episode_number &&
+                e.season_number === currentDB_episode?.season_number
+            )
+
+            // Check if the File Server episode metadata is newer than the currentDB metadata
+            // for this episode
+            if (
+              currentDB_episode &&
+              new Date(mostRecent_episodeMetadata.last_updated) >
+                new Date(currentDB_episodeMetadata?.last_updated ?? '2024-01-01T01:00:00.000000')
+            ) {
+              // Logic to update this episode's metadata in currentDB
+              console.log(
+                `TV: Updating episode metadata for ${episodeFileName} in ${tv.title}, Season ${currentDB_memory_season.seasonNumber}`
+              )
+
+              tv_metadata = {
+                ...tv_metadata,
+                seasons: tv_metadata.seasons.map((season) => {
+                  if (season.season_number === currentDB_memory_season.seasonNumber) {
+                    currentDB_memory_season.metadata.episodes =
+                      currentDB_memory_season.metadata.episodes.map((episode) => {
+                        if (episode.episode_number === mostRecent_episodeMetadata.episode_number) {
+                          seasonNeedsUpdate = true
+                          console.log(
+                            'TV: --Updating episode metadata',
+                            tv.title,
+                            `Season ${currentDB_memory_season.seasonNumber} E${episode.episode_number}`,
+                            mostRecent_episodeMetadata
+                          )
+                          return mostRecent_episodeMetadata
+                        } else {
+                          return episode
+                        }
+                      })
+                    return {
+                      ...season,
+                      episodes: currentDB_memory_season.metadata.episodes,
+                    }
+                  }
+                  return season
+                }),
+              }
+            }
+          } else {
+            // Episode doesn't exist in currentDB, add it to tv_metadata
             console.log(
-              `TV: Updating episode metadata for ${episodeFileName} in ${tv.title}, Season ${currentDB_memory_season.seasonNumber}`
+              `TV: Adding missing episode metadata for ${episodeFileName} in ${tv.title}, Season ${currentDB_memory_season.seasonNumber}`
             )
 
             tv_metadata = {
               ...tv_metadata,
-              seasons: tv_metadata.seasons.map((season) => {
-                if (season.season_number === currentDB_memory_season.seasonNumber) {
-                  currentDB_memory_season.metadata.episodes =
-                    currentDB_memory_season.metadata.episodes.map((episode) => {
-                      if (episode.episode_number === mostRecent_episodeMetadata.episode_number) {
-                        seasonNeedsUpdate = true
-                        console.log(
-                          'TV: --Updating episode metadata',
-                          tv.title,
-                          `Season ${currentDB_memory_season.seasonNumber} E${episode.episode_number}`,
-                          mostRecent_episodeMetadata
-                        )
-                        return mostRecent_episodeMetadata
-                      } else {
-                        return episode
-                      }
-                    })
-                  return {
-                    ...season,
-                    episodes: currentDB_memory_season.metadata.episodes,
+              seasons: tv_metadata.seasons.map((_season) => {
+                if (_season.season_number === currentDB_memory_season.seasonNumber) {
+                  let episodes = _season.episodes || []
+
+                  // Check if the episodes array is empty
+                  if (episodes.length === 0) {
+                    // Populate the initial list of available episodes from currentDB_memory_season.metadata.episodes
+                    episodes = currentDB_memory_season.metadata.episodes
                   }
+
+                  // Check if the episode exists in the episodes array
+                  const episodeExists = episodes.some(
+                    (episode) =>
+                      episode.episode_number === mostRecent_episodeMetadata.episode_number
+                  )
+
+                  if (!episodeExists) {
+                    console.log(
+                      `TV: Adding missing episode metadata for ${episodeFileName} in ${tv.title}, Season ${currentDB_memory_season.seasonNumber}`
+                    )
+
+                    // Add the missing episode metadata to the current season
+                    const updatedEpisodes = [...episodes, mostRecent_episodeMetadata]
+
+                    // Sort the updated episodes array based on the episode number
+                    const sortedEpisodes = updatedEpisodes.sort(
+                      (a, b) => a.episode_number - b.episode_number
+                    )
+
+                    return {
+                      ..._season,
+                      episodes: sortedEpisodes,
+                    }
+                  }
+
+                  return _season
                 }
-                return season
+                return _season
               }),
             }
+
+            seasonNeedsUpdate = true
           }
-        } else {
-          // Episode doesn't exist in currentDB, add it to tv_metadata
-          console.log(
-            `TV: Adding missing episode metadata for ${episodeFileName} in ${tv.title}, Season ${currentDB_memory_season.seasonNumber}`
+        }
+
+        if (seasonNeedsUpdate) {
+          console.log('tv_metadata', tv_metadata)
+        }
+
+        if (
+          new Date(mostRecent_showMetadata.seasons?.last_updated) >
+          new Date(
+            currentDB_memory_season.metadata.episodes?.last_updated ?? '2024-01-01T01:00:00.000000'
           )
-
-          tv_metadata = {
-            ...tv_metadata,
-            seasons: tv_metadata.seasons.map((_season) => {
-              if (_season.season_number === currentDB_memory_season.seasonNumber) {
-                let episodes = _season.episodes || []
-
-                // Check if the episodes array is empty
-                if (episodes.length === 0) {
-                  // Populate the initial list of available episodes from currentDB_memory_season.metadata.episodes
-                  episodes = currentDB_memory_season.metadata.episodes
-                }
-
-                // Check if the episode exists in the episodes array
-                const episodeExists = episodes.some(
-                  (episode) => episode.episode_number === mostRecent_episodeMetadata.episode_number
-                )
-
-                if (!episodeExists) {
-                  console.log(
-                    `TV: Adding missing episode metadata for ${episodeFileName} in ${tv.title}, Season ${currentDB_memory_season.seasonNumber}`
-                  )
-
-                  // Add the missing episode metadata to the current season
-                  const updatedEpisodes = [...episodes, mostRecent_episodeMetadata]
-
-                  // Sort the updated episodes array based on the episode number
-                  const sortedEpisodes = updatedEpisodes.sort(
-                    (a, b) => a.episode_number - b.episode_number
-                  )
-
-                  return {
-                    ..._season,
-                    episodes: sortedEpisodes,
-                  }
-                }
-
-                return _season
-              }
-              return _season
-            }),
-          }
-
+        ) {
+          console.log(
+            'TV: Old Show Data',
+            tv.title,
+            `Season ${currentDB_memory_season.seasonNumber}`
+          )
           seasonNeedsUpdate = true
         }
-      }
 
-      if (seasonNeedsUpdate) {
-        console.log('tv_metadata', tv_metadata)
-      }
-
-      if (
-        new Date(mostRecent_showMetadata.seasons?.last_updated) >
-        new Date(
-          currentDB_memory_season.metadata.episodes?.last_updated ?? '2024-01-01T01:00:00.000000'
-        )
-      ) {
-        console.log('TV: Old Show Data', tv.title, `Season ${currentDB_memory_season.seasonNumber}`)
-        seasonNeedsUpdate = true
-      }
-
-      // After processing all episodes, check if the season needs an update
-      if (seasonNeedsUpdate) {
-        console.log(
-          'TV: Updating season metadata',
-          tv.title,
-          `Season ${currentDB_memory_season.seasonNumber}`
-        )
-        // Perform the necessary update for the season metadata here
-        await client
-          .db('Media')
-          .collection('TV')
-          .updateOne(
-            { title: tv.title },
-            {
-              $set: {
-                'seasons.$[elem].metadata': tv_metadata.seasons.find(
-                  (s) => s.season_number === currentDB_memory_season.seasonNumber
-                ),
-              },
-            },
-            { arrayFilters: [{ 'elem.seasonNumber': currentDB_memory_season.seasonNumber }] }
+        // After processing all episodes, check if the season needs an update
+        if (seasonNeedsUpdate) {
+          console.log(
+            'TV: Updating season metadata',
+            tv.title,
+            `Season ${currentDB_memory_season.seasonNumber}`
           )
+          // Perform the necessary update for the season metadata here
+          await client
+            .db('Media')
+            .collection('TV')
+            .updateOne(
+              { title: tv.title },
+              {
+                $set: {
+                  'seasons.$[elem].metadata': tv_metadata.seasons.find(
+                    (s) => s.season_number === currentDB_memory_season.seasonNumber
+                  ),
+                },
+              },
+              { arrayFilters: [{ 'elem.seasonNumber': currentDB_memory_season.seasonNumber }] }
+            )
+        }
       }
     }
+  } catch (error) {
+    console.error('Error in syncMetadata:', error)
+    throw error // Rethrow the error to be handled by the calling function
   }
 }
 

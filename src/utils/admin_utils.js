@@ -92,6 +92,65 @@ export function processUserData(jsonResponse) {
   }
 }
 
+// Regular expression to extract episode number and title
+/**
+ * Regular expression to extract episode number and title from a filename.
+ * Matches filenames in the format:
+ * - S01E02 - Episode Title.ext
+ * - 02 - Episode Title.ext
+ * And captures:
+ * - Episode number in capture group 1 or 2
+ * - Episode title in capture group 3
+ */
+const patterns = [
+  /S(\d+)E(\d+)(?:\s*-\s*(.+?))?(?:\s*-\s*.+?)?\.([^.]+)$/i, // Matches 'S01E01 - Title - Extra.mp4'
+  /(\d+)(?:\s*-\s*(.+?))?\.([^.]+)$/i, // Matches '01 - Title.mp4'
+  /(.+?)\s*-\s*S(\d+)E(\d+)(?:\s*-\s*(.+?))?(?:\s*-\s*.+?)?\.([^.]+)$/i, // Matches '1923 - S01E01 - Title - Extra.mp4'
+]
+
+export function matchEpisodeFileName(filename) {
+  for (const pattern of patterns) {
+    const match = filename.match(pattern)
+    if (match) {
+      return match
+    }
+  }
+  return null
+}
+
+export function extractEpisodeDetails(match) {
+  if (!match) return null
+
+  // Determine which pattern matched and extract details accordingly
+  if (match.length === 5 && match[1] && match[2]) {
+    // Pattern 1: SxxExx
+    return {
+      seasonNumber: parseInt(match[1]),
+      episodeNumber: parseInt(match[2]),
+      title: match[3].replace(/(WEBRip|WEBDL|HDTV|Bluray|\d{3,4}p).*$/i, '').trim() || '',
+      extension: match[4],
+    }
+  } else if (match.length === 4 && match[1] && match[2]) {
+    // Pattern 2: xx - Title
+    return {
+      seasonNumber: null,
+      episodeNumber: parseInt(match[1]),
+      title: match[2].replace(/(WEBRip|WEBDL|HDTV|Bluray|\d{3,4}p).*$/i, '').trim() || '',
+      extension: match[3],
+    }
+  } else if (match.length === 6 && match[2] && match[3]) {
+    // Pattern 3: Title - SxxExx - Title - Extra
+    return {
+      seasonNumber: parseInt(match[2]),
+      episodeNumber: parseInt(match[3]),
+      title: match[4].replace(/(WEBRip|WEBDL|HDTV|Bluray|\d{3,4}p).*$/i, '').trim() || '',
+      extension: match[5],
+    }
+  }
+
+  return null
+}
+
 function getYearFromDate(dateString) {
   return dateString ? new Date(dateString).getFullYear() : null
 }
@@ -197,17 +256,16 @@ export async function addOrUpdateSeason(
     }
 
     for (const episode of episodes) {
-      const episodeMatch = episode.fileName.match(
-        /^(?<showTitle>.+?)_?(?: - )?S(?<seasonNumber>\d+)E(?<episodeNumber>\d+)(?: - )?(?<episodeTitle>.+?)\.[^.]+$/
-      )
+      const episodeMatch = matchEpisodeFileName(episode.fileName)
       if (episodeMatch) {
-        const { episodeNumber, episodeTitle } = episodeMatch.groups
-        const parsedEpisodeNumber = parseInt(episodeNumber)
-
-        // Currently the title is the file name without the extension
-        let title = episodeTitle.replace(/(WEBRip|WEBDL|HDTV|Bluray|\d{3,4}p).+$/i, '').trim()
+        const { episodeNumber, title } = extractEpisodeDetails(episodeMatch)
 
         let episodeMetadata = {}
+        /**
+         * Adds the episode metadata to the season metadata object.
+         * Episode metadata is used in the frontend from this new
+         * episodes array inside seasons.
+         */
         if (episode.metadata) {
           try {
             episodeMetadata = await fetchMetadata(episode.metadata)
@@ -221,7 +279,7 @@ export async function addOrUpdateSeason(
         // If we wanted to use the metadata title, we could set the title here instead
         // title = episodeMetadata.name || name
         const existingEpisodeIndex = currentShow.seasons[currentSeasonIndex].episodes.findIndex(
-          (e) => e.episodeNumber === parsedEpisodeNumber
+          (e) => e.episodeNumber === episodeNumber
         )
         if (existingEpisodeIndex === -1) {
           const videoURL =
@@ -232,7 +290,7 @@ export async function addOrUpdateSeason(
             fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].subtitles
 
           let updatedData = {
-            episodeNumber: parsedEpisodeNumber,
+            episodeNumber: episodeNumber,
             title,
             videoURL: fileServerURL + `${videoURL}`,
             mediaLastModified: episode.mediaLastModified,
