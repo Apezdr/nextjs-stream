@@ -89,7 +89,7 @@ export default async function TVShowSeasonsList({ showTitle }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
       <SyncClientWithServerWatched />
-      <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-3 xl:grid-cols-6 xl:gap-x-2">
+      <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-6 xl:gap-x-2 ">
         {/* Summary Poster */}
         <li className="col-span-1 sm:col-span-3 xl:col-span-2 lg:row-span-3">
           <Detailed tvShow={tvShow} />
@@ -142,13 +142,17 @@ export default async function TVShowSeasonsList({ showTitle }) {
                 >
                   <Link href={`/list/tv/${showTitle}/${season.seasonNumber}`}>
                     <div className="block mb-2 w-full lg:w-auto group">
-                      <MediaPoster className="max-w-[200px]" tv={season} />
+                      <MediaPoster
+                        className="max-w-[200px] !mx-auto rounded-t-sm shadow-2xl"
+                        contClassName="mx-auto"
+                        tv={season}
+                      />
                       <button
                         type="button"
-                        className="w-full flex flex-row gap-x-2 justify-center rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm group-hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 h-16 lg:h-auto max-w-[200px]"
+                        className="mx-auto w-full flex flex-row gap-x-2 justify-center rounded-b bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-2xl group-hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 h-16 lg:h-auto max-w-[200px]"
                       >
-                        <div className="mt-2 text-center text-sm font-medium text-gray-200">
-                          <span className="underline">Season {season.seasonNumber}</span>
+                        <div className="my-2 text-center text-sm font-medium text-gray-200">
+                          <span>Season {season.seasonNumber}</span>
                         </div>
                       </button>
                     </div>
