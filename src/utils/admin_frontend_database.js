@@ -1486,7 +1486,8 @@ export async function syncEpisodeThumbnails(currentDB, fileServer) {
 
           // Check if the file server thumbnail blurhash is different from the current blurhash
           const thumbnailBlurhashNeedsUpdate =
-            fileServerEpisodeData.thumbnailBlurhash !== episode.thumbnailBlurhash
+            `${fileServerURL}${fileServerEpisodeData.thumbnailBlurhash}` !==
+            `${fileServerURL}${episode.thumbnailBlurhash}`
 
           // If either URL needs to be updated
           if (
@@ -1500,11 +1501,11 @@ export async function syncEpisodeThumbnails(currentDB, fileServer) {
             const updateFields = {}
             if (thumbnailURLNeedsUpdate) {
               updateFields['seasons.$.episodes.$[episode].thumbnail'] =
-                fileServerURL + fileServerEpisodeData.thumbnail
+                `${fileServerURL}${fileServerEpisodeData.thumbnail}`
             }
             if (thumbnailBlurhashNeedsUpdate) {
               updateFields['seasons.$.episodes.$[episode].thumbnailBlurhash'] =
-                fileServerEpisodeData.thumbnailBlurhash
+                `${fileServerURL}${fileServerEpisodeData.thumbnailBlurhash}`
             }
 
             await client
