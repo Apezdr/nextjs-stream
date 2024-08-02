@@ -1,3 +1,33 @@
+# Ignore environment variables
 .env
+
+# Ignore node_modules
 node_modules
+
+# Ignore git repository
 .git
+
+# Ignore npm debug log
+npm-debug.log
+
+# Ignore Dockerfile and .dockerignore
+Dockerfile
+.dockerignore
+
+# Ignore README.md
+README.md
+
+# Ignore other unnecessary files and directories
+*.md
+*.log
+*.lock
+*.swp
+*.swo
+*.DS_Store
+.idea
+.vscode
+coverage
+tests
+docs
+examples
+scripts
