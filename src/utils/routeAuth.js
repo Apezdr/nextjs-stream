@@ -37,15 +37,13 @@ export async function isAdminOrWebhook(req) {
         }
       )
     }
-  }
-  else {
+  } else {
     // If webhook ID is not valid or not provided, attempt to authenticate as admin
     const authResult = await isAdmin(req)
     if (authResult instanceof Response) {
       // Admin authentication failed, return the failure response
       return authResult
-    }
-    else if (authResult) {
+    } else if (authResult) {
       // Admin authentication succeeded, return the success response
       return true
     }
@@ -76,7 +74,10 @@ export async function isAdmin(req) {
     session = await auth()
   }
   if (!session || !session.user || !adminUserEmails.includes(session.user.email)) {
-    return new Response('You must be signed in as an admin.', { status: 401, url: buildURL(`/api/auth/session`) })
+    return new Response('You must be signed in as an admin.', {
+      status: 401,
+      url: buildURL(`/api/auth/session`),
+    })
   }
   return session.user
 }

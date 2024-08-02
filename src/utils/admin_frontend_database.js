@@ -1327,6 +1327,88 @@ export async function syncLogos(currentDB, fileServer) {
 }
 
 /**
+ * Syncs blurhash image urls between the current database and file server
+ * @param {Object} currentDB - The current database
+ * @param {Object} fileServer - The file server data
+ * @returns {Promise} - Resolves when sync is complete
+ */
+export async function syncBlurhash(currentDB, fileServer) {
+  const client = await clientPromise
+  console.log('Starting blurhash synchronization...')
+
+  // Iterate through TV shows
+  for (const tv of currentDB.tv) {
+    const fileServerShowData = fileServer.tv[tv.title]
+
+    if (fileServerShowData) {
+      const updateData = {}
+
+      // Update posterBlurhash URL if it exists
+      if (
+        fileServerShowData.posterBlurhash &&
+        (!tv.posterBlurhash ||
+          fileServerShowData.posterBlurhash !== tv.posterBlurhash.replace(fileServerURL, ''))
+      ) {
+        updateData.posterBlurhash = fileServerURL + fileServerShowData.posterBlurhash
+        console.log(`TV: Updating posterBlurhash for ${tv.title}`)
+      }
+
+      // Update backdropBlurhash URL if it exists
+      if (
+        fileServerShowData.backdropBlurhash &&
+        (!tv.backdropBlurhash ||
+          fileServerShowData.backdropBlurhash !== tv.backdropBlurhash.replace(fileServerURL, ''))
+      ) {
+        updateData.backdropBlurhash = fileServerURL + fileServerShowData.backdropBlurhash
+        console.log(`TV: Updating backdropBlurhash for ${tv.title}`)
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await client
+          .db('Media')
+          .collection('TV')
+          .updateOne({ title: tv.title }, { $set: updateData })
+        console.log(`TV show updated: ${tv.title}`)
+      }
+    } else {
+      console.log(`No file server data found for TV show: ${tv.title}`)
+    }
+  }
+
+  // Iterate through movies
+  for (const movie of currentDB.movies) {
+    const fileServerMovieData = fileServer.movies[movie.title]
+
+    if (fileServerMovieData) {
+      const updateData = {}
+
+      // Update posterBlurhash URL if it exists
+      if (
+        fileServerMovieData.urls?.posterBlurhash &&
+        (!movie.posterBlurhash ||
+          fileServerMovieData.urls.posterBlurhash !==
+            movie.posterBlurhash.replace(fileServerURL, ''))
+      ) {
+        updateData.posterBlurhash = fileServerURL + fileServerMovieData.urls.posterBlurhash
+        console.log(`Movie: Updating posterBlurhash for ${movie.title}`)
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await client
+          .db('Media')
+          .collection('Movies')
+          .updateOne({ title: movie.title }, { $set: updateData })
+        console.log(`Movie updated: ${movie.title}`)
+      }
+    } else {
+      console.log(`No file server data found for movie: ${movie.title}`)
+    }
+  }
+
+  console.log('Blurhash synchronization complete.')
+}
+
+/**
  * Sync the length and dimensions properties of TV shows and movies between the
  * admin frontend database and the file server.
  */

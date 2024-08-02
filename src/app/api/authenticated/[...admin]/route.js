@@ -9,6 +9,7 @@ import {
 import { extractEpisodeDetails, matchEpisodeFileName, processMediaData, processUserData } from 'src/utils/admin_utils'
 import axios from 'axios'
 import {
+  syncBlurhash,
   syncCaptions,
   syncChapters,
   syncEpisodeThumbnails,
@@ -142,6 +143,7 @@ async function handleSync(webhookId, request) {
     await syncChapters(currentDB, fileServer)
     await syncVideoURL(currentDB, fileServer)
     await syncLogos(currentDB, fileServer)
+    await syncBlurhash(currentDB, fileServer)
     await syncLengthAndDimensions(currentDB, fileServer)
     await syncEpisodeThumbnails(currentDB, fileServer)
     await updateLastSynced()
