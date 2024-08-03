@@ -160,7 +160,7 @@ export async function getRecentlyWatchedForUser(userId) {
         .collection('TV')
         .find({ 'seasons.episodes.videoURL': { $in: uniqueVideoIds } })
         .sort({ 'seasons.episodes.videoURL': -1 })
-        .hint({ 'seasons.episodes.videoURL': -1 })
+        //.hint({ 'seasons.episodes.videoURL': -1 })
         .toArray(),
     ])
 
