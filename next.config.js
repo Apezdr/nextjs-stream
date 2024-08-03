@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-empty-function */
+const dotenv = require('dotenv')
+dotenv.config()
 
 const withBundleAnalyzer = require('@next/bundle-analyzer')({
   enabled: 'false',
@@ -25,28 +27,29 @@ const nextConfig = {
   },
   images: {
     minimumCacheTTL: 604800,
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'personalserver.adamdrumm.com',
-      },
-      {
-        protocol: 'https',
-        hostname: 'image.tmdb.org',
-      },
-      {
-        protocol: 'https',
-        hostname: 'm.media-amazon.com',
-      },
-      {
-        protocol: 'https',
-        hostname: 'iconape.com',
-      },
-      {
-        protocol: 'https',
-        hostname: 'www.freeiconspng.com',
-      },
-    ],
+    remotePatterns: process.env.REMOTE_PATTERNS
+      ? process.env.REMOTE_PATTERNS.split(',').map((pattern) => {
+          const [protocol, hostname] = pattern.trim().split('://')
+          return { protocol, hostname }
+        })
+      : [
+          {
+            protocol: 'https',
+            hostname: 'image.tmdb.org',
+          },
+          {
+            protocol: 'https',
+            hostname: 'm.media-amazon.com',
+          },
+          {
+            protocol: 'https',
+            hostname: 'iconape.com',
+          },
+          {
+            protocol: 'https',
+            hostname: 'www.freeiconspng.com',
+          },
+        ],
   },
   // Additional Next.js configurations can be added here
   webpack(config) {
