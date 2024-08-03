@@ -47,7 +47,9 @@ export function getFullImageUrl(imagePath, size = 'w780') {
 export function buildURL(url) {
   return `${
     process.env.NODE_ENV === 'development'
-      ? `http://localhost:${process.env.PORT || 3000}`
+      ? process.env.NEXT_PUBLIC_BASE_URL
+        ? process.env.NEXT_PUBLIC_BASE_URL
+        : `http://localhost:${process.env.PORT || 3000}`
       : process.env.NEXT_PUBLIC_BASE_URL
   }${url}`
 }

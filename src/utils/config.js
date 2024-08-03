@@ -1,4 +1,7 @@
 const fileServerURL = process.env.NEXT_PUBLIC_FILE_SERVER_URL || 'http://localhost:3000'
+const fileServerURLforReverseProxy =
+  (process.env.NEXT_PUBLIC_FILE_SERVER_URL || 'http://localhost:3000') +
+  (process.env.NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH || '')
 const adminUserEmails = process.env.NEXT_PUBLIC_ADMIN_USER_EMAILS
   ? process.env.NEXT_PUBLIC_ADMIN_USER_EMAILS.split(',').map((email) => email.trim())
   : []
@@ -9,4 +12,12 @@ const syncTVURL = process.env.NEXT_PUBLIC_SYNC_TV_URL || 'http://localhost:3000/
 const syncMoviesURL =
   process.env.NEXT_PUBLIC_SYNC_MOVIES_URL || 'http://localhost:3000/movies_list.json'
 
-export { fileServerURL, adminUserEmails, siteTitle, siteDescription, syncTVURL, syncMoviesURL }
+export {
+  fileServerURL,
+  fileServerURLforReverseProxy,
+  adminUserEmails,
+  siteTitle,
+  siteDescription,
+  syncTVURL,
+  syncMoviesURL,
+}

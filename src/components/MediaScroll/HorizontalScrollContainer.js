@@ -27,21 +27,29 @@ export default async function HorizontalScrollContainer({
   switch (type) {
     case 'movie':
       moviePosters = await getPosters('movie')
-      items = moviePosters.sort(sortList)
+      if (moviePosters && moviePosters.length > 0) {
+        items = moviePosters.sort(sortList)
+      }
       break
     case 'tv':
       tvPosters = await getPosters('tv')
-      items = tvPosters.sort(sortList)
+      if (tvPosters && tvPosters.length > 0) {
+        items = tvPosters.sort(sortList)
+      }
       break
     case 'recentlyWatched':
       watched = await getRecentlyWatchedForUser(session.user?.id)
-      items = watched.sort(sortList)
+      if (watched && watched.length > 0) {
+        items = watched.sort(sortList)
+      }
       break
     case 'all':
     default:
       moviePosters = await getPosters('movie')
       tvPosters = await getPosters('tv')
-      items = [...tvPosters, ...moviePosters].sort(sortList)
+      if (moviePosters && moviePosters.length > 0 && tvPosters && tvPosters.length > 0) {
+        items = [...tvPosters, ...moviePosters].sort(sortList)
+      }
   }
 
   return <HorizontalScroll items={items} listtype={type} />

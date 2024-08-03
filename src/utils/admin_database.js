@@ -2,7 +2,7 @@ import getMetadata from '@components/movieMetadata'
 import clientPromise from '../lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { extractTVShowDetails } from './admin_frontend_database'
-import { fileServerURL } from './config'
+import { fileServerURLforReverseProxy } from './config'
 
 export async function getAllMedia() {
   const client = await clientPromise
@@ -105,8 +105,8 @@ export async function getRecentlyWatched() {
             }
             try {
               if (
-                video.videoId.startsWith(fileServerURL + `/movies`) ||
-                video.videoId.startsWith(fileServerURL + `/limited`)
+                video.videoId.startsWith(fileServerURLforReverseProxy + `/movies`) ||
+                video.videoId.startsWith(fileServerURLforReverseProxy + `/limited`)
               ) {
                 const movie = await client
                   .db('Media')
@@ -120,7 +120,7 @@ export async function getRecentlyWatched() {
                       lastUpdated: video.lastUpdated,
                     }
                   : null
-              } else if (video.videoId.startsWith(fileServerURL + `/tv`)) {
+              } else if (video.videoId.startsWith(fileServerURLforReverseProxy + `/tv`)) {
                 const tvDetails = await extractTVShowDetails(client, video.videoId)
                 return tvDetails
                   ? {
