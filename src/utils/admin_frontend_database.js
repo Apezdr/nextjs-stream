@@ -135,7 +135,7 @@ export async function getRecentlyWatchedForUser(userId) {
           { $limit: 200 },
           { $group: { _id: '$userId', videosWatched: { $push: '$videosWatched' } } },
         ],
-        { hint: 'userId_1' }
+        //{ hint: 'userId_1' }
       )
       .toArray()
 
@@ -153,7 +153,7 @@ export async function getRecentlyWatchedForUser(userId) {
         .collection('Movies')
         .find({ videoURL: { $in: uniqueVideoIds } })
         .sort({ videoURL: -1 })
-        .hint({ videoURL: -1 })
+        //.hint({ videoURL: -1 })
         .toArray(),
       client
         .db('Media')
