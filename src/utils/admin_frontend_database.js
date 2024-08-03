@@ -51,7 +51,7 @@ export async function getPosters(type) {
           },
         }
       )
-      .hint({ _id: 1 })
+      //.hint({ _id: 1 })
       .toArray()
   } else if (type === 'tv') {
     records = await client
@@ -76,7 +76,7 @@ export async function getPosters(type) {
           },
         }
       )
-      .hint({ _id: 1 })
+      //.hint({ _id: 1 })
       .toArray()
   }
 
