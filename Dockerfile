@@ -1,12 +1,14 @@
 # Stage 1: Building the code
 FROM node:21-alpine as builder
 WORKDIR /app
+
 COPY package.json package-lock.json* ./
+COPY .env.local ./
 RUN npm install -g npm@latest
 RUN npm install --force
-#RUN npm install pm2 -g
 COPY . .
 RUN npm run build
+RUN rm .env.local
 
 # Stage 2: Running the code
 FROM node:21-alpine
