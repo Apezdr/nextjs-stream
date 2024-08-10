@@ -45,12 +45,16 @@ export function getFullImageUrl(imagePath, size = 'w780') {
 }
 
 export function buildURL(url) {
+  const isDevelopment = process.env.NODE_ENV === 'development'
+  const baseURL = process.env.NEXT_PUBLIC_BASE_URL
   return `${
-    process.env.NODE_ENV === 'development'
-      ? process.env.NEXT_PUBLIC_BASE_URL
-        ? process.env.NEXT_PUBLIC_BASE_URL
+    isDevelopment
+      ? baseURL
+        ? baseURL
         : `http://localhost:${process.env.PORT || 3000}`
-      : process.env.NEXT_PUBLIC_BASE_URL
+      : baseURL
+        ? baseURL
+        : ''
   }${url}`
 }
 

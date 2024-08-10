@@ -6,7 +6,12 @@ import {
   getLastSynced,
   getRecentlyWatched,
 } from 'src/utils/admin_database'
-import { extractEpisodeDetails, matchEpisodeFileName, processMediaData, processUserData } from 'src/utils/admin_utils'
+import {
+  extractEpisodeDetails,
+  matchEpisodeFileName,
+  processMediaData,
+  processUserData,
+} from 'src/utils/admin_utils'
 import axios from 'axios'
 import {
   syncBlurhash,

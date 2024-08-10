@@ -2,7 +2,7 @@ import getMetadata from '@components/movieMetadata'
 import clientPromise from '../lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { extractTVShowDetails } from './admin_frontend_database'
-import { fileServerURLforReverseProxy } from './config'
+import { fileServerURLWithPrefixPath } from './config'
 
 export async function getAllMedia() {
   const client = await clientPromise
@@ -70,6 +70,11 @@ export async function getLastSynced() {
     .db('app_config')
     .collection('syncInfo')
     .findOne({ _id: 'lastSyncTime' })
+
+  if (!lastSyncTime || !lastSyncTime?.timestamp) {
+    return null
+  }
+
   return lastSyncTime.timestamp || null
 }
 
@@ -105,8 +110,8 @@ export async function getRecentlyWatched() {
             }
             try {
               if (
-                video.videoId.startsWith(fileServerURLforReverseProxy + `/movies`) ||
-                video.videoId.startsWith(fileServerURLforReverseProxy + `/limited`)
+                video.videoId.startsWith(fileServerURLWithPrefixPath + `/movies`) ||
+                video.videoId.startsWith(fileServerURLWithPrefixPath + `/limited`)
               ) {
                 const movie = await client
                   .db('Media')
@@ -120,7 +125,7 @@ export async function getRecentlyWatched() {
                       lastUpdated: video.lastUpdated,
                     }
                   : null
-              } else if (video.videoId.startsWith(fileServerURLforReverseProxy + `/tv`)) {
+              } else if (video.videoId.startsWith(fileServerURLWithPrefixPath + `/tv`)) {
                 const tvDetails = await extractTVShowDetails(client, video.videoId)
                 return tvDetails
                   ? {
@@ -130,7 +135,9 @@ export async function getRecentlyWatched() {
                       lastUpdated: video.lastUpdated,
                     }
                   : null
-              }
+              } /* else {
+                throw new Error(`Invalid videoId: ${video.videoId} or ${fileServerURLWithPrefixPath}`)
+              } */
             } catch (innerError) {
               console.error(`Error processing video details: ${innerError.message}`)
               return null

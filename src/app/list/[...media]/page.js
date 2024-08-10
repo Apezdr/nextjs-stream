@@ -14,7 +14,7 @@ import { Suspense } from 'react'
 import Loading from 'src/app/loading'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { buildURL } from 'src/utils'
-import { fileServerURL } from 'src/utils/config'
+import { fileServerURLWithPrefixPath } from 'src/utils/config'
 
 export async function generateMetadata({ params, searchParams }, parent) {
   // read route params
@@ -26,7 +26,7 @@ export async function generateMetadata({ params, searchParams }, parent) {
   let media,
     overview,
     title = (await parent).title.absolute,
-    poster = fileServerURL + `/poster_collage.jpg`
+    poster = fileServerURLWithPrefixPath + `/poster_collage.jpg`
   if (mediaType === 'tv') {
     media = await getRequestedMedia(
       mediaType,

@@ -4,7 +4,7 @@ import GeneralFullScreenBackdrop from '@components/Backdrop/GeneralFullscreen'
 import { AnimatePresence } from 'framer-motion'
 import { useParams } from 'next/navigation'
 
-export default function GeneralLayout({ fileServerURL }) {
+export default function GeneralLayout({ fileServerURLWithPrefixPath }) {
   const params = useParams()
 
   // Destructure parameters and decode if necessary
@@ -18,7 +18,7 @@ export default function GeneralLayout({ fileServerURL }) {
       {((mediaType === 'tv' && !mediaTitle) || mediaType !== 'tv') && (
         <GeneralFullScreenBackdrop
           key={'poster_collage'}
-          url={fileServerURL + `/poster_collage.jpg`}
+          url={fileServerURLWithPrefixPath + `/poster_collage.jpg`}
           imageClasses="opacity-25"
         />
       )}

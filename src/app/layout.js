@@ -4,7 +4,7 @@ import './globals.css'
 import TVLayout from '@components/HOC/TVLayout'
 import GeneralLayout from '@components/HOC/GeneralLayout'
 import { classNames } from 'src/utils'
-import { fileServerURL, siteDescription, siteTitle } from 'src/utils/config'
+import { fileServerURLWithPrefixPath, siteDescription, siteTitle } from 'src/utils/config'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -12,7 +12,7 @@ export const metadata = {
   title: siteTitle,
   description: siteDescription,
   openGraph: {
-    images: fileServerURL + `/poster_collage.jpg`,
+    images: fileServerURLWithPrefixPath + `/poster_collage.jpg`,
   },
 }
 
@@ -23,8 +23,8 @@ export default function RootLayout({ children }) {
         className={classNames(inter.className, `bg-blue-500 transition-colors duration-1000`)}
         id="page-container"
       >
-        <GeneralLayout fileServerURL={fileServerURL} />
-        <TVLayout fileServerURL={fileServerURL} />
+        <GeneralLayout fileServerURLWithPrefixPath={fileServerURLWithPrefixPath} />
+        <TVLayout fileServerURLWithPrefixPath={fileServerURLWithPrefixPath} />
         {/* <PageAnimatePresence>{children}</PageAnimatePresence> */}
         {children}
       </body>

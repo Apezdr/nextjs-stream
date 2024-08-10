@@ -8,7 +8,7 @@ export default function SyncMediaPopup({
   isOpen,
   setIsOpen,
   updateProcessedData,
-  setLastSyncTime,
+  setLastSync,
 }) {
   const cancelButtonRef = useRef(null)
   const [syncData, setSyncData] = useState(null) // [tvData, moviesData]
@@ -40,7 +40,7 @@ export default function SyncMediaPopup({
       // based on the sync results
       updateProcessedData('media')
 
-      setLastSyncTime(new Date()) // Update the last sync time
+      setLastSync(new Date()) // Update the last sync time
 
       setComplete(true) // Indicate that the sync operation is complete
     } catch (error) {

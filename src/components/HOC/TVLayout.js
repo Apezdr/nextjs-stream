@@ -7,7 +7,7 @@ import { useParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { buildURL } from 'src/utils'
 
-export default function TVLayout({ fileServerURL }) {
+export default function TVLayout({ fileServerURLWithPrefixPath }) {
   const params = useParams()
   const [media, setMedia] = useState(null)
 
@@ -60,7 +60,7 @@ export default function TVLayout({ fileServerURL }) {
         mediaTitle && (
           <GeneralFullScreenBackdrop
             key={'poster_collage'}
-            url={fileServerURL + `/poster_collage.jpg`}
+            url={fileServerURLWithPrefixPath + `/poster_collage.jpg`}
             imageClasses="opacity-25"
           />
         )

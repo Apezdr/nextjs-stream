@@ -1,6 +1,6 @@
 import axios from 'axios'
 import { getFullImageUrl } from '.'
-import { fileServerURL } from './config'
+import { fileServerURLWithoutPrefixPath } from './config'
 
 export function processMediaData(jsonResponseString) {
   const { movies, tv } = jsonResponseString
@@ -292,16 +292,16 @@ export async function addOrUpdateSeason(
           let updatedData = {
             episodeNumber: episodeNumber,
             title,
-            videoURL: fileServerURL + `${videoURL}`,
+            videoURL: fileServerURLWithoutPrefixPath + `${videoURL}`,
             mediaLastModified: episode.mediaLastModified,
             length: episode.length,
             dimensions: episode.dimensions,
           }
           if (episode.thumbnail) {
-            updatedData.thumbnail = fileServerURL + `${episode.thumbnail}`
+            updatedData.thumbnail = fileServerURLWithoutPrefixPath + `${episode.thumbnail}`
           }
           if (episode.thumbnailBlurhash) {
-            updatedData.thumbnailBlurhash = fileServerURL + `${thumbnailBlurhash}`
+            updatedData.thumbnailBlurhash = fileServerURLWithoutPrefixPath + `${thumbnailBlurhash}`
           }
 
           /**
@@ -312,7 +312,7 @@ export async function addOrUpdateSeason(
            */
           if (captions) {
             Object.keys(captions).map((caption) => {
-              captions[caption].url = fileServerURL + `${captions[caption].url}`
+              captions[caption].url = fileServerURLWithoutPrefixPath + `${captions[caption].url}`
               return caption
             })
             updatedData.captionURLs = captions
@@ -321,7 +321,7 @@ export async function addOrUpdateSeason(
           // Add chapterURL if chapters file exists
           if (fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].chapters) {
             updatedData.chapterURL =
-              fileServerURL +
+              fileServerURLWithoutPrefixPath +
               `${
                 fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].chapters
               }`
@@ -336,30 +336,31 @@ export async function addOrUpdateSeason(
       (a, b) => a.episodeNumber - b.episodeNumber
     )
     currentShow.seasons[currentSeasonIndex].metadata = seasonMetadata
-    currentShow.seasons[currentSeasonIndex].season_poster = fileServerURL + `${season_poster}`
+    currentShow.seasons[currentSeasonIndex].season_poster = fileServerURLWithoutPrefixPath + `${season_poster}`
     currentShow.seasons[currentSeasonIndex].seasonPosterBlurhash =
-      fileServerURL + `${seasonPosterBlurhash}`
+      fileServerURLWithoutPrefixPath + `${seasonPosterBlurhash}`
   }
 }
 
 // Function to fetch
 export async function fetchMetadata(metadataUrl, type = 'file') {
   try {
-    if (metadataUrl.startsWith(fileServerURL)) {
-      metadataUrl = metadataUrl.replace(fileServerURL, '')
+    if (metadataUrl.startsWith(fileServerURLWithoutPrefixPath)) {
+      metadataUrl = metadataUrl.replace(fileServerURLWithoutPrefixPath, '')
     }
     // Remove leading slash
     if (metadataUrl.startsWith('/')) {
       metadataUrl = metadataUrl.slice(1)
     }
-    const response = await axios.get(fileServerURL + `/${metadataUrl}`)
+    console.log(fileServerURLWithoutPrefixPath + `/${metadataUrl}`)
+    const response = await axios.get(fileServerURLWithoutPrefixPath + `/${metadataUrl}`)
     if (type === 'blurhash') {
       let blurhash = response.data
       return blurhash.trim()
     }
     return response.data
   } catch (error) {
-    console.log('Error fetching metadata:', fileServerURL + `/${metadataUrl}`, error)
+    console.log('Error fetching metadata:', fileServerURLWithoutPrefixPath + `/${metadataUrl}`, error)
     return false
   }
 }

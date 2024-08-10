@@ -12,11 +12,37 @@ import Link from 'next/link'
 import RecentlyWatched from './RecentlyWatchedList'
 import { buildURL } from 'src/utils'
 
+const processLastSyncTimeData = (lastSyncTimeData) => {
+  const lastSyncTime = typeof(lastSyncTimeData) === 'object' ? lastSyncTimeData.lastSyncTime : lastSyncTimeData
+  if (!isNaN(Date.parse(lastSyncTime)) && lastSyncTime) {
+    const lastSyncDate = new Date(lastSyncTime)
+    const formattedTime = isSameDay(new Date(), lastSyncDate)
+      ? `Today at ${lastSyncDate.toLocaleString('en-US', {
+          hour: 'numeric',
+          minute: 'numeric',
+          second: 'numeric',
+          hour12: true,
+        })}`
+      : lastSyncDate.toLocaleString('en-US', {
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: 'numeric',
+          minute: 'numeric',
+          second: 'numeric',
+          hour12: true,
+        })
+    return String(formattedTime)
+  } else {
+    return 'Sync hasn\'t been run yet'
+  }
+}
+
 export default function AdminOverviewPage({
   processedData,
   processedUserData,
   _lastSyncTime,
-  fileServerURL,
+  organizrURL,
 }) {
   const [isOpen, setIsOpen] = useState(false)
   const [isSyncOpen, setIsSyncOpen] = useState(false)
@@ -25,11 +51,13 @@ export default function AdminOverviewPage({
   const [_processedData, setProcessedData] = useState(processedData)
   const [_processedUserData, setProcessedUserData] = useState(processedUserData)
   const [recentlyWatched, setRecentlyWatched] = useState(false)
-  const [lastSyncTime, setLastSyncTime] = useState(_lastSyncTime)
+  const [lastSyncTime, setLastSyncTime] = useState(() => processLastSyncTimeData(_lastSyncTime))
 
   const updateRecord = (newData) => {
     setRecord((prevRecord) => ({ ...prevRecord, ...newData }))
   }
+
+  const setLastSync = (lastSync) => processLastSyncTimeData(lastSync)
 
   const action = record && record.action
 
@@ -49,7 +77,8 @@ export default function AdminOverviewPage({
     const fetchData = async () => {
       try {
         const lastSyncTimeData = await fetchLastSyncTime()
-        setLastSyncTime(new Date(lastSyncTimeData.lastSyncTime))
+        const formattedTime = processLastSyncTimeData(lastSyncTimeData)
+        setLastSyncTime(formattedTime)
       } catch (error) {
         console.error('Error fetching data:', error)
       }
@@ -102,7 +131,7 @@ export default function AdminOverviewPage({
           isOpen={isSyncOpen}
           setIsOpen={setIsSyncOpen}
           updateProcessedData={updateProcessedData}
-          setLastSyncTime={setLastSyncTime}
+          setLastSync={setLastSync}
         />
       )}
       {record && action !== 'delete' && record.type === 'movie' && (
@@ -173,22 +202,7 @@ export default function AdminOverviewPage({
             <span className="text-lg font-semibold text-black">Last Synced:</span>
           </div>
           <p className="mt-2 text-gray-600">
-            {isSameDay(lastSyncTime, new Date())
-              ? `Today at ${lastSyncTime.toLocaleString('en-US', {
-                  hour: 'numeric',
-                  minute: 'numeric',
-                  second: 'numeric',
-                  hour12: true,
-                })}`
-              : lastSyncTime.toLocaleString('en-US', {
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                  hour: 'numeric',
-                  minute: 'numeric',
-                  second: 'numeric',
-                  hour12: true,
-                })}
+            {lastSyncTime}
           </p>
         </div>
       </div>
@@ -202,7 +216,7 @@ export default function AdminOverviewPage({
         </button>
         <Link
           className="block rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-          href={fileServerURL + `/organizr/`}
+          href={organizrURL}
           target="_blank"
         >
           Organizr
