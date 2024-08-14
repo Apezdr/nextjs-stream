@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { classNames, generateColors, getFullImageUrl } from '../utils'
 import HD4kBanner from '../../public/4kBanner.png'
 import Image from 'next/image'
@@ -7,7 +7,7 @@ import useWatchedWidth from './useWatchedWidth'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 
-export default function MediaPoster({
+function MediaPoster({
   movie,
   tv,
   className = 'max-w-full',
@@ -130,3 +130,5 @@ export default function MediaPoster({
     </div>
   )
 }
+
+export default memo(MediaPoster)

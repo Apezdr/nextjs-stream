@@ -2,7 +2,7 @@
 
 import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion, useInView } from 'framer-motion'
-import { useRef } from 'react'
+import { memo, useRef } from 'react'
 
 const PageContentAnimatePresence = ({ children, variants, transition, _key = '' }) => {
   const pathname = usePathname()
@@ -26,4 +26,4 @@ const PageContentAnimatePresence = ({ children, variants, transition, _key = '' 
   )
 }
 
-export default PageContentAnimatePresence
+export default memo(PageContentAnimatePresence)
