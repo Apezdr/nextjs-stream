@@ -352,7 +352,7 @@ export async function fetchMetadata(metadataUrl, type = 'file') {
     if (metadataUrl.startsWith('/')) {
       metadataUrl = metadataUrl.slice(1)
     }
-    console.log(fileServerURLWithoutPrefixPath + `/${metadataUrl}`)
+    //console.log(fileServerURLWithoutPrefixPath + `/${metadataUrl}`)
     const response = await axios.get(fileServerURLWithoutPrefixPath + `/${metadataUrl}`)
     if (type === 'blurhash') {
       let blurhash = response.data

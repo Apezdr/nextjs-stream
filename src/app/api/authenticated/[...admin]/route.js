@@ -22,6 +22,7 @@ import {
   syncLogos,
   syncMetadata,
   syncMissingMedia,
+  syncPosterURLs,
   syncVideoURL,
   updateLastSynced,
 } from 'src/utils/admin_frontend_database'
@@ -151,6 +152,7 @@ async function handleSync(webhookId, request) {
     await syncBlurhash(currentDB, fileServer)
     await syncLengthAndDimensions(currentDB, fileServer)
     await syncEpisodeThumbnails(currentDB, fileServer)
+    await syncPosterURLs(currentDB, fileServer)
     await updateLastSynced()
     console.info('Finished Sync with Fileserver')
     return { missingMedia, missingMp4 }

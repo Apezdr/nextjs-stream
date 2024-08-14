@@ -134,7 +134,7 @@ export async function getRecentlyWatchedForUser(userId) {
           { $sort: { 'videosWatched.lastUpdated': -1 } },
           { $limit: 200 },
           { $group: { _id: '$userId', videosWatched: { $push: '$videosWatched' } } },
-        ],
+        ]
         //{ hint: 'userId_1' }
       )
       .toArray()
@@ -517,7 +517,8 @@ export async function syncMissingMedia(missingMedia, fileServer) {
     }
     // Add posterBlurhash URL if it exists
     if (movieData.urls?.posterBlurhash) {
-      updateData.posterBlurhash = fileServerURLWithoutPrefixPath + `${movieData.urls.posterBlurhash}`
+      updateData.posterBlurhash =
+        fileServerURLWithoutPrefixPath + `${movieData.urls.posterBlurhash}`
     }
     // Some movies have a logo image
     if (movieData.urls?.logo) {
@@ -1209,7 +1210,10 @@ export async function syncVideoURL(currentDB, fileServer) {
           const fileServerEpisodeData = fileServerSeasonData.urls[episodeFileName]
 
           // If the file server video URL is different from the current video URL
-          if (fileServerEpisodeData.videourl !== episode.videoURL.replace(fileServerURLWithoutPrefixPath, '')) {
+          if (
+            fileServerEpisodeData.videourl !==
+            episode.videoURL.replace(fileServerURLWithoutPrefixPath, '')
+          ) {
             console.log(
               `TV: Updating video URL for ${tv.title} - Season ${season.seasonNumber}, Episode ${episode.episodeNumber}`
             )
@@ -1281,7 +1285,10 @@ export async function syncLogos(currentDB, fileServer) {
     const fileServerShowData = fileServer.tv[tv.title]
 
     if (fileServerShowData?.logo) {
-      if (!tv.logo || fileServerShowData.logo !== tv.logo.replace(fileServerURLWithoutPrefixPath, '')) {
+      if (
+        !tv.logo ||
+        fileServerShowData.logo !== tv.logo.replace(fileServerURLWithoutPrefixPath, '')
+      ) {
         console.log(`TV: Updating logo URL for ${tv.title}`)
         await client
           .db('Media')
@@ -1307,7 +1314,10 @@ export async function syncLogos(currentDB, fileServer) {
 
     // If the file server video poster is different from the current posterURL
     if (fileServerMovieData.urls?.logo)
-      if (!movie.logo || fileServerMovieData.urls.logo !== movie.logo.replace(fileServerURLWithoutPrefixPath, '')) {
+      if (
+        !movie.logo ||
+        fileServerMovieData.urls.logo !== movie.logo.replace(fileServerURLWithoutPrefixPath, '')
+      ) {
         console.log(`Movie: Updating posterURL for ${movie.title}`)
         await client
           .db('Media')
@@ -1348,9 +1358,11 @@ export async function syncBlurhash(currentDB, fileServer) {
       if (
         fileServerShowData.posterBlurhash &&
         (!tv.posterBlurhash ||
-          fileServerShowData.posterBlurhash !== tv.posterBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
+          fileServerShowData.posterBlurhash !==
+            tv.posterBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
       ) {
-        updateData.posterBlurhash = fileServerURLWithoutPrefixPath + fileServerShowData.posterBlurhash
+        updateData.posterBlurhash =
+          fileServerURLWithoutPrefixPath + fileServerShowData.posterBlurhash
         console.log(`TV: Updating posterBlurhash for ${tv.title}`)
       } else if (!fileServerShowData.posterBlurhash && tv.posterBlurhash) {
         unsetData.posterBlurhash = ''
@@ -1361,13 +1373,49 @@ export async function syncBlurhash(currentDB, fileServer) {
       if (
         fileServerShowData.backdropBlurhash &&
         (!tv.backdropBlurhash ||
-          fileServerShowData.backdropBlurhash !== tv.backdropBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
+          fileServerShowData.backdropBlurhash !==
+            tv.backdropBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
       ) {
-        updateData.backdropBlurhash = fileServerURLWithoutPrefixPath + fileServerShowData.backdropBlurhash
+        updateData.backdropBlurhash =
+          fileServerURLWithoutPrefixPath + fileServerShowData.backdropBlurhash
         console.log(`TV: Updating backdropBlurhash for ${tv.title}`)
       } else if (!fileServerShowData.backdropBlurhash && tv.backdropBlurhash) {
         unsetData.backdropBlurhash = ''
         console.log(`TV: Removing backdropBlurhash for ${tv.title}`)
+      }
+
+      // Update season poster blurhash
+      if (tv.seasons && fileServerShowData.seasons) {
+        const updatedSeasons = tv.seasons.map((season) => {
+          const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
+          if (fileServerSeasonData && fileServerSeasonData.seasonPosterBlurhash) {
+            if (
+              !season.seasonPosterBlurhash ||
+              fileServerSeasonData.seasonPosterBlurhash !==
+                season.seasonPosterBlurhash.replace(fileServerURLWithoutPrefixPath, '')
+            ) {
+              console.log(
+                `TV Season: Updating seasonPosterBlurhash for ${tv.title} Season ${season.seasonNumber}`
+              )
+              return {
+                ...season,
+                seasonPosterBlurhash:
+                  fileServerURLWithoutPrefixPath + fileServerSeasonData.seasonPosterBlurhash,
+              }
+            }
+          } else if (season.seasonPosterBlurhash) {
+            console.log(
+              `TV Season: Removing seasonPosterBlurhash for ${tv.title} Season ${season.seasonNumber}`
+            )
+            const { seasonPosterBlurhash, ...seasonWithoutBlurhash } = season
+            return seasonWithoutBlurhash
+          }
+          return season
+        })
+
+        if (JSON.stringify(updatedSeasons) !== JSON.stringify(tv.seasons)) {
+          updateData.seasons = updatedSeasons
+        }
       }
 
       if (Object.keys(updateData).length > 0 || Object.keys(unsetData).length > 0) {
@@ -1396,7 +1444,8 @@ export async function syncBlurhash(currentDB, fileServer) {
           fileServerMovieData.urls.posterBlurhash !==
             movie.posterBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
       ) {
-        updateData.posterBlurhash = fileServerURLWithoutPrefixPath + fileServerMovieData.urls.posterBlurhash
+        updateData.posterBlurhash =
+          fileServerURLWithoutPrefixPath + fileServerMovieData.urls.posterBlurhash
         console.log(`Movie: Updating posterBlurhash for ${movie.title}`)
       }
 
@@ -1566,7 +1615,8 @@ export async function syncEpisodeThumbnails(currentDB, fileServer) {
           const fileServerEpisodeData = fileServerSeasonData.urls[episodeFileName]
 
           const thumbnailUrl = episode.thumbnail ? episode.thumbnail : null
-          const sanitizedThumbnailUrl = thumbnailUrl && thumbnailUrl.replaceAll(fileServerURLWithoutPrefixPath, '')
+          const sanitizedThumbnailUrl =
+            thumbnailUrl && thumbnailUrl.replaceAll(fileServerURLWithoutPrefixPath, '')
 
           // Check if the file server thumbnail URL is different from the current thumbnail URL
           const thumbnailURLNeedsUpdate =
@@ -1618,6 +1668,106 @@ export async function syncEpisodeThumbnails(currentDB, fileServer) {
       }
     }
   }
+}
+
+/**
+ * Syncs poster URLs between the current database and file server
+ * @param {Object} currentDB - The current database
+ * @param {Object} fileServer - The file server data
+ * @returns {Promise} - Resolves when sync is complete
+ */
+export async function syncPosterURLs(currentDB, fileServer) {
+  const client = await clientPromise
+  console.log('Starting poster URL synchronization...')
+
+  // Sync TV shows and seasons
+  for (const tv of currentDB.tv) {
+    const fileServerShowData = fileServer.tv[tv.title]
+
+    if (fileServerShowData) {
+      const updateData = {}
+
+      // Update show poster URL
+      if (
+        fileServerShowData.posterURL &&
+        (!tv.posterURL ||
+          fileServerShowData.posterURL !== tv.posterURL.replace(fileServerURLWithoutPrefixPath, ''))
+      ) {
+        updateData.posterURL = fileServerURLWithoutPrefixPath + fileServerShowData.posterURL
+        console.log(`TV: Updating posterURL for ${tv.title}`)
+      }
+
+      // Update season poster URLs
+      if (tv.seasons && fileServerShowData.seasons) {
+        const updatedSeasons = tv.seasons.map((season) => {
+          const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
+          if (
+            fileServerSeasonData &&
+            fileServerSeasonData.season_poster &&
+            (!season.season_poster ||
+              fileServerSeasonData.season_poster !==
+                season.season_poster.replace(fileServerURLWithoutPrefixPath, ''))
+          ) {
+            console.log(
+              `TV Season: Updating posterURL for ${tv.title} Season ${season.seasonNumber}`
+            )
+            return {
+              ...season,
+              season_poster: fileServerURLWithoutPrefixPath + fileServerSeasonData.season_poster,
+            }
+          }
+          return season
+        })
+
+        // Only update seasons if there are changes
+        if (JSON.stringify(updatedSeasons) !== JSON.stringify(tv.seasons)) {
+          updateData.seasons = updatedSeasons
+        }
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await client
+          .db('Media')
+          .collection('TV')
+          .updateOne({ title: tv.title }, { $set: updateData })
+        console.log(`TV show updated: ${tv.title}`)
+      }
+    } else {
+      console.log(`No file server data found for TV show: ${tv.title}`)
+    }
+  }
+
+  // Sync movies
+  for (const movie of currentDB.movies) {
+    const fileServerMovieData = fileServer.movies[movie.title]
+
+    if (fileServerMovieData) {
+      const updateData = {}
+
+      // Update movie poster URL
+      if (
+        fileServerMovieData.urls?.posterURL &&
+        (!movie.posterURL ||
+          fileServerMovieData.urls.posterURL !==
+            movie.posterURL.replace(fileServerURLWithoutPrefixPath, ''))
+      ) {
+        updateData.posterURL = fileServerURLWithoutPrefixPath + fileServerMovieData.urls.posterURL
+        console.log(`Movie: Updating posterURL for ${movie.title}`)
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await client
+          .db('Media')
+          .collection('Movies')
+          .updateOne({ title: movie.title }, { $set: updateData })
+        console.log(`Movie updated: ${movie.title}`)
+      }
+    } else {
+      console.log(`No file server data found for movie: ${movie.title}`)
+    }
+  }
+
+  console.log('Poster URL synchronization complete.')
 }
 
 export async function updateUserLimitedAccessFlag({ limitedAccess = false, userID }) {
