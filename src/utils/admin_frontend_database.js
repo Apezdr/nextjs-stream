@@ -203,6 +203,33 @@ export async function getRecentlyWatchedForUser(userId) {
 }
 
 /**
+ * Updates the MediaUpdates collection with the last updated timestamp for a given media title.
+ *
+ * @param {string} title - The title of the media (show or movie).
+ * @param {string} type - The type of the media ('movie' or 'tv').
+ */
+export async function updateMediaUpdates(title, type) {
+  const client = await clientPromise
+  const collectionName = type === 'movie' ? 'MediaUpdatesMovie' : 'MediaUpdatesTV'
+  await client
+    .db('Media')
+    .collection(collectionName)
+    .updateOne({ title }, { $set: { lastUpdated: new Date() } }, { upsert: true })
+}
+
+/**
+ * Deletes a record from the MediaUpdates collection by title and type.
+ *
+ * @param {string} title - The title of the media (show or movie).
+ * @param {string} type - The type of the media ('movie' or 'tv').
+ */
+export async function deleteMediaUpdates(title, type) {
+  const client = await clientPromise
+  const collectionName = type === 'movie' ? 'MediaUpdatesMovie' : 'MediaUpdatesTV'
+  await client.db('Media').collection(collectionName).deleteOne({ title })
+}
+
+/**
  * Saves changes made in the movie modal form.
  *
  * @export
@@ -296,6 +323,9 @@ export async function saveMovieModalChanges(formData) {
         await updateMetadata({ type: 'movie', media_title: rawFormData.title })
 
       console.log(`Record with ID ${recordId} updated in collection ${collection}.`)
+
+      // Update the MediaUpdatesMovie collection
+      await updateMediaUpdates(rawFormData.title, 'movie')
     } else {
       console.log('No changes to update.')
     }
@@ -304,6 +334,9 @@ export async function saveMovieModalChanges(formData) {
     const newRecordId = await client.db('Media').collection(collection).insertOne(rawFormData)
     console.log(`New record added with ID ${newRecordId.insertedId} to collection ${collection}.`)
     await updateMetadata({ type: 'movie', media_title: rawFormData.title })
+
+    // Update the MediaUpdatesMovie collection
+    await updateMediaUpdates(rawFormData.title, 'movie')
   }
 }
 
@@ -397,6 +430,9 @@ export async function saveTVSeriesModalChanges(formData) {
         tvSeriesData: tvSeriesData,
       })
     }
+
+    // Update the MediaUpdatesTV collection
+    await updateMediaUpdates(tvSeriesData.title, 'tv')
   } else {
     // Add new record
     const newRecordId = await client.db('Media').collection(collection).insertOne(tvSeriesData)
@@ -411,6 +447,9 @@ export async function saveTVSeriesModalChanges(formData) {
       media_title: tvSeriesData.title,
       tvSeriesData: tvSeriesData,
     })
+
+    // Update the MediaUpdatesTV collection
+    await updateMediaUpdates(tvSeriesData.title, 'tv')
   }
 }
 
@@ -433,6 +472,16 @@ export async function deleteRecordById(formData) {
     return
   }
 
+  // Retrieve the title of the record to delete
+  const record = await client
+    .db('Media')
+    .collection(collection)
+    .findOne({ _id: new ObjectId(recordId) })
+  if (!record) {
+    console.log(`No record found with ID ${recordId} in collection ${collection}.`)
+    return
+  }
+
   // Delete the record in MongoDB
   try {
     const result = await client
@@ -442,6 +491,9 @@ export async function deleteRecordById(formData) {
 
     if (result.deletedCount === 1) {
       console.log(`Record with ID ${recordId} successfully deleted from collection ${collection}.`)
+
+      // Delete the corresponding entry in the MediaUpdatesMovie or MediaUpdatesTV collection
+      await deleteMediaUpdates(record.title, formData.get('type'))
     } else {
       console.log(`No record found with ID ${recordId} in collection ${collection}.`)
     }
@@ -533,7 +585,9 @@ export async function syncMissingMedia(missingMedia, fileServer) {
       .db('Media')
       .collection('Movies')
       .updateOne({ title: movieTitle }, { $set: updateData }, { upsert: true })
-    //await updateMetadata({ type: 'movie', media_title: movieTitle })
+
+    // Update the MediaUpdatesMovie collection
+    await updateMediaUpdates(movieTitle, 'movie')
   }
 
   // Sync TV Shows
@@ -587,7 +641,8 @@ export async function syncMissingMedia(missingMedia, fileServer) {
       .db('Media')
       .collection('TV')
       .updateOne({ title: showTitle }, { $set: showUpdateData }, { upsert: true })
-    //await updateMetadata({ type: 'tv', media_title: showTitle, tvSeriesData: currentShow });
+    // Update the MediaUpdatesTV collection
+    await updateMediaUpdates(showTitle, 'tv')
   }
 }
 
@@ -618,6 +673,9 @@ export async function syncMetadata(currentDB, fileServer) {
           .db('Media')
           .collection('Movies')
           .updateOne({ title: movie.title }, { $set: { metadata: movieMetadata } })
+
+        // Update the MediaUpdatesMovie collection
+        await updateMediaUpdates(movie.title, 'movie')
       }
     }
     // Sync TV
@@ -649,6 +707,9 @@ export async function syncMetadata(currentDB, fileServer) {
           .db('Media')
           .collection('TV')
           .updateOne({ title: tv.title }, { $set: { metadata: mostRecent_showMetadata } })
+
+        // Update the MediaUpdatesTV collection
+        await updateMediaUpdates(tv.title, 'tv')
       }
 
       // Then check the last updated date of the season metadata
@@ -957,6 +1018,9 @@ export async function syncCaptions(currentDB, fileServer) {
                     arrayFilters: [{ 'episode.episodeNumber': episode.episodeNumber }],
                   }
                 )
+
+              // Update the MediaUpdatesTV collection
+              await updateMediaUpdates(tv.title, 'tv')
             }
           }
         }
@@ -1025,6 +1089,9 @@ export async function syncCaptions(currentDB, fileServer) {
                 },
               }
             )
+
+          // Update the MediaUpdatesMovie collection
+          await updateMediaUpdates(movie.title, 'movie')
         }
       }
     }
@@ -1423,6 +1490,9 @@ export async function syncBlurhash(currentDB, fileServer) {
           .db('Media')
           .collection('TV')
           .updateOne({ title: tv.title }, { $set: updateData, $unset: unsetData })
+
+        // Update the MediaUpdatesTV collection
+        await updateMediaUpdates(tv.title, 'tv')
         console.log(`TV show updated: ${tv.title}`)
       }
     } else {
@@ -1454,6 +1524,9 @@ export async function syncBlurhash(currentDB, fileServer) {
           .db('Media')
           .collection('Movies')
           .updateOne({ title: movie.title }, { $set: updateData })
+
+        // Update the MediaUpdatesMovie collection
+        await updateMediaUpdates(movie.title, 'movie')
         console.log(`Movie updated: ${movie.title}`)
       }
     } else {
@@ -1730,6 +1803,9 @@ export async function syncPosterURLs(currentDB, fileServer) {
           .db('Media')
           .collection('TV')
           .updateOne({ title: tv.title }, { $set: updateData })
+
+        // Update the MediaUpdatesTV collection
+        await updateMediaUpdates(tv.title, 'tv')
         console.log(`TV show updated: ${tv.title}`)
       }
     } else {
@@ -1760,6 +1836,9 @@ export async function syncPosterURLs(currentDB, fileServer) {
           .db('Media')
           .collection('Movies')
           .updateOne({ title: movie.title }, { $set: updateData })
+
+        // Update the MediaUpdatesTV collection
+        await updateMediaUpdates(movie.title, 'movie')
         console.log(`Movie updated: ${movie.title}`)
       }
     } else {

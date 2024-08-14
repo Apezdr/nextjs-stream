@@ -7,7 +7,7 @@ import SignOutButton from '@components/SignOutButton'
 import SkeletonCard from '@components/SkeletonCard'
 import Detailed from '@components/Poster/Detailed'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { Suspense } from 'react'
+import { cache, Suspense } from 'react'
 import Loading from 'src/app/loading'
 import { fetchMetadata } from 'src/utils/admin_utils'
 import { getAvailableMedia } from 'src/utils/database'
@@ -20,6 +20,19 @@ const variants = {
 const variants_height = {
   hidden: { opacity: 0 },
   enter: { opacity: 1 },
+}
+
+async function getLastUpdatedTimestamp() {
+  const client = await clientPromise
+  const lastUpdatedDoc = await client
+    .db('Media')
+    .collection('MediaUpdatesTV')
+    .find({})
+    .sort({ _id: -1 })
+    .limit(1)
+    .toArray()
+
+  return lastUpdatedDoc[0]?.lastUpdated || new Date().toISOString()
 }
 
 export default async function TVListComponent() {
@@ -106,7 +119,8 @@ export default async function TVListComponent() {
 }
 
 async function TVList() {
-  const tvList = await getAndUpdateMongoDB()
+  const latestUpdateTimestamp = await getLastUpdatedTimestamp()
+  const tvList = await getAndUpdateMongoDB(latestUpdateTimestamp)
   return (
     <>
       {tvList.map(function (tv, index) {
@@ -131,7 +145,7 @@ async function TVList() {
   )
 }
 
-async function getAndUpdateMongoDB() {
+const getAndUpdateMongoDB = cache(async () => {
   const client = await clientPromise
   const tvprograms = await client
     .db('Media')
@@ -190,4 +204,4 @@ async function getAndUpdateMongoDB() {
   )
 
   return plainTVShows
-}
+})

@@ -9,7 +9,7 @@ import SignOutButton from '@components/SignOutButton'
 import SkeletonCard from '@components/SkeletonCard'
 import { CaptionSVG, GoogleCloudSVG } from '@components/SVGIcons'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { Suspense } from 'react'
+import { cache, Suspense } from 'react'
 import Loading from 'src/app/loading'
 import { fetchMetadata } from 'src/utils/admin_utils'
 import { getAvailableMedia } from 'src/utils/database'
@@ -22,6 +22,19 @@ const variants = {
 const variants_height = {
   hidden: { opacity: 0 },
   enter: { opacity: 1 },
+}
+
+async function getLastUpdatedTimestamp() {
+  const client = await clientPromise
+  const lastUpdatedDoc = await client
+    .db('Media')
+    .collection('MediaUpdatesMovies')
+    .find({})
+    .sort({ _id: -1 })
+    .limit(1)
+    .toArray()
+
+  return lastUpdatedDoc[0]?.lastUpdated || new Date().toISOString()
 }
 
 export default async function MovieListComponent() {
@@ -106,7 +119,8 @@ export default async function MovieListComponent() {
 }
 
 async function MovieList() {
-  const movieList = await getAndUpdateMongoDB()
+  const latestUpdateTimestamp = await getLastUpdatedTimestamp()
+  const movieList = await getAndUpdateMongoDB(latestUpdateTimestamp)
   return (
     <>
       {movieList.map((movie, index) => (
@@ -175,7 +189,7 @@ async function MovieList() {
   )
 }
 
-async function getAndUpdateMongoDB() {
+const getAndUpdateMongoDB = cache(async () => {
   const client = await clientPromise
 
   const movies = await client
@@ -244,4 +258,4 @@ async function getAndUpdateMongoDB() {
   )
 
   return plainMovies
-}
+})
