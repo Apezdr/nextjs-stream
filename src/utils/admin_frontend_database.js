@@ -139,8 +139,8 @@ export async function getRecentlyWatchedForUser(userId) {
           { $sort: { 'videosWatched.lastUpdated': -1 } },
           { $limit: 200 },
           { $group: { _id: '$userId', videosWatched: { $push: '$videosWatched' } } },
-        ]
-        //{ hint: 'userId_1' }
+        ],
+        { hint: 'userId_1' }
       )
       .toArray()
 
