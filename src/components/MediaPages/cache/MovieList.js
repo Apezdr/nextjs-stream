@@ -141,7 +141,12 @@ const getAndUpdateMongoDB = cache(async (latestUpdateTimestamp) => {
       }
 
       if (movie.posterBlurhash) {
-        returnObject.posterBlurhash = await fetchMetadata(movie.posterBlurhash, 'blurhash')
+        returnObject.posterBlurhash = await fetchMetadata(
+          movie.posterBlurhash,
+          'blurhash',
+          'movie',
+          movie.title
+        )
       }
 
       return returnObject

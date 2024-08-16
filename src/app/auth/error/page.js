@@ -13,6 +13,9 @@ const AuthError = async ({ searchParams }) => {
       headers: headersList,
       searchParams,
     })
+    if (authResult instanceof Response) {
+      return authResult
+    }
   }
   const paramError = searchParams.error
   var error = ''

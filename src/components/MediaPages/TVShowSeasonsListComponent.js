@@ -83,7 +83,7 @@ export default async function TVShowSeasonsList({ showTitle }) {
     )
   }
   if (tvShow.posterBlurhash) {
-    tvShow.posterBlurhash = await fetchMetadata(tvShow.posterBlurhash, 'blurhash')
+    tvShow.posterBlurhash = await fetchMetadata(tvShow.posterBlurhash, 'blurhash', 'tv', showTitle)
   }
 
   return (
@@ -126,7 +126,12 @@ export default async function TVShowSeasonsList({ showTitle }) {
         {await Promise.all(
           tvShow.seasons.map(async (season, seasonIndex) => {
             if (season.seasonPosterBlurhash) {
-              season.posterBlurhash = await fetchMetadata(season.seasonPosterBlurhash, 'blurhash')
+              season.posterBlurhash = await fetchMetadata(
+                season.seasonPosterBlurhash,
+                'blurhash',
+                'tv',
+                showTitle
+              )
             }
             return (
               <li

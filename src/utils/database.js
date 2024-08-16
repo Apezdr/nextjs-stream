@@ -141,13 +141,23 @@ function handleEpisode(tvShow, seasonObj, episodeNumber) {
 async function processBlurhashes(media) {
   if (media?.posterBlurhash) {
     if (media.posterBlurhash.startsWith('http')) {
-      media.posterBlurhash = await fetchMetadata(media.posterBlurhash, 'blurhash')
+      media.posterBlurhash = await fetchMetadata(
+        media.posterBlurhash,
+        'blurhash',
+        'tv',
+        media.title
+      )
     }
   }
 
   if (media?.backdropBlurhash) {
     if (media.backdropBlurhash.startsWith('http')) {
-      media.backdropBlurhash = await fetchMetadata(media.backdropBlurhash, 'blurhash')
+      media.backdropBlurhash = await fetchMetadata(
+        media.backdropBlurhash,
+        'blurhash',
+        'tv',
+        media.title
+      )
     }
   }
 }
@@ -168,4 +178,19 @@ export async function getAvailableMedia({ type = 'all' } = {}) {
   }
 
   return returnValue
+}
+
+export async function getLastUpdatedTimestamp({ type, title = '' }) {
+  const client = await clientPromise
+  const collectionName = type === 'tv' ? 'MediaUpdatesTV' : 'MediaUpdatesMovie'
+
+  const lastUpdatedDoc = await client
+    .db('Media')
+    .collection(collectionName)
+    .find({ title })
+    .sort({ _id: -1 })
+    .limit(1)
+    .toArray()
+
+  return lastUpdatedDoc[0]?.lastUpdated.toISOString() || new Date().toISOString()
 }

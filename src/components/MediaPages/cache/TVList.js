@@ -84,7 +84,7 @@ const getAndUpdateMongoDB = cache(async () => {
   const plainTVShows = await Promise.all(
     tvprograms.map(async (tv) => {
       if (tv.posterBlurhash) {
-        tv.posterBlurhash = await fetchMetadata(tv.posterBlurhash, 'blurhash')
+        tv.posterBlurhash = await fetchMetadata(tv.posterBlurhash, 'blurhash', 'tv', tv.title)
       }
       return {
         _id: tv._id.toString(), // Convert ObjectId to string

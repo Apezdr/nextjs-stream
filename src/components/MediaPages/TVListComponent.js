@@ -1,31 +1,14 @@
-import clientPromise from '../../lib/mongodb'
-import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence'
 import Link from 'next/link'
 import { auth } from '../../lib/auth'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import SignOutButton from '@components/SignOutButton'
 import SkeletonCard from '@components/SkeletonCard'
-import Detailed from '@components/Poster/Detailed'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { cache, Suspense } from 'react'
+import { Suspense } from 'react'
 import Loading from 'src/app/loading'
-import { fetchMetadata } from 'src/utils/admin_utils'
-import { getAvailableMedia } from 'src/utils/database'
+import { getAvailableMedia, getLastUpdatedTimestamp } from 'src/utils/database'
 import TVList from './cache/TVList'
 //export const dynamic = 'force-dynamic'
-
-async function getLastUpdatedTimestamp() {
-  const client = await clientPromise
-  const lastUpdatedDoc = await client
-    .db('Media')
-    .collection('MediaUpdatesTV')
-    .find({})
-    .sort({ _id: -1 })
-    .limit(1)
-    .toArray()
-
-  return lastUpdatedDoc[0]?.lastUpdated || new Date().toISOString()
-}
 
 export default async function TVListComponent() {
   const session = await auth()
@@ -51,7 +34,7 @@ export default async function TVListComponent() {
     user: { name, email },
   } = session
   const { tvprogramsCount } = await getAvailableMedia({ type: 'tv' })
-  const latestUpdateTimestamp = await getLastUpdatedTimestamp()
+  const latestUpdateTimestamp = await getLastUpdatedTimestamp({ type: 'tv' })
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
       <SyncClientWithServerWatched />

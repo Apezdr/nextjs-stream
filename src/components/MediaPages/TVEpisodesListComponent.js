@@ -60,7 +60,12 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
     return <div>Season not found</div>
   }
   if (season.seasonPosterBlurhash) {
-    season.posterBlurhash = await fetchMetadata(season.seasonPosterBlurhash, 'blurhash')
+    season.posterBlurhash = await fetchMetadata(
+      season.seasonPosterBlurhash,
+      'blurhash',
+      'tv',
+      showTitle
+    )
   }
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
@@ -116,7 +121,9 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                 if (episode.thumbnailBlurhash) {
                   episode.thumbnailBlurhash = await fetchMetadata(
                     episode.thumbnailBlurhash,
-                    'blurhash'
+                    'blurhash',
+                    'tv',
+                    showTitle
                   )
                 }
 

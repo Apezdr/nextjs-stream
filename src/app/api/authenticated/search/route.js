@@ -103,7 +103,12 @@ async function addCustomUrlToMedia(mediaArray, type) {
         type,
       }
       if (media.posterBlurhash) {
-        returnObj.posterBlurhash = await fetchMetadata(media.posterBlurhash, 'blurhash')
+        returnObj.posterBlurhash = await fetchMetadata(
+          media.posterBlurhash,
+          'blurhash',
+          type,
+          media.title
+        )
       }
       return returnObj
     })

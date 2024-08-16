@@ -13,7 +13,7 @@ export default async function isAuthenticated(req) {
   })
   const session = await sessionResponse.json()
   if (!session || !session.user) {
-    throw new Response('You must be signed in.', { status: 401 })
+    return new Response('You must be signed in.', { status: 401 })
   }
   return session.user
 }
@@ -80,4 +80,15 @@ export async function isAdmin(req) {
     })
   }
   return session.user
+}
+
+export async function isValidWebhook(req) {
+  const webhookId = req.headers?.get('X-Webhook-ID') || req.query?.webhookId || false
+  if (webhookId) {
+    const isValidWebhookId = await validateWebhookId(webhookId)
+    if (isValidWebhookId) {
+      return true
+    }
+  }
+  return false
 }

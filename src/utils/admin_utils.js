@@ -1,6 +1,7 @@
 import axios from 'axios'
 import { getFullImageUrl } from '.'
 import { fileServerURLWithoutPrefixPath } from './config'
+import { getLastUpdatedTimestamp } from './database'
 
 export function processMediaData(jsonResponseString) {
   const { movies, tv } = jsonResponseString
@@ -336,15 +337,28 @@ export async function addOrUpdateSeason(
       (a, b) => a.episodeNumber - b.episodeNumber
     )
     currentShow.seasons[currentSeasonIndex].metadata = seasonMetadata
-    currentShow.seasons[currentSeasonIndex].season_poster = fileServerURLWithoutPrefixPath + `${season_poster}`
+    currentShow.seasons[currentSeasonIndex].season_poster =
+      fileServerURLWithoutPrefixPath + `${season_poster}`
     currentShow.seasons[currentSeasonIndex].seasonPosterBlurhash =
       fileServerURLWithoutPrefixPath + `${seasonPosterBlurhash}`
   }
 }
 
+const metadataCache = new Map()
+
 // Function to fetch
-export async function fetchMetadata(metadataUrl, type = 'file') {
+export async function fetchMetadata(metadataUrl, type = 'file', mediaType, title) {
   try {
+    const cacheKey = `${type}:${metadataUrl}`
+    const lastUpdated = await getLastUpdatedTimestamp({ type: mediaType, title })
+
+    if (metadataCache.has(cacheKey)) {
+      const cachedData = metadataCache.get(cacheKey)
+      if (cachedData.lastUpdated === lastUpdated) {
+        return cachedData.data
+      }
+    }
+
     if (metadataUrl.startsWith(fileServerURLWithoutPrefixPath)) {
       metadataUrl = metadataUrl.replace(fileServerURLWithoutPrefixPath, '')
     }
@@ -352,15 +366,18 @@ export async function fetchMetadata(metadataUrl, type = 'file') {
     if (metadataUrl.startsWith('/')) {
       metadataUrl = metadataUrl.slice(1)
     }
-    //console.log(fileServerURLWithoutPrefixPath + `/${metadataUrl}`)
+
     const response = await axios.get(fileServerURLWithoutPrefixPath + `/${metadataUrl}`)
-    if (type === 'blurhash') {
-      let blurhash = response.data
-      return blurhash.trim()
-    }
-    return response.data
+    const data = type === 'blurhash' ? response.data.trim() : response.data
+
+    metadataCache.set(cacheKey, { data, lastUpdated })
+    return data
   } catch (error) {
-    console.log('Error fetching metadata:', fileServerURLWithoutPrefixPath + `/${metadataUrl}`, error)
+    console.log(
+      'Error fetching metadata:',
+      fileServerURLWithoutPrefixPath + `/${metadataUrl}`,
+      error
+    )
     return false
   }
 }
@@ -424,16 +441,20 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
     if (record._id) {
       record._id = record._id.toString()
     }
+
+    const metadataPromises = []
     if (record.posterBlurhash) {
-      record.posterBlurhash = await fetchMetadata(record.posterBlurhash, 'blurhash')
+      metadataPromises.push(fetchMetadata(record.posterBlurhash, 'blurhash', record.title, type))
     }
 
+    const [posterBlurhash] = await Promise.all(metadataPromises)
+    record.posterBlurhash = posterBlurhash
+
     if (type === 'tv' && record.episode) {
-      // Special handling for TV show episodes
       return {
         id: record._id.toString(),
         date: formatDateToEST(lastWatchedVideo.lastUpdated),
-        link: `${record.showTitle}/${record.seasonNumber}/${record.episode.episodeNumber}`,
+        link: `${record.title}/${record.seasonNumber}/${record.episode.episodeNumber}`,
         length: record.length ?? 0,
         posterURL: poster,
         posterBlurhash: record.posterBlurhash || null,
@@ -443,7 +464,7 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
         metadata: record.metadata || null,
         seasons: record.seasons,
         media: {
-          showTitle: record.showTitle,
+          showTitle: record.title,
           seasonNumber: record.seasonNumber,
           episode: {
             episodeNumber: record.episode.episodeNumber,
@@ -459,7 +480,6 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
         },
       }
     } else {
-      // Default handling for movies
       return {
         id: record._id.toString(),
         date: formatDateToEST(lastWatchedVideo.lastUpdated),

@@ -90,7 +90,12 @@ export async function getPosters(type) {
         record._id = record._id.toString()
       }
       if (record.posterBlurhash) {
-        record.posterBlurhash = await fetchMetadata(record.posterBlurhash, 'blurhash')
+        record.posterBlurhash = await fetchMetadata(
+          record.posterBlurhash,
+          'blurhash',
+          type,
+          record.title
+        )
       }
       return {
         id: record._id.toString(),
@@ -524,7 +529,7 @@ export async function syncMissingMedia(missingMedia, fileServer) {
     }
 
     // Make a GET request to retrieve movie metadata from file server
-    const movieMetadata = await fetchMetadata(movieData.urls.metadata, 'file')
+    const movieMetadata = await fetchMetadata(movieData.urls.metadata, 'file', 'movie', movieTitle)
 
     if (!movieMetadata) {
       return console.log(`Movie: No metadata found for ${movieData}. Skipping.`)
@@ -596,7 +601,7 @@ export async function syncMissingMedia(missingMedia, fileServer) {
     const showData = fileServer.tv[showTitle]
 
     // Make a GET request to retrieve show-level metadata
-    const showMetadata = await fetchMetadata(showData.metadata)
+    const showMetadata = await fetchMetadata(showData.metadata, 'file', 'tv', showTitle)
 
     if (!showMetadata) {
       return console.log(`TV: No metadata found for ${showTitle}. Skipping.`)
@@ -662,7 +667,12 @@ export async function syncMetadata(currentDB, fileServer) {
       // Set the current DB movie data
       const currentDB_movieData = movie
       // Make a GET request to retrieve movie-level metadata
-      const movieMetadata = await fetchMetadata(fileServer_movieData.urls.metadata)
+      const movieMetadata = await fetchMetadata(
+        fileServer_movieData.urls.metadata,
+        'file',
+        'movie',
+        movie.title
+      )
 
       movieMetadata.release_date = new Date(movieMetadata.release_date)
       // First check the last updated date of the movie metadata
@@ -688,7 +698,12 @@ export async function syncMetadata(currentDB, fileServer) {
       // Set the current DB show data
       const currentDB_showData = tv
       // Make a GET request to retrieve show-level metadata
-      const mostRecent_showMetadata = await fetchMetadata(fileServer_showData.metadata)
+      const mostRecent_showMetadata = await fetchMetadata(
+        fileServer_showData.metadata,
+        'file',
+        'tv',
+        tv.title
+      )
 
       if (mostRecent_showMetadata.name !== tv_metadata.name) {
         tv_metadata = structuredClone(mostRecent_showMetadata)
@@ -744,7 +759,12 @@ export async function syncMetadata(currentDB, fileServer) {
 
         for await (const episodeFileName of fileServer_seasonData.fileNames) {
           const episodeData = fileServer_seasonData.urls[episodeFileName]
-          const mostRecent_episodeMetadata = await fetchMetadata(episodeData.metadata)
+          const mostRecent_episodeMetadata = await fetchMetadata(
+            episodeData.metadata,
+            'file',
+            'tv',
+            tv.title
+          )
 
           if (!mostRecent_episodeMetadata) {
             console.error('TV: Metadata fetch failed for', episodeFileName, episodeData.metadata)
@@ -1690,34 +1710,63 @@ export async function syncEpisodeThumbnails(currentDB, fileServer) {
           const thumbnailUrl = episode.thumbnail ? episode.thumbnail : null
           const sanitizedThumbnailUrl =
             thumbnailUrl && thumbnailUrl.replaceAll(fileServerURLWithoutPrefixPath, '')
+          //
+          const blurhashURL = episode.thumbnailBlurhash ? episode.thumbnailBlurhash : null
+          const sanitizedBlurhashThumbnailUrl =
+            blurhashURL && blurhashURL.replaceAll(fileServerURLWithoutPrefixPath, '')
 
           // Check if the file server thumbnail URL is different from the current thumbnail URL
           const thumbnailURLNeedsUpdate =
             fileServerEpisodeData.thumbnail &&
             fileServerEpisodeData.thumbnail !== sanitizedThumbnailUrl
 
+          const thumbnailURLNeedsRemove = episode.thumbnail && !fileServerEpisodeData.thumbnail
+
           // Check if the file server thumbnail blurhash is different from the current blurhash
           const thumbnailBlurhashNeedsUpdate =
-            `${fileServerURLWithoutPrefixPath}${fileServerEpisodeData.thumbnailBlurhash}` !==
-            `${episode.thumbnailBlurhash}`
+            fileServerEpisodeData.thumbnailBlurhash &&
+            fileServerEpisodeData.thumbnailBlurhash !== sanitizedBlurhashThumbnailUrl
 
-          // If either URL needs to be updated
+          const thumbnailBlurhashNeedsRemove =
+            episode.thumbnailBlurhash && !fileServerEpisodeData.thumbnailBlurhash
+
+          // If either URL needs to be updated or removed
+          // To allow a user to manually update any missing
+          // thumbnail URLs or blurhashes we have commented out
+          // thumbnailURLNeedsRemove and thumbnailBlurhashNeedsRemove
           if (
             thumbnailUrl !== undefined &&
-            (thumbnailURLNeedsUpdate || thumbnailBlurhashNeedsUpdate)
+            (thumbnailURLNeedsUpdate || thumbnailBlurhashNeedsUpdate) /* ||
+              thumbnailURLNeedsRemove ||
+              thumbnailBlurhashNeedsRemove */
           ) {
             console.log(
               `TV: Updating thumbnail URLs for ${tv.title} - Season ${season.seasonNumber}, Episode ${episode.episodeNumber}`
             )
 
             const updateFields = {}
+            const unsetFields = {}
+
             if (thumbnailURLNeedsUpdate) {
               updateFields['seasons.$.episodes.$[episode].thumbnail'] =
                 `${fileServerURLWithoutPrefixPath}${fileServerEpisodeData.thumbnail}`
+            } else if (thumbnailURLNeedsRemove) {
+              unsetFields['seasons.$.episodes.$[episode].thumbnail'] = ''
             }
+
             if (thumbnailBlurhashNeedsUpdate) {
               updateFields['seasons.$.episodes.$[episode].thumbnailBlurhash'] =
                 `${fileServerURLWithoutPrefixPath}${fileServerEpisodeData.thumbnailBlurhash}`
+            } else if (thumbnailBlurhashNeedsRemove) {
+              unsetFields['seasons.$.episodes.$[episode].thumbnailBlurhash'] = ''
+            }
+
+            const updateOperation = {}
+            if (Object.keys(updateFields).length > 0) {
+              updateOperation.$set = updateFields
+            }
+            if (Object.keys(unsetFields).length > 0) {
+              updateOperation.$unset = unsetFields
             }
 
             await client
@@ -1729,9 +1778,7 @@ export async function syncEpisodeThumbnails(currentDB, fileServer) {
                   'seasons.seasonNumber': season.seasonNumber,
                   'seasons.episodes.episodeNumber': episode.episodeNumber,
                 },
-                {
-                  $set: updateFields,
-                },
+                updateOperation,
                 {
                   arrayFilters: [{ 'episode.episodeNumber': episode.episodeNumber }],
                 }
@@ -1908,7 +1955,7 @@ async function extractTVShowDetailsFromMap(tvDetails, videoId) {
 
   returnData = {
     _id: tvDetails._id,
-    showTitle: showTitleDecoded,
+    title: showTitleDecoded,
     showTitleFormatted: `${showTitleDecoded} S${seasonNumber
       .toString()
       .padStart(2, '0')}E${episode.episodeNumber.toString().padStart(2, '0')}`,
@@ -1923,6 +1970,7 @@ async function extractTVShowDetailsFromMap(tvDetails, videoId) {
     returnData.logo = tvDetails.logo
   }
 
+  // Replace the posterBlurhash with the episode's thumbnail blurhash if available
   if (episode.thumbnailBlurhash) {
     returnData.posterBlurhash = episode.thumbnailBlurhash
   }
