@@ -27,7 +27,9 @@ async function handleRequest(request, params, isWebhook) {
   let response = {}
 
   if (fetchRecentlyWatched) {
-    const recentlyWatched = await getRecentlyWatchedForUser(userID)
+    const page = request.query.page || 1
+    const limit = request.query.limit || 15
+    const recentlyWatched = await getRecentlyWatchedForUser(userID, { page, limit })
     response = recentlyWatched
   }
 

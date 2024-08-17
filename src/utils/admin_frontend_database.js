@@ -117,7 +117,7 @@ export async function getPosters(type) {
  * @param {string} userId - The ID of the current user.
  * @returns {Promise<Array>} The recently watched media details.
  */
-export async function getRecentlyWatchedForUser(userId) {
+export async function getRecentlyWatchedForUser(userId, page = 1, limit = 15) {
   try {
     const client = await clientPromise
     const user = await client
@@ -137,7 +137,8 @@ export async function getRecentlyWatchedForUser(userId) {
           { $match: { userId: user._id } },
           { $unwind: '$videosWatched' },
           { $sort: { 'videosWatched.lastUpdated': -1 } },
-          { $limit: 200 },
+          { $skip: (page - 1) * limit },
+          { $limit: limit },
           { $group: { _id: '$userId', videosWatched: { $push: '$videosWatched' } } },
         ],
         { hint: 'userId_1' }
