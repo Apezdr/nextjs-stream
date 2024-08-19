@@ -4,13 +4,24 @@ import '@vidstack/react/player/styles/default/layouts/video.css'
 import { MediaPlayer, MediaProvider, Track } from '@vidstack/react'
 import WithPlaybackTracker from './built-in/WithPlaybackTracker'
 import { VideoLayout } from './MediaPlayer/Layouts/video-layout'
-import MediaPoster from './MediaPlayer/MediaPoster'
+import { MediaPoster as vidStackPoster } from './MediaPlayer/MediaPoster'
 import { buildURL, getFullImageUrl } from 'src/utils'
 import { onProviderChange, onProviderSetup } from './MediaPlayer/clientSide'
 import { Inconsolata } from 'next/font/google'
+import Image from 'next/image'
+import MediaPoster from './MediaPoster'
 const inconsolata = Inconsolata({ subsets: ['latin'] })
 
-function VideoPlayer({
+async function validateVideoURL(url) {
+  try {
+    const response = await fetch(url, { method: 'HEAD' })
+    return response.ok
+  } catch (error) {
+    return false
+  }
+}
+
+async function VideoPlayer({
   media,
   mediaTitle,
   mediaType,
@@ -18,6 +29,36 @@ function VideoPlayer({
   searchParams = { clipStartTime: false, clipEndTime: false },
 }) {
   const { videoURL, metadata } = media
+
+  const isValidVideoURL = await validateVideoURL(videoURL)
+  if (!isValidVideoURL) {
+    return (
+      <div className="w-96">
+        {media?.posterURL ? (
+          <MediaPoster contClassName="relative" media={media} alt={media.title} />
+        ) : null}
+        <div className="font-bold mt-4">Looks like we've got an error on our side:</div>
+        <div>The video URL is invalid or unreachable.</div>
+        {process.env.NODE_ENV === 'development' ? (
+          <div className="error-box mt-4 p-4 border border-red-500 bg-red-100 text-red-700 rounded-lg">
+            <span className="font-bold block text-sm uppercase underline">
+              Encountered an Error
+            </span>
+            <div className="mt-4 text-xs">
+              <span className="font-bold block">videoURL:</span>
+              <div className="w-80 truncate">
+                <span title={videoURL}>{videoURL}</span>
+              </div>
+            </div>
+            <hr className="border-red-500 w-full mt-2" />
+            <span className="mt-4 text-xs leading-normal">
+              You may need to update this videoURL to match an actual file/url.
+            </span>
+          </div>
+        ) : null}
+      </div>
+    )
+  }
 
   let { clipStartTime, clipEndTime } = searchParams
 
@@ -150,7 +191,7 @@ function VideoPlayer({
       }}
     >
       <MediaProvider>
-        <MediaPoster poster={poster} title={title} />
+        <vidStackPoster poster={poster} title={title} />
         <WithPlaybackTracker videoURL={videoURL} />
         {chapters ? <Track kind="chapters" src={chapters} lang="en-US" default /> : null}
         {captions

@@ -129,6 +129,8 @@ export async function getRecentlyWatchedForUser(userId, page = 1, limit = 15) {
       throw new Error(`User with ID ${userId} not found`)
     }
 
+    const validPage = Math.max(page - 1, 0) // Ensure page is at least 1
+
     const lastWatched = await client
       .db('Media')
       .collection('PlaybackStatus')
@@ -137,7 +139,7 @@ export async function getRecentlyWatchedForUser(userId, page = 1, limit = 15) {
           { $match: { userId: user._id } },
           { $unwind: '$videosWatched' },
           { $sort: { 'videosWatched.lastUpdated': -1 } },
-          { $skip: (page - 1) * limit },
+          { $skip: validPage * limit },
           { $limit: limit },
           { $group: { _id: '$userId', videosWatched: { $push: '$videosWatched' } } },
         ],

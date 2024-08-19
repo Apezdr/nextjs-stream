@@ -7,7 +7,8 @@ import useWatchedWidth from './useWatchedWidth'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 
-function MediaPoster({
+function _mediaPoster({
+  media,
   movie,
   tv,
   className = 'max-w-full',
@@ -22,27 +23,27 @@ function MediaPoster({
   const [isClient, setIsClient] = useState(false)
 
   // Determine whether to use movie or TV show data
-  const media = movie || tv
-  const watchedWidth = useWatchedWidth(media.metadata, media)
+  const _media = movie || tv || media
+  const watchedWidth = useWatchedWidth(_media.metadata, _media)
 
   useEffect(() => {
     setIsClient(true)
   }, [])
 
   // Determine the poster URL for movie or TV show
-  const posterURL = media.posterURL
-    ? media.posterURL
-    : media.season_poster
-      ? media.season_poster
-      : media.metadata?.poster_path
-        ? getFullImageUrl(media.metadata.poster_path)
+  const posterURL = _media.posterURL
+    ? _media.posterURL
+    : _media.season_poster
+      ? _media.season_poster
+      : _media.metadata?.poster_path
+        ? getFullImageUrl(_media.metadata.poster_path)
         : '/sorry-image-not-available.jpg'
 
-  const posterBlurhash = media.posterBlurhash || media.seasonPosterBlurhash || false
+  const posterBlurhash = _media.posterBlurhash || _media.seasonPosterBlurhash || false
 
   let dims, is4k, is1080p
-  if (media.dimensions) {
-    dims = media?.dimensions?.split('x')
+  if (_media.dimensions) {
+    dims = _media?.dimensions?.split('x')
     is4k = parseInt(dims[0]) >= 3840 || parseInt(dims[1]) >= 2160
     is1080p = parseInt(dims[0]) >= 1920 || parseInt(dims[1]) >= 1080
   }
@@ -58,18 +59,18 @@ function MediaPoster({
           <span>Restart</span>
         </div>
       )}
-      {media.videoURL ? (
+      {_media.videoURL ? (
         <TotalRuntime
-          length={media.length ?? media.metadata.runtime * 60000 ?? 0}
-          metadata={media.metadata}
-          videoURL={media.videoURL}
+          length={_media.length ?? _media.metadata.runtime * 60000 ?? 0}
+          metadata={_media.metadata}
+          videoURL={_media.videoURL}
           classNames="absolute bottom-0 w-full text-center z-[11] text-[0.55rem]"
         />
       ) : null}
-      {!hideGenres && media.metadata?.genres && (
+      {!hideGenres && _media.metadata?.genres && (
         <div className="bg-gray-900 text-center px-0.5 py-0.5 text-white transition-opacity duration-700 inset-0 text-xs opacity-75 group-hover:opacity-100 z-[11] relative">
           <div className="whitespace-nowrap">
-            {media.metadata.genres.map((genre) => {
+            {_media.metadata.genres.map((genre) => {
               const { fontColor, backgroundColor } = generateColors(genre?.name)
               return (
                 <span
@@ -87,7 +88,7 @@ function MediaPoster({
       {posterBlurhash ? (
         <Image
           src={posterURL}
-          alt={alt ?? media.title}
+          alt={alt ?? _media.title}
           quality={quality}
           width={size.w}
           height={size.h}
@@ -100,7 +101,7 @@ function MediaPoster({
       ) : (
         <Image
           src={posterURL}
-          alt={alt ?? media.title}
+          alt={alt ?? _media.title}
           quality={quality}
           width={size.w}
           height={size.h}
@@ -108,7 +109,7 @@ function MediaPoster({
           priority={imagePriority}
         />
       )}
-      {media.dimensions && (
+      {_media.dimensions && (
         <div className="flex bg-gray-900 justify-center content-center flex-wrap pb-[23px] pt-3 text-white transition-opacity duration-700 inset-0 text-xs h-3.5 opacity-75 group-hover:opacity-100 z-10 relative">
           <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
             {is4k ? (
@@ -131,4 +132,4 @@ function MediaPoster({
   )
 }
 
-export default memo(MediaPoster)
+export default memo(_mediaPoster)
