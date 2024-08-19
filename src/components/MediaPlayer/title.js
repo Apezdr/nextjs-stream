@@ -22,7 +22,7 @@ export function Title() {
     </div> */
   }
   return (
-    <span className="z-20 relative inline-block flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-2 text-sm font-medium text-white/70">
+    <span className="z-20 relative inline-block flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-2 text-sm font-medium text-white/70 text-center">
       <MediaTitle />
     </span>
   )

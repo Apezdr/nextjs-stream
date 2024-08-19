@@ -100,9 +100,9 @@ export function VideoLayout({
           <Buttons.SeekForward tooltipPlacement="top" />
           <Buttons.Mute tooltipPlacement="top" />
           <Sliders.Volume />
-          <div className="flex-1" />
+          {/* <div className="flex-1" /> */}
           <Title />
-          <div className="flex-1" />
+          {/* <div className="flex-1" /> */}
           {hasCaptions && <Buttons.Caption tooltipPlacement="top" />}
           {hasChapters && (
             <Menus.Chapters
