@@ -31,7 +31,7 @@ const MovieList = async ({ latestUpdateTimestamp }) => {
             }}
           >
             <Link href={`movie/${encodeURIComponent(movie.title)}`} className="group">
-              <div className="relative block w-max mx-auto overflow-hidden rounded-lg bg-gray-100 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-100">
+              <div className="relative block w-auto mx-auto overflow-hidden rounded-lg focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-100 ">
                 <MediaPoster movie={movie} />
                 <button type="button" className="absolute inset-0 focus:outline-none">
                   <span className="sr-only">View details for {movie.title}</span>

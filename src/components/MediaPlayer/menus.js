@@ -278,7 +278,9 @@ function ChaptersMenu({ thumbnailURL }) {
                   <Thumbnail.Img aria-hidden="false" />
                 </Thumbnail.Root>
                 <div class="vds-chapter-radio-content">
-                  <span className="vds-chapter-radio-label">{label}</span>
+                  <span className="vds-chapter-radio-label" data-part="label">
+                    {label}
+                  </span>
                   <span class="vds-chapter-radio-start-time" data-part="start-time">
                     {startTimeText}
                   </span>

@@ -50,7 +50,7 @@ function _mediaPoster({
 
   return (
     <div
-      className={classNames(contClassName, 'watched-border')}
+      className={classNames(contClassName, 'watched-border relative')}
       style={isClient ? { '--watched-width': `${watchedWidth.toFixed(2)}%` } : {}}
     >
       {watchedWidth > 90 && (

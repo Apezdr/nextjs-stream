@@ -1,5 +1,8 @@
 import '@vidstack/react/player/styles/default/theme.css'
-import '@vidstack/react/player/styles/default/layouts/video.css'
+//import '@vidstack/react/player/styles/default/layouts/video.css'
+import './MediaPlayer/Layouts/video-layout.module.css'
+import './MediaPlayer/Layouts/menus.css'
+import './MediaPlayer/Layouts/sliders.css'
 
 import { MediaPlayer, MediaProvider, Track } from '@vidstack/react'
 import WithPlaybackTracker from './built-in/WithPlaybackTracker'
@@ -183,7 +186,7 @@ async function VideoPlayer({
       load="idle"
       aspectRatio="16/9"
       fullscreenOrientation="landscape"
-      className="max-h-screen"
+      className="max-h-screen dark"
       clipStartTime={clipStartTime}
       clipEndTime={clipEndTime}
       googleCast={{
