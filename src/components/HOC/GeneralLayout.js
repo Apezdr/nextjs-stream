@@ -10,12 +10,15 @@ export default function GeneralLayout({ fileServerURLWithPrefixPath }) {
   // Destructure parameters and decode if necessary
   const mediaType = params?.media?.[0] // 'movie' or 'tv'
   const mediaTitle = decodeURIComponent(params?.media?.[1] || '')
-  //const mediaSeason = params?.media?.[2] // Could be 'Season X'
-  //const mediaEpisode = params?.media?.[3] // Could be 'Episode Y'
+
+  const shouldShowGeneralLayout =
+    (mediaType === 'tv' && !mediaTitle) ||
+    (mediaType === 'movie' && !mediaTitle) ||
+    (mediaType !== 'tv' && mediaType !== 'movie')
 
   return (
     <AnimatePresence mode="wait">
-      {((mediaType === 'tv' && !mediaTitle) || mediaType !== 'tv') && (
+      {shouldShowGeneralLayout && (
         <GeneralFullScreenBackdrop
           key={'poster_collage'}
           url={fileServerURLWithPrefixPath + `/poster_collage.jpg`}
