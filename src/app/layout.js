@@ -5,6 +5,7 @@ import TVLayout from '@components/HOC/TVLayout'
 import GeneralLayout from '@components/HOC/GeneralLayout'
 import { classNames } from 'src/utils'
 import { fileServerURLWithPrefixPath, siteDescription, siteTitle } from 'src/utils/config'
+import MovieLayout from '@components/HOC/MovieLayout'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -51,7 +52,7 @@ export default function RootLayout({ children }) {
         )}
         <GeneralLayout fileServerURLWithPrefixPath={fileServerURLWithPrefixPath} />
         <TVLayout fileServerURLWithPrefixPath={fileServerURLWithPrefixPath} />
-        {/* <PageAnimatePresence>{children}</PageAnimatePresence> */}
+        <MovieLayout fileServerURLWithPrefixPath={fileServerURLWithPrefixPath} />
         {children}
       </body>
     </html>

@@ -7,22 +7,20 @@ import { useParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { buildURL } from 'src/utils'
 
-export default function TVLayout({ fileServerURLWithPrefixPath }) {
+export default function MovieLayout({ fileServerURLWithPrefixPath }) {
   const params = useParams()
   const [media, setMedia] = useState(null)
 
   // Destructure parameters and decode if necessary
   const mediaType = params?.media?.[0] // 'movie' or 'tv'
   const mediaTitle = decodeURIComponent(params?.media?.[1] || '')
-  const mediaSeason = params?.media?.[2] // Could be 'Season X'
-  const mediaEpisode = params?.media?.[3] // Could be 'Episode Y'
 
   useEffect(() => {
     if (media && media.title !== mediaTitle) {
       setMedia(null)
     }
 
-    if (mediaType === 'tv' && mediaTitle && (!media || media.title !== mediaTitle)) {
+    if (mediaType === 'movie' && mediaTitle && (!media || media.title !== mediaTitle)) {
       fetch(buildURL('/api/authenticated/media'), {
         method: 'POST',
         headers: {
@@ -31,8 +29,6 @@ export default function TVLayout({ fileServerURLWithPrefixPath }) {
         body: JSON.stringify({
           mediaType,
           mediaTitle,
-          mediaSeason,
-          mediaEpisode,
         }),
       })
         .then((response) => {
@@ -53,7 +49,7 @@ export default function TVLayout({ fileServerURLWithPrefixPath }) {
 
   return (
     <AnimatePresence mode="wait">
-      {mediaType === 'tv' && mediaTitle && media ? (
+      {mediaType === 'movie' && mediaTitle && media ? (
         <FullScreenBackdrop key={mediaTitle} media={media} />
       ) : null}
     </AnimatePresence>
