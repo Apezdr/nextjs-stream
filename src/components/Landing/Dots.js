@@ -1,17 +1,7 @@
 'use client'
-import { memo, useEffect, useState } from 'react'
+import { memo } from 'react'
 
-const Dots = ({ mediaList, currentMediaIndex, handleDotClick, progress, setProgressUpdateRef }) => {
-  const [localProgress, setLocalProgress] = useState(progress)
-
-  useEffect(() => {
-    setProgressUpdateRef((newProgress) => setLocalProgress(Math.min(newProgress, 100)))
-  }, [setProgressUpdateRef])
-
-  useEffect(() => {
-    setLocalProgress(Math.min(progress, 100))
-  }, [progress])
-
+const Dots = ({ mediaList, currentMediaIndex, handleDotClick, progress }) => {
   return (
     <div className="absolute bottom-4 right-4 flex gap-1">
       {mediaList.map((_, index) => (
@@ -22,9 +12,8 @@ const Dots = ({ mediaList, currentMediaIndex, handleDotClick, progress, setProgr
         >
           {index === currentMediaIndex && (
             <div
-              key={localProgress === 0 ? 'reset' : 'progress'}
               className="absolute top-0 left-0 h-full bg-blue-500 rounded-full"
-              style={{ width: `${localProgress}%` }}
+              style={{ width: `${progress}%` }} // Directly use the progress prop
             ></div>
           )}
         </button>
@@ -32,5 +21,6 @@ const Dots = ({ mediaList, currentMediaIndex, handleDotClick, progress, setProgr
     </div>
   )
 }
+
 Dots.displayName = 'ProgressDots'
 export default memo(Dots)

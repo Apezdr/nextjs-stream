@@ -3,24 +3,12 @@ import '@vidstack/react/player/styles/default/theme.css'
 import './media-player.css'
 import '@components/MediaPlayer/Layouts/menus.css'
 import { Controls, MediaPlayer, MediaProvider } from '@vidstack/react'
-import { memo, useEffect, useRef } from 'react'
-import * as Buttons from '@components/MediaPlayer/buttons' // Import the buttons
+import { memo, useRef } from 'react'
+import * as Buttons from '@components/MediaPlayer/buttons'
 
 function BannerVideoPlayer({ media, onVideoEnd }) {
   const { videoURL } = media
   const playerRef = useRef(null)
-
-  useEffect(() => {
-    const player = playerRef.current
-    if (player) {
-      const timer = setTimeout(() => {
-        player.pause()
-        onVideoEnd()
-      }, 30000) // Stop video after 30 seconds
-
-      return () => clearTimeout(timer)
-    }
-  }, [onVideoEnd])
 
   const handleVolumeChange = () => {
     const player = playerRef.current
@@ -54,6 +42,7 @@ function BannerVideoPlayer({ media, onVideoEnd }) {
       }
       onVolumeChange={handleVolumeChange}
       volume={localStorage.getItem('videoVolumeBanner') || 1}
+      onEnded={onVideoEnd} // Call onVideoEnd directly when video ends
     >
       <MediaProvider />
       <Controls.Root className="absolute bottom-4 left-4 flex space-x-2 z-[5]">

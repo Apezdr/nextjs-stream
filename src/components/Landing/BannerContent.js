@@ -12,11 +12,9 @@ const BannerContent = ({
   videoEnded,
   handleVideoEnd,
   handleDotClick,
-  progressRef,
-  progressUpdateRef,
+  progressSeconds,
   mediaList,
   currentMediaIndex,
-  setProgressUpdateRef,
 }) => {
   return (
     <div className="relative w-full h-[40vh] md:h-[80vh] bg-black">
@@ -140,8 +138,7 @@ const BannerContent = ({
         mediaList={mediaList}
         currentMediaIndex={currentMediaIndex}
         handleDotClick={handleDotClick}
-        progress={progressRef.current}
-        setProgressUpdateRef={setProgressUpdateRef}
+        progress={progressSeconds} // Use the progress seconds passed down from the parent
       />
     </div>
   )
