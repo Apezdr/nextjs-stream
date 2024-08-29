@@ -1,25 +1,23 @@
+'use client'
 import { memo, Suspense } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Image from 'next/image'
 import Link from 'next/link'
 import Loading from 'src/app/loading'
-import BannerVideoPlayer from './BannerVideoPlayer'
-import Dots from './Dots'
+import { lazy } from 'react'
+const BannerVideoPlayer = lazy(() => import('./BannerVideoPlayer'))
 
 const BannerContent = ({
   currentMedia,
   showVideo,
-  videoEnded,
   handleVideoEnd,
-  handleDotClick,
-  progressSeconds,
-  mediaList,
   currentMediaIndex,
+  onImageLoad,
 }) => {
   return (
-    <div className="relative w-full h-[40vh] md:h-[80vh] bg-black">
+    <>
       <AnimatePresence mode="wait">
-        {(!showVideo || videoEnded) && (
+        {!showVideo && (
           <motion.div
             key={`banner-${currentMediaIndex}`} // Updated key
             initial={{ opacity: 0 }}
@@ -37,6 +35,7 @@ const BannerContent = ({
                 blurDataURL={`data:image/png;base64,${currentMedia.backdropBlurhash}`}
                 placeholder="blur"
                 quality={100}
+                onLoad={onImageLoad}
               />
             ) : (
               <Image
@@ -45,6 +44,7 @@ const BannerContent = ({
                 alt="Banner Image"
                 fill
                 quality={100}
+                onLoad={onImageLoad}
               />
             )}
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>
@@ -52,7 +52,7 @@ const BannerContent = ({
         )}
       </AnimatePresence>
       <AnimatePresence mode="wait">
-        {currentMedia.metadata?.trailer_url && showVideo && !videoEnded && (
+        {currentMedia.metadata?.trailer_url && showVideo && (
           <motion.div
             key={`video-${currentMediaIndex}`} // Updated key
             initial={{ opacity: 0 }}
@@ -62,10 +62,13 @@ const BannerContent = ({
             className="absolute inset-0 bg-black flex items-center justify-center"
           >
             <Suspense fallback={<Loading fullscreenClasses={false} />}>
-              <BannerVideoPlayer
-                media={{ videoURL: currentMedia.metadata.trailer_url }}
-                onVideoEnd={handleVideoEnd}
-              />
+              <AnimatePresence mode="wait">
+                <BannerVideoPlayer
+                  media={{ videoURL: currentMedia.metadata.trailer_url }}
+                  onVideoEnd={handleVideoEnd}
+                  currentMediaIndex={currentMediaIndex}
+                />
+              </AnimatePresence>
               <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>
             </Suspense>
           </motion.div>
@@ -134,14 +137,16 @@ const BannerContent = ({
           </motion.div>
         )}
       </AnimatePresence>
-      <Dots
-        mediaList={mediaList}
-        currentMediaIndex={currentMediaIndex}
-        handleDotClick={handleDotClick}
-        progress={progressSeconds} // Use the progress seconds passed down from the parent
-      />
-    </div>
+    </>
   )
 }
 
-export default memo(BannerContent)
+function areEqual(prevProps, nextProps) {
+  return (
+    prevProps.currentMedia.id === nextProps.currentMedia.id &&
+    prevProps.showVideo === nextProps.showVideo &&
+    prevProps.currentMediaIndex === nextProps.currentMediaIndex
+  )
+}
+
+export default memo(BannerContent, areEqual)

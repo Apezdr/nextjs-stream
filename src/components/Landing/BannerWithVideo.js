@@ -1,143 +1,198 @@
 'use client'
-import { useState, useEffect, memo, useCallback } from 'react'
+import { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react'
+import { useSwipeable } from 'react-swipeable'
 import { useTimer } from 'react-timer-hook'
-import { useSwipeable } from 'react-swipeable' // Import useSwipeable
-import BannerContent from './BannerContent'
 import { usePathname } from 'next/navigation'
+import { lazy } from 'react'
+
+const Dots = lazy(() => import('./Dots'))
+const BannerContent = lazy(() => import('./BannerContent'))
 
 const BannerWithVideo = ({ mediaList }) => {
   const pathname = usePathname()
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
   const [showVideo, setShowVideo] = useState(false)
-  const [videoEnded, setVideoEnded] = useState(false)
+  const isFullscreenRef = useRef(false)
 
-  const videoDuration = 30 // Duration of the video in seconds
-  const cycleDelay = 10 // Delay before cycling to next media in seconds
-  const progressDuration = 40 // Duration of progress in seconds
+  const bannerDisplayBeforeVideo = 5
+  const videoDuration = 30
+  const bannerDisplayAfterVideo = 10
+  const totalSlideDuration = bannerDisplayBeforeVideo + videoDuration + bannerDisplayAfterVideo
 
-  const {
-    seconds: videoSeconds,
-    start: startVideoTimer,
-    pause: pauseVideoTimer,
-    restart: restartVideoTimer,
-  } = useTimer({
-    expiryTimestamp: new Date(), // Provide an initial expiry timestamp
-    autoStart: false, // Start manually
-    onExpire: () => handleVideoEnd(),
-  })
+  const currentStepRef = useRef(0)
+  const [currentStep, setCurrentStep] = useState(0)
 
   const {
-    seconds: cycleSeconds,
-    start: startCycleTimer,
-    pause: pauseCycleTimer,
-    restart: restartCycleTimer,
+    seconds,
+    restart: restartTimer,
+    pause: pauseTimer,
+    resume: resumeTimer,
+    isRunning,
   } = useTimer({
-    expiryTimestamp: new Date(), // Provide an initial expiry timestamp
-    autoStart: false, // Start manually
-    onExpire: () => cycleToNextMedia(),
-  })
-
-  const {
-    seconds: progressSeconds,
-    start: startProgressTimer,
-    restart: restartProgressTimer,
-  } = useTimer({
-    expiryTimestamp: new Date(), // Provide an initial expiry timestamp
+    expiryTimestamp: new Date(),
+    onExpire: () => handleNextStep(),
     autoStart: false,
   })
 
-  useEffect(() => {
-    restartProgressTimer(new Date(Date.now() + progressDuration * 1000)) // Start progress timer when media changes
-  }, [currentMediaIndex])
+  const calculatedProgress = useMemo(() => {
+    let progressSeconds = 0
+
+    if (isRunning) {
+      switch (currentStepRef.current) {
+        case 0:
+          progressSeconds = bannerDisplayBeforeVideo - seconds
+          break
+        case 1:
+          progressSeconds = bannerDisplayBeforeVideo + (videoDuration - seconds)
+          break
+        case 2:
+          progressSeconds =
+            bannerDisplayBeforeVideo + videoDuration + (bannerDisplayAfterVideo - seconds)
+          break
+      }
+    }
+
+    return totalSlideDuration - Math.ceil(Math.min(progressSeconds, totalSlideDuration))
+  }, [seconds, isRunning, totalSlideDuration])
+
+  const handleSlideEnd = useCallback(() => {
+    cycleToNextMedia()
+  }, [])
+
+  const handleNextStep = useCallback(() => {
+    switch (currentStepRef.current) {
+      case 0:
+        currentStepRef.current = 1
+        setShowVideo(true)
+        break
+      case 1:
+        setShowVideo(false)
+        currentStepRef.current = 2
+        break
+      default:
+        handleSlideEnd()
+        break
+    }
+    setCurrentStep(currentStepRef.current)
+  }, [handleSlideEnd])
 
   useEffect(() => {
-    const showVideoTimer = setTimeout(() => {
-      setShowVideo(true)
-      restartVideoTimer(new Date(Date.now() + videoDuration * 1000)) // Start video timer when the video is shown
-    }, 3000)
+    let duration = 0
+    switch (currentStepRef.current) {
+      case 0:
+        duration = bannerDisplayBeforeVideo
+        break
+      case 1:
+        duration = videoDuration
+        break
+      case 2:
+        duration = bannerDisplayAfterVideo
+        break
+    }
 
-    return () => clearTimeout(showVideoTimer)
-  }, [currentMediaIndex, showVideo])
+    const time = new Date()
+    time.setSeconds(time.getSeconds() + duration)
+    restartTimer(time)
+  }, [currentStep, restartTimer])
 
-  const handleVideoEnd = useCallback(() => {
+  const startSlideCycle = useCallback(() => {
+    currentStepRef.current = 0
     setShowVideo(false)
-    setVideoEnded(true)
-    pauseVideoTimer()
-    restartCycleTimer(new Date(Date.now() + cycleDelay * 1000)) // Start the cycle timer after video ends
-  }, [pauseVideoTimer, restartCycleTimer])
+    const time = new Date()
+    time.setSeconds(time.getSeconds() + bannerDisplayBeforeVideo)
+    restartTimer(time)
+    setCurrentStep(currentStepRef.current)
+  }, [restartTimer, bannerDisplayBeforeVideo])
 
   const cycleToNextMedia = useCallback(() => {
     setCurrentMediaIndex((prevIndex) => (prevIndex + 1) % mediaList.length)
-    setShowVideo(false)
-    setVideoEnded(false)
-    restartCycleTimer(new Date(Date.now() + cycleDelay * 1000))
-    restartProgressTimer(new Date(Date.now() + progressDuration * 1000))
-  }, [mediaList.length, restartCycleTimer, restartProgressTimer])
+    startSlideCycle()
+  }, [mediaList.length, startSlideCycle])
 
   const handleDotClick = useCallback(
     (index) => {
-      pauseVideoTimer() // Pause the video timer
-      pauseCycleTimer() // Pause the cycle timer
-      restartProgressTimer(new Date(Date.now() + progressDuration * 1000)) // Reset progress timer
       setCurrentMediaIndex(index)
-      setShowVideo(false)
-      setVideoEnded(false)
-      startProgressTimer() // Restart progress timer for the new media
+      startSlideCycle()
     },
-    [pauseVideoTimer, pauseCycleTimer, restartProgressTimer, startProgressTimer]
+    [startSlideCycle]
   )
 
   const handleSwipe = useCallback(
     (direction) => {
-      pauseVideoTimer() // Pause the video timer
-      pauseCycleTimer() // Pause the cycle timer
-
-      if (direction === 'LEFT') {
-        setCurrentMediaIndex((prevIndex) => (prevIndex + 1) % mediaList.length)
-      } else if (direction === 'RIGHT') {
-        setCurrentMediaIndex((prevIndex) =>
-          prevIndex === 0 ? mediaList.length - 1 : prevIndex - 1
-        )
-      }
-
-      setShowVideo(false)
-      setVideoEnded(false)
-      restartCycleTimer(new Date(Date.now() + cycleDelay * 1000)) // Reset cycle timer
-      restartProgressTimer(new Date(Date.now() + progressDuration * 1000)) // Reset progress timer
+      setCurrentMediaIndex((prevIndex) =>
+        direction === 'LEFT'
+          ? (prevIndex + 1) % mediaList.length
+          : prevIndex === 0
+            ? mediaList.length - 1
+            : prevIndex - 1
+      )
+      startSlideCycle()
     },
-    [pauseVideoTimer, pauseCycleTimer, restartCycleTimer, restartProgressTimer, mediaList.length]
+    [mediaList.length, startSlideCycle]
   )
 
   const swipeHandlers = useSwipeable({
     onSwipedLeft: () => handleSwipe('LEFT'),
     onSwipedRight: () => handleSwipe('RIGHT'),
     preventDefaultTouchmoveEvent: true,
-    trackMouse: true, // Enable mouse swiping for desktop
+    trackMouse: true,
   })
 
   useEffect(() => {
-    localStorage.setItem('videoMutedBanner', true) // Set muted initially for banner video
+    const handleFullscreenChange = () => {
+      isFullscreenRef.current = !!document.fullscreenElement
+      isFullscreenRef.current ? pauseTimer() : resumeTimer()
+    }
+
+    document.addEventListener('fullscreenchange', handleFullscreenChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFullscreenChange)
+    }
+  }, [pauseTimer, resumeTimer])
+
+  useEffect(() => {
+    startSlideCycle()
+  }, [startSlideCycle])
+
+  useEffect(() => {
+    localStorage.setItem('videoMutedBanner', true)
   }, [])
 
-  const currentMedia = mediaList[currentMediaIndex]
+  const currentMedia = useMemo(() => mediaList[currentMediaIndex], [mediaList, currentMediaIndex])
 
   return (
     pathname === '/list' && (
       <div {...swipeHandlers}>
-        <BannerContent
-          currentMedia={currentMedia}
-          showVideo={showVideo}
-          videoEnded={videoEnded}
-          handleVideoEnd={handleVideoEnd}
-          handleDotClick={handleDotClick}
-          progressSeconds={((progressDuration - progressSeconds) / progressDuration) * 100} // Calculate progress from 0% to 100%
-          mediaList={mediaList}
-          currentMediaIndex={currentMediaIndex}
-          setCurrentMediaIndex={setCurrentMediaIndex}
-        />
+        <div className="relative w-full h-[40vh] md:h-[80vh] bg-black">
+          <BannerContent
+            currentMedia={currentMedia}
+            showVideo={showVideo}
+            progressSeconds={calculatedProgress}
+            handleDotClick={handleDotClick}
+            progressCalculation={(calculatedProgress / totalSlideDuration) * 100}
+            mediaList={mediaList}
+            currentMediaIndex={currentMediaIndex}
+          />
+          <Dots
+            mediaList={mediaList}
+            currentMediaIndex={currentMediaIndex}
+            handleDotClick={handleDotClick}
+            progress={(calculatedProgress / totalSlideDuration) * 100}
+            progressSeconds={calculatedProgress}
+          />
+        </div>
       </div>
     )
   )
 }
 
-export default memo(BannerWithVideo)
+function areEqual(prevProps, nextProps) {
+  return (
+    prevProps.showVideo === nextProps.showVideo &&
+    prevProps.currentMediaIndex === nextProps.currentMediaIndex &&
+    prevProps.mediaList === nextProps.mediaList &&
+    prevProps.pathname === nextProps.pathname
+  )
+}
+
+export default memo(BannerWithVideo, areEqual)
