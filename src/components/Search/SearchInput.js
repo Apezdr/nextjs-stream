@@ -119,7 +119,7 @@ export default function SearchInput() {
         afterLeave={() => null}
         appear
       >
-        <Dialog as="div" className="relative z-10" onClose={() => setOpen(false)}>
+        <Dialog as="div" className="relative z-20" onClose={() => setOpen(false)}>
           <TransitionChild
             as={Fragment}
             enter="ease-out duration-300"
@@ -142,7 +142,7 @@ export default function SearchInput() {
             />
           </TransitionChild>
 
-          <div className="fixed inset-0 z-10 w-screen overflow-y-auto p-4 sm:p-6 md:p-20">
+          <div className="fixed inset-0 z-20 w-screen overflow-y-auto p-4 sm:p-6 md:p-20">
             <TransitionChild
               as={Fragment}
               enter="ease-out duration-300"
@@ -217,7 +217,11 @@ export default function SearchInput() {
                                           }
                                         >
                                           {({ active }) => (
-                                            <Link href={buildURL(media.url)} className="contents">
+                                            <Link
+                                              href={buildURL(media.url)}
+                                              className="contents"
+                                              onClick={() => setOpen(false)}
+                                            >
                                               <Image
                                                 src={media.posterURL}
                                                 loading="lazy"
@@ -291,6 +295,7 @@ export default function SearchInput() {
                                       href={buildURL(activeOption.url)}
                                       type="button"
                                       className="mt-6 w-full rounded-md bg-indigo-600 px-3 py-2 text-center text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                                      onClick={() => setOpen(false)}
                                     >
                                       Open this
                                     </Link>
