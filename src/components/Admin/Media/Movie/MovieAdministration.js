@@ -174,10 +174,10 @@ export default function MovieAdministration({ processedData, _lastSyncTime, orga
       <hr className="my-16 border-gray-300 w-full" />
       <div className="flex flex-col xl:flex-row">
         <ListRecords
-          title={`(${_processedData.movies.data.length}) Movies`}
+          title={`${_processedData.movies ? `(${_processedData.movies?.data.length}) ` : ``}Movies`}
           subtitle="Overview of all movies"
-          headers={_processedData.movies.headers}
-          data={_processedData.movies.data}
+          headers={_processedData.movies?.headers}
+          data={_processedData.movies?.data}
           onEditClick={async (id) => {
             const record = await getRecord({ type: 'movie', id })
             setRecord({ type: 'movie', ...record })

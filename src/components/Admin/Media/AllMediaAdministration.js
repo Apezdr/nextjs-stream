@@ -184,14 +184,14 @@ export default function AllMediaAdministration({ processedData, _lastSyncTime, o
       </div>
       <hr className="my-16 border-gray-300 w-full" />
       <h2 className="text-2xl font-semibold mb-4">
-        ({_processedData.movies.data.length + _processedData.tvShows.data.length}) Available Media
+        ({_processedData.movies?.data.length + _processedData.tvShows?.data.length}) Available Media
       </h2>
       <div className="flex flex-col 2xl:flex-row gap-8 overflow-hidden">
         <ListRecords
           title="Movies"
           subtitle="Overview of all movies"
-          headers={_processedData.movies.headers}
-          data={_processedData.movies.data}
+          headers={_processedData.movies?.headers}
+          data={_processedData.movies?.data}
           onEditClick={async (id) => {
             const record = await getRecord({ type: 'movie', id })
             setRecord({ type: 'movie', action: 'edit', ...record })

@@ -335,8 +335,8 @@ export default function AdminOverviewPage({
         <ListRecords
           title="Movies"
           subtitle="Overview of all movies"
-          headers={_processedData.movies.headers}
-          data={_processedData.movies.data}
+          headers={_processedData.movies?.headers}
+          data={_processedData.movies?.data}
           onEditClick={async (id) => {
             const record = await getRecord({ type: 'movie', id })
             setRecord({ type: 'movie', action: 'edit', ...record })
@@ -358,8 +358,8 @@ export default function AdminOverviewPage({
         <ListRecords
           title="TV Shows"
           subtitle="Overview of all TV shows"
-          headers={_processedData.tvShows.headers}
-          data={_processedData.tvShows.data}
+          headers={_processedData.tvShows?.headers}
+          data={_processedData.tvShows?.data}
           onEditClick={async (id) => {
             const record = await getRecord({ type: 'tv', id })
             setRecord({ type: 'tv', ...record })

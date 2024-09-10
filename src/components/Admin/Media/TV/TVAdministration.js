@@ -174,10 +174,10 @@ export default function TVAdministration({ processedData, _lastSyncTime, organiz
       <hr className="my-16 border-gray-300 w-full" />
       <div className="flex flex-col xl:flex-row">
         <ListRecords
-          title={`(${_processedData.tvShows.data.length}) TV Shows`}
+          title={`${_processedData.tvShows ? `(${_processedData.tvShows.data.length}) ` : ``}TV Shows`}
           subtitle="Overview of all TV shows"
-          headers={_processedData.tvShows.headers}
-          data={_processedData.tvShows.data}
+          headers={_processedData.tvShows?.headers}
+          data={_processedData.tvShows?.data}
           onEditClick={async (id) => {
             const record = await getRecord({ type: 'tv', id })
             setRecord({ type: 'tv', ...record })
