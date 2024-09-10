@@ -184,7 +184,10 @@ export default function AllMediaAdministration({ processedData, _lastSyncTime, o
       </div>
       <hr className="my-16 border-gray-300 w-full" />
       <h2 className="text-2xl font-semibold mb-4">
-        ({_processedData.movies?.data.length + _processedData.tvShows?.data.length}) Available Media
+        {(_processedData.movies?.data.length || 0) + (_processedData.tvShows?.data.length || 0) > 0
+          ? `(${(_processedData.movies?.data.length || 0) + (_processedData.tvShows?.data.length || 0)}) `
+          : ''}
+        Available Media
       </h2>
       <div className="flex flex-col 2xl:flex-row gap-8 overflow-hidden">
         <ListRecords
@@ -213,8 +216,8 @@ export default function AllMediaAdministration({ processedData, _lastSyncTime, o
         <ListRecords
           title="TV Shows"
           subtitle="Overview of all TV shows"
-          headers={_processedData.tvShows.headers}
-          data={_processedData.tvShows.data}
+          headers={_processedData.tvShows?.headers}
+          data={_processedData.tvShows?.data}
           onEditClick={async (id) => {
             const record = await getRecord({ type: 'tv', id })
             setRecord({ type: 'tv', action: 'edit', ...record })
