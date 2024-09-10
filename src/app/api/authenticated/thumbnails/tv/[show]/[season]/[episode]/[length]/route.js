@@ -1,5 +1,5 @@
-import { fileServerURL } from 'src/utils/config'
-import isAuthenticated from 'src/utils/routeAuth'
+import { fileServerURL } from '@src/utils/config'
+import isAuthenticated from '@src/utils/routeAuth'
 
 export async function GET(req, { params }) {
   const authResult = await isAuthenticated(req)

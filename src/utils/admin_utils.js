@@ -10,64 +10,69 @@ export function processMediaData(jsonResponseString) {
   const movieHeaders = ['Poster', 'Title', 'Genre', 'Year']
   const tvHeaders = ['Poster', 'Title', 'Seasons', 'Year']
 
-  // Transform data for movies
-  const movieData = movies.map((movie) => {
-    let poster = movie.posterURL || getFullImageUrl(movie.metadata?.poster_path)
-    if (!poster) {
-      poster = null
-    }
-    return {
-      id: movie._id.toString(),
-      posterURL: poster, // Add poster URL
-      title:
-        movie.title === movie.metadata?.title
-          ? movie.metadata?.title
-          : movie.title + ` (${movie.metadata?.title})` || movie.title,
-      genre: movie.metadata?.genres.map((genre) => genre.name).join(', '),
-      year: movie.metadata?.release_date ? movie.metadata.release_date.getFullYear() : 'N/A',
-    }
-  })
+  let result = {}
 
-  // Transform data for TV shows
-  const tvData = tv.map((show) => {
-    let poster = show.posterURL || getFullImageUrl(show.metadata?.poster_path, 'w185')
-    if (!poster) {
-      poster = null
-    }
-    // Extract years
-    const startYear = getYearFromDate(show.metadata?.first_air_date)
-    const endYear = getYearFromDate(show.metadata?.last_air_date)
+  // Process movies if present
+  if (movies && movies.length > 0) {
+    const movieData = movies.map((movie) => {
+      let poster = movie.posterURL || getFullImageUrl(movie.metadata?.poster_path)
+      if (!poster) {
+        poster = null
+      }
+      return {
+        id: movie._id.toString(),
+        posterURL: poster,
+        title:
+          movie.title === movie.metadata?.title
+            ? movie.metadata?.title
+            : movie.title + ` (${movie.metadata?.title})` || movie.title,
+        genre: movie.metadata?.genres.map((genre) => genre.name).join(', '),
+        year: movie.metadata?.release_date ? movie.metadata.release_date.getFullYear() : 'N/A',
+      }
+    })
 
-    // Format release range
-    let released
-    if (startYear && endYear && startYear !== endYear) {
-      released = `${startYear}–${endYear}`
-    } else {
-      released = startYear ? startYear.toString() : ''
-    }
-
-    if (!released) {
-      released = show.metadata?.release_date.getFullYear()
-    }
-    return {
-      id: show._id.toString(),
-      posterURL: poster, // Add poster URL
-      title: show.title,
-      seasons: show.seasons.length,
-      year: released,
-    }
-  })
-
-  return {
-    movies: {
+    result.movies = {
       headers: movieHeaders,
       data: movieData,
-    },
-    tvShows: {
+    }
+  }
+
+  // Process TV shows if present
+  if (tv && tv.length > 0) {
+    const tvData = tv.map((show) => {
+      let poster = show.posterURL || getFullImageUrl(show.metadata?.poster_path, 'w185')
+      if (!poster) {
+        poster = null
+      }
+      const startYear = getYearFromDate(show.metadata?.first_air_date)
+      const endYear = getYearFromDate(show.metadata?.last_air_date)
+
+      let released
+      if (startYear && endYear && startYear !== endYear) {
+        released = `${startYear}–${endYear}`
+      } else {
+        released = startYear ? startYear.toString() : ''
+      }
+
+      if (!released) {
+        released = show.metadata?.release_date.getFullYear()
+      }
+      return {
+        id: show._id.toString(),
+        posterURL: poster,
+        title: show.title,
+        seasons: show.seasons.length,
+        year: released,
+      }
+    })
+
+    result.tvShows = {
       headers: tvHeaders,
       data: tvData,
-    },
+    }
   }
+
+  return result
 }
 
 export function processUserData(jsonResponse) {
@@ -168,29 +173,29 @@ function extractSeasonInfo(seasonInfo, showTitle, fileServer) {
       return {
         number: parseInt(seasonInfo.split(' ')[1]),
         seasonIdentifier: seasonIdentifier,
-        season_poster: fileServer.tv[showTitle].seasons[seasonInfo].season_poster,
-        seasonPosterBlurhash: fileServer.tv[showTitle].seasons[seasonInfo].seasonPosterBlurhash,
-        episodes: fileServer.tv[showTitle].seasons[seasonInfo].fileNames.map(function (fileName) {
+        season_poster: fileServer?.tv[showTitle].seasons[seasonInfo].season_poster,
+        seasonPosterBlurhash: fileServer?.tv[showTitle].seasons[seasonInfo].seasonPosterBlurhash,
+        episodes: fileServer?.tv[showTitle].seasons[seasonInfo].fileNames.map(function (fileName) {
           let returnData = {
             fileName,
-            videoURL: fileServer.tv[showTitle].seasons[seasonInfo].urls[fileName].videourl,
-            length: fileServer.tv[showTitle].seasons[seasonInfo].lengths[fileName],
-            dimensions: fileServer.tv[showTitle].seasons[seasonInfo].dimensions[fileName],
+            videoURL: fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].videourl,
+            length: fileServer?.tv[showTitle].seasons[seasonInfo].lengths[fileName],
+            dimensions: fileServer?.tv[showTitle].seasons[seasonInfo].dimensions[fileName],
             mediaLastModified: new Date(
-              fileServer.tv[showTitle].seasons[seasonInfo].urls[fileName].mediaLastModified
+              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].mediaLastModified
             ),
           }
-          if (fileServer.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnail) {
+          if (fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnail) {
             returnData.thumbnail =
-              fileServer.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnail
+              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnail
           }
-          if (fileServer.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnailBlurhash) {
+          if (fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnailBlurhash) {
             returnData.thumbnailBlurhash =
-              fileServer.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnailBlurhash
+              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnailBlurhash
           }
-          if (fileServer.tv[showTitle].seasons[seasonInfo].urls[fileName].metadata) {
+          if (fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].metadata) {
             returnData.metadata =
-              fileServer.tv[showTitle].seasons[seasonInfo].urls[fileName].metadata
+              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].metadata
           }
           return returnData
         }),
@@ -203,9 +208,9 @@ function extractSeasonInfo(seasonInfo, showTitle, fileServer) {
       return {
         number: parseInt(seasonInfo.season.split(' ')[1]),
         seasonIdentifier: seasonIdentifier,
-        season_poster: fileServer.tv[showTitle].seasons[seasonIdentifier].season_poster,
+        season_poster: fileServer?.tv[showTitle].seasons[seasonIdentifier].season_poster,
         seasonPosterBlurhash:
-          fileServer.tv[showTitle].seasons[seasonIdentifier].seasonPosterBlurhash,
+          fileServer?.tv[showTitle].seasons[seasonIdentifier].seasonPosterBlurhash,
         episodes: seasonInfo.missingEpisodes.map(function (episode) {
           let returnData = {
             fileName: episode.episodeFileName,
@@ -284,11 +289,11 @@ export async function addOrUpdateSeason(
         )
         if (existingEpisodeIndex === -1) {
           const videoURL =
-            fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].videourl
+            fileServer?.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].videourl
           // Store the thumbnail blurhash URL
           let thumbnailBlurhash = episode.thumbnailBlurhash ?? false
           let captions =
-            fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].subtitles
+            fileServer?.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].subtitles
 
           let updatedData = {
             episodeNumber: episodeNumber,
@@ -320,11 +325,11 @@ export async function addOrUpdateSeason(
           }
 
           // Add chapterURL if chapters file exists
-          if (fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].chapters) {
+          if (fileServer?.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].chapters) {
             updatedData.chapterURL =
               fileServerURLWithoutPrefixPath +
               `${
-                fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].chapters
+                fileServer?.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].chapters
               }`
           }
 

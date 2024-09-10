@@ -1,9 +1,9 @@
-import { classNames } from 'src/utils'
+import { classNames } from '@src/utils'
 
 export default function Loading({ fullscreenClasses = 'min-h-screen' }) {
   // You can add any UI inside Loading, including a Skeleton.
   return (
-    <main className="sm:mx-auto sm:max-w-7xl sm:px-6 lg:px-8">
+    <main className="sm:mx-auto sm:max-w-7xl sm:px-6 lg:px-8" data-testid="loading">
       <div
         className={classNames(
           `flex flex-col items-center justify-between p-24`,

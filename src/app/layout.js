@@ -1,11 +1,13 @@
 import { Inter } from 'next/font/google'
 import './globals.css'
 //import PageAnimatePresence from '@components/HOC/PageAnimatePresence'
-import TVLayout from '@components/HOC/TVLayout'
-import GeneralLayout from '@components/HOC/GeneralLayout'
-import { classNames } from 'src/utils'
-import { fileServerURLWithPrefixPath, siteDescription, siteTitle } from 'src/utils/config'
-import MovieLayout from '@components/HOC/MovieLayout'
+import { classNames } from '@src/utils'
+import { fileServerURLWithPrefixPath, siteDescription, siteTitle } from '@src/utils/config'
+import { lazy } from 'react'
+
+const TVLayout = lazy(() => import('@components/HOC/TVLayout'))
+const GeneralLayout = lazy(() => import('@components/HOC/GeneralLayout'))
+const MovieLayout = lazy(() => import('@components/HOC/MovieLayout'))
 
 const inter = Inter({ subsets: ['latin'] })
 

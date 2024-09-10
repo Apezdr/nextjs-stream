@@ -24,10 +24,11 @@ import {
 } from '@vidstack/react/icons'
 
 import { buttonClass, tooltipClass } from './buttons'
-import { classNames } from 'src/utils'
+import { classNames } from '@src/utils'
 import styles from './Layouts/video-layout.module.css'
 import Image from 'next/image'
-import Loading from 'src/app/loading'
+import Loading from '@src/app/loading'
+import ChaptersMenu from './chapter/chapters'
 
 export const menuClass =
   'animate-out fade-out slide-out-to-bottom-2 data-[open]:animate-in data-[open]:fade-in data-[open]:slide-in-from-bottom-4 flex h-[var(--menu-height)] max-h-[60vh] min-w-[260px] flex-col overflow-y-auto overscroll-y-contain rounded-md border border-white/10 bg-black/95 p-2.5 font-sans text-[15px] font-medium outline-none backdrop-blur-sm transition-[height] duration-300 will-change-[height] data-[resizing]:overflow-hidden'
@@ -247,54 +248,5 @@ function SubmenuButton({ label, hint, icon: Icon, disabled, className = '', auto
       </span>
       <ChevronRightIcon className="parent-data-[open]:hidden ml-0.5 h-[18px] w-[18px] text-sm text-white/50" />
     </Menu.Button>
-  )
-}
-
-function ChaptersMenu({ thumbnailURL }) {
-  const options = useChapterOptions()
-  return (
-    <Menu.Root>
-      <span className="w-full text-center text-gray-200 my-3">Chapters</span>
-      <Menu.RadioGroup
-        value={options.selectedValue}
-        className="vds-chapters-radio-group vds-radio-group"
-        data-thumbnails
-      >
-        {options.length > 0 ? (
-          options.map(
-            ({ cue, label, value, startTimeText, durationText, select, setProgressVar }) => (
-              <Menu.Radio
-                className="vds-chapter-radio vds-radio"
-                value={value}
-                key={value}
-                onSelect={select}
-                ref={setProgressVar}
-              >
-                <Thumbnail.Root
-                  className="vds-thumbnail"
-                  src={thumbnailURL}
-                  time={parseInt(cue.startTime)}
-                >
-                  <Thumbnail.Img aria-hidden="false" />
-                </Thumbnail.Root>
-                <div class="vds-chapter-radio-content">
-                  <span className="vds-chapter-radio-label" data-part="label">
-                    {label}
-                  </span>
-                  <span class="vds-chapter-radio-start-time" data-part="start-time">
-                    {startTimeText}
-                  </span>
-                  <span class="vds-chapter-radio-duration" data-part="duration">
-                    {durationText}
-                  </span>
-                </div>
-              </Menu.Radio>
-            )
-          )
-        ) : (
-          <Loading fullscreenClasses={''} />
-        )}
-      </Menu.RadioGroup>
-    </Menu.Root>
   )
 }

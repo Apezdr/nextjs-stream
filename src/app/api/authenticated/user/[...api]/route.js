@@ -1,6 +1,6 @@
-import { auth } from 'src/lib/auth'
-import { getRecentlyWatchedForUser } from 'src/utils/admin_frontend_database'
-import isAuthenticated, { isValidWebhook } from 'src/utils/routeAuth'
+import { auth } from '@src/lib/auth'
+import { getRecentlyWatchedForUser } from '@src/utils/admin_frontend_database'
+import isAuthenticated, { isValidWebhook } from '@src/utils/routeAuth'
 
 async function getUserID(request, isWebhook) {
   if (isWebhook) {

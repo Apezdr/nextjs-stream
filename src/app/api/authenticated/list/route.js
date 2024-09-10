@@ -1,6 +1,6 @@
-import { syncMoviesURL, syncTVURL } from 'src/utils/config'
+import { syncMoviesURL, syncTVURL } from '@src/utils/config'
 import { isAdminOrWebhook } from '../../../../utils/routeAuth'
-import { getAllMedia } from 'src/utils/admin_database'
+import { getAllMedia } from '@src/utils/admin_database'
 
 export const GET = async (req) => {
   const authResult = await isAdminOrWebhook(req)

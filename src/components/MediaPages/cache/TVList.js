@@ -2,8 +2,8 @@ import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresen
 import Detailed from '@components/Poster/Detailed'
 import Link from 'next/link'
 import { cache, memo } from 'react'
-import clientPromise from 'src/lib/mongodb'
-import { fetchMetadata } from 'src/utils/admin_utils'
+import clientPromise from '@src/lib/mongodb'
+import { fetchMetadata } from '@src/utils/admin_utils'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },

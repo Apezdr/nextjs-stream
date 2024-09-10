@@ -1,5 +1,5 @@
-import { getVideosWatched } from 'src/utils/auth_database'
-import isAuthenticated from 'src/utils/routeAuth'
+import { getVideosWatched } from '@src/utils/auth_database'
+import isAuthenticated from '@src/utils/routeAuth'
 
 export async function GET(req) {
   // Authenticate the user

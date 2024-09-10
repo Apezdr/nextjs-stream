@@ -1,7 +1,7 @@
 'use client'
 import { useMediaState } from '@vidstack/react'
 import Link from 'next/link'
-import { memo, useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState, useMemo, useCallback } from 'react'
 
 function NextUpCard({
   mediaTitle,
@@ -20,38 +20,39 @@ function NextUpCard({
   const timerRef = useRef(null)
   const intervalRef = useRef(null)
 
-  const [progressBarWidth, setProgressBarWidth] = useState('0%')
-
-  useEffect(() => {
-    const width = `${(1 - remainingTime / 15000) * 100}%`
-    setProgressBarWidth(width)
+  const progressBarWidth = useMemo(() => {
+    return `${(1 - remainingTime / 15000) * 100}%`
   }, [remainingTime])
 
   useEffect(() => {
-    playbackTimeRef.current = currentPlaybackTime
+    if (playbackTimeRef.current !== currentPlaybackTime) {
+      playbackTimeRef.current = currentPlaybackTime
+    }
   }, [currentPlaybackTime])
 
-  const startTimer = (duration) => {
-    clearTimeout(timerRef.current)
-    clearInterval(intervalRef.current)
-    setRemainingTime(duration)
+  const startTimer = useCallback(
+    (duration) => {
+      clearTimeout(timerRef.current)
+      clearInterval(intervalRef.current)
+      setRemainingTime(duration)
 
-    let endTime = Date.now() + duration
-    timerRef.current = setTimeout(() => {
-      window.location.href = `/list/tv/${mediaTitle}/${season_number}/${nextEpisodeNumber}`
-    }, duration)
+      let endTime = Date.now() + duration
+      timerRef.current = setTimeout(() => {
+        window.location.href = `/list/tv/${mediaTitle}/${season_number}/${nextEpisodeNumber}`
+      }, duration)
 
-    intervalRef.current = setInterval(() => {
-      let timeLeft = endTime - Date.now()
-      setRemainingTime(Math.max(timeLeft, 0))
-      if (timeLeft <= 0) {
-        clearInterval(intervalRef.current)
-      }
-    }, 1000)
-  }
+      intervalRef.current = setInterval(() => {
+        let timeLeft = endTime - Date.now()
+        setRemainingTime(Math.max(timeLeft, 0))
+        if (timeLeft <= 0) {
+          clearInterval(intervalRef.current)
+        }
+      }, 1000)
+    },
+    [mediaTitle, season_number, nextEpisodeNumber]
+  )
 
   useEffect(() => {
-    // Effect to start the timer, now using debouncedPlaybackTime
     if (
       playbackTimeRef.current * 1000 > mediaLength - 35000 &&
       hasNextEpisode &&
@@ -61,29 +62,35 @@ function NextUpCard({
       startTimer(15000)
       setTimerInitialized(true)
     }
-  }, [hasNextEpisode, isHovering, timerInitialized, mediaLength])
+  }, [hasNextEpisode, isHovering, timerInitialized, mediaLength, startTimer])
 
   useEffect(() => {
-    // Cleanup effect
     return () => {
       clearTimeout(timerRef.current)
       clearInterval(intervalRef.current)
     }
   }, [])
 
-  const handleMouseOver = () => {
+  const handleMouseOver = useCallback(() => {
     setIsHovering(true)
     clearTimeout(timerRef.current)
     clearInterval(intervalRef.current)
-  }
+  }, [])
 
-  const handleMouseOut = () => {
+  const handleMouseOut = useCallback(() => {
     setIsHovering(false)
     if (currentPlaybackTime * 1000 > mediaLength - 35000 && hasNextEpisode && !timerInitialized) {
       startTimer(remainingTime)
       setTimerInitialized(true)
     }
-  }
+  }, [
+    currentPlaybackTime,
+    mediaLength,
+    hasNextEpisode,
+    timerInitialized,
+    startTimer,
+    remainingTime,
+  ])
 
   return (
     hasNextEpisode &&
@@ -114,15 +121,11 @@ const NextUpCardContent = memo(
         href={`/list/tv/${mediaTitle}/${season_number}/${nextEpisodeNumber}`}
         className="group pointer-events-auto"
       >
-        <div
-          className="absolute rounded-lg bottom-10 right-4 z-10 flex flex-col items-center justify-center py-12 w-40 h-52 bg-black group-hover:bg-gray-900 bg-opacity-50"
-          // Add other necessary props and event handlers if needed
-        >
+        <div className="absolute rounded-lg bottom-10 right-4 z-10 flex flex-col items-center justify-center py-12 w-40 h-52 bg-black group-hover:bg-gray-900 bg-opacity-50">
           <div
             className="h-1 bg-blue-500 absolute top-0 left-0 transition-[width]"
             style={{ width: progressBarWidth }}
-          ></div>{' '}
-          {/* Timer indicator */}
+          ></div>
           <h5 className="font-sans font-bold text-white mb-2">Next Up:</h5>
           <img
             src={`https://image.tmdb.org/t/p/w780${nextEpisodeThumbnail}`}

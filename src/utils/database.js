@@ -1,6 +1,9 @@
+import { auth } from '@src/lib/auth'
 import { getFullImageUrl } from '.'
 import clientPromise from '../lib/mongodb'
 import { fetchMetadata } from './admin_utils'
+import { fetchRecentlyAdded } from './auth_database'
+import { getRecentlyWatchedForUser } from './admin_frontend_database'
 
 export async function getRequestedMediaTrailer(type, title, season = null, episode = null) {
   const client = await clientPromise
@@ -166,15 +169,32 @@ export async function getAvailableMedia({ type = 'all' } = {}) {
   const client = await clientPromise
   let moviesCount, tvprogramsCount
   let returnValue = {}
+  const db = client.db('Media')
 
   if (type === 'movie' || type === 'all') {
-    moviesCount = await client.db('Media').collection('Movies').countDocuments()
+    moviesCount = await db.collection('Movies').countDocuments()
     returnValue.moviesCount = moviesCount
   }
 
   if (type === 'tv' || type === 'all') {
-    tvprogramsCount = await client.db('Media').collection('TV').countDocuments()
+    tvprogramsCount = await db.collection('TV').countDocuments()
     returnValue.tvprogramsCount = tvprogramsCount
+  }
+
+  if (type === 'recently-added' || type === 'all') {
+    const [movies, tvShows] = await Promise.all([
+      fetchRecentlyAdded(db, 'Movies', undefined, true),
+      fetchRecentlyAdded(db, 'TV', undefined, true),
+    ])
+
+    returnValue.recentlyaddedCount = movies + tvShows
+  }
+
+  if (type === 'recently-watched' || type === 'all') {
+    const session = await auth()
+    const watched = await getRecentlyWatchedForUser(session.user?.id, undefined, undefined, true)
+
+    returnValue.recentlywatchedCount = watched
   }
 
   return returnValue

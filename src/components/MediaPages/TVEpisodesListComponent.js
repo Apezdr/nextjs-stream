@@ -9,8 +9,8 @@ import SignOutButton from '@components/SignOutButton'
 import TVShowThumbnail from '@components/TVShowThumbnail'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { Suspense } from 'react'
-import Loading from 'src/app/loading'
-import { fetchMetadata } from 'src/utils/admin_utils'
+import Loading from '@src/app/loading'
+import { fetchMetadata } from '@src/utils/admin_utils'
 import { CaptionSVG } from '@components/SVGIcons'
 import HD4kBanner from '../../../public/4kBanner.png'
 import Image from 'next/image'
@@ -75,7 +75,11 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
           <Suspense fallback={<Loading />}>
             {/* Summary Poster */}
             <li className="col-span-1 sm:col-span-2 xl:col-span-1 lg:row-span-3 text-center">
-              <MediaPoster tv={season} className="max-w-full rounded-lg" contClassName="mx-auto" />
+              <MediaPoster
+                tv={season}
+                className="max-w-full rounded-lg !mx-auto"
+                contClassName="mx-auto"
+              />
               <h2 className="mx-auto max-w-2xl text-2xl font-bold tracking-tight text-white sm:text-3xl pb-8 xl:pb-0 px-4 xl:px-0">
                 Viewing Season {season.seasonNumber}
               </h2>

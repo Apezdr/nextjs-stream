@@ -28,7 +28,7 @@ export default function GeneralFullScreenBackdrop({ url }) {
           backgroundImage: `url(${url})`,
           backgroundRepeat: 'repeat',
           backgroundSize: 'cover',
-          animation: 'scrollBackground 200s linear infinite',
+          //animation: 'scrollBackground 200s linear infinite',
         }}
       ></div>
     </motion.div>

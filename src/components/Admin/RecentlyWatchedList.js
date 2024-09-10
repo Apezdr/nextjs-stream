@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'framer-motion'
 import { memo } from 'react'
-import Loading from 'src/app/loading'
-import { classNames } from 'src/utils'
+import Loading from '@src/app/loading'
+import { classNames } from '@src/utils'
 
 const variants = {
   hidden: { opacity: 0 },

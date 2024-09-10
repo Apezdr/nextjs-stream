@@ -3,7 +3,8 @@ import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import SkeletonCard from '@components/SkeletonCard'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import LandingPage from '@components/LandingPage'
-import { getAvailableMedia } from 'src/utils/database'
+import { getAvailableMedia } from '@src/utils/database'
+import { Suspense } from 'react'
 export const dynamic = 'force-dynamic'
 
 async function MediaDirectory() {
@@ -31,13 +32,18 @@ async function MediaDirectory() {
 
   // sync up with the server
   //const serverVideoWatchedAmount = await getVideosWatched()
-  const { moviesCount, tvprogramsCount } = await getAvailableMedia()
+  const { moviesCount, tvprogramsCount, recentlyaddedCount, recentlywatchedCount } =
+    await getAvailableMedia()
   return (
-    <LandingPage
-      user={{ name, email, limitedAccess }}
-      moviesCount={moviesCount}
-      tvprogramsCount={tvprogramsCount}
-    />
+    <Suspense>
+      <LandingPage
+        user={{ name, email, limitedAccess }}
+        moviesCount={moviesCount}
+        tvprogramsCount={tvprogramsCount}
+        recentlyaddedCount={recentlyaddedCount}
+        recentlywatchedCount={recentlywatchedCount}
+      />
+    </Suspense>
   )
 }
 

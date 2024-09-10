@@ -6,6 +6,8 @@ import { updateMetadata } from './admin_database'
 import { addOrUpdateSeason, fetchMetadata, sanitizeRecord } from './admin_utils'
 import isEqual from 'lodash/isEqual'
 import { fileServerURLWithoutPrefixPath } from './config'
+import { addCustomUrlToMedia, fetchRecentlyAdded } from './auth_database'
+import { arrangeMediaByLatestModification } from './auth_utils'
 
 /**
  * Get a record from the database by type and id
@@ -115,9 +117,12 @@ export async function getPosters(type) {
  * Get the most recently watched media for the current user.
  *
  * @param {string} userId - The ID of the current user.
- * @returns {Promise<Array>} The recently watched media details.
+ * @param {number} [page=1] - The page number for pagination.
+ * @param {number} [limit=15] - The number of items per page.
+ * @param {boolean} [countOnly=false] - Whether to only get the document count.
+ * @returns {Promise<Array|number>} The recently watched media details or the document count.
  */
-export async function getRecentlyWatchedForUser(userId, page = 1, limit = 15) {
+export async function getRecentlyWatchedForUser(userId, page = 1, limit = 15, countOnly = false) {
   try {
     const client = await clientPromise
     const user = await client
@@ -131,20 +136,32 @@ export async function getRecentlyWatchedForUser(userId, page = 1, limit = 15) {
 
     const validPage = Math.max(page - 1, 0) // Ensure page is at least 1
 
+    const lastWatchedAggregation = [
+      { $match: { userId: user._id } },
+      { $unwind: '$videosWatched' },
+      { $sort: { 'videosWatched.lastUpdated': -1 } },
+      { $limit: limit },
+    ]
+
+    if (countOnly) {
+      const countResult = await client
+        .db('Media')
+        .collection('PlaybackStatus')
+        .aggregate([...lastWatchedAggregation, { $count: 'total' }])
+        .toArray()
+
+      return countResult.length > 0 ? countResult[0].total : 0
+    }
+
+    lastWatchedAggregation.push(
+      { $skip: validPage * limit },
+      { $group: { _id: '$userId', videosWatched: { $push: '$videosWatched' } } }
+    )
+
     const lastWatched = await client
       .db('Media')
       .collection('PlaybackStatus')
-      .aggregate(
-        [
-          { $match: { userId: user._id } },
-          { $unwind: '$videosWatched' },
-          { $sort: { 'videosWatched.lastUpdated': -1 } },
-          { $skip: validPage * limit },
-          { $limit: limit },
-          { $group: { _id: '$userId', videosWatched: { $push: '$videosWatched' } } },
-        ],
-        { hint: 'userId_1' }
-      )
+      .aggregate(lastWatchedAggregation, { hint: 'userId_1' })
       .toArray()
 
     if (lastWatched.length === 0 || !lastWatched[0].videosWatched) {
@@ -202,10 +219,29 @@ export async function getRecentlyWatchedForUser(userId, page = 1, limit = 15) {
       })
     )
 
-    const filtered = watchedDetails.filter((detail) => detail !== null && detail !== undefined)
-    return filtered
+    return watchedDetails.filter((detail) => detail !== null && detail !== undefined)
   } catch (error) {
     console.error(`Error in getRecentlyWatchedForUser: ${error.message}`)
+    throw error
+  }
+}
+
+export async function getRecentlyAddedMedia({ limit = 12 }) {
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+    let movies, tvShows
+    ;[movies, tvShows] = await Promise.all([
+      fetchRecentlyAdded(db, 'Movies', limit),
+      fetchRecentlyAdded(db, 'TV', limit),
+    ])
+    const [moviesWithUrl, tvShowsWithUrl] = await Promise.all([
+      addCustomUrlToMedia(movies, 'movie'),
+      addCustomUrlToMedia(tvShows, 'tv'),
+    ])
+    return arrangeMediaByLatestModification(moviesWithUrl, tvShowsWithUrl)
+  } catch (error) {
+    console.error(`Error in getRecentlyAddedMedia: ${error.message}`)
     throw error
   }
 }
@@ -521,7 +557,7 @@ export async function syncMissingMedia(missingMedia, fileServer) {
   // Sync Movies
   for (const movieIndex in missingMedia.movies) {
     const movieTitle = missingMedia.movies[parseInt(movieIndex)]
-    const movieData = fileServer.movies[movieTitle]
+    const movieData = fileServer?.movies[movieTitle]
 
     // Find the MP4 file
     const mp4File = movieData.fileNames.find((name) => name.endsWith('.mp4'))
@@ -588,6 +624,15 @@ export async function syncMissingMedia(missingMedia, fileServer) {
     if (movieData.urls?.chapters) {
       updateData.chapterURL = fileServerURLWithoutPrefixPath + `${movieData.urls.chapters}`
     }
+    // Add backdrop if it exists
+    if (movieData.urls?.backdrop) {
+      updateData.backdrop = fileServerURLWithoutPrefixPath + `${movieData.urls.backdrop}`
+    }
+    // Add backdrop blurhash if it exists
+    if (movieData.urls?.backdropBlurhash) {
+      updateData.backdropBlurhash =
+        fileServerURLWithoutPrefixPath + `${movieData.urls.backdropBlurhash}`
+    }
 
     await client
       .db('Media')
@@ -601,7 +646,7 @@ export async function syncMissingMedia(missingMedia, fileServer) {
   // Sync TV Shows
   for (const missingShow of missingMedia.tv) {
     const showTitle = missingShow.showTitle
-    const showData = fileServer.tv[showTitle]
+    const showData = fileServer?.tv[showTitle]
 
     // Make a GET request to retrieve show-level metadata
     const showMetadata = await fetchMetadata(showData.metadata, 'file', 'tv', showTitle)
@@ -666,16 +711,21 @@ export async function syncMetadata(currentDB, fileServer) {
     // Sync Movies
     for (const movie of currentDB.movies) {
       // Set the file server movie data
-      const fileServer_movieData = fileServer.movies[movie.title]
+      const fileServer_movieData = fileServer?.movies[movie.title]
       // Set the current DB movie data
       const currentDB_movieData = movie
       // Make a GET request to retrieve movie-level metadata
-      const movieMetadata = await fetchMetadata(
-        fileServer_movieData.urls.metadata,
-        'file',
-        'movie',
-        movie.title
-      )
+      let movieMetadata
+      try {
+        movieMetadata = await fetchMetadata(
+          fileServer_movieData.urls.metadata,
+          'file',
+          'movie',
+          movie.title
+        )
+      } catch (error) {
+        console.error(`Failed to fetch metadata for movie ${movie.title}:`, error)
+      }
 
       movieMetadata.release_date = new Date(movieMetadata.release_date)
       // First check the last updated date of the movie metadata
@@ -697,16 +747,21 @@ export async function syncMetadata(currentDB, fileServer) {
     }
     for (const tv of currentDB.tv) {
       // Set the file server show data
-      const fileServer_showData = fileServer.tv[tv.title]
+      const fileServer_showData = fileServer?.tv[tv.title]
       // Set the current DB show data
       const currentDB_showData = tv
       // Make a GET request to retrieve show-level metadata
-      const mostRecent_showMetadata = await fetchMetadata(
-        fileServer_showData.metadata,
-        'file',
-        'tv',
-        tv.title
-      )
+      let mostRecent_showMetadata
+      try {
+        mostRecent_showMetadata = await fetchMetadata(
+          fileServer_showData.metadata,
+          'file',
+          'tv',
+          tv.title
+        )
+      } catch (error) {
+        console.error(`Failed to fetch metadata for TV show ${tv.title}:`, error)
+      }
 
       if (mostRecent_showMetadata.name !== tv_metadata.name) {
         tv_metadata = structuredClone(mostRecent_showMetadata)
@@ -762,12 +817,19 @@ export async function syncMetadata(currentDB, fileServer) {
 
         for await (const episodeFileName of fileServer_seasonData.fileNames) {
           const episodeData = fileServer_seasonData.urls[episodeFileName]
-          const mostRecent_episodeMetadata = await fetchMetadata(
-            episodeData.metadata,
-            'file',
-            'tv',
-            tv.title
-          )
+          let mostRecent_episodeMetadata
+          try {
+            mostRecent_episodeMetadata = await fetchMetadata(
+              episodeData.metadata,
+              'file',
+              'tv',
+              tv.title
+            )
+          } catch (error) {
+            console.error(`Failed to fetch metadata for ${tv.title}:`, error)
+            // Handle the error appropriately, e.g., throw an error or return a default value
+            throw new Error(`Failed to fetch metadata for ${tv.title}`)
+          }
 
           if (!mostRecent_episodeMetadata) {
             console.error('TV: Metadata fetch failed for', episodeFileName, episodeData.metadata)
@@ -944,7 +1006,7 @@ export async function syncCaptions(currentDB, fileServer) {
   // Iterate through TV shows
   for (const tv of currentDB.tv) {
     // Retrieve the file server show data
-    const fileServerShowData = fileServer.tv[tv.title]
+    const fileServerShowData = fileServer?.tv[tv.title]
 
     // Iterate through seasons
     for (const season of tv.seasons) {
@@ -1054,7 +1116,7 @@ export async function syncCaptions(currentDB, fileServer) {
   // Iterate through movies
   for (const movie of currentDB.movies) {
     // Retrieve the file server movie data
-    const fileServerMovieData = fileServer.movies[movie.title]
+    const fileServerMovieData = fileServer?.movies[movie.title]
 
     // If there are subtitles data
     if (fileServerMovieData.urls?.subtitles) {
@@ -1133,7 +1195,7 @@ export async function syncChapters(currentDB, fileServer) {
   // Iterate through TV shows
   for (const tv of currentDB.tv) {
     // Retrieve the file server show data or default to empty if not present
-    const fileServerShowData = fileServer.tv[tv.title] || { seasons: {} }
+    const fileServerShowData = fileServer?.tv[tv.title] || { seasons: {} }
 
     // Iterate through seasons
     for (const season of tv.seasons) {
@@ -1219,7 +1281,7 @@ export async function syncChapters(currentDB, fileServer) {
   // Iterate through movies
   for (const movie of currentDB.movies) {
     // Retrieve the file server movie data or default to empty if not present
-    const fileServerMovieData = fileServer.movies[movie.title] || { urls: {} }
+    const fileServerMovieData = fileServer?.movies[movie.title] || { urls: {} }
 
     // If there is a chapters URL
     if (fileServerMovieData.urls.chapters) {
@@ -1276,7 +1338,7 @@ export async function syncVideoURL(currentDB, fileServer) {
   // Iterate through TV shows
   for (const tv of currentDB.tv) {
     // Retrieve the file server show data
-    const fileServerShowData = fileServer.tv[tv.title]
+    const fileServerShowData = fileServer?.tv[tv.title]
 
     // Iterate through seasons
     for (const season of tv.seasons) {
@@ -1335,7 +1397,7 @@ export async function syncVideoURL(currentDB, fileServer) {
   // Iterate through movies
   for (const movie of currentDB.movies) {
     // Retrieve the file server movie data
-    const fileServerMovieData = fileServer.movies[movie.title]
+    const fileServerMovieData = fileServer?.movies[movie.title]
 
     // If the file server video URL is different from the current video URL
     if (
@@ -1372,7 +1434,7 @@ export async function syncLogos(currentDB, fileServer) {
   // Iterate through TV shows
   for (const tv of currentDB.tv) {
     // Retrieve the file server show data
-    const fileServerShowData = fileServer.tv[tv.title]
+    const fileServerShowData = fileServer?.tv[tv.title]
 
     if (fileServerShowData?.logo) {
       if (
@@ -1400,7 +1462,7 @@ export async function syncLogos(currentDB, fileServer) {
   // Iterate through movies
   for (const movie of currentDB.movies) {
     // Retrieve the file server movie data
-    const fileServerMovieData = fileServer.movies[movie.title]
+    const fileServerMovieData = fileServer?.movies[movie.title]
 
     // If the file server video poster is different from the current posterURL
     if (fileServerMovieData.urls?.logo)
@@ -1438,7 +1500,7 @@ export async function syncBlurhash(currentDB, fileServer) {
 
   // Iterate through TV shows
   for (const tv of currentDB.tv) {
-    const fileServerShowData = fileServer.tv[tv.title]
+    const fileServerShowData = fileServer?.tv[tv.title]
 
     if (fileServerShowData) {
       const updateData = {}
@@ -1525,7 +1587,7 @@ export async function syncBlurhash(currentDB, fileServer) {
 
   // Iterate through movies
   for (const movie of currentDB.movies) {
-    const fileServerMovieData = fileServer.movies[movie.title]
+    const fileServerMovieData = fileServer?.movies[movie.title]
 
     if (fileServerMovieData) {
       const updateData = {}
@@ -1570,7 +1632,7 @@ export async function syncLengthAndDimensions(currentDB, fileServer) {
   // Iterate through TV shows
   for (const tv of currentDB.tv) {
     // Retrieve the file server show data
-    const fileServerShowData = fileServer.tv[tv.title]
+    const fileServerShowData = fileServer?.tv[tv.title]
 
     // Iterate through seasons
     for (const season of tv.seasons) {
@@ -1638,7 +1700,7 @@ export async function syncLengthAndDimensions(currentDB, fileServer) {
   // Iterate through movies
   for (const movie of currentDB.movies) {
     // Retrieve the file server movie data
-    const fileServerMovieData = fileServer.movies[movie.title]
+    const fileServerMovieData = fileServer?.movies[movie.title]
 
     // Find the MP4 file
     const mp4File = fileServerMovieData.fileNames.find((name) => name.endsWith('.mp4'))
@@ -1687,7 +1749,7 @@ export async function syncEpisodeThumbnails(currentDB, fileServer) {
   // Iterate through TV shows
   for (const tv of currentDB.tv) {
     // Retrieve the file server show data
-    const fileServerShowData = fileServer.tv[tv.title]
+    const fileServerShowData = fileServer?.tv[tv.title]
 
     // Iterate through seasons
     for (const season of tv.seasons) {
@@ -1805,7 +1867,7 @@ export async function syncPosterURLs(currentDB, fileServer) {
 
   // Sync TV shows and seasons
   for (const tv of currentDB.tv) {
-    const fileServerShowData = fileServer.tv[tv.title]
+    const fileServerShowData = fileServer?.tv[tv.title]
 
     if (fileServerShowData) {
       const updateData = {}
@@ -1865,7 +1927,7 @@ export async function syncPosterURLs(currentDB, fileServer) {
 
   // Sync movies
   for (const movie of currentDB.movies) {
-    const fileServerMovieData = fileServer.movies[movie.title]
+    const fileServerMovieData = fileServer?.movies[movie.title]
 
     if (fileServerMovieData) {
       const updateData = {}
@@ -1879,6 +1941,109 @@ export async function syncPosterURLs(currentDB, fileServer) {
       ) {
         updateData.posterURL = fileServerURLWithoutPrefixPath + fileServerMovieData.urls.posterURL
         console.log(`Movie: Updating posterURL for ${movie.title}`)
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await client
+          .db('Media')
+          .collection('Movies')
+          .updateOne({ title: movie.title }, { $set: updateData })
+
+        // Update the MediaUpdatesTV collection
+        await updateMediaUpdates(movie.title, 'movie')
+        console.log(`Movie updated: ${movie.title}`)
+      }
+    } else {
+      console.log(`No file server data found for movie: ${movie.title}`)
+    }
+  }
+
+  console.log('Poster URL synchronization complete.')
+}
+
+/**
+ * Syncs backdrop URLs between the current database and file server
+ * @param {Object} currentDB - The current database
+ * @param {Object} fileServer - The file server data
+ * @returns {Promise} - Resolves when sync is complete
+ */
+export async function syncBackdrop(currentDB, fileServer) {
+  const client = await clientPromise
+  console.log('Starting backdrop URL synchronization...')
+
+  // Sync TV shows and seasons
+  for (const tv of currentDB.tv) {
+    const fileServerShowData = fileServer?.tv[tv.title]
+
+    if (fileServerShowData) {
+      const updateData = {}
+
+      // Update show backdrop URL
+      if (
+        fileServerShowData.backdrop &&
+        (!tv.backdrop ||
+          fileServerShowData.backdrop !== tv.backdrop.replace(fileServerURLWithoutPrefixPath, ''))
+      ) {
+        updateData.backdrop = fileServerURLWithoutPrefixPath + fileServerShowData.backdrop
+        console.log(`TV: Updating backdrop for ${tv.title}`)
+      }
+
+      // Update show backdrop URL
+      if (
+        fileServerShowData.backdropBlurhash &&
+        (!tv.backdropBlurhash ||
+          fileServerShowData.backdropBlurhash !==
+            tv.backdropBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
+      ) {
+        updateData.backdropBlurhash =
+          fileServerURLWithoutPrefixPath + fileServerShowData.backdropBlurhash
+        console.log(`TV: Updating backdropBlurhash for ${tv.title}`)
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await client
+          .db('Media')
+          .collection('TV')
+          .updateOne({ title: tv.title }, { $set: updateData })
+
+        // Update the MediaUpdatesTV collection
+        await updateMediaUpdates(tv.title, 'tv')
+        console.log(`TV show updated: ${tv.title}`)
+      }
+    } else {
+      console.log(`No file server data found for TV show: ${tv.title}`)
+    }
+  }
+
+  // Sync movies
+  for (const movie of currentDB.movies) {
+    const fileServerMovieData = fileServer?.movies[movie.title]
+
+    if (fileServerMovieData) {
+      const updateData = {}
+
+      // Update movie backdrop URL
+      if (
+        fileServerMovieData.urls?.backdrop &&
+        (!movie.backdrop ||
+          fileServerMovieData.urls.backdrop !==
+            movie.backdrop.replace(fileServerURLWithoutPrefixPath, ''))
+      ) {
+        updateData.backdrop =
+          fileServerURLWithoutPrefixPath + fileServerMovieData.urls.backdropBlurhash
+        console.log(`Movie: Updating backdrop for ${movie.title}`)
+      }
+
+      // Update movie backdropBlurhash URL
+      if (
+        fileServerMovieData.urls?.backdropBlurhash &&
+        (!movie.backdropBlurhash ||
+          fileServerMovieData.urls.backdropBlurhash !==
+            movie.backdropBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
+      ) {
+        updateData.backdropBlurhash =
+          fileServerURLWithoutPrefixPath + fileServerMovieData.urls.backdropBlurhash
+        console.log(`Movie: Updating backdropBlurhash for ${movie.title}`)
       }
 
       if (Object.keys(updateData).length > 0) {

@@ -1,8 +1,8 @@
 import fetch from 'node-fetch'
 //import isAuthenticated from '../../../../utils/routeAuth'
 import clientPromise from '../../../../lib/mongodb'
-import isAuthenticated from 'src/utils/routeAuth'
-import { fileServerURL } from 'src/utils/config'
+import isAuthenticated from '@src/utils/routeAuth'
+import { fileServerURL } from '@src/utils/config'
 
 // This route is used to fetch spritesheet vtt file for a specific media item
 export const GET = async (req) => {

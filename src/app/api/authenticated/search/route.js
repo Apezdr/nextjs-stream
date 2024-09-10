@@ -1,6 +1,13 @@
-import clientPromise from 'src/lib/mongodb'
-import { fetchMetadata } from 'src/utils/admin_utils'
-import isAuthenticated from 'src/utils/routeAuth'
+import clientPromise from '@src/lib/mongodb'
+import { fetchMetadata } from '@src/utils/admin_utils'
+import { addCustomUrlToMedia, fetchRecentlyAdded } from '@src/utils/auth_database'
+import {
+  arrangeMediaByLatestModification,
+  getModifiedDate,
+  movieProjectionFields,
+  tvShowProjectionFields,
+} from '@src/utils/auth_utils'
+import isAuthenticated from '@src/utils/routeAuth'
 
 export const POST = async (req) => {
   const authResult = await isAuthenticated(req)
@@ -35,33 +42,10 @@ export const POST = async (req) => {
   }
 }
 
-const movieProjectionFields = {
-  _id: 0,
-  posterURL: 1,
-  posterBlurhash: 1,
-  title: 1,
-  dimensions: 1,
-  'metadata.overview': 1,
-  'metadata.release_date': 1,
-  'metadata.genres': 1,
-}
-
-const tvShowProjectionFields = {
-  _id: 0,
-  posterURL: 1,
-  posterBlurhash: 1,
-  title: 1,
-  'metadata.overview': 1,
-  'metadata.last_air_date': 1,
-  'metadata.networks': 1,
-  'metadata.genres': 1,
-  'metadata.status': 1,
-  seasons: 1,
-}
-
 async function searchMedia(query) {
   const client = await clientPromise
   const db = client.db('Media')
+  let recentlyAddedMediaQuery = false
 
   let movies, tvShows
 
@@ -83,6 +67,7 @@ async function searchMedia(query) {
       fetchRecentlyAdded(db, 'Movies'),
       fetchRecentlyAdded(db, 'TV'),
     ])
+    recentlyAddedMediaQuery = true
   }
 
   const [moviesWithUrl, tvShowsWithUrl] = await Promise.all([
@@ -90,45 +75,10 @@ async function searchMedia(query) {
     addCustomUrlToMedia(tvShows, 'tv'),
   ])
 
-  return [...moviesWithUrl, ...tvShowsWithUrl]
-}
-
-async function addCustomUrlToMedia(mediaArray, type) {
-  return await Promise.all(
-    mediaArray.map(async (media) => {
-      let returnObj = {
-        ...media,
-        url: `/list/${type}/${encodeURIComponent(media.title)}`,
-        description: media.metadata?.overview,
-        type,
-      }
-      if (media.posterBlurhash) {
-        returnObj.posterBlurhash = await fetchMetadata(
-          media.posterBlurhash,
-          'blurhash',
-          type,
-          media.title
-        )
-      }
-      return returnObj
-    })
-  )
-}
-
-async function fetchRecentlyAdded(db, collectionName) {
-  let sortField = { _id: -1 }
-  let projectionFields = {}
-
-  if (collectionName === 'Movies') {
-    projectionFields = movieProjectionFields
-  } else if (collectionName === 'TV') {
-    projectionFields = tvShowProjectionFields
+  if (recentlyAddedMediaQuery) {
+    // Merge and sort based on the latest modification date
+    return arrangeMediaByLatestModification(moviesWithUrl, tvShowsWithUrl)
   }
 
-  return await db
-    .collection(collectionName)
-    .find({}, { projection: projectionFields })
-    .sort(sortField)
-    .limit(3) // limit to 3 recent items, adjust as needed
-    .toArray()
+  return [...moviesWithUrl, ...tvShowsWithUrl]
 }

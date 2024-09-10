@@ -1,4 +1,4 @@
-import { auth } from 'src/lib/auth'
+import { auth } from '@src/lib/auth'
 import { buildURL } from '.'
 import { adminUserEmails } from './config'
 import axios from 'axios'
@@ -57,7 +57,7 @@ async function validateWebhookId(webhookId) {
   return validWebhookIds.includes(webhookId)
 }
 
-export async function isAdmin(req) {
+export async function isAdmin(req, redirect = true) {
   let sessionResponse
   try {
     sessionResponse = await axios.get(buildURL(`/api/auth/session`), {
@@ -73,7 +73,7 @@ export async function isAdmin(req) {
   if (!session || !session.user) {
     session = await auth()
   }
-  if (!session || !session.user || !adminUserEmails.includes(session.user.email)) {
+  if (redirect && (!session || !session.user || !adminUserEmails.includes(session.user.email))) {
     return new Response('You must be signed in as an admin.', {
       status: 401,
       url: buildURL(`/api/auth/session`),

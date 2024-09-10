@@ -5,7 +5,7 @@ import { processMediaData, processUserData } from '../../utils/admin_utils'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
-import { adminUserEmails, organizrURL } from 'src/utils/config'
+import { adminUserEmails, organizrURL } from '@src/utils/config'
 
 async function AdminPage() {
   const session = await auth()

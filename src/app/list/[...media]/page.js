@@ -11,10 +11,10 @@ import TVShowSeasonsList from '../../../components/MediaPages/TVShowSeasonsListC
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import Image from 'next/image'
 import { Suspense } from 'react'
-import Loading from 'src/app/loading'
+import Loading from '@src/app/loading'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { buildURL } from 'src/utils'
-import { fileServerURLWithPrefixPath } from 'src/utils/config'
+import { buildURL } from '@src/utils'
+import { fileServerURLWithPrefixPath } from '@src/utils/config'
 
 export async function generateMetadata({ params, searchParams }, parent) {
   // read route params

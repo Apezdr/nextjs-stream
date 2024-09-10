@@ -1,7 +1,7 @@
 'use client'
 import Link from 'next/link'
 import { memo, Suspense, lazy } from 'react'
-import { classNames } from 'src/utils'
+import { classNames } from '@src/utils'
 
 const LazyImage = lazy(() => import('next/image'))
 
@@ -27,7 +27,7 @@ const Card = ({
         >
           <div
             className={classNames(
-              listtype === 'recentlyWatched' && (logo || media.seasonNumber)
+              listtype === 'recentlyWatched' && (logo || media?.seasonNumber)
                 ? "inline-block before:content-[''] before:absolute before:top-0 before:left-0 before:w-full before:h-full before:bg-black before:rounded-lg"
                 : '',
               'relative'
@@ -45,7 +45,7 @@ const Card = ({
                 loading="lazy"
               />
             ) : null}
-            {media.seasonNumber ? (
+            {media?.seasonNumber ? (
               <div className="absolute z-20 top-[86%] max-w-[70%] mx-auto max-h-14 h-5 justify-center text-center w-auto inset-0">
                 <div className="bg-gray-200 bg-opacity-20 rounded-xl flex flex-row gap-1 px-[10px] py-[2px] justify-center">
                   <span className="text-xs text-gray-300">Season {media.seasonNumber}</span>

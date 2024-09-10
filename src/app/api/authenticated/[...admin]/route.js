@@ -1,19 +1,20 @@
-import { buildURL } from 'src/utils'
+import { buildURL } from '@src/utils'
 import { isAdmin, isAdminOrWebhook } from '../../../../utils/routeAuth'
 import {
   getAllMedia,
   getAllUsers,
   getLastSynced,
   getRecentlyWatched,
-} from 'src/utils/admin_database'
+} from '@src/utils/admin_database'
 import {
   extractEpisodeDetails,
   matchEpisodeFileName,
   processMediaData,
   processUserData,
-} from 'src/utils/admin_utils'
+} from '@src/utils/admin_utils'
 import axios from 'axios'
 import {
+  syncBackdrop,
   syncBlurhash,
   syncCaptions,
   syncChapters,
@@ -25,7 +26,17 @@ import {
   syncPosterURLs,
   syncVideoURL,
   updateLastSynced,
-} from 'src/utils/admin_frontend_database'
+} from '@src/utils/admin_frontend_database'
+import {
+  radarrAPIKey,
+  radarrURL,
+  sabnzbdAPIKey,
+  sabnzbdURL,
+  sonarrAPIKey,
+  sonarrURL,
+  tdarrAPIKey,
+  tdarrURL,
+} from '@src/utils/ssr_config'
 
 export async function GET(request, { params }) {
   const authResult = await isAdmin(request)
@@ -38,6 +49,10 @@ export async function GET(request, { params }) {
   const fetchUsers = slugs.includes('users') && slugs[0] === 'admin'
   const fetchRecentlyWatched = slugs.includes('recently-watched') && slugs[0] === 'admin'
   const fetchLastSynced = slugs.includes('lastSynced') && slugs[0] === 'admin'
+  const fetchSABNZBDqueue = slugs.includes('sabnzbd') && slugs[0] === 'admin'
+  const fetchRadarrqueue = slugs.includes('radarr') && slugs[0] === 'admin'
+  const fetchSonarrqueue = slugs.includes('sonarr') && slugs[0] === 'admin'
+  const fetchTdarrqueue = slugs.includes('tdarr') && slugs[0] === 'admin'
 
   let response = {}
 
@@ -61,8 +76,38 @@ export async function GET(request, { params }) {
     response = { lastSyncTime: lastSynced }
   }
 
+  if (fetchSABNZBDqueue) {
+    const sabnzbdQueue = await fetchSABNZBDQueue()
+    response = sabnzbdQueue
+  }
+
+  if (fetchRadarrqueue) {
+    const radarrQueue = await fetchRadarrQueue()
+    response = radarrQueue
+  }
+
+  if (fetchSonarrqueue) {
+    const sonarrQueue = await fetchSonarrQueue()
+    response = sonarrQueue
+  }
+
+  if (fetchTdarrqueue) {
+    const tdarrQueue = await fetchTdarrQueue()
+    response = tdarrQueue
+  }
+
   // Ensure that at least one type of data is included
-  if (!fetchMedia && !fetchUsers && !fetchRecentlyWatched && !fetchLastSynced && slugs.length > 0) {
+  if (
+    !fetchMedia &&
+    !fetchUsers &&
+    !fetchRecentlyWatched &&
+    !fetchLastSynced &&
+    !fetchSABNZBDqueue &&
+    !fetchRadarrqueue &&
+    !fetchSonarrqueue &&
+    !fetchTdarrqueue &&
+    slugs.length > 0
+  ) {
     return new Response(JSON.stringify({ error: 'No valid data type specified' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
@@ -153,6 +198,7 @@ async function handleSync(webhookId, request) {
     await syncLengthAndDimensions(currentDB, fileServer)
     await syncEpisodeThumbnails(currentDB, fileServer)
     await syncPosterURLs(currentDB, fileServer)
+    await syncBackdrop(currentDB, fileServer)
     await updateLastSynced()
     console.info('Finished Sync with Fileserver')
     return { missingMedia, missingMp4 }
@@ -176,13 +222,13 @@ function identifyMissingMedia(fileServer, currentDB) {
   const missingMp4 = { tv: [], movies: [] }
 
   // Check for missing TV shows, seasons, and episodes
-  Object.keys(fileServer.tv).forEach((showTitle) => {
+  Object.keys(fileServer?.tv).forEach((showTitle) => {
     const foundShow = currentDB.tv.find((show) => show.title === showTitle)
 
     if (!foundShow) {
-      const seasons = Object.keys(fileServer.tv[showTitle].seasons)
+      const seasons = Object.keys(fileServer?.tv[showTitle].seasons)
       const seasonsWithEpisodes = seasons.filter(
-        (season) => fileServer.tv[showTitle].seasons[season].fileNames.length > 0
+        (season) => fileServer?.tv[showTitle].seasons[season].fileNames.length > 0
       )
 
       if (seasonsWithEpisodes.length > 0) {
@@ -195,19 +241,19 @@ function identifyMissingMedia(fileServer, currentDB) {
         missingMp4.tv.push(showTitle)
       }
     } else {
-      Object.keys(fileServer.tv[showTitle].seasons).forEach((season) => {
+      Object.keys(fileServer?.tv[showTitle].seasons).forEach((season) => {
         const foundSeason = foundShow.seasons.find((s) => `Season ${s.seasonNumber}` === season)
         const hasFilesForSeason =
           Array.isArray(foundSeason?.fileNames) ||
           foundSeason?.fileNames?.length > 0 ||
-          fileServer.tv[showTitle].seasons[season]?.fileNames?.length > 0
+          fileServer?.tv[showTitle].seasons[season]?.fileNames?.length > 0
 
         if (!foundSeason && hasFilesForSeason) {
           let show = missingShowsMap.get(showTitle) || { showTitle, seasons: [] }
           show.seasons.push(season)
           missingShowsMap.set(showTitle, show)
         } else if (hasFilesForSeason) {
-          const seasonFiles = fileServer.tv[showTitle].seasons[season].fileNames
+          const seasonFiles = fileServer?.tv[showTitle].seasons[season].fileNames
 
           // Check if the season has any episodes
           if (seasonFiles.length === 0) {
@@ -230,10 +276,10 @@ function identifyMissingMedia(fileServer, currentDB) {
                 return false
               })
               .map((episodeFileName) => {
-                const length = fileServer.tv[showTitle].seasons[season].lengths[episodeFileName]
+                const length = fileServer?.tv[showTitle].seasons[season].lengths[episodeFileName]
                 const dimensions =
-                  fileServer.tv[showTitle].seasons[season].dimensions[episodeFileName]
-                const urls = fileServer.tv[showTitle].seasons[season].urls[episodeFileName]
+                  fileServer?.tv[showTitle].seasons[season].dimensions[episodeFileName]
+                const urls = fileServer?.tv[showTitle].seasons[season].urls[episodeFileName]
                 return { episodeFileName, length, dimensions, ...urls }
               })
 
@@ -253,12 +299,12 @@ function identifyMissingMedia(fileServer, currentDB) {
   missingMedia.tv = missingMediaArray
 
   // Check for missing Movies
-  Object.keys(fileServer.movies).forEach((movieTitle) => {
+  Object.keys(fileServer?.movies).forEach((movieTitle) => {
     const foundMovie = currentDB.movies.find((movie) => movie.title === movieTitle)
     if (!foundMovie) {
       // If the movie is missing the url for the mp4 file
       // Add it to the missingMedia array
-      if (fileServer.movies[movieTitle].urls.mp4) {
+      if (fileServer?.movies[movieTitle].urls.mp4) {
         missingMedia.movies.push(movieTitle)
       } else {
         missingMp4.movies.push(movieTitle)
@@ -267,4 +313,60 @@ function identifyMissingMedia(fileServer, currentDB) {
   })
 
   return { missingMedia, missingMp4 }
+}
+
+async function fetchSABNZBDQueue() {
+  if (!sabnzbdURL || !sabnzbdAPIKey) {
+    throw new Error('SABNZBD URL or API key not configured')
+  }
+  try {
+    const sabnzbdQueue = await axios.get(`${sabnzbdURL}/api?mode=queue&apikey=${sabnzbdAPIKey}`)
+    return sabnzbdQueue.data
+  } catch (error) {
+    console.error('Failed to fetch SABNZBD queue:', error)
+    throw new Error('Failed to fetch SABNZBD queue')
+  }
+}
+
+async function fetchRadarrQueue() {
+  if (!radarrURL || !radarrAPIKey) {
+    throw new Error('Radarr URL or API key not configured')
+  }
+  try {
+    const radarrQueue = await axios.get(`${radarrURL}/api/v3/queue?apikey=${radarrAPIKey}`)
+    return radarrQueue.data
+  } catch (error) {
+    console.error(
+      'Failed to fetch Radarr queue:',
+      `${radarrURL}/api/v3/queue?apikey=${radarrAPIKey}`,
+      error
+    )
+    throw new Error('Failed to fetch Radarr queue')
+  }
+}
+
+async function fetchSonarrQueue() {
+  if (!sonarrURL || !sonarrAPIKey) {
+    throw new Error('Sonarr URL or API key not configured')
+  }
+  try {
+    const sonarrQueue = await axios.get(`${sonarrURL}/api/v3/queue?apikey=${sonarrAPIKey}`)
+    return sonarrQueue.data
+  } catch (error) {
+    console.error('Failed to fetch Sonarr queue:', error)
+    throw new Error('Failed to fetch Sonarr queue')
+  }
+}
+
+async function fetchTdarrQueue() {
+  if (!tdarrURL || !tdarrAPIKey) {
+    throw new Error('Tdarr URL or API key not configured')
+  }
+  try {
+    const tdarrQueue = await axios.get(`${tdarrURL}/api/v2/get-nodes?apikey=${tdarrAPIKey}`)
+    return tdarrQueue.data
+  } catch (error) {
+    console.error('Failed to fetch Tdarr queue:', error)
+    throw new Error('Failed to fetch Tdarr queue')
+  }
 }

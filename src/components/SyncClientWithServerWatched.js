@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect } from 'react'
-import { buildURL } from 'src/utils'
+import { buildURL } from '@src/utils'
 
 export default function SyncClientWithServerWatched({ once = false }) {
   useEffect(() => {

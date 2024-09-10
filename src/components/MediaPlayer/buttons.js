@@ -28,6 +28,7 @@ import {
   ChromecastIcon,
   AirPlayIcon,
 } from '@vidstack/react/icons'
+import * as Sliders from '@components/MediaPlayer/sliders'
 import Link from 'next/link'
 //import ChromecastButton from './ChromecastButton'
 
@@ -53,21 +54,28 @@ export function Play({ tooltipPlacement }) {
   )
 }
 
-export function Mute({ tooltipPlacement }) {
+export function Mute({ tooltipPlacement, toggleSliderOnUnmute = false }) {
   const volume = useMediaState('volume'),
     isMuted = useMediaState('muted')
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
-        <MuteButton className={buttonClass}>
-          {isMuted || volume == 0 ? (
-            <MuteIcon className="w-8 h-8" />
-          ) : volume < 0.5 ? (
-            <VolumeLowIcon className="w-8 h-8" />
-          ) : (
-            <VolumeHighIcon className="w-8 h-8" />
-          )}
-        </MuteButton>
+        <>
+          <MuteButton className={buttonClass}>
+            {isMuted || volume == 0 ? (
+              <MuteIcon className="w-8 h-8" />
+            ) : volume < 0.5 ? (
+              <VolumeLowIcon className="w-8 h-8" />
+            ) : (
+              <VolumeHighIcon className="w-8 h-8" />
+            )}
+          </MuteButton>
+          {toggleSliderOnUnmute && !isMuted ? (
+            <div className="min-w-24">
+              <Sliders.Volume />
+            </div>
+          ) : null}
+        </>
       </Tooltip.Trigger>
       <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
         {isMuted ? 'Unmute' : 'Mute'}

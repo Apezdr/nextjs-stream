@@ -18,6 +18,7 @@
     "baseUrl": ".",
     "paths": {
       "@components/*": ["./src/components/*"],
+      "@src/*": ["./src/*"],
       "contentlayer/generated": ["./.contentlayer/generated"]
     },
     "plugins": [
@@ -33,10 +34,12 @@
     "**/*.mjs",
     "**/*.ts",
     "**/*.tsx",
+    "**/*.jsx",
     "**/*.json",
     ".contentlayer/generated",
     ".contentlayer/generated/**/*.json",
-    ".next/types/**/*.ts"
+    ".next/types/**/*.ts",
+    "__tests__/**/*.jsx"
   ],
   "exclude": ["node_modules"]
 }

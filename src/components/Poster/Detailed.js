@@ -1,6 +1,6 @@
 import MediaPoster from '@components/MediaPoster'
 import Image from 'next/image'
-import { classNames, generateColors, getFullImageUrl } from 'src/utils'
+import { classNames, generateColors, getFullImageUrl } from '@src/utils'
 
 export default function Detailed({
   tvShow,

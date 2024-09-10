@@ -1,5 +1,5 @@
 # Stage 1: Building the code
-FROM node:21-alpine as builder
+FROM node:current-alpine as builder
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
@@ -9,7 +9,7 @@ COPY . .
 RUN npm run build
 
 # Stage 2: Running the code
-FROM node:21-alpine
+FROM node:current-alpine
 WORKDIR /app
 COPY --from=builder /app/ ./
 EXPOSE 3232

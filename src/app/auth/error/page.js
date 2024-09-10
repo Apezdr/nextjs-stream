@@ -1,9 +1,9 @@
 import Image from 'next/image'
 import Link from 'next/link'
 import Clock from '../../../../public/Clock.png'
-import isAuthenticated from 'src/utils/routeAuth'
+import isAuthenticated from '@src/utils/routeAuth'
 import { headers } from 'next/headers'
-import { classNames } from 'src/utils'
+import { classNames } from '@src/utils'
 
 const AuthError = async ({ searchParams }) => {
   const headersList = headers()

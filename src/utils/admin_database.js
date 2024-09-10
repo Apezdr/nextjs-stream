@@ -4,14 +4,19 @@ import { ObjectId } from 'mongodb'
 import { extractTVShowDetails } from './admin_frontend_database'
 import { fileServerURLWithPrefixPath } from './config'
 
-export async function getAllMedia() {
+export async function getAllMedia({ type = 'all' } = {}) {
   const client = await clientPromise
-  const movies = await client.db('Media').collection('Movies').find({}).toArray()
-  const tv = await client.db('Media').collection('TV').find({}).toArray()
-  return {
-    movies,
-    tv,
+  const result = {}
+
+  if (type === 'all' || type === 'movie') {
+    result.movies = await client.db('Media').collection('Movies').find({}).toArray()
   }
+
+  if (type === 'all' || type === 'tv') {
+    result.tv = await client.db('Media').collection('TV').find({}).toArray()
+  }
+
+  return result
 }
 
 export async function updateMetadata({ type, media_title, tvSeriesData = null }) {

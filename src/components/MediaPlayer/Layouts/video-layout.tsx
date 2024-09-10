@@ -10,7 +10,7 @@ import * as Menus from '../menus'
 import * as Sliders from '../sliders'
 import { TimeGroup } from '../time-group'
 import { Title, VideoMetadata } from '../title'
-import { buildURL } from 'src/utils'
+import { buildURL } from '@src/utils'
 import NextUpCard from '../NextUpCard'
 
 export interface VideoLayoutProps {
@@ -78,7 +78,7 @@ export function VideoLayout({
         )}
         <div className="flex-1" />
         <Controls.Group className="flex w-full items-center px-2">
-          {nextUpCard && (
+          {nextUpCard && nextUpCard?.hasNextEpisode && (
             <div className="relative -bottom-4 left-full">
               <NextUpCard
                 mediaTitle={nextUpCard?.mediaTitle}

@@ -4,7 +4,7 @@ import authConfig from './auth.config'
 import clientPromise from './mongodb'
 import MongoDBCustomAdapter from './MongoDBCustomAdapter'
 import { JWT } from '@auth/core/jwt'
-import { adminUserEmails } from 'src/utils/config'
+import { adminUserEmails } from '@src/utils/config'
 
 type CustomUser = {
   id: string

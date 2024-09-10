@@ -8,7 +8,7 @@ import SignOutButton from '@components/SignOutButton'
 import MediaPoster from '../MediaPoster'
 import Detailed from '@components/Poster/Detailed'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { fetchMetadata } from 'src/utils/admin_utils'
+import { fetchMetadata } from '@src/utils/admin_utils'
 export const dynamic = 'force-dynamic'
 
 const variants = {
@@ -89,7 +89,7 @@ export default async function TVShowSeasonsList({ showTitle }) {
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
       <SyncClientWithServerWatched />
-      <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-6 xl:gap-x-2 ">
+      <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-6 xl:gap-x-2 mt-32">
         {/* Summary Poster */}
         <li className="col-span-1 sm:col-span-3 xl:col-span-2 lg:row-span-3">
           <Detailed tvShow={tvShow} />

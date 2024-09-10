@@ -1,4 +1,4 @@
-import { classNames } from 'src/utils'
+import { classNames } from '@src/utils'
 
 export const CaptionSVG = ({ className = '' }) => (
   <svg

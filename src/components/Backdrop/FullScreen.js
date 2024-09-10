@@ -1,6 +1,6 @@
 'use client'
 import Image from 'next/image'
-import { getFullImageUrl } from 'src/utils'
+import { getFullImageUrl } from '@src/utils'
 import { motion } from 'framer-motion'
 
 export default function FullScreenBackdrop({ media }) {

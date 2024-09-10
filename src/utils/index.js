@@ -87,3 +87,5 @@ export function generateColors(str) {
     fontColor: fontColor,
   }
 }
+
+export const fetcher = (...args) => fetch(...args).then((res) => res.json())

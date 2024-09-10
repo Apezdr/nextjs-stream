@@ -3,12 +3,12 @@
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
 import listPlugin from '@fullcalendar/list'
-import Loading from 'src/app/loading'
+import Loading from '@src/app/loading'
 import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import ical from 'ical.js'
 import { motion, AnimatePresence } from 'framer-motion'
-import { classNames, generateColors } from 'src/utils'
+import { classNames, generateColors } from '@src/utils'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -34,25 +34,38 @@ function extractShowTitleAndDetails(eventTitle) {
 
 // Helper function to parse calendar data from Sonarr and Radarr
 function parseCalendarData(data, sourceType) {
-  const vcalendar = ical.parse(data)
-  const calendarData = new ical.Component(vcalendar)
-  return calendarData.getAllSubcomponents('vevent').map((vevent) => {
-    const title = vevent.getFirstPropertyValue('summary')
-    const showTitle = title.split(' - ')[0] // Extract the show title from the event title for Sonarr, adjust for Radarr if needed
-    const colors = generateColors(showTitle) // Generate unique colors based on the show or movie title
-    return {
-      title: `${/*sourceType + ": "*/ ''}${title}`, // Prefix the title with the source type (Sonarr or Radarr)
-      start: vevent.getFirstPropertyValue('dtstart').toJSDate(),
-      end: vevent.getFirstPropertyValue('dtend').toJSDate(),
-      backgroundColor: colors.backgroundColor,
-      fontColor: colors.fontColor,
-      sourceType: sourceType,
-      // Add any other necessary event properties here
-    }
-  })
+  if (!data) {
+    console.warn(`No data provided for ${sourceType}`)
+    return []
+  }
+
+  try {
+    const vcalendar = ical.parse(data)
+    const calendarData = new ical.Component(vcalendar)
+    return calendarData.getAllSubcomponents('vevent').map((vevent) => {
+      const title = vevent.getFirstPropertyValue('summary')
+      const showTitle = title.split(' - ')[0] // Extract the show title from the event title for Sonarr, adjust for Radarr if needed
+      const colors = generateColors(showTitle) // Generate unique colors based on the show or movie title
+      return {
+        title: `${/*sourceType + ": "*/ ''}${title}`, // Prefix the title with the source type (Sonarr or Radarr)
+        start: vevent.getFirstPropertyValue('dtstart').toJSDate(),
+        end: vevent.getFirstPropertyValue('dtend').toJSDate(),
+        backgroundColor: colors.backgroundColor,
+        fontColor: colors.fontColor,
+        sourceType: sourceType,
+        // Add any other necessary event properties here
+      }
+    })
+  } catch (error) {
+    console.error(`Error parsing ${sourceType} data:`, error)
+    return []
+  }
 }
 
-export default function ReleaseCalendar() {
+export default function ReleaseCalendar({
+  aspectRatio = 1.6,
+  containerClasses = 'w-full lg:w-3/5 mx-auto mt-4',
+}) {
   const [isLoading, setIsLoading] = useState(true)
   const [events, setEvents] = useState([])
   const calendarRef = useRef(null)
@@ -119,35 +132,39 @@ export default function ReleaseCalendar() {
       const sonarr_data = await sonarr_response.text()
       const radarr_data = await radarr_response.text()
 
-      // Parse Sonarr and Radarr data
-      const sonarr_events = parseCalendarData(sonarr_data, 'Sonarr') || []
-      const radarr_events = parseCalendarData(radarr_data, 'Radarr') || []
+      if (sonarr_data || radarr_data) {
+        // Parse Sonarr and Radarr data
+        const sonarr_events = parseCalendarData(sonarr_data, 'Sonarr') || []
+        const radarr_events = parseCalendarData(radarr_data, 'Radarr') || []
 
-      // Group Sonarr events by start time and show title
-      const groupedSonarrEvents = sonarr_events.reduce((acc, event) => {
-        const startTime = event.start.getTime()
-        const showTitle = event.title.split(' - ')[0]
-        const key = `${startTime}-${showTitle}`
+        // Group Sonarr events by start time and show title
+        const groupedSonarrEvents = sonarr_events.reduce((acc, event) => {
+          const startTime = event.start.getTime()
+          const showTitle = event.title.split(' - ')[0]
+          const key = `${startTime}-${showTitle}`
 
-        if (!acc[key]) {
-          acc[key] = {
-            ...event,
-            showDetails: [event.title.split(' - ').slice(1).join(' - ')],
+          if (!acc[key]) {
+            acc[key] = {
+              ...event,
+              showDetails: [event.title.split(' - ').slice(1).join(' - ')],
+            }
+          } else {
+            acc[key].showDetails.push(event.title.split(' - ').slice(1).join(' - '))
           }
-        } else {
-          acc[key].showDetails.push(event.title.split(' - ').slice(1).join(' - '))
-        }
 
-        return acc
-      }, {})
+          return acc
+        }, {})
 
-      // Combine grouped Sonarr events and Radarr events
-      const combinedEvents = [...Object.values(groupedSonarrEvents), ...radarr_events]
+        // Combine grouped Sonarr events and Radarr events
+        const combinedEvents = [...Object.values(groupedSonarrEvents), ...radarr_events]
 
-      setEvents(combinedEvents)
+        setEvents(combinedEvents)
+      }
+
       setIsLoading(false)
     } catch (error) {
       console.error('Error fetching events:', error)
+    } finally {
       setIsLoading(false)
     }
   }
@@ -168,7 +185,7 @@ export default function ReleaseCalendar() {
         duration: 0.45,
       }}
     >
-      <div className="w-full lg:w-3/5 mx-auto mt-4">
+      <div className={classNames(containerClasses)}>
         <h4 className="text-center text-2xl font-bold text-white">Release Calendar</h4>
         <AnimatePresence mode="wait">
           {isLoading ? (
@@ -198,6 +215,7 @@ export default function ReleaseCalendar() {
                 duration: 1.45,
               }}
               key={'ReleaseCalendar-FullCalendar-AnimationCont'}
+              data-testid="full-calendar"
             >
               <FullCalendar
                 ref={calendarRef}
@@ -212,7 +230,7 @@ export default function ReleaseCalendar() {
                   right: 'dayGridMonth,dayGridWeek,dayGridDay', // user can switch between the two
                 }}
                 windowResize={callback}
-                aspectRatio={1.6}
+                aspectRatio={aspectRatio}
               />
             </motion.div>
           )}
@@ -222,7 +240,7 @@ export default function ReleaseCalendar() {
   )
 }
 
-function renderEventContent(eventInfo) {
+export function renderEventContent(eventInfo) {
   const { showTitle, showDetails } = extractShowTitleAndDetails(eventInfo.event.title)
   const backgroundColor = eventInfo.event.backgroundColor
   const fontColor = eventInfo.event.extendedProps.fontColor

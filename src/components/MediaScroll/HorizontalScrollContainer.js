@@ -1,6 +1,10 @@
-import { getPosters, getRecentlyWatchedForUser } from 'src/utils/admin_frontend_database'
+import {
+  getPosters,
+  getRecentlyAddedMedia,
+  getRecentlyWatchedForUser,
+} from '@src/utils/admin_frontend_database'
 import HorizontalScroll from './HorizontalScroll'
-import { auth } from 'src/lib/auth'
+import { auth } from '@src/lib/auth'
 
 const sortFunctions = {
   id: (a, b, order) => (order === 'asc' ? a - b : b - a),
@@ -19,6 +23,7 @@ export default async function HorizontalScrollContainer({
   let moviePosters = [],
     tvPosters = [],
     watched = [],
+    addedMedia = [],
     items = []
   const session = await auth()
 
@@ -41,6 +46,12 @@ export default async function HorizontalScrollContainer({
       watched = await getRecentlyWatchedForUser(session.user?.id)
       if (watched && watched.length > 0) {
         items = watched.sort(sortList)
+      }
+      break
+    case 'recentlyAdded':
+      addedMedia = await getRecentlyAddedMedia({ limit: 30 })
+      if (addedMedia && addedMedia.length > 0) {
+        items = addedMedia
       }
       break
     case 'all':

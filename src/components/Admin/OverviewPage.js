@@ -10,10 +10,20 @@ import SyncMediaPopup from './SyncMediaPopup'
 import axios from 'axios'
 import Link from 'next/link'
 import RecentlyWatched from './RecentlyWatchedList'
-import { buildURL } from 'src/utils'
+import { buildURL } from '@src/utils'
+import DownloadStatus from './Integrations/SABNZBDqueue'
+import TdarrProgressBar from './Integrations/TdarrQueue'
+import RadarrQueue from './Integrations/RadarrQueue'
+import SonarrQueue from './Integrations/SonarrQueue'
+import { PauseCircleIcon } from '@heroicons/react/20/solid'
 
 const processLastSyncTimeData = (lastSyncTimeData) => {
-  const lastSyncTime = typeof(lastSyncTimeData) === 'object' ? lastSyncTimeData.lastSyncTime : lastSyncTimeData
+  const lastSyncTime =
+    typeof lastSyncTimeData === 'object'
+      ? lastSyncTimeData?.lastSyncTime
+        ? lastSyncTimeData.lastSyncTime
+        : lastSyncTimeData
+      : lastSyncTimeData
   if (!isNaN(Date.parse(lastSyncTime)) && lastSyncTime) {
     const lastSyncDate = new Date(lastSyncTime)
     const formattedTime = isSameDay(new Date(), lastSyncDate)
@@ -34,7 +44,7 @@ const processLastSyncTimeData = (lastSyncTimeData) => {
         })
     return String(formattedTime)
   } else {
-    return 'Sync hasn\'t been run yet'
+    return "Sync hasn't been run yet"
   }
 }
 
@@ -52,6 +62,10 @@ export default function AdminOverviewPage({
   const [_processedUserData, setProcessedUserData] = useState(processedUserData)
   const [recentlyWatched, setRecentlyWatched] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState(() => processLastSyncTimeData(_lastSyncTime))
+  const [sabnzbdQueue, setsabnzbdQueue] = useState(false)
+  const [radarrQueue, setradarrQueue] = useState(false)
+  const [sonarrQueue, setsonarrQueue] = useState(false)
+  const [tdarrQueue, settdarrQueue] = useState(false)
 
   const updateRecord = (newData) => {
     setRecord((prevRecord) => ({ ...prevRecord, ...newData }))
@@ -69,6 +83,30 @@ export default function AdminOverviewPage({
 
   const fetchLastSyncTime = async () => {
     const response = await fetch(buildURL(`/api/authenticated/admin/lastSynced`))
+    const data = await response.json()
+    return data
+  }
+
+  const fetchSABNZBDqueue = async () => {
+    const response = await fetch(buildURL(`/api/authenticated/admin/sabnzbd`))
+    const data = await response.json()
+    return data
+  }
+
+  const fetchRadarrqueue = async () => {
+    const response = await fetch(buildURL(`/api/authenticated/admin/radarr`))
+    const data = await response.json()
+    return data
+  }
+
+  const fetchSonarrqueue = async () => {
+    const response = await fetch(buildURL(`/api/authenticated/admin/sonarr`))
+    const data = await response.json()
+    return data
+  }
+
+  const fetchTdarrqueue = async () => {
+    const response = await fetch(buildURL(`/api/authenticated/admin/tdarr`))
     const data = await response.json()
     return data
   }
@@ -91,15 +129,55 @@ export default function AdminOverviewPage({
         console.error('Error fetching data:', error)
       }
     }
+    const fetchSABNZBDdata = async () => {
+      try {
+        const sabnzbdData = await fetchSABNZBDqueue()
+        setsabnzbdQueue(sabnzbdData)
+      } catch (error) {
+        console.error('Error fetching SABNZBD queue:', error)
+      }
+    }
+    const fetchRadarrdata = async () => {
+      try {
+        const radarrData = await fetchRadarrqueue()
+        setradarrQueue(radarrData)
+      } catch (error) {
+        console.error('Error fetching Radarr queue:', error)
+      }
+    }
+    const fetchSonarrdata = async () => {
+      try {
+        const sonarrData = await fetchSonarrqueue()
+        setsonarrQueue(sonarrData)
+      } catch (error) {
+        console.error('Error fetching Sonarr queue:', error)
+      }
+    }
+    const fetchTdarrdata = async () => {
+      try {
+        const tdarrData = await fetchTdarrqueue()
+        settdarrQueue(tdarrData)
+      } catch (error) {
+        console.error('Error fetching Tdarr queue:', error)
+      }
+    }
 
     fetchData()
 
     const intervalId = setInterval(fetchData, 15000)
     const intervalId2 = setInterval(fetchRecentlyWatchedData, 2000)
+    const intervalId3 = setInterval(fetchSABNZBDdata, 2000)
+    const intervalId4 = setInterval(fetchRadarrdata, 2000)
+    const intervalId5 = setInterval(fetchSonarrdata, 2000)
+    const intervalId6 = setInterval(fetchTdarrdata, 2000)
 
     return () => {
       clearInterval(intervalId)
       clearInterval(intervalId2)
+      clearInterval(intervalId3)
+      clearInterval(intervalId4)
+      clearInterval(intervalId5)
+      clearInterval(intervalId6)
     }
   }, [])
 
@@ -201,9 +279,7 @@ export default function AdminOverviewPage({
             </svg>
             <span className="text-lg font-semibold text-black">Last Synced:</span>
           </div>
-          <p className="mt-2 text-gray-600">
-            {lastSyncTime}
-          </p>
+          <p className="mt-2 text-gray-600">{lastSyncTime}</p>
         </div>
       </div>
       <div className="flex flex-row gap-4 mt-8">
@@ -224,6 +300,37 @@ export default function AdminOverviewPage({
       </div>
       <hr className="my-16 border-gray-300 w-full" />
       <RecentlyWatched recentlyWatched={recentlyWatched} />
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        {sabnzbdQueue ? (
+          <div>
+            <h2 className="text-xl font-bold mb-2">
+              Download Status
+              {sabnzbdQueue.queue.status?.toLowerCase() === 'paused' ? (
+                <PauseCircleIcon className="ml-2 w-8 inline-block" />
+              ) : null}
+            </h2>
+            <DownloadStatus data={sabnzbdQueue.queue} />
+          </div>
+        ) : null}
+        {radarrQueue ? (
+          <div>
+            <h2 className="text-xl font-bold mb-2">Radarr Queue</h2>
+            <RadarrQueue data={radarrQueue} />
+          </div>
+        ) : null}
+        {sonarrQueue ? (
+          <div>
+            <h2 className="text-xl font-bold mb-2">Sonarr Queue</h2>
+            <SonarrQueue data={sonarrQueue} />
+          </div>
+        ) : null}
+        {tdarrQueue ? (
+          <div>
+            <h2 className="text-xl font-bold mb-2">Tdarr Progress</h2>
+            <TdarrProgressBar data={tdarrQueue} />
+          </div>
+        ) : null}
+      </div>
       <div className="flex flex-col xl:flex-row">
         <ListRecords
           title="Movies"

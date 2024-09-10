@@ -1,4 +1,4 @@
-import { buildURL } from 'src/utils'
+import { buildURL } from '@src/utils'
 
 self.addEventListener('message', (e) => {
   const { videoURL, currentTime } = e.data

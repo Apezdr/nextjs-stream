@@ -2,7 +2,7 @@
 
 import { Dialog, Transition } from '@headlessui/react'
 import { Fragment, useRef, useState } from 'react'
-import { buildURL, classNames } from 'src/utils'
+import { buildURL, classNames } from '@src/utils'
 
 export default function SyncMediaPopup({
   isOpen,

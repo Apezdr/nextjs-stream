@@ -1,19 +1,20 @@
 'use client'
-import { memo, Suspense } from 'react'
+import { memo, Suspense, useMemo } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Image from 'next/image'
 import Link from 'next/link'
-import Loading from 'src/app/loading'
+import Loading from '@src/app/loading'
 import { lazy } from 'react'
 const BannerVideoPlayer = lazy(() => import('./BannerVideoPlayer'))
 
 const BannerContent = ({
-  currentMedia,
+  mediaList,
   showVideo,
   handleVideoEnd,
   currentMediaIndex,
   onImageLoad,
 }) => {
+  const currentMedia = useMemo(() => mediaList[currentMediaIndex], [mediaList, currentMediaIndex])
   return (
     <>
       <AnimatePresence mode="wait">
@@ -26,9 +27,9 @@ const BannerContent = ({
             transition={{ duration: 1, ease: 'easeInOut' }} // Adjusted transition
             className="absolute inset-0"
           >
-            {currentMedia.backdropBlurhash ? (
+            {currentMedia?.backdropBlurhash ? (
               <Image
-                src={currentMedia.backdrop}
+                src={currentMedia?.backdrop}
                 className="object-cover select-none pointer-events-none"
                 alt="Banner Image"
                 fill
@@ -36,23 +37,26 @@ const BannerContent = ({
                 placeholder="blur"
                 quality={100}
                 onLoad={onImageLoad}
+                priority
               />
-            ) : (
+            ) : currentMedia?.backdrop ? (
               <Image
-                src={currentMedia.backdrop}
+                src={currentMedia?.backdrop}
                 className="object-cover select-none pointer-events-none"
                 alt="Banner Image"
                 fill
                 quality={100}
                 onLoad={onImageLoad}
+                priority
               />
-            )}
+            ) : null}
+            {/* Fallback to null but could show something as a placeholder */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>
           </motion.div>
         )}
       </AnimatePresence>
       <AnimatePresence mode="wait">
-        {currentMedia.metadata?.trailer_url && showVideo && (
+        {currentMedia?.metadata?.trailer_url && showVideo && (
           <motion.div
             key={`video-${currentMediaIndex}`} // Updated key
             initial={{ opacity: 0 }}
@@ -75,15 +79,15 @@ const BannerContent = ({
         )}
       </AnimatePresence>
       <AnimatePresence mode="wait">
-        {currentMedia.logo && (
-          <motion.div
-            key={`logo-${currentMediaIndex}`} // Updated key
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0, transition: { duration: 0.5, ease: 'easeInOut' } }} // Faster exit transition
-            transition={{ duration: 1, ease: 'easeInOut', delay: 0.5 }} // Standard transition with delay for entry
-            className="absolute left-1/4 top-1/2 transform -translate-y-1/2 text-center w-36 sm:w-64"
-          >
+        <motion.div
+          key={`logo-${currentMediaIndex}`} // Updated key
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0, transition: { duration: 0.5, ease: 'easeInOut' } }} // Faster exit transition
+          transition={{ duration: 1, ease: 'easeInOut', delay: 0.5 }} // Standard transition with delay for entry
+          className="absolute left-1/4 top-1/2 transform -translate-y-1/2 text-center w-36 sm:w-64"
+        >
+          {currentMedia?.logo ? (
             <Image
               src={currentMedia.logo}
               alt="Logo Image"
@@ -91,7 +95,10 @@ const BannerContent = ({
               height={300}
               className="object-contain select-none pointer-events-none"
               loading="eager"
+              priority
             />
+          ) : null}
+          {currentMedia?.title ? (
             <div className="flex gap-2 text-xs sm:text-sm">
               <Link
                 href={`/list/movie/${encodeURIComponent(currentMedia.title)}`}
@@ -134,8 +141,8 @@ const BannerContent = ({
                 Trailer
               </Link>
             </div>
-          </motion.div>
-        )}
+          ) : null}
+        </motion.div>
       </AnimatePresence>
     </>
   )
@@ -143,7 +150,8 @@ const BannerContent = ({
 
 function areEqual(prevProps, nextProps) {
   return (
-    prevProps.currentMedia.id === nextProps.currentMedia.id &&
+    prevProps.mediaList === nextProps.mediaList &&
+    prevProps.currentMedia === nextProps.currentMedia &&
     prevProps.showVideo === nextProps.showVideo &&
     prevProps.currentMediaIndex === nextProps.currentMediaIndex
   )

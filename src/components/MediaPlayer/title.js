@@ -5,7 +5,7 @@ import {
   ChapterTitle as MediaChapterTitle,
   useChapterTitle,
 } from '@vidstack/react'
-import { classNames } from 'src/utils'
+import { classNames } from '@src/utils'
 
 export function Title() {
   //const chapterTitle = useChapterTitle()

@@ -1,4 +1,4 @@
-import { fileServerURL } from 'src/utils/config'
+import { fileServerURL } from '@src/utils/config'
 import isAuthenticated from '../../../../../../../utils/routeAuth'
 
 export async function GET(req, { params }) {

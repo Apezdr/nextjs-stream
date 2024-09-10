@@ -8,11 +8,12 @@ import { MediaPlayer, MediaProvider, Track } from '@vidstack/react'
 import WithPlaybackTracker from './built-in/WithPlaybackTracker'
 import { VideoLayout } from './MediaPlayer/Layouts/video-layout'
 import { MediaPoster as vidStackPoster } from './MediaPlayer/MediaPoster'
-import { buildURL, getFullImageUrl } from 'src/utils'
+import { buildURL, getFullImageUrl } from '@src/utils'
 import { onProviderChange, onProviderSetup } from './MediaPlayer/clientSide'
 import { Inconsolata } from 'next/font/google'
 import Image from 'next/image'
 import MediaPoster from './MediaPoster'
+import VolumeRegulator from './MediaPlayer/VolumeRegulator'
 const inconsolata = Inconsolata({ subsets: ['latin'] })
 
 async function validateVideoURL(url) {
@@ -30,10 +31,11 @@ async function VideoPlayer({
   mediaType,
   goBack,
   searchParams = { clipStartTime: false, clipEndTime: false },
+  shouldValidateURL = true,
 }) {
   const { videoURL, metadata } = media
 
-  const isValidVideoURL = await validateVideoURL(videoURL)
+  const isValidVideoURL = shouldValidateURL ? await validateVideoURL(videoURL) : true
   if (!isValidVideoURL) {
     return (
       <div className="w-96">
@@ -186,7 +188,7 @@ async function VideoPlayer({
       load="idle"
       aspectRatio="16/9"
       fullscreenOrientation="landscape"
-      className="max-h-screen dark"
+      className="max-h-screen dark z-10"
       clipStartTime={clipStartTime}
       clipEndTime={clipEndTime}
       googleCast={{
@@ -194,7 +196,8 @@ async function VideoPlayer({
       }}
     >
       <MediaProvider>
-        <vidStackPoster poster={poster} title={title} />
+        <VolumeRegulator />
+        {poster ? <vidStackPoster poster={poster} title={title} /> : null}
         <WithPlaybackTracker videoURL={videoURL} />
         {chapters ? <Track kind="chapters" src={chapters} lang="en-US" default /> : null}
         {captions
@@ -206,7 +209,7 @@ async function VideoPlayer({
                   kind="subtitles"
                   label={language}
                   lang={captionObject.srcLang}
-                  default={index === 0}
+                  default={language.indexOf('English') > -1}
                   className={inconsolata.className}
                 />
               )

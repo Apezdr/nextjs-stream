@@ -1,53 +1,16 @@
-'use client'
-
-import React from 'react'
+import { useContext } from 'react'
 import { VisibilityContext } from 'react-horizontal-scrolling-menu'
 
-function Arrow({
-  children,
-  disabled,
-  onClick,
-}: {
-  children: React.ReactNode
-  disabled: boolean
-  onClick: VoidFunction
-}) {
-  return (
-    <button
-      disabled={disabled}
-      onClick={onClick}
-      className="transition-opacity duration-200"
-      style={{
-        cursor: 'pointer',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'center',
-        right: '1%',
-        opacity: disabled ? '0' : '1',
-        userSelect: 'none',
-      }}
-    >
-      {children}
-    </button>
-  )
-}
-
 export function LeftArrow() {
-  const { isFirstItemVisible, scrollPrev, visibleElements, initComplete } =
-    React.useContext(VisibilityContext)
-
-  const [disabled, setDisabled] = React.useState(
-    !initComplete || (initComplete && isFirstItemVisible)
-  )
-  React.useEffect(() => {
-    // NOTE: detect if whole component visible
-    if (visibleElements.length) {
-      setDisabled(isFirstItemVisible)
-    }
-  }, [isFirstItemVisible, visibleElements])
+  const visibility = useContext(VisibilityContext)
+  const isFirstItemVisible = visibility.useIsVisible('first', true)
 
   return (
-    <Arrow disabled={disabled} onClick={() => scrollPrev()}>
+    <Arrow
+      disabled={isFirstItemVisible}
+      onClick={() => visibility.scrollPrev()}
+      testId="left-arrow"
+    >
       <svg
         xmlns="http://www.w3.org/2000/svg"
         xmlSpace="preserve"
@@ -64,18 +27,15 @@ export function LeftArrow() {
 }
 
 export function RightArrow() {
-  const { isLastItemVisible, scrollNext, visibleElements } = React.useContext(VisibilityContext)
-
-  // console.log({ isLastItemVisible });
-  const [disabled, setDisabled] = React.useState(!visibleElements.length && isLastItemVisible)
-  React.useEffect(() => {
-    if (visibleElements.length) {
-      setDisabled(isLastItemVisible)
-    }
-  }, [isLastItemVisible, visibleElements])
+  const visibility = useContext(VisibilityContext)
+  const isLastItemVisible = visibility.useIsVisible('last', false)
 
   return (
-    <Arrow disabled={disabled} onClick={() => scrollNext()}>
+    <Arrow
+      disabled={isLastItemVisible}
+      onClick={() => visibility.scrollNext()}
+      testId="right-arrow"
+    >
       <svg
         xmlns="http://www.w3.org/2000/svg"
         xmlSpace="preserve"
@@ -86,5 +46,49 @@ export function RightArrow() {
         <path d="M233.252 155.997 120.752 6.001c-4.972-6.628-14.372-7.97-21-3-6.628 4.971-7.971 14.373-3 21l105.75 140.997-105.75 141.003c-4.971 6.627-3.627 16.03 3 21a14.93 14.93 0 0 0 8.988 3.001c4.561 0 9.065-2.072 12.012-6.001l112.5-150.004a15 15 0 0 0 0-18z" />
       </svg>
     </Arrow>
+  )
+}
+
+const ArrowButton = ({
+  disabled,
+  ...props
+}: React.ButtonHTMLAttributes<HTMLButtonElement> & { disabled: boolean }) => {
+  const style: React.CSSProperties = {
+    cursor: 'pointer',
+    display: 'flex',
+    flexDirection: 'column',
+    justifyContent: 'center',
+    //marginBottom: '2px',
+    opacity: disabled ? '0' : '1',
+    userSelect: 'none',
+    //borderRadius: '6px',
+    //borderWidth: '1px',
+  }
+
+  return <button className="transition-opacity" style={style} disabled={disabled} {...props} />
+}
+
+export function Arrow({
+  children,
+  disabled,
+  onClick,
+  className,
+  testId,
+}: {
+  children: React.ReactNode
+  disabled: boolean
+  onClick: VoidFunction
+  className?: string
+  testId: string
+}) {
+  return (
+    <ArrowButton
+      disabled={disabled}
+      onClick={onClick}
+      className={`arrow ${className || ''}`}
+      data-testid={testId}
+    >
+      {children}
+    </ArrowButton>
   )
 }

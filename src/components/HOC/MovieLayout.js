@@ -5,7 +5,7 @@ import GeneralFullScreenBackdrop from '@components/Backdrop/GeneralFullscreen'
 import { AnimatePresence } from 'framer-motion'
 import { useParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
-import { buildURL } from 'src/utils'
+import { buildURL } from '@src/utils'
 
 export default function MovieLayout({ fileServerURLWithPrefixPath }) {
   const params = useParams()

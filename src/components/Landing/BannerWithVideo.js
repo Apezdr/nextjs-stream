@@ -2,14 +2,12 @@
 import { useState, useEffect, useRef, memo, useCallback, useMemo } from 'react'
 import { useSwipeable } from 'react-swipeable'
 import { useTimer } from 'react-timer-hook'
-import { usePathname } from 'next/navigation'
 import { lazy } from 'react'
 
 const Dots = lazy(() => import('./Dots'))
 const BannerContent = lazy(() => import('./BannerContent'))
 
 const BannerWithVideo = ({ mediaList }) => {
-  const pathname = usePathname()
   const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
   const [showVideo, setShowVideo] = useState(false)
   const isFullscreenRef = useRef(false)
@@ -54,27 +52,6 @@ const BannerWithVideo = ({ mediaList }) => {
 
     return totalSlideDuration - Math.ceil(Math.min(progressSeconds, totalSlideDuration))
   }, [seconds, isRunning, totalSlideDuration])
-
-  const handleSlideEnd = useCallback(() => {
-    cycleToNextMedia()
-  }, [])
-
-  const handleNextStep = useCallback(() => {
-    switch (currentStepRef.current) {
-      case 0:
-        currentStepRef.current = 1
-        setShowVideo(true)
-        break
-      case 1:
-        setShowVideo(false)
-        currentStepRef.current = 2
-        break
-      default:
-        handleSlideEnd()
-        break
-    }
-    setCurrentStep(currentStepRef.current)
-  }, [handleSlideEnd])
 
   useEffect(() => {
     let duration = 0
@@ -158,31 +135,47 @@ const BannerWithVideo = ({ mediaList }) => {
     localStorage.setItem('videoMutedBanner', true)
   }, [])
 
-  const currentMedia = useMemo(() => mediaList[currentMediaIndex], [mediaList, currentMediaIndex])
+  const handleSlideEnd = useCallback(() => {
+    cycleToNextMedia()
+  }, [cycleToNextMedia])
+
+  const handleNextStep = useCallback(() => {
+    switch (currentStepRef.current) {
+      case 0:
+        currentStepRef.current = 1
+        setShowVideo(true)
+        break
+      case 1:
+        setShowVideo(false)
+        currentStepRef.current = 2
+        break
+      default:
+        handleSlideEnd()
+        break
+    }
+    setCurrentStep(currentStepRef.current)
+  }, [handleSlideEnd])
 
   return (
-    pathname === '/list' && (
-      <div {...swipeHandlers}>
-        <div className="relative w-full h-[40vh] md:h-[80vh] bg-black">
-          <BannerContent
-            currentMedia={currentMedia}
-            showVideo={showVideo}
-            progressSeconds={calculatedProgress}
-            handleDotClick={handleDotClick}
-            progressCalculation={(calculatedProgress / totalSlideDuration) * 100}
-            mediaList={mediaList}
-            currentMediaIndex={currentMediaIndex}
-          />
-          <Dots
-            mediaList={mediaList}
-            currentMediaIndex={currentMediaIndex}
-            handleDotClick={handleDotClick}
-            progress={(calculatedProgress / totalSlideDuration) * 100}
-            progressSeconds={calculatedProgress}
-          />
-        </div>
+    <div {...swipeHandlers}>
+      <div className="relative w-full h-[40vh] md:h-[80vh] bg-black">
+        <BannerContent
+          mediaList={mediaList}
+          showVideo={showVideo}
+          progressSeconds={calculatedProgress}
+          handleDotClick={handleDotClick}
+          progressCalculation={(calculatedProgress / totalSlideDuration) * 100}
+          currentMediaIndex={currentMediaIndex}
+        />
+        <Dots
+          mediaList={mediaList}
+          currentMediaIndex={currentMediaIndex}
+          handleDotClick={handleDotClick}
+          progress={(calculatedProgress / totalSlideDuration) * 100}
+          progressSeconds={calculatedProgress}
+        />
       </div>
-    )
+    </div>
   )
 }
 

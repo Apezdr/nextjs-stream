@@ -1,5 +1,5 @@
 import isAuthenticated from '../../../../utils/routeAuth'
-import { getRequestedMedia } from 'src/utils/database'
+import { getRequestedMedia } from '@src/utils/database'
 
 export async function POST(req) {
   const authResult = await isAuthenticated(req)

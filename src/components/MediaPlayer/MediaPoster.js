@@ -1,7 +1,7 @@
 'use client'
 
 import { Poster, useMediaState } from '@vidstack/react'
-import { classNames } from 'src/utils'
+import { classNames } from '@src/utils'
 
 export default function MediaPoster({ poster, title }) {
   const canPlay = useMediaState('canPlay'),

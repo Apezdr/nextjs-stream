@@ -52,7 +52,7 @@ const nextConfig = {
         ],
   },
   // Additional Next.js configurations can be added here
-  webpack(config) {
+  /* webpack(config) {
     Object.defineProperty(config, 'devtool', {
       get() {
         return 'source-map'
@@ -60,7 +60,7 @@ const nextConfig = {
       set() {},
     })
     return config
-  },
+  }, */
   productionBrowserSourceMaps: true,
 }
 
