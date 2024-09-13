@@ -727,7 +727,9 @@ export async function syncMetadata(currentDB, fileServer) {
         console.error(`Failed to fetch metadata for movie ${movie.title}:`, error)
       }
 
-      movieMetadata.release_date = new Date(movieMetadata.release_date)
+      if (typeof movieMetadata.release_date !== 'object') {
+        movieMetadata.release_date = new Date(movieMetadata.release_date)
+      }
       // First check the last updated date of the movie metadata
       if (movieMetadata.last_updated > currentDB_movieData.metadata?.last_updated) {
         // Update movie metadata
