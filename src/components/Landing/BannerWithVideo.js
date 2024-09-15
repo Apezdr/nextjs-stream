@@ -143,7 +143,9 @@ const BannerWithVideo = ({ mediaList }) => {
     switch (currentStepRef.current) {
       case 0:
         currentStepRef.current = 1
-        setShowVideo(true)
+        if (mediaList[currentMediaIndex]?.metadata?.trailer_url) {
+          setShowVideo(true)
+        }
         break
       case 1:
         setShowVideo(false)
