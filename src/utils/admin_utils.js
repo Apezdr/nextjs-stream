@@ -353,6 +353,9 @@ const metadataCache = new Map()
 
 // Function to fetch
 export async function fetchMetadata(metadataUrl, type = 'file', mediaType, title) {
+  if (metadataUrl === undefined) {
+    return {}
+  }
   try {
     const cacheKey = `${type}:${metadataUrl}`
     const lastUpdated = await getLastUpdatedTimestamp({ type: mediaType, title })
