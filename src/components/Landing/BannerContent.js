@@ -13,6 +13,7 @@ const BannerContent = ({
   handleVideoEnd,
   currentMediaIndex,
   onImageLoad,
+  onVideoReady,
 }) => {
   const currentMedia = useMemo(() => mediaList[currentMediaIndex], [mediaList, currentMediaIndex])
   return (
@@ -71,6 +72,7 @@ const BannerContent = ({
                   media={{ videoURL: currentMedia.metadata.trailer_url }}
                   onVideoEnd={handleVideoEnd}
                   currentMediaIndex={currentMediaIndex}
+                  onVideoReady={onVideoReady}
                 />
               </AnimatePresence>
               <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>

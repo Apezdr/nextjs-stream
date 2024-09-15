@@ -7,7 +7,7 @@ import { memo, useRef, useState, useEffect, useCallback } from 'react'
 import * as Buttons from '@components/MediaPlayer/buttons'
 import { motion } from 'framer-motion'
 
-function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex }) {
+function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex, onVideoReady }) {
   const { videoURL } = media
   const playerRef = useRef(null)
   const [isPlayerReady, setPlayerReady] = useState(false)
@@ -45,6 +45,13 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex }) {
     }
   }, [handleVisibilityChange])
 
+  const handlePlaying = useCallback(() => {
+    setPlayerReady(true)
+    if (onVideoReady) {
+      onVideoReady() // Notify parent that video is ready
+    }
+  }, [onVideoReady])
+
   return (
     <motion.div
       key={`video-player-${currentMediaIndex}`}
@@ -80,7 +87,7 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex }) {
         }}
         onVolumeChange={handleVolumeChange}
         onEnded={onVideoEnd}
-        onPlaying={() => setPlayerReady(true)}
+        onPlaying={handlePlaying}
       >
         <MediaProvider />
         <Controls.Root className="absolute bottom-4 left-4 flex space-x-2 z-[5]">
@@ -99,6 +106,7 @@ export default memo(BannerVideoPlayer, (prevProps, nextProps) => {
     prevProps.isPlayerReady === nextProps.isPlayerReady &&
     prevProps.media.videoURL === nextProps.media.videoURL &&
     prevProps.currentMediaIndex === nextProps.currentMediaIndex &&
-    prevProps.onVideoEnd === nextProps.onVideoEnd
+    prevProps.onVideoEnd === nextProps.onVideoEnd &&
+    prevProps.onVideoReady === nextProps.onVideoReady
   )
 })
