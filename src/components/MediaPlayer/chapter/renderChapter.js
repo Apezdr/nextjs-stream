@@ -1,6 +1,6 @@
 'use client'
 import { Menu, Thumbnail } from '@vidstack/react'
-import { memo, useCallback } from 'react'
+import { useCallback } from 'react'
 
 const RenderChapter = ({
   cue,
@@ -42,14 +42,4 @@ const RenderChapter = ({
   )
 }
 
-export default memo(RenderChapter, (prevProps, nextProps) => {
-  return (
-    prevProps.cue === nextProps.cue &&
-    prevProps.label === nextProps.label &&
-    prevProps.value === nextProps.value &&
-    prevProps.startTimeText === nextProps.startTimeText &&
-    prevProps.durationText === nextProps.durationText &&
-    prevProps.thumbnailURL === nextProps.thumbnailURL &&
-    prevProps.setProgressVar === nextProps.setProgressVar
-  )
-})
+export default RenderChapter

@@ -17,7 +17,17 @@ const ChaptersMenu = memo(({ thumbnailURL }) => {
       >
         {options.length > 0 ? (
           options.map((chapterProps) => (
-            <RenderChapter key={chapterProps.value} {...chapterProps} thumbnailURL={thumbnailURL} />
+            <RenderChapter
+              key={chapterProps.value}
+              cue={chapterProps.cue}
+              label={chapterProps.label}
+              value={chapterProps.value}
+              startTimeText={chapterProps.startTimeText}
+              durationText={chapterProps.durationText}
+              select={chapterProps.select}
+              setProgressVar={chapterProps.setProgressVar}
+              thumbnailURL={thumbnailURL}
+            />
           ))
         ) : (
           <Loading fullscreenClasses={''} />
