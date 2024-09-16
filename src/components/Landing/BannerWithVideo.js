@@ -37,7 +37,6 @@ const BannerWithVideo = ({ mediaList }) => {
     restart: restartTimer,
     pause: pauseTimer,
     resume: resumeTimer,
-    isRunning,
   } = useTimer({
     expiryTimestamp: new Date(),
     onExpire: () => handleNextStep(),
@@ -70,22 +69,33 @@ const BannerWithVideo = ({ mediaList }) => {
     return TOTAL_SLIDE_DURATION - Math.ceil(Math.min(progressSeconds, TOTAL_SLIDE_DURATION))
   }, [seconds, currentStep, isImageReady, isVideoReady])
 
-  // Start or pause the timer based on the current step and readiness of image/video
-  useEffect(() => {
-    const duration = getDurationForStep(currentStep)
-    const time = new Date()
-    time.setSeconds(time.getSeconds() + duration)
+  // Helper function to restart the timer for the current step
+  const restartTimerForStep = useCallback(
+    (step) => {
+      const duration = getDurationForStep(step)
+      const time = new Date()
+      time.setSeconds(time.getSeconds() + duration)
+      restartTimer(time)
+    },
+    [restartTimer]
+  )
 
-    // Pause timer if the image or video is not ready
+  // Restart the timer when currentStep changes
+  useEffect(() => {
+    restartTimerForStep(currentStep)
+  }, [currentStep, currentMediaIndex, restartTimerForStep])
+
+  // Pause or resume the timer based on readiness of image/video
+  useEffect(() => {
     if (
       (currentStep === STEP.IMAGE && !isImageReady) ||
       (currentStep === STEP.VIDEO && !isVideoReady)
     ) {
       pauseTimer()
     } else {
-      restartTimer(time)
+      resumeTimer()
     }
-  }, [currentStep, isImageReady, isVideoReady, pauseTimer, restartTimer])
+  }, [currentStep, isImageReady, isVideoReady, pauseTimer, resumeTimer])
 
   // Helper function to get duration for the current step
   const getDurationForStep = (step) => {
@@ -107,11 +117,7 @@ const BannerWithVideo = ({ mediaList }) => {
     setShowVideo(false)
     setIsImageReady(false)
     setIsVideoReady(false)
-
-    const time = new Date()
-    time.setSeconds(time.getSeconds() + BANNER_DISPLAY_BEFORE_VIDEO)
-    restartTimer(time)
-  }, [restartTimer])
+  }, [])
 
   // Move to the next media item
   const cycleToNextMedia = useCallback(() => {
@@ -198,12 +204,7 @@ const BannerWithVideo = ({ mediaList }) => {
   // Handle when the video is ready to play
   const handleVideoReady = useCallback(() => {
     setIsVideoReady(true)
-    if (!isRunning) {
-      const time = new Date()
-      time.setSeconds(time.getSeconds() + VIDEO_DURATION)
-      restartTimer(time)
-    }
-  }, [isRunning, restartTimer])
+  }, [])
 
   // Handle when the image has loaded
   const handleImageLoad = useCallback(() => {
@@ -219,20 +220,23 @@ const BannerWithVideo = ({ mediaList }) => {
           setIsVideoReady(false)
           setShowVideo(true)
         } else {
-          // If there's no video, skip to the after video step
           setCurrentStep(STEP.AFTER_VIDEO)
+          restartTimerForStep(STEP.AFTER_VIDEO)
         }
         break
       case STEP.VIDEO:
         setCurrentStep(STEP.AFTER_VIDEO)
+        restartTimerForStep(STEP.AFTER_VIDEO) // Restart the timer for AFTER_VIDEO immediately
         setShowVideo(false)
         break
       case STEP.AFTER_VIDEO:
+        handleSlideEnd() // Move to the next slide after AFTER_VIDEO duration
+        break
       default:
         handleSlideEnd()
         break
     }
-  }, [currentStep, currentMediaIndex, handleSlideEnd, mediaList])
+  }, [currentStep, currentMediaIndex, handleSlideEnd, mediaList, restartTimerForStep])
 
   return (
     <div {...swipeHandlers}>
@@ -263,6 +267,7 @@ export default memo(BannerWithVideo, (prevProps, nextProps) => {
   return (
     prevProps.showVideo === nextProps.showVideo &&
     prevProps.currentMediaIndex === nextProps.currentMediaIndex &&
+    prevProps.currentStep === nextProps.currentStep &&
     prevProps.mediaList === nextProps.mediaList
   )
 })
