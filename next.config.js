@@ -26,7 +26,7 @@ const nextConfig = {
     ignoreDuringBuilds: false,
   },
   images: {
-    minimumCacheTTL: 604800,
+    minimumCacheTTL: 259200,
     remotePatterns: process.env.REMOTE_PATTERNS
       ? process.env.REMOTE_PATTERNS.split(',').map((pattern) => {
           const [protocol, hostname] = pattern.trim().split('://')
