@@ -43,6 +43,7 @@ export interface VideoLayoutProps {
     hasNextEpisode: boolean
     mediaLength: number
   }
+  chapterThumbnailURL?: string
 }
 
 export function VideoLayout({
@@ -55,6 +56,7 @@ export function VideoLayout({
   videoURL,
   captions,
   nextUpCard,
+  chapterThumbnailURL,
 }: VideoLayoutProps) {
   return (
     <>
@@ -71,11 +73,9 @@ export function VideoLayout({
         </Controls.Group>
         {/* End Top Bar */}
         <div className="flex-1" />
-        {mediaMetadata && (
-          <Controls.Group className="flex flex-col justify-end !h-auto !bottom-32 sm:!bottom-[60%] max-w-sm sm:max-w-lg xl:max-w-3xl !pointer-events-none">
-            <VideoMetadata mediaMetadata={mediaMetadata} logo={logo} />
-          </Controls.Group>
-        )}
+        <Controls.Group className="flex flex-col justify-end !h-auto !bottom-32 sm:!bottom-[60%] max-w-sm sm:max-w-lg xl:max-w-3xl !pointer-events-none">
+          <VideoMetadata mediaMetadata={mediaMetadata} logo={logo} />
+        </Controls.Group>
         <div className="flex-1" />
         <Controls.Group className="flex w-full items-center px-2">
           {nextUpCard && nextUpCard?.hasNextEpisode && (
@@ -108,10 +108,10 @@ export function VideoLayout({
             <Menus.Chapters
               placement="top end"
               tooltipPlacement="top"
-              thumbnailURL={buildURL(thumbnails)}
+              chapterThumbnailURL={chapterThumbnailURL}
             />
           )}
-          {hasCaptions && <Menus.Settings placement="top end" tooltipPlacement="top" />}
+          <Menus.Settings placement="top end" tooltipPlacement="top" />
           <Buttons.PIP tooltipPlacement="top" />
           <Buttons.Chromecast tooltipPlacement="top" videoURL={videoURL} captions={captions} />
           <Buttons.AirPlay tooltipPlacement="top" />

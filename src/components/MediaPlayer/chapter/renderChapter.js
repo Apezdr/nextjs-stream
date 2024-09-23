@@ -1,6 +1,27 @@
 'use client'
-import { Menu, Thumbnail } from '@vidstack/react'
+import { RadioGroup } from '@vidstack/react'
+import Image from 'next/image'
 import { useCallback } from 'react'
+
+function convertTimeFormat(startTimeText) {
+  const parts = startTimeText.split(':')
+  let hours, minutes, seconds
+
+  if (parts.length === 3) {
+    ;[hours, minutes, seconds] = parts
+  } else if (parts.length === 2) {
+    hours = '00'
+    ;[minutes, seconds] = parts
+  } else {
+    return '00:00:00' // Invalid input
+  }
+
+  hours = hours.padStart(2, '0')
+  minutes = minutes.padStart(2, '0')
+  seconds = seconds.padStart(2, '0')
+
+  return `${hours}:${minutes}:${seconds}`
+}
 
 const RenderChapter = ({
   cue,
@@ -10,23 +31,28 @@ const RenderChapter = ({
   durationText,
   select,
   setProgressVar,
-  thumbnailURL,
+  chapterThumbnailURL,
+  chapterTitle,
 }) => {
   const handleSelect = useCallback(() => {
     select(value)
   }, [select, value])
 
   return (
-    <Menu.Radio
-      className="vds-chapter-radio vds-radio"
+    <RadioGroup.Item
+      className="vds-chapter-radio vds-radio max-w-[91vw]"
       value={value}
-      key={value}
+      key={value + chapterTitle}
       onSelect={handleSelect}
       ref={setProgressVar}
     >
-      <Thumbnail.Root className="vds-thumbnail" src={thumbnailURL} time={parseInt(cue.startTime)}>
-        <Thumbnail.Img aria-hidden="false" />
-      </Thumbnail.Root>
+      {chapterThumbnailURL && (
+        <img
+          className="vds-thumbnail"
+          src={`${chapterThumbnailURL}${convertTimeFormat(startTimeText)}`}
+          alt="Chapter Thumbnail"
+        />
+      )}
       <div className="vds-chapter-radio-content">
         <span className="vds-chapter-radio-label" data-part="label">
           {label}
@@ -38,7 +64,7 @@ const RenderChapter = ({
           {durationText}
         </span>
       </div>
-    </Menu.Radio>
+    </RadioGroup.Item>
   )
 }
 

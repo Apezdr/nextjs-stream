@@ -103,7 +103,8 @@
   }
   
   .vds-chapters-menu-items {
-    padding: var(--media-chapters-padding, 0);
+    /*padding: var(--media-chapters-padding, 0);*/
+    padding: 6px
   }
   
   :where(.vds-menu-items:has(.vds-chapters-radio-group[data-thumbnails])) {

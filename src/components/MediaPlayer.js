@@ -7,13 +7,13 @@ import './MediaPlayer/Layouts/sliders.css'
 import { MediaPlayer, MediaProvider, Track } from '@vidstack/react'
 import WithPlaybackTracker from './built-in/WithPlaybackTracker'
 import { VideoLayout } from './MediaPlayer/Layouts/video-layout'
-import { MediaPoster as vidStackPoster } from './MediaPlayer/MediaPoster'
+import MediaPoster from './MediaPlayer/MediaPoster'
 import { buildURL, getFullImageUrl } from '@src/utils'
 import { onProviderChange, onProviderSetup } from './MediaPlayer/clientSide'
 import { Inconsolata } from 'next/font/google'
-import Image from 'next/image'
-import MediaPoster from './MediaPoster'
+import Media_Poster from './MediaPoster'
 import VolumeRegulator from './MediaPlayer/VolumeRegulator'
+import { nodeJSURL } from '@src/utils/config'
 const inconsolata = Inconsolata({ subsets: ['latin'] })
 
 async function validateVideoURL(url) {
@@ -40,7 +40,7 @@ async function VideoPlayer({
     return (
       <div className="w-96">
         {media?.posterURL ? (
-          <MediaPoster contClassName="relative" media={media} alt={media.title} />
+          <Media_Poster contClassName="relative" media={media} alt={media.title} />
         ) : null}
         <div className="font-bold mt-4">Looks like we've got an error on our side:</div>
         <div>The video URL is invalid or unreachable.</div>
@@ -74,7 +74,7 @@ async function VideoPlayer({
     clipEndTime = parseInt(clipEndTime)
   }
   // Adjust metadata keys based on mediaType
-  let title, released, overview, actors, episode_number, season_number
+  let title, released, overview, actors, episode_number, season_number, rating
   //
   let hasNextEpisode, nextEpisodeThumbnail, nextEpisodeTitle, nextEpisodeNumber
   //
@@ -84,6 +84,8 @@ async function VideoPlayer({
   let mediaLength
   // thumbnail url
   let thumbnailURL
+  //
+  let chapterThumbnailURL
 
   let mediaMetadata, poster, logo, chapters
 
@@ -102,14 +104,21 @@ async function VideoPlayer({
     if (media.logo) {
       logo = media.logo
     }
+    if (metadata.rating) {
+      rating = metadata.rating
+    }
     if (media.chapterURL) {
       chapters = `/api/authenticated/chapter?name=${encodeURIComponent(
         mediaTitle
       )}&type=${mediaType}&season=${season_number}&episode=${episode_number}`
+      chapterThumbnailURL = `${nodeJSURL}/frame/tv/${encodeURIComponent(
+        mediaTitle
+      )}/${season_number}/${episode_number}/`
     }
     thumbnailURL = `/api/authenticated/thumbnails?name=${encodeURIComponent(
       mediaTitle
     )}&type=${mediaType}&season=${season_number}&episode=${episode_number}`
+
     mediaMetadata = {
       mediaTitle,
       title,
@@ -122,6 +131,7 @@ async function VideoPlayer({
       nextEpisodeTitle,
       nextEpisodeNumber,
       mediaLength,
+      rating,
     }
   } else if (metadata && mediaType === 'movie') {
     // Fallback for movies or other media types
@@ -132,11 +142,17 @@ async function VideoPlayer({
     poster = media.posterURL ?? getFullImageUrl(metadata.poster_path)
     if (media.logo) {
       logo = media.logo
+    } else if (media.metadata.logo_path) {
+      logo = getFullImageUrl(media.metadata.logo_path)
+    }
+    if (metadata.rating) {
+      rating = metadata.rating
     }
     if (media.chapterURL) {
       chapters = `/api/authenticated/chapter?name=${encodeURIComponent(
         mediaTitle
       )}&type=${mediaType}`
+      chapterThumbnailURL = `${nodeJSURL}/frame/movie/${encodeURIComponent(mediaTitle)}/`
     }
     thumbnailURL = `/api/authenticated/thumbnails?name=${encodeURIComponent(
       mediaTitle
@@ -147,6 +163,7 @@ async function VideoPlayer({
       released,
       overview,
       mediaLength,
+      rating,
     }
   }
 
@@ -197,7 +214,7 @@ async function VideoPlayer({
     >
       <MediaProvider>
         <VolumeRegulator />
-        {poster ? <vidStackPoster poster={poster} title={title} /> : null}
+        {poster ? <MediaPoster poster={poster} title={title} /> : null}
         <WithPlaybackTracker videoURL={videoURL} />
         {chapters ? <Track kind="chapters" src={chapters} lang="en-US" default /> : null}
         {captions
@@ -234,6 +251,7 @@ async function VideoPlayer({
           hasNextEpisode: hasNextEpisode,
           mediaLength: mediaLength,
         }}
+        chapterThumbnailURL={chapterThumbnailURL}
       />
     </MediaPlayer>
   )

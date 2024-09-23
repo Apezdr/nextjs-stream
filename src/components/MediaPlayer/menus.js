@@ -58,7 +58,7 @@ export function Settings({ placement, tooltipPlacement }) {
   )
 }
 
-export function Chapters({ placement, tooltipPlacement, thumbnailURL }) {
+export function Chapters({ placement, tooltipPlacement, chapterThumbnailURL }) {
   return (
     <Menu.Root className="parent">
       <Tooltip.Root>
@@ -71,8 +71,11 @@ export function Chapters({ placement, tooltipPlacement, thumbnailURL }) {
           Chapters
         </Tooltip.Content>
       </Tooltip.Root>
-      <Menu.Content className={`vds-chapters-menu-items vds-menu-items`} placement={placement}>
-        <ChaptersMenu thumbnailURL={thumbnailURL} />
+      <Menu.Content
+        className={`vds-chapters-menu-items vds-menu-items sm:translate-x-0 !-translate-x-1/2 !left-1/2 sm:left-0 max-h-[60vh] bottom-1`}
+        //placement={placement}
+      >
+        <ChaptersMenu chapterThumbnailURL={chapterThumbnailURL} />
       </Menu.Content>
     </Menu.Root>
   )
@@ -185,14 +188,15 @@ function AudioSubmenu() {
 }
 
 function CaptionSubmenu() {
-  const options = useCaptionOptions(),
-    hint = options.selectedTrack?.label ?? 'Off'
+  const options = useCaptionOptions()
+
+  const hint = options.selectedTrack?.label ?? 'Off'
   return (
     <Menu.Root>
       <SubmenuButton
         label="Captions"
         hint={hint}
-        disabled={options.disabled}
+        //disabled={options.disabled}
         icon={ClosedCaptionsIcon}
         className={styles.captions}
       />
@@ -205,7 +209,7 @@ function CaptionSubmenu() {
             <Radio value={value} onSelect={select} key={value}>
               {label}
             </Radio>
-          ))}
+          )) || <Radio value={''} key={'empty'}></Radio>}
         </Menu.RadioGroup>
       </Menu.Content>
     </Menu.Root>

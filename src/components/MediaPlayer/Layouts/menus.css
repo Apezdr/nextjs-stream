@@ -1390,7 +1390,8 @@ iframe.vds-youtube[data-no-controls] {
 }
 
 :where(.vds-chapters-menu-items) {
-    min-width: var(--media-chapters-min-width, var(--media-menu-min-width, 220px))
+    min-width: var(--media-chapters-min-width, var(--media-menu-min-width, 220px));
+    max-width: 98vw;
 }
 
 .vds-chapters-menu-items {
