@@ -10,7 +10,7 @@ export default function FullScreenBackdrop({ media }) {
   if (media.backdrop) {
     lowResImageUrl = media.backdropBlurhash
     highResImageUrl = media.backdrop
-  } else {
+  } else if (media.metadata?.backdrop_path) {
     // fallback to TMDB image
     lowResImageUrl = getFullImageUrl(media.metadata?.backdrop_path, 'w780') // Low-resolution version
     highResImageUrl = getFullImageUrl(media.metadata?.backdrop_path, 'original') // High-resolution version

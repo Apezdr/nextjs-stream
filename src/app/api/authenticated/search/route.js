@@ -64,8 +64,8 @@ async function searchMedia(query) {
   } else {
     // Fetch recently added media if query is empty
     ;[movies, tvShows] = await Promise.all([
-      fetchRecentlyAdded(db, 'Movies'),
-      fetchRecentlyAdded(db, 'TV'),
+      fetchRecentlyAdded({ db: db, collectionName: 'Movies' }),
+      fetchRecentlyAdded({ db: db, collectionName: 'TV' }),
     ])
     recentlyAddedMediaQuery = true
   }

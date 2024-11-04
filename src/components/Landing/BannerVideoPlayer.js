@@ -62,6 +62,7 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex, onVideoReady 
       className="h-full w-full"
     >
       <MediaPlayer
+        key={videoURL}
         ref={playerRef}
         src={videoURL}
         autoPlay={true}
@@ -71,7 +72,7 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex, onVideoReady 
         load="idle"
         aspectRatio="16/9"
         fullscreenOrientation="landscape"
-        className="absolute inset-0 w-full h-full select-none pointer-events-none"
+        className="absolute inset-0 w-full h-full select-none pointer-events-none z-0"
         muted={localStorage.getItem('videoMutedBanner') === 'true'}
         volume={localStorage.getItem('videoVolumeBanner') || 1}
         onPause={() => {
@@ -88,6 +89,20 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex, onVideoReady 
         onVolumeChange={handleVolumeChange}
         onEnded={onVideoEnd}
         onPlaying={handlePlaying}
+        onDestroy={() => {
+          // Remove the visibilitychange event listener
+          document.removeEventListener('visibilitychange', handleVisibilityChange)
+
+          // Clear stored volume and mute settings from localStorage
+          localStorage.removeItem('videoVolumeBanner')
+          localStorage.removeItem('videoMutedBanner')
+
+          // Reset the player ready state
+          setPlayerReady(false)
+
+          // Clear the player reference
+          playerRef.current = null
+        }}
       >
         <MediaProvider />
         <Controls.Root className="absolute bottom-4 left-4 flex space-x-2 z-[5]">
@@ -96,6 +111,7 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex, onVideoReady 
             <Buttons.Mute tooltipPlacement="top" toggleSliderOnUnmute={true} />
           </Controls.Group>
         </Controls.Root>
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>
       </MediaPlayer>
     </motion.div>
   )

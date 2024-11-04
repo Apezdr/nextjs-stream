@@ -2,10 +2,6 @@
 const dotenv = require('dotenv')
 dotenv.config()
 
-const withBundleAnalyzer = require('@next/bundle-analyzer')({
-  enabled: 'false',
-})
-
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -61,7 +57,7 @@ const nextConfig = {
     })
     return config
   }, */
-  productionBrowserSourceMaps: true,
+  //productionBrowserSourceMaps: true,
 }
 
-module.exports = process.env.ANALYZE === 'true' ? withBundleAnalyzer(nextConfig) : nextConfig
+module.exports = nextConfig

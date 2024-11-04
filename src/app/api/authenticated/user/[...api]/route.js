@@ -1,5 +1,5 @@
 import { auth } from '@src/lib/auth'
-import { getRecentlyWatchedForUser } from '@src/utils/admin_frontend_database'
+import { getRecentlyWatchedForUser } from '@src/utils/auth_database'
 import isAuthenticated, { isValidWebhook } from '@src/utils/routeAuth'
 
 async function getUserID(request, isWebhook) {
@@ -29,7 +29,11 @@ async function handleRequest(request, params, isWebhook) {
   if (fetchRecentlyWatched) {
     const page = request?.query?.page || 1
     const limit = request?.query?.limit || 15
-    const recentlyWatched = await getRecentlyWatchedForUser(userID, page, limit)
+    const recentlyWatched = await getRecentlyWatchedForUser({
+      userId: userID,
+      page: page,
+      limit: limit,
+    })
     response = recentlyWatched
   }
 

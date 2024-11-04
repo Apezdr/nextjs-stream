@@ -4,8 +4,12 @@ import { AnimatePresence, motion } from 'framer-motion'
 import Image from 'next/image'
 import Link from 'next/link'
 import Loading from '@src/app/loading'
-import { lazy } from 'react'
-const BannerVideoPlayer = lazy(() => import('./BannerVideoPlayer'))
+import { getFullImageUrl } from '@src/utils'
+import dynamic from 'next/dynamic'
+
+const BannerVideoPlayer = dynamic(() => import('./BannerVideoPlayer'), {
+  ssr: false,
+})
 
 const BannerContent = ({
   mediaList,
@@ -16,16 +20,26 @@ const BannerContent = ({
   onVideoReady,
 }) => {
   const currentMedia = useMemo(() => mediaList[currentMediaIndex], [mediaList, currentMediaIndex])
+  const logo = currentMedia?.logo || getFullImageUrl(currentMedia?.metadata?.logo_path) || null
+
+  const handleExitComplete = () =>
+    new Promise((resolve) => {
+      console.log('Exit animation completed')
+      // Any other logic you want to run after the exit animation
+      resolve()
+    })
+
   return (
-    <>
+    <Suspense>
+      {/* Media Content AnimatePresence */}
       <AnimatePresence mode="wait">
         {!showVideo && (
           <motion.div
-            key={`banner-${currentMediaIndex}`} // Updated key
+            key={`banner-${currentMediaIndex}`} // Media-specific key
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 1, ease: 'easeInOut' }} // Adjusted transition
+            transition={{ duration: 1, ease: 'easeInOut' }}
             className="absolute inset-0"
           >
             {currentMedia?.backdropBlurhash ? (
@@ -51,47 +65,47 @@ const BannerContent = ({
                 priority
               />
             ) : null}
-            {/* Fallback to null but could show something as a placeholder */}
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>
           </motion.div>
         )}
-      </AnimatePresence>
-      <AnimatePresence mode="wait">
         {currentMedia?.metadata?.trailer_url && showVideo && (
           <motion.div
-            key={`video-${currentMediaIndex}`} // Updated key
+            key={`video-${currentMediaIndex}`} // Video-specific key
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            transition={{ duration: 1, ease: 'easeInOut' }} // Adjusted transition
-            className="absolute inset-0 bg-black flex items-center justify-center"
+            transition={{ duration: 1, ease: 'easeInOut' }}
+            className="absolute inset-0 bg-black flex items-center justify-center z-auto"
           >
             <Suspense fallback={<Loading fullscreenClasses={false} />}>
-              <AnimatePresence mode="wait">
+              <AnimatePresence mode="wait" onExitComplete={handleExitComplete}>
                 <BannerVideoPlayer
+                  key={`video-player-${currentMediaIndex}`} // Ensure video player has a unique key
                   media={{ videoURL: currentMedia.metadata.trailer_url }}
                   onVideoEnd={handleVideoEnd}
                   currentMediaIndex={currentMediaIndex}
                   onVideoReady={onVideoReady}
+                  onExit={handleExitComplete}
                 />
               </AnimatePresence>
-              <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>
             </Suspense>
           </motion.div>
         )}
       </AnimatePresence>
-      <AnimatePresence mode="wait">
+
+      {/* Logo and Buttons AnimatePresence */}
+      <AnimatePresence>
         <motion.div
-          key={`logo-${currentMediaIndex}`} // Updated key
+          key={`logo-${currentMediaIndex}`} // Logo/buttons keyed by media index
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          exit={{ opacity: 0, transition: { duration: 0.5, ease: 'easeInOut' } }} // Faster exit transition
-          transition={{ duration: 1, ease: 'easeInOut', delay: 0.5 }} // Standard transition with delay for entry
+          exit={{ opacity: 0, transition: { duration: 0.5, ease: 'easeInOut' } }}
+          transition={{ duration: 1, ease: 'easeInOut', delay: 0.5 }}
           className="absolute left-1/4 top-1/2 transform -translate-y-1/2 text-center w-36 sm:w-64"
         >
-          {currentMedia?.logo ? (
+          {logo ? (
             <Image
-              src={currentMedia.logo}
+              src={logo}
               alt="Logo Image"
               width={300}
               height={300}
@@ -150,16 +164,18 @@ const BannerContent = ({
           ) : null}
         </motion.div>
       </AnimatePresence>
-    </>
+    </Suspense>
   )
 }
 
 function areEqual(prevProps, nextProps) {
   return (
     prevProps.mediaList === nextProps.mediaList &&
-    prevProps.currentMedia === nextProps.currentMedia &&
+    prevProps.currentMediaIndex === nextProps.currentMediaIndex &&
     prevProps.showVideo === nextProps.showVideo &&
-    prevProps.currentMediaIndex === nextProps.currentMediaIndex
+    prevProps.onImageLoad === nextProps.onImageLoad &&
+    prevProps.onVideoReady === nextProps.onVideoReady &&
+    prevProps.handleVideoEnd === nextProps.handleVideoEnd
   )
 }
 

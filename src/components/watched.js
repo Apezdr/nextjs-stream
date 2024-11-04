@@ -45,7 +45,7 @@ export function TotalRuntime({ length, metadata, videoURL, classNames }) {
 
   useEffect(() => {
     const watchedTimeInSeconds = getWatchedTime(videoURL)
-    const formattedDisplayTime = formatWatchedTime(watchedTimeInSeconds, length ?? metadata.runtime)
+    const formattedDisplayTime = formatWatchedTime(watchedTimeInSeconds, length ?? metadata.runtime ?? "Unknown")
     setDisplayTime(formattedDisplayTime)
   }, [metadata, videoURL])
 

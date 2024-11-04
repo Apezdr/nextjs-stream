@@ -39,6 +39,9 @@ export function formatTime(milliseconds) {
 }
 
 export function getFullImageUrl(imagePath, size = 'w780') {
+  if (!imagePath) {
+    return null
+  }
   // Adjust the size as needed (e.g., 'w780', 'original')
   const baseUrl = 'https://image.tmdb.org/t/p/'
   return `${baseUrl}${size}${imagePath}`
@@ -89,3 +92,52 @@ export function generateColors(str) {
 }
 
 export const fetcher = (...args) => fetch(...args).then((res) => res.json())
+
+export const obfuscateString = (str) => {
+  if (!str) return ''
+  const parts = str.split(',')
+  return parts.map((part) => '•'.repeat(Math.min(part.length, 10))).join(', ')
+}
+
+/**
+ * Convert date to Eastern Standard Time and format it.
+ * @param {string} dateStr - The date string in ISO format.
+ * @returns {string} The formatted date in EST.
+ */
+export function formatDateToEST(dateStr) {
+  const options = {
+    timeZone: 'America/New_York',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  }
+
+  const date = new Date(dateStr)
+  const formatter = new Intl.DateTimeFormat('en-US', options)
+  const parts = formatter.formatToParts(date)
+  const formattedDate = parts
+    .map(({ type, value }) => {
+      switch (type) {
+        case 'day':
+        case 'month':
+        case 'year':
+        case 'hour':
+        case 'minute':
+        case 'second':
+          return value
+        case 'dayPeriod':
+          return ` ${value}`
+        case 'literal':
+          return type === 'literal' && value === ' ' ? ', ' : value
+        default:
+          return value
+      }
+    })
+    .join('')
+
+  return formattedDate
+}

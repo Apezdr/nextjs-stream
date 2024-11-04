@@ -19,7 +19,7 @@ export async function getAllMedia({ type = 'all' } = {}) {
   return result
 }
 
-export async function updateMetadata({ type, media_title, tvSeriesData = null }) {
+export async function updateMetadata({ type, media_title, tvSeriesData = null, tmdb_id = null }) {
   const client = await clientPromise
   const collection = type === 'movie' ? 'Movies' : 'TV'
 
@@ -50,6 +50,7 @@ export async function updateMetadata({ type, media_title, tvSeriesData = null })
   }
   // Fetch metadata for a movie or the entire TV show
   const metadata = await getMetadata({
+    tmdb_id: tmdb_id,
     title: media_title,
     type: type,
   })
@@ -81,6 +82,49 @@ export async function getLastSynced() {
   }
 
   return lastSyncTime.timestamp || null
+}
+
+export class AutoSyncManager {
+  async getAutoSync() {
+    const client = await clientPromise
+    const autoSync = await client
+      .db('app_config')
+      .collection('settings')
+      .findOne({ name: 'autoSync' })
+    return autoSync.value
+  }
+
+  async setAutoSync(autoSync) {
+    const client = await clientPromise
+    await client
+      .db('app_config')
+      .collection('settings')
+      .updateOne({ name: 'autoSync' }, { $set: { value: autoSync } }, { upsert: true })
+    return autoSync
+  }
+}
+export class SyncAggressivenessManager {
+  async getSyncAggressiveness() {
+    const client = await clientPromise
+    const autoSync = await client
+      .db('app_config')
+      .collection('settings')
+      .findOne({ name: 'syncAggressiveness' })
+    return autoSync.value
+  }
+
+  async setSyncAggressiveness(syncAggressiveness) {
+    const client = await clientPromise
+    await client
+      .db('app_config')
+      .collection('settings')
+      .updateOne(
+        { name: 'syncAggressiveness' },
+        { $set: { value: syncAggressiveness } },
+        { upsert: true }
+      )
+    return syncAggressiveness
+  }
 }
 
 export async function getRecentlyWatched() {

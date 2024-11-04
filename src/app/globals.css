@@ -202,3 +202,27 @@ body.playing #backdrop-cover {
 .fc-event i {
   font-size: 11px;
 }
+
+@media (max-width: 640px) {
+  .fc-header-toolbar {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .fc-header-toolbar > .fc-toolbar-chunk {
+    display: flex;
+    flex-direction: row;
+    gap: 5px;
+  }
+}
+
+/* 
+  -----
+  For the Scroll Container on Home Page
+  -----
+*/
+
+/*
+  -----
+  End of Scroll Container on Home Page
+  -----
+*/

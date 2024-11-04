@@ -1,6 +1,6 @@
 'use client'
 import { memo, useEffect, useState } from 'react'
-import { classNames, generateColors, getFullImageUrl } from '../utils'
+import { buildURL, classNames, generateColors, getFullImageUrl } from '../utils'
 import HD4kBanner from '../../public/4kBanner.png'
 import Image from 'next/image'
 import useWatchedWidth from './useWatchedWidth'
@@ -37,7 +37,7 @@ function _mediaPoster({
       ? _media.season_poster
       : _media.metadata?.poster_path
         ? getFullImageUrl(_media.metadata.poster_path)
-        : '/sorry-image-not-available.jpg'
+        : buildURL(`/sorry-image-not-available.jpg`)
 
   const posterBlurhash = _media.posterBlurhash || _media.seasonPosterBlurhash || false
 
@@ -61,7 +61,7 @@ function _mediaPoster({
       )}
       {_media.videoURL ? (
         <TotalRuntime
-          length={_media.length ?? _media.metadata.runtime * 60000 ?? 0}
+          length={_media.length ?? (_media.metadata?.runtime ? _media.metadata.runtime * 60000 : 0)}
           metadata={_media.metadata}
           videoURL={_media.videoURL}
           classNames="absolute bottom-0 w-full text-center z-[11] text-[0.55rem]"

@@ -1,11 +1,11 @@
 'use client'
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useRef, useState } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
-import { PencilSquareIcon } from '@heroicons/react/24/outline'
+import { PencilSquareIcon, LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
 import { saveMovieModalChanges } from '../../utils/admin_frontend_database'
-import { classNames } from '../../utils'
+import { classNames, getFullImageUrl } from '../../utils'
 
-export default function MovieModalPopup({
+function MovieModalPopup({
   record,
   updateRecord,
   isAdding,
@@ -13,106 +13,196 @@ export default function MovieModalPopup({
   setIsOpen,
   updateProcessedData,
 }) {
-  // Local state for managing new caption inputs
+  // Local state for managing form fields
+  const [formState, setFormState] = useState({
+    tmdb_id: '',
+    title: '',
+    videoURL: '',
+    posterURL: '',
+    posterBlurhash: '',
+    chapterURL: '',
+    logo: '',
+    length: '',
+    dimensions: '',
+    backdrop: '',
+    backdropBlurhash: '',
+    // Add other fields as necessary
+  })
+
+  const [lockedFields, setLockedFields] = useState({})
+  const [userLockedFields, setUserLockedFields] = useState({}) // New state to track user-locked fields
+  const [captionStore, setCaptionStore] = useState([])
   const [newCaption, setNewCaption] = useState({
     label: '',
     srcLang: '',
     url: '',
   })
-  const [caption_store, setCaption_store] = useState([])
+
+  const cancelButtonRef = useRef(null)
 
   useEffect(() => {
-    setNewCaption({
-      label: '',
-      srcLang: '',
-      url: '',
-    })
-    // Check if captionURLs exists and is an object
-    if (record.captionURLs && typeof record.captionURLs === 'object') {
-      // Transform the object into an array of objects
-      const captionUrlsArray = Object.entries(record.captionURLs).map(
-        ([label, { srcLang, url }]) => ({
-          [label]: { srcLang, url },
-        })
-      )
-      setCaption_store(captionUrlsArray)
-    } else {
-      // If captionURLs is not an object, set an empty array
-      setCaption_store([])
+    // Initialize formState with record data
+    const initialState = {
+      tmdb_id: record?.metadata?.id || '',
+      title: record?.title || '',
+      videoURL: record?.videoURL || '',
+      posterURL: record?.posterURL || '',
+      posterBlurhash: record?.posterBlurhash || '',
+      chapterURL: record?.chapterURL || '',
+      logo: record?.logo || '',
+      length: record?.length || '',
+      dimensions: record?.dimensions || '',
+      backdrop: record?.backdrop || '',
+      backdropBlurhash: record?.backdropBlurhash || '',
+      // Initialize other fields
     }
+    setFormState(initialState)
+
+    // Initialize lockedFields
+    const recordLockedFields = record.lockedFields || {}
+    setLockedFields(recordLockedFields)
+
+    // Initialize captions
+    if (record.captionURLs && typeof record.captionURLs === 'object') {
+      const captionsArray = Object.entries(record.captionURLs).map(([label, { srcLang, url }]) => ({
+        [label]: { srcLang, url },
+      }))
+      setCaptionStore(captionsArray)
+    } else {
+      setCaptionStore([])
+    }
+
+    // Reset userLockedFields when record changes
+    setUserLockedFields({})
   }, [record])
 
+  // Define field mappings with dynamic locking for tmdb_id
   const fieldMappings = {
-    title: { label: 'Title', placeholder: 'Enter Label' },
+    tmdb_id: {
+      label: 'TMDB ID',
+      placeholder: 'Enter TMDB ID',
+      locked: !isAdding && !!record?.metadata?.id,
+    },
+    title: { label: 'Title', placeholder: 'Enter Title' },
     videoURL: { label: 'Video URL', placeholder: 'Enter Video URL' },
     posterURL: { label: 'Poster URL', placeholder: 'Enter Poster URL' },
     posterBlurhash: { label: 'Poster Blurhash URL', placeholder: 'Enter Poster Blurhash URL' },
     chapterURL: { label: 'Chapter URL', placeholder: 'Enter Chapter URL' },
+    logo: { label: 'Logo', placeholder: 'Enter Logo Image URL' },
+    length: { label: 'Length', placeholder: 'Enter length in ms of media' },
+    dimensions: { label: 'Dimensions', placeholder: 'Enter dimensions of media' },
+    backdrop: { label: 'Backdrop Image', placeholder: 'Enter backdrop image URL for media' },
+    backdropBlurhash: {
+      label: 'Backdrop Blurhash',
+      placeholder: 'Enter backdrop blurhash URL for media',
+    },
     // Add more mappings as needed
   }
 
-  const cancelButtonRef = useRef(null)
+  const posterURL = record.posterURL || getFullImageUrl(record?.metadata?.poster_path) || null
+
+  const handleInputChange = (event) => {
+    const { name, value } = event.target
+    setFormState((prevState) => ({
+      ...prevState,
+      [name]: value,
+    }))
+  }
+
+  // Function to toggle the lock state of a field
+  const toggleFieldLock = (fieldKey) => {
+    setLockedFields((prevLockedFields) => {
+      const newLockedState = !prevLockedFields[fieldKey]
+      // Update userLockedFields based on newLockedState
+      setUserLockedFields((prevUserLockedFields) => {
+        const updatedUserLockedFields = { ...prevUserLockedFields }
+        if (newLockedState) {
+          updatedUserLockedFields[fieldKey] = true
+        } else {
+          delete updatedUserLockedFields[fieldKey]
+        }
+        return updatedUserLockedFields
+      })
+      return {
+        ...prevLockedFields,
+        [fieldKey]: newLockedState,
+      }
+    })
+  }
 
   const removeCaption = (indexToRemove) => {
-    setCaption_store((prevCaptions) => prevCaptions.filter((_, index) => index !== indexToRemove))
+    setCaptionStore((prevCaptions) => prevCaptions.filter((_, index) => index !== indexToRemove))
+  }
+
+  const handleNewCaptionChange = (event) => {
+    const { name, value } = event.target
+    setNewCaption((prevCaption) => ({ ...prevCaption, [name]: value }))
+  }
+
+  const addNewCaption = () => {
+    const { label, srcLang, url } = newCaption
+    const updatedCaption = {
+      [newCaption.label]: {
+        srcLang: newCaption.srcLang,
+        url: newCaption.url,
+      },
+    }
+    if (label && srcLang && url) {
+      setCaptionStore((prevCaptions) => [...prevCaptions, updatedCaption])
+      setNewCaption({ label: '', srcLang: '', url: '' })
+    }
   }
 
   // Function to render input fields for each property in the record
   const renderInputFields = () => {
-    // Ensure posterURL is always included
-    const modifiedRecord = { ...record }
-    if (!modifiedRecord.posterURL) {
-      modifiedRecord.posterURL = '' // Default value for posterURL if not present
-    }
-    if (!modifiedRecord.posterBlurhash) {
-      modifiedRecord.posterBlurhash = '' // Default value for posterURL if not present
-    }
-    return Object.entries(modifiedRecord).map(([key, value]) => {
-      // Exclude _id and metadata fields
-      if (
-        key !== '_id' &&
-        key !== 'metadata' &&
-        key !== 'captionURLs' &&
-        key !== 'type' &&
-        key !== 'action'
-      ) {
-        // Check if the value is an object (for nested properties like captionURLs)
-        if (typeof value === 'object' && value !== null) {
-          return Object.entries(value).map(([nestedKey, nestedValue]) => (
-            <div key={nestedKey} className="mt-4">
-              <label htmlFor={nestedKey} className="block text-sm font-medium text-gray-700">
-                {nestedKey}
-              </label>
-              <input
-                type="text"
-                name={nestedKey}
-                id={nestedKey}
-                className="mt-1 block w-full h-5 text-gray-600 border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-                defaultValue={JSON.stringify(nestedValue)}
-              />
-            </div>
-          ))
-        }
-        const { label, placeholder } = fieldMappings[key] || {
-          label: key,
-          placeholder: `Enter ${key}`,
-        }
-        return (
-          <div key={key} className="mt-4">
-            <label htmlFor={key} className="block text-sm font-medium text-gray-700 text-left">
-              {label}
-            </label>
+    return Object.entries(fieldMappings).map(([key, { label, placeholder, locked }]) => {
+      const isInitiallyLocked = key === 'tmdb_id' && locked
+      const isLocked = lockedFields[key] || locked
+      const isUserLocked = userLockedFields[key]
+
+      return (
+        <div key={key} className="mt-4 flex flex-col">
+          <label htmlFor={key} className="block text-sm font-medium text-gray-700 text-left mb-1">
+            {label}
+          </label>
+          <div className="flex items-center">
             <input
               type="text"
               name={key}
               id={key}
-              className="mt-1 block w-full h-5 text-gray-600 border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm"
-              defaultValue={value}
+              className={classNames(
+                'flex-grow mt-1 block w-full h-5 text-gray-600 border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm',
+                isLocked ? 'bg-gray-100 cursor-not-allowed' : ''
+              )}
+              value={formState[key]}
+              onChange={handleInputChange}
               placeholder={placeholder}
+              disabled={isLocked}
             />
+            <button
+              type="button"
+              onClick={() => toggleFieldLock(key)}
+              className="ml-2 focus:outline-none"
+              title={isLocked ? 'Unlock field' : 'Lock field'}
+              disabled={isInitiallyLocked} // Prevent toggling tmdb_id when it's initially locked
+            >
+              {isLocked ? (
+                <LockClosedIcon className="h-5 w-5 text-gray-500" />
+              ) : (
+                <LockOpenIcon className="h-5 w-5 text-gray-500" />
+              )}
+            </button>
           </div>
-        )
-      }
+          {/* Conditionally render hidden input if the field is locked by the user */}
+          {isLocked && isUserLocked && (
+            <>
+              <input type="hidden" name={key} value={formState[key]} />
+              {/* Optional: Add a visual indicator */}
+              <span className="text-xs text-gray-500 ml-2"> (Locked and saved)</span>
+            </>
+          )}
+        </div>
+      )
     })
   }
 
@@ -132,13 +222,17 @@ export default function MovieModalPopup({
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Caption URL
               </th>
+              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {caption_store && caption_store.length > 0 ? (
-              caption_store.map((caption, index) =>
-                Object.entries(caption).map(([label, { srcLang, url }]) => (
-                  <tr key={index + label}>
+            {captionStore.length > 0 ? (
+              captionStore.map((caption, index) => {
+                const [label, { srcLang, url }] = Object.entries(caption)[0]
+                return (
+                  <tr key={`${index}-${label}`}>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{label}</td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{srcLang}</td>
                     <td
@@ -156,12 +250,12 @@ export default function MovieModalPopup({
                       </button>
                     </td>
                   </tr>
-                ))
-              )
+                )
+              })
             ) : (
               <tr>
                 <td
-                  colSpan="3"
+                  colSpan="4"
                   className="px-6 py-4 whitespace-nowrap text-lg font-bold text-gray-500 text-center"
                 >
                   No captions available
@@ -174,30 +268,10 @@ export default function MovieModalPopup({
     )
   }
 
-  const handleNewCaptionChange = (event) => {
-    const { name, value } = event.target
-    setNewCaption((prevCaption) => ({ ...prevCaption, [name]: value || '' }))
-  }
-
-  const addNewCaption = () => {
-    if (newCaption.label !== '' && newCaption.srcLang !== '' && newCaption.url !== '') {
-      const updatedCaption = {
-        [newCaption.label]: {
-          srcLang: newCaption.srcLang,
-          url: newCaption.url,
-        },
-      }
-      setCaption_store((prevCaptionStore) => [...prevCaptionStore, updatedCaption])
-      //updateRecord(updatedRecord);
-      // Reset the input fields after adding a new caption
-      setNewCaption({ label: '', srcLang: '', url: '' })
-    }
-  }
-
   const renderNewCaptionInputs = () => {
     return (
       <div className="w-full mt-6">
-        {/* Wrap in a form to prevent it from populating empty or non-appended fields. */}
+        {/* Form for adding new captions */}
         <form>
           <h2 className="text-gray-600 text-lg font-bold mb-2">Subtitles</h2>
           <div className="grid grid-cols-4 gap-4 w-4/5 mx-auto">
@@ -266,18 +340,18 @@ export default function MovieModalPopup({
             >
               <Dialog.Panel className="relative transform overflow-hidden rounded-lg bg-white px-4 pb-4 pt-5 text-left shadow-xl transition-all sm:my-8 sm:w-full sm:max-w-6xl sm:p-6">
                 <form action={saveMovieModalChanges}>
-                  <div className={classNames(record.posterURL ? 'sm:flex sm:flex-row' : '')}>
+                  <div className={classNames(posterURL ? 'sm:flex sm:flex-row' : '')}>
                     <div
                       className={classNames(
-                        record.posterURL
+                        posterURL
                           ? 'min-w-fit h-auto w-4/5 mr-4 rounded-lg max-w-sm'
                           : 'h-12 w-12 rounded-full',
                         'mx-auto flex items-center justify-center'
                       )}
                     >
-                      {record.posterURL ? (
+                      {posterURL ? (
                         <img
-                          src={record.posterURL}
+                          src={posterURL}
                           alt={record.title}
                           className="h-auto w-full rounded-lg shadow-xl max-w-[384px]"
                         />
@@ -285,7 +359,7 @@ export default function MovieModalPopup({
                         <PencilSquareIcon className="h-6 w-6 text-blue-600" aria-hidden="true" />
                       )}
                     </div>
-                    <div className="mt-3 text-center sm:mt-5">
+                    <div className="mt-3 text-center sm:mt-5 w-full">
                       <Dialog.Title
                         as="h3"
                         className="text-base font-semibold leading-6 text-gray-900"
@@ -296,15 +370,26 @@ export default function MovieModalPopup({
                         {renderInputFields()}
                         <hr className="mt-4" />
                         {renderNewCaptionInputs()}
-                        {caption_store.length > 0 &&
-                          caption_store.map((caption, index) => (
-                            <input
-                              key={index}
-                              type="hidden"
-                              name="captionURLs"
-                              value={JSON.stringify(caption)}
-                            />
-                          ))}
+                        {captionStore.length > 0 &&
+                          captionStore.map((caption, index) => {
+                            const captionJSON = JSON.stringify(caption)
+                            return (
+                              <input
+                                key={index}
+                                type="hidden"
+                                name="captionURLs"
+                                value={captionJSON}
+                              />
+                            )
+                          })}
+                        {Object.entries(lockedFields).map(([field, isLocked]) => (
+                          <input
+                            key={field}
+                            type="hidden"
+                            name={`locked_${field}`}
+                            value={isLocked.toString()}
+                          />
+                        ))}
                         <input type="hidden" name="record" value={JSON.stringify(record)} />
                         <input type="hidden" name="type" value={record.type} />
                         {renderCaptionURLsTable()}
@@ -342,3 +427,5 @@ export default function MovieModalPopup({
     </Transition.Root>
   )
 }
+
+export default memo(MovieModalPopup)

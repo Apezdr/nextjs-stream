@@ -1,7 +1,6 @@
 'use client'
 
 import FullScreenBackdrop from '@components/Backdrop/FullScreen'
-import GeneralFullScreenBackdrop from '@components/Backdrop/GeneralFullscreen'
 import { AnimatePresence } from 'framer-motion'
 import { useParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
@@ -51,9 +50,11 @@ export default function TVLayout({ fileServerURLWithPrefixPath }) {
     }
   }, [params]) // Dependency array
 
+  const hasBackdropAvailable = media?.backdrop?.length || media?.metadata?.backdrop_path
+
   return (
     <AnimatePresence mode="wait">
-      {mediaType === 'tv' && mediaTitle && media ? (
+      {mediaType === 'tv' && mediaTitle && media && hasBackdropAvailable ? (
         <FullScreenBackdrop key={mediaTitle} media={media} />
       ) : null}
     </AnimatePresence>

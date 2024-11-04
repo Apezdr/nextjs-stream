@@ -94,7 +94,7 @@ export function VideoLayout({
           <Sliders.Time thumbnails={buildURL(thumbnails)} />
           <TimeGroup />
         </Controls.Group>
-        <Controls.Group className="-mt-0.5 flex w-full items-center px-2 pb-2">
+        <Controls.Group className="-mt-0.5 flex w-full items-center px-2 pb-2 relative">
           <Buttons.Play tooltipPlacement="top" />
           <Buttons.SeekBackward tooltipPlacement="top start" />
           <Buttons.SeekForward tooltipPlacement="top" />

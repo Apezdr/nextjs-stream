@@ -4,6 +4,7 @@ import { usePathname } from 'next/navigation'
 import { Disclosure, Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react'
 import { Bars3Icon, XMarkIcon, BellIcon } from '@heroicons/react/24/outline'
 import { lazy, Suspense } from 'react'
+import { siteTitle } from '@src/utils/config'
 const SearchInput = lazy(() => import('@components/Search/SearchInput'))
 const SignOutButton = lazy(() => import('@components/SignOutButton'))
 
@@ -94,8 +95,8 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                 <div className="flex flex-shrink-0 items-center">
                   <Link href="/list">
                     <img
-                      alt="Your Company"
-                      src="https://tailwindui.com/img/logos/mark.svg?color=black&shade=600"
+                      alt={siteTitle}
+                      src="https://tailwindui.com/plus/img/logos/mark.svg?color=indigo&shade=500"
                       className="h-8 w-auto"
                     />
                   </Link>

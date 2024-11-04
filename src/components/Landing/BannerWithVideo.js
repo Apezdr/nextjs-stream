@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, memo } from 'react'
+import { useState, useEffect, useCallback, useMemo, memo, Suspense } from 'react'
 import { useSwipeable } from 'react-swipeable'
 import { useTimer } from 'react-timer-hook'
 import { lazy } from 'react'
 
 // Lazy load components
 const Dots = lazy(() => import('./Dots'))
+const Loading = lazy(() => import('@src/app/loading'))
 const BannerContent = lazy(() => import('./BannerContent'))
 
 // Define steps for clarity
@@ -69,6 +70,20 @@ const BannerWithVideo = ({ mediaList }) => {
     return TOTAL_SLIDE_DURATION - Math.ceil(Math.min(progressSeconds, TOTAL_SLIDE_DURATION))
   }, [seconds, currentStep, isImageReady, isVideoReady])
 
+  // Helper function to get duration for the current step
+  const getDurationForStep = useCallback((step) => {
+    switch (step) {
+      case STEP.IMAGE:
+        return BANNER_DISPLAY_BEFORE_VIDEO
+      case STEP.VIDEO:
+        return VIDEO_DURATION
+      case STEP.AFTER_VIDEO:
+        return BANNER_DISPLAY_AFTER_VIDEO
+      default:
+        return 0
+    }
+  }, [])
+
   // Helper function to restart the timer for the current step
   const restartTimerForStep = useCallback(
     (step) => {
@@ -77,13 +92,13 @@ const BannerWithVideo = ({ mediaList }) => {
       time.setSeconds(time.getSeconds() + duration)
       restartTimer(time)
     },
-    [restartTimer]
+    [restartTimer, getDurationForStep]
   )
 
   // Restart the timer when currentStep changes
   useEffect(() => {
     restartTimerForStep(currentStep)
-  }, [currentStep, currentMediaIndex, restartTimerForStep])
+  }, [currentStep, restartTimerForStep])
 
   // Pause or resume the timer based on readiness of image/video
   useEffect(() => {
@@ -96,20 +111,6 @@ const BannerWithVideo = ({ mediaList }) => {
       resumeTimer()
     }
   }, [currentStep, isImageReady, isVideoReady, pauseTimer, resumeTimer])
-
-  // Helper function to get duration for the current step
-  const getDurationForStep = (step) => {
-    switch (step) {
-      case STEP.IMAGE:
-        return BANNER_DISPLAY_BEFORE_VIDEO
-      case STEP.VIDEO:
-        return VIDEO_DURATION
-      case STEP.AFTER_VIDEO:
-        return BANNER_DISPLAY_AFTER_VIDEO
-      default:
-        return 0
-    }
-  }
 
   // Start the slide cycle from the beginning
   const startSlideCycle = useCallback(() => {
@@ -128,10 +129,18 @@ const BannerWithVideo = ({ mediaList }) => {
   // Handle dot click to select a specific media item
   const handleDotClick = useCallback(
     (index) => {
-      setCurrentMediaIndex(index)
-      startSlideCycle()
+      if (index === currentMediaIndex) {
+        setCurrentStep(STEP.IMAGE)
+        setShowVideo(false)
+        setIsVideoReady(false)
+        restartTimerForStep(STEP.IMAGE)
+      } else {
+        setCurrentMediaIndex(index)
+        restartTimerForStep(currentStep)
+        startSlideCycle()
+      }
     },
-    [startSlideCycle]
+    [currentMediaIndex, restartTimerForStep, currentStep, startSlideCycle]
   )
 
   // Handle swipe gestures to change media items
@@ -155,20 +164,22 @@ const BannerWithVideo = ({ mediaList }) => {
     onSwipedRight: () => handleSwipe('RIGHT'),
     preventDefaultTouchmoveEvent: true,
     trackMouse: true,
+    delta: { left: 20, right: 20 },
+    swipeDuration: 250,
   })
 
   // Pause or resume timer when entering or exiting fullscreen mode
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      const isFullscreen = !!document.fullscreenElement
-      isFullscreen ? pauseTimer() : resumeTimer()
-    }
+  const handleFullscreenChange = useCallback(() => {
+    const isFullscreen = !!document.fullscreenElement
+    isFullscreen ? pauseTimer() : resumeTimer()
+  }, [pauseTimer, resumeTimer])
 
+  useEffect(() => {
     document.addEventListener('fullscreenchange', handleFullscreenChange)
     return () => {
       document.removeEventListener('fullscreenchange', handleFullscreenChange)
     }
-  }, [pauseTimer, resumeTimer])
+  }, [handleFullscreenChange])
 
   // Pause or resume timer based on page visibility
   useEffect(() => {
@@ -241,33 +252,44 @@ const BannerWithVideo = ({ mediaList }) => {
   return (
     <div {...swipeHandlers}>
       <div className="relative w-full h-[40vh] md:h-[80vh] bg-black">
-        <BannerContent
-          mediaList={mediaList}
-          showVideo={showVideo}
-          progressSeconds={calculatedProgress}
-          handleDotClick={handleDotClick}
-          progressCalculation={(calculatedProgress / TOTAL_SLIDE_DURATION) * 100}
-          currentMediaIndex={currentMediaIndex}
-          onVideoReady={handleVideoReady}
-          onImageLoad={handleImageLoad}
-        />
-        <Dots
-          mediaList={mediaList}
-          currentMediaIndex={currentMediaIndex}
-          handleDotClick={handleDotClick}
-          progress={(calculatedProgress / TOTAL_SLIDE_DURATION) * 100}
-          progressSeconds={calculatedProgress}
-        />
+        <Suspense
+          fallback={
+            <div className="w-full h-[40vh] md:h-[80vh] bg-black flex items-center justify-center text-white">
+              <Loading fullscreenClasses={false} />
+            </div>
+          }
+        >
+          <BannerContent
+            mediaList={mediaList}
+            showVideo={showVideo}
+            progressSeconds={calculatedProgress}
+            handleDotClick={handleDotClick}
+            progressCalculation={(calculatedProgress / TOTAL_SLIDE_DURATION) * 100}
+            currentMediaIndex={currentMediaIndex}
+            onVideoReady={handleVideoReady}
+            onImageLoad={handleImageLoad}
+          />
+        </Suspense>
+        <Suspense
+          fallback={
+            <div className="absolute bottom-4 right-4 flex gap-1">
+              {[...Array(1)].map((_, index) => (
+                <div key={index} className="w-2 h-2 rounded-full bg-gray-400"></div>
+              ))}
+            </div>
+          }
+        >
+          <Dots
+            mediaList={mediaList}
+            currentMediaIndex={currentMediaIndex}
+            handleDotClick={handleDotClick}
+            progress={(calculatedProgress / TOTAL_SLIDE_DURATION) * 100}
+            progressSeconds={calculatedProgress}
+          />
+        </Suspense>
       </div>
     </div>
   )
 }
 
-export default memo(BannerWithVideo, (prevProps, nextProps) => {
-  return (
-    prevProps.showVideo === nextProps.showVideo &&
-    prevProps.currentMediaIndex === nextProps.currentMediaIndex &&
-    prevProps.currentStep === nextProps.currentStep &&
-    prevProps.mediaList === nextProps.mediaList
-  )
-})
+export default memo(BannerWithVideo)

@@ -1,9 +1,9 @@
 import { auth } from '@src/lib/auth'
-import { getFullImageUrl } from '.'
-import clientPromise from '../lib/mongodb'
-import { fetchMetadata } from './admin_utils'
-import { fetchRecentlyAdded } from './auth_database'
-import { getRecentlyWatchedForUser } from './admin_frontend_database'
+import { getFullImageUrl } from '@src/utils'
+import clientPromise from '@src/lib/mongodb'
+import { fetchMetadata } from '@src/utils/admin_utils'
+import { getRecentlyWatchedForUser, fetchRecentlyAdded } from '@src/utils/auth_database'
+import { ObjectId } from 'mongodb'
 
 export async function getRequestedMediaTrailer(type, title, season = null, episode = null) {
   const client = await clientPromise
@@ -49,21 +49,30 @@ export async function getRequestedMediaTrailer(type, title, season = null, episo
   return null
 }
 
-export async function getRequestedMedia(type, title, season = null, episode = null) {
+export async function getRequestedMedia({
+  type,
+  title = null,
+  season = null,
+  episode = null,
+  id = null,
+}) {
   const client = await clientPromise
   const collection = type === 'movie' ? 'Movies' : 'TV'
 
   if (type === 'movie') {
     // Fetch movie
     const projection = { _id: 0 }
-    const DBmovie = await client
-      .db('Media')
-      .collection(collection)
-      .findOne({ title: title }, { projection })
+    const query = {}
+    if (title) query.title = title
+    if (id) query._id = new ObjectId(id)
+
+    if (!title && !id) return null
+
+    const DBmovie = await client.db('Media').collection(collection).findOne(query, { projection })
 
     return DBmovie
   } else if (type === 'tv') {
-    const DBtvShow = await getTvShowData(client, collection, title, season, episode)
+    const DBtvShow = await getTvShowData(client, collection, title, season, episode, id)
     await processBlurhashes(DBtvShow)
     return DBtvShow
   }
@@ -71,12 +80,15 @@ export async function getRequestedMedia(type, title, season = null, episode = nu
   return null
 }
 
-async function getTvShowData(client, collection, title, season, episode) {
-  const projection = { _id: 0 } // Adjust based on needed fields
-  const tvShow = await client
-    .db('Media')
-    .collection(collection)
-    .findOne({ title: title }, { projection })
+async function getTvShowData(client, collection, title, season, episode, id) {
+  const projection = { _id: 0 }
+  const query = {}
+  if (title) query.title = title
+  if (id) query._id = new ObjectId(id)
+
+  if (!title && !id) return null
+
+  const tvShow = await client.db('Media').collection(collection).findOne(query, { projection })
 
   if (!tvShow) return null
 
@@ -101,6 +113,7 @@ async function getTvShowData(client, collection, title, season, episode) {
         getFullImageUrl(tvShow.metadata.poster_path)
       seasonObj.title = tvShow.title
       seasonObj.metadata.tvOverview = tvShow.metadata.overview
+      if (tvShow.metadata.trailer_url) seasonObj.metadata.trailer_url = tvShow.metadata.trailer_url
       return seasonObj
     }
   } else {
@@ -109,7 +122,6 @@ async function getTvShowData(client, collection, title, season, episode) {
     return tvShow
   }
 }
-
 function handleEpisode(tvShow, seasonObj, episodeNumber) {
   const episodeMetadata = seasonObj.metadata.episodes?.find(
     (ep) => ep.episode_number === episodeNumber
@@ -125,6 +137,14 @@ function handleEpisode(tvShow, seasonObj, episodeNumber) {
   episodeObj.metadata.backdrop_path = episodeObj.metadata.backdrop_path || tvShow.backdrop
   episodeObj.posterURL = seasonObj.season_poster || tvShow.posterURL || tvShow.metadata.poster_path
   episodeObj.posterBlurhash = seasonObj.seasonPosterBlurhash || tvShow.posterBlurhash || null
+
+  if (tvShow?.metadata?.rating) {
+    episodeObj.metadata.rating = tvShow.metadata.rating
+  }
+
+  if (tvShow?.metadata?.trailer_url) {
+    episodeObj.metadata.trailer_url = tvShow.metadata.trailer_url
+  }
 
   const nextAvailableEpisode = seasonObj.metadata.episodes?.find(
     (ep) => ep.episode_number > episodeNumber
@@ -183,8 +203,8 @@ export async function getAvailableMedia({ type = 'all' } = {}) {
 
   if (type === 'recently-added' || type === 'all') {
     const [movies, tvShows] = await Promise.all([
-      fetchRecentlyAdded(db, 'Movies', undefined, true),
-      fetchRecentlyAdded(db, 'TV', undefined, true),
+      fetchRecentlyAdded({ db: db, collectionName: 'Movies', countOnly: true }),
+      fetchRecentlyAdded({ db: db, collectionName: 'TV', countOnly: true }),
     ])
 
     returnValue.recentlyaddedCount = movies + tvShows
@@ -192,7 +212,7 @@ export async function getAvailableMedia({ type = 'all' } = {}) {
 
   if (type === 'recently-watched' || type === 'all') {
     const session = await auth()
-    const watched = await getRecentlyWatchedForUser(session.user?.id, undefined, undefined, true)
+    const watched = await getRecentlyWatchedForUser({ userId: session.user?.id, countOnly: true })
 
     returnValue.recentlywatchedCount = watched
   }

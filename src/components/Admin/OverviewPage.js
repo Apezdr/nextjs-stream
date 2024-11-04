@@ -184,24 +184,39 @@ export default function AdminOverviewPage({
   async function updateProcessedData(type) {
     let url = `/api/authenticated/admin`
     if (type === 'media') {
-      url += '/media' // Append '/media' to the URL
+      url += '/media'
     } else if (type === 'users') {
-      url += '/users' // Append '/users' to the URL
+      url += '/users'
     }
 
-    const res = await axios.get(buildURL(url))
-    const { processedData, processedUserData } = res.data
+    const maxRetries = 3
+    let retries = 0
 
-    if (type === 'media') {
-      setProcessedData(processedData)
-    } else if (type === 'users') {
-      setProcessedUserData(processedUserData)
-    } else {
-      setProcessedData(processedData)
-      setProcessedUserData(processedUserData)
+    while (retries < maxRetries) {
+      try {
+        const res = await axios.get(buildURL(url))
+        const { processedData, processedUserData } = res.data
+
+        if (type === 'media') {
+          setProcessedData(processedData)
+        } else if (type === 'users') {
+          setProcessedUserData(processedUserData)
+        } else {
+          setProcessedData(processedData)
+          setProcessedUserData(processedUserData)
+        }
+
+        return // Success, exit the function
+      } catch (error) {
+        retries++
+        if (retries === maxRetries) {
+          console.error(`Failed to fetch data after ${maxRetries} attempts:`, error)
+          throw error // Rethrow the error if all retries fail
+        }
+        await new Promise((resolve) => setTimeout(resolve, 1000 * retries)) // Wait before retrying
+      }
     }
   }
-
   return (
     <>
       {isSyncOpen && (

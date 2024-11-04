@@ -3,8 +3,14 @@
 import clientPromise from '@src/lib/mongodb'
 import { auth } from '../lib/auth'
 import { ObjectId } from 'mongodb'
-import { fetchMetadata } from './admin_utils'
-import { movieProjectionFields, tvShowProjectionFields } from './auth_utils'
+import { fetchMetadata } from '@src/utils/admin_utils'
+import {
+  arrangeMediaByLatestModification,
+  movieProjectionFields,
+  processWatchedDetails,
+  tvShowProjectionFields,
+} from '@src/utils/auth_utils'
+import { buildURL, getFullImageUrl } from '@src/utils'
 
 export async function getVideosWatched() {
   const session = await auth()
@@ -50,6 +56,9 @@ export const fetchBannerMedia = async () => {
         }
         item.backdropBlurhash = blurhashString
       }
+      if (item && !item.backdrop) {
+        item.backdrop = getFullImageUrl(item.metadata.backdrop_path, 'original')
+      }
       if (item && item._id) {
         delete item._id
       }
@@ -61,7 +70,358 @@ export const fetchBannerMedia = async () => {
   }
 }
 
-export async function fetchRecentlyAdded(db, collectionName, limit = 12, countOnly = false) {
+export async function addCustomUrlToMedia(mediaArray, type) {
+  return await Promise.all(
+    mediaArray.map(async (media) => {
+      const id = media._id.toString()
+      delete media._id
+      let returnObj = {
+        ...media,
+        id: id,
+        url: `/list/${type}/${encodeURIComponent(media.title)}`,
+        link: encodeURIComponent(media.title) || null,
+        description: media.metadata?.overview,
+        type,
+        media: media,
+      }
+      if (!media.posterURL) {
+        returnObj.posterURL = media.metadata?.poster_path
+          ? getFullImageUrl(media.metadata.poster_path, 'w780')
+          : buildURL(`/sorry-image-not-available.jpg`)
+      }
+      if (media.posterBlurhash) {
+        returnObj.posterBlurhash = await fetchMetadata(
+          media.posterBlurhash,
+          'blurhash',
+          type,
+          media.title
+        )
+      }
+      if (media.backdropBlurhash) {
+        returnObj.backdropBlurhash = await fetchMetadata(
+          media.backdropBlurhash,
+          'blurhash',
+          type,
+          media.title
+        )
+      }
+      return returnObj
+    })
+  )
+}
+
+/**
+ * Gets posters for movies or TV shows.
+ *
+ * @param {string} type - The type of media (movie or TV).
+ * @param {boolean} [countOnly=false] - If true, returns only the count of records.
+ * @returns {Promise} Resolves to an array of poster objects or the count of records.
+ */
+export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
+  const client = await clientPromise
+  const collection = type === 'movie' ? 'Movies' : 'TV'
+
+  const projection =
+    type === 'movie'
+      ? {
+          title: 1,
+          posterURL: 1,
+          posterBlurhash: 1,
+          backdrop: 1,
+          backdropBlurhash: 1,
+          'metadata.poster_path': 1,
+          'metadata.trailer_url': 1,
+          'metadata.overview': 1,
+        }
+      : {
+          title: 1,
+          posterURL: 1,
+          posterBlurhash: 1,
+          backdrop: 1,
+          backdropBlurhash: 1,
+          'metadata.genres': 1,
+          'metadata.networks': 1,
+          'metadata.status': 1,
+          'metadata.seasons.length': 1,
+          'metadata.seasons.overview': 1,
+          'metadata.poster_path': 1,
+          'metadata.trailer_url': 1,
+          'metadata.overview': 1,
+          'seasons.seasonNumber': 1,
+          'seasons.season_poster': 1,
+          'seasons.seasonPosterBlurhash': 1,
+        }
+
+  if (countOnly) {
+    return await client.db('Media').collection(collection).countDocuments()
+  }
+
+  const skip = page * limit
+  const queryOptions = { projection }
+  if (limit > 0) {
+    queryOptions.limit = limit
+    queryOptions.skip = skip
+  }
+
+  const records = await client
+    .db('Media')
+    .collection(collection)
+    .find({}, queryOptions)
+    .hint({ _id: 1 })
+    .toArray()
+
+  return await Promise.all(
+    records.map(async (record) => {
+      let poster =
+        record.posterURL ||
+        getFullImageUrl(record.metadata?.poster_path) ||
+        buildURL(`/sorry-image-not-available.jpg`)
+      if (!poster) {
+        poster = null
+      }
+      if (record._id) {
+        record._id = record._id.toString()
+      }
+      if (record.posterBlurhash) {
+        record.posterBlurhash = await fetchMetadata(
+          record.posterBlurhash,
+          'blurhash',
+          type,
+          record.title
+        )
+      }
+      if (record.backdropBlurhash) {
+        record.backdropBlurhash = await fetchMetadata(
+          record.backdropBlurhash,
+          'blurhash',
+          type,
+          record.title
+        )
+      }
+      return {
+        id: record._id.toString(),
+        posterURL: poster,
+        posterBlurhash: record.posterBlurhash || null,
+        backdrop: record.backdrop || null,
+        backdropBlurhash: record.backdropBlurhash || null,
+        title: record.title || null,
+        link: encodeURIComponent(record.title) || null,
+        type: type,
+        metadata: record.metadata || null,
+        media: record,
+      }
+    })
+  )
+}
+
+/**
+ * Get the most recently watched media for the current user.
+ *
+ * @param {string} userId - The ID of the current user.
+ * @param {number} [page=0] - The page number for pagination (0-based).
+ * @param {number} [limit=15] - The number of items per page.
+ * @param {boolean} [countOnly=false] - Whether to only get the document count.
+ * @returns {Promise<Array|number>} The recently watched media details or the document count.
+ */
+export async function getRecentlyWatchedForUser({
+  userId,
+  page = 0,
+  limit = 15,
+  countOnly = false,
+}) {
+  try {
+    const client = await clientPromise
+    const user = await client
+      .db('Users')
+      .collection('AuthenticatedUsers')
+      .findOne({ _id: new ObjectId(userId) })
+
+    if (!user) {
+      throw new Error(`User with ID ${userId} not found`)
+    }
+
+    const validPage = Math.max(page, 0) // Ensure page is at least 0
+
+    const baseAggregation = [
+      { $match: { userId: user._id } },
+      { $unwind: '$videosWatched' },
+      { $sort: { 'videosWatched.lastUpdated': -1 } },
+    ]
+
+    if (countOnly) {
+      const countAggregation = [
+        ...baseAggregation,
+        { $limit: limit }, // Apply limit inside countOnly
+        { $count: 'total' },
+      ]
+      const countResult = await client
+        .db('Media')
+        .collection('PlaybackStatus')
+        .aggregate(countAggregation)
+        .toArray()
+      return countResult.length > 0 ? countResult[0].total : 0
+    }
+
+    const dataAggregation = [
+      ...baseAggregation,
+      { $skip: validPage * limit },
+      //{ $limit: limit },
+      {
+        $group: {
+          _id: '$userId',
+          videosWatched: { $push: '$videosWatched' },
+        },
+      },
+    ]
+
+    const lastWatched = await client
+      .db('Media')
+      .collection('PlaybackStatus')
+      .aggregate(dataAggregation, { hint: 'userId_1' })
+      .toArray()
+
+    if (lastWatched.length === 0 || !lastWatched[0].videosWatched) {
+      return null
+    }
+
+    const videoIds = lastWatched[0].videosWatched.map((video) => video.videoId)
+    const uniqueVideoIds = [...new Set(videoIds)]
+
+    // Bulk fetch movies and TV shows
+    const [movies, tvShows] = await Promise.all([
+      client
+        .db('Media')
+        .collection('Movies')
+        .find({ videoURL: { $in: uniqueVideoIds } })
+        .toArray(),
+      client
+        .db('Media')
+        .collection('TV')
+        .find({ 'seasons.episodes.videoURL': { $in: uniqueVideoIds } })
+        .toArray(),
+    ])
+
+    // Populate the movie and TV maps to match videoURLs to their respective records
+    const movieMap = new Map(movies.map((movie) => [movie.videoURL, movie]))
+    const tvMap = new Map()
+
+    tvShows.forEach((tvShow) => {
+      tvShow.seasons.forEach((season) => {
+        season.episodes.forEach((episode) => {
+          if (uniqueVideoIds.includes(episode.videoURL)) {
+            tvMap.set(episode.videoURL, { ...tvShow, episode })
+          }
+        })
+      })
+    })
+
+    const watchedDetails = await processWatchedDetails(lastWatched, movieMap, tvMap, limit)
+
+    return watchedDetails
+  } catch (error) {
+    console.error(`Error in getRecentlyWatchedForUser: ${error.message}`)
+    throw error
+  }
+}
+
+export async function getRecentlyAddedMedia({ page = 0, limit = 12, countOnly = false }) {
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+
+    // Define projection fields for Movies and TV
+    const movieProjectionFields = {
+      _id: 1,
+      title: 1,
+      metadata: 1,
+      posterURL: 1,
+      posterBlurhash: 1,
+      backdrop: 1,
+      backdropBlurhash: 1,
+      mediaLastModified: 1,
+      // Add other necessary fields
+    }
+
+    const tvShowProjectionFields = {
+      _id: 1,
+      title: 1,
+      metadata: 1,
+      posterURL: 1,
+      posterBlurhash: 1,
+      backdrop: 1,
+      backdropBlurhash: 1,
+      'seasons.episodes.mediaLastModified': 1,
+      // Add other necessary fields
+    }
+
+    const pipeline = [
+      {
+        $project: movieProjectionFields,
+      },
+      {
+        $unionWith: {
+          coll: 'TV',
+          pipeline: [
+            {
+              $project: tvShowProjectionFields,
+            },
+          ],
+        },
+      },
+      {
+        $addFields: {
+          mediaLastModified: {
+            $ifNull: ['$mediaLastModified', '$seasons.episodes.mediaLastModified'],
+          },
+          type: {
+            $cond: [{ $ifNull: ['$mediaLastModified', false] }, 'movie', 'tv'],
+          },
+        },
+      },
+      {
+        $sort: { mediaLastModified: -1 },
+      },
+      {
+        $skip: page * limit,
+      },
+      {
+        $limit: limit,
+      },
+    ]
+
+    const combinedMedia = await db.collection('Movies').aggregate(pipeline).toArray()
+
+    // Separate movies and tv shows
+    const movies = combinedMedia.filter((item) => item.type === 'movie')
+    const tvShows = combinedMedia.filter((item) => item.type === 'tv')
+
+    if (countOnly) {
+      return Math.min(movies.length + tvShows.length, limit)
+    }
+
+    // Add URLs to media
+    const [moviesWithUrl, tvShowsWithUrl] = await Promise.all([
+      addCustomUrlToMedia(movies, 'movie'),
+      addCustomUrlToMedia(tvShows, 'tv'),
+    ])
+
+    // Arrange media by latest modification
+    const arrangedMedia = arrangeMediaByLatestModification(moviesWithUrl, tvShowsWithUrl)
+
+    return arrangedMedia
+  } catch (error) {
+    console.error(`Error in getRecentlyAddedMedia: ${error.message}`)
+    throw error
+  }
+}
+
+export async function fetchRecentlyAdded({
+  db,
+  collectionName,
+  limit = 12,
+  skip = 0,
+  countOnly = false,
+}) {
   let sortField = {}
   let projectionFields = {}
 
@@ -74,35 +434,17 @@ export async function fetchRecentlyAdded(db, collectionName, limit = 12, countOn
   }
 
   if (countOnly) {
+    if (limit) {
+      const count = await db.collection(collectionName).countDocuments()
+      return Math.min(count, limit)
+    }
     return await db.collection(collectionName).countDocuments()
   }
-
   return await db
     .collection(collectionName)
     .find({}, { projection: projectionFields })
     .sort(sortField)
+    .skip(skip)
     .limit(limit)
     .toArray()
-}
-
-export async function addCustomUrlToMedia(mediaArray, type) {
-  return await Promise.all(
-    mediaArray.map(async (media) => {
-      let returnObj = {
-        ...media,
-        url: `/list/${type}/${encodeURIComponent(media.title)}`,
-        description: media.metadata?.overview,
-        type,
-      }
-      if (media.posterBlurhash) {
-        returnObj.posterBlurhash = await fetchMetadata(
-          media.posterBlurhash,
-          'blurhash',
-          type,
-          media.title
-        )
-      }
-      return returnObj
-    })
-  )
 }

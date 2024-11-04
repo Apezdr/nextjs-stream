@@ -39,20 +39,22 @@ const MovieList = async ({ latestUpdateTimestamp }) => {
               </div>
               <p className="pointer-events-none mt-2 block text-sm font-medium text-gray-200 text-center">
                 <TotalRuntime
-                  length={movie.length ?? movie.metadata.runtime * 60000 ?? 0}
+                  length={movie.metadata?.runtime ? movie.metadata.runtime * 60000 : 0}
                   metadata={movie.metadata}
                   videoURL={movie.videoURL}
                 />
               </p>
-              <PageContentAnimatePresence
-                _key={index + '-Metadata2'}
-                variants={variants_height}
-                transition={{ type: 'linear', delay: 0.21, duration: 2 }}
-              >
-                <p className="pointer-events-none mt-2 block text-sm font-medium text-gray-200 text-center">
-                  {movie.metadata.release_date}
-                </p>
-              </PageContentAnimatePresence>
+              {movie.metadata?.release_date ? (
+                <PageContentAnimatePresence
+                  _key={index + '-Metadata2'}
+                  variants={variants_height}
+                  transition={{ type: 'linear', delay: 0.21, duration: 2 }}
+                >
+                  <p className="pointer-events-none mt-2 block text-sm font-medium text-gray-200 text-center">
+                    {movie.metadata.release_date}
+                  </p>
+                </PageContentAnimatePresence>
+              ) : null}
               <PageContentAnimatePresence
                 _key={index + '-Metadata3'}
                 variants={variants_height}
@@ -63,15 +65,17 @@ const MovieList = async ({ latestUpdateTimestamp }) => {
                   {movie?.captionURLs ? <CaptionSVG /> : ''}
                 </span>
               </PageContentAnimatePresence>
-              <PageContentAnimatePresence
-                _key={index + '-Metadata4'}
-                variants={variants_height}
-                transition={{ type: 'linear', delay: 0.75, duration: 2 }}
-              >
-                <p className="pointer-events-none mt-2 block text-sm font-medium text-gray-100">
-                  {movie.metadata.overview}
-                </p>
-              </PageContentAnimatePresence>
+              {movie.metadata?.overview ? (
+                <PageContentAnimatePresence
+                  _key={index + '-Metadata4'}
+                  variants={variants_height}
+                  transition={{ type: 'linear', delay: 0.75, duration: 2 }}
+                >
+                  <p className="pointer-events-none mt-2 block text-sm font-medium text-gray-100">
+                    {movie.metadata.overview}
+                  </p>
+                </PageContentAnimatePresence>
+              ) : null}
             </Link>
           </PageContentAnimatePresence>
         </li>
@@ -101,6 +105,7 @@ const getAndUpdateMongoDB = cache(async (latestUpdateTimestamp) => {
           'metadata.overview': 1,
           'metadata.release_date': 1,
           'metadata.runtime': 1,
+          'metadata.poster_path': 1,
         },
       }
     )
@@ -125,10 +130,10 @@ const getAndUpdateMongoDB = cache(async (latestUpdateTimestamp) => {
         dimensions: movie.dimensions,
         length: movie.length,
       }
-      if (movie.metadata.release_date) {
+      if (movie.metadata?.release_date) {
         returnObject.metadata.release_date = movie.metadata.release_date.toLocaleDateString()
       }
-      if (movie.metadata.runtime <= 0) {
+      if (movie.metadata?.runtime <= 0) {
         returnObject.metadata.runtime = movie.length
       }
 

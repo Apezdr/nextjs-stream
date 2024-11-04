@@ -15,6 +15,7 @@ const siteDescription =
 const syncTVURL = process.env.NEXT_PUBLIC_SYNC_TV_URL || 'http://localhost:3000/tv_list.json'
 const syncMoviesURL =
   process.env.NEXT_PUBLIC_SYNC_MOVIES_URL || 'http://localhost:3000/movies_list.json'
+const nodeJSURL = process.env.NEXT_PUBLIC_NODE_SERVER_URL || 'http://localhost:3000'
 
 export {
   organizrURL,
@@ -27,4 +28,5 @@ export {
   siteDescription,
   syncTVURL,
   syncMoviesURL,
+  nodeJSURL,
 }

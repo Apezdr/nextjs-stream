@@ -1,10 +1,41 @@
-import { fetchBannerMedia } from '@src/utils/auth_database'
+'use client'
+
+import React from 'react'
+import useSWR from 'swr'
 import BannerWithVideo from './BannerWithVideo'
+import { buildURL, fetcher } from '@src/utils'
+import Loading from '@src/app/loading'
 
-const BannerWithVideoContainer = async () => {
-  const bannerMediaList = await fetchBannerMedia()
+const BannerWithVideoContainer = () => {
+  // Use useSWR to fetch data with a 4-second refresh interval
+  const { data: bannerMediaList, error } = useSWR(buildURL('/api/authenticated/banner'), fetcher, {
+    refreshInterval: 4000, // 4 seconds
+    dedupingInterval: 4000, // Prevents duplicate requests within this interval
+  })
 
-  return bannerMediaList ? <BannerWithVideo mediaList={bannerMediaList} /> : null
+  // Handle error state
+  if (error && !bannerMediaList) {
+    return (
+      <div className="w-full h-[40vh] md:h-[80vh] bg-black flex items-center justify-center text-white">
+        <div className="py-12 flex flex-col gap-2 text-center">
+          <span className="text-2xl">⚠️</span>
+          <strong>Error loading banner data. Please try again later.</strong>
+        </div>
+      </div>
+    )
+  }
+
+  // Handle loading state
+  if (!bannerMediaList) {
+    return (
+      <div className="w-full h-[40vh] md:h-[80vh] bg-black flex items-center justify-center text-white">
+        <Loading fullscreenClasses={false} />
+      </div>
+    )
+  }
+
+  // Render BannerWithVideo component if mediaList is available
+  return bannerMediaList.length > 0 ? <BannerWithVideo mediaList={bannerMediaList} /> : null
 }
 
 export default BannerWithVideoContainer

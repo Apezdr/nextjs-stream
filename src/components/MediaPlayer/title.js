@@ -15,22 +15,24 @@ import RestrictedBadge from '@src/components/MediaPlayer/Ratings/restricted_badg
 import No17AndUnderBadge from '@src/components/MediaPlayer/Ratings/no_17_and_under_badge.svg'
 
 export function Title() {
-  const isPaused = useMediaState('paused')
+  //const isPaused = useMediaState('paused')
   return (
     <span
       className={classNames(
-        'z-20 sm:relative inline-block flex-1 overflow-hidden text-ellipsis whitespace-nowrap px-2 text-sm font-medium text-white/70 text-center'
+        'z-20 w-h-full sm:w-auto absolute sm:relative inline-block flex-1 overflow-visible sm:overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-white/70 text-center',
+        'left-1/2 sm:left-0 -translate-x-1/2 sm:translate-x-0 mt-[9%] sm:mt-0 p-0'
       )}
     >
       <div
         className={classNames(
-          'flex flex-col items-center justify-normal sm:min-h-0 sm:px-0 sm:pb-0 sm:bg-inherit sm:relative sm:bottom-0 sm:translate-x-0 sm:left-0',
-          'bg-opacity-80 sm:transition-all transition-colors duration-1000 absolute left-1/2 -translate-x-1/2 -bottom-[3.4rem] bg-black rounded-b-lg px-4 pb-2 min-h-14 justify-center',
-          isPaused ? 'bg-black delay-1000' : 'bg-transparent delay-200'
+          'flex flex-col items-center justify-normal sm:min-h-0 sm:px-0 sm:pb-0 sm:bg-inherit sm:relative sm:translate-x-0 sm:left-0',
+          'bg-opacity-80 sm:transition-none transition-colors duration-1000 absolute left-1/2 -translate-x-1/2 rounded-b-lg px-4 pt-3 sm:pt-0 pb-2 sm:pb-0 min-h-14 justify-center',
+          /* isPaused ? 'bg-black delay-1000' : 'bg-transparent delay-200', */
+          'max-w-[98vw] w-[90vw] sm:w-auto sm:max-w-none'
         )}
       >
-        <MediaTitle />
-        <MediaChapterTitle />
+        <MediaTitle className="text-pretty" />
+        <MediaChapterTitle className="text-pretty" />
       </div>
     </span>
   )

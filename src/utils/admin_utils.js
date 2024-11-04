@@ -1,7 +1,7 @@
 import axios from 'axios'
-import { getFullImageUrl } from '.'
-import { fileServerURLWithoutPrefixPath } from './config'
-import { getLastUpdatedTimestamp } from './database'
+import { buildURL, getFullImageUrl } from '@src/utils'
+import { fileServerURLWithoutPrefixPath } from '@src/utils/config'
+import { getLastUpdatedTimestamp } from '@src/utils/database'
 
 export function processMediaData(jsonResponseString) {
   const { movies, tv } = jsonResponseString
@@ -15,10 +15,11 @@ export function processMediaData(jsonResponseString) {
   // Process movies if present
   if (movies && movies.length > 0) {
     const movieData = movies.map((movie) => {
-      let poster = movie.posterURL || getFullImageUrl(movie.metadata?.poster_path)
-      if (!poster) {
-        poster = null
-      }
+      let poster =
+        movie.posterURL ||
+        getFullImageUrl(movie.metadata?.poster_path) ||
+        buildURL(`/sorry-image-not-available.jpg`)
+
       return {
         id: movie._id.toString(),
         posterURL: poster,
@@ -390,119 +391,3 @@ export async function fetchMetadata(metadataUrl, type = 'file', mediaType, title
   }
 }
 // End of utilities for syncing media
-
-/**
- * Convert date to Eastern Standard Time and format it.
- * @param {string} dateStr - The date string in ISO format.
- * @returns {string} The formatted date in EST.
- */
-function formatDateToEST(dateStr) {
-  const options = {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    hour12: true,
-  }
-
-  const date = new Date(dateStr)
-  const formatter = new Intl.DateTimeFormat('en-US', options)
-  const parts = formatter.formatToParts(date)
-  const formattedDate = parts
-    .map(({ type, value }) => {
-      switch (type) {
-        case 'day':
-        case 'month':
-        case 'year':
-        case 'hour':
-        case 'minute':
-        case 'second':
-          return value
-        case 'dayPeriod':
-          return ` ${value}`
-        case 'literal':
-          return type === 'literal' && value === ' ' ? ', ' : value
-        default:
-          return value
-      }
-    })
-    .join('')
-
-  return formattedDate
-}
-
-/**
- * Sanitize record to a consistent format
- * @param {Object} record - The media record
- * @param {string} type - The type of media (movie or TV)
- * @returns {Object} The sanitized record
- */
-export async function sanitizeRecord(record, type, lastWatchedVideo) {
-  try {
-    let poster = record.posterURL || record.metadata?.poster_path
-    if (!poster) {
-      poster = null
-    }
-    if (record._id) {
-      record._id = record._id.toString()
-    }
-
-    const metadataPromises = []
-    if (record.posterBlurhash) {
-      metadataPromises.push(fetchMetadata(record.posterBlurhash, 'blurhash', record.title, type))
-    }
-
-    const [posterBlurhash] = await Promise.all(metadataPromises)
-    record.posterBlurhash = posterBlurhash
-
-    if (type === 'tv' && record.episode) {
-      return {
-        id: record._id.toString(),
-        date: formatDateToEST(lastWatchedVideo.lastUpdated),
-        link: `${record.title}/${record.seasonNumber}/${record.episode.episodeNumber}`,
-        length: record.length ?? 0,
-        posterURL: poster,
-        posterBlurhash: record.posterBlurhash || null,
-        title: record.showTitleFormatted || null,
-        logo: record.logo || null,
-        type: type,
-        metadata: record.metadata || null,
-        seasons: record.seasons,
-        media: {
-          showTitle: record.title,
-          seasonNumber: record.seasonNumber,
-          episode: {
-            episodeNumber: record.episode.episodeNumber,
-            title: record.episode.title,
-            videoURL: record.episode.videoURL,
-            mediaLastModified: record.episode.mediaLastModified,
-            length: record.episode.length,
-            dimensions: record.episode.dimensions,
-            thumbnail: record.episode.thumbnail,
-            thumbnailBlurhash: record.episode.thumbnailBlurhash,
-            captionURLs: record.episode.captionURLs,
-          },
-        },
-      }
-    } else {
-      return {
-        id: record._id.toString(),
-        date: formatDateToEST(lastWatchedVideo.lastUpdated),
-        link: encodeURIComponent(record.title),
-        length: record.length ?? 0,
-        posterURL: poster,
-        posterBlurhash: record.posterBlurhash || null,
-        title: record.title || record.metadata?.title || null,
-        type: type,
-        metadata: record.metadata || null,
-        media: record,
-      }
-    }
-  } catch (e) {
-    console.log(e)
-    return null
-  }
-}

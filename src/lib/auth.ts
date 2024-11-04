@@ -13,6 +13,7 @@ type CustomUser = {
   image?: string
   approved: boolean
   limitedAccess?: boolean
+  admin?: boolean
 }
 
 const myMongoDBAdapterOptions = {
@@ -54,6 +55,12 @@ export const {
             approved: isAdmin ? true : (existingUser.approved as boolean), // Add the 'approved' flag to the session's user object
             limitedAccess: existingUser.limitedAccess as boolean, // Add the 'limitedAccess' flag to the session's user object; used to restrict access to content
           } as CustomUser
+          if (isAdmin) {
+            session.user = {
+              ...session.user,
+              admin: true,
+            } as CustomUser
+          }
         }
       }
       // If the user signed in without an adapter being used, the user will be redirected to the sign in page

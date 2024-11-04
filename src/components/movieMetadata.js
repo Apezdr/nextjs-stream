@@ -4,26 +4,49 @@ import { convertToDate, getFullImageUrl } from '../utils'
 const OMDB_API_KEY = process.env.OMDB_API_KEY
 const TMDB_API_KEY = process.env.TMDB_API_KEY
 
-async function getMetadata({ title, season = null, episode = null, type }) {
+async function getMetadata({ title, season = null, episode = null, type, tmdb_id = null }) {
   // Use TMDb for movies
   if (type === 'movie') {
-    let url = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(
-      title
-    )}`
+    let url
+    if (tmdb_id) {
+      url = `https://api.themoviedb.org/3/movie/${tmdb_id}?api_key=${TMDB_API_KEY}`
+    } else {
+      url = `https://api.themoviedb.org/3/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(
+        title
+      )}`
+    }
 
     try {
       const searchResponse = await axios.get(url)
-      if (searchResponse.data.results.length > 0) {
-        const movieId = searchResponse.data.results[0].id
+      if (tmdb_id || searchResponse.data.results.length > 0) {
+        const movieId = tmdb_id || searchResponse.data.results[0].id
 
         const detailsUrl = `https://api.themoviedb.org/3/movie/${movieId}?api_key=${TMDB_API_KEY}`
         const movieDetailsResponse = await axios.get(detailsUrl)
 
-        let data = {
-          ...movieDetailsResponse.data,
-          highQualityPosterUrl: movieDetailsResponse.data.poster_path
-            ? `https://image.tmdb.org/t/p/original${movieDetailsResponse.data.poster_path}`
-            : null,
+        let data = { ...movieDetailsResponse.data }
+
+        // Fetch logos if available
+        const logosUrl = `https://api.themoviedb.org/3/movie/${movieId}/images?api_key=${TMDB_API_KEY}`
+        const logosResponse = await axios.get(logosUrl)
+        const logo =
+          logosResponse.data.logos && logosResponse.data.logos.length > 0
+            ? logosResponse.data.logos[0].file_path
+            : null
+
+        if (logo) {
+          data.logo_path = `https://image.tmdb.org/t/p/original${logo}`
+        }
+
+        // Fetch trailer if available
+        const videosUrl = `https://api.themoviedb.org/3/movie/${movieId}/videos?api_key=${TMDB_API_KEY}`
+        const videosResponse = await axios.get(videosUrl)
+        const trailer = videosResponse.data.results.find(
+          (video) => video.type === 'Trailer' && video.site === 'YouTube'
+        )
+
+        if (trailer) {
+          data.trailer_url = `https://www.youtube.com/watch?v=${trailer.key}`
         }
 
         // Convert 'Released' dates if present

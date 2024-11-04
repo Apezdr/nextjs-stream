@@ -14,6 +14,17 @@ import {
 } from '@src/utils/admin_utils'
 import axios from 'axios'
 import {
+  radarrAPIKey,
+  radarrURL,
+  sabnzbdAPIKey,
+  sabnzbdURL,
+  sonarrAPIKey,
+  sonarrURL,
+  tdarrAPIKey,
+  tdarrURL,
+} from '@src/utils/ssr_config'
+import chalk from 'chalk'
+import {
   syncBackdrop,
   syncBlurhash,
   syncCaptions,
@@ -26,17 +37,8 @@ import {
   syncPosterURLs,
   syncVideoURL,
   updateLastSynced,
-} from '@src/utils/admin_frontend_database'
-import {
-  radarrAPIKey,
-  radarrURL,
-  sabnzbdAPIKey,
-  sabnzbdURL,
-  sonarrAPIKey,
-  sonarrURL,
-  tdarrAPIKey,
-  tdarrURL,
-} from '@src/utils/ssr_config'
+} from '@src/utils/sync'
+import { getFileServerImportSettings } from '@src/utils/sync_db'
 
 export async function GET(request, { params }) {
   const authResult = await isAdmin(request)
@@ -185,7 +187,13 @@ async function handleSync(webhookId, request) {
 
     const { fileServer, currentDB } = await response.data
 
-    console.info('Starting Sync with Fileserver')
+    const startTime = Date.now()
+    console.info(
+      chalk.bold.dim(`⋄⋄ Starting Sync with Fileserver ⋄⋄ [${new Date(startTime).toISOString()}]`)
+    )
+
+    const importSettings = await getFileServerImportSettings()
+    console.log(importSettings)
 
     const { missingMedia, missingMp4 } = identifyMissingMedia(fileServer, currentDB)
     await syncMissingMedia(missingMedia, fileServer)
@@ -200,7 +208,14 @@ async function handleSync(webhookId, request) {
     await syncPosterURLs(currentDB, fileServer)
     await syncBackdrop(currentDB, fileServer)
     await updateLastSynced()
-    console.info('Finished Sync with Fileserver')
+
+    const endTime = Date.now()
+    const duration = (endTime - startTime) / 1000 // Convert to seconds
+    console.info(
+      chalk.bold.dim(
+        `⋄⋄ Finished Sync with Fileserver ⋄⋄ [${new Date(endTime).toISOString()}] (Total Runtime: ${duration.toFixed(2)}s)`
+      )
+    )
     return { missingMedia, missingMp4 }
   } catch (error) {
     console.error('Sync operation failed:', error)

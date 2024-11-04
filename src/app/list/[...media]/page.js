@@ -1,4 +1,4 @@
-import MediaPlayerComponent from '@components/MediaPlayer'
+import MediaPlayerComponent from '@components/MediaPlayer/MediaPlayer'
 import MovieListComponent from '@components/MediaPages/MovieListComponent'
 import TVListComponent from '@components/MediaPages/TVListComponent'
 import { auth } from '../../../lib/auth'
@@ -16,6 +16,15 @@ import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched
 import { buildURL } from '@src/utils'
 import { fileServerURLWithPrefixPath } from '@src/utils/config'
 
+async function validateVideoURL(url) {
+  try {
+    const response = await fetch(url, { method: 'HEAD' })
+    return response.ok
+  } catch (error) {
+    return false
+  }
+}
+
 export async function generateMetadata({ params, searchParams }, parent) {
   // read route params
   const mediaType = params?.media?.[0] // 'movie' or 'tv'
@@ -28,12 +37,12 @@ export async function generateMetadata({ params, searchParams }, parent) {
     title = (await parent).title.absolute,
     poster = fileServerURLWithPrefixPath + `/poster_collage.jpg`
   if (mediaType === 'tv') {
-    media = await getRequestedMedia(
-      mediaType,
-      decodeURIComponent(mediaTitle),
-      mediaSeason,
-      mediaEpisode
-    )
+    media = await getRequestedMedia({
+      type: mediaType,
+      title: decodeURIComponent(mediaTitle),
+      season: mediaSeason,
+      episode: mediaEpisode,
+    })
     overview = (await parent).description
     if (mediaTitle) {
       title = media?.title ?? title
@@ -57,7 +66,10 @@ export async function generateMetadata({ params, searchParams }, parent) {
   } else if (mediaType === 'movie') {
     overview = (await parent).description
     if (mediaTitle) {
-      media = await getRequestedMedia(mediaType, decodeURIComponent(mediaTitle))
+      media = await getRequestedMedia({
+        type: mediaType,
+        title: decodeURIComponent(mediaTitle),
+      })
       title = media?.title ?? title
       overview = media?.metadata?.overview ?? overview
       poster = media?.posterURL ?? poster
@@ -98,14 +110,17 @@ async function MediaPage({ params, searchParams }) {
       media = await getRequestedMediaTrailer(mediaType, decodeURIComponent(mediaTitle))
     }
   } else if (mediaType === 'tv' && mediaTitle) {
-    media = await getRequestedMedia(
-      mediaType,
-      decodeURIComponent(mediaTitle),
-      mediaSeason,
-      mediaEpisode
-    )
+    media = await getRequestedMedia({
+      type: mediaType,
+      title: decodeURIComponent(mediaTitle),
+      season: mediaSeason,
+      episode: mediaEpisode,
+    })
   } else if (mediaType === 'movie' && mediaTitle) {
-    media = await getRequestedMedia(mediaType, decodeURIComponent(mediaTitle))
+    media = await getRequestedMedia({
+      type: mediaType,
+      title: decodeURIComponent(mediaTitle),
+    })
   }
 
   let TVParams = ''
@@ -133,7 +148,7 @@ async function MediaPage({ params, searchParams }) {
       >
         {media ? (
           <>
-            <div className="mt-8">
+            <div className="mt-8 w-full">
               {media.posterURL || media.metadata?.poster_path ? (
                 <Image
                   src={
@@ -145,7 +160,7 @@ async function MediaPage({ params, searchParams }) {
                   height={600}
                   quality={100}
                   alt={media.title}
-                  className="max-w-xl w-auto h-auto md:w-3/4 mx-auto rounded-lg"
+                  className="max-w-xs w-full h-auto md:w-3/4 mx-auto rounded-lg"
                 />
               ) : null}
             </div>
@@ -198,6 +213,7 @@ async function MediaPage({ params, searchParams }) {
     )
   } else if (mediaType === 'tv' && mediaTitle && mediaSeason && mediaEpisode) {
     // If a specific episode is selected
+    const isValidVideoURL = media.videoURL && (await validateVideoURL(media.videoURL))
     if (media) {
       return (
         <div className="flex flex-col items-center justify-center md:py-12 h-screen max-h-[90%]">
@@ -213,6 +229,8 @@ async function MediaPage({ params, searchParams }) {
                   : '/list'
               }
               searchParams={searchParams}
+              session={session}
+              isValidVideoURL={isValidVideoURL}
             />
           </Suspense>
         </div>
@@ -221,6 +239,7 @@ async function MediaPage({ params, searchParams }) {
     // Handle episode not found
     // ... Similar to 'Media not found error' logic ...
   } else if (mediaType === 'movie' && mediaTitle && media) {
+    const isValidVideoURL = media.videoURL && (await validateVideoURL(media.videoURL))
     return (
       <div className="flex flex-col items-center justify-center md:py-12 h-screen max-h-[90%]">
         <SyncClientWithServerWatched once={true} />
@@ -235,6 +254,8 @@ async function MediaPage({ params, searchParams }) {
                 : '/list'
             }
             searchParams={searchParams}
+            session={session}
+            isValidVideoURL={isValidVideoURL}
           />
         </Suspense>
       </div>

@@ -57,16 +57,19 @@ async function validateWebhookId(webhookId) {
   return validWebhookIds.includes(webhookId)
 }
 
-export async function isAdmin(req, redirect = true) {
+export async function isAdmin(req = false, redirect = true) {
   let sessionResponse
-  try {
-    sessionResponse = await axios.get(buildURL(`/api/auth/session`), {
-      headers: {
-        cookie: req.headers.get('cookie') || '', // Forward the cookies from the original request
-      },
-    })
-  } catch (error) {
-    return new Response('Failed to fetch session.', { status: 500 })
+  //
+  if (req) {
+    try {
+      sessionResponse = await axios.get(buildURL(`/api/auth/session`), {
+        headers: {
+          cookie: req.headers.get('cookie') || '', // Forward the cookies from the original request
+        },
+      })
+    } catch (error) {
+      return new Response('Failed to fetch session.', { status: 500 })
+    }
   }
 
   let session = sessionResponse.data

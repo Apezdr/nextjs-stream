@@ -2,6 +2,8 @@
   "compilerOptions": {
     "paths": {
       "@components/*": ["./src/components/*"],
+      "@src/*": ["./src/*"],
+      "contentlayer/generated": ["./.contentlayer/generated"]
     }
   }
 }

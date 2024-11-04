@@ -2,18 +2,10 @@ import {
   getPosters,
   getRecentlyAddedMedia,
   getRecentlyWatchedForUser,
-} from '@src/utils/admin_frontend_database'
-import HorizontalScroll from './HorizontalScroll'
+} from '@src/utils/auth_database'
+import dynamic from 'next/dynamic'
 import { auth } from '@src/lib/auth'
-
-const sortFunctions = {
-  id: (a, b, order) => (order === 'asc' ? a - b : b - a),
-  title: (a, b, order) =>
-    order === 'asc' ? a.title.localeCompare(b.title) : b.title.localeCompare(a.title),
-  date: (a, b, order) =>
-    order === 'asc' ? new Date(a.date) - new Date(b.date) : new Date(b.date) - new Date(a.date),
-  // Add more sorting functions as needed
-}
+const HorizontalScroll = dynamic(() => import('./HorizontalScroll'), { ssr: false })
 
 export default async function HorizontalScrollContainer({
   type = 'all',
@@ -22,46 +14,37 @@ export default async function HorizontalScrollContainer({
 }) {
   let moviePosters = [],
     tvPosters = [],
-    watched = [],
-    addedMedia = [],
-    items = []
+    items = [],
+    limit = null
   const session = await auth()
-
-  const sortList = (a, b) => sortFunctions[sort](a, b, sortOrder)
 
   switch (type) {
     case 'movie':
-      moviePosters = await getPosters('movie')
-      if (moviePosters && moviePosters.length > 0) {
-        items = moviePosters.sort(sortList)
-      }
+      items = await getPosters('movie', true)
       break
     case 'tv':
-      tvPosters = await getPosters('tv')
-      if (tvPosters && tvPosters.length > 0) {
-        items = tvPosters.sort(sortList)
-      }
+      items = await getPosters('tv', true)
       break
     case 'recentlyWatched':
-      watched = await getRecentlyWatchedForUser(session.user?.id)
-      if (watched && watched.length > 0) {
-        items = watched.sort(sortList)
-      }
+      limit = 50
+      items = await getRecentlyWatchedForUser({
+        userId: session.user?.id,
+        countOnly: true,
+        limit: limit,
+      })
       break
     case 'recentlyAdded':
-      addedMedia = await getRecentlyAddedMedia({ limit: 30 })
-      if (addedMedia && addedMedia.length > 0) {
-        items = addedMedia
-      }
+      limit = 30
+      items = await getRecentlyAddedMedia({ limit: limit, countOnly: true })
       break
     case 'all':
     default:
-      moviePosters = await getPosters('movie')
-      tvPosters = await getPosters('tv')
-      if (moviePosters && moviePosters.length > 0 && tvPosters && tvPosters.length > 0) {
-        items = [...tvPosters, ...moviePosters].sort(sortList)
-      }
+      moviePosters = await getPosters('movie', true)
+      tvPosters = await getPosters('tv', true)
+      items = moviePosters + tvPosters
   }
 
-  return <HorizontalScroll items={items} listtype={type} />
+  return (
+    <HorizontalScroll numberOfItems={items} listType={type} sort={sort} sortOrder={sortOrder} />
+  )
 }

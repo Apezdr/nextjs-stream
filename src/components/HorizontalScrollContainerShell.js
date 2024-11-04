@@ -1,6 +1,6 @@
 'use client'
 import { ScrollMenu } from 'react-horizontal-scrolling-menu'
-import { SkeletonCard } from './MediaScroll/Card'
+import SkeletonCard from '@components/SkeletonCard'
 
 const HorizontalScrollContainerShell = ({ skeletonCount = 0 }) => {
   return (
