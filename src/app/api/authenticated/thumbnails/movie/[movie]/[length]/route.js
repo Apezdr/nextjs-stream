@@ -1,4 +1,4 @@
-import { fileServerURL } from '@src/utils/config'
+import { nodeJSURL } from '@src/utils/config'
 import isAuthenticated from '../../../../../../../utils/routeAuth'
 
 export async function GET(req, { params }) {
@@ -9,7 +9,7 @@ export async function GET(req, { params }) {
   const { movie, length } = params
   const totalLengthInSeconds = parseInt(length)
 
-  const baseUrl = fileServerURL + `/nodejs/frame/movie/${encodeURIComponent(movie)}/`
+  const baseUrl = `${nodeJSURL}/frame/movie/${encodeURIComponent(movie)}/`
   let webVttContent = 'WEBVTT\n\n'
 
   // Generate thumbnails based on the video length

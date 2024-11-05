@@ -1,4 +1,4 @@
-import { fileServerURL } from '@src/utils/config'
+import { nodeJSURL } from '@src/utils/config'
 import isAuthenticated from '@src/utils/routeAuth'
 
 export async function GET(req, { params }) {
@@ -10,7 +10,7 @@ export async function GET(req, { params }) {
   // Extract TV show details from params
   const { show, season, episode, length } = params
   const totalLengthInSeconds = parseInt(length)
-  const baseUrl = fileServerURL + `/nodejs/frame/tv/${show}/${season}/${episode}/`
+  const baseUrl = `${nodeJSURL}/frame/tv/${show}/${season}/${episode}/`
   let webVttContent = 'WEBVTT\n\n'
 
   // Generate thumbnails based on the video length

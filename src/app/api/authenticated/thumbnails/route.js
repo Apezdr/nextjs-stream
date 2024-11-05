@@ -2,7 +2,7 @@ import fetch from 'node-fetch'
 //import isAuthenticated from '../../../../utils/routeAuth'
 import clientPromise from '../../../../lib/mongodb'
 import isAuthenticated from '@src/utils/routeAuth'
-import { fileServerURL } from '@src/utils/config'
+import { nodeJSURL } from '@src/utils/config'
 
 // This route is used to fetch spritesheet vtt file for a specific media item
 export const GET = async (req) => {
@@ -56,9 +56,9 @@ export const GET = async (req) => {
     let spriteURL
 
     if (type === 'movie') {
-      spriteURL = fileServerURL + `/nodejs/vtt/${type}/${name}/`
+      spriteURL = `${nodeJSURL}/vtt/${type}/${name}/`
     } else if (type === 'tv') {
-      spriteURL = fileServerURL + `/nodejs/vtt/${type}/${name}/${season}/${episode}`
+      spriteURL = `${nodeJSURL}/vtt/${type}/${name}/${season}/${episode}`
     }
 
     if (!spriteURL) {
