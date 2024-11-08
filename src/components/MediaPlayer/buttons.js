@@ -30,6 +30,7 @@ import {
 } from '@vidstack/react/icons'
 import * as Sliders from '@components/MediaPlayer/sliders'
 import Link from 'next/link'
+import { Fragment } from 'react'
 //import ChromecastButton from './ChromecastButton'
 
 export const buttonClass =
@@ -60,7 +61,7 @@ export function Mute({ tooltipPlacement, toggleSliderOnUnmute = false }) {
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
-        <>
+        <div className="flex flex-row">
           <MuteButton className={buttonClass}>
             {isMuted || volume == 0 ? (
               <MuteIcon className="w-8 h-8" />
@@ -75,7 +76,7 @@ export function Mute({ tooltipPlacement, toggleSliderOnUnmute = false }) {
               <Sliders.Volume />
             </div>
           ) : null}
-        </>
+        </div>
       </Tooltip.Trigger>
       <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
         {isMuted ? 'Unmute' : 'Mute'}
@@ -179,7 +180,7 @@ export function GoBack({ goBack, tooltipPlacement }) {
   return (
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
-        <>
+        <div>
           <Link
             href={goBack}
             className="absolute top-6 left-8 p-2 text-white rounded-full hover:bg-gray-700 hover:bg-opacity-30"
@@ -199,7 +200,7 @@ export function GoBack({ goBack, tooltipPlacement }) {
               />
             </svg>
           </Link>
-        </>
+        </div>
       </Tooltip.Trigger>
       <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
         Go Back to List

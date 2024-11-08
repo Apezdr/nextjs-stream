@@ -51,7 +51,8 @@ async function handleRequest(request, params, isWebhook) {
   })
 }
 
-export async function GET(request, { params }) {
+export async function GET(request, props) {
+  const params = await props.params;
   const authResult = await isAuthenticated(request)
   if (authResult instanceof Response) {
     return authResult
@@ -60,7 +61,8 @@ export async function GET(request, { params }) {
   return handleRequest(request, params, false)
 }
 
-export async function POST(request, { params }) {
+export async function POST(request, props) {
+  const params = await props.params;
   const isWebhook = await isValidWebhook(request)
   return handleRequest(request, params, isWebhook)
 }

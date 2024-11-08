@@ -8,11 +8,12 @@ import { buildURL, classNames, fetcher } from '@src/utils'
 import dynamic from 'next/dynamic'
 import useSWR from 'swr'
 
-const CardVideoPlayer = dynamic(() => import('./CardVideoPlayer'), {
+const CardVideoPlayer = dynamic(() => import('@src/components/MediaScroll/CardVideoPlayer'), {
   ssr: false,
 })
 
 const PopupCard = ({
+  imageDimensions,
   imagePosition,
   title,
   seasonNumber = null,
@@ -84,12 +85,16 @@ const PopupCard = ({
 
   return (
     <div
-      className="absolute z-50 pointer-events-none transition-all duration-300 ease-in-out"
+      className={classNames(
+        'absolute z-50 pointer-events-none transition-all duration-300 ease-in-out',
+        `w-[${imageDimensions.width}]`,
+        imagePosition.expandedWidth && `!w-[${imagePosition.expandedWidth}]`
+      )}
       style={{
         top: imagePosition.top,
         left: imagePosition.left,
-        width: imagePosition.expandedWidth,
-        height: imagePosition.height,
+        //width: imagePosition.expandedWidth ?? imageDimensions.width,
+        height: imagePosition.height ?? imageDimensions.height,
         opacity: 1,
       }}
       onClick={handleCollapse}
@@ -135,10 +140,9 @@ const PopupCard = ({
             <Image
               quality={25}
               fill
-              objectFit="contain"
               src={data.logo}
               alt={`${title} Logo`}
-              className="absolute z-20 !top-[67%] max-w-[70%] mx-auto max-h-14 inset-0"
+              className="absolute z-20 !top-[67%] max-w-[70%] mx-auto max-h-14 inset-0 object-contain"
               loading="lazy"
             />
           )}
@@ -190,8 +194,7 @@ const PopupCard = ({
                   loading="eager"
                   priority
                   fill
-                  objectFit="cover"
-                  className="rounded-t-lg"
+                  className="rounded-t-lg object-cover"
                 />
               </motion.div>
             )}
@@ -220,9 +223,8 @@ const PopupCard = ({
                   loading="eager"
                   priority
                   fill
-                  objectFit="cover"
-                  className="rounded-t-lg"
-                  onLoadingComplete={() => setIsThumbnailLoaded(true)}
+                  className="rounded-t-lg object-cover"
+                  onLoad={() => setIsThumbnailLoaded(true)}
                 />
               </motion.div>
             )}
@@ -249,8 +251,7 @@ const PopupCard = ({
                   loading="eager"
                   priority
                   fill
-                  objectFit="cover"
-                  className="rounded-t-lg"
+                  className="rounded-t-lg object-cover"
                 />
               </motion.div>
             )}

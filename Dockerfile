@@ -3,7 +3,7 @@ FROM node:current-alpine as builder
 WORKDIR /app
 
 COPY package.json package-lock.json* ./
-RUN npm install -g npm@latest
+RUN npm install -g npm@10.3.0
 RUN npm install --force
 COPY . .
 RUN npm run build

@@ -25,7 +25,8 @@ async function validateVideoURL(url) {
   }
 }
 
-export async function generateMetadata({ params, searchParams }, parent) {
+export async function generateMetadata(props, parent) {
+  const params = await props.params;
   // read route params
   const mediaType = params?.media?.[0] // 'movie' or 'tv'
   const mediaTitle = params?.media?.[1]
@@ -93,7 +94,7 @@ async function MediaPage({ params, searchParams }) {
     mediaTitle = params?.media?.[1],
     mediaSeason = params?.media?.[2], // Could be 'Season X'
     mediaEpisode = params?.media?.[3], // Could be 'Episode Y'
-    limitedAccess = session && session.user.limitedAccess,
+    limitedAccess = session && session.user?.limitedAccess,
     media
 
   // Handle if the user is limited and show the video for them

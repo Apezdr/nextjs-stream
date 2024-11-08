@@ -30,7 +30,7 @@ import {
   syncCaptions,
   syncChapters,
   syncEpisodeThumbnails,
-  syncLengthAndDimensions,
+  syncVideoInfo,
   syncLogos,
   syncMetadata,
   syncMissingMedia,
@@ -40,7 +40,8 @@ import {
 } from '@src/utils/sync'
 import { getFileServerImportSettings } from '@src/utils/sync_db'
 
-export async function GET(request, { params }) {
+export async function GET(request, props) {
+  const params = await props.params
   const authResult = await isAdmin(request)
   if (authResult instanceof Response) {
     return authResult
@@ -123,7 +124,8 @@ export async function GET(request, { params }) {
 }
 
 // New POST method for handling the sync operation
-export async function POST(request, { params }) {
+export async function POST(request, props) {
+  const params = await props.params
   const authResult = await isAdminOrWebhook(request)
   if (authResult instanceof Response) {
     return authResult
@@ -203,7 +205,7 @@ async function handleSync(webhookId, request) {
     await syncVideoURL(currentDB, fileServer)
     await syncLogos(currentDB, fileServer)
     await syncBlurhash(currentDB, fileServer)
-    await syncLengthAndDimensions(currentDB, fileServer)
+    await syncVideoInfo(currentDB, fileServer)
     await syncEpisodeThumbnails(currentDB, fileServer)
     await syncPosterURLs(currentDB, fileServer)
     await syncBackdrop(currentDB, fileServer)

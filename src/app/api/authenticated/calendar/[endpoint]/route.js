@@ -25,7 +25,8 @@ async function fetchWithRetry(url, retries, delay) {
   }
 }
 
-export async function GET(req, { params }) {
+export async function GET(req, props) {
+  const params = await props.params;
   const authResult = await isAuthenticated(req)
   if (authResult instanceof Response) {
     return authResult

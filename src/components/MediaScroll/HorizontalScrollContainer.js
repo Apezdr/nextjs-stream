@@ -3,9 +3,8 @@ import {
   getRecentlyAddedMedia,
   getRecentlyWatchedForUser,
 } from '@src/utils/auth_database'
-import dynamic from 'next/dynamic'
 import { auth } from '@src/lib/auth'
-const HorizontalScroll = dynamic(() => import('./HorizontalScroll'), { ssr: false })
+import HorizontalScroll from '@src/components/MediaScroll/HorizontalScroll'
 
 export default async function HorizontalScrollContainer({
   type = 'all',

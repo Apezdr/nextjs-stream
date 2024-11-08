@@ -5,8 +5,9 @@ import isAuthenticated from '@src/utils/routeAuth'
 import { headers } from 'next/headers'
 import { classNames } from '@src/utils'
 
-const AuthError = async ({ searchParams }) => {
-  const headersList = headers()
+const AuthError = async props => {
+  const searchParams = await props.searchParams;
+  const headersList = await headers()
   let authResult
   if (headersList.get('cookie')) {
     authResult = await isAuthenticated({

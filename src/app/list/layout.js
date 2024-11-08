@@ -1,6 +1,6 @@
 import { auth } from '@src/lib/auth'
 import { adminUserEmails } from '@src/utils/config'
-import { lazy, Suspense } from 'react'
+import { Fragment, lazy, Suspense } from 'react'
 import Nav from '@components/Navigation/Nav'
 const ShouldRenderContent = lazy(() => import('@components/HOC/ShouldRenderContent'))
 const BannerWithVideoContainer = lazy(() => import('@components/Landing/BannerWithVideoContainer'))
@@ -39,7 +39,7 @@ export default async function ListLayout({ children }) {
       ]
     : []
   return (
-    <>
+    <Fragment>
       {!email ? null : (
         <div className="relative">
           <div className="w-full h-auto flex flex-col items-center justify-center text-center z-[3]">
@@ -56,6 +56,6 @@ export default async function ListLayout({ children }) {
         </div>
       )}
       {children}
-    </>
+    </Fragment>
   )
 }

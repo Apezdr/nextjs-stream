@@ -7,12 +7,12 @@
     --media-menu-y-offset: 30px;
 }
   
-.controls :global(.volume-slider) {
+.controls .volume-slider {
     --media-slider-preview-offset: 30px;
     margin-left: 1.5px;
 }
 
-.captions:global, .audio:global, .videoquality:global {
+.captions, .audio, .videoquality {
     position: sticky;
 }
 

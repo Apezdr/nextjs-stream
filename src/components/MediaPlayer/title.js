@@ -38,7 +38,7 @@ export function Title() {
   )
 }
 
-export function VideoMetadata({ mediaMetadata = {}, logo }) {
+export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo }) {
   const isPaused = useMediaState('paused'),
     player = useMediaPlayer()
   return (
@@ -85,6 +85,26 @@ export function VideoMetadata({ mediaMetadata = {}, logo }) {
                 return `Rated ${mediaMetadata.rating}`
             }
           })()}
+        </span>
+      )}
+      {(hdr || dims) && (
+        <span
+          className={classNames(
+            `font-sans hidden sm:block max-w-sm xl:max-w-lg text-xl text-gray-300 media-HDR`,
+            isPaused ? '' : 'playing'
+          )}
+        >
+          {dims &&
+            (() => {
+              const [width] = dims.split('x').map(Number)
+              if (width >= 3800 && width <= 3900) return '4K UHD'
+              if (width >= 1900 && width <= 2000) return '1080p'
+              if (width >= 1200 && width <= 1300) return '720p'
+              if (width >= 600 && width <= 700) return '480p'
+              return dims
+            })()}
+          {dims && hdr && ' | '}
+          {hdr}
         </span>
       )}
       <div

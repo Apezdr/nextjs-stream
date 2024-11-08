@@ -1236,82 +1236,112 @@ export async function syncBlurhash(currentDB, fileServer) {
 }
 
 /**
- * Sync the length and dimensions properties of TV shows and movies between the
+ * Sync the video information (length, dimensions, HDR) of TV shows and movies between the
  * admin frontend database and the file server.
  */
-export async function syncLengthAndDimensions(currentDB, fileServer) {
-  const client = await clientPromise
+export async function syncVideoInfo(currentDB, fileServer) {
+  const client = await clientPromise;
 
-  console.log(chalk.bold.greenBright('Starting length and dimensions synchronization...'))
+  console.log(chalk.bold.greenBright('Starting video information synchronization...'));
+
   // Iterate through TV shows
   for (const tv of currentDB.tv) {
     // Retrieve the file server show data
-    const fileServerShowData = fileServer?.tv[tv.title]
+    const fileServerShowData = fileServer?.tv[tv.title];
+
+    if (!fileServerShowData) {
+      console.log(`No file server data found for TV show: ${tv.title}`);
+      continue;
+    }
 
     // Iterate through seasons
     for (const season of tv.seasons) {
       // Retrieve the file server season data
-      const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
-      const fileServerSeasonDataFILENAMES = fileServerSeasonData?.fileNames
+      const seasonKey = `Season ${season.seasonNumber}`;
+      const fileServerSeasonData = fileServerShowData?.seasons[seasonKey];
+      const fileServerSeasonDataFILENAMES = fileServerSeasonData?.fileNames;
 
-      if (fileServerSeasonDataFILENAMES) {
-        // Iterate through episodes
-        for (const episode of season.episodes) {
-          // Find the corresponding episode file in the fileServer data
-          const episodeFileName = fileServerSeasonDataFILENAMES.find((fileName) => {
-            const fileNameWithoutExtension = fileName.slice(0, -4) // Remove the file extension
-            const episodeNumberRegex = new RegExp(
-              `S\\d{2}E${episode.episodeNumber.toString().padStart(2, '0')}`,
-              'i'
-            )
-            return episodeNumberRegex.test(fileNameWithoutExtension)
-          })
+      if (!fileServerSeasonDataFILENAMES) {
+        console.log(`No file server season data found for ${tv.title} - ${seasonKey}`);
+        continue;
+      }
 
-          // If episode file found in file server data
-          if (episodeFileName) {
-            const updateData = {}
+      // Iterate through episodes
+      for (const episode of season.episodes) {
+        // Find the corresponding episode file in the fileServer data
+        const episodeFileName = fileServerSeasonDataFILENAMES.find((fileName) => {
+          const fileNameWithoutExtension = fileName.slice(0, -4); // Remove the file extension
+          const episodeNumberRegex = new RegExp(
+            `S\\d{2}E${episode.episodeNumber.toString().padStart(2, '0')}`,
+            'i'
+          );
+          return episodeNumberRegex.test(fileNameWithoutExtension);
+        });
 
-            if (
-              fileServerSeasonData.lengths[episodeFileName] &&
-              episode.length !== fileServerSeasonData.lengths[episodeFileName]
-            ) {
-              updateData['seasons.$.episodes.$[episode].length'] =
-                fileServerSeasonData.lengths[episodeFileName]
-            }
+        // If episode file found in file server data
+        if (episodeFileName) {
+          const episodeInfo = fileServerSeasonData.urls[episodeFileName]?.additionalMetadata;
 
-            if (
-              fileServerSeasonData.dimensions[episodeFileName] &&
-              episode.dimensions !== fileServerSeasonData.dimensions[episodeFileName]
-            ) {
-              updateData['seasons.$.episodes.$[episode].dimensions'] =
-                fileServerSeasonData.dimensions[episodeFileName]
-            }
+          if (!episodeInfo) {
+            console.warn(`No additionalMetadata found for ${episodeFileName} in file server data.`);
+            continue;
+          }
 
-            if (Object.keys(updateData).length > 0) {
-              console.log(
-                `TV: Updating length and dimensions for ${tv.title} - Season ${season.seasonNumber}, Episode ${episode.episodeNumber}`
-              )
-              await client
-                .db('Media')
-                .collection('TV')
-                .updateOne(
-                  {
-                    title: tv.title,
-                    'seasons.seasonNumber': season.seasonNumber,
-                    'seasons.episodes.episodeNumber': episode.episodeNumber,
-                  },
-                  {
-                    $set: updateData,
-                  },
-                  {
-                    arrayFilters: [{ 'episode.episodeNumber': episode.episodeNumber }],
-                  }
-                )
-            }
+          const hdrInfo = fileServerSeasonData.urls[episodeFileName]?.hdr || null;
+
+          const updateData = {};
+
+          // Sync length
+          if (
+            fileServerSeasonData.lengths[episodeFileName] &&
+            episode.length !== fileServerSeasonData.lengths[episodeFileName]
+          ) {
+            updateData['seasons.$.episodes.$[episode].length'] =
+              fileServerSeasonData.lengths[episodeFileName];
+          }
+
+          // Sync dimensions
+          if (
+            fileServerSeasonData.dimensions[episodeFileName] &&
+            episode.dimensions !== fileServerSeasonData.dimensions[episodeFileName]
+          ) {
+            updateData['seasons.$.episodes.$[episode].dimensions'] =
+              fileServerSeasonData.dimensions[episodeFileName];
+          }
+
+          // Sync HDR information
+          if (hdrInfo && episode.hdr !== hdrInfo) {
+            updateData['seasons.$.episodes.$[episode].hdr'] = hdrInfo;
+          }
+
+          // Sync additional metadata (optional)
+          // Example: Sync duration and size
+          if (episodeInfo.duration && episode.duration !== episodeInfo.duration * 1000) {
+            updateData['seasons.$.episodes.$[episode].duration'] = episodeInfo.duration * 1000; // Convert to ms
+          }
+
+          if (Object.keys(updateData).length > 0) {
+            console.log(
+              `TV: Updating video info for ${tv.title} - ${seasonKey}, Episode ${episode.episodeNumber}`
+            );
+            await client
+              .db('Media')
+              .collection('TV')
+              .updateOne(
+                {
+                  title: tv.title,
+                  'seasons.seasonNumber': season.seasonNumber,
+                  'seasons.episodes.episodeNumber': episode.episodeNumber,
+                },
+                {
+                  $set: updateData,
+                },
+                {
+                  arrayFilters: [{ 'episode.episodeNumber': episode.episodeNumber }],
+                }
+              );
           }
         }
-      } else {
-        console.log(`No file server data found for TV show: ${tv.title}`)
       }
     }
   }
@@ -1319,47 +1349,73 @@ export async function syncLengthAndDimensions(currentDB, fileServer) {
   // Iterate through movies
   for (const movie of currentDB.movies) {
     // Retrieve the file server movie data
-    const fileServerMovieData = fileServer?.movies[movie.title]
-    const fileServerMovieDataFILENAMES = fileServerMovieData?.fileNames
+    const fileServerMovieData = fileServer?.movies[movie.title];
+    const fileServerMovieDataFILENAMES = fileServerMovieData?.fileNames;
 
-    if (fileServerMovieDataFILENAMES) {
-      // Find the MP4 file
-      const mp4File = fileServerMovieDataFILENAMES.find((name) => name.endsWith('.mp4'))
+    if (!fileServerMovieDataFILENAMES) {
+      console.log(`No file server data found for movie: ${movie.title}`);
+      continue;
+    }
 
-      if (mp4File) {
-        const updateData = {}
+    // Find the MP4 file
+    const mp4File = fileServerMovieDataFILENAMES.find((name) => name.endsWith('.mp4'));
 
-        if (
-          fileServerMovieData.length[mp4File] &&
-          movie.length !== fileServerMovieData.length[mp4File]
-        ) {
-          updateData.length = fileServerMovieData.length[mp4File]
-        }
+    if (mp4File) {
+      const additionalMetadata = fileServerMovieData.additional_metadata;
 
-        if (
-          fileServerMovieData.dimensions[mp4File] &&
-          movie.dimensions !== fileServerMovieData.dimensions[mp4File]
-        ) {
-          updateData.dimensions = fileServerMovieData.dimensions[mp4File]
-        }
-
-        if (Object.keys(updateData).length > 0) {
-          console.log(`Movie: Updating length and dimensions for ${movie.title}`)
-          await client.db('Media').collection('Movies').updateOne(
-            {
-              title: movie.title,
-            },
-            {
-              $set: updateData,
-            }
-          )
-        }
+      if (!additionalMetadata) {
+        console.warn(`No additionalMetadata found for ${mp4File} in file server data.`);
+        continue;
       }
-    } else {
-      console.log(`No file server data found for movie: ${movie.title}`)
+
+      const hdrInfo = fileServerMovieData.hdr || null;
+      const fileServerDuration = fileServerMovieData.duration;
+      const fileServerSize = fileServerMovieData.size || null;
+
+      const updateData = {};
+
+      // Sync length
+      if (
+        fileServerMovieData.length[mp4File] &&
+        movie.length !== fileServerMovieData.length[mp4File]
+      ) {
+        updateData.length = fileServerMovieData.length[mp4File];
+      }
+
+      // Sync dimensions
+      if (
+        fileServerMovieData.dimensions[mp4File] &&
+        movie.dimensions !== fileServerMovieData.dimensions[mp4File]
+      ) {
+        updateData.dimensions = fileServerMovieData.dimensions[mp4File];
+      }
+
+      // Sync HDR information
+      if (hdrInfo && movie.hdr !== hdrInfo) {
+        updateData.hdr = hdrInfo;
+      }
+
+      // Sync additional metadata (optional)
+      // Example: Sync duration and size
+      if (fileServerDuration && movie.duration !== fileServerDuration * 1000) {
+        updateData.duration = fileServerDuration * 1000; // Convert to ms
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        console.log(`Movie: Updating video info for ${movie.title}`);
+        await client.db('Media').collection('Movies').updateOne(
+          {
+            title: movie.title,
+          },
+          {
+            $set: updateData,
+          }
+        );
+      }
     }
   }
-  console.log(chalk.bold.greenBright('Length and dimensions synchronization complete.'))
+
+  console.log(chalk.bold.greenBright('Video information synchronization complete.'));
 }
 
 /**

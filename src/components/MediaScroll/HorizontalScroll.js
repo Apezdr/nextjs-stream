@@ -1,13 +1,22 @@
 'use client'
 
-import { useState, useRef, useCallback, useMemo, memo, useLayoutEffect, useEffect } from 'react'
+import {
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+  memo,
+  useLayoutEffect,
+  useEffect,
+  Fragment,
+} from 'react'
 import useSWR, { useSWRConfig, preload } from 'swr'
 import { buildURL, classNames } from '@src/utils'
 import { ChevronDoubleLeftIcon, ChevronDoubleRightIcon } from '@heroicons/react/20/solid'
-import SkeletonCard from './SkeletonCard'
+import SkeletonCard from '@components/MediaScroll/SkeletonCard'
 import Card from './Card'
 import { motion, AnimatePresence } from 'framer-motion'
-import { v4 as uuidv4 } from 'uuid'
+import { v7 as uuidv7 } from 'uuid'
 import throttle from 'lodash.throttle'
 import debounce from 'lodash.debounce'
 
@@ -70,7 +79,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   const [expandedCardId, setExpandedCardId] = useState(null)
   const [direction, setDirection] = useState(0) // Track direction
   const [isAnimating, setIsAnimating] = useState(false) // Track animation state
-  const uniqueId = useRef(uuidv4()) // Unique ID for this instance
+  const uniqueId = useRef(uuidv7()) // Unique ID for this instance
   const containerRef = useRef(null)
   const cardsContainerRef = useRef(null)
   const cardRef = useRef(null)
@@ -384,60 +393,66 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
               style={{ willChange: 'transform, opacity' }}
               onAnimationComplete={() => setIsAnimating(false)}
             >
-              {isLoading
-                ? // Render SkeletonCards during loading
-                  Array.from({
+              {isLoading ? (
+                // Render SkeletonCards during loading
+                <Fragment>
+                  {Array.from({
                     length: itemsPerPage + numberOfPeeks,
-                  }).map((_, index) => <SkeletonCard key={`skeleton-${index}`} />)
-                : // Render actual Cards when data is loaded
-                  itemsToRender.map(({ item, isPeek }, index) => {
-                    // if (!item) {
-                    //   return (
-                    //     <div
-                    //       key={`empty-${index}`}
-                    //       className="w-32 md:w-36 lg:w-48 flex-shrink-0 h-full"
-                    //     />
-                    //   )
-                    // }
+                  }).map((_, index) => (
+                    <SkeletonCard key={`skeleton-${index}-${isLoading}`} />
+                  ))}
+                </Fragment>
+              ) : (
+                // Render actual Cards when data is loaded
+                itemsToRender.map(({ item, isPeek }, index) => {
+                  // if (!item) {
+                  //   return (
+                  //     <div
+                  //       key={`empty-${index}`}
+                  //       className="w-32 md:w-36 lg:w-48 flex-shrink-0 h-full"
+                  //     />
+                  //   )
+                  // }
 
-                    const uniqueIdItem = `${item.id}-${currentPage * itemsPerPage + index}`
-                    const videoURL = item?.metadata?.trailer_url || item?.videoURL || null
+                  const uniqueIdItem = `${item.id}-${currentPage * itemsPerPage + index}`
+                  const videoURL = item?.metadata?.trailer_url || item?.videoURL || null
 
-                    const onCardClick = isPeek
-                      ? () => moveScroll(isPeek === 'previous' ? 'left' : 'right')
-                      : () => handleCardExpand(uniqueIdItem)
+                  const onCardClick = isPeek
+                    ? () => moveScroll(isPeek === 'previous' ? 'left' : 'right')
+                    : () => handleCardExpand(uniqueIdItem)
 
-                    return (
-                      <div
-                        ref={index === (data.previousItem ? 1 : 0) ? cardRef : null}
-                        key={uniqueIdItem}
-                      >
-                        <Card
-                          title={item.title}
-                          itemId={uniqueIdItem}
-                          mediaId={item.id}
-                          type={item.type}
-                          posterURL={item.posterURL}
-                          posterBlurhash={item.posterBlurhash}
-                          backdrop={item.backdrop}
-                          backdropBlurhash={item.backdropBlurhash}
-                          videoURL={videoURL}
-                          date={item.date}
-                          link={item.link}
-                          logo={item.logo}
-                          listType={listType}
-                          isExpanded={expandedCardId === uniqueIdItem}
-                          onExpand={() => handleCardExpand(uniqueIdItem)}
-                          onCollapse={handleCardCollapse}
-                          isPeek={isPeek}
-                          onCardClick={onCardClick}
-                          // tv
-                          episodeNumber={item?.episodeNumber}
-                          seasonNumber={item?.seasonNumber}
-                        />
-                      </div>
-                    )
-                  })}
+                  return (
+                    <div
+                      ref={index === (data.previousItem ? 1 : 0) ? cardRef : null}
+                      key={uniqueIdItem}
+                    >
+                      <Card
+                        title={item.title}
+                        itemId={uniqueIdItem}
+                        mediaId={item.id}
+                        type={item.type}
+                        posterURL={item.posterURL}
+                        posterBlurhash={item.posterBlurhash}
+                        backdrop={item.backdrop}
+                        backdropBlurhash={item.backdropBlurhash}
+                        videoURL={videoURL}
+                        date={item.date}
+                        link={item.link}
+                        logo={item.logo}
+                        listType={listType}
+                        isExpanded={expandedCardId === uniqueIdItem}
+                        onExpand={() => handleCardExpand(uniqueIdItem)}
+                        onCollapse={handleCardCollapse}
+                        isPeek={isPeek}
+                        onCardClick={onCardClick}
+                        // tv
+                        episodeNumber={item?.episodeNumber}
+                        seasonNumber={item?.seasonNumber}
+                      />
+                    </div>
+                  )
+                })
+              )}
             </motion.div>
           </AnimatePresence>
         </div>

@@ -25,19 +25,6 @@ async function validateVideoURL(url) {
   }
 }
 
-const relatedMedia = [
-  {
-    title: '#Alive (2020) 1080p BluRay',
-    url: 'https://personalserver.adamdrumm.com/movies/%23Alive/%23Alive.2020.1080p.BluRay.DD5.1.x264-playHD.mp4',
-    thumbnail: 'https://personalserver.adamdrumm.com/movies/%23Alive/thumbnail.jpg',
-  },
-  {
-    title: 'Office Space (1999) 2160p WEB-DL',
-    url: 'https://personalserver.adamdrumm.com/movies/Office%20Space/Office.Space.1999.REPACK.2160p.MA.WEB-DL.DTS-HD.MA.5.1.H.265-FLUX.mp4',
-    thumbnail: 'https://personalserver.adamdrumm.com/movies/Office%20Space/thumbnail.jpg',
-  },
-]
-
 async function VideoPlayer({
   media,
   mediaTitle,
@@ -102,6 +89,8 @@ async function VideoPlayer({
   let chapterThumbnailURL
 
   let mediaMetadata, poster, logo, chapters
+  //
+  let hdr = false
 
   if (metadata && mediaType === 'tv') {
     title = metadata.name || metadata.title // Use 'name' for TV show episodes, 'title' for general metadata
@@ -132,6 +121,9 @@ async function VideoPlayer({
     thumbnailURL = `/api/authenticated/thumbnails?name=${encodeURIComponent(
       mediaTitle
     )}&type=${mediaType}&season=${season_number}&episode=${episode_number}`
+    if (media.hdr) {
+      hdr = media.hdr
+    }
 
     mediaMetadata = {
       mediaTitle,
@@ -176,6 +168,9 @@ async function VideoPlayer({
     thumbnailURL = `/api/authenticated/thumbnails?name=${encodeURIComponent(
       mediaTitle
     )}&type=${mediaType}`
+    if (media.hdr) {
+      hdr = media.hdr
+    }
     mediaMetadata = {
       mediaTitle,
       title,
@@ -272,6 +267,8 @@ async function VideoPlayer({
           mediaLength: mediaLength,
         }}
         chapterThumbnailURL={chapterThumbnailURL}
+        hdrVal={hdr}
+        dimsVal={media.dimensions}
       />
     </MediaPlayer>
   )

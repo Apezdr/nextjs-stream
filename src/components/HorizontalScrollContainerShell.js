@@ -1,16 +1,33 @@
 'use client'
-import { ScrollMenu } from 'react-horizontal-scrolling-menu'
-import SkeletonCard from '@components/SkeletonCard'
+
+import { classNames } from '@src/utils'
+import SkeletonCard from '@components/MediaScroll/SkeletonCard'
 
 const HorizontalScrollContainerShell = ({ skeletonCount = 0 }) => {
   return (
-    <ScrollMenu
-      wrapperClassName="w-full p-4 shadow-xl rounded-xl bg-gradient-to-br from-blue-500 via-blue-400 to-blue-600"
-      scrollContainerClassName="scrollbar scrollbar-thumb-rounded scrollbar-thumb-blue-200 scrollbar-track-gray-500"
-    >
-      {skeletonCount > 0 &&
-        Array.from({ length: skeletonCount }).map((_, i) => <SkeletonCard key={i} />)}
-    </ScrollMenu>
+    <div className="relative my-8 w-full flex flex-col justify-center overflow-hidden max-w-[100vw]">
+      {/* Carousel Container */}
+      <div className="flex flex-row items-center w-full relative">
+        {/* Cards Container with Framer Motion */}
+        <div
+          className={classNames(
+            'relative flex flex-grow overflow-visible h-[22rem]',
+            'justify-start'
+          )}
+        >
+          <div
+            className={classNames(
+              'ml-3',
+              'absolute inset-0 flex gap-x-4 justify-center items-start cards-row'
+            )}
+            style={{ willChange: 'transform, opacity' }}
+          >
+            {skeletonCount > 0 &&
+              Array.from({ length: skeletonCount }).map((_, i) => <SkeletonCard key={i} />)}
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 

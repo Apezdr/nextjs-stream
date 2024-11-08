@@ -44,6 +44,8 @@ export interface VideoLayoutProps {
     mediaLength: number
   }
   chapterThumbnailURL?: string
+  hdrVal?: string
+  dimsVal?: string
 }
 
 export function VideoLayout({
@@ -57,6 +59,8 @@ export function VideoLayout({
   captions,
   nextUpCard,
   chapterThumbnailURL,
+  hdrVal,
+  dimsVal,
 }: VideoLayoutProps) {
   return (
     <>
@@ -74,7 +78,7 @@ export function VideoLayout({
         {/* End Top Bar */}
         <div className="flex-1" />
         <Controls.Group className="flex flex-col justify-end !h-auto !bottom-32 sm:!bottom-[60%] max-w-sm sm:max-w-lg xl:max-w-3xl !pointer-events-none">
-          <VideoMetadata mediaMetadata={mediaMetadata} logo={logo} />
+          <VideoMetadata dims={dimsVal} hdr={hdrVal} mediaMetadata={mediaMetadata} logo={logo} />
         </Controls.Group>
         <div className="flex-1" />
         <Controls.Group className="flex w-full items-center px-2">

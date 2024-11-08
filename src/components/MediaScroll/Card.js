@@ -1,13 +1,13 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, Suspense } from 'react'
+import { useState, useRef, useEffect, useCallback, Suspense, Fragment } from 'react'
 import { debounce } from 'lodash'
 import Image from 'next/image'
 import { classNames } from '@src/utils'
 import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 
-const PopupCard = dynamic(() => import('./PopupCard'), {
+const PopupCard = dynamic(() => import('@src/components/MediaScroll/PopupCard'), {
   ssr: false,
 })
 
@@ -67,8 +67,10 @@ const Card = ({
     setIsTouchDevice(isTouch)
   }, [])
 
-  const handleImageLoad = useCallback(({ naturalWidth, naturalHeight }) => {
+  const handleImageLoad = useCallback(({ target }) => {
+    const { naturalWidth, naturalHeight } = target
     setImageDimensions({ width: naturalWidth, height: naturalHeight })
+    setImagePosition({ width: naturalWidth, height: naturalHeight })
   }, [])
 
   const handleImageError = useCallback(() => {
@@ -257,7 +259,7 @@ const Card = ({
   }, [showPortal, imageDimensions.width, calculateImagePosition])
 
   return (
-    <>
+    <Fragment>
       <div
         ref={cardRef}
         className={classNames(
@@ -282,10 +284,9 @@ const Card = ({
                 <Image
                   quality={25}
                   fill
-                  objectFit="contain"
                   src={logo}
                   alt={`${title} Logo`}
-                  className="absolute z-20 !top-[67%] max-w-[70%] mx-auto max-h-14 inset-0"
+                  className="absolute z-20 !top-[67%] max-w-[70%] mx-auto max-h-14 inset-0 object-contain"
                   loading="lazy"
                   sizes="(max-width: 640px) 128px, (max-width: 1024px) 144px, 192px"
                 />
@@ -303,18 +304,17 @@ const Card = ({
                 ref={imageRef}
                 quality={25}
                 fill
-                objectFit="cover"
                 src={posterURL}
                 placeholder={posterBlurhash ? 'blur' : 'empty'}
                 blurDataURL={posterBlurhash ? `data:image/png;base64,${posterBlurhash}` : undefined}
                 alt={title}
                 className={classNames(
-                  'rounded-lg shadow-xl transition-opacity duration-300',
+                  'rounded-lg shadow-xl transition-opacity duration-300 object-cover',
                   'mx-auto relative',
                   'opacity-60 group-hover:opacity-100'
                 )}
                 loading="lazy"
-                onLoadingComplete={handleImageLoad}
+                onLoad={handleImageLoad}
                 onError={handleImageError}
               />
               {imageError && (
@@ -346,6 +346,7 @@ const Card = ({
           showPortal &&
           createPortal(
             <PopupCard
+              imageDimensions={imageDimensions}
               imagePosition={imagePosition}
               title={title}
               seasonNumber={seasonNumber}
@@ -369,7 +370,7 @@ const Card = ({
             document.body
           )}
       </Suspense>
-    </>
+    </Fragment>
   )
 }
 
