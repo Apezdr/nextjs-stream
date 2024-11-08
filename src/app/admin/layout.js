@@ -16,9 +16,6 @@ import {
   Bars3Icon,
   BellIcon,
   CalendarIcon,
-  ChartPieIcon,
-  Cog6ToothIcon,
-  DocumentDuplicateIcon,
   FolderIcon,
   HomeIcon,
   UsersIcon,
@@ -31,7 +28,7 @@ import Link from 'next/link'
 import { siteTitle } from '@src/utils/config'
 import { buildURL } from '@src/utils'
 import { useRouter } from 'next/navigation'
-import Image from 'next/image'
+import Logo from '../logo'
 
 const navigation = [
   { name: 'Dashboard', href: '/admin', icon: HomeIcon },
@@ -201,11 +198,7 @@ export default function AdminLayout({ children }) {
               {/* Sidebar component, swap this element with another sidebar if you like */}
               <div className="flex grow flex-col gap-y-5 overflow-y-auto bg-gray-900 px-6 pb-4 ring-1 ring-white/10">
                 <div className="flex h-16 shrink-0 items-center">
-                  <img
-                    alt={siteTitle}
-                    src="https://tailwindui.com/plus/img/logos/mark.svg?color=indigo&shade=500"
-                    className="h-8 w-auto"
-                  />
+                  <Logo siteTitle={siteTitle} />
                 </div>
                 <nav className="flex flex-1 flex-col">
                   <ul className="flex flex-1 flex-col gap-y-7">
@@ -257,12 +250,8 @@ export default function AdminLayout({ children }) {
         <div className="hidden lg:fixed lg:inset-y-0 lg:z-50 lg:flex lg:w-72 lg:flex-col">
           {/* Sidebar component, swap this element with another sidebar if you like */}
           <div className="flex grow flex-col gap-y-5 overflow-y-auto bg-gray-900 px-6 pb-4">
-            <div className="flex h-16 shrink-0 items-center">
-              <img
-                alt={siteTitle}
-                src="https://tailwindui.com/plus/img/logos/mark.svg?color=indigo&shade=500"
-                className="h-8 w-auto"
-              />
+            <div className="flex h-16 shrink-0 items-center self-center">
+              <Logo siteTitle={siteTitle} />
             </div>
             <nav className="flex flex-1 flex-col">
               <ul className="flex flex-1 flex-col gap-y-7">

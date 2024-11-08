@@ -5,6 +5,7 @@ import { Disclosure, Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/r
 import { Bars3Icon, XMarkIcon, BellIcon } from '@heroicons/react/24/outline'
 import { lazy, Suspense } from 'react'
 import { siteTitle } from '@src/utils/config'
+import Logo from '@src/app/logo'
 const SearchInput = lazy(() => import('@components/Search/SearchInput'))
 const SignOutButton = lazy(() => import('@components/SignOutButton'))
 
@@ -94,11 +95,7 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
               <div className="flex px-2 lg:px-0">
                 <div className="flex flex-shrink-0 items-center">
                   <Link href="/list">
-                    <img
-                      alt={siteTitle}
-                      src="https://tailwindui.com/plus/img/logos/mark.svg?color=indigo&shade=500"
-                      className="h-8 w-auto"
-                    />
+                    <Logo siteTitle={siteTitle} />
                   </Link>
                 </div>
                 <div className="hidden lg:ml-6 lg:flex lg:space-x-8">

@@ -183,7 +183,7 @@ export function GoBack({ goBack, tooltipPlacement }) {
         <div>
           <Link
             href={goBack}
-            className="absolute top-6 left-8 p-2 text-white rounded-full hover:bg-gray-700 hover:bg-opacity-30"
+            className="absolute z-[1] top-6 left-8 p-2 text-white rounded-full hover:bg-gray-700 hover:bg-opacity-30"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
