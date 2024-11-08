@@ -9,10 +9,10 @@ const nextConfig = {
   // developers have to do through APIs such as useMemo and useCallback
   // - making code simpler, easier to maintain, and less error prone.
   // -----Removed but will be needed to upgrade to React 19-----
-  /* experimental: {
+  experimental: {
     reactCompiler: true,
-    esmExternals: false,
-  }, */
+    //esmExternals: false,
+  },
   // ESLint Configuration
   pageExtensions: ['ts', 'tsx', 'js', 'jsx', 'md', 'mdx'],
   eslint: {
