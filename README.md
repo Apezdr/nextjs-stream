@@ -31,38 +31,63 @@ To implement the NextJS-Stream app, follow these steps:
 5. Configure the environment variables:
     Create a `.env.local` file in the root directory and add the following variables:
     ```env
+    # Database Configuration
     MONGODB_URI=mongodb://dbUser:your_password@your_ip:your_port/?authMechanism=DEFAULT
     MONGODB_DB=Media
     MONGODB_DB_USERS=Users
     
+    # NextAuth Configuration
     NEXTAUTH_SECRET=your_nextauth_secret
     AUTH_TRUST_HOST="true"
     AUTH_GOOGLE_ID=your_google_client_id
     AUTH_GOOGLE_SECRET=your_google_client_secret
-    
     AUTH_DISCORD_ID=your_discord_client_id
     AUTH_DISCORD_SECRET=your_discord_client_secret
     
+    # Media API Keys
     TMDB_API_KEY=your_tmdb_api_key
     OMDB_API_KEY=your_omdb_api_key
     
+    # Chromecast Configuration
     CHROMECAST_RECEIVER_ID=your_chromecast_receiver_id
     
+    # Base URL Configuration
     NEXT_PUBLIC_BASE_URL=https://cinema.your-domain.com
     
+    # Webhook Configuration
     VALID_WEBHOOK_IDS=322fb39e4591514d2b8c1697sbc72c9c,521ebe9e6211514d2b8c1697sbc72c98
     
+    # Radarr Configuration
     RADARR_ICAL_LINK=https://your-radarr-server.com/radarr/feed/v3/calendar/Radarr.ics?unmonitored=true&apikey=your_api_key&PastDays=1880&FutureDays=380
+    RADARR_URL=your_radarr_url
+    RADARR_API_KEY=your_radarr_api_key
     
-    NEXT_PUBLIC_ORGANIZR_URL=http://localhost:3000 # Default for Organizr URL
+    # Sonarr Configuration
+    SONARR_URL=your_sonarr_url
+    SONARR_API_KEY=your_sonarr_api_key
+    
+    # Tdarr Configuration
+    TDARR_URL=your_tdarr_url
+    TDARR_API_KEY=your_tdarr_api_key
+    
+    # SABnzbd Configuration
+    SABNZBD_URL=http://192.168.1.2:8080/sabnzbd # Example URL, replace with your actual URL
+    SABNZBD_API_KEY=your_sabnzbd_api_key
+    
+    # Public URLs and Paths
+    NEXT_PUBLIC_ORGANIZR_URL=http://localhost:3000
     NEXT_PUBLIC_FILE_SERVER_URL=https://subdomain.your-domain.com
     NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH= # Optional prefix path for file server
     NEXT_PUBLIC_ADMIN_USER_EMAILS=email1@xxxx.com,email2@zzzz.com
-    NEXT_PUBLIC_SITE_TITLE=Cinema Sanctuary # Site Title
-    NEXT_PUBLIC_SITE_DESCRIPTION=Sharing media content with friends and family. # Site Description
-    NEXT_PUBLIC_SYNC_TV_URL=http://localhost:3000/tv_list.json # TV List URL
-    NEXT_PUBLIC_SYNC_MOVIES_URL=http://localhost:3000/movies_list.json # Movies List URL
-    NEXT_PUBLIC_NODE_SERVER_URL=http://localhost:3000 # Node.js Server URL
+    
+    # Site Information
+    NEXT_PUBLIC_SITE_TITLE=Cinema Sanctuary
+    NEXT_PUBLIC_SITE_DESCRIPTION=Sharing media content with friends and family.
+    
+    # Sync URLs
+    NEXT_PUBLIC_SYNC_TV_URL=http://localhost:3000/tv_list.json
+    NEXT_PUBLIC_SYNC_MOVIES_URL=http://localhost:3000/movies_list.json
+    NEXT_PUBLIC_NODE_SERVER_URL=http://localhost:3000
    ```
 
     Replace the placeholder values with your actual credentials and API keys. Anywhere you see `cinema.your-domain.com` or `subdomain.your-domain.com` you don't have to use a subdomain but it would generally be the approach on the same host.
