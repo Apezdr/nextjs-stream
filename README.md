@@ -34,32 +34,35 @@ To implement the NextJS-Stream app, follow these steps:
     MONGODB_URI=mongodb://dbUser:your_password@your_ip:your_port/?authMechanism=DEFAULT
     MONGODB_DB=Media
     MONGODB_DB_USERS=Users
-
+    
     NEXTAUTH_SECRET=your_nextauth_secret
     AUTH_TRUST_HOST="true"
     AUTH_GOOGLE_ID=your_google_client_id
     AUTH_GOOGLE_SECRET=your_google_client_secret
-
+    
     AUTH_DISCORD_ID=your_discord_client_id
     AUTH_DISCORD_SECRET=your_discord_client_secret
-
+    
     TMDB_API_KEY=your_tmdb_api_key
     OMDB_API_KEY=your_omdb_api_key
-
+    
     CHROMECAST_RECEIVER_ID=your_chromecast_receiver_id
-
+    
     NEXT_PUBLIC_BASE_URL=https://cinema.your-domain.com
-
-    VALID_WEBHOOK_IDS=322fb39e4591514d2b8c1697sbc72c9c,521ebe9e6211514d2b8c1697sbc72c98 # file server, some other webapp
-
+    
+    VALID_WEBHOOK_IDS=322fb39e4591514d2b8c1697sbc72c9c,521ebe9e6211514d2b8c1697sbc72c98
+    
     RADARR_ICAL_LINK=https://your-radarr-server.com/radarr/feed/v3/calendar/Radarr.ics?unmonitored=true&apikey=your_api_key&PastDays=1880&FutureDays=380
     
+    NEXT_PUBLIC_ORGANIZR_URL=http://localhost:3000 # Default for Organizr URL
     NEXT_PUBLIC_FILE_SERVER_URL=https://subdomain.your-domain.com
+    NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH= # Optional prefix path for file server
     NEXT_PUBLIC_ADMIN_USER_EMAILS=email1@xxxx.com,email2@zzzz.com
-    # Site Title
-    NEXT_PUBLIC_SITE_TITLE=Cinema Sanctuary
-    # Site Description
-    NEXT_PUBLIC_SITE_DESCRIPTION=Sharing media content with friends and family.
+    NEXT_PUBLIC_SITE_TITLE=Cinema Sanctuary # Site Title
+    NEXT_PUBLIC_SITE_DESCRIPTION=Sharing media content with friends and family. # Site Description
+    NEXT_PUBLIC_SYNC_TV_URL=http://localhost:3000/tv_list.json # TV List URL
+    NEXT_PUBLIC_SYNC_MOVIES_URL=http://localhost:3000/movies_list.json # Movies List URL
+    NEXT_PUBLIC_NODE_SERVER_URL=http://localhost:3000 # Node.js Server URL
    ```
 
     Replace the placeholder values with your actual credentials and API keys. Anywhere you see `cinema.your-domain.com` or `subdomain.your-domain.com` you don't have to use a subdomain but it would generally be the approach on the same host.
