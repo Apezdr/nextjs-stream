@@ -44,12 +44,13 @@ To implement the NextJS-Stream app, follow these steps:
     AUTH_DISCORD_ID=your_discord_client_id
     AUTH_DISCORD_SECRET=your_discord_client_secret
     
-    # Media API Keys
-    TMDB_API_KEY=your_tmdb_api_key
-    OMDB_API_KEY=your_omdb_api_key
+    # Media API Keys (Optional)
+    # These variables are only needed if you want to use TMDB or OMDB APIs
+    TMDB_API_KEY=your_tmdb_api_key # Optional
+    OMDB_API_KEY=your_omdb_api_key # Optional
     
-    # Chromecast Configuration
-    CHROMECAST_RECEIVER_ID=your_chromecast_receiver_id
+    # Chromecast Configuration (Optional)
+    CHROMECAST_RECEIVER_ID=your_chromecast_receiver_id # Optional
     
     # Base URL Configuration
     NEXT_PUBLIC_BASE_URL=https://cinema.your-domain.com
@@ -57,22 +58,26 @@ To implement the NextJS-Stream app, follow these steps:
     # Webhook Configuration
     VALID_WEBHOOK_IDS=322fb39e4591514d2b8c1697sbc72c9c,521ebe9e6211514d2b8c1697sbc72c98
     
-    # Radarr Configuration
-    RADARR_ICAL_LINK=https://your-radarr-server.com/radarr/feed/v3/calendar/Radarr.ics?unmonitored=true&apikey=your_api_key&PastDays=1880&FutureDays=380
-    RADARR_URL=your_radarr_url
-    RADARR_API_KEY=your_radarr_api_key
+    # Radarr Configuration (Optional)
+    # Only needed if you are using Radarr integration
+    RADARR_ICAL_LINK=https://your-radarr-server.com/radarr/feed/v3/calendar/Radarr.ics?unmonitored=true&apikey=your_api_key&PastDays=1880&FutureDays=380 # Optional
+    RADARR_URL=your_radarr_url # Optional
+    RADARR_API_KEY=your_radarr_api_key # Optional
     
-    # Sonarr Configuration
-    SONARR_URL=your_sonarr_url
-    SONARR_API_KEY=your_sonarr_api_key
+    # Sonarr Configuration (Optional)
+    # Only needed if you are using Sonarr integration
+    SONARR_URL=your_sonarr_url # Optional
+    SONARR_API_KEY=your_sonarr_api_key # Optional
     
-    # Tdarr Configuration
-    TDARR_URL=your_tdarr_url
-    TDARR_API_KEY=your_tdarr_api_key
+    # Tdarr Configuration (Optional)
+    # Only needed if you are using Tdarr integration
+    TDARR_URL=your_tdarr_url # Optional
+    TDARR_API_KEY=your_tdarr_api_key # Optional
     
-    # SABnzbd Configuration
-    SABNZBD_URL=http://192.168.1.2:8080/sabnzbd # Example URL, replace with your actual URL
-    SABNZBD_API_KEY=your_sabnzbd_api_key
+    # SABnzbd Configuration (Optional)
+    # Only needed if you are using SABnzbd integration
+    SABNZBD_URL=http://192.168.1.2:8080/sabnzbd # Example URL, replace with your actual URL # Optional
+    SABNZBD_API_KEY=your_sabnzbd_api_key # Optional
     
     # Public URLs and Paths
     NEXT_PUBLIC_ORGANIZR_URL=http://localhost:3000
@@ -80,14 +85,16 @@ To implement the NextJS-Stream app, follow these steps:
     NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH= # Optional prefix path for file server
     NEXT_PUBLIC_ADMIN_USER_EMAILS=email1@xxxx.com,email2@zzzz.com
     
-    # Site Information
-    NEXT_PUBLIC_SITE_TITLE=Cinema Sanctuary
-    NEXT_PUBLIC_SITE_DESCRIPTION=Sharing media content with friends and family.
+    # Site Information (Optional)
+    # Use these variables to customize the site title and description
+    NEXT_PUBLIC_SITE_TITLE=Cinema Sanctuary # Optional
+    NEXT_PUBLIC_SITE_DESCRIPTION=Sharing media content with friends and family. # Optional
     
     # Sync URLs
     NEXT_PUBLIC_SYNC_TV_URL=http://localhost:3000/tv_list.json
     NEXT_PUBLIC_SYNC_MOVIES_URL=http://localhost:3000/movies_list.json
     NEXT_PUBLIC_NODE_SERVER_URL=http://localhost:3000
+
    ```
 
     Replace the placeholder values with your actual credentials and API keys. Anywhere you see `cinema.your-domain.com` or `subdomain.your-domain.com` you don't have to use a subdomain but it would generally be the approach on the same host.
