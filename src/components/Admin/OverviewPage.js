@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ListRecords from './ListRecords'
 import MovieModalPopup from './MovieModalPopup'
 import TVModalPopup from './TVModalPopup'
@@ -62,10 +62,19 @@ export default function AdminOverviewPage({
   const [_processedUserData, setProcessedUserData] = useState(processedUserData)
   const [recentlyWatched, setRecentlyWatched] = useState(false)
   const [lastSyncTime, setLastSyncTime] = useState(() => processLastSyncTimeData(_lastSyncTime))
-  const [sabnzbdQueue, setsabnzbdQueue] = useState(false)
-  const [radarrQueue, setradarrQueue] = useState(false)
-  const [sonarrQueue, setsonarrQueue] = useState(false)
-  const [tdarrQueue, settdarrQueue] = useState(false)
+  const [sabnzbdQueue, setsabnzbdQueue] = useState(null)
+  const [radarrQueue, setradarrQueue] = useState(null)
+  const [sonarrQueue, setsonarrQueue] = useState(null)
+  const [tdarrQueue, settdarrQueue] = useState(null)
+  const [unsupportedQueues, setUnsupportedQueues] = useState([]) // Optional: To track unsupported queues
+
+  // Refs to store interval IDs
+  const sabnzbdIntervalRef = useRef(null)
+  const radarrIntervalRef = useRef(null)
+  const sonarrIntervalRef = useRef(null)
+  const tdarrIntervalRef = useRef(null)
+  const dataIntervalRef = useRef(null)
+  const recentlyWatchedIntervalRef = useRef(null)
 
   const updateRecord = (newData) => {
     setRecord((prevRecord) => ({ ...prevRecord, ...newData }))
@@ -88,30 +97,23 @@ export default function AdminOverviewPage({
   }
 
   const fetchSABNZBDqueue = async () => {
-    const response = await fetch(buildURL(`/api/authenticated/admin/sabnzbd`))
-    const data = await response.json()
-    return data
+    return fetch(buildURL(`/api/authenticated/admin/sabnzbd`))
   }
 
   const fetchRadarrqueue = async () => {
-    const response = await fetch(buildURL(`/api/authenticated/admin/radarr`))
-    const data = await response.json()
-    return data
+    return fetch(buildURL(`/api/authenticated/admin/radarr`))
   }
 
   const fetchSonarrqueue = async () => {
-    const response = await fetch(buildURL(`/api/authenticated/admin/sonarr`))
-    const data = await response.json()
-    return data
+    return fetch(buildURL(`/api/authenticated/admin/sonarr`))
   }
 
   const fetchTdarrqueue = async () => {
-    const response = await fetch(buildURL(`/api/authenticated/admin/tdarr`))
-    const data = await response.json()
-    return data
+    return fetch(buildURL(`/api/authenticated/admin/tdarr`))
   }
 
   useEffect(() => {
+    // Function to fetch general data
     const fetchData = async () => {
       try {
         const lastSyncTimeData = await fetchLastSyncTime()
@@ -121,63 +123,125 @@ export default function AdminOverviewPage({
         console.error('Error fetching data:', error)
       }
     }
+
+    // Function to fetch recently watched data
     const fetchRecentlyWatchedData = async () => {
       try {
         const recentlyWatched = await fetchRecentlyWatched()
         setRecentlyWatched(recentlyWatched)
       } catch (error) {
-        console.error('Error fetching data:', error)
+        console.error('Error fetching recently watched data:', error)
       }
     }
+
+    // Function to fetch SABNZBD queue
     const fetchSABNZBDdata = async () => {
       try {
-        const sabnzbdData = await fetchSABNZBDqueue()
+        const response = await fetchSABNZBDqueue()
+        if (response.status === 501) { // 501 Not Implemented
+          clearInterval(sabnzbdIntervalRef.current)
+          sabnzbdIntervalRef.current = null
+          console.warn('SABNZBD not supported. Stopping interval.')
+          setUnsupportedQueues((prev) => [...prev, 'SABNZBD']) // Optional
+          return
+        }
+        if (!response.ok) {
+          throw new Error(`Error fetching SABNZBD queue: ${response.status}`)
+        }
+        const sabnzbdData = await response.json()
         setsabnzbdQueue(sabnzbdData)
       } catch (error) {
         console.error('Error fetching SABNZBD queue:', error)
       }
     }
+
+    // Function to fetch Radarr queue
     const fetchRadarrdata = async () => {
       try {
-        const radarrData = await fetchRadarrqueue()
+        const response = await fetchRadarrqueue()
+        if (response.status === 501) {
+          clearInterval(radarrIntervalRef.current)
+          radarrIntervalRef.current = null
+          console.warn('Radarr not supported. Stopping interval.')
+          setUnsupportedQueues((prev) => [...prev, 'Radarr']) // Optional
+          return
+        }
+        if (!response.ok) {
+          throw new Error(`Error fetching Radarr queue: ${response.status}`)
+        }
+        const radarrData = await response.json()
         setradarrQueue(radarrData)
       } catch (error) {
         console.error('Error fetching Radarr queue:', error)
       }
     }
+
+    // Function to fetch Sonarr queue
     const fetchSonarrdata = async () => {
       try {
-        const sonarrData = await fetchSonarrqueue()
+        const response = await fetchSonarrqueue()
+        if (response.status === 501) {
+          clearInterval(sonarrIntervalRef.current)
+          sonarrIntervalRef.current = null
+          console.warn('Sonarr not supported. Stopping interval.')
+          setUnsupportedQueues((prev) => [...prev, 'Sonarr']) // Optional
+          return
+        }
+        if (!response.ok) {
+          throw new Error(`Error fetching Sonarr queue: ${response.status}`)
+        }
+        const sonarrData = await response.json()
         setsonarrQueue(sonarrData)
       } catch (error) {
         console.error('Error fetching Sonarr queue:', error)
       }
     }
+
+    // Function to fetch Tdarr queue
     const fetchTdarrdata = async () => {
       try {
-        const tdarrData = await fetchTdarrqueue()
+        const response = await fetchTdarrqueue()
+        if (response.status === 501) {
+          clearInterval(tdarrIntervalRef.current)
+          tdarrIntervalRef.current = null
+          console.warn('Tdarr not supported. Stopping interval.')
+          setUnsupportedQueues((prev) => [...prev, 'Tdarr']) // Optional
+          return
+        }
+        if (!response.ok) {
+          throw new Error(`Error fetching Tdarr queue: ${response.status}`)
+        }
+        const tdarrData = await response.json()
         settdarrQueue(tdarrData)
       } catch (error) {
         console.error('Error fetching Tdarr queue:', error)
       }
     }
 
+    // Initial data fetch
     fetchData()
+    fetchRecentlyWatchedData()
+    fetchSABNZBDdata()
+    fetchRadarrdata()
+    fetchSonarrdata()
+    fetchTdarrdata()
 
-    const intervalId = setInterval(fetchData, 15000)
-    const intervalId2 = setInterval(fetchRecentlyWatchedData, 2000)
-    const intervalId3 = setInterval(fetchSABNZBDdata, 2000)
-    const intervalId4 = setInterval(fetchRadarrdata, 2000)
-    const intervalId5 = setInterval(fetchSonarrdata, 2000)
-    const intervalId6 = setInterval(fetchTdarrdata, 2000)
+    // Set intervals and store their IDs in refs
+    dataIntervalRef.current = setInterval(fetchData, 15000)
+    recentlyWatchedIntervalRef.current = setInterval(fetchRecentlyWatchedData, 2000)
+    sabnzbdIntervalRef.current = setInterval(fetchSABNZBDdata, 2000)
+    radarrIntervalRef.current = setInterval(fetchRadarrdata, 2000)
+    sonarrIntervalRef.current = setInterval(fetchSonarrdata, 2000)
+    tdarrIntervalRef.current = setInterval(fetchTdarrdata, 2000)
 
+    // Cleanup function to clear all intervals
     return () => {
-      clearInterval(intervalId)
-      clearInterval(intervalId2)
-      clearInterval(intervalId3)
-      clearInterval(intervalId4)
-      clearInterval(intervalId5)
-      clearInterval(intervalId6)
+      clearInterval(dataIntervalRef.current)
+      clearInterval(recentlyWatchedIntervalRef.current)
+      if (sabnzbdIntervalRef.current) clearInterval(sabnzbdIntervalRef.current)
+      if (radarrIntervalRef.current) clearInterval(radarrIntervalRef.current)
+      if (sonarrIntervalRef.current) clearInterval(sonarrIntervalRef.current)
+      if (tdarrIntervalRef.current) clearInterval(tdarrIntervalRef.current)
     }
   }, [])
 
@@ -217,6 +281,7 @@ export default function AdminOverviewPage({
       }
     }
   }
+
   return (
     <>
       {isSyncOpen && (
@@ -316,7 +381,7 @@ export default function AdminOverviewPage({
       <hr className="my-16 border-gray-300 w-full" />
       <RecentlyWatched recentlyWatched={recentlyWatched} />
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {sabnzbdQueue ? (
+        {sabnzbdQueue && (
           <div>
             <h2 className="text-xl font-bold mb-2">
               Download Status
@@ -326,26 +391,37 @@ export default function AdminOverviewPage({
             </h2>
             <DownloadStatus data={sabnzbdQueue.queue} />
           </div>
-        ) : null}
-        {radarrQueue ? (
+        )}
+        {radarrQueue && (
           <div>
             <h2 className="text-xl font-bold mb-2">Radarr Queue</h2>
             <RadarrQueue data={radarrQueue} />
           </div>
-        ) : null}
-        {sonarrQueue ? (
+        )}
+        {sonarrQueue && (
           <div>
             <h2 className="text-xl font-bold mb-2">Sonarr Queue</h2>
             <SonarrQueue data={sonarrQueue} />
           </div>
-        ) : null}
-        {tdarrQueue ? (
+        )}
+        {tdarrQueue && (
           <div>
             <h2 className="text-xl font-bold mb-2">Tdarr Progress</h2>
             <TdarrProgressBar data={tdarrQueue} />
           </div>
-        ) : null}
+        )}
       </div>
+      {/* Optional: Display unsupported queues */}
+      {unsupportedQueues.length > 0 && (
+        <div className="mt-8 p-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
+          <h3 className="font-semibold">Unsupported Integrations:</h3>
+          <ul className="list-disc list-inside">
+            {unsupportedQueues.map((queue) => (
+              <li key={queue}>{queue} is not supported.</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="flex flex-col xl:flex-row">
         <ListRecords
           title="Movies"

@@ -80,23 +80,23 @@ export async function GET(request, props) {
   }
 
   if (fetchSABNZBDqueue) {
-    const sabnzbdQueue = await fetchSABNZBDQueue()
-    response = sabnzbdQueue
+    const sabnzbdResponse = await handleQueueFetch(fetchSABNZBDQueue, 'SABNZBD')
+    if (sabnzbdResponse) return sabnzbdResponse
   }
 
   if (fetchRadarrqueue) {
-    const radarrQueue = await fetchRadarrQueue()
-    response = radarrQueue
+    const radarrResponse = await handleQueueFetch(fetchRadarrQueue, 'Radarr')
+    if (radarrResponse) return radarrResponse
   }
 
   if (fetchSonarrqueue) {
-    const sonarrQueue = await fetchSonarrQueue()
-    response = sonarrQueue
+    const sonarrResponse = await handleQueueFetch(fetchSonarrQueue, 'Sonarr')
+    if (sonarrResponse) return sonarrResponse
   }
 
   if (fetchTdarrqueue) {
-    const tdarrQueue = await fetchTdarrQueue()
-    response = tdarrQueue
+    const tdarrResponse = await handleQueueFetch(fetchTdarrQueue, 'Tdarr')
+    if (tdarrResponse) return tdarrResponse
   }
 
   // Ensure that at least one type of data is included
@@ -330,6 +330,20 @@ function identifyMissingMedia(fileServer, currentDB) {
   })
 
   return { missingMedia, missingMp4 }
+}
+
+// Helper function to handle queue fetching with error handling
+const handleQueueFetch = async (fetchFunction, queueName) => {
+  try {
+    const queueData = await fetchFunction()
+    response = queueData
+  } catch (error) {
+    console.error(`Error fetching ${queueName} queue:`, error)
+    return new Response(JSON.stringify({ error: `${queueName} not supported` }), {
+      status: 501, // 501 Not Implemented is suitable for unsupported features
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
 }
 
 async function fetchSABNZBDQueue() {
