@@ -11,7 +11,7 @@ import {
   Fragment,
 } from 'react'
 import useSWR, { useSWRConfig, preload } from 'swr'
-import { buildURL, classNames } from '@src/utils'
+import { buildURL, classNames, fetcher } from '@src/utils'
 import { ChevronDoubleLeftIcon, ChevronDoubleRightIcon } from '@heroicons/react/20/solid'
 import SkeletonCard from '@components/MediaScroll/SkeletonCard'
 import Card from './Card'
@@ -19,43 +19,43 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { v7 as uuidv7 } from 'uuid'
 import throttle from 'lodash.throttle'
 import debounce from 'lodash.debounce'
+import SkeletonList from './SkeletonList'
 
 // Define Peek Width
 const PEEK_WIDTH = 50 // Adjust based on design
 
 // PaginationIndicators Component
 const PaginationIndicators = memo(
-  ({ totalPages, currentPage, goToPage, isAnimating, prefetchPageData }) => (
-    <div className="flex justify-center mt-4 space-x-2">
-      {Array.from({ length: totalPages }).map((_, pageIndex) => (
-        <button
-          key={pageIndex}
-          onMouseEnter={() => {
-            if (pageIndex !== currentPage) prefetchPageData(pageIndex)
-          }}
-          onClick={() => goToPage(pageIndex)}
-          className={classNames(
-            'w-3 h-3 rounded-full focus:outline-none',
-            pageIndex === currentPage ? 'bg-gray-800' : 'bg-gray-400'
-          )}
-          aria-label={`Go to page ${pageIndex + 1}`}
-        />
-      ))}
-    </div>
-  )
+  ({ totalPages, currentPage, goToPage, isAnimating, prefetchPageData }) => {
+    const [isClient, setIsClient] = useState(false)
+  
+    useEffect(() => {
+      setIsClient(true)
+    }, [])
+    return (
+      isClient ?
+      <div className="flex justify-center mt-4 space-x-2">
+        {Array.from({ length: totalPages }).map((_, pageIndex) => (
+          <button
+            key={pageIndex}
+            onMouseEnter={() => {
+              if (pageIndex !== currentPage) prefetchPageData(pageIndex)
+            }}
+            onClick={() => goToPage(pageIndex)}
+            className={classNames(
+              'w-3 h-3 rounded-full focus:outline-none',
+              pageIndex === currentPage ? 'bg-gray-800' : 'bg-gray-400'
+            )}
+            aria-label={`Go to page ${pageIndex + 1}`}
+          />
+        ))}
+      </div>
+      : null
+    )
+  }
 )
 
 PaginationIndicators.displayName = 'PaginationIndicators'
-
-// Fetcher Function
-const fetcher = async (url) => {
-  console.log(`Fetching data from: ${url}`)
-  const res = await fetch(url)
-  if (!res.ok) {
-    throw new Error('Network response was not ok')
-  }
-  return res.json()
-}
 
 // Animation Variants
 const variants = {
@@ -181,6 +181,12 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     [prefetchPageData]
   )
 
+  useEffect(() => {
+    if (currentPage < totalPages - 1) {
+      prefetchPageData(currentPage - 1)
+      prefetchPageData(currentPage + 1)
+    }
+  }, [currentPage, prefetchPageData, totalPages])
   // Prepare items including previous and next peek items
   const itemsToRender = useMemo(() => {
     if (!data) return []
@@ -393,15 +399,9 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
               style={{ willChange: 'transform, opacity' }}
               onAnimationComplete={() => setIsAnimating(false)}
             >
-              {isLoading ? (
+              {!data && isLoading ? (
                 // Render SkeletonCards during loading
-                <Fragment>
-                  {Array.from({
-                    length: itemsPerPage + numberOfPeeks,
-                  }).map((_, index) => (
-                    <SkeletonCard key={`skeleton-${index}-${isLoading}`} />
-                  ))}
-                </Fragment>
+                <SkeletonList numberOfItems={numberOfItems} itemsPerPage={itemsPerPage} numberOfPeeks={numberOfPeeks} />
               ) : (
                 // Render actual Cards when data is loaded
                 itemsToRender.map(({ item, isPeek }, index) => {

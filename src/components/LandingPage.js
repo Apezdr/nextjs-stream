@@ -3,7 +3,6 @@ import Loading from '@src/app/loading'
 import SyncClientWithServerWatched from './SyncClientWithServerWatched'
 import HorizontalScrollContainer from '@src/components/MediaScroll/HorizontalScrollContainer'
 
-const HorizontalScrollContainerShell = lazy(() => import('./HorizontalScrollContainerShell'))
 const ReleaseCalendar = lazy(() => import('./Calendar/ReleaseCalendar'))
 
 export default function LandingPage({

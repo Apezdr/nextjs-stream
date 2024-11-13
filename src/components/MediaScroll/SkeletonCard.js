@@ -1,3 +1,4 @@
+'use client'
 const SkeletonCard = () => (
   <div className="w-32 md:w-36 lg:w-48 flex-shrink-0">
     <div className="animate-pulse">

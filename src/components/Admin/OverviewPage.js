@@ -385,7 +385,7 @@ export default function AdminOverviewPage({
           <div>
             <h2 className="text-xl font-bold mb-2">
               Download Status
-              {sabnzbdQueue.queue.status?.toLowerCase() === 'paused' ? (
+              {sabnzbdQueue?.queue?.status?.toLowerCase() === 'paused' ? (
                 <PauseCircleIcon className="ml-2 w-8 inline-block" />
               ) : null}
             </h2>
@@ -416,7 +416,7 @@ export default function AdminOverviewPage({
         <div className="mt-8 p-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
           <h3 className="font-semibold">Unsupported Integrations:</h3>
           <ul className="list-disc list-inside">
-            {unsupportedQueues.map((queue) => (
+            {[...new Set(unsupportedQueues)].map((queue) => (
               <li key={queue}>{queue} is not supported.</li>
             ))}
           </ul>

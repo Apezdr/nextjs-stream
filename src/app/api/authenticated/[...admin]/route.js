@@ -48,80 +48,108 @@ export async function GET(request, props) {
   }
 
   const slugs = params.admin // This is an array
-  const fetchMedia = slugs.includes('media') && slugs[0] === 'admin'
-  const fetchUsers = slugs.includes('users') && slugs[0] === 'admin'
-  const fetchRecentlyWatched = slugs.includes('recently-watched') && slugs[0] === 'admin'
-  const fetchLastSynced = slugs.includes('lastSynced') && slugs[0] === 'admin'
-  const fetchSABNZBDqueue = slugs.includes('sabnzbd') && slugs[0] === 'admin'
-  const fetchRadarrqueue = slugs.includes('radarr') && slugs[0] === 'admin'
-  const fetchSonarrqueue = slugs.includes('sonarr') && slugs[0] === 'admin'
-  const fetchTdarrqueue = slugs.includes('tdarr') && slugs[0] === 'admin'
 
-  let response = {}
-
-  if (fetchMedia) {
-    const allRecords = await getAllMedia()
-    response.processedData = processMediaData(allRecords)
-  }
-
-  if (fetchUsers) {
-    const allUsers = await getAllUsers()
-    response.processedUserData = processUserData(allUsers)
-  }
-
-  if (fetchRecentlyWatched) {
-    const recentlyWatched = await getRecentlyWatched()
-    response = recentlyWatched
-  }
-
-  if (fetchLastSynced) {
-    const lastSynced = await getLastSynced()
-    response = { lastSyncTime: lastSynced }
-  }
-
-  if (fetchSABNZBDqueue) {
-    const sabnzbdResponse = await handleQueueFetch(fetchSABNZBDQueue, 'SABNZBD')
-    if (sabnzbdResponse) return sabnzbdResponse
-  }
-
-  if (fetchRadarrqueue) {
-    const radarrResponse = await handleQueueFetch(fetchRadarrQueue, 'Radarr')
-    if (radarrResponse) return radarrResponse
-  }
-
-  if (fetchSonarrqueue) {
-    const sonarrResponse = await handleQueueFetch(fetchSonarrQueue, 'Sonarr')
-    if (sonarrResponse) return sonarrResponse
-  }
-
-  if (fetchTdarrqueue) {
-    const tdarrResponse = await handleQueueFetch(fetchTdarrQueue, 'Tdarr')
-    if (tdarrResponse) return tdarrResponse
-  }
-
-  // Ensure that at least one type of data is included
-  if (
-    !fetchMedia &&
-    !fetchUsers &&
-    !fetchRecentlyWatched &&
-    !fetchLastSynced &&
-    !fetchSABNZBDqueue &&
-    !fetchRadarrqueue &&
-    !fetchSonarrqueue &&
-    !fetchTdarrqueue &&
-    slugs.length > 0
-  ) {
-    return new Response(JSON.stringify({ error: 'No valid data type specified' }), {
+  // Determine the specific data type being requested
+  if (!slugs || slugs.length === 0 || slugs[0] !== 'admin') {
+    return new Response(JSON.stringify({ error: 'Invalid endpoint' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
-  return new Response(JSON.stringify(response), {
+  // The data type is the second slug, e.g., 'media', 'users', 'sabnzbd', etc.
+  const dataType = slugs[1]
+
+  if (!dataType) {
+    return new Response(JSON.stringify({ error: 'No data type specified' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  let responseData = {}
+
+  try {
+    switch (dataType.toLowerCase()) {
+      case 'media':
+        {
+          const allRecords = await getAllMedia()
+          responseData = { processedData: processMediaData(allRecords) }
+        }
+        break
+
+      case 'users':
+        {
+          const allUsers = await getAllUsers()
+          responseData = { processedUserData: processUserData(allUsers) }
+        }
+        break
+
+      case 'recently-watched':
+        {
+          const recentlyWatched = await getRecentlyWatched()
+          responseData = recentlyWatched
+        }
+        break
+
+      case 'lastsynced':
+        {
+          const lastSynced = await getLastSynced()
+          responseData = { lastSyncTime: lastSynced }
+        }
+        break
+
+      case 'sabnzbd':
+        {
+          const sabnzbdQueue = await handleQueueFetch(fetchSABNZBDQueue, 'SABNZBD')
+          responseData = sabnzbdQueue
+        }
+        break
+
+      case 'radarr':
+        {
+          const radarrQueue = await handleQueueFetch(fetchRadarrQueue, 'Radarr')
+          responseData = radarrQueue
+        }
+        break
+
+      case 'sonarr':
+        {
+          const sonarrQueue = await handleQueueFetch(fetchSonarrQueue, 'Sonarr')
+          responseData = sonarrQueue
+        }
+        break
+
+      case 'tdarr':
+        {
+          const tdarrQueue = await handleQueueFetch(fetchTdarrQueue, 'Tdarr')
+          responseData = tdarrQueue
+        }
+        break
+
+      default:
+        {
+          return new Response(JSON.stringify({ error: 'No valid data type specified' }), {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+    }
+  } catch (error) {
+    // Handle errors thrown by handleQueueFetch or any other function
+    //console.error(`Error fetching ${dataType} data:`, error)
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: error.statusCode || 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  return new Response(JSON.stringify(responseData), {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   })
 }
+
 
 // New POST method for handling the sync operation
 export async function POST(request, props) {
@@ -332,20 +360,25 @@ function identifyMissingMedia(fileServer, currentDB) {
   return { missingMedia, missingMp4 }
 }
 
-// Helper function to handle queue fetching with error handling
-const handleQueueFetch = async (fetchFunction, queueName) => {
+/**
+ * Fetches a queue using the provided fetch function and handles any errors.
+ *
+ * @param {Function} fetchFunction - The function to fetch the queue data.
+ * @param {string} queueName - The name of the queue for error reporting.
+ * @returns {Promise<any>} The queue data if successful.
+ * @throws {Error} Throws an error with statusCode 501 if fetch fails.
+ */
+async function handleQueueFetch(fetchFunction, queueName) {
   try {
     const queueData = await fetchFunction()
-    response = queueData
+    return queueData
   } catch (error) {
     console.error(`Error fetching ${queueName} queue:`, error)
-    return new Response(JSON.stringify({ error: `${queueName} not supported` }), {
-      status: 501, // 501 Not Implemented is suitable for unsupported features
-      headers: { 'Content-Type': 'application/json' },
-    })
+    // You can set a custom status code if needed
+    error.statusCode = 501 // Not Implemented
+    throw error
   }
 }
-
 async function fetchSABNZBDQueue() {
   if (!sabnzbdURL || !sabnzbdAPIKey) {
     throw new Error('SABNZBD URL or API key not configured')

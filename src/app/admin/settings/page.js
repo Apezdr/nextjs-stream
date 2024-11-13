@@ -10,6 +10,7 @@ export const revalidate = 0 // Ensure fresh data on each request
 async function SettingsPage({ searchParams }) {
   const session = await auth()
   const settings = await getServerSettings()
+  const params = await searchParams
 
   if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
     redirect('/', 'replace')
@@ -17,10 +18,10 @@ async function SettingsPage({ searchParams }) {
 
   // Handle visibility state from search parameters or default to all hidden
   let webhookVisibility = settings.webhookVisibility || []
-  if (searchParams.visibility) {
+  if (params.visibility) {
     // Parse visibility from query string (e.g., visibility=1:true,2:false)
     webhookVisibility = settings.webhookVisibility || []
-    const visibilityParams = searchParams.visibility.split(',')
+    const visibilityParams = params.visibility.split(',')
     visibilityParams.forEach((param) => {
       const [index, value] = param.split(':')
       webhookVisibility[parseInt(index, 10)] = value === 'true'

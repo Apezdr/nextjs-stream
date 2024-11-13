@@ -230,62 +230,112 @@ export async function getRecentlyWatchedForUser({
   countOnly = false,
 }) {
   try {
-    const client = await clientPromise
+    const client = await clientPromise;
     const user = await client
       .db('Users')
       .collection('AuthenticatedUsers')
-      .findOne({ _id: new ObjectId(userId) })
+      .findOne({ _id: new ObjectId(userId) });
 
     if (!user) {
-      throw new Error(`User with ID ${userId} not found`)
+      throw new Error(`User with ID ${userId} not found`);
     }
 
-    const validPage = Math.max(page, 0) // Ensure page is at least 0
+    const validPage = Math.max(page, 0); // Ensure page is at least 0
 
     const baseAggregation = [
       { $match: { userId: user._id } },
       { $unwind: '$videosWatched' },
       { $sort: { 'videosWatched.lastUpdated': -1 } },
-    ]
+    ];
 
     if (countOnly) {
+      // Fetch count of media that exists in the database
       const countAggregation = [
         ...baseAggregation,
-        { $limit: limit }, // Apply limit inside countOnly
+        { $project: { videoId: '$videosWatched.videoId' } },
+        {
+          $lookup: {
+            from: 'Movies',
+            localField: 'videoId',
+            foreignField: 'videoURL',
+            as: 'movies',
+          },
+        },
+        {
+          $lookup: {
+            from: 'TV',
+            localField: 'videoId',
+            foreignField: 'seasons.episodes.videoURL',
+            as: 'tvShows',
+          },
+        },
+        {
+          $match: {
+            $or: [
+              { 'movies.0': { $exists: true } },
+              { 'tvShows.0': { $exists: true } },
+            ],
+          },
+        },
         { $count: 'total' },
-      ]
+      ];
       const countResult = await client
         .db('Media')
         .collection('PlaybackStatus')
         .aggregate(countAggregation)
-        .toArray()
-      return countResult.length > 0 ? countResult[0].total : 0
+        .toArray();
+      return countResult.length > 0 ? countResult[0].total : 0;
     }
 
+    // For non-count requests, filter out media not in the database
     const dataAggregation = [
       ...baseAggregation,
       { $skip: validPage * limit },
-      //{ $limit: limit },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: 'Movies',
+          localField: 'videosWatched.videoId',
+          foreignField: 'videoURL',
+          as: 'movie',
+        },
+      },
+      {
+        $lookup: {
+          from: 'TV',
+          localField: 'videosWatched.videoId',
+          foreignField: 'seasons.episodes.videoURL',
+          as: 'tvShow',
+        },
+      },
+      {
+        $match: {
+          $or: [
+            { 'movie.0': { $exists: true } },
+            { 'tvShow.0': { $exists: true } },
+          ],
+        },
+      },
       {
         $group: {
           _id: '$userId',
           videosWatched: { $push: '$videosWatched' },
         },
       },
-    ]
+    ];
 
     const lastWatched = await client
       .db('Media')
       .collection('PlaybackStatus')
       .aggregate(dataAggregation, { hint: 'userId_1' })
-      .toArray()
+      .toArray();
 
     if (lastWatched.length === 0 || !lastWatched[0].videosWatched) {
-      return null
+      return null;
     }
 
-    const videoIds = lastWatched[0].videosWatched.map((video) => video.videoId)
-    const uniqueVideoIds = [...new Set(videoIds)]
+    const videoIds = lastWatched[0].videosWatched.map((video) => video.videoId);
+    const uniqueVideoIds = [...new Set(videoIds)];
 
     // Bulk fetch movies and TV shows
     const [movies, tvShows] = await Promise.all([
@@ -299,30 +349,31 @@ export async function getRecentlyWatchedForUser({
         .collection('TV')
         .find({ 'seasons.episodes.videoURL': { $in: uniqueVideoIds } })
         .toArray(),
-    ])
+    ]);
 
     // Populate the movie and TV maps to match videoURLs to their respective records
-    const movieMap = new Map(movies.map((movie) => [movie.videoURL, movie]))
-    const tvMap = new Map()
+    const movieMap = new Map(movies.map((movie) => [movie.videoURL, movie]));
+    const tvMap = new Map();
 
     tvShows.forEach((tvShow) => {
       tvShow.seasons.forEach((season) => {
         season.episodes.forEach((episode) => {
           if (uniqueVideoIds.includes(episode.videoURL)) {
-            tvMap.set(episode.videoURL, { ...tvShow, episode })
+            tvMap.set(episode.videoURL, { ...tvShow, episode });
           }
-        })
-      })
-    })
+        });
+      });
+    });
 
-    const watchedDetails = await processWatchedDetails(lastWatched, movieMap, tvMap, limit)
+    const watchedDetails = await processWatchedDetails(lastWatched, movieMap, tvMap, limit);
 
-    return watchedDetails
+    return watchedDetails;
   } catch (error) {
-    console.error(`Error in getRecentlyWatchedForUser: ${error.message}`)
-    throw error
+    console.error(`Error in getRecentlyWatchedForUser: ${error.message}`);
+    throw error;
   }
 }
+
 
 export async function getRecentlyAddedMedia({ page = 0, limit = 12, countOnly = false }) {
   try {

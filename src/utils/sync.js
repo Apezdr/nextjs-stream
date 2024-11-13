@@ -1401,6 +1401,10 @@ export async function syncVideoInfo(currentDB, fileServer) {
         updateData.duration = fileServerDuration * 1000; // Convert to ms
       }
 
+      if (fileServerSize && movie.size !== fileServerSize) {
+        updateData.size = fileServerSize
+      }
+
       if (Object.keys(updateData).length > 0) {
         console.log(`Movie: Updating video info for ${movie.title}`);
         await client.db('Media').collection('Movies').updateOne(
@@ -1716,7 +1720,7 @@ export async function syncBackdrop(currentDB, fileServer) {
             movie.backdrop.replace(fileServerURLWithoutPrefixPath, ''))
       ) {
         updateData.backdrop =
-          fileServerURLWithoutPrefixPath + fileServerMovieDataURLS.backdropBlurhash
+          fileServerURLWithoutPrefixPath + fileServerMovieDataURLS.backdrop
         console.log(`Movie: Updating backdrop for ${movie.title}`)
       }
 

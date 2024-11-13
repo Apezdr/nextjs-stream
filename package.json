@@ -3,7 +3,8 @@
   "version": "2024.11.07",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack -p 3232",
+    "dev": "next dev -p 3232",
+    "dev-turbo": "next dev --turbopack -p 3232",
     "build": "next build",
     "start": "next start",
     "lint": "next lint --fix --dir pages --dir app --dir components --dir lib --dir layouts --dir scripts",
