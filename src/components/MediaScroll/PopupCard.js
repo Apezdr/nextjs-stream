@@ -23,12 +23,10 @@ const PopupCard = ({
   type,
   logo,
   mediaId,
-  media,
   posterURL,
   posterBlurhash,
   backdrop,
   backdropBlurhash,
-  //videoURL,
   handleCollapse,
   handlePortalMouseEnter,
   handlePortalMouseLeave,
@@ -45,8 +43,13 @@ const PopupCard = ({
     dedupingInterval: 5000, // Adjust as needed
   })
 
+  const hasVideo = !data?.clipVideoURL || !data?.trailer_url
+  const videoURL = data?.clipVideoURL || data?.trailer_url
+
+  const [imageLoaded, setImageLoaded] = useState(false)
   const [videoReady, setVideoReady] = useState(false)
-  const [hideVideo, setHideVideo] = useState(!data?.trailer_url)
+  const [playingVideo, setPlayingVideo] = useState(false)
+  const [hideVideo, setHideVideo] = useState(!data?.clipVideoURL || !data?.trailer_url)
   const [afterVideo, setAfterVideo] = useState(false)
 
   // New state to track thumbnail loading
@@ -67,7 +70,7 @@ const PopupCard = ({
     [handleCollapse]
   )
 
-  const onVideoReady = useCallback(() => {
+  const onVideoReady = useCallback((player) => {
     const timeout = setTimeout(() => {
       setVideoReady(true)
     }, 200)
@@ -77,11 +80,20 @@ const PopupCard = ({
   useEffect(() => {
     setVideoReady(false)
     setAfterVideo(false)
-    setHideVideo(!data?.trailer_url)
+    setHideVideo(hasVideo)
 
     // Reset thumbnail loaded state when data changes
     setIsThumbnailLoaded(false)
-  }, [data?.trailer_url, data?.thumbnail])
+  }, [videoURL, data?.thumbnail])
+
+  const handleImageLoad = useCallback(() => {
+    const timeout = setTimeout(() => {
+      setImageLoaded(true)
+    }, 3200) // 3.2 seconds delay before showing video
+    return () => clearTimeout(timeout)
+  }, [])
+
+  const shouldPlay = (!hideVideo || !afterVideo) && imageLoaded && videoReady
 
   return (
     <div
@@ -142,46 +154,53 @@ const PopupCard = ({
               fill
               src={data.logo}
               alt={`${title} Logo`}
-              className="absolute z-20 !top-[67%] max-w-[70%] mx-auto max-h-14 inset-0 object-contain"
+              className="absolute z-20 !top-[67%] max-w-[70%] mx-auto max-h-14 inset-0 object-contain select-none"
               loading="lazy"
             />
           )}
-          <AnimatePresence mode="wait">
-            {data?.trailer_url && !afterVideo && !hideVideo ? (
+          <AnimatePresence>
+            {videoURL && !afterVideo ? (
               <motion.div
                 key="video"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.5 }}
-                className="w-full h-full absolute inset-0"
+                className={classNames(
+                  "w-full h-full absolute inset-0 z-[2] select-none"
+                )}
               >
                 <CardVideoPlayer
                   height={imagePosition?.height}
                   width={imagePosition?.expandedWidth}
                   onVideoReady={onVideoReady}
-                  onVideoEnd={() => {
+                  playingVideo={playingVideo}
+                  onPlaying={() => {
+                    setPlayingVideo(true)
+                  }}
+                  onVideoEnd={(player) => {
+                    player.pause()
                     setVideoReady(false)
                     setHideVideo(true)
                     setAfterVideo(true)
+                    setPlayingVideo(false)
                   }}
-                  media={media}
-                  videoURL={data?.trailer_url}
-                  shouldNotPlay={hideVideo === true || afterVideo === true}
+                  videoURL={videoURL}
+                  shouldPlay={shouldPlay}
                 />
               </motion.div>
             ) : null}
           </AnimatePresence>
           <AnimatePresence>
             {/* Render Backdrop if available and thumbnail is not loaded */}
-            {(!videoReady || hideVideo) && backdrop && !isThumbnailLoaded && (
+            {!shouldPlay && backdrop && !isThumbnailLoaded && (
               <motion.div
                 key="backdrop"
                 initial={{ opacity: 1 }}
                 animate={{ opacity: isThumbnailLoaded ? 0 : 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.5 }}
-                className="w-full h-full absolute inset-0"
+                transition={{ duration: 0.5, delay: 0.5 }}
+                className="w-full h-full absolute inset-0 z-[1]"
               >
                 <Image
                   quality={100}
@@ -195,19 +214,20 @@ const PopupCard = ({
                   priority
                   fill
                   className="rounded-t-lg object-cover"
+                  onLoad={handleImageLoad} // Corrected to directly call handleImageLoad
                 />
               </motion.div>
             )}
           </AnimatePresence>
           <AnimatePresence>
             {/* Render Thumbnail if available */}
-            {(!videoReady || hideVideo) && data?.thumbnail && (
+            {!shouldPlay && data?.thumbnail && (
               <motion.div
                 key="thumbnail"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.5 }}
+                transition={{ duration: 0.5, delay: 0.5 }}
                 className="w-full h-full absolute inset-0"
               >
                 <Image
@@ -224,20 +244,23 @@ const PopupCard = ({
                   priority
                   fill
                   className="rounded-t-lg object-cover"
-                  onLoad={() => setIsThumbnailLoaded(true)}
+                  onLoad={() => {
+                    setIsThumbnailLoaded(true)
+                    handleImageLoad() // Ensure handleImageLoad is called after thumbnail is loaded
+                  }}
                 />
               </motion.div>
             )}
           </AnimatePresence>
           <AnimatePresence>
             {/* Render Poster if neither thumbnail nor backdrop is available and video is not ready */}
-            {(!videoReady || hideVideo) && !data?.thumbnail && !backdrop && (
+            {!shouldPlay && !data?.thumbnail && !backdrop && (
               <motion.div
                 key="poster"
                 initial={{ opacity: 1 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.5 }}
+                transition={{ duration: 0.5, delay: 0.5 }}
                 className="w-full h-full absolute inset-0"
               >
                 <Image
@@ -252,6 +275,7 @@ const PopupCard = ({
                   priority
                   fill
                   className="rounded-t-lg object-cover"
+                  onLoad={handleImageLoad} // Corrected to directly call handleImageLoad
                 />
               </motion.div>
             )}
@@ -269,7 +293,7 @@ const PopupCard = ({
           {date && <p className="text-sm text-gray-600">Last Watched: {date}</p>}
           {/* Add more detailed information here */}
           <p className="text-gray-500 mb-2">
-            {isLoading ? '' : (data?.description ?? 'No description available.')}
+            {isLoading ? '' : data?.description ?? 'No description available.'}
           </p>
           {link && (
             <Link

@@ -1,5 +1,6 @@
 import { buildURL, formatDateToEST, getFullImageUrl } from '@src/utils'
-import { fetchMetadata } from '@src/utils/admin_utils'
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+import { getServer } from './config'
 
 export const movieProjectionFields = {
   _id: 1,
@@ -10,6 +11,8 @@ export const movieProjectionFields = {
   backdropBlurhash: 1,
   title: 1,
   dimensions: 1,
+  blurhashSource: 1,
+  backdropBlurhashSource: 1,
   'metadata.overview': 1,
   'metadata.release_date': 1,
   'metadata.genres': 1,
@@ -24,6 +27,9 @@ export const tvShowProjectionFields = {
   backdrop: 1,
   backdropBlurhash: 1,
   title: 1,
+  posterSource: 1,
+  blurhashSource: 1,
+  backdropBlurhashSource: 1,
   'metadata.overview': 1,
   'metadata.last_air_date': 1,
   'metadata.networks': 1,
@@ -143,13 +149,28 @@ async function extractTVShowDetailsFromMap(tvDetails, videoId) {
     returnData.logo = tvDetails.logo
   }
 
-  // Replace the posterBlurhash with the episode's thumbnail blurhash if available
+  if (tvDetails.posterBlurhash) {
+    returnData.posterBlurhash = tvDetails.posterBlurhash
+  }
+  
   if (episode.thumbnailBlurhash) {
-    returnData.posterBlurhash = episode.thumbnailBlurhash
+    returnData.thumbnailBlurhash = episode.thumbnailBlurhash
+  }
+
+  if (episode.thumbnailSource) {
+    returnData.thumbnailSource = episode.thumbnailSource
   }
 
   if (tvDetails.backdropBlurhash) {
     returnData.backdropBlurhash = tvDetails.backdropBlurhash
+  }
+
+  if (tvDetails.blurhashSource) {
+    returnData.blurhashSource = tvDetails.blurhashSource
+  }
+
+  if (tvDetails.backdropBlurhashSource) {
+    returnData.backdropBlurhashSource = tvDetails.backdropBlurhashSource
   }
 
   return returnData
@@ -206,18 +227,18 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
 
     const metadataPromises = []
     if (record.posterBlurhash) {
-      metadataPromises.push(fetchMetadata(record.posterBlurhash, 'blurhash', record.title, type))
+      metadataPromises.push(fetchMetadataMultiServer(record.blurhashSource, record.posterBlurhash, 'blurhash', record.title, type))
       delete record.posterBlurhash
     }
 
     if (record.backdropBlurhash) {
-      metadataPromises.push(fetchMetadata(record.backdropBlurhash, 'blurhash', record.title, type))
+      metadataPromises.push(fetchMetadataMultiServer(record.backdropBlurhashSource, record.backdropBlurhash, 'blurhash', record.title, type))
       delete record.backdropBlurhash
     }
 
     if (record?.episode?.thumbnailBlurhash) {
       metadataPromises.push(
-        fetchMetadata(record?.episode?.thumbnailBlurhash, 'blurhash', record.title, type)
+        fetchMetadataMultiServer(record?.episode?.thumbnailSource, record?.episode?.thumbnailBlurhash, 'blurhash', record.title, type)
       )
       delete record?.episode?.thumbnailBlurhash
     }
@@ -327,12 +348,34 @@ export async function sanitizeCardData(item, popup = false) {
   if (popup) {
     if (metadata?.trailer_url) sanitized.trailer_url = metadata?.trailer_url
     if (item?.thumbnail) sanitized.thumbnail = item?.thumbnail
-    if (item?.thumbnailBlurhash) sanitized.thumbnailBlurhash = await fetchMetadata(item?.thumbnailBlurhash)
+    if (item?.thumbnailBlurhash) sanitized.thumbnailBlurhash = await fetchMetadataMultiServer(item?.thumbnailBlurhash)
     // Description
     if (metadata?.overview) sanitized.description = metadata?.overview
     if (metadata?.name) sanitized.title = metadata?.name
-  }
+    // Because the Node Server requires a video to clip from, we validate the videoURL
+      if (item.videoURL) {
+        const maxDuration = 30; // 30 seconds
+        const videoLength = Math.floor(item.length / 1000); // Convert ms to seconds
+        let start = 3200
+        let end = start + maxDuration
+      
+        if (videoLength < end || start >= videoLength) {
+          const oneThirdLength = Math.floor(videoLength / 3)
+          start = Math.max(Math.min(oneThirdLength, videoLength - maxDuration - 15), 0)
+          end = Math.min(start + maxDuration, videoLength)
+          
+          // Ensure minimum 2 second difference and valid ranges
+          if (end - start <= 2 || end >= videoLength) {
+            start = 0
+            end = Math.min(maxDuration, videoLength)
+          }
+        }
 
+        const nodeJSURL = getServer(item?.videoSource || 'default').syncEndpoint
+      
+        sanitized.clipVideoURL = `${nodeJSURL}/videoClip/${type}/${title}${item?.metadata?.season_number ? `/${item?.metadata.season_number}${item?.episodeNumber ? `/${item?.episodeNumber}` : ''}` : ''}?start=${start}&end=${end}`
+      }
+    }
   return sanitized
 }
 
@@ -346,4 +389,24 @@ export async function sanitizeCardItems(items) {
   if (!Array.isArray(items)) return []
   const sanitizedItems = await Promise.all(items.map((item) => sanitizeCardData(item)))
   return sanitizedItems.filter(Boolean)
+}
+
+/**
+ * Fetches a queue using the provided fetch function and handles any errors.
+ *
+ * @param {Function} fetchFunction - The function to fetch the queue data.
+ * @param {string} queueName - The name of the queue for error reporting.
+ * @returns {Promise<any>} The queue data if successful.
+ * @throws {Error} Throws an error with statusCode 501 if fetch fails.
+ */
+export async function handleQueueFetch(fetchFunction, queueName) {
+  try {
+    const queueData = await fetchFunction()
+    return queueData
+  } catch (error) {
+    console.error(`Error fetching ${queueName} queue:`, error)
+    // You can set a custom status code if needed
+    error.statusCode = 501 // Not Implemented
+    throw error
+  }
 }

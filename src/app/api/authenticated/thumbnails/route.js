@@ -2,7 +2,7 @@ import fetch from 'node-fetch'
 //import isAuthenticated from '../../../../utils/routeAuth'
 import clientPromise from '../../../../lib/mongodb'
 import isAuthenticated from '@src/utils/routeAuth'
-import { nodeJSURL } from '@src/utils/config'
+import { getServer, multiServerHandler, nodeJSURL } from '@src/utils/config'
 
 // This route is used to fetch spritesheet vtt file for a specific media item
 export const GET = async (req) => {
@@ -25,6 +25,7 @@ export const GET = async (req) => {
       headers: { 'Content-Type': 'application/json' },
     })
   }
+
 
   try {
     const client = await clientPromise
@@ -52,13 +53,18 @@ export const GET = async (req) => {
         headers: { 'Content-Type': 'application/json' },
       })
     }
+    // Access the server configuration using the media's videoInfoSource
+    const serverConfig = getServer(media?.videoInfoSource)
+
+    // Extract the Node.js server URL (syncEndpoint) from the server configuration
+    const nodeServerUrl = serverConfig.syncEndpoint
 
     let spriteURL
 
     if (type === 'movie') {
-      spriteURL = `${nodeJSURL}/vtt/${type}/${name}/`
+      spriteURL = `${nodeServerUrl}/vtt/${type}/${name}/`
     } else if (type === 'tv') {
-      spriteURL = `${nodeJSURL}/vtt/${type}/${name}/${season}/${episode}`
+      spriteURL = `${nodeServerUrl}/vtt/${type}/${name}/${season}/${episode}`
     }
 
     if (!spriteURL) {
@@ -78,7 +84,7 @@ export const GET = async (req) => {
 
     return new Response(data, { status: 200, headers: headers })
   } catch (error) {
-    return new Response(JSON.stringify({ error: 'Failed to fetch chapters' }), {
+    return new Response(JSON.stringify({ error: 'Failed to fetch chapters/thumbnails' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     })

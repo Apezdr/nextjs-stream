@@ -50,7 +50,7 @@ async function getServerSettings() {
     webhookIds: webhookIds,
     fileImport: fileImportSettings,
     // Urls
-    fileServerURL: fileServerURLWithPrefixPath,
+    fileServerURL: fileServerURLWithPrefixPath(''),
     fileServerPrefixPath: fileServerPrefixPath,
     organizrURL: organizrURL,
     nodeJSURL: nodeJSURL,

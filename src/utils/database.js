@@ -1,7 +1,7 @@
 import { auth } from '@src/lib/auth'
 import { getFullImageUrl } from '@src/utils'
 import clientPromise from '@src/lib/mongodb'
-import { fetchMetadata } from '@src/utils/admin_utils'
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { getRecentlyWatchedForUser, fetchRecentlyAdded } from '@src/utils/auth_database'
 import { ObjectId } from 'mongodb'
 
@@ -69,12 +69,13 @@ export async function getRequestedMedia({
     if (!title && !id) return null
 
     const DBmovie = await client.db('Media').collection(collection).findOne(query, { projection })
+    await processBlurhashes(DBmovie, type)
 
-    return DBmovie
+    return { type: type, ...DBmovie }
   } else if (type === 'tv') {
     const DBtvShow = await getTvShowData(client, collection, title, season, episode, id)
-    await processBlurhashes(DBtvShow)
-    return DBtvShow
+    await processBlurhashes(DBtvShow, type)
+    return { type: type, ...DBtvShow }
   }
 
   return null
@@ -138,6 +139,12 @@ function handleEpisode(tvShow, seasonObj, episodeNumber) {
   episodeObj.posterURL = seasonObj.season_poster || tvShow.posterURL || tvShow.metadata.poster_path
   episodeObj.posterBlurhash = seasonObj.seasonPosterBlurhash || tvShow.posterBlurhash || null
 
+  if (seasonObj.seasonPosterBlurhashSource) {
+    episodeObj.blurhashSource = seasonObj.seasonPosterBlurhashSource
+  } else if (tvShow.posterBlurhash) {
+    episodeObj.blurhashSource = tvShow.posterBlurhash
+  }
+
   if (tvShow?.metadata?.rating) {
     episodeObj.metadata.rating = tvShow.metadata.rating
   }
@@ -161,13 +168,14 @@ function handleEpisode(tvShow, seasonObj, episodeNumber) {
   return episodeObj
 }
 
-async function processBlurhashes(media) {
+async function processBlurhashes(media, type) {
   if (media?.posterBlurhash) {
     if (media.posterBlurhash.startsWith('http')) {
-      media.posterBlurhash = await fetchMetadata(
+      media.posterBlurhash = await fetchMetadataMultiServer(
+        media.blurhashSource,
         media.posterBlurhash,
         'blurhash',
-        'tv',
+        type,
         media.title
       )
     }
@@ -175,10 +183,11 @@ async function processBlurhashes(media) {
 
   if (media?.backdropBlurhash) {
     if (media.backdropBlurhash.startsWith('http')) {
-      media.backdropBlurhash = await fetchMetadata(
+      media.backdropBlurhash = await fetchMetadataMultiServer(
+        media.backdropBlurhashSource,
         media.backdropBlurhash,
         'blurhash',
-        'tv',
+        type,
         media.title
       )
     }

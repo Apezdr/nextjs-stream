@@ -8,6 +8,12 @@
       "command": "npm run dev"
     },
     {
+      "name": "Next.js: debug server-side --turbo",
+      "type": "node-terminal",
+      "request": "launch",
+      "command": "npm run dev-turbo"
+    },
+    {
       "name": "Next.js: debug client-side",
       "type": "chrome",
       "request": "launch",

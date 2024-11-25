@@ -19,6 +19,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { v7 as uuidv7 } from 'uuid'
 import throttle from 'lodash.throttle'
 import debounce from 'lodash.debounce'
+import { useSwipeable } from 'react-swipeable'
 import SkeletonList from './SkeletonList'
 
 // Define Peek Width
@@ -339,6 +340,29 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     [currentPage]
   )
 
+  // Handle swipe gestures
+  const handleSwipe = useCallback(
+    (direction) => {
+      if (direction === 'LEFT') {
+        moveScroll('right') // Swiping left navigates to the next page (right)
+      } else if (direction === 'RIGHT') {
+        moveScroll('left') // Swiping right navigates to the previous page (left)
+      }
+    },
+    [moveScroll]
+  )
+
+  // Configure swipe handlers
+  const swipeHandlers = useSwipeable({
+    onSwipedLeft: () => handleSwipe('LEFT'),
+    onSwipedRight: () => handleSwipe('RIGHT'),
+    preventDefaultTouchmoveEvent: true,
+    preventScrollOnSwipe: true,
+    trackMouse: true,
+    delta: { left: 20, right: 20 },
+    swipeDuration: 250,
+  })
+
   // Handle error state
   if (error && !data) {
     return (
@@ -350,7 +374,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   }
 
   return (
-    <div className="relative my-8 w-full flex flex-col justify-center overflow-hidden max-w-[100vw]">
+    <div className="relative my-8 w-full flex flex-col justify-center overflow-hidden max-w-[100vw]" {...swipeHandlers}>
       {/* Carousel Container */}
       <div className="flex flex-row items-center w-full relative" ref={containerRef}>
         {/* Left Arrow */}

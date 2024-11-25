@@ -90,9 +90,7 @@ To implement the NextJS-Stream app, follow these steps:
     NEXT_PUBLIC_SITE_TITLE=Cinema Sanctuary # Optional
     NEXT_PUBLIC_SITE_DESCRIPTION=Sharing media content with friends and family. # Optional
     
-    # Sync URLs
-    NEXT_PUBLIC_SYNC_TV_URL=http://localhost:3000/tv_list.json
-    NEXT_PUBLIC_SYNC_MOVIES_URL=http://localhost:3000/movies_list.json
+    # Sync URL, uses the node server
     NEXT_PUBLIC_NODE_SERVER_URL=http://localhost:3000
 
    ```

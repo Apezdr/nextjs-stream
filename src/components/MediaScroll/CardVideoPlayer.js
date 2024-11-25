@@ -5,15 +5,17 @@ import '@components/MediaPlayer/Layouts/menus.css'
 import { Controls, MediaPlayer, MediaProvider } from '@vidstack/react'
 import { memo, useRef, useState, useEffect, useCallback } from 'react'
 import * as Buttons from '@components/MediaPlayer/buttons'
+import { classNames } from '@src/utils'
 
 function CardVideoPlayer({
   media,
   videoURL = null,
   onVideoReady,
   onVideoEnd,
+  onPlaying,
   height,
   width,
-  shouldNotPlay = false,
+  shouldPlay = false,
 }) {
   //const { trailer_url } = media
   const playerRef = useRef(null)
@@ -53,13 +55,23 @@ function CardVideoPlayer({
   }, [handleVisibilityChange])
 
   const handlePlaying = useCallback(() => {
-    if (shouldNotPlay == false) {
-      setPlayerReady(true)
-      if (onVideoReady) {
-        onVideoReady() // Notify parent that video is ready
-      }
+    onPlaying()
+  }, [onPlaying])
+
+  const handleCanPlay = useCallback(() => {
+    const player = playerRef?.current
+    setPlayerReady(true)
+    if (onVideoReady) {
+      onVideoReady(player) // Notify parent that video is ready
     }
-  }, [onVideoReady])
+  }, [onVideoReady, setPlayerReady])
+
+  useEffect(()=>{
+    const player = playerRef?.current
+    if (player && shouldPlay) {
+      player.play()
+    }
+  }, [shouldPlay, playerRef])
 
   return (
     <MediaPlayer
@@ -67,20 +79,23 @@ function CardVideoPlayer({
       src={videoURL}
       height={height}
       width={width}
-      autoPlay={shouldNotPlay == false ? true : false}
-      controlsDelay={999999}
+      autoPlay={false}
+      controlsDelay={-1}
       streamType="on-demand"
       playsInline
       load="visible"
       aspectRatio="16/9"
       fullscreenOrientation="landscape"
-      className="absolute inset-0 w-full h-full select-none pointer-events-none"
+      className={classNames(
+        "absolute inset-0 w-full h-full select-none pointer-events-none media-playing:opacity-100 media-paused:opacity-0",
+        shouldPlay ? 'shouldPlay' : ''
+      )}
       muted={
-        localStorage.getItem('videoMutedCard')
+        localStorage?.getItem('videoMutedCard')
           ? localStorage.getItem('videoMutedCard') === 'true'
           : true
       }
-      volume={localStorage.getItem('videoVolumeCard') || 1}
+      volume={parseFloat(localStorage?.getItem('videoVolumeCard')) || 1}
       onPause={() => {
         const player = playerRef?.current
         if (
@@ -88,13 +103,18 @@ function CardVideoPlayer({
           player &&
           player.state.paused &&
           document.visibilityState === 'visible' &&
-          shouldNotPlay == false
+          shouldPlay == true &&
+          player.state.fullscreen == false
         ) {
           player.play()
         }
       }}
       onVolumeChange={handleVolumeChange}
-      onEnded={onVideoEnd}
+      onEnded={() => {
+        const player = playerRef?.current
+        onVideoEnd(player)
+      }}
+      onCanPlay={handleCanPlay}
       onPlaying={handlePlaying}
       loop={false}
     >

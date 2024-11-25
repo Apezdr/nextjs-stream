@@ -6,7 +6,7 @@ import { useParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { buildURL } from '@src/utils'
 
-export default function TVLayout({ fileServerURLWithPrefixPath }) {
+export default function TVLayout({ posterCollage }) {
   const params = useParams()
   const [media, setMedia] = useState(null)
 

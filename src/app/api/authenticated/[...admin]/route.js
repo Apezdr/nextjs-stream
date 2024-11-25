@@ -7,22 +7,14 @@ import {
   getRecentlyWatched,
 } from '@src/utils/admin_database'
 import {
-  extractEpisodeDetails,
-  matchEpisodeFileName,
+  fetchRadarrQueue,
+  fetchSABNZBDQueue,
+  fetchSonarrQueue,
+  fetchTdarrQueue,
   processMediaData,
   processUserData,
 } from '@src/utils/admin_utils'
 import axios from 'axios'
-import {
-  radarrAPIKey,
-  radarrURL,
-  sabnzbdAPIKey,
-  sabnzbdURL,
-  sonarrAPIKey,
-  sonarrURL,
-  tdarrAPIKey,
-  tdarrURL,
-} from '@src/utils/ssr_config'
 import chalk from 'chalk'
 import {
   syncBackdrop,
@@ -37,6 +29,7 @@ import {
   syncPosterURLs,
   syncVideoURL,
   updateLastSynced,
+  identifyMissingMedia,
 } from '@src/utils/sync'
 import { getFileServerImportSettings } from '@src/utils/sync_db'
 
@@ -150,7 +143,6 @@ export async function GET(request, props) {
   })
 }
 
-
 // New POST method for handling the sync operation
 export async function POST(request, props) {
   const params = await props.params
@@ -199,238 +191,80 @@ export async function POST(request, props) {
 
 async function handleSync(webhookId, request) {
   try {
-    // Fetch and process TV shows data
-    let response
-    try {
-      const headers = webhookId ? { 'X-Webhook-ID': webhookId } : {}
-      const cookie = request.headers.get('cookie')
-      if (cookie) {
-        headers['cookie'] = cookie
-      }
-      response = await axios.get(buildURL('/api/authenticated/list'), { headers })
-    } catch (error) {
-      console.error('Error fetching data from API:', error)
-      // Handle the error based on your requirements
-      // For example, you can throw a custom error or return an error response
-      throw new Error('Failed to fetch data from the API')
-    }
+    // Fetch data from all configured servers
+    const headers = {}
+    if (webhookId) headers['X-Webhook-ID'] = webhookId
+    if (request.headers.get('cookie')) headers['cookie'] = request.headers.get('cookie')
 
-    const { fileServer, currentDB } = await response.data
+    const response = await axios.get(buildURL('/api/authenticated/list'), { headers })
+    const { fileServers, currentDB, errors } = await response.data
 
     const startTime = Date.now()
     console.info(
-      chalk.bold.dim(`⋄⋄ Starting Sync with Fileserver ⋄⋄ [${new Date(startTime).toISOString()}]`)
+      chalk.bold.dim(`⋄⋄ Starting Multi-Server Sync ⋄⋄ [${new Date(startTime).toISOString()}]`)
     )
 
     const importSettings = await getFileServerImportSettings()
-    console.log(importSettings)
+    console.log('Import Settings:', importSettings)
 
-    const { missingMedia, missingMp4 } = identifyMissingMedia(fileServer, currentDB)
-    await syncMissingMedia(missingMedia, fileServer)
-    await syncMetadata(currentDB, fileServer)
-    await syncCaptions(currentDB, fileServer)
-    await syncChapters(currentDB, fileServer)
-    await syncVideoURL(currentDB, fileServer)
-    await syncLogos(currentDB, fileServer)
-    await syncBlurhash(currentDB, fileServer)
-    await syncVideoInfo(currentDB, fileServer)
-    await syncEpisodeThumbnails(currentDB, fileServer)
-    await syncPosterURLs(currentDB, fileServer)
-    await syncBackdrop(currentDB, fileServer)
+    const results = {
+      missingMedia: {},
+      missingMp4: {},
+      errors: errors || []
+    }
+
+    // Process each server sequentially to avoid overwhelming the system
+    for (const [serverId, fileServer] of Object.entries(fileServers)) {
+      console.info(chalk.bold.cyan(`\nProcessing server: ${serverId}`))
+      
+      try {
+        const serverConfig = {
+          id: serverId,
+          ...fileServer.config
+        }
+
+        // Identify missing media for this server
+        const { missingMedia, missingMp4 } = await identifyMissingMedia(fileServer, currentDB)
+        results.missingMedia[serverId] = missingMedia
+        results.missingMp4[serverId] = missingMp4
+
+        // Perform sync operations with server-specific configuration
+        await syncMissingMedia(missingMedia, fileServer, serverConfig)
+        await syncMetadata(currentDB, fileServer, serverConfig)
+        await syncCaptions(currentDB, fileServer, serverConfig)
+        await syncChapters(currentDB, fileServer, serverConfig)
+        await syncVideoURL(currentDB, fileServer, serverConfig)
+        await syncLogos(currentDB, fileServer, serverConfig)
+        await syncVideoInfo(currentDB, fileServer, serverConfig)
+        await syncEpisodeThumbnails(currentDB, fileServer, serverConfig)
+        await syncPosterURLs(currentDB, fileServer, serverConfig)
+        await syncBackdrop(currentDB, fileServer, serverConfig)
+        await syncBlurhash(currentDB, fileServer, serverConfig)
+
+      } catch (error) {
+        console.error(`Error processing server ${serverId}:`, error)
+        results.errors.push({
+          serverId,
+          error: error.message,
+          phase: 'sync'
+        })
+      }
+    }
+
     await updateLastSynced()
 
     const endTime = Date.now()
-    const duration = (endTime - startTime) / 1000 // Convert to seconds
+    const duration = (endTime - startTime) / 1000
     console.info(
       chalk.bold.dim(
-        `⋄⋄ Finished Sync with Fileserver ⋄⋄ [${new Date(endTime).toISOString()}] (Total Runtime: ${duration.toFixed(2)}s)`
+        `⋄⋄ Finished Multi-Server Sync ⋄⋄ [${new Date(endTime).toISOString()}] (Total Runtime: ${duration.toFixed(2)}s)`
       )
     )
-    return { missingMedia, missingMp4 }
+
+    return results
+
   } catch (error) {
     console.error('Sync operation failed:', error)
-    throw error // Rethrow to handle in the calling function
-  }
-}
-
-/**
- * Identifies missing media and MP4 files between the file server and current database.
- * @param {Object} fileServer - The data structure representing media available on the file server.
- * @param {Object} currentDB - The current state of the media database.
- * @returns {Object} An object containing arrays of missing media and MP4 file information.
- */
-function identifyMissingMedia(fileServer, currentDB) {
-  const missingMedia = { tv: [], movies: [] }
-  const missingShowsMap = new Map()
-
-  // Keep track of titles (movie/tv) that don't have a url for the mp4 file
-  const missingMp4 = { tv: [], movies: [] }
-
-  // Check for missing TV shows, seasons, and episodes
-  Object.keys(fileServer?.tv).forEach((showTitle) => {
-    const foundShow = currentDB.tv.find((show) => show.title === showTitle)
-
-    if (!foundShow) {
-      const seasons = Object.keys(fileServer?.tv[showTitle].seasons)
-      const seasonsWithEpisodes = seasons.filter(
-        (season) => fileServer?.tv[showTitle].seasons[season].fileNames.length > 0
-      )
-
-      if (seasonsWithEpisodes.length > 0) {
-        missingShowsMap.set(showTitle, {
-          showTitle,
-          seasons: seasonsWithEpisodes,
-        })
-      } else {
-        // If there are no seasons with episodes, add the show to missingMp4.tv
-        missingMp4.tv.push(showTitle)
-      }
-    } else {
-      Object.keys(fileServer?.tv[showTitle].seasons).forEach((season) => {
-        const foundSeason = foundShow.seasons.find((s) => `Season ${s.seasonNumber}` === season)
-        const hasFilesForSeason =
-          Array.isArray(foundSeason?.fileNames) ||
-          foundSeason?.fileNames?.length > 0 ||
-          fileServer?.tv[showTitle].seasons[season]?.fileNames?.length > 0
-
-        if (!foundSeason && hasFilesForSeason) {
-          let show = missingShowsMap.get(showTitle) || { showTitle, seasons: [] }
-          show.seasons.push(season)
-          missingShowsMap.set(showTitle, show)
-        } else if (hasFilesForSeason) {
-          const seasonFiles = fileServer?.tv[showTitle].seasons[season].fileNames
-
-          // Check if the season has any episodes
-          if (seasonFiles.length === 0) {
-            missingMp4.tv.push(`${showTitle} - ${season}`)
-          } else {
-            const missingEpisodes = seasonFiles
-              .filter((episodeFileName) => {
-                /**
-                 * Checks if the given episode file name matches the expected format
-                 * and returns whether that episode already exists for the given season
-                 */
-                const match = matchEpisodeFileName(episodeFileName)
-                if (match) {
-                  const details = extractEpisodeDetails(match)
-                  return !foundSeason.episodes.some(
-                    (e) => e.episodeNumber === details.episodeNumber
-                  )
-                }
-
-                return false
-              })
-              .map((episodeFileName) => {
-                const length = fileServer?.tv[showTitle].seasons[season].lengths[episodeFileName]
-                const dimensions =
-                  fileServer?.tv[showTitle].seasons[season].dimensions[episodeFileName]
-                const urls = fileServer?.tv[showTitle].seasons[season].urls[episodeFileName]
-                return { episodeFileName, length, dimensions, ...urls }
-              })
-
-            if (missingEpisodes.length > 0) {
-              let show = missingShowsMap.get(showTitle) || { showTitle, seasons: [] }
-              show.seasons.push({ season, missingEpisodes })
-              missingShowsMap.set(showTitle, show)
-            }
-          }
-        }
-      })
-    }
-  })
-
-  // Convert Map to Array
-  const missingMediaArray = Array.from(missingShowsMap.values())
-  missingMedia.tv = missingMediaArray
-
-  // Check for missing Movies
-  Object.keys(fileServer?.movies).forEach((movieTitle) => {
-    const foundMovie = currentDB.movies.find((movie) => movie.title === movieTitle)
-    if (!foundMovie) {
-      // If the movie is missing the url for the mp4 file
-      // Add it to the missingMedia array
-      if (fileServer?.movies[movieTitle].urls.mp4) {
-        missingMedia.movies.push(movieTitle)
-      } else {
-        missingMp4.movies.push(movieTitle)
-      }
-    }
-  })
-
-  return { missingMedia, missingMp4 }
-}
-
-/**
- * Fetches a queue using the provided fetch function and handles any errors.
- *
- * @param {Function} fetchFunction - The function to fetch the queue data.
- * @param {string} queueName - The name of the queue for error reporting.
- * @returns {Promise<any>} The queue data if successful.
- * @throws {Error} Throws an error with statusCode 501 if fetch fails.
- */
-async function handleQueueFetch(fetchFunction, queueName) {
-  try {
-    const queueData = await fetchFunction()
-    return queueData
-  } catch (error) {
-    console.error(`Error fetching ${queueName} queue:`, error)
-    // You can set a custom status code if needed
-    error.statusCode = 501 // Not Implemented
     throw error
-  }
-}
-async function fetchSABNZBDQueue() {
-  if (!sabnzbdURL || !sabnzbdAPIKey) {
-    throw new Error('SABNZBD URL or API key not configured')
-  }
-  try {
-    const sabnzbdQueue = await axios.get(`${sabnzbdURL}/api?mode=queue&apikey=${sabnzbdAPIKey}`)
-    return sabnzbdQueue.data
-  } catch (error) {
-    console.error('Failed to fetch SABNZBD queue:', error)
-    throw new Error('Failed to fetch SABNZBD queue')
-  }
-}
-
-async function fetchRadarrQueue() {
-  if (!radarrURL || !radarrAPIKey) {
-    throw new Error('Radarr URL or API key not configured')
-  }
-  try {
-    const radarrQueue = await axios.get(`${radarrURL}/api/v3/queue?apikey=${radarrAPIKey}`)
-    return radarrQueue.data
-  } catch (error) {
-    console.error(
-      'Failed to fetch Radarr queue:',
-      `${radarrURL}/api/v3/queue?apikey=${radarrAPIKey}`,
-      error
-    )
-    throw new Error('Failed to fetch Radarr queue')
-  }
-}
-
-async function fetchSonarrQueue() {
-  if (!sonarrURL || !sonarrAPIKey) {
-    throw new Error('Sonarr URL or API key not configured')
-  }
-  try {
-    const sonarrQueue = await axios.get(`${sonarrURL}/api/v3/queue?apikey=${sonarrAPIKey}`)
-    return sonarrQueue.data
-  } catch (error) {
-    console.error('Failed to fetch Sonarr queue:', error)
-    throw new Error('Failed to fetch Sonarr queue')
-  }
-}
-
-async function fetchTdarrQueue() {
-  if (!tdarrURL || !tdarrAPIKey) {
-    throw new Error('Tdarr URL or API key not configured')
-  }
-  try {
-    const tdarrQueue = await axios.get(`${tdarrURL}/api/v2/get-nodes?apikey=${tdarrAPIKey}`)
-    return tdarrQueue.data
-  } catch (error) {
-    console.error('Failed to fetch Tdarr queue:', error)
-    throw new Error('Failed to fetch Tdarr queue')
   }
 }

@@ -3,7 +3,7 @@ import Detailed from '@components/Poster/Detailed'
 import Link from 'next/link'
 import { cache, memo } from 'react'
 import clientPromise from '@src/lib/mongodb'
-import { fetchMetadata } from '@src/utils/admin_utils'
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -54,10 +54,13 @@ const getAndUpdateMongoDB = cache(async () => {
           metadata: 1,
           posterURL: 1,
           posterBlurhash: 1,
+          blurhashSource: 1,
           'seasons.seasonNumber': 1,
           'seasons.title': 1,
           'seasons.season_poster': 1,
+          'seasons.posterSource': 1,
           'seasons.seasonPosterBlurhash': 1,
+          'seasons.seasonPosterBlurhashSource': 1,
           'seasons.metadata.Genre': 1,
         },
       }
@@ -84,7 +87,7 @@ const getAndUpdateMongoDB = cache(async () => {
   const plainTVShows = await Promise.all(
     tvprograms.map(async (tv) => {
       if (tv.posterBlurhash) {
-        tv.posterBlurhash = await fetchMetadata(tv.posterBlurhash, 'blurhash', 'tv', tv.title)
+        tv.posterBlurhash = await fetchMetadataMultiServer(tv.blurhashSource, tv.posterBlurhash, 'blurhash', 'tv', tv.title)
       }
       return {
         _id: tv._id.toString(), // Convert ObjectId to string

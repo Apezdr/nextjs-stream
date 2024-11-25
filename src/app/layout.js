@@ -1,29 +1,35 @@
 import { Inter } from 'next/font/google'
-import './globals.css'
-//import PageAnimatePresence from '@components/HOC/PageAnimatePresence'
-import { classNames } from '@src/utils'
-import { fileServerURLWithPrefixPath, siteDescription, siteTitle } from '@src/utils/config'
-import { lazy } from 'react'
-
-const TVLayout = lazy(() => import('@components/HOC/TVLayout'))
-const GeneralLayout = lazy(() => import('@components/HOC/GeneralLayout'))
-const MovieLayout = lazy(() => import('@components/HOC/MovieLayout'))
+import './tailwind.css'
+import { siteDescription, siteTitle } from '@src/utils/config'
+import { getServerConfig } from './api/getserverconfig/config'
 
 const inter = Inter({ subsets: ['latin'] })
+export async function generateMetadata() {
+  try {
+    const config = await getServerConfig()
+    const { defaultFileServer } = config
+    const posterCollage = `${defaultFileServer}poster_collage.jpg`
 
-export const metadata = {
-  title: siteTitle,
-  description: siteDescription,
-  openGraph: {
-    images: fileServerURLWithPrefixPath + `/poster_collage.jpg`,
-  },
+    return {
+      title: siteTitle,
+      description: siteDescription,
+      openGraph: {
+        images: posterCollage,
+      },
+    }
+  } catch (error) {
+    console.error('Error generating metadata:', error)
+    return {
+      title: siteTitle,
+      description: siteDescription,
+    }
+  }
 }
 
 export default function RootLayout({ children }) {
   return (
     <html lang="en">
       <body
-        className={classNames(inter.className, `bg-blue-500 transition-colors duration-1000`)}
         id="page-container"
       >
         {process.env.NODE_ENV === 'development' && (
@@ -52,9 +58,6 @@ export default function RootLayout({ children }) {
             </div>
           </div>
         )}
-        <GeneralLayout fileServerURLWithPrefixPath={fileServerURLWithPrefixPath} />
-        <TVLayout fileServerURLWithPrefixPath={fileServerURLWithPrefixPath} />
-        <MovieLayout fileServerURLWithPrefixPath={fileServerURLWithPrefixPath} />
         {children}
       </body>
     </html>

@@ -176,36 +176,27 @@ export function SeekBackward({ tooltipPlacement }) {
   )
 }
 
-export function GoBack({ goBack, tooltipPlacement }) {
+export function GoBack({ goBack }) {
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <div>
-          <Link
-            href={goBack}
-            className="absolute z-[1] top-6 left-8 p-2 text-white rounded-full hover:bg-gray-700 hover:bg-opacity-30"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-              className="w-12 h-12"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"
-              />
-            </svg>
-          </Link>
-        </div>
-      </Tooltip.Trigger>
-      <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
-        Go Back to List
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <Link
+      href={goBack}
+      className="z-[1] p-2 text-white rounded-full hover:bg-gray-700 hover:bg-opacity-30"
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        strokeWidth={1.5}
+        stroke="currentColor"
+        className="w-12 h-12"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18"
+        />
+      </svg>
+    </Link>
   )
 }
 

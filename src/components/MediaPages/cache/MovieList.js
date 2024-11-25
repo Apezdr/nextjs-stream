@@ -5,7 +5,7 @@ import { TotalRuntime } from '@components/watched'
 import Link from 'next/link'
 import { cache, memo } from 'react'
 import clientPromise from '@src/lib/mongodb'
-import { fetchMetadata } from '@src/utils/admin_utils'
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -101,6 +101,7 @@ const getAndUpdateMongoDB = cache(async (latestUpdateTimestamp) => {
           length: 1,
           dimensions: 1,
           captionURLs: 1,
+          blurhashSource: 1,
           'metadata.genres': 1,
           'metadata.overview': 1,
           'metadata.release_date': 1,
@@ -146,7 +147,8 @@ const getAndUpdateMongoDB = cache(async (latestUpdateTimestamp) => {
       }
 
       if (movie.posterBlurhash) {
-        returnObject.posterBlurhash = await fetchMetadata(
+        returnObject.posterBlurhash = await fetchMetadataMultiServer(
+          movie.blurhashSource,
           movie.posterBlurhash,
           'blurhash',
           'movie',

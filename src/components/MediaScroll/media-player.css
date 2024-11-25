@@ -1,3 +1,13 @@
 .vds-blocker {
     display: none;
 }
+
+[data-media-player] [data-media-provider] {
+    opacity: 0;
+}
+
+[data-media-player].shouldPlay [data-media-provider] {
+    transition: opacity .55s ease-out;
+    background: black;
+    opacity: 1;
+}

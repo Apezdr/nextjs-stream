@@ -159,8 +159,8 @@ export async function getRecentlyWatched() {
             }
             try {
               if (
-                video.videoId.startsWith(fileServerURLWithPrefixPath + `/movies`) ||
-                video.videoId.startsWith(fileServerURLWithPrefixPath + `/limited`)
+                video.videoId.startsWith(fileServerURLWithPrefixPath(`/movies`)) ||
+                video.videoId.startsWith(fileServerURLWithPrefixPath(`/limited`))
               ) {
                 const movie = await client
                   .db('Media')
@@ -174,7 +174,7 @@ export async function getRecentlyWatched() {
                       lastUpdated: video.lastUpdated,
                     }
                   : null
-              } else if (video.videoId.startsWith(fileServerURLWithPrefixPath + `/tv`)) {
+              } else if (video.videoId.startsWith(fileServerURLWithPrefixPath(`/tv`))) {
                 const tvDetails = await extractTVShowDetails(client, video.videoId)
                 return tvDetails
                   ? {

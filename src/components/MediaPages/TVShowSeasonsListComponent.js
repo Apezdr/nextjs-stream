@@ -8,7 +8,7 @@ import SignOutButton from '@components/SignOutButton'
 import MediaPoster from '../MediaPoster'
 import Detailed from '@components/Poster/Detailed'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { fetchMetadata } from '@src/utils/admin_utils'
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 export const dynamic = 'force-dynamic'
 
 const variants = {
@@ -83,7 +83,7 @@ export default async function TVShowSeasonsList({ showTitle }) {
     )
   }
   if (tvShow.posterBlurhash) {
-    tvShow.posterBlurhash = await fetchMetadata(tvShow.posterBlurhash, 'blurhash', 'tv', showTitle)
+    tvShow.posterBlurhash = await fetchMetadataMultiServer(tvShow.blurhashSource, tvShow.posterBlurhash, 'blurhash', 'tv', showTitle)
   }
 
   return (
@@ -126,7 +126,8 @@ export default async function TVShowSeasonsList({ showTitle }) {
         {await Promise.all(
           tvShow.seasons.map(async (season, seasonIndex) => {
             if (season.seasonPosterBlurhash) {
-              season.posterBlurhash = await fetchMetadata(
+              season.posterBlurhash = await fetchMetadataMultiServer(
+                season.seasonPosterBlurhashSource,
                 season.seasonPosterBlurhash,
                 'blurhash',
                 'tv',
@@ -187,11 +188,14 @@ async function getAndUpdateMongoDB(showTitle) {
           metadata: 1,
           posterURL: 1,
           posterBlurhash: 1,
+          blurhashSource: 1,
           'seasons.seasonNumber': 1,
           //'seasons.episodes': 1,
           'seasons.title': 1,
           'seasons.season_poster': 1,
+          'seasons.posterSource': 1,
           'seasons.seasonPosterBlurhash': 1,
+          'seasons.seasonPosterBlurhashSource': 1,
           'seasons.metadata.Genre': 1,
         },
       }
@@ -208,5 +212,6 @@ async function getAndUpdateMongoDB(showTitle) {
     seasons: tvShow.seasons,
     posterURL: tvShow.posterURL,
     posterBlurhash: tvShow.posterBlurhash,
+    blurhashSource: tvShow.blurhashSource,
   }
 }

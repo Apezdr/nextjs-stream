@@ -1,7 +1,17 @@
 import axios from 'axios'
 import { buildURL, getFullImageUrl } from '@src/utils'
-import { fileServerURLWithoutPrefixPath } from '@src/utils/config'
 import { getLastUpdatedTimestamp } from '@src/utils/database'
+import {
+  radarrAPIKey,
+  radarrURL,
+  sabnzbdAPIKey,
+  sabnzbdURL,
+  sonarrAPIKey,
+  sonarrURL,
+  tdarrAPIKey,
+  tdarrURL,
+} from '@src/utils/ssr_config'
+import { multiServerHandler } from './config'
 
 export function processMediaData(jsonResponseString) {
   const { movies, tv } = jsonResponseString
@@ -99,268 +109,82 @@ export function processUserData(jsonResponse) {
   }
 }
 
-// Regular expression to extract episode number and title
-/**
- * Regular expression to extract episode number and title from a filename.
- * Matches filenames in the format:
- * - S01E02 - Episode Title.ext
- * - 02 - Episode Title.ext
- * And captures:
- * - Episode number in capture group 1 or 2
- * - Episode title in capture group 3
- */
-const patterns = [
-  /S(\d+)E(\d+)(?:\s*-\s*(.+?))?(?:\s*-\s*.+?)?\.([^.]+)$/i, // Matches 'S01E01 - Title - Extra.mp4'
-  /(\d+)(?:\s*-\s*(.+?))?\.([^.]+)$/i, // Matches '01 - Title.mp4'
-  /(.+?)\s*-\s*S(\d+)E(\d+)(?:\s*-\s*(.+?))?(?:\s*-\s*.+?)?\.([^.]+)$/i, // Matches '1923 - S01E01 - Title - Extra.mp4'
-]
-
-export function matchEpisodeFileName(filename) {
-  for (const pattern of patterns) {
-    const match = filename.match(pattern)
-    if (match) {
-      return match
-    }
-  }
-  return null
-}
-
-export function extractEpisodeDetails(match) {
-  if (!match) return null
-
-  // Determine which pattern matched and extract details accordingly
-  if (match.length === 5 && match[1] && match[2]) {
-    // Pattern 1: SxxExx
-    return {
-      seasonNumber: parseInt(match[1]),
-      episodeNumber: parseInt(match[2]),
-      title: match[3].replace(/(WEBRip|WEBDL|HDTV|Bluray|\d{3,4}p).*$/i, '').trim() || '',
-      extension: match[4],
-    }
-  } else if (match.length === 4 && match[1] && match[2]) {
-    // Pattern 2: xx - Title
-    return {
-      seasonNumber: null,
-      episodeNumber: parseInt(match[1]),
-      title: match[2].replace(/(WEBRip|WEBDL|HDTV|Bluray|\d{3,4}p).*$/i, '').trim() || '',
-      extension: match[3],
-    }
-  } else if (match.length === 6 && match[2] && match[3]) {
-    // Pattern 3: Title - SxxExx - Title - Extra
-    return {
-      seasonNumber: parseInt(match[2]),
-      episodeNumber: parseInt(match[3]),
-      title: match[4].replace(/(WEBRip|WEBDL|HDTV|Bluray|\d{3,4}p).*$/i, '').trim() || '',
-      extension: match[5],
-    }
-  }
-
-  return null
-}
-
 function getYearFromDate(dateString) {
   return dateString ? new Date(dateString).getFullYear() : null
 }
 
-// Utilities for syncing media
-function extractSeasonInfo(seasonInfo, showTitle, fileServer) {
-  try {
-    if (!seasonInfo) {
-      throw new Error('Season info is undefined')
-    }
-
-    const seasonIdentifier = seasonInfo.season || seasonInfo
-    if (typeof seasonInfo === 'string') {
-      return {
-        number: parseInt(seasonInfo.split(' ')[1]),
-        seasonIdentifier: seasonIdentifier,
-        season_poster: fileServer?.tv[showTitle].seasons[seasonInfo].season_poster,
-        seasonPosterBlurhash: fileServer?.tv[showTitle].seasons[seasonInfo].seasonPosterBlurhash,
-        episodes: fileServer?.tv[showTitle].seasons[seasonInfo].fileNames.map(function (fileName) {
-          let returnData = {
-            fileName,
-            videoURL: fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].videourl,
-            length: fileServer?.tv[showTitle].seasons[seasonInfo].lengths[fileName],
-            dimensions: fileServer?.tv[showTitle].seasons[seasonInfo].dimensions[fileName],
-            mediaLastModified: new Date(
-              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].mediaLastModified
-            ),
-          }
-          if (fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnail) {
-            returnData.thumbnail =
-              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnail
-          }
-          if (fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnailBlurhash) {
-            returnData.thumbnailBlurhash =
-              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnailBlurhash
-          }
-          if (fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].metadata) {
-            returnData.metadata =
-              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].metadata
-          }
-          return returnData
-        }),
-      }
-    } else {
-      if (!seasonInfo.season) {
-        throw new Error('Season number is undefined')
-      }
-
-      return {
-        number: parseInt(seasonInfo.season.split(' ')[1]),
-        seasonIdentifier: seasonIdentifier,
-        season_poster: fileServer?.tv[showTitle].seasons[seasonIdentifier].season_poster,
-        seasonPosterBlurhash:
-          fileServer?.tv[showTitle].seasons[seasonIdentifier].seasonPosterBlurhash,
-        episodes: seasonInfo.missingEpisodes.map(function (episode) {
-          let returnData = {
-            fileName: episode.episodeFileName,
-            videoURL: episode.videourl,
-            mediaLastModified: new Date(episode.mediaLastModified),
-            length: episode.lengths,
-            dimensions: episode.dimensions,
-          }
-          if (episode.thumbnail) {
-            returnData.thumbnail = episode.thumbnail
-          }
-          if (episode.thumbnailBlurhash) {
-            returnData.thumbnailBlurhash = episode.thumbnailBlurhash
-          }
-          if (episode.metadata) {
-            returnData.metadata = episode.metadata
-          }
-          return returnData
-        }),
-      }
-    }
-  } catch (error) {
-    // handle error
-    console.error('Error Processing', showTitle, seasonInfo, error)
-    throw error
-  }
-}
-
-export async function addOrUpdateSeason(
-  currentShow,
-  seasonInfo,
-  showTitle,
-  fileServer,
-  showMetadata
-) {
-  const { number, seasonIdentifier, season_poster, seasonPosterBlurhash, episodes } =
-    extractSeasonInfo(seasonInfo, showTitle, fileServer)
-  if (episodes.length > 0 && episodes !== undefined && episodes !== null) {
-    let currentSeasonIndex = currentShow.seasons.findIndex((s) => s.seasonNumber === number)
-
-    // If the season doesn't exist, initialize it
-    if (currentSeasonIndex === -1) {
-      currentShow.seasons.push({ seasonNumber: number, episodes: [] })
-      currentSeasonIndex = currentShow.seasons.length - 1
-    }
-
-    let seasonMetadata = showMetadata.seasons.find((s) => s.season_number === number) || {
-      episode_count: 0,
-    }
-
-    for (const episode of episodes) {
-      const episodeMatch = matchEpisodeFileName(episode.fileName)
-      if (episodeMatch) {
-        const { episodeNumber, title } = extractEpisodeDetails(episodeMatch)
-
-        let episodeMetadata = {}
-        /**
-         * Adds the episode metadata to the season metadata object.
-         * Episode metadata is used in the frontend from this new
-         * episodes array inside seasons.
-         */
-        if (episode.metadata) {
-          try {
-            episodeMetadata = await fetchMetadata(episode.metadata)
-            seasonMetadata.episodes = seasonMetadata.episodes || []
-            seasonMetadata.episodes.push(episodeMetadata) // Append episode metadata
-          } catch (error) {
-            console.error('Error fetching episode metadata:', error)
-          }
-        }
-
-        // If we wanted to use the metadata title, we could set the title here instead
-        // title = episodeMetadata.name || name
-        const existingEpisodeIndex = currentShow.seasons[currentSeasonIndex].episodes.findIndex(
-          (e) => e.episodeNumber === episodeNumber
-        )
-        if (existingEpisodeIndex === -1) {
-          const videoURL =
-            fileServer?.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].videourl
-          // Store the thumbnail blurhash URL
-          let thumbnailBlurhash = episode.thumbnailBlurhash ?? false
-          let captions =
-            fileServer?.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].subtitles
-
-          let updatedData = {
-            episodeNumber: episodeNumber,
-            title,
-            videoURL: fileServerURLWithoutPrefixPath + `${videoURL}`,
-            mediaLastModified: episode.mediaLastModified,
-            length: episode.length,
-            dimensions: episode.dimensions,
-          }
-          if (episode.thumbnail) {
-            updatedData.thumbnail = fileServerURLWithoutPrefixPath + `${episode.thumbnail}`
-          }
-          if (episode.thumbnailBlurhash) {
-            updatedData.thumbnailBlurhash = fileServerURLWithoutPrefixPath + `${thumbnailBlurhash}`
-          }
-
-          /**
-           * Updates the URLs for captions files to point to the file server.
-           * Loops through the captions object, updating each URL to prepend
-           * the file server URL. Adds the updated captions to the episode
-           * metadata.
-           */
-          if (captions) {
-            Object.keys(captions).map((caption) => {
-              captions[caption].url = fileServerURLWithoutPrefixPath + `${captions[caption].url}`
-              return caption
-            })
-            updatedData.captionURLs = captions
-          }
-
-          // Add chapterURL if chapters file exists
-          if (fileServer?.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].chapters) {
-            updatedData.chapterURL =
-              fileServerURLWithoutPrefixPath +
-              `${
-                fileServer?.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].chapters
-              }`
-          }
-
-          currentShow.seasons[currentSeasonIndex].episodes.push(updatedData)
-        }
-      }
-    }
-
-    currentShow.seasons[currentSeasonIndex].episodes.sort(
-      (a, b) => a.episodeNumber - b.episodeNumber
-    )
-    currentShow.seasons[currentSeasonIndex].metadata = seasonMetadata
-    currentShow.seasons[currentSeasonIndex].season_poster =
-      fileServerURLWithoutPrefixPath + `${season_poster}`
-    currentShow.seasons[currentSeasonIndex].seasonPosterBlurhash =
-      fileServerURLWithoutPrefixPath + `${seasonPosterBlurhash}`
-  }
-}
-
-const metadataCache = new Map()
-
 // Function to fetch
-export async function fetchMetadata(metadataUrl, type = 'file', mediaType, title) {
-  if (metadataUrl === undefined) {
+/**
+ * Normalizes a metadata URL using the appropriate server configuration
+ * @param {string} url - The metadata URL to normalize
+ * @param {Object} serverConfig - Server configuration
+ * @returns {string} The normalized URL
+ */
+function normalizeMetadataURL(url, serverConfig) {
+  if (!url) return ''
+  
+  const handler = multiServerHandler.getHandler(serverConfig.id)
+  
+  // First strip any existing prefix paths or base URLs
+  const strippedPath = handler.stripPrefixPath(url)
+  
+  // Remove any leading slashes
+  const cleanPath = strippedPath.replace(/^\/+/, '')
+  
+  // Create the full URL with the correct prefix path
+  return handler.createFullURL(cleanPath)
+}
+
+/**
+ * Cache implementation for metadata
+ */
+class MetadataCache {
+  constructor() {
+    this.cache = new Map()
+  }
+
+  getKey(type, url, serverId) {
+    return `${serverId}:${type}:${url}`
+  }
+
+  get(type, url, serverId) {
+    return this.cache.get(this.getKey(type, url, serverId))
+  }
+
+  set(type, url, serverId, value) {
+    this.cache.set(this.getKey(type, url, serverId), value)
+  }
+
+  has(type, url, serverId) {
+    return this.cache.has(this.getKey(type, url, serverId))
+  }
+
+  clear() {
+    this.cache.clear()
+  }
+}
+
+// Create a singleton instance of the cache
+export const metadataCache = new MetadataCache()
+
+/**
+ * When using multiple file servers, this version of fetchMetadata can be used
+ * @param {string} serverId - The ID of the file server to fetch from
+ * @param {string} metadataUrl - The URL to fetch metadata from
+ * @param {'file'|'blurhash'} type - The type of metadata being fetched
+ * @param {'tv'|'movie'} mediaType - The type of media
+ * @param {string} title - The title of the media
+ */
+export async function fetchMetadataMultiServer(serverId, metadataUrl, type = 'file', mediaType, title) {
+  if (!metadataUrl) {
     return {}
   }
+
   try {
-    const cacheKey = `${type}:${metadataUrl}`
+    const cacheKey = `${serverId}:${type}:${metadataUrl}`
     const lastUpdated = await getLastUpdatedTimestamp({ type: mediaType, title })
 
+    // Check cache
     if (metadataCache.has(cacheKey)) {
       const cachedData = metadataCache.get(cacheKey)
       if (cachedData.lastUpdated === lastUpdated) {
@@ -368,26 +192,86 @@ export async function fetchMetadata(metadataUrl, type = 'file', mediaType, title
       }
     }
 
-    if (metadataUrl.startsWith(fileServerURLWithoutPrefixPath)) {
-      metadataUrl = metadataUrl.replace(fileServerURLWithoutPrefixPath, '')
-    }
-    // Remove leading slash
-    if (metadataUrl.startsWith('/')) {
-      metadataUrl = metadataUrl.slice(1)
-    }
+    // Get the URL handler for this server
+    const handler = multiServerHandler.getHandler(serverId)
+    
+    // Strip any existing paths and create the full URL
+    const strippedPath = handler.stripPrefixPath(metadataUrl)
+    const normalizedUrl = handler.createFullURL(strippedPath)
 
-    const response = await axios.get(fileServerURLWithoutPrefixPath + `/${metadataUrl}`)
+    // Fetch the data
+    const response = await axios.get(normalizedUrl)
     const data = type === 'blurhash' ? response.data.trim() : response.data
 
+    // Cache the result
     metadataCache.set(cacheKey, { data, lastUpdated })
+
     return data
   } catch (error) {
-    console.log(
-      'Error fetching metadata:',
-      fileServerURLWithoutPrefixPath + `/${metadataUrl}`,
-      error
-    )
+    console.error('Error fetching metadata:', {
+      serverId,
+      url: metadataUrl,
+      error: error.message,
+      mediaType,
+      title
+    })
     return false
   }
 }
 // End of utilities for syncing media
+
+export async function fetchRadarrQueue() {
+  if (!radarrURL || !radarrAPIKey) {
+    throw new Error('Radarr URL or API key not configured')
+  }
+  try {
+    const radarrQueue = await axios.get(`${radarrURL}/api/v3/queue?apikey=${radarrAPIKey}`)
+    return radarrQueue.data
+  } catch (error) {
+    console.error(
+      'Failed to fetch Radarr queue:',
+      `${radarrURL}/api/v3/queue?apikey=${radarrAPIKey}`,
+      error
+    )
+    throw new Error('Failed to fetch Radarr queue')
+  }
+}
+
+export async function fetchSonarrQueue() {
+  if (!sonarrURL || !sonarrAPIKey) {
+    throw new Error('Sonarr URL or API key not configured')
+  }
+  try {
+    const sonarrQueue = await axios.get(`${sonarrURL}/api/v3/queue?apikey=${sonarrAPIKey}`)
+    return sonarrQueue.data
+  } catch (error) {
+    console.error('Failed to fetch Sonarr queue:', error)
+    throw new Error('Failed to fetch Sonarr queue')
+  }
+}
+
+export async function fetchTdarrQueue() {
+  if (!tdarrURL || !tdarrAPIKey) {
+    throw new Error('Tdarr URL or API key not configured')
+  }
+  try {
+    const tdarrQueue = await axios.get(`${tdarrURL}/api/v2/get-nodes?apikey=${tdarrAPIKey}`)
+    return tdarrQueue.data
+  } catch (error) {
+    console.error('Failed to fetch Tdarr queue:', error)
+    throw new Error('Failed to fetch Tdarr queue')
+  }
+}
+
+export async function fetchSABNZBDQueue() {
+  if (!sabnzbdURL || !sabnzbdAPIKey) {
+    throw new Error('SABNZBD URL or API key not configured')
+  }
+  try {
+    const sabnzbdQueue = await axios.get(`${sabnzbdURL}/api?mode=queue&apikey=${sabnzbdAPIKey}`)
+    return sabnzbdQueue.data
+  } catch (error) {
+    console.error('Failed to fetch SABNZBD queue:', error)
+    throw new Error('Failed to fetch SABNZBD queue')
+  }
+}

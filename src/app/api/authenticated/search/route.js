@@ -1,9 +1,7 @@
 import clientPromise from '@src/lib/mongodb'
-import { fetchMetadata } from '@src/utils/admin_utils'
 import { addCustomUrlToMedia, fetchRecentlyAdded } from '@src/utils/auth_database'
 import {
   arrangeMediaByLatestModification,
-  getModifiedDate,
   movieProjectionFields,
   tvShowProjectionFields,
 } from '@src/utils/auth_utils'

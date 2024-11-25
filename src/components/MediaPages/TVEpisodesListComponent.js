@@ -10,7 +10,7 @@ import TVShowThumbnail from '@components/TVShowThumbnail'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { Suspense } from 'react'
 import Loading from '@src/app/loading'
-import { fetchMetadata } from '@src/utils/admin_utils'
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { CaptionSVG } from '@components/SVGIcons'
 import HD4kBanner from '../../../public/4kBanner.png'
 import Image from 'next/image'
@@ -60,7 +60,8 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
     return <div>Season not found</div>
   }
   if (season.seasonPosterBlurhash) {
-    season.posterBlurhash = await fetchMetadata(
+    season.posterBlurhash = await fetchMetadataMultiServer(
+      season.seasonPosterBlurhashSource,
       season.seasonPosterBlurhash,
       'blurhash',
       'tv',
@@ -123,7 +124,8 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                 )
 
                 if (episode.thumbnailBlurhash) {
-                  episode.thumbnailBlurhash = await fetchMetadata(
+                  episode.thumbnailBlurhash = await fetchMetadataMultiServer(
+                    episode.thumbnailSource,
                     episode.thumbnailBlurhash,
                     'blurhash',
                     'tv',
@@ -208,10 +210,13 @@ async function getAndUpdateMongoDB(showTitle, seasonNumber) {
           metadata: 1,
           posterURL: 1,
           posterBlurhash: 1,
+          posterSource: 1,
+          blurhashSource: 1,
           'seasons.seasonNumber': 1,
           'seasons.title': 1,
           'seasons.season_poster': 1,
           'seasons.seasonPosterBlurhash': 1,
+          'seasons.seasonPosterBlurhashSource': 1,
           'seasons.metadata.Genre': 1,
           'seasons.metadata.episodes': 1,
           'seasons.episodes': 1,
@@ -239,6 +244,7 @@ async function getAndUpdateMongoDB(showTitle, seasonNumber) {
     metadata: tvShow.metadata, // Include the show's metadata
     currentSeasonMetadata: tvShow.seasons[seasonIndex].metadata, // Include the metadata for the current season
     seasons: tvShow.seasons, // Include the list of all seasons
+    blurhashSource: tvShow.blurhashSource, // Include the blurhash source for the show
   }
 
   return returnObject

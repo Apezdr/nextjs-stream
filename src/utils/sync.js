@@ -1,1757 +1,1117 @@
 'use server'
 
 import clientPromise from '@src/lib/mongodb'
-import { addOrUpdateSeason, fetchMetadata } from '@src/utils/admin_utils'
-import { filterLockedFields } from '@src/utils/sync_utils'
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+import { matchEpisodeFileName, processMovie, processMovieCaptions, processMovieChapters, processMovieLogo, processMovieMetadata, processMovieVideoURL, processSeasonCaptions, processSeasonChapters, processSeasonMetadata, processSeasonVideoURLs, processShowLogo, processTVShow, updateMediaInDatabase, extractEpisodeDetails, processShowBlurhash, processMovieBlurhash, processSeasonVideoInfo, processMovieVideoInfo, findEpisodeFileName, processEpisodeThumbnails, updateEpisodeInDatabase, processSeasonPoster, processPosterURL, MediaType, processBackdropURLs, processBackdropUpdates, processSeasonThumbnails, processSeasonPosters, processShowPosterURL } from '@src/utils/sync_utils'
 import chalk from 'chalk'
-import { fileServerURLWithoutPrefixPath } from '@src/utils/config'
-import { updateMediaUpdates } from '@src/utils/admin_frontend_database'
-import { isEqual } from 'lodash'
+
+/**
+ * Identifies missing media and MP4 files between the file server and current database.
+ * @param {Object} fileServer - The data structure representing media available on the file server.
+ * @param {Object} currentDB - The current state of the media database.
+ * @returns {Object} An object containing arrays of missing media and MP4 file information.
+ */
+export async function identifyMissingMedia(fileServer, currentDB) {
+  const missingMedia = { tv: [], movies: [] }
+  const missingShowsMap = new Map()
+
+  // Keep track of titles (movie/tv) that don't have a url for the mp4 file
+  const missingMp4 = { tv: [], movies: [] }
+
+  // Check for missing TV shows, seasons, and episodes
+  Object.keys(fileServer?.tv).forEach((showTitle) => {
+    const foundShow = currentDB.tv.find((show) => show.title === showTitle)
+
+    if (!foundShow) {
+      const seasons = Object.keys(fileServer?.tv[showTitle].seasons)
+      const seasonsWithEpisodes = seasons.filter(
+        (season) => fileServer?.tv[showTitle].seasons[season].fileNames.length > 0
+      )
+
+      if (seasonsWithEpisodes.length > 0) {
+        missingShowsMap.set(showTitle, {
+          showTitle,
+          seasons: seasonsWithEpisodes,
+        })
+      } else {
+        // If there are no seasons with episodes, add the show to missingMp4.tv
+        missingMp4.tv.push(showTitle)
+      }
+    } else {
+      Object.keys(fileServer?.tv[showTitle].seasons).forEach((season) => {
+        const foundSeason = foundShow.seasons.find((s) => `Season ${s.seasonNumber}` === season)
+        const hasFilesForSeason =
+          Array.isArray(foundSeason?.fileNames) ||
+          foundSeason?.fileNames?.length > 0 ||
+          fileServer?.tv[showTitle].seasons[season]?.fileNames?.length > 0
+
+        if (!foundSeason && hasFilesForSeason) {
+          let show = missingShowsMap.get(showTitle) || { showTitle, seasons: [] }
+          show.seasons.push(season)
+          missingShowsMap.set(showTitle, show)
+        } else if (hasFilesForSeason) {
+          const seasonFiles = fileServer?.tv[showTitle].seasons[season].fileNames
+
+          // Check if the season has any episodes
+          if (seasonFiles.length === 0) {
+            missingMp4.tv.push(`${showTitle} - ${season}`)
+          } else {
+            const missingEpisodes = seasonFiles
+              .filter((episodeFileName) => {
+                /**
+                 * Checks if the given episode file name matches the expected format
+                 * and returns whether that episode already exists for the given season
+                 */
+                const match = matchEpisodeFileName(episodeFileName)
+                if (match) {
+                  const details = extractEpisodeDetails(match)
+                  return !foundSeason.episodes.some(
+                    (e) => e.episodeNumber === details.episodeNumber
+                  )
+                }
+
+                return false
+              })
+              .map((episodeFileName) => {
+                const length = fileServer?.tv[showTitle].seasons[season].lengths[episodeFileName]
+                const dimensions =
+                  fileServer?.tv[showTitle].seasons[season].dimensions[episodeFileName]
+                const urls = fileServer?.tv[showTitle].seasons[season].urls[episodeFileName]
+                return { episodeFileName, length, dimensions, ...urls }
+              })
+
+            if (missingEpisodes.length > 0) {
+              let show = missingShowsMap.get(showTitle) || { showTitle, seasons: [] }
+              show.seasons.push({ season, missingEpisodes })
+              missingShowsMap.set(showTitle, show)
+            }
+          }
+        }
+      })
+    }
+  })
+
+  // Convert Map to Array
+  const missingMediaArray = Array.from(missingShowsMap.values())
+  missingMedia.tv = missingMediaArray
+
+  // Check for missing Movies
+  Object.keys(fileServer?.movies).forEach((movieTitle) => {
+    const foundMovie = currentDB.movies.find((movie) => movie.title === movieTitle)
+    if (!foundMovie) {
+      // If the movie is missing the url for the mp4 file
+      // Add it to the missingMedia array
+      if (fileServer?.movies[movieTitle].urls.mp4) {
+        missingMedia.movies.push(movieTitle)
+      } else {
+        missingMp4.movies.push(movieTitle)
+      }
+    }
+  })
+
+  return { missingMedia, missingMp4 }
+}
 
 /**
  * Sync media items that are missing from the database
  * @param {Object[]} missingMedia - Array of missing media items
- * @param {Object} fileServer - File server object
+ * @param {Object} fileServer - File server object containing media data
+ * @param {Object} serverConfig - Configuration for the file server
+ * @param {string} serverConfig.id - Unique identifier for the server
+ * @param {string} serverConfig.baseURL - Base URL of the server
+ * @param {string} serverConfig.prefixPath - Prefix path for the server
+ * @returns {Promise<Object>} Results of the sync operation
  */
-export async function syncMissingMedia(missingMedia, fileServer) {
+export async function syncMissingMedia(missingMedia, fileServer, serverConfig) {
+  const client = await clientPromise;
+  const results = {
+    processed: { movies: [], tv: [] },
+    errors: { movies: [], tv: [] }
+  };
+
+  try {
+    // Process movies and TV shows concurrently
+    const [movieResults, tvResults] = await Promise.all([
+      // Process all movies concurrently
+      Promise.allSettled(
+        missingMedia.movies.map(async movieTitle => {
+          try {
+            await processMovie(client, movieTitle, fileServer, serverConfig);
+            results.processed.movies.push({
+              title: movieTitle,
+              serverId: serverConfig.id
+            });
+          } catch (error) {
+            results.errors.movies.push({
+              title: movieTitle,
+              serverId: serverConfig.id,
+              error: error.message
+            });
+          }
+        })
+      ),
+      
+      // Process all TV shows concurrently
+      Promise.allSettled(
+        missingMedia.tv.map(async show => {
+          try {
+            await processTVShow(client, show, fileServer, show.showTitle, serverConfig);
+            results.processed.tv.push({
+              title: show.showTitle,
+              serverId: serverConfig.id,
+              seasons: show.seasons.length
+            });
+          } catch (error) {
+            results.errors.tv.push({
+              title: show.showTitle,
+              serverId: serverConfig.id,
+              error: error.message
+            });
+          }
+        })
+      )
+    ]);
+
+    // Log results
+    if (results.processed.movies.length > 0) {
+      console.log(`Successfully processed ${results.processed.movies.length} movies from server ${serverConfig.id}`);
+    }
+    if (results.processed.tv.length > 0) {
+      console.log(`Successfully processed ${results.processed.tv.length} TV shows from server ${serverConfig.id}`);
+    }
+    if (results.errors.movies.length > 0) {
+      console.error(`Failed to process ${results.errors.movies.length} movies from server ${serverConfig.id}`);
+    }
+    if (results.errors.tv.length > 0) {
+      console.error(`Failed to process ${results.errors.tv.length} TV shows from server ${serverConfig.id}`);
+    }
+
+    return results;
+
+  } catch (error) {
+    console.error(`Error in syncMissingMedia for server ${serverConfig.id}:`, error);
+    throw new Error(`Failed to sync missing media from server ${serverConfig.id}: ${error.message}`);
+  }
+}
+
+/**
+ * Syncs metadata from a server to the database
+ * @param {Object} currentDB - Current database state
+ * @param {Object} fileServer - File server data
+ * @param {Object} serverConfig - Server configuration
+ * @returns {Promise<Object>} Sync results
+ */
+export async function syncMetadata(currentDB, fileServer, serverConfig) {
+  console.log(chalk.bold.cyan(`Starting metadata sync for server ${serverConfig.id}...`))
   const client = await clientPromise
-
-  // Sync Movies
-  for (const movieIndex in missingMedia.movies) {
-    const movieTitle = missingMedia.movies[parseInt(movieIndex)]
-    const movieData = fileServer?.movies[movieTitle]
-    const movieDataFILENAMES = movieData?.fileNames
-    const movieDataURLS = movieData?.urls
-
-    // Find the MP4 file
-    const mp4File = movieDataFILENAMES.find((name) => name.endsWith('.mp4'))
-
-    if (!mp4File) {
-      console.log(`Movie: No MP4 file found for ${movieTitle}. Skipping.`)
-      continue
-    }
-
-    // Make a GET request to retrieve movie metadata from file server
-    const movieMetadata = await fetchMetadata(movieDataURLS?.metadata, 'file', 'movie', movieTitle)
-
-    if (!movieMetadata) {
-      return console.log(`Movie: No metadata found for ${movieData}. Skipping.`)
-    }
-    if (typeof movieMetadata.release_date !== 'object') {
-      movieMetadata.release_date = new Date(movieMetadata.release_date)
-    }
-
-    // Initialize update data
-    let updateData = {
-      title: movieTitle,
-      videoURL: fileServerURLWithoutPrefixPath + `${movieDataURLS.mp4}`,
-      mediaLastModified: new Date(movieDataURLS.mediaLastModified),
-      length: movieData.length[mp4File],
-      dimensions: movieData.dimensions[mp4File],
-      metadata: movieMetadata,
-    }
-
-    // Add captionURLs for available subtitles
-    if (movieDataURLS?.subtitles) {
-      const subtitleURLs = {}
-      for (const [langName, subtitleData] of Object.entries(movieDataURLS.subtitles)) {
-        subtitleURLs[langName] = {
-          srcLang: subtitleData.srcLang,
-          url: fileServerURLWithoutPrefixPath + `${subtitleData.url}`,
-          lastModified: subtitleData.lastModified,
-        }
-      }
-
-      // Sort the subtitleURLs object to show English first
-      const sortedSubtitleURLs = Object.entries(subtitleURLs).sort(([langNameA], [langNameB]) => {
-        if (langNameA.toLowerCase().includes('english')) return -1
-        if (langNameB.toLowerCase().includes('english')) return 1
-        return 0
-      })
-
-      updateData.captionURLs = Object.fromEntries(sortedSubtitleURLs)
-    }
-
-    if (movieDataURLS?.poster) {
-      updateData.posterURL = fileServerURLWithoutPrefixPath + `${movieDataURLS.poster}`
-    }
-    // Add posterBlurhash URL if it exists
-    if (movieDataURLS?.posterBlurhash) {
-      updateData.posterBlurhash = fileServerURLWithoutPrefixPath + `${movieDataURLS.posterBlurhash}`
-    }
-    // Some movies have a logo image
-    if (movieDataURLS?.logo) {
-      updateData.logo = fileServerURLWithoutPrefixPath + `${movieDataURLS.logo}`
-    }
-    // Add chapterURL if chapters file exists
-    if (movieDataURLS?.chapters) {
-      updateData.chapterURL = fileServerURLWithoutPrefixPath + `${movieDataURLS.chapters}`
-    }
-    // Add backdrop if it exists
-    if (movieDataURLS?.backdrop) {
-      updateData.backdrop = fileServerURLWithoutPrefixPath + `${movieDataURLS.backdrop}`
-    }
-    // Add backdrop blurhash if it exists
-    if (movieDataURLS?.backdropBlurhash) {
-      updateData.backdropBlurhash =
-        fileServerURLWithoutPrefixPath + `${movieDataURLS.backdropBlurhash}`
-    }
-
-    await client
-      .db('Media')
-      .collection('Movies')
-      .updateOne({ title: movieTitle }, { $set: updateData }, { upsert: true })
-
-    // Update the MediaUpdatesMovie collection
-    await updateMediaUpdates(movieTitle, 'movie')
+  const results = {
+    processed: { movies: [], tv: [] },
+    errors: { movies: [], tv: [] }
   }
 
-  // Sync TV Shows
-  for (const missingShow of missingMedia.tv) {
-    const showTitle = missingShow.showTitle
-    const showData = fileServer?.tv[showTitle]
-
-    // Make a GET request to retrieve show-level metadata
-    const showMetadata = await fetchMetadata(showData.metadata, 'file', 'tv', showTitle)
-
-    if (!showMetadata) {
-      return console.log(`TV: No metadata found for ${showTitle}. Skipping.`)
-    }
-
-    const currentShow = (await client
-      .db('Media')
-      .collection('TV')
-      .findOne({ title: showTitle })) || { seasons: [] }
-
-    // Use Promise.all to wait for all seasons to be updated
-    await Promise.all(
-      missingShow.seasons.map((seasonInfo) =>
-        addOrUpdateSeason(currentShow, seasonInfo, showTitle, fileServer, showMetadata)
-      )
+  try {
+    // Sync Movies
+    await Promise.allSettled(
+      currentDB.movies.map(async movie => {
+        try {
+          await processMovieMetadata(
+            client, 
+            movie, 
+            fileServer?.movies[movie.title],
+            serverConfig
+          )
+          results.processed.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id
+          })
+        } catch (error) {
+          results.errors.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id,
+            error: error.message
+          })
+        }
+      })
     )
 
-    currentShow.seasons.sort((a, b) => a.seasonNumber - b.seasonNumber)
-
-    /* const posterBlurhashResponse = await fetchMetadata(showData.posterBlurhash)
-      const backdropBlurhashResponse = await fetchMetadata(showData.backdropBlurhash) */
-
-    // Add posterBlurhash & backdropBlurhash URL if it exists
-    const posterBlurhash = showData.posterBlurhash
-    const backdropBlurhash = showData.backdropBlurhash
-
-    const showUpdateData = {
-      // ...other show data,
-      metadata: showMetadata,
-      seasons: currentShow.seasons,
-      posterURL: fileServerURLWithoutPrefixPath + `${showData.poster}`,
-      posterBlurhash: fileServerURLWithoutPrefixPath + `${posterBlurhash}`,
-      backdrop: fileServerURLWithoutPrefixPath + `${showData.backdrop}`,
-      backdropBlurhash: fileServerURLWithoutPrefixPath + `${backdropBlurhash}`,
-    }
-
-    if (showData.logo) {
-      showUpdateData.logo = fileServerURLWithoutPrefixPath + `${showData.logo}`
-    }
-
-    await client
-      .db('Media')
-      .collection('TV')
-      .updateOne({ title: showTitle }, { $set: showUpdateData }, { upsert: true })
-    // Update the MediaUpdatesTV collection
-    await updateMediaUpdates(showTitle, 'tv')
-  }
-}
-
-/**
- *
- * @param {Object} fileServer - The data structure representing media available on the file server.
- * @param {Object} currentDB - The current state of the media database.
- *
- */
-export async function syncMetadata(currentDB, fileServer) {
-  console.log(chalk.bold.cyan('Starting Syncing metadata...'))
-  const client = await clientPromise
-  // Sync Movies
-  for (const movie of currentDB.movies) {
-    try {
-      // Access the current movie data from currentDB
-      const currentDB_movieData = movie
-
-      // Ensure the movie exists in the file server data
-      const fileServer_movieData = fileServer?.movies[movie.title]
-      if (!fileServer_movieData) {
-        console.error(`Movie "${movie.title}" not found in file server data. Skipping.`)
-        continue
-      }
-      const fileServer_movieDataURLS = fileServer_movieData?.urls ?? {
-        metadata: null,
-      }
-
-      // Fetch movie metadata from file server
-      let movieMetadata
+    // Sync TV Shows
+    for (const show of currentDB.tv) {
       try {
-        movieMetadata = await fetchMetadata(
-          fileServer_movieDataURLS?.metadata,
-          'file',
-          'movie',
-          movie.title
-        )
-      } catch (error) {
-        console.error(`Failed to fetch metadata for movie "${movie.title}":`, error)
-        continue // Skip this movie and proceed to the next
-      }
-
-      // Ensure release_date is a Date object
-      if (typeof movieMetadata.release_date !== 'object') {
-        movieMetadata.release_date = new Date(movieMetadata.release_date)
-      }
-
-      // Compare last_updated timestamps
-      const existingMetadataLastUpdated = new Date(
-        currentDB_movieData.metadata?.last_updated ?? '1970-01-01T00:00:00.000Z'
-      )
-      const newMetadataLastUpdated = new Date(movieMetadata.last_updated)
-
-      if (newMetadataLastUpdated > existingMetadataLastUpdated) {
-        // Prepare the update data
-        const updateData = { metadata: movieMetadata }
-
-        // Filter out locked fields
-        const filteredUpdateData = filterLockedFields(currentDB_movieData, updateData)
-
-        // If 'metadata' is empty after filtering, remove it from updateData
-        if (filteredUpdateData.metadata && Object.keys(filteredUpdateData.metadata).length === 0) {
-          delete filteredUpdateData.metadata
+        const fileServerShowData = fileServer?.tv[show.title]
+        if (!fileServerShowData) {
+          console.error(`TV show "${show.title}" not found in server ${serverConfig.id} data. Skipping.`)
+          continue
         }
 
-        // Proceed with the update if there are fields to update
-        if (Object.keys(filteredUpdateData).length > 0) {
-          console.log(`Movie: Updating metadata for "${movie.title}"`)
-
-          await client
-            .db('Media')
-            .collection('Movies')
-            .updateOne({ title: movie.title }, { $set: filteredUpdateData }, { upsert: true })
-
-          // Update the MediaUpdatesMovie collection
-          await updateMediaUpdates(movie.title, 'movie')
-        } else {
-          console.log(`All metadata fields are locked for movie "${movie.title}". Skipping update.`)
-        }
-      }
-    } catch (error) {
-      console.error(`Error in movie metadata processing ${movie.title}:`, error)
-      throw error // Rethrow the error to be handled by the calling function
-    }
-  }
-  // Sync TV
-  let tv_metadata = {
-    name: '',
-  }
-  for (const tv of currentDB.tv) {
-    try {
-      // Set the file server show data
-      const fileServer_showData = fileServer?.tv[tv.title]
-      // Set the current DB show data
-      const currentDB_showData = tv
-      const currentDB_showDataSEASONS = currentDB_showData?.seasons
-      const currentDB_showDataMETADATA = currentDB_showData?.metadata
-      // Make a GET request to retrieve show-level metadata
-      let mostRecent_showMetadata
-      try {
-        mostRecent_showMetadata = await fetchMetadata(
-          fileServer_showData.metadata,
+        const showMetadata = await fetchMetadataMultiServer(
+          serverConfig.id,
+          fileServerShowData.metadata,
           'file',
           'tv',
-          tv.title
+          show.title,
+          serverConfig
         )
+
+        if (!showMetadata) {
+          console.error(`No metadata found for TV show ${show.title} on server ${serverConfig.id}. Skipping.`)
+          continue
+        }
+
+        // Update show-level metadata if needed
+        if (new Date(showMetadata.last_updated) > 
+            new Date(show.metadata?.last_updated ?? '2024-01-01T01:00:00.000000')) {
+          await updateMediaInDatabase(
+            client, 
+            MediaType.TV, 
+            show.title, 
+            { metadata: showMetadata },
+            serverConfig.id
+          )
+        }
+
+        // Process seasons
+        await Promise.allSettled(
+          show.seasons.map(season =>
+            processSeasonMetadata(
+              client,
+              season,
+              fileServerShowData,
+              show,
+              showMetadata,
+              structuredClone(showMetadata),
+              serverConfig
+            )
+          )
+        )
+
+        results.processed.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          seasons: show.seasons.length
+        })
+
       } catch (error) {
-        console.error(`Failed to fetch metadata for TV show ${tv.title}:`, error)
+        results.errors.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          error: error.message
+        })
       }
+    }
 
-      if (mostRecent_showMetadata.name !== tv_metadata.name) {
-        tv_metadata = structuredClone(mostRecent_showMetadata)
-      }
-      // Store the Current DB Season - Episode Data
-      var currentDB_memory_season = {}
+    console.log(chalk.bold.cyan(`Finished metadata sync for server ${serverConfig.id}`))
+    return results
 
-      // First check the last updated date of the show metadata
-      if (
-        new Date(mostRecent_showMetadata.last_updated) >
-        new Date(currentDB_showDataMETADATA?.last_updated ?? '2024-01-01T01:00:00.000000')
-      ) {
-        // Update show metadata
-        console.log('TV: Updating show metadata', tv.title)
-        await client
-          .db('Media')
-          .collection('TV')
-          .updateOne(
-            { title: tv.title },
-            { $set: { metadata: mostRecent_showMetadata } },
-            { upsert: true }
-          )
+  } catch (error) {
+    console.error(`Error during metadata sync for server ${serverConfig.id}:`, error)
+    throw error
+  }
+}
 
-        // Update the MediaUpdatesTV collection
-        await updateMediaUpdates(tv.title, 'tv')
-      }
+/**
+ * Syncs captions from a server to the database
+ * @param {Object} currentDB - Current database state
+ * @param {Object} fileServer - File server data
+ * @param {Object} serverConfig - Server configuration
+ * @returns {Promise<Object>} Sync results
+ */
+export async function syncCaptions(currentDB, fileServer, serverConfig) {
+  const client = await clientPromise
+  console.log(chalk.bold.white(`Starting caption sync for server ${serverConfig.id}...`))
 
-      // Then check the last updated date of the season metadata
-      for await (const season of currentDB_showDataSEASONS) {
+  const results = {
+    processed: { movies: [], tv: [] },
+    errors: { movies: [], tv: [] }
+  }
+
+  try {
+    // Process movies concurrently
+    await Promise.allSettled(
+      currentDB.movies.map(async movie => {
         try {
-          if (
-            Object.keys(currentDB_memory_season).length === 0 ||
-            currentDB_memory_season.seasonNumber !== season.seasonNumber
-          ) {
-            currentDB_memory_season = structuredClone(season)
-          }
-
-          // Ensure currentDB_memory_season.metadata.episodes is defined and is an array
-          if (!Array.isArray(currentDB_memory_season.metadata.episodes)) {
-            console.error(
-              `${tv.title} - currentDB_memory_season.metadata.episodes is not an array or is undefined`
-            )
-            // Handle the error appropriately, e.g., throw an error or return a default value
-            throw new Error(
-              `Invalid data structure: ${tv.title} currentDB_memory_season.metadata.episodes is not an array or is undefined`
-            )
-          }
-
-          const fileServer_seasonData =
-            fileServer_showData.seasons[`Season ${currentDB_memory_season.seasonNumber}`]
-          if (!fileServer_seasonData) {
-            console.error(
-              `${tv.title} - Season ${currentDB_memory_season.seasonNumber} - fileServer_seasonData is undefined`
-            )
-            // Handle the error appropriately, e.g., throw an error or return a default value
-            throw new Error(
-              `Invalid data structure: ${tv.title} Season ${currentDB_memory_season.seasonNumber} fileServer_seasonData is undefined`
-            )
-          }
-
-          const fileServer_seasonDataFILENAMES = fileServer_seasonData?.fileNames
-          const fileServer_seasonDataURLS = fileServer_seasonData?.urls
-
-          let seasonNeedsUpdate = false
-
-          // Create a Set to store the episode numbers of existing episodes in currentDB
-          const existingEpisodeNumbers = new Set(
-            currentDB_memory_season.metadata.episodes.map((episode) => episode.episode_number)
+          await processMovieCaptions(
+            client, 
+            movie, 
+            fileServer?.movies[movie.title],
+            serverConfig
           )
+          results.processed.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id
+          })
+        } catch (error) {
+          results.errors.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id,
+            error: error.message
+          })
+        }
+      })
+    )
 
-          for await (const episodeFileName of fileServer_seasonDataFILENAMES) {
+    // Process TV shows
+    for (const show of currentDB.tv) {
+      const fileServerShowData = fileServer?.tv[show.title]
+      if (!fileServerShowData) {
+        console.error(`TV: No data/captions found for ${show.title} on server ${serverConfig.id}. Skipping.`)
+        continue
+      }
+
+      try {
+        // Process seasons concurrently
+        await Promise.allSettled(
+          show.seasons.map(async season => {
             try {
-              const episodeData = fileServer_seasonDataURLS[episodeFileName] ?? {
-                metadata: null,
-              }
-              const episodeDataMETADATA = episodeData?.metadata
-              let mostRecent_episodeMetadata
-              try {
-                mostRecent_episodeMetadata = await fetchMetadata(
-                  episodeDataMETADATA,
-                  'file',
-                  'tv',
-                  tv.title
-                )
-              } catch (error) {
-                console.error(`Failed to fetch metadata for ${tv.title}:`, error)
-                // Handle the error appropriately, e.g., throw an error or return a default value
-                throw new Error(`Failed to fetch metadata for ${tv.title}`)
-              }
-
-              if (!mostRecent_episodeMetadata) {
-                console.error('TV: Metadata fetch failed for', episodeFileName, episodeDataMETADATA)
-                continue
-              }
-
-              // Check if the episode exists in currentDB
-              const episodeExists = existingEpisodeNumbers.has(
-                mostRecent_episodeMetadata.episode_number
+              await processSeasonCaptions(
+                client, 
+                show, 
+                season, 
+                fileServerShowData,
+                serverConfig
               )
-
-              if (episodeExists) {
-                // Find the corresponding episode in currentDB
-                const currentDB_episode = currentDB_memory_season.metadata.episodes.find(
-                  (e) => e.episode_number === mostRecent_episodeMetadata.episode_number
-                )
-                const currentDB_episodeMetadata = currentDB_memory_season?.metadata?.episodes.find(
-                  (e) =>
-                    e.episode_number === currentDB_episode?.episode_number &&
-                    e.season_number === currentDB_episode?.season_number
-                )
-
-                // Check if the File Server episode metadata is newer than the currentDB metadata
-                // for this episode
-                if (
-                  currentDB_episode &&
-                  new Date(mostRecent_episodeMetadata.last_updated) >
-                    new Date(
-                      currentDB_episodeMetadata?.last_updated ?? '2024-01-01T01:00:00.000000'
-                    )
-                ) {
-                  // Logic to update this episode's metadata in currentDB
-                  // console.log(
-                  //   `TV: Updating episode metadata for ${episodeFileName} in ${tv.title}, Season ${currentDB_memory_season.seasonNumber}`
-                  // )
-
-                  tv_metadata = {
-                    ...tv_metadata,
-                    seasons: tv_metadata.seasons.map((season) => {
-                      if (season.season_number === currentDB_memory_season.seasonNumber) {
-                        currentDB_memory_season.metadata.episodes =
-                          currentDB_memory_season.metadata.episodes.map((episode) => {
-                            if (
-                              episode.episode_number === mostRecent_episodeMetadata.episode_number
-                            ) {
-                              seasonNeedsUpdate = true
-                              console.log(
-                                'TV: --Updating episode metadata',
-                                tv.title,
-                                `Season ${currentDB_memory_season.seasonNumber} E${episode.episode_number}`
-                                //mostRecent_episodeMetadata
-                              )
-                              return mostRecent_episodeMetadata
-                            } else {
-                              return episode
-                            }
-                          })
-                        return {
-                          ...season,
-                          episodes: currentDB_memory_season.metadata.episodes,
-                        }
-                      }
-                      return season
-                    }),
-                  }
-                }
-              } else {
-                // Episode doesn't exist in currentDB, add it to tv_metadata
-                console.log(
-                  `TV: Adding missing episode metadata for ${episodeFileName} in ${tv.title}, Season ${currentDB_memory_season.seasonNumber}`
-                )
-
-                tv_metadata = {
-                  ...tv_metadata,
-                  seasons: tv_metadata.seasons.map((_season) => {
-                    if (_season.season_number === currentDB_memory_season.seasonNumber) {
-                      let episodes = _season.episodes || []
-
-                      // Check if the episodes array is empty
-                      if (episodes.length === 0) {
-                        // Populate the initial list of available episodes from currentDB_memory_season.metadata.episodes
-                        episodes = currentDB_memory_season.metadata.episodes
-                      }
-
-                      // Check if the episode exists in the episodes array
-                      const episodeExists = episodes.some(
-                        (episode) =>
-                          episode.episode_number === mostRecent_episodeMetadata.episode_number
-                      )
-
-                      if (!episodeExists) {
-                        console.log(
-                          `TV: Adding missing episode metadata for ${episodeFileName} in ${tv.title}, Season ${currentDB_memory_season.seasonNumber}`
-                        )
-
-                        // Add the missing episode metadata to the current season
-                        const updatedEpisodes = [...episodes, mostRecent_episodeMetadata]
-
-                        // Sort the updated episodes array based on the episode number
-                        const sortedEpisodes = updatedEpisodes.sort(
-                          (a, b) => a.episode_number - b.episode_number
-                        )
-
-                        return {
-                          ..._season,
-                          episodes: sortedEpisodes,
-                        }
-                      }
-
-                      return _season
-                    }
-                    return _season
-                  }),
-                }
-
-                seasonNeedsUpdate = true
-              }
+              return { success: true, seasonNumber: season.seasonNumber }
             } catch (error) {
-              console.error(
-                `Error in tv metadata processing "${tv.title}" Season: ${season.seasonNumber}, ${episodeFileName}`,
-                error
-              )
-              throw error // Rethrow the error to be handled by the calling function
+              return { 
+                success: false, 
+                seasonNumber: season.seasonNumber,
+                error: error.message 
+              }
             }
-          }
+          })
+        )
 
-          if (seasonNeedsUpdate) {
-            console.log('tv_metadata', tv_metadata)
-          }
+        results.processed.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          seasons: show.seasons.length
+        })
 
-          if (
-            new Date(mostRecent_showMetadata.seasons?.last_updated) >
-            new Date(
-              currentDB_memory_season.metadata.episodes?.last_updated ??
-                '2024-01-01T01:00:00.000000'
-            )
-          ) {
-            console.log(
-              'TV: Old Show Data',
-              tv.title,
-              `Season ${currentDB_memory_season.seasonNumber}`
-            )
-            seasonNeedsUpdate = true
-          }
+      } catch (error) {
+        results.errors.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          error: error.message
+        })
+      }
+    }
 
-          // After processing all episodes, check if the season needs an update
-          if (seasonNeedsUpdate) {
-            console.log(
-              'TV: Updating season metadata',
-              tv.title,
-              `Season ${currentDB_memory_season.seasonNumber}`
-            )
-            // Perform the necessary update for the season metadata here
-            await client
-              .db('Media')
-              .collection('TV')
-              .updateOne(
-                { title: tv.title },
-                {
-                  $set: {
-                    'seasons.$[elem].metadata': tv_metadata.seasons.find(
-                      (s) => s.season_number === currentDB_memory_season.seasonNumber
-                    ),
-                  },
-                },
-                { arrayFilters: [{ 'elem.seasonNumber': currentDB_memory_season.seasonNumber }] },
-                { upsert: true }
+    console.log(chalk.bold.white(`Finished caption sync for server ${serverConfig.id}`))
+    return results
+
+  } catch (error) {
+    console.error(`Error during caption sync for server ${serverConfig.id}:`, error)
+    throw error
+  }
+}
+
+/**
+ * Syncs chapter information from a server to the database
+ * @param {Object} currentDB - Current database state
+ * @param {Object} fileServer - File server data
+ * @param {Object} serverConfig - Server configuration
+ * @returns {Promise<Object>} Sync results
+ */
+export async function syncChapters(currentDB, fileServer, serverConfig) {
+  const client = await clientPromise
+  console.log(chalk.bold.blue(`Starting chapter sync for server ${serverConfig.id}...`))
+
+  const results = {
+    processed: { movies: [], tv: [] },
+    errors: { movies: [], tv: [] }
+  }
+
+  try {
+    // Process movies concurrently
+    await Promise.allSettled(
+      currentDB.movies.map(async movie => {
+        try {
+          await processMovieChapters(
+            client,
+            movie,
+            fileServer?.movies[movie.title],
+            serverConfig
+          )
+          results.processed.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id
+          })
+        } catch (error) {
+          results.errors.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id,
+            error: error.message
+          })
+        }
+      })
+    )
+
+    // Process TV shows
+    for (const show of currentDB.tv) {
+      const fileServerShowData = fileServer?.tv[show.title] || { seasons: {} }
+
+      try {
+        // Process seasons concurrently
+        await Promise.allSettled(
+          show.seasons.map(async season => {
+            try {
+              await processSeasonChapters(
+                client, 
+                show, 
+                season, 
+                fileServerShowData,
+                serverConfig
               )
+              return { success: true, seasonNumber: season.seasonNumber }
+            } catch (error) {
+              return { 
+                success: false, 
+                seasonNumber: season.seasonNumber,
+                error: error.message 
+              }
+            }
+          })
+        )
+
+        results.processed.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          seasons: show.seasons.length
+        })
+
+      } catch (error) {
+        results.errors.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          error: error.message
+        })
+      }
+    }
+
+    console.log(chalk.bold.blue(`Finished chapter sync for server ${serverConfig.id}`))
+    return results
+
+  } catch (error) {
+    console.error(`Error during chapter sync for server ${serverConfig.id}:`, error)
+    throw error
+  }
+}
+
+/**
+ * Syncs video URLs from server to database
+ */
+export async function syncVideoURL(currentDB, fileServer, serverConfig) {
+  const client = await clientPromise
+  console.log(chalk.bold.blueBright(`Starting video URL sync for server ${serverConfig.id}...`))
+
+  const results = {
+    processed: { movies: [], tv: [] },
+    errors: { movies: [], tv: [] }
+  }
+
+  try {
+    // Process movies concurrently
+    await Promise.allSettled(
+      currentDB.movies.map(async movie => {
+        try {
+          await processMovieVideoURL(
+            client,
+            movie,
+            fileServer?.movies[movie.title],
+            serverConfig
+          )
+          results.processed.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id
+          })
+        } catch (error) {
+          results.errors.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id,
+            error: error.message
+          })
+        }
+      })
+    )
+
+    // Process TV shows
+    for (const show of currentDB.tv) {
+      const fileServerShowData = fileServer?.tv[show.title]
+      if (!fileServerShowData) {
+        console.log(
+          `TV show "${show.title}" not found on server ${serverConfig.id}. Skipping.`
+        )
+        continue
+      }
+
+      try {
+        // Process seasons concurrently
+        await Promise.allSettled(
+          show.seasons.map(season =>
+            processSeasonVideoURLs(
+              client,
+              show,
+              season,
+              fileServerShowData,
+              serverConfig
+            )
+          )
+        )
+
+        results.processed.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          seasons: show.seasons.length
+        })
+      } catch (error) {
+        results.errors.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          error: error.message
+        })
+      }
+    }
+
+    console.log(chalk.bold.blueBright(`Video URL sync complete for server ${serverConfig.id}`))
+    return results
+
+  } catch (error) {
+    console.error(`Error during video URL sync for server ${serverConfig.id}:`, error)
+    throw error
+  }
+}
+
+
+/**
+ * Syncs logos between the current database and file server for the specified server configuration.
+ * @param {Object} currentDB - The current database.
+ * @param {Object} fileServer - The file server data.
+ * @param {Object} serverConfig - The server configuration.
+ * @returns {Promise<Object>} - An object containing the results of the sync operation, including processed and errored items.
+ */
+export async function syncLogos(currentDB, fileServer, serverConfig) {
+  const client = await clientPromise
+  console.log(chalk.bold.yellow(`Starting logo sync for server ${serverConfig.id}...`))
+
+  const results = {
+    processed: { movies: [], tv: [] },
+    errors: { movies: [], tv: [] }
+  }
+
+  try {
+    // Process TV shows concurrently
+    await Promise.allSettled(
+      currentDB.tv.map(async show => {
+        try {
+          const updated = await processShowLogo(
+            client,
+            show,
+            fileServer?.tv[show.title],
+            serverConfig
+          )
+          if (updated) {
+            results.processed.tv.push({
+              title: show.title,
+              serverId: serverConfig.id
+            })
           }
         } catch (error) {
-          console.error(
-            `Error in tv metadata processing "${tv.title}" Season: ${season.seasonNumber}:`,
-            error
+          results.errors.tv.push({
+            title: show.title,
+            serverId: serverConfig.id,
+            error: error.message
+          })
+        }
+      })
+    )
+
+    // Process movies concurrently
+    await Promise.allSettled(
+      currentDB.movies.map(async movie => {
+        try {
+          const updated = await processMovieLogo(
+            client,
+            movie,
+            fileServer?.movies[movie.title],
+            serverConfig
           )
-          throw error // Rethrow the error to be handled by the calling function
-        }
-      }
-    } catch (error) {
-      console.error(`Error in tv metadata processing ${tv.title}:`, error)
-      throw error // Rethrow the error to be handled by the calling function
-    }
-  }
-  console.log(chalk.bold.cyan('Finished Syncing metadata...'))
-}
-
-/**
- *
- * @param {Object} fileServer - The data structure representing media available on the file server.
- * @param {Object} currentDB - The current state of the media database.
- *
- */
-export async function syncCaptions(currentDB, fileServer) {
-  const client = await clientPromise
-  console.log(chalk.bold.white('Starting Syncing captions...'))
-
-  // Iterate through movies
-  for (const movie of currentDB.movies) {
-    // Retrieve the file server movie data
-    const fileServerMovieData = fileServer?.movies[movie.title]
-    const fileServerMovieDataURLS = fileServerMovieData?.urls
-
-    if (!fileServerMovieDataURLS) {
-      console.error(`Movie: No data found for ${movie.title}. Skipping.`)
-      continue
-    }
-
-    // If there are subtitles data
-    if (fileServerMovieDataURLS?.subtitles) {
-      const updatedCaptionsURLs = { ...movie.captionURLs } // Create a copy of existing captions
-
-      // Iterate through subtitles and update captionURLs
-      for (const [langName, subtitleData] of Object.entries(fileServerMovieDataURLS.subtitles)) {
-        // Check if the subtitle data has a lastModified property
-        if (subtitleData.lastModified) {
-          // Compare the lastModified date with the existing date in the movie's captionURLs
-          const existingSubtitle = movie.captionURLs?.[langName]
-          if (
-            !existingSubtitle ||
-            new Date(subtitleData.lastModified) > new Date(existingSubtitle.lastModified)
-          ) {
-            updatedCaptionsURLs[langName] = {
-              url: fileServerURLWithoutPrefixPath + subtitleData.url,
-              srcLang: subtitleData.srcLang,
-              lastModified: subtitleData.lastModified,
-            }
-          }
-        } else {
-          // If lastModified is not available, add the subtitle data
-          updatedCaptionsURLs[langName] = {
-            url: fileServerURLWithoutPrefixPath + subtitleData.url,
-            srcLang: subtitleData.srcLang,
-          }
-        }
-      }
-
-      // Sort the updatedCaptionsURLs object to show English first
-      const sortedCaptionsURLs = Object.entries(updatedCaptionsURLs).sort(
-        ([langNameA], [langNameB]) => {
-          if (langNameA.toLowerCase().includes('english')) return -1
-          if (langNameB.toLowerCase().includes('english')) return 1
-          return 0
-        }
-      )
-
-      // Update the movie in MongoDB if there are updated captions
-      if (sortedCaptionsURLs.length > 0) {
-        const hasChanges = !isEqual(movie.captionURLs, Object.fromEntries(sortedCaptionsURLs))
-        if (hasChanges) {
-          console.log(`Movie: Updating captions for ${movie.title}`)
-          await client
-            .db('Media')
-            .collection('Movies')
-            .updateOne(
-              {
-                title: movie.title,
-              },
-              {
-                $set: {
-                  captionURLs: Object.fromEntries(sortedCaptionsURLs),
-                },
-              }
-            )
-
-          // Update the MediaUpdatesMovie collection
-          await updateMediaUpdates(movie.title, 'movie')
-        }
-      }
-    }
-  }
-
-  // Iterate through TV shows
-  for (const tv of currentDB.tv) {
-    // Retrieve the file server show data
-    const fileServerShowData = fileServer?.tv[tv.title]
-
-    // Iterate through seasons
-    for (const season of tv.seasons) {
-      // Retrieve the file server season data
-      const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
-      const fileServerSeasonDataURLS = fileServerSeasonData?.urls
-
-      if (!fileServerSeasonDataURLS) {
-        console.error(
-          `TV: No data found for ${tv.title} - Season ${season.seasonNumber}. Skipping.`
-        )
-        continue
-      }
-
-      // Iterate through episodes
-      for (const episode of season.episodes) {
-        // Construct the episode file name based on a pattern or directly from the fileServer data
-        const episodeFileName = Object.keys(fileServerSeasonDataURLS).find((fileName) => {
-          const fileNameWithoutExtension = fileName.slice(0, -4) // Remove the file extension
-          const episodeNumberRegex = new RegExp(
-            `S\\d{2}E${episode.episodeNumber.toString().padStart(2, '0')}`,
-            'i'
-          )
-          return episodeNumberRegex.test(fileNameWithoutExtension)
-        })
-
-        // If episode file found in file server data
-        if (episodeFileName) {
-          const fileServerEpisodeData = fileServerSeasonDataURLS[episodeFileName]
-
-          // If there are subtitles data
-          if (fileServerEpisodeData.subtitles) {
-            const updatedCaptionsURLs = { ...episode.captionURLs } // Create a copy of existing captions
-
-            // Iterate through subtitles and update captionURLs
-            for (const [langName, subtitleData] of Object.entries(
-              fileServerEpisodeData.subtitles
-            )) {
-              // Check if the subtitle data has a lastModified property
-              if (subtitleData.lastModified) {
-                // Compare the lastModified date with the existing date in the episode's captionURLs
-                const existingSubtitle = episode.captionURLs?.[langName]
-                if (
-                  !existingSubtitle ||
-                  new Date(subtitleData.lastModified) > new Date(existingSubtitle.lastModified)
-                ) {
-                  updatedCaptionsURLs[langName] = {
-                    url: fileServerURLWithoutPrefixPath + subtitleData.url,
-                    srcLang: subtitleData.srcLang,
-                    lastModified: subtitleData.lastModified,
-                  }
-                }
-              } else {
-                // If lastModified is not available, add the subtitle data
-                updatedCaptionsURLs[langName] = {
-                  url: fileServerURLWithoutPrefixPath + subtitleData.url,
-                  srcLang: subtitleData.srcLang,
-                }
-              }
-            }
-
-            // Sort the updatedCaptionsURLs object to show English first
-            const sortedCaptionsURLs = Object.entries(updatedCaptionsURLs).sort(
-              ([langNameA], [langNameB]) => {
-                if (langNameA.toLowerCase().includes('english')) return -1
-                if (langNameB.toLowerCase().includes('english')) return 1
-                return 0
-              }
-            )
-
-            // Check if there are any changes in the captions URLs
-            const hasChanges = !isEqual(episode.captionURLs, Object.fromEntries(sortedCaptionsURLs))
-
-            // Update the episode in MongoDB if there are updated captions
-            if (hasChanges) {
-              // For Logging
-              const addedSubtitles = Object.entries(Object.fromEntries(sortedCaptionsURLs))
-                .filter(([langName]) => !episode.captionURLs?.[langName])
-                .map(([langName, subtitleData]) => `${langName} (${subtitleData.srcLang})`)
-                .join(', ')
-
-              console.log(
-                `TV: Updating captions for ${tv.title} - Season ${season.seasonNumber}, Episode ${episode.episodeNumber}`,
-                addedSubtitles ? `Added subtitles: ${addedSubtitles}` : ''
-              )
-              await client
-                .db('Media')
-                .collection('TV')
-                .updateOne(
-                  {
-                    title: tv.title,
-                    'seasons.seasonNumber': season.seasonNumber,
-                    'seasons.episodes.episodeNumber': episode.episodeNumber,
-                  },
-                  {
-                    $set: {
-                      'seasons.$.episodes.$[episode].captionURLs':
-                        Object.fromEntries(sortedCaptionsURLs),
-                    },
-                  },
-                  {
-                    arrayFilters: [{ 'episode.episodeNumber': episode.episodeNumber }],
-                  }
-                )
-
-              // Update the MediaUpdatesTV collection
-              await updateMediaUpdates(tv.title, 'tv')
-            }
-          }
-        }
-      }
-    }
-  }
-
-  console.log(chalk.bold.white('Finished Syncing captions...'))
-}
-
-/**
- * Sync subtitles/chapters from a file server to the current database.
- *
- * @param {Object} currentDB - The database to sync chapters to
- * @param {Object} fileServer - The file server to fetch chapter data from
- */
-export async function syncChapters(currentDB, fileServer) {
-  const client = await clientPromise
-  console.log(chalk.bold.blue('Starting chapter synchronization...'))
-
-  // Iterate through movies
-  for (const movie of currentDB.movies) {
-    // Retrieve the file server movie data or default to empty if not present
-    const fileServerMovieData = fileServer?.movies[movie.title] || { urls: {} }
-    const fileServerMovieDataURLS = fileServerMovieData?.urls
-
-    // If there is a chapters URL
-    if (fileServerMovieDataURLS.chapters) {
-      const chaptersURL = fileServerURLWithoutPrefixPath + fileServerMovieDataURLS.chapters
-
-      // Update if chapter URL is different
-      if (movie.chapterURL !== chaptersURL) {
-        console.log(`Movie: Updating chapters for ${movie.title}`)
-        await client
-          .db('Media')
-          .collection('Movies')
-          .updateOne(
-            {
+          if (updated) {
+            results.processed.movies.push({
               title: movie.title,
-            },
-            {
-              $set: {
-                chapterURL: chaptersURL,
-              },
-            }
-          )
-      }
-    } else {
-      // Remove the chapter URL if none found
-      if (movie.chapterURL) {
-        console.log(`Movie: Removing chapters for ${movie.title}`)
-        await client
-          .db('Media')
-          .collection('Movies')
-          .updateOne(
-            {
-              title: movie.title,
-            },
-            {
-              $unset: {
-                chapterURL: '',
-              },
-            }
-          )
-      }
-    }
-  }
-
-  // Iterate through TV shows
-  for (const tv of currentDB.tv) {
-    // Retrieve the file server show data or default to empty if not present
-    const fileServerShowData = fileServer?.tv[tv.title] || { seasons: {} }
-
-    // Iterate through seasons
-    for (const season of tv.seasons) {
-      // Retrieve the file server season data or default to empty object if not present
-      const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`] || {
-        urls: {},
-      }
-      const fileServerSeasonDataURLS = fileServerSeasonData?.urls
-
-      // Iterate through episodes
-      for (const episode of season.episodes) {
-        // Determine the existence of episode file based on expected naming convention
-        const episodeFileName = Object.keys(fileServerSeasonDataURLS).find((fileName) => {
-          const fileNameWithoutExtension = fileName.slice(0, -4) // Remove the file extension
-          const episodeNumberRegex = new RegExp(
-            `S\\d{2}E${episode.episodeNumber.toString().padStart(2, '0')}`,
-            'i'
-          )
-          return episodeNumberRegex.test(fileNameWithoutExtension)
-        })
-
-        const fileServerEpisodeData = episodeFileName
-          ? fileServerSeasonDataURLS[episodeFileName]
-          : null
-
-        // Handle updating or removing chapter URLs based on file server data
-        if (fileServerEpisodeData && fileServerEpisodeData.chapters) {
-          const chaptersURL = fileServerURLWithoutPrefixPath + fileServerEpisodeData.chapters
-
-          // Update chapter URL if different
-          if (
-            episode.chapterURL !== chaptersURL ||
-            episode.chapterURL === undefined ||
-            episode.chapterURL === null
-          ) {
-            console.log(
-              `TV: Updating chapters for ${tv.title} - Season ${season.seasonNumber}, Episode ${episode.episodeNumber}`
-            )
-            await client
-              .db('Media')
-              .collection('TV')
-              .updateOne(
-                {
-                  title: tv.title,
-                  'seasons.seasonNumber': season.seasonNumber,
-                  'seasons.episodes.episodeNumber': episode.episodeNumber,
-                },
-                {
-                  $set: { 'seasons.$.episodes.$[episode].chapterURL': chaptersURL },
-                },
-                {
-                  arrayFilters: [{ 'episode.episodeNumber': episode.episodeNumber }],
-                }
-              )
+              serverId: serverConfig.id
+            })
           }
-        } else {
-          // Remove chapter URL if no chapters found or if the episode file itself is not found
-          if (episode.chapterURL && episode.chapterURL !== undefined) {
-            console.log(
-              `TV: Removing chapters for ${tv.title} - Season ${season.seasonNumber}, Episode ${episode.episodeNumber}`
-            )
-            await client
-              .db('Media')
-              .collection('TV')
-              .updateOne(
-                {
-                  title: tv.title,
-                  'seasons.seasonNumber': season.seasonNumber,
-                  'seasons.episodes.episodeNumber': episode.episodeNumber,
-                },
-                {
-                  $unset: { 'seasons.$.episodes.$[episode].chapterURL': '' },
-                },
-                {
-                  arrayFilters: [{ 'episode.episodeNumber': episode.episodeNumber }],
-                }
-              )
-          }
-        }
-      }
-    }
-  }
-  console.log(chalk.bold.blue('Chapter synchronization complete.'))
-}
-
-/**
- * Syncs video URLs between the current database and file server
- * @param {Object} currentDB - The current database
- * @param {Object} fileServer - The file server data
- * @returns {Promise} - Resolves when sync is complete
- */
-export async function syncVideoURL(currentDB, fileServer) {
-  const client = await clientPromise
-  console.log(chalk.bold.blueBright('Starting video URL synchronization...'))
-
-  // Iterate through movies
-  for (const movie of currentDB.movies) {
-    // Retrieve the file server movie data
-    const fileServerMovieData = fileServer?.movies[movie.title]
-    const fileServerMovieDataURLS = fileServerMovieData?.urls
-
-    if (!fileServerMovieData) {
-      console.log(`Movie "${movie.title}" not found on file server. Skipping.`)
-      continue
-    }
-
-    // Check if the file server video URL exists
-    if (fileServerMovieDataURLS?.mp4) {
-      const newVideoURL = fileServerURLWithoutPrefixPath + fileServerMovieDataURLS.mp4
-      const currentVideoURL = movie.videoURL
-
-      // Compare the current video URL with the file server's video URL
-      if (newVideoURL !== currentVideoURL) {
-        // Prepare the update data
-        const updateData = { videoURL: newVideoURL }
-
-        // Use filterLockedFields to exclude locked fields from updateData
-        const filteredUpdateData = filterLockedFields(movie, updateData)
-
-        // Check if 'videoURL' was filtered out due to being locked
-        if (filteredUpdateData.videoURL) {
-          console.log(`Movie: Updating video URL for "${movie.title}"`)
-          await client
-            .db('Media')
-            .collection('Movies')
-            .updateOne({ title: movie.title }, { $set: { videoURL: filteredUpdateData.videoURL } })
-
-          // Update the MediaUpdatesMovie collection
-          await updateMediaUpdates(movie.title, 'movie')
-        } else {
-          console.log(
-            `Field "videoURL" is locked for movie "${movie.title}". Skipping video URL update.`
-          )
-        }
-      }
-      /*  else {
-          console.log(`Movie "${movie.title}" video URL is already up-to-date. Skipping.`)
-        } */
-    } else {
-      console.log(`No MP4 video URL found for movie "${movie.title}" on file server. Skipping.`)
-    }
-  }
-
-  // Iterate through TV shows (unchanged, as locking isn't implemented yet)
-  for (const tv of currentDB.tv) {
-    // Retrieve the file server show data
-    const fileServerShowData = fileServer?.tv[tv.title]
-
-    if (!fileServerShowData) {
-      console.log(`TV show "${tv.title}" not found on file server. Skipping.`)
-      continue
-    }
-
-    // Iterate through seasons
-    for (const season of tv.seasons) {
-      // Retrieve the file server season data
-      const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
-      const fileServerSeasonDataURLS = fileServerSeasonData?.urls
-
-      if (!fileServerSeasonData) {
-        console.log(
-          `Season ${season.seasonNumber} for TV show "${tv.title}" not found on file server. Skipping.`
-        )
-        continue
-      }
-
-      // Iterate through episodes
-      for (const episode of season.episodes) {
-        // Construct the episode file name based on a pattern or directly from the fileServer data
-        const episodeFileName = Object.keys(fileServerSeasonDataURLS).find((fileName) => {
-          const fileNameWithoutExtension = fileName.slice(0, -4) // Remove the file extension
-          const episodeNumberRegex = new RegExp(
-            `(S?${season.seasonNumber.toString().padStart(2, '0')}E${episode.episodeNumber.toString().padStart(2, '0')})|^${episode.episodeNumber.toString().padStart(2, '0')}\\s?-`,
-            'i'
-          )
-          const evaluatedFilename = episodeNumberRegex.test(fileNameWithoutExtension)
-          return evaluatedFilename
-        })
-
-        // If episode file found in file server data
-        if (episodeFileName) {
-          const fileServerEpisodeData = fileServerSeasonDataURLS[episodeFileName]
-
-          // If the file server video URL is different from the current video URL
-          const currentVideoURL = episode.videoURL.replace(fileServerURLWithoutPrefixPath, '')
-          if (fileServerEpisodeData.videourl !== currentVideoURL) {
-            console.log(
-              `TV: Updating video URL for "${tv.title}" - Season ${season.seasonNumber}, Episode ${episode.episodeNumber}`
-            )
-            await client
-              .db('Media')
-              .collection('TV')
-              .updateOne(
-                {
-                  title: tv.title,
-                  'seasons.seasonNumber': season.seasonNumber,
-                  'seasons.episodes.episodeNumber': episode.episodeNumber,
-                },
-                {
-                  $set: {
-                    'seasons.$.episodes.$[episode].videoURL':
-                      fileServerURLWithoutPrefixPath + fileServerEpisodeData.videourl,
-                  },
-                },
-                {
-                  arrayFilters: [{ 'episode.episodeNumber': episode.episodeNumber }],
-                }
-              )
-          }
-        } else {
-          console.log(
-            `Episode file not found for "${tv.title}" - Season ${season.seasonNumber}, Episode ${episode.episodeNumber}. Skipping video URL update.`
-          )
-        }
-      }
-    }
-  }
-  console.log(chalk.bold.blueBright('Video URL synchronization complete.'))
-}
-
-/**
- * Syncs logo urls between the current database and file server
- * @param {Object} currentDB - The current database
- * @param {Object} fileServer - The file server data
- * @returns {Promise} - Resolves when sync is complete
- */
-export async function syncLogos(currentDB, fileServer) {
-  const client = await clientPromise
-  console.log(chalk.bold.yellow('Starting logo synchronization...'))
-
-  // Iterate through TV shows
-  for (const tv of currentDB.tv) {
-    // Retrieve the file server show data
-    const fileServerShowData = fileServer?.tv[tv.title]
-
-    if (fileServerShowData?.logo) {
-      if (
-        !tv.logo ||
-        fileServerShowData.logo !== tv.logo.replace(fileServerURLWithoutPrefixPath, '')
-      ) {
-        console.log(`TV: Updating logo URL for ${tv.title}`)
-        await client
-          .db('Media')
-          .collection('TV')
-          .updateOne(
-            {
-              title: tv.title,
-            },
-            {
-              $set: {
-                logo: fileServerURLWithoutPrefixPath + fileServerShowData.logo,
-              },
-            }
-          )
-      }
-    }
-  }
-
-  // Iterate through movies
-  for (const movie of currentDB.movies) {
-    // Retrieve the file server movie data
-    const fileServerMovieData = fileServer?.movies[movie.title]
-    const fileServerMovieDataURLS = fileServerMovieData?.urls
-
-    // If the file server video poster is different from the current posterURL
-    if (fileServerMovieDataURLS?.logo) {
-      if (
-        !movie.logo ||
-        fileServerMovieDataURLS.logo !== movie.logo.replace(fileServerURLWithoutPrefixPath, '')
-      ) {
-        console.log(`Movie: Updating posterURL for ${movie.title}`)
-        await client
-          .db('Media')
-          .collection('Movies')
-          .updateOne(
-            {
-              title: movie.title,
-            },
-            {
-              $set: {
-                logo: fileServerURLWithoutPrefixPath + fileServerMovieDataURLS.logo,
-              },
-            }
-          )
-      }
-    }
-  }
-  console.log(chalk.bold.yellow('Logo synchronization complete.'))
-}
-
-/**
- * Syncs blurhash image urls between the current database and file server
- * @param {Object} currentDB - The current database
- * @param {Object} fileServer - The file server data
- * @returns {Promise} - Resolves when sync is complete
- */
-export async function syncBlurhash(currentDB, fileServer) {
-  const client = await clientPromise
-  console.log(chalk.bold.green('Starting blurhash synchronization...'))
-
-  // Iterate through TV shows
-  for (const tv of currentDB.tv) {
-    const fileServerShowData = fileServer?.tv[tv.title]
-
-    if (fileServerShowData) {
-      const updateData = {}
-      const unsetData = {}
-
-      // Update posterBlurhash URL if it exists, or remove it if it doesn't exist in fileServerShowData
-      if (
-        fileServerShowData.posterBlurhash &&
-        (!tv.posterBlurhash ||
-          fileServerShowData.posterBlurhash !==
-            tv.posterBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
-      ) {
-        updateData.posterBlurhash =
-          fileServerURLWithoutPrefixPath + fileServerShowData.posterBlurhash
-        console.log(`TV: Updating posterBlurhash for ${tv.title}`)
-      } else if (!fileServerShowData.posterBlurhash && tv.posterBlurhash) {
-        unsetData.posterBlurhash = ''
-        console.log(`TV: Removing posterBlurhash for ${tv.title}`)
-      }
-
-      // Update backdropBlurhash URL if it exists, or remove it if it doesn't exist in fileServerShowData
-      if (
-        fileServerShowData.backdropBlurhash &&
-        (!tv.backdropBlurhash ||
-          fileServerShowData.backdropBlurhash !==
-            tv.backdropBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
-      ) {
-        updateData.backdropBlurhash =
-          fileServerURLWithoutPrefixPath + fileServerShowData.backdropBlurhash
-        console.log(`TV: Updating backdropBlurhash for ${tv.title}`)
-      } else if (!fileServerShowData.backdropBlurhash && tv.backdropBlurhash) {
-        unsetData.backdropBlurhash = ''
-        console.log(`TV: Removing backdropBlurhash for ${tv.title}`)
-      }
-
-      // Update season poster blurhash
-      if (tv.seasons && fileServerShowData.seasons) {
-        const updatedSeasons = tv.seasons.map((season) => {
-          const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
-          if (fileServerSeasonData && fileServerSeasonData.seasonPosterBlurhash) {
-            if (
-              !season.seasonPosterBlurhash ||
-              fileServerSeasonData.seasonPosterBlurhash !==
-                season.seasonPosterBlurhash.replace(fileServerURLWithoutPrefixPath, '')
-            ) {
-              console.log(
-                `TV Season: Updating seasonPosterBlurhash for ${tv.title} Season ${season.seasonNumber}`
-              )
-              return {
-                ...season,
-                seasonPosterBlurhash:
-                  fileServerURLWithoutPrefixPath + fileServerSeasonData.seasonPosterBlurhash,
-              }
-            }
-          } else if (season.seasonPosterBlurhash) {
-            console.log(
-              `TV Season: Removing seasonPosterBlurhash for ${tv.title} Season ${season.seasonNumber}`
-            )
-            const { seasonPosterBlurhash, ...seasonWithoutBlurhash } = season
-            return seasonWithoutBlurhash
-          }
-          return season
-        })
-
-        if (JSON.stringify(updatedSeasons) !== JSON.stringify(tv.seasons)) {
-          updateData.seasons = updatedSeasons
-        }
-      }
-
-      if (Object.keys(updateData).length > 0 || Object.keys(unsetData).length > 0) {
-        await client
-          .db('Media')
-          .collection('TV')
-          .updateOne({ title: tv.title }, { $set: updateData, $unset: unsetData })
-
-        // Update the MediaUpdatesTV collection
-        await updateMediaUpdates(tv.title, 'tv')
-        console.log(`TV show updated: ${tv.title}`)
-      }
-    } else {
-      console.log(`No file server data found for TV show: ${tv.title}`)
-    }
-  }
-
-  // Iterate through movies
-  for (const movie of currentDB.movies) {
-    const fileServerMovieData = fileServer?.movies[movie.title]
-    const fileServerMovieDataURLS = fileServerMovieData.urls
-
-    if (fileServerMovieData) {
-      const updateData = {}
-
-      // Update posterBlurhash URL if it exists
-      if (
-        fileServerMovieDataURLS?.posterBlurhash &&
-        (!movie.posterBlurhash ||
-          fileServerMovieDataURLS?.posterBlurhash !==
-            movie.posterBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
-      ) {
-        updateData.posterBlurhash =
-          fileServerURLWithoutPrefixPath + fileServerMovieDataURLS.posterBlurhash
-        console.log(`Movie: Updating posterBlurhash for ${movie.title}`)
-      }
-
-      if (Object.keys(updateData).length > 0) {
-        await client
-          .db('Media')
-          .collection('Movies')
-          .updateOne({ title: movie.title }, { $set: updateData })
-
-        // Update the MediaUpdatesMovie collection
-        await updateMediaUpdates(movie.title, 'movie')
-        console.log(`Movie updated: ${movie.title}`)
-      }
-    } else {
-      console.log(`No file server data found for movie: ${movie.title}`)
-    }
-  }
-
-  console.log(chalk.bold.green('Blurhash synchronization complete.'))
-}
-
-/**
- * Sync the video information (length, dimensions, HDR) of TV shows and movies between the
- * admin frontend database and the file server.
- */
-export async function syncVideoInfo(currentDB, fileServer) {
-  const client = await clientPromise;
-
-  console.log(chalk.bold.greenBright('Starting video information synchronization...'));
-
-  // Iterate through TV shows
-  for (const tv of currentDB.tv) {
-    // Retrieve the file server show data
-    const fileServerShowData = fileServer?.tv[tv.title];
-
-    if (!fileServerShowData) {
-      console.log(`No file server data found for TV show: ${tv.title}`);
-      continue;
-    }
-
-    // Iterate through seasons
-    for (const season of tv.seasons) {
-      // Retrieve the file server season data
-      const seasonKey = `Season ${season.seasonNumber}`;
-      const fileServerSeasonData = fileServerShowData?.seasons[seasonKey];
-      const fileServerSeasonDataFILENAMES = fileServerSeasonData?.fileNames;
-
-      if (!fileServerSeasonDataFILENAMES) {
-        console.log(`No file server season data found for ${tv.title} - ${seasonKey}`);
-        continue;
-      }
-
-      // Iterate through episodes
-      for (const episode of season.episodes) {
-        // Find the corresponding episode file in the fileServer data
-        const episodeFileName = fileServerSeasonDataFILENAMES.find((fileName) => {
-          const fileNameWithoutExtension = fileName.slice(0, -4); // Remove the file extension
-          const episodeNumberRegex = new RegExp(
-            `S\\d{2}E${episode.episodeNumber.toString().padStart(2, '0')}`,
-            'i'
-          );
-          return episodeNumberRegex.test(fileNameWithoutExtension);
-        });
-
-        // If episode file found in file server data
-        if (episodeFileName) {
-          const episodeInfo = fileServerSeasonData.urls[episodeFileName]?.additionalMetadata;
-
-          if (!episodeInfo) {
-            console.warn(`No additionalMetadata found for ${episodeFileName} in file server data.`);
-            continue;
-          }
-
-          const hdrInfo = fileServerSeasonData.urls[episodeFileName]?.hdr || null;
-
-          const updateData = {};
-
-          // Sync length
-          if (
-            fileServerSeasonData.lengths[episodeFileName] &&
-            episode.length !== fileServerSeasonData.lengths[episodeFileName]
-          ) {
-            updateData['seasons.$.episodes.$[episode].length'] =
-              fileServerSeasonData.lengths[episodeFileName];
-          }
-
-          // Sync dimensions
-          if (
-            fileServerSeasonData.dimensions[episodeFileName] &&
-            episode.dimensions !== fileServerSeasonData.dimensions[episodeFileName]
-          ) {
-            updateData['seasons.$.episodes.$[episode].dimensions'] =
-              fileServerSeasonData.dimensions[episodeFileName];
-          }
-
-          // Sync HDR information
-          if (hdrInfo && episode.hdr !== hdrInfo) {
-            updateData['seasons.$.episodes.$[episode].hdr'] = hdrInfo;
-          }
-
-          // Sync additional metadata (optional)
-          // Example: Sync duration and size
-          if (episodeInfo.duration && episode.duration !== episodeInfo.duration * 1000) {
-            updateData['seasons.$.episodes.$[episode].duration'] = episodeInfo.duration * 1000; // Convert to ms
-          }
-
-          if (Object.keys(updateData).length > 0) {
-            console.log(
-              `TV: Updating video info for ${tv.title} - ${seasonKey}, Episode ${episode.episodeNumber}`
-            );
-            await client
-              .db('Media')
-              .collection('TV')
-              .updateOne(
-                {
-                  title: tv.title,
-                  'seasons.seasonNumber': season.seasonNumber,
-                  'seasons.episodes.episodeNumber': episode.episodeNumber,
-                },
-                {
-                  $set: updateData,
-                },
-                {
-                  arrayFilters: [{ 'episode.episodeNumber': episode.episodeNumber }],
-                }
-              );
-          }
-        }
-      }
-    }
-  }
-
-  // Iterate through movies
-  for (const movie of currentDB.movies) {
-    // Retrieve the file server movie data
-    const fileServerMovieData = fileServer?.movies[movie.title];
-    const fileServerMovieDataFILENAMES = fileServerMovieData?.fileNames;
-
-    if (!fileServerMovieDataFILENAMES) {
-      console.log(`No file server data found for movie: ${movie.title}`);
-      continue;
-    }
-
-    // Find the MP4 file
-    const mp4File = fileServerMovieDataFILENAMES.find((name) => name.endsWith('.mp4'));
-
-    if (mp4File) {
-      const additionalMetadata = fileServerMovieData.additional_metadata;
-
-      if (!additionalMetadata) {
-        console.warn(`No additionalMetadata found for ${mp4File} in file server data.`);
-        continue;
-      }
-
-      const hdrInfo = fileServerMovieData.hdr || null;
-      const fileServerDuration = fileServerMovieData.duration;
-      const fileServerSize = fileServerMovieData.size || null;
-
-      const updateData = {};
-
-      // Sync length
-      if (
-        fileServerMovieData.length[mp4File] &&
-        movie.length !== fileServerMovieData.length[mp4File]
-      ) {
-        updateData.length = fileServerMovieData.length[mp4File];
-      }
-
-      // Sync dimensions
-      if (
-        fileServerMovieData.dimensions[mp4File] &&
-        movie.dimensions !== fileServerMovieData.dimensions[mp4File]
-      ) {
-        updateData.dimensions = fileServerMovieData.dimensions[mp4File];
-      }
-
-      // Sync HDR information
-      if (hdrInfo && movie.hdr !== hdrInfo) {
-        updateData.hdr = hdrInfo;
-      }
-
-      // Sync additional metadata (optional)
-      // Example: Sync duration and size
-      if (fileServerDuration && movie.duration !== fileServerDuration * 1000) {
-        updateData.duration = fileServerDuration * 1000; // Convert to ms
-      }
-
-      if (fileServerSize && movie.size !== fileServerSize) {
-        updateData.size = fileServerSize
-      }
-
-      if (Object.keys(updateData).length > 0) {
-        console.log(`Movie: Updating video info for ${movie.title}`);
-        await client.db('Media').collection('Movies').updateOne(
-          {
+        } catch (error) {
+          results.errors.movies.push({
             title: movie.title,
-          },
-          {
-            $set: updateData,
-          }
-        );
-      }
-    }
-  }
+            serverId: serverConfig.id,
+            error: error.message
+          })
+        }
+      })
+    )
 
-  console.log(chalk.bold.greenBright('Video information synchronization complete.'));
+    console.log(chalk.bold.yellow(`Logo sync complete for server ${serverConfig.id}`))
+    return results
+
+  } catch (error) {
+    console.error(`Error during logo sync for server ${serverConfig.id}:`, error)
+    throw error
+  }
 }
 
 /**
- * Syncs episode thumbnail URLs and blurhash between the current database and file server
- * @param {Object} currentDB - The current database
- * @param {Object} fileServer - The file server data
- * @returns {Promise} - Resolves when sync is complete
+ * Syncs blurhash data from server to database.
+ * @param {Object} currentDB - The current database.
+ * @param {Object} fileServer - The file server data.
+ * @param {Object} serverConfig - The configuration for the current server.
+ * @returns {Promise<{ processed: { movies: Array, tv: Array }, errors: { movies: Array, tv: Array }}>} - The results of the sync operation.
  */
-export async function syncEpisodeThumbnails(currentDB, fileServer) {
+export async function syncBlurhash(currentDB, fileServer, serverConfig) {
   const client = await clientPromise
-  console.log(chalk.bold.magentaBright('Starting episode thumbnail synchronization...'))
+  console.log(chalk.bold.green(`Starting blurhash sync for server ${serverConfig.id}...`))
 
-  // Iterate through TV shows
-  for (const tv of currentDB.tv) {
-    // Retrieve the file server show data
-    const fileServerShowData = fileServer?.tv[tv.title]
+  const results = {
+    processed: { movies: [], tv: [] },
+    errors: { movies: [], tv: [] }
+  }
 
-    // Iterate through seasons
-    for (const season of tv.seasons) {
-      // Retrieve the file server season data
-      const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
-      const fileServerSeasonDataURLS = fileServerSeasonData?.urls
-
-      // Iterate through episodes
-      for (const episode of season.episodes) {
-        // Construct the episode file name based on a pattern or directly from the fileServer data
-        const episodeFileName = Object.keys(fileServerSeasonDataURLS).find((fileName) => {
-          const fileNameWithoutExtension = fileName.slice(0, -4) // Remove the file extension
-          const episodeNumberRegex = new RegExp(
-            `S\\d{2}E${episode.episodeNumber.toString().padStart(2, '0')}`,
-            'i'
+  try {
+    // Process TV shows concurrently
+    await Promise.allSettled(
+      currentDB.tv.map(async show => {
+        try {
+          const updated = await processShowBlurhash(
+            client,
+            show,
+            fileServer?.tv[show.title],
+            serverConfig
           )
-          return episodeNumberRegex.test(fileNameWithoutExtension)
-        })
-
-        // If episode file found in file server data
-        if (episodeFileName) {
-          const fileServerEpisodeData = fileServerSeasonDataURLS[episodeFileName]
-
-          const thumbnailUrl = episode.thumbnail ? episode.thumbnail : null
-          const sanitizedThumbnailUrl =
-            thumbnailUrl && thumbnailUrl.replaceAll(fileServerURLWithoutPrefixPath, '')
-          //
-          const blurhashURL = episode.thumbnailBlurhash ? episode.thumbnailBlurhash : null
-          const sanitizedBlurhashThumbnailUrl =
-            blurhashURL && blurhashURL.replaceAll(fileServerURLWithoutPrefixPath, '')
-
-          // Check if the file server thumbnail URL is different from the current thumbnail URL
-          const thumbnailURLNeedsUpdate =
-            fileServerEpisodeData.thumbnail &&
-            fileServerEpisodeData.thumbnail !== sanitizedThumbnailUrl
-
-          const thumbnailURLNeedsRemove = episode.thumbnail && !fileServerEpisodeData.thumbnail
-
-          // Check if the file server thumbnail blurhash is different from the current blurhash
-          const thumbnailBlurhashNeedsUpdate =
-            fileServerEpisodeData.thumbnailBlurhash &&
-            fileServerEpisodeData.thumbnailBlurhash !== sanitizedBlurhashThumbnailUrl
-
-          const thumbnailBlurhashNeedsRemove =
-            episode.thumbnailBlurhash && !fileServerEpisodeData.thumbnailBlurhash
-
-          // If either URL needs to be updated or removed
-          // To allow a user to manually update any missing
-          // thumbnail URLs or blurhashes we have commented out
-          // thumbnailURLNeedsRemove and thumbnailBlurhashNeedsRemove
-          if (
-            thumbnailUrl !== undefined &&
-            (thumbnailURLNeedsUpdate || thumbnailBlurhashNeedsUpdate) /* ||
-                thumbnailURLNeedsRemove ||
-                thumbnailBlurhashNeedsRemove */
-          ) {
-            console.log(
-              `TV: Updating thumbnail URLs for ${tv.title} - Season ${season.seasonNumber}, Episode ${episode.episodeNumber}`
-            )
-
-            const updateFields = {}
-            const unsetFields = {}
-
-            if (thumbnailURLNeedsUpdate) {
-              updateFields['seasons.$.episodes.$[episode].thumbnail'] =
-                `${fileServerURLWithoutPrefixPath}${fileServerEpisodeData.thumbnail}`
-            } else if (thumbnailURLNeedsRemove) {
-              unsetFields['seasons.$.episodes.$[episode].thumbnail'] = ''
-            }
-
-            if (thumbnailBlurhashNeedsUpdate) {
-              updateFields['seasons.$.episodes.$[episode].thumbnailBlurhash'] =
-                `${fileServerURLWithoutPrefixPath}${fileServerEpisodeData.thumbnailBlurhash}`
-            } else if (thumbnailBlurhashNeedsRemove) {
-              unsetFields['seasons.$.episodes.$[episode].thumbnailBlurhash'] = ''
-            }
-
-            const updateOperation = {}
-            if (Object.keys(updateFields).length > 0) {
-              updateOperation.$set = updateFields
-            }
-            if (Object.keys(unsetFields).length > 0) {
-              updateOperation.$unset = unsetFields
-            }
-
-            await client
-              .db('Media')
-              .collection('TV')
-              .updateOne(
-                {
-                  title: tv.title,
-                  'seasons.seasonNumber': season.seasonNumber,
-                  'seasons.episodes.episodeNumber': episode.episodeNumber,
-                },
-                updateOperation,
-                {
-                  arrayFilters: [{ 'episode.episodeNumber': episode.episodeNumber }],
-                }
-              )
+          if (updated) {
+            results.processed.tv.push({
+              title: show.title,
+              serverId: serverConfig.id
+            })
           }
+        } catch (error) {
+          results.errors.tv.push({
+            title: show.title,
+            serverId: serverConfig.id,
+            error: error.message
+          })
         }
-      }
-    }
+      })
+    )
+
+    // Process movies concurrently
+    await Promise.allSettled(
+      currentDB.movies.map(async movie => {
+        try {
+          const updated = await processMovieBlurhash(
+            client,
+            movie,
+            fileServer?.movies[movie.title],
+            serverConfig
+          )
+          if (updated) {
+            results.processed.movies.push({
+              title: movie.title,
+              serverId: serverConfig.id
+            })
+          }
+        } catch (error) {
+          results.errors.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id,
+            error: error.message
+          })
+        }
+      })
+    )
+
+    console.log(chalk.bold.green(`Blurhash sync complete for server ${serverConfig.id}`))
+    return results
+
+  } catch (error) {
+    console.error(`Error during blurhash sync for server ${serverConfig.id}:`, error)
+    throw error
   }
-  console.log(chalk.bold.magentaBright('Episode thumbnail synchronization complete.'))
 }
 
 /**
- * Syncs poster URLs between the current database and file server
- * @param {Object} currentDB - The current database
- * @param {Object} fileServer - The file server data
- * @returns {Promise} - Resolves when sync is complete
+ * Syncs video information from a server to the database
+ * @param {Object} currentDB - Current database state
+ * @param {Object} fileServer - File server data
+ * @param {Object} serverConfig - Server configuration
+ * @returns {Promise<Object>} Sync results
  */
-export async function syncPosterURLs(currentDB, fileServer) {
+export async function syncVideoInfo(currentDB, fileServer, serverConfig) {
   const client = await clientPromise
-  console.log(chalk.bold.magenta('Starting poster URL synchronization...'))
+  console.log(chalk.bold.greenBright(`Starting video information sync for server ${serverConfig.id}...`))
 
-  // Sync TV shows and seasons
-  for (const tv of currentDB.tv) {
-    const fileServerShowData = fileServer?.tv[tv.title]
+  const results = {
+    processed: { movies: [], tv: [] },
+    errors: { movies: [], tv: [] }
+  }
 
-    if (fileServerShowData) {
-      const updateData = {}
-
-      // Update show poster URL
-      if (
-        fileServerShowData.posterURL &&
-        (!tv.posterURL ||
-          fileServerShowData.posterURL !== tv.posterURL.replace(fileServerURLWithoutPrefixPath, ''))
-      ) {
-        updateData.posterURL = fileServerURLWithoutPrefixPath + fileServerShowData.posterURL
-        console.log(`TV: Updating posterURL for ${tv.title}`)
+  try {
+    // Process TV shows
+    for (const show of currentDB.tv) {
+      const fileServerShowData = fileServer?.tv[show.title]
+      if (!fileServerShowData) {
+        //console.log(`No file server data found for TV show: ${show.title} on server ${serverConfig.id}`)
+        continue
       }
 
-      // Update season poster URLs
-      if (tv.seasons && fileServerShowData.seasons) {
-        const updatedSeasons = tv.seasons.map((season) => {
-          const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
-          if (
-            fileServerSeasonData &&
-            fileServerSeasonData.season_poster &&
-            (!season.season_poster ||
-              fileServerSeasonData.season_poster !==
-                season.season_poster.replace(fileServerURLWithoutPrefixPath, ''))
-          ) {
-            console.log(
-              `TV Season: Updating posterURL for ${tv.title} Season ${season.seasonNumber}`
+      try {
+        // Process seasons concurrently
+        const seasonResults = await Promise.allSettled(
+          show.seasons.map(season =>
+            processSeasonVideoInfo(
+              client,
+              show,
+              season,
+              fileServerShowData,
+              serverConfig
             )
-            return {
-              ...season,
-              season_poster: fileServerURLWithoutPrefixPath + fileServerSeasonData.season_poster,
-            }
-          }
-          return season
-        })
+          )
+        )
 
-        // Only update seasons if there are changes
-        if (JSON.stringify(updatedSeasons) !== JSON.stringify(tv.seasons)) {
-          updateData.seasons = updatedSeasons
+        const processedEpisodes = seasonResults
+          .filter(result => result.status === 'fulfilled' && result.value > 0)
+          .reduce((sum, result) => sum + result.value, 0)
+
+        if (processedEpisodes > 0) {
+          results.processed.tv.push({
+            title: show.title,
+            serverId: serverConfig.id,
+            processedEpisodes
+          })
         }
+      } catch (error) {
+        results.errors.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          error: error.message
+        })
       }
-
-      if (Object.keys(updateData).length > 0) {
-        await client
-          .db('Media')
-          .collection('TV')
-          .updateOne({ title: tv.title }, { $set: updateData })
-
-        // Update the MediaUpdatesTV collection
-        await updateMediaUpdates(tv.title, 'tv')
-        console.log(`TV show updated: ${tv.title}`)
-      }
-    } else {
-      console.log(`No file server data found for TV show: ${tv.title}`)
     }
+
+    // Process movies concurrently
+    await Promise.allSettled(
+      currentDB.movies.map(async movie => {
+        try {
+          await processMovieVideoInfo(
+            client,
+            movie,
+            fileServer?.movies[movie.title],
+            serverConfig
+          )
+          results.processed.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id
+          })
+        } catch (error) {
+          results.errors.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id,
+            error: error.message
+          })
+        }
+      })
+    )
+
+    console.log(chalk.bold.greenBright(`Video information sync complete for server ${serverConfig.id}.`))
+    return results
+
+  } catch (error) {
+    console.error(`Error during video information sync for server ${serverConfig.id}:`, error)
+    throw error
   }
-
-  // Sync movies
-  for (const movie of currentDB.movies) {
-    const fileServerMovieData = fileServer?.movies[movie.title]
-    const fileServerMovieDataURLS = fileServerMovieData?.urls
-
-    if (fileServerMovieData) {
-      const updateData = {}
-
-      // Update movie poster URL
-      if (
-        fileServerMovieDataURLS?.posterURL &&
-        (!movie.posterURL ||
-          fileServerMovieDataURLS?.posterURL !==
-            movie.posterURL.replace(fileServerURLWithoutPrefixPath, ''))
-      ) {
-        updateData.posterURL = fileServerURLWithoutPrefixPath + fileServerMovieDataURLS.posterURL
-        console.log(`Movie: Updating posterURL for ${movie.title}`)
-      }
-
-      if (Object.keys(updateData).length > 0) {
-        await client
-          .db('Media')
-          .collection('Movies')
-          .updateOne({ title: movie.title }, { $set: updateData })
-
-        // Update the MediaUpdatesTV collection
-        await updateMediaUpdates(movie.title, 'movie')
-        console.log(`Movie updated: ${movie.title}`)
-      }
-    } else {
-      console.log(`No file server data found for movie: ${movie.title}`)
-    }
-  }
-
-  console.log(chalk.bold.magenta('Poster URL synchronization complete.'))
 }
 
 /**
- * Syncs backdrop URLs between the current database and file server
- * @param {Object} currentDB - The current database
- * @param {Object} fileServer - The file server data
- * @returns {Promise} - Resolves when sync is complete
+ * Syncs episode thumbnails from a server to the database
+ * @param {Object} currentDB - Current database state
+ * @param {Object} fileServer - File server data
+ * @param {Object} serverConfig - Server configuration
+ * @returns {Promise<Object>} Sync results
  */
-export async function syncBackdrop(currentDB, fileServer) {
+export async function syncEpisodeThumbnails(currentDB, fileServer, serverConfig) {
   const client = await clientPromise
-  console.log(chalk.bold.redBright('Starting backdrop URL synchronization...'))
+  console.log(chalk.bold.magentaBright(`Starting episode thumbnail sync for server ${serverConfig.id}...`))
 
-  // Sync TV shows and seasons
-  for (const tv of currentDB.tv) {
-    const fileServerShowData = fileServer?.tv[tv.title]
-
-    if (fileServerShowData) {
-      const updateData = {}
-
-      // Update show backdrop URL
-      if (
-        fileServerShowData.backdrop &&
-        (!tv.backdrop ||
-          fileServerShowData.backdrop !== tv.backdrop.replace(fileServerURLWithoutPrefixPath, ''))
-      ) {
-        updateData.backdrop = fileServerURLWithoutPrefixPath + fileServerShowData.backdrop
-        console.log(`TV: Updating backdrop for ${tv.title}`)
-      }
-
-      // Update show backdrop URL
-      if (
-        fileServerShowData.backdropBlurhash &&
-        (!tv.backdropBlurhash ||
-          fileServerShowData.backdropBlurhash !==
-            tv.backdropBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
-      ) {
-        updateData.backdropBlurhash =
-          fileServerURLWithoutPrefixPath + fileServerShowData.backdropBlurhash
-        console.log(`TV: Updating backdropBlurhash for ${tv.title}`)
-      }
-
-      if (Object.keys(updateData).length > 0) {
-        await client
-          .db('Media')
-          .collection('TV')
-          .updateOne({ title: tv.title }, { $set: updateData })
-
-        // Update the MediaUpdatesTV collection
-        await updateMediaUpdates(tv.title, 'tv')
-        console.log(`TV show updated: ${tv.title}`)
-      }
-    } else {
-      console.log(`No file server data found for TV show: ${tv.title}`)
-    }
+  const results = {
+    processed: { tv: [] },
+    errors: { tv: [] }
   }
 
-  // Sync movies
-  for (const movie of currentDB.movies) {
-    const fileServerMovieData = fileServer?.movies[movie.title]
-    const fileServerMovieDataURLS = fileServerMovieData?.urls
-
-    if (fileServerMovieData) {
-      const updateData = {}
-
-      // Update movie backdrop URL
-      if (
-        fileServerMovieDataURLS?.backdrop &&
-        (!movie.backdrop ||
-          fileServerMovieDataURLS.backdrop !==
-            movie.backdrop.replace(fileServerURLWithoutPrefixPath, ''))
-      ) {
-        updateData.backdrop =
-          fileServerURLWithoutPrefixPath + fileServerMovieDataURLS.backdrop
-        console.log(`Movie: Updating backdrop for ${movie.title}`)
+  try {
+    // Process each TV show
+    for (const show of currentDB.tv) {
+      const fileServerShowData = fileServer?.tv[show.title]
+      if (!fileServerShowData) {
+        //console.log(`No file server data found for TV show: ${show.title} on server ${serverConfig.id}`)
+        continue
       }
 
-      // Update movie backdropBlurhash URL
-      if (
-        fileServerMovieDataURLS?.backdropBlurhash &&
-        (!movie.backdropBlurhash ||
-          fileServerMovieDataURLS.backdropBlurhash !==
-            movie.backdropBlurhash.replace(fileServerURLWithoutPrefixPath, ''))
-      ) {
-        updateData.backdropBlurhash =
-          fileServerURLWithoutPrefixPath + fileServerMovieDataURLS.backdropBlurhash
-        console.log(`Movie: Updating backdropBlurhash for ${movie.title}`)
-      }
+      try {
+        let updatedEpisodes = 0
 
-      if (Object.keys(updateData).length > 0) {
-        await client
-          .db('Media')
-          .collection('Movies')
-          .updateOne({ title: movie.title }, { $set: updateData })
+        // Process each season
+        for (const season of show.seasons) {
+          const seasonUpdates = await processSeasonThumbnails(
+            client,
+            show,
+            season,
+            fileServerShowData,
+            serverConfig
+          )
 
-        // Update the MediaUpdatesTV collection
-        await updateMediaUpdates(movie.title, 'movie')
-        console.log(`Movie updated: ${movie.title}`)
+          if (seasonUpdates > 0) {
+            updatedEpisodes += seasonUpdates
+          }
+        }
+
+        if (updatedEpisodes > 0) {
+          results.processed.tv.push({
+            title: show.title,
+            serverId: serverConfig.id,
+            updatedEpisodes
+          })
+        }
+
+      } catch (error) {
+        results.errors.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          error: error.message
+        })
       }
-    } else {
-      console.log(`No file server data found for movie: ${movie.title}`)
     }
+
+    console.log(chalk.bold.magentaBright(`Episode thumbnail sync complete for server ${serverConfig.id}.`))
+    return results
+
+  } catch (error) {
+    console.error(`Error during episode thumbnail sync for server ${serverConfig.id}:`, error)
+    throw error
+  }
+}
+
+/**
+ * Synchronizes poster URLs between the current database and file server.
+ * @param {Object} currentDB - The current database.
+ * @param {Object} fileServer - The file server data.
+ * @param {Object} serverConfig - The configuration for the current server.
+ * @returns {Promise<Object>} - An object containing the results of the sync operation.
+ */
+export async function syncPosterURLs(currentDB, fileServer, serverConfig) {
+  const client = await clientPromise
+  console.log(chalk.bold.magenta(`Starting poster URL sync for server ${serverConfig.id}...`))
+
+  const results = {
+    processed: { movies: [], tv: [] },
+    errors: { movies: [], tv: [] }
   }
 
-  console.log(chalk.bold.redBright('Poster URL synchronization complete.'))
+  try {
+    // Process TV shows
+    for (const show of currentDB.tv) {
+      const fileServerShowData = fileServer?.tv[show.title]
+      if (!fileServerShowData) {
+        //console.log(`No file server data found for TV show: ${show.title} on server ${serverConfig.id}`)
+        continue
+      }
+
+      try {
+        let updatesMade = false
+        const updateData = {}
+
+        // Process show poster
+        const showPosterUpdates = processShowPosterURL(show, fileServerShowData, serverConfig)
+        if (showPosterUpdates) {
+          Object.assign(updateData, showPosterUpdates)
+          updatesMade = true
+        }
+
+        // Process season posters
+        if (show.seasons && fileServerShowData.seasons) {
+          const { updatedSeasons, hasUpdates } = await processSeasonPosters(
+            show.seasons,
+            fileServerShowData,
+            serverConfig
+          )
+          
+          if (hasUpdates) {
+            updateData.seasons = updatedSeasons
+            updatesMade = true
+          }
+        }
+
+        if (updatesMade) {
+          await updateMediaInDatabase(
+            client,
+            MediaType.TV,
+            show.title,
+            updateData,
+            serverConfig.id
+          )
+          results.processed.tv.push({
+            title: show.title,
+            serverId: serverConfig.id,
+            updates: Object.keys(updateData)
+          })
+        }
+
+      } catch (error) {
+        results.errors.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          error: error.message
+        })
+      }
+    }
+
+    // Process movies concurrently
+    await Promise.allSettled(
+      currentDB.movies.map(async movie => {
+        try {
+          const fileServerMovieData = fileServer?.movies[movie.title]
+          if (!fileServerMovieData) {
+            //console.log(`No file server data found for movie: ${movie.title} on server ${serverConfig.id}`)
+            return
+          }
+
+          const posterUpdates = processMoviePosterURL(movie, fileServerMovieData, serverConfig)
+          if (posterUpdates) {
+            await updateMediaInDatabase(
+              client,
+              MediaType.MOVIE,
+              movie.title,
+              posterUpdates,
+              serverConfig.id
+            )
+            results.processed.movies.push({
+              title: movie.title,
+              serverId: serverConfig.id
+            })
+          }
+        } catch (error) {
+          results.errors.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id,
+            error: error.message
+          })
+        }
+      })
+    )
+
+    console.log(chalk.bold.magenta(`Poster URL sync complete for server ${serverConfig.id}`))
+    return results
+
+  } catch (error) {
+    console.error(`Error during poster URL sync for server ${serverConfig.id}:`, error)
+    throw error
+  }
+}
+
+/**
+ * Synchronizes the backdrop images for movies and TV shows across multiple servers.
+ *
+ * This function processes the current database and file server data, updating the backdrop
+ * images in the database as needed. It handles both movies and TV shows concurrently.
+ *
+ * @param {Object} currentDB - The current database data, containing movies and TV shows.
+ * @param {Object} fileServer - The file server data, containing movie and TV show information.
+ * @param {Object} serverConfig - The configuration for the current server.
+ * @returns {Promise<Object>} - An object containing the results of the sync operation, including
+ * the processed and errored movies and TV shows.
+ */
+export async function syncBackdrop(currentDB, fileServer, serverConfig) {
+  const client = await clientPromise
+  console.log(chalk.bold.redBright(`Starting backdrop sync for server ${serverConfig.id}...`))
+
+  const results = {
+    processed: { movies: [], tv: [] },
+    errors: { movies: [], tv: [] }
+  }
+
+  try {
+    // Process TV shows
+    for (const show of currentDB.tv) {
+      const fileServerShowData = fileServer?.tv[show.title]
+      if (!fileServerShowData) {
+        //console.log(`No file server data found for TV show: ${show.title} on server ${serverConfig.id}`)
+        continue
+      }
+
+      try {
+        const backdropUpdates = processBackdropUpdates(show, fileServerShowData, serverConfig)
+        if (backdropUpdates) {
+          await updateMediaInDatabase(
+            client,
+            MediaType.TV,
+            show.title,
+            backdropUpdates,
+            serverConfig.id
+          )
+          results.processed.tv.push({
+            title: show.title,
+            serverId: serverConfig.id,
+            updates: Object.keys(backdropUpdates)
+          })
+        }
+      } catch (error) {
+        results.errors.tv.push({
+          title: show.title,
+          serverId: serverConfig.id,
+          error: error.message
+        })
+      }
+    }
+
+    // Process movies concurrently
+    await Promise.allSettled(
+      currentDB.movies.map(async movie => {
+        try {
+          const fileServerMovieData = fileServer?.movies[movie.title]
+          if (!fileServerMovieData) {
+            //console.log(`No file server data found for movie: ${movie.title} on server ${serverConfig.id}`)
+            return
+          }
+
+          const backdropUpdates = processBackdropUpdates(movie, fileServerMovieData, serverConfig)
+          if (backdropUpdates) {
+            await updateMediaInDatabase(
+              client,
+              MediaType.MOVIE,
+              movie.title,
+              backdropUpdates,
+              serverConfig.id
+            )
+            results.processed.movies.push({
+              title: movie.title,
+              serverId: serverConfig.id,
+              updates: Object.keys(backdropUpdates)
+            })
+          }
+        } catch (error) {
+          results.errors.movies.push({
+            title: movie.title,
+            serverId: serverConfig.id,
+            error: error.message
+          })
+        }
+      })
+    )
+
+    console.log(chalk.bold.redBright(`Backdrop sync complete for server ${serverConfig.id}`))
+    return results
+
+  } catch (error) {
+    console.error(`Error during backdrop sync for server ${serverConfig.id}:`, error)
+    throw error
+  }
 }
 
 export async function updateLastSynced() {

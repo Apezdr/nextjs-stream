@@ -72,8 +72,8 @@ export function VideoLayout({
         className={`${styles.controls} data-[visible]:opacity-100 absolute inset-0 z-10 flex h-full w-full flex-col bg-gradient-to-t from-black/10 to-transparent opacity-0 transition-opacity pointer-events-none`}
       >
         {/* Top Bar */}
-        <Controls.Group className="flex w-full items-center px-2 pointer-events-auto">
-          <Buttons.GoBack goBack={goBack} tooltipPlacement="bottom start" />
+        <Controls.Group className="flex items-center px-2 relative w-16 h-12 left-1 top-4">
+          <Buttons.GoBack goBack={goBack} />
         </Controls.Group>
         {/* End Top Bar */}
         <div className="flex-1" />

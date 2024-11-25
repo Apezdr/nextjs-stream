@@ -3,7 +3,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { auth } from '../lib/auth'
 import { ObjectId } from 'mongodb'
-import { fetchMetadata } from '@src/utils/admin_utils'
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import {
   arrangeMediaByLatestModification,
   movieProjectionFields,
@@ -50,7 +50,7 @@ export const fetchBannerMedia = async () => {
     // Fetch metadata for backdropBlurhash if available
     for (let item of media) {
       if (item && item.backdropBlurhash) {
-        const blurhashString = await fetchMetadata(item.backdropBlurhash)
+        const blurhashString = await fetchMetadataMultiServer(item.backdropBlurhashSource, item.backdropBlurhash)
         if (blurhashString.error) {
           return { error: blurhashString.error, status: blurhashString.status }
         }
@@ -65,6 +65,48 @@ export const fetchBannerMedia = async () => {
     }
 
     return media // Return the array of media objects
+  } catch (error) {
+    return { error: 'Failed to fetch media', status: 500 }
+  }
+}
+
+export const fetchRandomBannerMedia = async () => {
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+    
+    // Randomly choose between Movies and TV collections
+    const collections = ['Movies', 'TV']
+    const randomCollection = collections[Math.floor(Math.random() * collections.length)]
+    
+    const media = await db
+      .collection(randomCollection)
+      .aggregate([
+        { $sample: { size: 1 } }
+      ])
+      .toArray()
+
+    if (!media || media.length === 0) {
+      return { error: 'No media found', status: 404 }
+    }
+
+    // Fetch metadata for backdropBlurhash if available
+    const item = media[0]
+    if (item && item.backdropBlurhash) {
+      const blurhashString = await fetchMetadataMultiServer(item.backdropBlurhashSource, item.backdropBlurhash)
+      if (blurhashString.error) {
+        return { error: blurhashString.error, status: blurhashString.status }
+      }
+      item.backdropBlurhash = blurhashString
+    }
+    if (item && !item.backdrop) {
+      item.backdrop = getFullImageUrl(item.metadata.backdrop_path, 'original')
+    }
+    if (item && item._id) {
+      delete item._id
+    }
+
+    return item // Return single media object
   } catch (error) {
     return { error: 'Failed to fetch media', status: 500 }
   }
@@ -90,7 +132,8 @@ export async function addCustomUrlToMedia(mediaArray, type) {
           : buildURL(`/sorry-image-not-available.jpg`)
       }
       if (media.posterBlurhash) {
-        returnObj.posterBlurhash = await fetchMetadata(
+        returnObj.posterBlurhash = await fetchMetadataMultiServer(
+          media.blurhashSource,
           media.posterBlurhash,
           'blurhash',
           type,
@@ -98,7 +141,8 @@ export async function addCustomUrlToMedia(mediaArray, type) {
         )
       }
       if (media.backdropBlurhash) {
-        returnObj.backdropBlurhash = await fetchMetadata(
+        returnObj.backdropBlurhash = await fetchMetadataMultiServer(
+          media.backdropBlurhashSource,
           media.backdropBlurhash,
           'blurhash',
           type,
@@ -121,6 +165,8 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
   const client = await clientPromise
   const collection = type === 'movie' ? 'Movies' : 'TV'
 
+  let additionalFields = {}
+
   const projection =
     type === 'movie'
       ? {
@@ -129,6 +175,10 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
           posterBlurhash: 1,
           backdrop: 1,
           backdropBlurhash: 1,
+          posterSource: 1,
+          backdropSource: 1,
+          blurhashSource: 1,
+          backdropBlurhashSource: 1,
           'metadata.poster_path': 1,
           'metadata.trailer_url': 1,
           'metadata.overview': 1,
@@ -137,8 +187,12 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
           title: 1,
           posterURL: 1,
           posterBlurhash: 1,
+          posterSource: 1,
           backdrop: 1,
           backdropBlurhash: 1,
+          backdropSource: 1,
+          blurhashSource: 1,
+          backdropBlurhashSource: 1,
           'metadata.genres': 1,
           'metadata.networks': 1,
           'metadata.status': 1,
@@ -150,6 +204,7 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
           'seasons.seasonNumber': 1,
           'seasons.season_poster': 1,
           'seasons.seasonPosterBlurhash': 1,
+          'seasons.seasonPosterBlurhashSource': 1,
         }
 
   if (countOnly) {
@@ -183,7 +238,8 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
         record._id = record._id.toString()
       }
       if (record.posterBlurhash) {
-        record.posterBlurhash = await fetchMetadata(
+        record.posterBlurhash = await fetchMetadataMultiServer(
+          record.blurhashSource,
           record.posterBlurhash,
           'blurhash',
           type,
@@ -191,7 +247,8 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
         )
       }
       if (record.backdropBlurhash) {
-        record.backdropBlurhash = await fetchMetadata(
+        record.backdropBlurhash = await fetchMetadataMultiServer(
+          record.backdropBlurhashSource,
           record.backdropBlurhash,
           'blurhash',
           type,
@@ -202,6 +259,8 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
         id: record._id.toString(),
         posterURL: poster,
         posterBlurhash: record.posterBlurhash || null,
+        backdropBlurhashSource: record.backdropBlurhashSource || null,
+        posterSource: record.posterSource || null,
         backdrop: record.backdrop || null,
         backdropBlurhash: record.backdropBlurhash || null,
         title: record.title || null,
@@ -209,6 +268,7 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
         type: type,
         metadata: record.metadata || null,
         media: record,
+        ...additionalFields
       }
     })
   )
@@ -390,6 +450,8 @@ export async function getRecentlyAddedMedia({ page = 0, limit = 12, countOnly = 
       backdrop: 1,
       backdropBlurhash: 1,
       mediaLastModified: 1,
+      blurhashSource: 1,
+      backdropBlurhashSource: 1,
       // Add other necessary fields
     }
 
@@ -401,6 +463,8 @@ export async function getRecentlyAddedMedia({ page = 0, limit = 12, countOnly = 
       posterBlurhash: 1,
       backdrop: 1,
       backdropBlurhash: 1,
+      blurhashSource: 1,
+      backdropBlurhashSource: 1,
       'seasons.episodes.mediaLastModified': 1,
       // Add other necessary fields
     }
