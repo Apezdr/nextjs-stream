@@ -13,6 +13,7 @@ import ParentalGuidanceBadge from '@src/components/MediaPlayer/Ratings/parental_
 import ParensStronglyCautionedBadge from '@src/components/MediaPlayer/Ratings/parens_strongly_cautioned_badge.svg'
 import RestrictedBadge from '@src/components/MediaPlayer/Ratings/restricted_badge.svg'
 import No17AndUnderBadge from '@src/components/MediaPlayer/Ratings/no_17_and_under_badge.svg'
+import RetryImage from '@components/RetryImage'
 
 export function Title() {
   //const isPaused = useMediaState('paused')
@@ -61,25 +62,25 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
             switch (mediaMetadata.rating) {
               case 'G':
                 return (
-                  <Image src={GeneralAudiencesBadge} alt="Rated G" className="max-h-20 w-auto" />
+                  <RetryImage src={GeneralAudiencesBadge} alt="Rated G" className="max-h-20 w-auto" />
                 )
               case 'PG':
                 return (
-                  <Image src={ParentalGuidanceBadge} alt="Rated PG" className="max-h-20 w-auto" />
+                  <RetryImage src={ParentalGuidanceBadge} alt="Rated PG" className="max-h-20 w-auto" />
                 )
               case 'PG-13':
                 return (
-                  <Image
+                  <RetryImage
                     src={ParensStronglyCautionedBadge}
                     alt="Rated PG-13"
                     className="max-h-20 w-auto"
                   />
                 )
               case 'R':
-                return <Image src={RestrictedBadge} alt="Rated R" className="max-h-20 w-auto" />
+                return <RetryImage src={RestrictedBadge} alt="Rated R" className="max-h-20 w-auto" />
               case 'NC-17':
                 return (
-                  <Image src={No17AndUnderBadge} alt="Rated NC-17" className="max-h-20 w-auto" />
+                  <RetryImage src={No17AndUnderBadge} alt="Rated NC-17" className="max-h-20 w-auto" />
                 )
               default:
                 return `Rated ${mediaMetadata.rating}`

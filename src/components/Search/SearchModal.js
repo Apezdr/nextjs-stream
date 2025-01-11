@@ -13,6 +13,7 @@ import {
   UsersIcon,
   XMarkIcon,
 } from '@heroicons/react/20/solid'
+import RetryImage from '@components/RetryImage'
 
 const SearchModal = ({
   open,
@@ -138,7 +139,7 @@ const SearchModal = ({
                                             className="contents"
                                             onClick={() => setOpen(false)}
                                           >
-                                            <Image
+                                            <RetryImage
                                               src={media.posterURL}
                                               loading="lazy"
                                               placeholder="blur"

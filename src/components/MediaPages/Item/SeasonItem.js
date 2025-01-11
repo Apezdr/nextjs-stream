@@ -6,6 +6,7 @@ import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresen
 import HD4kBanner from '../../../../public/4kBanner.png';
 import hdr10PlusLogo from '../../../../public/HDR10+_Logo_light.svg';
 import { classNames } from '@src/utils';
+import RetryImage from '@components/RetryImage';
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -45,7 +46,7 @@ export default function SeasonItem({ season, showTitle }) {
                 <div className="flex flex-row gap-x-2">
                   {has4k && (
                     <div className="mb-2 select-none bg-transparent h-4">
-                      <Image
+                      <RetryImage
                         src={HD4kBanner}
                         className="h-auto w-[85px]"
                         alt="4K Banner"
@@ -57,7 +58,7 @@ export default function SeasonItem({ season, showTitle }) {
                   {hasHDR && (
                     hasHDR10 ? (
                       <div className="mb-2 select-none bg-transparent h-4">
-                        <Image
+                        <RetryImage
                           src={hdr10PlusLogo}
                           alt="HDR10 Logo"
                           className="h-4 w-auto"

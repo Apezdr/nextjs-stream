@@ -3,9 +3,11 @@
 import { useState, useRef, useEffect, useCallback, Suspense, Fragment } from 'react'
 import { debounce } from 'lodash'
 import Image from 'next/image'
-import { classNames } from '@src/utils'
+import { buildURL, classNames, fetcher } from '@src/utils'
 import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
+import { preload } from 'swr'
+import RetryImage from '@components/RetryImage'
 
 const PopupCard = dynamic(() => import('@src/components/MediaScroll/PopupCard'), {
   ssr: false,
@@ -141,11 +143,17 @@ const Card = ({
   }, [isAnimating, onCollapse])
 
   const handleMouseEnter = useCallback(() => {
+    const apiEndpoint = buildURL(
+      type === 'tv'
+        ? `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&season=${seasonNumber}&episode=${episodeNumber}&card=true`
+        : `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&card=true`
+    )
     if (isAnimating || isExpanded || isTouchDevice) return
+    preload(apiEndpoint, fetcher)
     hoverTimeoutRef.current = setTimeout(() => {
       handleExpand()
     }, 1000)
-  }, [isAnimating, isExpanded, handleExpand, isTouchDevice])
+  }, [isAnimating, isExpanded, handleExpand, isTouchDevice, mediaId, seasonNumber, episodeNumber, type])
 
   const handleMouseLeave = useCallback(() => {
     if (hoverTimeoutRef.current) {
@@ -281,7 +289,7 @@ const Card = ({
           <button className="block w-full h-full">
             <div className="relative w-full h-full">
               {logo && (
-                <Image
+                <RetryImage
                   quality={50}
                   fill
                   src={logo}
@@ -300,7 +308,7 @@ const Card = ({
                   </div>
                 </div>
               )}
-              <Image
+              <RetryImage
                 ref={imageRef}
                 quality={50}
                 fill

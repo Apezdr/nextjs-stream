@@ -4,6 +4,7 @@ import useWatchedWidth from './useWatchedWidth'
 import Image from 'next/image'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/20/solid'
+import RetryImage from './RetryImage'
 
 export default function TVShowThumbnail({ episode, metadata }) {
   const [isClient, setIsClient] = useState(false)
@@ -45,7 +46,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
         />
       )}
       {blurDataURL ? (
-        <Image
+        <RetryImage
           src={stillURL}
           width={390}
           height={217}
@@ -56,7 +57,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
           blurDataURL={`data:image/png;base64,${blurDataURL}`}
         />
       ) : (
-        <Image
+        <RetryImage
           src={stillURL}
           width={390}
           height={217}

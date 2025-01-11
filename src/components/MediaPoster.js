@@ -7,6 +7,7 @@ import Image from 'next/image'
 import useWatchedWidth from './useWatchedWidth'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
+import RetryImage from './RetryImage'
 
 function _mediaPoster({
   media,
@@ -85,7 +86,7 @@ function _mediaPoster({
         </div>
       )}
       {posterBlurhash ? (
-        <Image
+        <RetryImage
           src={posterURL}
           alt={alt ?? _media.title}
           quality={quality}
@@ -98,7 +99,7 @@ function _mediaPoster({
           priority={imagePriority}
         />
       ) : posterURL ? (
-        <Image
+        <RetryImage
           src={posterURL}
           alt={alt ?? _media.title}
           quality={quality}
@@ -108,7 +109,7 @@ function _mediaPoster({
           priority={imagePriority}
         />
       ) : (
-        <Image
+        <RetryImage
           src={'/sorry-image-not-available.jpg'}
           alt={alt ?? _media.title}
           quality={quality}
@@ -122,7 +123,7 @@ function _mediaPoster({
         <div className="flex flex-col items-center bg-gray-900 justify-center content-center pb-4 pt-1 text-white transition-opacity duration-700 inset-0 text-xs h-auto opacity-75 group-hover:opacity-100 z-10 relative">
           <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
             {is4k ? (
-              <Image
+              <RetryImage
                 src={HD4kBanner}
                 className="h-4 w-auto"
                 alt={'4k Banner'}
@@ -138,7 +139,7 @@ function _mediaPoster({
           {hdr ? (
             <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
             {hdr === 'HDR10' ? (
-            <Image src={hdr10PlusLogo} alt={'HDR10 Logo'} className="h-4 w-auto" loading="lazy" />  
+            <RetryImage src={hdr10PlusLogo} alt={'HDR10 Logo'} className="h-4 w-auto" loading="lazy" />  
             ) : (
             <>{hdr}</>
             )}

@@ -6,7 +6,8 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { buildURL, classNames, fetcher, getFullImageUrl } from '@src/utils'
 import dynamic from 'next/dynamic'
-import useSWR from 'swr'
+import useSWR, { preload } from 'swr'
+import RetryImage from '@components/RetryImage'
 
 // Import the CardVideoPlayer with z-[40]
 const CardVideoPlayer = dynamic(() => import('@src/components/MediaScroll/CardVideoPlayer'), {
@@ -40,9 +41,12 @@ const PopupCard = ({
   )
 
   const { data, error, isLoading } = useSWR(apiEndpoint, fetcher, {
+    suspense: true,
     revalidateOnFocus: false,
-    revalidateOnReconnect: false,
-    dedupingInterval: 5000, // Adjust as needed
+    revalidateOnReconnect: true,
+    dedupingInterval: 15000, // Adjust as needed
+    errorRetryInteral: 2000,
+    errorRetryCount: 20,
   })
 
   // If either clipVideoURL OR trailer_url is missing, hasVideo = false
@@ -117,6 +121,7 @@ const PopupCard = ({
     <div
       className={classNames(
         'absolute z-50 pointer-events-none transition-all duration-300 ease-in-out',
+        'min-w-52',
         calculateWidth()
       )}
       style={{
@@ -159,9 +164,11 @@ const PopupCard = ({
         >
           {/* Logo if present (z-[50]) */}
           {data?.logo && (
-            <Image
+            <RetryImage
               quality={25}
               fill
+              loading="eager"
+              priority
               src={data.logo}
               alt={`${title} Logo`}
               className={classNames(
@@ -173,7 +180,6 @@ const PopupCard = ({
                 // Center it if the video is not playing
                 shouldPlay ? '!top-4 !left-8 max-h-5' : '!top-[67%] !left-1/2 max-h-14 -translate-x-1/2'           
               )}
-              loading="lazy"
             />
           )}
 
@@ -208,7 +214,7 @@ const PopupCard = ({
                 transition={{ duration: 0.4 }}
                 className="w-full h-full absolute inset-0 z-[10]"
               >
-                <Image
+                <RetryImage
                   quality={100}
                   src={data?.posterURL}
                   placeholder={posterBlurhash ? 'blur' : 'empty'}
@@ -235,7 +241,7 @@ const PopupCard = ({
                 transition={{ duration: 0.4 }}
                 className="w-full h-full absolute inset-0 z-[20]"
               >
-                <Image
+                <RetryImage
                   quality={100}
                   src={backdrop}
                   placeholder={backdropBlurhash ? 'blur' : 'empty'}
@@ -262,7 +268,7 @@ const PopupCard = ({
                 transition={{ duration: 0.4 }}
                 className="w-full h-full absolute inset-0 z-[30]"
               >
-                <Image
+                <RetryImage
                   quality={100}
                   src={data?.thumbnail}
                   placeholder={data?.thumbnailBlurhash ? 'blur' : 'empty'}
@@ -340,7 +346,7 @@ const PopupCard = ({
                 >
                   <div className="w-20 h-20 relative rounded-full overflow-hidden bg-gray-200">
                     {actor.profile_path ? (
-                      <Image
+                      <RetryImage
                         src={getFullImageUrl(actor.profile_path)}
                         alt={actor.name}
                         layout="fill"

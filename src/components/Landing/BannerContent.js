@@ -6,6 +6,7 @@ import Link from 'next/link'
 import Loading from '@src/app/loading'
 import { getFullImageUrl } from '@src/utils'
 import dynamic from 'next/dynamic'
+import RetryImage from '@components/RetryImage'
 
 const BannerVideoPlayer = dynamic(() => import('./BannerVideoPlayer'), {
   ssr: false,
@@ -43,7 +44,7 @@ const BannerContent = ({
             className="absolute inset-0"
           >
             {currentMedia?.backdropBlurhash ? (
-              <Image
+              <RetryImage
                 src={currentMedia?.backdrop}
                 className="object-cover select-none pointer-events-none"
                 alt="Banner Image"
@@ -55,7 +56,7 @@ const BannerContent = ({
                 priority
               />
             ) : currentMedia?.backdrop ? (
-              <Image
+              <RetryImage
                 src={currentMedia?.backdrop}
                 className="object-cover select-none pointer-events-none"
                 alt="Banner Image"
@@ -104,7 +105,7 @@ const BannerContent = ({
           className="absolute left-1/4 top-1/2 transform -translate-y-1/2 text-center w-36 sm:w-64"
         >
           {logo ? (
-            <Image
+            <RetryImage
               src={logo}
               alt="Logo Image"
               width={300}

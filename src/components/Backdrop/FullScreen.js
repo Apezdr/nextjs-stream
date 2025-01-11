@@ -1,7 +1,7 @@
 'use client'
-import Image from 'next/image'
 import { getFullImageUrl } from '@src/utils'
 import { motion } from 'framer-motion'
+import RetryImage from '@components/RetryImage'
 
 export default function FullScreenBackdrop({ media }) {
   let lowResImageUrl, highResImageUrl
@@ -36,7 +36,7 @@ export default function FullScreenBackdrop({ media }) {
         id="backdrop-cover"
         className="w-screen h-screen backdrop-blur-sm absolute top-0 left-0 z-[-1]"
       />
-      <Image
+      <RetryImage
         src={highResImageUrl}
         alt="Backdrop Image"
         fill

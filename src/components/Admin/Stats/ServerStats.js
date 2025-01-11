@@ -111,7 +111,8 @@ function ServerStats() {
 
   // Data for CPU Doughnut Chart
   const cpuData = {
-    labels: ['Used', 'Available'],
+    labels: ['CPU Used', 'Available'],
+    type: 'cpu',
     datasets: [
       {
         data: [cpu, 100 - cpu],
@@ -134,7 +135,7 @@ function ServerStats() {
 
   // Data for Memory Doughnut Chart
   const memoryData = {
-    labels: ['Used', 'Available'],
+    labels: ['Memory Used', 'Available'],
     datasets: [
       {
         data: [memoryUsed, memoryAvailable],
@@ -175,8 +176,8 @@ function ServerStats() {
           label: function(context) {
             const label = context.label || '';
             const value = context.parsed;
-            if (label === 'Used') {
-              if (context.chart.data.labels === 'CPU') {
+            if (label.indexOf('Used') > -1) {
+              if (context.chart.data.labels[0] === 'CPU Used') {
                 return `${label}: ${value}%`;
               } else {
                 return `${label}: ${value} GB`;

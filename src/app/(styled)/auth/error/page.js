@@ -4,6 +4,7 @@ import Clock from '../../../../../public/Clock.png'
 import isAuthenticated from '@src/utils/routeAuth'
 import { headers } from 'next/headers'
 import { classNames } from '@src/utils'
+import RetryImage from '@components/RetryImage'
 
 const AuthError = async props => {
   const searchParams = await props.searchParams;
@@ -54,7 +55,7 @@ const AuthError = async props => {
           {error ? <pre>{error}</pre> : null}
           {pendingApproval && !error ? (
             <div className="relative">
-              <Image
+              <RetryImage
                 className="rounded-3xl border border-gray-800"
                 src={Clock}
                 alt="Clock"

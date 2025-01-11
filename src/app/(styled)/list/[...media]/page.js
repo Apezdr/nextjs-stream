@@ -15,6 +15,7 @@ import { Suspense } from 'react'
 import Loading from '@src/app/loading'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { fileServerURLWithPrefixPath } from '@src/utils/config'
+import RetryImage from '@components/RetryImage'
 
 async function validateVideoURL(url) {
   try {
@@ -155,7 +156,7 @@ async function MediaPage({ params, searchParams }) {
           <>
             <div className="mt-8 w-full">
               {media.posterURL || media.metadata?.poster_path ? (
-                <Image
+                <RetryImage
                   src={
                     media.posterURL
                       ? media.posterURL
