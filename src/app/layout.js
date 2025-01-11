@@ -6,8 +6,7 @@ import { getServerConfig } from './api/getserverconfig/config'
 const inter = Inter({ subsets: ['latin'] })
 export async function generateMetadata() {
   try {
-    const config = await getServerConfig()
-    const { defaultFileServer } = config
+    const { defaultFileServer } = getServerConfig()
     const posterCollage = `${defaultFileServer}poster_collage.jpg`
 
     return {

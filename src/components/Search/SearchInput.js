@@ -1,7 +1,7 @@
 'use client'
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { MagnifyingGlassIcon } from '@heroicons/react/20/solid'
-import { buildURL, classNames } from '@src/utils'
+import { classNames } from '@src/utils'
 import debounce from 'lodash.debounce'
 import Count from './Count'
 const SearchModal = lazy(() => import('./SearchModal'))
@@ -17,7 +17,7 @@ export default function SearchInput() {
   const fetchSearchResults = debounce(async (query) => {
     setIsLoading(true)
     try {
-      const response = await fetch(buildURL('/api/authenticated/search'), {
+      const response = await fetch('/api/authenticated/search', {
         method: 'POST',
         body: JSON.stringify({ query }),
         headers: { 'Content-Type': 'application/json' },
@@ -37,7 +37,7 @@ export default function SearchInput() {
     const fetchRecentlyAddedMedia = async () => {
       setIsLoading(true)
       try {
-        const response = await fetch(buildURL('/api/authenticated/search'), {
+        const response = await fetch('/api/authenticated/search', {
           method: 'POST',
           body: JSON.stringify({ query: '' }),
           headers: { 'Content-Type': 'application/json' },

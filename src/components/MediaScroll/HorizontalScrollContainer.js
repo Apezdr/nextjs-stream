@@ -43,7 +43,7 @@ export default async function HorizontalScrollContainer({
       })
       break
     case 'recentlyAdded':
-      limit = 30
+      limit = 32
       items = await getRecentlyAddedMedia({ limit: limit, countOnly: true })
       break
     case 'all':

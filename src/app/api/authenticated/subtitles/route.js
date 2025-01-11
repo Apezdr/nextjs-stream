@@ -1,6 +1,6 @@
-import fetch from 'node-fetch'
 //import isAuthenticated from '../../../../utils/routeAuth'
 import clientPromise from '../../../../lib/mongodb'
+import { httpGet } from '@src/lib/httpHelper'
 
 // This route is used to fetch subtitles for a specific media item
 // It is not protected by authentication because it is used by the media player
@@ -71,8 +71,9 @@ export const GET = async (req) => {
       })
     }
 
-    const response = await fetch(subtitleUrl)
-    const data = await response.text()
+    const { data } = await httpGet(subtitleUrl, {
+      responseType: 'text',
+    })
 
     const fileExtension = subtitleUrl.split('.').pop()
     const headers = {

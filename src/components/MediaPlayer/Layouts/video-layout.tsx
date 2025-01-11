@@ -10,7 +10,6 @@ import * as Menus from '../menus'
 import * as Sliders from '../sliders'
 import { TimeGroup } from '../time-group'
 import { Title, VideoMetadata } from '../title'
-import { buildURL } from '@src/utils'
 import NextUpCard from '../NextUpCard'
 
 export interface VideoLayoutProps {
@@ -95,7 +94,7 @@ export function VideoLayout({
               />
             </div>
           )}
-          <Sliders.Time thumbnails={buildURL(thumbnails)} />
+          <Sliders.Time thumbnails={thumbnails} />
           <TimeGroup />
         </Controls.Group>
         <Controls.Group className="-mt-0.5 flex w-full items-center px-2 pb-2 relative">
@@ -126,7 +125,34 @@ export function VideoLayout({
   )
 }
 
-function Gestures() {
+export function Gestures() {
+  return (
+    <>
+      <Gesture
+        className="absolute inset-0 z-0 block h-full w-full"
+        event="pointerup"
+        action="toggle:paused"
+      />
+      <Gesture
+        className="absolute inset-0 z-0 block h-full w-full"
+        event="dblpointerup"
+        action="toggle:fullscreen"
+      />
+      <Gesture
+        className="absolute left-0 top-0 z-10 block h-full w-1/5"
+        event="dblpointerup"
+        action="seek:-10"
+      />
+      <Gesture
+        className="absolute right-0 top-0 z-10 block h-full w-1/5"
+        event="dblpointerup"
+        action="seek:10"
+      />
+    </>
+  )
+}
+
+export function GesturesNoFullscreen() {
   return (
     <>
       <Gesture

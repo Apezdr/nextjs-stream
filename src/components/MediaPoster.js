@@ -1,7 +1,8 @@
 'use client'
 import { memo, useEffect, useState } from 'react'
-import { buildURL, classNames, generateColors, getFullImageUrl } from '../utils'
+import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '../utils'
 import HD4kBanner from '../../public/4kBanner.png'
+import hdr10PlusLogo from '../../public/HDR10+_Logo_light.svg'
 import Image from 'next/image'
 import useWatchedWidth from './useWatchedWidth'
 import { TotalRuntime } from './watched'
@@ -23,7 +24,7 @@ function _mediaPoster({
   const [isClient, setIsClient] = useState(false)
 
   // Determine whether to use movie or TV show data
-  const _media = movie || tv || media
+  const _media = media || movie || tv
   const watchedWidth = useWatchedWidth(_media.metadata, _media)
 
   useEffect(() => {
@@ -37,20 +38,18 @@ function _mediaPoster({
       ? _media.season_poster
       : _media.metadata?.poster_path
         ? getFullImageUrl(_media.metadata.poster_path)
-        : buildURL(`/sorry-image-not-available.jpg`)
+        : `/sorry-image-not-available.jpg`
 
   const posterBlurhash = _media.posterBlurhash || _media.seasonPosterBlurhash || false
 
-  let dims, is4k, is1080p
-  if (_media.dimensions) {
-    dims = _media?.dimensions?.split('x')
-    is4k = parseInt(dims[0]) >= 3840 || parseInt(dims[1]) >= 2160
-    is1080p = parseInt(dims[0]) >= 1920 || parseInt(dims[1]) >= 1080
-  }
+  // Determine the resolution of the media
+  const { res_width, is4k, is1080p } = getResolutionLabel(_media?.dimensions ?? null)
+
+  let hdr = _media?.hdr ? _media.hdr : false
 
   return (
     <div
-      className={classNames(contClassName, 'watched-border relative')}
+      className={classNames(contClassName, 'watched-border', watchedWidth ? 'relative' : '')}
       style={isClient ? { '--watched-width': `${watchedWidth.toFixed(2)}%` } : {}}
     >
       {watchedWidth > 90 && (
@@ -98,7 +97,7 @@ function _mediaPoster({
           className={classNames(className, 'object-cover group-hover:opacity-75')}
           priority={imagePriority}
         />
-      ) : (
+      ) : posterURL ? (
         <Image
           src={posterURL}
           alt={alt ?? _media.title}
@@ -108,9 +107,19 @@ function _mediaPoster({
           className={classNames(className, 'object-cover group-hover:opacity-75')}
           priority={imagePriority}
         />
+      ) : (
+        <Image
+          src={'/sorry-image-not-available.jpg'}
+          alt={alt ?? _media.title}
+          quality={quality}
+          width={size.w}
+          height={size.h}
+          className={classNames(className, 'object-cover group-hover:opacity-75')}
+          priority={imagePriority}
+        />
       )}
       {_media.dimensions && (
-        <div className="flex bg-gray-900 justify-center content-center flex-wrap pb-[23px] pt-3 text-white transition-opacity duration-700 inset-0 text-xs h-3.5 opacity-75 group-hover:opacity-100 z-10 relative">
+        <div className="flex flex-col items-center bg-gray-900 justify-center content-center pb-4 pt-1 text-white transition-opacity duration-700 inset-0 text-xs h-auto opacity-75 group-hover:opacity-100 z-10 relative">
           <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
             {is4k ? (
               <Image
@@ -123,9 +132,18 @@ function _mediaPoster({
             ) : is1080p ? (
               <span className="text-yellow-500 font-bold">1080p</span>
             ) : (
-              dims[0] + 'p'
+              res_width + 'p'
             )}
           </div>
+          {hdr ? (
+            <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
+            {hdr === 'HDR10' ? (
+            <Image src={hdr10PlusLogo} alt={'HDR10 Logo'} className="h-4 w-auto" loading="lazy" />  
+            ) : (
+            <>{hdr}</>
+            )}
+          </div>
+          ) : null}
         </div>
       )}
     </div>

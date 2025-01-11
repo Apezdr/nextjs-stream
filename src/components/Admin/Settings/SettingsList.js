@@ -13,6 +13,7 @@ export default function SettingsList({ settings }) {
     fileImport,
     fileServerURL,
     fileServerPrefixPath,
+    servers,
     organizrURL,
     nodeJSURL,
     syncTVURL,

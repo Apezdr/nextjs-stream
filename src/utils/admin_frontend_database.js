@@ -33,6 +33,8 @@ export async function updateMediaUpdates(title, type) {
     .db('Media')
     .collection(collectionName)
     .updateOne({ title }, { $set: { lastUpdated: new Date() } }, { upsert: true })
+
+  return true
 }
 
 /**

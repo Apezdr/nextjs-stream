@@ -3,12 +3,12 @@
 import React from 'react'
 import useSWR from 'swr'
 import BannerWithVideo from './BannerWithVideo'
-import { buildURL, fetcher } from '@src/utils'
+import { fetcher } from '@src/utils'
 import Loading from '@src/app/loading'
 
 const BannerWithVideoContainer = () => {
   // Use useSWR to fetch data with a 4-second refresh interval
-  const { data: bannerMediaList, error } = useSWR(buildURL('/api/authenticated/banner'), fetcher, {
+  const { data: bannerMediaList, error } = useSWR('/api/authenticated/banner', fetcher, {
     refreshInterval: 4000, // 4 seconds
     dedupingInterval: 4000, // Prevents duplicate requests within this interval
   })

@@ -23,12 +23,14 @@ import {
   ChevronDownIcon as ChevronDownIconOutline,
   Cog8ToothIcon,
 } from '@heroicons/react/24/outline'
-import { ArrowLeftIcon, ChevronDownIcon, MagnifyingGlassIcon } from '@heroicons/react/20/solid'
+import { ArrowLeftIcon, ChevronDownIcon, InformationCircleIcon, MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import Link from 'next/link'
 import { siteTitle } from '@src/utils/config'
 import { buildURL } from '@src/utils'
 import { useRouter } from 'next/navigation'
 import Logo from '../../logo'
+import { MinimalServerStats } from '@components/Admin/Stats/ServerStats'
+import { MinimalizedServerProcesses } from '@components/Admin/Stats/ServerProcesses'
 
 const navigation = [
   { name: 'Dashboard', href: '/admin', icon: HomeIcon },
@@ -44,6 +46,7 @@ const navigation = [
   },
   { name: 'Calendar', href: '/admin/calendar', icon: CalendarIcon },
   { name: 'Settings', href: '/admin/settings', icon: Cog8ToothIcon },
+  { name: 'Logs', href: '/admin/logs', icon: InformationCircleIcon },
 ]
 const teams = [
   { id: 1, name: 'Heroicons', href: '#', initial: 'H', current: false },
@@ -170,7 +173,6 @@ export default function AdminLayout({ children }) {
     return null // or a loading spinner
   }
   return (
-    <>
       <div>
         <Dialog open={sidebarOpen} onClose={setSidebarOpen} className="relative z-50 lg:hidden">
           <DialogBackdrop
@@ -231,6 +233,14 @@ export default function AdminLayout({ children }) {
                       </ul>
                     </li>
                     <li className="mt-auto">
+                      <div className="px-2">
+                        <div className="text-xs font-semibold leading-6 text-gray-400 mb-2">Server Processes</div>
+                        <MinimalizedServerProcesses />
+                      </div>
+                      <div className="px-2">
+                        <div className="text-xs font-semibold leading-6 text-gray-400 mb-2">Server Status</div>
+                        <MinimalServerStats />
+                      </div>
                       <a
                         href="/list"
                         className="group -mx-2 flex gap-x-3 rounded-md p-2 text-sm font-semibold leading-6 text-gray-400 hover:bg-gray-800 hover:text-white"
@@ -282,6 +292,14 @@ export default function AdminLayout({ children }) {
                   </ul>
                 </li>
                 <li className="mt-auto">
+                  <div className="px-2">
+                    <div className="text-xs font-semibold leading-6 text-gray-400 mb-2">Server Processes</div>
+                    <MinimalizedServerProcesses />
+                  </div>
+                  <div className="px-2">
+                    <div className="text-xs font-semibold leading-6 text-gray-400 mb-2">Server Status</div>
+                    <MinimalServerStats />
+                  </div>
                   <a
                     href="/list"
                     className="group -mx-2 flex gap-x-3 rounded-md p-2 text-sm font-semibold leading-6 text-gray-400 hover:bg-gray-800 hover:text-white"
@@ -384,6 +402,5 @@ export default function AdminLayout({ children }) {
           </main>
         </div>
       </div>
-    </>
   )
 }

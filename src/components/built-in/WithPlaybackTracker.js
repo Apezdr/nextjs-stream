@@ -23,6 +23,12 @@ export default function WithPlayBackTracker({ videoURL }) {
   }, [remote, canPlay, videoURL])
 
   useEffect(() => {
+    // Ensure import.meta.url is valid
+    if (typeof import.meta.url !== 'string') {
+      console.error('Invalid import.meta.url')
+      return
+    }
+
     // Initialize the web worker
     updatePlaybackWorkerRef.current = new Worker(
       new URL('./updatePlaybackWorker.js', import.meta.url)

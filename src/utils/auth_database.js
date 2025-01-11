@@ -10,7 +10,7 @@ import {
   processWatchedDetails,
   tvShowProjectionFields,
 } from '@src/utils/auth_utils'
-import { buildURL, getFullImageUrl } from '@src/utils'
+import { getFullImageUrl } from '@src/utils'
 
 export async function getVideosWatched() {
   const session = await auth()
@@ -50,7 +50,7 @@ export const fetchBannerMedia = async () => {
     // Fetch metadata for backdropBlurhash if available
     for (let item of media) {
       if (item && item.backdropBlurhash) {
-        const blurhashString = await fetchMetadataMultiServer(item.backdropBlurhashSource, item.backdropBlurhash)
+        const blurhashString = await fetchMetadataMultiServer(item.backdropBlurhashSource, item.backdropBlurhash, "blurhash")
         if (blurhashString.error) {
           return { error: blurhashString.error, status: blurhashString.status }
         }
@@ -66,7 +66,7 @@ export const fetchBannerMedia = async () => {
 
     return media // Return the array of media objects
   } catch (error) {
-    return { error: 'Failed to fetch media', status: 500 }
+    return { error: 'Failed to fetch media', details: error.message, status: 500 }
   }
 }
 
@@ -93,7 +93,7 @@ export const fetchRandomBannerMedia = async () => {
     // Fetch metadata for backdropBlurhash if available
     const item = media[0]
     if (item && item.backdropBlurhash) {
-      const blurhashString = await fetchMetadataMultiServer(item.backdropBlurhashSource, item.backdropBlurhash)
+      const blurhashString = await fetchMetadataMultiServer(item.backdropBlurhashSource, item.backdropBlurhash, "blurhash")
       if (blurhashString.error) {
         return { error: blurhashString.error, status: blurhashString.status }
       }
@@ -129,11 +129,11 @@ export async function addCustomUrlToMedia(mediaArray, type) {
       if (!media.posterURL) {
         returnObj.posterURL = media.metadata?.poster_path
           ? getFullImageUrl(media.metadata.poster_path, 'w780')
-          : buildURL(`/sorry-image-not-available.jpg`)
+          : `/sorry-image-not-available.jpg`
       }
       if (media.posterBlurhash) {
         returnObj.posterBlurhash = await fetchMetadataMultiServer(
-          media.blurhashSource,
+          media.posterBlurhashSource,
           media.posterBlurhash,
           'blurhash',
           type,
@@ -177,8 +177,9 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
           backdropBlurhash: 1,
           posterSource: 1,
           backdropSource: 1,
-          blurhashSource: 1,
+          posterBlurhashSource: 1,
           backdropBlurhashSource: 1,
+          hdr: 1,
           'metadata.poster_path': 1,
           'metadata.trailer_url': 1,
           'metadata.overview': 1,
@@ -191,7 +192,7 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
           backdrop: 1,
           backdropBlurhash: 1,
           backdropSource: 1,
-          blurhashSource: 1,
+          posterBlurhashSource: 1,
           backdropBlurhashSource: 1,
           'metadata.genres': 1,
           'metadata.networks': 1,
@@ -230,7 +231,7 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
       let poster =
         record.posterURL ||
         getFullImageUrl(record.metadata?.poster_path) ||
-        buildURL(`/sorry-image-not-available.jpg`)
+        `/sorry-image-not-available.jpg`
       if (!poster) {
         poster = null
       }
@@ -239,7 +240,7 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
       }
       if (record.posterBlurhash) {
         record.posterBlurhash = await fetchMetadataMultiServer(
-          record.blurhashSource,
+          record.posterBlurhashSource,
           record.posterBlurhash,
           'blurhash',
           type,
@@ -302,21 +303,15 @@ export async function getRecentlyWatchedForUser({
 
     const validPage = Math.max(page, 0); // Ensure page is at least 0
 
-    const baseAggregation = [
-      { $match: { userId: user._id } },
-      { $unwind: '$videosWatched' },
-      { $sort: { 'videosWatched.lastUpdated': -1 } },
-    ];
-
     if (countOnly) {
       // Fetch count of media that exists in the database
       const countAggregation = [
-        ...baseAggregation,
-        { $project: { videoId: '$videosWatched.videoId' } },
+        { $match: { userId: user._id } },
+        { $unwind: '$videosWatched' },
         {
           $lookup: {
             from: 'Movies',
-            localField: 'videoId',
+            localField: 'videosWatched.videoId',
             foreignField: 'videoURL',
             as: 'movies',
           },
@@ -324,7 +319,7 @@ export async function getRecentlyWatchedForUser({
         {
           $lookup: {
             from: 'TV',
-            localField: 'videoId',
+            localField: 'videosWatched.videoId',
             foreignField: 'seasons.episodes.videoURL',
             as: 'tvShows',
           },
@@ -347,11 +342,10 @@ export async function getRecentlyWatchedForUser({
       return countResult.length > 0 ? countResult[0].total : 0;
     }
 
-    // For non-count requests, filter out media not in the database
+    // For non-count requests, filter out media not in the database before pagination
     const dataAggregation = [
-      ...baseAggregation,
-      { $skip: validPage * limit },
-      { $limit: limit },
+      { $match: { userId: user._id } },
+      { $unwind: '$videosWatched' },
       {
         $lookup: {
           from: 'Movies',
@@ -376,6 +370,9 @@ export async function getRecentlyWatchedForUser({
           ],
         },
       },
+      { $sort: { 'videosWatched.lastUpdated': -1 } }, // Sort after filtering
+      { $skip: validPage * limit },
+      { $limit: limit },
       {
         $group: {
           _id: '$userId',
@@ -440,7 +437,7 @@ export async function getRecentlyAddedMedia({ page = 0, limit = 12, countOnly = 
     const client = await clientPromise
     const db = client.db('Media')
 
-    // Define projection fields for Movies and TV
+    // Define projection fields for Movies
     const movieProjectionFields = {
       _id: 1,
       title: 1,
@@ -449,12 +446,14 @@ export async function getRecentlyAddedMedia({ page = 0, limit = 12, countOnly = 
       posterBlurhash: 1,
       backdrop: 1,
       backdropBlurhash: 1,
+      hdr: 1,
       mediaLastModified: 1,
-      blurhashSource: 1,
+      posterBlurhashSource: 1,
       backdropBlurhashSource: 1,
       // Add other necessary fields
     }
 
+    // Define projection fields for TV Shows, including computation for latestMediaLastModified
     const tvShowProjectionFields = {
       _id: 1,
       title: 1,
@@ -463,10 +462,20 @@ export async function getRecentlyAddedMedia({ page = 0, limit = 12, countOnly = 
       posterBlurhash: 1,
       backdrop: 1,
       backdropBlurhash: 1,
-      blurhashSource: 1,
+      posterBlurhashSource: 1,
       backdropBlurhashSource: 1,
-      'seasons.episodes.mediaLastModified': 1,
       // Add other necessary fields
+      latestMediaLastModified: {
+        $max: {
+          $map: {
+            input: "$seasons",
+            as: "season",
+            in: {
+              $max: "$$season.episodes.mediaLastModified"
+            }
+          }
+        }
+      }
     }
 
     const pipeline = [
@@ -486,10 +495,14 @@ export async function getRecentlyAddedMedia({ page = 0, limit = 12, countOnly = 
       {
         $addFields: {
           mediaLastModified: {
-            $ifNull: ['$mediaLastModified', '$seasons.episodes.mediaLastModified'],
+            $ifNull: ['$mediaLastModified', '$latestMediaLastModified'],
           },
           type: {
-            $cond: [{ $ifNull: ['$mediaLastModified', false] }, 'movie', 'tv'],
+            $cond: [
+              { $ifNull: ['$mediaLastModified', false] },
+              'movie',
+              'tv',
+            ],
           },
         },
       },
@@ -506,7 +519,7 @@ export async function getRecentlyAddedMedia({ page = 0, limit = 12, countOnly = 
 
     const combinedMedia = await db.collection('Movies').aggregate(pipeline).toArray()
 
-    // Separate movies and tv shows
+    // Separate movies and TV shows
     const movies = combinedMedia.filter((item) => item.type === 'movie')
     const tvShows = combinedMedia.filter((item) => item.type === 'tv')
 

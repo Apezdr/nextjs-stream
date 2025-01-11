@@ -5,7 +5,7 @@
 
 :root {
   --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 0, 0, 255;
+  --background-start-rgb: 59 130 246;
   --background-end-rgb: 0, 136, 181;
   --background-end-watching-rgb: 0, 0, 0;
 }

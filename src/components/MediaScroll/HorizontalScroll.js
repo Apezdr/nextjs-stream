@@ -11,9 +11,8 @@ import {
   Fragment,
 } from 'react'
 import useSWR, { useSWRConfig, preload } from 'swr'
-import { buildURL, classNames, fetcher } from '@src/utils'
+import { classNames, fetcher } from '@src/utils'
 import { ChevronDoubleLeftIcon, ChevronDoubleRightIcon } from '@heroicons/react/20/solid'
-import SkeletonCard from '@components/MediaScroll/SkeletonCard'
 import Card from './Card'
 import { motion, AnimatePresence } from 'framer-motion'
 import { v7 as uuidv7 } from 'uuid'
@@ -115,7 +114,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     if (itemsPerPage) params.append('limit', itemsPerPage)
     if (sortOrder) params.append('sortOrder', sortOrder)
     params.append('page', pageIndex)
-    return buildURL(`/api/authenticated/horizontal-list?${params.toString()}`)
+    return `/api/authenticated/horizontal-list?${params.toString()}`
   }
 
   const apiEndpoint = buildPrefetchURL(currentPage)

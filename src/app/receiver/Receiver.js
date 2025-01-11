@@ -12,7 +12,7 @@ export default function ReceiverComponent() {
   useEffect(() => {
     async function fetchConfig() {
       try {
-        const response = await fetch(buildURL('/api/getserverconfig'), {
+        const response = await fetch('/api/getserverconfig', {
           headers: {
             'Content-Type': 'application/json',
           }

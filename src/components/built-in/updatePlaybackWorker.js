@@ -1,9 +1,7 @@
-import { buildURL } from '@src/utils'
-
 self.addEventListener('message', (e) => {
   const { videoURL, currentTime } = e.data
 
-  fetch(buildURL('/api/authenticated/sync/updatePlayback'), {
+  fetch('/api/authenticated/sync/updatePlayback', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

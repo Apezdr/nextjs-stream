@@ -69,7 +69,7 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex, onVideoReady 
         controlsDelay={6000}
         streamType="on-demand"
         playsInline
-        load="idle"
+        load="eager"
         aspectRatio="16/9"
         fullscreenOrientation="landscape"
         className="absolute inset-0 w-full h-full select-none pointer-events-none z-0"

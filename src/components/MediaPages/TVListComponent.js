@@ -8,7 +8,6 @@ import { Suspense } from 'react'
 import Loading from '@src/app/loading'
 import { getAvailableMedia, getLastUpdatedTimestamp } from '@src/utils/database'
 import TVList from './cache/TVList'
-//export const dynamic = 'force-dynamic'
 
 export default async function TVListComponent() {
   const session = await auth()

@@ -5,6 +5,7 @@ dotenv.config()
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  output: 'standalone',
   // The compiler reduces the amount of manual memoization
   // developers have to do through APIs such as useMemo and useCallback
   // - making code simpler, easier to maintain, and less error prone.
@@ -22,30 +23,35 @@ const nextConfig = {
     ignoreDuringBuilds: false,
   },
   images: {
+    formats: ['image/avif', 'image/webp'],
     minimumCacheTTL: 259200,
-    remotePatterns: process.env.REMOTE_PATTERNS
-      ? process.env.REMOTE_PATTERNS.split(',').map((pattern) => {
-          const [protocol, hostname] = pattern.trim().split('://')
-          return { protocol, hostname }
-        })
-      : [
-          {
-            protocol: 'https',
-            hostname: 'image.tmdb.org',
-          },
-          {
-            protocol: 'https',
-            hostname: 'm.media-amazon.com',
-          },
-          {
-            protocol: 'https',
-            hostname: 'iconape.com',
-          },
-          {
-            protocol: 'https',
-            hostname: 'www.freeiconspng.com',
-          },
-        ],
+    remotePatterns: [{
+      protocol: 'https',
+      hostname: '**', // Allows all hosts
+    }],
+    // remotePatterns: process.env.REMOTE_PATTERNS
+    //   ? process.env.REMOTE_PATTERNS.split(',').map((pattern) => {
+    //       const [protocol, hostname] = pattern.trim().split('://')
+    //       return { protocol, hostname }
+    //     })
+    //   : [
+    //       {
+    //         protocol: 'https',
+    //         hostname: 'image.tmdb.org',
+    //       },
+    //       {
+    //         protocol: 'https',
+    //         hostname: 'm.media-amazon.com',
+    //       },
+    //       {
+    //         protocol: 'https',
+    //         hostname: 'iconape.com',
+    //       },
+    //       {
+    //         protocol: 'https',
+    //         hostname: 'www.freeiconspng.com',
+    //       },
+    //     ],
   },
   // Additional Next.js configurations can be added here
   /* webpack(config) {

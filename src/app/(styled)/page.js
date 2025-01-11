@@ -1,11 +1,32 @@
+const dynamic = 'force-dynamic'
 import Image from 'next/image'
 import Link from 'next/link'
 import { auth } from '../../lib/auth'
 import SignOutButton from '@components/SignOutButton'
 import SignInButtons from '@components/SignInButtons'
+import ServerStatus from '@components/Login/Status'
+import { httpGet } from '@src/lib/httpHelper'
+import { getServer } from '@src/utils/config'
+import { getServerConfig } from '../api/getserverconfig/config'
+import { buildURL } from '@src/utils'
 
 export default async function Home() {
-  const session = await auth()
+  let { server } = getServerConfig();
+  let _serverStatus = null;
+  let error = null;
+  try {
+    _serverStatus = await fetch(buildURL(`/api/status`), { cache: 'no-store' });
+    _serverStatus = await _serverStatus.json();
+  } catch (error) {
+    console.error('Error fetching server status:', error);
+    _serverStatus = { ok: false }; // Set to a default value if there's an error
+  }
+
+  let session = null;
+  if (_serverStatus?.ok) {
+    session = await auth();
+  }
+
   return (
     <main className="sm:mx-auto sm:max-w-7xl sm:px-6 lg:px-8">
       <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
@@ -70,6 +91,7 @@ export default async function Home() {
                 </radialGradient>
               </defs>
             </svg>
+            {_serverStatus?.ok ? null : ServerStatus({ _serverStatus })}
           </div>
         </div>
       </div>

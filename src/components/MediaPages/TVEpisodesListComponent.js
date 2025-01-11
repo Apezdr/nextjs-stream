@@ -13,7 +13,10 @@ import Loading from '@src/app/loading'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { CaptionSVG } from '@components/SVGIcons'
 import HD4kBanner from '../../../public/4kBanner.png'
+import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
 import Image from 'next/image'
+import { getServer } from '@src/utils/config'
+import { generateClipVideoURL } from '@src/utils/auth_utils'
 export const dynamic = 'force-dynamic'
 
 const variants = {
@@ -139,6 +142,16 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                   is4k = parseInt(dims[0]) >= 3840 || parseInt(dims[1]) >= 2160
                   is1080p = parseInt(dims[0]) >= 1920 || parseInt(dims[1]) >= 1080
                 }
+                let hdr
+                if (episode.hdr) {
+                  hdr = episode.hdr
+                }
+
+                // ex. 
+                // sanitized.clipVideoURL = `${nodeJSURL}/videoClip/${type}/${title}${item?.metadata?.season_number ? `/${item?.metadata.season_number}${item?.episodeNumber ? `/${item?.episodeNumber}` : ''}` : ''}?start=${start}&end=${end}`
+                if (episode.videoURL) {
+                  episode.clipVideoURL = generateClipVideoURL(episode, 'tv', showTitle)
+                }
 
                 return (
                   <li key={episode.title + '-AnimationCont'} className="relative min-w-[250px]">
@@ -157,7 +170,7 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                             <div className="relative block mx-auto overflow-hidden rounded-lg bg-gray-800 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-100">
                               <TVShowThumbnail episode={episode} metadata={episodeMetadata} />
                               {episode.dimensions && (
-                                <div className="flex bg-gray-900 justify-center content-center flex-wrap pb-[18px] pt-3 text-white transition-opacity duration-700 inset-0 text-xs h-3.5 opacity-75 group-hover:opacity-100 relative z-10">
+                                <div className="flex gap-3 bg-gray-900 justify-center content-center flex-wrap pb-[18px] pt-3 text-white transition-opacity duration-700 inset-0 text-xs h-3.5 opacity-75 group-hover:opacity-100 relative z-10">
                                   <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
                                     {is4k ? (
                                       <Image
@@ -173,6 +186,15 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                                       dims[0] + 'p'
                                     )}
                                   </div>
+                                  {hdr ? (
+                                    <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
+                                    {hdr === 'HDR10' ? (
+                                    <Image src={hdr10PlusLogo} alt={'HDR10 Logo'} className="h-4 w-auto" loading="lazy" />  
+                                    ) : (
+                                    <>{hdr}</>
+                                    )}
+                                  </div>
+                                  ) : null}
                                 </div>
                               )}
                               <div className="inset-0 pt-2 pb-4 text-center rounded-b-lg text-sm font-medium text-gray-200 group-hover:text-gray-300 relative z-10">
@@ -211,7 +233,7 @@ async function getAndUpdateMongoDB(showTitle, seasonNumber) {
           posterURL: 1,
           posterBlurhash: 1,
           posterSource: 1,
-          blurhashSource: 1,
+          posterBlurhashSource: 1,
           'seasons.seasonNumber': 1,
           'seasons.title': 1,
           'seasons.season_poster': 1,
@@ -244,7 +266,7 @@ async function getAndUpdateMongoDB(showTitle, seasonNumber) {
     metadata: tvShow.metadata, // Include the show's metadata
     currentSeasonMetadata: tvShow.seasons[seasonIndex].metadata, // Include the metadata for the current season
     seasons: tvShow.seasons, // Include the list of all seasons
-    blurhashSource: tvShow.blurhashSource, // Include the blurhash source for the show
+    posterBlurhashSource: tvShow.posterBlurhashSource, // Include the blurhash source for the show
   }
 
   return returnObject

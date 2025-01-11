@@ -50,6 +50,11 @@ export function getFullImageUrl(imagePath, size = 'w780') {
 export function buildURL(url) {
   const isDevelopment = process.env.NODE_ENV === 'development'
   const baseURL = process.env.NEXT_PUBLIC_BASE_URL
+
+  // if (typeof window !== 'undefined') {
+  //   debugger; // Add debugger break if this is run in the client
+  // }
+
   return `${
     isDevelopment
       ? baseURL
@@ -140,4 +145,38 @@ export function formatDateToEST(dateStr) {
     .join('')
 
   return formattedDate
+}
+
+/**
+ * Determines the resolution label for the given dimensions.
+ * @param {string} dims - The dimensions string in the format 'WIDTHxHEIGHT'.
+ * @returns {string|object} The resolution label or an object with boolean flags.
+ */
+export const getResolutionLabel = (dims) => {
+  if (!dims)
+    return {
+      dims: null,
+      res_width: null,
+      is4k: false,
+      is1080p: false,
+      is720p: false,
+      is480p: false,
+    }
+  const [width] = dims.split('x').map(Number)
+
+  const resolutions = {
+    '4K UHD': width >= 3800 && width <= 3900,
+    '1080p': width >= 1900 && width <= 2000,
+    '720p': width >= 1200 && width <= 1300,
+    '480p': width >= 600 && width <= 700,
+  }
+
+  return {
+    dims: dims,
+    res_width: width,
+    is4k: resolutions['4K UHD'],
+    is1080p: resolutions['1080p'],
+    is720p: resolutions['720p'],
+    is480p: resolutions['480p'],
+  }
 }

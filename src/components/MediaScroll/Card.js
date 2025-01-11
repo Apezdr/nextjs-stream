@@ -282,7 +282,7 @@ const Card = ({
             <div className="relative w-full h-full">
               {logo && (
                 <Image
-                  quality={25}
+                  quality={50}
                   fill
                   src={logo}
                   alt={`${title} Logo`}
@@ -302,7 +302,7 @@ const Card = ({
               )}
               <Image
                 ref={imageRef}
-                quality={25}
+                quality={50}
                 fill
                 src={posterURL}
                 placeholder={posterBlurhash ? 'blur' : 'empty'}

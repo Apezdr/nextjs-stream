@@ -4,6 +4,7 @@ import clientPromise from '@src/lib/mongodb'
 import {
   fileServerPrefixPath,
   fileServerURLWithPrefixPath,
+  getAllServers,
   nodeJSURL,
   organizrURL,
   syncMoviesURL,
@@ -44,14 +45,16 @@ async function getServerSettings() {
   const lastSyncTime = await getLastSynced()
   const fileImportSettings = await getFileServerImportSettings()
   const automaticSyncEnabled = await autoSync.getAutoSync()
+  const servers = getAllServers()
   const webhookIds = process.env.VALID_WEBHOOK_IDS
 
   return {
     webhookIds: webhookIds,
     fileImport: fileImportSettings,
     // Urls
-    fileServerURL: fileServerURLWithPrefixPath(''),
-    fileServerPrefixPath: fileServerPrefixPath,
+    servers: servers,
+    //fileServerURL: fileServerURLWithPrefixPath(''),
+    //fileServerPrefixPath: fileServerPrefixPath,
     organizrURL: organizrURL,
     nodeJSURL: nodeJSURL,
     syncTVURL: syncTVURL,

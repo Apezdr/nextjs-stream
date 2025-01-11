@@ -1,0 +1,36 @@
+# ========== Stage 1: Dependencies ========== #
+FROM node:22-alpine3.19 AS deps
+
+WORKDIR /app
+
+# Install Docker CLI if needed (optional)
+RUN apk add --no-cache docker-cli
+
+# Copy package files and install dependencies
+COPY package.json package-lock.json* ./
+RUN npm install -g npm@10.3.0
+RUN npm install --force
+
+# ========== Stage 2: Final Image ========== #
+FROM node:22-alpine3.19 AS runtime
+
+WORKDIR /app
+
+# Copy all the dependencies from stage 1
+COPY --from=deps /app/node_modules /app/node_modules
+COPY --from=deps /usr/local/lib/node_modules /usr/local/lib/node_modules
+
+# Copy app source
+COPY . .
+
+# We'll use a startup script to build at runtime
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 3000
+
+# Use the entrypoint script that will handle building & starting
+ENTRYPOINT [ "/usr/local/bin/entrypoint.sh" ]
+
+# Default command (override in docker-compose or docker run if needed)
+CMD ["npm", "start"]

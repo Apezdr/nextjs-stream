@@ -1,4 +1,4 @@
-import { buildURL, formatDateToEST, getFullImageUrl } from '@src/utils'
+import { formatDateToEST, getFullImageUrl } from '@src/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { getServer } from './config'
 
@@ -11,8 +11,9 @@ export const movieProjectionFields = {
   backdropBlurhash: 1,
   title: 1,
   dimensions: 1,
-  blurhashSource: 1,
+  posterBlurhashSource: 1,
   backdropBlurhashSource: 1,
+  hdr: 1,
   'metadata.overview': 1,
   'metadata.release_date': 1,
   'metadata.genres': 1,
@@ -28,7 +29,7 @@ export const tvShowProjectionFields = {
   backdropBlurhash: 1,
   title: 1,
   posterSource: 1,
-  blurhashSource: 1,
+  posterBlurhashSource: 1,
   backdropBlurhashSource: 1,
   'metadata.overview': 1,
   'metadata.last_air_date': 1,
@@ -152,7 +153,7 @@ async function extractTVShowDetailsFromMap(tvDetails, videoId) {
   if (tvDetails.posterBlurhash) {
     returnData.posterBlurhash = tvDetails.posterBlurhash
   }
-  
+
   if (episode.thumbnailBlurhash) {
     returnData.thumbnailBlurhash = episode.thumbnailBlurhash
   }
@@ -161,12 +162,16 @@ async function extractTVShowDetailsFromMap(tvDetails, videoId) {
     returnData.thumbnailSource = episode.thumbnailSource
   }
 
+  if (episode.hdr) {
+    returnData.hdr = episode.hdr
+  }
+
   if (tvDetails.backdropBlurhash) {
     returnData.backdropBlurhash = tvDetails.backdropBlurhash
   }
 
-  if (tvDetails.blurhashSource) {
-    returnData.blurhashSource = tvDetails.blurhashSource
+  if (tvDetails.posterBlurhashSource) {
+    returnData.posterBlurhashSource = tvDetails.posterBlurhashSource
   }
 
   if (tvDetails.backdropBlurhashSource) {
@@ -218,7 +223,7 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
     let backdropBlurhash = false
     let thumbnailBlurhash = false
     if (!poster) {
-      poster = buildURL(`/sorry-image-not-available.jpg`)
+      poster = `/sorry-image-not-available.jpg`
     }
     if (record._id ?? record.id) {
       record.id = record._id ? record._id.toString() : record.id.toString()
@@ -227,18 +232,40 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
 
     const metadataPromises = []
     if (record.posterBlurhash) {
-      metadataPromises.push(fetchMetadataMultiServer(record.blurhashSource, record.posterBlurhash, 'blurhash', record.title, type))
+      metadataPromises.push(
+        fetchMetadataMultiServer(
+          record.posterBlurhashSource,
+          record.posterBlurhash,
+          'blurhash',
+          record.title,
+          type
+        )
+      )
       delete record.posterBlurhash
     }
 
     if (record.backdropBlurhash) {
-      metadataPromises.push(fetchMetadataMultiServer(record.backdropBlurhashSource, record.backdropBlurhash, 'blurhash', record.title, type))
+      metadataPromises.push(
+        fetchMetadataMultiServer(
+          record.backdropBlurhashSource,
+          record.backdropBlurhash,
+          'blurhash',
+          record.title,
+          type
+        )
+      )
       delete record.backdropBlurhash
     }
 
     if (record?.episode?.thumbnailBlurhash) {
       metadataPromises.push(
-        fetchMetadataMultiServer(record?.episode?.thumbnailSource, record?.episode?.thumbnailBlurhash, 'blurhash', record.title, type)
+        fetchMetadataMultiServer(
+          record?.episode?.thumbnailSource,
+          record?.episode?.thumbnailBlurhash,
+          'blurhash',
+          record.title,
+          type
+        )
       )
       delete record?.episode?.thumbnailBlurhash
     }
@@ -278,6 +305,7 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
             thumbnailBlurhash: thumbnailBlurhash,
             captionURLs: record.episode.captionURLs,
             metadata: record.episode.metadata,
+            hdr: record.episode.hdr,
           },
         },
       }
@@ -294,6 +322,7 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
         title: record.title || record.metadata?.title || null,
         type: type,
         metadata: record.metadata || null,
+        hdr: record.hdr || null,
         media: record,
       }
     }
@@ -325,6 +354,7 @@ export async function sanitizeCardData(item, popup = false) {
     link,
     logo,
     metadata,
+    cast,
     // tv
     media,
   } = item
@@ -344,39 +374,66 @@ export async function sanitizeCardData(item, popup = false) {
   // tv
   if (media?.seasonNumber) sanitized.seasonNumber = media?.seasonNumber
   if (media?.episode?.episodeNumber) sanitized.episodeNumber = media?.episode?.episodeNumber
+  // pre-aggregate the cast information from multiple places
+  if (cast) sanitized.cast = cast
+
+  // General
+  if (media?.hdr || item?.hdr) sanitized.hdr = media?.hdr ?? item?.hdr
 
   if (popup) {
     if (metadata?.trailer_url) sanitized.trailer_url = metadata?.trailer_url
     if (item?.thumbnail) sanitized.thumbnail = item?.thumbnail
-    if (item?.thumbnailBlurhash) sanitized.thumbnailBlurhash = await fetchMetadataMultiServer(item?.thumbnailBlurhash)
+    if (item?.thumbnailBlurhash)
+      sanitized.thumbnailBlurhash = await fetchMetadataMultiServer(item?.thumbnailBlurhashSource, item?.thumbnailBlurhash, 'blurhash', 'tv', title)
     // Description
     if (metadata?.overview) sanitized.description = metadata?.overview
     if (metadata?.name) sanitized.title = metadata?.name
     // Because the Node Server requires a video to clip from, we validate the videoURL
-      if (item.videoURL) {
-        const maxDuration = 30; // 30 seconds
-        const videoLength = Math.floor(item.length / 1000); // Convert ms to seconds
-        let start = 3200
-        let end = start + maxDuration
-      
-        if (videoLength < end || start >= videoLength) {
-          const oneThirdLength = Math.floor(videoLength / 3)
-          start = Math.max(Math.min(oneThirdLength, videoLength - maxDuration - 15), 0)
-          end = Math.min(start + maxDuration, videoLength)
-          
-          // Ensure minimum 2 second difference and valid ranges
-          if (end - start <= 2 || end >= videoLength) {
-            start = 0
-            end = Math.min(maxDuration, videoLength)
-          }
-        }
+    if (item.videoURL) {
+      sanitized.clipVideoURL = generateClipVideoURL(item, type, title)
+    }
+  }
+  return sanitized
+}
 
-        const nodeJSURL = getServer(item?.videoSource || 'default').syncEndpoint
-      
-        sanitized.clipVideoURL = `${nodeJSURL}/videoClip/${type}/${title}${item?.metadata?.season_number ? `/${item?.metadata.season_number}${item?.episodeNumber ? `/${item?.episodeNumber}` : ''}` : ''}?start=${start}&end=${end}`
+/**
+ * Generates a clip video URL with adjusted start and end times.
+ *
+ * @param {Object} item - The media item containing video information.
+ * @param {string} type - The type of media.
+ * @param {string} title - The title of the media.
+ * @returns {string|null} - The generated clip video URL or null if videoURL is missing.
+ */
+export function generateClipVideoURL(item, type, title) {
+  if (!item?.videoURL) return null
+
+    const maxDuration = 30 // 30 seconds
+    const videoLength = Math.floor(item['length'] / 1000) // Convert ms to seconds
+    let start = 3200 // Default start time
+    let end = start + maxDuration // Default end time
+
+    // Adjust start/end if video is shorter than default timings
+    if (videoLength <= end || start >= videoLength - 300) {
+      // Ensure at least 5 minutes for credits if possible
+      const oneThirdLength = Math.floor(videoLength / 3)
+      start = Math.max(
+        Math.min(oneThirdLength, videoLength - maxDuration - 300), // Avoid credits
+        0
+      )
+      end = Math.min(start + maxDuration, videoLength)
+
+      // Ensure valid range and minimum difference
+      if (end - start < 2 || end >= videoLength) {
+        start = 0 // Fallback to the beginning of the video
+        end = Math.min(maxDuration, videoLength) // Clip to max duration or video length
       }
     }
-  return sanitized
+
+    // Generate sanitized URL with adjusted start and end times
+    const nodeJSURL = getServer(
+      item?.videoSource || item?.videoInfoSource || 'default'
+    ).syncEndpoint
+    return `${nodeJSURL}/videoClip/${type}/${title}${item?.metadata?.season_number ? `/${item?.metadata.season_number}${item?.episodeNumber ? `/${item?.episodeNumber}` : ''}` : ''}?start=${start}&end=${end}`
 }
 
 /**

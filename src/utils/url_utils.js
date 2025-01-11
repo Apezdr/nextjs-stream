@@ -21,7 +21,7 @@ export function createURLHandler(fileServer) {
      */
     function stripPrefixPath(url) {
         if (!url) return ''
-        return url.replace(new RegExp(`^${baseURL}${prefixPath}/?`), '')
+        return url.replace(new RegExp(`^(?:${baseURL})?${prefixPath}/?`), '')
     }
 
     /**

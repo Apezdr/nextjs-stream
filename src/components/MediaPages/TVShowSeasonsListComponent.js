@@ -1,26 +1,28 @@
-import clientPromise from '../../lib/mongodb'
-import Link from 'next/link'
-import { auth } from '../../lib/auth'
-import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
-import SkeletonCard from '@components/SkeletonCard'
-import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence'
-import SignOutButton from '@components/SignOutButton'
-import MediaPoster from '../MediaPoster'
-import Detailed from '@components/Poster/Detailed'
-import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
-export const dynamic = 'force-dynamic'
+// TVShowSeasonsList.js
+import clientPromise from '../../lib/mongodb';
+import Link from 'next/link';
+import { auth } from '../../lib/auth';
+import UnauthenticatedPage from '@components/system/UnauthenticatedPage';
+import SkeletonCard from '@components/SkeletonCard';
+import SignOutButton from '@components/SignOutButton';
+import Detailed from '@components/Poster/Detailed';
+import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched';
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
+import { getResolutionLabel } from '@src/utils';
+import { classNames } from '@src/utils';
+import SeasonItem from './Item/SeasonItem';
+export const dynamic = 'force-dynamic';
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
   enter: { opacity: 1, x: 0, y: 0 },
-}
+};
 
 export default async function TVShowSeasonsList({ showTitle }) {
-  const session = await auth()
+  const session = await auth();
+
   if (!session || !session.user) {
-    // Handle the case where the user is not authenticated
-    // For example, redirect to login or show an error message
+    // User is not authenticated
     return (
       <UnauthenticatedPage callbackUrl={`/list/tv/${showTitle}`}>
         <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
@@ -34,16 +36,18 @@ export default async function TVShowSeasonsList({ showTitle }) {
           </div>
         </div>
       </UnauthenticatedPage>
-    )
+    );
   }
+
   const {
     user: { name, email },
-  } = session
+  } = session;
+
   // Fetch the TV show and its seasons
-  const tvShow = await getAndUpdateMongoDB(decodeURIComponent(showTitle))
+  const tvShow = await getAndUpdateMongoDB(decodeURIComponent(showTitle));
 
   if (!tvShow) {
-    // Handle the case where the TV show is not found
+    // TV show not found
     return (
       <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
         <div>
@@ -80,11 +84,55 @@ export default async function TVShowSeasonsList({ showTitle }) {
           </div>
         </div>
       </div>
-    )
+    );
   }
+
+  // Fetch posterBlurhash if available
   if (tvShow.posterBlurhash) {
-    tvShow.posterBlurhash = await fetchMetadataMultiServer(tvShow.blurhashSource, tvShow.posterBlurhash, 'blurhash', 'tv', showTitle)
+    tvShow.posterBlurhash = await fetchMetadataMultiServer(
+      tvShow.posterBlurhashSource,
+      tvShow.posterBlurhash,
+      'blurhash',
+      'tv',
+      showTitle
+    );
   }
+
+  // Process all seasons: fetch blurhash and compute flags
+  const processedSeasons = await Promise.all(
+    tvShow.seasons.map(async (season) => {
+      if (season.seasonPosterBlurhash) {
+        season.posterBlurhash = await fetchMetadataMultiServer(
+          season.seasonPosterBlurhashSource,
+          season.seasonPosterBlurhash,
+          'blurhash',
+          'tv',
+          showTitle
+        );
+      }
+
+      // Check all episodes for HDR and 4k
+      const has4k = season.episodes.some(
+        (episode) => getResolutionLabel(episode?.dimensions).is4k
+      );
+
+      const hasHDR = season.episodes.some((episode) => episode?.hdr);
+
+      const hasHDR10 = season.episodes.some((episode) => episode?.hdr === 'HDR10');
+
+      return { ...season, has4k, hasHDR, hasHDR10 };
+    })
+  );
+
+  // Compute overall flags for 4K and HDR
+  const overallHas4k = processedSeasons.some((season) => season.has4k);
+  const overallHasHDR = processedSeasons.some((season) => season.hasHDR);
+  const overallHasHDR10 = processedSeasons.some((season) => season.hasHDR10);
+
+  // Calculate total episodes
+  const totalEpisodes = processedSeasons.reduce((total, season) => {
+    return total + (season.episodes ? season.episodes.length : 0);
+  }, 0);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
@@ -92,7 +140,13 @@ export default async function TVShowSeasonsList({ showTitle }) {
       <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-6 xl:gap-x-2 mt-32">
         {/* Summary Poster */}
         <li className="col-span-1 sm:col-span-3 xl:col-span-2 lg:row-span-3">
-          <Detailed tvShow={tvShow} />
+          <Detailed
+            tvShow={tvShow}
+            totalEpisodes={totalEpisodes}
+            overallHas4k={overallHas4k}
+            overallHasHDR={overallHasHDR}
+            overallHasHDR10={overallHasHDR10}
+          />
           <div className="flex flex-row gap-x-4 mt-4 justify-center">
             <Link href="/list/tv" className="self-center">
               <button
@@ -123,60 +177,17 @@ export default async function TVShowSeasonsList({ showTitle }) {
           </div>
         </li>
         {/* Seasons List */}
-        {await Promise.all(
-          tvShow.seasons.map(async (season, seasonIndex) => {
-            if (season.seasonPosterBlurhash) {
-              season.posterBlurhash = await fetchMetadataMultiServer(
-                season.seasonPosterBlurhashSource,
-                season.seasonPosterBlurhash,
-                'blurhash',
-                'tv',
-                showTitle
-              )
-            }
-            return (
-              <li
-                key={season.seasonNumber + '-AnimationCont'}
-                className="relative min-w-[250px] ml-4 xl:ml-0"
-              >
-                <PageContentAnimatePresence
-                  variants={variants}
-                  transition={{
-                    type: 'linear',
-                    duration: 0.45,
-                  }}
-                >
-                  <Link href={`/list/tv/${showTitle}/${season.seasonNumber}`}>
-                    <div className="block mb-2 w-full lg:w-auto group">
-                      <MediaPoster
-                        className="max-w-[200px] !mx-auto rounded-t-sm shadow-2xl"
-                        contClassName="mx-auto"
-                        tv={season}
-                      />
-                      <button
-                        type="button"
-                        className="mx-auto w-full flex flex-row gap-x-2 justify-center rounded-b bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-2xl group-hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 h-16 lg:h-auto max-w-[200px]"
-                      >
-                        <div className="my-2 text-center text-sm font-medium text-gray-200">
-                          <span>Season {season.seasonNumber}</span>
-                        </div>
-                      </button>
-                    </div>
-                  </Link>
-                </PageContentAnimatePresence>
-              </li>
-            )
-          })
-        )}
+        {processedSeasons.map((season) => (
+          <SeasonItem key={season.seasonNumber} season={season} showTitle={showTitle} />
+        ))}
       </ul>
     </div>
-  )
+  );
 }
 
 async function getAndUpdateMongoDB(showTitle) {
-  const client = await clientPromise
+  const client = await clientPromise;
   // Use projection to only fetch necessary fields
-  // Explicitly include necessary fields and exclude seasons.episodes
   const tvShow = await client
     .db('Media')
     .collection('TV')
@@ -188,9 +199,10 @@ async function getAndUpdateMongoDB(showTitle) {
           metadata: 1,
           posterURL: 1,
           posterBlurhash: 1,
-          blurhashSource: 1,
+          posterBlurhashSource: 1,
           'seasons.seasonNumber': 1,
-          //'seasons.episodes': 1,
+          'seasons.episodes.hdr': 1,
+          'seasons.episodes.dimensions': 1,
           'seasons.title': 1,
           'seasons.season_poster': 1,
           'seasons.posterSource': 1,
@@ -199,10 +211,10 @@ async function getAndUpdateMongoDB(showTitle) {
           'seasons.metadata.Genre': 1,
         },
       }
-    )
+    );
 
   if (!tvShow) {
-    return null
+    return null;
   }
 
   return {
@@ -212,6 +224,6 @@ async function getAndUpdateMongoDB(showTitle) {
     seasons: tvShow.seasons,
     posterURL: tvShow.posterURL,
     posterBlurhash: tvShow.posterBlurhash,
-    blurhashSource: tvShow.blurhashSource,
-  }
+    posterBlurhashSource: tvShow.posterBlurhashSource,
+  };
 }

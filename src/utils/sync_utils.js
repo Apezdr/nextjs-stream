@@ -1,12 +1,13 @@
-import { isEqual } from "lodash"
-import { updateMediaUpdates } from "./admin_frontend_database"
-import { fetchMetadataMultiServer } from "./admin_utils"
-import { multiServerHandler } from "./config"
+import { isEqual } from 'lodash'
+import { updateMediaUpdates } from './admin_frontend_database'
+import { fetchMetadataMultiServer } from './admin_utils'
+import { getServer, isCurrentServerHigherPriority, multiServerHandler } from './config'
+import chalk from 'chalk'
 
 // Constants and Types
 export const MediaType = {
   TV: 'tv',
-  MOVIE: 'movie'
+  MOVIE: 'movie',
 }
 
 // File Pattern Constants
@@ -102,13 +103,12 @@ export function filterLockedFields(existingDoc, updateData) {
  * @returns {string|null} The file name that matches the given season and episode number, or `null` if no match is found.
  */
 export function findEpisodeFileName(fileNames, seasonNumber, episodeNumber) {
-  return fileNames.find(fileName => {
-    const fileNameWithoutExtension = fileName.slice(0, -4)
+  return fileNames.find((fileName) => {
     const episodeNumberRegex = new RegExp(
       `(S?${seasonNumber.toString().padStart(2, '0')}E${episodeNumber.toString().padStart(2, '0')})|^${episodeNumber.toString().padStart(2, '0')}\\s?-`,
       'i'
     )
-    return episodeNumberRegex.test(fileNameWithoutExtension)
+    return episodeNumberRegex.test(fileName)
   })
 }
 
@@ -150,7 +150,7 @@ export function extractEpisodeDetails(match) {
       extension: match[4],
     }
   }
-  
+
   // Pattern 2: xx - Title
   if (match.length === 4 && match[1] && match[2]) {
     return {
@@ -160,7 +160,7 @@ export function extractEpisodeDetails(match) {
       extension: match[3],
     }
   }
-  
+
   // Pattern 3: Title - SxxExx - Title - Extra
   if (match.length === 6 && match[2] && match[3]) {
     return {
@@ -195,31 +195,86 @@ function cleanEpisodeTitle(title) {
  *
  * This function updates the specified episode in the TV collection of the Media database. It takes the client connection, the show title, the season number, the episode number, and an object of updates to apply to the episode.
  *
+ * The `updates` object can have two optional properties:
+ * - `set`: An object containing fields to set/update.
+ * - `unset`: An array of field names to unset/remove.
+ *
  * @param {Object} client - The MongoDB client connection.
  * @param {string} showTitle - The title of the TV show.
  * @param {number} seasonNumber - The season number of the episode.
  * @param {number} episodeNumber - The episode number.
- * @param {Object} updates - An object containing the updates to apply to the episode.
+ * @param {Object} updates - An object containing `set` and/or `unset` properties.
  * @returns {Promise<Object>} - The result of the updateOne operation.
  */
-export async function updateEpisodeInDatabase(client, showTitle, seasonNumber, episodeNumber, updates) {
-  const updateFields = {}
-  for (const [key, value] of Object.entries(updates)) {
-    updateFields[`seasons.$.episodes.$[episode].${key}`] = value
+export async function updateEpisodeInDatabase(
+  client,
+  showTitle,
+  seasonNumber,
+  episodeNumber,
+  updates
+) {
+  const updateOperation = {}
+
+  // Handle $set operations
+  if (updates.set && Object.keys(updates.set).length > 0) {
+    updateOperation.$set = {}
+    for (const [key, value] of Object.entries(updates.set)) {
+      updateOperation.$set[`seasons.$[season].episodes.$[episode].${key}`] = value
+    }
   }
-  
-  return client
-    .db('Media')
-    .collection('TV')
-    .updateOne(
-      {
-        title: showTitle,
-        'seasons.seasonNumber': seasonNumber,
-        'seasons.episodes.episodeNumber': episodeNumber
-      },
-      { $set: updateFields },
-      { arrayFilters: [{ 'episode.episodeNumber': episodeNumber }] }
+
+  // Handle $unset operations
+  if (updates.unset && Array.isArray(updates.unset) && updates.unset.length > 0) {
+    updateOperation.$unset = {}
+    for (const key of updates.unset) {
+      updateOperation.$unset[`seasons.$[season].episodes.$[episode].${key}`] = ''
+    }
+  }
+
+  // If no operations are specified, exit early
+  if (Object.keys(updateOperation).length === 0) {
+    console.warn('No valid update operations provided.')
+    return
+  }
+
+  console.log(`Updating show: ${showTitle}, Season: ${seasonNumber}, Episode: ${episodeNumber}`)
+  console.log('Update Operation:', JSON.stringify(updateOperation, null, 2))
+
+  try {
+    const result = await client
+      .db('Media')
+      .collection('TV')
+      .updateOne({ title: showTitle }, updateOperation, {
+        arrayFilters: [
+          { 'season.seasonNumber': seasonNumber },
+          { 'episode.episodeNumber': episodeNumber },
+        ],
+      })
+
+    console.log('Update Result:', result)
+
+    if (result.matchedCount === 0) {
+      console.warn(
+        `No matching document found for show "${showTitle}" Season ${seasonNumber} Episode ${episodeNumber}.`
+      )
+    } else if (result.modifiedCount === 0) {
+      console.warn(
+        `No changes were made to show "${showTitle}" Season ${seasonNumber} Episode ${episodeNumber}.`
+      )
+    } else {
+      console.log(
+        `Successfully updated show "${showTitle}" Season ${seasonNumber} Episode ${episodeNumber}.`
+      )
+    }
+
+    return result
+  } catch (error) {
+    console.error(
+      `Error updating show "${showTitle}" Season ${seasonNumber} Episode ${episodeNumber}:`,
+      error
     )
+    throw error // Re-throw the error after logging
+  }
 }
 
 /**
@@ -230,23 +285,41 @@ export async function updateEpisodeInDatabase(client, showTitle, seasonNumber, e
  * @param {Object} client - The MongoDB client connection.
  * @param {string} mediaType - The type of media, either 'TV' or 'Movies'.
  * @param {string} title - The title of the media item.
- * @param {Object} updateData - An object containing the updates to apply to the media item.
+ * @param {Object} updates - An object containing the updates to apply to the media item, including MongoDB update operators like $set and $unset.
  * @returns {Promise<void>} - A Promise that resolves when the update operation is complete.
  */
-export async function updateMediaInDatabase(client, mediaType, title, updateData) {
-  const collection = mediaType === MediaType.TV ? 'TV' : 'Movies'
+export async function updateMediaInDatabase(client, mediaType, title, updates) {
+  const collectionName = mediaType === MediaType.TV ? 'TV' : 'Movies'
+
+  // Validate that 'updates' contains valid MongoDB update operators
+  const allowedOperators = [
+    '$set',
+    '$unset',
+    '$inc',
+    '$push',
+    '$pull',
+    '$addToSet',
+    '$rename',
+    '$currentDate',
+  ]
+  const updateKeys = Object.keys(updates)
+
+  const hasValidOperator = updateKeys.some((key) => allowedOperators.includes(key))
+  if (!hasValidOperator) {
+    throw new Error(`Invalid update operators provided: ${updateKeys.join(', ')}`)
+  }
+
   await client
     .db('Media')
-    .collection(collection)
-    .updateOne({ title }, { $set: updateData }, { upsert: true })
-    
+    .collection(collectionName)
+    .updateOne({ title }, updates, { upsert: true })
+
   await updateMediaUpdates(title, mediaType)
 }
 
 // ==========================================
 // Media Processing
 // ==========================================
-
 
 /**
  * Processes the caption URLs from the subtitles data.
@@ -259,19 +332,19 @@ export async function updateMediaInDatabase(client, mediaType, title, updateData
  */
 export function processCaptionURLs(subtitlesData, serverConfig) {
   if (!subtitlesData) return null
-  
+
   const subtitleURLs = Object.entries(subtitlesData).reduce((acc, [langName, subtitleData]) => {
     acc[langName] = {
       srcLang: subtitleData.srcLang,
       url: createFullUrl(subtitleData.url, serverConfig),
       lastModified: subtitleData.lastModified,
+      sourceServerId: serverConfig.id,
     }
     return acc
   }, {})
 
   return Object.fromEntries(sortSubtitleEntries(Object.entries(subtitleURLs)))
 }
-
 
 /**
  * Sorts the subtitle entries, prioritizing English subtitles.
@@ -311,14 +384,17 @@ export async function addOrUpdateSeason(
     // Initialize or retrieve season metadata
     let seasonMetadata = showMetadata.seasons.find((s) => s.season_number === number) || {
       episode_count: 0,
-      episodes: []
+      episodes: [],
     }
 
-    for (const episode of episodes) {
-      const episodeMatch = matchEpisodeFileName(episode.fileName)
-      if (!episodeMatch) continue
+    // Add in the existing metadata for the season
+    seasonMetadata.episodes =
+      currentShow.seasons.find((s) => s.seasonNumber === number)?.metadata?.episodes ?? []
 
-      const { episodeNumber, title } = extractEpisodeDetails(episodeMatch)
+    for (const episode of episodes) {
+      // Extract episode details
+      // Initialize episode number and title
+      let { episodeNumber, title } = episode
 
       // Fetch episode metadata if available
       let episodeMetadata = {}
@@ -331,24 +407,45 @@ export async function addOrUpdateSeason(
             'tv',
             showTitle
           )
+          // Set title to episode name if available
+          title = episodeMetadata?.name || title
           seasonMetadata.episodes = seasonMetadata.episodes || []
           seasonMetadata.episodes.push(episodeMetadata)
         } catch (error) {
-          console.error(`Error fetching metadata for episode ${episodeNumber} of ${showTitle}:`, error)
+          console.error(
+            `Error fetching metadata for episode ${episodeNumber} of ${showTitle}:`,
+            error
+          )
         }
+      }
+
+      // Fallback to filename if details are not available from the episode metadata
+      // ex. S01E01 - The One Way Trip WEBRip-1080p.mp4 =
+      // episodeNumber = 1
+      // title = 'The One Way Trip'
+      if (!title) {
+        const episodeMatch = matchEpisodeFileName(episode.filename)
+        if (!episodeMatch) continue
+        title = episodeMatch.title
+        // Extract episode details from the filename
+        const e = extractEpisodeDetails(episodeMatch)
+        episodeNumber = e.episodeNumber
+        title = e.title
       }
 
       // Check if the episode already exists
       const existingEpisode = currentSeason.episodes.find((e) => e.episodeNumber === episodeNumber)
       if (!existingEpisode) {
+        const season = fileServer.tv[showTitle].seasons[seasonIdentifier]
         // Construct videoURL using the handler
-        const videoURL = createFullUrl(fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].videourl, serverConfig)
+        const videoURL = createFullUrl(episode.videoURL, serverConfig)
 
         // Initialize updatedData with required fields
         let updatedData = {
           episodeNumber: episodeNumber,
           title: title,
           videoURL: videoURL,
+          videoSource: episode.videoSource,
           mediaLastModified: episode.mediaLastModified,
           length: episode.length,
           dimensions: episode.dimensions,
@@ -356,20 +453,18 @@ export async function addOrUpdateSeason(
 
         // Add thumbnail if available
         if (episode.thumbnail) {
-          updatedData.thumbnail = createFullUrl(fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].thumbnail, serverConfig)
+          updatedData.thumbnail = createFullUrl(episode.thumbnail, serverConfig)
+          updatedData.thumbnailSource = episode.thumbnailSource
         }
 
         // Add thumbnailBlurhash if available
         if (episode.thumbnailBlurhash) {
-          updatedData.thumbnailBlurhash = createFullUrl(fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].thumbnailBlurhash, serverConfig)
-        }
-
-        if (episode.thumbnailSource) {
-          updatedData.thumbnailSource = serverConfig.id
+          updatedData.thumbnailBlurhash = createFullUrl(episode.thumbnailBlurhash, serverConfig)
+          updatedData.thumbnailBlurhashSource = episode.thumbnailBlurhashSource
         }
 
         // Process captions
-        const captions = fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].subtitles
+        const captions = episode.subtitles
         if (captions) {
           updatedData.captionURLs = {}
           for (const [lang, captionData] of Object.entries(captions)) {
@@ -379,12 +474,14 @@ export async function addOrUpdateSeason(
               lastModified: captionData.lastModified,
             }
           }
+          updatedData.captionSource = serverConfig.id
         }
 
         // Add chapterURL if exists
-        const chapters = fileServer.tv[showTitle].seasons[seasonIdentifier].urls[episode.fileName].chapters
+        const chapters = episode.chapters
         if (chapters) {
           updatedData.chapterURL = createFullUrl(chapters, serverConfig)
+          updatedData.chapterSource = serverConfig.id
         }
 
         // Push the new episode to the current season
@@ -409,76 +506,83 @@ export async function addOrUpdateSeason(
 
 function extractSeasonInfo(seasonInfo, showTitle, fileServer, serverConfig) {
   try {
+    // This handles the full season data
     if (!seasonInfo) {
       throw new Error('Season info is undefined')
     }
 
     const seasonIdentifier = seasonInfo.season || seasonInfo
+    const season_ = fileServer?.tv[showTitle].seasons[seasonIdentifier]
     if (typeof seasonInfo === 'string') {
       return {
-        number: parseInt(seasonInfo.split(' ')[1]),
+        number: season_.seasonNumber,
         seasonIdentifier: seasonIdentifier,
-        season_poster: fileServer?.tv[showTitle].seasons[seasonInfo].season_poster,
+        season_poster: season_.season_poster,
         posterSource: serverConfig.id,
-        seasonPosterBlurhash: fileServer?.tv[showTitle].seasons[seasonInfo].seasonPosterBlurhash,
+        seasonPosterBlurhash: season_.seasonPosterBlurhash,
         seasonPosterBlurhashSource: serverConfig.id,
-        episodes: fileServer?.tv[showTitle].seasons[seasonInfo].fileNames.map(function (fileName) {
+        episodes: Object.keys(season_.episodes).map(function (seasonAndEpisode) {
+          const episode = season_.episodes[seasonAndEpisode]
+          const length = season_.lengths[seasonAndEpisode]
+          const dimensions = season_.dimensions[seasonAndEpisode]
           let returnData = {
-            fileName,
-            videoURL: fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].videourl,
-            length: fileServer?.tv[showTitle].seasons[seasonInfo].lengths[fileName],
-            dimensions: fileServer?.tv[showTitle].seasons[seasonInfo].dimensions[fileName],
-            mediaLastModified: new Date(
-              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].mediaLastModified
-            ),
+            ...episode,
+            key: seasonAndEpisode,
+            _id: episode._id,
+            length: length,
+            dimensions: dimensions,
+            mediaLastModified: new Date(episode.mediaLastModified),
           }
-          if (fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnail) {
-            returnData.thumbnail =
-              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnail
+          if (episode.videoURL) {
+            returnData.videoSource = serverConfig.id
           }
-          if (fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnailBlurhash) {
-            returnData.thumbnailBlurhash =
-              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].thumbnailBlurhash
+          if (episode.thumbnail) {
             returnData.thumbnailSource = serverConfig.id
           }
-          if (fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].metadata) {
-            returnData.metadata =
-              fileServer?.tv[showTitle].seasons[seasonInfo].urls[fileName].metadata
+          if (episode.thumbnailBlurhash) {
+            returnData.thumbnailBlurhashSource = serverConfig.id
           }
+          if (!episode.hdr) delete returnData.hdr
           return returnData
         }),
       }
     } else {
-      if (!seasonInfo.season) {
+      // This is used for populating missing episodes from a season
+      // ex. some episodes are missing from a season
+      if (!seasonIdentifier) {
         throw new Error('Season number is undefined')
       }
 
       return {
-        number: parseInt(seasonInfo.season.split(' ')[1]),
+        number: season_.seasonNumber,
         seasonIdentifier: seasonIdentifier,
-        season_poster: fileServer?.tv[showTitle].seasons[seasonIdentifier].season_poster,
+        season_poster: season_.season_poster,
         posterSource: serverConfig.id,
-        seasonPosterBlurhash:
-          fileServer?.tv[showTitle].seasons[seasonIdentifier].seasonPosterBlurhash,
+        seasonPosterBlurhash: season_.seasonPosterBlurhash,
         seasonPosterBlurhashSource: serverConfig.id,
         episodes: seasonInfo.missingEpisodes.map(function (episode) {
           let returnData = {
-            fileName: episode.episodeFileName,
-            videoURL: episode.videourl,
+            ...episode,
+            _id: episode._id,
             mediaLastModified: new Date(episode.mediaLastModified),
-            length: episode.lengths,
+            length: episode.length,
             dimensions: episode.dimensions,
+          }
+          if (episode.videoURL) {
+            returnData.videoSource = serverConfig.id
           }
           if (episode.thumbnail) {
             returnData.thumbnail = episode.thumbnail
+            returnData.thumbnailSource = serverConfig.id
           }
           if (episode.thumbnailBlurhash) {
             returnData.thumbnailBlurhash = episode.thumbnailBlurhash
-            returnData.thumbnailSource = serverConfig.id
+            returnData.thumbnailBlurhashSource = serverConfig.id
           }
           if (episode.metadata) {
             returnData.metadata = episode.metadata
           }
+          if (!episode.hdr) delete returnData.hdr
           return returnData
         }),
       }
@@ -498,13 +602,19 @@ function extractSeasonInfo(seasonInfo, showTitle, fileServer, serverConfig) {
  * @returns {Object|null} - The updated movie data, or null if the movie cannot be processed.
  */
 export async function processMovieData(movieTitle, movieData, serverConfig) {
-  const mp4File = movieData.fileNames.find(name => name.endsWith('.mp4'))
+  const mp4File = movieData.fileNames.find((name) => name.endsWith('.mp4'))
   if (!mp4File) {
     console.log(`Movie: No MP4 file found for ${movieTitle}. Skipping.`)
     return null
   }
 
-  const movieMetadata = await fetchMetadataMultiServer(serverConfig.id, movieData.urls?.metadata, 'file', 'movie', movieTitle)
+  const movieMetadata = await fetchMetadataMultiServer(
+    serverConfig.id,
+    movieData.urls?.metadata,
+    'file',
+    'movie',
+    movieTitle
+  )
   if (!movieMetadata) {
     console.log(`Movie: No metadata found for ${movieTitle}. Skipping.`)
     return null
@@ -520,7 +630,7 @@ export async function processMovieData(movieTitle, movieData, serverConfig) {
     { name: 'logo' },
     { name: 'chapters', dbField: 'chapterURL' },
     { name: 'backdrop' },
-    { name: 'backdropBlurhash' }
+    { name: 'backdropBlurhash' },
   ]
 
   const updateData = {
@@ -530,12 +640,14 @@ export async function processMovieData(movieTitle, movieData, serverConfig) {
     length: movieData.length[mp4File],
     dimensions: movieData.dimensions[mp4File],
     metadata: movieMetadata,
+    metadataSource: serverConfig.id,
   }
 
   for (const field of urlFields) {
     const fileServerValue = movieData.urls[field.name]
     if (fileServerValue) {
       updateData[field.dbField || field.name] = createFullUrl(fileServerValue, serverConfig)
+      updateData[field.name + 'Source'] = serverConfig.id
     }
   }
 
@@ -554,9 +666,12 @@ export function processShowData(showData, showMetadata, currentShow, serverConfi
     posterURL: createFullUrl(showData.poster, serverConfig),
     posterSource: serverConfig.id,
     posterBlurhash: createFullUrl(showData.posterBlurhash, serverConfig),
+    posterBlurhashSource: serverConfig.id,
     backdrop: createFullUrl(showData.backdrop, serverConfig),
+    backdropSource: serverConfig.id,
     backdropBlurhash: createFullUrl(showData.backdropBlurhash, serverConfig),
-    ...(showData.logo && { logo: createFullUrl(showData.logo, serverConfig) })
+    backdropBlurhashSource: serverConfig.id,
+    ...(showData.logo && { logo: createFullUrl(showData.logo, serverConfig) }),
   }
 }
 
@@ -570,7 +685,7 @@ export function processShowData(showData, showMetadata, currentShow, serverConfi
  */
 export async function processTVShow(client, show, fileServer, showTitle, serverConfig) {
   const showData = fileServer?.tv[showTitle]
-  
+
   if (!showData) {
     console.log(`TV: No data found for ${showTitle} on server ${serverConfig.id}. Skipping.`)
     return
@@ -578,52 +693,36 @@ export async function processTVShow(client, show, fileServer, showTitle, serverC
 
   const showMetadata = await fetchMetadataMultiServer(
     serverConfig.id,
-    showData.metadata, 
-    'file', 
-    'tv', 
+    showData.metadata,
+    'file',
+    'tv',
     showTitle
   )
-  
+
   if (!showMetadata) {
     console.log(`TV: No metadata found for ${showTitle} on server ${serverConfig.id}. Skipping.`)
     return
   }
 
-  const currentShow = await client
-    .db('Media')
-    .collection('TV')
-    .findOne({ title: showTitle }) || { seasons: [] }
+  const currentShow = (await client.db('Media').collection('TV').findOne({ title: showTitle })) || {
+    seasons: [],
+  }
 
   // Update all seasons concurrently
   await Promise.all(
-    show.seasons.map(seasonInfo =>
-      addOrUpdateSeason(
-        currentShow, 
-        seasonInfo, 
-        showTitle, 
-        fileServer, 
-        showMetadata,
-        serverConfig
-      )
+    show.seasons.map((seasonInfo) =>
+      addOrUpdateSeason(currentShow, seasonInfo, showTitle, fileServer, showMetadata, serverConfig)
     )
   )
 
   currentShow.seasons.sort((a, b) => a.seasonNumber - b.seasonNumber)
-  
-  const showUpdateData = processShowData(
-    showData, 
-    showMetadata, 
-    currentShow, 
-    serverConfig
-  )
-  
-  await updateMediaInDatabase(
-    client, 
-    MediaType.TV, 
-    showTitle, 
-    showUpdateData,
-    serverConfig.id
-  )
+
+  const showUpdateData = processShowData(showData, showMetadata, currentShow, serverConfig)
+  const preparedUpdateData = {
+    $set: showUpdateData,
+  }
+
+  await updateMediaInDatabase(client, MediaType.TV, showTitle, preparedUpdateData, serverConfig.id)
 }
 
 /**
@@ -635,27 +734,140 @@ export async function processTVShow(client, show, fileServer, showTitle, serverC
  */
 export async function processMovie(client, movieTitle, fileServer, serverConfig) {
   const movieData = fileServer?.movies[movieTitle]
-  
+
   if (!movieData) {
     console.log(`Movie: No data found for ${movieTitle} on server ${serverConfig.id}. Skipping.`)
     return
   }
 
-  const updateData = await processMovieData(
-    movieTitle, 
-    movieData, 
-    serverConfig
-  )
-  
+  const updateData = await processMovieData(movieTitle, movieData, serverConfig)
+
   if (!updateData) return
-  
+
+  const preparedUpdateData = {
+    $set: updateData,
+  }
+
   await updateMediaInDatabase(
-    client, 
-    MediaType.MOVIE, 
-    movieTitle, 
-    updateData,
+    client,
+    MediaType.MOVIE,
+    movieTitle,
+    preparedUpdateData,
     serverConfig.id
   )
+}
+
+/**
+ * Gathers metadata for a single movie across ALL servers.
+ * We'll store whichever server's metadata is "best."
+ * "Best" is determined by (lowest priority) and then by the largest last_updated.
+ *
+ * @param {Object} movie - The DB movie object (e.g., { title, metadata, metadataSource, ... })
+ * @param {Object} fileServers - All server data, keyed by serverId
+ * @returns {Object|null} - The best metadata object or null if none found
+ */
+export async function gatherMovieMetadataForAllServers(movie, fileServers) {
+  let bestMetadata = null
+  let bestPriority = Infinity
+
+  for (const [serverId, fileServer] of Object.entries(fileServers)) {
+    const serverConfig = {
+      id: serverId,
+      ...fileServer.config,
+    }
+    const fileServerMovieData = fileServer.movies?.[movie.title]
+    if (!fileServerMovieData) continue
+
+    // Attempt to fetch metadata from this server
+    // (Equivalent to your existing "fetchMetadataMultiServer" usage.)
+    const metadataURL = fileServerMovieData.urls?.metadata
+    if (!metadataURL) continue
+
+    // Attempt to load the metadata
+    const metadata = await fetchMetadataMultiServer(
+      serverConfig.id,
+      metadataURL,
+      'file',
+      'movie',
+      movie.title
+    )
+
+    if (!metadata) {
+      // server has no valid metadata or fetch failed
+      continue
+    }
+
+    // Ensure release_date is a Date object if present
+    if (metadata.release_date && typeof metadata.release_date === 'string') {
+      metadata.release_date = new Date(metadata.release_date)
+    }
+
+    // Convert last_updated to a Date if it's a string
+    let newLastUpdated = new Date(metadata.last_updated || '1970-01-01')
+    // Compare with our best so far
+    if (serverConfig.priority < bestPriority || movie.metadataSource !== serverConfig.id) {
+      // This server outranks the old winner by priority => it wins automatically
+      // or this server is not synchronized with the correct owner
+      bestMetadata = metadata
+      bestMetadata.metadataSource = serverConfig.id
+      bestPriority = serverConfig.priority
+    } else if (serverConfig.priority === bestPriority && bestMetadata) {
+      // Same priority => pick whichever has a more recent last_updated
+      let oldLastUpdated = new Date(bestMetadata.last_updated || '1970-01-01')
+      if (newLastUpdated > oldLastUpdated) {
+        bestMetadata = metadata
+        bestMetadata.metadataSource = serverConfig.id
+      }
+    }
+  }
+
+  return bestMetadata
+}
+
+/**
+ * Compare the aggregated "bestMetadata" vs. the DB's existing movie metadata, 
+ * and update if needed.
+ *
+ * @param {Object} client - DB client
+ * @param {Object} movie - DB movie object (with .metadata, .metadataSource, etc.)
+ * @param {Object} bestMetadata - from gatherMovieMetadataForAllServers
+ * @returns {Promise<void>}
+ */
+export async function finalizeMovieMetadata(client, movie, bestMetadata) {
+  if (!bestMetadata) {
+    // No server had metadata => optionally remove DB metadata or do nothing
+    return
+  }
+
+  // Compare last_updated
+  const existingMetadataLastUpdated = new Date(movie.metadata?.last_updated || '1970-01-01')
+  const newMetadataLastUpdated = new Date(bestMetadata.last_updated || '1970-01-01')
+
+  if (newMetadataLastUpdated <= existingMetadataLastUpdated) {
+    // The DB is same or newer => do nothing
+    return
+  }
+
+  // Also check ownership if you have the concept of locked metadata. 
+  // If the DB says "metadataSource" is a different, higher-priority server, 
+  // you might skip. Or just do filterLockedFields...
+  const updateData = {
+    metadata: bestMetadata,
+    metadataSource: bestMetadata.metadataSource // If you want, you can track which server provided bestMetadata
+  }
+
+  // Remove metadataSource from the updateData
+  delete updateData.metadata?.metadataSource
+
+  const filteredUpdateData = filterLockedFields(movie, updateData)
+  if (Object.keys(filteredUpdateData).length === 0) {
+    console.log(`All metadata fields locked for movie "${movie.title}". Skipping update.`)
+    return
+  }
+
+  console.log(`Movie: Updating metadata for "${movie.title}"...`)
+  const preparedUpdateData = { $set: filteredUpdateData }
+  await updateMediaInDatabase(client, MediaType.MOVIE, movie.title, preparedUpdateData)
 }
 
 /**
@@ -664,10 +876,39 @@ export async function processMovie(client, movieTitle, fileServer, serverConfig)
  * @param {Object} currentMovieData - Current movie data in database
  * @param {Object} fileServerMovieData - Movie data from file server
  * @param {Object} serverConfig - Server configuration
+ * @param {Object} fieldAvailability - Field availability
  */
-export async function processMovieMetadata(client, currentMovieData, fileServerMovieData, serverConfig) {
+export async function processMovieMetadata(
+  client,
+  currentMovieData,
+  fileServerMovieData,
+  serverConfig,
+  fieldAvailability
+) {
   if (!fileServerMovieData) {
-    throw new Error(`Movie "${currentMovieData.title}" not found in server ${serverConfig.id} data`)
+    // console.log(
+    //   `Movie: No data found for ${currentMovieData.title} on server ${serverConfig.id}. Skipping.`
+    // )
+    return
+  }
+
+  // Construct the field path for the movie metadata
+  const fieldPath = 'urls.metadata'
+
+  // Check if the current server is the highest priority with metadata
+  const isHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'movies',
+    currentMovieData.title,
+    fieldPath,
+    serverConfig
+  )
+
+  if (!isHighestPriority) {
+    // console.log(
+    //   `Skipping metadata update for "${currentMovieData.title}" - higher-priority server has metadata.`
+    // )
+    return
   }
 
   const movieMetadata = await fetchMetadataMultiServer(
@@ -679,7 +920,9 @@ export async function processMovieMetadata(client, currentMovieData, fileServerM
   )
 
   if (!movieMetadata) {
-    throw new Error(`No metadata found for movie "${currentMovieData.title}" on server ${serverConfig.id}`)
+    throw new Error(
+      `No metadata found for movie "${currentMovieData.title}" on server ${serverConfig.id}`
+    )
   }
 
   // Ensure release_date is a Date object
@@ -692,30 +935,395 @@ export async function processMovieMetadata(client, currentMovieData, fileServerM
   )
   const newMetadataLastUpdated = new Date(movieMetadata.last_updated)
 
+  // Check if new metadata is more recent
   if (newMetadataLastUpdated > existingMetadataLastUpdated) {
-    const updateData = { 
-      metadata: movieMetadata,
-      metadataSource: serverConfig.id
-    }
-    const filteredUpdateData = filterLockedFields(currentMovieData, updateData)
+    // Verify that the current server is the source of existing metadata or it's unset
+    const canUpdate =
+      !currentMovieData.metadataSource ||
+      isSourceMatchingServer(currentMovieData, 'metadataSource', serverConfig)
 
-    if (filteredUpdateData.metadata && Object.keys(filteredUpdateData.metadata).length === 0) {
-      delete filteredUpdateData.metadata
-    }
+    if (canUpdate) {
+      const updateData = {
+        metadata: movieMetadata,
+        metadataSource: serverConfig.id,
+      }
+      const filteredUpdateData = filterLockedFields(currentMovieData, updateData)
 
-    if (Object.keys(filteredUpdateData).length > 0) {
-      console.log(`Movie: Updating metadata for "${currentMovieData.title}" from server ${serverConfig.id}`)
-      await updateMediaInDatabase(
-        client, 
-        MediaType.MOVIE, 
-        currentMovieData.title, 
-        filteredUpdateData,
-        serverConfig.id
-      )
-    } else {
+      // Remove empty objects
+      if (filteredUpdateData.metadata && Object.keys(filteredUpdateData.metadata).length === 0) {
+        delete filteredUpdateData.metadata
+      }
+
+      if (Object.keys(filteredUpdateData).length > 0) {
+        console.log(
+          `Movie: Updating metadata for "${currentMovieData.title}" from server ${serverConfig.id}`
+        )
+        const preparedUpdateData = {
+          $set: filteredUpdateData,
+        }
+        await updateMediaInDatabase(
+          client,
+          MediaType.MOVIE,
+          currentMovieData.title,
+          preparedUpdateData,
+          serverConfig.id
+        )
+      } else {
+        console.log(
+          `All metadata fields are locked for movie "${currentMovieData.title}" on server ${serverConfig.id}. Skipping update.`
+        )
+      }
+    } /*else {
       console.log(
-        `All metadata fields are locked for movie "${currentMovieData.title}" on server ${serverConfig.id}. Skipping update.`
+        `Cannot update metadata for "${currentMovieData.title}" - metadata is owned by server ${currentMovieData.metadataSource}.`
       )
+    }*/
+  }
+}
+
+/**
+ * Gather TV metadata for a single show from ALL servers concurrently.
+ *
+ * @param {Object} show - The DB show object.
+ * @param {Object} fileServers - The raw data from all servers, keyed by serverId.
+ * @returns {Object} aggregatedData with shape:
+ *   {
+ *     showMetadata: {...},
+ *     seasons: {
+ *       [seasonNumber]: {
+ *         seasonMetadata: {...},
+ *         episodes: {
+ *           [episodeNumber]: {...}
+ *         }
+ *       }
+ *     }
+ *   }
+ */
+export async function gatherTvMetadataForAllServers(show, fileServers) {
+  // 1) Gather Show-Level Metadata Concurrently
+  const showMetadataPromises = Object.entries(fileServers).map(async ([serverId, fileServer]) => {
+    if (!fileServer.tv?.[show.title]) return null;
+    const serverConfig = { id: serverId, ...fileServer.config };
+    const metadataURL = fileServer.tv[show.title]?.metadata;
+    if (!metadataURL) return null;
+
+    const metadata = await fetchMetadataMultiServer(
+      serverConfig.id,
+      metadataURL,
+      'file',
+      'tv',
+      show.title
+    );
+    if (!metadata) return null;
+
+    metadata.metadataSource = serverConfig.id;
+    return { metadata, priority: serverConfig.priority };
+  });
+
+  const showMetadataResults = await Promise.all(showMetadataPromises);
+  const validShowMetadata = showMetadataResults.filter(Boolean);
+
+  // Determine Best Show Metadata
+  const bestShowMetadata = validShowMetadata.reduce((best, current) => {
+    if (!best) return current;
+    if (current.priority < best.priority) return current;
+    if (current.priority === best.priority && new Date(current.metadata.last_updated) > new Date(best.metadata.last_updated)) {
+      return current;
+    }
+    return best;
+  }, null)?.metadata || null;
+
+  const aggregatedData = {
+    showMetadata: bestShowMetadata,
+    seasons: {},
+  };
+
+  // 2) Gather Season and Episode-Level Metadata Concurrently
+  const seasonPromises = show.seasons.map(async (season) => {
+    const { seasonNumber } = season;
+
+    // Gather Season Metadata Concurrently
+    const seasonMetadataPromises = Object.entries(fileServers).map(async ([serverId, fileServer]) => {
+      const serverConfig = { id: serverId, ...fileServer.config };
+      const fileServerShowData = fileServer.tv?.[show.title];
+      if (!fileServerShowData) return null;
+
+      const seasonKey = `Season ${seasonNumber}`;
+      const seasonData = fileServerShowData.seasons?.[seasonKey];
+      if (!seasonData?.metadata) return null;
+
+      const metadataURL = seasonData.metadata;
+      const metadata = await fetchMetadataMultiServer(
+        serverConfig.id,
+        metadataURL,
+        'file',
+        'tv',
+        show.title
+      );
+      if (!metadata) return null;
+
+      metadata.metadataSource = serverConfig.id;
+      return { metadata, priority: serverConfig.priority };
+    });
+
+    const seasonMetadataResults = await Promise.all(seasonMetadataPromises);
+    const validSeasonMetadata = seasonMetadataResults.filter(Boolean);
+
+    // Determine Best Season Metadata
+    const bestSeasonMetadata = validSeasonMetadata.reduce((best, current) => {
+      if (!best) return current;
+      if (current.priority < best.priority) return current;
+      if (current.priority === best.priority && new Date(current.metadata.last_updated) > new Date(best.metadata.last_updated)) {
+        return current;
+      }
+      return best;
+    }, null)?.metadata || null;
+
+    // Gather Episode Metadata Concurrently
+    const episodePromises = season.episodes.map(async (episode) => {
+      const { episodeNumber } = episode;
+      const episodeMetadataPromises = Object.entries(fileServers).map(async ([serverId, fileServer]) => {
+        const serverConfig = { id: serverId, ...fileServer.config };
+        const fileServerShowData = fileServer.tv?.[show.title];
+        if (!fileServerShowData) return null;
+
+        const seasonKey = `Season ${seasonNumber}`;
+        const fsSeasonData = fileServerShowData.seasons?.[seasonKey];
+        if (!fsSeasonData?.episodes) return null;
+
+        const episodeFileName = findEpisodeFileName(
+          Object.keys(fsSeasonData.episodes),
+          seasonNumber,
+          episodeNumber
+        );
+        if (!episodeFileName) return null;
+
+        const episodeData = fsSeasonData.episodes[episodeFileName];
+        if (!episodeData?.metadata) return null;
+
+        const metadataURL = episodeData.metadata;
+        const metadata = await fetchMetadataMultiServer(
+          serverConfig.id,
+          metadataURL,
+          'file',
+          'tv',
+          show.title
+        );
+        if (!metadata) return null;
+
+        metadata.metadataSource = serverConfig.id;
+        return { metadata, priority: serverConfig.priority };
+      });
+
+      const episodeMetadataResults = await Promise.all(episodeMetadataPromises);
+      const validEpisodeMetadata = episodeMetadataResults.filter(Boolean);
+
+      // Determine Best Episode Metadata
+      const bestEpisodeMetadata = validEpisodeMetadata.reduce((best, current) => {
+        if (!best) return current;
+        if (current.priority < best.priority) return current;
+        if (current.priority === best.priority && new Date(current.metadata.last_updated) > new Date(best.metadata.last_updated)) {
+          return current;
+        }
+        return best;
+      }, null)?.metadata || null;
+
+      if (bestSeasonMetadata || bestEpisodeMetadata) {
+        aggregatedData.seasons[seasonNumber] = aggregatedData.seasons[seasonNumber] || {
+          seasonMetadata: null,
+          episodes: {},
+        };
+
+        if (bestSeasonMetadata) {
+          aggregatedData.seasons[seasonNumber].seasonMetadata = bestSeasonMetadata;
+        }
+
+        if (bestEpisodeMetadata) {
+          aggregatedData.seasons[seasonNumber].episodes[episodeNumber] = bestEpisodeMetadata;
+        }
+      }
+    });
+
+    await Promise.all(episodePromises);
+  });
+
+  await Promise.all(seasonPromises);
+
+  return aggregatedData;
+}
+
+/**
+ * Selects the best metadata based on server priority and last_updated timestamp.
+ *
+ * @param {Object|null} currentBestMetadata - The current best metadata.
+ * @param {string|null} currentBestSource - The server ID of the current best metadata source.
+ * @param {Object} newMetadata - The newly fetched metadata.
+ * @param {Object} newServerConfig - The server configuration of the new metadata source.
+ * @returns {Object} - Updated best metadata and its source.
+ */
+function selectBestMetadata(currentBestMetadata, currentBestSource, newMetadata, newServerConfig) {
+  if (!currentBestMetadata) {
+    return {
+      metadata: { ...newMetadata, metadataSource: newServerConfig.id },
+      metadataSource: newServerConfig.id,
+    };
+  }
+
+  const existingPriority = serverManager.getServerPriority(currentBestSource);
+  const newPriority = serverManager.getServerPriority(newServerConfig.id);
+
+  if (newPriority < existingPriority) {
+    // New server has higher priority
+    return {
+      metadata: { ...newMetadata, metadataSource: newServerConfig.id },
+      metadataSource: newServerConfig.id,
+    };
+  } else if (newPriority === existingPriority) {
+    // Same priority, choose the most recently updated
+    const existingLastUpdated = new Date(currentBestMetadata.last_updated || '1970-01-01');
+    const newLastUpdated = new Date(newMetadata.last_updated || '1970-01-01');
+
+    if (newLastUpdated > existingLastUpdated) {
+      return {
+        metadata: { ...newMetadata, metadataSource: newServerConfig.id },
+        metadataSource: newServerConfig.id,
+      };
+    }
+  }
+
+  // Existing metadata is better
+  return {
+    metadata: currentBestMetadata,
+    metadataSource: currentBestSource,
+  };
+}
+
+/**
+ * Compare aggregated TV metadata vs. DB and update if needed.
+ *
+ * @param {Object} client - The DB client.
+ * @param {Object} show - The DB show object (with .metadata, .seasons, etc.).
+ * @param {Object} aggregatedData - Output of gatherTvMetadataForAllServers().
+ */
+export async function finalizeTvMetadata(client, show, aggregatedData) {
+  if (!aggregatedData?.showMetadata) {
+    // No metadata found from any server. Optionally you can do nothing or clear existing.
+    return
+  }
+
+  // --- 1) Finalize SHOW-LEVEL METADATA ---
+  const existingMetadataLastUpdated = new Date(show.metadata?.last_updated || '1970-01-01')
+  const newMetadataLastUpdated = new Date(aggregatedData.showMetadata.last_updated || '1970-01-01')
+  
+  const canUpdateShowLevel = isCurrentServerHigherPriority(
+    show.metadataSource, 
+    { id: aggregatedData.showMetadata.metadataSource }
+  ) || !show.metadataSource
+
+  if (newMetadataLastUpdated > existingMetadataLastUpdated && canUpdateShowLevel) {
+    // Also apply locked-field filtering if you use it
+    const updateData = {
+      metadata: aggregatedData.showMetadata,
+      metadataSource: aggregatedData.showMetadata.metadataSource
+    }
+    // Remove metadataSource from nested structure
+    delete updateData.metadata.metadataSource
+
+    const filteredUpdateData = filterLockedFields(show, updateData)
+    if (Object.keys(filteredUpdateData).length > 0) {
+      console.log(`Updating show-level metadata for "${show.title}"...`)
+      await updateMediaInDatabase(client, MediaType.TV, show.title, { $set: filteredUpdateData })
+    }
+  }
+
+  // --- 2) Finalize SEASON-LEVEL METADATA ---
+  for (const [seasonNumber, seasonAggData] of Object.entries(aggregatedData.seasons)) {
+    const existingSeason = show.seasons.find((s) => s.seasonNumber === Number(seasonNumber))
+    if (!existingSeason) {
+      // This theoretically shouldn't happen if `show.seasons` is accurate, 
+      // but handle gracefully
+      continue
+    }
+
+    if (seasonAggData.seasonMetadata) {
+      const existingSeasonLastUpdated = new Date(
+        existingSeason.metadata?.last_updated || '1970-01-01'
+      )
+      const newSeasonLastUpdated = new Date(
+        seasonAggData.seasonMetadata.last_updated || '1970-01-01'
+      )
+
+      const canUpdateSeason = isCurrentServerHigherPriority(
+        existingSeason.metadataSource,
+        { id: seasonAggData.seasonMetadata.metadataSource }
+      ) || !existingSeason.metadataSource
+
+      if (newSeasonLastUpdated > existingSeasonLastUpdated && canUpdateSeason) {
+        const updateData = {
+          [`seasons.$[elem].metadata`]: seasonAggData.seasonMetadata,
+          [`seasons.$[elem].metadataSource`]: seasonAggData.seasonMetadata.metadataSource
+        }
+        delete updateData[`seasons.$[elem].metadata`].metadataSource
+
+        // Filter locked fields at the show level if needed
+        // Or if you keep locked fields at the season level
+        const filtered = filterLockedFields(existingSeason, seasonAggData.seasonMetadata)
+        if (Object.keys(filtered).length > 0) {
+          console.log(
+            `Updating season-level metadata for "${show.title}" - Season ${seasonNumber}`
+          )
+          await client
+            .db('Media')
+            .collection('TV')
+            .updateOne(
+              { title: show.title },
+              { $set: updateData },
+              { arrayFilters: [{ 'elem.seasonNumber': Number(seasonNumber) }] }
+            )
+        }
+      }
+    }
+
+    // --- 3) Finalize EPISODE-LEVEL METADATA ---
+    // e.g. if you store it in `seasons[n].metadata.episodes`
+    for (const [episodeNumber, episodeMetadata] of Object.entries(
+      seasonAggData.episodes
+    )) {
+      // Find matching DB episode object
+      const dbEpisode = existingSeason.episodes.find(
+        (e) => e.episodeNumber === Number(episodeNumber)
+      )
+      if (!dbEpisode) continue
+
+      const existingEpisodeLastUpdated = new Date(
+        dbEpisode?.metadata?.last_updated || '1970-01-01'
+      )
+      const newEpisodeLastUpdated = new Date(
+        episodeMetadata.last_updated || '1970-01-01'
+      )
+
+      const canUpdateEpisode = isCurrentServerHigherPriority(
+        dbEpisode.metadataSource,
+        { id: episodeMetadata.metadataSource }
+      ) || !dbEpisode.metadataSource
+
+      if (newEpisodeLastUpdated > existingEpisodeLastUpdated && canUpdateEpisode) {
+        console.log(
+          `Updating episode metadata for "${show.title}" S${seasonNumber}E${episodeNumber}`
+        )
+
+        // Filter locked fields
+        const filtered = filterLockedFields(dbEpisode, episodeMetadata)
+        if (Object.keys(filtered).length > 0) {
+          // Build a partial update for that episode
+          await updateEpisodeInDatabase(client, show.title, Number(seasonNumber), Number(episodeNumber), {
+            set: {
+              metadata: episodeMetadata,
+              metadataSource: episodeMetadata.metadataSource
+            }
+          })
+        }
+      }
     }
   }
 }
@@ -737,9 +1345,30 @@ async function processEpisodeMetadata(
   currentSeasonData,
   showTitle,
   seasonNumber,
-  serverConfig
+  serverConfig,
+  fieldAvailability
 ) {
   const episodeData = fileServerUrls[episodeFileName] ?? { metadata: null }
+
+  // Construct the field path for the episode metadata, including the filename
+  const fieldPath = `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.metadata`
+
+  // Check if the current server is the highest priority with metadata for this episode
+  const isHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'tv',
+    showTitle,
+    fieldPath,
+    serverConfig
+  )
+
+  if (!isHighestPriority) {
+    // console.log(
+    //   `Skipping metadata update for "${showTitle}" Season ${seasonNumber} Episode ${episode.episodeNumber} - higher-priority server has metadata.`
+    // )
+    return null
+  }
+
   const mostRecent_episodeMetadata = await fetchMetadataMultiServer(
     serverConfig.id,
     episodeData.metadata,
@@ -750,29 +1379,42 @@ async function processEpisodeMetadata(
 
   if (!mostRecent_episodeMetadata) {
     console.error(
-      `TV: Metadata fetch failed for ${episodeFileName} in ${showTitle} on server ${serverConfig.id}`,
+      `TV: Metadata fetch failed for ${episodeFileName} in "${showTitle}" on server ${serverConfig.id}`,
       episodeData.metadata
     )
     return null
   }
 
   const currentEpisodeMetadata = currentSeasonData.metadata.episodes.find(
-    (e) => e.episode_number === episode.episode_number && 
-          e.season_number === episode.season_number
+    (e) => e.episode_number === episode.episodeNumber && e.season_number === seasonNumber
   )
 
-  const needsUpdate = currentEpisodeMetadata && 
-    new Date(mostRecent_episodeMetadata.last_updated) >
-    new Date(currentEpisodeMetadata.last_updated ?? '2024-01-01T01:00:00.000000')
+  const existingMetadataLastUpdated = new Date(
+    currentEpisodeMetadata?.last_updated ?? '1970-01-01T00:00:00.000Z'
+  )
+  const newMetadataLastUpdated = new Date(mostRecent_episodeMetadata.last_updated)
 
-  if (needsUpdate) {
+  // Determine if an update is needed based on timestamp
+  const needsUpdate =
+    newMetadataLastUpdated > existingMetadataLastUpdated || !currentEpisodeMetadata
+
+  // Verify ownership: only update if current server is the source or source is unset
+  const canUpdate =
+    !currentSeasonData.metadataSource ||
+    isSourceMatchingServer(currentSeasonData, 'metadataSource', serverConfig)
+
+  if (needsUpdate && canUpdate) {
     console.log(
-      `TV: Updating episode metadata for ${showTitle} Season ${seasonNumber} E${episode.episode_number} from server ${serverConfig.id}`
+      `TV: Updating episode metadata for "${showTitle}" Season ${seasonNumber} Episode ${episode.episodeNumber} from server ${serverConfig.id}`
     )
     return {
       ...mostRecent_episodeMetadata,
-      metadataSource: serverConfig.id
+      metadataSource: serverConfig.id,
     }
+  } else if (needsUpdate && !canUpdate) {
+    console.log(
+      `Cannot update episode metadata for "${showTitle}" Season ${seasonNumber} Episode ${episode.episodeNumber} - metadata is owned by server ${currentSeasonData.metadataSource}.`
+    )
   }
 
   return null
@@ -787,7 +1429,8 @@ async function processEpisodeMetadata(
  * @param {Object} showMetadata - The metadata for the TV show.
  * @param {Object} tvMetadata - The TV metadata.
  * @param {Object} serverConfig - The server configuration.
- * @returns {Promise<void>} - A Promise that resolves when the season metadata updates are processed.
+ * @param {Object} fieldAvailability - The field availability for the TV show.
+ * @returns {Promise<number>} - Number of episodes updated.
  */
 export async function processSeasonMetadata(
   client,
@@ -796,98 +1439,212 @@ export async function processSeasonMetadata(
   currentShow,
   showMetadata,
   tvMetadata,
-  serverConfig
+  serverConfig,
+  fieldAvailability
 ) {
   const seasonNumber = season.seasonNumber
   const fileServerSeasonData = showData.seasons[`Season ${seasonNumber}`]
-  
+
   if (!fileServerSeasonData) {
-    return null
+    // console.warn(
+    //   `Season ${seasonNumber} for TV show "${showData.title ?? currentShow.title}" not found on server ${serverConfig.id}. Skipping.`
+    // )
+    return 0
   }
 
   let seasonNeedsUpdate = false
   const updatedEpisodes = []
 
-  for (const episodeFileName of fileServerSeasonData.urls) {
-    try {
-      const episode = season.episodes.find(
-        (e) => e.videoURL.indexOf(episodeFileName)
+  // Create a map of episodeNumber to episodeData for quick lookup
+  const episodeDataMap = {}
+  Object.entries(fileServerSeasonData.episodes).forEach(([episodeFileName, episodeData]) => {
+    if (episodeData.episodeNumber !== undefined && episodeData.episodeNumber !== null) {
+      episodeDataMap[episodeData.episodeNumber] = { episodeFileName, episodeData }
+    } else {
+      console.warn(
+        `Episode data missing episodeNumber for filename "${episodeFileName}" in Season ${seasonNumber} of "${showData.title ?? currentShow.title}" on server ${serverConfig.id}.`
       )
-      if (!episode) {
-        console.error(
-          `Error: Episode "${episodeFileName}" not found in season ${seasonNumber} of ${showData.title ?? currentShow.title} on server ${serverConfig.id}`
-        )
-        continue
+    }
+  })
+
+  // Process episodes in parallel using Promise.all
+  const episodePromises = season.episodes.map(async (episode) => {
+    try {
+      const episodeNumber = episode.episodeNumber
+      const episodeDataEntry = episodeDataMap[episodeNumber]
+
+      if (!episodeDataEntry) {
+        // console.warn(
+        //   `No corresponding episode data found on server ${serverConfig.id} for Season ${seasonNumber}, Episode ${episodeNumber} of "${showData.title ?? currentShow.title}". Skipping.`
+        // )
+        return null
       }
+
+      const { episodeFileName } = episodeDataEntry
 
       const updatedMetadata = await processEpisodeMetadata(
         episode,
         episodeFileName,
-        fileServerSeasonData.urls,
+        fileServerSeasonData.episodes,
         season,
-        showData.title,
+        showData.title ?? currentShow.title,
         seasonNumber,
-        serverConfig
+        serverConfig,
+        fieldAvailability
       )
 
       if (updatedMetadata) {
         seasonNeedsUpdate = true
-        updatedEpisodes.push(updatedMetadata)
+        return updatedMetadata
       }
     } catch (error) {
       console.error(
-        `Error processing episode "${episodeFileName}" in ${showData.title} Season ${seasonNumber} on server ${serverConfig.id}:`,
+        `Error processing episode ${seasonNumber}x${episode.episodeNumber} in "${showData.title ?? currentShow.title}" on server ${serverConfig.id}:`,
         error
       )
+      return null
     }
-  }
+  })
 
-  if (seasonNeedsUpdate || shouldUpdateSeason(showMetadata, season)) {
+  // Wait for all episode processing to complete and filter out null results
+  const processedEpisodes = (await Promise.all(episodePromises)).filter(Boolean)
+  updatedEpisodes.push(...processedEpisodes)
+
+  // Determine if season metadata needs to be updated
+  const shouldUpdate = seasonNeedsUpdate || shouldUpdateSeason(showMetadata, season)
+  const seasonMetadata = currentShow.seasons.find((s) => s.seasonNumber === seasonNumber).metadata
+
+  // Deduplicate episodes based on episode_number and add updated episodes
+  seasonMetadata.episodes = [
+    ...new Map(
+      [...(seasonMetadata.episodes || []), ...(updatedEpisodes || [])].map(episode => [episode.episode_number, episode])
+    ).values()
+  ]
+  // sort episodes by episodeNumber
+  seasonMetadata.episodes = seasonMetadata.episodes.sort((a, b) => a.episode_number - b.episode_number)
+  if (shouldUpdate) {
     const updatedSeasonData = {
-      ...tvMetadata.seasons.find((s) => s.season_number === seasonNumber),
-      episodes: updatedEpisodes,
-      metadataSource: serverConfig.id
+      ...seasonMetadata,
+      metadataSource: serverConfig.id,
     }
 
-    await client
-      .db('Media')
-      .collection('TV')
-      .updateOne(
-        { title: showData.title },
-        { 
-          $set: {
-            'seasons.$[elem].metadata': updatedSeasonData
-          }
-        },
-        { arrayFilters: [{ 'elem.seasonNumber': seasonNumber }] }
+    // Construct the field path for the season metadata
+    const seasonFieldPath = `metadata`
+
+    // Check if the current server is the highest priority for season metadata
+    const isSeasonHighestPriority = isCurrentServerHighestPriorityForField(
+      fieldAvailability,
+      'tv',
+      showData.title ?? currentShow.title,
+      seasonFieldPath,
+      serverConfig
+    )
+
+    if (!isSeasonHighestPriority) {
+      console.log(
+        `Skipping season metadata update for "${showData.title ?? currentShow.title}" Season ${seasonNumber} - higher-priority server has metadata.`
       )
+      return 0
+    }
+
+    // Verify ownership before updating
+    const canUpdateSeason =
+      !showMetadata.metadataSource ||
+      isSourceMatchingServer(showMetadata, 'metadataSource', serverConfig)
+
+    if (canUpdateSeason) {
+      console.log(
+        `TV: Updating metadata for "${showData.title ?? currentShow.title}" Season ${seasonNumber} from server ${serverConfig.id}`
+      )
+      await client
+        .db('Media')
+        .collection('TV')
+        .updateOne(
+          { title: showData.title ?? currentShow.title },
+          {
+            $set: {
+              'seasons.$[elem].metadata': updatedSeasonData,
+            },
+          },
+          { arrayFilters: [{ 'elem.seasonNumber': seasonNumber }] }
+        )
+      return processedEpisodes.length
+    } else {
+      console.log(
+        `Cannot update season metadata for "${showData.title ?? currentShow.title}" Season ${seasonNumber} - metadata is owned by server ${showMetadata.metadataSource}.`
+      )
+      return 0
+    }
   }
+
+  return 0
 }
 
 /**
  * Processes caption updates for a movie
  */
-export async function processMovieCaptions(client, movie, fileServerData, serverConfig) {
+export async function processMovieCaptions(
+  client,
+  movie,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
   if (!fileServerData?.urls) {
     throw new Error(`No data found for movie ${movie.title} on server ${serverConfig.id}`)
   }
 
   if (!fileServerData.urls.subtitles) return null
 
-  const updatedCaptions = processCaptionURLs(fileServerData.urls.subtitles, serverConfig)
-  if (!updatedCaptions) return null
+  const availableCaptions = processCaptionURLs(fileServerData.urls.subtitles, serverConfig)
+  if (!availableCaptions) return null
 
-  const hasChanges = !isEqual(movie.captionURLs, updatedCaptions)
-  if (hasChanges) {
-    console.log(`Movie: Updating captions for ${movie.title} from server ${serverConfig.id}`)
-    await updateMediaInDatabase(
-      client, 
-      MediaType.MOVIE, 
+  // Check if the current server is the highest priority with captions
+  for (const language of Object.keys(availableCaptions)) {
+    const fieldPath = `urls.subtitles.${language}.url`
+
+    const isHighestPriority = isCurrentServerHighestPriorityForField(
+      fieldAvailability,
+      'movies',
       movie.title,
-      {
-        captionURLs: updatedCaptions,
-        captionSource: serverConfig.id
+      fieldPath,
+      serverConfig
+    )
+
+    if (!isHighestPriority) {
+      // console.log(
+      //   `Skipping caption update for "${movie.title}" language "${language}" - higher-priority server has captions.`
+      // );
+      delete availableCaptions[language] // Remove language from updates
+    }
+  }
+
+  if (Object.keys(availableCaptions).length === 0) {
+    // No updates to make
+    return
+  }
+
+  const sameURLs = isEqual(movie.captionURLs, availableCaptions)
+
+  const hasSameData =
+    movie.captionURLs &&
+    movie.captionSource &&
+    isSourceMatchingServer(movie, 'captionSource', serverConfig) &&
+    sameURLs
+
+  if (!hasSameData) {
+    console.log(`Movie: Updating captions for ${movie.title} from server ${serverConfig.id}`)
+    const preparedUpdateData = {
+      $set: {
+        captionURLs: availableCaptions,
+        captionSource: serverConfig.id,
       },
+    }
+    await updateMediaInDatabase(
+      client,
+      MediaType.MOVIE,
+      movie.title,
+      preparedUpdateData,
       serverConfig.id
     )
     return true
@@ -896,26 +1653,190 @@ export async function processMovieCaptions(client, movie, fileServerData, server
 }
 
 /**
- * Processes episode captions
+ * Gathers captions for a single movie across ALL servers, returns an object:
+ * { languageName: { srcLang, url, lastModified, sourceServerId, priority } }
+ * picking the highest priority if multiple servers have the same language.
+ *
+ * @param {Object} movie - The DB movie object (with movie.title, etc.).
+ * @param {Object} fileServers - The entire fileServers object, keyed by serverId.
+ * @returns {Object} - Aggregated captions for the movie. Possibly empty if no server has captions.
+ */
+export function gatherMovieCaptionsForAllServers(movie, fileServers) {
+  const aggregated = {} // language => { srcLang, url, lastModified, sourceServerId, priority }
+
+  // Iterate all servers
+  for (const [serverId, fileServer] of Object.entries(fileServers)) {
+    const serverConfig = {
+      id: serverId,
+      ...fileServer.config,
+    }
+    const fileServerMovieData = fileServer.movies?.[movie.title]
+    if (!fileServerMovieData?.urls?.subtitles) {
+      // This server has no subtitles for this movie
+      continue
+    }
+
+    // Convert server's raw data into an object of { lang: { srcLang, url, lastModified, sourceServerId } }
+    const serverCaptions = processCaptionURLs(fileServerMovieData.urls.subtitles, serverConfig)
+    if (!serverCaptions) continue
+
+    // Merge these into `aggregated`, respecting priority
+    for (const [lang, subObj] of Object.entries(serverCaptions)) {
+      const existing = aggregated[lang]
+      if (!existing) {
+        // If we have no data yet for this lang => take it
+        aggregated[lang] = {
+          ...subObj,
+          priority: serverConfig.priority,
+        }
+      } else {
+        // Compare priority, if the new server has a *higher* priority (numerically lower)
+        // then overwrite
+        if (serverConfig.priority < existing.priority) {
+          aggregated[lang] = {
+            ...subObj,
+            priority: serverConfig.priority,
+          }
+        }
+      }
+    }
+  }
+
+  return aggregated
+}
+
+/**
+ * Given the aggregated data (highest-priority captions from all servers) for ONE movie,
+ * compare to DB, remove orphans, add new, etc., then do a single update if something changed.
+ *
+ * @param {Object} client - DB client
+ * @param {Object} movie - DB movie object (has movie.captionURLs, movie.captionSource, etc.)
+ * @param {Object} aggregated - from gatherMovieCaptionsForAllServers
+ *   shape: { [langName]: { srcLang, url, lastModified, sourceServerId, priority } }
+ * @returns {boolean} Whether an update occurred
+ */
+export async function finalizeMovieCaptions(client, movie, aggregated) {
+  // Build a final "captionURLs" that excludes the "priority" field
+  const finalCaptionURLs = {}
+  for (const [lang, captionObj] of Object.entries(aggregated)) {
+    finalCaptionURLs[lang] = {
+      srcLang: captionObj.srcLang,
+      url: captionObj.url,
+      lastModified: captionObj.lastModified,
+      sourceServerId: captionObj.sourceServerId,
+    }
+  }
+
+  const currentCaptions = movie.captionURLs || {}
+
+  // Compare
+  if (isEqual(currentCaptions, finalCaptionURLs)) {
+    // They match exactly => no update needed
+    return false
+  }
+
+  // If different, we do an update
+  // Decide which server ID to store in `captionSource`.
+  // Typically, you'd pick the server ID from the "winning" set of captions.
+  // For example, pick the first language's sourceServerId if it exists:
+  let newCaptionSource = null
+  const langKeys = Object.keys(finalCaptionURLs)
+  if (langKeys.length > 0) {
+    newCaptionSource = finalCaptionURLs[langKeys[0]].sourceServerId
+  }
+
+  console.log(`Movie: Updating captions for "${movie.title}" (orphan removal, new data, etc.)`)
+
+  const updateDoc = {
+    $set: {
+      captionURLs: finalCaptionURLs,
+      captionSource: newCaptionSource,
+    },
+  }
+
+  await updateMediaInDatabase(
+    client,
+    MediaType.MOVIE,
+    movie.title,
+    updateDoc,
+    newCaptionSource // or server id
+  )
+
+  return true
+}
+
+/**
+ * Processes episode captions by comparing captions available on the file server and the database,
+ * and updates the database with any new captions found on the file server.
+ *
+ * @param {Object} episode - The episode object containing the current captions from the database.
+ * @param {Object} fileServerEpisodeData - The episode data from the file server.
+ * @param {string} episodeFileName - The filename of the episode.
+ * @param {string} showTitle - The title of the TV show.
+ * @param {number} seasonNumber - The season number of the episode.
+ * @param {Object} serverConfig - The configuration for the current server.
+ * @param {Object} fieldAvailability - The availability of fields for the current server.
+ * @returns {Object|null} - An object containing the updated captions and caption source, or null if no updates are needed.
  */
 async function processEpisodeCaptions(
   episode,
   fileServerEpisodeData,
+  episodeFileName,
   showTitle,
   seasonNumber,
-  serverConfig
+  serverConfig,
+  fieldAvailability
 ) {
   if (!fileServerEpisodeData.subtitles) return null
 
-  const updatedCaptions = processCaptionURLs(fileServerEpisodeData.subtitles, serverConfig)
-  if (!updatedCaptions) return null
+  const captionsOnFileServer = processCaptionURLs(fileServerEpisodeData.subtitles, serverConfig)
+  const captionsOnDB = episode.captionURLs
+  const availableCaptions = Object.fromEntries(
+    sortSubtitleEntries(Object.entries({ ...captionsOnDB, ...captionsOnFileServer }))
+  )
 
-  const hasChanges = !isEqual(episode.captionURLs, updatedCaptions)
-  if (!hasChanges) return null
+  // No captions available
+  if (!availableCaptions) return null
+
+  for (const language of Object.keys(availableCaptions)) {
+    const fieldPath = `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.subtitles.${language}.url`
+
+    const isHighestPriority = isCurrentServerHighestPriorityForField(
+      fieldAvailability,
+      'tv',
+      showTitle,
+      fieldPath,
+      serverConfig
+    )
+
+    if (
+      !isHighestPriority &&
+      isSourceMatchingServer(availableCaptions[language], 'sourceServerId', serverConfig)
+    ) {
+      // console.log(
+      //   `Skipping caption update for "${showTitle}" Season ${seasonNumber} Episode ${episode.episodeNumber} language "${language}" - higher-priority server has captions.`
+      // );
+      delete availableCaptions[language] // Remove language from updates
+    }
+  }
+
+  if (Object.keys(availableCaptions).length === 0) {
+    // No updates to make
+    return null
+  }
+
+  const sameURLs = isEqual(captionsOnDB, availableCaptions)
+
+  const hasSameData =
+    captionsOnDB &&
+    episode.captionSource &&
+    isSourceMatchingServer(episode, 'captionSource', serverConfig) &&
+    sameURLs
+  if (hasSameData) return null
 
   // Log added subtitles for this update
-  const addedSubtitles = Object.entries(updatedCaptions)
-    .filter(([langName]) => !episode.captionURLs?.[langName])
+  const addedSubtitles = Object.entries(availableCaptions)
+    .filter(([langName]) => !captionsOnDB?.[langName])
     .map(([langName, subtitleData]) => `${langName} (${subtitleData.srcLang})`)
     .join(', ')
 
@@ -927,45 +1848,214 @@ async function processEpisodeCaptions(
   }
 
   return {
-    captionURLs: updatedCaptions,
-    captionSource: serverConfig.id
+    captionURLs: Object.fromEntries(sortSubtitleEntries(Object.entries(availableCaptions))),
+    captionSource: serverConfig.id,
   }
 }
 
 /**
- * Processes season captions
+ * Returns an object like:
+ *  {
+ *    [episodeNumber]: {
+ *      [languageName]: {
+ *        srcLang,
+ *        url,
+ *        lastModified,
+ *        sourceServerId,
+ *        priority
+ *      }
+ *    }
+ *  }
+ * for all episodes in the given season, merged from *all* servers by priority.
  */
-export async function processSeasonCaptions(client, show, season, fileServerShowData, serverConfig) {
+export function gatherSeasonCaptionsForAllServers(show, season, fileServers) {
+  const aggregatedData = {} // key => episodeNumber, value => { lang => captionObj }
+
+  // For each server
+  for (const [serverId, fileServer] of Object.entries(fileServers)) {
+    const serverConfig = {
+      id: serverId,
+      ...fileServer.config,
+    }
+    const fileServerShowData = fileServer.tv?.[show.title]
+    if (!fileServerShowData) {
+      // This server doesn't have this show
+      continue
+    }
+
+    // The file server's data for the *season* we want, e.g. "Season 3"
+    const seasonKey = `Season ${season.seasonNumber}`
+    const fileServerSeasonData = fileServerShowData.seasons?.[seasonKey]
+    if (!fileServerSeasonData) {
+      // This server doesn't have this season
+      continue
+    }
+
+    // For each episode in the DB season
+    for (const episode of season.episodes) {
+      const episodeNumber = episode.episodeNumber
+      const episodeFileName = findEpisodeFileName(
+        Object.keys(fileServerSeasonData.episodes || {}),
+        season.seasonNumber,
+        episodeNumber
+      )
+
+      if (!episodeFileName) {
+        // Not found on this server
+        continue
+      }
+
+      // Grab the server’s subtitles
+      const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName]
+      if (!fileServerEpisodeData?.subtitles) {
+        continue
+      }
+
+      const captionsOnFileServer = processCaptionURLs(fileServerEpisodeData.subtitles, serverConfig)
+      if (!captionsOnFileServer) continue
+
+      // Ensure we have an aggregated object for this episode
+      if (!aggregatedData[episodeNumber]) {
+        aggregatedData[episodeNumber] = {}
+      }
+
+      // Merge in the server’s data, respecting priority
+      for (const [lang, subObj] of Object.entries(captionsOnFileServer)) {
+        const existing = aggregatedData[episodeNumber][lang]
+        if (!existing) {
+          aggregatedData[episodeNumber][lang] = {
+            ...subObj,
+            priority: serverConfig.priority
+          }
+        } else {
+          // If new server is higher priority (numerically lower), overwrite
+          if (serverConfig.priority < existing.priority) {
+            console.log(`New server is higher priority, overwriting for ${show.title} ${season.seasonNumber} ${episodeNumber} - ${lang}`)
+            aggregatedData[episodeNumber][lang] = {
+              ...subObj,
+              priority: serverConfig.priority
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return aggregatedData
+}
+
+/**
+ * Compare the aggregated data vs. the actual DB episodes for this season,
+ * removing orphans and adding/updating as needed.
+ *
+ * @param {Object} client - the DB client
+ * @param {Object} show - the DB show object
+ * @param {Object} season - the DB season object
+ * @param {Object} aggregatedData - from gatherSeasonCaptionsForAllServers (episodeNumber => language => obj)
+ */
+export async function finalizeSeasonCaptions(client, show, season, aggregatedData) {
+
+  for (const episode of season.episodes) {
+    const episodeNumber = episode.episodeNumber
+    const aggregatedForEpisode = aggregatedData[episodeNumber] || {}
+
+    // Build final captionURLs object
+    const finalCaptionURLs = {}
+    for (const [lang, capObj] of Object.entries(aggregatedForEpisode)) {
+      finalCaptionURLs[lang] = {
+        srcLang: capObj.srcLang,
+        url: capObj.url,
+        lastModified: capObj.lastModified,
+        sourceServerId: capObj.sourceServerId,
+      }
+    }
+
+    const currentCaptions = episode.captionURLs || {}
+
+    // Compare
+    if (!isEqual(currentCaptions, finalCaptionURLs)) {
+      // Decide on captionSource
+      let newCaptionSource = episode.captionSource
+      if (Object.keys(finalCaptionURLs).length > 0) {
+        // pick the first lang's server
+        const firstLang = Object.keys(finalCaptionURLs)[0]
+        newCaptionSource = finalCaptionURLs[firstLang].sourceServerId
+      } else {
+        // If no captions remain, can set null
+        newCaptionSource = null
+      }
+
+      // Prepare update
+      const updates = {
+        captionURLs: finalCaptionURLs,
+        captionSource: newCaptionSource
+      }
+
+      // Perform DB update
+      await updateEpisodeInDatabase(client, show.title, season.seasonNumber, episodeNumber, {
+        set: updates
+      })
+
+      console.log(
+        `[${show.title}] Season ${season.seasonNumber}, Episode ${episodeNumber} - Updated captions.`
+      )
+    }
+  }
+}
+
+/**
+ * Processes season-level caption updates for a TV show.
+ * @param {Object} client - The database client.
+ * @param {Object} show - The TV show object from the database.
+ * @param {Object} season - The season object from the database.
+ * @param {Object} fileServerShowData - The file server data for the TV show.
+ * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability data.
+ * @returns {Promise<number|null>} - The number of updated episodes, or null if no updates were made.
+ */
+export async function processSeasonCaptions(
+  client,
+  show,
+  season,
+  fileServerShowData,
+  serverConfig,
+  fieldAvailability
+) {
   const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
-  if (!fileServerSeasonData?.urls) {
-    throw new Error(
-      `No data/captions found for ${show.title} - Season ${season.seasonNumber} on server ${serverConfig.id}`
-    )
+  if (!fileServerSeasonData?.episodes) {
+    // throw new Error(
+    //   `No data/captions found for ${show.title} - Season ${season.seasonNumber} on server ${serverConfig.id}`
+    // )
+    return null
   }
 
   const updates = []
   for (const episode of season.episodes) {
     const episodeFileName = findEpisodeFileName(
-      Object.keys(fileServerSeasonData.urls),
+      Object.keys(fileServerSeasonData.episodes),
       season.seasonNumber,
       episode.episodeNumber
     )
 
     if (!episodeFileName) continue
 
-    const fileServerEpisodeData = fileServerSeasonData.urls[episodeFileName]
+    const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName]
     const updatedCaptions = await processEpisodeCaptions(
       episode,
       fileServerEpisodeData,
+      episodeFileName,
       show.title,
       season.seasonNumber,
-      serverConfig
+      serverConfig,
+      fieldAvailability
     )
 
     if (updatedCaptions) {
       updates.push({
         episodeNumber: episode.episodeNumber,
-        updates: updatedCaptions
+        updates: {
+          set: updatedCaptions
+        },
       })
     }
   }
@@ -985,29 +2075,61 @@ export async function processSeasonCaptions(client, show, season, fileServerShow
     await updateMediaUpdates(show.title, MediaType.TV)
     return updates.length
   }
-  
+
   return 0
 }
 
 /**
  * Processes chapter updates for a movie
  */
-export async function processMovieChapters(client, movie, fileServerData, serverConfig) {
+export async function processMovieChapters(
+  client,
+  movie,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
   const fileServerUrls = fileServerData?.urls || {}
 
   if (fileServerUrls.chapters) {
     const newChapterUrl = createFullUrl(fileServerUrls.chapters, serverConfig)
 
-    if (movie.chapterURL !== newChapterUrl) {
+    // Check if the current server has the highest priority for chapters
+    const isHighestPriority = isCurrentServerHighestPriorityForField(
+      fieldAvailability,
+      'movies',
+      movie.title,
+      'urls.chapters',
+      null,
+      serverConfig
+    )
+
+    if (!isHighestPriority) {
+      console.log(
+        `Skipping chapter update for "${movie.title}" - higher-priority server has chapters.`
+      )
+      return false
+    }
+
+    const hasSameData =
+      movie.chapterURL &&
+      movie.chapterSource &&
+      isEqual(movie.chapterURL, newChapterUrl) &&
+      isSourceMatchingServer(movie, 'chapterSource', serverConfig)
+
+    if (!hasSameData) {
       console.log(`Movie: Updating chapters for ${movie.title} from server ${serverConfig.id}`)
-      await updateMediaInDatabase(
-        client, 
-        MediaType.MOVIE, 
-        movie.title,
-        {
+      const preparedUpdateData = {
+        $set: {
           chapterURL: newChapterUrl,
-          chapterSource: serverConfig.id
+          chapterSource: serverConfig.id,
         },
+      }
+      await updateMediaInDatabase(
+        client,
+        MediaType.MOVIE,
+        movie.title,
+        preparedUpdateData,
         serverConfig.id
       )
       return true
@@ -1019,11 +2141,11 @@ export async function processMovieChapters(client, movie, fileServerData, server
       .collection('Movies')
       .updateOne(
         { title: movie.title },
-        { 
-          $unset: { 
+        {
+          $unset: {
             chapterURL: '',
-            chapterSource: '' 
-          }
+            chapterSource: '',
+          },
         }
       )
     return true
@@ -1034,32 +2156,61 @@ export async function processMovieChapters(client, movie, fileServerData, server
 /**
  * Processes chapter updates for a TV episode
  */
-async function processEpisodeChapters(client, episode, fileServerEpisodeData, showTitle, seasonNumber, serverConfig) {
+async function processEpisodeChapters(
+  client,
+  episode,
+  fileServerEpisodeData,
+  episodeFileName,
+  showTitle,
+  seasonNumber,
+  serverConfig,
+  fieldAvailability
+) {
   if (fileServerEpisodeData?.chapters) {
     const newChapterUrl = createFullUrl(fileServerEpisodeData.chapters, serverConfig)
 
-    if (
-      episode.chapterURL !== newChapterUrl ||
-      episode.chapterURL === undefined ||
-      episode.chapterURL === null
-    ) {
+    // Check if the current server has the highest priority for chapters
+    const fieldPath = `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.chapters`
+    const isHighestPriority = isCurrentServerHighestPriorityForField(
+      fieldAvailability,
+      'tv',
+      showTitle,
+      fieldPath,
+      null,
+      serverConfig
+    )
+
+    if (!isHighestPriority) {
       console.log(
-        `TV: Updating chapters for ${showTitle} - Season ${seasonNumber}, Episode ${episode.episodeNumber} from server ${serverConfig.id}`
+        `Skipping chapter update for "${showTitle}" Season ${seasonNumber}, Episode ${episode.episodeNumber} - higher-priority server has chapters.`
+      )
+      return null
+    }
+
+    const hasSameData =
+      episode.chapterURL &&
+      episode.chapterSource &&
+      isEqual(episode.chapterURL, newChapterUrl) &&
+      isSourceMatchingServer(episode, 'chapterSource', serverConfig)
+
+    if (!hasSameData) {
+      console.log(
+        `TV: Updating chapters for "${showTitle}" Season ${seasonNumber}, Episode ${episode.episodeNumber} from server ${serverConfig.id}`
       )
       return {
         chapterURL: newChapterUrl,
-        chapterSource: serverConfig.id
+        chapterSource: serverConfig.id,
       }
     }
   } else if (episode.chapterURL && isSourceMatchingServer(episode, 'chapterSource', serverConfig)) {
     console.log(
-      `TV: Removing chapters for ${showTitle} - Season ${seasonNumber}, Episode ${episode.episodeNumber} from server ${serverConfig.id}`
+      `TV: Removing chapters for "${showTitle}" Season ${seasonNumber}, Episode ${episode.episodeNumber} from server ${serverConfig.id}`
     )
     return {
       $unset: {
         chapterURL: '',
-        chapterSource: ''
-      }
+        chapterSource: '',
+      },
     }
   }
   return null
@@ -1068,41 +2219,50 @@ async function processEpisodeChapters(client, episode, fileServerEpisodeData, sh
 /**
  * Processes chapter updates for a TV season
  */
-export async function processSeasonChapters(client, show, season, fileServerShowData, serverConfig) {
+export async function processSeasonChapters(
+  client,
+  show,
+  season,
+  fileServerShowData,
+  serverConfig,
+  fieldAvailability
+) {
   const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`] || {
-    urls: {}
+    urls: {},
   }
 
   const updates = []
   for (const episode of season.episodes) {
     const episodeFileName = findEpisodeFileName(
-      Object.keys(fileServerSeasonData.urls),
+      Object.keys(fileServerSeasonData.episodes),
       season.seasonNumber,
       episode.episodeNumber
     )
 
     const fileServerEpisodeData = episodeFileName
-      ? fileServerSeasonData.urls[episodeFileName]
+      ? fileServerSeasonData.episodes[episodeFileName]
       : null
 
     const chapterUpdates = await processEpisodeChapters(
       client,
       episode,
       fileServerEpisodeData,
+      episodeFileName,
       show.title,
       season.seasonNumber,
-      serverConfig
+      serverConfig,
+      fieldAvailability
     )
 
     if (chapterUpdates) {
       updates.push({
         episodeNumber: episode.episodeNumber,
-        updates: chapterUpdates
+        updates: chapterUpdates,
       })
     }
   }
 
-  // Process all updates
+  // Apply updates
   for (const update of updates) {
     await updateEpisodeInDatabase(
       client,
@@ -1122,31 +2282,63 @@ export async function processSeasonChapters(client, show, season, fileServerShow
  * @param {Object} movie - The movie object.
  * @param {Object} fileServerData - The data from the file server for the movie.
  * @param {Object} serverConfig - The configuration for the file server.
+ * @param {Object} fieldAvailability - The availability of fields for the movie.
  * @returns {Promise<boolean|null>} - A Promise that resolves to true if the video URL was updated, null if the update was skipped.
  */
-export async function processMovieVideoURL(client, movie, fileServerData, serverConfig) {
+export async function processMovieVideoURL(
+  client,
+  movie,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
   if (!fileServerData) {
     throw new Error(`Movie "${movie.title}" not found on server ${serverConfig.id}`)
   }
 
   if (!fileServerData.urls?.mp4) {
-    throw new Error(`No MP4 video URL found for movie "${movie.title}" on server ${serverConfig.id}`)
+    throw new Error(
+      `No MP4 video URL found for movie "${movie.title}" on server ${serverConfig.id}`
+    )
   }
 
-  const newVideoURL = createFullUrl(fileServerData.urls.mp4, serverConfig)
-  if (newVideoURL === movie.videoURL) return null
+  // Construct the field path for the movie video URL
+  const fieldPath = 'urls.mp4'
 
-  // Only update if the current source is the same server or not set
-  if (movie.videoSource && isSourceMatchingServer(movie, 'videoSource', serverConfig)) {
-    console.log(
-      `Skipping video URL update for "${movie.title}" - content owned by server ${movie.videoSource}`
-    )
+  // Check if the current server has the highest priority for videoURL
+  const isHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'movies',
+    movie.title,
+    fieldPath,
+    serverConfig
+  )
+
+  if (!isHighestPriority) {
+    // console.log(
+    //   `Skipping video URL update for "${movie.title}" - higher-priority server has videoURL.`
+    // );
     return null
   }
 
-  const updateData = { 
+  const newVideoURL = createFullUrl(fileServerData.urls.mp4, serverConfig)
+  const hasSameData =
+    movie.videoURL &&
+    isEqual(movie.videoURL, newVideoURL) &&
+    isSourceMatchingServer(movie, 'videoSource', serverConfig)
+  if (hasSameData) return null
+
+  // Only update if the current source is the same server or not set
+  //if (movie.videoSource && isSourceMatchingServer(movie, 'videoSource', serverConfig)) {
+    // console.log(
+    //   `Skipping video URL update for "${movie.title}" - content owned by server ${movie.videoSource}`
+    // );
+    //return null
+  //}
+
+  const updateData = {
     videoURL: newVideoURL,
-    videoSource: serverConfig.id
+    videoSource: serverConfig.id,
   }
   const filteredUpdateData = filterLockedFields(movie, updateData)
 
@@ -1156,7 +2348,16 @@ export async function processMovieVideoURL(client, movie, fileServerData, server
   }
 
   console.log(`Movie: Updating video URL for "${movie.title}" from server ${serverConfig.id}`)
-  await updateMediaInDatabase(client, MediaType.MOVIE, movie.title, filteredUpdateData, serverConfig.id)
+  const preparedUpdateData = {
+    $set: filteredUpdateData,
+  }
+  await updateMediaInDatabase(
+    client,
+    MediaType.MOVIE,
+    movie.title,
+    preparedUpdateData,
+    serverConfig.id
+  )
   return true
 }
 
@@ -1171,33 +2372,58 @@ export async function processMovieVideoURL(client, movie, fileServerData, server
  * @returns {Promise<{videoURL: string, videoSource: string}|null>} - A Promise that resolves to an object with the updated video URL and source, or null if the update was skipped.
  */
 export async function processEpisodeVideoURL(
-  client,
   episode,
   fileServerEpisodeData,
+  episodeFileName,
   showTitle,
   seasonNumber,
-  serverConfig
+  serverConfig,
+  fieldAvailability
 ) {
-  if (!fileServerEpisodeData?.videourl) return null
+  // Construct the field path for the episode video URL
+  const fieldPath = `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.videoURL`
 
-  // Only update if the current source is not the same server or not set
-  if (episode.videoSource && isSourceMatchingServer(episode, 'videoSource', serverConfig)) {
+  // Check if the current server has the highest priority for videoURL
+  const isHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'tv',
+    showTitle,
+    fieldPath,
+    serverConfig
+  )
+
+  if (!isHighestPriority) {
+    // console.log(
+    //   `Skipping video URL update for "${showTitle}" - Season ${seasonNumber}, Episode ${episode.episodeNumber} - higher-priority server has videoURL.`
+    // );
     return null
   }
 
-  const newVideoURL = createFullUrl(fileServerEpisodeData.videourl, serverConfig)
-  if (episode.videoURL === newVideoURL) return null
-  
-  console.log(
-    `TV: Updating video URL for "${showTitle}" - Season ${seasonNumber}, Episode ${episode.episodeNumber} from server ${serverConfig.id}`
-  )
+  const setFields = {}
+  const unsetFields = []
 
-  return {
-    videoURL: newVideoURL,
-    videoSource: serverConfig.id
+  const newVideoURL = createFullUrl(fileServerEpisodeData.videoURL, serverConfig)
+  if (!isEqual(episode.videoURL, newVideoURL)) {
+    setFields.videoURL = newVideoURL
+    setFields.videoSource = serverConfig.id
   }
-}
 
+  if (Object.keys(setFields).length > 0 || unsetFields.length > 0) {
+    const updates = {}
+    if (Object.keys(setFields).length > 0) {
+      updates.set = setFields
+    }
+    if (unsetFields.length > 0) {
+      updates.unset = unsetFields
+    }
+    console.log(
+      `TV: Updating video URL for "${showTitle}" - Season ${seasonNumber}, Episode ${episode.episodeNumber} from server ${serverConfig.id}`
+    )
+    return updates
+  }
+
+  return null
+}
 
 /**
  * Processes the video URL updates for all episodes in a TV show season.
@@ -1208,7 +2434,14 @@ export async function processEpisodeVideoURL(
  * @param {Object} serverConfig - The configuration for the file server.
  * @returns {Promise<number>} - A Promise that resolves to the number of episodes updated.
  */
-export async function processSeasonVideoURLs(client, show, season, fileServerShowData, serverConfig) {
+export async function processSeasonVideoURLs(
+  client,
+  show,
+  season,
+  fileServerShowData,
+  serverConfig,
+  fieldAvailability
+) {
   const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
   if (!fileServerSeasonData) {
     throw new Error(
@@ -1219,21 +2452,22 @@ export async function processSeasonVideoURLs(client, show, season, fileServerSho
   const updates = []
   for (const episode of season.episodes) {
     const episodeFileName = findEpisodeFileName(
-      Object.keys(fileServerSeasonData.urls),
+      Object.keys(fileServerSeasonData.episodes),
       season.seasonNumber,
       episode.episodeNumber
     )
 
     if (!episodeFileName) continue
 
-    const fileServerEpisodeData = fileServerSeasonData.urls[episodeFileName]
+    const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName]
     const videoUpdates = await processEpisodeVideoURL(
-      client,
       episode,
       fileServerEpisodeData,
+      episodeFileName,
       show.title,
       season.seasonNumber,
-      serverConfig
+      serverConfig,
+      fieldAvailability
     )
 
     if (videoUpdates) {
@@ -1242,6 +2476,7 @@ export async function processSeasonVideoURLs(client, show, season, fileServerSho
         updates: videoUpdates
       })
     }
+
   }
 
   // Process all updates
@@ -1263,86 +2498,173 @@ export async function processSeasonVideoURLs(client, show, season, fileServerSho
 }
 
 /**
- * Processes the logo URL update for a TV show.
+ * Processes the logo URL update for a TV show, integrating fieldAvailability and priority checks.
  * @param {Object} client - The database client.
  * @param {Object} show - The TV show object.
  * @param {Object} fileServerData - The file server data for the TV show.
  * @param {Object} serverConfig - The server configuration.
- * @returns {Promise<boolean|null>} - A Promise that resolves to true if the logo URL was updated, null if no update was needed.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<boolean|null>} - Returns true if the logo was updated, null otherwise.
  */
-export async function processShowLogo(client, show, fileServerData, serverConfig) {
+export async function processShowLogo(
+  client,
+  show,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
   if (!fileServerData?.logo) return null
 
-  const newLogoUrl = createFullUrl(fileServerData.logo, serverConfig)
-  
-  // Only update if the current source is the same server or not set
-  if (show.logoSource && isSourceMatchingServer(show, 'logoSource', serverConfig)) {
+  const fieldPath = 'logo'
+  const showTitle = show.title
+
+  // Check if the current server is the highest priority for the 'logo' field
+  const isHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'tv',
+    showTitle,
+    fieldPath,
+    serverConfig
+  )
+
+  if (!isHighestPriority) {
+    // console.log(
+    //   `Skipping logo update for "${showTitle}" - higher-priority server has logo.`
+    // );
     return null
   }
 
-  if (show.logo === newLogoUrl) return null
+  const newLogoUrl = createFullUrl(fileServerData.logo, serverConfig)
 
-  console.log(`TV: Updating logo URL for ${show.title} from server ${serverConfig.id}`)
-  await updateMediaInDatabase(
-    client,
-    MediaType.TV,
-    show.title,
-    {
-      logo: newLogoUrl,
-      logoSource: serverConfig.id
-    },
-    serverConfig.id
-  )
+  if (isEqual(show.logo, newLogoUrl) && isSourceMatchingServer(show, 'logoSource', serverConfig))
+    return null
+
+  const updateData = {
+    logo: newLogoUrl,
+    logoSource: serverConfig.id,
+  }
+
+  // Filter out any locked fields
+  const filteredUpdateData = filterLockedFields(show, updateData)
+
+  if (!filteredUpdateData.logo) {
+    console.log(`Field "logo" is locked for show "${showTitle}". Skipping logo update.`)
+    return null
+  }
+
+  console.log(`TV: Updating logo URL for "${showTitle}" from server ${serverConfig.id}`)
+  const preparedUpdateData = {
+    $set: filteredUpdateData,
+  }
+  await updateMediaInDatabase(client, MediaType.TV, showTitle, preparedUpdateData, serverConfig.id)
   return true
 }
 
 /**
- * Processes the logo URL update for a movie.
+ * Processes the logo URL update for a movie, integrating fieldAvailability and priority checks.
  * @param {Object} client - The database client.
  * @param {Object} movie - The movie object.
  * @param {Object} fileServerData - The file server data for the movie.
  * @param {Object} serverConfig - The server configuration.
- * @returns {Promise<boolean|null>} - A Promise that resolves to true if the logo URL was updated, null if no update was needed.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<boolean|null>} - Returns true if the logo was updated, null otherwise.
  */
-export async function processMovieLogo(client, movie, fileServerData, serverConfig) {
+export async function processMovieLogo(
+  client,
+  movie,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
   if (!fileServerData?.urls?.logo) return null
 
-  const newLogoUrl = createFullUrl(fileServerData.urls.logo, serverConfig)
-  
-  // Only update if the current source is the same server or not set
-  if (movie.logoSource && isSourceMatchingServer(movie, 'logoSource', serverConfig)) {
+  const fieldPath = 'urls.logo'
+  const movieTitle = movie.title
+
+  // Check if the current server is the highest priority for the 'urls.logo' field
+  const isHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'movies',
+    movieTitle,
+    fieldPath,
+    serverConfig
+  )
+
+  if (!isHighestPriority) {
+    // console.log(
+    //   `Skipping logo update for "${movieTitle}" - higher-priority server has logo.`
+    // );
     return null
   }
 
-  if (movie.logo === newLogoUrl) return null
+  const newLogoUrl = createFullUrl(fileServerData.urls.logo, serverConfig)
 
-  console.log(`Movie: Updating logo URL for ${movie.title} from server ${serverConfig.id}`)
+  if (isEqual(movie.logo, newLogoUrl) && isSourceMatchingServer(movie, 'logoSource', serverConfig))
+    return null
+
+  const updateData = {
+    logo: newLogoUrl,
+    logoSource: serverConfig.id,
+  }
+
+  // Filter out any locked fields
+  const filteredUpdateData = filterLockedFields(movie, updateData)
+
+  if (!filteredUpdateData.logo) {
+    console.log(`Field "logo" is locked for movie "${movieTitle}". Skipping logo update.`)
+    return null
+  }
+
+  console.log(`Movie: Updating logo URL for "${movieTitle}" from server ${serverConfig.id}`)
+  const preparedUpdateData = {
+    $set: filteredUpdateData,
+  }
   await updateMediaInDatabase(
     client,
     MediaType.MOVIE,
-    movie.title,
-    {
-      logo: newLogoUrl,
-      logoSource: serverConfig.id
-    },
+    movieTitle,
+    preparedUpdateData,
     serverConfig.id
   )
   return true
 }
 
 /**
- * Processes the blurhash update for a TV season.
- * @param {Object} season - The TV season object
- * @param {Object} fileServerSeasonData - The file server data for the TV season
- * @param {string} showTitle - The title of the TV show
- * @param {Object} serverConfig - Server configuration
- * @returns {Object} The updated TV season object or null if no updates needed
+ * Processes the blurhash update for a TV season, integrating fieldAvailability and priority checks.
+ * @param {Object} client - The database client.
+ * @param {Object} season - The TV season object.
+ * @param {Object} fileServerSeasonData - The file server data for the TV season.
+ * @param {string} showTitle - The title of the TV show.
+ * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<boolean|null>} - Returns true if the season was updated, null otherwise.
  */
-export function processSeasonBlurhash(season, fileServerSeasonData, showTitle, serverConfig) {
+export async function processSeasonBlurhash(
+  client,
+  season,
+  fileServerSeasonData,
+  showTitle,
+  serverConfig,
+  fieldAvailability
+) {
   if (!fileServerSeasonData) return null
 
-  // Only update if the current source is the same server or not set
-  if (season.blurhashSource && isSourceMatchingServer(season, 'blurhashSource', serverConfig)) {
+  const seasonNumber = season.seasonNumber
+  const fieldPath = `seasons.Season ${seasonNumber}.seasonPosterBlurhash`
+
+  // Check if the current server is the highest priority for the 'seasonPosterBlurhash' field
+  const isHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'tv',
+    showTitle,
+    fieldPath,
+    serverConfig
+  )
+
+  if (!isHighestPriority) {
+    // console.log(
+    //   `Skipping blurhash update for "${showTitle}" Season ${seasonNumber} - higher-priority server has blurhash.`
+    // )
     return null
   }
 
@@ -1351,76 +2673,168 @@ export function processSeasonBlurhash(season, fileServerSeasonData, showTitle, s
 
   if (fileServerSeasonData.seasonPosterBlurhash) {
     const newBlurhashUrl = createFullUrl(fileServerSeasonData.seasonPosterBlurhash, serverConfig)
-    
-    if (!season.seasonPosterBlurhash || season.seasonPosterBlurhash !== newBlurhashUrl) {
+
+    if (
+      !season.seasonPosterBlurhashSource ||
+      !isEqual(season.seasonPosterBlurhash, newBlurhashUrl)
+    ) {
       console.log(
-        `TV Season: Updating seasonPosterBlurhash for ${showTitle} Season ${season.seasonNumber} from server ${serverConfig.id}`
+        `TV Season: Updating seasonPosterBlurhash for "${showTitle}" Season ${seasonNumber} from server ${serverConfig.id}`
       )
       updatedSeason = {
         ...updatedSeason,
         seasonPosterBlurhash: newBlurhashUrl,
-        blurhashSource: serverConfig.id
+        seasonPosterBlurhashSource: serverConfig.id,
       }
       needsUpdate = true
     }
   } else if (
-    season.seasonPosterBlurhash && 
-    isSourceMatchingServer(season, 'blurhashSource', serverConfig)
+    season.seasonPosterBlurhash &&
+    isSourceMatchingServer(season, 'seasonPosterBlurhashSource', serverConfig)
   ) {
     console.log(
-      `TV Season: Removing seasonPosterBlurhash for ${showTitle} Season ${season.seasonNumber} from server ${serverConfig.id}`
+      `TV Season: Removing seasonPosterBlurhash for "${showTitle}" Season ${seasonNumber} from server ${serverConfig.id}`
     )
-    const { 
-      seasonPosterBlurhash, 
-      blurhashSource, 
-      ...seasonWithoutBlurhash 
-    } = updatedSeason
+    const { seasonPosterBlurhash, seasonPosterBlurhashSource, ...seasonWithoutBlurhash } =
+      updatedSeason
     updatedSeason = seasonWithoutBlurhash
     needsUpdate = true
   }
 
-  return needsUpdate ? updatedSeason : null
+  if (needsUpdate) {
+    // Filter out any locked fields
+    const filteredUpdateData = filterLockedFields(season, updatedSeason)
+
+    // Determine whether to set or unset fields
+    const setFields = {}
+    const unsetFields = {}
+
+    if (filteredUpdateData.seasonPosterBlurhash) {
+      setFields['seasons.$[elem].seasonPosterBlurhash'] = filteredUpdateData.seasonPosterBlurhash
+      setFields['seasons.$[elem].seasonPosterBlurhashSource'] =
+        filteredUpdateData.seasonPosterBlurhashSource
+    }
+
+    if (
+      !filteredUpdateData.seasonPosterBlurhash &&
+      isSourceMatchingServer(season, 'seasonPosterBlurhashSource', serverConfig)
+    ) {
+      unsetFields['seasons.$[elem].seasonPosterBlurhash'] = ''
+      unsetFields['seasons.$[elem].seasonPosterBlurhashSource'] = ''
+    }
+
+    const updateOperation = {}
+    if (Object.keys(setFields).length > 0) {
+      updateOperation.$set = setFields
+    }
+    if (Object.keys(unsetFields).length > 0) {
+      updateOperation.$unset = unsetFields
+    }
+
+    if (Object.keys(updateOperation).length > 0) {
+      await client
+        .db('Media')
+        .collection('TV')
+        .updateOne({ title: showTitle }, updateOperation, {
+          arrayFilters: [{ 'elem.seasonNumber': seasonNumber }],
+        })
+
+      await updateMediaUpdates(showTitle, MediaType.TV)
+      return true
+    }
+  }
+
+  return null
 }
 
 /**
- * Processes the blurhash update for a TV show.
- *
- * This function compares the TV show data with the file server data and updates the poster and backdrop blurhash fields in the database if needed.
- *
- * @param {Object} client - The MongoDB client instance.
- * @param {Object} show - The TV show object containing the current blurhash data.
- * @param {Object} fileServerData - The file server data containing the updated blurhash URLs.
- * @param {Object} serverConfig - The server configuration object.
- * @returns {Promise<boolean|null>} - True if the show was updated, null if no updates were needed.
+ * Processes the blurhash update for a TV show, integrating fieldAvailability and priority checks.
+ * @param {Object} client - The database client.
+ * @param {Object} show - The TV show object.
+ * @param {Object} fileServerData - The file server data for the TV show.
+ * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<boolean|null>} - Returns true if the show was updated, null otherwise.
  */
-export async function processShowBlurhash(client, show, fileServerData, serverConfig) {
+export async function processShowBlurhash(
+  client,
+  show,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
   if (!fileServerData) return null
+
+  const showTitle = show.title
 
   const updates = {}
   const unsetFields = {}
 
-  const blurhashURL = createFullUrl(fileServerData.posterBlurhash, serverConfig)
+  // Process posterBlurhash
+  const posterBlurhashFieldPath = 'posterBlurhash'
+  const hasPosterBlurhashData = !!fileServerData.posterBlurhash
 
-  // Process poster blurhash
-  if (fileServerData.posterBlurhash && 
-      (blurhashURL !== show.posterBlurhash) || (!show.posterBlurhash || !isSourceMatchingServer(show, 'blurhashSource', serverConfig))) {
-    updates.posterBlurhash = blurhashURL
-    updates.blurhashSource = serverConfig.id
-  } else if (!fileServerData.posterBlurhash && 
-             show.posterBlurhash && 
-             isSourceMatchingServer(show, 'blurhashSource', serverConfig)) {
+  const isPosterBlurhashHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'tv',
+    showTitle,
+    posterBlurhashFieldPath,
+    serverConfig
+  )
+
+  if (hasPosterBlurhashData) {
+    if (isPosterBlurhashHighestPriority) {
+      const newPosterBlurhashURL = createFullUrl(fileServerData.posterBlurhash, serverConfig)
+
+      if (!isEqual(show.posterBlurhash, newPosterBlurhashURL) || !show.posterBlurhashSource) {
+        updates.posterBlurhash = newPosterBlurhashURL
+        updates.posterBlurhashSource = serverConfig.id
+      }
+    } //else {
+    // console.log(
+    //   `Skipping posterBlurhash update for "${showTitle}" - higher-priority server has posterBlurhash.`
+    // );
+    //}
+  } else if (
+    show.posterBlurhash &&
+    isSourceMatchingServer(show, 'posterBlurhashSource', serverConfig)
+  ) {
+    // Remove posterBlurhash if server is the source and serverData doesn't have it
     unsetFields.posterBlurhash = ''
-    unsetFields.blurhashSource = ''
+    unsetFields.posterBlurhashSource = ''
   }
 
-  // Process backdrop blurhash (similar logic)
-  if (fileServerData.backdropBlurhash &&
-      (!show.backdropBlurhash || !isSourceMatchingServer(show, 'backdropBlurhashSource', serverConfig))) {
-    updates.backdropBlurhash = createFullUrl(fileServerData.backdropBlurhash, serverConfig)
-    updates.backdropBlurhashSource = serverConfig.id
-  } else if (!fileServerData.backdropBlurhash &&
-             show.backdropBlurhash &&
-             isSourceMatchingServer(show, 'backdropBlurhashSource', serverConfig)) {
+  // Process backdropBlurhash
+  const backdropBlurhashFieldPath = 'backdropBlurhash'
+  const hasBackdropBlurhashData = !!fileServerData.backdropBlurhash
+
+  const isBackdropBlurhashHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'tv',
+    showTitle,
+    backdropBlurhashFieldPath,
+    serverConfig
+  )
+
+  if (hasBackdropBlurhashData) {
+    if (isBackdropBlurhashHighestPriority) {
+      const newBackdropBlurhashURL = createFullUrl(fileServerData.backdropBlurhash, serverConfig)
+
+      if (!show.backdropBlurhashSource || !isEqual(show.backdropBlurhash, newBackdropBlurhashURL)) {
+        // Check ownership
+        updates.backdropBlurhash = newBackdropBlurhashURL
+        updates.backdropBlurhashSource = serverConfig.id
+      }
+    } /*else {
+      console.log(
+        `Skipping backdropBlurhash update for "${showTitle}" - higher-priority server has backdropBlurhash.`
+      )
+    }*/
+  } else if (
+    show.backdropBlurhash &&
+    isSourceMatchingServer(show, 'backdropBlurhashSource', serverConfig)
+  ) {
+    // Remove backdropBlurhash if server is the source and serverData doesn't have it
     unsetFields.backdropBlurhash = ''
     unsetFields.backdropBlurhashSource = ''
   }
@@ -1434,153 +2848,461 @@ export async function processShowBlurhash(client, show, fileServerData, serverCo
       updateOperation.$unset = unsetFields
     }
 
-    await client
-      .db('Media')
-      .collection('TV')
-      .updateOne(
-        { title: show.title },
-        updateOperation
-      )
+    // Optionally filter locked fields for $set operations
+    if (updateOperation.$set) {
+      updateOperation.$set = filterLockedFields(show, updateOperation.$set)
+    }
 
-    await updateMediaUpdates(show.title, MediaType.TV)
-    return true
+    // Remove empty $set or $unset
+    if (updateOperation.$set && Object.keys(updateOperation.$set).length === 0) {
+      delete updateOperation.$set
+    }
+    if (updateOperation.$unset && Object.keys(updateOperation.$unset).length === 0) {
+      delete updateOperation.$unset
+    }
+
+    if (Object.keys(updateOperation).length > 0) {
+      await client.db('Media').collection('TV').updateOne({ title: showTitle }, updateOperation)
+
+      await updateMediaUpdates(showTitle, MediaType.TV)
+      return true
+    }
   }
 
   return null
 }
 
 /**
- * Processes the blurhash for a movie poster.
- *
- * This function compares the movie's current blurhash with the blurhash data from the file server. If the blurhash has changed, it updates the movie's blurhash and blurhash source in the database.
- *
+ * Processes the blurhash update for a movie's poster, integrating fieldAvailability and priority checks.
  * @param {Object} client - The database client.
- * @param {Object} movie - The movie object containing the current blurhash information.
- * @param {Object} fileServerData - The file server data containing the updated blurhash information.
- * @param {Object} serverConfig - The configuration for the current file server.
- * @returns {Promise<boolean|null>} - True if the movie's blurhash was updated, null if no update was needed.
+ * @param {Object} movie - The movie object.
+ * @param {Object} fileServerData - The file server data for the movie.
+ * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<boolean|null>} - Returns true if the blurhash was updated, null otherwise.
  */
-export async function processMovieBlurhash(client, movie, fileServerData, serverConfig) {
+export async function processMovieBlurhash(
+  client,
+  movie,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
   if (!fileServerData?.urls?.posterBlurhash) return null
 
-  // Only update if the current source is the same server or not set
-  if (movie.blurhashSource && isSourceMatchingServer(movie, 'blurhashSource', serverConfig)) {
+  const fieldPath = 'urls.posterBlurhash'
+  const movieTitle = movie.title
+
+  // Check if the current server is the highest priority for the 'urls.posterBlurhash' field
+  const isHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'movies',
+    movieTitle,
+    fieldPath,
+    serverConfig
+  )
+
+  if (!isHighestPriority) {
+    // console.log(
+    //   `Skipping posterBlurhash update for "${movieTitle}" - higher-priority server has posterBlurhash.`
+    // );
     return null
   }
 
   const newBlurhash = createFullUrl(fileServerData.urls.posterBlurhash, serverConfig)
-  if (movie.posterBlurhash === newBlurhash && isSourceMatchingServer(movie, 'blurhashSource', serverConfig)) return null
 
-  console.log(`Movie: Updating posterBlurhash for ${movie.title} from server ${serverConfig.id}`)
+  if (isSourceMatchingServer(media, 'posterBlurhashSource', serverConfig) && isEqual(movie.posterBlurhash, newBlurhash)) return null
+
+  const updateData = {
+    posterBlurhash: newBlurhash,
+    posterBlurhashSource: serverConfig.id,
+  }
+
+  // Filter out any locked fields
+  const filteredUpdateData = filterLockedFields(movie, updateData)
+
+  if (!filteredUpdateData.posterBlurhash) {
+    // console.log(
+    //   `Field "posterBlurhash" is locked for movie "${movieTitle}". Skipping blurhash update.`
+    // )
+    return null
+  }
+
+  console.log(`Movie: Updating posterBlurhash for "${movieTitle}" from server ${serverConfig.id}`)
+  const preparedUpdateData = {
+    $set: filteredUpdateData,
+  }
   await updateMediaInDatabase(
     client,
     MediaType.MOVIE,
-    movie.title,
-    {
-      posterBlurhash: newBlurhash,
-      blurhashSource: serverConfig.id
-    },
+    movieTitle,
+    preparedUpdateData,
     serverConfig.id
   )
   return true
 }
 
 /**
- * Processes video information updates for an episode.
+ * Gathers video info for one (show, season) from ALL servers, 
+ * picking the highest priority server's data for each field.
  *
- * This function compares the episode's current video information with the updated information from the file server. If any changes are detected, it updates the episode's video information in the database.
- *
- * @param {Object} episode - The episode object containing the current video information.
- * @param {string} episodeFileName - The file name of the episode on the file server.
- * @param {Object} fileServerSeasonData - The file server data for the season containing the episode.
- * @param {Object} serverConfig - The configuration for the current file server.
- * @returns {Promise<Object|null>} - An object containing the updated video information, or null if no updates are needed.
+ * @param {Object} show - DB show object (with .title, etc.)
+ * @param {Object} season - DB season object (with .seasonNumber, .episodes)
+ * @param {Object} fileServers - All servers, keyed by serverId
+ * @returns {Object} aggregatedSeasonData
+ *  {
+ *    [episodeNumber]: {
+ *      dimensions: { width, height } | null,
+ *      duration: number | null,
+ *      hdr: string | null,
+ *      size: number | null,
+ *      priorityMap: { dimensions: number, duration: number, hdr: number, size: number },
+ *    }
+ *  }
  */
-export async function processEpisodeVideoInfo(episode, episodeFileName, fileServerSeasonData, serverConfig) {
-  const episodeInfo = fileServerSeasonData.urls[episodeFileName]?.additionalMetadata
-  if (!episodeInfo) {
-    console.warn(`No additionalMetadata found for ${episodeFileName} in server ${serverConfig.id} data.`)
+export function gatherSeasonVideoInfoForAllServers(show, season, fileServers) {
+  const aggregated = {}
+
+  // For each server
+  for (const [serverId, fileServer] of Object.entries(fileServers)) {
+    const serverConfig = fileServer.config // includes .priority
+    const fileServerShowData = fileServer.tv?.[show.title]
+    if (!fileServerShowData) continue
+
+    const seasonKey = `Season ${season.seasonNumber}`
+    const fileServerSeasonData = fileServerShowData.seasons?.[seasonKey]
+    if (!fileServerSeasonData?.episodes) continue
+
+    // For each episode in the DB season
+    for (const episode of season.episodes) {
+      const episodeNumber = episode.episodeNumber
+      const episodeFileName = findEpisodeFileName(
+        Object.keys(fileServerSeasonData.episodes),
+        season.seasonNumber,
+        episodeNumber
+      )
+      if (!episodeFileName) continue
+
+      const fileData = fileServerSeasonData.episodes[episodeFileName]
+      if (!fileData) continue
+
+      const additionalMetadata = fileData.additionalMetadata || {}
+      const dimensions = fileServerSeasonData.dimensions?.[episodeFileName] || null
+      const length =
+        fileServerSeasonData.lengths?.[episodeFileName] ||
+        additionalMetadata.duration ||
+        null
+      const hdr = fileData.hdr || null
+      const size = additionalMetadata.size || null
+
+      // Make sure we have an object for this episode
+      if (!aggregated[episodeNumber]) {
+        aggregated[episodeNumber] = {
+          dimensions: null,
+          duration: null,
+          hdr: null,
+          size: null,
+          priorityMap: {
+            dimensions: Infinity,
+            duration: Infinity,
+            hdr: Infinity,
+            size: Infinity,
+          },
+        }
+      }
+
+      // Now, compare priorities for each field
+      const epData = aggregated[episodeNumber]
+
+      // If this server has `dimensions` and it's higher-priority (lower numeric value):
+      if (dimensions && serverConfig.priority < epData.priorityMap.dimensions) {
+        epData.dimensions = dimensions
+        epData.priorityMap.dimensions = serverConfig.priority
+      }
+
+      // If this server has `duration`:
+      if (length && serverConfig.priority < epData.priorityMap.duration) {
+        epData.duration = length
+        epData.priorityMap.duration = serverConfig.priority
+      }
+
+      // If this server has `hdr`:
+      if (hdr && serverConfig.priority < epData.priorityMap.hdr) {
+        epData.hdr = hdr
+        epData.priorityMap.hdr = serverConfig.priority
+      }
+
+      // If this server has `size`:
+      if (size && serverConfig.priority < epData.priorityMap.size) {
+        epData.size = size
+        epData.priorityMap.size = serverConfig.priority
+      }
+
+      // Also note: If a server *omits* a field (hdr = null), we do *not* forcibly remove it yet.
+      // We only remove if *no* server has it or if the original server "owner" is gone.
+      // We'll handle that in "finalize".
+    }
+  }
+
+  return aggregated
+}
+
+/**
+ * Compare aggregated video info vs. what's in the DB episodes. 
+ * Update fields if changed, remove fields if no server has them (or no longer owns them).
+ *
+ * @param {Object} client - DB client
+ * @param {Object} show - the DB show object
+ * @param {Object} season - the DB season object
+ * @param {Object} aggregatedSeasonData - result of gatherSeasonVideoInfoForAllServers
+ */
+export async function finalizeSeasonVideoInfo(client, show, season, aggregatedSeasonData) {
+  for (const episode of season.episodes) {
+    const episodeNumber = episode.episodeNumber
+    const bestData = aggregatedSeasonData[episodeNumber]
+    if (!bestData) {
+      // Means no server had any data for this episode => might remove if the DB had something
+      // But let's skip if we want to leave it alone if there's no new data
+      continue
+    }
+
+    // Compare to existing
+    // Fields: episode.dimensions, episode.duration, episode.hdr, episode.size
+    // We see if they differ from bestData
+    const changes = {}
+    let changed = false
+
+    // Compare each field
+    if (!isEqual(episode.dimensions, bestData.dimensions)) {
+      changes.dimensions = bestData.dimensions || null
+      changed = true
+    }
+    if (episode.duration !== bestData.duration || episode.length !== bestData.duration) {
+      changes.duration = bestData.duration || null
+      changes.length = bestData.duration || null
+      changed = true
+    }
+    if (episode.hdr !== bestData.hdr) {
+      changes.hdr = bestData.hdr || null
+      changed = true
+    }
+    if (episode.size !== bestData.size) {
+      changes.size = bestData.size || null
+      changed = true
+    }
+
+    // Ownership: if any field changed, we can set videoInfoSource to 
+    // the highest-priority server that "won" the majority. 
+    // Or just pick one field's priority. 
+    if (changed) {
+      // We'll just store the ID of whichever server had the highest priority for, say, the "dimensions" field.
+      // You can do more robust logic if needed (like the highest among all changed fields).
+      let finalSourceId = episode.videoInfoSource
+      const minPriority = Math.min(
+        bestData.priorityMap.dimensions,
+        bestData.priorityMap.duration,
+        bestData.priorityMap.hdr,
+        bestData.priorityMap.size
+      )
+      // You can set finalSourceId by matching that priority to a server. 
+      // That might require storing the serverId in your aggregated structure, 
+      // or you can just store the numeric priority if you don’t need the exact ID.
+
+      changes.videoInfoSource = finalSourceId // or some logic to find the correct server ID
+      await updateEpisodeInDatabase(client, show.title, season.seasonNumber, episodeNumber, {
+        set: changes,
+      })
+
+      console.log(
+        `Updated video info for ${show.title} - Season ${season.seasonNumber}, Episode ${episodeNumber}`
+      )
+    } 
+    else {
+      // No changes
+    }
+  }
+}
+
+export async function syncSeasonVideoInfoAllServers(
+  client,
+  show,
+  season,
+  fileServers
+) {
+  // Phase 1: gather from all servers
+  const aggregatedSeasonData = gatherSeasonVideoInfoForAllServers(show, season, fileServers)
+
+  // Phase 2: finalize in DB
+  await finalizeSeasonVideoInfo(client, show, season, aggregatedSeasonData)
+}
+
+
+/**
+ * Processes video information updates for an episode, integrating fieldAvailability and priority checks.
+ *
+ * @param {Object} episode - The episode object containing current video information.
+ * @param {Object} fileServerSeasonData - The file server data for the season containing the episode.
+ * @param {string} episodeFileName - The file name of the episode on the file server.
+ * @param {string} showTitle - The title of the TV show.
+ * @param {number} seasonNumber - The season number.
+ * @param {number} episodeNumber - The episode number.
+ * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<Object|null>} - Returns an object containing `set` and/or `unset` properties, or null if no updates are needed.
+ */
+export async function processEpisodeVideoInfo(
+  episode,
+  fileServerSeasonData,
+  episodeFileName,
+  showTitle,
+  seasonNumber,
+  episodeNumber,
+  serverConfig,
+  fieldAvailability
+) {
+  const fileData = fileServerSeasonData.episodes[episodeFileName]
+  if (!fileData) {
+    console.warn(
+      `No additionalMetadata found for "${episodeFileName}" in server "${serverConfig.id}" data.`
+    )
     return null
   }
 
-  // Only update if the current source is the same server or not set
-  if (episode.videoInfoSource && isSourceMatchingServer(episode, 'videoInfoSource', serverConfig)) {
-    return null
+  const dimensions = fileServerSeasonData?.dimensions[episodeFileName] || null
+  const length =
+    fileServerSeasonData?.lengths[episodeFileName] || additionalMetadata?.duration || null
+  const additionalMetadata = fileData.additionalMetadata || {}
+  const hdr = fileData.hdr || null
+
+  const fieldsToCheck = {
+    dimensions: { value: dimensions, path: '.dimensions.', fieldPath: '' },
+    duration: { value: length, path: '.episodes.', fieldPath: '.additionalMetadata.duration' },
+    hdr: { value: hdr, path: '.episodes.', fieldPath: '.hdr' },
+    size: { value: additionalMetadata.size, path: '.episodes.', fieldPath: '.additionalMetadata.size' },
   }
 
-  const updateData = {}
-  const hdrInfo = fileServerSeasonData.urls[episodeFileName]?.hdr || null
+  const setFields = {}
+  const unsetFields = []
 
-  // Check each field for updates
-  if (fileServerSeasonData.lengths[episodeFileName] &&
-      episode.length !== fileServerSeasonData.lengths[episodeFileName]) {
-    updateData.length = fileServerSeasonData.lengths[episodeFileName]
+  for (const [field, { value: newValue, path, fieldPath }] of Object.entries(fieldsToCheck)) {
+    // Construct fieldPath for fieldAvailability
+    const completeFieldPath = `seasons.Season ${seasonNumber}${path}${episodeFileName}${fieldPath}`
+
+    // Check if current server is highest priority for this field
+    const isHighestPriority = isCurrentServerHighestPriorityForField(
+      fieldAvailability,
+      'tv',
+      showTitle,
+      completeFieldPath,
+      serverConfig
+    )
+
+    if (!isHighestPriority) {
+      // console.log(
+      //   `Skipping update for field "${field}" of "${showTitle}" Season ${seasonNumber} Episode ${episodeNumber} - higher-priority server has data.`
+      // );
+      continue
+    }
+
+    // **1. Handling Setting/Updating the Field**
+
+    if (newValue !== null && newValue !== undefined) {
+      if (episode[field] !== newValue) {
+        setFields[field] = newValue
+        // Update ownership to the current server
+        setFields.videoInfoSource = serverConfig.id
+        console.log(
+          `Setting field "${field}" for "${showTitle}" Season ${seasonNumber} Episode ${episodeNumber} from server "${serverConfig.id}".`
+        )
+      }
+    } else {
+      // **2. Handling Removal of the Field**
+
+      // Only the owning server can unset/remove the field
+      if (isSourceMatchingServer(episode, 'videoInfoSource', serverConfig) && episode[field]) {
+        unsetFields.push(field)
+        console.log(
+          `Removing field "${field}" for "${showTitle}" Season ${seasonNumber} Episode ${episodeNumber} from server "${serverConfig.id}".`
+        )
+      }
+    }
   }
 
-  if (fileServerSeasonData.dimensions[episodeFileName] &&
-      episode.dimensions !== fileServerSeasonData.dimensions[episodeFileName]) {
-    updateData.dimensions = fileServerSeasonData.dimensions[episodeFileName]
-  }
+  // **3. Prepare the updates object only if there are changes**
 
-  if (hdrInfo && episode.hdr !== hdrInfo) {
-    updateData.hdr = hdrInfo
-  }
-
-  if (episodeInfo.duration && episode.duration !== episodeInfo.duration * 1000) {
-    updateData.duration = episodeInfo.duration * 1000
-  }
-
-  if (Object.keys(updateData).length > 0) {
-    updateData.videoInfoSource = serverConfig.id
-    return updateData
+  if (Object.keys(setFields).length > 0 || unsetFields.length > 0) {
+    const updates = {}
+    if (Object.keys(setFields).length > 0) {
+      updates.set = setFields
+    }
+    if (unsetFields.length > 0) {
+      updates.unset = unsetFields
+    }
+    return updates
   }
 
   return null
 }
 
 /**
- * Processes video information updates for a season of a TV show.
- *
- * This function compares the episode video information in the database with the updated information from the file server. If any changes are detected, it updates the episode video information in the database.
+ * Processes video information updates for a season of a TV show, integrating fieldAvailability and priority checks.
  *
  * @param {Object} client - The database client.
  * @param {Object} show - The TV show object.
  * @param {Object} season - The season object.
  * @param {Object} fileServerShowData - The file server data for the TV show.
- * @param {Object} serverConfig - The configuration for the current file server.
+ * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability map.
  * @returns {Promise<number>} - The number of episodes that were updated.
  */
-export async function processSeasonVideoInfo(client, show, season, fileServerShowData, serverConfig) {
+export async function processSeasonVideoInfo(
+  client,
+  show,
+  season,
+  fileServerShowData,
+  serverConfig,
+  fieldAvailability
+) {
   const seasonKey = `Season ${season.seasonNumber}`
   const fileServerSeasonData = fileServerShowData?.seasons[seasonKey]
 
-  if (!fileServerSeasonData?.fileNames) {
+  if (!fileServerSeasonData?.episodes) {
+    // console.warn(`No fileNames found for "${show.title}" Season ${season.seasonNumber} on server ${serverConfig.id}. Skipping video info updates.`)
     return 0
   }
 
   let updatedEpisodes = 0
 
   await Promise.all(
-    season.episodes.map(async episode => {
+    season.episodes.map(async (episode) => {
       const episodeFileName = findEpisodeFileName(
-        fileServerSeasonData.fileNames,
+        Object.keys(fileServerSeasonData.episodes),
         season.seasonNumber,
         episode.episodeNumber
       )
 
-      if (!episodeFileName) return
+      if (!episodeFileName) {
+        // console.warn(
+        //   `Episode file name not found for "${show.title}" Season ${season.seasonNumber} Episode ${episode.episodeNumber} on server ${serverConfig.id}. Skipping.`
+        // )
+        return
+      }
 
       try {
         const updates = await processEpisodeVideoInfo(
           episode,
-          episodeFileName,
           fileServerSeasonData,
-          serverConfig
+          episodeFileName,
+          show.title,
+          season.seasonNumber,
+          episode.episodeNumber,
+          serverConfig,
+          fieldAvailability
         )
 
         if (updates) {
           console.log(
-            `TV: Updating video info for ${show.title} - ${seasonKey}, Episode ${episode.episodeNumber} from server ${serverConfig.id}`
+            `TV: Updating video info for "${show.title}" - ${seasonKey}, Episode ${episode.episodeNumber} from server ${serverConfig.id}`
           )
           await updateEpisodeInDatabase(
             client,
@@ -1593,7 +3315,7 @@ export async function processSeasonVideoInfo(client, show, season, fileServerSho
         }
       } catch (error) {
         console.error(
-          `Error updating video info for ${show.title} S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}:`,
+          `Error updating video info for "${show.title}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}:`,
           error
         )
       }
@@ -1604,61 +3326,266 @@ export async function processSeasonVideoInfo(client, show, season, fileServerSho
 }
 
 /**
- * Processes video information for a movie from a file server.
- * @param {Object} client - The database client to use for updates.
- * @param {Object} movie - The movie object containing current video information.
- * @param {Object} fileServerData - The video information data from the file server.
- * @param {Object} serverConfig - The configuration for the file server.
- * @returns {boolean|null} - True if the movie's video information was updated, null if no updates were needed.
+ * Compare the aggregated data to the DB movie's existing fields,
+ * and do one update if something changed (including removing fields
+ * if no server has them).
+ *
+ * @param {Object} client - DB client
+ * @param {Object} movie - DB movie object
+ * @param {Object} aggregated - from gatherMovieVideoInfoForAllServers
+ *   { dimensions, length, hdr, size, priorityMap: {...} }
  */
-export async function processMovieVideoInfo(client, movie, fileServerData, serverConfig) {
-  if (!fileServerData?.fileNames) {
-    return null
-    //throw new Error(`No file server data found for movie: ${movie.title} on server ${serverConfig.id}`)
+export async function finalizeMovieVideoInfo(client, movie, aggregated) {
+  const updates = {}
+  let changed = false
+
+  // Compare each field
+  // 1) dimensions
+  if (!isEqual(movie.dimensions, aggregated.dimensions)) {
+    updates.dimensions = aggregated.dimensions || null
+    changed = true
   }
 
-  // Only update if the current source is the same server or not set
-  if (movie.videoInfoSource && isSourceMatchingServer(movie, 'videoInfoSource', serverConfig)) {
-    return null
+  // 2) length => you call it "duration" in DB or "length"? Adjust accordingly
+  if (!isEqual(movie.duration, aggregated.length)) {
+    updates.duration = aggregated.length || null
+    changed = true
   }
 
-  const mp4File = fileServerData.fileNames.find(name => name.endsWith('.mp4'))
-  if (!mp4File) return null
-
-  const updateData = {}
-
-  // Check each field for updates
-  if (fileServerData.length[mp4File] && movie.length !== fileServerData.length[mp4File]) {
-    updateData.length = fileServerData.length[mp4File]
+  // 3) hdr
+  if (!isEqual(movie.hdr, aggregated.hdr)) {
+    updates.hdr = aggregated.hdr || null
+    changed = true
   }
 
-  if (fileServerData.dimensions[mp4File] && movie.dimensions !== fileServerData.dimensions[mp4File]) {
-    updateData.dimensions = fileServerData.dimensions[mp4File]
+  // 4) size
+  if (!isEqual(movie.size, aggregated.size)) {
+    updates.size = aggregated.size || null
+    changed = true
+  }
+  
+  // 5) videoInfoSource
+  if (!isEqual(movie.videoInfoSource, aggregated.videoInfoSource)) {
+    updates.videoInfoSource = aggregated.videoInfoSource || null
+    changed = true
   }
 
-  if (fileServerData.hdr && movie.hdr !== fileServerData.hdr) {
-    updateData.hdr = fileServerData.hdr
-  }
-
-  // if (fileServerData.duration && movie.duration !== fileServerData.duration * 1000) {
-  //   updateData.duration = fileServerData.duration * 1000
-  // }
-
-  if (fileServerData.size && movie.size !== fileServerData.size) {
-    updateData.size = fileServerData.size
-  }
-
-  if (!movie.videoInfoSource) {
-    updateData.videoInfoSource = serverConfig.id
-  }
-
-  if (Object.keys(updateData).length > 0) {
-    console.log(`Movie: Updating video info for ${movie.title} from server ${serverConfig.id}`)
+  // If changed, also set "videoInfoSource" if you want
+  // We haven't stored the actual winning serverId, only priority. 
+  // If you want to store the ID, you'd need to keep track of it 
+  // in the aggregator. 
+  if (changed) {
+    console.log(`Updating video info for movie "${movie.title}"...`)
     await updateMediaInDatabase(
       client,
       MediaType.MOVIE,
       movie.title,
-      updateData,
+      { $set: updates }
+    )
+  }
+}
+
+/**
+ * Gathers video info for a single movie across ALL servers, 
+ * returning the highest priority data for each field (dimensions, duration, hdr, size).
+ *
+ * @param {Object} movie - DB movie object (with .title, .dimensions, .hdr, etc.)
+ * @param {Object} fileServers - All servers keyed by serverId
+ * @returns {Object} aggregatedData 
+ *   { dimensions, length, hdr, size, priorityMap: {...} }
+ */
+export function gatherMovieVideoInfoForAllServers(movie, fileServers) {
+  const aggregated = {
+    dimensions: null,
+    length: null,
+    hdr: null,
+    size: null,
+    priorityMap: {
+      dimensions: Infinity,
+      length: Infinity,
+      hdr: Infinity,
+      size: Infinity,
+    },
+    videoInfoSource: null,
+  }
+
+  for (const [serverId, fileServer] of Object.entries(fileServers)) {
+    const serverConfig = {
+      id: serverId,
+      ...fileServer.config,
+    }
+    const fileServerData = fileServer.movies?.[movie.title]
+    if (!fileServerData?.fileNames) continue
+
+    // Example from your code: find the mp4
+    const mp4File = fileServerData.fileNames.find((n) => n.endsWith('.mp4'))
+    if (!mp4File) continue
+
+    const newDimensions = fileServerData.dimensions?.[mp4File]
+    const newLength = fileServerData.length?.[mp4File]
+    const newHdr = fileServerData.hdr
+    const newSize = fileServerData?.additional_metadata?.size
+
+    // Compare priorities for each field
+    if (newDimensions && serverConfig.priority < aggregated.priorityMap.dimensions) {
+      aggregated.dimensions = newDimensions
+      aggregated.priorityMap.dimensions = serverConfig.priority
+    }
+    if (newLength && serverConfig.priority < aggregated.priorityMap.length) {
+      aggregated.length = newLength
+      aggregated.priorityMap.length = serverConfig.priority
+    }
+    if (newHdr && serverConfig.priority < aggregated.priorityMap.hdr) {
+      aggregated.hdr = newHdr
+      aggregated.priorityMap.hdr = serverConfig.priority
+    }
+    if (newSize && serverConfig.priority < aggregated.priorityMap.size) {
+      aggregated.size = newSize
+      aggregated.priorityMap.size = serverConfig.priority
+    }
+    // Add in serverId
+    aggregated.videoInfoSource = serverConfig.id
+  }
+
+  return aggregated
+}
+
+/**
+ * Processes video information for a movie from a file server, integrating fieldAvailability and priority checks.
+ *
+ * @param {Object} client - The database client to use for updates.
+ * @param {Object} movie - The movie object containing current video information.
+ * @param {Object} fileServerData - The video information data from the file server.
+ * @param {Object} serverConfig - The configuration for the file server.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<boolean|null>} - Returns true if the movie's video info was updated, null otherwise.
+ */
+export async function processMovieVideoInfo(
+  client,
+  movie,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
+  if (!fileServerData?.fileNames) {
+    // console.warn(`No fileNames found for movie "${movie.title}" on server ${serverConfig.id}. Skipping video info updates.`)
+    return null
+  }
+
+  const mp4File = fileServerData.fileNames.find((name) => name.endsWith('.mp4'))
+  if (!mp4File) {
+    console.warn(
+      `No .mp4 file found for movie "${movie.title}" on server ${serverConfig.id}. Skipping video info updates.`
+    )
+    return null
+  }
+
+  const fieldsToCheck = {
+    dimensions: fileServerData.dimensions[mp4File],
+    length: fileServerData.length[mp4File],
+    hdr: fileServerData.hdr,
+    size: fileServerData?.additional_metadata.size,
+  }
+
+  const updates = {}
+
+  for (const [field, newValue] of Object.entries(fieldsToCheck)) {
+    if (newValue && movie[field] !== newValue) {
+      // Construct fieldPath
+      const fieldPath = 'hdr'
+
+      // Check priority
+      const isHighestPriority = isCurrentServerHighestPriorityForField(
+        fieldAvailability,
+        'movies',
+        movie.title,
+        fieldPath,
+        serverConfig
+      )
+
+      if (!isHighestPriority) {
+        console.log(
+          `Skipping update for field "${field}" of movie "${movie.title}" - higher-priority server has data.`
+        )
+        continue
+      }
+
+      // Verify ownership
+      if (
+        movie.videoInfoSource &&
+        !isSourceMatchingServer(movie, 'videoInfoSource', serverConfig)
+      ) {
+        console.log(
+          `Cannot update field "${field}" for movie "${movie.title}" - owned by server ${movie.videoInfoSource}.`
+        )
+        continue
+      }
+
+      updates[field] = newValue
+      updates.videoInfoSource = serverConfig.id // Update source to current server
+    }
+  }
+
+  // Check for HDR removal
+  if (
+    !fileServerData.hdr &&
+    movie.hdr &&
+    isSourceMatchingServer(movie, 'videoInfoSource', serverConfig)
+  ) {
+    const fieldPath = `hdr`
+    const isHighestPriority = isCurrentServerHighestPriorityForField(
+      fieldAvailability,
+      'movies',
+      movie.title,
+      fieldPath,
+      serverConfig
+    )
+
+    if (isHighestPriority) {
+      updates.$unset = { hdr: '' }
+      updates.videoInfoSource = serverConfig.id
+      console.log(`Removing HDR for movie "${movie.title}" from server ${serverConfig.id}`)
+    }
+  }
+
+  // Check size separately if needed
+  if (
+    fileServerData?.additional_metadata.size &&
+    movie.size !== fileServerData?.additional_metadata.size
+  ) {
+    const fieldPath = `additional_metadata.size`
+    const isHighestPriority = isCurrentServerHighestPriorityForField(
+      fieldAvailability,
+      'movies',
+      movie.title,
+      fieldPath,
+      serverConfig
+    )
+
+    if (isHighestPriority) {
+      updates.size = fileServerData.additional_metadata.size
+      updates.videoInfoSource = serverConfig.id
+    }
+  }
+
+  // Set videoInfoSource if not set
+  if (
+    !movie.videoInfoSource &&
+    (updates.length || updates.dimensions || updates.hdr || updates.size)
+  ) {
+    updates.videoInfoSource = serverConfig.id
+  }
+
+  if (Object.keys(updates).length > 0) {
+    console.log(`Movie: Updating video info for "${movie.title}" from server ${serverConfig.id}`)
+    const preparedUpdateData = {
+      $set: updates,
+    }
+    await updateMediaInDatabase(
+      client,
+      MediaType.MOVIE,
+      movie.title,
+      preparedUpdateData,
       serverConfig.id
     )
     return true
@@ -1668,231 +3595,762 @@ export async function processMovieVideoInfo(client, movie, fileServerData, serve
 }
 
 /**
- * Processes season thumbnails for a TV show.
- * @param {Object} client - The database client
- * @param {Object} show - The TV show object
- * @param {Object} season - The season object
- * @param {Object} fileServerShowData - The file server data for the TV show
- * @param {Object} serverConfig - The server configuration
- * @returns {number} The number of updated episodes
+ * Processes season thumbnails for a TV show, integrating fieldAvailability and priority checks.
+ *
+ * @param {Object} client - The database client.
+ * @param {Object} show - The TV show object.
+ * @param {Object} season - The season object.
+ * @param {Object} fileServerShowData - The file server data for the TV show.
+ * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<number>} - The number of episodes that were updated.
  */
-export async function processSeasonThumbnails(client, show, season, fileServerShowData, serverConfig) {
+export async function processSeasonThumbnails(
+  client,
+  show,
+  season,
+  fileServerShowData,
+  serverConfig,
+  fieldAvailability
+) {
   const fileServerSeasonData = fileServerShowData.seasons[`Season ${season.seasonNumber}`]
-  if (!fileServerSeasonData?.urls) return 0
+  if (!fileServerSeasonData?.episodes) {
+    //console.warn(`No URLs found for "${show.title}" Season ${season.seasonNumber} on server ${serverConfig.id}. Skipping thumbnail updates.`)
+    return 0
+  }
 
   let updatedEpisodes = 0
 
-  for (const episode of season.episodes) {
-    const episodeFileName = findEpisodeFileName(
-      Object.keys(fileServerSeasonData.urls),
-      season.seasonNumber,
-      episode.episodeNumber
-    )
-
-    if (!episodeFileName) continue
-
-    // Only update if the current source is the same server or not set
-    if (episode.thumbnailSource && isSourceMatchingServer(episode, 'thumbnailSource', serverConfig)) {
-      continue
-    }
-
-    const fileServerEpisodeData = fileServerSeasonData.urls[episodeFileName]
-    const updates = processEpisodeThumbnails(episode, fileServerEpisodeData, serverConfig)
-
-    if (updates) {
-      console.log(
-        `TV: Updating thumbnails for ${show.title} - Season ${season.seasonNumber}, Episode ${episode.episodeNumber} from server ${serverConfig.id}`
-      )
-
-      await updateEpisodeInDatabase(
-        client,
-        show.title,
+  await Promise.all(
+    season.episodes.map(async (episode) => {
+      const episodeFileName = findEpisodeFileName(
+        Object.keys(fileServerSeasonData.episodes),
         season.seasonNumber,
-        episode.episodeNumber,
-        updates
+        episode.episodeNumber
       )
-      updatedEpisodes++
-    }
-  }
+
+      if (!episodeFileName) {
+        // console.warn(
+        //   `Episode file name not found for "${show.title}" Season ${season.seasonNumber} Episode ${episode.episodeNumber} on server ${serverConfig.id}. Skipping.`
+        // )
+        return
+      }
+
+      try {
+        const updates = await processEpisodeThumbnails(
+          client,
+          episode,
+          fileServerSeasonData.episodes[episodeFileName],
+          episodeFileName,
+          show.title,
+          season.seasonNumber,
+          episode.episodeNumber,
+          serverConfig,
+          fieldAvailability
+        )
+
+        if (updates) {
+          console.log(
+            `TV: Updating thumbnails for "${show.title}" - Season ${season.seasonNumber}, Episode ${episode.episodeNumber} from server ${serverConfig.id}`
+          )
+
+          await updateEpisodeInDatabase(
+            client,
+            show.title,
+            season.seasonNumber,
+            episode.episodeNumber,
+            updates
+          )
+          updatedEpisodes++
+        }
+      } catch (error) {
+        console.error(
+          `Error updating thumbnails for "${show.title}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}:`,
+          error
+        )
+      }
+    })
+  )
 
   return updatedEpisodes
 }
 
 /**
- * Processes episode thumbnails and blurhash URLs from file server data.
- * @param {Object} episode - The episode object
- * @param {Object} fileServerEpisodeData - The file server data for the episode
- * @param {Object} serverConfig - The server configuration
- * @returns {Object|null} An object containing the updated thumbnail and blurhash URLs if changes were needed, null otherwise
+ * Processes episode thumbnails and blurhash URLs from file server data, integrating fieldAvailability and priority checks.
+ *
+ * @param {Object} client - The database client.
+ * @param {Object} episode - The episode object.
+ * @param {Object} fileServerEpisodeData - The file server data for the episode.
+ * @param {string} showTitle - The title of the TV show.
+ * @param {number} seasonNumber - The season number.
+ * @param {number} episodeNumber - The episode number.
+ * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<Object|null>} - An object containing the updated thumbnail and blurhash URLs if changes were needed, null otherwise.
  */
-function processEpisodeThumbnails(episode, fileServerEpisodeData, serverConfig) {
+export async function processEpisodeThumbnails(
+  client,
+  episode,
+  fileServerEpisodeData,
+  episodeFileName,
+  showTitle,
+  seasonNumber,
+  episodeNumber,
+  serverConfig,
+  fieldAvailability
+) {
   const updates = {}
 
+  // Process thumbnail
   if (fileServerEpisodeData.thumbnail) {
     const newThumbnailUrl = createFullUrl(fileServerEpisodeData.thumbnail, serverConfig)
     if (!episode.thumbnail || episode.thumbnail !== newThumbnailUrl) {
-      updates.thumbnail = newThumbnailUrl
+      const fieldPath = `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.thumbnail`
+
+      // Check priority
+      const isHighestPriority = isCurrentServerHighestPriorityForField(
+        fieldAvailability,
+        'tv',
+        showTitle,
+        fieldPath,
+        serverConfig
+      )
+
+      if (isHighestPriority) {
+        // Verify ownership
+        if (!isSourceMatchingServer(episode, 'thumbnailSource', serverConfig) || episode.thumbnail !== newThumbnailUrl) {
+          updates.set = {
+            thumbnail: newThumbnailUrl,
+            thumbnailSource: serverConfig.id,
+          }
+        } /* else {
+          console.log(`Cannot update thumbnail for "${showTitle}" S${seasonNumber}E${episodeNumber} - owned by server ${episode.thumbnailSource}.`)
+        } */
+      } /*else {
+        console.log(
+          `Skipping thumbnail update for "${showTitle}" S${seasonNumber}E${episodeNumber} - higher-priority server has thumbnail.`
+        )
+      }*/
     }
   }
 
+  // Process thumbnailBlurhash
   if (fileServerEpisodeData.thumbnailBlurhash) {
     const newBlurhashUrl = createFullUrl(fileServerEpisodeData.thumbnailBlurhash, serverConfig)
     if (!episode.thumbnailBlurhash || episode.thumbnailBlurhash !== newBlurhashUrl) {
-      updates.thumbnailBlurhash = newBlurhashUrl
+      const fieldPath = `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.thumbnailBlurhash`
+
+      // Check priority
+      const isHighestPriority = isCurrentServerHighestPriorityForField(
+        fieldAvailability,
+        'tv',
+        showTitle,
+        fieldPath,
+        serverConfig
+      )
+
+      if (isHighestPriority) {
+        // Verify ownership
+        if (
+          episode.thumbnailBlurhash !== newBlurhashUrl ||
+          isSourceMatchingServer(episode, 'thumbnailBlurhashSource', serverConfig)
+        ) {
+          updates.set = {
+            thumbnailBlurhash: newBlurhashUrl,
+            thumbnailBlurhashSource: serverConfig.id
+          }
+        } /* else {
+          console.log(`Cannot update thumbnailBlurhash for "${showTitle}" S${seasonNumber}E${episodeNumber} - owned by server ${episode.thumbnailBlurhashSource}.`)
+        } */
+      } /* else {
+        console.log(`Skipping thumbnailBlurhash update for "${showTitle}" S${seasonNumber}E${episodeNumber} - higher-priority server has thumbnailBlurhash.`)
+      } */
     }
   }
 
-  if (updates.thumbnailBlurhash && !isSourceMatchingServer(episode, 'thumbnailSource', serverConfig)) {
-    updates.thumbnailSource = serverConfig.id
+  // Handle removal of thumbnailBlurhash if not provided
+  if (
+    !fileServerEpisodeData.thumbnailBlurhash && episode.thumbnailBlurhash
+  ) {
+    const fieldPath = `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.thumbnailBlurhash`
+    const isHighestPriority = isCurrentServerHighestPriorityForField(
+      fieldAvailability,
+      'tv',
+      showTitle,
+      fieldPath,
+      serverConfig
+    )
+
+    if (isHighestPriority) {
+      updates.unset = { thumbnailBlurhash: '', thumbnailBlurhashSource: '' }
+      console.log(
+        `Removing thumbnailBlurhash for "${showTitle}" S${seasonNumber}E${episodeNumber} from server ${serverConfig.id}`
+      )
+    }
   }
 
-  return Object.keys(updates).length > 0 ? updates : null
+  // Handle removal of thumbnail if not provided
+  if (
+    !fileServerEpisodeData.thumbnail &&
+    episode.thumbnail &&
+    isSourceMatchingServer(episode, 'thumbnailSource', serverConfig)
+  ) {
+    const fieldPath = `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.thumbnail`
+    const isHighestPriority = isCurrentServerHighestPriorityForField(
+      fieldAvailability,
+      'tv',
+      showTitle,
+      fieldPath,
+      serverConfig
+    )
+
+    if (isHighestPriority) {
+      updates.unset = { thumbnail: '', thumbnailSource: '' }
+      console.log(
+        `Removing thumbnail for "${showTitle}" S${seasonNumber}E${episodeNumber} from server ${serverConfig.id}`
+      )
+    }
+  }
+
+  // Apply updates if any
+  if (Object.keys(updates).length > 0) {
+    // Filter out any locked fields
+    const filteredUpdates = filterLockedFields(episode, updates)
+
+    // If $unset exists in updates, ensure it's preserved
+    if (updates.unset) {
+      filteredUpdates.unset = updates.unset
+    }
+
+    return Object.keys(filteredUpdates).length > 0 ? filteredUpdates : null
+  }
+
+  return null
 }
 
 /**
- * Processes show poster URL updates.
- * @param {Object} show - The show object.
+ * Processes show poster URL updates, integrating fieldAvailability and priority checks.
+ *
+ * @param {Object} client - The database client.
+ * @param {Object} show - The TV show object.
  * @param {Object} fileServerData - The file server data for the show.
  * @param {Object} serverConfig - The server configuration.
- * @returns {Object|null} An object containing the updated poster URL and source if changes were needed, null otherwise.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<boolean|null>} - Returns true if the show was updated, null otherwise.
  */
-export function processShowPosterURL(show, fileServerData, serverConfig) {
+export async function processShowPosterURL(
+  client,
+  show,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
   if (!fileServerData.poster) return null
 
-  // Only update if the current source is the same server or not set
-  if (show.posterSource && isSourceMatchingServer(show, 'posterSource', serverConfig)) {
+  const fieldPath = 'poster'
+  const showTitle = show.title
+
+  // Check if the current server is the highest priority for the 'poster' field
+  const isHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'tv',
+    showTitle,
+    fieldPath,
+    serverConfig
+  )
+
+  if (!isHighestPriority) {
+    console.log(
+      `Skipping poster URL update for "${showTitle}" - higher-priority server has poster.`
+    )
     return null
   }
 
   const newPosterURL = createFullUrl(fileServerData.poster, serverConfig)
-  if (show.poster === newPosterURL) return null
 
-  return {
-    posterURL: newPosterURL,
-    posterSource: serverConfig.id
+  // Verify ownership: only update if the current server owns the poster or if it's unset
+  // if (show.posterSource && !isSourceMatchingServer(show, 'posterSource', serverConfig)) {
+  //   console.log(
+  //     `Cannot update poster URL for "${showTitle}" - poster is owned by server ${show.posterSource}.`
+  //   )
+  //   return null
+  // }
+
+  if (
+    show.posterSource &&
+    isEqual(show.poster, newPosterURL) &&
+    isSourceMatchingServer(show, 'posterSource', serverConfig)
+  )
+    return null
+
+  const updateData = {
+    poster: newPosterURL,
+    posterSource: serverConfig.id,
   }
+
+  // Filter out any locked fields
+  const filteredUpdateData = filterLockedFields(show, updateData)
+
+  if (!filteredUpdateData.poster) {
+    console.log(`Field "poster" is locked for show "${showTitle}". Skipping poster URL update.`)
+    return null
+  }
+
+  console.log(`TV: Updating poster URL for "${showTitle}" from server ${serverConfig.id}`)
+  const preparedUpdateData = {
+    $set: filteredUpdateData,
+  }
+  await updateMediaInDatabase(client, MediaType.TV, showTitle, preparedUpdateData, serverConfig.id)
+  return true
 }
 
 /**
- * Processes movie poster URL updates.
+ * Processes movie poster URL updates, integrating fieldAvailability and priority checks.
+ *
+ * @param {Object} client - The database client.
  * @param {Object} movie - The movie object.
  * @param {Object} fileServerData - The file server data for the movie.
  * @param {Object} serverConfig - The server configuration.
- * @returns {Object|null} An object containing the updated poster URL and source if changes were needed, null otherwise.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<boolean|null>} - Returns true if the movie was updated, null otherwise.
  */
-export function processMoviePosterURL(movie, fileServerData, serverConfig) {
+export async function processMoviePosterURL(
+  client,
+  movie,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
   if (!fileServerData.urls?.posterURL) return null
 
-  // Only update if the current source is the same server or not set
-  if (movie.posterSource && isSourceMatchingServer(movie, 'posterSource', serverConfig)) {
+  const fieldPath = 'urls.posterURL'
+  const movieTitle = movie.title
+
+  // Check if the current server is the highest priority for the 'urls.posterURL' field
+  const isHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    'movies',
+    movieTitle,
+    fieldPath,
+    serverConfig
+  )
+
+  if (!isHighestPriority) {
+    console.log(
+      `Skipping poster URL update for movie "${movieTitle}" - higher-priority server has posterURL.`
+    )
     return null
   }
 
   const newPosterURL = createFullUrl(fileServerData.urls.posterURL, serverConfig)
-  if (movie.posterURL === newPosterURL) return null
 
-  return {
+  // // Verify ownership: only update if the current server owns the poster or if it's unset
+  // if (movie.posterSource && !isSourceMatchingServer(movie, 'posterSource', serverConfig)) {
+  //   console.log(
+  //     `Cannot update poster URL for movie "${movieTitle}" - poster is owned by server ${movie.posterSource}.`
+  //   )
+  //   return null
+  // }
+
+  if (
+    movie.posterSource &&
+    isEqual(movie.posterURL, newPosterURL) &&
+    isSourceMatchingServer(movie, 'posterSource', serverConfig)
+  )
+    return null
+
+  const updateData = {
     posterURL: newPosterURL,
-    posterSource: serverConfig.id
+    posterSource: serverConfig.id,
   }
+
+  // Filter out any locked fields
+  const filteredUpdateData = filterLockedFields(movie, updateData)
+
+  if (!filteredUpdateData.posterURL) {
+    console.log(
+      `Field "posterURL" is locked for movie "${movieTitle}". Skipping poster URL update.`
+    )
+    return null
+  }
+
+  console.log(`Movie: Updating poster URL for "${movieTitle}" from server ${serverConfig.id}`)
+  return filteredUpdateData
 }
 
 /**
- * Processes season poster updates for a list of seasons.
- * 
- * @param {Array<Season>} seasons - The list of seasons to process.
+ * Processes season poster updates for a list of seasons, integrating fieldAvailability and priority checks.
+ *
+ * @param {Object} client - The database client.
+ * @param {Array<Object>} seasons - The list of seasons to process.
  * @param {Object} fileServerData - The data from the file server.
- * @param {Object} serverConfig - The configuration for the server.
- * @returns {Object} - An object containing the updated seasons and a flag indicating if any updates were made.
+ * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Promise<{ updatedSeasons: Array<Object>, hasUpdates: boolean }>} - Updated seasons and a flag indicating if any updates were made.
  */
-export async function processSeasonPosters(seasons, fileServerData, serverConfig) {
+export async function processSeasonPosters(
+  client,
+  seasons,
+  fileServerData,
+  serverConfig,
+  fieldAvailability
+) {
   const updatedSeasons = []
   let hasUpdates = false
 
-  for (const season of seasons) {
-    const fileServerSeasonData = fileServerData.seasons[`Season ${season.seasonNumber}`]
-    
-    if (!fileServerSeasonData) {
-      updatedSeasons.push(season)
-      continue
-    }
+  await Promise.all(
+    seasons.map(async (season) => {
+      const fileServerSeasonData = fileServerData.seasons[`Season ${season.seasonNumber}`]
 
-    let updatedSeason = { ...season }
-    let seasonUpdated = false
+      // If no data is provided by the file server for this season, skip processing
+      if (!fileServerSeasonData) {
+        updatedSeasons.push(season)
+        return
+      }
 
-    // Only update if the current source is the same server or not set
-    if (!season.posterSource || !isSourceMatchingServer(season, 'posterSource', serverConfig)) {
+      // Create a shallow copy of the season to track updates
+      let updatedSeason = { ...season }
+      let seasonUpdated = false
+
+      // Define the field path for season_poster in fieldAvailability
+      const fieldPath = `seasons.Season ${season.seasonNumber}.season_poster`
+
+      // Determine if the current server is the highest priority for the 'season_poster' field
+      const isHighestPriority = isCurrentServerHighestPriorityForField(
+        fieldAvailability,
+        'tv',
+        season.showTitle, // Ensure 'showTitle' exists; adjust if necessary
+        fieldPath,
+        serverConfig
+      )
+
+      if (!isHighestPriority) {
+        console.log(
+          `Skipping season_poster update for "${season.showTitle}" Season ${season.seasonNumber} - higher-priority server has season_poster.`
+        )
+        updatedSeasons.push(season)
+        return
+      }
+
+      // **1. Handling Setting/Updating season_poster**
+
       if (fileServerSeasonData.season_poster) {
         const newPosterURL = createFullUrl(fileServerSeasonData.season_poster, serverConfig)
-        if (season.season_poster !== newPosterURL) {
-          updatedSeason = {
-            ...updatedSeason,
-            season_poster: newPosterURL,
-            posterSource: serverConfig.id
-          }
+        const differentURL = !isEqual(season.season_poster, newPosterURL)
+
+        if (differentURL) {
+          updatedSeason.season_poster = newPosterURL
+          updatedSeason.posterSource = serverConfig.id
           seasonUpdated = true
+          console.log(
+            `Updating season_poster for "${season.showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id}`
+          )
         }
       }
-    }
 
-    if (seasonUpdated) {
-      hasUpdates = true
-    }
-    updatedSeasons.push(updatedSeason)
-  }
+      // **2. Handling Removal of season_poster**
+
+      // Only the owning server can remove the season_poster
+      if (
+        !fileServerSeasonData.season_poster &&
+        season.season_poster &&
+        isSourceMatchingServer(season, 'posterSource', serverConfig)
+      ) {
+        updatedSeason = { ...updatedSeason }
+        delete updatedSeason.season_poster
+        delete updatedSeason.posterSource
+        seasonUpdated = true
+        console.log(
+          `Removing season_poster for "${season.showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id}`
+        )
+      }
+
+      // If any updates were made, prepare the update operation
+      if (seasonUpdated) {
+        // **3. Filtering Locked Fields**
+
+        // Prevent updates to fields that are locked
+        const filteredUpdateData = filterLockedFields(season, updatedSeason)
+
+        // **4. Preparing MongoDB Update Operations**
+
+        const setFields = {}
+        const unsetFields = {}
+
+        if (filteredUpdateData.season_poster) {
+          setFields.season_poster = filteredUpdateData.season_poster
+          setFields.posterSource = serverConfig.id
+        }
+
+        if (!filteredUpdateData.season_poster && (season.season_poster || season.posterSource)) {
+          unsetFields.season_poster = ''
+          unsetFields.posterSource = ''
+        }
+
+        const updateOperation = {}
+        if (Object.keys(setFields).length > 0) {
+          updateOperation.$set = setFields
+        }
+        if (Object.keys(unsetFields).length > 0) {
+          updateOperation.$unset = unsetFields
+        }
+
+        // **5. Executing the Database Update**
+
+        if (Object.keys(updateOperation).length > 0) {
+          try {
+            await client
+              .db('Media')
+              .collection('TV')
+              .updateOne(
+                { title: season.showTitle }, // Ensure the query correctly identifies the document
+                updateOperation,
+                { arrayFilters: [{ 'elem.seasonNumber': season.seasonNumber }] }
+              )
+
+            await updateMediaUpdates(season.showTitle, MediaType.TV)
+            hasUpdates = true
+          } catch (error) {
+            console.error(
+              `Error updating season_poster for "${season.showTitle}" Season ${season.seasonNumber}:`,
+              error
+            )
+            // Optionally, you could push to an errors array similar to syncBackdrop
+          }
+        }
+      }
+
+      // Add the updated season to the list
+      updatedSeasons.push(updatedSeason)
+    })
+  )
 
   return { updatedSeasons, hasUpdates }
 }
 
 /**
- * Processes backdrop updates for media items
+ * Processes backdrop updates for media items (TV shows or movies), integrating fieldAvailability and priority checks.
+ *
+ * @param {Object} media - The media object (TV show or movie).
+ * @param {Object} fileServerData - The file server data containing backdrop information.
+ * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @returns {Object|null} - Returns an updates object if the media should be updated, null otherwise.
  */
-export function processBackdropUpdates(media, fileServerData, serverConfig) {
+export function processBackdropUpdates(media, fileServerData, serverConfig, fieldAvailability) {
   const updates = {}
-  const fileServerUrls = fileServerData?.urls || fileServerData
+  const fileServerUrls = fileServerData?.urls || fileServerData?.episodes || fileServerData
+
+  const mediaType = media.type === 'movie' ? 'movies' : 'tv'
+  const mediaTitle = media.title
+
+  // Determine if current server is top priority for 'backdrop'
+  const backdropFieldPath = mediaType === 'movies' ? 'urls.backdrop' : 'backdrop'
+  const backdropIsHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    mediaType,
+    mediaTitle,
+    backdropFieldPath,
+    serverConfig
+  )
 
   // Process main backdrop
-  if (!media.backdropSource || !isSourceMatchingServer(media, 'backdropSource', serverConfig)) {
-    if (fileServerUrls.backdrop) {
+  if (fileServerUrls.backdrop) {
+    if (backdropIsHighestPriority) {
       const newBackdropUrl = createFullUrl(fileServerUrls.backdrop, serverConfig)
-      if (!media.backdrop || media.backdrop !== newBackdropUrl || !isSourceMatchingServer(media, 'backdropSource', serverConfig)) {
+      if (
+        !media.backdropSource ||
+        !isEqual(media.backdrop, newBackdropUrl) ||
+        !isSourceMatchingServer(media, 'backdropSource', serverConfig)
+      ) {
         updates.backdrop = newBackdropUrl
         updates.backdropSource = serverConfig.id
       }
+    } /*else {
+      console.log(
+        `Skipping backdrop update for "${mediaTitle}" - higher-priority server has backdrop.`
+      )
+    }*/
+  } else if (media.backdrop && isSourceMatchingServer(media, 'backdropSource', serverConfig)) {
+    // Remove backdrop if not provided by this server anymore and still highest priority
+    if (backdropIsHighestPriority) {
+      updates.$unset = { backdrop: '', backdropSource: '' }
+      console.log(`Removing backdrop for "${mediaTitle}" from server ${serverConfig.id}`)
     }
   }
+
+  // Determine if current server is top priority for 'backdropBlurhash'
+  const backdropBlurhashFieldPath =
+    mediaType === 'movies' ? 'urls.backdropBlurhash' : 'backdropBlurhash'
+  const blurhashIsHighestPriority = isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    mediaType,
+    mediaTitle,
+    backdropBlurhashFieldPath,
+    serverConfig
+  )
 
   // Process backdrop blurhash
-  if (!media.backdropBlurhashSource || !isSourceMatchingServer(media, 'backdropBlurhashSource', serverConfig)) {
-    if (fileServerUrls.backdropBlurhash) {
+  if (fileServerUrls.backdropBlurhash) {
+    if (blurhashIsHighestPriority) {
       const newBlurhashUrl = createFullUrl(fileServerUrls.backdropBlurhash, serverConfig)
-      if (!media.backdropBlurhash || media.backdropBlurhash !== newBlurhashUrl || !isSourceMatchingServer(media, 'backdropBlurhashSource', serverConfig)) {
-        updates.backdropBlurhash = newBlurhashUrl
-        updates.backdropBlurhashSource = serverConfig.id
+      if (
+        !media.backdropBlurhashSource ||
+        !isEqual(media.backdropBlurhash, newBlurhashUrl) ||
+        !isSourceMatchingServer(media, 'backdropBlurhashSource', serverConfig)
+      ) {
+        if (
+          !media.backdropBlurhash ||
+          !isEqual(media.backdropBlurhash, newBlurhashUrl) ||
+          !isSourceMatchingServer(media, 'backdropBlurhashSource', serverConfig)
+        ) {
+          updates.backdropBlurhash = newBlurhashUrl
+          updates.backdropBlurhashSource = serverConfig.id
+        }
       }
+    } /*else {
+      console.log(
+        `Skipping backdropBlurhash update for "${mediaTitle}" - higher-priority server has it.`
+      )
+    }*/
+  } else if (
+    media.backdropBlurhash &&
+    isSourceMatchingServer(media, 'backdropBlurhashSource', serverConfig)
+  ) {
+    if (blurhashIsHighestPriority) {
+      if (!updates.$unset) updates.$unset = {}
+      updates.$unset.backdropBlurhash = ''
+      updates.$unset.backdropBlurhashSource = ''
+      console.log(`Removing backdropBlurhash for "${mediaTitle}" from server ${serverConfig.id}`)
     }
   }
 
-  return Object.keys(updates).length > 0 ? updates : null
+  if (Object.keys(updates).length === 0) {
+    return null
+  }
+
+  // Filter out locked fields
+  const filteredUpdates = filterLockedFields(media, updates)
+
+  // Preserve $unset if present
+  if (updates.$unset) {
+    filteredUpdates.$unset = { ...filteredUpdates.$unset, ...updates.$unset }
+  }
+
+  // Clean empty operations
+  if (filteredUpdates.$set && Object.keys(filteredUpdates.$set).length === 0) {
+    delete filteredUpdates.$set
+  }
+  if (filteredUpdates.$unset && Object.keys(filteredUpdates.$unset).length === 0) {
+    delete filteredUpdates.$unset
+  }
+
+  // If nothing remains after filtering, return null
+  if (Object.keys(filteredUpdates).length === 0) {
+    return null
+  }
+
+  return filteredUpdates
 }
 
 function shouldUpdateSeason(showMetadata, season) {
-  return new Date(showMetadata.seasons?.last_updated) >
+  return (
+    new Date(showMetadata.seasons?.last_updated) >
     new Date(season.metadata.episodes?.last_updated ?? '2024-01-01T01:00:00.000000')
+  )
 }
 
 /**
  * Checks if a media item's source matches a server configuration ID
  * @param {Object} item - The media item (movie, episode, etc.)
- * @param {string} sourceKey - The key to check (e.g., 'blurhashSource', 'videoInfoSource')
+ * @param {string} sourceKey - The key to check (e.g., 'posterBlurhashSource', 'videoInfoSource')
  * @param {Object} serverConfig - The server configuration object containing an ID
  * @param {string} serverConfig.id - The server configuration ID to check against
  * @returns {boolean} Returns true if the source matches the server config ID
  */
 const isSourceMatchingServer = (item, sourceKey, serverConfig) => {
   if (!item || !sourceKey || !serverConfig?.id) {
-    return false;
+    return false
   }
 
-  return item[sourceKey] && item[sourceKey] === serverConfig.id;
+  return item[sourceKey] && item[sourceKey] === serverConfig.id
+}
+
+/**
+ * Determines whether the current server is the highest priority among servers that have data for a specific field path.
+ * @param {Object} fieldAvailability - The field availability map.
+ * @param {string} mediaType - The type of media ('movies' or 'tv').
+ * @param {string} mediaTitle - The title of the media item.
+ * @param {string} fieldPath - The dot-separated path to the field.
+ * @param {Object} serverConfig - The current server configuration.
+ * @returns {boolean} - True if the current server is the highest priority server with data for the field path.
+ */
+function isCurrentServerHighestPriorityForField(
+  fieldAvailability,
+  mediaType,
+  mediaTitle,
+  fieldPath,
+  serverConfig
+) {
+  const serversWithData = fieldAvailability[mediaType][mediaTitle]?.[fieldPath] || []
+  if (serversWithData.length === 0) {
+    // No server provides this field currently, so current server can proceed.
+    debugger
+    return true
+  }
+
+  // Among the servers that currently have this field, find the one with the highest priority (lowest priority number).
+  const highestPriority = serversWithData.reduce((minPriority, serverId) => {
+    const server = getServer(serverId)
+    if (!server) return minPriority
+    return Math.min(minPriority, server.priority)
+  }, Infinity)
+
+  return serverConfig.priority <= highestPriority
+}
+
+/**
+ * Synchronizes movie data across all servers.
+ * @param {Object} client - The client object used for making API requests.
+ * @param {Object} currentDB - The current database object containing movie data.
+ * @param {Object[]} fileServers - The list of file servers to gather data from.
+ * @returns {Promise} - A promise that resolves when the movie data synchronization is complete.
+ */
+export async function syncMovieDataAllServers(client, currentDB, fileServers) {
+  // 1) Movies
+  for (const movie of currentDB.movies) {
+    // Phase 1: Gather
+    const aggregatedCaptions = gatherMovieCaptionsForAllServers(movie, fileServers)
+    const aggregatedVideoInfo = gatherMovieVideoInfoForAllServers(movie, fileServers)
+    const aggregatedMetadata = await gatherMovieMetadataForAllServers(movie, fileServers)
+    
+    // Phase 2: Finalize
+    await finalizeMovieCaptions(client, movie, aggregatedCaptions)
+    await finalizeMovieVideoInfo(client, movie, aggregatedVideoInfo)
+    await finalizeMovieMetadata(client, movie, aggregatedMetadata)
+  }
+}
+
+/**
+ * Synchronizes TV data across all servers.
+ * @param {Object} client - The client object used for making API requests.
+ * @param {Object} currentDB - The current database object containing TV show data.
+ * @param {Object[]} fileServers - The list of file servers to gather data from.
+ * @returns {Promise} - A promise that resolves when the TV data synchronization is complete.
+ */
+export async function syncTVDataAllServers(client, currentDB, fileServers) {
+  // 1) TV
+  for (const show of currentDB.tv) {
+    const aggregatedTVMetadata = await gatherTvMetadataForAllServers(show, fileServers);
+    // 2) Seasons
+    for (const season of show.seasons) {
+      // Phase 1: Gather
+      const aggregatedCaptions = gatherSeasonCaptionsForAllServers(show, season, fileServers)
+      const aggregatedVideoInfo = gatherSeasonVideoInfoForAllServers(show, season, fileServers)
+      // Phase 2: Finalize
+      await finalizeSeasonCaptions(client, show, season, aggregatedCaptions)
+      await finalizeSeasonVideoInfo(client, show, season, aggregatedVideoInfo)
+    }
+    await finalizeTvMetadata(client, show, aggregatedTVMetadata)
+  }
 }

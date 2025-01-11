@@ -2,7 +2,7 @@
 
 import { Dialog, Transition } from '@headlessui/react'
 import { Fragment, useRef, useState } from 'react'
-import { buildURL, classNames } from '@src/utils'
+import { classNames } from '@src/utils'
 
 export default function SyncMediaPopup({
   isOpen,
@@ -11,12 +11,15 @@ export default function SyncMediaPopup({
   setLastSync,
 }) {
   const cancelButtonRef = useRef(null)
-  const [syncData, setSyncData] = useState(null) // [tvData, moviesData]
-  const [syncNotReady, setSyncNotReady] = useState(null) // [tvData, moviesData]
+  const [syncData, setSyncData] = useState(null)    // Will store the full { missingMedia: {...} }
+  const [syncNotReady, setSyncNotReady] = useState(null) // Will store the full { missingMp4: {...} }
+  const [syncDuration, setSyncDuration] = useState(null) // Will store the full { duration: ... }
+  const [syncstartTime, setSyncstartTime] = useState(null) // Will store the full { startTime: ... }
   const [loading, setLoading] = useState(false)
   const [complete, setComplete] = useState(false)
 
   const handleSyncClick = async () => {
+    setComplete(false)
     setLoading(true)
     try {
       // Call the API endpoint to perform the sync operation
@@ -31,21 +34,19 @@ export default function SyncMediaPopup({
 
       const data = await response.json()
 
-      // Assuming the API returns the missing media and mp4 data correctly
-      setSyncData({ missingMedia: data.missingMedia }) // Update state with the missing media data
-      setSyncNotReady({ missingMp4: data.missingMp4 }) // Update state with the missing mp4 data
+      // Store both missingMedia and missingMp4 in state
+      setSyncData({ missingMedia: data.missingMedia })
+      setSyncNotReady({ missingMp4: data.missingMp4 })
+      setSyncDuration(data.duration)
+      setSyncstartTime(data.startTime)
 
-      // Here you might want to call updateProcessedData or any other
-      // function necessary to update your UI or perform further operations
-      // based on the sync results
+      // Optionally call any callbacks to update other parts of your UI
       updateProcessedData('media')
+      setLastSync(new Date())
 
-      setLastSync(new Date()) // Update the last sync time
-
-      setComplete(true) // Indicate that the sync operation is complete
+      setComplete(true)
     } catch (error) {
       console.error('Sync failed:', error)
-      // Handle errors appropriately
     } finally {
       setLoading(false)
     }
@@ -70,6 +71,7 @@ export default function SyncMediaPopup({
         >
           <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" />
         </Transition.Child>
+
         <div className="fixed inset-0 z-10 w-screen overflow-y-auto">
           <div className="flex min-h-full items-end justify-center p-4 text-center sm:items-center sm:p-0">
             <Transition.Child
@@ -99,96 +101,218 @@ export default function SyncMediaPopup({
                       />
                     </svg>
                   </div>
+
                   <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
-                    <Dialog.Title as="h3" className="text-lg leading-6 font-medium text-gray-900">
+                    <Dialog.Title
+                      as="h3"
+                      className="text-lg leading-6 font-medium text-gray-900"
+                    >
                       Sync Media Files
                     </Dialog.Title>
+
                     <div className="mt-2">
                       <p className="text-sm text-gray-500">
-                        Are you sure you want to sync the media files? This action will update your
-                        local media database with the latest files from the server.
+                        Are you sure you want to sync the media files? This action
+                        will update your local media database with the latest files
+                        from the server.
                       </p>
+
                       <hr className="my-4" />
-                      {syncData && syncData.missingMedia.tv.length > 0 && (
-                        <div className="mb-4">
-                          <h2 className="text-xs font-bold text-center underline">
-                            Missing TV Shows
-                          </h2>
-                          <ul>
-                            {syncData.missingMedia.tv.map((show, showIndex) => (
-                              <li className="font-bold" key={showIndex}>
-                                {show.showTitle}
-                                <ul className="ml-4 font-normal">
-                                  {show.seasons.map((season, seasonIndex) => (
-                                    <li className="text-xs" key={seasonIndex}>
-                                      {typeof season === 'string' ? (
-                                        `${season}`
-                                      ) : (
-                                        <div>
-                                          Season: {season.season}
-                                          <ul className="ml-8">
-                                            {season.missingEpisodes.map((episode, episodeIndex) => (
-                                              <li key={episodeIndex}>
-                                                {typeof episode === 'string'
-                                                  ? episode
-                                                  : episode.episodeFileName}
-                                              </li>
-                                            ))}
-                                          </ul>
-                                        </div>
-                                      )}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
+
+                      {/* -------------------------
+                          Display Missing Media
+                          ------------------------- */}
+                      {syncData && (
+                        <>
+                          {Object.entries(syncData.missingMedia).map(
+                            ([serverName, { tv, movies }]) => {
+                              const hasTv = tv && tv.length > 0
+                              const hasMovies = movies && movies.length > 0
+
+                              // If no missing items for this server, skip rendering
+                              if (!hasTv && !hasMovies) return null
+
+                              return (
+                                <div className="mb-4" key={serverName}>
+                                  <h2 className="text-xs font-bold underline">
+                                    Missing Media from <span className="text-blue-600">{serverName}</span>
+                                  </h2>
+
+                                  {/* TV Shows */}
+                                  {hasTv && (
+                                    <div className="mt-2">
+                                      <h3 className="text-xs font-bold text-center">
+                                        Missing TV Shows
+                                      </h3>
+                                      <ul className="mt-1">
+                                        {tv.map((show, showIndex) => (
+                                          <li className="font-bold" key={showIndex}>
+                                            {show.showTitle}
+                                            <ul className="ml-4 font-normal">
+                                              {show.seasons.map((season, seasonIndex) => (
+                                                <li className="text-xs" key={seasonIndex}>
+                                                  {typeof season === 'string' ? (
+                                                    season
+                                                  ) : (
+                                                    <div>
+                                                      <span className="font-semibold">
+                                                        Season: {season.season}
+                                                      </span>
+                                                      <ul className="ml-8">
+                                                        {season.missingEpisodes.map((episode, episodeIndex) => (
+                                                          <li key={episodeIndex}>
+                                                            {typeof episode === 'string'
+                                                              ? episode
+                                                              : episode.episodeFileName}
+                                                          </li>
+                                                        ))}
+                                                      </ul>
+                                                    </div>
+                                                  )}
+                                                </li>
+                                              ))}
+                                            </ul>
+                                          </li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+
+                                  {/* Movies */}
+                                  {hasMovies && (
+                                    <div className="mt-3">
+                                      <h3 className="text-xs font-bold text-center">
+                                        Missing Movies
+                                      </h3>
+                                      <ul className="list-disc ml-4">
+                                        {movies.map((movie, index) => (
+                                          <li key={index}>{movie}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            }
+                          )}
+                        </>
                       )}
 
-                      {syncData && syncData.missingMedia.movies.length > 0 && (
-                        <div className="mb-4">
-                          <h2 className="text-xs font-bold text-center underline">
-                            Missing Movies
-                          </h2>
-                          <ul>
-                            {syncData.missingMedia.movies.map((movie, index) => (
-                              <li key={index}>{movie}</li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
+                      {/* -------------------------
+                          Display Missing MP4
+                          ------------------------- */}
+                      {syncNotReady && (
+                        <>
+                          {Object.entries(syncNotReady.missingMp4).map(
+                            ([serverName, { tv, movies }]) => {
+                              const hasTv = tv && tv.length > 0
+                              const hasMovies = movies && movies.length > 0
 
-                      {syncNotReady && syncNotReady.missingMp4.movies.length > 0 && (
-                        <div className="p-4 rounded-lg border border-gray-500">
-                          <h2 className="text-xs font-bold text-center underline text-red-800">
-                            Missing MP4 Files Unable to Sync these
-                          </h2>
-                          <h3 className="text-xs font-bold text-center underline text-red-600">
-                            Movies
-                          </h3>
-                          <ul className="text-red-600 text-xs list-disc ml-4">
-                            {syncNotReady.missingMp4.movies.map((movie, index) => (
-                              <li key={index}>{movie}</li>
-                            ))}
-                          </ul>
-                        </div>
+                              // If no MP4 issues for this server, skip
+                              if (!hasTv && !hasMovies) return null
+
+                              return (
+                                <div
+                                  key={serverName}
+                                  className="p-4 mb-4 rounded-lg border border-gray-500"
+                                >
+                                  <h2 className="text-xs font-bold underline text-red-800 text-center">
+                                    Missing MP4 Files on <span className="text-black">{serverName}</span>
+                                  </h2>
+
+                                  {/* Movies */}
+                                  {hasMovies && (
+                                    <div className="mt-2">
+                                      <h3 className="text-xs font-bold underline text-red-600 text-center">
+                                        Movies
+                                      </h3>
+                                      <ul className="text-red-600 text-xs list-disc ml-4 mt-1">
+                                        {movies.map((movie, index) => (
+                                          <li key={index}>{movie}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+
+                                  {/* TV Shows */}
+                                  {hasTv && (
+                                    <div className="mt-4">
+                                      <h3 className="text-xs font-bold underline text-red-600 text-center">
+                                        TV Shows
+                                      </h3>
+                                      <ul className="text-red-600 text-xs list-disc ml-4 mt-1">
+                                        {tv.map((tvShow, index) => (
+                                          <li key={index}>{tvShow}</li>
+                                        ))}
+                                      </ul>
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            }
+                          )}
+                        </>
                       )}
-                      {syncNotReady && syncNotReady.missingMp4.tv.length > 0 && (
-                        <div className="p-4 rounded-lg border border-gray-500 mt-4">
-                          <h3 className="text-xs font-bold text-center underline text-red-600">
-                            TV Shows
-                          </h3>
-                          <ul className="text-red-600 text-xs list-disc ml-4">
-                            {syncNotReady.missingMp4.tv.map((tvShow, index) => (
-                              <li key={index}>{tvShow}</li>
-                            ))}
-                          </ul>
+                      {/* -------------------------
+                          Display Sync Duration
+                          ------------------------- */}
+                      {syncstartTime && syncDuration && (
+                        <div className="mt-4 bg-gradient-to-r from-gray-50 to-gray-100 p-4 rounded-lg shadow-sm border border-gray-200">
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between p-3 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow duration-200">
+                              <div className="flex items-center">
+                                <span className="text-xl mr-2">🕒</span>
+                                <span className="text-xs font-medium text-gray-600">Started</span>
+                              </div>
+                              <span className="text-xs font-semibold text-blue-600">
+                                {new Date(syncstartTime).toLocaleString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  second: '2-digit',
+                                  hour12: true
+                                })}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between p-3 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow duration-200">
+                              <div className="flex items-center">
+                                <span className="text-xl mr-2">🏁</span>
+                                <span className="text-xs font-medium text-gray-600">Ended</span>
+                              </div>
+                              <span className="text-xs font-semibold text-blue-600">
+                                {new Date(new Date(syncstartTime).getTime() + (syncDuration * 1000)).toLocaleString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                  second: '2-digit',
+                                  hour12: true
+                                })}
+                              </span>
+                            </div>
+
+                            <div className="flex items-center justify-between p-3 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow duration-200">
+                              <div className="flex items-center">
+                                <span className="text-xl mr-2">⏱️</span>
+                                <span className="text-xs font-medium text-gray-600">Duration</span>
+                              </div>
+                              <span className="text-xs font-semibold text-blue-600">
+                                {syncDuration < 60 
+                                  ? `${syncDuration.toFixed(2)} seconds`
+                                  : `${(syncDuration / 60).toFixed(2)} minutes`}
+                              </span>
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
                   </div>
                 </div>
+
                 <div className="mt-5 sm:mt-4 sm:flex sm:flex-row-reverse">
                   <button
                     type="button"
@@ -201,7 +325,7 @@ export default function SyncMediaPopup({
                     onClick={handleSyncClick}
                     disabled={loading}
                   >
-                    {complete ? 'Sync Complete' : loading ? 'Syncing...' : 'Sync'}
+                    {complete && !loading ? 'Sync Complete' : loading ? 'Syncing...' : 'Sync'}
                   </button>
                   <button
                     type="button"

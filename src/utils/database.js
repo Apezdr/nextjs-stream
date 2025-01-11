@@ -71,6 +71,10 @@ export async function getRequestedMedia({
     const DBmovie = await client.db('Media').collection(collection).findOne(query, { projection })
     await processBlurhashes(DBmovie, type)
 
+    if (DBmovie?.metadata?.cast) {
+      DBmovie.cast = DBmovie.metadata.cast
+    }
+
     return { type: type, ...DBmovie }
   } else if (type === 'tv') {
     const DBtvShow = await getTvShowData(client, collection, title, season, episode, id)
@@ -120,6 +124,22 @@ async function getTvShowData(client, collection, title, season, episode, id) {
   } else {
     // Return the entire TV show if no season is specified
     await processBlurhashes(tvShow)
+    // Handle Cast
+    if (tvShow.metadata.cast) {
+      let compiledCastAcrossEpisodes = {}
+      for (const seasonObj of tvShow.seasons) {
+        if (seasonObj.metadata.episodes) {
+          for (const episode of seasonObj.metadata.episodes) {
+            for (const castMember of episode.guest_stars) {
+              if (!compiledCastAcrossEpisodes[castMember.id]) {
+                compiledCastAcrossEpisodes[castMember.id] = castMember
+              }
+            }
+          }
+        }
+        tvShow.cast = {...tvShow.metadata.cast, ...Object.values(compiledCastAcrossEpisodes)}
+      }
+    }
     return tvShow
   }
 }
@@ -138,11 +158,16 @@ function handleEpisode(tvShow, seasonObj, episodeNumber) {
   episodeObj.metadata.backdrop_path = episodeObj.metadata.backdrop_path || tvShow.backdrop
   episodeObj.posterURL = seasonObj.season_poster || tvShow.posterURL || tvShow.metadata.poster_path
   episodeObj.posterBlurhash = seasonObj.seasonPosterBlurhash || tvShow.posterBlurhash || null
+  
+  // Handle Cast
+  if (tvShow.metadata.cast || episodeObj.metadata.guest_stars) {
+    episodeObj.cast = {...tvShow.metadata.cast, ...episodeObj.metadata.guest_stars}
+  }
 
   if (seasonObj.seasonPosterBlurhashSource) {
-    episodeObj.blurhashSource = seasonObj.seasonPosterBlurhashSource
+    episodeObj.posterBlurhashSource = seasonObj.seasonPosterBlurhashSource
   } else if (tvShow.posterBlurhash) {
-    episodeObj.blurhashSource = tvShow.posterBlurhash
+    episodeObj.posterBlurhashSource = tvShow.posterBlurhash
   }
 
   if (tvShow?.metadata?.rating) {
@@ -172,7 +197,7 @@ async function processBlurhashes(media, type) {
   if (media?.posterBlurhash) {
     if (media.posterBlurhash.startsWith('http')) {
       media.posterBlurhash = await fetchMetadataMultiServer(
-        media.blurhashSource,
+        media.posterBlurhashSource,
         media.posterBlurhash,
         'blurhash',
         type,

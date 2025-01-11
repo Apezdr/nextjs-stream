@@ -1,6 +1,8 @@
 import MediaPoster from '@components/MediaPoster'
+import HD4kBanner from '../../../public/4kBanner.png'
+import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
 import Image from 'next/image'
-import { classNames, generateColors, getFullImageUrl } from '@src/utils'
+import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '@src/utils'
 
 export default function Detailed({
   tvShow,
@@ -14,6 +16,7 @@ export default function Detailed({
   networkClasses = 'w-auto h-4 inset-0 mx-auto',
   networkContainerClasses = 'w-full inset-0 flex flex-col py-3',
   hideGenres = true,
+  check4kandHDR = false,
   imagePriority = false,
   loadingType = undefined,
 }) {
@@ -22,6 +25,23 @@ export default function Detailed({
   const totalEpisodes = tvShow.seasons.reduce((total, season) => {
     return total + (season.episodes ? season.episodes.length : 0)
   }, 0)
+
+  let has4k, hasHDR, hasHDR10
+  if (check4kandHDR) {
+    has4k = tvShow.seasons.some((season) =>
+      season.episodes.every(
+        (episode) => getResolutionLabel(episode?.dimensions).is4k
+      )
+    )
+    
+    hasHDR = tvShow.seasons.some((season) =>
+      season.episodes.every((episode) => episode?.hdr)
+    )
+    
+    hasHDR10 = tvShow.seasons.some((season) =>
+      season.episodes.every((episode) => episode?.hdr === 'HDR10')
+    )
+  }
   return (
     <>
       <div
@@ -94,15 +114,17 @@ export default function Detailed({
                   'bg-gradient-to-bl from-gray-400 via-gray-200 to-gray-100'
           )}
         >
-          <Image
-            src={networkImage}
-            width={96}
-            height={16}
-            alt={networkName}
-            quality={networkQuality}
-            className={networkClasses}
-            priority
-          />
+          {networkImage ? (
+            <Image
+              src={networkImage}
+              width={96}
+              height={16}
+              alt={networkName}
+              quality={networkQuality}
+              className={networkClasses}
+              priority
+            />
+          ) : null}
         </div>
       </div>
       {posterOnly ? null : (
@@ -146,6 +168,37 @@ export default function Detailed({
             />
           </div>
           <div className="mt-2 text-center text-sm font-medium text-gray-300 group-hover:text-white pt-2 border-t border-solid border-t-[#c1c1c133]">
+          {check4kandHDR && (has4k || hasHDR) && (
+              <>
+                <div className="flex flex-row gap-3 justify-center mb-2">
+                  {has4k && (
+                    <div className="select-none bg-transparent h-4">
+                      <Image
+                        src={HD4kBanner}
+                        className="h-4 w-auto"
+                        alt="4K Banner"
+                        loading="lazy"
+                        placeholder="blur"
+                      />
+                    </div>
+                  )}
+                  {hasHDR && (
+                    <>
+                      {hasHDR10 ? (
+                        <Image
+                          src={hdr10PlusLogo}
+                          alt="HDR10 Logo"
+                          className="h-4 w-auto"
+                          priority
+                        />
+                        // add additional HDR handling here if needed
+                      ) : null}
+                    </>
+                  )}
+                </div>
+                <hr className="mb-2 border-[#c1c1c133] w-full" />
+              </>
+            )}
             <span className="">{tvShow.metadata?.overview}</span>
           </div>
         </>

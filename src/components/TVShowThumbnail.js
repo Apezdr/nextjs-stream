@@ -23,6 +23,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
       : '/sorry-image-not-available.jpg'
 
   const blurDataURL = episode.thumbnailBlurhash || false
+  const clipURL = episode?.clipURL || false
 
   return (
     <div

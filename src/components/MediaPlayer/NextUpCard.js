@@ -54,6 +54,7 @@ function NextUpCard({
 
   useEffect(() => {
     if (
+      mediaLength &&
       playbackTimeRef.current * 1000 > mediaLength - 35000 &&
       hasNextEpisode &&
       !isHovering &&
@@ -93,7 +94,7 @@ function NextUpCard({
   ])
 
   return (
-    hasNextEpisode &&
+    mediaLength && hasNextEpisode &&
     currentPlaybackTime * 1000 > mediaLength - 35000 && (
       <NextUpCardContent
         mediaTitle={mediaTitle}

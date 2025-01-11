@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { buildURL, getFullImageUrl } from '@src/utils'
+import { getFullImageUrl } from '@src/utils'
 import { getLastUpdatedTimestamp } from '@src/utils/database'
 import {
   radarrAPIKey,
@@ -12,6 +12,13 @@ import {
   tdarrURL,
 } from '@src/utils/ssr_config'
 import { multiServerHandler } from './config'
+//import axiosInstance from './axiosInstance'
+import pLimit from 'p-limit'
+import { httpGet } from '@src/lib/httpHelper'
+
+// Define concurrency limit
+const CONCURRENCY_LIMIT = 200; // Adjust based on your system's capacity
+const limit = pLimit(CONCURRENCY_LIMIT);
 
 export function processMediaData(jsonResponseString) {
   const { movies, tv } = jsonResponseString
@@ -28,7 +35,7 @@ export function processMediaData(jsonResponseString) {
       let poster =
         movie.posterURL ||
         getFullImageUrl(movie.metadata?.poster_path) ||
-        buildURL(`/sorry-image-not-available.jpg`)
+        `/sorry-image-not-available.jpg`
 
       return {
         id: movie._id.toString(),
@@ -135,78 +142,118 @@ function normalizeMetadataURL(url, serverConfig) {
   return handler.createFullURL(cleanPath)
 }
 
-/**
- * Cache implementation for metadata
- */
 class MetadataCache {
   constructor() {
-    this.cache = new Map()
+    this.cache = new Map();
   }
 
   getKey(type, url, serverId) {
-    return `${serverId}:${type}:${url}`
+    return `${serverId}:${type}:${url}`;
   }
 
   get(type, url, serverId) {
-    return this.cache.get(this.getKey(type, url, serverId))
+    return this.cache.get(this.getKey(type, url, serverId));
   }
 
   set(type, url, serverId, value) {
-    this.cache.set(this.getKey(type, url, serverId), value)
+    this.cache.set(this.getKey(type, url, serverId), value);
   }
 
   has(type, url, serverId) {
-    return this.cache.has(this.getKey(type, url, serverId))
+    return this.cache.has(this.getKey(type, url, serverId));
   }
 
   clear() {
-    this.cache.clear()
+    this.cache.clear();
   }
 }
 
-// Create a singleton instance of the cache
-export const metadataCache = new MetadataCache()
+// Singleton instance
+export const metadataCache = new MetadataCache();
 
 /**
- * When using multiple file servers, this version of fetchMetadata can be used
+ * Retry function with exponential backoff
+ */
+async function fetchWithRetry(fetchFunction, retries = 3, delay = 1000) {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fetchFunction();
+    } catch (error) {
+      if (attempt === retries) {
+        throw error;
+      }
+      console.warn(`Fetch attempt ${attempt} failed. Retrying in ${delay}ms...`);
+      await new Promise(res => setTimeout(res, delay));
+      delay *= 2; // Exponential backoff
+    }
+  }
+}
+
+/**
+ * Enhanced fetchMetadataMultiServer with caching, conditional requests, controlled concurrency, and retry logic
  * @param {string} serverId - The ID of the file server to fetch from
  * @param {string} metadataUrl - The URL to fetch metadata from
  * @param {'file'|'blurhash'} type - The type of metadata being fetched
  * @param {'tv'|'movie'} mediaType - The type of media
  * @param {string} title - The title of the media
+ * @returns {Object|null} - The fetched metadata or null if not modified
  */
 export async function fetchMetadataMultiServer(serverId, metadataUrl, type = 'file', mediaType, title) {
   if (!metadataUrl) {
-    return {}
+    return {};
   }
 
   try {
-    const cacheKey = `${serverId}:${type}:${metadataUrl}`
-    const lastUpdated = await getLastUpdatedTimestamp({ type: mediaType, title })
+    const cacheKey = `${serverId}:${type}:${metadataUrl}`;
+    const cachedEntry = metadataCache.get(type, metadataUrl, serverId);
 
-    // Check cache
-    if (metadataCache.has(cacheKey)) {
-      const cachedData = metadataCache.get(cacheKey)
-      if (cachedData.lastUpdated === lastUpdated) {
-        return cachedData.data
+    const headers = {};
+    if (cachedEntry) {
+      if (cachedEntry.etag) {
+        headers['If-None-Match'] = cachedEntry.etag;
+      }
+      if (cachedEntry.lastModified) {
+        headers['If-Modified-Since'] = cachedEntry.lastModified;
       }
     }
 
     // Get the URL handler for this server
-    const handler = multiServerHandler.getHandler(serverId)
+    const handler = multiServerHandler.getHandler(serverId);
     
     // Strip any existing paths and create the full URL
-    const strippedPath = handler.stripPrefixPath(metadataUrl)
-    const normalizedUrl = handler.createFullURL(strippedPath)
+    const strippedPath = handler.stripPrefixPath(metadataUrl);
+    const normalizedUrl = handler.createFullURL(strippedPath);
 
-    // Fetch the data
-    const response = await axios.get(normalizedUrl)
-    const data = type === 'blurhash' ? response.data.trim() : response.data
+    // Define the fetch function using the httpGet helper
+    const fetchFunction = async () => {
+      const { data, headers: responseHeaders } = await httpGet(normalizedUrl, {
+        headers,
+        timeout: 5000, // Customize as needed
+        responseType: type === 'blurhash' ? 'text' : 'json',
+      });
 
-    // Cache the result
-    metadataCache.set(cacheKey, { data, lastUpdated })
+      if (data === null && cachedEntry) {
+        // Not Modified; return cached data
+        return cachedEntry.data;
+      }
 
-    return data
+      const processedData = type === 'blurhash' ? data.trim() : data;
+
+      // Update cache with new ETag and Last-Modified
+      metadataCache.set(type, metadataUrl, serverId, {
+        data: processedData,
+        lastUpdated: new Date(data?.last_updated || '1970-01-01'), // Adjust based on actual response structure
+        etag: responseHeaders.etag || cachedEntry?.etag, // Use response ETag or fallback to existing
+        lastModified: responseHeaders['last-modified'] || cachedEntry?.lastModified, // Use response Last-Modified or fallback
+      });
+
+      return processedData;
+    };
+
+    // Use concurrency limiter and retry logic
+    const data = await limit(() => fetchWithRetry(fetchFunction));
+
+    return data;
   } catch (error) {
     console.error('Error fetching metadata:', {
       serverId,
@@ -214,10 +261,11 @@ export async function fetchMetadataMultiServer(serverId, metadataUrl, type = 'fi
       error: error.message,
       mediaType,
       title
-    })
-    return false
+    });
+    return null;
   }
 }
+
 // End of utilities for syncing media
 
 export async function fetchRadarrQueue() {

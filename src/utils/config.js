@@ -49,7 +49,8 @@ function createServerConfig({
   baseURL, 
   prefixPath = '', 
   syncEndpoint, 
-  isDefault = false 
+  isDefault = false,
+  priority = 1
 }) {
   return {
     id,
@@ -59,7 +60,8 @@ function createServerConfig({
     paths: {
       sync: createSyncUrls(syncEndpoint)
     },
-    isDefault
+    isDefault,
+    priority
   }
 }
 
@@ -76,7 +78,8 @@ function loadServerConfigurations() {
     baseURL: process.env.NEXT_PUBLIC_FILE_SERVER_URL || 'http://localhost:3000',
     prefixPath: process.env.NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH || '',
     syncEndpoint: process.env.NEXT_PUBLIC_NODE_SERVER_URL || 'http://localhost:3000',
-    isDefault: true
+    isDefault: true,
+    priority: 1
   }))
 
   // Load additional servers
@@ -87,7 +90,8 @@ function loadServerConfigurations() {
       baseURL: process.env[`NEXT_PUBLIC_FILE_SERVER_URL_${serverIndex}`],
       prefixPath: process.env[`NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH_${serverIndex}`] || '',
       syncEndpoint: process.env[`NEXT_PUBLIC_NODE_SERVER_URL_${serverIndex}`],
-      isDefault: false
+      isDefault: false,
+      priority: serverIndex
     }))
     serverIndex++
   }
@@ -119,6 +123,19 @@ class ServerManager {
       throw new Error(`No server found with ID: ${serverId}`)
     }
     return server
+  }
+  
+  /**
+   * Get the priority of a server by ID
+   * @param {string} serverId - Server ID
+   * @returns {number} Priority of the server
+   */
+  getServerPriority(serverId) {
+    const server = this.servers.get(serverId);
+    if (!server) {
+      throw new Error(`No server found with ID: ${serverId}`);
+    }
+    return server.priority;
   }
 
   /**
@@ -161,6 +178,23 @@ const serverManager = new ServerManager(loadServerConfigurations())
 // Create URL handlers for all servers
 import { createURLHandler, createMultiServerURLHandler } from './url_utils'
 
+/**
+ * Determines whether the current server has higher priority than the existing source.
+ * @param {string} existingSourceId - The server ID of the existing source.
+ * @param {Object} serverConfig - The current server configuration.
+ * @returns {boolean} - True if current server has higher priority, or if existing source is undefined.
+ */
+export function isCurrentServerHigherPriority(existingSourceId, serverConfig) {
+  if (!existingSourceId) {
+    return true;
+  }
+
+  const existingPriority = serverManager.getServerPriority(existingSourceId);
+  const currentPriority = serverManager.getServerPriority(serverConfig.id);
+
+  return currentPriority < existingPriority;
+}
+
 // Create handlers for all servers
 const urlHandlers = new Map(
   serverManager.getAllServers().map(server => [
@@ -196,3 +230,10 @@ export const fileServerURL = defaultServer.baseURL
 export const fileServerPrefixPath = defaultServer.prefixPath
 export const fileServerURLWithoutPrefixPath = defaultServer.baseURL
 export const fileServerURLWithPrefixPath = (path) => urlHandlers.get(defaultServer.id).createFullURL(path ?? '')
+
+// Version Support
+// Update to identify the front end support for
+// File Server code changes
+// Version Format: 1.0000 (Major.Minor)
+export const fileServerVersionTV = 1.0001
+export const fileServerVersionMOVIES = 1.0000

@@ -1,3 +1,4 @@
+const dynamic = 'force-dynamic'
 import { Inter } from 'next/font/google'
 import './globals.css'
 //import PageAnimatePresence from '@components/HOC/PageAnimatePresence'
@@ -20,18 +21,15 @@ export const metadata = {
   },
 }
 
-export default function RootLayout({ children }) {
+export default function styledLayout({ children }) {
   return (
-    <html lang="en">
-      <body
-        className={classNames(inter.className, `bg-blue-500 transition-colors duration-1000`)}
-        id="page-container"
-      >
-        <GeneralLayout posterCollage={posterCollage} />
-        <TVLayout posterCollage={posterCollage} />
-        <MovieLayout posterCollage={posterCollage} />
-        {children}
-      </body>
-    </html>
+    <div
+      className={classNames(inter.className, `transition-colors duration-1000`)}
+    >
+      <GeneralLayout posterCollage={posterCollage} />
+      <TVLayout posterCollage={posterCollage} />
+      <MovieLayout posterCollage={posterCollage} />
+      {children}
+    </div>
   )
 }

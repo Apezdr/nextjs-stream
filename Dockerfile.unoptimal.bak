@@ -1,0 +1,26 @@
+# Stage 1: Building the code
+FROM node:22-alpine3.19 as builder
+WORKDIR /app
+
+# Install dependencies and build the app
+COPY package.json package-lock.json* ./ 
+RUN npm install -g npm@10.3.0
+RUN npm install --force
+COPY . . 
+RUN npm run build
+
+# Stage 2: Running the code with Docker CLI
+FROM node:22-alpine3.19
+WORKDIR /app
+
+# Install Docker CLI; used for version tracking on host
+RUN apk add --no-cache docker-cli
+
+# Copy the built app from the builder stage
+COPY --from=builder /app/ ./
+
+# Expose port
+EXPOSE 3232
+
+# Use environment variables from docker-compose.yml at runtime
+CMD ["npm", "start"]

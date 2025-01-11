@@ -30,7 +30,7 @@ const TVList = async (latestUpdateTimestamp) => {
               }}
             >
               <Link href={`/list/tv/${encodeURIComponent(tv.title)}`} className="group">
-                <Detailed tvShow={tv} />
+                <Detailed tvShow={tv} check4kandHDR={true} />
               </Link>
             </PageContentAnimatePresence>
           </li>
@@ -54,8 +54,10 @@ const getAndUpdateMongoDB = cache(async () => {
           metadata: 1,
           posterURL: 1,
           posterBlurhash: 1,
-          blurhashSource: 1,
+          posterBlurhashSource: 1,
           'seasons.seasonNumber': 1,
+          'seasons.episodes.hdr': 1,
+          'seasons.episodes.dimensions': 1,
           'seasons.title': 1,
           'seasons.season_poster': 1,
           'seasons.posterSource': 1,
@@ -87,16 +89,12 @@ const getAndUpdateMongoDB = cache(async () => {
   const plainTVShows = await Promise.all(
     tvprograms.map(async (tv) => {
       if (tv.posterBlurhash) {
-        tv.posterBlurhash = await fetchMetadataMultiServer(tv.blurhashSource, tv.posterBlurhash, 'blurhash', 'tv', tv.title)
+        tv.posterBlurhash = await fetchMetadataMultiServer(tv.posterBlurhashSource, tv.posterBlurhash, 'blurhash', 'tv', tv.title)
       }
       return {
+        ...tv,
         _id: tv._id.toString(), // Convert ObjectId to string
         title: tv.title,
-        metadata: tv.metadata,
-        seasons: tv.seasons, // Include the seasons
-        backdrop: tv.backdrop,
-        posterURL: tv.posterURL,
-        posterBlurhash: tv.posterBlurhash,
       }
     })
   )

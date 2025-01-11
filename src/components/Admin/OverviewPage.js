@@ -16,6 +16,9 @@ import TdarrProgressBar from './Integrations/TdarrQueue'
 import RadarrQueue from './Integrations/RadarrQueue'
 import SonarrQueue from './Integrations/SonarrQueue'
 import { PauseCircleIcon } from '@heroicons/react/20/solid'
+import WipeDbButton from '@src/app/(styled)/admin/WipeDBButton'
+import { ServerStats } from './Stats/ServerStats'
+import { ServerProcesses } from './Stats/ServerProcesses'
 
 const processLastSyncTimeData = (lastSyncTimeData) => {
   const lastSyncTime =
@@ -323,6 +326,8 @@ export default function AdminOverviewPage({
         />
       )}
       <h1 className="block">Admin Page</h1>
+      <ServerStats />
+      <ServerProcesses />
       <div className="bg-white shadow-md rounded-lg">
         <div className="bg-red-500 text-white flex flex-row justify-center rounded-t-md select-none">
           <svg
@@ -370,6 +375,7 @@ export default function AdminOverviewPage({
         >
           Sync with Fileserver
         </button>
+        <WipeDbButton />
         <Link
           className="block rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
           href={organizrURL}

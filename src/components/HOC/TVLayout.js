@@ -4,10 +4,10 @@ import FullScreenBackdrop from '@components/Backdrop/FullScreen'
 import { AnimatePresence } from 'framer-motion'
 import { useParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
-import { buildURL } from '@src/utils'
 
 export default function TVLayout({ posterCollage }) {
-  const params = useParams()
+  const routeParams = useParams()
+  const [params, setParams] = useState(routeParams)
   const [media, setMedia] = useState(null)
 
   // Destructure parameters and decode if necessary
@@ -17,12 +17,16 @@ export default function TVLayout({ posterCollage }) {
   const mediaEpisode = params?.media?.[3] // Could be 'Episode Y'
 
   useEffect(() => {
+    setParams(routeParams)
+  }, [routeParams])
+
+  useEffect(() => {
     if (media && media.title !== mediaTitle) {
       setMedia(null)
     }
 
     if (mediaType === 'tv' && mediaTitle && (!media || media.title !== mediaTitle)) {
-      fetch(buildURL('/api/authenticated/media'), {
+      fetch('/api/authenticated/media', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

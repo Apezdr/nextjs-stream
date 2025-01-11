@@ -8,8 +8,8 @@ export const GET = async (req) => {
   }
 
   const mediaResult = await fetchBannerMedia()
-  if (mediaResult.error) {
-    return new Response(JSON.stringify({ error: mediaResult.error }), {
+  if (mediaResult.error && mediaResult.details && mediaResult.status) {
+    return new Response(JSON.stringify({ error: mediaResult.error, details: mediaResult.details }), {
       status: mediaResult.status,
       headers: { 'Content-Type': 'application/json' },
     })

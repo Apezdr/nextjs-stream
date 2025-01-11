@@ -1,7 +1,6 @@
-'use server'
 import { multiServerHandler } from "@src/utils/config"
 
-export async function getServerConfig() {
+export function getServerConfig() {
     const handler = multiServerHandler.getHandler("default")
     const defaultFileServer = handler.createFullURL('', true)
     return {

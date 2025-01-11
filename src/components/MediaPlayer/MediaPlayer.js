@@ -13,7 +13,8 @@ import { onProviderChange, onProviderSetup } from './clientSide'
 import { Inconsolata } from 'next/font/google'
 import Media_Poster from '../MediaPoster'
 import VolumeRegulator from './VolumeRegulator'
-import { nodeJSURL } from '@src/utils/config'
+import { getServer } from '@src/utils/config'
+import { Suspense } from 'react'
 const inconsolata = Inconsolata({ subsets: ['latin'] })
 
 async function validateVideoURL(url) {
@@ -41,7 +42,7 @@ async function VideoPlayer({
     return (
       <div className="w-96">
         {media?.posterURL ? (
-          <Media_Poster contClassName="relative" media={media} alt={media.title} />
+          <Suspense><Media_Poster contClassName="relative" media={media} alt={media.title} /></Suspense>
         ) : null}
         <div className="font-bold mt-4">Looks like we've got an error on our side:</div>
         <div>The video URL is invalid or unreachable.</div>
@@ -92,6 +93,12 @@ async function VideoPlayer({
   //
   let hdr = false
 
+  // Access the server configuration using the media's videoSource
+  const serverConfig = getServer(media?.videoSource || media?.videoInfoSource || 'default')
+
+  // Extract the Node.js server URL (syncEndpoint) from the server configuration
+  const nodeServerUrl = serverConfig.syncEndpoint
+
   if (metadata && mediaType === 'tv') {
     title = metadata.name || metadata.title // Use 'name' for TV show episodes, 'title' for general metadata
     released = metadata.air_date // Use 'air_date' for TV show episodes
@@ -114,7 +121,7 @@ async function VideoPlayer({
       chapters = `/api/authenticated/chapter?name=${encodeURIComponent(
         mediaTitle
       )}&type=${mediaType}&season=${season_number}&episode=${episode_number}`
-      chapterThumbnailURL = `${nodeJSURL}/frame/tv/${encodeURIComponent(
+      chapterThumbnailURL = `${nodeServerUrl}/frame/tv/${encodeURIComponent(
         mediaTitle
       )}/${season_number}/${episode_number}/`
     }
@@ -160,14 +167,14 @@ async function VideoPlayer({
       rating = metadata.rating
     }
     if (media.chapterURL) {
-      chapters = `/api/authenticated/chapter?name=${encodeURIComponent(
+      chapters = buildURL(`/api/authenticated/chapter?name=${encodeURIComponent(
         mediaTitle
-      )}&type=${mediaType}`
-      chapterThumbnailURL = `${nodeJSURL}/frame/movie/${encodeURIComponent(mediaTitle)}/`
+      )}&type=${mediaType}`)
+      chapterThumbnailURL = `${nodeServerUrl}/frame/movie/${encodeURIComponent(mediaTitle)}/`
     }
-    thumbnailURL = `/api/authenticated/thumbnails?name=${encodeURIComponent(
+    thumbnailURL = buildURL(`/api/authenticated/thumbnails?name=${encodeURIComponent(
       mediaTitle
-    )}&type=${mediaType}`
+    )}&type=${mediaType}`)
     if (media.hdr) {
       hdr = media.hdr
     }
@@ -206,71 +213,73 @@ async function VideoPlayer({
   }
 
   return (
-    <MediaPlayer
-      title={mediaPlayerTitleLabel}
-      src={videoURL}
-      poster={poster}
-      autoPlay={true}
-      controlsDelay={6000}
-      onProviderChange={onProviderChange}
-      onProviderSetup={onProviderSetup}
-      streamType="on-demand"
-      playsInline
-      load="idle"
-      aspectRatio="16/9"
-      fullscreenOrientation="landscape"
-      className="max-h-screen dark z-10"
-      clipStartTime={clipStartTime}
-      clipEndTime={clipEndTime}
-      googleCast={{
-        receiverApplicationId: process.env.CHROMECAST_RECEIVER_ID || undefined,
-        resumeSavedSession: true,
-      }}
-    >
-      <MediaProvider>
-        <VolumeRegulator />
-        {poster ? <MediaPoster poster={poster} title={title} /> : null}
-        <WithPlaybackTracker videoURL={videoURL} />
-        {chapters ? <Track kind="chapters" src={chapters} lang="en-US" default /> : null}
-        {captions
-          ? Object.entries(captions).map(([language, captionObject], index) => {
-              return (
-                <Track
-                  key={language + index}
-                  src={captionObject.url}
-                  kind="subtitles"
-                  label={language}
-                  lang={captionObject.srcLang}
-                  default={language.indexOf('English') > -1}
-                  className={inconsolata.className}
-                />
-              )
-            })
-          : null}
-      </MediaProvider>
-      <VideoLayout
-        thumbnails={thumbnailURL}
-        hasCaptions={hasCaptions}
-        hasChapters={hasChapters}
-        goBack={goBack}
-        mediaMetadata={mediaMetadata}
-        logo={logo}
-        videoURL={videoURL}
-        captions={captions}
-        nextUpCard={{
-          mediaTitle: mediaTitle,
-          season_number: season_number,
-          nextEpisodeNumber: nextEpisodeNumber,
-          nextEpisodeThumbnail: nextEpisodeThumbnail,
-          nextEpisodeTitle: nextEpisodeTitle,
-          hasNextEpisode: hasNextEpisode,
-          mediaLength: mediaLength,
+    <Suspense fallback={<div>Loading...</div>}>
+      <MediaPlayer
+        title={mediaPlayerTitleLabel}
+        src={videoURL}
+        poster={poster}
+        autoPlay={true}
+        controlsDelay={6000}
+        onProviderChange={onProviderChange}
+        onProviderSetup={onProviderSetup}
+        streamType="on-demand"
+        playsInline
+        load="eager"
+        aspectRatio="16/9"
+        fullscreenOrientation="landscape"
+        className="max-h-screen dark z-10"
+        clipStartTime={clipStartTime}
+        clipEndTime={clipEndTime}
+        googleCast={{
+          receiverApplicationId: process.env.CHROMECAST_RECEIVER_ID || undefined,
+          resumeSavedSession: true,
         }}
-        chapterThumbnailURL={chapterThumbnailURL}
-        hdrVal={hdr}
-        dimsVal={media.dimensions}
-      />
-    </MediaPlayer>
+      >
+        <MediaProvider>
+          <VolumeRegulator />
+          {poster ? <MediaPoster poster={poster} title={title} /> : null}
+          {videoURL ? <Suspense><WithPlaybackTracker videoURL={videoURL} /></Suspense> : null}
+          {chapters ? <Track kind="chapters" src={chapters} lang="en-US" default /> : null}
+          {captions
+            ? Object.entries(captions).map(([language, captionObject], index) => {
+                return (
+                  <Track
+                    key={language + index}
+                    src={captionObject.url}
+                    kind="subtitles"
+                    label={language}
+                    lang={captionObject.srcLang}
+                    default={language.indexOf('English') > -1}
+                    className={inconsolata.className}
+                  />
+                )
+              })
+            : null}
+        </MediaProvider>
+        <VideoLayout
+          thumbnails={thumbnailURL}
+          hasCaptions={hasCaptions}
+          hasChapters={hasChapters}
+          goBack={goBack}
+          mediaMetadata={mediaMetadata}
+          logo={logo}
+          videoURL={videoURL}
+          captions={captions}
+          nextUpCard={{
+            mediaTitle: mediaTitle,
+            season_number: season_number,
+            nextEpisodeNumber: nextEpisodeNumber,
+            nextEpisodeThumbnail: nextEpisodeThumbnail,
+            nextEpisodeTitle: nextEpisodeTitle,
+            hasNextEpisode: hasNextEpisode,
+            mediaLength: mediaLength,
+          }}
+          chapterThumbnailURL={chapterThumbnailURL}
+          hdrVal={hdr}
+          dimsVal={media.dimensions}
+        />
+      </MediaPlayer>
+    </Suspense>
   )
 }
 

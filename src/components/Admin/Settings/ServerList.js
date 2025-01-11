@@ -3,50 +3,11 @@ import { memo, useState } from 'react'
 import { Dialog } from '@headlessui/react'
 import { QuestionMarkCircleIcon, XMarkIcon } from '@heroicons/react/24/outline' // Optional: For icons
 import NodeJSDocumentation from './ServerInfo/NodeJSDocumentation'
+import PropTypes from 'prop-types'
 
-function ServerList({
-  fileServerURL,
-  fileServerPrefixPath,
-  organizrURL,
-  nodeJSURL,
-  syncTVURL,
-  syncMoviesURL,
-}) {
+function ServerList({ servers, organizrURL }) {
   const [isOpen, setIsOpen] = useState(false)
   const [modalContent, setModalContent] = useState({ label: '', info: '' })
-
-  const settings = [
-    {
-      label: 'File Server URL',
-      value: fileServerURL,
-      info: 'This is the base URL for your File Server. Ensure it is correctly configured in your Docker setup.',
-    },
-    {
-      label: 'File Server Prefix',
-      value: fileServerPrefixPath,
-      info: 'The prefix path for accessing files on the File Server. This should match your server configuration.',
-    },
-    {
-      label: 'Organizr URL',
-      value: organizrURL,
-      info: 'URL for Organizr, which manages your web services. Make sure it points to the correct Organizr instance.',
-    },
-    {
-      label: 'NodeJS URL',
-      value: nodeJSURL,
-      info: <NodeJSDocumentation nodeJSURL={nodeJSURL} />,
-    },
-    {
-      label: 'Sync TV URL',
-      value: syncTVURL,
-      info: 'URL used to synchronize TV data. The NodeJS service serves this data.',
-    },
-    {
-      label: 'Sync Movies URL',
-      value: syncMoviesURL,
-      info: 'URL used to synchronize movie data. The NodeJS service serves this data.',
-    },
-  ]
 
   const openModal = (label, info) => {
     setModalContent({ label, info })
@@ -61,56 +22,148 @@ function ServerList({
     <div>
       <h2 className="text-base font-semibold leading-7 text-gray-900">Server Settings</h2>
       <p className="mt-1 text-sm leading-6 text-gray-500">
-        Configure your server settings inside your Docker configuration.
+        Below are the server settings dynamically fetched from the configuration.
       </p>
 
-      <dl className="mt-6 space-y-6 divide-y divide-gray-100 border-t border-gray-200 text-sm leading-6">
-        <div className="pt-6 sm:flex flex-col divide-y">
-          {settings.map(({ label, value, info }) => (
-            <div key={label} className="sm:flex sm:items-center sm:w-full py-4">
-              <dt className="font-medium text-gray-900 sm:w-64 sm:flex-none sm:pr-2 flex items-center">
-                {label}
-              </dt>
-              <dd className="mt-1 sm:mt-0 flex flex-row">
-                <div className="text-gray-900 truncate w-full" title={value}>
-                  {value}
-                </div>
-                <div>
-                  {info && (
-                    <button
-                      type="button"
-                      onClick={() => openModal(label, info)}
-                      className="ml-2 text-gray-500 hover:text-gray-700 focus:outline-none"
-                      aria-label={`More info about ${label}`}
-                    >
-                      <QuestionMarkCircleIcon className="h-5 w-5 inline" />
-                    </button>
-                  )}
-                </div>
-                {/* You can uncomment and implement the "Change" button if needed */}
-                {/* <button
+      <div className="mt-6 space-y-8 divide-y divide-gray-200">
+        {/* Iterate through each server and render its settings */}
+        {servers.map((server, index) => (
+          <div key={server.id} className="pt-6">
+            {/* Server Header */}
+            <h3 className="text-lg font-medium text-gray-800 mb-4">
+              Server: <span className="font-semibold">{server.id}</span>
+            </h3>
+
+            <dl className="space-y-6">
+              {/* File Server URL */}
+              <div className="flex flex-col md:flex-row items-center justify-between">
+                <dt className="font-medium text-gray-900">File Server URL</dt>
+                <dd className="flex items-center space-x-2">
+                  <span className="text-gray-900 truncate" title={server.baseURL}>
+                    {server.baseURL}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openModal(`File Server URL (${server.id})`, `This is the base URL for the ${server.id} File Server. Ensure it is correctly configured in your Docker setup.`)}
+                    className="text-gray-500 hover:text-gray-700 focus:outline-none"
+                    aria-label={`More info about File Server URL (${server.id})`}
+                  >
+                    <QuestionMarkCircleIcon className="h-5 w-5" />
+                  </button>
+                </dd>
+              </div>
+
+              {/* File Server Prefix Path */}
+              <div className="flex flex-col md:flex-row items-center justify-between">
+                <dt className="font-medium text-gray-900">File Server Prefix Path</dt>
+                <dd className="flex items-center space-x-2">
+                  <span className="text-gray-900 truncate" title={server.prefixPath || 'None'}>
+                    {server.prefixPath || 'None'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openModal(`File Server Prefix Path (${server.id})`, `The prefix path for accessing files on the ${server.id} File Server. This should match your server configuration.`)}
+                    className="text-gray-500 hover:text-gray-700 focus:outline-none"
+                    aria-label={`More info about File Server Prefix Path (${server.id})`}
+                  >
+                    <QuestionMarkCircleIcon className="h-5 w-5" />
+                  </button>
+                </dd>
+              </div>
+
+              {/* NodeJS URL */}
+              <div className="flex flex-col md:flex-row items-center justify-between">
+                <dt className="font-medium text-gray-900">NodeJS URL</dt>
+                <dd className="flex items-center space-x-2">
+                  <span className="text-gray-900 truncate" title={server.syncEndpoint}>
+                    {server.syncEndpoint}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openModal(`NodeJS URL (${server.id})`, <NodeJSDocumentation nodeJSURL={server.syncEndpoint} />)}
+                    className="text-gray-500 hover:text-gray-700 focus:outline-none"
+                    aria-label={`More info about NodeJS URL (${server.id})`}
+                  >
+                    <QuestionMarkCircleIcon className="h-5 w-5" />
+                  </button>
+                </dd>
+              </div>
+
+              {/* Sync TV URL */}
+              <div className="flex flex-col md:flex-row items-center justify-between">
+                <dt className="font-medium text-gray-900">Sync TV URL</dt>
+                <dd className="flex items-center space-x-2">
+                  <span className="text-gray-900 truncate" title={server.paths?.sync?.tv || 'Not Provided'}>
+                    {server.paths?.sync?.tv || 'Not Provided'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openModal(`Sync TV URL (${server.id})`, `URL for synchronizing TV data on the ${server.id} server.`)}
+                    className="text-gray-500 hover:text-gray-700 focus:outline-none"
+                    aria-label={`More info about Sync TV URL (${server.id})`}
+                  >
+                    <QuestionMarkCircleIcon className="h-5 w-5" />
+                  </button>
+                </dd>
+              </div>
+
+              {/* Sync Movies URL */}
+              <div className="flex flex-col md:flex-row items-center justify-between">
+                <dt className="font-medium text-gray-900">Sync Movies URL</dt>
+                <dd className="flex items-center space-x-2">
+                  <span className="text-gray-900 truncate" title={server.paths?.sync?.movies || 'Not Provided'}>
+                    {server.paths?.sync?.movies || 'Not Provided'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openModal(`Sync Movies URL (${server.id})`, `URL for synchronizing Movies data on the ${server.id} server.`)}
+                    className="text-gray-500 hover:text-gray-700 focus:outline-none"
+                    aria-label={`More info about Sync Movies URL (${server.id})`}
+                  >
+                    <QuestionMarkCircleIcon className="h-5 w-5" />
+                  </button>
+                </dd>
+              </div>
+            </dl>
+
+            {/* Add a divider between servers, except after the last server */}
+            {/* {index < servers.length - 1 && <hr className="mt-6 border-gray-300" />} */}
+          </div>
+        ))}
+
+        {/* Global Settings Section */}
+        <div className="pt-6">
+          <h3 className="text-lg font-medium text-gray-800 mb-4">Global Settings</h3>
+          <dl className="space-y-6">
+            {/* Organizr URL */}
+            <div className="flex flex-col md:flex-row items-center justify-between">
+              <dt className="font-medium text-gray-900">Organizr URL</dt>
+              <dd className="flex items-center space-x-2">
+                <span className="text-gray-900 truncate" title={organizrURL}>
+                  {organizrURL}
+                </span>
+                <button
                   type="button"
-                  // onClick={() => alert('You must change this in the docker compose file.')}
-                  className="ml-2 text-indigo-600 hover:text-indigo-900"
+                  onClick={() => openModal('Organizr URL', 'URL for Organizr, which manages your web services.')}
+                  className="text-gray-500 hover:text-gray-700 focus:outline-none"
+                  aria-label="More info about Organizr URL"
                 >
-                  Change
-                </button> */}
+                  <QuestionMarkCircleIcon className="h-5 w-5" />
+                </button>
               </dd>
             </div>
-          ))}
+          </dl>
         </div>
-        {/* Other server settings can be added here if needed */}
-      </dl>
+      </div>
 
       {/* Modal */}
       <Dialog open={isOpen} onClose={closeModal} className="relative z-50">
         <div className="fixed inset-0 bg-black/30" aria-hidden="true" />
-
         <div className="fixed inset-0 flex items-center justify-center p-4">
           <Dialog.Panel className="mx-auto max-w-md lg:max-w-7xl flex flex-col h-auto rounded bg-white p-6 shadow-lg">
             <div className="flex justify-between items-start">
               <Dialog.Title className="text-lg font-medium text-gray-900">
-                {modalContent.label} Information
+                {typeof modalContent.info === 'string' ? `${modalContent.label} Information` : `${modalContent.label} Information`}
               </Dialog.Title>
               <button
                 type="button"
@@ -137,6 +190,24 @@ function ServerList({
       </Dialog>
     </div>
   )
+}
+
+ServerList.propTypes = {
+  servers: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.string.isRequired,
+      baseURL: PropTypes.string.isRequired,
+      prefixPath: PropTypes.string,
+      syncEndpoint: PropTypes.string.isRequired,
+      paths: PropTypes.shape({
+        sync: PropTypes.shape({
+          tv: PropTypes.string,
+          movies: PropTypes.string,
+        }),
+      }),
+    })
+  ).isRequired,
+  organizrURL: PropTypes.string.isRequired,
 }
 
 export default memo(ServerList)

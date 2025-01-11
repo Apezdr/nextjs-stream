@@ -5,7 +5,7 @@ import {
   ChapterTitle as MediaChapterTitle,
   useChapterTitle,
 } from '@vidstack/react'
-import { classNames } from '@src/utils'
+import { classNames, getResolutionLabel } from '@src/utils'
 import Image from 'next/image'
 
 import GeneralAudiencesBadge from '@src/components/MediaPlayer/Ratings/general_audiences_badge.svg'
@@ -96,11 +96,11 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
         >
           {dims &&
             (() => {
-              const [width] = dims.split('x').map(Number)
-              if (width >= 3800 && width <= 3900) return '4K UHD'
-              if (width >= 1900 && width <= 2000) return '1080p'
-              if (width >= 1200 && width <= 1300) return '720p'
-              if (width >= 600 && width <= 700) return '480p'
+              const { is4k, is1080p, is720p, is480p } = getResolutionLabel(dims)
+              if (is4k) return '4K UHD'
+              if (is1080p) return '1080p'
+              if (is720p) return '720p'
+              if (is480p) return '480p'
               return dims
             })()}
           {dims && hdr && ' | '}

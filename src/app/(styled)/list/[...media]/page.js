@@ -1,3 +1,4 @@
+const dynamic = 'force-dynamic'
 import MediaPlayerComponent from '@components/MediaPlayer/MediaPlayer'
 import MovieListComponent from '@components/MediaPages/MovieListComponent'
 import TVListComponent from '@components/MediaPages/TVListComponent'
@@ -13,7 +14,6 @@ import Image from 'next/image'
 import { Suspense } from 'react'
 import Loading from '@src/app/loading'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { buildURL } from '@src/utils'
 import { fileServerURLWithPrefixPath } from '@src/utils/config'
 
 async function validateVideoURL(url) {
@@ -58,7 +58,7 @@ export async function generateMetadata(props, parent) {
         ? media.posterURL
         : media?.metadata?.poster_path
           ? `https://image.tmdb.org/t/p/w780${media?.metadata?.poster_path}`
-          : buildURL(`/sorry-image-not-available.jpg`)
+          : `/sorry-image-not-available.jpg`
     }
     if (mediaSeason) {
       title = `${title} - S${mediaSeason.padStart(2, '0')}`

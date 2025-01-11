@@ -1,13 +1,12 @@
 'use client'
 
 import { useEffect } from 'react'
-import { buildURL } from '@src/utils'
 
 export default function SyncClientWithServerWatched({ once = false }) {
   useEffect(() => {
     // Define the function to fetch and process video watch data
     const fetchAndProcessData = () => {
-      fetch(buildURL('/api/authenticated/sync/pullPlayback'))
+      fetch('/api/authenticated/sync/pullPlayback')
         .then((response) => {
           if (!response.ok) {
             console.log(`Error Pulling Playback: ${response.status}`)

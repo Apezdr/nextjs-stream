@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+echo "==== Entrypoint Script ===="
+echo "NODE_ENV=$NODE_ENV"
+echo "NEXT_PUBLIC_BASE_URL=$NEXT_PUBLIC_BASE_URL"
+echo "==========================="
+
+# Optional: Check if required env vars are set
+if [ -z "$NEXT_PUBLIC_BASE_URL" ]; then
+  echo "Warning: NEXT_PUBLIC_BASE_URL is not set. Using default logic in the code which may not work in all cases."
+fi
+
+echo "Running Next.js build..."
+npm run build
+
+echo "Starting Next.js..."
+exec "$@"

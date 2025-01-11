@@ -2,8 +2,36 @@
 
 import clientPromise from '@src/lib/mongodb'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
-import { matchEpisodeFileName, processMovie, processMovieCaptions, processMovieChapters, processMovieLogo, processMovieMetadata, processMovieVideoURL, processSeasonCaptions, processSeasonChapters, processSeasonMetadata, processSeasonVideoURLs, processShowLogo, processTVShow, updateMediaInDatabase, extractEpisodeDetails, processShowBlurhash, processMovieBlurhash, processSeasonVideoInfo, processMovieVideoInfo, findEpisodeFileName, processEpisodeThumbnails, updateEpisodeInDatabase, processSeasonPoster, processPosterURL, MediaType, processBackdropURLs, processBackdropUpdates, processSeasonThumbnails, processSeasonPosters, processShowPosterURL } from '@src/utils/sync_utils'
+import {
+  matchEpisodeFileName,
+  processMovie,
+  processMovieCaptions,
+  processMovieChapters,
+  processMovieLogo,
+  processMovieMetadata,
+  processMovieVideoURL,
+  processSeasonCaptions,
+  processSeasonChapters,
+  processSeasonMetadata,
+  processSeasonVideoURLs,
+  processShowLogo,
+  processTVShow,
+  updateMediaInDatabase,
+  extractEpisodeDetails,
+  processShowBlurhash,
+  processMovieBlurhash,
+  processSeasonVideoInfo,
+  processMovieVideoInfo,
+  MediaType,
+  processBackdropUpdates,
+  processSeasonThumbnails,
+  processSeasonPosters,
+  processShowPosterURL,
+  processMoviePosterURL,
+  processSeasonBlurhash,
+} from '@src/utils/sync_utils'
 import chalk from 'chalk'
+import { getAllServers } from './config'
 
 /**
  * Identifies missing media and MP4 files between the file server and current database.
@@ -25,7 +53,7 @@ export async function identifyMissingMedia(fileServer, currentDB) {
     if (!foundShow) {
       const seasons = Object.keys(fileServer?.tv[showTitle].seasons)
       const seasonsWithEpisodes = seasons.filter(
-        (season) => fileServer?.tv[showTitle].seasons[season].fileNames.length > 0
+        (season) => Object.keys(fileServer?.tv[showTitle].seasons[season].episodes).length > 0
       )
 
       if (seasonsWithEpisodes.length > 0) {
@@ -40,44 +68,34 @@ export async function identifyMissingMedia(fileServer, currentDB) {
     } else {
       Object.keys(fileServer?.tv[showTitle].seasons).forEach((season) => {
         const foundSeason = foundShow.seasons.find((s) => `Season ${s.seasonNumber}` === season)
+        const episodes = fileServer?.tv[showTitle].seasons[season]?.episodes || {}
+
         const hasFilesForSeason =
           Array.isArray(foundSeason?.fileNames) ||
           foundSeason?.fileNames?.length > 0 ||
-          fileServer?.tv[showTitle].seasons[season]?.fileNames?.length > 0
+          Object.keys(episodes).length > 0
 
         if (!foundSeason && hasFilesForSeason) {
           let show = missingShowsMap.get(showTitle) || { showTitle, seasons: [] }
           show.seasons.push(season)
           missingShowsMap.set(showTitle, show)
         } else if (hasFilesForSeason) {
-          const seasonFiles = fileServer?.tv[showTitle].seasons[season].fileNames
-
           // Check if the season has any episodes
-          if (seasonFiles.length === 0) {
+          if (Object.keys(episodes).length === 0) {
             missingMp4.tv.push(`${showTitle} - ${season}`)
           } else {
-            const missingEpisodes = seasonFiles
-              .filter((episodeFileName) => {
-                /**
-                 * Checks if the given episode file name matches the expected format
-                 * and returns whether that episode already exists for the given season
-                 */
-                const match = matchEpisodeFileName(episodeFileName)
-                if (match) {
-                  const details = extractEpisodeDetails(match)
-                  return !foundSeason.episodes.some(
-                    (e) => e.episodeNumber === details.episodeNumber
-                  )
-                }
-
-                return false
+            const missingEpisodes = Object.keys(episodes) // Use Object.keys() to get episode keys (e.g., "S01E01")
+              .filter((episodeKey) => {
+                const foundEpisode = foundSeason.episodes.find(
+                  (e) => `S${String(foundSeason.seasonNumber).padStart(2,'0')}E${String(e.episodeNumber).padStart(2,'0')}` === episodeKey // Use episodeKey for comparison
+                )
+                return !foundEpisode
               })
-              .map((episodeFileName) => {
-                const length = fileServer?.tv[showTitle].seasons[season].lengths[episodeFileName]
-                const dimensions =
-                  fileServer?.tv[showTitle].seasons[season].dimensions[episodeFileName]
-                const urls = fileServer?.tv[showTitle].seasons[season].urls[episodeFileName]
-                return { episodeFileName, length, dimensions, ...urls }
+              .map((episodeKey) => {
+                const length = fileServer?.tv[showTitle].seasons[season].lengths[episodeKey]
+                const dimensions = fileServer?.tv[showTitle].seasons[season].dimensions[episodeKey]
+                const episode = episodes[episodeKey]
+                return { episodeKey, length, dimensions, ...episode }
               })
 
             if (missingEpisodes.length > 0) {
@@ -122,75 +140,95 @@ export async function identifyMissingMedia(fileServer, currentDB) {
  * @param {string} serverConfig.prefixPath - Prefix path for the server
  * @returns {Promise<Object>} Results of the sync operation
  */
-export async function syncMissingMedia(missingMedia, fileServer, serverConfig) {
-  const client = await clientPromise;
+export async function syncMissingMedia(missingMedia, fileServer, serverConfig, contentAddedToDB) {
+  const client = await clientPromise
   const results = {
     processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] }
-  };
+    errors: { movies: [], tv: [] },
+  }
+
+  // Filter out contentAddedToDB from missingMedia
+  // This is here because it will be caught before standard (just get it in there) logic is run
+  // and subsequent syncs will not overwrite it
+  //
+  // -- Meant to be a pseudo priority drop in implementation --
+  // May need to be refactored to account for missing episodes not found in the first sync
+  // ex. if a server processes a show with 10 episodes but it has 12, the next server will not process the missing 2
+  // because they would be omitted from the missingMedia array based on the first sync finding some episodes
+  missingMedia.movies = missingMedia.movies.filter((movie) => !contentAddedToDB.movies.includes(movie))
+  missingMedia.tv = missingMedia.tv.filter((show) => !contentAddedToDB.tv.includes(show))
 
   try {
     // Process movies and TV shows concurrently
     const [movieResults, tvResults] = await Promise.all([
       // Process all movies concurrently
       Promise.allSettled(
-        missingMedia.movies.map(async movieTitle => {
+        missingMedia.movies.map(async (movieTitle) => {
           try {
-            await processMovie(client, movieTitle, fileServer, serverConfig);
+            await processMovie(client, movieTitle, fileServer, serverConfig)
             results.processed.movies.push({
               title: movieTitle,
-              serverId: serverConfig.id
-            });
+              serverId: serverConfig.id,
+            })
+            contentAddedToDB.movies.push(movieTitle)
           } catch (error) {
             results.errors.movies.push({
               title: movieTitle,
               serverId: serverConfig.id,
-              error: error.message
-            });
+              error: error.message,
+            })
           }
         })
       ),
-      
+
       // Process all TV shows concurrently
       Promise.allSettled(
-        missingMedia.tv.map(async show => {
+        missingMedia.tv.map(async (show) => {
           try {
-            await processTVShow(client, show, fileServer, show.showTitle, serverConfig);
+            await processTVShow(client, show, fileServer, show.showTitle, serverConfig)
             results.processed.tv.push({
               title: show.showTitle,
               serverId: serverConfig.id,
-              seasons: show.seasons.length
-            });
+              seasons: show.seasons.length,
+            })
+            contentAddedToDB.tv.push(show.showTitle)
           } catch (error) {
             results.errors.tv.push({
               title: show.showTitle,
               serverId: serverConfig.id,
-              error: error.message
-            });
+              error: error.message,
+            })
           }
         })
-      )
-    ]);
+      ),
+    ])
 
     // Log results
     if (results.processed.movies.length > 0) {
-      console.log(`Successfully processed ${results.processed.movies.length} movies from server ${serverConfig.id}`);
+      console.log(
+        `Successfully processed ${results.processed.movies.length} movies from server ${serverConfig.id}`
+      )
     }
     if (results.processed.tv.length > 0) {
-      console.log(`Successfully processed ${results.processed.tv.length} TV shows from server ${serverConfig.id}`);
+      console.log(
+        `Successfully processed ${results.processed.tv.length} TV shows from server ${serverConfig.id}`
+      )
     }
     if (results.errors.movies.length > 0) {
-      console.error(`Failed to process ${results.errors.movies.length} movies from server ${serverConfig.id}`);
+      console.error(
+        `Failed to process ${results.errors.movies.length} movies from server ${serverConfig.id}`
+      )
     }
     if (results.errors.tv.length > 0) {
-      console.error(`Failed to process ${results.errors.tv.length} TV shows from server ${serverConfig.id}`);
+      console.error(
+        `Failed to process ${results.errors.tv.length} TV shows from server ${serverConfig.id}`
+      )
     }
 
-    return results;
-
+    return results
   } catch (error) {
-    console.error(`Error in syncMissingMedia for server ${serverConfig.id}:`, error);
-    throw new Error(`Failed to sync missing media from server ${serverConfig.id}: ${error.message}`);
+    console.error(`Error in syncMissingMedia for server ${serverConfig.id}:`, error)
+    throw new Error(`Failed to sync missing media from server ${serverConfig.id}: ${error.message}`)
   }
 }
 
@@ -199,36 +237,38 @@ export async function syncMissingMedia(missingMedia, fileServer, serverConfig) {
  * @param {Object} currentDB - Current database state
  * @param {Object} fileServer - File server data
  * @param {Object} serverConfig - Server configuration
+ * @param {string} fieldAvailability - Field availability for the server
  * @returns {Promise<Object>} Sync results
  */
-export async function syncMetadata(currentDB, fileServer, serverConfig) {
+export async function syncMetadata(currentDB, fileServer, serverConfig, fieldAvailability) {
   console.log(chalk.bold.cyan(`Starting metadata sync for server ${serverConfig.id}...`))
   const client = await clientPromise
   const results = {
     processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] }
+    errors: { movies: [], tv: [] },
   }
 
   try {
     // Sync Movies
     await Promise.allSettled(
-      currentDB.movies.map(async movie => {
+      currentDB.movies.map(async (movie) => {
         try {
           await processMovieMetadata(
-            client, 
-            movie, 
+            client,
+            movie,
             fileServer?.movies[movie.title],
-            serverConfig
+            serverConfig,
+            fieldAvailability
           )
           results.processed.movies.push({
             title: movie.title,
-            serverId: serverConfig.id
+            serverId: serverConfig.id,
           })
         } catch (error) {
           results.errors.movies.push({
             title: movie.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: error.message,
           })
         }
       })
@@ -239,8 +279,26 @@ export async function syncMetadata(currentDB, fileServer, serverConfig) {
       try {
         const fileServerShowData = fileServer?.tv[show.title]
         if (!fileServerShowData) {
-          console.error(`TV show "${show.title}" not found in server ${serverConfig.id} data. Skipping.`)
+          // console.error(
+          //   `TV show "${show.title}" not found in server ${serverConfig.id} data. Skipping.`
+          // )
           continue
+        }
+
+        // Check if higher-priority servers have metadata for this movie
+        const higherPriorityServers = getAllServers()
+          .filter((s) => s.priority < serverConfig.priority)
+          .map((s) => s.id)
+
+        const hasHigherPriorityData = higherPriorityServers.some((serverId) =>
+          fieldAvailability.tv[show.title]?.metadata?.includes(serverId)
+        )
+
+        if (hasHigherPriorityData) {
+          // console.log(
+          //   `Skipping metadata update for "${show.title}" - higher-priority server has metadata.`
+          // )
+          return
         }
 
         const showMetadata = await fetchMetadataMultiServer(
@@ -253,25 +311,32 @@ export async function syncMetadata(currentDB, fileServer, serverConfig) {
         )
 
         if (!showMetadata) {
-          console.error(`No metadata found for TV show ${show.title} on server ${serverConfig.id}. Skipping.`)
+          console.error(
+            `No metadata found for TV show ${show.title} on server ${serverConfig.id}. Skipping.`
+          )
           continue
         }
 
         // Update show-level metadata if needed
-        if (new Date(showMetadata.last_updated) > 
-            new Date(show.metadata?.last_updated ?? '2024-01-01T01:00:00.000000')) {
+        if (
+          new Date(showMetadata.last_updated) >
+          new Date(show.metadata?.last_updated ?? '2024-01-01T01:00:00.000000')
+        ) {
+          const preparedUpdateData = {
+            $set: { metadata: showMetadata },
+          }
           await updateMediaInDatabase(
-            client, 
-            MediaType.TV, 
-            show.title, 
-            { metadata: showMetadata },
+            client,
+            MediaType.TV,
+            show.title,
+            preparedUpdateData,
             serverConfig.id
           )
         }
 
         // Process seasons
         await Promise.allSettled(
-          show.seasons.map(season =>
+          show.seasons.map((season) =>
             processSeasonMetadata(
               client,
               season,
@@ -279,7 +344,8 @@ export async function syncMetadata(currentDB, fileServer, serverConfig) {
               show,
               showMetadata,
               structuredClone(showMetadata),
-              serverConfig
+              serverConfig,
+              fieldAvailability
             )
           )
         )
@@ -287,21 +353,19 @@ export async function syncMetadata(currentDB, fileServer, serverConfig) {
         results.processed.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          seasons: show.seasons.length
+          seasons: show.seasons.length,
         })
-
       } catch (error) {
         results.errors.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          error: error.message
+          error: error.message,
         })
       }
     }
 
     console.log(chalk.bold.cyan(`Finished metadata sync for server ${serverConfig.id}`))
     return results
-
   } catch (error) {
     console.error(`Error during metadata sync for server ${serverConfig.id}:`, error)
     throw error
@@ -313,37 +377,39 @@ export async function syncMetadata(currentDB, fileServer, serverConfig) {
  * @param {Object} currentDB - Current database state
  * @param {Object} fileServer - File server data
  * @param {Object} serverConfig - Server configuration
+ * @param {Object} fieldAvailability - Field availability for the server
  * @returns {Promise<Object>} Sync results
  */
-export async function syncCaptions(currentDB, fileServer, serverConfig) {
+export async function syncCaptions(currentDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
   console.log(chalk.bold.white(`Starting caption sync for server ${serverConfig.id}...`))
 
   const results = {
     processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] }
+    errors: { movies: [], tv: [] },
   }
 
   try {
     // Process movies concurrently
     await Promise.allSettled(
-      currentDB.movies.map(async movie => {
+      currentDB.movies.map(async (movie) => {
         try {
           await processMovieCaptions(
-            client, 
-            movie, 
+            client,
+            movie,
             fileServer?.movies[movie.title],
-            serverConfig
+            serverConfig,
+            fieldAvailability
           )
           results.processed.movies.push({
             title: movie.title,
-            serverId: serverConfig.id
+            serverId: serverConfig.id,
           })
         } catch (error) {
           results.errors.movies.push({
             title: movie.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: error.message,
           })
         }
       })
@@ -353,28 +419,31 @@ export async function syncCaptions(currentDB, fileServer, serverConfig) {
     for (const show of currentDB.tv) {
       const fileServerShowData = fileServer?.tv[show.title]
       if (!fileServerShowData) {
-        console.error(`TV: No data/captions found for ${show.title} on server ${serverConfig.id}. Skipping.`)
+        // console.error(
+        //   `TV: No data/captions found for ${show.title} on server ${serverConfig.id}. Skipping.`
+        // )
         continue
       }
 
       try {
         // Process seasons concurrently
         await Promise.allSettled(
-          show.seasons.map(async season => {
+          show.seasons.map(async (season) => {
             try {
               await processSeasonCaptions(
-                client, 
-                show, 
-                season, 
+                client,
+                show,
+                season,
                 fileServerShowData,
-                serverConfig
+                serverConfig,
+                fieldAvailability
               )
               return { success: true, seasonNumber: season.seasonNumber }
             } catch (error) {
-              return { 
-                success: false, 
+              return {
+                success: false,
                 seasonNumber: season.seasonNumber,
-                error: error.message 
+                error: error.message,
               }
             }
           })
@@ -383,21 +452,19 @@ export async function syncCaptions(currentDB, fileServer, serverConfig) {
         results.processed.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          seasons: show.seasons.length
+          seasons: show.seasons.length,
         })
-
       } catch (error) {
         results.errors.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          error: error.message
+          error: error.message,
         })
       }
     }
 
     console.log(chalk.bold.white(`Finished caption sync for server ${serverConfig.id}`))
     return results
-
   } catch (error) {
     console.error(`Error during caption sync for server ${serverConfig.id}:`, error)
     throw error
@@ -409,37 +476,37 @@ export async function syncCaptions(currentDB, fileServer, serverConfig) {
  * @param {Object} currentDB - Current database state
  * @param {Object} fileServer - File server data
  * @param {Object} serverConfig - Server configuration
+ * @param {Object} fieldAvailability - Field availability for the server
  * @returns {Promise<Object>} Sync results
  */
-export async function syncChapters(currentDB, fileServer, serverConfig) {
+export async function syncChapters(currentDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
   console.log(chalk.bold.blue(`Starting chapter sync for server ${serverConfig.id}...`))
 
   const results = {
     processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] }
+    errors: { movies: [], tv: [] },
   }
 
   try {
     // Process movies concurrently
     await Promise.allSettled(
-      currentDB.movies.map(async movie => {
+      currentDB.movies.map(async (movie) => {
+        const fileServerMovieData = fileServer?.movies[movie.title]
+        if (!fileServerMovieData) {
+          return
+        }
         try {
-          await processMovieChapters(
-            client,
-            movie,
-            fileServer?.movies[movie.title],
-            serverConfig
-          )
+          await processMovieChapters(client, movie, fileServerMovieData, serverConfig, fieldAvailability)
           results.processed.movies.push({
             title: movie.title,
-            serverId: serverConfig.id
+            serverId: serverConfig.id,
           })
         } catch (error) {
           results.errors.movies.push({
             title: movie.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: error.message,
           })
         }
       })
@@ -447,26 +514,26 @@ export async function syncChapters(currentDB, fileServer, serverConfig) {
 
     // Process TV shows
     for (const show of currentDB.tv) {
-      const fileServerShowData = fileServer?.tv[show.title] || { seasons: {} }
+      const fileServerShowData = fileServer?.tv[show.title] || null
+
+      // In multi-server it's fairly common for a show to be missing from one server,
+      // so we'll just skip it if it's not there
+      if (!fileServerShowData) {
+        continue
+      }
 
       try {
         // Process seasons concurrently
         await Promise.allSettled(
-          show.seasons.map(async season => {
+          show.seasons.map(async (season) => {
             try {
-              await processSeasonChapters(
-                client, 
-                show, 
-                season, 
-                fileServerShowData,
-                serverConfig
-              )
+              await processSeasonChapters(client, show, season, fileServerShowData, serverConfig, fieldAvailability)
               return { success: true, seasonNumber: season.seasonNumber }
             } catch (error) {
-              return { 
-                success: false, 
+              return {
+                success: false,
                 seasonNumber: season.seasonNumber,
-                error: error.message 
+                error: error.message,
               }
             }
           })
@@ -475,21 +542,19 @@ export async function syncChapters(currentDB, fileServer, serverConfig) {
         results.processed.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          seasons: show.seasons.length
+          seasons: show.seasons.length,
         })
-
       } catch (error) {
         results.errors.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          error: error.message
+          error: error.message,
         })
       }
     }
 
     console.log(chalk.bold.blue(`Finished chapter sync for server ${serverConfig.id}`))
     return results
-
   } catch (error) {
     console.error(`Error during chapter sync for server ${serverConfig.id}:`, error)
     throw error
@@ -499,35 +564,30 @@ export async function syncChapters(currentDB, fileServer, serverConfig) {
 /**
  * Syncs video URLs from server to database
  */
-export async function syncVideoURL(currentDB, fileServer, serverConfig) {
+export async function syncVideoURL(currentDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
   console.log(chalk.bold.blueBright(`Starting video URL sync for server ${serverConfig.id}...`))
 
   const results = {
     processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] }
+    errors: { movies: [], tv: [] },
   }
 
   try {
     // Process movies concurrently
     await Promise.allSettled(
-      currentDB.movies.map(async movie => {
+      currentDB.movies.map(async (movie) => {
         try {
-          await processMovieVideoURL(
-            client,
-            movie,
-            fileServer?.movies[movie.title],
-            serverConfig
-          )
+          await processMovieVideoURL(client, movie, fileServer?.movies[movie.title], serverConfig, fieldAvailability)
           results.processed.movies.push({
             title: movie.title,
-            serverId: serverConfig.id
+            serverId: serverConfig.id,
           })
         } catch (error) {
           results.errors.movies.push({
             title: movie.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: error.message,
           })
         }
       })
@@ -537,88 +597,80 @@ export async function syncVideoURL(currentDB, fileServer, serverConfig) {
     for (const show of currentDB.tv) {
       const fileServerShowData = fileServer?.tv[show.title]
       if (!fileServerShowData) {
-        console.log(
-          `TV show "${show.title}" not found on server ${serverConfig.id}. Skipping.`
-        )
+        // console.log(`TV show "${show.title}" not found on server ${serverConfig.id}. Skipping.`)
         continue
       }
 
       try {
         // Process seasons concurrently
         await Promise.allSettled(
-          show.seasons.map(season =>
-            processSeasonVideoURLs(
-              client,
-              show,
-              season,
-              fileServerShowData,
-              serverConfig
-            )
+          show.seasons.map((season) =>
+            processSeasonVideoURLs(client, show, season, fileServerShowData, serverConfig, fieldAvailability)
           )
         )
 
         results.processed.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          seasons: show.seasons.length
+          seasons: show.seasons.length,
         })
       } catch (error) {
         results.errors.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          error: error.message
+          error: error.message,
         })
       }
     }
 
     console.log(chalk.bold.blueBright(`Video URL sync complete for server ${serverConfig.id}`))
     return results
-
   } catch (error) {
     console.error(`Error during video URL sync for server ${serverConfig.id}:`, error)
     throw error
   }
 }
 
-
 /**
  * Syncs logos between the current database and file server for the specified server configuration.
  * @param {Object} currentDB - The current database.
  * @param {Object} fileServer - The file server data.
  * @param {Object} serverConfig - The server configuration.
+ * @param {Object} fieldAvailability - The field availability object
  * @returns {Promise<Object>} - An object containing the results of the sync operation, including processed and errored items.
  */
-export async function syncLogos(currentDB, fileServer, serverConfig) {
+export async function syncLogos(currentDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
   console.log(chalk.bold.yellow(`Starting logo sync for server ${serverConfig.id}...`))
 
   const results = {
     processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] }
+    errors: { movies: [], tv: [] },
   }
 
   try {
     // Process TV shows concurrently
     await Promise.allSettled(
-      currentDB.tv.map(async show => {
+      currentDB.tv.map(async (show) => {
         try {
           const updated = await processShowLogo(
             client,
             show,
             fileServer?.tv[show.title],
-            serverConfig
+            serverConfig,
+            fieldAvailability
           )
           if (updated) {
             results.processed.tv.push({
               title: show.title,
-              serverId: serverConfig.id
+              serverId: serverConfig.id,
             })
           }
         } catch (error) {
           results.errors.tv.push({
             title: show.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: error.message,
           })
         }
       })
@@ -626,25 +678,26 @@ export async function syncLogos(currentDB, fileServer, serverConfig) {
 
     // Process movies concurrently
     await Promise.allSettled(
-      currentDB.movies.map(async movie => {
+      currentDB.movies.map(async (movie) => {
         try {
           const updated = await processMovieLogo(
             client,
             movie,
             fileServer?.movies[movie.title],
-            serverConfig
+            serverConfig,
+            fieldAvailability
           )
           if (updated) {
             results.processed.movies.push({
               title: movie.title,
-              serverId: serverConfig.id
+              serverId: serverConfig.id,
             })
           }
         } catch (error) {
           results.errors.movies.push({
             title: movie.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: error.message,
           })
         }
       })
@@ -652,7 +705,6 @@ export async function syncLogos(currentDB, fileServer, serverConfig) {
 
     console.log(chalk.bold.yellow(`Logo sync complete for server ${serverConfig.id}`))
     return results
-
   } catch (error) {
     console.error(`Error during logo sync for server ${serverConfig.id}:`, error)
     throw error
@@ -664,39 +716,72 @@ export async function syncLogos(currentDB, fileServer, serverConfig) {
  * @param {Object} currentDB - The current database.
  * @param {Object} fileServer - The file server data.
  * @param {Object} serverConfig - The configuration for the current server.
- * @returns {Promise<{ processed: { movies: Array, tv: Array }, errors: { movies: Array, tv: Array }}>} - The results of the sync operation.
+ * @param {Object} fieldAvailability - Field availability information
+ * @returns {Promise<{ processed: { movies: Array, tv: Array, seasons: Array }, errors: { movies: Array, tv: Array, seasons: Array }}>} - The results of the sync operation.
  */
-export async function syncBlurhash(currentDB, fileServer, serverConfig) {
+export async function syncBlurhash(currentDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
   console.log(chalk.bold.green(`Starting blurhash sync for server ${serverConfig.id}...`))
 
   const results = {
-    processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] }
+    processed: { movies: [], tv: [], seasons: [] },
+    errors: { movies: [], tv: [], seasons: [] },
   }
 
   try {
     // Process TV shows concurrently
     await Promise.allSettled(
-      currentDB.tv.map(async show => {
+      currentDB.tv.map(async (show) => {
         try {
-          const updated = await processShowBlurhash(
+          // Process show-level blurhash
+          const updatedShow = await processShowBlurhash(
             client,
             show,
             fileServer?.tv[show.title],
-            serverConfig
+            serverConfig,
+            fieldAvailability
           )
-          if (updated) {
+          if (updatedShow) {
             results.processed.tv.push({
               title: show.title,
-              serverId: serverConfig.id
+              serverId: serverConfig.id,
             })
           }
-        } catch (error) {
+
+          // Process blurhash for each season within the show
+          await Promise.allSettled(
+            show.seasons.map(async (season) => {
+              try {
+                const updatedSeason = await processSeasonBlurhash(
+                  client,
+                  season,
+                  fileServer?.tv?.[show.title]?.seasons?.[`Season ${season.seasonNumber}`],
+                  show.title,
+                  serverConfig,
+                  fieldAvailability
+                )
+                if (updatedSeason) {
+                  results.processed.seasons.push({
+                    title: show.title,
+                    seasonNumber: season.seasonNumber,
+                    serverId: serverConfig.id,
+                  })
+                }
+              } catch (seasonError) {
+                results.errors.seasons.push({
+                  title: show.title,
+                  seasonNumber: season.seasonNumber,
+                  serverId: serverConfig.id,
+                  error: seasonError.message,
+                })
+              }
+            })
+          )
+        } catch (showError) {
           results.errors.tv.push({
             title: show.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: showError.message,
           })
         }
       })
@@ -704,25 +789,26 @@ export async function syncBlurhash(currentDB, fileServer, serverConfig) {
 
     // Process movies concurrently
     await Promise.allSettled(
-      currentDB.movies.map(async movie => {
+      currentDB.movies.map(async (movie) => {
         try {
           const updated = await processMovieBlurhash(
             client,
             movie,
             fileServer?.movies[movie.title],
-            serverConfig
+            serverConfig,
+            fieldAvailability
           )
           if (updated) {
             results.processed.movies.push({
               title: movie.title,
-              serverId: serverConfig.id
+              serverId: serverConfig.id,
             })
           }
-        } catch (error) {
+        } catch (movieError) {
           results.errors.movies.push({
             title: movie.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: movieError.message,
           })
         }
       })
@@ -730,7 +816,6 @@ export async function syncBlurhash(currentDB, fileServer, serverConfig) {
 
     console.log(chalk.bold.green(`Blurhash sync complete for server ${serverConfig.id}`))
     return results
-
   } catch (error) {
     console.error(`Error during blurhash sync for server ${serverConfig.id}:`, error)
     throw error
@@ -742,15 +827,18 @@ export async function syncBlurhash(currentDB, fileServer, serverConfig) {
  * @param {Object} currentDB - Current database state
  * @param {Object} fileServer - File server data
  * @param {Object} serverConfig - Server configuration
+ * @param {Object} fieldAvailability - Field availability information
  * @returns {Promise<Object>} Sync results
  */
-export async function syncVideoInfo(currentDB, fileServer, serverConfig) {
+export async function syncVideoInfo(currentDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
-  console.log(chalk.bold.greenBright(`Starting video information sync for server ${serverConfig.id}...`))
+  console.log(
+    chalk.bold.greenBright(`Starting video information sync for server ${serverConfig.id}...`)
+  )
 
   const results = {
     processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] }
+    errors: { movies: [], tv: [] },
   }
 
   try {
@@ -765,64 +853,54 @@ export async function syncVideoInfo(currentDB, fileServer, serverConfig) {
       try {
         // Process seasons concurrently
         const seasonResults = await Promise.allSettled(
-          show.seasons.map(season =>
-            processSeasonVideoInfo(
-              client,
-              show,
-              season,
-              fileServerShowData,
-              serverConfig
-            )
+          show.seasons.map((season) =>
+            processSeasonVideoInfo(client, show, season, fileServerShowData, serverConfig, fieldAvailability)
           )
         )
 
         const processedEpisodes = seasonResults
-          .filter(result => result.status === 'fulfilled' && result.value > 0)
+          .filter((result) => result.status === 'fulfilled' && result.value > 0)
           .reduce((sum, result) => sum + result.value, 0)
 
         if (processedEpisodes > 0) {
           results.processed.tv.push({
             title: show.title,
             serverId: serverConfig.id,
-            processedEpisodes
+            processedEpisodes,
           })
         }
       } catch (error) {
         results.errors.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          error: error.message
+          error: error.message,
         })
       }
     }
 
     // Process movies concurrently
     await Promise.allSettled(
-      currentDB.movies.map(async movie => {
+      currentDB.movies.map(async (movie) => {
         try {
-          await processMovieVideoInfo(
-            client,
-            movie,
-            fileServer?.movies[movie.title],
-            serverConfig
-          )
+          await processMovieVideoInfo(client, movie, fileServer?.movies[movie.title], serverConfig, fieldAvailability)
           results.processed.movies.push({
             title: movie.title,
-            serverId: serverConfig.id
+            serverId: serverConfig.id,
           })
         } catch (error) {
           results.errors.movies.push({
             title: movie.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: error.message,
           })
         }
       })
     )
 
-    console.log(chalk.bold.greenBright(`Video information sync complete for server ${serverConfig.id}.`))
+    console.log(
+      chalk.bold.greenBright(`Video information sync complete for server ${serverConfig.id}.`)
+    )
     return results
-
   } catch (error) {
     console.error(`Error during video information sync for server ${serverConfig.id}:`, error)
     throw error
@@ -836,13 +914,15 @@ export async function syncVideoInfo(currentDB, fileServer, serverConfig) {
  * @param {Object} serverConfig - Server configuration
  * @returns {Promise<Object>} Sync results
  */
-export async function syncEpisodeThumbnails(currentDB, fileServer, serverConfig) {
+export async function syncEpisodeThumbnails(currentDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
-  console.log(chalk.bold.magentaBright(`Starting episode thumbnail sync for server ${serverConfig.id}...`))
+  console.log(
+    chalk.bold.magentaBright(`Starting episode thumbnail sync for server ${serverConfig.id}...`)
+  )
 
   const results = {
     processed: { tv: [] },
-    errors: { tv: [] }
+    errors: { tv: [] },
   }
 
   try {
@@ -864,7 +944,8 @@ export async function syncEpisodeThumbnails(currentDB, fileServer, serverConfig)
             show,
             season,
             fileServerShowData,
-            serverConfig
+            serverConfig,
+            fieldAvailability
           )
 
           if (seasonUpdates > 0) {
@@ -876,22 +957,22 @@ export async function syncEpisodeThumbnails(currentDB, fileServer, serverConfig)
           results.processed.tv.push({
             title: show.title,
             serverId: serverConfig.id,
-            updatedEpisodes
+            updatedEpisodes,
           })
         }
-
       } catch (error) {
         results.errors.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          error: error.message
+          error: error.message,
         })
       }
     }
 
-    console.log(chalk.bold.magentaBright(`Episode thumbnail sync complete for server ${serverConfig.id}.`))
+    console.log(
+      chalk.bold.magentaBright(`Episode thumbnail sync complete for server ${serverConfig.id}.`)
+    )
     return results
-
   } catch (error) {
     console.error(`Error during episode thumbnail sync for server ${serverConfig.id}:`, error)
     throw error
@@ -905,13 +986,13 @@ export async function syncEpisodeThumbnails(currentDB, fileServer, serverConfig)
  * @param {Object} serverConfig - The configuration for the current server.
  * @returns {Promise<Object>} - An object containing the results of the sync operation.
  */
-export async function syncPosterURLs(currentDB, fileServer, serverConfig) {
+export async function syncPosterURLs(currentDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
   console.log(chalk.bold.magenta(`Starting poster URL sync for server ${serverConfig.id}...`))
 
   const results = {
     processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] }
+    errors: { movies: [], tv: [] },
   }
 
   try {
@@ -928,7 +1009,7 @@ export async function syncPosterURLs(currentDB, fileServer, serverConfig) {
         const updateData = {}
 
         // Process show poster
-        const showPosterUpdates = processShowPosterURL(show, fileServerShowData, serverConfig)
+        const showPosterUpdates = processShowPosterURL(show, fileServerShowData, serverConfig, fieldAvailability)
         if (showPosterUpdates) {
           Object.assign(updateData, showPosterUpdates)
           updatesMade = true
@@ -939,9 +1020,10 @@ export async function syncPosterURLs(currentDB, fileServer, serverConfig) {
           const { updatedSeasons, hasUpdates } = await processSeasonPosters(
             show.seasons,
             fileServerShowData,
-            serverConfig
+            serverConfig,
+            fieldAvailability
           )
-          
+
           if (hasUpdates) {
             updateData.seasons = updatedSeasons
             updatesMade = true
@@ -949,32 +1031,28 @@ export async function syncPosterURLs(currentDB, fileServer, serverConfig) {
         }
 
         if (updatesMade) {
-          await updateMediaInDatabase(
-            client,
-            MediaType.TV,
-            show.title,
-            updateData,
-            serverConfig.id
-          )
+          const preparedUpdateData = {
+            $set: updateData,
+          }
+          await updateMediaInDatabase(client, MediaType.TV, show.title, preparedUpdateData, serverConfig.id)
           results.processed.tv.push({
             title: show.title,
             serverId: serverConfig.id,
-            updates: Object.keys(updateData)
+            updates: Object.keys(updateData),
           })
         }
-
       } catch (error) {
         results.errors.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          error: error.message
+          error: error.message,
         })
       }
     }
 
     // Process movies concurrently
     await Promise.allSettled(
-      currentDB.movies.map(async movie => {
+      currentDB.movies.map(async (movie) => {
         try {
           const fileServerMovieData = fileServer?.movies[movie.title]
           if (!fileServerMovieData) {
@@ -982,25 +1060,28 @@ export async function syncPosterURLs(currentDB, fileServer, serverConfig) {
             return
           }
 
-          const posterUpdates = processMoviePosterURL(movie, fileServerMovieData, serverConfig)
+          const posterUpdates = processMoviePosterURL(movie, fileServerMovieData, serverConfig, fieldAvailability)
           if (posterUpdates) {
+            const preparedUpdateData = {
+              $set: posterUpdates,
+            }
             await updateMediaInDatabase(
               client,
               MediaType.MOVIE,
               movie.title,
-              posterUpdates,
+              preparedUpdateData,
               serverConfig.id
             )
             results.processed.movies.push({
               title: movie.title,
-              serverId: serverConfig.id
+              serverId: serverConfig.id,
             })
           }
         } catch (error) {
           results.errors.movies.push({
             title: movie.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: error.message,
           })
         }
       })
@@ -1008,7 +1089,6 @@ export async function syncPosterURLs(currentDB, fileServer, serverConfig) {
 
     console.log(chalk.bold.magenta(`Poster URL sync complete for server ${serverConfig.id}`))
     return results
-
   } catch (error) {
     console.error(`Error during poster URL sync for server ${serverConfig.id}:`, error)
     throw error
@@ -1024,16 +1104,17 @@ export async function syncPosterURLs(currentDB, fileServer, serverConfig) {
  * @param {Object} currentDB - The current database data, containing movies and TV shows.
  * @param {Object} fileServer - The file server data, containing movie and TV show information.
  * @param {Object} serverConfig - The configuration for the current server.
+ * @param {Object} fieldAvailability - The availability of fields in the database
  * @returns {Promise<Object>} - An object containing the results of the sync operation, including
  * the processed and errored movies and TV shows.
  */
-export async function syncBackdrop(currentDB, fileServer, serverConfig) {
+export async function syncBackdrop(currentDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
   console.log(chalk.bold.redBright(`Starting backdrop sync for server ${serverConfig.id}...`))
 
   const results = {
     processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] }
+    errors: { movies: [], tv: [] },
   }
 
   try {
@@ -1046,7 +1127,7 @@ export async function syncBackdrop(currentDB, fileServer, serverConfig) {
       }
 
       try {
-        const backdropUpdates = processBackdropUpdates(show, fileServerShowData, serverConfig)
+        const backdropUpdates = processBackdropUpdates({type: "tv", ...show}, fileServerShowData, serverConfig, fieldAvailability)
         if (backdropUpdates) {
           await updateMediaInDatabase(
             client,
@@ -1058,21 +1139,21 @@ export async function syncBackdrop(currentDB, fileServer, serverConfig) {
           results.processed.tv.push({
             title: show.title,
             serverId: serverConfig.id,
-            updates: Object.keys(backdropUpdates)
+            updates: Object.keys(backdropUpdates),
           })
         }
       } catch (error) {
         results.errors.tv.push({
           title: show.title,
           serverId: serverConfig.id,
-          error: error.message
+          error: error.message,
         })
       }
     }
 
     // Process movies concurrently
     await Promise.allSettled(
-      currentDB.movies.map(async movie => {
+      currentDB.movies.map(async (movie) => {
         try {
           const fileServerMovieData = fileServer?.movies[movie.title]
           if (!fileServerMovieData) {
@@ -1080,7 +1161,7 @@ export async function syncBackdrop(currentDB, fileServer, serverConfig) {
             return
           }
 
-          const backdropUpdates = processBackdropUpdates(movie, fileServerMovieData, serverConfig)
+          const backdropUpdates = processBackdropUpdates({type: "movie", ...movie}, fileServerMovieData, serverConfig, fieldAvailability)
           if (backdropUpdates) {
             await updateMediaInDatabase(
               client,
@@ -1092,14 +1173,14 @@ export async function syncBackdrop(currentDB, fileServer, serverConfig) {
             results.processed.movies.push({
               title: movie.title,
               serverId: serverConfig.id,
-              updates: Object.keys(backdropUpdates)
+              updates: Object.keys(backdropUpdates),
             })
           }
         } catch (error) {
           results.errors.movies.push({
             title: movie.title,
             serverId: serverConfig.id,
-            error: error.message
+            error: error.message,
           })
         }
       })
@@ -1107,7 +1188,6 @@ export async function syncBackdrop(currentDB, fileServer, serverConfig) {
 
     console.log(chalk.bold.redBright(`Backdrop sync complete for server ${serverConfig.id}`))
     return results
-
   } catch (error) {
     console.error(`Error during backdrop sync for server ${serverConfig.id}:`, error)
     throw error

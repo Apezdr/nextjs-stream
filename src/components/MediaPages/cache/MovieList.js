@@ -21,7 +21,7 @@ const MovieList = async ({ latestUpdateTimestamp }) => {
   return (
     <>
       {movieList.map((movie, index) => (
-        <li key={movie.title} className="relative min-w-[250px]">
+        <li key={movie.title} className="relative min-w-[250px] max-w-sm">
           <PageContentAnimatePresence
             _key={movie.title + '-AnimationCont'}
             variants={variants}
@@ -101,7 +101,8 @@ const getAndUpdateMongoDB = cache(async (latestUpdateTimestamp) => {
           length: 1,
           dimensions: 1,
           captionURLs: 1,
-          blurhashSource: 1,
+          posterBlurhashSource: 1,
+          hdr: 1,
           'metadata.genres': 1,
           'metadata.overview': 1,
           'metadata.release_date': 1,
@@ -148,12 +149,16 @@ const getAndUpdateMongoDB = cache(async (latestUpdateTimestamp) => {
 
       if (movie.posterBlurhash) {
         returnObject.posterBlurhash = await fetchMetadataMultiServer(
-          movie.blurhashSource,
+          movie.posterBlurhashSource,
           movie.posterBlurhash,
           'blurhash',
           'movie',
           movie.title
         )
+      }
+
+      if (movie.hdr) {
+        returnObject.hdr = movie.hdr
       }
 
       return returnObject
