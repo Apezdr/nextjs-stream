@@ -83,14 +83,14 @@ export default function SearchInput() {
       <div
         className={classNames(
           !open
-            ? 'w-full divide-y divide-gray-100 rounded-xl shadow-2xl ring-1 ring-black ring-opacity-5 transform'
+            ? 'w-10 h-10 lg:h-auto rounded-full lg:w-full lg:divide-y lg:divide-gray-100 lg:rounded-xl lg:shadow-2xl lg:ring-1 lg:ring-black lg:ring-opacity-5 lg:transform'
             : 'w-10 h-10 rounded-full',
-          'relative mx-auto max-w-3xl overflow-hidden bg-gray-50 transition-[width] ease-in-out duration-800'
+          'relative mr-auto lg:mx-auto max-w-3xl overflow-hidden bg-gray-50 transition-[width] ease-in-out duration-800'
         )}
       >
         <MagnifyingGlassIcon
           className={classNames(
-            !open ? 'left-4 top-3.5' : 'left-[0.6rem] top-[0.6rem]',
+            !open ? 'left-[0.6rem] top-[0.6rem] lg:left-4 lg:top-3.5' : 'left-[0.6rem] top-[0.6rem]',
             'pointer-events-none absolute h-5 w-5 text-gray-400'
           )}
           aria-hidden="true"

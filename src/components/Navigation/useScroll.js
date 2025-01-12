@@ -1,30 +1,33 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import throttle from 'lodash.throttle'
+import { useState, useEffect, useCallback } from 'react';
+import throttle from 'lodash.throttle';
 
-const useScroll = (threshold = 0, throttleMs = 100) => {
-  const [isScrolled, setIsScrolled] = useState(false)
+const useScroll = (threshold = 0, throttleMs = 600) => {
+  const [isScrolled, setIsScrolled] = useState(false);
+
+  const handleScroll = useCallback(
+    throttle(() => {
+      const scrolled = window.scrollY > threshold;
+      setIsScrolled(scrolled);
+    }, throttleMs),
+    [threshold, throttleMs]
+  );
 
   useEffect(() => {
-    const handleScroll = throttle(() => {
-      const scrolled = window.scrollY > threshold
-      setIsScrolled(scrolled)
-    }, throttleMs)
-
     // Initial check
-    handleScroll()
+    handleScroll();
 
-    window.addEventListener('scroll', handleScroll)
+    window.addEventListener('scroll', handleScroll);
 
     // Cleanup
     return () => {
-      window.removeEventListener('scroll', handleScroll)
-      handleScroll.cancel() // Cancel any pending throttled calls
-    }
-  }, [threshold, throttleMs])
+      window.removeEventListener('scroll', handleScroll);
+      handleScroll.cancel(); // Cancel any pending throttled calls
+    };
+  }, [handleScroll]);
 
-  return isScrolled
-}
+  return isScrolled;
+};
 
-export default useScroll
+export default useScroll;

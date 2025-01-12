@@ -121,7 +121,10 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
         >
           {({ open }) => (
             <>
-              <div className="mx-auto max-w-7xl px-2 sm:px-4 lg:px-8">
+              <div className={classNames(
+                "mx-auto max-w-7xl px-2 sm:px-4 lg:px-8",
+                open ? 'bg-[#2f70cc] lg:bg-transparent' : ''
+              )}>
                 <div className="flex h-16 justify-between">
                   <div className="flex px-2 lg:px-0">
                     <div className="flex flex-shrink-0 items-center">
@@ -151,7 +154,7 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                       ))}
                     </div>
                   </div>
-                  <div className="flex flex-1 items-center justify-center px-2 lg:ml-6 lg:justify-end">
+                  <div className="flex flex-1 items-center justify-start px-2 lg:ml-6 lg:justify-end">
                     <div className="w-full max-w-lg lg:max-w-xs">
                       <SearchInput />
                     </div>
@@ -193,8 +196,14 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                 </div>
               </div>
 
-              <Disclosure.Panel className="lg:hidden">
-                <div className="space-y-1 px-2 pt-2 pb-3">
+              <Disclosure.Panel className={classNames(
+                "lg:hidden",
+                open ? 'bg-[#2f70cc] lg:bg-transparent' : ''
+              )}>
+                <div className={classNames(
+                  "space-y-1 px-2 pt-2 pb-3",
+                  open ? 'bg-[#2f70cc] lg:bg-transparent' : ''
+                )}>
                   {navItems.map((item) => (
                     <Disclosure.Button
                       key={item.href}

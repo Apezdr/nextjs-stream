@@ -6,7 +6,7 @@ const Logo = memo(function Logo({ siteTitle, color = 'black' }) {
   return (
     <svg
       className={classNames(
-        "hidden h-6 sm:block transition-colors duration-700 ease-in-out",
+        "block h-6 transition-colors duration-700 ease-in-out",
         color === 'black' ? 'text-zinc-950 dark:text-white' : 'text-white',
       )}
       fill="currentColor"
