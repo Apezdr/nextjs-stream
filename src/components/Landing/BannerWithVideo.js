@@ -251,7 +251,7 @@ const BannerWithVideo = ({ mediaList }) => {
 
   return (
     <div {...swipeHandlers}>
-      <div className="relative w-full h-[40vh] md:h-[80vh] min-h-[120px] bg-black">
+      <div className="relative w-full h-[40vh] sm:h-[29rem] md:h-[49rem] min-h-[220px] md:min-h-[29rem] lg:min-h-[29rem] max-h-[95vh] bg-black">
         <Suspense
           fallback={
             <div className="w-full h-[40vh] md:h-[80vh] bg-black flex items-center justify-center text-white">

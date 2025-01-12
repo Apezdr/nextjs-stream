@@ -1,4 +1,5 @@
 import { classNames } from '@src/utils'
+import { useMemo } from 'react'
 
 export default function Loading({ fullscreenClasses = 'min-h-screen' }) {
   // You can add any UI inside Loading, including a Skeleton.
@@ -34,4 +35,14 @@ export default function Loading({ fullscreenClasses = 'min-h-screen' }) {
       </div>
     </main>
   )
+}
+
+export const LoadingDots = () => {
+  return useMemo(() => (
+    <div className="inset-0 flex items-center justify-center space-x-1">
+      <span className="dot w-2 h-2 bg-gray-400 rounded-full"></span>
+      <span className="dot w-2 h-2 bg-gray-400 rounded-full"></span>
+      <span className="dot w-2 h-2 bg-gray-400 rounded-full"></span>
+    </div>
+  ), [])
 }

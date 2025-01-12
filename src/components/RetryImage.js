@@ -25,7 +25,7 @@ const RetryImage = ({
     if (attempt > 0 && attempt <= retryCount) {
       const timeout = setTimeout(() => {
         // Append a query parameter to bypass cache
-        const separator = src.includes('?') ? '&' : '?'
+        const separator = src?.includes('?') ? '&' : '?'
         setCurrentSrc(`${src}${separator}retry=${attempt}`)
       }, retryDelay)
 
@@ -38,12 +38,21 @@ const RetryImage = ({
       setAttempt(prev => prev + 1)
     } else {
       setHasError(true)
+      if (props.onError) props.onError()
     }
+  }
+
+  const handleLoad = (e) => {
+    if (props.onLoad) props.onLoad(e)
+  }
+
+  if (!src) {
+    return null
   }
 
   if (hasError) {
     if (fallbackSrc) {
-      return <Image src={fallbackSrc} alt={alt} {...props} />
+      return <Image src={fallbackSrc} alt={alt} onLoad={handleLoad} {...props} />
     }
     // Render a fallback UI if no fallbackSrc is provided
     return (
@@ -62,7 +71,7 @@ const RetryImage = ({
     )
   }
 
-  return <Image src={currentSrc} alt={alt} onError={handleError} {...props} />
+  return <Image src={currentSrc} alt={alt} onError={handleError} onLoad={handleLoad} {...props} />
 }
 
 export default RetryImage

@@ -19,7 +19,7 @@ export default function LandingPage({
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:py-24">
       <SyncClientWithServerWatched />
-      <div className="h-auto flex pt-12 lg:py-0 px-4 xl:px-0 z-10 relative">
+      <div className="h-auto flex pt-12 lg:py-0 px-4 xl:px-0 relative">
         <ul className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-8 sm:gap-x-6 xl:gap-x-8">
           <li className="col-span-1 sm:col-span-2">
             <h2 className="max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0 self-baseline">

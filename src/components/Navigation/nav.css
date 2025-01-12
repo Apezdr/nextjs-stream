@@ -1,0 +1,27 @@
+.navigation-shadow {
+  box-shadow: 0px 0px 50px 74px #000000a1;
+}
+
+/* Define the pseudo-element for the gradient background */
+.nav-container::before {
+  content: '';
+  position: absolute;
+  inset: 0; /* Shorthand for top: 0; right: 0; bottom: 0; left: 0; */
+  pointer-events: none; /* Allows clicks to pass through */
+  background-image: linear-gradient(
+    to right,
+    rgba(31, 41, 55, 0.4),
+    /* from-gray-800/40 */ rgba(18, 108, 255, 1),
+    /* via-blue-600 */ rgba(31, 41, 55, 0.4) /* to-gray-800/40 */
+  );
+  opacity: 0; /* Start as transparent */
+  transition: opacity ease-in-out; /* Smooth transition */
+  transition-duration: 1s;
+  z-index: -1; /* Place behind the nav content */
+}
+
+/* When gradient-active class is present, fade in the gradient */
+.nav-container.gradient-active::before {
+  transition-duration: 350ms;
+  opacity: 1;
+}

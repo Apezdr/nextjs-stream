@@ -1,10 +1,14 @@
 'use client'
+import { classNames } from '@src/utils'
 import { memo } from 'react'
 
-const Logo = memo(function Logo({ siteTitle }) {
+const Logo = memo(function Logo({ siteTitle, color = 'black' }) {
   return (
     <svg
-      className="hidden h-6 text-zinc-950 sm:block dark:text-white"
+      className={classNames(
+        "hidden h-6 sm:block transition-colors duration-700 ease-in-out",
+        color === 'black' ? 'text-zinc-950 dark:text-white' : 'text-white',
+      )}
       fill="currentColor"
       viewBox="0 0 27 22"
       title={siteTitle}

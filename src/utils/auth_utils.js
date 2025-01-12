@@ -407,7 +407,7 @@ export async function sanitizeCardData(item, popup = false) {
 export function generateClipVideoURL(item, type, title) {
   if (!item?.videoURL) return null
 
-    const maxDuration = 30 // 30 seconds
+    const maxDuration = 50 // 50 seconds
     const videoLength = Math.floor(item['length'] / 1000) // Convert ms to seconds
     let start = 3200 // Default start time
     let end = start + maxDuration // Default end time

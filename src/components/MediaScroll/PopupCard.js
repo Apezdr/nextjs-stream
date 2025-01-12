@@ -121,7 +121,7 @@ const PopupCard = ({
   return (
     <div
       className={classNames(
-        'absolute z-50 pointer-events-none transition-all duration-300 ease-in-out',
+        'absolute z-10 pointer-events-none transition-all duration-300 ease-in-out',
         'min-w-52',
         calculateWidth()
       )}
