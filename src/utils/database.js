@@ -126,19 +126,46 @@ async function getTvShowData(client, collection, title, season, episode, id) {
     await processBlurhashes(tvShow)
     // Handle Cast
     if (tvShow.metadata.cast) {
-      let compiledCastAcrossEpisodes = {}
+      // Initialize a Map to store unique guest stars by their ID
+      const compiledGuestStarsMap = new Map();
+
+      // Iterate over each season
       for (const seasonObj of tvShow.seasons) {
         if (seasonObj.metadata.episodes) {
+          // Iterate over each episode in the season
           for (const episode of seasonObj.metadata.episodes) {
-            for (const castMember of episode.guest_stars) {
-              if (!compiledCastAcrossEpisodes[castMember.id]) {
-                compiledCastAcrossEpisodes[castMember.id] = castMember
+            if (episode.guest_stars && Array.isArray(episode.guest_stars)) {
+              // Iterate over each guest star in the episode
+              for (const castMember of episode.guest_stars) {
+                // Add the guest star to the Map if not already present
+                if (!compiledGuestStarsMap.has(castMember.id)) {
+                  compiledGuestStarsMap.set(castMember.id, castMember);
+                }
               }
             }
           }
         }
-        tvShow.cast = {...tvShow.metadata.cast, ...Object.values(compiledCastAcrossEpisodes)}
       }
+
+      // Convert the Map values to an array of unique guest stars
+      const uniqueGuestStars = Array.from(compiledGuestStarsMap.values());
+
+      // Combine the main cast with the unique guest stars
+      // Using spread operator within an array to concatenate
+      tvShow.cast = [
+        ...(tvShow.metadata.cast || []), // Main cast
+        ...uniqueGuestStars             // Guest stars
+      ];
+
+      // Optional: If you want to ensure all cast members are unique based on ID
+      // (In case there are overlapping IDs between main cast and guest stars)
+      const uniqueCastMap = new Map();
+      tvShow.cast.forEach(castMember => {
+        if (!uniqueCastMap.has(castMember.id)) {
+          uniqueCastMap.set(castMember.id, castMember);
+        }
+      });
+      tvShow.cast = Array.from(uniqueCastMap.values());
     }
     return tvShow
   }
@@ -161,7 +188,16 @@ function handleEpisode(tvShow, seasonObj, episodeNumber) {
   
   // Handle Cast
   if (tvShow.metadata.cast || episodeObj.metadata.guest_stars) {
-    episodeObj.cast = {...tvShow.metadata.cast, ...episodeObj.metadata.guest_stars}
+    // Merge cast from tvShow.metadata.cast and episodeObj.metadata.guest_stars
+    // Filter out duplicates based on the id property
+    episodeObj.cast = [
+      ...(tvShow.metadata.cast || []),
+      ...(episodeObj.metadata.guest_stars || [])
+    ].filter((item, index, self) =>
+      index === self.findIndex((t) => (
+        t.id === item.id
+      ))
+    )
   }
 
   if (seasonObj.seasonPosterBlurhashSource) {

@@ -3,6 +3,7 @@ import HD4kBanner from '../../../public/4kBanner.png'
 import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
 import Image from 'next/image'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '@src/utils'
+import RetryImage from '@components/RetryImage'
 
 export default function Detailed({
   tvShow,
@@ -115,7 +116,7 @@ export default function Detailed({
           )}
         >
           {networkImage ? (
-            <Image
+            <RetryImage
               src={networkImage}
               width={96}
               height={16}
@@ -173,7 +174,7 @@ export default function Detailed({
                 <div className="flex flex-row gap-3 justify-center mb-2">
                   {has4k && (
                     <div className="select-none bg-transparent h-4">
-                      <Image
+                      <RetryImage
                         src={HD4kBanner}
                         className="h-4 w-auto"
                         alt="4K Banner"
@@ -185,7 +186,7 @@ export default function Detailed({
                   {hasHDR && (
                     <>
                       {hasHDR10 ? (
-                        <Image
+                        <RetryImage
                           src={hdr10PlusLogo}
                           alt="HDR10 Logo"
                           className="h-4 w-auto"

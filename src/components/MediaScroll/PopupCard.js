@@ -8,6 +8,8 @@ import { buildURL, classNames, fetcher, getFullImageUrl } from '@src/utils'
 import dynamic from 'next/dynamic'
 import useSWR, { preload } from 'swr'
 import RetryImage from '@components/RetryImage'
+import Loading from '@src/app/loading'
+import VirtualizedCastGrid from './VirtualizedCastGrid'
 
 // Import the CardVideoPlayer with z-[40]
 const CardVideoPlayer = dynamic(() => import('@src/components/MediaScroll/CardVideoPlayer'), {
@@ -41,11 +43,10 @@ const PopupCard = ({
   )
 
   const { data, error, isLoading } = useSWR(apiEndpoint, fetcher, {
-    suspense: true,
     revalidateOnFocus: false,
     revalidateOnReconnect: true,
     dedupingInterval: 15000, // Adjust as needed
-    errorRetryInteral: 2000,
+    errorRetryInterval: 2000,
     errorRetryCount: 20,
   })
 
@@ -302,10 +303,10 @@ const PopupCard = ({
               {data?.seasonNumber || data?.episodeNumber ? ' ' : ''}
             </h2>
           </div>
-          {date && <p className="text-sm text-gray-600">Last Watched: {date}</p>}
-          <p className="text-gray-500 mb-2">
-            {isLoading ? '' : data?.description ?? 'No description available.'}
-          </p>
+          {date && <div className="text-sm text-gray-600">Last Watched: {date}</div>}
+          <div className="text-gray-500 mb-2">
+            {isLoading ? <Loading fullscreenClasses={false} /> : data?.description ?? 'No description available.'}
+          </div>
 
           {link && (
             <Link
@@ -332,53 +333,18 @@ const PopupCard = ({
           )}
         </div>
         {data?.cast && Object.keys(data.cast).length > 0 && (
-          <div className="p-4 relative">
+          <div className="p-4 relative h-[31rem]"> {/* Ensure a fixed height for virtualization */}
             <h2 className="text-2xl text-gray-900 font-bold mb-4">Starring:</h2>
-            
-            {/* Cast Grid */}
-            <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-5 gap-4 max-h-[31rem] overflow-y-auto p-4 pb-32">
-              {Object.values(data.cast).map((actor) => (
-                <Link
-                  key={actor?.id}
-                  href={actor.id ? `https://www.themoviedb.org/person/${actor.id}` : '#'}
-                  target="_blank"
-                  className="flex flex-col items-center w-24 transition-transform duration-200 transform hover:scale-105 hover:shadow-lg"
-                >
-                  <div className="w-20 h-20 relative rounded-full overflow-hidden bg-gray-200">
-                    {actor.profile_path ? (
-                      <RetryImage
-                        src={getFullImageUrl(actor.profile_path)}
-                        alt={actor.name}
-                        layout="fill"
-                        objectFit="cover"
-                        className="rounded-full"
-                        quality={40}
-                        //placeholder="blur"
-                        //blurDataURL={actor.profileBlurhash || ''}
-                      />
-                    ) : (
-                      <div className="w-full h-full flex items-center justify-center text-gray-500 select-none pointer-events-none">
-                        N/A
-                      </div>
-                    )}
-                  </div>
-                  <p className="mt-2 text-center text-sm font-medium text-gray-700">
-                    {actor.name}
-                  </p>
-                  {actor.character && (
-                    <p className="text-center text-xs text-gray-500">as {actor.character}</p>
-                  )}
-                </Link>
-              ))}
-            </div>
-            
+
+            {/* Virtualized Cast Grid */}
+            <VirtualizedCastGrid cast={data.cast} />
+
             {/* Gradient Overlay */}
             {Object.values(data.cast).length > 16 && (
               <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-white to-transparent pointer-events-none"></div>
             )}
           </div>
         )}
-
       </div>
     </div>
   )

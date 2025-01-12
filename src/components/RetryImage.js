@@ -6,7 +6,7 @@ import Image from 'next/image'
 const RetryImage = ({
   src,
   alt,
-  retryCount = 3,
+  retryCount = 15,
   retryDelay = 1000, // in milliseconds
   fallbackSrc, // Optional fallback image src
   ...props

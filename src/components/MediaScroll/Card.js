@@ -8,10 +8,11 @@ import { createPortal } from 'react-dom'
 import dynamic from 'next/dynamic'
 import { preload } from 'swr'
 import RetryImage from '@components/RetryImage'
+import PopupCard from './PopupCard'
 
-const PopupCard = dynamic(() => import('@src/components/MediaScroll/PopupCard'), {
-  ssr: false,
-})
+// const PopupCard = dynamic(() => import('@src/components/MediaScroll/PopupCard'), {
+//   ssr: false,
+// })
 
 const Card = ({
   title,
@@ -347,37 +348,34 @@ const Card = ({
           )}
         </div>
       </div>
-
-      <Suspense fallback={null}>
-        {/* React Portal for Expanded View */}
-        {isExpanded &&
-          showPortal &&
-          createPortal(
-            <PopupCard
-              imageDimensions={imageDimensions}
-              imagePosition={imagePosition}
-              title={title}
-              seasonNumber={seasonNumber}
-              episodeNumber={episodeNumber}
-              date={date}
-              link={link}
-              type={type}
-              logo={logo}
-              mediaId={mediaId}
-              media={media}
-              posterURL={posterURL}
-              posterBlurhash={posterBlurhash}
-              backdrop={backdrop}
-              backdropBlurhash={backdropBlurhash}
-              videoURL={videoURL}
-              handleCollapse={handleCollapse}
-              handlePortalMouseEnter={handlePortalMouseEnter}
-              handlePortalMouseLeave={handlePortalMouseLeave}
-              isTouchDevice={isTouchDevice}
-            />,
-            document.body
-          )}
-      </Suspense>
+      {/* React Portal for Expanded View */}
+      {isExpanded &&
+        showPortal &&
+        createPortal(
+          <PopupCard
+            imageDimensions={imageDimensions}
+            imagePosition={imagePosition}
+            title={title}
+            seasonNumber={seasonNumber}
+            episodeNumber={episodeNumber}
+            date={date}
+            link={link}
+            type={type}
+            logo={logo}
+            mediaId={mediaId}
+            media={media}
+            posterURL={posterURL}
+            posterBlurhash={posterBlurhash}
+            backdrop={backdrop}
+            backdropBlurhash={backdropBlurhash}
+            videoURL={videoURL}
+            handleCollapse={handleCollapse}
+            handlePortalMouseEnter={handlePortalMouseEnter}
+            handlePortalMouseLeave={handlePortalMouseLeave}
+            isTouchDevice={isTouchDevice}
+          />,
+          document.body
+        )}
     </Fragment>
   )
 }
