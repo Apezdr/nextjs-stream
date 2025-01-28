@@ -14,7 +14,7 @@ const SearchInput = lazy(() => import('@components/Search/SearchInput'))
 const SignOutButton = lazy(() => import('@components/SignOutButton'))
 
 const isMediaPageFunc = (pathname) => {
-  const moviePattern = /^\/list\/movie\/[^/]+$/
+  const moviePattern = /^\/list\/movie\/[^/]+\/play$/
   const tvPattern = /^\/list\/tv\/[^/]+\/\d+\/\d+$/
   return moviePattern.test(pathname) || tvPattern.test(pathname)
 }

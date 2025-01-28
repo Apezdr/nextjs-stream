@@ -16,6 +16,7 @@ import Loading from '@src/app/loading'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { fileServerURLWithPrefixPath } from '@src/utils/config'
 import RetryImage from '@components/RetryImage'
+import MovieDetailsComponent from '@components/MediaPages/MovieDetailsComponent'
 
 async function validateVideoURL(url) {
   try {
@@ -96,10 +97,20 @@ async function MediaPage({ params, searchParams }) {
   const _params = await params
   let mediaType = _params?.media?.[0], // 'movie' or 'tv'
     mediaTitle = _params?.media?.[1],
-    mediaSeason = _params?.media?.[2], // Could be 'Season X'
-    mediaEpisode = _params?.media?.[3], // Could be 'Episode Y'
+    mediaSeason = null,
+    mediaEpisode = null,
+    mediaPlayerPage = null,
     limitedAccess = session && session.user?.limitedAccess,
     media
+  if (mediaType == 'tv') {
+    mediaSeason = _params?.media?.[2] // Could be 'Season X'
+    mediaEpisode = _params?.media?.[3] // Could be 'Episode Y'
+    // not implemented yet
+    mediaPlayerPage = _params?.media?.[4] === 'play' // ex. /list/tv/Breaking%20Bad/1/1/play
+  }
+  if (mediaType === 'movie') {
+    mediaPlayerPage = _params?.media?.[2] === 'play' // ex. /list/movie/Inception/play
+  }
   const _searchParams = await searchParams
 
   // Handle if the user is limited and show the video for them
@@ -247,24 +258,36 @@ async function MediaPage({ params, searchParams }) {
   } else if (mediaType === 'movie' && mediaTitle && media) {
     const isValidVideoURL = media.videoURL && (await validateVideoURL(media.videoURL))
     return (
-      <div className="flex flex-col items-center justify-center md:py-12 h-screen max-h-[90%]">
-        <SyncClientWithServerWatched once={true} />
+      <>
+      <SyncClientWithServerWatched once={true} />
+        {mediaPlayerPage ? (
+        // ex. /list/movie/Inception/play
         <Suspense fallback={<Loading />}>
+        <div className="flex flex-col items-center justify-center md:py-12 h-screen max-h-[90%]">
           <MediaPlayerComponent
             media={media}
             mediaTitle={mediaTitle}
             mediaType={mediaType}
             goBack={
               mediaType
-                ? `/list${mediaType ? '/' + mediaType : ''}${TVParams}${MovieParams}`
+                ? `/list${mediaType ? '/' + mediaType + '/' + mediaTitle : ''}${TVParams}${MovieParams}`
                 : '/list'
             }
             searchParams={_searchParams}
             session={session}
             isValidVideoURL={isValidVideoURL}
           />
+        </div>
         </Suspense>
-      </div>
+        ) : (
+        // ex. /list/movie/Inception
+        <Suspense fallback={<Loading />}>
+          <div className='max-h-[90%] h-screen pt-16'>
+          <MovieDetailsComponent media={media} />
+          </div>
+        </Suspense>
+        )}
+      </>
     )
   }
   // Media not found error

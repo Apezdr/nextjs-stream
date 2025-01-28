@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useMemo, useCallback } from 'react'
+import React, { useMemo } from 'react'
 import { FixedSizeGrid as Grid } from 'react-window'
 import AutoSizer from 'react-virtualized-auto-sizer'
 import CastGridCell from './CastGridCell'
@@ -13,16 +13,6 @@ const VirtualizedCastGrid = ({ cast }) => {
   const GUTTER_SIZE = 8
 
   const castItems = useMemo(() => Object.values(cast), [cast])
-
-  // Instead of managing loading state globally, we'll pass the handlers
-  // and let each cell manage its own loading state
-  const handleImageLoad = useCallback((actorId) => {
-    // Individual cells will handle their own loading state
-  }, [])
-
-  const handleImageError = useCallback((actorId) => {
-    // Individual cells will handle their own loading state
-  }, [])
 
   return (
     <div className="w-full h-full">
@@ -47,8 +37,6 @@ const VirtualizedCastGrid = ({ cast }) => {
                   style={style}
                   columnCount={columnCount}
                   castItems={castItems}
-                  handleImageLoad={handleImageLoad}
-                  handleImageError={handleImageError}
                 />
               )}
             </Grid>

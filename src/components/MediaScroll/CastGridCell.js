@@ -46,7 +46,7 @@ const CastGridCell = memo(({
             <RetryImage
               src={getFullImageUrl(actor.profile_path)}
               alt={actor.name}
-              lazy
+              loading="lazy"
               layout="responsive"
               className="rounded-full"
               width={80}
