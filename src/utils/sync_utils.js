@@ -3,6 +3,7 @@ import { updateMediaUpdates } from './admin_frontend_database'
 import { fetchMetadataMultiServer } from './admin_utils'
 import { getServer, isCurrentServerHigherPriority, multiServerHandler } from './config'
 import chalk from 'chalk'
+import { getCacheBatch } from '@src/lib/cache'
 
 // Constants and Types
 export const MediaType = {
@@ -758,70 +759,106 @@ export async function processMovie(client, movieTitle, fileServer, serverConfig)
 }
 
 /**
- * Gathers metadata for a single movie across ALL servers.
- * We'll store whichever server's metadata is "best."
- * "Best" is determined by (lowest priority) and then by the largest last_updated.
+ * Gathers metadata for a single movie across ALL servers in parallel (batch),
+ * picking the "best" metadata among all valid responses.
+ *
+ * "Best" is determined by:
+ *   1. Lowest server priority
+ *   2. Largest last_updated if priorities are equal
  *
  * @param {Object} movie - The DB movie object (e.g., { title, metadata, metadataSource, ... })
  * @param {Object} fileServers - All server data, keyed by serverId
  * @returns {Object|null} - The best metadata object or null if none found
  */
 export async function gatherMovieMetadataForAllServers(movie, fileServers) {
-  let bestMetadata = null
-  let bestPriority = Infinity
+  // 1) Build a list of servers that actually have a metadata URL for this movie
+  const movieMetadataEntries = Object.entries(fileServers)
+    .map(([serverId, fileServer]) => {
+      const fileServerMovieData = fileServer.movies?.[movie.title];
+      if (!fileServerMovieData) return null;
 
-  for (const [serverId, fileServer] of Object.entries(fileServers)) {
-    const serverConfig = {
-      id: serverId,
-      ...fileServer.config,
-    }
-    const fileServerMovieData = fileServer.movies?.[movie.title]
-    if (!fileServerMovieData) continue
+      const metadataURL = fileServerMovieData.urls?.metadata;
+      if (!metadataURL) return null;
 
-    // Attempt to fetch metadata from this server
-    // (Equivalent to your existing "fetchMetadataMultiServer" usage.)
-    const metadataURL = fileServerMovieData.urls?.metadata
-    if (!metadataURL) continue
+      // Prepare a "batch entry" similar to the TV logic
+      const serverConfig = { id: serverId, ...fileServer.config };
+      const cacheKey = `${serverConfig.id}:file:${metadataURL}`;
 
-    // Attempt to load the metadata
-    const metadata = await fetchMetadataMultiServer(
-      serverConfig.id,
-      metadataURL,
-      'file',
-      'movie',
-      movie.title
-    )
+      return { serverId, serverConfig, metadataURL, cacheKey };
+    })
+    .filter(Boolean);
 
-    if (!metadata) {
-      // server has no valid metadata or fetch failed
-      continue
-    }
-
-    // Ensure release_date is a Date object if present
-    if (metadata.release_date && typeof metadata.release_date === 'string') {
-      metadata.release_date = new Date(metadata.release_date)
-    }
-
-    // Convert last_updated to a Date if it's a string
-    let newLastUpdated = new Date(metadata.last_updated || '1970-01-01')
-    // Compare with our best so far
-    if (serverConfig.priority < bestPriority || movie.metadataSource !== serverConfig.id) {
-      // This server outranks the old winner by priority => it wins automatically
-      // or this server is not synchronized with the correct owner
-      bestMetadata = metadata
-      bestMetadata.metadataSource = serverConfig.id
-      bestPriority = serverConfig.priority
-    } else if (serverConfig.priority === bestPriority && bestMetadata) {
-      // Same priority => pick whichever has a more recent last_updated
-      let oldLastUpdated = new Date(bestMetadata.last_updated || '1970-01-01')
-      if (newLastUpdated > oldLastUpdated) {
-        bestMetadata = metadata
-        bestMetadata.metadataSource = serverConfig.id
-      }
-    }
+  // If no servers have metadata for this movie, return null
+  if (movieMetadataEntries.length === 0) {
+    return null;
   }
 
-  return bestMetadata
+  // 2) Retrieve any existing cache entries in batch
+  const movieCacheKeys = movieMetadataEntries.map((entry) => entry.cacheKey);
+  const cachedMovieEntries = await getCacheBatch(movieCacheKeys);
+
+  // 3) Prepare concurrency-limited fetch promises
+  const fetchPromises = movieMetadataEntries.map((entry) => {
+    const { serverId, serverConfig, metadataURL, cacheKey } = entry;
+    const cachedEntry = cachedMovieEntries[cacheKey];
+
+    // Build conditional headers
+    const headers = {};
+    if (cachedEntry) {
+      if (cachedEntry.etag) {
+        headers['If-None-Match'] = cachedEntry.etag;
+      }
+      if (cachedEntry.lastModified) {
+        headers['If-Modified-Since'] = cachedEntry.lastModified;
+      }
+    }
+
+    // Return an object that includes everything we need to do the actual fetch
+    return {
+      serverId,
+      serverConfig,
+      metadataURL,
+      headers,
+      cacheKey,
+    };
+  });
+
+  // Execute all fetch operations concurrently (with optional p-limit)
+  const results = await Promise.all(
+    fetchPromises.map((entry) =>
+      fetchMetadataMultiServer(
+        entry.serverId,
+        entry.metadataURL,
+        'file',
+        'movie',
+        movie.title,
+        entry.headers,
+        entry.cacheKey
+      )
+    )
+  );
+
+  // 4) Pair up each result with its server priority so we can pick the "best"
+  const validMetadataArray = results
+    .map((metadata, index) => {
+      if (!metadata) return null;
+      const { priority } = fetchPromises[index].serverConfig;
+      return {
+        metadata,
+        priority,
+      };
+    })
+    .filter(Boolean);
+
+  // 5) Determine the best metadata
+  // (Same logic as used in TV code: pick the lowest priority, then newest last_updated.)
+  const bestMetadata = determineBestMetadata(validMetadataArray);
+
+  if (bestMetadata.release_date && typeof bestMetadata.release_date === 'string') {
+    bestMetadata.release_date = new Date(bestMetadata.release_date)
+  }
+
+  return bestMetadata;
 }
 
 /**
@@ -982,6 +1019,23 @@ export async function processMovieMetadata(
 }
 
 /**
+ * Helper function to determine the best metadata based on priority and last_updated
+ */
+function determineBestMetadata(metadataArray) {
+  return metadataArray.reduce((best, current) => {
+    if (!best) return current;
+    if (current.priority < best.priority) return current;
+    if (
+      current.priority === best.priority &&
+      new Date(current.metadata.last_updated) > new Date(best.metadata.last_updated)
+    ) {
+      return current;
+    }
+    return best;
+  }, null)?.metadata || null;
+}
+
+/**
  * Gather TV metadata for a single show from ALL servers concurrently.
  *
  * @param {Object} show - The DB show object.
@@ -1000,50 +1054,78 @@ export async function processMovieMetadata(
  *   }
  */
 export async function gatherTvMetadataForAllServers(show, fileServers) {
+  const aggregatedData = {
+    showMetadata: null,
+    seasons: {},
+  };
+
   // 1) Gather Show-Level Metadata Concurrently
-  const showMetadataPromises = Object.entries(fileServers).map(async ([serverId, fileServer]) => {
+  const showMetadataEntries = Object.entries(fileServers).map(([serverId, fileServer]) => {
     if (!fileServer.tv?.[show.title]) return null;
     const serverConfig = { id: serverId, ...fileServer.config };
     const metadataURL = fileServer.tv[show.title]?.metadata;
     if (!metadataURL) return null;
 
-    const metadata = await fetchMetadataMultiServer(
-      serverConfig.id,
-      metadataURL,
-      'file',
-      'tv',
-      show.title
-    );
-    if (!metadata) return null;
+    const cacheKey = `${serverConfig.id}:file:${metadataURL}`;
+    return { serverId, serverConfig, metadataURL, cacheKey };
+  }).filter(Boolean);
 
-    metadata.metadataSource = serverConfig.id;
-    return { metadata, priority: serverConfig.priority };
+  const showCacheKeys = showMetadataEntries.map(entry => entry.cacheKey);
+  const cachedShowEntries = await getCacheBatch(showCacheKeys);
+
+  const fetchShowPromises = showMetadataEntries.map((entry) => {
+    const { serverId, serverConfig, metadataURL, cacheKey } = entry;
+    const cachedEntry = cachedShowEntries[cacheKey];
+
+    const headers = {};
+    if (cachedEntry) {
+      if (cachedEntry.etag) {
+        headers['If-None-Match'] = cachedEntry.etag;
+      }
+      if (cachedEntry.lastModified) {
+        headers['If-Modified-Since'] = cachedEntry.lastModified;
+      }
+    }
+
+    return {
+      serverId,
+      serverConfig,
+      metadataURL,
+      headers,
+      cacheKey,
+    };
   });
 
-  const showMetadataResults = await Promise.all(showMetadataPromises);
-  const validShowMetadata = showMetadataResults.filter(Boolean);
+  // Execute all fetch operations concurrently
+  const fetchShowData = await Promise.all(
+    fetchShowPromises.map(entry => fetchMetadataMultiServer(
+        entry.serverId,
+        entry.metadataURL,
+        'file',
+        'tv',
+        show.title,
+        entry.headers,
+        entry.cacheKey
+      ))
+  );
 
-  // Determine Best Show Metadata
-  const bestShowMetadata = validShowMetadata.reduce((best, current) => {
-    if (!best) return current;
-    if (current.priority < best.priority) return current;
-    if (current.priority === best.priority && new Date(current.metadata.last_updated) > new Date(best.metadata.last_updated)) {
-      return current;
-    }
-    return best;
-  }, null)?.metadata || null;
+  // Filter out null responses and determine the best metadata
+  const validShowMetadata = fetchShowData
+    .map((data, index) => {
+      if (!data) return null;
+      return { metadata: data, priority: showMetadataEntries[index].serverConfig.priority };
+    })
+    .filter(Boolean);
 
-  const aggregatedData = {
-    showMetadata: bestShowMetadata,
-    seasons: {},
-  };
+  const bestShowMetadata = determineBestMetadata(validShowMetadata);
+  aggregatedData.showMetadata = bestShowMetadata;
 
   // 2) Gather Season and Episode-Level Metadata Concurrently
   const seasonPromises = show.seasons.map(async (season) => {
     const { seasonNumber } = season;
 
     // Gather Season Metadata Concurrently
-    const seasonMetadataPromises = Object.entries(fileServers).map(async ([serverId, fileServer]) => {
+    const seasonMetadataEntries = Object.entries(fileServers).map(([serverId, fileServer]) => {
       const serverConfig = { id: serverId, ...fileServer.config };
       const fileServerShowData = fileServer.tv?.[show.title];
       if (!fileServerShowData) return null;
@@ -1053,36 +1135,66 @@ export async function gatherTvMetadataForAllServers(show, fileServers) {
       if (!seasonData?.metadata) return null;
 
       const metadataURL = seasonData.metadata;
-      const metadata = await fetchMetadataMultiServer(
-        serverConfig.id,
-        metadataURL,
-        'file',
-        'tv',
-        show.title
-      );
-      if (!metadata) return null;
+      const cacheKey = `${serverConfig.id}:file:${metadataURL}`;
+      return { serverId, serverConfig, metadataURL, cacheKey };
+    }).filter(Boolean);
 
-      metadata.metadataSource = serverConfig.id;
-      return { metadata, priority: serverConfig.priority };
+    if (seasonMetadataEntries.length === 0) return;
+
+    const seasonCacheKeys = seasonMetadataEntries.map(entry => entry.cacheKey);
+    const cachedSeasonEntries = await getCacheBatch(seasonCacheKeys);
+
+    const fetchSeasonPromises = seasonMetadataEntries.map((entry) => {
+      const { serverId, serverConfig, metadataURL, cacheKey } = entry;
+      const cachedEntry = cachedSeasonEntries[cacheKey];
+
+      const headers = {};
+      if (cachedEntry) {
+        if (cachedEntry.etag) {
+          headers['If-None-Match'] = cachedEntry.etag;
+        }
+        if (cachedEntry.lastModified) {
+          headers['If-Modified-Since'] = cachedEntry.lastModified;
+        }
+      }
+
+      return {
+        serverId,
+        serverConfig,
+        metadataURL,
+        headers,
+        cacheKey,
+      };
     });
 
-    const seasonMetadataResults = await Promise.all(seasonMetadataPromises);
-    const validSeasonMetadata = seasonMetadataResults.filter(Boolean);
+    const fetchSeasonData = await Promise.all(
+      fetchSeasonPromises.map(entry => 
+        limit(() => fetchMetadataMultiServer(
+          entry.serverId,
+          entry.metadataURL,
+          'file',
+          'tv',
+          show.title,
+          entry.headers,
+          entry.cacheKey
+        ))
+      )
+    );
 
-    // Determine Best Season Metadata
-    const bestSeasonMetadata = validSeasonMetadata.reduce((best, current) => {
-      if (!best) return current;
-      if (current.priority < best.priority) return current;
-      if (current.priority === best.priority && new Date(current.metadata.last_updated) > new Date(best.metadata.last_updated)) {
-        return current;
-      }
-      return best;
-    }, null)?.metadata || null;
+    const validSeasonMetadata = fetchSeasonData
+      .map((data, index) => {
+        if (!data) return null;
+        return { metadata: data, priority: seasonMetadataEntries[index].serverConfig.priority };
+      })
+      .filter(Boolean);
+
+    const bestSeasonMetadata = determineBestMetadata(validSeasonMetadata);
 
     // Gather Episode Metadata Concurrently
     const episodePromises = season.episodes.map(async (episode) => {
       const { episodeNumber } = episode;
-      const episodeMetadataPromises = Object.entries(fileServers).map(async ([serverId, fileServer]) => {
+
+      const episodeMetadataEntries = Object.entries(fileServers).map(([serverId, fileServer]) => {
         const serverConfig = { id: serverId, ...fileServer.config };
         const fileServerShowData = fileServer.tv?.[show.title];
         if (!fileServerShowData) return null;
@@ -1102,31 +1214,60 @@ export async function gatherTvMetadataForAllServers(show, fileServers) {
         if (!episodeData?.metadata) return null;
 
         const metadataURL = episodeData.metadata;
-        const metadata = await fetchMetadataMultiServer(
-          serverConfig.id,
-          metadataURL,
-          'file',
-          'tv',
-          show.title
-        );
-        if (!metadata) return null;
+        const cacheKey = `${serverConfig.id}:file:${metadataURL}`;
+        return { serverId, serverConfig, metadataURL, cacheKey };
+      }).filter(Boolean);
 
-        metadata.metadataSource = serverConfig.id;
-        return { metadata, priority: serverConfig.priority };
+      if (episodeMetadataEntries.length === 0) return;
+
+      const episodeCacheKeys = episodeMetadataEntries.map(entry => entry.cacheKey);
+      const cachedEpisodeEntries = await getCacheBatch(episodeCacheKeys);
+
+      const fetchEpisodePromises = episodeMetadataEntries.map((entry) => {
+        const { serverId, serverConfig, metadataURL, cacheKey } = entry;
+        const cachedEntry = cachedEpisodeEntries[cacheKey];
+
+        const headers = {};
+        if (cachedEntry) {
+          if (cachedEntry.etag) {
+            headers['If-None-Match'] = cachedEntry.etag;
+          }
+          if (cachedEntry.lastModified) {
+            headers['If-Modified-Since'] = cachedEntry.lastModified;
+          }
+        }
+
+        return {
+          serverId,
+          serverConfig,
+          metadataURL,
+          headers,
+          cacheKey,
+        };
       });
 
-      const episodeMetadataResults = await Promise.all(episodeMetadataPromises);
-      const validEpisodeMetadata = episodeMetadataResults.filter(Boolean);
+      const fetchEpisodeData = await Promise.all(
+        fetchEpisodePromises.map(entry => 
+          limit(() => fetchMetadataMultiServer(
+            entry.serverId,
+            entry.metadataURL,
+            'file',
+            'tv',
+            show.title,
+            entry.headers,
+            entry.cacheKey
+          ))
+        )
+      );
 
-      // Determine Best Episode Metadata
-      const bestEpisodeMetadata = validEpisodeMetadata.reduce((best, current) => {
-        if (!best) return current;
-        if (current.priority < best.priority) return current;
-        if (current.priority === best.priority && new Date(current.metadata.last_updated) > new Date(best.metadata.last_updated)) {
-          return current;
-        }
-        return best;
-      }, null)?.metadata || null;
+      const validEpisodeMetadata = fetchEpisodeData
+        .map((data, index) => {
+          if (!data) return null;
+          return { metadata: data, priority: episodeMetadataEntries[index].serverConfig.priority };
+        })
+        .filter(Boolean);
+
+      const bestEpisodeMetadata = determineBestMetadata(validEpisodeMetadata);
 
       if (bestSeasonMetadata || bestEpisodeMetadata) {
         aggregatedData.seasons[seasonNumber] = aggregatedData.seasons[seasonNumber] || {
@@ -1217,8 +1358,8 @@ export async function finalizeTvMetadata(client, show, aggregatedData) {
   
   const canUpdateShowLevel = isCurrentServerHigherPriority(
     show.metadataSource, 
-    { id: aggregatedData.showMetadata.metadataSource }
-  ) || !show.metadataSource
+    { id: aggregatedData.showMetadata.metadataSource || show.metadataSource }
+  )
 
   if (newMetadataLastUpdated > existingMetadataLastUpdated && canUpdateShowLevel) {
     // Also apply locked-field filtering if you use it
@@ -3982,6 +4123,7 @@ export async function processMoviePosterURL(
  * Processes season poster updates for a list of seasons, integrating fieldAvailability and priority checks.
  *
  * @param {Object} client - The database client.
+ * @param {string} showTitle - The title of the show.
  * @param {Array<Object>} seasons - The list of seasons to process.
  * @param {Object} fileServerData - The data from the file server.
  * @param {Object} serverConfig - The server configuration.
@@ -3990,6 +4132,7 @@ export async function processMoviePosterURL(
  */
 export async function processSeasonPosters(
   client,
+  showTitle,
   seasons,
   fileServerData,
   serverConfig,
@@ -4019,16 +4162,16 @@ export async function processSeasonPosters(
       const isHighestPriority = isCurrentServerHighestPriorityForField(
         fieldAvailability,
         'tv',
-        season.showTitle, // Ensure 'showTitle' exists; adjust if necessary
+        showTitle,
         fieldPath,
         serverConfig
       )
 
       if (!isHighestPriority) {
-        console.log(
-          `Skipping season_poster update for "${season.showTitle}" Season ${season.seasonNumber} - higher-priority server has season_poster.`
-        )
-        updatedSeasons.push(season)
+        // console.log(
+        //   `Skipping season_poster update for "${showTitle}" Season ${season.seasonNumber} - higher-priority server has season_poster.`
+        // )
+        // updatedSeasons.push(season)
         return
       }
 
@@ -4043,25 +4186,18 @@ export async function processSeasonPosters(
           updatedSeason.posterSource = serverConfig.id
           seasonUpdated = true
           console.log(
-            `Updating season_poster for "${season.showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id}`
+            `Updating season_poster for "${showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id}`
           )
         }
       }
-
       // **2. Handling Removal of season_poster**
-
-      // Only the owning server can remove the season_poster
-      if (
-        !fileServerSeasonData.season_poster &&
-        season.season_poster &&
-        isSourceMatchingServer(season, 'posterSource', serverConfig)
-      ) {
-        updatedSeason = { ...updatedSeason }
+      else if (season.season_poster && isSourceMatchingServer(season, 'posterSource', serverConfig)) {
+        //updatedSeason = { ...updatedSeason }
         delete updatedSeason.season_poster
         delete updatedSeason.posterSource
         seasonUpdated = true
         console.log(
-          `Removing season_poster for "${season.showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id}`
+          `Removing season_poster for "${showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id}`
         )
       }
 
@@ -4078,13 +4214,13 @@ export async function processSeasonPosters(
         const unsetFields = {}
 
         if (filteredUpdateData.season_poster) {
-          setFields.season_poster = filteredUpdateData.season_poster
-          setFields.posterSource = serverConfig.id
+          setFields['seasons.$[elem].season_poster'] = filteredUpdateData.season_poster
+          setFields['seasons.$[elem].posterSource'] = serverConfig.id
         }
 
         if (!filteredUpdateData.season_poster && (season.season_poster || season.posterSource)) {
-          unsetFields.season_poster = ''
-          unsetFields.posterSource = ''
+          unsetFields['seasons.$[elem].season_poster'] = ''
+          unsetFields['seasons.$[elem].posterSource'] = ''
         }
 
         const updateOperation = {}
@@ -4103,16 +4239,16 @@ export async function processSeasonPosters(
               .db('Media')
               .collection('TV')
               .updateOne(
-                { title: season.showTitle }, // Ensure the query correctly identifies the document
+                { title: showTitle }, // Ensure the query correctly identifies the document
                 updateOperation,
                 { arrayFilters: [{ 'elem.seasonNumber': season.seasonNumber }] }
               )
 
-            await updateMediaUpdates(season.showTitle, MediaType.TV)
+            await updateMediaUpdates(showTitle, MediaType.TV)
             hasUpdates = true
           } catch (error) {
             console.error(
-              `Error updating season_poster for "${season.showTitle}" Season ${season.seasonNumber}:`,
+              `Error updating season_poster for "${showTitle}" Season ${season.seasonNumber}:`,
               error
             )
             // Optionally, you could push to an errors array similar to syncBackdrop
@@ -4295,7 +4431,7 @@ function isCurrentServerHighestPriorityForField(
   const serversWithData = fieldAvailability[mediaType][mediaTitle]?.[fieldPath] || []
   if (serversWithData.length === 0) {
     // No server provides this field currently, so current server can proceed.
-    debugger
+    //debugger
     return true
   }
 
@@ -4320,14 +4456,14 @@ export async function syncMovieDataAllServers(client, currentDB, fileServers) {
   // 1) Movies
   for (const movie of currentDB.movies) {
     // Phase 1: Gather
+    const aggregatedMetadata = await gatherMovieMetadataForAllServers(movie, fileServers)
     const aggregatedCaptions = gatherMovieCaptionsForAllServers(movie, fileServers)
     const aggregatedVideoInfo = gatherMovieVideoInfoForAllServers(movie, fileServers)
-    const aggregatedMetadata = await gatherMovieMetadataForAllServers(movie, fileServers)
     
     // Phase 2: Finalize
+    await finalizeMovieMetadata(client, movie, aggregatedMetadata)
     await finalizeMovieCaptions(client, movie, aggregatedCaptions)
     await finalizeMovieVideoInfo(client, movie, aggregatedVideoInfo)
-    await finalizeMovieMetadata(client, movie, aggregatedMetadata)
   }
 }
 

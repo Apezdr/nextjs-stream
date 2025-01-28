@@ -908,16 +908,16 @@ export async function syncVideoInfo(currentDB, fileServer, serverConfig, fieldAv
 }
 
 /**
- * Syncs episode thumbnails from a server to the database
+ * Syncs TV thumbnails from a server to the database
  * @param {Object} currentDB - Current database state
  * @param {Object} fileServer - File server data
  * @param {Object} serverConfig - Server configuration
  * @returns {Promise<Object>} Sync results
  */
-export async function syncEpisodeThumbnails(currentDB, fileServer, serverConfig, fieldAvailability) {
+export async function syncTVThumbnails(currentDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
   console.log(
-    chalk.bold.magentaBright(`Starting episode thumbnail sync for server ${serverConfig.id}...`)
+    chalk.bold.magentaBright(`Starting TV thumbnail sync for server ${serverConfig.id}...`)
   )
 
   const results = {
@@ -970,11 +970,11 @@ export async function syncEpisodeThumbnails(currentDB, fileServer, serverConfig,
     }
 
     console.log(
-      chalk.bold.magentaBright(`Episode thumbnail sync complete for server ${serverConfig.id}.`)
+      chalk.bold.magentaBright(`TV thumbnail sync complete for server ${serverConfig.id}.`)
     )
     return results
   } catch (error) {
-    console.error(`Error during episode thumbnail sync for server ${serverConfig.id}:`, error)
+    console.error(`Error during TV thumbnail sync for server ${serverConfig.id}:`, error)
     throw error
   }
 }
@@ -1018,6 +1018,8 @@ export async function syncPosterURLs(currentDB, fileServer, serverConfig, fieldA
         // Process season posters
         if (show.seasons && fileServerShowData.seasons) {
           const { updatedSeasons, hasUpdates } = await processSeasonPosters(
+            client,
+            show.title,
             show.seasons,
             fileServerShowData,
             serverConfig,

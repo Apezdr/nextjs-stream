@@ -1,4 +1,6 @@
+// httpGet.js
 import got from 'got';
+import { getCache, setCache } from './cache';
 
 /**
  * Sleep for a specified duration
@@ -21,7 +23,7 @@ const calculateBackoff = (retry, baseDelay = 1000, maxDelay = 10000) => {
 };
 
 /**
- * Performs an HTTP GET request with HTTP/2 support and retry capability.
+ * Performs an HTTP GET request with HTTP/2 support, retry, and conditional caching.
  * @param {string} url - The URL to fetch.
  * @param {Object} [options={}] - Additional options for the request.
  * @param {Object} [options.headers={}] - HTTP headers to include in the request.
@@ -51,15 +53,24 @@ export async function httpGet(url, options = {}) {
     shouldRetry = (error, attemptCount) => {
       // Default retry conditions
       if (attemptCount >= limit) return false;
-      
+
       // Retry on network errors
       if (!error.response) return true;
-      
+
       // Retry on 5xx server errors and specific 4xx errors
       const statusCode = error.response.statusCode;
       return statusCode >= 500 || statusCode === 429 || statusCode === 408;
-    }
+    },
   } = retry;
+
+  // 1) Check the cache for existing ETag and Last-Modified
+  const cachedEntry = await getCache(url);
+  if (cachedEntry?.etag) {
+    headers['If-None-Match'] = cachedEntry.etag;
+  }
+  if (cachedEntry?.lastModified) {
+    headers['If-Modified-Since'] = cachedEntry.lastModified;
+  }
 
   const requestOptions = {
     headers,
@@ -80,7 +91,20 @@ export async function httpGet(url, options = {}) {
       const response = await got(url, requestOptions);
       const { statusCode, headers: responseHeaders } = response;
 
-      if (statusCode >= 200 && statusCode < 300) {
+      if (statusCode === 304) {
+        // 2) Handle 304 Not Modified by returning cached data
+        if (cachedEntry) {
+          return { data: cachedEntry.data, headers: responseHeaders };
+        }
+        // else {
+        //   // No cached data exists; handle accordingly
+        //   throw new Error(
+        //     `Received 304 Not Modified for ${url} but no cached data is available.`
+        //   );
+        // }
+      }
+
+      if (statusCode >= 200 && statusCode < 300 || !cachedEntry) {
         let responseData;
 
         switch (responseType) {
@@ -108,23 +132,46 @@ export async function httpGet(url, options = {}) {
             throw new Error(`Unsupported response type: ${responseType}`);
         }
 
+        // 3) Update the cache with new data and validation tokens
+        await setCache(
+          url,
+          responseData,
+          responseHeaders.etag || null,
+          responseHeaders['last-modified'] || null
+        );
+
         return { data: responseData, headers: responseHeaders };
-      } else if (statusCode === 304) {
-        return { data: null, headers: responseHeaders };
       } else {
         throw new Error(`HTTP Error: ${statusCode} for URL: ${url}`);
       }
-
     } catch (error) {
       lastError = error;
-      
+
+      // Sometimes using Http2 with got can cause an error with JSON parsing
+      // This is a workaround for that issue
+      if (error?.message?.indexOf('Invalid JSON response') > -1) {
+        const response = await fetch(url);
+        const data = await response.json();
+        await setCache(
+          url,
+          data,
+          response.headers.etag || null,
+          response.headers['last-modified'] || null
+        );
+        return { data, headers: response.headers };
+      }
+
       if (shouldRetry(error, attempt)) {
         const delay = calculateBackoff(attempt, baseDelay, maxDelay);
-        console.warn(`Retrying request to ${url} (attempt ${attempt + 1}/${limit}) after ${delay}ms`);
+        console.warn(
+          `Retrying request to ${url} (attempt ${attempt + 1}/${limit}) after ${Math.round(
+            delay
+          )}ms`
+        );
         await sleep(delay);
         continue;
       }
-      
+
       break;
     }
   }
@@ -148,7 +195,21 @@ export async function fetchImageAsBuffer(url, options = {}) {
       Accept: 'image/*',
     },
   });
-  
+
+  if (response.data === null) {
+    // Handle cached data appropriately by retrieving it directly
+    const cachedEntry = await getCache(url);
+    if (cachedEntry?.data) {
+      const buffer = cachedEntry.data.buffer.slice(
+        cachedEntry.data.byteOffset,
+        cachedEntry.data.byteOffset + cachedEntry.data.byteLength
+      );
+      return buffer;
+    } else {
+      throw new Error('No cached data available for image.');
+    }
+  }
+
   // Convert Buffer to ArrayBuffer
   return response.data.buffer.slice(
     response.data.byteOffset,
@@ -171,6 +232,18 @@ export async function createImageStream(url, options = {}) {
       Accept: 'image/*',
     },
   });
+
+  if (response.data === null) {
+    // Handle cached data by retrieving it directly and converting to stream
+    const cachedEntry = await getCache(url);
+    if (cachedEntry?.data) {
+      const buffer = Buffer.from(cachedEntry.data);
+      const stream = Readable.from(buffer);
+      return stream;
+    } else {
+      throw new Error('No cached data available for image.');
+    }
+  }
 
   return response.data;
 }

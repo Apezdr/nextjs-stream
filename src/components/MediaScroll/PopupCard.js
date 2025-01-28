@@ -139,7 +139,9 @@ const PopupCard = ({
       aria-hidden="true"
     >
       <div
-        className="bg-white rounded-lg shadow-xl overflow-hidden relative transition-transform duration-300 ease-in-out pointer-events-auto"
+        className={classNames(
+          "bg-white rounded-lg shadow-xl overflow-hidden relative transition-transform duration-300 ease-in-out pointer-events-auto"
+        )}
         style={{
           width: `${imagePosition.expandedWidth}px`,
           transform: 'scale(1)',

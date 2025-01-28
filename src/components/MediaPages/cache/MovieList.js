@@ -133,7 +133,9 @@ const getAndUpdateMongoDB = cache(async (latestUpdateTimestamp) => {
         length: movie.length,
       }
       if (movie.metadata?.release_date) {
-        returnObject.metadata.release_date = movie.metadata.release_date.toLocaleDateString()
+        if(typeof movie.metadata?.release_date?.toLocaleDateString === 'function') {
+          returnObject.metadata.release_date = movie.metadata.release_date.toLocaleDateString()
+        }
       }
       if (movie.metadata?.runtime <= 0) {
         returnObject.metadata.runtime = movie.length

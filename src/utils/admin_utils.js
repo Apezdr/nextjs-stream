@@ -15,6 +15,7 @@ import { multiServerHandler } from './config'
 //import axiosInstance from './axiosInstance'
 import pLimit from 'p-limit'
 import { httpGet } from '@src/lib/httpHelper'
+import { getCache, setCache } from '@src/lib/cache'
 
 // Define concurrency limit
 const CONCURRENCY_LIMIT = 200; // Adjust based on your system's capacity
@@ -45,7 +46,7 @@ export function processMediaData(jsonResponseString) {
             ? movie.metadata?.title
             : movie.title + ` (${movie.metadata?.title})` || movie.title,
         genre: movie.metadata?.genres.map((genre) => genre.name).join(', '),
-        year: movie.metadata?.release_date ? movie.metadata.release_date.getFullYear() : 'N/A',
+        year: typeof movie.metadata?.release_date?.getFullYear === 'function' ? movie.metadata.release_date.getFullYear() : 'N/A',
       }
     })
 
@@ -121,55 +122,6 @@ function getYearFromDate(dateString) {
 }
 
 // Function to fetch
-/**
- * Normalizes a metadata URL using the appropriate server configuration
- * @param {string} url - The metadata URL to normalize
- * @param {Object} serverConfig - Server configuration
- * @returns {string} The normalized URL
- */
-function normalizeMetadataURL(url, serverConfig) {
-  if (!url) return ''
-  
-  const handler = multiServerHandler.getHandler(serverConfig.id)
-  
-  // First strip any existing prefix paths or base URLs
-  const strippedPath = handler.stripPrefixPath(url)
-  
-  // Remove any leading slashes
-  const cleanPath = strippedPath.replace(/^\/+/, '')
-  
-  // Create the full URL with the correct prefix path
-  return handler.createFullURL(cleanPath)
-}
-
-class MetadataCache {
-  constructor() {
-    this.cache = new Map();
-  }
-
-  getKey(type, url, serverId) {
-    return `${serverId}:${type}:${url}`;
-  }
-
-  get(type, url, serverId) {
-    return this.cache.get(this.getKey(type, url, serverId));
-  }
-
-  set(type, url, serverId, value) {
-    this.cache.set(this.getKey(type, url, serverId), value);
-  }
-
-  has(type, url, serverId) {
-    return this.cache.has(this.getKey(type, url, serverId));
-  }
-
-  clear() {
-    this.cache.clear();
-  }
-}
-
-// Singleton instance
-export const metadataCache = new MetadataCache();
 
 /**
  * Retry function with exponential backoff
@@ -190,24 +142,32 @@ async function fetchWithRetry(fetchFunction, retries = 3, delay = 1000) {
 }
 
 /**
- * Enhanced fetchMetadataMultiServer with caching, conditional requests, controlled concurrency, and retry logic
+ * Enhanced fetchMetadataMultiServer with Redis caching, conditional requests, controlled concurrency, and retry logic
  * @param {string} serverId - The ID of the file server to fetch from
  * @param {string} metadataUrl - The URL to fetch metadata from
  * @param {'file'|'blurhash'} type - The type of metadata being fetched
  * @param {'tv'|'movie'} mediaType - The type of media
  * @param {string} title - The title of the media
+ * @param {Object} headers - Conditional request headers
+ * @param {string} cacheKey - The Redis cache key
  * @returns {Object|null} - The fetched metadata or null if not modified
  */
-export async function fetchMetadataMultiServer(serverId, metadataUrl, type = 'file', mediaType, title) {
+export async function fetchMetadataMultiServer(
+  serverId,
+  metadataUrl,
+  type = 'file',
+  mediaType,
+  title,
+  headers = {},
+  cacheKey = `${serverId}:${type}:${metadataUrl}`
+) {
   if (!metadataUrl) {
     return {};
   }
 
   try {
-    const cacheKey = `${serverId}:${type}:${metadataUrl}`;
-    const cachedEntry = metadataCache.get(type, metadataUrl, serverId);
+    const cachedEntry = await getCache(cacheKey);
 
-    const headers = {};
     if (cachedEntry) {
       if (cachedEntry.etag) {
         headers['If-None-Match'] = cachedEntry.etag;
@@ -240,12 +200,17 @@ export async function fetchMetadataMultiServer(serverId, metadataUrl, type = 'fi
       const processedData = type === 'blurhash' ? data.trim() : data;
 
       // Update cache with new ETag and Last-Modified
-      metadataCache.set(type, metadataUrl, serverId, {
-        data: processedData,
-        lastUpdated: new Date(data?.last_updated || '1970-01-01'), // Adjust based on actual response structure
-        etag: responseHeaders.etag || cachedEntry?.etag, // Use response ETag or fallback to existing
-        lastModified: responseHeaders['last-modified'] || cachedEntry?.lastModified, // Use response Last-Modified or fallback
-      });
+      // const newCacheEntry = {
+      //   lastUpdated: new Date(data?.last_updated || '1970-01-01'),
+      // };
+      
+      await setCache(
+        cacheKey,
+        processedData, // Pass only the actual metadata here
+        responseHeaders.etag || cachedEntry?.etag,
+        responseHeaders['last-modified'] || cachedEntry?.lastModified,
+        3600 // TTL of 1 hour
+      );      
 
       return processedData;
     };

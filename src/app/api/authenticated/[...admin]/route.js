@@ -21,7 +21,7 @@ import {
   syncBlurhash,
   syncCaptions,
   syncChapters,
-  syncEpisodeThumbnails,
+  syncTVThumbnails,
   syncVideoInfo,
   syncLogos,
   syncMetadata,
@@ -454,9 +454,19 @@ async function handleSync(webhookId, request) {
 
     // Then do your incremental sync for Movies
     const client = await clientPromise
+    const startMovies = Date.now()
+    console.info(chalk.bold.cyan(`\nProcessing movies batch [${new Date(startMovies).toISOString()}]`))
     await syncMovieDataAllServers(client, currentDB, fileServers)
-    await syncTVDataAllServers(client, currentDB, fileServers)
+    const endMovies = Date.now()
+    const durationMovies = (endMovies - startMovies) / 1000
+    console.info(chalk.bold.cyan(`Finished Processing movies batch [${new Date(endMovies).toISOString()}] (Runtime: ${durationMovies.toFixed(2)}s)`))
 
+    const startTV = Date.now()
+    console.info(chalk.bold.magenta(`\nProcessing TV batch [${new Date(startTV).toISOString()}]`))
+    await syncTVDataAllServers(client, currentDB, fileServers)
+    const endTV = Date.now()
+    const durationTV = (endTV - startTV) / 1000
+    console.info(chalk.bold.magenta(`Finished Processing TV batch [${new Date(endTV).toISOString()}] (Runtime: ${durationTV.toFixed(2)}s)`))
     // Process each server sequentially to avoid overwhelming the system
     for (const [serverId, fileServer] of Object.entries(fileServers)) {
       console.info(chalk.bold.cyan(`\nProcessing server: ${serverId}`))
@@ -483,7 +493,7 @@ async function handleSync(webhookId, request) {
         await syncVideoURL(currentDB, fileServer, serverConfig, fieldAvailability)
         await syncLogos(currentDB, fileServer, serverConfig, fieldAvailability)
         //await syncVideoInfo(currentDB, fileServer, serverConfig, fieldAvailability)
-        await syncEpisodeThumbnails(currentDB, fileServer, serverConfig, fieldAvailability)
+        await syncTVThumbnails(currentDB, fileServer, serverConfig, fieldAvailability)
         await syncPosterURLs(currentDB, fileServer, serverConfig, fieldAvailability)
         await syncBackdrop(currentDB, fileServer, serverConfig, fieldAvailability)
         await syncBlurhash(currentDB, fileServer, serverConfig, fieldAvailability)
