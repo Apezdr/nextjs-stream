@@ -7,6 +7,7 @@ import Loading from '@src/app/loading'
 import { getFullImageUrl } from '@src/utils'
 import dynamic from 'next/dynamic'
 import RetryImage from '@components/RetryImage'
+import { InformationCircleIcon } from '@heroicons/react/20/solid'
 
 const BannerVideoPlayer = dynamic(() => import('./BannerVideoPlayer'), {
   ssr: false,
@@ -102,7 +103,7 @@ const BannerContent = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0, transition: { duration: 0.5, ease: 'easeInOut' } }}
           transition={{ duration: 1, ease: 'easeInOut', delay: 0.5 }}
-          className="absolute left-1/4 top-1/2 transform -translate-y-1/2 text-center w-36 sm:w-64"
+          className="max-h-full absolute left-1/4 top-1/2 transform -translate-y-1/2 text-center w-36 md:w-64"
         >
           {logo ? (
             <RetryImage
@@ -110,7 +111,7 @@ const BannerContent = ({
               alt="Logo Image"
               width={300}
               height={300}
-              className="object-contain select-none pointer-events-none"
+              className="object-contain select-none pointer-events-none !h-auto"
               loading="eager"
               priority
             />
@@ -118,10 +119,11 @@ const BannerContent = ({
             <div className="font-bold text-lg text-left">{currentMedia.title}</div>
           )}
           {currentMedia?.title ? (
-            <div className="flex gap-2 text-xs sm:text-sm">
+            <div className='flex flex-row md:flex-col gap-2 md:gap-0'>
+<div className="flex gap-2 text-xs sm:text-sm">
               <Link
-                href={`/list/movie/${encodeURIComponent(currentMedia.title)}`}
-                className="mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
+                href={`/list/movie/${encodeURIComponent(currentMedia.title)}/play`}
+                className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -137,13 +139,15 @@ const BannerContent = ({
                     d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"
                   />
                 </svg>
-                Watch Now
+                <span className="hidden sm:inline">
+                  Watch Now
+                </span>
               </Link>
               {currentMedia?.metadata?.trailer_url ? (
                 <Link
                   href={currentMedia.metadata.trailer_url}
                   target={'_blank'}
-                  className="mt-4 px-6 py-2 text-slate-200 hover:text-white bg-blue-700 rounded-full hover:bg-blue-800 transition flex items-center gap-2"
+                  className="h-12 mt-4 px-6 py-2 text-slate-200 hover:text-white bg-blue-700 rounded-full hover:bg-blue-800 transition flex items-center gap-2"
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
@@ -158,9 +162,23 @@ const BannerContent = ({
                       <path fill="#fff" d="M11.425 14.285 18.848 10l-7.423-4.285v8.57Z" />
                     </svg>
                   </svg>
-                  Trailer
+                  <span className="hidden sm:inline">
+                    Trailer
+                  </span>
                 </Link>
               ) : null}
+            </div>
+              <div>
+                <Link
+                  href={`/list/movie/${encodeURIComponent(currentMedia.title)}`}
+                  className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
+                >
+                  <InformationCircleIcon className="size-6 mr-0 sm:mr-2" />
+                  <span className="hidden sm:inline">
+                    View Details
+                  </span>
+                </Link>
+              </div>
             </div>
           ) : null}
         </motion.div>

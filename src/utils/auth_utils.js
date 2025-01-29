@@ -357,6 +357,8 @@ export async function sanitizeCardData(item, popup = false) {
     cast,
     // tv
     media,
+    episodeNumber, // it may not exist on the record if it's not an specific episode
+    seasonNumber, // it may not exist on the record if it's not an specific episode
   } = item
 
   const sanitized = {}
@@ -374,6 +376,8 @@ export async function sanitizeCardData(item, popup = false) {
   // tv
   if (media?.seasonNumber) sanitized.seasonNumber = media?.seasonNumber
   if (media?.episode?.episodeNumber) sanitized.episodeNumber = media?.episode?.episodeNumber
+  if (episodeNumber) sanitized.episodeNumber = episodeNumber
+  if (seasonNumber) sanitized.seasonNumber = seasonNumber
   // pre-aggregate the cast information from multiple places
   if (cast) sanitized.cast = cast
 

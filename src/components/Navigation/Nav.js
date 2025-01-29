@@ -15,13 +15,13 @@ const SignOutButton = lazy(() => import('@components/SignOutButton'))
 
 const isMediaPageFunc = (pathname) => {
   const moviePattern = /^\/list\/movie\/[^/]+\/play$/
-  const tvPattern = /^\/list\/tv\/[^/]+\/\d+\/\d+$/
+  const tvPattern = /^\/list\/tv\/[^/]+\/\d+\/\d+\/play$/
   return moviePattern.test(pathname) || tvPattern.test(pathname)
 }
 
 const isMediaListPageFunc = (pathname) => {
   const moviePattern = /^\/list\/movie(\/[^/]+)?$/
-  const tvPattern = /^\/list\/tv(\/[^/]+(\/\d+)?)?$/
+  const tvPattern = /^\/list\/tv(\/[^/]+(\/\d+)?(\/\d+)?)?$/
   return moviePattern.test(pathname) || tvPattern.test(pathname)
 }
 

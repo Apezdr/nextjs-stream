@@ -107,7 +107,7 @@ async function getTvShowData(client, collection, title, season, episode, id) {
 
     if (episode) {
       const episodeNumber = parseInt(episode.replace('Episode ', ''))
-      const episodeData = handleEpisode(tvShow, seasonObj, episodeNumber)
+      const episodeData = handleEpisode(tvShow, seasonObj, seasonNumber, episodeNumber)
       return episodeData
     } else {
       // Handle season-specific logic
@@ -170,7 +170,7 @@ async function getTvShowData(client, collection, title, season, episode, id) {
     return tvShow
   }
 }
-function handleEpisode(tvShow, seasonObj, episodeNumber) {
+function handleEpisode(tvShow, seasonObj, seasonNumber, episodeNumber) {
   const episodeMetadata = seasonObj.metadata.episodes?.find(
     (ep) => ep.episode_number === episodeNumber
   )
@@ -185,19 +185,47 @@ function handleEpisode(tvShow, seasonObj, episodeNumber) {
   episodeObj.metadata.backdrop_path = episodeObj.metadata.backdrop_path || tvShow.backdrop
   episodeObj.posterURL = seasonObj.season_poster || tvShow.posterURL || tvShow.metadata.poster_path
   episodeObj.posterBlurhash = seasonObj.seasonPosterBlurhash || tvShow.posterBlurhash || null
+  episodeObj.seasonNumber = seasonNumber
+  episodeObj.episodeNumber = episodeNumber
+
+  // For the info page
+  if (tvShow.backdrop) episodeObj.backdrop = tvShow.backdrop
+  if (tvShow.backdropSource) episodeObj.backdropSource = tvShow.backdropSource
+  if (tvShow.backdropBlurhash) {
+    episodeObj.backdropBlurhash = tvShow.backdropBlurhash
+    episodeObj.backdropBlurhashSource = tvShow.backdropBlurhashSource
+  }
+  if (episodeObj.thumbnail) episodeObj.backdrop = episodeObj.thumbnail
+  if (episodeObj.thumbnailSource) episodeObj.backdropSource = episodeObj.thumbnailSource
+  if (episodeObj.thumbnailBlurhash) {
+    episodeObj.backdropBlurhash = episodeObj.thumbnailBlurhash
+    episodeObj.backdropBlurhashSource = episodeObj.thumbnailBlurhashSource
+  }
   
   // Handle Cast
-  if (tvShow.metadata.cast || episodeObj.metadata.guest_stars) {
+  // if (tvShow.metadata.cast || episodeObj.metadata.guest_stars) {
+  if (tvShow.metadata.cast) {
     // Merge cast from tvShow.metadata.cast and episodeObj.metadata.guest_stars
     // Filter out duplicates based on the id property
-    episodeObj.cast = [
-      ...(tvShow.metadata.cast || []),
-      ...(episodeObj.metadata.guest_stars || [])
-    ].filter((item, index, self) =>
-      index === self.findIndex((t) => (
-        t.id === item.id
-      ))
-    )
+    // episodeObj.cast = [
+    //   ...(tvShow.metadata.cast || []),
+    //   ...(episodeObj.metadata.guest_stars || [])
+    // ].filter((item, index, self) =>
+    //   index === self.findIndex((t) => (
+    //     t.id === item.id
+    //   ))
+    // )
+    const guestStars = episodeObj.metadata.guest_stars || [];
+    const mainCast = tvShow.metadata.cast || [];
+
+    // Create a map of guest stars for quick lookup
+    const guestStarsMap = new Map(guestStars.map(star => [star.id, star]));
+
+    // Filter out guest stars from the main cast
+    const filteredMainCast = mainCast.filter(castMember => !guestStarsMap.has(castMember.id));
+
+    // Combine filtered main cast with guest stars
+    episodeObj.cast = filteredMainCast;
   }
 
   if (seasonObj.seasonPosterBlurhashSource) {

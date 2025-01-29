@@ -117,6 +117,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     return `/api/authenticated/horizontal-list?${params.toString()}`
   }
 
+  // ex. /api/authenticated/horizontal-list?type=movie&sort=id&limit=6&sortOrder=desc&page=0
   const apiEndpoint = buildPrefetchURL(currentPage)
 
   const { data, error, isLoading } = useSWR(apiEndpoint, fetcher, {

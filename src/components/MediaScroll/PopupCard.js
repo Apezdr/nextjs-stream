@@ -10,6 +10,7 @@ import useSWR, { preload } from 'swr'
 import RetryImage from '@components/RetryImage'
 import Loading from '@src/app/loading'
 import VirtualizedCastGrid from './VirtualizedCastGrid'
+import { InformationCircleIcon } from '@heroicons/react/20/solid'
 
 // Import the CardVideoPlayer with z-[40]
 const CardVideoPlayer = dynamic(() => import('@src/components/MediaScroll/CardVideoPlayer'), {
@@ -297,13 +298,30 @@ const PopupCard = ({
 
         {/* Info Section (just below the media in the DOM, but no special z-index needed) */}
         <div className="p-4">
-          <div className="flex flex-row justify-between">
-            <h2 className="text-2xl text-gray-900 font-bold mb-2">{data?.title ?? title}</h2>
-            <h2 className="text-2xl text-gray-700 font-bold mb-2">
-              {data?.seasonNumber ? `S${data?.seasonNumber}` : ''}
-              {data?.episodeNumber ? `E${data?.episodeNumber}` : ''}
-              {data?.seasonNumber || data?.episodeNumber ? ' ' : ''}
-            </h2>
+          <div className="flex flex-row relative">
+            {/* overflow: hidden;
+              width: 100%;
+              border-right: 1px solid #dfdfdf96;
+              margin-right: 16px; */}
+            <h2 className={classNames(
+              "text-2xl text-gray-900 font-bold mb-2 w-[88%] overflow-hidden",
+              "w-full mr-4",
+              data?.seasonNumber || data?.episodeNumber ? "border-r-[1px] border-r-[#dfdfdf96]" : ""
+            )}>{data?.title ?? title}</h2>
+            {(data?.seasonNumber || data?.episodeNumber) && (
+              <motion.h2 className={classNames(
+                "relative self-center text-2xl text-gray-700 font-bold mb-2"
+                )}
+                key="season-episode"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                transition={{ duration: 0.4 }}
+              >
+                {data?.seasonNumber ? `S${data?.seasonNumber}` : ''}
+                {data?.episodeNumber ? `E${data?.episodeNumber}` : ''}
+                {data?.seasonNumber || data?.episodeNumber ? ' ' : ''}
+              </motion.h2>
+            )}
           </div>
           {date && <div className="text-sm text-gray-600">Last Watched: {date}</div>}
           <div className="text-gray-500 mb-2">
@@ -311,27 +329,37 @@ const PopupCard = ({
           </div>
 
           {link && (
-            <Link
-              href={`/list/${type}/${link}`}
-              className={classNames(
-                'relative inline-flex items-center gap-2',
-                'opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'
-              )}
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="currentColor"
-                className="w-5 h-5"
+            <div className="flex flex-row gap-2">
+              <Link
+                href={`/list/${type}/${link}/play`}
+                className={classNames(
+                  'relative inline-flex items-center gap-2 opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'
+                )}
               >
-                <path
-                  fillRule="evenodd"
-                  d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <span>Watch Now {hdr ? `in HDR10+` : null}</span>
-            </Link>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  className="w-5 h-5"
+                >
+                  <path
+                    fillRule="evenodd"
+                    d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z"
+                    clipRule="evenodd"
+                  />
+                </svg>
+                <span>Watch Now {hdr ? `in HDR10+` : null}</span>
+              </Link>
+              <Link
+                href={`/list/${type}/${link}`}
+                className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
+              >
+                <InformationCircleIcon className="size-6 mr-0 sm:mr-2" />
+                <span className="hidden sm:inline">
+                  View Details
+                </span>
+              </Link>
+            </div>
           )}
         </div>
         {data?.cast && Object.keys(data.cast).length > 0 && (

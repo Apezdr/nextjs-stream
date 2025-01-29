@@ -2,14 +2,13 @@ import VirtualizedCastGrid from '@components/MediaScroll/VirtualizedCastGrid'
 import { classNames, getFullImageUrl } from '@src/utils'
 import Link from 'next/link'
 
-const MovieDetailsComponent = ({ media }) => {
+const TVEpisodeDetailsComponent = ({ media }) => {
   if (!media) {
     return <div className="text-center py-4">Loading...</div>
   }
 
-  const { title, backdrop, logo, metadata, hdr, length } = media
-  const { release_date, genres, cast, overview, runtime, tagline, trailer_url } = metadata
-  const collectionData = metadata?.belongs_to_collection
+  const { title, backdrop, logo, metadata, hdr, episodeNumber, seasonNumber, cast, length } = media
+  const { air_date, genres, overview, runtime, tagline, trailer_url, name, guest_stars } = metadata
 
   const convertToLocaleTime = (minutes) => {
     const hours = Math.floor(minutes / 60);
@@ -37,7 +36,7 @@ const MovieDetailsComponent = ({ media }) => {
             )}
           </div>
           <div className="mt-4">
-            <Link href="/list/movie" className="self-center">
+            <Link href={`/list/tv/${title}/${seasonNumber}`} className="self-center">
               <button
                 type="button"
                 className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 mx-auto"
@@ -59,17 +58,24 @@ const MovieDetailsComponent = ({ media }) => {
                 Go Back
               </button>
             </Link>
-            <h1 className="text-3xl font-bold">{title}</h1>
+            <div className="flex flex-row w-full gap-2">
+              <h1 className="text-3xl font-bold">{name ?? title}</h1>
+              <strong>S{seasonNumber}E{episodeNumber}</strong>
+            </div>
             <p className="text-gray-300 italic">{tagline}</p>
             <p className="mt-2">
-              <strong>Release Date:</strong> {new Date(release_date).toLocaleDateString()}
+              <strong>Air Date:</strong> {new Date(air_date).toLocaleDateString()}
             </p>
-            <p>
-              <strong>Genres:</strong> {genres.map((genre) => genre.name).join(', ')}
-            </p>
-            <p>
-              <strong>Runtime:</strong> {calculatedRuntime}
-            </p>
+            {genres ? (
+              <p>
+                <strong>Genres:</strong> {genres.map((genre) => genre.name).join(', ')}
+              </p>
+            ) : null}
+            {calculatedRuntime ? (
+              <p>
+                <strong>Runtime:</strong> {calculatedRuntime}
+              </p>
+            ) : null}
             <p className="mt-4">
               <strong>Overview:</strong> {overview}
             </p>
@@ -88,7 +94,7 @@ const MovieDetailsComponent = ({ media }) => {
                     </div> */}
           <div className='flex flex-row justify-evenly'>
           <Link
-            href={`/list/movie/${title}/play`}
+            href={`/list/tv/${title}/${seasonNumber}/${episodeNumber}/play`}
             className={classNames(
               'relative inline-flex flex-row items-center gap-2',
               'opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'
@@ -132,31 +138,16 @@ const MovieDetailsComponent = ({ media }) => {
           ) : null}
           </div>
         </div>
-        {collectionData || cast ? (
+        {(cast || guest_stars) ? (
             <hr className="my-8 border-gray-300" />
         ) : null}
         <div className='flex flex-col gap-8'>
-          {collectionData ? (
-            <div>
-              <h2 className="text-2xl font-semibold">Collection</h2>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
-                <div key={collectionData.id} className="flex flex-col items-center">
-                  <Link
-                    href={`https://www.themoviedb.org/collection/${collectionData.id}`}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    <img
-                        src={getFullImageUrl(collectionData.poster_path)}
-                        alt={collectionData.name}
-                        className="w-24 h-auto object-cover rounded-lg shadow-md"
-                    />
-                    <p className="mt-2 text-center">{collectionData.name}</p>
-                  </Link>
-                </div>
-              </div>
+          {guest_stars ? (
+            <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg"> {/* Ensure a fixed height for virtualization */}
+                <h4 className="text-2xl text-black font-semibold mb-4">Guest Stars</h4>
+                <VirtualizedCastGrid cast={guest_stars} />
             </div>
-          ) : null}
+          ): null}
           {cast ? (
             <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg"> {/* Ensure a fixed height for virtualization */}
                 <h4 className="text-2xl text-black font-semibold mb-4">Cast</h4>
@@ -169,4 +160,4 @@ const MovieDetailsComponent = ({ media }) => {
   )
 }
 
-export default MovieDetailsComponent
+export default TVEpisodeDetailsComponent

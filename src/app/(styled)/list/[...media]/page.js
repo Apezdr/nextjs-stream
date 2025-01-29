@@ -17,6 +17,7 @@ import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched
 import { fileServerURLWithPrefixPath } from '@src/utils/config'
 import RetryImage from '@components/RetryImage'
 import MovieDetailsComponent from '@components/MediaPages/MovieDetailsComponent'
+import TVEpisodeDetailsComponent from '@components/MediaPages/TVEpisodeDetailsComponent'
 
 async function validateVideoURL(url) {
   try {
@@ -105,7 +106,6 @@ async function MediaPage({ params, searchParams }) {
   if (mediaType == 'tv') {
     mediaSeason = _params?.media?.[2] // Could be 'Season X'
     mediaEpisode = _params?.media?.[3] // Could be 'Episode Y'
-    // not implemented yet
     mediaPlayerPage = _params?.media?.[4] === 'play' // ex. /list/tv/Breaking%20Bad/1/1/play
   }
   if (mediaType === 'movie') {
@@ -145,7 +145,8 @@ async function MediaPage({ params, searchParams }) {
   if (mediaType === 'tv') {
     if (mediaTitle) {
       const season = mediaSeason ? '/' + mediaSeason : ''
-      TVParams = `/${mediaTitle}${season}`
+      const episode = mediaEpisode ? '/' + mediaEpisode : ''
+      TVParams = `/${mediaTitle}${season}${episode}`
     }
   }
 
@@ -236,19 +237,27 @@ async function MediaPage({ params, searchParams }) {
         <div className="flex flex-col items-center justify-center md:py-12 h-screen max-h-[90%]">
           <SyncClientWithServerWatched once={true} />
           <Suspense fallback={<Loading />}>
-            <MediaPlayerComponent
-              media={media}
-              mediaTitle={mediaTitle}
-              mediaType={mediaType}
-              goBack={
-                mediaType
-                  ? `/list${mediaType ? '/' + mediaType : ''}${TVParams}${MovieParams}`
-                  : '/list'
-              }
-              searchParams={_searchParams}
-              session={session}
-              isValidVideoURL={isValidVideoURL}
-            />
+            {mediaPlayerPage ? (
+              <MediaPlayerComponent
+                media={media}
+                mediaTitle={mediaTitle}
+                mediaType={mediaType}
+                goBack={
+                  mediaType
+                    ? `/list${mediaType ? '/' + mediaType : ''}${TVParams}`
+                    : '/list'
+                }
+                searchParams={_searchParams}
+                session={session}
+                isValidVideoURL={isValidVideoURL}
+              />
+            ) : (
+            <Suspense fallback={<Loading />}>
+              <div className='max-h-[90%] h-screen pt-16 w-full'>
+              <TVEpisodeDetailsComponent media={media} />
+              </div>
+            </Suspense>
+            )}
           </Suspense>
         </div>
       )
@@ -270,7 +279,7 @@ async function MediaPage({ params, searchParams }) {
             mediaType={mediaType}
             goBack={
               mediaType
-                ? `/list${mediaType ? '/' + mediaType + '/' + mediaTitle : ''}${TVParams}${MovieParams}`
+                ? `/list${mediaType ? '/' + mediaType + '/' + mediaTitle : ''}${MovieParams}`
                 : '/list'
             }
             searchParams={_searchParams}
@@ -282,7 +291,7 @@ async function MediaPage({ params, searchParams }) {
         ) : (
         // ex. /list/movie/Inception
         <Suspense fallback={<Loading />}>
-          <div className='max-h-[90%] h-screen pt-16'>
+          <div className='max-h-[90%] h-screen pt-16 w-full'>
           <MovieDetailsComponent media={media} />
           </div>
         </Suspense>
