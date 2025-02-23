@@ -4,8 +4,9 @@ import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
 import Image from 'next/image'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '@src/utils'
 import RetryImage from '@components/RetryImage'
+import { cache } from 'react'
 
-export default function Detailed({
+function Detailed({
   tvShow,
   posterOnly = false,
   size = { w: 600, h: 600 },
@@ -208,7 +209,7 @@ export default function Detailed({
   )
 }
 
-const SeasonCount = ({ seasons, metadata }) => {
+const SeasonCount = cache(({ seasons, metadata }) => {
   const validSeasonsCount = seasons.filter((season) => season.seasonNumber !== 0).length
   const totalSeasonsCount = metadata?.seasons.filter(
     (season) => season.season_number !== 0 && season.episode_count > 0
@@ -220,11 +221,13 @@ const SeasonCount = ({ seasons, metadata }) => {
       {validSeasonsCount === totalSeasonsCount ? '' : ` of ${totalSeasonsCount}`}
     </span>
   )
-}
-const EpisodeCount = ({ totalEpisodes }) => {
+})
+
+const EpisodeCount = cache(({ totalEpisodes }) => {
   return totalEpisodes ? <span className="text-xs">{totalEpisodes} Episodes</span> : null
-}
-const ShowMetadata = ({ metadata, totalEpisodes, tvShow }) => {
+})
+
+const ShowMetadata = cache(({ metadata, totalEpisodes, tvShow }) => {
   return (
     <div className="grid grid-cols-3 text-center mt-4">
       <span className="block">
@@ -257,4 +260,6 @@ const ShowMetadata = ({ metadata, totalEpisodes, tvShow }) => {
       </span>
     </div>
   )
-}
+})
+
+export default Detailed

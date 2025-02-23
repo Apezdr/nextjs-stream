@@ -9,6 +9,7 @@ import {
   useLayoutEffect,
   useEffect,
   Fragment,
+  cache,
 } from 'react'
 import useSWR, { useSWRConfig, preload } from 'swr'
 import { classNames, fetcher } from '@src/utils'
@@ -74,7 +75,7 @@ const variants = {
 }
 
 // HorizontalScroll Component
-const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder = 'desc' }) => {
+const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrder = 'desc' }) => {
   const [currentPage, setCurrentPage] = useState(0)
   const [expandedCardId, setExpandedCardId] = useState(null)
   const [direction, setDirection] = useState(0) // Track direction

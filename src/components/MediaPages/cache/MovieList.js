@@ -3,9 +3,10 @@ import MediaPoster from '@components/MediaPoster'
 import { CaptionSVG } from '@components/SVGIcons'
 import { TotalRuntime } from '@components/watched'
 import Link from 'next/link'
-import { cache, memo } from 'react'
+import { cache, memo, Suspense } from 'react'
 import clientPromise from '@src/lib/mongodb'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+import SkeletonCard from '@components/SkeletonCard'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -32,7 +33,7 @@ const MovieList = async ({ latestUpdateTimestamp }) => {
           >
             <Link href={`movie/${encodeURIComponent(movie.title)}`} className="group">
               <div className="relative block w-auto mx-auto overflow-hidden rounded-lg focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-100 ">
-                <MediaPoster movie={movie} />
+                <Suspense fallback={<SkeletonCard key={index} heightClass={'h-[582px]'} imageOnly />}><MediaPoster movie={movie} /></Suspense>
                 <button type="button" className="absolute inset-0 focus:outline-none">
                   <span className="sr-only">View details for {movie.title}</span>
                 </button>
@@ -150,14 +151,16 @@ const getAndUpdateMongoDB = cache(async (latestUpdateTimestamp) => {
       }
 
       if (movie.posterBlurhash) {
-        returnObject.posterBlurhash = await fetchMetadataMultiServer(
-          movie.posterBlurhashSource,
-          movie.posterBlurhash,
-          'blurhash',
-          'movie',
-          movie.title
-        )
-      }
+      // Attach the promise; once it resolves, you'll get the blurhash base64 string.
+      returnObject.posterBlurhashPromise = fetchMetadataMultiServer(
+        movie.posterBlurhashSource,
+        movie.posterBlurhash,
+        'blurhash',
+        'movie',
+        movie.title
+      );
+    }
+
 
       if (movie.hdr) {
         returnObject.hdr = movie.hdr

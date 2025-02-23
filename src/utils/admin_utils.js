@@ -184,6 +184,12 @@ export async function fetchMetadataMultiServer(
     const strippedPath = handler.stripPrefixPath(metadataUrl);
     const normalizedUrl = handler.createFullURL(strippedPath);
 
+    // If it's incorrectly normalized we can tell by two http in the URL ex. http://test.com/media/http://
+    const matches = normalizedUrl.match(/https?:\/\//g);
+    if (matches && matches.length > 1) {
+      throw new Error('URL is incorrectly normalized; likely caused by incorrect server source in sync.', normalizedUrl);
+    }
+
     // Define the fetch function using the httpGet helper
     const fetchFunction = async () => {
       const { data, headers: responseHeaders } = await httpGet(normalizedUrl, {

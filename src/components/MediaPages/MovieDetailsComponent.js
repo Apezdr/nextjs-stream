@@ -7,7 +7,7 @@ const MovieDetailsComponent = ({ media }) => {
     return <div className="text-center py-4">Loading...</div>
   }
 
-  const { title, backdrop, logo, metadata, hdr, length } = media
+  const { title, backdrop, posterURL, logo, metadata, hdr, length } = media
   const { release_date, genres, cast, overview, runtime, tagline, trailer_url } = metadata
   const collectionData = metadata?.belongs_to_collection
 
@@ -26,7 +26,7 @@ const MovieDetailsComponent = ({ media }) => {
         <div>
           <div className="relative">
             <img
-              src={backdrop}
+              src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
               alt={`${title} backdrop`}
               className="w-full h-64 object-cover rounded-lg shadow-md"
             />
@@ -59,20 +59,28 @@ const MovieDetailsComponent = ({ media }) => {
                 Go Back
               </button>
             </Link>
-            <h1 className="text-3xl font-bold">{title}</h1>
-            <p className="text-gray-300 italic">{tagline}</p>
-            <p className="mt-2">
-              <strong>Release Date:</strong> {new Date(release_date).toLocaleDateString()}
-            </p>
-            <p>
-              <strong>Genres:</strong> {genres.map((genre) => genre.name).join(', ')}
-            </p>
-            <p>
-              <strong>Runtime:</strong> {calculatedRuntime}
-            </p>
-            <p className="mt-4">
-              <strong>Overview:</strong> {overview}
-            </p>
+            {title ? <h1 className="text-3xl font-bold">{title}</h1> : null}
+            {tagline ? <p className="text-gray-300 italic">{tagline}</p> : null}
+            {release_date ? (
+              <p className="mt-2">
+                <strong>Release Date:</strong> {new Date(release_date).toLocaleDateString()}
+              </p>
+            ):null}
+            {genres && genres.length > 0 ? (
+              <p>
+                <strong>Genres:</strong> {genres.map((genre) => genre.name).join(', ')}
+              </p>
+            ):null}
+            {calculatedRuntime ? (
+              <p>
+                <strong>Runtime:</strong> {calculatedRuntime}
+              </p>
+            ):null}
+            {overview ? (
+              <p className="mt-4">
+                <strong>Overview:</strong> {overview}
+              </p>
+            ):null}
           </div>
           {/* <div className="mt-6">
                         <h2 className="text-2xl font-semibold">Cast</h2>
@@ -132,7 +140,7 @@ const MovieDetailsComponent = ({ media }) => {
           ) : null}
           </div>
         </div>
-        {collectionData || cast ? (
+        {collectionData || cast && cast.length > 0 ? (
             <hr className="my-8 border-gray-300" />
         ) : null}
         <div className='flex flex-col gap-8'>
@@ -157,7 +165,7 @@ const MovieDetailsComponent = ({ media }) => {
               </div>
             </div>
           ) : null}
-          {cast ? (
+          {cast && cast.length > 0 ? (
             <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg"> {/* Ensure a fixed height for virtualization */}
                 <h4 className="text-2xl text-black font-semibold mb-4">Cast</h4>
                 <VirtualizedCastGrid cast={cast} />

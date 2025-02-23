@@ -1,8 +1,10 @@
-export function classNames(...classes) {
-  return classes.filter(Boolean).join(' ')
-}
+import { cache } from 'react'
 
-export function convertToPlainObjects(documents) {
+export const classNames = cache((...classes) => {
+  return classes.filter(Boolean).join(' ')
+})
+
+export const convertToPlainObjects = cache((documents) => {
   return documents.map((doc) => {
     const returnObject = {
       _id: doc._id.toString(), // Convert ObjectId to string
@@ -17,15 +19,15 @@ export function convertToPlainObjects(documents) {
 
     return returnObject
   })
-}
+})
 
-export function convertToDate(str) {
+export const convertToDate = cache((str) => {
   const date = new Date(str)
   return date
-}
+})
 
 // Function to format time in milliseconds to hh:mm:ss
-export function formatTime(milliseconds) {
+export const formatTime = cache((milliseconds) => {
   let seconds = Math.floor(milliseconds / 1000)
   let minutes = Math.floor(seconds / 60)
   let hours = Math.floor(minutes / 60)
@@ -36,18 +38,18 @@ export function formatTime(milliseconds) {
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds
     .toString()
     .padStart(2, '0')}`
-}
+})
 
-export function getFullImageUrl(imagePath, size = 'w780') {
+export const getFullImageUrl = cache((imagePath, size = 'w780') => {
   if (!imagePath) {
     return null
   }
   // Adjust the size as needed (e.g., 'w780', 'original')
   const baseUrl = 'https://image.tmdb.org/t/p/'
   return `${baseUrl}${size}${imagePath}`
-}
+})
 
-export function buildURL(url) {
+export const buildURL = cache((url) => {
   const isDevelopment = process.env.NODE_ENV === 'development'
   const baseURL = process.env.NEXT_PUBLIC_BASE_URL
 
@@ -64,9 +66,9 @@ export function buildURL(url) {
         ? baseURL
         : ''
   }${url}`
-}
+})
 
-export function generateColors(str) {
+export const generateColors = cache((str) => {
   let hash = 0
   for (let i = 0; i < str.length; i++) {
     hash = str.charCodeAt(i) + ((hash << 5) - hash)
@@ -94,22 +96,22 @@ export function generateColors(str) {
     backgroundColor: bgColor,
     fontColor: fontColor,
   }
-}
+})
 
 export const fetcher = (...args) => fetch(...args).then((res) => res.json())
 
-export const obfuscateString = (str) => {
+export const obfuscateString = cache((str) => {
   if (!str) return ''
   const parts = str.split(',')
   return parts.map((part) => '•'.repeat(Math.min(part.length, 10))).join(', ')
-}
+})
 
 /**
  * Convert date to Eastern Standard Time and format it.
  * @param {string} dateStr - The date string in ISO format.
  * @returns {string} The formatted date in EST.
  */
-export function formatDateToEST(dateStr) {
+export const formatDateToEST = cache((dateStr) => {
   const options = {
     timeZone: 'America/New_York',
     year: 'numeric',
@@ -145,14 +147,14 @@ export function formatDateToEST(dateStr) {
     .join('')
 
   return formattedDate
-}
+})
 
 /**
  * Determines the resolution label for the given dimensions.
  * @param {string} dims - The dimensions string in the format 'WIDTHxHEIGHT'.
  * @returns {string|object} The resolution label or an object with boolean flags.
  */
-export const getResolutionLabel = (dims) => {
+export const getResolutionLabel = cache((dims) => {
   if (!dims)
     return {
       dims: null,
@@ -179,4 +181,4 @@ export const getResolutionLabel = (dims) => {
     is720p: resolutions['720p'],
     is480p: resolutions['480p'],
   }
-}
+})

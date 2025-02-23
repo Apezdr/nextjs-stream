@@ -1,6 +1,6 @@
 import { classNames } from '../utils'
 
-export default function SkeletonCard({ className = '', heightClass = 'h-48' }) {
+export default function SkeletonCard({ className = '', heightClass = 'h-48', imageOnly = false }) {
   return (
     <div
       role="status"
@@ -26,11 +26,16 @@ export default function SkeletonCard({ className = '', heightClass = 'h-48' }) {
           <path d="M5 5V.13a2.96 2.96 0 0 0-1.293.749L.879 3.707A2.98 2.98 0 0 0 .13 5H5Z" />
         </svg>
       </div>
-      <div className="h-2.5 bg-gray-200 rounded-full dark:bg-gray-700 w-48 mb-4"></div>
-      <div className="h-2 bg-gray-200 rounded-full dark:bg-gray-700 mb-2.5"></div>
-      <div className="h-2 bg-gray-200 rounded-full dark:bg-gray-700 mb-2.5"></div>
-      <div className="h-2 bg-gray-200 rounded-full dark:bg-gray-700"></div>
-      <span className="sr-only">Loading...</span>
+      {imageOnly ? null : (
+        <>
+          <div className="h-2.5 bg-gray-200 rounded-full dark:bg-gray-700 w-48 mb-4"></div>
+          <div className="h-2 bg-gray-200 rounded-full dark:bg-gray-700 mb-2.5"></div>
+          <div className="h-2 bg-gray-200 rounded-full dark:bg-gray-700 mb-2.5"></div>
+          <div className="h-2 bg-gray-200 rounded-full dark:bg-gray-700"></div>
+          <span className="sr-only">Loading...</span>
+        </>
+      )}
+      
     </div>
   )
 }

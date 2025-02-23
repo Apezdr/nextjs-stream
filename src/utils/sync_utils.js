@@ -1,9 +1,12 @@
 import { isEqual } from 'lodash'
 import { updateMediaUpdates } from './admin_frontend_database'
 import { fetchMetadataMultiServer } from './admin_utils'
-import { getServer, isCurrentServerHigherPriority, multiServerHandler } from './config'
+import { getDefaultServer, getServer, isCurrentServerHigherPriority, multiServerHandler } from './config'
 import chalk from 'chalk'
 import { getCacheBatch } from '@src/lib/cache'
+import pLimit from 'p-limit'
+const CONCURRENCY_LIMIT = 200; // Adjust based on your system's capacity
+const limit = pLimit(CONCURRENCY_LIMIT);
 
 // Constants and Types
 export const MediaType = {
@@ -854,7 +857,7 @@ export async function gatherMovieMetadataForAllServers(movie, fileServers) {
   // (Same logic as used in TV code: pick the lowest priority, then newest last_updated.)
   const bestMetadata = determineBestMetadata(validMetadataArray);
 
-  if (bestMetadata.release_date && typeof bestMetadata.release_date === 'string') {
+  if (bestMetadata && bestMetadata.release_date && typeof bestMetadata.release_date === 'string') {
     bestMetadata.release_date = new Date(bestMetadata.release_date)
   }
 
@@ -1032,7 +1035,7 @@ function determineBestMetadata(metadataArray) {
       return current;
     }
     return best;
-  }, null)?.metadata || null;
+  }, null) || null;
 }
 
 /**
@@ -1113,12 +1116,12 @@ export async function gatherTvMetadataForAllServers(show, fileServers) {
   const validShowMetadata = fetchShowData
     .map((data, index) => {
       if (!data) return null;
-      return { metadata: data, priority: showMetadataEntries[index].serverConfig.priority };
+      return { metadata: data, ...showMetadataEntries[index].serverConfig };
     })
     .filter(Boolean);
 
   const bestShowMetadata = determineBestMetadata(validShowMetadata);
-  aggregatedData.showMetadata = bestShowMetadata;
+  aggregatedData.showMetadata = bestShowMetadata.metadata;
 
   // 2) Gather Season and Episode-Level Metadata Concurrently
   const seasonPromises = show.seasons.map(async (season) => {
@@ -1129,12 +1132,13 @@ export async function gatherTvMetadataForAllServers(show, fileServers) {
       const serverConfig = { id: serverId, ...fileServer.config };
       const fileServerShowData = fileServer.tv?.[show.title];
       if (!fileServerShowData) return null;
+      const fileServerShowMetadataURL = fileServerShowData.metadata;
+      if (!fileServerShowMetadataURL) return null;
 
-      const seasonKey = `Season ${seasonNumber}`;
-      const seasonData = fileServerShowData.seasons?.[seasonKey];
-      if (!seasonData?.metadata) return null;
+      //const seasonKey = `Season ${seasonNumber}`;
+      //const seasonData = fileServerShowData.seasons?.[seasonKey];
 
-      const metadataURL = seasonData.metadata;
+      const metadataURL = fileServerShowMetadataURL;
       const cacheKey = `${serverConfig.id}:file:${metadataURL}`;
       return { serverId, serverConfig, metadataURL, cacheKey };
     }).filter(Boolean);
@@ -1184,7 +1188,7 @@ export async function gatherTvMetadataForAllServers(show, fileServers) {
     const validSeasonMetadata = fetchSeasonData
       .map((data, index) => {
         if (!data) return null;
-        return { metadata: data, priority: seasonMetadataEntries[index].serverConfig.priority };
+        return { metadata: data, ...seasonMetadataEntries[index].serverConfig };
       })
       .filter(Boolean);
 
@@ -1263,7 +1267,7 @@ export async function gatherTvMetadataForAllServers(show, fileServers) {
       const validEpisodeMetadata = fetchEpisodeData
         .map((data, index) => {
           if (!data) return null;
-          return { metadata: data, priority: episodeMetadataEntries[index].serverConfig.priority };
+          return { metadata: data, ...episodeMetadataEntries[index].serverConfig };
         })
         .filter(Boolean);
 
@@ -1275,12 +1279,12 @@ export async function gatherTvMetadataForAllServers(show, fileServers) {
           episodes: {},
         };
 
-        if (bestSeasonMetadata) {
-          aggregatedData.seasons[seasonNumber].seasonMetadata = bestSeasonMetadata;
+        if (bestSeasonMetadata.metadata) {
+          aggregatedData.seasons[seasonNumber].seasonMetadata = { ...bestSeasonMetadata.metadata, metadataSource: bestSeasonMetadata.serverId };
         }
 
-        if (bestEpisodeMetadata) {
-          aggregatedData.seasons[seasonNumber].episodes[episodeNumber] = bestEpisodeMetadata;
+        if (bestEpisodeMetadata.metadata) {
+          aggregatedData.seasons[seasonNumber].episodes[episodeNumber] = { ...bestEpisodeMetadata.metadata, metadataSource: bestEpisodeMetadata.serverId };
         }
       }
     });
@@ -1352,20 +1356,22 @@ export async function finalizeTvMetadata(client, show, aggregatedData) {
     return
   }
 
+  const defaultServerFallback = getDefaultServer().id
+
   // --- 1) Finalize SHOW-LEVEL METADATA ---
   const existingMetadataLastUpdated = new Date(show.metadata?.last_updated || '1970-01-01')
   const newMetadataLastUpdated = new Date(aggregatedData.showMetadata.last_updated || '1970-01-01')
   
   const canUpdateShowLevel = isCurrentServerHigherPriority(
-    show.metadataSource, 
-    { id: aggregatedData.showMetadata.metadataSource || show.metadataSource }
+    show.metadataSource ?? defaultServerFallback, 
+    { id: aggregatedData.showMetadata.metadataSource ?? show.metadataSource ?? defaultServerFallback }
   )
 
   if (newMetadataLastUpdated > existingMetadataLastUpdated && canUpdateShowLevel) {
     // Also apply locked-field filtering if you use it
     const updateData = {
       metadata: aggregatedData.showMetadata,
-      metadataSource: aggregatedData.showMetadata.metadataSource
+      metadataSource: aggregatedData.showMetadata.metadataSource ?? show.metadataSource ?? defaultServerFallback
     }
     // Remove metadataSource from nested structure
     delete updateData.metadata.metadataSource
@@ -1395,14 +1401,14 @@ export async function finalizeTvMetadata(client, show, aggregatedData) {
       )
 
       const canUpdateSeason = isCurrentServerHigherPriority(
-        existingSeason.metadataSource,
-        { id: seasonAggData.seasonMetadata.metadataSource }
+        existingSeason.metadataSource ?? defaultServerFallback,
+        { id: seasonAggData.seasonMetadata.metadataSource ?? defaultServerFallback }
       ) || !existingSeason.metadataSource
 
       if (newSeasonLastUpdated > existingSeasonLastUpdated && canUpdateSeason) {
         const updateData = {
           [`seasons.$[elem].metadata`]: seasonAggData.seasonMetadata,
-          [`seasons.$[elem].metadataSource`]: seasonAggData.seasonMetadata.metadataSource
+          [`seasons.$[elem].metadataSource`]: seasonAggData.seasonMetadata.metadataSource ?? defaultServerFallback
         }
         delete updateData[`seasons.$[elem].metadata`].metadataSource
 
@@ -1444,8 +1450,8 @@ export async function finalizeTvMetadata(client, show, aggregatedData) {
       )
 
       const canUpdateEpisode = isCurrentServerHigherPriority(
-        dbEpisode.metadataSource,
-        { id: episodeMetadata.metadataSource }
+        dbEpisode.metadataSource ?? defaultServerFallback,
+        { id: episodeMetadata.metadataSource ?? defaultServerFallback }
       ) || !dbEpisode.metadataSource
 
       if (newEpisodeLastUpdated > existingEpisodeLastUpdated && canUpdateEpisode) {

@@ -32,26 +32,26 @@ const SYNC_PATHS = {
  * @param {string} serverBaseUrl - Base URL of the server
  * @returns {SyncPaths} Standardized sync paths
  */
-function createSyncUrls(serverBaseUrl) {
+const createSyncUrls = cache((serverBaseUrl) => {
   return {
     tv: `${serverBaseUrl}${SYNC_PATHS.TV}`,
     movies: `${serverBaseUrl}${SYNC_PATHS.MOVIES}`
   }
-}
+})
 
 /**
  * Creates a server configuration object
  * @param {Object} params - Server configuration parameters
  * @returns {FileServerConfig} Complete server configuration
  */
-function createServerConfig({ 
+const createServerConfig = cache(({ 
   id, 
   baseURL, 
   prefixPath = '', 
   syncEndpoint, 
   isDefault = false,
   priority = 1
-}) {
+}) => {
   return {
     id,
     baseURL,
@@ -63,13 +63,13 @@ function createServerConfig({
     isDefault,
     priority
   }
-}
+})
 
 /**
  * Loads server configurations from environment variables
  * @returns {FileServerConfig[]} Array of server configurations
  */
-function loadServerConfigurations() {
+const loadServerConfigurations = cache(() => {
   const servers = []
   
   // Always add the default server first
@@ -97,7 +97,7 @@ function loadServerConfigurations() {
   }
 
   return servers
-}
+})
 
 /**
  * Server manager class to handle multiple servers
@@ -175,6 +175,7 @@ class ServerManager {
 // Initialize server configurations
 const serverManager = new ServerManager(loadServerConfigurations())
 
+import { cache } from 'react'
 // Create URL handlers for all servers
 import { createURLHandler, createMultiServerURLHandler } from './url_utils'
 
@@ -192,7 +193,7 @@ export function isCurrentServerHigherPriority(existingSourceId, serverConfig) {
   const existingPriority = serverManager.getServerPriority(existingSourceId);
   const currentPriority = serverManager.getServerPriority(serverConfig.id);
 
-  return currentPriority < existingPriority;
+  return currentPriority < existingPriority || currentPriority === existingPriority;
 }
 
 // Create handlers for all servers

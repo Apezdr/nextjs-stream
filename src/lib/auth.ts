@@ -69,6 +69,17 @@ export const {
       }
       return session // Return the session if the user exists
     },
+    // Used primarily for allowing mobile application to redirect to the app after authentication
+    async redirect({ url, baseUrl }) {
+      // Default behavior for web
+      // Allows relative callback URLs
+      if (url.startsWith("/")) return `${baseUrl}${url}`
+      // Handle mobile apps
+      else if (url.startsWith("routertv://")) return url
+      // Allows callback URLs on the same origin
+      else if (new URL(url).origin === baseUrl) return url
+      return baseUrl
+    },
   },
   ...authConfig,
 })

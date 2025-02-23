@@ -1,6 +1,7 @@
 import { formatDateToEST, getFullImageUrl } from '@src/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { getServer } from './config'
+import { cache } from 'react'
 
 export const movieProjectionFields = {
   _id: 1,
@@ -73,7 +74,7 @@ export function getLatestEpisodeModifiedDate(tvShow) {
  * @param {Array} tvShowsWithUrl - Array of TV shows with URL
  * @returns {Array} - Combined and sorted media array
  */
-export function arrangeMediaByLatestModification(moviesWithUrl, tvShowsWithUrl) {
+export const arrangeMediaByLatestModification = cache((moviesWithUrl, tvShowsWithUrl) => {
   // Merge and sort
   const combinedMedia = [...moviesWithUrl, ...tvShowsWithUrl].sort((a, b) => {
     const aModified = getModifiedDate(a)
@@ -83,7 +84,7 @@ export function arrangeMediaByLatestModification(moviesWithUrl, tvShowsWithUrl) 
     return bModified - aModified
   })
   return combinedMedia
-}
+})
 
 /**
  * Extract detailed TV show information from the pre-fetched data.
@@ -408,7 +409,7 @@ export async function sanitizeCardData(item, popup = false) {
  * @param {string} title - The title of the media.
  * @returns {string|null} - The generated clip video URL or null if videoURL is missing.
  */
-export function generateClipVideoURL(item, type, title) {
+export const generateClipVideoURL = cache((item, type, title) => {
   if (!item?.videoURL) return null
 
     const maxDuration = 50 // 50 seconds
@@ -438,7 +439,7 @@ export function generateClipVideoURL(item, type, title) {
       item?.videoSource || item?.videoInfoSource || 'default'
     ).syncEndpoint
     return `${nodeJSURL}/videoClip/${type}/${title}${item?.metadata?.season_number ? `/${item?.metadata.season_number}${item?.episodeNumber ? `/${item?.episodeNumber}` : ''}` : ''}?start=${start}&end=${end}`
-}
+})
 
 /**
  * Sanitizes an array of media items.

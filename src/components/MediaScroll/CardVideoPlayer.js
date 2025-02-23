@@ -2,7 +2,7 @@
 import './media-player.css'
 import '@components/MediaPlayer/Layouts/menus.css'
 import { Controls, MediaPlayer, MediaProvider } from '@vidstack/react'
-import { memo, useRef, useState, useEffect, useCallback } from 'react'
+import { memo, useRef, useState, useEffect, useCallback, cache } from 'react'
 import * as Buttons from '@components/MediaPlayer/buttons'
 import { classNames } from '@src/utils'
 import { GesturesNoFullscreen } from '@components/MediaPlayer/Layouts/video-layout'
@@ -149,4 +149,4 @@ function CardVideoPlayer({
   )
 }
 
-export default memo(CardVideoPlayer)
+export default cache(CardVideoPlayer)

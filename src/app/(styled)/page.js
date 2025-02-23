@@ -1,12 +1,9 @@
 const dynamic = 'force-dynamic'
-import Image from 'next/image'
 import Link from 'next/link'
 import { auth } from '../../lib/auth'
 import SignOutButton from '@components/SignOutButton'
 import SignInButtons from '@components/SignInButtons'
 import ServerStatus from '@components/Login/Status'
-import { httpGet } from '@src/lib/httpHelper'
-import { getServer } from '@src/utils/config'
 import { getServerConfig } from '../api/getserverconfig/config'
 import { buildURL } from '@src/utils'
 

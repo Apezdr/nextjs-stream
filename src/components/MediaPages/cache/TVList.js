@@ -89,7 +89,8 @@ const getAndUpdateMongoDB = cache(async () => {
   const plainTVShows = await Promise.all(
     tvprograms.map(async (tv) => {
       if (tv.posterBlurhash) {
-        tv.posterBlurhash = await fetchMetadataMultiServer(tv.posterBlurhashSource, tv.posterBlurhash, 'blurhash', 'tv', tv.title)
+        // Attach the promise; once it resolves, you'll get the blurhash base64 string.
+        tv.posterBlurhashPromise  = fetchMetadataMultiServer(tv.posterBlurhashSource, tv.posterBlurhash, 'blurhash', 'tv', tv.title)
       }
       return {
         ...tv,

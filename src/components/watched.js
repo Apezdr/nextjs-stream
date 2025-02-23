@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { cache, useEffect, useState } from 'react'
 
 export function getWatchedTime(videoURL) {
   if (typeof window === 'undefined') return 0
@@ -55,7 +55,7 @@ export function TotalRuntime({ length, metadata, videoURL, classNames }) {
   return <span className={classNames}>{displayTime}</span>
 }
 
-export function totalRuntimeInPercentage(length, metadata, videoURL) {
+export const totalRuntimeInPercentage = cache((length, metadata, videoURL) => {
   if (!videoURL) {
     return 0
   }
@@ -76,4 +76,4 @@ export function totalRuntimeInPercentage(length, metadata, videoURL) {
   }
 
   return (watchedTimeInSeconds / totalRuntimeInSeconds) * 100
-}
+})

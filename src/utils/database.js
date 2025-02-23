@@ -176,8 +176,8 @@ function handleEpisode(tvShow, seasonObj, seasonNumber, episodeNumber) {
   )
   const episodeObj = seasonObj.episodes?.find((ep) => ep.episodeNumber === episodeNumber)
 
-  if (episodeObj && !episodeMetadata) return episodeObj
-  if (!episodeObj || !episodeMetadata) return null
+  //if (episodeObj && !episodeMetadata) return episodeObj
+  if (!episodeObj && !episodeMetadata) return null
 
   episodeObj.title = tvShow.title
   episodeObj.logo = tvShow.logo
@@ -189,6 +189,7 @@ function handleEpisode(tvShow, seasonObj, seasonNumber, episodeNumber) {
   episodeObj.episodeNumber = episodeNumber
 
   // For the info page
+  if (tvShow.thumbnail) episodeObj.thumbnail = tvShow.thumbnail
   if (tvShow.backdrop) episodeObj.backdrop = tvShow.backdrop
   if (tvShow.backdropSource) episodeObj.backdropSource = tvShow.backdropSource
   if (tvShow.backdropBlurhash) {

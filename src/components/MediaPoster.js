@@ -1,5 +1,5 @@
 'use client'
-import { memo, useEffect, useState } from 'react'
+import { cache, memo, use, useEffect, useState } from 'react'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '../utils'
 import HD4kBanner from '../../public/4kBanner.png'
 import hdr10PlusLogo from '../../public/HDR10+_Logo_light.svg'
@@ -41,7 +41,11 @@ function _mediaPoster({
         ? getFullImageUrl(_media.metadata.poster_path)
         : `/sorry-image-not-available.jpg`
 
-  const posterBlurhash = _media.posterBlurhash || _media.seasonPosterBlurhash || false
+  let posterBlurhash = _media.posterBlurhash || _media.seasonPosterBlurhash || false
+
+  if (_media?.posterBlurhashPromise) {
+    posterBlurhash = use(_media?.posterBlurhashPromise) ?? false
+  }
 
   // Determine the resolution of the media
   const { res_width, is4k, is1080p } = getResolutionLabel(_media?.dimensions ?? null)
@@ -151,4 +155,4 @@ function _mediaPoster({
   )
 }
 
-export default memo(_mediaPoster)
+export default cache(_mediaPoster)

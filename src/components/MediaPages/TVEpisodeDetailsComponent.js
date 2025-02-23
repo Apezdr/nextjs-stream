@@ -7,8 +7,22 @@ const TVEpisodeDetailsComponent = ({ media }) => {
     return <div className="text-center py-4">Loading...</div>
   }
 
-  const { title, backdrop, logo, metadata, hdr, episodeNumber, seasonNumber, cast, length } = media
-  const { air_date, genres, overview, runtime, tagline, trailer_url, name, guest_stars } = metadata
+  // If it's brand new or not updated from TMDB yet, it won't have metadata
+  let air_date, genres, overview, runtime, tagline, trailer_url, name, guest_stars
+  if (media.metadata) {
+    air_date = media.metadata.air_date
+    genres = media.metadata.genres
+    overview = media.metadata.overview
+    runtime = media.metadata.runtime
+    tagline = media.metadata.tagline
+    trailer_url = media.metadata.trailer_url
+    name = media.metadata.name
+    guest_stars = media.metadata.guest_stars
+  }
+  const { title, backdrop, logo, hdr, episodeNumber, seasonNumber, cast, length } = media
+
+  const thumbnail = media.thumbnail
+  const posterURL = media.posterURL
 
   const convertToLocaleTime = (minutes) => {
     const hours = Math.floor(minutes / 60);
@@ -25,7 +39,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
         <div>
           <div className="relative">
             <img
-              src={backdrop}
+              src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
               alt={`${title} backdrop`}
               className="w-full h-64 object-cover rounded-lg shadow-md"
             />
@@ -63,9 +77,11 @@ const TVEpisodeDetailsComponent = ({ media }) => {
               <strong>S{seasonNumber}E{episodeNumber}</strong>
             </div>
             <p className="text-gray-300 italic">{tagline}</p>
-            <p className="mt-2">
-              <strong>Air Date:</strong> {new Date(air_date).toLocaleDateString()}
-            </p>
+            {air_date ? (
+              <p className="mt-2">
+                <strong>Air Date:</strong> {new Date(air_date).toLocaleDateString()}
+              </p>
+            ):null}
             {genres ? (
               <p>
                 <strong>Genres:</strong> {genres.map((genre) => genre.name).join(', ')}
@@ -76,9 +92,11 @@ const TVEpisodeDetailsComponent = ({ media }) => {
                 <strong>Runtime:</strong> {calculatedRuntime}
               </p>
             ) : null}
-            <p className="mt-4">
-              <strong>Overview:</strong> {overview}
-            </p>
+            {overview ? (
+              <p className="mt-4">
+                <strong>Overview:</strong> {overview}
+              </p>
+            ) : null}
           </div>
           {/* <div className="mt-6">
                         <h2 className="text-2xl font-semibold">Cast</h2>
@@ -138,17 +156,17 @@ const TVEpisodeDetailsComponent = ({ media }) => {
           ) : null}
           </div>
         </div>
-        {(cast || guest_stars) ? (
+        {(cast && cast.length || guest_stars && guest_stars.length) ? (
             <hr className="my-8 border-gray-300" />
         ) : null}
         <div className='flex flex-col gap-8'>
-          {guest_stars ? (
+          {guest_stars && guest_stars.length > 0 ? (
             <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg"> {/* Ensure a fixed height for virtualization */}
                 <h4 className="text-2xl text-black font-semibold mb-4">Guest Stars</h4>
                 <VirtualizedCastGrid cast={guest_stars} />
             </div>
           ): null}
-          {cast ? (
+          {cast && cast.length > 0 ? (
             <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg"> {/* Ensure a fixed height for virtualization */}
                 <h4 className="text-2xl text-black font-semibold mb-4">Cast</h4>
                 <VirtualizedCastGrid cast={cast} />
