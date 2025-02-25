@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { adminUserEmails } from '@src/utils/config'
 import SettingsList from '@components/Admin/Settings/SettingsList'
-import { getServerSettings } from '@src/utils/sync_db'
+import { getServerSettings } from '@src/utils/sync/database'
 import DockerHubLastUpdated from '@components/Admin/DockerHubLastUpdated'
 //import { updateAutomaticSync, updateSyncAggressiveness } from '@src/utils/actions/admin_settings'
 export const revalidate = 0 // Ensure fresh data on each request

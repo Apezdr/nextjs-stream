@@ -24,7 +24,11 @@
 
 [data-media-player][data-view-type=video][data-started]:not([data-controls]) {
     pointer-events: auto;
-    cursor: none
+    /* cursor: none */
+}
+
+[data-media-player][data-view-type=video][data-started]:not([data-controls]) {
+    cursor: default !important;
 }
 
 [data-media-player] slot {

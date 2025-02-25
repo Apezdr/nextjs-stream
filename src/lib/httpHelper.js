@@ -94,7 +94,9 @@ export async function httpGet(url, options = {}) {
       if (statusCode === 304) {
         // 2) Handle 304 Not Modified by returning cached data
         if (cachedEntry) {
-          return { data: cachedEntry.data, headers: responseHeaders };
+          //cachedEntry.data is the data that was stored in the
+          //cache when the data was last fetched
+          return { data: null, headers: responseHeaders };
         }
         // else {
         //   // No cached data exists; handle accordingly

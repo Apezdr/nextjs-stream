@@ -18,7 +18,7 @@ import { httpGet } from '@src/lib/httpHelper'
 import { getCache, setCache } from '@src/lib/cache'
 
 // Define concurrency limit
-const CONCURRENCY_LIMIT = 200; // Adjust based on your system's capacity
+const CONCURRENCY_LIMIT = 900; // Adjust based on your system's capacity
 const limit = pLimit(CONCURRENCY_LIMIT);
 
 export function processMediaData(jsonResponseString) {
@@ -126,7 +126,7 @@ function getYearFromDate(dateString) {
 /**
  * Retry function with exponential backoff
  */
-async function fetchWithRetry(fetchFunction, retries = 3, delay = 1000) {
+async function fetchWithRetry(fetchFunction, retries = 3, delay = 200) {
   for (let attempt = 1; attempt <= retries; attempt++) {
     try {
       return await fetchFunction();
@@ -169,7 +169,7 @@ export async function fetchMetadataMultiServer(
     const cachedEntry = await getCache(cacheKey);
 
     if (cachedEntry) {
-      if (cachedEntry.etag) {
+      if (cachedEntry?.etag) {
         headers['If-None-Match'] = cachedEntry.etag;
       }
       if (cachedEntry.lastModified) {
@@ -198,6 +198,10 @@ export async function fetchMetadataMultiServer(
         responseType: type === 'blurhash' ? 'text' : 'json',
       });
 
+      if (headers['If-None-Match'] === responseHeaders?.etag && data !== null) {
+        console.warn('Potential Configuration issue on file host: ETag did not change but full data was returned.')
+      }
+
       if (data === null && cachedEntry) {
         // Not Modified; return cached data
         return cachedEntry.data;
@@ -213,7 +217,7 @@ export async function fetchMetadataMultiServer(
       await setCache(
         cacheKey,
         processedData, // Pass only the actual metadata here
-        responseHeaders.etag || cachedEntry?.etag,
+        responseHeaders?.etag ?? cachedEntry?.etag ?? null, // Use the new ETag if available
         responseHeaders['last-modified'] || cachedEntry?.lastModified,
         3600 // TTL of 1 hour
       );      

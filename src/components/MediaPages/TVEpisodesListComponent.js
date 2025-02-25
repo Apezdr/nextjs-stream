@@ -122,7 +122,7 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
             {/* Episodes List */}
             {await Promise.all(
               season.episodes.map(async (episode, episodeIndex) => {
-                const episodeMetadata = season.metadata?.episodes.find(
+                const episodeMetadata = season.metadata?.episodes?.find(
                   (ep) => ep.episode_number === episode.episodeNumber
                 )
 
