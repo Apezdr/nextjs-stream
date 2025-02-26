@@ -17,6 +17,7 @@ export function gatherMovieVideoInfoForAllServers(movie, fileServers, fieldAvail
     length: null,
     hdr: null,
     size: null,
+    mediaQuality: null,
     videoInfoSource: null,
   }
 
@@ -26,12 +27,33 @@ export function gatherMovieVideoInfoForAllServers(movie, fileServers, fieldAvail
       ...fileServer.config,
     }
 
+    const fileServerData = fileServer.movies?.[movie.title]
+    if (!fileServerData?.fileNames) continue
+
+    const mp4File = fileServerData.fileNames.find((n) => n.endsWith('.mp4'))
+    if (!mp4File) continue
+
     // Check if this server could be highest priority for any field
-    const fields = ['dimensions', 'length', 'hdr', 'size']
+    const fields = [
+      `dimensions.${mp4File}`,
+      `length.${mp4File}`,
+      'hdr',
+      'additional_metadata.size',
+      'mediaQuality.format',
+      'mediaQuality.bitDepth',
+      'mediaQuality.colorSpace',
+      'mediaQuality.transferCharacteristics',
+      'mediaQuality.isHDR',
+      'mediaQuality.viewingExperience.enhancedColor',
+      'mediaQuality.viewingExperience.highDynamicRange',
+      'mediaQuality.viewingExperience.dolbyVision',
+      'mediaQuality.viewingExperience.hdr10Plus',
+      'mediaQuality.viewingExperience.standardHDR'
+    ]
     const hasHighestPriorityForAnyField = fields.some(field => 
       isCurrentServerHighestPriorityForField(
         fieldAvailability,
-        MediaType.MOVIE,
+        MediaType.MOVIES,
         movie.title,
         field,
         serverConfig
@@ -42,32 +64,29 @@ export function gatherMovieVideoInfoForAllServers(movie, fileServers, fieldAvail
       continue // Skip this server if it's not highest priority for any field
     }
 
-    const fileServerData = fileServer.movies?.[movie.title]
-    if (!fileServerData?.fileNames) continue
-
-    const mp4File = fileServerData.fileNames.find((n) => n.endsWith('.mp4'))
-    if (!mp4File) continue
-
     const newDimensions = fileServerData.dimensions?.[mp4File]
     const newLength = fileServerData.length?.[mp4File]
     const newHdr = fileServerData.hdr
     const newSize = fileServerData?.additional_metadata?.size
+    const newMediaQuality = fileServerData.mediaQuality
 
     // Check each field's priority independently
     const fieldsToCheck = {
-      dimensions: { value: newDimensions, path: 'dimensions' },
-      length: { value: newLength, path: 'length' },
+      dimensions: { value: newDimensions, path: `dimensions.${mp4File}` },
+      length: { value: newLength, path: `length.${mp4File}` },
       hdr: { value: newHdr, path: 'hdr' },
-      size: { value: newSize, path: 'size' }
+      size: { value: newSize, path: 'additional_metadata.size' }
     }
 
     let updated = false
+    
+    // Process standard fields
     for (const [field, { value, path }] of Object.entries(fieldsToCheck)) {
       if (!value) continue
 
       const isHighestPriority = isCurrentServerHighestPriorityForField(
         fieldAvailability,
-        MediaType.MOVIE,
+        MediaType.MOVIES,
         movie.title,
         path,
         serverConfig
@@ -76,6 +95,46 @@ export function gatherMovieVideoInfoForAllServers(movie, fileServers, fieldAvail
       if (isHighestPriority && !isEqual(aggregated[field], value)) {
         aggregated[field] = value
         updated = true
+      }
+    }
+    
+    // Process mediaQuality fields separately to handle nested properties
+    if (newMediaQuality) {
+      // Check if any mediaQuality field has highest priority
+      const mediaQualityFields = [
+        'mediaQuality.format',
+        'mediaQuality.bitDepth',
+        'mediaQuality.colorSpace',
+        'mediaQuality.transferCharacteristics',
+        'mediaQuality.isHDR',
+        'mediaQuality.viewingExperience.enhancedColor',
+        'mediaQuality.viewingExperience.highDynamicRange',
+        'mediaQuality.viewingExperience.dolbyVision',
+        'mediaQuality.viewingExperience.hdr10Plus',
+        'mediaQuality.viewingExperience.standardHDR'
+      ];
+      
+      let hasAnyMediaQualityPriority = false;
+      
+      for (const fieldPath of mediaQualityFields) {
+        const isHighestPriority = isCurrentServerHighestPriorityForField(
+          fieldAvailability,
+          MediaType.MOVIES,
+          movie.title,
+          fieldPath,
+          serverConfig
+        );
+        
+        if (isHighestPriority) {
+          hasAnyMediaQualityPriority = true;
+          break;
+        }
+      }
+      
+      // If this server has priority for any mediaQuality field, use its entire mediaQuality object
+      if (hasAnyMediaQualityPriority && !isEqual(aggregated.mediaQuality, newMediaQuality)) {
+        aggregated.mediaQuality = newMediaQuality;
+        updated = true;
       }
     }
 
@@ -120,6 +179,11 @@ export async function finalizeMovieVideoInfo(client, movie, aggregated) {
     changed = true
   }
   
+  if (aggregated.mediaQuality && !isEqual(movie.mediaQuality ?? {}, aggregated.mediaQuality)) {
+    updates.mediaQuality = aggregated.mediaQuality || null
+    changed = true
+  }
+  
   if (aggregated.videoInfoSource && !isEqual(movie.videoInfoSource, aggregated.videoInfoSource)) {
     updates.videoInfoSource = aggregated.videoInfoSource || null
     changed = true
@@ -131,7 +195,7 @@ export async function finalizeMovieVideoInfo(client, movie, aggregated) {
       client,
       MediaType.MOVIE,
       movie.title,
-      { set: updates }
+      { $set: updates }
     )
   }
 }
@@ -178,7 +242,17 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
         `seasons.Season ${season.seasonNumber}.dimensions.${episodeFileName}`,
         `seasons.Season ${season.seasonNumber}.lengths.${episodeFileName}`,
         `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.hdr`,
-        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.additionalMetadata.size`
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.additionalMetadata.size`,
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.format`,
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.bitDepth`,
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.colorSpace`,
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.transferCharacteristics`,
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.isHDR`,
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.enhancedColor`,
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.highDynamicRange`,
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.dolbyVision`,
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.hdr10Plus`,
+        `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.standardHDR`
       ]
       const hasHighestPriorityForAnyField = fields.some(field => 
         isCurrentServerHighestPriorityForField(
@@ -202,6 +276,7 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
         null
       const hdr = fileData.hdr || null
       const size = additionalMetadata.size || null
+      const mediaQuality = fileData.mediaQuality || null
 
       // Make sure we have an object for this episode
       if (!aggregated[episodeNumber]) {
@@ -210,6 +285,7 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
           duration: null,
           hdr: null,
           size: null,
+          mediaQuality: null,
           videoInfoSource: null,
         }
       }
@@ -221,10 +297,12 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
         dimensions: { value: dimensions, path: `seasons.Season ${season.seasonNumber}.dimensions.${episodeFileName}` },
         duration: { value: length, path: `seasons.Season ${season.seasonNumber}.lengths.${episodeFileName}` },
         hdr: { value: hdr, path: `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.hdr` },
-        size: { value: size, path: `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.additional_metadata.size` }
+        size: { value: size, path: `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.additionalMetadata.size` }
       }
 
       let updated = false
+      
+      // Process standard fields
       for (const [field, { value, path }] of Object.entries(fieldsToCheck)) {
         if (!value) continue
 
@@ -246,6 +324,46 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
             }
             updated = true
           }
+        }
+      }
+      
+      // Process mediaQuality fields separately to handle nested properties
+      if (mediaQuality) {
+        // Check if any mediaQuality field has highest priority
+        const mediaQualityFields = [
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.format`,
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.bitDepth`,
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.colorSpace`,
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.transferCharacteristics`,
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.isHDR`,
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.enhancedColor`,
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.highDynamicRange`,
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.dolbyVision`,
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.hdr10Plus`,
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.standardHDR`
+        ];
+        
+        let hasAnyMediaQualityPriority = false;
+        
+        for (const fieldPath of mediaQualityFields) {
+          const isHighestPriority = isCurrentServerHighestPriorityForField(
+            fieldAvailability,
+            MediaType.TV,
+            show.title,
+            fieldPath,
+            serverConfig
+          );
+          
+          if (isHighestPriority) {
+            hasAnyMediaQualityPriority = true;
+            break;
+          }
+        }
+        
+        // If this server has priority for any mediaQuality field, use its entire mediaQuality object
+        if (hasAnyMediaQualityPriority && !isEqual(epData.mediaQuality, mediaQuality)) {
+          epData.mediaQuality = mediaQuality;
+          updated = true;
         }
       }
 
@@ -291,6 +409,11 @@ export async function finalizeSeasonVideoInfo(client, show, season, aggregatedSe
     }
     if (episode.size !== bestData.size) {
       changes.size = bestData.size || null
+      changed = true
+    }
+    
+    if (!isEqual(episode.mediaQuality, bestData.mediaQuality)) {
+      changes.mediaQuality = bestData.mediaQuality || null
       changed = true
     }
 

@@ -31,7 +31,7 @@ function processCaptionURLs(subtitlesData, serverConfig) {
  * @param {Array} entries - Subtitle entries
  * @returns {Array} Sorted entries
  */
-function sortSubtitleEntries(entries) {
+export function sortSubtitleEntries(entries) {
   return entries.sort(([langNameA], [langNameB]) => {
     if (langNameA.toLowerCase().includes('english')) return -1
     if (langNameB.toLowerCase().includes('english')) return 1

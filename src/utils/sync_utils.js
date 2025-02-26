@@ -2,8 +2,10 @@ import { isEqual } from 'lodash'
 import { updateMediaUpdates } from './admin_frontend_database'
 import { fetchMetadataMultiServer } from './admin_utils'
 import pLimit from 'p-limit'
-import { createFullUrl, extractEpisodeDetails, isCurrentServerHighestPriorityForField, matchEpisodeFileName, MediaType } from './sync/utils'
-import { extractSeasonInfo, processMovieData } from './sync/fileServer'
+import { createFullUrl, extractEpisodeDetails, findEpisodeFileName, isCurrentServerHighestPriorityForField, isSourceMatchingServer, matchEpisodeFileName, MediaType, processCaptionURLs } from './sync/utils'
+import { extractSeasonInfo, processMovieData, processShowData } from './sync/fileServer'
+import { updateEpisodeInDatabase, updateMediaInDatabase } from './sync/database'
+import { sortSubtitleEntries } from './sync/captions'
 const CONCURRENCY_LIMIT = 200; // Adjust based on your system's capacity
 const limit = pLimit(CONCURRENCY_LIMIT);
 
@@ -28,6 +30,7 @@ export async function addOrUpdateSeason(
     if (!currentSeason) {
       currentSeason = { seasonNumber: number, episodes: [] }
       currentShow.seasons.push(currentSeason)
+      currentShow.seasons.sort((a, b) => a.seasonNumber - b.seasonNumber)
     }
 
     // Initialize or retrieve season metadata
@@ -905,9 +908,9 @@ export async function processEpisodeVideoInfo(
   }
 
   const dimensions = fileServerSeasonData?.dimensions[episodeFileName] || null
+  const additionalMetadata = fileData.additionalMetadata || {}
   const length =
     fileServerSeasonData?.lengths[episodeFileName] || additionalMetadata?.duration || null
-  const additionalMetadata = fileData.additionalMetadata || {}
   const hdr = fileData.hdr || null
 
   const fieldsToCheck = {

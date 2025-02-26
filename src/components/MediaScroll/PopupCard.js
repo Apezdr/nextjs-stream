@@ -348,7 +348,7 @@ const PopupCard = ({
                     clipRule="evenodd"
                   />
                 </svg>
-                <span>Watch Now {hdr ? `in HDR10+` : null}</span>
+                <span>Watch Now {hdr ? `in ${hdr}+` : null}</span>
               </Link>
               <Link
                 href={`/list/${type}/${link}`}

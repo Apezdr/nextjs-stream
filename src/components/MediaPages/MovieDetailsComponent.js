@@ -7,7 +7,7 @@ const MovieDetailsComponent = ({ media }) => {
     return <div className="text-center py-4">Loading...</div>
   }
 
-  const { title, backdrop, posterURL, logo, metadata, hdr, length } = media
+  const { title, backdrop, posterURL, logo, metadata, hdr, length,  } = media
   const { release_date, genres, cast, overview, runtime, tagline, trailer_url } = metadata
   const collectionData = metadata?.belongs_to_collection
 
@@ -114,7 +114,7 @@ const MovieDetailsComponent = ({ media }) => {
                 clipRule="evenodd"
               />
             </svg>
-            <span>Watch Now {hdr ? `in HDR10+` : null}</span>
+            <span>Watch Now {hdr ? `in ${hdr}` : null}</span>
           </Link>
           {trailer_url ? (
           <Link

@@ -1,8 +1,10 @@
 import { getServer, multiServerHandler } from '@src/utils/config'
+import { sortSubtitleEntries } from './captions'
 
 export const MediaType = {
   TV: 'tv',
   MOVIE: 'movie',
+  MOVIES: 'movies',
 }
 
 // File Pattern Constants

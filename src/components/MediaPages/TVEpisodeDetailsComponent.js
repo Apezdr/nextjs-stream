@@ -130,7 +130,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
                 clipRule="evenodd"
               />
             </svg>
-            <span>Watch Now {hdr ? `in HDR10+` : null}</span>
+            <span>Watch Now {hdr ? `in ${hdr}` : null}</span>
           </Link>
           {trailer_url ? (
           <Link

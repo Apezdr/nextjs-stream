@@ -1,4 +1,5 @@
-import { matchEpisodeFileName, extractEpisodeDetails } from './utils'
+import { fetchMetadataMultiServer } from '../admin_utils'
+import { matchEpisodeFileName, extractEpisodeDetails, createFullUrl, processCaptionURLs } from './utils'
 
 /**
  * Identifies missing media and MP4 files between the file server and current database.

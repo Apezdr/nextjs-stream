@@ -146,9 +146,9 @@ export async function finalizeMovieMetadata(client, movie, bestMetadata, fieldAv
   // Check if current server has highest priority for metadata
   const isHighestPriorityForMetadata = isCurrentServerHighestPriorityForField(
     fieldAvailability,
-    MediaType.MOVIE,
+    MediaType.MOVIES,
     movie.title,
-    'metadata',
+    'urls.metadata',
     { id: bestMetadata.metadataSource }
   )
 
@@ -510,18 +510,10 @@ export async function finalizeTvMetadata(client, show, aggregatedData, fieldAvai
         seasonAggData.seasonMetadata.last_updated || '1970-01-01'
       )
 
-      const isHighestPriorityForSeason = isCurrentServerHighestPriorityForField(
-        fieldAvailability,
-        MediaType.TV,
-        show.title,
-        `seasons.Season ${seasonNumber}.metadata`,
-        { id: seasonAggData.metadataSource }
-      )
-
       // Force update if metadata or source is missing
-      const shouldForceUpdate = (!existingSeason.metadata || !existingSeason.metadataSource) && isHighestPriorityForSeason
+      const shouldForceUpdate = !existingSeason.metadata || !existingSeason.metadataSource
 
-      if (shouldForceUpdate || (newSeasonLastUpdated > existingSeasonLastUpdated && isHighestPriorityForSeason)) {
+      if (shouldForceUpdate || (newSeasonLastUpdated > existingSeasonLastUpdated)) {
         const updateData = {
           [`seasons.$[elem].metadata`]: seasonAggData.seasonMetadata,
           [`seasons.$[elem].metadataSource`]: seasonAggData.seasonMetadata.metadataSource
@@ -572,7 +564,7 @@ export async function finalizeTvMetadata(client, show, aggregatedData, fieldAvai
         fieldAvailability,
         MediaType.TV,
         show.title,
-        `seasons.Season ${seasonNumber}.episodes.S${seasonNumber.padStart(2, '0')}${`${dbEpisode.episodeNumber}`.padStart(2, '0')}.metadata`,
+        `seasons.Season ${seasonNumber}.episodes.S${seasonNumber.padStart(2, '0')}E${`${dbEpisode.episodeNumber}`.padStart(2, '0')}.metadata`,
         { id: episodeMetadata.metadataSource }
       )
 
