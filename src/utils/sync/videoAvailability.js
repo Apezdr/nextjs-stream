@@ -199,7 +199,12 @@ export async function checkVideoAvailabilityAcrossServers(currentDB, fileServers
     return recordsToRemove
   } catch (error) {
     console.error(`Error during video availability check:`, error)
-    throw error
+    // Instead of throwing the error, add it to the results and return
+    recordsToRemove.error = {
+      message: error.message,
+      stack: error.stack
+    }
+    return recordsToRemove
   }
 }
 
@@ -507,6 +512,11 @@ export async function removeUnavailableVideos(recordsToRemove) {
     return results
   } catch (error) {
     console.error(`Error during removal of unavailable videos:`, error)
-    throw error
+    // Instead of throwing the error, add it to the results and return
+    results.errors.general = {
+      message: error.message,
+      stack: error.stack
+    }
+    return results
   }
 }

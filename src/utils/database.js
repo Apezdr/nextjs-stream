@@ -134,7 +134,7 @@ async function getTvShowData(client, collection, title, season, episode, id) {
         if (seasonObj.metadata.episodes) {
           // Iterate over each episode in the season
           for (const episode of seasonObj.metadata.episodes) {
-            if (episode.guest_stars && Array.isArray(episode.guest_stars)) {
+            if (episode?.guest_stars && Array.isArray(episode?.guest_stars)) {
               // Iterate over each guest star in the episode
               for (const castMember of episode.guest_stars) {
                 // Add the guest star to the Map if not already present
@@ -216,7 +216,7 @@ function handleEpisode(tvShow, seasonObj, seasonNumber, episodeNumber) {
     //     t.id === item.id
     //   ))
     // )
-    const guestStars = episodeObj.metadata.guest_stars || [];
+    const guestStars = episodeObj.metadata?.guest_stars || [];
     const mainCast = tvShow.metadata.cast || [];
 
     // Create a map of guest stars for quick lookup

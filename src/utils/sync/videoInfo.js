@@ -12,14 +12,17 @@ import { isEqual } from 'lodash'
  * @returns {Object} Aggregated video info
  */
 export function gatherMovieVideoInfoForAllServers(movie, fileServers, fieldAvailability) {
-  const aggregated = {
-    dimensions: null,
-    length: null,
-    hdr: null,
-    size: null,
-    mediaQuality: null,
-    videoInfoSource: null,
+  // Track both values and their sources with priorities
+  const aggregatedWithSources = {
+    dimensions: { value: null, priority: Infinity, source: null },
+    length: { value: null, priority: Infinity, source: null },
+    hdr: { value: null, priority: Infinity, source: null },
+    size: { value: null, priority: Infinity, source: null },
+    mediaQuality: { value: null, priority: Infinity, source: null },
   }
+  
+  // Track if any field was updated
+  let videoInfoSource = null;
 
   for (const [serverId, fileServer] of Object.entries(fileServers)) {
     const serverConfig = {
@@ -82,7 +85,8 @@ export function gatherMovieVideoInfoForAllServers(movie, fileServers, fieldAvail
     
     // Process standard fields
     for (const [field, { value, path }] of Object.entries(fieldsToCheck)) {
-      if (!value) continue
+      // Skip null/undefined values
+      if (value === null || value === undefined) continue
 
       const isHighestPriority = isCurrentServerHighestPriorityForField(
         fieldAvailability,
@@ -92,8 +96,14 @@ export function gatherMovieVideoInfoForAllServers(movie, fileServers, fieldAvail
         serverConfig
       )
 
-      if (isHighestPriority && !isEqual(aggregated[field], value)) {
-        aggregated[field] = value
+      // Only update if this server has highest priority AND
+      // either we don't have a value yet OR this server has higher priority
+      if (isHighestPriority && serverConfig.priority < aggregatedWithSources[field].priority) {
+        aggregatedWithSources[field] = {
+          value: value,
+          priority: serverConfig.priority,
+          source: serverConfig.id
+        }
         updated = true
       }
     }
@@ -131,20 +141,34 @@ export function gatherMovieVideoInfoForAllServers(movie, fileServers, fieldAvail
         }
       }
       
-      // If this server has priority for any mediaQuality field, use its entire mediaQuality object
-      if (hasAnyMediaQualityPriority && !isEqual(aggregated.mediaQuality, newMediaQuality)) {
-        aggregated.mediaQuality = newMediaQuality;
+      // If this server has priority for any mediaQuality field and has higher priority
+      // than the current source, use its entire mediaQuality object
+      if (hasAnyMediaQualityPriority && 
+          serverConfig.priority < aggregatedWithSources.mediaQuality.priority) {
+        aggregatedWithSources.mediaQuality = {
+          value: newMediaQuality,
+          priority: serverConfig.priority,
+          source: serverConfig.id
+        };
         updated = true;
       }
     }
 
     // Update source if any field was updated
     if (updated) {
-      aggregated.videoInfoSource = serverConfig.id
+      videoInfoSource = serverConfig.id;
     }
   }
 
-  return aggregated
+  // Convert back to the expected format before returning
+  return {
+    dimensions: aggregatedWithSources.dimensions.value,
+    length: aggregatedWithSources.length.value,
+    hdr: aggregatedWithSources.hdr.value,
+    size: aggregatedWithSources.size.value,
+    mediaQuality: aggregatedWithSources.mediaQuality.value,
+    videoInfoSource: videoInfoSource,
+  }
 }
 
 /**
@@ -209,6 +233,7 @@ export async function finalizeMovieVideoInfo(client, movie, aggregated) {
  * @returns {Object} Aggregated video info
  */
 export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fieldAvailability) {
+  // Initialize an empty object to store aggregated data for each episode
   const aggregated = {}
 
   // For each server
@@ -278,19 +303,21 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
       const size = additionalMetadata.size || null
       const mediaQuality = fileData.mediaQuality || null
 
-      // Make sure we have an object for this episode
+      // Initialize episode data with source tracking if it doesn't exist
       if (!aggregated[episodeNumber]) {
         aggregated[episodeNumber] = {
-          dimensions: null,
-          duration: null,
-          hdr: null,
-          size: null,
-          mediaQuality: null,
+          // Track both values and their sources with priorities
+          dimensions: { value: null, priority: Infinity, source: null },
+          duration: { value: null, priority: Infinity, source: null },
+          hdr: { value: null, priority: Infinity, source: null },
+          size: { value: null, priority: Infinity, source: null },
+          mediaQuality: { value: null, priority: Infinity, source: null },
           videoInfoSource: null,
         }
       }
 
       const epData = aggregated[episodeNumber]
+      let updated = false
 
       // Check each field's priority independently
       const fieldsToCheck = {
@@ -299,12 +326,11 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
         hdr: { value: hdr, path: `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.hdr` },
         size: { value: size, path: `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.additionalMetadata.size` }
       }
-
-      let updated = false
       
       // Process standard fields
       for (const [field, { value, path }] of Object.entries(fieldsToCheck)) {
-        if (!value) continue
+        // Skip null/undefined values
+        if (value === null || value === undefined) continue
 
         const isHighestPriority = isCurrentServerHighestPriorityForField(
           fieldAvailability,
@@ -314,16 +340,15 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
           serverConfig
         )
 
-        if (isHighestPriority) {
-          const currentValue = field === 'duration' ? epData.duration : epData[field]
-          if (!isEqual(currentValue, value)) {
-            if (field === 'duration') {
-              epData.duration = value
-            } else {
-              epData[field] = value
-            }
-            updated = true
+        // Only update if this server has highest priority AND
+        // either we don't have a value yet OR this server has higher priority
+        if (isHighestPriority && serverConfig.priority < epData[field].priority) {
+          epData[field] = {
+            value: value,
+            priority: serverConfig.priority,
+            source: serverConfig.id
           }
+          updated = true
         }
       }
       
@@ -360,9 +385,15 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
           }
         }
         
-        // If this server has priority for any mediaQuality field, use its entire mediaQuality object
-        if (hasAnyMediaQualityPriority && !isEqual(epData.mediaQuality, mediaQuality)) {
-          epData.mediaQuality = mediaQuality;
+        // If this server has priority for any mediaQuality field and has higher priority
+        // than the current source, use its entire mediaQuality object
+        if (hasAnyMediaQualityPriority && 
+            serverConfig.priority < epData.mediaQuality.priority) {
+          epData.mediaQuality = {
+            value: mediaQuality,
+            priority: serverConfig.priority,
+            source: serverConfig.id
+          };
           updated = true;
         }
       }
@@ -374,7 +405,21 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
     }
   }
 
-  return aggregated
+  // Convert back to the expected format before returning
+  const result = {};
+  
+  for (const [episodeNumber, epData] of Object.entries(aggregated)) {
+    result[episodeNumber] = {
+      dimensions: epData.dimensions.value,
+      duration: epData.duration.value,
+      hdr: epData.hdr.value,
+      size: epData.size.value,
+      mediaQuality: epData.mediaQuality.value,
+      videoInfoSource: epData.videoInfoSource,
+    };
+  }
+
+  return result;
 }
 
 /**
@@ -394,28 +439,28 @@ export async function finalizeSeasonVideoInfo(client, show, season, aggregatedSe
     const changes = {}
     let changed = false
 
-    if (!isEqual(episode.dimensions, bestData.dimensions)) {
-      changes.dimensions = bestData.dimensions || null
-      changed = true
-    }
-    if (episode.duration !== bestData.duration || episode.length !== bestData.duration) {
-      changes.duration = bestData.duration || null
-      changes.length = bestData.duration || null
-      changed = true
-    }
-    if (episode.hdr !== bestData.hdr) {
-      changes.hdr = bestData.hdr || null
-      changed = true
-    }
-    if (episode.size !== bestData.size) {
-      changes.size = bestData.size || null
-      changed = true
-    }
-    
-    if (!isEqual(episode.mediaQuality, bestData.mediaQuality)) {
-      changes.mediaQuality = bestData.mediaQuality || null
-      changed = true
-    }
+  if (bestData.dimensions && !isEqual(episode.dimensions, bestData.dimensions)) {
+    changes.dimensions = bestData.dimensions || null
+    changed = true
+  }
+  if (bestData.duration && (episode.duration !== bestData.duration || episode.length !== bestData.duration)) {
+    changes.duration = bestData.duration || null
+    changes.length = bestData.duration || null
+    changed = true
+  }
+  if (bestData.hdr !== undefined && episode.hdr !== bestData.hdr) {
+    changes.hdr = bestData.hdr || null
+    changed = true
+  }
+  if (bestData.size !== undefined && episode.size !== bestData.size) {
+    changes.size = bestData.size || null
+    changed = true
+  }
+  
+  if (bestData.mediaQuality && !isEqual(episode.mediaQuality, bestData.mediaQuality)) {
+    changes.mediaQuality = bestData.mediaQuality || null
+    changed = true
+  }
 
     if (changed) {
       // Update videoInfoSource if it has changed
@@ -513,6 +558,11 @@ export async function syncVideoInfo(currentDB, fileServer, serverConfig, fieldAv
     return results
   } catch (error) {
     console.error(`Error during video information sync for server ${serverConfig.id}:`, error)
-    throw error
+    // Instead of throwing the error, add it to the results and return
+    results.errors.general = {
+      message: error.message,
+      stack: error.stack
+    }
+    return results
   }
 }

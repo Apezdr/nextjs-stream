@@ -202,6 +202,11 @@ export async function syncLogos(currentDB, fileServer, serverConfig, fieldAvaila
     return results
   } catch (error) {
     console.error(`Error during logo sync for server ${serverConfig.id}:`, error)
-    throw error
+    // Instead of throwing the error, add it to the results and return
+    results.errors.general = {
+      message: error.message,
+      stack: error.stack
+    }
+    return results
   }
 }

@@ -168,17 +168,36 @@ export async function syncAllServers(currentDB, fileServers, fieldAvailability) 
       results.missingMp4[serverId] = missingMp4
 
       // Perform sync operations with server-specific configuration
-      await syncMissingMedia(missingMedia, fileServer, serverConfig, contentAddedToDB)
-      await syncMetadata(currentDB, fileServer, serverConfig, fieldAvailability)
-      await syncCaptions(currentDB, fileServer, serverConfig, fieldAvailability)
-      await syncChapters(currentDB, fileServer, serverConfig, fieldAvailability)
-      await syncVideoURL(currentDB, fileServer, serverConfig, fieldAvailability)
-      await syncLogos(currentDB, fileServer, serverConfig, fieldAvailability)
-      await syncVideoInfo(currentDB, fileServer, serverConfig, fieldAvailability)
-      await syncTVThumbnails(currentDB, fileServer, serverConfig, fieldAvailability)
-      await syncPosterURLs(currentDB, fileServer, serverConfig, fieldAvailability)
-      await syncBackdrop(currentDB, fileServer, serverConfig, fieldAvailability)
-      await syncBlurhash(currentDB, fileServer, serverConfig, fieldAvailability)
+      // Use a wrapper function to catch errors for each sync operation
+      const syncOperations = [
+        { name: 'Missing Media', fn: () => syncMissingMedia(missingMedia, fileServer, serverConfig, contentAddedToDB) },
+        { name: 'Metadata', fn: () => syncMetadata(currentDB, fileServer, serverConfig, fieldAvailability) },
+        { name: 'Captions', fn: () => syncCaptions(currentDB, fileServer, serverConfig, fieldAvailability) },
+        { name: 'Chapters', fn: () => syncChapters(currentDB, fileServer, serverConfig, fieldAvailability) },
+        { name: 'Video URLs', fn: () => syncVideoURL(currentDB, fileServer, serverConfig, fieldAvailability) },
+        { name: 'Logos', fn: () => syncLogos(currentDB, fileServer, serverConfig, fieldAvailability) },
+        { name: 'Video Info', fn: () => syncVideoInfo(currentDB, fileServer, serverConfig, fieldAvailability) },
+        { name: 'TV Thumbnails', fn: () => syncTVThumbnails(currentDB, fileServer, serverConfig, fieldAvailability) },
+        { name: 'Poster URLs', fn: () => syncPosterURLs(currentDB, fileServer, serverConfig, fieldAvailability) },
+        { name: 'Backdrop', fn: () => syncBackdrop(currentDB, fileServer, serverConfig, fieldAvailability) },
+        { name: 'Blurhash', fn: () => syncBlurhash(currentDB, fileServer, serverConfig, fieldAvailability) }
+      ];
+
+      // Execute each sync operation and catch any errors
+      for (const operation of syncOperations) {
+        try {
+          await operation.fn();
+        } catch (error) {
+          console.error(`Error in ${operation.name} sync for server ${serverId}:`, error);
+          results.errors.push({
+            serverId,
+            error: error.message,
+            phase: operation.name,
+            stack: error.stack
+          });
+          // Continue with the next operation despite the error
+        }
+      }
     } catch (error) {
       console.error(`Error processing server ${serverId}:`, error)
       results.errors.push({

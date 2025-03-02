@@ -10,12 +10,17 @@
         - Two-phase sync process (gather/finalize)
         - Concurrent data collection
         - Granular sync operations for:
-            - Movies (metadata, captions, video info)
+            - Movies (metadata, captions, video info, mediaQuality)
             - TV Shows (show/season/episode data)
             - Media assets (posters, backdrops, thumbnails)
         - Error handling and progress tracking
         - Webhook support
         - Subscriber pattern for concurrent syncs
+        - Robust priority enforcement to prevent lower priority servers from overwriting data
+        - Improved null/undefined value handling to maintain data integrity
+        - Selective update pattern for captions and posters to prevent update loops between servers
+        - Preservation of data from multiple servers during sync operations
+        - Source-aware updates that respect data ownership across servers
 
 - **What's left to build:**
     - Implement additional media streaming functionality.
@@ -29,8 +34,15 @@
         - Additional webhook integrations
         - Performance optimizations for large datasets
         - Expanded field-level availability tracking
+        - Additional mediaQuality fields and format detection
+        - Comprehensive testing of priority-based field selection
+        - Apply selective update pattern to other sync modules (backdrops, thumbnails, etc.)
+        - Add more granular logging to track which specific data is being updated and from which servers
+        - Implement source tracking for all media assets to improve ownership management
 
 - **Progress status:** 
     - Core application structure complete
-    - Multi-server sync system operational
+    - Multi-server sync system operational with improved data integrity
+    - Priority-based field selection enhanced to prevent data corruption
+    - Selective update pattern implemented for captions and posters to prevent update loops
     - Additional features and optimizations pending

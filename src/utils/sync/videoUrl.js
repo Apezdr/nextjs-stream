@@ -1,5 +1,6 @@
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName } from './utils'
 import { updateMediaInDatabase, updateEpisodeInDatabase } from './database'
+import { updateMediaUpdates } from '@src/utils/admin_frontend_database'
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
 import { isEqual } from 'lodash'
@@ -276,6 +277,11 @@ export async function syncVideoURL(currentDB, fileServer, serverConfig, fieldAva
     return results
   } catch (error) {
     console.error(`Error during video URL sync for server ${serverConfig.id}:`, error)
-    throw error
+    // Instead of throwing the error, add it to the results and return
+    results.errors.general = {
+      message: error.message,
+      stack: error.stack
+    }
+    return results
   }
 }

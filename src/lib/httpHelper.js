@@ -34,10 +34,11 @@ const calculateBackoff = (retry, baseDelay = 1000, maxDelay = 10000) => {
  * @param {number} [options.retry.baseDelay=1000] - Base delay for exponential backoff in milliseconds
  * @param {number} [options.retry.maxDelay=10000] - Maximum delay between retries in milliseconds
  * @param {function} [options.retry.shouldRetry] - Custom function to determine if a request should be retried
+ * @param {boolean} [returnCacheDataIfAvailable=false] - Return cached data if available
  * @returns {Promise<{ data: Object|string|Buffer|ReadableStream|null, headers: Object }>}
  * @throws {Error} - Throws an error if all retry attempts fail
  */
-export async function httpGet(url, options = {}) {
+export async function httpGet(url, options = {}, returnCacheDataIfAvailable = false) {
   const {
     headers = {},
     timeout = 5000,
@@ -96,7 +97,11 @@ export async function httpGet(url, options = {}) {
         if (cachedEntry) {
           //cachedEntry.data is the data that was stored in the
           //cache when the data was last fetched
-          return { data: null, headers: responseHeaders };
+          if (returnCacheDataIfAvailable) {
+            return { data: cachedEntry.data, headers: responseHeaders };
+          } else {
+            return { data: null, headers: responseHeaders };
+          }
         }
         // else {
         //   // No cached data exists; handle accordingly

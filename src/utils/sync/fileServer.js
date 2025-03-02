@@ -277,6 +277,12 @@ export function extractSeasonInfo(seasonInfo, showTitle, fileServer, serverConfi
     }
   } catch (error) {
     console.error('Error Processing', showTitle, seasonInfo, error)
-    throw error
+    // Instead of throwing the error, return an error object
+    return {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    }
   }
 }

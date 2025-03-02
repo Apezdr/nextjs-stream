@@ -71,9 +71,19 @@ export const GET = async (req) => {
       })
     }
 
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log('Fetching subtitles with the following parameters:', {
+        subtitleUrl,
+        language,
+        type,
+        season,
+        episode,
+      })
+    }
+    
     const { data } = await httpGet(subtitleUrl, {
       responseType: 'text',
-    })
+    }, true)
 
     const fileExtension = subtitleUrl.split('.').pop()
     const headers = {
@@ -88,6 +98,7 @@ export const GET = async (req) => {
       return new Response(data, { status: 200, headers: headers })
     }
   } catch (error) {
+    console.error('Failed to fetch subtitles:', error)
     return new Response(JSON.stringify({ error: 'Failed to fetch subtitles' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

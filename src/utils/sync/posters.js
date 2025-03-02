@@ -37,23 +37,24 @@ export async function processShowPosterURL(
 
   const newPosterURL = createFullUrl(fileServerData.poster, serverConfig)
 
-  if (isEqual(show.posterURL, newPosterURL) && isSourceMatchingServer(show, 'posterSource', serverConfig))
-    return null
+  // Only update if the poster URL has changed
+  if (show.posterURL === newPosterURL) return null
 
+  // Create update data with the new poster URL and source
   const updateData = {
-    poster: newPosterURL,
+    posterURL: newPosterURL,
     posterSource: serverConfig.id,
   }
 
   // Filter out any locked fields
   const filteredUpdateData = filterLockedFields(show, updateData)
 
-  if (!filteredUpdateData.poster) {
+  if (!filteredUpdateData.posterURL) {
     console.log(`Field "poster" is locked for show "${showTitle}". Skipping poster URL update.`)
     return null
   }
 
-  console.log(`TV: Updating poster URL for "${showTitle}" from server ${serverConfig.id}`)
+  console.log(`TV: Updating poster URL for "${showTitle}" from server ${serverConfig.id} (selective update)`)
   return filteredUpdateData
 }
 
@@ -89,9 +90,10 @@ export async function processMoviePosterURL(
 
   const newPosterURL = createFullUrl(fileServerData.urls.posterURL, serverConfig)
 
-  if (isEqual(movie.posterURL, newPosterURL) && isSourceMatchingServer(movie, 'posterSource', serverConfig))
-    return null
+  // Only update if the poster URL has changed
+  if (movie.posterURL === newPosterURL) return null
 
+  // Create update data with the new poster URL and source
   const updateData = {
     posterURL: newPosterURL,
     posterSource: serverConfig.id,
@@ -105,7 +107,7 @@ export async function processMoviePosterURL(
     return null
   }
 
-  console.log(`Movie: Updating poster URL for "${movieTitle}" from server ${serverConfig.id}`)
+  console.log(`Movie: Updating poster URL for "${movieTitle}" from server ${serverConfig.id} (selective update)`)
   return filteredUpdateData
 }
 
@@ -156,29 +158,33 @@ export async function processSeasonPosters(
         serverConfig
       )
 
-      if (!isHighestPriority) return
+      if (!isHighestPriority) {
+        updatedSeasons.push(season)
+        return
+      }
 
       // **1. Handling Setting/Updating season_poster**
       if (fileServerSeasonData.season_poster) {
         const newPosterURL = createFullUrl(fileServerSeasonData.season_poster, serverConfig)
-        const differentURL = !isEqual(season.season_poster, newPosterURL)
-
-        if (differentURL) {
+        
+        // Only update if the poster URL has changed
+        if (season.season_poster !== newPosterURL) {
           updatedSeason.season_poster = newPosterURL
           updatedSeason.posterSource = serverConfig.id
           seasonUpdated = true
           console.log(
-            `Updating season_poster for "${showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id}`
+            `Updating season_poster for "${showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id} (selective update)`
           )
         }
       }
       // **2. Handling Removal of season_poster**
-      else if (season.season_poster && isSourceMatchingServer(season, 'posterSource', serverConfig)) {
+      // Only remove if this server is the source of the current poster
+      else if (season.season_poster && season.posterSource === serverConfig.id) {
         delete updatedSeason.season_poster
         delete updatedSeason.posterSource
         seasonUpdated = true
         console.log(
-          `Removing season_poster for "${showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id}`
+          `Removing season_poster for "${showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id} (selective update)`
         )
       }
 
@@ -198,7 +204,8 @@ export async function processSeasonPosters(
 
         if (
           !filteredUpdateData.season_poster &&
-          (season.season_poster || season.posterSource)
+          (season.season_poster || season.posterSource) &&
+          season.posterSource === serverConfig.id
         ) {
           unsetFields['seasons.$[elem].season_poster'] = ''
           unsetFields['seasons.$[elem].posterSource'] = ''
@@ -321,7 +328,7 @@ export async function syncPosterURLs(currentDB, fileServer, serverConfig, fieldA
           const fileServerMovieData = fileServer?.movies[movie.title]
           if (!fileServerMovieData) return
 
-          const posterUpdates = processMoviePosterURL(movie, fileServerMovieData, serverConfig, fieldAvailability)
+          const posterUpdates = await processMoviePosterURL(movie, fileServerMovieData, serverConfig, fieldAvailability)
           if (posterUpdates) {
             const preparedUpdateData = {
               $set: posterUpdates,
@@ -352,6 +359,11 @@ export async function syncPosterURLs(currentDB, fileServer, serverConfig, fieldA
     return results
   } catch (error) {
     console.error(`Error during poster URL sync for server ${serverConfig.id}:`, error)
-    throw error
+    // Instead of throwing the error, add it to the results and return
+    results.errors.general = {
+      message: error.message,
+      stack: error.stack
+    }
+    return results
   }
 }

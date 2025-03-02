@@ -1,4 +1,5 @@
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from './utils'
+import { isEqual } from 'lodash'
 import { updateMediaInDatabase } from './database'
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
@@ -150,11 +151,17 @@ export async function syncBackdrop(currentDB, fileServer, serverConfig, fieldAva
           fieldAvailability
         )
         if (backdropUpdates) {
+          const updateDoc = {
+            $set: {
+              backdrop: backdropUpdates.backdrop,
+              backdropUpdates: backdropUpdates.backdropSource,
+            },
+          }
           await updateMediaInDatabase(
             client,
             MediaType.TV,
             show.title,
-            backdropUpdates,
+            updateDoc,
             serverConfig.id
           )
           results.processed.tv.push({
@@ -186,11 +193,17 @@ export async function syncBackdrop(currentDB, fileServer, serverConfig, fieldAva
             fieldAvailability
           )
           if (backdropUpdates) {
+            const updateDoc = {
+              $set: {
+                backdrop: backdropUpdates.backdrop,
+                backdropUpdates: backdropUpdates.backdropSource,
+              },
+            }
             await updateMediaInDatabase(
               client,
               MediaType.MOVIE,
               movie.title,
-              backdropUpdates,
+              updateDoc,
               serverConfig.id
             )
             results.processed.movies.push({
@@ -213,6 +226,11 @@ export async function syncBackdrop(currentDB, fileServer, serverConfig, fieldAva
     return results
   } catch (error) {
     console.error(`Error during backdrop sync for server ${serverConfig.id}:`, error)
-    throw error
+    // Instead of throwing the error, add it to the results and return
+    results.errors.general = {
+      message: error.message,
+      stack: error.stack
+    }
+    return results
   }
 }

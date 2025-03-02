@@ -18,6 +18,12 @@
         - Two-phase sync process:
             1. Gathering Phase: Collect data from all servers concurrently
             2. Finalization Phase: Compare and merge data based on priority
+        - Selective update pattern:
+            - Start with existing data from database instead of empty objects
+            - Only update fields that are from the current server or are new
+            - Preserve data from other servers that aren't being updated
+            - Only mark as changed if there are actual differences
+            - Prevents update loops between servers
         - Subscriber pattern for sync operations to handle concurrent sync requests
         - Webhook support for external sync triggers
         - Granular sync operations:

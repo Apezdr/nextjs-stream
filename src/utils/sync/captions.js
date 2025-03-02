@@ -1,4 +1,4 @@
-import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from './utils'
+import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName } from './utils'
 import { updateMediaInDatabase, updateEpisodeInDatabase } from './database'
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
@@ -43,9 +43,10 @@ export function sortSubtitleEntries(entries) {
  * Gathers captions for a movie from all servers.
  * @param {Object} movie - Movie object
  * @param {Object} fileServers - File servers data
+ * @param {Object} fieldAvailability - Field availability map
  * @returns {Object} Aggregated captions
  */
-export function gatherMovieCaptionsForAllServers(movie, fileServers) {
+export function gatherMovieCaptionsForAllServers(movie, fileServers, fieldAvailability) {
   const aggregated = {}
 
   // Iterate all servers
@@ -62,14 +63,27 @@ export function gatherMovieCaptionsForAllServers(movie, fileServers) {
 
     // Merge these into `aggregated`, respecting priority
     for (const [lang, subObj] of Object.entries(serverCaptions)) {
+      // Check if this server has highest priority for this caption language
+      const isHighestPriority = isCurrentServerHighestPriorityForField(
+        fieldAvailability,
+        MediaType.MOVIES,
+        movie.title,
+        `urls.subtitles.${lang}.url`,
+        serverConfig
+      );
+
       const existing = aggregated[lang]
       if (!existing) {
-        aggregated[lang] = {
-          ...subObj,
-          priority: serverConfig.priority,
+        // Only add if this server has highest priority for this field
+        if (isHighestPriority) {
+          aggregated[lang] = {
+            ...subObj,
+            priority: serverConfig.priority,
+          }
         }
       } else {
-        if (serverConfig.priority < existing.priority) {
+        // Only update if this server has highest priority and better priority value
+        if (isHighestPriority && serverConfig.priority < existing.priority) {
           aggregated[lang] = {
             ...subObj,
             priority: serverConfig.priority,
@@ -90,27 +104,41 @@ export function gatherMovieCaptionsForAllServers(movie, fileServers) {
  * @returns {Promise<boolean>} True if updated
  */
 export async function finalizeMovieCaptions(client, movie, aggregated) {
-  const finalCaptionURLs = {}
+  // Start with current captions
+  const finalCaptionURLs = { ...(movie.captionURLs || {}) }
+  let changed = false
+  
+  // Only update captions from the current server's aggregated data
   for (const [lang, captionObj] of Object.entries(aggregated)) {
-    finalCaptionURLs[lang] = {
-      srcLang: captionObj.srcLang,
-      url: captionObj.url,
-      lastModified: captionObj.lastModified,
-      sourceServerId: captionObj.sourceServerId,
+    const currentCaption = finalCaptionURLs[lang]
+    
+    // Only update if the caption doesn't exist or has changed
+    if (!currentCaption || 
+        currentCaption.url !== captionObj.url || 
+        currentCaption.lastModified !== captionObj.lastModified) {
+      
+      finalCaptionURLs[lang] = {
+        srcLang: captionObj.srcLang,
+        url: captionObj.url,
+        lastModified: captionObj.lastModified,
+        sourceServerId: captionObj.sourceServerId,
+      }
+      changed = true
     }
   }
 
-  const currentCaptions = movie.captionURLs || {}
+  if (!changed) return false
 
-  if (isEqual(currentCaptions, finalCaptionURLs)) return false
-
-  let newCaptionSource = null
+  // Determine caption source from the first language (if available)
+  let newCaptionSource = movie.captionSource
   const langKeys = Object.keys(finalCaptionURLs)
   if (langKeys.length > 0) {
     newCaptionSource = finalCaptionURLs[langKeys[0]].sourceServerId
+  } else {
+    newCaptionSource = null
   }
 
-  console.log(`Movie: Updating captions for "${movie.title}" (orphan removal, new data, etc.)`)
+  console.log(`Movie: Updating captions for "${movie.title}" (selective update)`)
 
   const updateDoc = {
     $set: {
@@ -135,9 +163,10 @@ export async function finalizeMovieCaptions(client, movie, aggregated) {
  * @param {Object} show - Show object
  * @param {Object} season - Season object
  * @param {Object} fileServers - File servers data
+ * @param {Object} fieldAvailability - Field availability map
  * @returns {Object} Aggregated captions
  */
-export function gatherSeasonCaptionsForAllServers(show, season, fileServers) {
+export function gatherSeasonCaptionsForAllServers(show, season, fileServers, fieldAvailability) {
   const aggregatedData = {}
 
   for (const [serverId, fileServer] of Object.entries(fileServers)) {
@@ -173,14 +202,27 @@ export function gatherSeasonCaptionsForAllServers(show, season, fileServers) {
       }
 
       for (const [lang, subObj] of Object.entries(captionsOnFileServer)) {
+        // Check if this server has highest priority for this caption language
+        const isHighestPriority = isCurrentServerHighestPriorityForField(
+          fieldAvailability,
+          MediaType.TV,
+          show.title,
+          `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.subtitles.${lang}.url`,
+          serverConfig
+        );
+
         const existing = aggregatedData[episodeNumber][lang]
         if (!existing) {
-          aggregatedData[episodeNumber][lang] = {
-            ...subObj,
-            priority: serverConfig.priority
+          // Only add if this server has highest priority for this field
+          if (isHighestPriority) {
+            aggregatedData[episodeNumber][lang] = {
+              ...subObj,
+              priority: serverConfig.priority
+            }
           }
         } else {
-          if (serverConfig.priority < existing.priority) {
+          // Only update if this server has highest priority and better priority value
+          if (isHighestPriority && serverConfig.priority < existing.priority) {
             aggregatedData[episodeNumber][lang] = {
               ...subObj,
               priority: serverConfig.priority
@@ -206,41 +248,53 @@ export async function finalizeSeasonCaptions(client, show, season, aggregatedDat
   for (const episode of season.episodes) {
     const episodeNumber = episode.episodeNumber
     const aggregatedForEpisode = aggregatedData[episodeNumber] || {}
-
-    const finalCaptionURLs = {}
+    
+    // Start with current captions
+    const finalCaptionURLs = { ...(episode.captionURLs || {}) }
+    let changed = false
+    
+    // Only update captions from the current server's aggregated data
     for (const [lang, capObj] of Object.entries(aggregatedForEpisode)) {
-      finalCaptionURLs[lang] = {
-        srcLang: capObj.srcLang,
-        url: capObj.url,
-        lastModified: capObj.lastModified,
-        sourceServerId: capObj.sourceServerId,
+      const currentCaption = finalCaptionURLs[lang]
+      
+      // Only update if the caption doesn't exist or has changed
+      if (!currentCaption || 
+          currentCaption.url !== capObj.url || 
+          currentCaption.lastModified !== capObj.lastModified) {
+        
+        finalCaptionURLs[lang] = {
+          srcLang: capObj.srcLang,
+          url: capObj.url,
+          lastModified: capObj.lastModified,
+          sourceServerId: capObj.sourceServerId,
+        }
+        changed = true
       }
     }
 
-    const currentCaptions = episode.captionURLs || {}
+    if (!changed) continue
 
-    if (!isEqual(currentCaptions, finalCaptionURLs)) {
-      let newCaptionSource = episode.captionSource
-      if (Object.keys(finalCaptionURLs).length > 0) {
-        const firstLang = Object.keys(finalCaptionURLs)[0]
-        newCaptionSource = finalCaptionURLs[firstLang].sourceServerId
-      } else {
-        newCaptionSource = null
-      }
-
-      const updates = {
-        captionURLs: finalCaptionURLs,
-        captionSource: newCaptionSource
-      }
-
-      await updateEpisodeInDatabase(client, show.title, season.seasonNumber, episodeNumber, {
-        set: updates
-      })
-
-      console.log(
-        `[${show.title}] Season ${season.seasonNumber}, Episode ${episodeNumber} - Updated captions.`
-      )
+    // Determine caption source
+    let newCaptionSource = episode.captionSource
+    if (Object.keys(finalCaptionURLs).length > 0) {
+      const firstLang = Object.keys(finalCaptionURLs)[0]
+      newCaptionSource = finalCaptionURLs[firstLang].sourceServerId
+    } else {
+      newCaptionSource = null
     }
+
+    const updates = {
+      captionURLs: finalCaptionURLs,
+      captionSource: newCaptionSource
+    }
+
+    await updateEpisodeInDatabase(client, show.title, season.seasonNumber, episodeNumber, {
+      set: updates
+    })
+
+    console.log(
+      `[${show.title}] Season ${season.seasonNumber}, Episode ${episodeNumber} - Updated captions (selective update).`
+    )
   }
 }
 
@@ -269,7 +323,7 @@ export async function syncCaptions(currentDB, fileServer, serverConfig, fieldAva
           const fileServerMovieData = fileServer?.movies[movie.title]
           if (!fileServerMovieData) return
 
-          const aggregatedCaptions = gatherMovieCaptionsForAllServers(movie, { [serverConfig.id]: fileServer })
+          const aggregatedCaptions = gatherMovieCaptionsForAllServers(movie, { [serverConfig.id]: fileServer }, fieldAvailability)
           await finalizeMovieCaptions(client, movie, aggregatedCaptions)
 
           results.processed.movies.push({
@@ -294,7 +348,7 @@ export async function syncCaptions(currentDB, fileServer, serverConfig, fieldAva
       try {
         // Process seasons concurrently
         for (const season of show.seasons) {
-          const aggregatedCaptions = gatherSeasonCaptionsForAllServers(show, season, { [serverConfig.id]: fileServer })
+          const aggregatedCaptions = gatherSeasonCaptionsForAllServers(show, season, { [serverConfig.id]: fileServer }, fieldAvailability)
           await finalizeSeasonCaptions(client, show, season, aggregatedCaptions)
         }
 
@@ -316,6 +370,11 @@ export async function syncCaptions(currentDB, fileServer, serverConfig, fieldAva
     return results
   } catch (error) {
     console.error(`Error during caption sync for server ${serverConfig.id}:`, error)
-    throw error
+    // Instead of throwing the error, add it to the results and return
+    results.errors.general = {
+      message: error.message,
+      stack: error.stack
+    }
+    return results
   }
 }

@@ -85,7 +85,13 @@ export async function updateEpisodeInDatabase(
       `Error updating show "${showTitle}" Season ${seasonNumber} Episode ${episodeNumber}:`,
       error
     )
-    throw error
+    // Return error object instead of throwing
+    return {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    }
   }
 }
 
@@ -101,40 +107,63 @@ export async function updateEpisodeInDatabase(
 export async function updateMediaInDatabase(client, mediaType, title, updates, serverId) {
   const collectionName = mediaType === MediaType.TV ? 'TV' : 'Movies'
 
-  // Validate that 'updates' contains valid MongoDB update operators
-  const allowedOperators = [
-    '$set',
-    '$unset',
-    '$inc',
-    '$push',
-    '$pull',
-    '$addToSet',
-    '$rename',
-    '$currentDate',
-  ]
-  const updateKeys = Object.keys(updates)
+  try {
+    // Validate that 'updates' contains valid MongoDB update operators
+    const allowedOperators = [
+      '$set',
+      '$unset',
+      '$inc',
+      '$push',
+      '$pull',
+      '$addToSet',
+      '$rename',
+      '$currentDate',
+    ]
+    const updateKeys = Object.keys(updates)
 
-  const hasValidOperator = updateKeys.some((key) => allowedOperators.includes(key))
-  if (!hasValidOperator) {
-    throw new Error(`Invalid update operators provided: ${updateKeys.join(', ')}`)
+    const hasValidOperator = updateKeys.some((key) => allowedOperators.includes(key))
+    if (!hasValidOperator) {
+      throw new Error(`Invalid update operators provided: ${updateKeys.join(', ')}`)
+    }
+
+    const result = await client
+      .db('Media')
+      .collection(collectionName)
+      .updateOne({ title: title }, updates, { upsert: true })
+
+    if (result.matchedCount === 0) {
+      console.warn(`No matching document found for ${mediaType}: "${title}".`)
+    }
+
+    await updateMediaUpdates(title, mediaType)
+    return result
+  } catch (error) {
+    console.error(`Error updating ${mediaType} "${title}":`, error)
+    // Return error object instead of throwing
+    return {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    }
   }
-
-  const result = await client
-    .db('Media')
-    .collection(collectionName)
-    .updateOne({ title }, updates, { upsert: true })
-
-  if (result.matchedCount === 0) {
-    console.warn(`No matching document found for ${mediaType}: "${title}".`)
-  }
-
-  await updateMediaUpdates(title, mediaType)
 }
 
 export async function updateLastSynced(client) {
-  const result = await client
-    .db('app_config')
-    .collection('syncInfo')
-    .updateOne({ _id: 'lastSyncTime' }, { $set: { timestamp: new Date() } }, { upsert: true })
-  return result
+  try {
+    const result = await client
+      .db('app_config')
+      .collection('syncInfo')
+      .updateOne({ _id: 'lastSyncTime' }, { $set: { timestamp: new Date() } }, { upsert: true })
+    return result
+  } catch (error) {
+    console.error('Error updating last synced timestamp:', error)
+    // Return error object instead of throwing
+    return {
+      error: {
+        message: error.message,
+        stack: error.stack
+      }
+    }
+  }
 }

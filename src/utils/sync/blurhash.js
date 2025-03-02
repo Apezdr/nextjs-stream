@@ -1,4 +1,5 @@
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from './utils'
+import { isEqual } from 'lodash'
 import { updateMediaInDatabase } from './database'
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
@@ -399,6 +400,11 @@ export async function syncBlurhash(currentDB, fileServer, serverConfig, fieldAva
     return results
   } catch (error) {
     console.error(`Error during blurhash sync for server ${serverConfig.id}:`, error)
-    throw error
+    // Instead of throwing the error, add it to the results and return
+    results.errors.general = {
+      message: error.message,
+      stack: error.stack
+    }
+    return results
   }
 }

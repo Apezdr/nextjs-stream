@@ -1,4 +1,4 @@
-import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from './utils'
+import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName } from './utils'
 import { updateMediaInDatabase, updateEpisodeInDatabase } from './database'
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
@@ -296,6 +296,11 @@ export async function syncChapters(currentDB, fileServer, serverConfig, fieldAva
     return results
   } catch (error) {
     console.error(`Error during chapter sync for server ${serverConfig.id}:`, error)
-    throw error
+    // Instead of throwing the error, add it to the results and return
+    results.errors.general = {
+      message: error.message,
+      stack: error.stack
+    }
+    return results
   }
 }
