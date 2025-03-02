@@ -42,4 +42,4 @@ next-env.d.ts
 /analyze
 
 # AI
-/cline_docs/
+cline_docs*/
