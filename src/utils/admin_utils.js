@@ -17,9 +17,16 @@ import pLimit from 'p-limit'
 import { httpGet } from '@src/lib/httpHelper'
 import { getCache, setCache } from '@src/lib/cache'
 
-// Define concurrency limit
-const CONCURRENCY_LIMIT = 900; // Adjust based on your system's capacity
+// Define concurrency limit - reduced to prevent resource exhaustion
+const CONCURRENCY_LIMIT = 120; // Reduced from 900 to prevent resource exhaustion
 const limit = pLimit(CONCURRENCY_LIMIT);
+
+// Cache TTLs for different types of data (in seconds)
+const CACHE_TTL = {
+  blurhash: 86400 * 7, // 7 days for blurhash data (rarely changes)
+  file: 3600,          // 1 hour for regular files
+  default: 3600        // Default 1 hour
+};
 
 export function processMediaData(jsonResponseString) {
   const { movies, tv } = jsonResponseString
@@ -161,82 +168,131 @@ export async function fetchMetadataMultiServer(
   headers = {},
   cacheKey = `${serverId}:${type}:${metadataUrl}`
 ) {
+  // Early return if no metadata URL is provided
   if (!metadataUrl) {
     return {};
   }
 
-  try {
-    const cachedEntry = await getCache(cacheKey);
-
-    if (cachedEntry) {
-      if (cachedEntry?.etag) {
-        headers['If-None-Match'] = cachedEntry.etag;
+    // First, try to get from cache to avoid unnecessary processing
+    try {
+      const cachedEntry = await getCache(cacheKey);
+      if (cachedEntry && cachedEntry.data) {
+        // For blurhash data, we can use the cached version but still allow for periodic refresh
+        // We'll check the cache age and only refresh if it's older than a certain threshold
+        if (type === 'blurhash') {
+          // Check if the cache entry has a timestamp
+          const cacheAge = cachedEntry.timestamp 
+            ? (Date.now() - new Date(cachedEntry.timestamp).getTime()) / 1000 
+            : Infinity;
+            
+          // If the cache is less than 1 day old for blurhash, use it directly
+          // This provides a balance between performance and freshness
+          if (cacheAge < 86400) {
+            return cachedEntry.data;
+          }
+          // Otherwise, continue with the fetch but use cached data as fallback
+        }
+        
+        // Set conditional headers if available
+        if (cachedEntry?.etag) {
+          headers['If-None-Match'] = cachedEntry.etag;
+        }
+        if (cachedEntry.lastModified) {
+          headers['If-Modified-Since'] = cachedEntry.lastModified;
+        }
       }
-      if (cachedEntry.lastModified) {
-        headers['If-Modified-Since'] = cachedEntry.lastModified;
-      }
-    }
 
     // Get the URL handler for this server
     const handler = multiServerHandler.getHandler(serverId);
+    if (!handler) {
+      throw new Error(`No handler found for server ID: ${serverId}`);
+    }
     
     // Strip any existing paths and create the full URL
     const strippedPath = handler.stripPrefixPath(metadataUrl);
     const normalizedUrl = handler.createFullURL(strippedPath);
 
-    // If it's incorrectly normalized we can tell by two http in the URL ex. http://test.com/media/http://
+    // Validate URL format
     const matches = normalizedUrl.match(/https?:\/\//g);
     if (matches && matches.length > 1) {
-      throw new Error('URL is incorrectly normalized; likely caused by incorrect server source in sync.', normalizedUrl);
+      throw new Error(`URL is incorrectly normalized: ${normalizedUrl}`);
     }
 
-    // Define the fetch function using the httpGet helper
+    // Define the fetch function with a timeout
     const fetchFunction = async () => {
-      const { data, headers: responseHeaders } = await httpGet(normalizedUrl, {
-        headers,
-        timeout: 5000, // Customize as needed
-        responseType: type === 'blurhash' ? 'text' : 'json',
-      });
+      try {
+        // Create a promise that rejects after the timeout
+        const timeoutPromise = new Promise((_, reject) => {
+          const timeoutMs = type === 'blurhash' ? 3000 : 5000; // Shorter timeout for blurhash
+          setTimeout(() => reject(new Error(`Fetch timeout after ${timeoutMs}ms`)), timeoutMs);
+        });
+        
+        // Race the fetch against the timeout
+        const fetchPromise = httpGet(normalizedUrl, {
+          headers,
+          timeout: type === 'blurhash' ? 3000 : 5000, // Shorter timeout for blurhash
+          responseType: type === 'blurhash' ? 'text' : 'json',
+        });
+        
+        const { data, headers: responseHeaders } = await Promise.race([fetchPromise, timeoutPromise]);
 
-      if (headers['If-None-Match'] === responseHeaders?.etag && data !== null) {
-        console.warn('Potential Configuration issue on file host: ETag did not change but full data was returned.')
+        // Handle 304 Not Modified
+        if (data === null && cachedEntry) {
+          return cachedEntry.data;
+        }
+
+        // Process the data based on type
+        const processedData = type === 'blurhash' ? (data ? data.trim() : null) : data;
+        
+        if (!processedData) {
+          throw new Error('Empty or null response data');
+        }
+
+        // Use different TTLs based on the type of data
+        const ttl = CACHE_TTL[type] || CACHE_TTL.default;
+        
+        // Update the cache with the new data
+        await setCache(
+          cacheKey,
+          processedData,
+          responseHeaders?.etag ?? cachedEntry?.etag ?? null,
+          responseHeaders['last-modified'] || cachedEntry?.lastModified,
+          ttl
+        );      
+
+        return processedData;
+      } catch (fetchError) {
+        // If we have cached data, return it as a fallback
+        if (cachedEntry && cachedEntry.data) {
+          if (Boolean(process.env.DEBUG) == true) {
+            console.warn(`Fetch failed, using cached data for ${metadataUrl}: ${fetchError.message}`);
+          }
+          return cachedEntry.data;
+        }
+        throw fetchError; // Re-throw if no cached data
       }
-
-      if (data === null && cachedEntry) {
-        // Not Modified; return cached data
-        return cachedEntry.data;
-      }
-
-      const processedData = type === 'blurhash' ? data.trim() : data;
-
-      // Update cache with new ETag and Last-Modified
-      // const newCacheEntry = {
-      //   lastUpdated: new Date(data?.last_updated || '1970-01-01'),
-      // };
-      
-      await setCache(
-        cacheKey,
-        processedData, // Pass only the actual metadata here
-        responseHeaders?.etag ?? cachedEntry?.etag ?? null, // Use the new ETag if available
-        responseHeaders['last-modified'] || cachedEntry?.lastModified,
-        3600 // TTL of 1 hour
-      );      
-
-      return processedData;
     };
 
     // Use concurrency limiter and retry logic
-    const data = await limit(() => fetchWithRetry(fetchFunction));
+    const data = await limit(() => fetchWithRetry(fetchFunction, 2, 300)); // Reduced retries for faster failure
 
     return data;
   } catch (error) {
-    console.error('Error fetching metadata:', {
-      serverId,
-      url: metadataUrl,
-      error: error.message,
-      mediaType,
-      title
-    });
+    if (Boolean(process.env.DEBUG) == true) {
+      console.error('Error fetching metadata:', {
+        serverId,
+        url: metadataUrl,
+        error: error.message,
+        mediaType,
+        title
+      });
+    }
+    
+    // For blurhash, return an empty string as fallback
+    if (type === 'blurhash') {
+      return '';
+    }
+    
     return null;
   }
 }

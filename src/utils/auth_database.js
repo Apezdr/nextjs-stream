@@ -291,141 +291,226 @@ export async function getRecentlyWatchedForUser({
   countOnly = false,
 }) {
   try {
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getRecentlyWatchedForUser:total');
+      console.log(`[PERF] Starting getRecentlyWatchedForUser for userId: ${userId}, page: ${page}, limit: ${limit}, countOnly: ${countOnly}`);
+    
+      console.time('getRecentlyWatchedForUser:findUser');
+    }
+    
     const client = await clientPromise;
     const user = await client
       .db('Users')
       .collection('AuthenticatedUsers')
-      .findOne({ _id: new ObjectId(userId) });
+      .findOne({ _id: new ObjectId(userId) }, { projection: { _id: 1 } }); // Only fetch the _id field
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd('getRecentlyWatchedForUser:findUser');
+      }
 
     if (!user) {
       throw new Error(`User with ID ${userId} not found`);
     }
 
     const validPage = Math.max(page, 0); // Ensure page is at least 0
-
-    if (countOnly) {
-      // Fetch count of media that exists in the database
-      const countAggregation = [
-        { $match: { userId: user._id } },
-        { $unwind: '$videosWatched' },
-        {
-          $lookup: {
-            from: 'Movies',
-            localField: 'videosWatched.videoId',
-            foreignField: 'videoURL',
-            as: 'movies',
-          },
-        },
-        {
-          $lookup: {
-            from: 'TV',
-            localField: 'videosWatched.videoId',
-            foreignField: 'seasons.episodes.videoURL',
-            as: 'tvShows',
-          },
-        },
-        {
-          $match: {
-            $or: [
-              { 'movies.0': { $exists: true } },
-              { 'tvShows.0': { $exists: true } },
-            ],
-          },
-        },
-        { $count: 'total' },
-      ];
-      const countResult = await client
-        .db('Media')
-        .collection('PlaybackStatus')
-        .aggregate(countAggregation)
-        .toArray();
-      return countResult.length > 0 ? countResult[0].total : 0;
+    
+    // Get the user's watch history first - this is more efficient than doing it in the aggregation
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getRecentlyWatchedForUser:fetchWatchHistory');
     }
-
-    // For non-count requests, filter out media not in the database before pagination
-    const dataAggregation = [
-      { $match: { userId: user._id } },
-      { $unwind: '$videosWatched' },
-      {
-        $lookup: {
-          from: 'Movies',
-          localField: 'videosWatched.videoId',
-          foreignField: 'videoURL',
-          as: 'movie',
-        },
-      },
-      {
-        $lookup: {
-          from: 'TV',
-          localField: 'videosWatched.videoId',
-          foreignField: 'seasons.episodes.videoURL',
-          as: 'tvShow',
-        },
-      },
-      {
-        $match: {
-          $or: [
-            { 'movie.0': { $exists: true } },
-            { 'tvShow.0': { $exists: true } },
-          ],
-        },
-      },
-      { $sort: { 'videosWatched.lastUpdated': -1 } }, // Sort after filtering
-      { $skip: validPage * limit },
-      { $limit: limit },
-      {
-        $group: {
-          _id: '$userId',
-          videosWatched: { $push: '$videosWatched' },
-        },
-      },
-    ];
-
-    const lastWatched = await client
+    const userPlayback = await client
       .db('Media')
       .collection('PlaybackStatus')
-      .aggregate(dataAggregation, { hint: 'userId_1' })
-      .toArray();
-
-    if (lastWatched.length === 0 || !lastWatched[0].videosWatched) {
-      return null;
+      .findOne({ userId: user._id }, { projection: { videosWatched: 1 } }); // Only fetch the videosWatched field
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getRecentlyWatchedForUser:fetchWatchHistory');
     }
 
-    const videoIds = lastWatched[0].videosWatched.map((video) => video.videoId);
-    const uniqueVideoIds = [...new Set(videoIds)];
-
-    // Bulk fetch movies and TV shows
+    if (!userPlayback || !userPlayback.videosWatched || userPlayback.videosWatched.length === 0) {
+      if (Boolean(process.env.DEBUG) == true) {
+        console.log('[PERF] No watch history found');
+        console.timeEnd('getRecentlyWatchedForUser:total');
+      }
+      return countOnly ? 0 : null;
+    }
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[PERF] Total videos in watch history: ${userPlayback.videosWatched.length}`);
+      console.time('getRecentlyWatchedForUser:filterValidVideos');
+    }
+    
+    // Filter valid videos in memory - more efficient than doing it in the aggregation
+    const validVideos = userPlayback.videosWatched.filter(video => 
+      video.isValid === undefined || video.isValid === true
+    );
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getRecentlyWatchedForUser:filterValidVideos');
+    
+      console.log(`[PERF] Valid videos after filtering: ${validVideos.length}`);
+    }
+    
+    if (validVideos.length === 0) {
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd('getRecentlyWatchedForUser:total');
+      }
+      return countOnly ? 0 : null;
+    }
+    
+    // Extract video IDs
+    const videoIds = validVideos.map(video => video.videoId);
+    const uniqueVideoIds = [...new Set(videoIds)]; // Ensure uniqueness
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[PERF] Unique video IDs: ${uniqueVideoIds.length}`);
+    }
+    
+    // Define projections to limit the fields returned
+    const movieProjection = {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      posterURL: 1,
+      posterBlurhash: 1,
+      posterBlurhashSource: 1,
+      backdrop: 1,
+      backdropBlurhash: 1,
+      backdropBlurhashSource: 1,
+      hdr: 1,
+      length: 1,
+      'metadata.poster_path': 1,
+      'metadata.backdrop_path': 1,
+      'metadata.logo_path': 1,
+      'metadata.title': 1
+    };
+    
+    const tvProjection = {
+      _id: 1,
+      title: 1,
+      seasons: 1,
+      backdrop: 1,
+      backdropBlurhash: 1,
+      backdropBlurhashSource: 1,
+      posterBlurhash: 1,
+      posterBlurhashSource: 1,
+      logo: 1,
+      metadata: 1
+    };
+    
+    // Bulk fetch movies and TV shows that match these video IDs with limited fields
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getRecentlyWatchedForUser:fetchMediaData');
+    }
     const [movies, tvShows] = await Promise.all([
       client
         .db('Media')
         .collection('Movies')
-        .find({ videoURL: { $in: uniqueVideoIds } })
+        .find({ videoURL: { $in: uniqueVideoIds } }, { projection: movieProjection })
+        .hint({ videoURL: 1 }) // Use index on videoURL if available
         .toArray(),
       client
         .db('Media')
         .collection('TV')
-        .find({ 'seasons.episodes.videoURL': { $in: uniqueVideoIds } })
-        .toArray(),
+        .aggregate([
+          { $match: { "seasons.episodes.videoURL": { $in: uniqueVideoIds } } },
+          { $project: tvProjection },
+          { $addFields: { matchedEpisodes: { $filter: {
+            input: { $reduce: {
+              input: "$seasons",
+              initialValue: [],
+              in: { $concatArrays: ["$$value", "$$this.episodes"] }
+            }},
+            as: "episode",
+            cond: { $in: ["$$episode.videoURL", uniqueVideoIds] }
+          }}}},
+          { $match: { "matchedEpisodes.0": { $exists: true } } }
+        ]).toArray()
     ]);
-
-    // Populate the movie and TV maps to match videoURLs to their respective records
-    const movieMap = new Map(movies.map((movie) => [movie.videoURL, movie]));
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getRecentlyWatchedForUser:fetchMediaData');
+    
+      console.log(`[PERF] Found ${movies.length} movies and ${tvShows.length} TV shows`);
+      console.time('getRecentlyWatchedForUser:createLookupMaps');
+    }
+    
+    // Create maps for efficient lookups
+    const movieMap = new Map(movies.map(movie => [movie.videoURL, movie]));
     const tvMap = new Map();
-
-    tvShows.forEach((tvShow) => {
-      tvShow.seasons.forEach((season) => {
-        season.episodes.forEach((episode) => {
+    
+    tvShows.forEach(tvShow => {
+      tvShow.seasons.forEach(season => {
+        season.episodes.forEach(episode => {
           if (uniqueVideoIds.includes(episode.videoURL)) {
             tvMap.set(episode.videoURL, { ...tvShow, episode });
           }
         });
       });
     });
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getRecentlyWatchedForUser:createLookupMaps');
+    
+      console.log(`[PERF] Created lookup maps - Movies: ${movieMap.size}, TV: ${tvMap.size}`);
+      console.time('getRecentlyWatchedForUser:filterAndSort');
+    }    
+    // Filter out videos that don't exist in the database
+    const validVideoIds = new Set([
+      ...movieMap.keys(),
+      ...tvMap.keys()
+    ]);
+    
+    const filteredVideos = validVideos.filter(video => 
+      validVideoIds.has(video.videoId)
+    );
+    
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[PERF] Videos after filtering for existence in DB: ${filteredVideos.length}`);
+    }
 
+    // If count only, return the count
+    if (countOnly) {
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd('getRecentlyWatchedForUser:filterAndSort');
+        console.timeEnd('getRecentlyWatchedForUser:total');
+      }
+      return filteredVideos.length;
+    }
+    
+    // Sort by lastUpdated (most recent first)
+    filteredVideos.sort((a, b) => {
+      const dateA = a.lastUpdated ? new Date(a.lastUpdated) : new Date(0);
+      const dateB = b.lastUpdated ? new Date(b.lastUpdated) : new Date(0);
+      return dateB - dateA;
+    });
+    
+    // Apply pagination
+    const paginatedVideos = filteredVideos.slice(
+      validPage * limit, 
+      (validPage + 1) * limit
+    );
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getRecentlyWatchedForUser:filterAndSort');
+      
+      console.log(`[PERF] Videos after pagination: ${paginatedVideos.length}`);
+    }
+    
+    // Create a mock lastWatched object to match the expected format for processWatchedDetails
+    const lastWatched = [{
+      _id: userId,
+      videosWatched: paginatedVideos
+    }];
+    
+    // Process the watched details with optimized blurhash handling
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getRecentlyWatchedForUser:processWatchedDetails');
+    }
     const watchedDetails = await processWatchedDetails(lastWatched, movieMap, tvMap, limit);
-
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getRecentlyWatchedForUser:processWatchedDetails');
+      console.log(`[PERF] Final processed watched details count: ${watchedDetails ? watchedDetails.length : 0}`);
+      console.timeEnd('getRecentlyWatchedForUser:total');
+    }
+    
     return watchedDetails;
   } catch (error) {
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getRecentlyWatchedForUser:total');
+    }
     console.error(`Error in getRecentlyWatchedForUser: ${error.message}`);
     throw error;
   }

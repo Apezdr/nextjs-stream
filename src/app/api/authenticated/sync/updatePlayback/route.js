@@ -1,6 +1,8 @@
 import { ObjectId } from 'mongodb'
 import isAuthenticated from '../../../../../utils/routeAuth'
 import clientPromise from '../../../../../lib/mongodb'
+import { validateSingleVideoUrl } from '../../../../../utils/sync/playbackValidation'
+import { getAllServers } from '../../../../../utils/config'
 
 export const POST = async (req) => {
   const authResult = await isAuthenticated(req)
@@ -26,23 +28,59 @@ export const POST = async (req) => {
     })
 
     if (userPlaybackStatus) {
-      // Update playback time for existing videoId
+      // Get the existing video entry
+      const existingVideo = userPlaybackStatus.videosWatched.find(v => v.videoId === videoId);
+      
+      // Check if we need to validate this video (if it hasn't been validated in the last 24 hours)
+      let isValid = existingVideo.isValid;
+      let lastScanned = existingVideo.lastScanned;
+      const needsValidation = !lastScanned || 
+                             new Date(lastScanned) < new Date(Date.now() - 24 * 60 * 60 * 1000);
+      
+      if (needsValidation) {
+        console.log(`Validating existing video that hasn't been checked in 24+ hours: ${videoId}`);
+        const fileServers = await getAllServers();
+        isValid = await validateSingleVideoUrl(videoId, fileServers);
+        lastScanned = new Date().toISOString();
+      }
+      
+      // Update playback time for existing videoId (and validation info if needed)
       await playbackStatusCollection.updateOne(
         { userId: userIdObj, 'videosWatched.videoId': videoId },
         {
           $set: {
             'videosWatched.$.playbackTime': playbackTime,
             'videosWatched.$.lastUpdated': new Date(),
+            ...(needsValidation ? {
+              'videosWatched.$.isValid': isValid,
+              'videosWatched.$.lastScanned': lastScanned
+            } : {})
           },
         }
       )
     } else {
-      // Add new videoId with playback time
+      // For new videos, validate the URL before adding
+      const fileServers = await getAllServers()
+      const isValid = await validateSingleVideoUrl(videoId, fileServers)
+      
+      // Add new videoId with playback time and validation result
       await playbackStatusCollection.updateOne(
         { userId: userIdObj },
-        { $push: { videosWatched: { videoId, playbackTime, lastUpdated: new Date() } } },
+        { 
+          $push: { 
+            videosWatched: { 
+              videoId, 
+              playbackTime, 
+              lastUpdated: new Date(),
+              isValid,
+              lastScanned: new Date().toISOString()
+            } 
+          } 
+        },
         { upsert: true }
       )
+      
+      console.log(`Added new video to PlaybackStatus with validation result: ${isValid ? 'valid' : 'invalid'}`)
     }
 
     return new Response(JSON.stringify({ message: 'Playback status updated' }), {

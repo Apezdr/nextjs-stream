@@ -35,6 +35,10 @@ export default function LandingPage({
       <div className="flex flex-col w-full mt-10">
         <h2 className="text-xl font-bold text-left mt-4 ml-4">Watch History</h2>
         <HorizontalScrollContainer type="recentlyWatched" />
+        <h2 className="text-xl font-bold text-left mt-4 ml-4">
+          {recentlywatchedCount > 0 ? "Recommended For You" : "Popular Content"}
+        </h2>
+        <HorizontalScrollContainer type="recommendations" />
         <h2 className="text-xl font-bold text-left mt-4 ml-4">Recently Added</h2>
         <HorizontalScrollContainer type="recentlyAdded" />
         <h2 className="text-xl font-bold text-left mt-4 ml-4">Movies</h2>

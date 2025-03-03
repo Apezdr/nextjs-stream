@@ -42,7 +42,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
           length={episode.length ?? episode.metadata.runtime * 60000 ?? 0}
           metadata={episode.metadata}
           videoURL={episode.videoURL}
-          classNames="absolute bottom-0 w-full text-center z-[11] text-[0.55rem]"
+          classNames="absolute bottom-0 w-full text-center z-[10] text-[0.55rem]"
         />
       )}
       {blurDataURL ? (

@@ -5,6 +5,7 @@ import {
   getRecentlyWatchedForUser,
 } from '@src/utils/auth_database'
 import { sanitizeCardData, sanitizeCardItems } from '@src/utils/auth_utils'
+import { getRecommendations } from '@src/utils/recommendations'
 
 // Sorting functions
 const sortFunctions = {
@@ -55,6 +56,9 @@ export const GET = async (req) => {
           })
         case 'recentlyAdded':
           return await getRecentlyAddedMedia({ page: pageNumber, limit: limit })
+        case 'recommendations':
+          const recommendations = await getRecommendations(authResult?.id, pageNumber, limit)
+          return recommendations.items || []
         case 'all':
         default: {
           const [moviePosters, tvPosters] = await Promise.all([

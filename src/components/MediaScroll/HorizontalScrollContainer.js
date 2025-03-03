@@ -3,6 +3,7 @@ import {
   getRecentlyAddedMedia,
   getRecentlyWatchedForUser,
 } from '@src/utils/auth_database'
+import { getRecommendations } from '@src/utils/recommendations'
 import { auth } from '@src/lib/auth'
 import HorizontalScroll from '@src/components/MediaScroll/HorizontalScroll'
 
@@ -12,6 +13,7 @@ const NO_CONTENT_MESSAGES = {
   tv: "📺 No TV shows available at the moment.",
   recentlyWatched: "👀 You haven't watched anything recently.",
   recentlyAdded: "🆕 No recently added media available.",
+  recommendations: "🎯 No personalized recommendations available right now.",
   all: "📦 No media available at the moment.",
 }
 
@@ -45,6 +47,12 @@ export default async function HorizontalScrollContainer({
     case 'recentlyAdded':
       limit = 32
       items = await getRecentlyAddedMedia({ limit: limit, countOnly: true })
+      break
+    case 'recommendations':
+      limit = 30
+      // Fetch count from recommendations
+      const recommendationsData = await getRecommendations(session.user?.id, 0, limit, true)
+      items = recommendationsData.count || 0
       break
     case 'all':
     default:

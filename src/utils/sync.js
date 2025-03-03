@@ -12,6 +12,7 @@ import {
   syncTVThumbnails,
   syncVideoInfo,
   syncVideoURL,
+  validatePlaybackVideoUrls,
   identifyMissingMedia,
   checkVideoAvailabilityAcrossServers,
   removeUnavailableVideos,
@@ -180,7 +181,8 @@ export async function syncAllServers(currentDB, fileServers, fieldAvailability) 
         { name: 'TV Thumbnails', fn: () => syncTVThumbnails(currentDB, fileServer, serverConfig, fieldAvailability) },
         { name: 'Poster URLs', fn: () => syncPosterURLs(currentDB, fileServer, serverConfig, fieldAvailability) },
         { name: 'Backdrop', fn: () => syncBackdrop(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'Blurhash', fn: () => syncBlurhash(currentDB, fileServer, serverConfig, fieldAvailability) }
+        { name: 'Blurhash', fn: () => syncBlurhash(currentDB, fileServer, serverConfig, fieldAvailability) },
+        { name: 'Playback Status Validation', fn: () => validatePlaybackVideoUrls(currentDB, fileServers) }
       ];
 
       // Execute each sync operation and catch any errors

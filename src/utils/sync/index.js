@@ -8,6 +8,7 @@ import { syncPosterURLs } from './posters'
 import { syncTVThumbnails } from './thumbnails'
 import { syncVideoInfo } from './videoInfo'
 import { syncVideoURL } from './videoUrl'
+import { validatePlaybackVideoUrls } from './playbackValidation'
 import { identifyMissingMedia } from './fileServer'
 import { 
   checkVideoAvailabilityAcrossServers, 
@@ -32,6 +33,7 @@ export {
   syncTVThumbnails,
   syncVideoInfo,
   syncVideoURL,
+  validatePlaybackVideoUrls,
   
   // File server operations
   identifyMissingMedia,
