@@ -179,7 +179,7 @@ body.playing #backdrop-cover {
   background-color: rgb(255, 60, 0);
   position: absolute;
   bottom: 0;
-  z-index: 10;
+  z-index: 9;
 }
 
 .watched-border img {
