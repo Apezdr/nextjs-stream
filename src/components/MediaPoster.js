@@ -68,11 +68,11 @@ function _mediaPoster({
           length={_media.length ?? (_media.metadata?.runtime ? _media.metadata.runtime * 60000 : 0)}
           metadata={_media.metadata}
           videoURL={_media.videoURL}
-          classNames="absolute bottom-0 w-full text-center z-[11] text-[0.55rem]"
+          classNames="absolute bottom-0 w-full text-center z-[10] text-[0.55rem]"
         />
       ) : null}
       {!hideGenres && _media.metadata?.genres && (
-        <div className="bg-gray-900 text-center px-0.5 py-0.5 text-white transition-opacity duration-700 inset-0 text-xs opacity-75 group-hover:opacity-100 z-[11] relative">
+        <div className="bg-gray-900 text-center px-0.5 py-0.5 text-white transition-opacity duration-700 inset-0 text-xs opacity-75 group-hover:opacity-100 z-[10] relative">
           <div className="whitespace-nowrap">
             {_media.metadata.genres.map((genre) => {
               const { fontColor, backgroundColor } = generateColors(genre?.name)
@@ -124,7 +124,7 @@ function _mediaPoster({
         />
       )}
       {_media.dimensions && (
-        <div className="flex flex-col items-center bg-gray-900 justify-center content-center pb-4 pt-1 text-white transition-opacity duration-700 inset-0 text-xs h-auto opacity-75 group-hover:opacity-100 z-10 relative">
+        <div className="flex flex-col items-center bg-gray-900 justify-center content-center pb-4 pt-1 text-white transition-opacity duration-700 inset-0 text-xs h-auto opacity-75 group-hover:opacity-100 z-[8] relative">
           <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
             {is4k ? (
               <RetryImage
