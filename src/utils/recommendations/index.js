@@ -68,7 +68,7 @@ export async function getGenreBasedRecommendations(userId, page = 0, limit = 30)
 
     // Find movies and TV shows that match these video IDs
     const [watchedMovies, watchedTVShows] = await Promise.all([
-      db.collection('Movies').find({ videoURL: { $in: videoIds } }).toArray(),
+      db.collection('Movies').find({ videoURL: { $in: videoIds } }).hint("video_lookup").toArray(), // Use video_lookup index
       db.collection('TV').aggregate([
         { $match: { "seasons.episodes.videoURL": { $in: videoIds } } },
         { $addFields: { matchedEpisodes: { $filter: {
@@ -81,7 +81,7 @@ export async function getGenreBasedRecommendations(userId, page = 0, limit = 30)
           cond: { $in: ["$$episode.videoURL", videoIds] }
         }}}},
         { $match: { "matchedEpisodes.0": { $exists: true } } }
-      ]).toArray()
+      ], { hint: "episode_lookup" }).toArray() // Use episode_lookup index
     ])
 
     if (watchedMovies.length === 0 && watchedTVShows.length === 0) {
@@ -172,6 +172,7 @@ export async function getGenreBasedRecommendations(userId, page = 0, limit = 30)
       .sort({ title: 1 }) // Consistent sort for pagination
       .skip(page * Math.ceil(limit / 2))
       .limit(fetchLimit)
+      .hint("genres_id_lookup") // Use genres_id_lookup index
       .toArray()
 
     // Process TV show recommendations - we need to find next episodes for watched shows
@@ -209,6 +210,7 @@ export async function getGenreBasedRecommendations(userId, page = 0, limit = 30)
       const newTVShows = await db.collection('TV')
         .find(tvQuery)
         .limit(remainingTVShows)
+        .hint("genres_id_index") // Use genres_id_index index
         .toArray()
       
       // For each new show, recommend the first episode of the first season
@@ -264,10 +266,12 @@ export async function getGenreBasedRecommendations(userId, page = 0, limit = 30)
         db.collection('Movies')
           .find({ '_id': { $nin: Array.from(watchedMovieIds).map(id => new ObjectId(id)) } })
           .limit(Math.ceil(remainingItems / 2))
+          .hint('_id_') // Use default _id index
           .toArray(),
         db.collection('TV')
           .find({ '_id': { $nin: Array.from(watchedTVShowsMap.keys()).map(id => new ObjectId(id)) } })
           .limit(Math.ceil(remainingItems / 2))
+          .hint('_id_') // Use default _id index
           .toArray()
       ])
       
@@ -319,10 +323,12 @@ export async function getGenreBasedRecommendations(userId, page = 0, limit = 30)
           db.collection('Movies')
             .find({})
             .limit(limit)
+            .hint('_id_') // Use default _id index
             .toArray(),
           db.collection('TV')
             .find({})
             .limit(limit)
+            .hint('_id_') // Use default _id index
             .toArray()
         ])
         
@@ -462,7 +468,7 @@ export async function getMostPopularContent(page = 0, limit = 30) {
     
     // Find corresponding movies and TV shows
     const [movies, tvShows] = await Promise.all([
-      db.collection('Movies').find({ videoURL: { $in: allVideoIds } }).toArray(),
+      db.collection('Movies').find({ videoURL: { $in: allVideoIds } }).hint("video_lookup").toArray(), // Use video_lookup index
       db.collection('TV').aggregate([
         { $match: { "seasons.episodes.videoURL": { $in: allVideoIds } } },
         { $addFields: { matchedEpisodes: { $filter: {
@@ -475,7 +481,7 @@ export async function getMostPopularContent(page = 0, limit = 30) {
           cond: { $in: ["$$episode.videoURL", allVideoIds] }
         }}}},
         { $match: { "matchedEpisodes.0": { $exists: true } } }
-      ]).toArray()
+      ], { hint: "episode_lookup" }).toArray() // Use episode_lookup index
     ])
 
     if (movies.length === 0 && tvShows.length === 0) {
@@ -684,12 +690,14 @@ async function getRandomRecommendations(page = 0, limit = 30) {
         .sort({ title: 1 }) // Consistent sort for pagination
         .skip(page * Math.ceil(limit / 2))
         .limit(fetchLimit)
+        .hint("title_lookup") // Use title_lookup index
         .toArray(),
       db.collection('TV')
         .find({})
         .sort({ title: 1 }) // Consistent sort for pagination
         .skip(page * Math.ceil(limit / 2))
         .limit(fetchLimit)
+        .hint("title_index") // Use title_index index
         .toArray()
     ])
     

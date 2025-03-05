@@ -59,6 +59,9 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
     )
   }
   const season = tvShow.seasons.find((s) => s.seasonNumber === parseInt(seasonNumber))
+  const seasonMetadata = season?.metadata ?? {
+    episodes: [],
+  }
   if (!season) {
     return <div>Season not found</div>
   }
@@ -122,9 +125,14 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
             {/* Episodes List */}
             {await Promise.all(
               season.episodes.map(async (episode, episodeIndex) => {
-                const episodeMetadata = season.metadata?.episodes?.find(
-                  (ep) => ep.episode_number === episode.episodeNumber
+                let episodeMetadata = seasonMetadata?.episodes?.find(
+                  (ep) => ep?.episode_number === episode?.episodeNumber
                 )
+
+                // hacked in, should pull from season episode metadata array
+                if (!episodeMetadata) {
+                  episodeMetadata = episode.metadata
+                }
 
                 if (episode.thumbnailBlurhash) {
                   episode.thumbnailBlurhash = await fetchMetadataMultiServer(
@@ -153,8 +161,10 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                   episode.clipVideoURL = generateClipVideoURL(episode, 'tv', showTitle)
                 }
 
+                const episodeTitle = episodeMetadata?.name ?? episode.title
+
                 return (
-                  <li key={episode.title + '-AnimationCont'} className="relative min-w-[250px]">
+                  <li key={episodeTitle + '-AnimationCont'} className="relative min-w-[250px]">
                     <PageContentAnimatePresence
                       variants={variants}
                       transition={{
@@ -199,7 +209,7 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                               )}
                               <div className="inset-0 pt-2 pb-4 text-center rounded-b-lg text-sm font-medium text-gray-200 group-hover:text-gray-300 relative z-10">
                                 {episode?.captionURLs ? <CaptionSVG className="mr-1.5" /> : ''}
-                                Episode {episode.episodeNumber}: {episode.title}
+                                Episode {episode.episodeNumber}: {episodeTitle}
                               </div>
                             </div>
                           </div>

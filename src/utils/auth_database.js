@@ -223,7 +223,7 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
     .db('Media')
     .collection(collection)
     .find({}, queryOptions)
-    .hint({ _id: 1 })
+    .hint('_id_')
     .toArray()
 
   return await Promise.all(
@@ -402,7 +402,7 @@ export async function getRecentlyWatchedForUser({
         .db('Media')
         .collection('Movies')
         .find({ videoURL: { $in: uniqueVideoIds } }, { projection: movieProjection })
-        .hint({ videoURL: 1 }) // Use index on videoURL if available
+        .hint("video_lookup") // Use index on videoURL if available
         .toArray(),
       client
         .db('Media')
@@ -420,7 +420,9 @@ export async function getRecentlyWatchedForUser({
             cond: { $in: ["$$episode.videoURL", uniqueVideoIds] }
           }}}},
           { $match: { "matchedEpisodes.0": { $exists: true } } }
-        ]).toArray()
+        ], {
+          hint: "episode_lookup" // Use episode_lookup index
+        }).toArray()
     ]);
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getRecentlyWatchedForUser:fetchMediaData');
@@ -602,7 +604,9 @@ export async function getRecentlyAddedMedia({ page = 0, limit = 12, countOnly = 
       },
     ]
 
-    const combinedMedia = await db.collection('Movies').aggregate(pipeline).toArray()
+    const combinedMedia = await db.collection('Movies').aggregate(pipeline, {
+      hint: 'mediaLastModified' // Use index for sorting by mediaLastModified
+    }).toArray()
 
     // Separate movies and TV shows
     const movies = combinedMedia.filter((item) => item.type === 'movie')
@@ -659,5 +663,6 @@ export async function fetchRecentlyAdded({
     .sort(sortField)
     .skip(skip)
     .limit(limit)
+    .hint(collectionName === 'Movies' ? 'release_date' : 'episode_last_modified')
     .toArray()
 }

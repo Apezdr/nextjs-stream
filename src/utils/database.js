@@ -171,8 +171,11 @@ async function getTvShowData(client, collection, title, season, episode, id) {
   }
 }
 function handleEpisode(tvShow, seasonObj, seasonNumber, episodeNumber) {
-  const episodeMetadata = seasonObj.metadata.episodes?.find(
-    (ep) => ep.episode_number === episodeNumber
+  const seasonMetadata = seasonObj.metadata ?? {
+    episodes: [],
+  }
+  const episodeMetadata = seasonMetadata?.episodes?.find(
+    (ep) => ep?.episode_number === episodeNumber
   )
   const episodeObj = seasonObj.episodes?.find((ep) => ep.episodeNumber === episodeNumber)
 
@@ -243,8 +246,8 @@ function handleEpisode(tvShow, seasonObj, seasonNumber, episodeNumber) {
     episodeObj.metadata.trailer_url = tvShow.metadata.trailer_url
   }
 
-  const nextAvailableEpisode = seasonObj.metadata.episodes?.find(
-    (ep) => ep.episode_number > episodeNumber
+  const nextAvailableEpisode = seasonMetadata?.episodes?.find(
+    (ep) => ep?.episode_number > episodeNumber
   )
   if (nextAvailableEpisode) {
     episodeObj.hasNextEpisode = true
