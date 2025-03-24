@@ -6,8 +6,8 @@ import SkeletonCard from '@components/SkeletonCard'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { memo, Suspense } from 'react'
 import Loading from '@src/app/loading'
-import { getAvailableMedia, getLastUpdatedTimestamp } from '@src/utils/database'
 import MovieList from './cache/MovieList'
+import { getFlatAvailableMoviesCount, getFlatMoviesLastUpdatedTimestamp } from '@src/utils/flatDatabaseUtils'
 //export const dynamic = 'force-dynamic'
 
 async function MovieListComponent() {
@@ -33,8 +33,11 @@ async function MovieListComponent() {
   const {
     user: { name, email },
   } = session
-  const { moviesCount } = await getAvailableMedia({ type: 'movie' })
-  const latestUpdateTimestamp = await getLastUpdatedTimestamp({ type: 'movie' })
+  
+  // Get movie count and latest update timestamp using flat database functions
+  const moviesCount = await getFlatAvailableMoviesCount();
+  const latestUpdateTimestamp = await getFlatMoviesLastUpdatedTimestamp();
+  
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
       <SyncClientWithServerWatched />

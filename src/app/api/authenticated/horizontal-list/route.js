@@ -1,11 +1,13 @@
 import isAuthenticated from '@src/utils/routeAuth'
 import {
-  getPosters,
-  getRecentlyAddedMedia,
-  getRecentlyWatchedForUser,
-} from '@src/utils/auth_database'
+  getFlatPosters,
+  getFlatRecentlyAddedMedia,
+  getFlatRecentlyWatchedForUser,
+} from '@src/utils/flatDatabaseUtils'
 import { sanitizeCardData, sanitizeCardItems } from '@src/utils/auth_utils'
 import { getRecommendations } from '@src/utils/recommendations'
+import { getFlatRecommendations } from '@src/utils/flatRecommendations'
+import { getFullImageUrl } from '@src/utils'
 
 // Sorting functions
 const sortFunctions = {
@@ -45,25 +47,26 @@ export const GET = async (req) => {
     const fetchItemsForPage = async (pageNumber, limit) => {
       switch (type) {
         case 'movie':
-          return await getPosters('movie', false, pageNumber, limit)
+          return await getFlatPosters('movie', false, pageNumber, limit)
         case 'tv':
-          return await getPosters('tv', false, pageNumber, limit)
+          return await getFlatPosters('tv', false, pageNumber, limit)
         case 'recentlyWatched':
-          return await getRecentlyWatchedForUser({
+          return await getFlatRecentlyWatchedForUser({
             userId: authResult?.id,
             page: pageNumber,
             limit: limit,
           })
         case 'recentlyAdded':
-          return await getRecentlyAddedMedia({ page: pageNumber, limit: limit })
+          return await getFlatRecentlyAddedMedia({ page: pageNumber, limit: limit })
         case 'recommendations':
-          const recommendations = await getRecommendations(authResult?.id, pageNumber, limit)
+          //const recommendations = await getRecommendations(authResult?.id, pageNumber, limit)
+          const recommendations = await getFlatRecommendations(authResult?.id, pageNumber, limit)
           return recommendations.items || []
         case 'all':
         default: {
           const [moviePosters, tvPosters] = await Promise.all([
-            getPosters('movie', false, pageNumber, limit),
-            getPosters('tv', false, pageNumber, limit),
+            getFlatPosters('movie', false, pageNumber, limit),
+            getFlatPosters('tv', false, pageNumber, limit),
           ])
           return [...moviePosters, ...tvPosters]
         }
@@ -73,7 +76,36 @@ export const GET = async (req) => {
     // Fetch current items
     items = await fetchItemsForPage(page, itemsPerPage)
     if (items && items.length > 0) {
+      // First sort the items
       const sorted = items.sort(sortList)
+      
+      // Make sure thumbnails and posters are properly set for TV episodes
+      for (const item of sorted) {
+        if (item.type === 'tv' && item.episode) {
+          // Make sure episode has a thumbnail (use metadata still_path or fallback to posterURL)
+          if (!item.episode.thumbnail) {
+            item.episode.thumbnail = 
+              (item.episode.metadata?.still_path ? 
+               getFullImageUrl(item.episode.metadata.still_path) : 
+               item.posterURL);
+          }
+          
+          // Use episode thumbnail as the posterURL for TV episodes
+          if (item.episode.thumbnail) {
+            item.posterURL = item.episode.thumbnail;
+            item.thumbnail = item.episode.thumbnail;
+          }
+          
+          // For thumbnailBlurhash, we'll rely on sanitizeCardItems to handle that
+          
+          // Make sure episodeNumber is included at the top level
+          if (!item.episodeNumber && item.episode.episodeNumber) {
+            item.episodeNumber = item.episode.episodeNumber;
+          }
+        }
+      }
+      
+      // Then sanitize the items
       items = await sanitizeCardItems(sorted)
     } else {
       items = []

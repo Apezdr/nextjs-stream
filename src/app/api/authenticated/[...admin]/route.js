@@ -23,6 +23,7 @@ import clientPromise from '@src/lib/mongodb'
 import { getCpuUsage, getMemoryTotal, getMemoryUsage, getMemoryUsed } from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { syncAllServers } from '@src/utils/sync'
+import { getSyncVerificationReport } from '@src/utils/sync_verification'
 
 /**
  * Extracts all server endpoints from the configuration.
@@ -247,6 +248,50 @@ export async function GET(request, props) {
           responseData = processes
         }
         break
+      case 'sync-verification':
+        {
+          // Get query parameter for comparison with file servers
+          const url = new URL(request.url);
+          const compareWithFileServers = url.searchParams.get('compare') !== 'false';
+          
+          responseData = await getSyncVerificationReport(compareWithFileServers);
+          
+          // Add extra context for better diagnostics
+          responseData.generatedAt = new Date().toISOString();
+          responseData.servers = getAllServers().map(server => server.id);
+          
+          // Reorganize response to highlight the most important information first
+          if (responseData.issueSummary) {
+            responseData = {
+              // Quick overview at the top
+              overview: {
+                totalIssues: responseData.totalIssues,
+                totalMedia: responseData.totalMedia,
+                issuePercentage: responseData.issuePercentage,
+                generatedAt: responseData.generatedAt,
+                servers: responseData.servers
+              },
+              // Top-level issue summary by category
+              topIssues: responseData.issueSummary.topIssues,
+              // Detailed breakdown by issue pattern
+              issuePatterns: responseData.issueSummary.byPattern,
+              // Original issue summary for full detail
+              issueSummary: {
+                total: responseData.issueSummary.total,
+                byCategory: responseData.issueSummary.byCategory
+              },
+              // Stats about overall content
+              stats: responseData.stats,
+              // Rest of the data
+              ...responseData
+            };
+            
+            // Remove duplicated data to clean up the response
+            delete responseData.issueSummary.topIssues;
+            delete responseData.issueSummary.byPattern;
+          }
+        }
+        break
       default: {
         return new Response(JSON.stringify({ error: 'No valid data type specified' }), {
           status: 400,
@@ -365,7 +410,15 @@ async function handleSync(webhookId, request) {
     if (webhookId) headers['X-Webhook-ID'] = webhookId
     if (request.headers.get('cookie')) headers['cookie'] = request.headers.get('cookie')
 
-    const response = await axios.get(buildURL('/api/authenticated/list'), { headers })
+    let response;
+    try {
+      response = await axios.get(buildURL('/api/authenticated/list'), { headers });
+    } catch (error) {
+      if (error.response && error.response.status === 502) {
+        throw new Error('Bad Gateway: Failed to fetch data from the server.');
+      }
+      throw error;
+    }
     const { fileServers, currentDB, errors } = await response.data
 
     // Initialize field-level availability maps

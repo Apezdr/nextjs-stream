@@ -1,4 +1,4 @@
-import clientPromise from '../../lib/mongodb'
+import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils'
 import Link from 'next/link'
 import { auth } from '../../lib/auth'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
@@ -14,7 +14,6 @@ import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { CaptionSVG } from '@components/SVGIcons'
 import HD4kBanner from '../../../public/4kBanner.png'
 import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
-import { getServer } from '@src/utils/config'
 import { generateClipVideoURL } from '@src/utils/auth_utils'
 import RetryImage from '@components/RetryImage'
 export const dynamic = 'force-dynamic'
@@ -44,36 +43,36 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
       </UnauthenticatedPage>
     )
   }
+  
   const {
     user: { name, email },
   } = session
-  // Fetch the TV show and its seasons
-  const tvShow = await getAndUpdateMongoDB(decodeURIComponent(showTitle), parseInt(seasonNumber))
+  
+  // Fetch the TV show season with its episodes using the flat database structure
+  const season = await getFlatTVSeasonWithEpisodes({
+    showTitle: decodeURIComponent(showTitle),
+    seasonNumber: parseInt(seasonNumber)
+  })
 
-  if (!tvShow) {
-    // Handle the case where the TV show is not found
+  if (!season) {
+    // Handle the case where the TV show or season is not found
     return (
       <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
         TV Season Episodes not found
       </div>
     )
   }
-  const season = tvShow.seasons.find((s) => s.seasonNumber === parseInt(seasonNumber))
+
+  // Season metadata
   const seasonMetadata = season?.metadata ?? {
     episodes: [],
   }
-  if (!season) {
-    return <div>Season not found</div>
+  
+  // Make sure we have episodes
+  if (!season.episodes || season.episodes.length === 0) {
+    return <div>No episodes found for this season</div>
   }
-  if (season.seasonPosterBlurhash) {
-    season.posterBlurhash = await fetchMetadataMultiServer(
-      season.seasonPosterBlurhashSource,
-      season.seasonPosterBlurhash,
-      'blurhash',
-      'tv',
-      showTitle
-    )
-  }
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
       <SyncClientWithServerWatched />
@@ -94,7 +93,7 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                 {season.episodes.length} Episodes
               </h2>
               <div className="flex flex-row gap-x-4 mt-4 justify-center">
-                <Link href={`/list/tv/${tvShow.title}`} className="self-center">
+                <Link href={`/list/tv/${season.showTitle || showTitle}`} className="self-center">
                   <button
                     type="button"
                     className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
@@ -125,23 +124,14 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
             {/* Episodes List */}
             {await Promise.all(
               season.episodes.map(async (episode, episodeIndex) => {
+                // Get episode metadata from season metadata if available
                 let episodeMetadata = seasonMetadata?.episodes?.find(
                   (ep) => ep?.episode_number === episode?.episodeNumber
                 )
 
-                // hacked in, should pull from season episode metadata array
+                // Fallback to episode metadata if not found
                 if (!episodeMetadata) {
                   episodeMetadata = episode.metadata
-                }
-
-                if (episode.thumbnailBlurhash) {
-                  episode.thumbnailBlurhash = await fetchMetadataMultiServer(
-                    episode.thumbnailSource,
-                    episode.thumbnailBlurhash,
-                    'blurhash',
-                    'tv',
-                    showTitle
-                  )
                 }
 
                 let dims, is4k, is1080p
@@ -150,21 +140,22 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                   is4k = parseInt(dims[0]) >= 3840 || parseInt(dims[1]) >= 2160
                   is1080p = parseInt(dims[0]) >= 1920 || parseInt(dims[1]) >= 1080
                 }
+                
                 let hdr
                 if (episode.hdr) {
                   hdr = episode.hdr
                 }
 
-                // ex. 
-                // sanitized.clipVideoURL = `${nodeJSURL}/videoClip/${type}/${title}${item?.metadata?.season_number ? `/${item?.metadata.season_number}${item?.episodeNumber ? `/${item?.episodeNumber}` : ''}` : ''}?start=${start}&end=${end}`
+                // Generate clip video URL if videoURL is available
                 if (episode.videoURL) {
                   episode.clipVideoURL = generateClipVideoURL(episode, 'tv', showTitle)
                 }
 
                 const episodeTitle = episodeMetadata?.name ?? episode.title
+                const listKey = episodeTitle ?? episode.id
 
                 return (
-                  <li key={episodeTitle + '-AnimationCont'} className="relative min-w-[250px]">
+                  <li key={listKey + '-AnimationCont'} className="relative min-w-[250px]">
                     <PageContentAnimatePresence
                       variants={variants}
                       transition={{
@@ -225,59 +216,4 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
       </div>
     </div>
   )
-}
-
-async function getAndUpdateMongoDB(showTitle, seasonNumber) {
-  const client = await clientPromise
-
-  // Fetch the specific TV show based on the title
-  const tvShow = await client
-    .db('Media')
-    .collection('TV')
-    .findOne(
-      { title: showTitle },
-      {
-        projection: {
-          title: 1,
-          metadata: 1,
-          posterURL: 1,
-          posterBlurhash: 1,
-          posterSource: 1,
-          posterBlurhashSource: 1,
-          'seasons.seasonNumber': 1,
-          'seasons.title': 1,
-          'seasons.season_poster': 1,
-          'seasons.seasonPosterBlurhash': 1,
-          'seasons.seasonPosterBlurhashSource': 1,
-          'seasons.metadata.Genre': 1,
-          'seasons.metadata.episodes': 1,
-          'seasons.episodes': 1,
-        },
-      }
-    )
-
-  if (!tvShow) {
-    // Handle the case where the TV show is not found
-    return null
-  }
-
-  // Find the index of the season in the array
-  const seasonIndex = tvShow.seasons.findIndex((season) => season.seasonNumber === seasonNumber)
-
-  // Check if the season exists in the database
-  if (seasonIndex === -1) {
-    // Handle the case where the season is not found
-    return null
-  }
-
-  const returnObject = {
-    _id: tvShow._id.toString(), // Convert ObjectId to string
-    title: tvShow.title,
-    metadata: tvShow.metadata, // Include the show's metadata
-    currentSeasonMetadata: tvShow.seasons[seasonIndex].metadata, // Include the metadata for the current season
-    seasons: tvShow.seasons, // Include the list of all seasons
-    posterBlurhashSource: tvShow.posterBlurhashSource, // Include the blurhash source for the show
-  }
-
-  return returnObject
 }

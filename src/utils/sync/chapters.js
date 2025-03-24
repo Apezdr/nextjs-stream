@@ -185,7 +185,7 @@ export async function processSeasonChapters(
       episode,
       fileServerEpisodeData,
       episodeFileName,
-      show.title,
+      show.originalTitle,
       season.seasonNumber,
       serverConfig,
       fieldAvailability

@@ -23,6 +23,7 @@ export async function processEpisodeThumbnails(
   fileServerEpisodeData,
   episodeFileName,
   showTitle,
+  originalTitle,
   seasonNumber,
   serverConfig,
   fieldAvailability
@@ -39,7 +40,7 @@ export async function processEpisodeThumbnails(
       const isHighestPriority = isCurrentServerHighestPriorityForField(
         fieldAvailability,
         'tv',
-        showTitle,
+        originalTitle,
         fieldPath,
         serverConfig
       )
@@ -66,7 +67,7 @@ export async function processEpisodeThumbnails(
       const isHighestPriority = isCurrentServerHighestPriorityForField(
         fieldAvailability,
         'tv',
-        showTitle,
+        originalTitle,
         fieldPath,
         serverConfig
       )
@@ -94,7 +95,7 @@ export async function processEpisodeThumbnails(
     const isHighestPriority = isCurrentServerHighestPriorityForField(
       fieldAvailability,
       'tv',
-      showTitle,
+      originalTitle,
       fieldPath,
       serverConfig
     )
@@ -117,7 +118,7 @@ export async function processEpisodeThumbnails(
     const isHighestPriority = isCurrentServerHighestPriorityForField(
       fieldAvailability,
       'tv',
-      showTitle,
+      originalTitle,
       fieldPath,
       serverConfig
     )
@@ -186,6 +187,7 @@ export async function processSeasonThumbnails(
           fileServerSeasonData.episodes[episodeFileName],
           episodeFileName,
           show.title,
+          show.originalTitle,
           season.seasonNumber,
           serverConfig,
           fieldAvailability

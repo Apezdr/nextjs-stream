@@ -125,6 +125,24 @@ export function isCurrentServerHighestPriorityForField(
 }
 
 /**
+ * Checks if a field exists across any servers for a specific media item.
+ * @param {Object} fieldAvailability - Field availability mapping
+ * @param {string} mediaType - Media type (tv, movie)
+ * @param {string} mediaTitle - Media title identifier
+ * @param {string} fieldPath - Field path to check
+ * @returns {boolean} True if field exists on any server
+ */
+export function doesFieldExistAcrossServers(
+  fieldAvailability,
+  mediaType,
+  mediaTitle,
+  fieldPath
+) {
+  const serversWithData = fieldAvailability[mediaType][mediaTitle]?.[fieldPath] || []
+  return serversWithData.length > 0 ? true : false
+}
+
+/**
  * Finds episode filename matching season and episode numbers.
  * @param {string[]} fileNames - File names
  * @param {number} seasonNumber - Season number

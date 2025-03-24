@@ -19,6 +19,7 @@ import {
 } from './sync/index'
 import { updateLastSynced } from './sync/database'
 import { processMovie, processTVShow } from './sync_utils'
+import { syncToFlatStructure } from './flatSync'
 
 /**
  * Syncs missing media items that are missing from the database.
@@ -172,18 +173,21 @@ export async function syncAllServers(currentDB, fileServers, fieldAvailability) 
       // Use a wrapper function to catch errors for each sync operation
       const syncOperations = [
         { name: 'Missing Media', fn: () => syncMissingMedia(missingMedia, fileServer, serverConfig, contentAddedToDB) },
-        { name: 'Metadata', fn: () => syncMetadata(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'Captions', fn: () => syncCaptions(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'Chapters', fn: () => syncChapters(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'Video URLs', fn: () => syncVideoURL(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'Logos', fn: () => syncLogos(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'Video Info', fn: () => syncVideoInfo(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'TV Thumbnails', fn: () => syncTVThumbnails(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'Poster URLs', fn: () => syncPosterURLs(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'Backdrop', fn: () => syncBackdrop(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'Blurhash', fn: () => syncBlurhash(currentDB, fileServer, serverConfig, fieldAvailability) },
+        // { name: 'Metadata', fn: () => syncMetadata(currentDB, fileServer, serverConfig, fieldAvailability) },
+        // { name: 'Captions', fn: () => syncCaptions(currentDB, fileServer, serverConfig, fieldAvailability) },
+        // { name: 'Chapters', fn: () => syncChapters(currentDB, fileServer, serverConfig, fieldAvailability) },
+        // { name: 'Video URLs', fn: () => syncVideoURL(currentDB, fileServer, serverConfig, fieldAvailability) },
+        // { name: 'Logos', fn: () => syncLogos(currentDB, fileServer, serverConfig, fieldAvailability) },
+        // { name: 'Video Info', fn: () => syncVideoInfo(currentDB, fileServer, serverConfig, fieldAvailability) },
+        // { name: 'TV Thumbnails', fn: () => syncTVThumbnails(currentDB, fileServer, serverConfig, fieldAvailability) },
+        // { name: 'Poster URLs', fn: () => syncPosterURLs(currentDB, fileServer, serverConfig, fieldAvailability) },
+        // { name: 'Backdrop', fn: () => syncBackdrop(currentDB, fileServer, serverConfig, fieldAvailability) },
+        // { name: 'Blurhash', fn: () => syncBlurhash(currentDB, fileServer, serverConfig, fieldAvailability) },
         { name: 'Playback Status Validation', fn: () => validatePlaybackVideoUrls(currentDB, fileServers) }
       ];
+
+      // Use forceSync=true to override aggressive hash skipping
+      await syncToFlatStructure(fileServer, serverConfig, fieldAvailability, false, true)
 
       // Execute each sync operation and catch any errors
       for (const operation of syncOperations) {
@@ -208,6 +212,27 @@ export async function syncAllServers(currentDB, fileServers, fieldAvailability) 
         phase: 'sync',
       })
     }
+  }
+
+  // Now that all servers have been processed, run a final availability check
+  try {
+    console.log(chalk.bold.yellow('Performing final availability check across all servers...'));
+    
+    // Import the checkAvailabilityAcrossAllServers function from flatSync
+    const { checkAvailabilityAcrossAllServers } = require('./flatSync');
+    
+    // Run availability check with all servers' data
+    const finalAvailabilityResults = await checkAvailabilityAcrossAllServers(fileServers, fieldAvailability);
+    results.finalAvailabilityResults = finalAvailabilityResults;
+    
+    console.log(chalk.bold.yellow('Final availability check complete'));
+  } catch (error) {
+    console.error('Error during final availability check:', error);
+    results.errors.push({
+      phase: 'final-availability-check',
+      error: error.message,
+      stack: error.stack
+    });
   }
 
   await updateLastSynced(client)

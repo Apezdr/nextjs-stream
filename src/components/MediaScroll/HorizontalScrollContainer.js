@@ -6,6 +6,8 @@ import {
 import { getRecommendations } from '@src/utils/recommendations'
 import { auth } from '@src/lib/auth'
 import HorizontalScroll from '@src/components/MediaScroll/HorizontalScroll'
+import { getFlatRecommendations } from '@src/utils/flatRecommendations'
+import { getFlatPosters, getFlatRecentlyAddedMedia, getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 
 // Define personalized messages for each type
 const NO_CONTENT_MESSAGES = {
@@ -31,14 +33,14 @@ export default async function HorizontalScrollContainer({
   switch (type) {
     case 'movie':
       // Assuming getPosters returns a count when countOnly is true
-      items = await getPosters('movie', true)
+      items = await getFlatPosters('movie', true)
       break
     case 'tv':
-      items = await getPosters('tv', true)
+      items = await getFlatPosters('tv', true)
       break
     case 'recentlyWatched':
       limit = 50
-      items = await getRecentlyWatchedForUser({
+      items = await getFlatRecentlyWatchedForUser({
         userId: session.user?.id,
         countOnly: true,
         limit: limit,
@@ -46,19 +48,19 @@ export default async function HorizontalScrollContainer({
       break
     case 'recentlyAdded':
       limit = 32
-      items = await getRecentlyAddedMedia({ limit: limit, countOnly: true })
+      items = await getFlatRecentlyAddedMedia({ limit: limit, countOnly: true })
       break
     case 'recommendations':
       limit = 30
       // Fetch count from recommendations
-      const recommendationsData = await getRecommendations(session.user?.id, 0, limit, true)
+      const recommendationsData = await getFlatRecommendations(session.user?.id, 0, limit, true)
       items = recommendationsData.count || 0
       break
     case 'all':
     default:
       // Assuming getPosters returns a count when countOnly is true
-      moviePosters = await getPosters('movie', true)
-      tvPosters = await getPosters('tv', true)
+      moviePosters = await getFlatPosters('movie', true)
+      tvPosters = await getFlatPosters('tv', true)
       items = moviePosters + tvPosters
   }
 

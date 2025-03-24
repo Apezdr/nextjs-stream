@@ -1,6 +1,5 @@
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
-import { isMovieAvailableOnAnyServer, isEpisodeAvailableOnAnyServer } from './videoAvailability'
 import { ObjectId } from 'mongodb'
 
 /**

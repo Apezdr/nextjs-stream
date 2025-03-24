@@ -6,7 +6,6 @@ import { auth } from '../../../../lib/auth'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import Link from 'next/link'
 import SkeletonCard from '@components/SkeletonCard'
-import { getRequestedMedia, getRequestedMediaTrailer } from '../../../../utils/database'
 import TVEpisodesListComponent from '../../../../components/MediaPages/TVEpisodesListComponent'
 import TVShowSeasonsList from '../../../../components/MediaPages/TVShowSeasonsListComponent'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
@@ -18,6 +17,7 @@ import { fileServerURLWithPrefixPath } from '@src/utils/config'
 import RetryImage from '@components/RetryImage'
 import MovieDetailsComponent from '@components/MediaPages/MovieDetailsComponent'
 import TVEpisodeDetailsComponent from '@components/MediaPages/TVEpisodeDetailsComponent'
+import { getFlatRequestedMedia, getTrailerMedia } from '@src/utils/flatDatabaseUtils'
 
 async function validateVideoURL(url) {
   try {
@@ -43,7 +43,7 @@ export async function generateMetadata(props, parent) {
     title = (await parent).title.absolute,
     poster = posterCollage
   if (mediaType === 'tv') {
-    media = await getRequestedMedia({
+    media = await getFlatRequestedMedia({
       type: mediaType,
       title: decodeURIComponent(mediaTitle),
       season: mediaSeason,
@@ -64,15 +64,15 @@ export async function generateMetadata(props, parent) {
           : `/sorry-image-not-available.jpg`
     }
     if (mediaSeason) {
-      title = `${title} - S${mediaSeason.padStart(2, '0')}`
+      title = `${title} - S${mediaSeason.replace('Season ', '').padStart(2, '0')}`
       if (mediaEpisode) {
-        title = `${title}E${mediaEpisode.padStart(2, '0')}`
+        title = `${title}E${mediaEpisode.replace('Episode ', '').padStart(2, '0')}`
       }
     }
   } else if (mediaType === 'movie') {
     overview = (await parent).description
     if (mediaTitle) {
-      media = await getRequestedMedia({
+      media = await getFlatRequestedMedia({
         type: mediaType,
         title: decodeURIComponent(mediaTitle),
       })
@@ -121,20 +121,20 @@ async function MediaPage({ params, searchParams }) {
     mediaEpisode = undefined */
     if (mediaType === 'tv' && mediaTitle) {
       // Get the trailer for the tv show
-      media = await getRequestedMediaTrailer(mediaType, decodeURIComponent(mediaTitle))
+      media = await getTrailerMedia(mediaType, mediaTitle);
     } else if (mediaType === 'movie' && mediaTitle) {
       // Get the trailer for the movie
-      media = await getRequestedMediaTrailer(mediaType, decodeURIComponent(mediaTitle))
+      media = await getTrailerMedia(mediaType, mediaTitle);
     }
   } else if (mediaType === 'tv' && mediaTitle) {
-    media = await getRequestedMedia({
+    media = await getFlatRequestedMedia({
       type: mediaType,
       title: decodeURIComponent(mediaTitle),
       season: mediaSeason,
       episode: mediaEpisode,
     })
   } else if (mediaType === 'movie' && mediaTitle) {
-    media = await getRequestedMedia({
+    media = await getFlatRequestedMedia({
       type: mediaType,
       title: decodeURIComponent(mediaTitle),
     })
@@ -231,7 +231,7 @@ async function MediaPage({ params, searchParams }) {
     )
   } else if (mediaType === 'tv' && mediaTitle && mediaSeason && mediaEpisode) {
     // If a specific episode is selected
-    const isValidVideoURL = media.videoURL && (await validateVideoURL(media.videoURL))
+    const isValidVideoURL = media && media.videoURL && (await validateVideoURL(media.videoURL))
     if (media) {
       return (
         <div className="flex flex-col items-center justify-center md:py-12 h-screen max-h-[90%]">

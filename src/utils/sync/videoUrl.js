@@ -93,6 +93,7 @@ export async function processEpisodeVideoURL(
   fileServerEpisodeData,
   episodeFileName,
   showTitle,
+  originalTitle,
   seasonNumber,
   serverConfig,
   fieldAvailability
@@ -104,7 +105,7 @@ export async function processEpisodeVideoURL(
   const isHighestPriority = isCurrentServerHighestPriorityForField(
     fieldAvailability,
     'tv',
-    showTitle,
+    originalTitle,
     fieldPath,
     serverConfig
   )
@@ -178,6 +179,7 @@ export async function processSeasonVideoURLs(
       fileServerEpisodeData,
       episodeFileName,
       show.title,
+      originalTitle,
       season.seasonNumber,
       serverConfig,
       fieldAvailability

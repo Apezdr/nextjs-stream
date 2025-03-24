@@ -6,7 +6,7 @@ import SkeletonCard from '@components/SkeletonCard'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { Suspense } from 'react'
 import Loading from '@src/app/loading'
-import { getAvailableMedia, getLastUpdatedTimestamp } from '@src/utils/database'
+import { getFlatAvailableTVShowsCount } from '@src/utils/flatDatabaseUtils'
 import TVList from './cache/TVList'
 
 export default async function TVListComponent() {
@@ -32,8 +32,10 @@ export default async function TVListComponent() {
   const {
     user: { name, email },
   } = session
-  const { tvprogramsCount } = await getAvailableMedia({ type: 'tv' })
-  const latestUpdateTimestamp = await getLastUpdatedTimestamp({ type: 'tv' })
+  
+  // Get TV show count and latest update timestamp using flat database functions
+  const tvprogramsCount = await getFlatAvailableTVShowsCount();
+  
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
       <SyncClientWithServerWatched />
@@ -84,7 +86,7 @@ export default async function TVListComponent() {
                 </>
               }
             >
-              <TVList latestUpdateTimestamp={latestUpdateTimestamp} />
+              <TVList />
             </Suspense>
           </Suspense>
         </ul>

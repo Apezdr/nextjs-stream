@@ -397,7 +397,7 @@ export async function processSeasonMetadata(
         episodeFileName,
         fileServerSeasonData.episodes,
         season,
-        showData.title ?? currentShow.title,
+        showData.originalTitle ?? currentShow.originalTitle,
         seasonNumber,
         serverConfig,
         fieldAvailability
@@ -445,7 +445,7 @@ export async function processSeasonMetadata(
     const isSeasonHighestPriority = isCurrentServerHighestPriorityForField(
       fieldAvailability,
       'tv',
-      showData.title ?? currentShow.title,
+      showData.originalTitle ?? currentShow.originalTitle,
       seasonFieldPath,
       serverConfig
     )
@@ -841,7 +841,7 @@ export async function processSeasonCaptions(
       episode,
       fileServerEpisodeData,
       episodeFileName,
-      show.title,
+      show.originalTitle,
       season.seasonNumber,
       serverConfig,
       fieldAvailability
@@ -1032,7 +1032,7 @@ export async function processSeasonVideoInfo(
           episode,
           fileServerSeasonData,
           episodeFileName,
-          show.title,
+          show.originalTitle,
           season.seasonNumber,
           episode.episodeNumber,
           serverConfig,

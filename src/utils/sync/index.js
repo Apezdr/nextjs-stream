@@ -14,7 +14,6 @@ import {
   checkVideoAvailabilityAcrossServers, 
   removeUnavailableVideos,
   clearRelatedCacheEntries,
-  isMovieAvailableOnAnyServer,
   isEpisodeAvailableOnAnyServer,
   gatherUnavailableMovies,
   gatherUnavailableTVContent
@@ -42,7 +41,6 @@ export {
   checkVideoAvailabilityAcrossServers,
   removeUnavailableVideos,
   clearRelatedCacheEntries,
-  isMovieAvailableOnAnyServer,
   isEpisodeAvailableOnAnyServer,
   gatherUnavailableMovies,
   gatherUnavailableTVContent,

@@ -420,7 +420,7 @@ export async function finalizeTvMetadata(client, show, aggregatedData, fieldAvai
   const isHighestPriorityForMetadata = isCurrentServerHighestPriorityForField(
     fieldAvailability,
     MediaType.TV,
-    show.title,
+    show.originalTitle,
     'metadata',
     { priority: aggregatedData.priority }
   );
@@ -548,7 +548,7 @@ export async function finalizeTvMetadata(client, show, aggregatedData, fieldAvai
       const isHighestPriorityForEpisode = isCurrentServerHighestPriorityForField(
         fieldAvailability,
         MediaType.TV,
-        show.title,
+        show.originalTitle,
         fieldPath,
         { priority: episodeMetadata.priority }
       );

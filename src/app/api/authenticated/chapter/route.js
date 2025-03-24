@@ -1,6 +1,7 @@
 import fetch from 'node-fetch'
 //import isAuthenticated from '../../../../utils/routeAuth'
 import clientPromise from '../../../../lib/mongodb'
+import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 
 // This route is used to fetch subtitles for a specific media item
 // It is not protected by authentication because it is used by the media player
@@ -16,38 +17,25 @@ export const GET = async (req) => {
   const searchParams = req.nextUrl.searchParams
   const name = searchParams.get('name')
   const type = searchParams.get('type')
-  const season = searchParams.get('season') // New parameter for TV series
-  const episode = searchParams.get('episode') // New parameter for TV series
+  const season = searchParams.get('season') // Parameter for TV series
+  const episode = searchParams.get('episode') // Parameter for TV series
 
-  const collectionName = type === 'movie' ? 'Movies' : type === 'tv' ? 'TV' : null
-
-  if (!collectionName) {
-    return new Response(JSON.stringify({ error: 'Invalid type specified' }), {
+  if (!type || !name) {
+    return new Response(JSON.stringify({ error: 'Missing required parameters' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
   try {
-    const client = await clientPromise
-    let media
-
-    if (type === 'movie') {
-      media = await client
-        .db('Media')
-        .collection(collectionName)
-        .findOne({ title: decodeURIComponent(name) })
-    } else if (type === 'tv') {
-      // Query for TV series
-      media = await client
-        .db('Media')
-        .collection(collectionName)
-        .findOne({
-          title: decodeURIComponent(name),
-          'seasons.seasonNumber': parseInt(season),
-        })
-    }
-
+    // Use the getFlatRequestedMedia function to fetch media from flat database structure
+    const media = await getFlatRequestedMedia({
+      type: type,
+      title: decodeURIComponent(name),
+      season: season,
+      episode: episode
+    })
+    
     if (!media) {
       return new Response(JSON.stringify({ error: 'Media not found' }), {
         status: 404,
@@ -55,17 +43,22 @@ export const GET = async (req) => {
       })
     }
 
+    // Extract chapterURL based on media type
     let chapterURL
-
+    
     if (type === 'movie') {
       chapterURL = media.chapterURL
     } else if (type === 'tv') {
-      // Extract chapterURL for the specific season and episode
-      const selectedSeason = media.seasons.find((s) => s.seasonNumber === parseInt(season))
-      const selectedEpisode = selectedSeason?.episodes.find(
-        (e) => e.episodeNumber === parseInt(episode)
-      )
-      chapterURL = selectedEpisode?.chapterURL
+      // For episodes, the chapterURL is directly on the returned media object
+      if (episode) {
+        chapterURL = media.chapterURL
+      } else {
+        // For TV shows without specific episode, we can't determine chapters
+        return new Response(JSON.stringify({ error: 'Episode number required for TV chapters' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
     }
 
     if (!chapterURL) {
@@ -75,16 +68,43 @@ export const GET = async (req) => {
       })
     }
 
-    const response = await fetch(chapterURL)
-    const data = await response.text()
+    try {
+      const response = await fetch(chapterURL)
+      
+      if (!response.ok) {
+        return new Response(JSON.stringify({ 
+          error: `Failed to fetch chapters: ${response.status} ${response.statusText}` 
+        }), {
+          status: response.status,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      
+      const data = await response.text()
 
-    const headers = {
-      'Access-Control-Allow-Origin': '*', // Allows all origins
-      'Content-Type': 'text/vtt',
+      // Check if response is valid VTT format
+      if (data.toLowerCase().includes('<!doctype html>') || data.trim() === '') {
+        return new Response(JSON.stringify({ error: 'Invalid chapter format received' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+
+      const headers = {
+        'Access-Control-Allow-Origin': '*', // Allows all origins
+        'Content-Type': 'text/vtt',
+      }
+
+      return new Response(data, { status: 200, headers: headers })
+    } catch (error) {
+      console.error(`Error fetching chapter file: ${error.message}`);
+      return new Response(JSON.stringify({ error: 'Failed to fetch chapters' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
-
-    return new Response(data, { status: 200, headers: headers })
   } catch (error) {
+    console.error(`Error in chapter route: ${error.message}`);
     return new Response(JSON.stringify({ error: 'Failed to fetch chapters' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
