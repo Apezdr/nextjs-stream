@@ -12,6 +12,24 @@ import { syncSeasonPoster } from './poster';
 import { syncSeasonPosterBlurhash } from './blurhash';
 import { fetchHashData, getStoredHash, storeHash } from '../hashStorage';
 import { isCurrentServerHighestPriorityForField } from '../../sync/utils';
+import { getShowFromMemory, getSeasonFromMemory, createSeasonInMemory } from '../memoryUtils';
+
+/**
+ * Builds a new season object with proper defaults
+ * @param {Object} show - Show object with _id and title 
+ * @param {Object} season - Basic season info with seasonNumber
+ * @returns {Object} New season object ready for database insertion
+ */
+export function buildNewSeasonObject(show, season) {
+  return {
+    _id: new ObjectId(),
+    showId: show._id,
+    showTitle: show.title,
+    seasonNumber: season.seasonNumber,
+    type: 'season',
+    createdAt: new Date()
+  };
+}
 
 /**
  * Syncs a single TV season from file server to flat database structure
@@ -21,9 +39,10 @@ import { isCurrentServerHighestPriorityForField } from '../../sync/utils';
  * @param {Object} fileServerShowData - File server data for this show
  * @param {Object} serverConfig - Server configuration
  * @param {Object} fieldAvailability - Field availability map
+ * @param {Object} enhancedData - Enhanced data structure with lookup maps
  * @returns {Promise<Object>} Sync results for this season
  */
-async function syncSingleSeason(client, show, season, fileServerShowData, serverConfig, fieldAvailability) {
+async function syncSingleSeason(client, show, season, fileServerShowData, serverConfig, fieldAvailability, enhancedData) {
   const results = {
     showTitle: show.title,
     seasonNumber: season.seasonNumber,
@@ -36,37 +55,76 @@ async function syncSingleSeason(client, show, season, fileServerShowData, server
     // Get the file server data for this season
     const seasonKey = `Season ${season.seasonNumber}`;
     const fileServerSeasonData = fileServerShowData?.seasons?.[seasonKey];
-    if (!fileServerSeasonData) return results;
+    if (!fileServerSeasonData) {
+      console.error(`No file server data found for "${show.title}" Season ${season.seasonNumber}`);
+      results.errors.push({ field: 'fileServer', error: `No file server data found for "${show.title}" Season ${season.seasonNumber}` });
+      return results;
+    }
     
-    // Get the TV show from the flat database
-    const flatShow = await getTVShowFromFlatDB(client, show.originalTitle);
+    // Try to get the TV show from memory first if we have enhanced data
+    let flatShow = null;
+    const hasEnhancedData = enhancedData && enhancedData.lookups && 
+                          enhancedData.lookups.tvShows && enhancedData.lookups.seasons;
+    
+    if (hasEnhancedData) {
+      // Try to find the show in memory by original title first
+      flatShow = getShowFromMemory(enhancedData, show.originalTitle, true);
+      
+      // If not found, try by title
+      if (!flatShow) {
+        flatShow = getShowFromMemory(enhancedData, show.title);
+      }
+      
+      if (flatShow) {
+        console.log(chalk.green(`Found TV show "${show.title}" in memory lookups for season processing`));
+      }
+    }
+    
+    // Fall back to database lookup if not found in memory
+    if (!flatShow) {
+      flatShow = await getTVShowFromFlatDB(client, show.originalTitle);
+    }
+    
     if (!flatShow) {
       results.errors.push({ field: 'general', error: 'TV show not found in flat structure' });
       return results;
     }
     
-    // Get the season from the flat database or create it if it doesn't exist
-    let flatSeason = await getSeasonFromFlatDB(client, show.title, season.seasonNumber);
+    // Try to get the season from memory first if we have enhanced data
+    let flatSeason = null;
+    if (hasEnhancedData) {
+      flatSeason = getSeasonFromMemory(enhancedData, flatShow.title, season.seasonNumber);
+      
+      if (flatSeason) {
+        console.log(chalk.green(`Found Season ${season.seasonNumber} for "${show.title}" in memory lookups`));
+      }
+    }
+    
+    // Fall back to database lookup if not found in memory
+    if (!flatSeason) {
+      flatSeason = await getSeasonFromFlatDB(client, show.title, season.seasonNumber);
+    }
     
     if (!flatSeason) {
       // Create a new season in the flat database
-      const newSeason = {
-        _id: new ObjectId(),
-        showId: flatShow._id,
-        showTitle: show.title,
-        seasonNumber: season.seasonNumber,
-        type: 'season',
-        createdAt: new Date()
-      };
+      const newSeason = buildNewSeasonObject(flatShow, season);
       
+      // Create in database
       await createSeasonInFlatDB(client, newSeason);
-      flatSeason = newSeason;
+      
+      // If we have enhanced data, also add to memory for future lookups
+      if (hasEnhancedData) {
+        flatSeason = createSeasonInMemory(enhancedData, newSeason);
+      } else {
+        flatSeason = newSeason;
+      }
+      
       results.created = true;
     }
     
     // Sync metadata
     try {
-      const metadataResult = await syncSeasonMetadata(client, show, season, fileServerSeasonData, serverConfig, fieldAvailability);
+      const metadataResult = await syncSeasonMetadata(client, show, flatSeason, fileServerSeasonData, serverConfig, fieldAvailability);
       if (metadataResult) {
         results.updated = true;
         results.fields.push(metadataResult.field);
@@ -77,7 +135,7 @@ async function syncSingleSeason(client, show, season, fileServerShowData, server
     
     // Sync poster
     try {
-      const posterResult = await syncSeasonPoster(client, show, season, fileServerSeasonData, serverConfig, fieldAvailability);
+      const posterResult = await syncSeasonPoster(client, show, flatSeason, fileServerSeasonData, serverConfig, fieldAvailability);
       if (posterResult) {
         results.updated = true;
         results.fields.push(posterResult.field);
@@ -88,7 +146,7 @@ async function syncSingleSeason(client, show, season, fileServerShowData, server
     
     // Sync blurhash
     try {
-      const blurhashResult = await syncSeasonPosterBlurhash(client, show, season, fileServerSeasonData, serverConfig, fieldAvailability);
+      const blurhashResult = await syncSeasonPosterBlurhash(client, show, flatSeason, fileServerSeasonData, serverConfig, fieldAvailability);
       if (blurhashResult) {
         results.updated = true;
         results.fields.push(blurhashResult.field);
@@ -144,29 +202,105 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
       console.warn(chalk.yellow('Hash-based sync failed, falling back to traditional sync:'), hashError.message);
     }
 
-    // Create a mapping of titles to TV shows in the database for easy lookup
-    const dbShowMap = flatDB.tv.reduce((map, show) => {
-      // Also create a mapping of season numbers to seasons for each show
-      const seasonMap = show.seasons.reduce((sMap, season) => {
-        sMap[season.seasonNumber] = season;
-        return sMap;
+    // Check if we have enhanced data with lookup maps
+    const hasEnhancedData = flatDB.lookups && flatDB.lookups.tvShows && flatDB.lookups.seasons;
+    if (hasEnhancedData) {
+      console.log(chalk.green('Using enhanced in-memory lookups for TV season sync'));
+    } else {
+      console.log(chalk.yellow('Enhanced memory lookups not available, using database queries'));
+      
+      // Create a mapping of titles to TV shows in the database for easy lookup when not using memory
+      const dbShowMap = flatDB.tv.reduce((map, show) => {
+        // Also create a mapping of season numbers to seasons for each show
+        const seasonMap = show?.seasons?.reduce((sMap, season) => {
+          sMap[season.seasonNumber] = season;
+          return sMap;
+        }, {});
+
+        map[show.originalTitle] = {
+          show,
+          seasons: seasonMap
+        };
+        return map;
       }, {});
+      
+      // Assign to flatDB for use in the loop below
+      flatDB.dbShowMap = dbShowMap;
+    }
 
-      map[show.originalTitle] = {
-        show,
-        seasons: seasonMap
-      };
-      return map;
-    }, {});
-
-    // Process each TV show from the file server
+    // First, collect all unique seasons across all shows from the database
+    const allKnownSeasons = new Map(); // Map of showTitle -> Set of season numbers
+    
+    // Initialize map with seasons from the flatDB
+    for (const show of flatDB.tv) {
+      if (!show.seasons || show.seasons.length === 0 || !show.title) continue;
+      
+      if (!allKnownSeasons.has(show.title)) {
+        allKnownSeasons.set(show.title, new Set());
+      }
+      
+      for (const season of show.seasons) {
+        if (season.seasonNumber !== undefined) {
+          allKnownSeasons.get(show.title).add(season.seasonNumber);
+        }
+      }
+    }
+    
+    // Add seasons from the current file server
     for (const [showTitle, fileServerShowData] of Object.entries(fileServer.tv)) {
-      // Skip if no seasons data
       if (!fileServerShowData.seasons) continue;
+      
+      if (!allKnownSeasons.has(showTitle)) {
+        allKnownSeasons.set(showTitle, new Set());
+      }
+      
+      for (const seasonKey of Object.keys(fileServerShowData.seasons)) {
+        const seasonNumberMatch = seasonKey.match(/Season (\d+)/);
+        if (!seasonNumberMatch) continue;
+        const seasonNumber = parseInt(seasonNumberMatch[1], 10);
+        allKnownSeasons.get(showTitle).add(seasonNumber);
+      }
+    }
+    
+    console.log(chalk.cyan(`Found ${Array.from(allKnownSeasons.keys()).length} shows with seasons to process`));
 
-      // Get the show from database or create a simple object with just the title
-      const dbShowEntry = dbShowMap[showTitle];
-      const show = dbShowEntry?.show || { title: showTitle, originalTitle: showTitle };
+    // Process each TV show
+    for (const [showTitle, seasonNumbers] of allKnownSeasons.entries()) {
+      const fileServerShowData = fileServer.tv[showTitle];
+      
+      // Skip if no file server data for this show
+      if (!fileServerShowData) {
+        console.log(chalk.yellow(`No file server data for "${showTitle}" - skipping seasons`));
+        continue;
+      }
+      
+      // Get the show from enhanced data or database
+      let show;
+      if (hasEnhancedData) {
+        // Try to find the show in memory 
+        show = getShowFromMemory(flatDB, showTitle, true);
+        
+        // If not found by original title, try by title
+        if (!show) {
+          show = getShowFromMemory(flatDB, showTitle);
+        }
+      } else {
+        // Get from the database map
+        const dbShowEntry = flatDB.dbShowMap[showTitle];
+        show = dbShowEntry?.show;
+      }
+      
+      // If show not found in enhanced data or db map, fetch directly from database
+      if (!show) {
+        console.warn(chalk.yellow(`Show "${showTitle}" not found in memory, fetching from database...`));
+        show = await getTVShowFromFlatDB(client, showTitle);
+      }
+      
+      // Last resort - barebones object (should rarely happen)
+      if (!show) {
+        console.error(chalk.red(`Show "${showTitle}" not found in any data source, using minimal placeholder`));
+        show = { title: showTitle, originalTitle: showTitle };
+      }
 
       // For hash-based sync, get the show hash data if available
       let showHashData = null;
@@ -174,19 +308,20 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
         showHashData = mediaHashResponse.titles[showTitle];
       }
 
-      // Process each season from the file server
-      for (const [seasonKey, fileServerSeasonData] of Object.entries(fileServerShowData.seasons)) {
+      // Process each known season for this show
+      for (const seasonNumber of seasonNumbers) {
         try {
-          // Extract season number from the key (e.g., "Season 1" -> 1)
-          const seasonNumberMatch = seasonKey.match(/Season (\d+)/);
-          if (!seasonNumberMatch) continue;
-          const seasonNumber = parseInt(seasonNumberMatch[1], 10);
-
+          const seasonKey = `Season ${seasonNumber}`;
+          const fileServerSeasonData = fileServerShowData?.seasons?.[seasonKey];
+          
           // Get the season from database or create a simple object with basic properties
+          const dbShowEntry = flatDB.dbShowMap?.[showTitle];
           const season = dbShowEntry?.seasons?.[seasonNumber] || { 
             seasonNumber,
             showTitle
           };
+
+          const seasonInDB = !!dbShowEntry?.seasons?.[seasonNumber];
 
           // --- Revised season hash logic ---
           let currentSeasonHash = null;
@@ -205,7 +340,8 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
 
           if (syncStrategy === 'hash-based' && currentSeasonHash) {
             const storedSeasonHash = await getStoredHash(client, 'tv', showTitle, seasonNumber, null, serverConfig.id);
-            if (storedSeasonHash === currentSeasonHash) {
+            if (storedSeasonHash === currentSeasonHash && seasonInDB) {
+              // Only skip if the season is actually in the DB
               console.log(chalk.green(`Season hash unchanged for "${showTitle}" Season ${seasonNumber} - skipping processing`));
               results.skippedSeasons++;
               continue; // Skip to the next season
@@ -215,14 +351,21 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
           }
           // --- End revised season hash logic ---
 
-          // Process the season
+          // If the season doesn't exist on this server, log it but still try to process
+          // This allows seasons that only exist on other servers to be created
+          if (!fileServerSeasonData) {
+            console.log(chalk.yellow(`Season ${seasonNumber} of "${showTitle}" doesn't exist on server ${serverConfig.id} but may exist elsewhere`));
+          }
+
+          // Process the season with enhanced data if available
           const seasonResults = await syncSingleSeason(
             client,
             show,
             season,
-            fileServerShowData,
+            fileServerShowData || { seasons: {} }, // Provide empty seasons object if missing
             serverConfig,
-            fieldAvailability
+            fieldAvailability,
+            hasEnhancedData ? flatDB : null
           );
 
           if (seasonResults.updated || seasonResults.created) {

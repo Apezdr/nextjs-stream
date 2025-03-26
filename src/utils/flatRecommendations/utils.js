@@ -119,6 +119,14 @@ export async function ensureMediaProperties(item) {
         (enhancedItem.episode.metadata?.still_path ? 
          getFullImageUrl(enhancedItem.episode.metadata.still_path) : 
          enhancedItem.posterURL);
+      enhancedItem.episode.thumbnailSource = enhancedItem.episode.metadata?.still_path ? null : enhancedItem.posterSource;
+      enhancedItem.episode.thumbnailBlurhash = enhancedItem.episode.metadata?.still_path ? null : await fetchMetadataMultiServer(
+        enhancedItem.posterBlurhashSource,
+        enhancedItem.posterBlurhash,
+        'blurhash',
+        'tv',
+        enhancedItem.title
+      )
     }
     
     // For TV episodes, use the thumbnail as the posterURL
@@ -162,8 +170,14 @@ export async function ensureMediaProperties(item) {
   }
   
   // For movies, ensure videoURL is set
-  if (enhancedItem.type === 'movie' && !enhancedItem.videoURL && enhancedItem.media && enhancedItem.media.videoURL) {
-    enhancedItem.videoURL = enhancedItem.media.videoURL;
+  if (enhancedItem.type === 'movie' && enhancedItem.posterBlurhash) {
+    enhancedItem.posterBlurhash = await fetchMetadataMultiServer(
+      enhancedItem.posterBlurhashSource,
+      enhancedItem.posterBlurhash,
+      'blurhash',
+      'movie',
+      enhancedItem.title
+    );
   }
   
   return enhancedItem;

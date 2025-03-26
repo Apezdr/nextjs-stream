@@ -11,7 +11,15 @@ import chalk from 'chalk'
 import { ObjectId } from 'mongodb'
 import { createEpisodeInFlatDB, getEpisodeFromFlatDB, updateEpisodeInFlatDB } from './database'
 import { getTVShowFromFlatDB } from '../tvShows/database'
-import { getSeasonFromFlatDB } from '../seasons/database'
+import { createSeasonInFlatDB, getSeasonFromFlatDB } from '../seasons/database'
+import { 
+  getShowFromMemory, 
+  getSeasonFromMemory, 
+  getEpisodeFromMemory,
+  createEpisodeInMemory,
+  updateNestedDataWithNewEpisode,
+  countExpectedEpisodesForServer as countEpisodesFromMemory
+} from '../memoryUtils'
 import { syncEpisodeMetadata, syncShowEpisodesMetadataWithHashes } from './metadata'
 import { syncEpisodeVideoURL } from './videoUrl'
 import { syncEpisodeVideoInfo } from './videoInfo'
@@ -19,7 +27,7 @@ import { syncEpisodeThumbnail, syncEpisodeThumbnailBlurhash } from './thumbnail'
 import { syncEpisodeCaptions } from './captions'
 import { syncEpisodeChapters } from './chapters'
 import { createFullUrl, findEpisodeFileName } from '../../sync/utils'
-import { fetchHashData, getStoredHash, storeHash } from '../hashStorage'
+import { fetchHashData, getStoredHash, storeHash, getStoredHashesForShow } from '../hashStorage'
 
 /**
  * Syncs a single TV episode from file server to flat database structure
@@ -32,6 +40,7 @@ import { fetchHashData, getStoredHash, storeHash } from '../hashStorage'
  * @param {Object} fieldAvailability - Field availability map
  * @param {Object} season_hashData - Hash data for the season
  * @param {boolean} skipMetadataProcessing - Flag to skip metadata processing
+ * @param {Object} enhancedData - Enhanced data structure with lookup maps
  * @returns {Promise<Object>} Sync results for this episode
  */
 async function syncSingleEpisode(
@@ -43,7 +52,8 @@ async function syncSingleEpisode(
   serverConfig,
   fieldAvailability,
   season_hashData,
-  skipMetadataProcessing = false
+  skipMetadataProcessing = false,
+  enhancedData
 ) {
   const results = {
     showTitle: show.title,
@@ -73,34 +83,85 @@ async function syncSingleEpisode(
     const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName]
     if (!fileServerEpisodeData) return results
 
-    // Get all necessary IDs from the flat database upfront (only once)
-    const [flatShow, flatSeason] = await Promise.all([
-      getTVShowFromFlatDB(client, show.originalTitle),
-      getSeasonFromFlatDB(client, show.title, season.seasonNumber),
-    ])
-
+    // Try to get data from memory first, fall back to database
+    let flatShow, flatSeason, flatEpisode;
+    
+    // Check if we have enhanced data with lookup maps
+    if (enhancedData && enhancedData.lookups) {
+      // Get show from memory
+      flatShow = getShowFromMemory(enhancedData, show.originalTitle, true);
+      if (!flatShow) {
+        // Fall back to title lookup if original title fails
+        flatShow = getShowFromMemory(enhancedData, show.title);
+      }
+      
+      if (flatShow) {
+        // Get season from memory
+        flatSeason = getSeasonFromMemory(enhancedData, flatShow.title, season.seasonNumber);
+        
+        if (flatSeason) {
+          // Get episode from memory
+          flatEpisode = getEpisodeFromMemory(
+            enhancedData, 
+            flatShow.title, 
+            season.seasonNumber, 
+            episode.episodeNumber
+          );
+        }
+      }
+    }
+    
+    // Fall back to database lookups for any missing data
     if (!flatShow) {
-      results.errors.push({ field: 'general', error: 'TV show not found in flat structure' })
-      return results
+      flatShow = show;
+      if (!flatShow) {
+        results.errors.push({ field: 'general', error: 'TV show not found in flat structure' });
+        return results;
+      }
     }
-
+    
     if (!flatSeason) {
-      results.errors.push({ field: 'general', error: 'Season not found in flat structure' })
-      return results
+      flatSeason = season;
+      if (!flatSeason) {
+        console.log(chalk.yellow(`Season ${season.seasonNumber} not found for "${show.title}" - creating it on-the-fly`));
+        
+        // Create a new season in the flat database
+        const newSeason = buildNewSeasonObject({_id: flatShow._id, ...show}, season);
+        
+        try {
+          await createSeasonInFlatDB(client, newSeason);
+          
+          // If we have enhanced data, also add to memory for future lookups
+          if (enhancedData && enhancedData.lookups) {
+            const { createSeasonInMemory } = require('../memoryUtils');
+            flatSeason = createSeasonInMemory(enhancedData, newSeason);
+          } else {
+            flatSeason = newSeason;
+          }
+          
+          console.log(chalk.green(`Successfully created placeholder for Season ${season.seasonNumber} of "${show.title}"`));
+        } catch (error) {
+          console.error(`Error creating season ${season.seasonNumber} for "${show.title}":`, error);
+          results.errors.push({ field: 'general', error: 'Failed to create missing season: ' + error.message });
+          return results;
+        }
+      }
     }
-
+    
     const seasonMetadata = flatShow.metadata?.seasons?.find(
       (s) => s.season_number === season.seasonNumber
-    )
-
-    // Explicitly check if the episode exists in the flat database
-    let flatEpisode = await getEpisodeFromFlatDB(
-      client,
-      show.originalTitle,
-      season.seasonNumber,
-      episode.episodeNumber,
-      true
-    )
+    );
+    
+    // Get episode from database if not found in memory
+    if (!flatEpisode) {
+      flatEpisode = await getEpisodeFromFlatDB(
+        client,
+        show.originalTitle,
+        season.seasonNumber,
+        episode.episodeNumber,
+        true
+      );
+    }
 
     if (!flatEpisode) {
       // Episode does not exist, explicitly create it
@@ -119,41 +180,62 @@ async function syncSingleEpisode(
         }),
       }
 
-      // Use our improved createEpisodeInFlatDB function which handles duplicates
-      const createResult = await createEpisodeInFlatDB(client, newEpisodeData)
-
-      // If there was an existing episode found during creation, use that instead
-      if (createResult.existing) {
-        // Fetch the existing episode to make sure we have the full data
-        flatEpisode = await getEpisodeFromFlatDB(
-          client,
-          show.title,
-          season.seasonNumber,
-          episode.episodeNumber
-        )
-        //console.log(`Episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber} exists, proceeding with updates.`);
-
-        // Ensure the episode has the correct seasonId
-        if (flatEpisode.seasonId.toString() !== flatSeason._id.toString()) {
-          console.log(
-            chalk.yellow(
-              `Fixing inconsistent seasonId for episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`
-            )
-          )
-          flatEpisode.seasonId = flatSeason._id
-          // Update will happen later with other fields
+      // If we have enhancedData, also create the episode in memory
+      if (enhancedData && enhancedData.lookups) {
+        // Create in memory first for faster subsequent lookups
+        flatEpisode = createEpisodeInMemory(enhancedData, {...newEpisodeData});
+        
+        // Update the nested data structure so it's visible in the tvShowsWithSeasonsAndEpisodes array
+        updateNestedDataWithNewEpisode(enhancedData, flatEpisode);
+        
+        // Then create in database - this will handle duplicates
+        const createResult = await createEpisodeInFlatDB(client, newEpisodeData);
+        
+        if (createResult.existing) {
+          console.log(`Episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber} already exists in database`);
+          // Update memory object with any database fields we might be missing
+          if (createResult.matchedDocument) {
+            Object.assign(flatEpisode, createResult.matchedDocument);
+          }
+        } else {
+          results.created = true;
+          console.log(`Created new episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`);
         }
       } else {
-        // Otherwise use our new episode data
-        flatEpisode = newEpisodeData
-        results.created = true
-        console.log(
-          `Created new episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`
-        )
+        // No enhanced data, just use database
+        // Use our improved createEpisodeInFlatDB function which handles duplicates
+        const createResult = await createEpisodeInFlatDB(client, newEpisodeData);
+
+        // If there was an existing episode found during creation, use that instead
+        if (createResult.existing) {
+          // Fetch the existing episode to make sure we have the full data
+          flatEpisode = await getEpisodeFromFlatDB(
+            client,
+            show.title,
+            season.seasonNumber,
+            episode.episodeNumber
+          );
+
+          // Ensure the episode has the correct seasonId
+          if (flatEpisode.seasonId.toString() !== flatSeason._id.toString()) {
+            console.log(
+              chalk.yellow(
+                `Fixing inconsistent seasonId for episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`
+              )
+            );
+            flatEpisode.seasonId = flatSeason._id;
+            // Update will happen later with other fields
+          }
+        } else {
+          // Otherwise use our new episode data
+          flatEpisode = newEpisodeData;
+          results.created = true;
+          console.log(
+            `Created new episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`
+          );
+        }
       }
-    } /* else {
-      console.log(`Episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber} exists, proceeding with updates.`);
-    } */
+    }
 
     // Prepare sync functions with common parameters
     const syncFunctions = []
@@ -406,6 +488,7 @@ async function syncSingleEpisode(
 // Import p-limit for concurrency control
 import pLimit from 'p-limit'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+import { buildNewSeasonObject } from '../seasons'
 
 /**
  * Traditional sync method for TV episodes
@@ -495,6 +578,12 @@ async function traditionalSync(client, flatDB, fileServer, serverConfig, fieldAv
 
       // Get the hash for the season
       const season_hashData = await fetchHashData(serverConfig, 'tv', show.originalTitle, season.seasonNumber);
+      
+      // Store the season hash for future use if we successfully fetched it
+      if (season_hashData && season_hashData.hash) {
+        console.log(`Storing season hash for "${showTitle}" Season ${seasonNumber} from server ${serverConfig.id} (traditional sync)`);
+        await storeHash(client, 'tv', showTitle, seasonNumber, null, season_hashData.hash, serverConfig.id);
+      }
 
       // Get all episodes in the file server for this season
       const fileServerEpisodeFileNames = Object.keys(fileServerSeasonData.episodes || {})
@@ -518,17 +607,18 @@ async function traditionalSync(client, flatDB, fileServer, serverConfig, fieldAv
         // Process this episode
         episodeSyncTasks.push(
           limit(() =>
-            syncSingleEpisode(
-              client,
-              show,
-              season,
-              episode,
-              fileServerShowData,
-              serverConfig,
-              fieldAvailability,
-              season_hashData,
-              false // Do not skip metadata processing
-            )
+              syncSingleEpisode(
+                client,
+                show,
+                season,
+                episode,
+                fileServerShowData,
+                serverConfig,
+                fieldAvailability,
+                season_hashData,
+                false, // Do not skip metadata processing
+                flatDB // Pass the enhanced data for in-memory lookups
+              )
               .then((episodeResults) => {
                 if (episodeResults.updated || episodeResults.created) {
                   results.processed.push(episodeResults)
@@ -634,7 +724,15 @@ async function hashBasedSync(
 
     // Check if show hash has changed
     const currentShowHash = mediaHashData.titles[showTitle].hash
-    const storedShowHash = await getStoredHash(client, 'tv', showTitle, null, null, serverConfig.id)
+    
+    // Fetch all hashes for this show at once
+    console.log(chalk.cyan(`Fetching all hashes for "${showTitle}" from database (show level)`));
+    if (!show._seasonsHashes){
+      show._seasonsHashes = await getStoredHashesForShow(client, showTitle, serverConfig.id);
+    }
+    
+    // Use the cached show hash
+    const storedShowHash = show._seasonsHashes.show;
 
     // Count episodes in database for this show
     const actualEpisodeCount = await client
@@ -660,7 +758,7 @@ async function hashBasedSync(
     if (storedShowHash === currentShowHash) {
       // Get the flat database show title (which may be different from the file server show title)
       // The file server showTitle corresponds to originalTitle in the flat database
-      const flatShow = await getTVShowFromFlatDB(client, showTitle);
+      const flatShow = show;
       if (!flatShow) {
         console.log(
           chalk.yellow(
@@ -672,32 +770,30 @@ async function hashBasedSync(
         const flatShowTitle = flatShow.title;
         
         // Count seasons in the flat database using the correct show title
-        const flatSeasonCount = await client
-          .db('Media')
-          .collection('FlatSeasons')
-          .countDocuments({
-            showTitle: flatShowTitle
-          });
+        const flatSeasonCount = show.seasons?.length || 0;
         
         // Count seasons in the file server
         const fileServerSeasonCount = Object.keys(fileServerShowData.seasons || {}).length;
         
-        // Count episodes missing metadata using the correct show title
-        const missingEpisodeMetadataCount = await client
-          .db('Media')
-          .collection('FlatEpisodes')
-          .countDocuments({
-            showTitle: flatShowTitle,
-            $or: [{ metadata: { $exists: false } }, { metadata: null }, { metadata: { $size: 0 } }],
-          });
+        // Count episodes missing metadata directly from the show object in memory
+        // This avoids an unnecessary database request
+        let missingEpisodeMetadataCount = 0;
+        let flatEpisodeCount = 0;
         
-        // Count episodes in the flat database using the correct show title
-        const flatEpisodeCount = await client
-          .db('Media')
-          .collection('FlatEpisodes')
-          .countDocuments({
-            showTitle: flatShowTitle
-          });
+        // Loop through all seasons in the show
+        for (const season of flatShow.seasons || []) {
+          // Add to total episode count
+          flatEpisodeCount += season.episodes?.length || 0;
+          
+          // Count episodes without metadata
+          if (season.episodes) {
+            for (const episode of season.episodes) {
+              if (!episode.metadata || Object.keys(episode.metadata).length === 0) {
+                missingEpisodeMetadataCount++;
+              }
+            }
+          }
+        }
 
         // Compare season counts, episode counts, and check metadata to decide if we can skip metadata processing
         if (flatSeasonCount >= fileServerSeasonCount && flatEpisodeCount >= expectedEpisodeCount && missingEpisodeMetadataCount === 0) {
@@ -748,8 +844,27 @@ async function hashBasedSync(
 
       if (!fileServerSeasonData) continue
 
-      // Get the hash for the season
-      const season_hashData = await fetchHashData(serverConfig, 'tv', show.originalTitle, seasonNumber);
+      // Get the season hash - we'll optimize by fetching all hashes for the show at once
+      let season_hashData = null;
+      
+      // If this is the first season in this show, fetch all hashes for the show at once
+      if (!show._seasonsHashes) {
+        console.log(chalk.cyan(`Fetching all hashes for "${showTitle}" from database (one-time operation)`));
+        show._seasonsHashes = await getStoredHashesForShow(client, showTitle, serverConfig.id);
+      }
+      
+      // Try to get the season hash from our pre-fetched collection
+      const storedSeasonHash = show?._seasonsHashes?.seasons[seasonNumber];
+      
+      if (storedSeasonHash) {
+        console.log(chalk.green(`Using cached hash for "${showTitle}" Season ${seasonNumber} from database`));
+        // Create a minimal hash data structure with the stored hash
+        season_hashData = { hash: storedSeasonHash };
+      } else {
+        // If no stored hash, fetch from server
+        console.log(chalk.yellow(`No stored hash found for "${showTitle}" Season ${seasonNumber}, fetching from server`));
+        season_hashData = await fetchHashData(serverConfig, 'tv', show.originalTitle, seasonNumber);
+      }
 
       // Get all episodes in the file server for this season
       const fileServerEpisodeFileNames = Object.keys(fileServerSeasonData.episodes || {})
@@ -792,6 +907,7 @@ async function hashBasedSync(
               fieldAvailability,
               season_hashData,
               skipMetadataProcessing,
+              flatDB // Pass the enhanced data for in-memory lookups
             )
               .then((episodeResults) => {
                 if (episodeResults.updated || episodeResults.created) {
@@ -871,7 +987,8 @@ async function hashBasedSync(
                 serverConfig,
                 fieldAvailability,
                 season_hashData,
-                skipMetadataProcessing
+                skipMetadataProcessing,
+                flatDB // Pass the enhanced data for in-memory lookups
               )
                 .then((episodeResults) => {
                   if (episodeResults.updated) {
@@ -916,7 +1033,8 @@ async function hashBasedSync(
                 serverConfig,
                 fieldAvailability,
                 season_hashData,
-                skipMetadataProcessing
+                skipMetadataProcessing,
+                flatDB // Pass the enhanced data for in-memory lookups
               )
                 .then((episodeResults) => {
                   if (episodeResults.updated || episodeResults.created) {
@@ -990,8 +1108,39 @@ async function hashBasedSync(
       
       if (!fileServerSeasonData || !fileServerSeasonData.episodes) continue;
 
-      // Get the hash for the season
-      const season_hashData = await fetchHashData(serverConfig, 'tv', show.originalTitle, seasonNumber);
+      // Get the season hash - we'll optimize by using the already fetched hashes if available
+      let season_hashData = null;
+      
+      // If we didn't fetch the season hashes before, do it now
+      if (!show._seasonsHashes) {
+        console.log(chalk.cyan(`Fetching all hashes for "${showTitle}" from database (non-metadata processing)`));
+        show._seasonsHashes = await getStoredHashesForShow(client, showTitle, serverConfig.id);
+      }
+      
+      // Try to get the season hash from our pre-fetched collection
+      const storedSeasonHash = show?._seasonsHashes?.seasons[seasonNumber];
+      
+      if (storedSeasonHash) {
+        console.log(chalk.green(`Using cached hash for "${showTitle}" Season ${seasonNumber} from database (non-metadata processing)`));
+        // Create a minimal hash data structure with the stored hash
+        season_hashData = { hash: storedSeasonHash };
+      } else {
+        // If no stored hash, fetch from server
+        console.log(chalk.yellow(`No stored hash found for "${showTitle}" Season ${seasonNumber}, fetching from server (non-metadata processing)`));
+        season_hashData = await fetchHashData(serverConfig, 'tv', show.originalTitle, seasonNumber);
+        
+        // Store the hash for future use if we successfully fetched it
+        if (season_hashData && season_hashData.hash) {
+          console.log(`Storing newly fetched season hash for "${showTitle}" Season ${seasonNumber} from server ${serverConfig.id}`);
+          await storeHash(client, 'tv', showTitle, seasonNumber, null, season_hashData.hash, serverConfig.id);
+          
+          // Update our cached hashes
+          if (!show._seasonsHashes.seasons) {
+            show._seasonsHashes.seasons = {};
+          }
+          show._seasonsHashes.seasons[seasonNumber] = season_hashData.hash;
+        }
+      }
       
       // Process each episode in this season
       for (const episode of season.episodes) {
@@ -1018,7 +1167,8 @@ async function hashBasedSync(
               serverConfig,
               fieldAvailability,
               season_hashData,
-              skipMetadataProcessing
+              skipMetadataProcessing,
+              flatDB // Pass the enhanced data for in-memory lookups
             )
             .then((episodeResults) => {
               if (episodeResults.updated) {

@@ -11,6 +11,7 @@ import { syncTVShowPoster } from './poster';
 import { syncTVShowBackdrop } from './backdrop';
 import { syncTVShowBlurhash } from './blurhash';
 import { syncTVShowLogos } from './logos';
+import { getShowFromMemory, createShowInMemory, hasTVShowValidVideoURLs } from '../memoryUtils';
 
 /**
  * Syncs a single TV show from file server to flat database structure
@@ -19,9 +20,10 @@ import { syncTVShowLogos } from './logos';
  * @param {Object} fileServerData - File server data for this show
  * @param {Object} serverConfig - Server configuration
  * @param {Object} fieldAvailability - Field availability map
+ * @param {Object} enhancedData - Enhanced data structure with lookup maps
  * @returns {Promise<Object>} Sync results for this show
  */
-async function syncSingleTVShow(client, showTitle, fileServerData, serverConfig, fieldAvailability) {
+async function syncSingleTVShow(client, showTitle, fileServerData, serverConfig, fieldAvailability, enhancedData) {
   const results = {
     title: showTitle,
     updated: false,
@@ -30,8 +32,38 @@ async function syncSingleTVShow(client, showTitle, fileServerData, serverConfig,
   };
   
   try {
-    // Get the show from the flat database or create it if it doesn't exist
-    let flatShow = await getTVShowFromFlatDB(client, showTitle);
+    // Check if this show has any valid videoURLs
+    const hasValidVideoURLs = hasTVShowValidVideoURLs(fileServerData);
+    
+    if (!hasValidVideoURLs) {
+      console.log(chalk.yellow(`Skipping TV show "${showTitle}" as it doesn't have any episodes with valid videoURLs`));
+      results.skipped = true;
+      results.skippedReason = 'no_valid_video_urls';
+      return results;
+    }
+    
+    // Try to get the show from memory first, if we have enhanced data
+    let flatShow = null;
+    const hasEnhancedData = enhancedData && enhancedData.lookups && enhancedData.lookups.tvShows;
+    
+    if (hasEnhancedData) {
+      // Try to find the show by original title first (most file server titles are original titles)
+      flatShow = getShowFromMemory(enhancedData, showTitle, true);
+      
+      // If not found by original title, try by title
+      if (!flatShow) {
+        flatShow = getShowFromMemory(enhancedData, showTitle);
+      }
+      
+      if (flatShow) {
+        console.log(chalk.green(`Found TV show "${showTitle}" in memory lookups`));
+      }
+    }
+    
+    // Fall back to database lookup if not found in memory
+    if (!flatShow) {
+      flatShow = await getTVShowFromFlatDB(client, showTitle);
+    }
     
     if (!flatShow) {
       // Create a new TV show in the flat database
@@ -42,8 +74,16 @@ async function syncSingleTVShow(client, showTitle, fileServerData, serverConfig,
         createdAt: new Date()
       };
       
+      // Create in database
       await createTVShowInFlatDB(client, newShow);
-      flatShow = newShow;
+      
+      // If we have enhanced data, also create in memory for future lookups
+      if (hasEnhancedData) {
+        flatShow = createShowInMemory(enhancedData, newShow);
+      } else {
+        flatShow = newShow;
+      }
+      
       results.created = true;
     }
     
@@ -133,23 +173,24 @@ export async function syncTVShows(flatDB, fileServer, serverConfig, fieldAvailab
       return results;
     }
     
-    // Create a mapping of titles to TV shows in the database for easy lookup
-    const dbShowMap = flatDB.tv.reduce((map, show) => {
-      map[show.originalTitle] = show;
-      return map;
-    }, {});
+    // Check if we have enhanced data with lookup maps
+    const hasEnhancedData = flatDB.lookups && flatDB.lookups.tvShows;
+    if (hasEnhancedData) {
+      console.log(chalk.green('Using enhanced in-memory lookups for TV show sync'));
+    } else {
+      console.log(chalk.yellow('Enhanced memory lookups not available, using database queries'));
+    }
     
     // Process each TV show from the file server
     for (const [showTitle, fileServerShowData] of Object.entries(fileServer.tv)) {
       try {
-        // Get the show from the database or create a simple object with just the title
-        
         const showResults = await syncSingleTVShow(
           client,
           showTitle,
           fileServerShowData,
           serverConfig,
-          fieldAvailability
+          fieldAvailability,
+          hasEnhancedData ? flatDB : null // Pass enhanced data if available
         );
         
         results.processed.push(showResults);

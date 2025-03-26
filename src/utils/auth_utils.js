@@ -87,140 +87,112 @@ export const arrangeMediaByLatestModification = cache((moviesWithUrl, tvShowsWit
 })
 
 /**
- * Extract detailed TV show information from the pre-fetched data.
+ * Extract detailed TV show information using the TV details.
  *
  * @param {Object} tvDetails - The pre-fetched TV show details.
  * @param {string} videoId - The video URL.
  * @returns {Promise<Object|null>} The detailed TV show information or null if not found.
  */
 async function extractTVShowDetailsFromMap(tvDetails, videoId) {
-  if (Boolean(process.env.DEBUG) == true) {
+  if (process.env.DEBUG === 'true') {
     console.time('extractTVShowDetailsFromMap:total');
   }
   try {
-    if (Boolean(process.env.DEBUG) == true) {
-      console.time('extractTVShowDetailsFromMap:parsing');
+    if (process.env.DEBUG === 'true') {
+      console.time('extractTVShowDetailsFromMap:processing');
     }
-    const { title: showTitle, seasons, metadata } = tvDetails
-    const [_, showPath] = videoId?.split('/tv/') ?? [null, null]
-    const parts = showPath?.split('/')
-    let returnData = {}
 
-    if (parts?.length < 3) {
-      if (Boolean(process.env.DEBUG) == true) {
-        console.log('[PERF] Invalid TV show path structure');
-        console.timeEnd('extractTVShowDetailsFromMap:parsing');
+    // Destructure required fields from tvDetails.
+    const { title: showTitle, seasons, metadata } = tvDetails;
+
+    // Use the episode info provided in tvDetails.
+    const episodeFromTv = tvDetails.episode;
+    if (!episodeFromTv) {
+      if (process.env.DEBUG === 'true') {
+        console.log('[PERF] No episode info found in tvDetails');
+        console.timeEnd('extractTVShowDetailsFromMap:processing');
         console.timeEnd('extractTVShowDetailsFromMap:total');
       }
-      return null
+      return null;
     }
 
-    const showTitleDecoded = decodeURIComponent(parts[0].replace(/_/g, ' '))
-    const seasonPartDecoded = decodeURIComponent(parts[1])
-    const episodeFileNameDecoded = decodeURIComponent(parts[2])
-
-    const seasonNumber = parseInt(seasonPartDecoded.match(/\d+/)[0])
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('extractTVShowDetailsFromMap:parsing');
-
-      console.time('extractTVShowDetailsFromMap:findSeasonAndEpisode');
-    }
-    const season = seasons.find((s) => s.seasonNumber === seasonNumber)
+    const seasonNumber = episodeFromTv.seasonNumber;
+    // Find the season using the seasonNumber from tvDetails.
+    const season = seasons.find((s) => s.seasonNumber === seasonNumber);
     if (!season) {
-      if (Boolean(process.env.DEBUG) == true) {
+      if (process.env.DEBUG === 'true') {
         console.log(`[PERF] Season ${seasonNumber} not found`);
-        console.timeEnd('extractTVShowDetailsFromMap:findSeasonAndEpisode');
+        console.timeEnd('extractTVShowDetailsFromMap:processing');
         console.timeEnd('extractTVShowDetailsFromMap:total');
       }
-      return null
+      return null;
     }
 
-    const episode = season.episodes.find((e) => e.videoURL === videoId)
-    if (!episode) {
-      if (Boolean(process.env.DEBUG) == true) {
-        console.log(`[PERF] Episode with videoId ${videoId} not found`);
-        console.timeEnd('extractTVShowDetailsFromMap:findSeasonAndEpisode');
-        console.timeEnd('extractTVShowDetailsFromMap:total');
+    // Optionally verify that the passed videoId matches the episode in tvDetails.
+    let episode;
+    if (videoId && episodeFromTv.videoURL === videoId) {
+      episode = episodeFromTv;
+    } else {
+      // Fallback: search the season's episodes for the matching video URL.
+      episode = season.episodes.find((e) => e.videoURL === videoId);
+      if (!episode) {
+        if (process.env.DEBUG === 'true') {
+          console.log(`[PERF] Episode with videoId ${videoId} not found in season ${seasonNumber}`);
+          console.timeEnd('extractTVShowDetailsFromMap:processing');
+          console.timeEnd('extractTVShowDetailsFromMap:total');
+        }
+        return null;
       }
-      return null
     }
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('extractTVShowDetailsFromMap:findSeasonAndEpisode');
 
-      console.time('extractTVShowDetailsFromMap:findEpisodeMetadata');
-    }
-    // Find the episode metadata matching seasonNumber and episodeNumber
-    let episodeMetadata = null
+    // Optionally attach episode metadata if available.
+    let episodeMetadata = null;
     if (season.metadata && season.metadata.episodes) {
       episodeMetadata = season.metadata.episodes.find(
         (epMeta) =>
-          epMeta.season_number === seasonNumber && epMeta.episode_number === episode.episodeNumber
-      )
+          epMeta.season_number === seasonNumber &&
+          epMeta.episode_number === episode.episodeNumber
+      );
     }
-
-    // Attach the metadata to the episode object
     if (episodeMetadata) {
-      episode.metadata = episodeMetadata
+      episode.metadata = episodeMetadata;
     }
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('extractTVShowDetailsFromMap:findEpisodeMetadata');
 
-      console.time('extractTVShowDetailsFromMap:buildReturnData');
-    }
-    returnData = {
+    // Format the title using the show title and episode numbers.
+    const showTitleFormatted = `${showTitle} S${seasonNumber
+      .toString()
+      .padStart(2, '0')}E${episode.episodeNumber.toString().padStart(2, '0')}`;
+
+    const returnData = {
       id: tvDetails._id,
-      title: showTitleDecoded,
-      showTitleFormatted: `${showTitleDecoded} S${seasonNumber
-        .toString()
-        .padStart(2, '0')}E${episode.episodeNumber.toString().padStart(2, '0')}`,
+      title: showTitle,
+      showTitleFormatted,
       seasonNumber,
-      seasons: seasons,
+      seasons,
       posterURL: episode.thumbnail ?? '/sorry-image-not-available.jpg',
       backdrop: tvDetails.backdrop ?? null,
-      metadata: metadata,
+      metadata,
       episode,
-    }
+    };
 
-    if (tvDetails.logo) {
-      returnData.logo = tvDetails.logo
-    }
+    // Include additional optional properties.
+    if (tvDetails.logo) returnData.logo = tvDetails.logo;
+    if (tvDetails.posterBlurhash) returnData.posterBlurhash = tvDetails.posterBlurhash;
+    if (episode.thumbnailBlurhash) returnData.thumbnailBlurhash = episode.thumbnailBlurhash;
+    if (episode.thumbnailSource) returnData.thumbnailSource = episode.thumbnailSource;
+    if (episode.hdr) returnData.hdr = episode.hdr;
+    if (tvDetails.backdropBlurhash) returnData.backdropBlurhash = tvDetails.backdropBlurhash;
+    if (tvDetails.posterBlurhashSource) returnData.posterBlurhashSource = tvDetails.posterBlurhashSource;
+    if (tvDetails.backdropBlurhashSource) returnData.backdropBlurhashSource = tvDetails.backdropBlurhashSource;
 
-    if (tvDetails.posterBlurhash) {
-      returnData.posterBlurhash = tvDetails.posterBlurhash
-    }
-
-    if (episode.thumbnailBlurhash) {
-      returnData.thumbnailBlurhash = episode.thumbnailBlurhash
-    }
-
-    if (episode.thumbnailSource) {
-      returnData.thumbnailSource = episode.thumbnailSource
-    }
-
-    if (episode.hdr) {
-      returnData.hdr = episode.hdr
-    }
-
-    if (tvDetails.backdropBlurhash) {
-      returnData.backdropBlurhash = tvDetails.backdropBlurhash
-    }
-
-    if (tvDetails.posterBlurhashSource) {
-      returnData.posterBlurhashSource = tvDetails.posterBlurhashSource
-    }
-
-    if (tvDetails.backdropBlurhashSource) {
-      returnData.backdropBlurhashSource = tvDetails.backdropBlurhashSource
-    }
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('extractTVShowDetailsFromMap:buildReturnData');
-
+    if (process.env.DEBUG === 'true') {
+      console.timeEnd('extractTVShowDetailsFromMap:processing');
       console.timeEnd('extractTVShowDetailsFromMap:total');
     }
-    return returnData
+    return returnData;
   } catch (error) {
     console.error(`[PERF] Error in extractTVShowDetailsFromMap: ${error.message}`);
-    if (Boolean(process.env.DEBUG) == true) {
+    if (process.env.DEBUG === 'true') {
       console.timeEnd('extractTVShowDetailsFromMap:total');
     }
     return null;

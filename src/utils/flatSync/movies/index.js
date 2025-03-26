@@ -6,13 +6,14 @@ import { syncMovieMetadata } from './metadata';
 import { syncMovieVideoURL } from './videoUrl';
 import { syncMoviePoster } from './poster';
 import { syncMovieBackdrop } from './backdrop';
-import { syncMovieBlurhash } from './blurhash';
+import { syncMovieBlurhash, syncMovieBackdropBlurhash } from './blurhash';
 import { syncMovieLogos } from './logos';
 import { syncMovieChapters } from './chapters';
 import { syncMovieCaptions } from './captions';
 import { createMissingMovies } from './initialize'; // Import the new function
 import clientPromise from '@src/lib/mongodb';
 import chalk from 'chalk';
+import { getMovieFromMemory } from '../memoryUtils';
 
 /**
  * Syncs movies from file server to flat database structure
@@ -55,29 +56,52 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
       newlyCreatedMovies = createResults.createdMovies;
     }
     
-    // Create a map for faster lookups
-    const flatMoviesMap = flatDB.movies.reduce((map, movie) => {
+    // Check if we have enhanced data with memory lookups
+    const hasEnhancedData = flatDB.lookups && flatDB.lookups.movies;
+    if (hasEnhancedData) {
+      console.log(chalk.green('Using enhanced in-memory lookups for movie sync'));
+    } else {
+      console.log(chalk.yellow('Enhanced memory lookups not available, falling back to simple map'));
+    }
+    
+    // Create a simple map for lookups if we don't have enhanced data
+    const flatMoviesMap = !hasEnhancedData ? flatDB.movies.reduce((map, movie) => {
       map[movie.title] = movie;
       return map;
-    }, {});
+    }, {}) : null;
     
-    // Add newly created movies to the map
-    for (const newMovie of newlyCreatedMovies) {
-      flatMoviesMap[newMovie.title] = newMovie;
+    // Add newly created movies to the map if using simple lookup
+    if (!hasEnhancedData) {
+      for (const newMovie of newlyCreatedMovies) {
+        flatMoviesMap[newMovie.title] = newMovie;
+      }
     }
     
     // Process each movie from the file server directly
     for (const [movieTitle, fileServerMovieData] of Object.entries(fileServer.movies)) {
       try {
-        // Get the movie from flat structure - it should exist now due to our initialization step
-        const flatMovie = flatMoviesMap[movieTitle];
+        // Get the movie from memory or map, depending on what's available
+        let flatMovie;
         
-        if (!flatMovie) {
-          continue; // Skip if the movie is not found in the flat structure
-          // This should happen to movies that aren't valid in the file server
+        if (hasEnhancedData) {
+          // Try to get from memory first by title, then by original title if needed
+          flatMovie = getMovieFromMemory(flatDB, movieTitle);
+          
+          // If not found, it could be indexed by original title
+          if (!flatMovie) {
+            flatMovie = getMovieFromMemory(flatDB, movieTitle, true);
+          }
+        } else {
+          // Use the simple map lookup
+          flatMovie = flatMoviesMap[movieTitle];
         }
         
-        // Use the movie from the map or a minimal placeholder as fallback
+        if (!flatMovie) {
+          console.log(chalk.yellow(`Movie "${movieTitle}" not found in flat structure, skipping`));
+          continue; // Skip if the movie is not found in the flat structure
+        }
+        
+        // Use the movie for syncing
         const movieToSync = flatMovie;
         
         // Sync different aspects of the movie
@@ -85,7 +109,8 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
         const videoURLResult = await syncMovieVideoURL(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const posterResult = await syncMoviePoster(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const backdropResult = await syncMovieBackdrop(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
-        const blurhashResult = await syncMovieBlurhash(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
+        const posterBlurhashResult = await syncMovieBlurhash(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
+        const backdropBlurhashResult = await syncMovieBackdropBlurhash(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const logosResult = await syncMovieLogos(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const chaptersResult = await syncMovieChapters(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const captionsResult = await syncMovieCaptions(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
@@ -96,7 +121,8 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
           videoURLResult,
           posterResult,
           backdropResult,
-          blurhashResult,
+          posterBlurhashResult,
+          backdropBlurhashResult,
           logosResult,
           chaptersResult,
           captionsResult
@@ -137,8 +163,9 @@ export {
   syncMoviePoster,
   syncMovieBackdrop,
   syncMovieBlurhash,
+  syncMovieBackdropBlurhash,
   syncMovieLogos,
   syncMovieChapters,
   syncMovieCaptions,
-  createMissingMovies // Export the new function
+  createMissingMovies
 };

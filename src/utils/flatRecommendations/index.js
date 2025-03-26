@@ -32,9 +32,6 @@ import {
   filterValidVideoUrls
 } from '@src/utils/recommendations/filters'
 
-// Cache for recommendations to ensure consistency between refreshes
-const flatRecommendationsCache = new Map()
-
 /**
  * Get genre-based recommendations for a user based on their watch history, using flat database structure
  * 
@@ -834,6 +831,7 @@ async function getFlatLatestWatchTimestamp(userId) {
 
 /**
  * Get recommendations for a user, falling back to popular content if needed, using the flat database structure
+ * No longer caches between requests to ensure metadata/posters are always up-to-date
  * 
  * @param {string} userId - The user ID to get recommendations for
  * @param {number} page - The page number for pagination (0-based)
@@ -843,24 +841,11 @@ async function getFlatLatestWatchTimestamp(userId) {
  */
 export async function getFlatRecommendations(userId, page = 0, limit = 30, countOnly = false) {
   try {
-    // Get the latest watch timestamp for this user
+    // Get the latest watch timestamp for this user (for logging purposes only)
     const latestWatchTimestamp = await getFlatLatestWatchTimestamp(userId)
     
-    // Create a cache key based on userId, latest watch timestamp, and pagination
-    const cacheKey = `${userId}-${latestWatchTimestamp}-${page}-${limit}`
-    
-    // Check if we have cached recommendations for this user with this watch timestamp
-    if (flatRecommendationsCache.has(cacheKey)) {
-      const cachedData = flatRecommendationsCache.get(cacheKey)
-      console.log(`Using cached recommendations for user ${userId} with timestamp ${latestWatchTimestamp}`)
-      
-      // For count-only requests
-      if (countOnly) {
-        return { count: cachedData.items.length }
-      }
-      
-      return cachedData
-    }
+    // Log timestamp for debugging
+    console.log(`Fetching fresh recommendations for user ${userId} with timestamp ${latestWatchTimestamp}`)
     
     // Get recommendations based on user's watch history
     const recommendations = await getFlatGenreBasedRecommendations(userId, page, limit)
@@ -895,7 +880,7 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
     // This is async now, so we need to use Promise.all
     const enhancedItems = await Promise.all(items.map(item => ensureMediaProperties(item)));
     
-    // Cache the recommendations with the latest watch timestamp and pagination metadata
+    // Create result object with recommendations data (no caching)
     const result = {
       items: enhancedItems,
       hasWatched,
@@ -909,14 +894,12 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
       }
     }
     
-    // Only cache the current page results
-    flatRecommendationsCache.set(cacheKey, result)
-    
     // For count-only requests
     if (countOnly) {
       return { count: items.length }
     }
 
+    // Return fresh results without caching
     return result
   } catch (error) {
     console.error('Error in getFlatRecommendations:', error)

@@ -410,16 +410,46 @@ async function handleSync(webhookId, request) {
     if (webhookId) headers['X-Webhook-ID'] = webhookId
     if (request.headers.get('cookie')) headers['cookie'] = request.headers.get('cookie')
 
+    // Add retry logic with exponential backoff for the initial data fetch
     let response;
-    try {
-      response = await axios.get(buildURL('/api/authenticated/list'), { headers });
-    } catch (error) {
-      if (error.response && error.response.status === 502) {
-        throw new Error('Bad Gateway: Failed to fetch data from the server.');
+    const maxRetries = 3;  // Configurable retry count
+    let retryCount = 0;
+    const initialBackoff = 1000;  // Start with 1 second delay
+    
+    while (true) {
+      try {
+        if (retryCount > 0) {
+          console.log(`Attempt ${retryCount + 1}/${maxRetries + 1} to fetch server data...`);
+        }
+        
+        response = await axios.get(buildURL('/api/authenticated/list'), { headers });
+        break; // Success, exit the retry loop
+      } catch (error) {
+        retryCount++;
+        
+        if (retryCount <= maxRetries) {
+          // Calculate exponential backoff with jitter
+          const backoffTime = initialBackoff * Math.pow(2, retryCount - 1);
+          const jitter = Math.random() * 300; // Random jitter up to 300ms
+          const delay = backoffTime + jitter;
+          
+          console.log(`Server fetch failed (attempt ${retryCount}/${maxRetries + 1}). Retrying in ${Math.round(delay)}ms...`);
+          console.error(`Error details: ${error.message}`);
+          
+          // Wait before the next retry
+          await new Promise(resolve => setTimeout(resolve, delay));
+        } else {
+          // All retries exhausted, handle the error
+          console.error(`All ${maxRetries + 1} fetch attempts failed.`);
+          
+          if (error.response && error.response.status === 502) {
+            throw new Error('Bad Gateway: Failed to fetch data from the server after multiple attempts.');
+          }
+          throw error;
+        }
       }
-      throw error;
     }
-    const { fileServers, currentDB, errors } = await response.data
+    const { fileServers, currentDB, errors } = response.data
 
     // Initialize field-level availability maps
     const fieldAvailability = {

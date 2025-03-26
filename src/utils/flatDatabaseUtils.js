@@ -454,13 +454,15 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
       backdropBlurhashSource: 1,
     }
 
+    // For non-count queries, get a larger pool of items to combine and paginate
+    const poolSize = limit * 20; // Get more items to ensure we have enough after combination/sorting
+
     // Get most recently added movies
     const movies = await db
       .collection('FlatMovies')
       .find({}, { projection: movieProjectionFields })
       .sort({ mediaLastModified: -1 })
-      .limit(limit)
-      .skip(page * limit)
+      .limit(poolSize)
       .toArray()
 
     // Get most recently added TV shows or episodes
@@ -469,7 +471,7 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
       .collection('FlatEpisodes')
       .aggregate([
         { $sort: { mediaLastModified: -1 } },
-        { $limit: limit * 2 }, // Get more than needed to account for grouping
+        { $limit: poolSize * 2 }, // Get more than needed to account for grouping
         {
           $group: {
             _id: "$showId",
@@ -479,7 +481,7 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
           }
         },
         { $sort: { mediaLastModified: -1 } },
-        { $limit: limit }
+        { $limit: poolSize }
       ])
       .toArray()
 
@@ -499,7 +501,33 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
     ).then(shows => shows.filter(Boolean)) // Remove null values
 
     if (countOnly) {
-      return Math.min(movies.length + tvShows.length, limit)
+      // For "recently added", we cap the total items at a reasonable limit
+      // This prevents too many pagination buttons from being shown
+      const MAX_RECENTLY_ADDED_ITEMS = 100; // Cap at 100 items total
+      
+      // Get counts but with reasonable limits
+      const [moviesCount, episodeGroupsCount] = await Promise.all([
+        // Get count of movies, but no more than half our maximum
+        db.collection('FlatMovies')
+          .find({})
+          .sort({ mediaLastModified: -1 })
+          .limit(MAX_RECENTLY_ADDED_ITEMS / 2)
+          .count(),
+          
+        // Get count of unique TV shows with recent episodes, but no more than half our maximum
+        db.collection('FlatEpisodes')
+          .aggregate([
+            { $sort: { mediaLastModified: -1 } },
+            { $limit: 1000 }, // Look at the 1000 most recent episodes
+            { $group: { _id: "$showId" } },
+            { $count: "total" }
+          ])
+          .toArray()
+          .then(res => Math.min(res[0]?.total || 0, MAX_RECENTLY_ADDED_ITEMS / 2))
+      ]);
+      
+      // Return the sum, but never more than our maximum
+      return Math.min(moviesCount + episodeGroupsCount, MAX_RECENTLY_ADDED_ITEMS);
     }
 
     // Add URLs to media
@@ -511,15 +539,19 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
     // Arrange media by latest modification
     const arrangedMedia = arrangeMediaByLatestModification(moviesWithUrl, tvShowsWithUrl)
 
+    // Apply pagination to the combined and arranged result
+    // This ensures we maintain consistent pagination across all pages
     const validPage = Math.max(page, 0); // Ensure page is at least 0
-
-    // Apply pagination
-    const paginatedVideos = arrangedMedia.slice(
-      validPage * limit, 
-      (validPage + 1) * limit
-    );
-
-    return paginatedVideos
+    const startIndex = validPage * limit;
+    const endIndex = startIndex + limit;
+    
+    // If we're requesting a page beyond what we have data for, return empty array
+    if (startIndex >= arrangedMedia.length) {
+      return [];
+    }
+    
+    // Return only the items for the requested page
+    return arrangedMedia.slice(startIndex, endIndex);
   } catch (error) {
     console.error(`Error in getFlatRecentlyAddedMedia: ${error.message}`)
     throw error
@@ -733,16 +765,15 @@ export async function getFlatRequestedMedia({
         // Convert _id to string id
         const result = {
           ...tvShow,
-          id: tvShow._id.toString(),
+          _id: tvShow._id.toString(),
           type: 'tv',
           seasons: seasons.map(season => ({
             ...season,
-            id: season._id.toString(),
+            _id: season._id.toString(),
             showId: season.showId.toString(),
             seasonNumber: season.seasonNumber,
           }))
         };
-        delete result._id;
         
         // Add cast data if available
         if (result.metadata?.cast) {
@@ -1260,7 +1291,7 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
     // Get the full season details
     const season = await getFlatRequestedMedia({
       type: 'tv',
-      title: showTitle,
+      title: tvShow.title,
       season: `Season ${seasonNumber}`
     });
     
@@ -1274,7 +1305,7 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
     // Fetch episodes for this season from the flat database
     const episodes = await db.collection('FlatEpisodes')
       .find({ 
-        seasonId: new ObjectId(matchingSeason.id)
+        seasonId: new ObjectId(matchingSeason._id)
       })
       .sort({ episodeNumber: 1 })
       .toArray();
@@ -1287,12 +1318,10 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
     season.episodes = episodes.map((episode) => {
       const episodeObj = {
         ...episode,
-        id: episode._id.toString(),
+        _id: episode._id.toString(),
         showId: episode.showId.toString(),
         seasonId: episode.seasonId.toString()
       };
-
-      delete episodeObj._id;
 
       return episodeObj;
     });

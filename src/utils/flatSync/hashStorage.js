@@ -119,6 +119,61 @@ export async function getAllStoredHashes(client, mediaType, title, seasonNumber,
 }
 
 /**
+ * Retrieve all stored hashes for a TV show, including show, season, and episode level hashes
+ * @param {Object} client - MongoDB client
+ * @param {string} showTitle - TV show title
+ * @param {string} serverId - Server ID to retrieve hashes for
+ * @returns {Promise<Object>} Hierarchical object containing all hashes for the show
+ */
+export async function getStoredHashesForShow(client, showTitle, serverId) {
+  try {
+    // Query all hashes related to this show from a specific server in a single database call
+    const records = await client
+      .db('Media')
+      .collection('MetadataHashes')
+      .find({
+        mediaType: 'tv',
+        title: showTitle,
+        serverId
+      })
+      .toArray();
+    
+    // Initialize the result structure
+    const result = {
+      show: null,           // Show-level hash
+      seasons: {},          // Season-level hashes indexed by seasonNumber
+      episodes: {}          // Episode-level hashes indexed by seasonNumber and episodeNumber
+    };
+    
+    // Populate the result structure from the records
+    for (const record of records) {
+      // Show-level hash (no seasonNumber and no episodeNumber)
+      if (record.seasonNumber === null && record.episodeNumber === null) {
+        result.show = record.hash;
+      }
+      // Season-level hash (has seasonNumber but no episodeNumber)
+      else if (record.seasonNumber !== null && record.episodeNumber === null) {
+        result.seasons[record.seasonNumber] = record.hash;
+      }
+      // Episode-level hash (has both seasonNumber and episodeNumber)
+      else if (record.seasonNumber !== null && record.episodeNumber !== null) {
+        // Initialize the season object if it doesn't exist
+        if (!result.episodes[record.seasonNumber]) {
+          result.episodes[record.seasonNumber] = {};
+        }
+        // Store the episode hash
+        result.episodes[record.seasonNumber][record.episodeNumber] = record.hash;
+      }
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('Error retrieving show hashes:', error);
+    return { show: null, seasons: {}, episodes: {} };
+  }
+}
+
+/**
  * Fetch hash data from the server
  * @param {Object} serverConfig - Server configuration
  * @param {string} mediaType - Media type ('tv' or 'movie')

@@ -92,6 +92,45 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
               <h2 className="mx-auto max-w-2xl text-2xl font-bold tracking-tight text-white sm:text-3xl pb-8 xl:pb-0 px-4 xl:px-0">
                 {season.episodes.length} Episodes
               </h2>
+              <div className="flex flex-row gap-x-4 justify-center">
+                Originally Aired: {seasonMetadata?.airDate
+                  ? new Date(seasonMetadata?.airDate).toLocaleDateString('en-US', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                    })
+                  : new Date(season?.airDate).toLocaleDateString('en-US', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                    })}
+              </div>
+              <div className="mt-2 text-center text-sm font-medium text-gray-300 group-hover:text-white pt-2 border-t border-solid border-t-[#c1c1c133]">
+                {seasonMetadata?.overview || season.overview}
+              </div>
+              {seasonMetadata?.vote_average ? (
+                <div className="flex flex-row gap-x-4 mt-4 justify-center items-center">
+                  <span className="text-yellow-400 font-bold">Popularity:</span>
+                  <div className="relative w-48 h-4 bg-gray-700 rounded-full">
+                  <div
+                    className="absolute top-0 left-0 h-full bg-yellow-400 rounded-full"
+                    style={{ width: `${seasonMetadata?.vote_average * 10}%` }}
+                  ></div>
+                  </div>
+                  <span className="text-white font-bold">{seasonMetadata?.vote_average} / 10</span>
+                </div>
+                ) : season?.popularity ? (
+                <div className="flex flex-row gap-x-4 mt-4 justify-center items-center">
+                  <span className="text-yellow-400 font-bold">Popularity:</span>
+                  <div className="relative w-48 h-4 bg-gray-700 rounded-full">
+                  <div
+                    className="absolute top-0 left-0 h-full bg-yellow-400 rounded-full"
+                    style={{ width: `${season?.popularity}%` }}
+                  ></div>
+                  </div>
+                  <span className="text-white font-bold">{season?.popularity} / 10</span>
+                </div>
+              ) : null}
               <div className="flex flex-row gap-x-4 mt-4 justify-center">
                 <Link href={`/list/tv/${season.showTitle || showTitle}`} className="self-center">
                   <button

@@ -1,5 +1,5 @@
 import clientPromise from '@src/lib/mongodb'
-import { addCustomUrlToMedia, fetchRecentlyAdded } from '@src/utils/auth_database'
+import { addCustomUrlToFlatMedia, getFlatRecentlyAddedMedia } from '@src/utils/flatDatabaseUtils'
 import {
   arrangeMediaByLatestModification,
   movieProjectionFields,
@@ -51,32 +51,24 @@ async function searchMedia(query) {
     // Perform search if query is provided
     ;[movies, tvShows] = await Promise.all([
       db
-        .collection('Movies')
+        .collection('FlatMovies')
         .find({ title: { $regex: query, $options: 'i' } }, { projection: movieProjectionFields })
         .toArray(),
       db
-        .collection('TV')
+        .collection('FlatTVShows')
         .find({ title: { $regex: query, $options: 'i' } }, { projection: tvShowProjectionFields })
         .toArray(),
     ])
   } else {
     // Fetch recently added media if query is empty
-    ;[movies, tvShows] = await Promise.all([
-      fetchRecentlyAdded({ db: db, collectionName: 'Movies' }),
-      fetchRecentlyAdded({ db: db, collectionName: 'TV' }),
-    ])
-    recentlyAddedMediaQuery = true
+    const recentlyAddedMedia = await getFlatRecentlyAddedMedia({ limit: 15 })
+    return recentlyAddedMedia
   }
 
   const [moviesWithUrl, tvShowsWithUrl] = await Promise.all([
-    addCustomUrlToMedia(movies, 'movie'),
-    addCustomUrlToMedia(tvShows, 'tv'),
+    addCustomUrlToFlatMedia(movies, 'movie'),
+    addCustomUrlToFlatMedia(tvShows, 'tv'),
   ])
-
-  if (recentlyAddedMediaQuery) {
-    // Merge and sort based on the latest modification date
-    return arrangeMediaByLatestModification(moviesWithUrl, tvShowsWithUrl)
-  }
 
   return [...moviesWithUrl, ...tvShowsWithUrl]
 }

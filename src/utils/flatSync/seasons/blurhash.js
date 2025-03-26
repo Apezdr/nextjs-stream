@@ -36,10 +36,10 @@ export async function syncSeasonPosterBlurhash(client, show, season, fileServerS
   if (!isHighestPriority) return null;
   
   // Get the season from the flat database or create it if it doesn't exist
-  const flatShow = await getTVShowFromFlatDB(client, originalTitle);
+  const flatShow = show;
   if (!flatShow) return null;
   
-  let flatSeason = await getSeasonFromFlatDB(client, showTitle, season.seasonNumber);
+  let flatSeason = season;
   
   if (!flatSeason) {
     // Create a new season with basic information

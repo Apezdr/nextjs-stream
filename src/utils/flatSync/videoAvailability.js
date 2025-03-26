@@ -10,6 +10,7 @@ import clientPromise from '@src/lib/mongodb';
 import { getRedisClient } from '@src/lib/redisClient';
 import chalk from 'chalk';
 import { ObjectId } from 'mongodb';
+import { hasTVShowValidVideoURLs } from './memoryUtils';
 
 /**
  * Directly checks all movies in the flat database and removes any that don't exist in file servers
@@ -103,6 +104,7 @@ async function cleanupMissingMovies(client, flatDB, fileServers, fieldAvailabili
 
 /**
  * Directly checks all shows in the flat database and removes any that don't exist in file servers
+ * or have no valid videoURLs in any episode
  * @param {Object} client - MongoDB client
  * @param {Object} flatDB - Current flat database structure (used to avoid additional DB queries)
  * @param {Object} fileServers - All file servers data 
@@ -110,7 +112,7 @@ async function cleanupMissingMovies(client, flatDB, fileServers, fieldAvailabili
  * @returns {Promise<Object>} Results showing how many shows were removed
  */
 async function cleanupMissingTVShows(client, flatDB, fileServers, fieldAvailability) {
-  console.log(chalk.yellow('Checking for TV shows that don\'t exist in any file servers...'));
+  console.log(chalk.yellow('Checking for TV shows that don\'t exist in any file servers or have no valid videoURLs...'));
   
   try {
     // Use the TV shows from flatDB instead of making a new database query
@@ -122,19 +124,40 @@ async function cleanupMissingTVShows(client, flatDB, fileServers, fieldAvailabil
       let foundInAnyServer = false;
       const serversWithShow = [];
       
+      // Track servers that have this show and also if any server has valid videoURLs
+      let hasValidVideoURLsInAnyServer = false;
+      
       // Check if the show exists in any file server (by title or originalTitle)
       for (const [serverId, fileServer] of Object.entries(fileServers)) {
-        // Check against both title and originalTitle (if it exists)
-        if (fileServer.tv && (
-            fileServer.tv[show.title] || 
-            (show.originalTitle && fileServer.tv[show.originalTitle])
-          )) {
-          foundInAnyServer = true;
-          serversWithShow.push(serverId);
+        // Check existence of the show in this server's data
+        if (fileServer.tv) {
+          // Try with both title and originalTitle
+          const fileServerShowData = fileServer.tv[show.title] || 
+              (show.originalTitle && fileServer.tv[show.originalTitle]);
+              
+          if (fileServerShowData) {
+            foundInAnyServer = true;
+            serversWithShow.push(serverId);
+            
+            // Check if the show has any valid videoURLs in this server
+            if (hasTVShowValidVideoURLs(fileServerShowData)) {
+              hasValidVideoURLsInAnyServer = true;
+            }
+          }
         }
       }
       
-      let shouldRemove = !foundInAnyServer;
+      // A show should be removed if either:
+      // 1. It doesn't exist in any file server
+      // 2. It exists in one or more servers but doesn't have valid videoURLs in any of them
+      let shouldRemove = !foundInAnyServer || (foundInAnyServer && !hasValidVideoURLsInAnyServer);
+      
+      // If we're considering removal because of no valid videoURLs, log it
+      if (foundInAnyServer && !hasValidVideoURLsInAnyServer) {
+        console.log(chalk.yellow(
+          `TV show "${show.title}" exists on servers ${serversWithShow.join(', ')} but has no valid videoURLs in any episode`
+        ));
+      }
       
       // If the show exists in some servers but we have field availability, check priorities
       if (foundInAnyServer && fieldAvailability?.tv?.[show.title]) {

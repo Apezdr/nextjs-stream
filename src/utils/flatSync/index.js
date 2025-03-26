@@ -14,136 +14,12 @@ import chalk from 'chalk';
 import { initializeFlatDatabase } from './initializeDatabase';
 import { performance } from 'perf_hooks';
 import clientPromise from '@src/lib/mongodb';
+// Import memory utilities for optimized data access
+import { buildEnhancedFlatDBStructure } from './memoryUtils';
 // Import video availability functions
 import {
   checkAndRemoveUnavailableVideosFlat,
 } from './videoAvailability';
-
-/**
- * Builds a compatible data structure from the flat database collections
- * @param {Object} fileServer - Optional file server data to check for missing media
- * @param {Object} fieldAvailability - Field availability map
- * @returns {Promise<Object>} Data structure compatible with sync functions with missing media info
- */
-export async function buildFlatDBStructure(fileServer = null, fieldAvailability) {
-  const client = await clientPromise;
-  try {
-    console.log(chalk.cyan('Building data structure from flat database collections...'));
-    
-    // Get all TV shows from FlatTVShows collection
-    const flatTVShows = await client
-      .db('Media')
-      .collection('FlatTVShows')
-      .find({})
-      .toArray();
-    
-    // For each TV show, get its seasons and episodes
-    const tvShowsWithSeasonsAndEpisodes = await Promise.all(
-      flatTVShows.map(async (show) => {
-        const showId = show._id;
-        // Get all seasons for this show
-        const seasons = await client
-          .db('Media')
-          .collection('FlatSeasons')
-          .find({ showId: showId })
-          .sort({ seasonNumber: 1 })
-          .toArray();
-        
-        // For each season, get all episodes
-        const seasonsWithEpisodes = await Promise.all(
-          seasons.map(async (season) => {
-            const seasonId = season._id;
-            
-            // Get episodes with the correct showId AND seasonId
-            // Any episodes with incorrect IDs will be fixed by the getEpisodeFromFlatDB function
-            // the next time they are accessed
-            const episodes = await client
-              .db('Media')
-              .collection('FlatEpisodes')
-              .find({ 
-                showId: showId,
-                seasonId: seasonId 
-              })
-              .sort({ episodeNumber: 1 })
-              .toArray();
-            
-            return {
-              ...season,
-              episodes
-            };
-          })
-        );
-        
-        return {
-          ...show,
-          seasons: seasonsWithEpisodes
-        };
-      })
-    );
-    
-    // Get all movies from FlatMovies collection
-    const flatMovies = await client
-      .db('Media')
-      .collection('FlatMovies')
-      .find({})
-      .toArray();
-    
-    // Analyze missing media if fileServer data is provided
-    const missingMedia = {
-      movieTitles: [],
-      tvShowTitles: []
-    };
-    
-    if (fileServer) {
-      // Create maps for faster lookups
-      const movieTitleMap = flatMovies.reduce((map, movie) => {
-        if (movie.title) map[movie.title] = true;
-        if (movie.originalTitle && movie.originalTitle !== movie.title) map[movie.originalTitle] = true;
-        return map;
-      }, {});
-      
-      // Check for missing movies
-      if (fileServer.movies) {
-        const movieTitlesFromServer = Object.keys(fileServer.movies);
-        missingMedia.movieTitles = movieTitlesFromServer.filter((title) => {
-          if (
-            doesFieldExistAcrossServers(
-              fieldAvailability,
-              'movies',
-              title,
-              'urls.mp4'
-            )
-          ) {
-            return !movieTitleMap[title];
-          }
-        });
-        
-        if (missingMedia.movieTitles.length > 0) {
-          console.log(chalk.yellow(`Identified ${missingMedia.movieTitles.length} movies missing from database`));
-        }
-      }
-      
-      // Similar logic could be added for TV shows if needed
-    }
-
-    const data = {
-      tv: tvShowsWithSeasonsAndEpisodes,
-      movies: flatMovies,
-    };
-
-    if (missingMedia.movieTitles.length > 0) {
-      data.missingMovies = missingMedia.movieTitles;
-    }
-    if (missingMedia.tvShowTitles.length > 0) {
-      data.missingTVShows = missingMedia.tvShowTitles;
-    }
-    
-    return data;
-  } catch (error) {
-    console.error('Error building flat database structure:', error);
-    return { tv: [], movies: [] };
-  }
-}
 
 /**
  * Syncs all media data from file servers to the flat database structure
@@ -170,9 +46,12 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
     }
   }
   
-  // Build a compatible data structure from the flat database collections
-  // Pass fileServer to identify missing media
-  const flatDB = await buildFlatDBStructure(fileServer, fieldAvailability);
+  // Get MongoDB client
+  const client = await clientPromise;
+  
+  // Build the enhanced data structure with optimized lookups
+  console.log(chalk.green('Using enhanced in-memory data structure for improved performance...'));
+  const flatDB = await buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability);
   
   // Log missing media info
   if (flatDB.missingMovies && flatDB.missingMovies.length > 0) {
@@ -226,10 +105,15 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
   
   // Log summary of results
   console.log(chalk.bold.green(`Completed sync to flat structure for server ${serverConfig.id}`));
-  console.log(`TV Shows processed: ${tvShowResults.processed.length}, errors: ${tvShowResults.errors.length}`);
-  console.log(`Seasons processed: ${seasonResults.processed.length}, errors: ${seasonResults.errors.length}`);
-  console.log(`Episodes processed: ${episodeResults.processed.length}, errors: ${episodeResults.errors.length}`);
-  console.log(`Movies processed: ${movieResults.processed.length}, errors: ${movieResults.errors.length}`);
+  
+  // Count skipped TV shows due to no valid videoURLs
+  const skippedTVShows = tvShowResults.processed?.filter(show => show.skipped && show.skippedReason === 'no_valid_video_urls')?.length || 0;
+  const actualProcessedTVShows = (tvShowResults.processed?.length || 0) - skippedTVShows;
+  
+  console.log(`TV Shows processed: ${actualProcessedTVShows}, skipped due to no valid videoURLs: ${skippedTVShows}, errors: ${tvShowResults.errors?.length || 0}`);
+  console.log(`Seasons processed: ${seasonResults.processed?.length || 0}, errors: ${seasonResults.errors?.length || 0}`);
+  console.log(`Episodes processed: ${episodeResults.processed?.length || 0}, errors: ${episodeResults.errors?.length || 0}`);
+  console.log(`Movies processed: ${movieResults.processed?.length || 0}, errors: ${movieResults.errors?.length || 0}`);
   console.log(chalk.bold.green(`Total sync time: ${totalTimeSeconds.toFixed(2)} seconds`));
   
   // NOTE: We don't perform availability checks here anymore.
@@ -259,8 +143,12 @@ export async function checkAvailabilityAcrossAllServers(allFileServers, fieldAva
   console.log(chalk.bold.yellow('Performing final availability check across all servers...'));
   const startTime = performance.now();
   
-  // Build a flat database structure
-  const flatDB = await buildFlatDBStructure(null, fieldAvailability);
+  // Get MongoDB client
+  const client = await clientPromise;
+  
+  // Build the enhanced data structure with optimized lookups
+  console.log(chalk.green('Using enhanced in-memory data structure for improved performance...'));
+  const flatDB = await buildEnhancedFlatDBStructure(client, null, fieldAvailability);
   
   // Perform the availability check with all servers' data
   const results = await checkAndRemoveUnavailableVideosFlat(flatDB, allFileServers, fieldAvailability);
@@ -289,6 +177,9 @@ export {
   syncEpisodes,
   initializeFlatDatabase,
   MediaType,
+  
+  // Export memory utilities
+  buildEnhancedFlatDBStructure,
   
   // Export video availability functions
   checkAndRemoveUnavailableVideosFlat,

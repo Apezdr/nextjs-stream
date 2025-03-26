@@ -24,9 +24,9 @@ function Detailed({
 }) {
   let networkName = tvShow.metadata?.networks[0]?.name
   let networkImage = getFullImageUrl(tvShow.metadata?.networks[0]?.logo_path, 'w185')
-  const totalEpisodes = tvShow.seasons.reduce((total, season) => {
+  const totalEpisodes = tvShow?.seasons ? tvShow?.seasons?.reduce((total, season) => {
     return total + (season.episodes ? season.episodes.length : 0)
-  }, 0)
+  }, 0) : null
 
   let has4k, hasHDR, hasHDR10
   if (check4kandHDR) {
