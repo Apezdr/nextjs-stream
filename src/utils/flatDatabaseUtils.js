@@ -5,6 +5,7 @@ import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import {
   arrangeMediaByLatestModification,
   processWatchedDetails,
+  sanitizeRecord
 } from '@src/utils/auth_utils'
 import { getFullImageUrl } from '@src/utils'
 
@@ -133,7 +134,6 @@ export async function addCustomUrlToFlatMedia(mediaArray, type) {
         link: encodeURIComponent(media.title) || null,
         description: media.metadata?.overview,
         type,
-        //media: media,
       }
       
       // For TV episodes, use the episode thumbnail as the poster if available
@@ -141,16 +141,13 @@ export async function addCustomUrlToFlatMedia(mediaArray, type) {
         returnObj.posterURL = media.episode.thumbnail;
         returnObj.thumbnail = media.episode.thumbnail;
         
-        // For episode thumbnailBlurhash, also use it as posterBlurhash
+        // Preserve episode's raw thumbnail blurhash data for later processing
         if (media.episode.thumbnailBlurhash) {
-          returnObj.thumbnailBlurhash = await fetchMetadataMultiServer(
-            media.episode.thumbnailBlurhashSource,
-            media.episode.thumbnailBlurhash,
-            'blurhash',
-            type,
-            media.title
-          );
-          returnObj.posterBlurhash = returnObj.thumbnailBlurhash;
+          returnObj.thumbnailBlurhash = media.episode.thumbnailBlurhash;
+          returnObj.thumbnailBlurhashSource = media.episode.thumbnailBlurhashSource;
+          // Also use thumbnail blurhash as poster blurhash (keeping them raw)
+          returnObj.posterBlurhash = media.episode.thumbnailBlurhash;
+          returnObj.posterBlurhashSource = media.episode.thumbnailBlurhashSource;
         }
       } 
       // Standard poster handling for non-episode media
@@ -160,26 +157,22 @@ export async function addCustomUrlToFlatMedia(mediaArray, type) {
           : `/sorry-image-not-available.jpg`
       }
       
-      // Process standard poster blurhash if not already set by episode
+      // Preserve poster blurhash raw data (no fetching)
       if (!returnObj.posterBlurhash && media.posterBlurhash) {
-        returnObj.posterBlurhash = await fetchMetadataMultiServer(
-          media.posterBlurhashSource,
-          media.posterBlurhash,
-          'blurhash',
-          type,
-          media.title
-        )
+        returnObj.posterBlurhash = media.posterBlurhash;
+        returnObj.posterBlurhashSource = media.posterBlurhashSource;
       }
       
-      // Process backdrop blurhash
+      // Preserve backdrop blurhash raw data (no fetching)
       if (media.backdropBlurhash) {
-        returnObj.backdropBlurhash = await fetchMetadataMultiServer(
-          media.backdropBlurhashSource,
-          media.backdropBlurhash,
-          'blurhash',
-          type,
-          media.title
-        )
+        returnObj.backdropBlurhash = media.backdropBlurhash;
+        returnObj.backdropBlurhashSource = media.backdropBlurhashSource;
+        returnObj.backdropSource = media.backdropSource;
+      }
+      
+      // Make sure backdrop is set if it exists in metadata
+      if (!returnObj.backdrop && media.metadata?.backdrop_path) {
+        returnObj.backdrop = getFullImageUrl(media.metadata.backdrop_path, 'original')
       }
       
       return returnObj
@@ -407,7 +400,15 @@ export async function getFlatRecentlyWatchedForUser({
       console.time('getFlatRecentlyWatchedForUser:processWatchedDetails');
     }
     
-    const watchedDetails = await processWatchedDetails(lastWatched, movieMap, episodeMap, limit);
+    // Pass along the context object 
+    const contextObj = { dateContext: 'watchHistory' };
+    const watchedDetails = await processWatchedDetails(
+      lastWatched, 
+      movieMap, 
+      episodeMap, 
+      limit,
+      contextObj
+    );
     
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getFlatRecentlyWatchedForUser:processWatchedDetails');
@@ -452,6 +453,8 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
       mediaLastModified: 1,
       posterBlurhashSource: 1,
       backdropBlurhashSource: 1,
+      posterSource: 1,
+      backdropSource: 1 
     }
 
     // For non-count queries, get a larger pool of items to combine and paginate
@@ -550,8 +553,19 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
       return [];
     }
     
-    // Return only the items for the requested page
-    return arrangedMedia.slice(startIndex, endIndex);
+    // Get just the items for this page
+    const paginatedMedia = arrangedMedia.slice(startIndex, endIndex);
+    
+    // Sanitize each item using the flexible sanitizeRecord function with appropriate context
+    const contextObj = { dateContext: 'recentlyAdded' };
+    const sanitizedMedia = await Promise.all(
+      paginatedMedia.map(async (media) => 
+        // Use the flexible sanitizeRecord function with context
+        sanitizeRecord(media, media.type, contextObj)
+      )
+    );
+    
+    return sanitizedMedia;
   } catch (error) {
     console.error(`Error in getFlatRecentlyAddedMedia: ${error.message}`)
     throw error
@@ -849,6 +863,7 @@ export async function getFlatRequestedMedia({
             id: seasonData._id.toString(),
             showId: seasonData.showId.toString(),
             title: tvShow.title,
+            originalTitle: tvShow.originalTitle,
             type: 'tv',
             metadata: {
               ...(seasonData.metadata || {}),
@@ -906,7 +921,8 @@ export async function getFlatRequestedMedia({
             id: episodeData._id.toString(),
             showId: episodeData.showId.toString(),
             seasonId: episodeData.seasonId.toString(),
-            title: tvShow.title,
+            title: episodeData.title, // Use episode title
+            originalTitle: tvShow.originalTitle,
             logo: tvShow.logo,
             seasonNumber: seasonNumber,
             episodeNumber: episodeNumber,
@@ -1338,6 +1354,17 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
         );
       }
     }));
+    
+    // Process the season poster blurhash if it exists
+    if (season.posterBlurhash) {
+      season.posterBlurhash = await fetchMetadataMultiServer(
+        season.posterBlurhashSource,
+        season.posterBlurhash,
+        'blurhash',
+        'tv',
+        showTitle
+      );
+    }
     
     // Set basic info about the parent TV show for the component
     season.showTitle = tvShow.title;

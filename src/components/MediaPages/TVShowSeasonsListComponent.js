@@ -90,38 +90,10 @@ export default async function TVShowSeasonsList({ showTitle }) {
     );
   }
 
-  // Fetch posterBlurhash if available
-  if (tvShow.posterBlurhash) {
-    tvShow.posterBlurhash = await fetchMetadataMultiServer(
-      tvShow.posterBlurhashSource,
-      tvShow.posterBlurhash,
-      'blurhash',
-      'tv',
-      showTitle
-    );
-  }
-
   // Process all seasons: fetch blurhash and compute flags
   // Note: getFlatRequestedMedia already processes the blurhashes
   const processedSeasons = await Promise.all(
     tvShow.seasons.map(async (season) => {
-      // For flat database, we might need to handle different field names
-      if (season.posterBlurhash) {
-        // Use the appropriate field name based on what's available
-        const blurhashSource = season.posterBlurhashSource;
-        const blurhashValue = season.posterBlurhash;
-        
-        if (blurhashValue && blurhashSource) {
-          season.posterBlurhash = await fetchMetadataMultiServer(
-            blurhashSource,
-            blurhashValue,
-            'blurhash',
-            'tv',
-            showTitle
-          );
-        }
-      }
-
       // Check all episodes for HDR and 4k
       const episodes = season.episodes || [];
 
@@ -133,13 +105,26 @@ export default async function TVShowSeasonsList({ showTitle }) {
 
       const hasHDR10 = episodes.some((episode) => episode?.hdr === 'HDR10');
 
+      // Process the season poster blurhash if it exists
+      let posterBlurhash = season.posterBlurhash || null;
+      if (posterBlurhash && season.posterBlurhashSource) {
+        posterBlurhash = await fetchMetadataMultiServer(
+          season.posterBlurhashSource,
+          posterBlurhash,
+          'blurhash',
+          'tv',
+          tvShow.title
+        );
+      }
+
       return { 
         ...season, 
         has4k, 
         hasHDR, 
         hasHDR10,
         // Ensure field naming is consistent with what the component expects
-        posterURL: season.posterURL || season.season_poster
+        posterURL: season.posterURL || season.season_poster,
+        posterBlurhash: posterBlurhash
       };
     })
   );

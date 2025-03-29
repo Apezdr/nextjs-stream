@@ -57,10 +57,17 @@ export const GET = async (req) => {
             limit: limit,
           })
         case 'recentlyAdded':
-          return await getFlatRecentlyAddedMedia({ page: pageNumber, limit: limit })
+          return await getFlatRecentlyAddedMedia({ 
+            page: pageNumber, 
+            limit: limit,
+          })
         case 'recommendations':
           //const recommendations = await getRecommendations(authResult?.id, pageNumber, limit)
-          const recommendations = await getFlatRecommendations(authResult?.id, pageNumber, limit)
+          const recommendations = await getFlatRecommendations(
+            authResult?.id, 
+            pageNumber, 
+            limit,
+          )
           return recommendations.items || []
         case 'all':
         default: {
@@ -79,34 +86,45 @@ export const GET = async (req) => {
       // First sort the items
       const sorted = items.sort(sortList)
       
-      // Make sure thumbnails and posters are properly set for TV episodes
-      for (const item of sorted) {
-        if (item.type === 'tv' && item.episode) {
-          // Make sure episode has a thumbnail (use metadata still_path or fallback to posterURL)
-          if (!item.episode.thumbnail) {
-            item.episode.thumbnail = 
-              (item.episode.metadata?.still_path ? 
-               getFullImageUrl(item.episode.metadata.still_path) : 
-               item.posterURL);
-          }
-          
-          // Use episode thumbnail as the posterURL for TV episodes
-          if (item.episode.thumbnail) {
-            item.posterURL = item.episode.thumbnail;
-            item.thumbnail = item.episode.thumbnail;
-          }
-          
-          // For thumbnailBlurhash, we'll rely on sanitizeCardItems to handle that
-          
-          // Make sure episodeNumber is included at the top level
-          if (!item.episodeNumber && item.episode.episodeNumber) {
-            item.episodeNumber = item.episode.episodeNumber;
+      // For recently added items, they're already sanitized with proper structure
+      // For other item types that might not be fully sanitized, make sure thumbnails and posters are set for TV episodes
+      if (type !== 'recentlyAdded') {
+        for (const item of sorted) {
+          if (item.type === 'tv' && item.episode) {
+            // Make sure episode has a thumbnail (use metadata still_path or fallback to posterURL)
+            if (!item.episode.thumbnail) {
+              item.episode.thumbnail = 
+                (item.episode.metadata?.still_path ? 
+                 getFullImageUrl(item.episode.metadata.still_path) : 
+                 item.posterURL);
+            }
+            
+            // Use episode thumbnail as the posterURL for TV episodes
+            if (item.episode.thumbnail) {
+              item.posterURL = item.episode.thumbnail;
+              item.thumbnail = item.episode.thumbnail;
+            }
+            
+            // For thumbnailBlurhash, we'll rely on sanitizeCardItems to handle that
+            
+            // Make sure episodeNumber is included at the top level
+            if (!item.episodeNumber && item.episode.episodeNumber) {
+              item.episodeNumber = item.episode.episodeNumber;
+            }
           }
         }
       }
       
-      // Then sanitize the items
-      items = await sanitizeCardItems(sorted)
+      // Then sanitize the items with appropriate context based on type
+      const contextByType = {
+        recentlyWatched: { dateContext: 'watchHistory' },
+        recentlyAdded: { dateContext: 'recentlyAdded' },
+        recommendations: { dateContext: 'recommendations' },
+        // For other types, we'll rely on the default context
+      };
+      
+      // Pass the appropriate context for this type of list
+      items = await sanitizeCardItems(sorted, contextByType[type] || {})
     } else {
       items = []
     }
@@ -117,7 +135,15 @@ export const GET = async (req) => {
       if (prevPageItems && prevPageItems.length > 0) {
         prevPageItems.sort(sortList)
         previousItem = prevPageItems[prevPageItems.length - 1] // Get the last item
-        previousItem = await sanitizeCardData(previousItem)
+        const contextByType = {
+          recentlyWatched: { dateContext: 'watchHistory' },
+          recentlyAdded: { dateContext: 'recentlyAdded' },
+          recommendations: { dateContext: 'recommendations' },
+          // For other types, we'll rely on the default context
+        };
+        
+        // Apply same context to previous item
+        previousItem = await sanitizeCardData(previousItem, false, contextByType[type] || {})
       }
     }
 
@@ -126,7 +152,16 @@ export const GET = async (req) => {
     if (nextPageItems && nextPageItems.length > 0) {
       nextPageItems.sort(sortList)
       nextItem = nextPageItems[0] // Get the first item
-      nextItem = await sanitizeCardData(nextItem)
+      // Define context for next item (to match the previous implementations)
+      const contextByType = {
+        recentlyWatched: { dateContext: 'watchHistory' },
+        recentlyAdded: { dateContext: 'recentlyAdded' },
+        recommendations: { dateContext: 'recommendations' },
+        // For other types, we'll rely on the default context
+      };
+      
+      // Apply same context to next item
+      nextItem = await sanitizeCardData(nextItem, false, contextByType[type] || {})
     }
 
     // Return the items along with previous and next items

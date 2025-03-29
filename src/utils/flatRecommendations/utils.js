@@ -111,7 +111,7 @@ export async function ensureMediaProperties(item) {
       }
     }
     
-  // For TV shows with episodes, use episode thumbnail as poster and ensure thumbnails are set
+    // For TV shows with episodes, use episode thumbnail as poster and ensure thumbnails are set
   if (enhancedItem.episode) {
     // If episode has no thumbnail, try to use the episode's still_path or fallback to show poster
     if (!enhancedItem.episode.thumbnail) {
@@ -120,13 +120,12 @@ export async function ensureMediaProperties(item) {
          getFullImageUrl(enhancedItem.episode.metadata.still_path) : 
          enhancedItem.posterURL);
       enhancedItem.episode.thumbnailSource = enhancedItem.episode.metadata?.still_path ? null : enhancedItem.posterSource;
-      enhancedItem.episode.thumbnailBlurhash = enhancedItem.episode.metadata?.still_path ? null : await fetchMetadataMultiServer(
-        enhancedItem.posterBlurhashSource,
-        enhancedItem.posterBlurhash,
-        'blurhash',
-        'tv',
-        enhancedItem.title
-      )
+      
+      // Just pass through the raw blurhash data without fetching
+      if (enhancedItem.posterBlurhash) {
+        enhancedItem.episode.thumbnailBlurhash = enhancedItem.posterBlurhash;
+        enhancedItem.episode.thumbnailBlurhashSource = enhancedItem.posterBlurhashSource;
+      }
     }
     
     // For TV episodes, use the thumbnail as the posterURL
@@ -134,18 +133,14 @@ export async function ensureMediaProperties(item) {
       enhancedItem.posterURL = enhancedItem.episode.thumbnail;
     }
     
-    // Include thumbnailBlurhash from episode if available
+    // Include thumbnailBlurhash from episode if available - but do not fetch
     if (enhancedItem.episode.thumbnailBlurhash) {
-      enhancedItem.thumbnailBlurhash = await fetchMetadataMultiServer(
-        enhancedItem.episode.thumbnailBlurhashSource,
-        enhancedItem.episode.thumbnailBlurhash,
-        "blurhash",
-        "tv",
-        enhancedItem.title
-      );
+      // Just pass through the data
+      enhancedItem.thumbnailBlurhash = enhancedItem.episode.thumbnailBlurhash;
+      enhancedItem.thumbnailBlurhashSource = enhancedItem.episode.thumbnailBlurhashSource;
       
       // Also set posterBlurhash to the same value since we're using thumbnail as poster
-      enhancedItem.posterBlurhash = enhancedItem.thumbnailBlurhash;
+      enhancedItem.posterBlurhash = enhancedItem.episode.thumbnailBlurhash;
       enhancedItem.posterBlurhashSource = enhancedItem.episode.thumbnailBlurhashSource;
     }
     
@@ -169,15 +164,10 @@ export async function ensureMediaProperties(item) {
     }
   }
   
-  // For movies, ensure videoURL is set
-  if (enhancedItem.type === 'movie' && enhancedItem.posterBlurhash) {
-    enhancedItem.posterBlurhash = await fetchMetadataMultiServer(
-      enhancedItem.posterBlurhashSource,
-      enhancedItem.posterBlurhash,
-      'blurhash',
-      'movie',
-      enhancedItem.title
-    );
+  // For movies, just make sure posterBlurhashSource is preserved if we have posterBlurhash
+  if (enhancedItem.type === 'movie' && enhancedItem.posterBlurhash && !enhancedItem.posterBlurhashSource) {
+    // Log warning about missing source
+    console.warn(`Movie ${enhancedItem.title} has posterBlurhash but no posterBlurhashSource`);
   }
   
   return enhancedItem;

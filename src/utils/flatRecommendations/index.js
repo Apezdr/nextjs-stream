@@ -1,7 +1,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { addCustomUrlToFlatMedia } from '@src/utils/flatDatabaseUtils'
-import { processFlatBlurhashes } from './utils'
+import { sanitizeRecord } from '@src/utils/auth_utils'
 
 // Import utility functions
 import {
@@ -847,6 +847,9 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
     // Log timestamp for debugging
     console.log(`Fetching fresh recommendations for user ${userId} with timestamp ${latestWatchTimestamp}`)
     
+    // Create a hardcoded context object for recommendations
+    const context = { dateContext: 'recommendations' }
+    
     // Get recommendations based on user's watch history
     const recommendations = await getFlatGenreBasedRecommendations(userId, page, limit)
     
@@ -876,9 +879,16 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
     const totalItems = Math.min(totalMovies + totalTVShows, 500) // Cap at 500 to avoid excessive pagination
     const totalPages = Math.max(Math.ceil(totalItems / limit), 5) // Ensure at least 5 pages
     
-    // Ensure all items have the necessary properties for PopupCard component
-    // This is async now, so we need to use Promise.all
-    const enhancedItems = await Promise.all(items.map(item => ensureMediaProperties(item)));
+    // Sanitize each item to ensure proper blurhash processing
+    // Use the hardcoded context for consistent date field handling
+    const sanitizedItems = await Promise.all(
+      items.map(item => sanitizeRecord(item, item.type, context))
+    );
+    
+    // Then ensure they have all needed UI properties for PopupCard component
+    const enhancedItems = await Promise.all(
+      sanitizedItems.filter(Boolean).map(item => ensureMediaProperties(item))
+    );
     
     // Create result object with recommendations data (no caching)
     const result = {

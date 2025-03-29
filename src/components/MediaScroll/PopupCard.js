@@ -23,7 +23,11 @@ const PopupCard = ({
   title,
   seasonNumber = null,
   episodeNumber = null,
+  // Date fields (old and new)
   date,
+  lastWatchedDate,
+  addedDate,
+  releaseDate,
   link,
   type,
   logo,
@@ -118,6 +122,22 @@ const PopupCard = ({
       ? `!w-[${imagePosition.expandedWidth}]`
       : `w-[${imageDimensions.width}]`
   }
+
+  // Function to determine which date to display
+  const getDisplayDate = () => {
+    if (lastWatchedDate) {
+      return { label: "Last Watched", value: lastWatchedDate };
+    } else if (addedDate) {
+      return { label: "Added", value: addedDate };
+    } else if (releaseDate) {
+      return { label: "Released", value: releaseDate };
+    } else if (date) {
+      return { label: "Date", value: date };
+    }
+    return null;
+  }
+
+  const displayDate = getDisplayDate();
 
   return (
     <div
@@ -323,7 +343,20 @@ const PopupCard = ({
               </motion.h2>
             )}
           </div>
-          {date && <div className="text-sm text-gray-600">Last Watched: {date}</div>}
+          {displayDate && (
+            <div className="flex items-center mb-1 gap-1">
+              <span className={classNames(
+                "text-sm font-medium",
+                displayDate.label === "Last Watched" ? "text-blue-600" : 
+                displayDate.label === "Added" ? "text-green-600" : 
+                displayDate.label === "Released" ? "text-yellow-600" : 
+                "text-gray-600"
+              )}>
+                {displayDate.label}:
+              </span>
+              <span className="text-sm text-gray-800 font-medium">{displayDate.value}</span>
+            </div>
+          )}
           <div className="text-gray-500 mb-2">
             {isLoading ? <Loading fullscreenClasses={false} /> : data?.description ?? 'No description available.'}
           </div>

@@ -4,6 +4,7 @@ import {
   arrangeMediaByLatestModification,
   movieProjectionFields,
   tvShowProjectionFields,
+  sanitizeRecord
 } from '@src/utils/auth_utils'
 import isAuthenticated from '@src/utils/routeAuth'
 
@@ -65,10 +66,18 @@ async function searchMedia(query) {
     return recentlyAddedMedia
   }
 
+  // First add custom URLs (without fetching blurhash data)
   const [moviesWithUrl, tvShowsWithUrl] = await Promise.all([
     addCustomUrlToFlatMedia(movies, 'movie'),
     addCustomUrlToFlatMedia(tvShows, 'tv'),
   ])
 
-  return [...moviesWithUrl, ...tvShowsWithUrl]
+  // Now sanitize each item to ensure proper blurhash processing
+  const sanitizedResults = await Promise.all(
+    [...moviesWithUrl, ...tvShowsWithUrl].map(item => 
+      sanitizeRecord(item, item.type)
+    )
+  );
+
+  return sanitizedResults.filter(Boolean); // Filter out any null results
 }

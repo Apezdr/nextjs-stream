@@ -199,7 +199,7 @@ async function extractTVShowDetailsFromMap(tvDetails, videoId) {
   }
 }
 
-export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit) {
+export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit, context = {}) {
   if (Boolean(process.env.DEBUG) == true) {
     console.time('processWatchedDetails:total');
     console.log(`[PERF] Starting processWatchedDetails with ${lastWatched[0].videosWatched.length} videos, limit: ${limit}`);
@@ -214,7 +214,9 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit)
       if (Boolean(process.env.DEBUG) == true) {
         console.time(`processWatchedDetails:sanitizeMovie:${results.length}`);
       }
-      const sanitizedMovie = await sanitizeRecord(movie, 'movie', video)
+      // Pass the context to sanitizeRecord
+      const mergedContext = { ...context, lastWatchedVideo: video };
+      const sanitizedMovie = await sanitizeRecord(movie, 'movie', mergedContext)
       if (Boolean(process.env.DEBUG) == true) {
         console.timeEnd(`processWatchedDetails:sanitizeMovie:${results.length}`);
       }
@@ -239,7 +241,9 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit)
         if (Boolean(process.env.DEBUG) == true) {
           console.time(`processWatchedDetails:sanitizeTV:${results.length}`);
         }
-        const sanitizedData = await sanitizeRecord(detailedTVShow, 'tv', video)
+        // Pass the context to sanitizeRecord
+        const mergedContext = { ...context, lastWatchedVideo: video };
+        const sanitizedData = await sanitizeRecord(detailedTVShow, 'tv', mergedContext)
         if (Boolean(process.env.DEBUG) == true) {
           console.timeEnd(`processWatchedDetails:sanitizeTV:${results.length}`);
         }
@@ -259,16 +263,62 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit)
 }
 
 /**
- * Sanitize record to a consistent format
+ * Sanitize record to a consistent format for frontend use
  * @param {Object} record - The media record
  * @param {string} type - The type of media (movie or TV)
+ * @param {Object} [context] - Optional context with additional data
  * @returns {Object} The sanitized record
  */
-export async function sanitizeRecord(record, type, lastWatchedVideo) {
+export async function sanitizeRecord(record, type, context = {}) {
   if (Boolean(process.env.DEBUG) == true) {
     console.time('sanitizeRecord:total');
   }
   try {
+    // Initialize an object to hold different types of dates
+    let dateValues = {};
+    
+    // Determine which dates to include based on context
+    
+    // Last watched date - from watch history
+    if (context.dateContext === 'watchHistory' || context.dateTypes?.includes('lastWatched')) {
+      if (context.lastWatchedVideo?.lastUpdated) {
+        dateValues.lastWatchedDate = formatDateToEST(context.lastWatchedVideo.lastUpdated);
+      }
+    }
+    
+    // Added date - for recently added media
+    if (context.dateContext === 'recentlyAdded' || context.dateTypes?.includes('added')) {
+      if (record.mediaLastModified) {
+        dateValues.addedDate = formatDateToEST(record.mediaLastModified);
+      } else if (record?.episode?.mediaLastModified) {
+        dateValues.addedDate = formatDateToEST(record.episode.mediaLastModified);
+      }
+    }
+    
+    // Release date - from metadata
+    if (context.dateContext === 'recommendations' || context.dateTypes?.includes('release')) {
+      if (record.metadata?.release_date) {
+        dateValues.releaseDate = formatDateToEST(record.metadata.release_date);
+      } else if (type === 'tv' && record.metadata?.first_air_date) {
+        dateValues.releaseDate = formatDateToEST(record.metadata.first_air_date);
+      }
+    }
+    
+    // If no context is specified, try to determine the most appropriate date
+    if (!context.dateContext && !context.dateTypes) {
+      // For watched history
+      if (context.lastWatchedVideo?.lastUpdated) {
+        dateValues.lastWatchedDate = formatDateToEST(context.lastWatchedVideo.lastUpdated);
+      }
+      // For recently added
+      else if (record.mediaLastModified || record?.episode?.mediaLastModified) {
+        dateValues.addedDate = formatDateToEST(record.mediaLastModified || record?.episode?.mediaLastModified);
+      }
+      // For everything else
+      else if (record.metadata?.release_date || (type === 'tv' && record.metadata?.first_air_date)) {
+        dateValues.releaseDate = formatDateToEST(record.metadata?.release_date || record.metadata?.first_air_date);
+      }
+    }
     if (Boolean(process.env.DEBUG) == true) {
       console.time('sanitizeRecord:initialProcessing');
     }
@@ -402,7 +452,7 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
     if (type === 'tv' && record.episode) {
       result = {
         id: record.id,
-        date: formatDateToEST(lastWatchedVideo.lastUpdated),
+        ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         link: `${record.title}/${record.seasonNumber}/${record.episode.episodeNumber}`,
         length: record.length ?? 0,
         posterURL: poster,
@@ -414,6 +464,12 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
         type: type,
         metadata: record.metadata || null,
         seasons: record.seasons,
+        // Add season/episode data at top level for UI components
+        seasonNumber: record.seasonNumber,
+        episodeNumber: record.episode.episodeNumber,
+        thumbnail: record.episode.thumbnail,
+        thumbnailBlurhash: blurhashResults.thumbnail,
+        // Keep media object for API compatibility
         media: {
           showTitle: record.title,
           seasonNumber: record.seasonNumber,
@@ -435,7 +491,7 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
     } else {
       result = {
         id: record.id,
-        date: formatDateToEST(lastWatchedVideo.lastUpdated),
+        ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         link: encodeURIComponent(record.title),
         length: record.length ?? 0,
         posterURL: poster,
@@ -449,11 +505,25 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
         media: record,
       }
     }
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('sanitizeRecord:createReturnObject');
-      console.timeEnd('sanitizeRecord:total');
-    }
-    return result;
+  // Conditionally add url property if it exists in the data passed to the function
+  if (record.url) {
+    result.url = record.url;
+  }
+  if (Boolean(process.env.DEBUG) == true) {
+    console.timeEnd('sanitizeRecord:createReturnObject');
+    console.timeEnd('sanitizeRecord:total');
+  }
+  // For additional safety, if this is a TV show with episode info in the media property,
+  // ensure the seasonNumber and episodeNumber are at top level
+  if (result?.media?.seasonNumber && !result.seasonNumber) {
+    result.seasonNumber = result.media.seasonNumber;
+  }
+  
+  if (result?.media?.episode?.episodeNumber && !result.episodeNumber) {
+    result.episodeNumber = result.media.episode.episodeNumber;
+  }
+  
+  return result;
   } catch (e) {
     console.error(`Error in sanitizeRecord: ${e.message}`);
     if (Boolean(process.env.DEBUG) == true) {
@@ -468,27 +538,33 @@ export async function sanitizeRecord(record, type, lastWatchedVideo) {
  *
  * @param {Object} item - The media item to sanitize.
  * @param {boolean} popup - Whether the item is being used in a popup.
+ * @param {Object} context - Context parameters to pass through to sanitizeRecord.
  * @returns {Object|null} - The sanitized media item or null if the item is falsy.
  */
-export async function sanitizeCardData(item, popup = false) {
+export async function sanitizeCardData(item, popup = false, context = {}) {
   if (!item) return null
 
   try {
     const {
       id,
       title,
+      originalTitle,
       posterURL,
       posterBlurhash,
       backdrop,
       backdropBlurhash,
       type,
-      date,
+      // Date fields - using our new semantic naming
+      lastWatchedDate,
+      addedDate,
+      releaseDate,
       link,
       logo,
       metadata,
       cast,
       // tv
       media,
+      showTitle,
       episodeNumber, // it may not exist on the record if it's not an specific episode
       seasonNumber, // it may not exist on the record if it's not an specific episode
     } = item
@@ -505,14 +581,23 @@ export async function sanitizeCardData(item, popup = false) {
     try {
       if (posterBlurhash) sanitized.posterBlurhash = posterBlurhash
       if (backdrop) sanitized.backdrop = backdrop
-      if (backdropBlurhash) sanitized.backdropBlurhash = backdropBlurhash
-      if (date) sanitized.date = date
+      
+      // Ensure backdropBlurhash is properly preserved with its source
+      if (backdropBlurhash) {
+        sanitized.backdropBlurhash = backdropBlurhash
+        // Also preserve backdropBlurhashSource if available in the original item
+        if (item.backdropBlurhashSource) sanitized.backdropBlurhashSource = item.backdropBlurhashSource
+        if (item.backdropSource) sanitized.backdropSource = item.backdropSource
+      }
+      
+      // Handle the different date types
+      if (lastWatchedDate) sanitized.lastWatchedDate = lastWatchedDate
+      if (addedDate) sanitized.addedDate = addedDate 
+      if (releaseDate) sanitized.releaseDate = releaseDate
       if (link) sanitized.link = link
       if (logo) sanitized.logo = logo
       
       // TV specific properties
-      if (media?.seasonNumber) sanitized.seasonNumber = media?.seasonNumber
-      if (media?.episode?.episodeNumber) sanitized.episodeNumber = media?.episode?.episodeNumber
       if (episodeNumber) sanitized.episodeNumber = episodeNumber
       if (seasonNumber) sanitized.seasonNumber = seasonNumber
       
@@ -520,7 +605,7 @@ export async function sanitizeCardData(item, popup = false) {
       if (cast) sanitized.cast = cast
 
       // General properties
-      if (media?.hdr || item?.hdr) sanitized.hdr = media?.hdr ?? item?.hdr
+      if (item?.hdr) sanitized.hdr = item?.hdr
     } catch (nonCriticalError) {
       if (Boolean(process.env.DEBUG) == true) {
         console.warn('Non-critical error in sanitizeCardData:', nonCriticalError.message);
@@ -567,7 +652,7 @@ export async function sanitizeCardData(item, popup = false) {
         // Video clip URL
         if (item.videoURL) {
           try {
-            sanitized.clipVideoURL = generateClipVideoURL(item, type, title)
+            sanitized.clipVideoURL = generateClipVideoURL(item, type, originalTitle || title);
           } catch (clipError) {
             if (Boolean(process.env.DEBUG) == true) {
               console.warn(`Error generating clip URL for ${title}:`, clipError.message);
@@ -640,11 +725,12 @@ export const generateClipVideoURL = cache((item, type, title) => {
  * Sanitizes an array of media items.
  *
  * @param {Array} items - The array of media items to sanitize.
+ * @param {Object} context - Context parameters to pass through to sanitizeRecord.
  * @returns {Array} - The array of sanitized media items.
  */
-export async function sanitizeCardItems(items) {
+export async function sanitizeCardItems(items, context = {}) {
   if (!Array.isArray(items)) return []
-  const sanitizedItems = await Promise.all(items.map((item) => sanitizeCardData(item)))
+  const sanitizedItems = await Promise.all(items.map((item) => sanitizeCardData(item, false, context)))
   return sanitizedItems.filter(Boolean)
 }
 

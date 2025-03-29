@@ -75,7 +75,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
 
   const requestOptions = {
     headers,
-    http2: true,
+    http2: restOptions.http2 !== undefined ? restOptions.http2 : true, // Use passed http2 option or default to true
     timeout: { request: timeout },
     throwHttpErrors: false,
     ...restOptions,

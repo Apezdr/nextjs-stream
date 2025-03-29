@@ -25,7 +25,11 @@ const Card = ({
   videoURL,
   type,
   media,
+  // Date fields (old and new)
   date,
+  lastWatchedDate,
+  addedDate,
+  releaseDate,
   link,
   logo,
   listType,
@@ -335,15 +339,35 @@ const Card = ({
           </button>
         </div>
 
-        {/* Title and Date */}
+        {/* Title and Date - New semantically meaningful date fields */}
         <div className="mt-2 text-center w-full">
           <div className="text-sm truncate" title={title}>
             {title}
           </div>
-          {date && (
+          {/* Different date types with appropriate labels - Improved visibility */}
+          {lastWatchedDate && (
             <>
-              <div className="text-xs text-gray-200">Last Watched:</div>
-              <div className="text-[10px] text-gray-200 truncate">{date}</div>
+              <div className="text-xs font-medium text-blue-300">Last Watched:</div>
+              <div className="text-[10px] text-white truncate">{lastWatchedDate}</div>
+            </>
+          )}
+          {addedDate && !lastWatchedDate && (
+            <>
+              <div className="text-xs font-medium text-green-300">Added:</div>
+              <div className="text-[10px] text-white truncate">{addedDate}</div>
+            </>
+          )}
+          {releaseDate && !lastWatchedDate && !addedDate && (
+            <>
+              <div className="text-xs font-medium text-yellow-300">Released:</div>
+              <div className="text-[10px] text-white truncate">{releaseDate}</div>
+            </>
+          )}
+          {/* Fallback for legacy 'date' property for backward compatibility */}
+          {date && !lastWatchedDate && !addedDate && !releaseDate && (
+            <>
+              <div className="text-xs font-medium text-gray-300">Date:</div>
+              <div className="text-[10px] text-white truncate">{date}</div>
             </>
           )}
         </div>
@@ -358,7 +382,11 @@ const Card = ({
             title={title}
             seasonNumber={seasonNumber}
             episodeNumber={episodeNumber}
-            date={date}
+            // Pass all date types for the popup
+            lastWatchedDate={lastWatchedDate}
+            addedDate={addedDate}
+            releaseDate={releaseDate}
+            date={date} // For backward compatibility
             link={link}
             type={type}
             logo={logo}

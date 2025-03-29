@@ -232,6 +232,7 @@ export async function fetchMetadataMultiServer(
           headers,
           timeout: type === 'blurhash' ? 3000 : 5000, // Shorter timeout for blurhash
           responseType: type === 'blurhash' ? 'text' : 'json',
+          http2: true,
         });
         
         const { data, headers: responseHeaders } = await Promise.race([fetchPromise, timeoutPromise]);

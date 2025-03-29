@@ -51,7 +51,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
           width={390}
           height={217}
           alt={metadata ? metadata.name : 'Episode Image'}
-          className="object-cover group-hover:opacity-75 max-w-sm rounded-t-lg max-h-[13.3rem]"
+          className="mx-auto object-cover group-hover:opacity-75 max-w-md rounded-t-lg max-h-[13.3rem]"
           loading="lazy"
           placeholder="blur"
           blurDataURL={`data:image/png;base64,${blurDataURL}`}
@@ -62,7 +62,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
           width={390}
           height={217}
           alt={metadata ? metadata.name : 'Episode Image'}
-          className="object-cover group-hover:opacity-75 max-w-sm rounded-t-lg max-h-[13.3rem]"
+          className="mx-auto object-cover group-hover:opacity-75 max-w-md rounded-t-lg max-h-[13.3rem]"
         />
       )}
     </div>

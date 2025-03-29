@@ -19,7 +19,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
     name = media.metadata.name
     guest_stars = media.metadata.guest_stars
   }
-  const { title, backdrop, logo, hdr, episodeNumber, seasonNumber, cast, length } = media
+  const { title, showTitle, backdrop, logo, hdr, episodeNumber, seasonNumber, cast, length } = media
 
   const thumbnail = media.thumbnail
   const posterURL = media.posterURL
@@ -40,17 +40,17 @@ const TVEpisodeDetailsComponent = ({ media }) => {
           <div className="relative">
             <img
               src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-              alt={`${title} backdrop`}
+              alt={`${showTitle} backdrop`}
               className="w-full h-64 object-cover rounded-lg shadow-md"
             />
             {logo && (
               <div className="absolute top-4 left-4">
-                <img src={logo} alt={`${title} logo`} className="w-32 h-auto" />
+                <img src={logo} alt={`${showTitle} logo`} className="w-32 h-auto" />
               </div>
             )}
           </div>
           <div className="mt-4">
-            <Link href={`/list/tv/${title}/${seasonNumber}`} className="self-center">
+            <Link href={`/list/tv/${showTitle}/${seasonNumber}`} className="self-center">
               <button
                 type="button"
                 className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 mx-auto"
@@ -112,7 +112,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
                     </div> */}
           <div className='flex flex-row justify-evenly'>
           <Link
-            href={`/list/tv/${title}/${seasonNumber}/${episodeNumber}/play`}
+            href={`/list/tv/${showTitle}/${seasonNumber}/${episodeNumber}/play`}
             className={classNames(
               'relative inline-flex flex-row items-center gap-2',
               'opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'

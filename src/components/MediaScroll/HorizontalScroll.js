@@ -461,7 +461,12 @@ const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrde
                         backdrop={item.backdrop}
                         backdropBlurhash={item.backdropBlurhash}
                         videoURL={videoURL}
+                        // Pass all date fields
                         date={item.date}
+                        lastWatchedDate={item.lastWatchedDate}
+                        addedDate={item.addedDate}
+                        releaseDate={item.releaseDate}
+                        //
                         link={item.link}
                         logo={item.logo}
                         listType={listType}
