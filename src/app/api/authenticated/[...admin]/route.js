@@ -24,6 +24,7 @@ import { getCpuUsage, getMemoryTotal, getMemoryUsage, getMemoryUsed } from '@src
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { syncAllServers } from '@src/utils/sync'
 import { getSyncVerificationReport } from '@src/utils/sync_verification'
+import { httpGet } from '@src/lib/httpHelper'
 
 /**
  * Extracts all server endpoints from the configuration.
@@ -399,12 +400,15 @@ export async function POST(request, props) {
 }
 
 /**
- * Handles sync operation.
+ * Handles sync operation with improved error handling.
  * @param {string|null} webhookId - Webhook ID
  * @param {Request} request - Request object
  * @returns {Promise<Object>} Sync results
  */
 async function handleSync(webhookId, request) {
+  // Add a flag to track whether this sync operation is still in progress
+  let syncInProgress = true;
+  
   try {
     const headers = {}
     if (webhookId) headers['X-Webhook-ID'] = webhookId
@@ -416,18 +420,19 @@ async function handleSync(webhookId, request) {
     let retryCount = 0;
     const initialBackoff = 1000;  // Start with 1 second delay
     
-    while (true) {
+    while (syncInProgress && retryCount <= maxRetries) {
       try {
         if (retryCount > 0) {
           console.log(`Attempt ${retryCount + 1}/${maxRetries + 1} to fetch server data...`);
         }
         
-        response = await axios.get(buildURL('/api/authenticated/list'), { headers });
+        response = await httpGet(buildURL('/api/authenticated/list'), { headers });
         break; // Success, exit the retry loop
       } catch (error) {
         retryCount++;
         
-        if (retryCount <= maxRetries) {
+        // Only log and retry if the sync is still in progress
+        if (syncInProgress && retryCount <= maxRetries) {
           // Calculate exponential backoff with jitter
           const backoffTime = initialBackoff * Math.pow(2, retryCount - 1);
           const jitter = Math.random() * 300; // Random jitter up to 300ms
@@ -439,8 +444,8 @@ async function handleSync(webhookId, request) {
           // Wait before the next retry
           await new Promise(resolve => setTimeout(resolve, delay));
         } else {
-          // All retries exhausted, handle the error
-          console.error(`All ${maxRetries + 1} fetch attempts failed.`);
+          // All retries exhausted or sync no longer in progress
+          console.error(`All ${maxRetries + 1} fetch attempts failed or sync operation was canceled.`);
           
           if (error.response && error.response.status === 502) {
             throw new Error('Bad Gateway: Failed to fetch data from the server after multiple attempts.');
@@ -449,7 +454,13 @@ async function handleSync(webhookId, request) {
         }
       }
     }
-    const { fileServers, currentDB, errors } = response.data
+    
+    // If we don't have a response (due to cancellation), throw an error
+    if (!response) {
+      throw new Error('Sync operation was canceled or timed out during initial data fetch');
+    }
+    
+    const { fileServers, errors } = response.data
 
     // Initialize field-level availability maps
     const fieldAvailability = {
@@ -459,32 +470,47 @@ async function handleSync(webhookId, request) {
 
     // Build availability maps per server
     for (const [serverId, fileServer] of Object.entries(fileServers)) {
-      // For Movies
-      for (const [movieTitle, movieData] of Object.entries(fileServer.movies || {})) {
-        if (!fieldAvailability.movies[movieTitle]) {
-          fieldAvailability.movies[movieTitle] = {}
-        }
+      // For Movies - add null check to avoid errors on undefined
+      if (fileServer.movies) {
+        for (const [movieTitle, movieData] of Object.entries(fileServer.movies)) {
+          if (!fieldAvailability.movies[movieTitle]) {
+            fieldAvailability.movies[movieTitle] = {}
+          }
 
-        collectFieldAvailability(movieData, '', serverId, fieldAvailability.movies[movieTitle])
+          collectFieldAvailability(movieData, '', serverId, fieldAvailability.movies[movieTitle])
+        }
       }
 
-      // For TV Shows
-      for (const [showTitle, showData] of Object.entries(fileServer.tv || {})) {
-        if (!fieldAvailability.tv[showTitle]) {
-          fieldAvailability.tv[showTitle] = {}
-        }
+      // For TV Shows - add null check to avoid errors on undefined
+      if (fileServer.tv) {
+        for (const [showTitle, showData] of Object.entries(fileServer.tv)) {
+          if (!fieldAvailability.tv[showTitle]) {
+            fieldAvailability.tv[showTitle] = {}
+          }
 
-        collectFieldAvailability(showData, '', serverId, fieldAvailability.tv[showTitle])
+          collectFieldAvailability(showData, '', serverId, fieldAvailability.tv[showTitle])
+        }
       }
     }
 
     const importSettings = await getFileServerImportSettings()
     console.log('Import Settings:', importSettings)
 
-    return await syncAllServers(currentDB, fileServers, fieldAvailability)
+    // Perform the actual sync
+    const result = await syncAllServers(fileServers, fieldAvailability)
+    
+    // Mark sync as complete to prevent logging errors after completion
+    syncInProgress = false;
+    
+    return result;
   } catch (error) {
     console.error('Sync operation failed:', error)
-    throw error
+    // Update the flag to indicate sync is no longer in progress
+    syncInProgress = false;
+    throw error;
+  } finally {
+    // Ensure the flag is always updated in case of any errors
+    syncInProgress = false;
   }
 }
 

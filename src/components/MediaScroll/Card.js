@@ -10,12 +10,9 @@ import { preload } from 'swr'
 import RetryImage from '@components/RetryImage'
 import PopupCard from './PopupCard'
 
-// const PopupCard = dynamic(() => import('@src/components/MediaScroll/PopupCard'), {
-//   ssr: false,
-// })
-
 const Card = ({
   title,
+  showTitleFormatted, // Used for TV Episode titles
   itemId,
   mediaId,
   posterURL,
@@ -30,6 +27,8 @@ const Card = ({
   lastWatchedDate,
   addedDate,
   releaseDate,
+  // Support for new blurhash structure
+  blurhash = null,
   link,
   logo,
   listType,
@@ -67,6 +66,9 @@ const Card = ({
 
   const isHovered = isMouseOverCard || isMouseOverPortal
 
+  // Get effective blurhash from either new or legacy structure
+  const effectivePosterBlurhash = blurhash?.poster || posterBlurhash
+  
   // Detect if the device is a touch device
   useEffect(() => {
     const isTouch =
@@ -318,8 +320,8 @@ const Card = ({
                 quality={50}
                 fill
                 src={posterURL}
-                placeholder={posterBlurhash ? 'blur' : 'empty'}
-                blurDataURL={posterBlurhash ? `data:image/png;base64,${posterBlurhash}` : undefined}
+                placeholder={effectivePosterBlurhash ? 'blur' : 'empty'}
+                blurDataURL={effectivePosterBlurhash ? `data:image/png;base64,${effectivePosterBlurhash}` : undefined}
                 alt={title}
                 className={classNames(
                   'rounded-lg shadow-xl transition-opacity duration-300 object-cover',
@@ -380,6 +382,7 @@ const Card = ({
             imageDimensions={imageDimensions}
             imagePosition={imagePosition}
             title={title}
+            showTitleFormatted={showTitleFormatted}
             seasonNumber={seasonNumber}
             episodeNumber={episodeNumber}
             // Pass all date types for the popup
@@ -393,14 +396,15 @@ const Card = ({
             mediaId={mediaId}
             media={media}
             posterURL={posterURL}
-            posterBlurhash={posterBlurhash}
+            posterBlurhash={effectivePosterBlurhash}
             backdrop={backdrop}
-            backdropBlurhash={backdropBlurhash}
+            backdropBlurhash={blurhash?.backdrop || backdropBlurhash}
             videoURL={videoURL}
             handleCollapse={handleCollapse}
             handlePortalMouseEnter={handlePortalMouseEnter}
             handlePortalMouseLeave={handlePortalMouseLeave}
             isTouchDevice={isTouchDevice}
+            blurhash={blurhash}
           />,
           document.body
         )}

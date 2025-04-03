@@ -69,7 +69,7 @@ export function needsVideoInfoUpdate(flatEpisode, videoInfo, serverId) {
   }
   
   // Check if duration/length has changed
-  if (videoInfo.duration && (flatEpisode.duration !== videoInfo.duration || flatEpisode.length !== videoInfo.duration)) {
+  if (videoInfo.duration && (flatEpisode.duration !== videoInfo.duration)) {
     return true;
   }
   
@@ -171,7 +171,6 @@ export async function syncEpisodeVideoInfo(
 
   if (fileServerSeasonData.lengths?.[episodeFileName]) {
     videoInfo.duration = fileServerSeasonData.lengths[episodeFileName];
-    videoInfo.length = fileServerSeasonData.lengths[episodeFileName];
   }
   
   if (fileServerEpisodeData.size) {

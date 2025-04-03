@@ -121,15 +121,15 @@ async function syncSingleTVShow(client, showTitle, fileServerData, serverConfig,
     }
     
     // Sync blurhash
-    try {
-      const blurhashResult = await syncTVShowBlurhash(client, flatShow, fileServerData, serverConfig, fieldAvailability);
-      if (blurhashResult) {
-        results.updated = true;
-        results.fields.push(blurhashResult.field);
-      }
-    } catch (error) {
-      results.errors.push({ field: 'blurhash', error: error.message });
-    }
+    // try {
+    //   const blurhashResult = await syncTVShowBlurhash(client, flatShow, fileServerData, serverConfig, fieldAvailability);
+    //   if (blurhashResult) {
+    //     results.updated = true;
+    //     results.fields.push(blurhashResult.field);
+    //   }
+    // } catch (error) {
+    //   results.errors.push({ field: 'blurhash', error: error.message });
+    // }
     
     // Sync logos
     try {

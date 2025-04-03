@@ -6,6 +6,7 @@ import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentSer
 import { updateSeasonInFlatDB, getSeasonFromFlatDB } from './database';
 import { getTVShowFromFlatDB } from '../tvShows/database';
 import { isEqual } from 'lodash';
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
 
 /**
  * Processes TV season poster blurhash updates
@@ -51,16 +52,22 @@ export async function syncSeasonPosterBlurhash(client, show, season, fileServerS
       createdAt: new Date()
     };
   }
-  
-  const newPosterBlurhashURL = createFullUrl(fileServerSeasonData.seasonPosterBlurhash, serverConfig);
+
+  const posterBlurhash = await fetchMetadataMultiServer(
+    serverConfig.id,
+    fileServerSeasonData.seasonPosterBlurhash,
+    'blurhash',
+    MediaType.TV,
+    flatShow.originalTitle,
+  );
   
   // Only update if the posterBlurhash URL has changed
-  if (isEqual(flatSeason.posterBlurhash, newPosterBlurhashURL) && isSourceMatchingServer(flatSeason, 'posterBlurhashSource', serverConfig)) {
+  if (isEqual(flatSeason.posterBlurhash, posterBlurhash) && isSourceMatchingServer(flatSeason, 'posterBlurhashSource', serverConfig)) {
     return null;
   }
   
   const updateData = {
-    posterBlurhash: newPosterBlurhashURL,
+    posterBlurhash: posterBlurhash,
     posterBlurhashSource: serverConfig.id
   };
   

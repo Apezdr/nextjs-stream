@@ -453,6 +453,7 @@ const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrde
                     >
                       <Card
                         title={item.title}
+                        showTitleFormatted={item.showTitleFormatted}
                         itemId={uniqueIdItem}
                         mediaId={item.id}
                         type={item.type}

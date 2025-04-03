@@ -49,13 +49,6 @@ export const fetchBannerMedia = async () => {
 
     // Fetch metadata for backdropBlurhash if available
     for (let item of media) {
-      if (item && item.backdropBlurhash) {
-        const blurhashString = await fetchMetadataMultiServer(item.backdropBlurhashSource, item.backdropBlurhash, "blurhash")
-        if (blurhashString.error) {
-          return { error: blurhashString.error, status: blurhashString.status }
-        }
-        item.backdropBlurhash = blurhashString
-      }
       if (item && !item.backdrop) {
         item.backdrop = getFullImageUrl(item.metadata.backdrop_path, 'original')
       }
@@ -92,13 +85,6 @@ export const fetchRandomBannerMedia = async () => {
 
     // Fetch metadata for backdropBlurhash if available
     const item = media[0]
-    if (item && item.backdropBlurhash) {
-      const blurhashString = await fetchMetadataMultiServer(item.backdropBlurhashSource, item.backdropBlurhash, "blurhash")
-      if (blurhashString.error) {
-        return { error: blurhashString.error, status: blurhashString.status }
-      }
-      item.backdropBlurhash = blurhashString
-    }
     if (item && !item.backdrop) {
       item.backdrop = getFullImageUrl(item.metadata.backdrop_path, 'original')
     }
@@ -132,22 +118,10 @@ export async function addCustomUrlToMedia(mediaArray, type) {
           : `/sorry-image-not-available.jpg`
       }
       if (media.posterBlurhash) {
-        returnObj.posterBlurhash = await fetchMetadataMultiServer(
-          media.posterBlurhashSource,
-          media.posterBlurhash,
-          'blurhash',
-          type,
-          media.title
-        )
+        returnObj.posterBlurhash = media.posterBlurhash
       }
       if (media.backdropBlurhash) {
-        returnObj.backdropBlurhash = await fetchMetadataMultiServer(
-          media.backdropBlurhashSource,
-          media.backdropBlurhash,
-          'blurhash',
-          type,
-          media.title
-        )
+        returnObj.backdropBlurhash = media.backdropBlurhash
       }
       return returnObj
     })
@@ -237,24 +211,6 @@ export async function getPosters(type, countOnly = false, page = 1, limit = 0) {
       }
       if (record._id) {
         record._id = record._id.toString()
-      }
-      if (record.posterBlurhash) {
-        record.posterBlurhash = await fetchMetadataMultiServer(
-          record.posterBlurhashSource,
-          record.posterBlurhash,
-          'blurhash',
-          type,
-          record.title
-        )
-      }
-      if (record.backdropBlurhash) {
-        record.backdropBlurhash = await fetchMetadataMultiServer(
-          record.backdropBlurhashSource,
-          record.backdropBlurhash,
-          'blurhash',
-          type,
-          record.title
-        )
       }
       return {
         id: record._id.toString(),

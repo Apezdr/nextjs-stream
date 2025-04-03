@@ -1,6 +1,6 @@
 import { sanitizeCardData } from '@src/utils/auth_utils'
 import isAuthenticated from '../../../../utils/routeAuth'
-import { getAdaptedRequestedMedia } from '@src/utils/mediaAdapter'
+import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 
 export async function POST(req) {
   const authResult = await isAuthenticated(req)
@@ -9,7 +9,7 @@ export async function POST(req) {
   }
   const data = await req.json()
   const { mediaType, mediaTitle } = data
-  const media = await getAdaptedRequestedMedia({
+  const media = await getFlatRequestedMedia({
     type: mediaType,
     title: mediaTitle ? decodeURIComponent(mediaTitle) : null,
   })
@@ -49,7 +49,7 @@ export async function GET(req) {
       mediaRequest.episode = mediaEpisode
     }
 
-    const media = await getAdaptedRequestedMedia(mediaRequest)
+    const media = await getFlatRequestedMedia(mediaRequest)
     
     if (!media) {
       console.warn(`No media found for request: ${JSON.stringify(mediaRequest)}`);

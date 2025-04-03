@@ -7,7 +7,7 @@ import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { getCacheBatch } from '@src/lib/cache'
 import pLimit from 'p-limit'
 
-const CONCURRENCY_LIMIT = 200
+const CONCURRENCY_LIMIT = 10
 const limit = pLimit(CONCURRENCY_LIMIT)
 
 /**

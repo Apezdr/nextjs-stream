@@ -3,10 +3,9 @@ import MediaPoster from '@components/MediaPoster'
 import { CaptionSVG } from '@components/SVGIcons'
 import { TotalRuntime } from '@components/watched'
 import Link from 'next/link'
-import { cache, memo, Suspense } from 'react'
-import clientPromise from '@src/lib/mongodb'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+import { memo, Suspense } from 'react'
 import SkeletonCard from '@components/SkeletonCard'
+import { getFlatPosters } from '@src/utils/flatDatabaseUtils'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -17,8 +16,37 @@ const variants_height = {
   enter: { opacity: 1 },
 }
 
-const MovieList = async ({ latestUpdateTimestamp }) => {
-  const movieList = await getAndUpdateMongoDB(latestUpdateTimestamp)
+const MovieList = async () => {
+  // Define the custom projection needed for this component
+  const customProjection = {
+    length: 1,
+    dimensions: 1,
+    captionURLs: 1,
+    // 'metadata.genres': 1, // Not directly used in JSX, omit for now
+  };
+
+  let movieList = await getFlatPosters('movie', false, 1, 0, customProjection)
+
+  // Sort the movie list
+  movieList.sort((a, b) => {
+    const dateA = a.metadata?.release_date ? new Date(a.metadata.release_date) : null;
+    const dateB = b.metadata?.release_date ? new Date(b.metadata.release_date) : null;
+
+    if (dateA && dateB) {
+      // Both have dates, sort descending (newest first)
+      return dateB - dateA;
+    } else if (dateA) {
+      // Only A has a date, A comes first
+      return -1;
+    } else if (dateB) {
+      // Only B has a date, B comes first
+      return 1;
+    } else {
+      // Neither has a date, sort alphabetically by title
+      return a.title.localeCompare(b.title);
+    }
+  });
+
   return (
     <>
       {movieList.map((movie, index) => (
@@ -52,7 +80,9 @@ const MovieList = async ({ latestUpdateTimestamp }) => {
                   transition={{ type: 'linear', delay: 0.21, duration: 2 }}
                 >
                   <p className="pointer-events-none mt-2 block text-sm font-medium text-gray-200 text-center">
-                    {movie.metadata.release_date}
+                    {typeof movie.metadata.release_date.toLocaleDateString === 'function'
+                      ? movie.metadata.release_date.toLocaleDateString()
+                      : String(movie.metadata.release_date)}
                   </p>
                 </PageContentAnimatePresence>
               ) : null}
@@ -84,93 +114,5 @@ const MovieList = async ({ latestUpdateTimestamp }) => {
     </>
   )
 }
-
-const getAndUpdateMongoDB = cache(async (latestUpdateTimestamp) => {
-  const client = await clientPromise
-
-  const movies = await client
-    .db('Media')
-    .collection('Movies')
-    .find(
-      {},
-      {
-        projection: {
-          title: 1,
-          posterURL: 1,
-          posterBlurhash: 1,
-          videoURL: 1,
-          length: 1,
-          dimensions: 1,
-          captionURLs: 1,
-          posterBlurhashSource: 1,
-          hdr: 1,
-          'metadata.genres': 1,
-          'metadata.overview': 1,
-          'metadata.release_date': 1,
-          'metadata.runtime': 1,
-          'metadata.poster_path': 1,
-        },
-      }
-    )
-    .sort({ title: 1 })
-    .toArray()
-  movies.sort((a, b) => {
-    const dateA = a.metadata?.release_date
-    const dateB = b.metadata?.release_date
-
-    // Sorting in descending order
-    return dateB - dateA
-  })
-
-  // Convert MongoDB objects to plain JavaScript objects
-  const plainMovies = await Promise.all(
-    movies.map(async (movie) => {
-      const returnObject = {
-        _id: movie._id.toString(), // Convert ObjectId to string
-        title: movie.title,
-        videoURL: movie.videoURL,
-        metadata: movie.metadata,
-        dimensions: movie.dimensions,
-        length: movie.length,
-      }
-      if (movie.metadata?.release_date) {
-        if(typeof movie.metadata?.release_date?.toLocaleDateString === 'function') {
-          returnObject.metadata.release_date = movie.metadata.release_date.toLocaleDateString()
-        }
-      }
-      if (movie.metadata?.runtime <= 0) {
-        returnObject.metadata.runtime = movie.length
-      }
-
-      if (movie.captionURLs) {
-        returnObject.captionURLs = movie.captionURLs
-      }
-
-      if (movie.posterURL) {
-        returnObject.posterURL = movie.posterURL
-      }
-
-      if (movie.posterBlurhash) {
-      // Attach the promise; once it resolves, you'll get the blurhash base64 string.
-      returnObject.posterBlurhashPromise = fetchMetadataMultiServer(
-        movie.posterBlurhashSource,
-        movie.posterBlurhash,
-        'blurhash',
-        'movie',
-        movie.title
-      );
-    }
-
-
-      if (movie.hdr) {
-        returnObject.hdr = movie.hdr
-      }
-
-      return returnObject
-    })
-  )
-
-  return plainMovies
-})
 
 export default memo(MovieList)

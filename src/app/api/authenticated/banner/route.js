@@ -1,5 +1,6 @@
 import isAuthenticated from '@src/utils/routeAuth'
 import { fetchBannerMedia } from '@src/utils/auth_database'
+import { fetchFlatBannerMedia } from '@src/utils/flatDatabaseUtils'
 
 export const GET = async (req) => {
   const authResult = await isAuthenticated(req)
@@ -7,7 +8,7 @@ export const GET = async (req) => {
     return authResult // Stop execution and return the unauthorized response
   }
 
-  const mediaResult = await fetchBannerMedia()
+  const mediaResult = await fetchFlatBannerMedia()
   if (mediaResult.error && mediaResult.details && mediaResult.status) {
     return new Response(JSON.stringify({ error: mediaResult.error, details: mediaResult.details }), {
       status: mediaResult.status,

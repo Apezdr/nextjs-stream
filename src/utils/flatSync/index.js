@@ -15,11 +15,13 @@ import { initializeFlatDatabase } from './initializeDatabase';
 import { performance } from 'perf_hooks';
 import clientPromise from '@src/lib/mongodb';
 // Import memory utilities for optimized data access
-import { buildEnhancedFlatDBStructure } from './memoryUtils';
+import { buildEnhancedFlatDBStructure, hasTVShowValidVideoURLs } from './memoryUtils';
 // Import video availability functions
 import {
   checkAndRemoveUnavailableVideosFlat,
 } from './videoAvailability';
+// Import blurhash sync module
+import { syncBlurhashData } from './blurhashSync';
 
 /**
  * Syncs all media data from file servers to the flat database structure
@@ -60,6 +62,12 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
   if (flatDB.missingTVShows && flatDB.missingTVShows.length > 0) {
     console.log(chalk.cyan(`Found ${flatDB.missingTVShows.length} TV shows that need to be created during sync`));
   }
+  if (flatDB.missingSeasons && flatDB.missingSeasons.length > 0) {
+    console.log(chalk.cyan(`Found ${flatDB.missingSeasons.length} seasons that need to be created during sync`));
+  }
+  if (flatDB.missingEpisodes && flatDB.missingEpisodes.length > 0) {
+    console.log(chalk.cyan(`Found ${flatDB.missingEpisodes.length} episodes that need to be created during sync`));
+  }
   
   // Sync in order: TV Shows -> Seasons -> Episodes -> Movies
   // This order ensures that parent entities exist before child entities
@@ -92,11 +100,19 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
   const movieEndTime = performance.now();
   console.log(chalk.blue(`Movie sync completed in ${((movieEndTime - movieStartTime) / 1000).toFixed(2)} seconds`));
   
+  // Sync blurhashes using the most efficient available method
+  console.log(chalk.magenta(`Starting blurhash sync to flat structure...`));
+  const blurhashStartTime = performance.now();
+  const blurhashResults = await syncBlurhashData(client, flatDB, fileServer, serverConfig, fieldAvailability);
+  const blurhashEndTime = performance.now();
+  console.log(chalk.magenta(`Blurhash sync completed in ${((blurhashEndTime - blurhashStartTime) / 1000).toFixed(2)} seconds`));
+  
   const results = {
     tvShows: tvShowResults,
     seasons: seasonResults,
     episodes: episodeResults,
-    movies: movieResults
+    movies: movieResults,
+    blurhash: blurhashResults
   };
   
   // Calculate total time
@@ -114,6 +130,41 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
   console.log(`Seasons processed: ${seasonResults.processed?.length || 0}, errors: ${seasonResults.errors?.length || 0}`);
   console.log(`Episodes processed: ${episodeResults.processed?.length || 0}, errors: ${episodeResults.errors?.length || 0}`);
   console.log(`Movies processed: ${movieResults.processed?.length || 0}, errors: ${movieResults.errors?.length || 0}`);
+  
+  // Log blurhash sync results if available
+  if (blurhashResults) {
+    const method = blurhashResults.method || 'unknown';
+    console.log(chalk.cyan(`Blurhash sync method: ${method}`));
+    
+    if (method === 'traditional') {
+      const movieResults = blurhashResults.results?.movies;
+      const tvResults = blurhashResults.results?.tvShows;
+      
+      if (movieResults) {
+        console.log(`Blurhash movie posters processed: ${movieResults.poster || 0}, backdrops: ${movieResults.backdrop || 0}`);
+      }
+      
+      if (tvResults) {
+        console.log(`Blurhash TV shows processed: ${tvResults.show || 0}, seasons: ${tvResults.seasons || 0}`);
+      }
+    } else if (method === 'optimized' || method === 'basic') {
+      const movieResults = blurhashResults.results?.movies;
+      const tvResults = blurhashResults.results?.tvShows;
+      
+      if (movieResults) {
+        console.log(`Blurhash movies processed: ${movieResults.processed?.length || 0}, errors: ${movieResults.errors?.length || 0}`);
+      }
+      
+      if (tvResults) {
+        console.log(`Blurhash TV shows processed: ${tvResults.processed?.length || 0}, errors: ${tvResults.errors?.length || 0}`);
+      }
+    }
+    
+    if (blurhashResults.status === 'no_changes') {
+      console.log(chalk.green(`No blurhash changes detected`));
+    }
+  }
+  
   console.log(chalk.bold.green(`Total sync time: ${totalTimeSeconds.toFixed(2)} seconds`));
   
   // NOTE: We don't perform availability checks here anymore.
@@ -128,7 +179,8 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
       tvShowTimeSeconds: (tvShowEndTime - tvShowStartTime) / 1000,
       seasonTimeSeconds: (seasonEndTime - seasonStartTime) / 1000,
       episodeTimeSeconds: (episodeEndTime - episodeStartTime) / 1000,
-      movieTimeSeconds: (movieEndTime - movieStartTime) / 1000
+      movieTimeSeconds: (movieEndTime - movieStartTime) / 1000,
+      blurhashTimeSeconds: (blurhashEndTime - blurhashStartTime) / 1000
     }
   };
 }
@@ -183,4 +235,7 @@ export {
   
   // Export video availability functions
   checkAndRemoveUnavailableVideosFlat,
+  
+  // Export blurhash sync functions
+  syncBlurhashData,
 };

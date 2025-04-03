@@ -18,7 +18,7 @@ import { httpGet } from '@src/lib/httpHelper'
 import { getCache, setCache } from '@src/lib/cache'
 
 // Define concurrency limit - reduced to prevent resource exhaustion
-const CONCURRENCY_LIMIT = 120; // Reduced from 900 to prevent resource exhaustion
+const CONCURRENCY_LIMIT = 10;
 const limit = pLimit(CONCURRENCY_LIMIT);
 
 // Cache TTLs for different types of data (in seconds)

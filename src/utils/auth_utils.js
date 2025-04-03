@@ -1,5 +1,4 @@
 import { formatDateToEST, getFullImageUrl } from '@src/utils'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { getServer } from './config'
 import { cache } from 'react'
 
@@ -165,7 +164,7 @@ async function extractTVShowDetailsFromMap(tvDetails, videoId) {
 
     const returnData = {
       id: tvDetails._id,
-      title: showTitle,
+      title: tvDetails.title,
       showTitleFormatted,
       seasonNumber,
       seasons,
@@ -332,122 +331,9 @@ export async function sanitizeRecord(record, type, context = {}) {
     }
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('sanitizeRecord:initialProcessing');
-    }
-
-    // Optimize blurhash handling - only fetch what's needed for display
-    // and use a more efficient approach with better error handling
-    if (Boolean(process.env.DEBUG) == true) {
-      console.time('sanitizeRecord:prepareBlurhashPromises');
-    }
-    
-    // Create an object to track which blurhash types we need to fetch
-    const blurhashesToFetch = {
-      poster: record.posterBlurhash ? {
-        source: record.posterBlurhashSource,
-        hash: record.posterBlurhash
-      } : null,
-      backdrop: record.backdropBlurhash ? {
-        source: record.backdropBlurhashSource,
-        hash: record.backdropBlurhash
-      } : null,
-      thumbnail: record?.episode?.thumbnailBlurhash ? {
-        source: record?.episode?.thumbnailSource,
-        hash: record?.episode?.thumbnailBlurhash
-      } : null
-    };
-    
-    // Clean up original blurhash fields to avoid duplication
-    if (record.posterBlurhash) delete record.posterBlurhash;
-    if (record.backdropBlurhash) delete record.backdropBlurhash;
-    if (record?.episode?.thumbnailBlurhash) delete record.episode.thumbnailBlurhash;
-      
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('sanitizeRecord:prepareBlurhashPromises');
-    }
-
-    // Create a map to store the results
-    const blurhashResults = {
-      poster: null,
-      backdrop: null,
-      thumbnail: null
-    };
-
-    // Only fetch blurhashes if they exist
-    if (Boolean(process.env.DEBUG) == true) {
-      console.time('sanitizeRecord:fetchBlurhashData');
-    }
-    
-    // Create an array of promises for the blurhashes we need to fetch
-    const fetchPromises = [];
-    const blurhashTypes = [];
-    
-    if (blurhashesToFetch.poster) {
-      fetchPromises.push(
-        fetchMetadataMultiServer(
-          blurhashesToFetch.poster.source,
-          blurhashesToFetch.poster.hash,
-          'blurhash',
-          record.title,
-          type
-        ).catch(err => {
-          console.error(`Error fetching poster blurhash: ${err.message}`);
-          return null;
-        })
-      );
-      blurhashTypes.push('poster');
-    }
-    
-    if (blurhashesToFetch.backdrop) {
-      fetchPromises.push(
-        fetchMetadataMultiServer(
-          blurhashesToFetch.backdrop.source,
-          blurhashesToFetch.backdrop.hash,
-          'blurhash',
-          record.title,
-          type
-        ).catch(err => {
-          console.error(`Error fetching backdrop blurhash: ${err.message}`);
-          return null;
-        })
-      );
-      blurhashTypes.push('backdrop');
-    }
-    
-    if (blurhashesToFetch.thumbnail) {
-      fetchPromises.push(
-        fetchMetadataMultiServer(
-          blurhashesToFetch.thumbnail.source,
-          blurhashesToFetch.thumbnail.hash,
-          'blurhash',
-          record.title,
-          type
-        ).catch(err => {
-          console.error(`Error fetching thumbnail blurhash: ${err.message}`);
-          return null;
-        })
-      );
-      blurhashTypes.push('thumbnail');
-    }
-    
-    if (Boolean(process.env.DEBUG) == true) {
-      console.log(`[PERF] Number of blurhash promises: ${fetchPromises.length}`);
-    }
-
-    // Fetch all blurhashes in parallel
-    if (fetchPromises.length > 0) {
-      const results = await Promise.all(fetchPromises);
-      
-      // Map results back to their types
-      results.forEach((result, index) => {
-        blurhashResults[blurhashTypes[index]] = result;
-      });
-    }
-    
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('sanitizeRecord:fetchBlurhashData');
-
       console.time('sanitizeRecord:createReturnObject');
     }
+
     let result;
     if (type === 'tv' && record.episode) {
       result = {
@@ -456,10 +342,11 @@ export async function sanitizeRecord(record, type, context = {}) {
         link: `${record.title}/${record.seasonNumber}/${record.episode.episodeNumber}`,
         length: record.length ?? 0,
         posterURL: poster,
-        posterBlurhash: blurhashResults.poster || null,
+        posterBlurhash: record.posterBlurhash || null,
         backdrop: record.backdrop || getFullImageUrl(record.metadata?.backdrop_path) || null,
-        backdropBlurhash: blurhashResults.backdrop || null,
-        title: record.showTitleFormatted || null,
+        backdropBlurhash: record.backdropBlurhash || null,
+        title: record.title || null,
+        showTitleFormatted: record.showTitleFormatted || null,
         logo: record.logo || getFullImageUrl(record.metadata?.logo_path) || null,
         type: type,
         metadata: record.metadata || null,
@@ -468,7 +355,7 @@ export async function sanitizeRecord(record, type, context = {}) {
         seasonNumber: record.seasonNumber,
         episodeNumber: record.episode.episodeNumber,
         thumbnail: record.episode.thumbnail,
-        thumbnailBlurhash: blurhashResults.thumbnail,
+        thumbnailBlurhash: record.episode.thumbnailBlurhash || null,
         // Keep media object for API compatibility
         media: {
           showTitle: record.title,
@@ -481,7 +368,7 @@ export async function sanitizeRecord(record, type, context = {}) {
             length: record.episode.length,
             dimensions: record.episode.dimensions,
             thumbnail: record.episode.thumbnail,
-            thumbnailBlurhash: blurhashResults.thumbnail,
+            thumbnailBlurhash: record.episode.thumbnailBlurhash || null,
             captionURLs: record.episode.captionURLs,
             metadata: record.episode.metadata,
             hdr: record.episode.hdr,
@@ -495,9 +382,9 @@ export async function sanitizeRecord(record, type, context = {}) {
         link: encodeURIComponent(record.title),
         length: record.length ?? 0,
         posterURL: poster,
-        posterBlurhash: blurhashResults.poster || null,
+        posterBlurhash: record.posterBlurhash || null,
         backdrop: record.backdrop || getFullImageUrl(record.metadata?.backdrop_path) || null,
-        backdropBlurhash: blurhashResults.backdrop || null,
+        backdropBlurhash: record.backdropBlurhash || null,
         title: record.title || record.metadata?.title || null,
         type: type,
         metadata: record.metadata || null,
@@ -541,11 +428,12 @@ export async function sanitizeRecord(record, type, context = {}) {
  * @param {Object} context - Context parameters to pass through to sanitizeRecord.
  * @returns {Object|null} - The sanitized media item or null if the item is falsy.
  */
-export async function sanitizeCardData(item, popup = false, context = {}) {
+export function sanitizeCardData(item, popup = false, context = {}) {
   if (!item) return null
 
   try {
     const {
+      _id, // MongoDB ID
       id,
       title,
       originalTitle,
@@ -572,7 +460,7 @@ export async function sanitizeCardData(item, popup = false, context = {}) {
     const sanitized = {}
 
     // Basic properties that should always be included
-    if (id) sanitized.id = id
+    if (id || _id) sanitized.id = id ?? _id
     if (title) sanitized.title = title
     if (posterURL) sanitized.posterURL = posterURL
     if (type) sanitized.type = type
@@ -619,30 +507,9 @@ export async function sanitizeCardData(item, popup = false, context = {}) {
         if (metadata?.trailer_url) sanitized.trailer_url = metadata?.trailer_url
         if (item?.thumbnail) sanitized.thumbnail = item?.thumbnail
         
-        // Safely fetch thumbnailBlurhash with timeout and fallback
+        // Use thumbnailBlurhash directly from the database
         if (item?.thumbnailBlurhash) {
-          try {
-            // Add a timeout to prevent hanging
-            const blurhashPromise = Promise.race([
-              fetchMetadataMultiServer(
-                item?.thumbnailBlurhashSource, 
-                item?.thumbnailBlurhash, 
-                'blurhash', 
-                type || 'tv', 
-                title
-              ),
-              new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Blurhash fetch timeout')), 5000)
-              )
-            ]);
-            
-            sanitized.thumbnailBlurhash = await blurhashPromise;
-          } catch (blurhashError) {
-            if (Boolean(process.env.DEBUG) == true) {
-              console.warn(`Blurhash fetch error for ${title}:`, blurhashError.message);
-            }
-            // Continue without the blurhash - it's not critical
-          }
+          sanitized.thumbnailBlurhash = item.thumbnailBlurhash;
         }
         
         // Description and title
@@ -728,10 +595,9 @@ export const generateClipVideoURL = cache((item, type, title) => {
  * @param {Object} context - Context parameters to pass through to sanitizeRecord.
  * @returns {Array} - The array of sanitized media items.
  */
-export async function sanitizeCardItems(items, context = {}) {
+export function sanitizeCardItems(items, context = {}) {
   if (!Array.isArray(items)) return []
-  const sanitizedItems = await Promise.all(items.map((item) => sanitizeCardData(item, false, context)))
-  return sanitizedItems.filter(Boolean)
+  return items.map((item) => sanitizeCardData(item, false, context)).filter(Boolean)
 }
 
 /**
@@ -751,5 +617,21 @@ export async function handleQueueFetch(fetchFunction, queueName) {
     // You can set a custom status code if needed
     error.statusCode = 501 // Not Implemented
     throw error
+  }
+}
+
+/**
+ * Validates a URL by initiating a simple network request.
+ *
+ * @param {string} url - The URL to validate.
+ * @returns {Promise<boolean>} - Resolves to true if the URL is valid, false otherwise.
+ */
+export async function validateURL(url) {
+  try {
+    const response = await fetch(url, { method: 'HEAD' })
+    return response.ok
+  } catch (error) {
+    console.error(`Error validating URL: ${url}`, error)
+    return false
   }
 }

@@ -105,18 +105,6 @@ export default async function TVShowSeasonsList({ showTitle }) {
 
       const hasHDR10 = episodes.some((episode) => episode?.hdr === 'HDR10');
 
-      // Process the season poster blurhash if it exists
-      let posterBlurhash = season.posterBlurhash || null;
-      if (posterBlurhash && season.posterBlurhashSource) {
-        posterBlurhash = await fetchMetadataMultiServer(
-          season.posterBlurhashSource,
-          posterBlurhash,
-          'blurhash',
-          'tv',
-          tvShow.title
-        );
-      }
-
       return { 
         ...season, 
         has4k, 
@@ -124,7 +112,6 @@ export default async function TVShowSeasonsList({ showTitle }) {
         hasHDR10,
         // Ensure field naming is consistent with what the component expects
         posterURL: season.posterURL || season.season_poster,
-        posterBlurhash: posterBlurhash
       };
     })
   );

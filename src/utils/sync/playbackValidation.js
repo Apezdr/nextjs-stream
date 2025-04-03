@@ -162,28 +162,11 @@ function isVideoUrlValid(videoId, fileServers) {
 }
 
 /**
- * Validates a single video URL.
- * @param {string} videoId - The video URL to validate
- * @param {Object} fileServers - All file servers data
- * @returns {Promise<boolean>} True if the video URL is valid
- */
-export async function validateSingleVideoUrl(videoId, fileServers) {
-  try {
-    console.log(chalk.magenta(`Validating single video URL: ${videoId}`));
-    return isVideoUrlValid(videoId, fileServers);
-  } catch (error) {
-    console.error(`Error validating video URL: ${videoId}`, error);
-    return false;
-  }
-}
-
-/**
  * Validates video URLs in the PlaybackStatus collection.
- * @param {Object} currentDB - Current database state
  * @param {Object} fileServers - All file servers data
  * @returns {Promise<Object>} Validation results
  */
-export async function validatePlaybackVideoUrls(currentDB, fileServers) {
+export async function validatePlaybackVideoUrls(fileServers) {
   const client = await clientPromise;
   console.log(chalk.bold.magenta(`Starting PlaybackStatus video URL validation...`));
   

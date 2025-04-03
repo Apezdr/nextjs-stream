@@ -7,6 +7,7 @@ import { updateEpisodeInFlatDB, getEpisodeFromFlatDB } from './database';
 import { getTVShowFromFlatDB } from '../tvShows/database';
 import { getSeasonFromFlatDB } from '../seasons/database';
 import { isEqual } from 'lodash';
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
 
 /**
  * Processes TV episode thumbnail updates
@@ -117,16 +118,30 @@ export async function syncEpisodeThumbnailBlurhash(client, show, season, episode
   
   if (!isHighestPriority) return null;
   
-  const newThumbnailBlurhashURL = createFullUrl(fileServerEpisodeData.thumbnailBlurhash, serverConfig);
+  const thumbnailBlurhashURL = createFullUrl(fileServerEpisodeData.thumbnailBlurhash, serverConfig);
   
-  // Only update if the thumbnailBlurhash URL has changed
-  if (isEqual(flatEpisode.thumbnailBlurhash, newThumbnailBlurhashURL) && isSourceMatchingServer(flatEpisode, 'thumbnailBlurhashSource', serverConfig)) {
+  // Fetch the actual blurhash data using the URL
+  const thumbnailBlurhash = await fetchMetadataMultiServer(
+    serverConfig.id,
+    thumbnailBlurhashURL,
+    'blurhash',
+    'tv',
+    originalTitle
+  );
+  
+  // Only update if we got a valid blurhash and it's different from the current one
+  if (!thumbnailBlurhash || (flatEpisode.thumbnailBlurhash === thumbnailBlurhash && 
+      isSourceMatchingServer(flatEpisode, 'thumbnailBlurhashSource', serverConfig))) {
     return null;
   }
   
   const updateData = {
-    thumbnailBlurhash: newThumbnailBlurhashURL,
-    thumbnailBlurhashSource: serverConfig.id
+    thumbnailBlurhash: thumbnailBlurhash,
+    thumbnailBlurhashSource: serverConfig.id,
+    // Store additional metadata in blurhash subobject for consistency with other entities
+    'blurhash.thumbnailFileHash': fileServerEpisodeData.thumbnailBlurhash,
+    'blurhash.thumbnailBlurhashSource': serverConfig.id,
+    'blurhash.updatedAt': new Date()
   };
   
   // Filter out locked fields

@@ -1,44 +1,4 @@
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { getFullImageUrl } from '@src/utils'
-
-/**
- * Process blurhashes in the media object.
- *
- * @param {Object} media - The media object.
- * @param {string} type - The type of media (movie or tv).
- * @returns {Promise<void>}
- */
-export async function processFlatBlurhashes(media, type) {
-  if (media?.posterBlurhash) {
-    media.posterBlurhash = await fetchMetadataMultiServer(
-      media.posterBlurhashSource,
-      media.posterBlurhash,
-      'blurhash',
-      type,
-      media.title
-    );
-  }
-
-  if (media?.backdropBlurhash) {
-    media.backdropBlurhash = await fetchMetadataMultiServer(
-      media.backdropBlurhashSource,
-      media.backdropBlurhash,
-      'blurhash',
-      type,
-      media.title
-    );
-  }
-
-  if (media?.thumbnailBlurhash) {
-    media.thumbnailBlurhash = await fetchMetadataMultiServer(
-      media.thumbnailBlurhashSource,
-      media.thumbnailBlurhash,
-      'blurhash',
-      type,
-      media.title
-    );
-  }
-}
 
 /**
  * Filter out invalid episodes (those without videoURL)

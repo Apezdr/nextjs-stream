@@ -105,7 +105,9 @@ export const GET = async (req) => {
               item.thumbnail = item.episode.thumbnail;
             }
             
-            // For thumbnailBlurhash, we'll rely on sanitizeCardItems to handle that
+            if (item.episode.thumbnailBlurhash) {
+              item.thumbnailBlurhash = item.episode.thumbnailBlurhash;
+            }
             
             // Make sure episodeNumber is included at the top level
             if (!item.episodeNumber && item.episode.episodeNumber) {
@@ -124,7 +126,7 @@ export const GET = async (req) => {
       };
       
       // Pass the appropriate context for this type of list
-      items = await sanitizeCardItems(sorted, contextByType[type] || {})
+      items = sanitizeCardItems(sorted, contextByType[type] || {})
     } else {
       items = []
     }

@@ -8,8 +8,8 @@
 import clientPromise from '@src/lib/mongodb';
 import { getAllServers } from '@src/utils/config';
 import { buildURL } from '@src/utils';
-import axios from 'axios';
 import chalk from 'chalk';
+import { httpGet } from '@src/lib/httpHelper';
 
 /**
  * Retrieves file server data for comparison
@@ -18,7 +18,7 @@ import chalk from 'chalk';
 async function getFileServerData() {
   try {
     console.log(chalk.cyan('Fetching file server data for comparison...'));
-    const response = await axios.get(buildURL('/api/authenticated/list'));
+    const response = await httpGet(buildURL('/api/authenticated/list'));
     const { fileServers, currentDB, errors } = response.data;
     
     if (errors && errors.length > 0) {
@@ -587,6 +587,7 @@ export async function getSyncVerificationReport(compareWithFileServers = true) {
       if (!movie.title) issues.push('Missing title');
       if (!movie.posterURL) issues.push('Missing poster');
       if (!movie.posterSource) issues.push('Missing poster source server');
+      if (!movie.posterBlurhash) issues.push('Missing poster blurhash');
       if (!movie.logo && !movie.logoSource) issues.push('Missing logo and source server');
       else if (!movie.logo) issues.push('Missing logo');
       else if (!movie.logoSource) issues.push('Missing logo source server');
@@ -595,7 +596,7 @@ export async function getSyncVerificationReport(compareWithFileServers = true) {
       if (!movie.metadata && !movie.metadataSource) issues.push('Missing metadata and source server');
       else if (!movie.metadata) issues.push('Missing metadata');
       else if (!movie.metadataSource) issues.push('Missing metadata source server');
-      if (!movie['duration'] || !movie['length']) issues.push('Missing duration or length of media');
+      if (!movie['duration']) issues.push('Missing duration of media');
       if (!movie.dimensions) issues.push('Missing dimensions of media');
       
       // Check for missing or corrupted metadata
@@ -676,6 +677,7 @@ export async function getSyncVerificationReport(compareWithFileServers = true) {
       if (!show.title) issues.push('Missing title');
       if (!show.posterURL) issues.push('Missing poster');
       if (!show.posterSource) issues.push('Missing poster source server');
+      if (!show.posterBlurhash) issues.push('Missing poster blurhash');
       if (!show.logo && !show.logoSource) issues.push('Missing logo and source server');
       else if (!show.logo) issues.push('Missing logo');
       else if (!show.logoSource) issues.push('Missing logo source server');
@@ -734,6 +736,7 @@ export async function getSyncVerificationReport(compareWithFileServers = true) {
       if (season.seasonNumber === undefined) issues.push('Missing seasonNumber');
       if (!season.posterURL) issues.push('Missing poster');
       if (!season.posterSource) issues.push('Missing poster source server');
+      if (!season.posterBlurhash) issues.push('Missing poster blurhash');
       if (!season.metadata) issues.push('Missing metadata');
       if (!season.metadataSource) issues.push('Missing metadata source server');
       
@@ -780,6 +783,7 @@ export async function getSyncVerificationReport(compareWithFileServers = true) {
       if (episode.episodeNumber === undefined) issues.push('Missing episodeNumber');
       if (!episode.videoURL) issues.push('Missing videoURL');
       if (!episode.thumbnail) issues.push('Missing thumbnail');
+      if (!episode.thumbnailBlurhash) issues.push('Missing thumbnail blurhash');
       
       // Check for missing or corrupted metadata
       if (!episode.title) issues.push('Missing title');
@@ -788,7 +792,7 @@ export async function getSyncVerificationReport(compareWithFileServers = true) {
       if (!episode.metadata && !episode.metadataSource) issues.push('Missing metadata and source server');
       else if (!episode.metadata) issues.push('Missing metadata');
       else if (!episode.metadataSource) issues.push('Missing metadata source server');
-      if (!episode['duration'] || !episode['length']) issues.push('Missing duration or length of media');
+      if (!episode['duration']) issues.push('Missing duration or length of media');
       if (!episode.dimensions) issues.push('Missing dimensions of media');
       
       // If there are no issues, skip

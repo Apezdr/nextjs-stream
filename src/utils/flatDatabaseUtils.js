@@ -1,7 +1,6 @@
 import clientPromise from '@src/lib/mongodb'
 import { auth } from '../lib/auth'
 import { ObjectId } from 'mongodb'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import {
   arrangeMediaByLatestModification,
   processWatchedDetails,
@@ -17,28 +16,30 @@ import { getFullImageUrl } from '@src/utils'
  * @param {boolean} [countOnly=false] - If true, returns only the count of records.
  * @param {number} [page=1] - The page number for pagination (1-based).
  * @param {number} [limit=0] - The number of items per page.
+ * @param {object} [customProjection={}] - Optional custom projection object to merge with default.
  * @returns {Promise} Resolves to an array of poster objects or the count of records.
  */
-export async function getFlatPosters(type, countOnly = false, page = 1, limit = 15) {
+export async function getFlatPosters(type, countOnly = false, page = 1, limit = 15, customProjection = {}) {
   const client = await clientPromise
   const collection = type === 'movie' ? 'FlatMovies' : 'FlatTVShows'
 
-  // Define projections for fields to include
-  const projection = {
+  // Define default projections for fields to include
+  const defaultProjection = {
     _id: 1,
     title: 1,
     posterURL: 1,
     posterBlurhash: 1,
-    posterBlurhashSource: 1,
     backdrop: 1,
     backdropBlurhash: 1,
-    backdropBlurhashSource: 1,
     metadata: 1,
   }
   if (type === 'movie') {
-    projection.hdr = 1
-    projection.videoURL = 1
+    defaultProjection.hdr = 1
+    defaultProjection.videoURL = 1
   }
+
+  // Merge default projection with custom projection
+  const finalProjection = { ...defaultProjection, ...customProjection };
   
   if (countOnly) {
     return await client.db('Media').collection(collection).countDocuments()
@@ -46,7 +47,7 @@ export async function getFlatPosters(type, countOnly = false, page = 1, limit = 
 
   // Ensure page is at least 1 for 1-based pagination
   const skip = page * limit
-  const queryOptions = { projection }
+  const queryOptions = { projection: finalProjection } // Use the merged projection
   if (limit > 0) {
     queryOptions.limit = limit
     queryOptions.skip = skip
@@ -68,48 +69,19 @@ export async function getFlatPosters(type, countOnly = false, page = 1, limit = 
       if (!poster) {
         poster = null
       }
-      else {
-        if (record.posterBlurhash) {
-          record.posterBlurhash = await fetchMetadataMultiServer(
-            record.posterBlurhashSource,
-            record.posterBlurhash,
-            'blurhash',
-            type,
-            record.title
-          )
-        }
-      }
-      
-      if (record.backdropBlurhash) {
-        record.backdropBlurhash = await fetchMetadataMultiServer(
-          record.backdropBlurhashSource,
-          record.backdropBlurhash,
-          'blurhash',
-          type,
-          record.title
-        )
+
+      if (record._id) {
+        record._id = record._id.toString()
       }
 
       const returnData = {
-        id: record._id.toString(),
+        ...record,
         posterURL: poster,
-        posterBlurhash: record.posterBlurhash || null,
-        backdropBlurhashSource: record.backdropBlurhashSource || null,
-        posterSource: record.posterSource || null,
-        backdrop: record.backdrop || null,
-        backdropBlurhash: record.backdropBlurhash || null,
-        title: record.title || null,
         link: encodeURIComponent(record.title) || null,
         type: type,
-        metadata: record.metadata || null,
         //media: record
       }
 
-      if (type === 'movie' && record.videoURL) {
-        returnData.videoURL = record.videoURL
-      }
-
-      
       return returnData
     })
   )
@@ -573,6 +545,48 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
 }
 
 /**
+ * Fetch the latest movies for the banner from the flat database structure.
+ * 
+ * @returns {Promise<Array|Object>} An array of the latest 8 movie objects or an error object.
+ */
+export const fetchFlatBannerMedia = async () => {
+  try {
+    const client = await clientPromise;
+    const db = client.db('Media');
+    
+    const media = await db
+      .collection('FlatMovies') // Use FlatMovies collection
+      .find({})
+      .sort({ 'metadata.release_date': -1 }) // Sort by release date descending
+      .limit(8) // Limit to 8 movies
+      .toArray();
+
+    if (!media || media.length === 0) {
+      return { error: 'No media found for banner', status: 404 };
+    }
+
+    // Process items: ensure backdrop URL and remove _id
+    const processedMedia = media.map(item => {
+      const processedItem = { ...item }; // Clone item
+      if (processedItem && !processedItem.backdrop && processedItem.metadata?.backdrop_path) {
+        processedItem.backdrop = getFullImageUrl(processedItem.metadata.backdrop_path, 'original');
+      }
+      if (processedItem && processedItem._id) {
+        processedItem.id = processedItem._id.toString(); // Add string id
+        delete processedItem._id; // Remove ObjectId
+      }
+      return processedItem;
+    });
+
+    return processedMedia; // Return the array of processed media objects
+  } catch (error) {
+    console.error(`Error in fetchFlatBannerMedia: ${error.message}`);
+    return { error: 'Failed to fetch banner media', details: error.message, status: 500 };
+  }
+};
+
+
+/**
  * Fetch a random banner media from flat database structure.
  * 
  * @returns {Promise<Object>} A randomly selected banner media.
@@ -599,13 +613,6 @@ export const fetchFlatRandomBannerMedia = async () => {
 
     // Fetch metadata for backdropBlurhash if available
     const item = media[0]
-    if (item && item.backdropBlurhash) {
-      const blurhashString = await fetchMetadataMultiServer(item.backdropBlurhashSource, item.backdropBlurhash, "blurhash")
-      if (blurhashString.error) {
-        return { error: blurhashString.error, status: blurhashString.status }
-      }
-      item.backdropBlurhash = blurhashString
-    }
     if (item && !item.backdrop) {
       item.backdrop = getFullImageUrl(item.metadata.backdrop_path, 'original')
     }
@@ -616,45 +623,6 @@ export const fetchFlatRandomBannerMedia = async () => {
     return item // Return single media object
   } catch (error) {
     return { error: 'Failed to fetch media', status: 500 }
-  }
-}
-
-/**
- * Process blurhashes in the media object.
- *
- * @param {Object} media - The media object.
- * @param {string} type - The type of media (movie or tv).
- * @returns {Promise<void>}
- */
-async function processFlatBlurhashes(media, type) {
-  if (media?.posterBlurhash) {
-    media.posterBlurhash = await fetchMetadataMultiServer(
-      media.posterBlurhashSource,
-      media.posterBlurhash,
-      'blurhash',
-      type,
-      media.title
-    );
-  }
-
-  if (media?.backdropBlurhash) {
-    media.backdropBlurhash = await fetchMetadataMultiServer(
-      media.backdropBlurhashSource,
-      media.backdropBlurhash,
-      'blurhash',
-      type,
-      media.title
-    );
-  }
-
-  if (media?.thumbnailBlurhash) {
-    media.thumbnailBlurhash = await fetchMetadataMultiServer(
-      media.thumbnailBlurhashSource,
-      media.thumbnailBlurhash,
-      'blurhash',
-      type,
-      media.title
-    );
   }
 }
 
@@ -714,9 +682,6 @@ export async function getFlatRequestedMedia({
         return null;
       }
       
-      // Process blurhashes
-      await processFlatBlurhashes(movie, 'movie');
-      
       // Convert _id to string id
       const result = {
         ...movie,
@@ -767,9 +732,6 @@ export async function getFlatRequestedMedia({
       
       // Basic TV show data (no season/episode specified)
       if (!season) {
-        // Process blurhashes
-        await processFlatBlurhashes(tvShow, 'tv');
-        
         // Get all seasons for this show
         const seasons = await db.collection('FlatSeasons')
           .find({ showId: tvShow._id })
@@ -856,8 +818,6 @@ export async function getFlatRequestedMedia({
         
         // Just season (no episode)
         if (!episode) {
-          await processFlatBlurhashes(seasonData, 'tv');
-          
           const result = {
             ...seasonData,
             id: seasonData._id.toString(),
@@ -897,8 +857,6 @@ export async function getFlatRequestedMedia({
             }
             return null;
           }
-          
-          await processFlatBlurhashes(episodeData, 'tv');
           
           // Get next episode (if available)
           const nextEpisode = await db.collection('FlatEpisodes').findOne({
@@ -1098,17 +1056,6 @@ export async function getFlatTVList(options = {}) {
     // Process TV shows and fetch seasons for each show
     return await Promise.all(
       tvShows.map(async (tvShow) => {
-        // Process blurhash if available
-        if (tvShow.posterBlurhash) {
-          tvShow.posterBlurhash = await fetchMetadataMultiServer(
-            tvShow.posterBlurhashSource,
-            tvShow.posterBlurhash,
-            'blurhash',
-            'tv',
-            tvShow.title
-          );
-        }
-        
         // Ensure we have a poster URL
         const posterURL = 
           tvShow.posterURL || 
@@ -1157,7 +1104,7 @@ export async function getFlatTVList(options = {}) {
               .toArray();
               
             // Create our serialized episode objects
-            const serializedEpisodes = episodeStats.map(episode => ({
+            let serializedEpisodes = episodeStats.map(episode => ({
               _id: episode._id.toString(),
               episodeNumber: episode.episodeNumber,
               dimensions: episode.dimensions || '0x0', // Ensure we have a dimension string
@@ -1189,7 +1136,6 @@ export async function getFlatTVList(options = {}) {
           title: tvShow.title,
           posterURL: posterURL,
           posterBlurhash: tvShow.posterBlurhash || null,
-          posterBlurhashPromise: null,
           metadata: tvShow.metadata || {},
           link: encodeURIComponent(tvShow.title) || null,
           type: 'tv',
@@ -1341,30 +1287,6 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
 
       return episodeObj;
     });
-    
-    // Ensure episode thumbnails and blurhashes are processed
-    await Promise.all(season.episodes.map(async (episode) => {
-      if (episode.thumbnailBlurhash) {
-        episode.thumbnailBlurhash = await fetchMetadataMultiServer(
-          episode.thumbnailSource,
-          episode.thumbnailBlurhash,
-          'blurhash',
-          'tv',
-          showTitle
-        );
-      }
-    }));
-    
-    // Process the season poster blurhash if it exists
-    if (season.posterBlurhash) {
-      season.posterBlurhash = await fetchMetadataMultiServer(
-        season.posterBlurhashSource,
-        season.posterBlurhash,
-        'blurhash',
-        'tv',
-        showTitle
-      );
-    }
     
     // Set basic info about the parent TV show for the component
     season.showTitle = tvShow.title;

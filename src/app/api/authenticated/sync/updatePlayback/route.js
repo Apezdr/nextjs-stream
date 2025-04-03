@@ -1,8 +1,7 @@
 import { ObjectId } from 'mongodb'
 import isAuthenticated from '../../../../../utils/routeAuth'
 import clientPromise from '../../../../../lib/mongodb'
-import { validateSingleVideoUrl } from '../../../../../utils/sync/playbackValidation'
-import { getAllServers } from '../../../../../utils/config'
+import { validateURL } from '@src/utils/auth_utils'
 
 export const POST = async (req) => {
   const authResult = await isAuthenticated(req)
@@ -34,13 +33,12 @@ export const POST = async (req) => {
       // Check if we need to validate this video (if it hasn't been validated in the last 24 hours)
       let isValid = existingVideo.isValid;
       let lastScanned = existingVideo.lastScanned;
-      const needsValidation = !lastScanned || 
+      const needsValidation = !isValid || !lastScanned || 
                              new Date(lastScanned) < new Date(Date.now() - 24 * 60 * 60 * 1000);
       
       if (needsValidation) {
         console.log(`Validating existing video that hasn't been checked in 24+ hours: ${videoId}`);
-        const fileServers = await getAllServers();
-        isValid = await validateSingleVideoUrl(videoId, fileServers);
+        isValid = await validateURL(videoId);
         lastScanned = new Date().toISOString();
       }
       
@@ -60,8 +58,7 @@ export const POST = async (req) => {
       )
     } else {
       // For new videos, validate the URL before adding
-      const fileServers = await getAllServers()
-      const isValid = await validateSingleVideoUrl(videoId, fileServers)
+      const isValid = await validateURL(videoId)
       
       // Add new videoId with playback time and validation result
       await playbackStatusCollection.updateOne(

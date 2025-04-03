@@ -10,6 +10,7 @@ import { syncMovieBlurhash, syncMovieBackdropBlurhash } from './blurhash';
 import { syncMovieLogos } from './logos';
 import { syncMovieChapters } from './chapters';
 import { syncMovieCaptions } from './captions';
+import { syncMovieVideoInfo } from './videoInfo'; // Import the new video info sync function
 import { createMissingMovies } from './initialize'; // Import the new function
 import clientPromise from '@src/lib/mongodb';
 import chalk from 'chalk';
@@ -109,11 +110,12 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
         const videoURLResult = await syncMovieVideoURL(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const posterResult = await syncMoviePoster(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const backdropResult = await syncMovieBackdrop(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
-        const posterBlurhashResult = await syncMovieBlurhash(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
-        const backdropBlurhashResult = await syncMovieBackdropBlurhash(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
+        //const posterBlurhashResult = await syncMovieBlurhash(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
+        //const backdropBlurhashResult = await syncMovieBackdropBlurhash(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const logosResult = await syncMovieLogos(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const chaptersResult = await syncMovieChapters(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const captionsResult = await syncMovieCaptions(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
+        const videoInfoResult = await syncMovieVideoInfo(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability); // Call the new function
         
         // Combine results
         const syncResults = [
@@ -125,7 +127,8 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
           backdropBlurhashResult,
           logosResult,
           chaptersResult,
-          captionsResult
+          captionsResult,
+          videoInfoResult // Add the result to the array
         ].filter(Boolean);
         
         if (syncResults.length > 0) {
@@ -167,5 +170,6 @@ export {
   syncMovieLogos,
   syncMovieChapters,
   syncMovieCaptions,
+  syncMovieVideoInfo, // Export the new function
   createMissingMovies
 };

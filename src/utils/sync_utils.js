@@ -6,7 +6,7 @@ import { createFullUrl, extractEpisodeDetails, findEpisodeFileName, isCurrentSer
 import { extractSeasonInfo, processMovieData, processShowData } from './sync/fileServer'
 import { updateEpisodeInDatabase, updateMediaInDatabase } from './sync/database'
 import { sortSubtitleEntries } from './sync/captions'
-const CONCURRENCY_LIMIT = 200; // Adjust based on your system's capacity
+const CONCURRENCY_LIMIT = 10; // Adjust based on your system's capacity
 const limit = pLimit(CONCURRENCY_LIMIT);
 
 // ==========================================

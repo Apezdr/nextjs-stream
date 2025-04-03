@@ -196,31 +196,129 @@ export async function buildEnhancedFlatDBStructure(client, fileServer = null, fi
     
     // Identify missing movies if fileServer is provided
     const missingMovies = [];
-    if (fileServer && fileServer.movies) {
-      // Implementation of missing movies detection (similar to existing code)
-      const movieTitleMap = flatMovies.reduce((map, movie) => {
-        if (movie.title) map[movie.title] = true;
-        if (movie.originalTitle && movie.originalTitle !== movie.title) map[movie.originalTitle] = true;
-        return map;
-      }, {});
-      
-      const movieTitlesFromServer = Object.keys(fileServer.movies);
-      for (const title of movieTitlesFromServer) {
-        if (!movieTitleMap[title]) {
-          if (fieldAvailability?.movies?.[title]) {
-            const fieldPath = 'urls.mp4';
-            const responsibleServers = fieldAvailability.movies[title][fieldPath] || [];
-            if (responsibleServers.length > 0) {
+    const missingTVShows = [];
+    const missingSeasons = [];
+    const missingEpisodes = [];
+    
+    if (fileServer) {
+      // Identify missing movies
+      if (fileServer.movies) {
+        // Create a map of all movies in the database (by title and originalTitle)
+        const movieTitleMap = flatMovies.reduce((map, movie) => {
+          if (movie.title) map[movie.title] = true;
+          if (movie.originalTitle && movie.originalTitle !== movie.title) map[movie.originalTitle] = true;
+          return map;
+        }, {});
+        
+        // Check each movie from the file server
+        const movieTitlesFromServer = Object.keys(fileServer.movies);
+        for (const title of movieTitlesFromServer) {
+          if (!movieTitleMap[title]) {
+            if (fieldAvailability?.movies?.[title]) {
+              const fieldPath = 'urls.mp4';
+              const responsibleServers = fieldAvailability.movies[title][fieldPath] || [];
+              if (responsibleServers.length > 0) {
+                missingMovies.push(title);
+              }
+            } else {
               missingMovies.push(title);
             }
-          } else {
-            missingMovies.push(title);
           }
+        }
+        
+        if (missingMovies.length > 0) {
+          console.log(chalk.yellow(`Identified ${missingMovies.length} movies missing from database`));
         }
       }
       
-      if (missingMovies.length > 0) {
-        console.log(chalk.yellow(`Identified ${missingMovies.length} movies missing from database`));
+      // Identify missing TV shows, seasons, and episodes
+      if (fileServer.tv) {
+        // Create lookup structures for TV shows, seasons, and episodes
+        const tvShowMap = {};
+        const seasonMap = {};
+        const episodeMap = {};
+        
+        // Populate TV show map
+        flatTVShows.forEach(show => {
+          tvShowMap[show.title] = true;
+          if (show.originalTitle && show.originalTitle !== show.title) {
+            tvShowMap[show.originalTitle] = true;
+          }
+        });
+        
+        // Populate season map
+        flatSeasons.forEach(season => {
+          const key = `${season.showTitle}_S${season.seasonNumber}`;
+          seasonMap[key] = true;
+        });
+        
+        // Populate episode map
+        flatEpisodes.forEach(episode => {
+          const key = `${episode.showTitle}_S${episode.seasonNumber}_E${episode.episodeNumber}`;
+          episodeMap[key] = true;
+        });
+        
+        // Check for missing TV shows, seasons, and episodes
+        for (const showTitle of Object.keys(fileServer.tv)) {
+          const showData = fileServer.tv[showTitle];
+          
+          // Check if the show exists in the database
+          if (!tvShowMap[showTitle]) {
+            // Only consider missing if there's actual content
+            if (showData.seasons && Object.keys(showData.seasons).length > 0) {
+              missingTVShows.push({
+                title: showTitle,
+                seasons: Object.keys(showData.seasons).length,
+              });
+            }
+          }
+          
+          // Check seasons and episodes even if the show exists
+          if (showData.seasons) {
+            for (const seasonKey of Object.keys(showData.seasons)) {
+              const seasonData = showData.seasons[seasonKey];
+              const seasonNumber = parseInt(seasonKey.replace('Season ', ''), 10);
+              
+              if (isNaN(seasonNumber)) {
+                console.warn(`Invalid season key format: ${seasonKey} for show ${showTitle}`);
+                continue;
+              }
+              
+              const seasonMapKey = `${showTitle}_S${seasonNumber}`;
+              const isMissingSeason = !seasonMap[seasonMapKey];
+              
+              // Track missing season if the show exists in database but the season doesn't
+              if (tvShowMap[showTitle] && isMissingSeason && seasonData.episodes && Object.keys(seasonData.episodes).length > 0) {
+                missingSeasons.push({
+                  showTitle,
+                  seasonNumber,
+                });
+              }
+              
+              // Check for missing episodes
+              if (seasonData.episodes) {
+                for (const episodeKey of Object.keys(seasonData.episodes)) {
+                  // Parse episode number from key (e.g., "S01E05")
+                  const episodeMatch = episodeKey.match(/E(\d+)$/);
+                  if (!episodeMatch) continue;
+                  
+                  const episodeNumber = parseInt(episodeMatch[1], 10);
+                  const episodeMapKey = `${showTitle}_S${seasonNumber}_E${episodeNumber}`;
+                  
+                  // Episode is only considered missing if the show and season exist in the database
+                  if (tvShowMap[showTitle] && !isMissingSeason && !episodeMap[episodeMapKey]) {
+                    missingEpisodes.push({
+                      showTitle,
+                      seasonNumber,
+                      episodeNumber,
+                      episodeKey,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
       }
     }
     
@@ -229,7 +327,9 @@ export async function buildEnhancedFlatDBStructure(client, fileServer = null, fi
       tv: tvShowsWithSeasonsAndEpisodes,
       movies: flatMovies,
       missingMovies: missingMovies.length > 0 ? missingMovies : undefined,
-      // missingTVShows can be implemented similarly if needed
+      missingTVShows: missingTVShows.length > 0 ? missingTVShows : undefined,
+      missingSeasons: missingSeasons.length > 0 ? missingSeasons : undefined,
+      missingEpisodes: missingEpisodes.length > 0 ? missingEpisodes : undefined,
       // Add our lookup maps
       lookups: {
         tvShows: tvShowLookups,

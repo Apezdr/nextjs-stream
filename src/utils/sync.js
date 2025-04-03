@@ -1,25 +1,11 @@
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
-import { getAllServers } from './config'
 import {
-  syncBackdrop,
-  syncBlurhash,
-  syncCaptions,
-  syncChapters,
-  syncLogos,
-  syncMetadata,
-  syncPosterURLs,
-  syncTVThumbnails,
-  syncVideoInfo,
-  syncVideoURL,
   validatePlaybackVideoUrls,
-  identifyMissingMedia,
-  checkVideoAvailabilityAcrossServers,
-  removeUnavailableVideos,
 } from './sync/index'
 import { updateLastSynced } from './sync/database'
 import { processMovie, processTVShow } from './sync_utils'
-import { syncToFlatStructure } from './flatSync'
+import { syncToFlatStructure, buildEnhancedFlatDBStructure } from './flatSync'
 
 /**
  * Syncs missing media items that are missing from the database.
@@ -116,12 +102,11 @@ export async function syncMissingMedia(missingMedia, fileServer, serverConfig, c
 
 /**
  * Performs a multi-server sync operation.
- * @param {Object} currentDB - Current database state
  * @param {Object} fileServers - File server data
  * @param {Object} fieldAvailability - Field availability map
  * @returns {Promise<Object>} Sync results
  */
-export async function syncAllServers(currentDB, fileServers, fieldAvailability) {
+export async function syncAllServers(fileServers, fieldAvailability) {
   const client = await clientPromise
   const startTime = Date.now()
   console.info(
@@ -134,13 +119,13 @@ export async function syncAllServers(currentDB, fileServers, fieldAvailability) 
     errors: [],
   }
 
-  let contentAddedToDB = {
-    movies: [],
-    tv: [],
-  }
+  // let contentAddedToDB = {
+  //   movies: [],
+  //   tv: [],
+  // }
 
   // To check for unavailable videos and get records to remove
-  const recordsToRemove = await checkVideoAvailabilityAcrossServers(currentDB, fileServers);
+  //const recordsToRemove = await checkVideoAvailabilityAcrossServers(currentDB, fileServers);
 
   // The result will be an object with this structure:
   // {
@@ -152,7 +137,7 @@ export async function syncAllServers(currentDB, fileServers, fieldAvailability) 
   // }
 
   // Optionally, to actually remove the unavailable videos from the database:
-  const removalResults = await removeUnavailableVideos(recordsToRemove);
+  //const removalResults = await removeUnavailableVideos(recordsToRemove);
 
   // Process each server sequentially to avoid overwhelming the system
   for (const [serverId, fileServer] of Object.entries(fileServers)) {
@@ -164,30 +149,101 @@ export async function syncAllServers(currentDB, fileServers, fieldAvailability) 
         ...fileServer.config,
       }
 
-      // Identify missing media for this server
-      const { missingMedia, missingMp4 } = await identifyMissingMedia(fileServer, currentDB)
-      results.missingMedia[serverId] = missingMedia
-      results.missingMp4[serverId] = missingMp4
+      // Initialize missing media tracking for this server
+      results.missingMedia[serverId] = { movies: [], tv: [] };
+      results.missingMp4[serverId] = { movies: [], tv: [] };
 
+      try {
+        // Get client for database access
+        const client = await clientPromise;
+        
+        // First build the enhanced flat DB structure to identify missing media
+        const flatDB = await buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability);
+        
+        // Process missing movies
+        if (flatDB.missingMovies && flatDB.missingMovies.length > 0) {
+          results.missingMedia[serverId].movies = flatDB.missingMovies;
+        }
+        
+        // Process missing TV shows
+        if (flatDB.missingTVShows && flatDB.missingTVShows.length > 0) {
+          // Format missing TV shows for the frontend
+          const missingTV = flatDB.missingTVShows.map(show => ({
+            showTitle: show.title,
+            seasons: []
+          }));
+          
+          results.missingMedia[serverId].tv = missingTV;
+        }
+        
+        // Identify missing MP4 files from fileServer data
+        // Simple implementation - check for missing video URLs
+        if (fileServer.movies) {
+          Object.keys(fileServer.movies).forEach(movieTitle => {
+            if (!fileServer.movies[movieTitle].urls?.mp4) {
+              results.missingMp4[serverId].movies.push(movieTitle);
+            }
+          });
+        }
+        
+        if (fileServer.tv) {
+          Object.keys(fileServer.tv).forEach(showTitle => {
+            let hasValidEpisodes = false;
+            
+            const showData = fileServer.tv[showTitle];
+            if (!showData.seasons || Object.keys(showData.seasons).length === 0) {
+              results.missingMp4[serverId].tv.push(showTitle);
+              return;
+            }
+            
+            for (const seasonKey of Object.keys(showData.seasons)) {
+              const seasonData = showData.seasons[seasonKey];
+              
+              if (!seasonData.episodes || Object.keys(seasonData.episodes).length === 0) {
+                results.missingMp4[serverId].tv.push(`${showTitle} - ${seasonKey}`);
+                continue;
+              }
+              
+              let validEpisodesFound = false;
+              for (const episodeKey of Object.keys(seasonData.episodes)) {
+                if (seasonData.episodes[episodeKey].videoURL) {
+                  validEpisodesFound = true;
+                  hasValidEpisodes = true;
+                  break;
+                }
+              }
+              
+              if (!validEpisodesFound) {
+                results.missingMp4[serverId].tv.push(`${showTitle} - ${seasonKey}`);
+              }
+            }
+            
+            if (!hasValidEpisodes && !results.missingMp4[serverId].tv.includes(showTitle)) {
+              results.missingMp4[serverId].tv.push(showTitle);
+            }
+          });
+        }
+
+        // Use forceSync=true to override aggressive hash skipping
+        const syncResult = await syncToFlatStructure(fileServer, serverConfig, fieldAvailability, false, true);
+        
+        // Store the sync results for reference
+        results.flatSyncResults = results.flatSyncResults || {};
+        results.flatSyncResults[serverId] = syncResult;
+      } catch (error) {
+        console.error(`Error identifying missing media for server ${serverId}:`, error);
+        results.errors.push({
+          serverId,
+          error: error.message,
+          phase: 'missingMediaIdentification',
+          stack: error.stack
+        });
+      }
+      
       // Perform sync operations with server-specific configuration
-      // Use a wrapper function to catch errors for each sync operation
       const syncOperations = [
-        { name: 'Missing Media', fn: () => syncMissingMedia(missingMedia, fileServer, serverConfig, contentAddedToDB) },
-        // { name: 'Metadata', fn: () => syncMetadata(currentDB, fileServer, serverConfig, fieldAvailability) },
-        // { name: 'Captions', fn: () => syncCaptions(currentDB, fileServer, serverConfig, fieldAvailability) },
-        // { name: 'Chapters', fn: () => syncChapters(currentDB, fileServer, serverConfig, fieldAvailability) },
-        // { name: 'Video URLs', fn: () => syncVideoURL(currentDB, fileServer, serverConfig, fieldAvailability) },
-        // { name: 'Logos', fn: () => syncLogos(currentDB, fileServer, serverConfig, fieldAvailability) },
-        // { name: 'Video Info', fn: () => syncVideoInfo(currentDB, fileServer, serverConfig, fieldAvailability) },
-        // { name: 'TV Thumbnails', fn: () => syncTVThumbnails(currentDB, fileServer, serverConfig, fieldAvailability) },
-        // { name: 'Poster URLs', fn: () => syncPosterURLs(currentDB, fileServer, serverConfig, fieldAvailability) },
-        // { name: 'Backdrop', fn: () => syncBackdrop(currentDB, fileServer, serverConfig, fieldAvailability) },
-        // { name: 'Blurhash', fn: () => syncBlurhash(currentDB, fileServer, serverConfig, fieldAvailability) },
-        { name: 'Playback Status Validation', fn: () => validatePlaybackVideoUrls(currentDB, fileServers) }
+        { name: 'Playback Status Validation', fn: () => validatePlaybackVideoUrls(fileServers) }
       ];
-
-      // Use forceSync=true to override aggressive hash skipping
-      await syncToFlatStructure(fileServer, serverConfig, fieldAvailability, false, true)
 
       // Execute each sync operation and catch any errors
       for (const operation of syncOperations) {

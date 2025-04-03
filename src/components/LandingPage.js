@@ -9,7 +9,7 @@ export default function LandingPage({
   user = { name: '', email: '', limitedAccess: false },
   moviesCount,
   tvprogramsCount,
-  recentlyaddedCount,
+  //recentlyaddedCount,
   recentlywatchedCount,
 }) {
   const { name, email, limitedAccess } = user

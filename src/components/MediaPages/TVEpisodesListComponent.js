@@ -1,4 +1,5 @@
 import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils'
+import { refreshEpisodes } from '@src/utils/actions/refreshEpisodes'
 import Link from 'next/link'
 import { auth } from '../../lib/auth'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
@@ -10,12 +11,14 @@ import TVShowThumbnail from '@components/TVShowThumbnail'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { Suspense } from 'react'
 import Loading from '@src/app/loading'
+import NoEpisodesFound from './NoEpisodesFound'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { CaptionSVG } from '@components/SVGIcons'
 import HD4kBanner from '../../../public/4kBanner.png'
 import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
 import { generateClipVideoURL } from '@src/utils/auth_utils'
 import RetryImage from '@components/RetryImage'
+import Image from 'next/image'
 export const dynamic = 'force-dynamic'
 
 const variants = {
@@ -70,7 +73,14 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
   
   // Make sure we have episodes
   if (!season.episodes || season.episodes.length === 0) {
-    return <div>No episodes found for this season</div>
+    return (
+      <NoEpisodesFound 
+        onRetry={refreshEpisodes} 
+        showTitle={showTitle} 
+        seasonNumber={seasonNumber}
+        season={season}
+      />
+    )
   }
 
   return (

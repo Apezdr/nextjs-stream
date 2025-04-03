@@ -41,12 +41,8 @@ export async function syncMovieVideoURL(client, movie, fileServerData, serverCon
   
   const updateData = {
     videoURL: newVideoURL,
-    videoSource: serverConfig.id,
-    // Also update related video information
-    mediaLastModified: new Date(fileServerData.urls.mediaLastModified || Date.now()),
-    dimensions: fileServerData.dimensions?.[Object.keys(fileServerData.dimensions)[0]] || movie.dimensions,
-    length: fileServerData.length?.[Object.keys(fileServerData.length)[0]] || movie.length,
-    duration: fileServerData.length?.[Object.keys(fileServerData.length)[0]] || movie.duration
+    videoSource: serverConfig.id
+    // Video info like dimensions, duration, mediaLastModified is handled by videoInfo.js
   };
   
   // Filter out locked fields

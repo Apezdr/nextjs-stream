@@ -41,11 +41,10 @@ function _mediaPoster({
         ? getFullImageUrl(_media.metadata.poster_path)
         : `/sorry-image-not-available.jpg`
 
-  let posterBlurhash = _media.posterBlurhash || _media.seasonPosterBlurhash || false
-
-  if (_media?.posterBlurhashPromise) {
-    posterBlurhash = use(_media?.posterBlurhashPromise) ?? false
-  }
+  let posterBlurhash = _media.posterBlurhash || 
+                        _media.blurhash?.seasonPoster || 
+                        _media.seasonPosterBlurhash || 
+                        false
 
   // Determine the resolution of the media
   const { res_width, is4k, is1080p } = getResolutionLabel(_media?.dimensions ?? null)

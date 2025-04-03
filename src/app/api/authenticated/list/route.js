@@ -96,10 +96,6 @@ export const GET = async (req) => {
   }
 
   try {
-    // Get current database state
-    const { movies, tv } = await getAllMedia()
-    const currentDB = { tv, movies }
-
     // Fetch data from all configured servers
     const servers = getAllServers()
     const serverDataPromises = servers.map((server) => fetchServerData(server))
@@ -131,7 +127,6 @@ export const GET = async (req) => {
     return new Response(
       JSON.stringify({
         fileServers,
-        currentDB,
         errors: errors.length > 0 ? errors : undefined
       }),
       {

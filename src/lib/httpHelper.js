@@ -78,6 +78,18 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
     http2: restOptions.http2 !== undefined ? restOptions.http2 : true, // Use passed http2 option or default to true
     timeout: { request: timeout },
     throwHttpErrors: false,
+    // Add request ID for better tracking and debug
+    //context: { requestId: `req-${Date.now()}-${Math.random().toString(36).substr(2, 9)}` },
+    // Enable HTTP/2 with connection cleanup
+    // agent: {
+    //   http2: true,
+    //   keepAlive: true,
+    //   keepAliveMsecs: 5000, // 5 seconds
+    //   maxSockets: 100,
+    //   maxFreeSockets: 10,
+    //   // Explicitly clean up sockets after idle time
+    //   timeout: 60000, // Close idle sockets after 60 seconds
+    // },
     ...restOptions,
   };
 
@@ -87,14 +99,19 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
   }
 
   let lastError;
+  let response = null;
   for (let attempt = 0; attempt <= limit; attempt++) {
     try {
-      const response = await got(url, requestOptions);
+      // Store the response in the outer variable so it can be cleaned up in case of errors
+      response = await got(url, requestOptions);
       const { statusCode, headers: responseHeaders } = response;
 
       if (statusCode === 304) {
         // 2) Handle 304 Not Modified by returning cached data
         if (cachedEntry) {
+          // Make sure to clean up the response before returning
+          cleanupResponse(response);
+          
           //cachedEntry.data is the data that was stored in the
           //cache when the data was last fetched
           if (returnCacheDataIfAvailable) {
@@ -103,69 +120,92 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
             return { data: null, headers: responseHeaders };
           }
         }
-        // else {
-        //   // No cached data exists; handle accordingly
-        //   throw new Error(
-        //     `Received 304 Not Modified for ${url} but no cached data is available.`
-        //   );
-        // }
       }
 
       if (statusCode >= 200 && statusCode < 300 || !cachedEntry) {
         let responseData;
 
-        switch (responseType) {
-          case 'json':
-            try {
-              responseData = JSON.parse(response.body);
-            } catch (parseError) {
-              throw new Error(`Invalid JSON response from ${url}`);
-            }
-            break;
+        try {
+          switch (responseType) {
+            case 'json':
+              try {
+                responseData = JSON.parse(response.body);
+              } catch (parseError) {
+                throw new Error(`Invalid JSON response from ${url}`);
+              }
+              break;
 
-          case 'text':
-            responseData = response.body;
-            break;
+            case 'text':
+              responseData = response.body;
+              break;
 
-          case 'buffer':
-            responseData = Buffer.from(response.rawBody);
-            break;
+            case 'buffer':
+              responseData = Buffer.from(response.rawBody);
+              break;
 
-          case 'stream':
-            responseData = response;
-            break;
+            case 'stream':
+              responseData = response;
+              // For stream, we don't clean up as the stream is returned to the caller
+              break;
 
-          default:
-            throw new Error(`Unsupported response type: ${responseType}`);
+            default:
+              throw new Error(`Unsupported response type: ${responseType}`);
+          }
+
+          // 3) Update the cache with new data and validation tokens
+          await setCache(
+            url,
+            responseData,
+            responseHeaders.etag || null,
+            responseHeaders['last-modified'] || null
+          );
+
+          // Clean up the response if we're not returning it directly (stream case)
+          if (responseType !== 'stream') {
+            cleanupResponse(response);
+          }
+
+          return { data: responseData, headers: responseHeaders };
+        } catch (processingError) {
+          console.error(`Error processing response for ${url}:`, processingError);
+          
+          // Clean up response resources if there was an error processing the data
+          cleanupResponse(response);
+          
+          throw processingError;
         }
-
-        // 3) Update the cache with new data and validation tokens
-        await setCache(
-          url,
-          responseData,
-          responseHeaders.etag || null,
-          responseHeaders['last-modified'] || null
-        );
-
-        return { data: responseData, headers: responseHeaders };
       } else {
+        // Clean up response for unsuccessful status codes
+        cleanupResponse(response);
+        
         throw new Error(`HTTP Error: ${statusCode} for URL: ${url}`);
       }
     } catch (error) {
+      // If we have a response object, clean it up to prevent memory leaks
+      if (response) {
+        cleanupResponse(response);
+        response = null;
+      }
+      
       lastError = error;
 
       // Sometimes using Http2 with got can cause an error with JSON parsing
       // This is a workaround for that issue
       if (error?.message?.indexOf('Invalid JSON response') > -1) {
-        const response = await fetch(url);
-        const data = await response.json();
-        await setCache(
-          url,
-          data,
-          response.headers.etag || null,
-          response.headers['last-modified'] || null
-        );
-        return { data, headers: response.headers };
+        try {
+          const fetchResponse = await fetch(url);
+          const data = await fetchResponse.json();
+          await setCache(
+            url,
+            data,
+            fetchResponse.headers.get('etag') || null,
+            fetchResponse.headers.get('last-modified') || null
+          );
+          return { data, headers: Object.fromEntries(fetchResponse.headers.entries()) };
+        } catch (fetchError) {
+          console.error(`Fetch fallback failed for ${url}:`, fetchError);
+          // If fetch fails too, continue with retry logic
+        }
       }
 
       if (shouldRetry(error, attempt)) {
@@ -176,6 +216,16 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
           )}ms`
         );
         await sleep(delay);
+        
+        // Force garbage collection if available (Node.js with --expose-gc)
+        if (global.gc && attempt % 2 === 0) {
+          try {
+            global.gc();
+          } catch (gcError) {
+            // Ignore errors from garbage collection
+          }
+        }
+        
         continue;
       }
 
@@ -183,8 +233,55 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
     }
   }
 
+  // Make sure we clean up any response that might be lingering
+  if (response) {
+    cleanupResponse(response);
+  }
+
   console.error(`Failed to fetch ${url} after ${limit} attempts:`, lastError);
   throw lastError;
+}
+
+/**
+ * Cleans up a response object to prevent memory leaks
+ * @param {Object} response - The response object to clean up
+ */
+function cleanupResponse(response) {
+  try {
+    if (!response) return;
+    
+    // Close any open streams
+    if (typeof response.destroy === 'function') {
+      response.destroy();
+    }
+    
+    // If it's a stream, end it
+    if (typeof response.end === 'function') {
+      response.end();
+    }
+    
+    // If it has a body that should be released
+    if (response.body && typeof response.body.destroy === 'function') {
+      response.body.destroy();
+    }
+    
+    // If it has a connection property that can be destroyed
+    if (response.connection && typeof response.connection.destroy === 'function') {
+      response.connection.destroy();
+    }
+    
+    // If it has a socket that can be destroyed
+    if (response.socket && typeof response.socket.destroy === 'function') {
+      response.socket.destroy();
+    }
+    
+    // Clear any event listeners
+    if (typeof response.removeAllListeners === 'function') {
+      response.removeAllListeners();
+    }
+  } catch (error) {
+    console.error('Error cleaning up response:', error);
+  }
 }
 
 /**
