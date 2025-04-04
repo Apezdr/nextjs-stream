@@ -112,7 +112,7 @@ export function isCurrentServerHighestPriorityForField(
 ) {
   const serversWithData = fieldAvailability[mediaType][mediaTitle]?.[fieldPath] || []
   if (serversWithData.length === 0) {
-    return true
+    return false
   }
 
   const highestPriority = serversWithData.reduce((minPriority, serverId) => {

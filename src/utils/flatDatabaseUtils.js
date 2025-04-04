@@ -468,7 +468,7 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
           .findOne({ _id: item.showId })
         
         if (show) {
-          show.mediaLastModified = item.mediaLastModified
+          show.mediaLastModified = item.lastAirDate
         }
         
         return show

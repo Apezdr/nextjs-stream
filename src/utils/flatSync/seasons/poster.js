@@ -6,6 +6,7 @@ import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentSer
 import { updateSeasonInFlatDB, getSeasonFromFlatDB } from './database';
 import { getTVShowFromFlatDB } from '../tvShows/database';
 import { isEqual } from 'lodash';
+import { createAndPersistSeason } from '.';
 
 /**
  * Processes TV season poster URL updates
@@ -42,14 +43,14 @@ export async function syncSeasonPoster(client, show, season, fileServerSeasonDat
   let flatSeason = season;
   
   if (!flatSeason) {
-    // Create a new season with basic information
-    flatSeason = {
-      showId: flatShow._id,
-      showTitle: showTitle,
-      seasonNumber: season.seasonNumber,
-      type: 'season',
-      createdAt: new Date()
-    };
+    try {
+      // Create a new season properly persisting it to the database
+      flatSeason = await createAndPersistSeason(client, flatShow, season);
+      console.log(`Created new season ${season.seasonNumber} for "${showTitle}" during poster sync`);
+    } catch (error) {
+      console.error(`Failed to create season during poster sync: ${error.message}`);
+      return null;
+    }
   }
   
   const newPosterURL = createFullUrl(fileServerSeasonData.season_poster, serverConfig);

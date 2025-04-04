@@ -25,6 +25,7 @@ import { fetchProcesses } from '@src/utils/server_track_processes'
 import { syncAllServers } from '@src/utils/sync'
 import { getSyncVerificationReport } from '@src/utils/sync_verification'
 import { httpGet } from '@src/lib/httpHelper'
+import { handleQueueFetch } from '@src/utils/auth_utils'
 
 /**
  * Extracts all server endpoints from the configuration.

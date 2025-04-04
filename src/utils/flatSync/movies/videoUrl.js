@@ -34,8 +34,14 @@ export async function syncMovieVideoURL(client, movie, fileServerData, serverCon
   
   const newVideoURL = createFullUrl(fileServerData.urls.mp4, serverConfig);
   
-  // Only update if the video URL has changed
-  if (isEqual(movie.videoURL, newVideoURL) && isSourceMatchingServer(movie, 'videoSource', serverConfig)) {
+  // Primary logic: Check if the videoURL and source match
+  // If they match, we don't need to update the URL itself
+  const skipUrlUpdate = isEqual(movie.videoURL, newVideoURL) && 
+                       isSourceMatchingServer(movie, 'videoSource', serverConfig);
+  
+  if (skipUrlUpdate) {
+    // Note: Even if URL doesn't need to update, videoInfo.js will separately handle
+    // any needed metadata updates through its own sync function
     return null;
   }
   
@@ -51,6 +57,7 @@ export async function syncMovieVideoURL(client, movie, fileServerData, serverCon
   if (!filteredUpdateData.videoURL) return null;
   
   console.log(`Movie: Updating video URL for "${movieTitle}" from server ${serverConfig.id}`);
+  // Note: Related metadata fields are handled by videoInfo.js
   
   // Update the movie in the flat database
   await updateMovieInFlatDB(client, movieTitle, { $set: filteredUpdateData });

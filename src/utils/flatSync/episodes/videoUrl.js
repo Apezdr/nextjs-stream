@@ -54,8 +54,14 @@ export async function syncEpisodeVideoURL(client, show, season, episode, flatSho
   
   const newVideoURL = createFullUrl(fileServerEpisodeData.videoURL, serverConfig);
   
-  // Only update if the video URL has changed
-  if (isEqual(flatEpisode.videoURL, newVideoURL) && isSourceMatchingServer(flatEpisode, 'videoSource', serverConfig)) {
+  // Primary logic: Check if the videoURL and source match
+  // If they match, we don't need to update the URL itself
+  const skipUrlUpdate = isEqual(flatEpisode.videoURL, newVideoURL) &&
+                       isSourceMatchingServer(flatEpisode, 'videoSource', serverConfig);
+  
+  if (skipUrlUpdate) {
+    // Note: Even if URL doesn't need to update, videoInfo.js will separately handle
+    // any needed metadata updates through its own sync function
     return null;
   }
   
@@ -64,38 +70,14 @@ export async function syncEpisodeVideoURL(client, show, season, episode, flatSho
     videoSource: serverConfig.id
   };
   
-  // Add additional video information if available
-  if (fileServerEpisodeData.mediaLastModified) {
-    updateData.mediaLastModified = new Date(fileServerEpisodeData.mediaLastModified);
-  }
-  
-  if (fileServerSeasonData.dimensions?.[episodeFileName]) {
-    updateData.dimensions = fileServerSeasonData.dimensions[episodeFileName];
-  }
-  
-  if (fileServerSeasonData.lengths?.[episodeFileName]) {
-    updateData.duration = fileServerSeasonData.lengths[episodeFileName];
-    updateData.length = fileServerSeasonData.lengths[episodeFileName];
-  }
-  
-  if (fileServerEpisodeData.size) {
-    updateData.size = fileServerEpisodeData.size;
-  }
-  
-  if (fileServerEpisodeData.mediaQuality) {
-    updateData.mediaQuality = fileServerEpisodeData.mediaQuality;
-  }
-  
-  if (fileServerEpisodeData.hdr !== undefined && fileServerEpisodeData.hdr !== null) {
-    updateData.hdr = fileServerEpisodeData.hdr;
-  }
-  
   // Filter out locked fields
   const filteredUpdateData = filterLockedFields(flatEpisode, updateData);
   
   if (!filteredUpdateData.videoURL) return null;
   
   console.log(`Episode: Updating video URL for "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}`);
+  // Note: Related metadata fields are included here for convenience, but the primary
+  // purpose of this function is to update the video URL itself
   
   // Return both the status and the update data
   return {

@@ -194,6 +194,9 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
       if (error?.message?.indexOf('Invalid JSON response') > -1) {
         try {
           const fetchResponse = await fetch(url);
+          if (!fetchResponse.ok) {
+            return fetchResponse;
+          }
           const data = await fetchResponse.json();
           await setCache(
             url,

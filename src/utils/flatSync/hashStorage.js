@@ -7,6 +7,7 @@
 
 import fetch from "node-fetch";
 import { getServer, multiServerHandler } from "../config";
+import { httpGet } from "@src/lib/httpHelper";
 
 /**
  * Store a hash in the database
@@ -206,17 +207,22 @@ export async function fetchHashData(serverConfig, mediaType, title = null, seaso
     
     console.log(`Fetching hash data from: ${fullUrl}`);
     
-    const response = await fetch(fullUrl, { 
-      headers: { 'Cache-Control': 'no-cache' },
-      next: { revalidate: 0 }
-    });
+    const response = await httpGet(fullUrl, {
+      timeout: 3000,
+      responseType: 'json',
+      retry: {
+        limit: 4,
+        baseDelay: 1000,
+        maxDelay: 5000,
+      }
+    }, true);
     
-    if (!response.ok) {
-      console.warn(`Failed to fetch hash data: ${response.status} ${response.statusText}`);
+    if (!response.data) {
+      console.warn(`Failed to fetch hash data: ${response.headers[':status']}`);
       return null;
     }
     
-    return await response.json();
+    return response.data;
   } catch (error) {
     console.error('Error fetching hash data:', error);
     return null;

@@ -70,45 +70,73 @@ export function hasHighestPriorityForAnyVideoInfoField(
  * @returns {boolean} Whether an update is needed
  */
 export function needsVideoInfoUpdate(movie, videoInfo, serverId) {
-  // Check if dimensions have changed
-  if (videoInfo.dimensions && !isEqual(movie.dimensions, videoInfo.dimensions)) {
-    return true;
-  }
-  
-  // Check if duration/length has changed
-  // Use 'duration' field in the database, 'length' from file server
-  if (videoInfo.length && (movie.duration !== videoInfo.length)) {
-     return true;
-  }
-  
-  // Check if HDR has changed
-  if (videoInfo.hdr !== undefined && movie.hdr !== videoInfo.hdr) {
-    return true;
-  }
-  
-  // Check if size has changed
-  if (videoInfo.size && movie.size !== videoInfo.size) {
-    return true;
-  }
-  
-  // Check if mediaQuality has changed
-  if (videoInfo.mediaQuality && !isEqual(movie.mediaQuality, videoInfo.mediaQuality)) {
-    return true;
-  }
-
-  // Check if mediaLastModified has changed
-  const existingLastModified = movie.mediaLastModified ? new Date(movie.mediaLastModified).getTime() : 0;
-  const newLastModified = videoInfo.mediaLastModified ? new Date(videoInfo.mediaLastModified).getTime() : 0;
-  if (newLastModified > existingLastModified) {
-      return true;
-  }
-  
-  // Check if videoInfoSource has changed
+  // If the source server has changed, we need to update
   if (movie.videoInfoSource !== serverId) {
     return true;
   }
+
+  // Track any detected changes for logging
+  const changes = [];
   
-  return false;
+  // Helper function to check specific field differences with detailed logging
+  const checkField = (fieldName, existingValue, newValue, useDeepCompare = false) => {
+    // Skip if new value isn't provided by the source
+    if (newValue === undefined || newValue === null) {
+      return false;
+    }
+    
+    const valueChanged = useDeepCompare 
+      ? !isEqual(existingValue, newValue)
+      : existingValue !== newValue;
+      
+    // If value has changed or existing value is missing, we should update
+    const needsUpdate = valueChanged || existingValue === undefined || existingValue === null;
+    
+    if (needsUpdate) {
+      changes.push(fieldName);
+    }
+    
+    return needsUpdate;
+  };
+
+  // Check all fields that could need updating
+  const dimensionsChanged = checkField('dimensions', movie.dimensions, videoInfo.dimensions, true);
+  
+  // Special handling for length/duration (named differently in different places)
+  const durationChanged = videoInfo.length 
+    ? checkField('duration/length', movie.duration, videoInfo.length)
+    : checkField('duration', movie.duration, videoInfo.duration);
+    
+  const hdrChanged = checkField('hdr', movie.hdr, videoInfo.hdr);
+  const sizeChanged = checkField('size', movie.size, videoInfo.size);
+  const mediaQualityChanged = checkField('mediaQuality', movie.mediaQuality, videoInfo.mediaQuality, true);
+  
+  // Media last modified check - handle both date objects and timestamps
+  let mediaLastModifiedChanged = false;
+  if (videoInfo.mediaLastModified) {
+    const existingLastModified = movie.mediaLastModified ? new Date(movie.mediaLastModified).getTime() : 0;
+    const newLastModified = videoInfo.mediaLastModified instanceof Date 
+      ? videoInfo.mediaLastModified.getTime() 
+      : new Date(videoInfo.mediaLastModified).getTime();
+      
+    if (newLastModified > existingLastModified) {
+      changes.push('mediaLastModified');
+      mediaLastModifiedChanged = true;
+    }
+  }
+  
+  // If any field has changed or is newly provided, we need to update
+  const needsUpdate = dimensionsChanged || durationChanged || hdrChanged || 
+                      sizeChanged || mediaQualityChanged || mediaLastModifiedChanged;
+  
+  // Log which fields triggered the update (uncomment for debugging)
+  /*
+  if (needsUpdate && changes.length > 0) {
+    console.log(`Movie video info needs update due to changes in: ${changes.join(', ')}`);
+  }
+  */
+  
+  return needsUpdate;
 }
 
 /**

@@ -7,7 +7,7 @@ import { updateSeasonInFlatDB, getSeasonFromFlatDB } from './database';
 import { getTVShowFromFlatDB } from '../tvShows/database';
 import { isEqual } from 'lodash';
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
-import { buildNewSeasonObject } from '.';
+import { createAndPersistSeason } from '.';
 
 /**
  * Processes TV season metadata updates
@@ -106,8 +106,14 @@ export async function syncSeasonMetadata(client, show, season, fileServerSeasonD
   let flatSeason = season;
   
   if (!flatSeason) {
-    // Create a new season with basic information
-    flatSeason = buildNewSeasonObject(show, season);
+    try {
+      // Create a new season properly persisting it to the database
+      flatSeason = await createAndPersistSeason(client, show, season);
+      console.log(`Created new season ${season.seasonNumber} for "${showTitle}" during metadata sync`);
+    } catch (error) {
+      console.error(`Failed to create season during metadata sync: ${error.message}`);
+      return null;
+    }
   }
   
   // Compare last_updated timestamps if available

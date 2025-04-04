@@ -7,6 +7,7 @@ import { updateSeasonInFlatDB, getSeasonFromFlatDB } from './database';
 import { getTVShowFromFlatDB } from '../tvShows/database';
 import { isEqual } from 'lodash';
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
+import { createAndPersistSeason } from '.';
 
 /**
  * Processes TV season poster blurhash updates
@@ -43,14 +44,14 @@ export async function syncSeasonPosterBlurhash(client, show, season, fileServerS
   let flatSeason = season;
   
   if (!flatSeason) {
-    // Create a new season with basic information
-    flatSeason = {
-      showId: flatShow._id,
-      showTitle: showTitle,
-      seasonNumber: season.seasonNumber,
-      type: 'season',
-      createdAt: new Date()
-    };
+    try {
+      // Create a new season properly persisting it to the database
+      flatSeason = await createAndPersistSeason(client, flatShow, season);
+      console.log(`Created new season ${season.seasonNumber} for "${showTitle}" during blurhash sync`);
+    } catch (error) {
+      console.error(`Failed to create season during blurhash sync: ${error.message}`);
+      return null;
+    }
   }
 
   const posterBlurhash = await fetchMetadataMultiServer(

@@ -73,7 +73,7 @@ export function getLatestEpisodeModifiedDate(tvShow) {
  * @param {Array} tvShowsWithUrl - Array of TV shows with URL
  * @returns {Array} - Combined and sorted media array
  */
-export const arrangeMediaByLatestModification = cache((moviesWithUrl, tvShowsWithUrl) => {
+export const arrangeMediaByLatestModification = (moviesWithUrl, tvShowsWithUrl) => {
   // Merge and sort
   const combinedMedia = [...moviesWithUrl, ...tvShowsWithUrl].sort((a, b) => {
     const aModified = getModifiedDate(a)
@@ -83,7 +83,7 @@ export const arrangeMediaByLatestModification = cache((moviesWithUrl, tvShowsWit
     return bModified - aModified
   })
   return combinedMedia
-})
+}
 
 /**
  * Extract detailed TV show information using the TV details.

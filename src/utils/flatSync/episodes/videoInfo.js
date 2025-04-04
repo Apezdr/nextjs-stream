@@ -63,37 +63,55 @@ export function hasHighestPriorityForAnyVideoInfoField(
  * @returns {boolean} Whether an update is needed
  */
 export function needsVideoInfoUpdate(flatEpisode, videoInfo, serverId) {
-  // Check if dimensions have changed
-  if (videoInfo.dimensions && !isEqual(flatEpisode.dimensions, videoInfo.dimensions)) {
-    return true;
-  }
-  
-  // Check if duration/length has changed
-  if (videoInfo.duration && (flatEpisode.duration !== videoInfo.duration)) {
-    return true;
-  }
-  
-  // Check if HDR has changed
-  if (videoInfo.hdr !== undefined && flatEpisode.hdr !== videoInfo.hdr) {
-    return true;
-  }
-  
-  // Check if size has changed
-  if (videoInfo.size && flatEpisode.size !== videoInfo.size) {
-    return true;
-  }
-  
-  // Check if mediaQuality has changed
-  if (videoInfo.mediaQuality && !isEqual(flatEpisode.mediaQuality, videoInfo.mediaQuality)) {
-    return true;
-  }
-  
-  // Check if videoInfoSource has changed
+  // If the source server has changed, we need to update
   if (flatEpisode.videoInfoSource !== serverId) {
     return true;
   }
+
+  // Track any detected changes for logging
+  const changes = [];
   
-  return false;
+  // Helper function to check specific field differences with detailed logging
+  const checkField = (fieldName, existingValue, newValue, useDeepCompare = false) => {
+    // Skip if new value isn't provided by the source
+    if (newValue === undefined || newValue === null) {
+      return false;
+    }
+    
+    const valueChanged = useDeepCompare 
+      ? !isEqual(existingValue, newValue)
+      : existingValue !== newValue;
+      
+    // If value has changed or existing value is missing, we should update
+    const needsUpdate = valueChanged || existingValue === undefined || existingValue === null;
+    
+    if (needsUpdate) {
+      changes.push(fieldName);
+    }
+    
+    return needsUpdate;
+  };
+
+  // Check all fields that could need updating
+  const dimensionsChanged = checkField('dimensions', flatEpisode.dimensions, videoInfo.dimensions, true);
+  const durationChanged = checkField('duration', flatEpisode.duration, videoInfo.duration);
+  const hdrChanged = checkField('hdr', flatEpisode.hdr, videoInfo.hdr);
+  const sizeChanged = checkField('size', flatEpisode.size, videoInfo.size);
+  const mediaQualityChanged = checkField('mediaQuality', flatEpisode.mediaQuality, videoInfo.mediaQuality, true);
+  const mediaLastModifiedChanged = checkField('mediaLastModified', flatEpisode.mediaLastModified, videoInfo.mediaLastModified);
+  
+  // If any field has changed or is newly provided, we need to update
+  const needsUpdate = dimensionsChanged || durationChanged || hdrChanged || 
+                      sizeChanged || mediaQualityChanged || mediaLastModifiedChanged;
+  
+  // Log which fields triggered the update (uncomment for debugging)
+  /*
+  if (needsUpdate && changes.length > 0) {
+    console.log(`Video info needs update due to changes in: ${changes.join(', ')}`);
+  }
+  */
+  
+  return needsUpdate;
 }
 
 /**

@@ -41,9 +41,7 @@ export async function updateSeasonInFlatDB(client, showTitle, originalTitle, sea
       };
     }
     
-    // The issue is that we're querying by showId and seasonNumber,
-    // but the unique index constraint is on showTitle and seasonNumber
-    // So we need to query by the same fields that are in the index
+    // Fix the query to use the actual show ID to match the index on showId and seasonNumber
     const result = await client
       .db('Media')
       .collection('FlatSeasons')
