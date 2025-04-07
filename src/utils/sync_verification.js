@@ -7,9 +7,8 @@
 
 import clientPromise from '@src/lib/mongodb';
 import { getAllServers } from '@src/utils/config';
-import { buildURL } from '@src/utils';
 import chalk from 'chalk';
-import { httpGet } from '@src/lib/httpHelper';
+import { fetchAllServerData } from '@src/utils/fetchAllServerData';
 
 /**
  * Retrieves file server data for comparison
@@ -18,14 +17,13 @@ import { httpGet } from '@src/lib/httpHelper';
 async function getFileServerData() {
   try {
     console.log(chalk.cyan('Fetching file server data for comparison...'));
-    const response = await httpGet(buildURL('/api/authenticated/list'));
-    const { fileServers, currentDB, errors } = response.data;
+    const { fileServers, errors } = await fetchAllServerData();
     
     if (errors && errors.length > 0) {
       console.warn(chalk.yellow('Warnings when fetching file server data:'), errors);
     }
     
-    return { fileServers, currentDB };
+    return { fileServers };
   } catch (error) {
     console.error(chalk.red('Error fetching file server data:'), error.message);
     throw error;
@@ -548,14 +546,12 @@ export async function getSyncVerificationReport(compareWithFileServers = true) {
     // Get all file servers and their data if requested
     const servers = getAllServers();
     let fileServers = {};
-    let currentDB = {};
     
     if (compareWithFileServers) {
       try {
         console.log(chalk.cyan('Fetching file server data for comparison...'));
         const data = await getFileServerData();
         fileServers = data.fileServers || {};
-        currentDB = data.currentDB || {};
       } catch (error) {
         console.warn(chalk.yellow('Could not fetch file server data. Skipping comparison.'));
       }

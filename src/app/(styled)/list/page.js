@@ -3,12 +3,6 @@ import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import SkeletonCard from '@components/SkeletonCard'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import LandingPage from '@components/LandingPage'
-import { 
-  getFlatAvailableMoviesCount,
-  getFlatAvailableTVShowsCount,
-  //getFlatRecentlyAddedMedia,
-  getFlatRecentlyWatchedForUser
-} from '@src/utils/flatDatabaseUtils'
 import { Suspense } from 'react'
 export const dynamic = 'force-dynamic'
 
@@ -35,27 +29,9 @@ async function MediaDirectory() {
     user: { name, email, limitedAccess },
   } = session
 
-  // Fetch counts using flat database approach
-  const [
-    moviesCount,
-    tvprogramsCount,
-    //recentlyaddedCount,
-    recentlywatchedCount
-  ] = await Promise.all([
-    getFlatAvailableMoviesCount(),
-    getFlatAvailableTVShowsCount(),
-    //getFlatRecentlyAddedMedia({ countOnly: true }),
-    getFlatRecentlyWatchedForUser({ userId: session.user.id, countOnly: true })
-  ])
   return (
     <Suspense>
-      <LandingPage
-        user={{ name, email, limitedAccess }}
-        moviesCount={moviesCount}
-        tvprogramsCount={tvprogramsCount}
-        //recentlyaddedCount={recentlyaddedCount}
-        recentlywatchedCount={recentlywatchedCount}
-      />
+      <LandingPage user={{ name, email, limitedAccess }} />
     </Suspense>
   )
 }

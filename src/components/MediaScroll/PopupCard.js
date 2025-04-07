@@ -67,6 +67,7 @@ const PopupCard = ({
   const [hideVideo, setHideVideo] = useState(hasVideo)
   const [afterVideo, setAfterVideo] = useState(false)
   const [shouldPlay, setShouldPlay] = useState(false)
+  const [logoLoaded, setLogoLoaded] = useState(false)
 
   // Track thumbnail loading
   const [isThumbnailLoaded, setIsThumbnailLoaded] = useState(false)
@@ -107,6 +108,11 @@ const PopupCard = ({
       setImageLoaded(true)
     }, 3200)
     return () => clearTimeout(timeout)
+  }, [])
+  
+  // Handle logo image loading
+  const handleLogoLoad = useCallback(() => {
+    setLogoLoaded(true)
   }, [])
 
   // Whenever these states change, recalc shouldPlay
@@ -199,12 +205,15 @@ const PopupCard = ({
               className={classNames(
                 //absolute max-w-[70%] mr-auto !w-auto max-h-14 inset-0 object-contain select-none z-[50]
                 "absolute !w-auto transform max-w-[185px] inset-0 object-contain select-none z-[50]",
-                "transition-all duration-[1.4s] ease-in-out opacity-100",
+                "transition-all duration-[1.4s] ease-in-out",
+                // Fade in when loaded
+                logoLoaded ? 'opacity-100' : 'opacity-0',
                 // Dim it if the video is playing
                 shouldPlay ? 'opacity-45 hover:opacity-100' : '',
                 // Center it if the video is not playing
                 shouldPlay ? '!top-4 !left-8 max-h-5' : '!top-[67%] !left-1/2 max-h-14 -translate-x-1/2'           
               )}
+              onLoad={handleLogoLoad}
             />
           )}
 

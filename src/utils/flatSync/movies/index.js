@@ -14,7 +14,7 @@ import { syncMovieVideoInfo } from './videoInfo'; // Import the new video info s
 import { createMissingMovies } from './initialize'; // Import the new function
 import clientPromise from '@src/lib/mongodb';
 import chalk from 'chalk';
-import { getMovieFromMemory } from '../memoryUtils';
+import { getMovieFromMemory, createMovieInMemory } from '../memoryUtils';
 
 /**
  * Syncs movies from file server to flat database structure
@@ -46,17 +46,7 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
     if (flatDB.missingMovies) {
       missingMovieTitles = flatDB.missingMovies;
     }
-    
-    // If we have missing movies, create them
-    let newlyCreatedMovies = [];
-    if (missingMovieTitles.length > 0) {
-      console.log(chalk.yellow(`Found ${missingMovieTitles.length} missing movies to create before syncing`));
-      const createResults = await createMissingMovies(client, missingMovieTitles, serverConfig);
-      results.initialized.created = createResults.created;
-      results.initialized.movies = createResults.createdMovies;
-      newlyCreatedMovies = createResults.createdMovies;
-    }
-    
+
     // Check if we have enhanced data with memory lookups
     const hasEnhancedData = flatDB.lookups && flatDB.lookups.movies;
     if (hasEnhancedData) {
@@ -69,12 +59,31 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
     const flatMoviesMap = !hasEnhancedData ? flatDB.movies.reduce((map, movie) => {
       map[movie.title] = movie;
       return map;
-    }, {}) : null;
+    }, {}) : {};
     
-    // Add newly created movies to the map if using simple lookup
-    if (!hasEnhancedData) {
-      for (const newMovie of newlyCreatedMovies) {
-        flatMoviesMap[newMovie.title] = newMovie;
+    // If we have missing movies, create them
+    let newlyCreatedMovies = [];
+    if (missingMovieTitles.length > 0) {
+      console.log(chalk.yellow(`Found ${missingMovieTitles.length} missing movies to create before syncing`));
+      const createResults = await createMissingMovies(client, missingMovieTitles, serverConfig);
+      results.initialized.created = createResults.created;
+      results.initialized.movies = createResults.createdMovies;
+      newlyCreatedMovies = createResults.createdMovies;
+
+      // If we have created new movies, add them to the results
+      if (newlyCreatedMovies.length > 0) {
+        // If we have enhanced data, also update the in-memory structure
+        if (hasEnhancedData) {
+          console.log(chalk.green(`Updating in-memory structure with ${newlyCreatedMovies.length} newly created movies`));
+          for (const newMovie of newlyCreatedMovies) {
+            createMovieInMemory(flatDB, newMovie);
+          }
+        } else {
+          // Add to the simple map for non-enhanced lookups
+          for (const newMovie of newlyCreatedMovies) {
+            flatMoviesMap[newMovie.title] = newMovie;
+          }
+        }
       }
     }
     
@@ -91,6 +100,10 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
           // If not found, it could be indexed by original title
           if (!flatMovie) {
             flatMovie = getMovieFromMemory(flatDB, movieTitle, true);
+            if (!flatMovie) {
+            // Use the simple map lookup as a fallback
+            flatMovie = flatMoviesMap[movieTitle];
+            }
           }
         } else {
           // Use the simple map lookup

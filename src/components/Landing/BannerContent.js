@@ -191,10 +191,7 @@ function areEqual(prevProps, nextProps) {
   return (
     prevProps.mediaList === nextProps.mediaList &&
     prevProps.currentMediaIndex === nextProps.currentMediaIndex &&
-    prevProps.showVideo === nextProps.showVideo &&
-    prevProps.onImageLoad === nextProps.onImageLoad &&
-    prevProps.onVideoReady === nextProps.onVideoReady &&
-    prevProps.handleVideoEnd === nextProps.handleVideoEnd
+    prevProps.showVideo === nextProps.showVideo
   )
 }
 

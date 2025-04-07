@@ -427,7 +427,7 @@ async function handleSync(webhookId, request) {
           console.log(`Attempt ${retryCount + 1}/${maxRetries + 1} to fetch server data...`);
         }
         
-        response = await httpGet(buildURL('/api/authenticated/list'), { headers });
+        response = await httpGet(buildURL('/api/authenticated/list'), { headers, timeout: 10000, responseType: 'json'}, true);
         break; // Success, exit the retry loop
       } catch (error) {
         retryCount++;
@@ -573,23 +573,38 @@ export async function DELETE(request, props) {
       const client = await clientPromise
       const db = client.db('Media')
 
-      const collections = ['Movies', 'TV']
+      // Update to include flat database collections instead of old structure
+      const collections = ['FlatMovies', 'FlatTVShows', 'FlatSeasons', 'FlatEpisodes']
+      
+      // Track results for detailed response
+      const results = {}
+      
       for (const collectionName of collections) {
         const collection = db.collection(collectionName)
-        await collection.deleteMany({})
+        const deleteResult = await collection.deleteMany({})
+        results[collectionName] = deleteResult.deletedCount
+        console.log(`Cleared ${deleteResult.deletedCount} documents from ${collectionName}`)
       }
       
-      console.log('Cleared all documents from collections')
-      return new Response(JSON.stringify({ message: 'Cleared all documents from collections' }), {
+      console.log('Cleared all documents from flat database collections')
+      return new Response(JSON.stringify({ 
+        message: 'Cleared all documents from flat database collections',
+        details: results 
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
     } catch (error) {
-      console.error('Error clearing collections:', error)
+      console.error('Error clearing flat database collections:', error)
       return new Response(JSON.stringify({ error: error.message }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       })
     }
   }
+  
+  return new Response(JSON.stringify({ error: 'Invalid operation' }), {
+    status: 400,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }

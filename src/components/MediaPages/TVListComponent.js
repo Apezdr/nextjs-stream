@@ -4,12 +4,42 @@ import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import SignOutButton from '@components/SignOutButton'
 import SkeletonCard from '@components/SkeletonCard'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { Suspense } from 'react'
+import { memo, Suspense, cache } from 'react'
 import Loading from '@src/app/loading'
-import { getFlatAvailableTVShowsCount } from '@src/utils/flatDatabaseUtils'
 import TVList from './cache/TVList'
+import { 
+  getFlatAvailableTVShowsCount, 
+  getFlatTVList 
+} from '@src/utils/flatDatabaseUtils'
+import { unstable_noStore as noStore } from 'next/cache'
 
-export default async function TVListComponent() {
+// Use partial prerendering
+export const dynamic = 'force-dynamic'
+export const runtime = 'edge'
+
+// Cached count function that can be reused across requests
+const getCachedTVShowCount = cache(
+  async () => {
+    return await getFlatAvailableTVShowsCount();
+  },
+  ['tv-show-count'],
+  { revalidate: 60 } // Revalidate every minute
+);
+
+// Function to fetch the dynamic TV show data - this will be loaded after the static shell
+async function TVData() {
+  // Mark this component as dynamic - it won't be part of the static shell
+  noStore();
+  
+  // Get all TV shows
+  const tvList = await getFlatTVList();
+  
+  return (
+    <TVList tvList={tvList} />
+  );
+}
+
+async function TVListComponent() {
   const session = await auth()
   if (!session || !session.user) {
     // Handle the case where the user is not authenticated
@@ -33,8 +63,8 @@ export default async function TVListComponent() {
     user: { name, email },
   } = session
   
-  // Get TV show count and latest update timestamp using flat database functions
-  const tvprogramsCount = await getFlatAvailableTVShowsCount();
+  // Get TV show count - this is cached and can be part of the static shell
+  const tvprogramsCount = await getCachedTVShowCount();
   
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
@@ -43,8 +73,8 @@ export default async function TVListComponent() {
         <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-2 xl:grid-cols-4 xl:gap-x-8">
           <Suspense fallback={<Loading />}>
             <li>
-              <h2 className="mx-auto max-w-2xl text-2xl font-bold tracking-tight text-white sm:text-3xl pb-8 xl:pb-0 px-4 xl:px-0">
-                ({tvprogramsCount}) Available TV Programs
+              <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
+                <Suspense fallback={<Loading />}>({tvprogramsCount})</Suspense> Available TV Programs
               </h2>
               <div className="flex flex-row gap-x-4 mt-4 justify-center">
                 <Link href="/list" className="self-center">
@@ -78,7 +108,50 @@ export default async function TVListComponent() {
             <Suspense
               fallback={
                 <>
-                  {Array.from({ length: tvprogramsCount }, (_, i) => (
+                  {/* Skeleton for filtering UI */}
+                  <li className="col-span-full mb-6 border-b border-gray-700 pb-6">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                      {/* Sort dropdown skeleton */}
+                      <div>
+                        <div className="block text-sm font-medium text-gray-300 mb-1 w-40 h-5 bg-gray-700 animate-pulse rounded"></div>
+                        <div className="w-36 h-9 bg-gray-800 animate-pulse rounded"></div>
+                      </div>
+                      
+                      {/* Genre filter buttons skeleton */}
+                      <div className="w-full md:w-auto">
+                        <div className="block text-sm font-medium text-gray-300 mb-1 w-32 h-5 bg-gray-700 animate-pulse rounded"></div>
+                        <div className="flex flex-wrap gap-2 max-w-3xl">
+                          {Array.from({ length: 8 }, (_, i) => (
+                            <div key={`genre-skeleton-${i}`} className="h-6 bg-gray-700 animate-pulse rounded-full" style={{ width: `${Math.floor(Math.random() * 40) + 60}px` }}></div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {/* Pagination status skeleton */}
+                    <div className="mt-3 flex items-center justify-between">
+                      <div className="w-40 h-5 bg-gray-700 animate-pulse rounded"></div>
+                      
+                      {/* Pagination controls skeleton */}
+                      <div className="flex items-center space-x-2">
+                        <div className="w-8 h-8 bg-gray-700 animate-pulse rounded"></div>
+                        {Array.from({ length: 3 }, (_, i) => (
+                          <div key={`page-skeleton-${i}`} className="w-8 h-8 bg-gray-700 animate-pulse rounded"></div>
+                        ))}
+                        <div className="w-8 h-8 bg-gray-700 animate-pulse rounded"></div>
+                      </div>
+                    </div>
+                  </li>
+
+                  {/* Loading line animation */}
+                  <li className="col-span-full py-2">
+                    <div className="w-full h-1 bg-gray-800 overflow-hidden">
+                      <div className="h-full bg-indigo-600 w-1/3 animate-[pulse_1.5s_ease-in-out_infinite]"></div>
+                    </div>
+                  </li>
+                  
+                  {/* TV show card skeletons */}
+                  {Array.from({ length: 16 }, (_, i) => (
                     <li key={i + '-skeleton'} className="relative min-w-[250px]">
                       <SkeletonCard key={i} heightClass={'h-[582px]'} />
                     </li>
@@ -86,7 +159,7 @@ export default async function TVListComponent() {
                 </>
               }
             >
-              <TVList />
+              <TVData />
             </Suspense>
           </Suspense>
         </ul>
@@ -94,3 +167,5 @@ export default async function TVListComponent() {
     </div>
   )
 }
+
+export default memo(TVListComponent)

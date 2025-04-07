@@ -3,10 +3,8 @@
  */
 
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName } from '../../sync/utils';
-import { updateEpisodeInFlatDB, getEpisodeFromFlatDB } from './database';
-import { getTVShowFromFlatDB } from '../tvShows/database';
-import { getSeasonFromFlatDB } from '../seasons/database';
 import { isEqual } from 'lodash';
+import { generateNormalizedVideoId } from '../../flatDatabaseUtils';
 
 /**
  * Processes TV episode video URL updates
@@ -65,9 +63,13 @@ export async function syncEpisodeVideoURL(client, show, season, episode, flatSho
     return null;
   }
   
+  // Generate normalized video ID for consistent lookups across URL variations
+  const normalizedVideoId = generateNormalizedVideoId(newVideoURL);
+  
   const updateData = {
     videoURL: newVideoURL,
-    videoSource: serverConfig.id
+    videoSource: serverConfig.id,
+    normalizedVideoId // Add normalized ID for reliable lookups regardless of URL encoding
   };
   
   // Filter out locked fields

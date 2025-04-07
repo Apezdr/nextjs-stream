@@ -3,9 +3,6 @@
  */
 
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName } from '../../sync/utils';
-import { updateEpisodeInFlatDB, getEpisodeFromFlatDB } from './database';
-import { getTVShowFromFlatDB } from '../tvShows/database';
-import { getSeasonFromFlatDB } from '../seasons/database';
 import { isEqual } from 'lodash';
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
 

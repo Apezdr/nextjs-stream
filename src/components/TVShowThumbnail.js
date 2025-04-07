@@ -38,9 +38,9 @@ export default function TVShowThumbnail({ episode, metadata }) {
           <span>Restart</span>
         </div>
       )}
-      {episode.length && (
+      {episode.duration && (
         <TotalRuntime
-          length={episode.length ?? episode.metadata.runtime * 60000 ?? 0}
+          length={episode.duration ?? episode.metadata.runtime * 60000 ?? 0}
           metadata={episode.metadata}
           videoURL={episode.videoURL}
           classNames="absolute bottom-0 w-full text-center z-[10] text-[0.55rem]"

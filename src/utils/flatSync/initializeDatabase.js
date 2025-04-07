@@ -24,7 +24,9 @@ export async function createFlatDatabaseIndexes() {
       { key: { 'metadata.genres.name': 1 }, name: 'genres_index' },
       { key: { 'metadata.release_date': -1 }, name: 'release_date_index' },
       { key: { 'metadata.vote_average': -1 }, name: 'rating_index' },
-      { key: { type: 1 }, name: 'type_index' }
+      { key: { type: 1 }, name: 'type_index' },
+      { key: { videoURL: 1 }, name: 'videoURL_index' },
+      { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' }
     ]);
     console.log(chalk.green('Created indexes for FlatMovies collection'));
     
@@ -52,9 +54,25 @@ export async function createFlatDatabaseIndexes() {
       { key: { showId: 1, seasonId: 1, episodeNumber: 1 }, name: 'show_season_episode_index', unique: true },
       { key: { showTitle: 1, seasonNumber: 1, episodeNumber: 1 }, name: 'show_title_season_episode_index', unique: true },
       { key: { airDate: -1 }, name: 'air_date_index' },
-      { key: { type: 1 }, name: 'type_index' }
+      { key: { type: 1 }, name: 'type_index' },
+      { key: { videoURL: 1 }, name: 'videoURL_index' },
+      { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' }
     ]);
     console.log(chalk.green('Created indexes for FlatEpisodes collection'));
+    
+    // Create indexes for PlaybackStatus collection
+    await client.db('Media').collection('PlaybackStatus').createIndexes([
+      // Standard user lookup index
+      { key: { userId: 1 }, name: 'userId_index' },
+      
+      // Compound indexes for fast video lookups
+      { key: { userId: 1, 'videosWatched.videoId': 1 }, name: 'userId_videoId_index' },
+      { key: { userId: 1, 'videosWatched.normalizedVideoId': 1 }, name: 'userId_normalizedId_index' },
+      
+      // Index for sorting by last updated timestamp
+      { key: { userId: 1, 'videosWatched.lastUpdated': -1 }, name: 'userId_lastUpdated_index' }
+    ]);
+    console.log(chalk.green('Created indexes for PlaybackStatus collection'));
     
     console.log(chalk.bold.green('Successfully created all indexes for flat database collections'));
   } catch (error) {

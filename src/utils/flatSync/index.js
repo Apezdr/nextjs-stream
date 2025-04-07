@@ -34,7 +34,7 @@ import { syncBlurhashData } from './blurhashSync';
  */
 export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailability, skipInitialization = false, forceSync = false) {
   console.log(chalk.bold.green(`Starting sync to flat structure for server ${serverConfig.id}...`));
-  
+
   // Track performance
   const startTime = performance.now();
   

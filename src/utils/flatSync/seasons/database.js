@@ -66,27 +66,67 @@ export async function updateSeasonInFlatDB(client, showTitle, originalTitle, sea
  * @param {Object} client - MongoDB client
  * @param {string} showTitle - TV show title
  * @param {number} seasonNumber - Season number
+ * @param {boolean} forceOriginalTitleLookup - Force lookup by original title
  * @returns {Promise<Object|null>} Season document or null
  */
-export async function getSeasonFromFlatDB(client, showTitle, seasonNumber) {
+export async function getSeasonFromFlatDB(client, showTitle, seasonNumber, forceOriginalTitleLookup = false) {
   try {
+    // Determine whether to lookup by title or originalTitle based on parameter
+    const lookupQuery = forceOriginalTitleLookup ? { originalTitle: showTitle } : { title: showTitle };
+    
     // First, get the TV show ID
     const tvShow = await client
       .db('Media')
       .collection('FlatTVShows')
-      .findOne({ title: showTitle }, { projection: { _id: 1 } });
+      .findOne(lookupQuery, { projection: { _id: 1, title: 1 } });
     
     if (!tvShow) {
       return null;
     }
     
-    return await client
+    // First try to find the season using the official ID (primary index)
+    const seasonByIds = await client
       .db('Media')
       .collection('FlatSeasons')
       .findOne({ 
         showId: tvShow._id,
         seasonNumber: seasonNumber 
       });
+    
+    if (seasonByIds) {
+      return seasonByIds;
+    }
+    
+    // If not found by ID, check if there's a season with this natural key but mismatched showId
+    const seasonByNaturalKey = await client
+      .db('Media')
+      .collection('FlatSeasons')
+      .findOne({
+        showTitle: tvShow.title,
+        seasonNumber: seasonNumber
+      });
+    
+    // If we found a season with mismatched IDs, update it to have correct showId
+    // This prevents duplicates in our database
+    if (seasonByNaturalKey) {
+      // Update the season to have correct showId (which is the source of truth)
+      await client
+        .db('Media')
+        .collection('FlatSeasons')
+        .updateOne(
+          { _id: seasonByNaturalKey._id },
+          { $set: { showId: tvShow._id } }
+        );
+      
+      // Return the season with updated showId
+      return {
+        ...seasonByNaturalKey,
+        showId: tvShow._id
+      };
+    }
+    
+    // Season not found by any means
+    return null;
   } catch (error) {
     console.error(`Error getting season ${seasonNumber} of "${showTitle}" from flat structure:`, error);
     return null;
@@ -199,6 +239,48 @@ export async function createSeasonInFlatDB(client, seasonData) {
     return result;
   } catch (error) {
     console.error(`Error creating season ${seasonData.seasonNumber} of show ID "${seasonData.showId}" in flat structure:`, error);
+    return { error };
+  }
+}
+
+/**
+ * Updates only the showId for a TV season in the flat database structure
+ * @param {Object} client - MongoDB client
+ * @param {string} showTitle - TV show title from file server
+ * @param {number} seasonNumber - Season number
+ * @param {ObjectId} newShowId - The new show ID to set
+ * @returns {Promise<Object>} Update result
+ */
+export async function updateSeasonShowId(client, showTitle, seasonNumber, newShowId) {
+  try {
+    if (!showTitle) {
+      throw new Error('Cannot update season with null showTitle');
+    }
+    
+    // Find and update the season by showTitle and seasonNumber
+    // This matches the compound index that's causing the duplicate key error
+    const result = await client
+      .db('Media')
+      .collection('FlatSeasons')
+      .updateOne(
+        { 
+          showTitle: showTitle,
+          seasonNumber: seasonNumber 
+        }, 
+        { 
+          $set: { showId: newShowId }
+        }
+      );
+    
+    if (result.matchedCount === 0) {
+      console.warn(`No season found for "${showTitle}" season ${seasonNumber} to update showId`);
+    } else {
+      console.log(`Updated showId for "${showTitle}" season ${seasonNumber}`);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error(`Error updating showId for season ${seasonNumber} of "${showTitle}":`, error);
     return { error };
   }
 }

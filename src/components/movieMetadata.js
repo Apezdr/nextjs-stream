@@ -35,7 +35,7 @@ async function getMetadata({ title, season = null, episode = null, type, tmdb_id
             : null
 
         if (logo) {
-          data.logo_path = `https://image.tmdb.org/t/p/original${logo}`
+          data.logo_path = logo
         }
 
         // Fetch trailer if available

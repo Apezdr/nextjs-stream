@@ -9,6 +9,67 @@ import {
 import { getFullImageUrl } from '@src/utils'
 
 /**
+ * Generates a consistent hash identifier from a video URL.
+ * Uses cryptographic hashing for reliability across different encoding variations.
+ * 
+ * @param {string} url - The original video URL
+ * @returns {string} A hash string identifier
+ */
+export function generateNormalizedVideoId(url) {
+  if (!url) return '';
+  
+  try {
+    // Import Node.js crypto module dynamically for hashing
+    const crypto = require('crypto');
+    
+    // Normalize URL before hashing to handle encoding variations
+    let normalizedUrl = url;
+    
+    // Try to decode it if it's encoded
+    try {
+      // Double decode to handle multiple levels of encoding
+      normalizedUrl = decodeURIComponent(decodeURIComponent(url));
+    } catch (e) {
+      try {
+        // If double decode fails, try single decode
+        normalizedUrl = decodeURIComponent(url);
+      } catch (e2) {
+        // If even single decode fails, keep original
+        normalizedUrl = url;
+      }
+    }
+    
+    // Extract just the path portion when possible
+    try {
+      const urlObj = new URL(normalizedUrl);
+      // For our hash, we only care about the path since that's what uniquely identifies content
+      // Strip protocol, hostname, port, query params
+      normalizedUrl = urlObj.pathname;
+    } catch (e) {
+      // If URL parsing fails, use the whole string
+    }
+    
+    // Convert to lowercase before hashing to ensure case-insensitive matching
+    normalizedUrl = normalizedUrl.toLowerCase();
+
+    // Use SHA-256 for hashing - a modern, reliable hash algorithm
+    // We're not using this for security, just for consistent identifiers
+    const hash = crypto.createHash('sha256');
+    hash.update(normalizedUrl);
+    
+    // Return first 16 characters of hex digest - good balance of uniqueness vs length
+    return hash.digest('hex').substring(0, 16);
+  } catch (error) {
+    console.error(`Error generating hash for URL: ${url}`, error);
+    
+    // Fallback: if crypto fails, use basic string manipulation
+    // This should almost never happen, but just in case
+    const fallbackStr = url.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return `fallback_${fallbackStr.substring(0, 10)}`;
+  }
+}
+
+/**
  * Gets posters for movies or TV shows from the flat database structure.
  * Note: This function uses 1-based pagination (page 1 is first page)
  *
@@ -154,6 +215,7 @@ export async function addCustomUrlToFlatMedia(mediaArray, type) {
 
 /**
  * Get the most recently watched media for the current user from flat database structure.
+ * Optimized version that uses MongoDB aggregation pipeline for filtering, sorting, and pagination.
  *
  * @param {Object} params - Parameters for the function.
  * @param {string} params.userId - The ID of the current user.
@@ -172,75 +234,117 @@ export async function getFlatRecentlyWatchedForUser({
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatRecentlyWatchedForUser:total');
       console.log(`[PERF] Starting getFlatRecentlyWatchedForUser for userId: ${userId}, page: ${page}, limit: ${limit}, countOnly: ${countOnly}`);
-      console.time('getFlatRecentlyWatchedForUser:findUser');
     }
     
     const client = await clientPromise;
-    const user = await client
+    const validPage = Math.max(page, 0); // Ensure page is at least 0
+    const userObjectId = new ObjectId(userId);
+
+    // Validate user exists
+    const userExists = await client
       .db('Users')
       .collection('AuthenticatedUsers')
-      .findOne({ _id: new ObjectId(userId) }, { projection: { _id: 1 } });
+      .countDocuments({ _id: userObjectId }, { limit: 1 });
       
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('getFlatRecentlyWatchedForUser:findUser');
-    }
-
-    if (!user) {
+    if (!userExists) {
       throw new Error(`User with ID ${userId} not found`);
     }
 
-    const validPage = Math.max(page, 0); // Ensure page is at least 0
-    
-    // Get the user's watch history
-    if (Boolean(process.env.DEBUG) == true) {
-      console.time('getFlatRecentlyWatchedForUser:fetchWatchHistory');
+    // Step 1: Use aggregation to get count of valid videos (for countOnly)
+    if (countOnly) {
+      if (Boolean(process.env.DEBUG) == true) {
+        console.time('getFlatRecentlyWatchedForUser:count');
+      }
+      
+      const countResult = await client
+        .db('Media')
+        .collection('PlaybackStatus')
+        .aggregate([
+          { $match: { userId: userObjectId } },
+          { $project: { 
+              validVideosCount: {
+                $size: {
+                  $filter: {
+                    input: "$videosWatched",
+                    as: "video",
+                    cond: { $ne: ["$$video.isValid", false] }
+                  }
+                }
+              }
+            }
+          }
+        ])
+        .toArray();
+      
+      const count = countResult.length > 0 ? countResult[0].validVideosCount : 0;
+      
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd('getFlatRecentlyWatchedForUser:count');
+        console.timeEnd('getFlatRecentlyWatchedForUser:total');
+      }
+      
+      return count;
     }
     
-    const userPlayback = await client
+    // Step 2: Use aggregation pipeline to get paginated, sorted valid videos
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getFlatRecentlyWatchedForUser:aggregate');
+    }
+    
+    const aggregationPipeline = [
+      // Match the user's document
+      { $match: { userId: userObjectId } },
+      
+      // Unwind the videosWatched array to work with individual videos
+      { $unwind: "$videosWatched" },
+      
+      // Filter out invalid videos
+      { $match: { "videosWatched.isValid": { $ne: false } } },
+      
+      // Sort by lastUpdated (most recent first)
+      { $sort: { "videosWatched.lastUpdated": -1 } },
+      
+      // Apply pagination
+      { $skip: validPage * limit },
+      { $limit: limit },
+      
+      // Project only needed fields, including normalizedVideoId if available
+      { $project: {
+          videoId: "$videosWatched.videoId",
+          playbackTime: "$videosWatched.playbackTime",
+          lastUpdated: "$videosWatched.lastUpdated",
+          normalizedVideoId: "$videosWatched.normalizedVideoId"
+      }}
+    ];
+    
+    const watchedVideos = await client
       .db('Media')
       .collection('PlaybackStatus')
-      .findOne({ userId: user._id }, { projection: { videosWatched: 1 } });
-      
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('getFlatRecentlyWatchedForUser:fetchWatchHistory');
-    }
-
-    if (!userPlayback || !userPlayback.videosWatched || userPlayback.videosWatched.length === 0) {
-      if (Boolean(process.env.DEBUG) == true) {
-        console.log('[PERF] No watch history found');
-        console.timeEnd('getFlatRecentlyWatchedForUser:total');
-      }
-      return countOnly ? 0 : null;
-    }
+      .aggregate(aggregationPipeline)
+      .toArray();
     
     if (Boolean(process.env.DEBUG) == true) {
-      console.log(`[PERF] Total videos in watch history: ${userPlayback.videosWatched.length}`);
-      console.time('getFlatRecentlyWatchedForUser:filterValidVideos');
+      console.timeEnd('getFlatRecentlyWatchedForUser:aggregate');
+      console.log(`[PERF] Paginated watched videos: ${watchedVideos.length}`);
     }
     
-    // Filter valid videos in memory
-    const validVideos = userPlayback.videosWatched.filter(video => 
-      video.isValid === undefined || video.isValid === true
-    );
-    
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('getFlatRecentlyWatchedForUser:filterValidVideos');
-      console.log(`[PERF] Valid videos after filtering: ${validVideos.length}`);
-    }
-    
-    if (validVideos.length === 0) {
+    // If no videos found, return null
+    if (!watchedVideos || watchedVideos.length === 0) {
       if (Boolean(process.env.DEBUG) == true) {
         console.timeEnd('getFlatRecentlyWatchedForUser:total');
       }
-      return countOnly ? 0 : null;
+      return null;
     }
     
-    // Extract video IDs
-    const videoIds = validVideos.map(video => video.videoId);
-    const uniqueVideoIds = [...new Set(videoIds)]; // Ensure uniqueness
+    // Step 3: Extract videoIds and normalizedVideoIds for batch fetching
+    const videoIds = watchedVideos.map(video => video.videoId);
+    const normalizedVideoIds = watchedVideos
+      .filter(video => video.normalizedVideoId)
+      .map(video => video.normalizedVideoId);
     
     if (Boolean(process.env.DEBUG) == true) {
-      console.log(`[PERF] Unique video IDs: ${uniqueVideoIds.length}`);
+      console.time('getFlatRecentlyWatchedForUser:fetchMediaData');
+      console.log(`[PERF] Searching for ${videoIds.length} direct videoIds and ${normalizedVideoIds.length} normalized videoIds`);
     }
     
     // Define projections to limit the fields returned
@@ -248,6 +352,7 @@ export async function getFlatRecentlyWatchedForUser({
       _id: 1,
       title: 1,
       videoURL: 1,
+      normalizedVideoId: 1,
       posterURL: 1,
       posterBlurhash: 1,
       posterBlurhashSource: 1,
@@ -255,140 +360,192 @@ export async function getFlatRecentlyWatchedForUser({
       backdropBlurhash: 1,
       backdropBlurhashSource: 1,
       hdr: 1,
-      length: 1,
+      duration: 1,
       metadata: 1,
     };
     
-    // Bulk fetch movies and episodes from flat database
-    if (Boolean(process.env.DEBUG) == true) {
-      console.time('getFlatRecentlyWatchedForUser:fetchMediaData');
-    }
-    
+    // Step 4: Fetch movies and episodes in parallel - using both direct URL and hash matching
     const [movies, episodes] = await Promise.all([
       client
         .db('Media')
         .collection('FlatMovies')
-        .find({ videoURL: { $in: uniqueVideoIds } }, { projection: movieProjection })
+        .find({ 
+          $or: [
+            { videoURL: { $in: videoIds } },
+            { normalizedVideoId: { $in: normalizedVideoIds } }
+          ]
+        }, { projection: movieProjection })
         .toArray(),
       client
         .db('Media')
         .collection('FlatEpisodes')
-        .find({ videoURL: { $in: uniqueVideoIds } })
+        .find({ 
+          $or: [
+            { videoURL: { $in: videoIds } },
+            { normalizedVideoId: { $in: normalizedVideoIds } }
+          ]
+        })
         .toArray()
     ]);
     
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getFlatRecentlyWatchedForUser:fetchMediaData');
       console.log(`[PERF] Found ${movies.length} movies and ${episodes.length} episodes`);
-      console.time('getFlatRecentlyWatchedForUser:createLookupMaps');
     }
     
-    // Create maps for efficient lookups
-    const movieMap = new Map(movies.map(movie => [movie.videoURL, movie]));
+    // Step 5: Optimize episode data fetching with $lookup aggregation
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getFlatRecentlyWatchedForUser:episodeDetails');
+    }
+    
+    // Create enhanced movie lookup maps that support both direct URL and normalized ID lookups
+    const movieMap = new Map();
     const episodeMap = new Map();
     
-    // For each episode, fetch its season and show
-    await Promise.all(episodes.map(async (episode) => {
-      const season = await client
-        .db('Media')
-        .collection('FlatSeasons')
-        .findOne({ _id: episode.seasonId });
-        
-      if (!season) return;
+    // Populate movie map with both videoURL and normalizedVideoId keys for redundant lookup
+    movies.forEach(movie => {
+      // Primary key - direct videoURL 
+      movieMap.set(movie.videoURL, movie);
       
-      const show = await client
-        .db('Media')
-        .collection('FlatTVShows')
-        .findOne({ _id: episode.showId });
-        
-      if (!show) return;
-      
-      // Create a simplified TV show structure with this episode
-      episodeMap.set(episode.videoURL, { 
-        ...show, 
-        episode,
-        seasons: [{ 
-          ...season,
-          episodes: [episode]
-        }]
-      });
-    }));
-    
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('getFlatRecentlyWatchedForUser:createLookupMaps');
-      console.log(`[PERF] Created lookup maps - Movies: ${movieMap.size}, Episodes: ${episodeMap.size}`);
-      console.time('getFlatRecentlyWatchedForUser:filterAndSort');
-    }
-    
-    // Filter out videos that don't exist in the database
-    const validVideoIds = new Set([
-      ...movieMap.keys(),
-      ...episodeMap.keys()
-    ]);
-    
-    const filteredVideos = validVideos.filter(video => 
-      validVideoIds.has(video.videoId)
-    );
-    
-    if (Boolean(process.env.DEBUG) == true) {
-      console.log(`[PERF] Videos after filtering for existence in DB: ${filteredVideos.length}`);
-    }
-
-    // If count only, return the count
-    if (countOnly) {
-      if (Boolean(process.env.DEBUG) == true) {
-        console.timeEnd('getFlatRecentlyWatchedForUser:filterAndSort');
-        console.timeEnd('getFlatRecentlyWatchedForUser:total');
+      // Secondary key - normalizedVideoId (if available)
+      if (movie.normalizedVideoId) {
+        movieMap.set(movie.normalizedVideoId, movie);
       }
-      return filteredVideos.length;
-    }
-    
-    // Sort by lastUpdated (most recent first)
-    filteredVideos.sort((a, b) => {
-      const dateA = a.lastUpdated ? new Date(a.lastUpdated) : new Date(0);
-      const dateB = b.lastUpdated ? new Date(b.lastUpdated) : new Date(0);
-      return dateB - dateA;
     });
     
-    // Apply pagination
-    const paginatedVideos = filteredVideos.slice(
-      validPage * limit, 
-      (validPage + 1) * limit
-    );
-    
-    if (Boolean(process.env.DEBUG) == true) {
-      console.timeEnd('getFlatRecentlyWatchedForUser:filterAndSort');
-      console.log(`[PERF] Videos after pagination: ${paginatedVideos.length}`);
+    if (episodes.length > 0) {
+      // Get all unique season and show IDs
+      const seasonIds = [...new Set(episodes.map(ep => ep.seasonId))].filter(Boolean);
+      const showIds = [...new Set(episodes.map(ep => ep.showId))].filter(Boolean);
+      
+      // Batch fetch seasons and shows
+      const [seasons, shows] = await Promise.all([
+        seasonIds.length > 0 ? client
+          .db('Media')
+          .collection('FlatSeasons')
+          .find({ _id: { $in: seasonIds } })
+          .toArray() : [],
+        showIds.length > 0 ? client
+          .db('Media')
+          .collection('FlatTVShows')
+          .find({ _id: { $in: showIds } })
+          .toArray() : []
+      ]);
+      
+      // Create lookup maps
+      const seasonMap = new Map(seasons.map(season => [season._id.toString(), season]));
+      const showMap = new Map(shows.map(show => [show._id.toString(), show]));
+      
+      // Build episode map with joined data, supporting both direct URL and normalized ID lookups
+      episodes.forEach(episode => {
+        const seasonId = episode.seasonId ? episode.seasonId.toString() : null;
+        const showId = episode.showId ? episode.showId.toString() : null;
+        
+        const season = seasonId ? seasonMap.get(seasonId) : null;
+        const show = showId ? showMap.get(showId) : null;
+        
+        if (season && show) {
+          // Create the full episode object with show and season data
+          const fullEpisodeObj = {
+            ...show,
+            episode,
+            seasons: [{
+              ...season,
+              episodes: [episode]
+            }]
+          };
+          
+          // Add to map using direct videoURL key (primary)
+          episodeMap.set(episode.videoURL, fullEpisodeObj);
+          
+          // Also add using normalizedVideoId key (secondary) if available
+          if (episode.normalizedVideoId) {
+            episodeMap.set(episode.normalizedVideoId, fullEpisodeObj);
+          }
+        }
+      });
     }
     
-    // Create a mock lastWatched object to match the expected format for processWatchedDetails
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getFlatRecentlyWatchedForUser:episodeDetails');
+      console.log(`[PERF] Created lookup maps - Movies: ${movieMap.size}, Episodes: ${episodeMap.size}`);
+    }
+    
+    // Step 6: Create format expected by processWatchedDetails
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getFlatRecentlyWatchedForUser:prepareData');
+    }
+    
+    // Format watched videos to structure expected by processWatchedDetails
+    const formattedWatchedVideos = watchedVideos.map(video => ({
+      videoId: video.videoId,
+      playbackTime: video.playbackTime,
+      lastUpdated: video.lastUpdated
+    }));
+    
     const lastWatched = [{
       _id: userId,
-      videosWatched: paginatedVideos
+      videosWatched: formattedWatchedVideos
     }];
     
-    // Process the watched details
     if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getFlatRecentlyWatchedForUser:prepareData');
       console.time('getFlatRecentlyWatchedForUser:processWatchedDetails');
     }
     
-    // Pass along the context object 
+    // Step 7: Process watched details with existing function
     const contextObj = { dateContext: 'watchHistory' };
     const watchedDetails = await processWatchedDetails(
-      lastWatched, 
-      movieMap, 
-      episodeMap, 
+      lastWatched,
+      movieMap,
+      episodeMap,
       limit,
       contextObj
     );
     
-    if (Boolean(process.env.DEBUG) == true) {
+    // Diagnostic logging for pagination inconsistencies
+    if (Boolean(process.env.DEBUG) == true || watchedVideos.length !== (watchedDetails?.length || 0)) {
       console.timeEnd('getFlatRecentlyWatchedForUser:processWatchedDetails');
-      console.log(`[PERF] Final processed watched details count: ${watchedDetails ? watchedDetails.length : 0}`);
+      
+      // Log warning if the counts don't match (always log this regardless of DEBUG flag)
+      if (watchedVideos.length !== (watchedDetails?.length || 0)) {
+        console.warn(`[PAGINATION INCONSISTENCY] Expected ${watchedVideos.length} items but got ${watchedDetails?.length || 0} items`);
+        
+        // Identify which videos were expected but missing from results
+        const expectedVideoIds = new Set(watchedVideos.map(v => v.videoId));
+        const actualVideoIds = new Set((watchedDetails || []).map(item => item.videoURL));
+        
+        const missingVideoIds = [...expectedVideoIds].filter(id => !actualVideoIds.has(id));
+        if (missingVideoIds.length > 0) {
+          console.warn(`[MISSING VIDEOS] The following videos were expected but missing in results: ${JSON.stringify(missingVideoIds)}`);
+          
+          // Log details about the missing videos for debugging
+          missingVideoIds.forEach(videoId => {
+            const watchedVideo = watchedVideos.find(v => v.videoId === videoId);
+            if (watchedVideo) {
+              console.warn(`[MISSING VIDEO DETAILS] VideoId: ${videoId}, LastUpdated: ${watchedVideo.lastUpdated}`);
+              
+              // Check if it exists in the movie/episode maps
+              const inMovieMap = movieMap.has(videoId);
+              const inEpisodeMap = episodeMap.has(videoId);
+              console.warn(`[MISSING VIDEO MAPS] In MovieMap: ${inMovieMap}, In EpisodeMap: ${inEpisodeMap}`);
+            }
+          });
+        }
+        
+        // Also log unexpected extra videos
+        const extraVideoIds = [...actualVideoIds].filter(id => !expectedVideoIds.has(id));
+        if (extraVideoIds.length > 0) {
+          console.warn(`[EXTRA VIDEOS] The following videos were in results but not expected: ${JSON.stringify(extraVideoIds)}`);
+        }
+      } else {
+        console.log(`[PERF] Final processed watched details count: ${watchedDetails ? watchedDetails.length : 0}`);
+      }
+      
       console.timeEnd('getFlatRecentlyWatchedForUser:total');
     }
     
-    return watchedDetails;
+    return watchedDetails || [];
   } catch (error) {
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getFlatRecentlyWatchedForUser:total');
@@ -468,7 +625,7 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
           .findOne({ _id: item.showId })
         
         if (show) {
-          show.mediaLastModified = item.lastAirDate
+          show.mediaLastModified = item.mediaLastModified
         }
         
         return show

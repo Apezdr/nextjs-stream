@@ -77,11 +77,20 @@ export function needsVideoInfoUpdate(flatEpisode, videoInfo, serverId) {
     if (newValue === undefined || newValue === null) {
       return false;
     }
+
+    let valueChanged;
+
+    // Handle Date type comparison
+    if (existingValue instanceof Date || newValue instanceof Date) {
+      const existingTime = existingValue instanceof Date ? existingValue.getTime() : existingValue;
+      const newTime = newValue instanceof Date ? newValue.getTime() : newValue;
+      valueChanged = existingTime !== newTime;
+    } else {
+      valueChanged = useDeepCompare 
+        ? !isEqual(existingValue, newValue)
+        : existingValue !== newValue;
+    }
     
-    const valueChanged = useDeepCompare 
-      ? !isEqual(existingValue, newValue)
-      : existingValue !== newValue;
-      
     // If value has changed or existing value is missing, we should update
     const needsUpdate = valueChanged || existingValue === undefined || existingValue === null;
     
@@ -140,6 +149,7 @@ export async function syncEpisodeVideoInfo(
   serverConfig,
   fieldAvailability
 ) {
+  // ex. `S01E01`
   const episodeFileName = findEpisodeFileName(
     Object.keys(fileServerSeasonData.episodes || {}),
     season.seasonNumber,
@@ -151,7 +161,7 @@ export async function syncEpisodeVideoInfo(
   }
   
   const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName];
-  if (!fileServerEpisodeData || !fileServerEpisodeData.mediaQuality) return null;
+  if (!fileServerEpisodeData || (!fileServerEpisodeData.mediaQuality && !fileServerEpisodeData.mediaLastModified && !fileServerEpisodeData.additionalMetadata)) return null;
   
   const showTitle = show.title;
   const originalTitle = show.originalTitle;

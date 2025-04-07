@@ -1,13 +1,14 @@
 import { classNames } from '@src/utils'
 import { useMemo } from 'react'
 
-export default function Loading({ fullscreenClasses = 'min-h-screen' }) {
+export default function Loading({ fullscreenClasses = 'min-h-screen', containerClassnames = '', padding = 'p-24', size = 'w-8 h-8 xl:w-14 xl:h-14' }) {
   // You can add any UI inside Loading, including a Skeleton.
   return (
-    <main className="sm:mx-auto sm:max-w-7xl sm:px-6 lg:px-8" data-testid="loading">
+    <main className={classNames(containerClassnames,"sm:mx-auto sm:max-w-7xl sm:px-6 lg:px-8")} data-testid="loading">
       <div
         className={classNames(
-          `flex flex-col items-center justify-between p-24`,
+          `flex flex-col items-center justify-between`,
+          padding,
           fullscreenClasses ? fullscreenClasses : ''
         )}
       >
@@ -15,7 +16,10 @@ export default function Loading({ fullscreenClasses = 'min-h-screen' }) {
           <div role="status">
             <svg
               aria-hidden="true"
-              className="inline w-8 h-8 xl:w-14 xl:h-14 text-gray-200 animate-spin dark:text-gray-600 fill-blue-600"
+              className={classNames(
+                "inline text-gray-200 animate-spin dark:text-gray-600 fill-blue-600",
+                size,
+              )}
               viewBox="0 0 100 101"
               fill="none"
               xmlns="http://www.w3.org/2000/svg"

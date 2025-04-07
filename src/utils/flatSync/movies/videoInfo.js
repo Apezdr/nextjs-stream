@@ -84,11 +84,20 @@ export function needsVideoInfoUpdate(movie, videoInfo, serverId) {
     if (newValue === undefined || newValue === null) {
       return false;
     }
+
+    let valueChanged;
+
+    // Handle Date type comparison
+    if (existingValue instanceof Date || newValue instanceof Date) {
+      const existingTime = existingValue instanceof Date ? existingValue.getTime() : existingValue;
+      const newTime = newValue instanceof Date ? newValue.getTime() : newValue;
+      valueChanged = existingTime !== newTime;
+    } else {
+      valueChanged = useDeepCompare 
+        ? !isEqual(existingValue, newValue)
+        : existingValue !== newValue;
+    }
     
-    const valueChanged = useDeepCompare 
-      ? !isEqual(existingValue, newValue)
-      : existingValue !== newValue;
-      
     // If value has changed or existing value is missing, we should update
     const needsUpdate = valueChanged || existingValue === undefined || existingValue === null;
     
@@ -156,7 +165,7 @@ export async function syncMovieVideoInfo(
   fieldAvailability
 ) {
   // Basic check if essential data exists
-  if (!fileServerData || (!fileServerData.mediaQuality && !fileServerData.dimensions && !fileServerData.length)) {
+  if (!fileServerData || (!fileServerData.mediaQuality && !fileServerData.dimensions && !fileServerData.length && !fileServerData.urls?.mediaLastModified)) {
       return null;
   }
 

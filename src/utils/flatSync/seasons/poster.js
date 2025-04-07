@@ -3,8 +3,7 @@
  */
 
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
-import { updateSeasonInFlatDB, getSeasonFromFlatDB } from './database';
-import { getTVShowFromFlatDB } from '../tvShows/database';
+import { updateSeasonInFlatDB } from './database';
 import { isEqual } from 'lodash';
 import { createAndPersistSeason } from '.';
 

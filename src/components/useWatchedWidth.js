@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react'
 import { getWatchedTime } from './watched'
 
-const computeTotalRuntimeInPercentage = (metadata, videoURL, length = false) => {
+const computeTotalRuntimeInPercentage = (metadata, videoURL, duration = false) => {
   if (!videoURL) {
     return 0
   }
@@ -11,8 +11,8 @@ const computeTotalRuntimeInPercentage = (metadata, videoURL, length = false) => 
   const watchedTimeInSeconds = getWatchedTime(videoURL)
   let totalRuntimeInSeconds = 0
 
-  if (length) {
-    totalRuntimeInSeconds = Math.floor(length / 1000)
+  if (duration) {
+    totalRuntimeInSeconds = Math.floor(duration / 1000)
   } else if (metadata?.runtime) {
     totalRuntimeInSeconds = metadata.runtime * 60
   }
@@ -29,7 +29,7 @@ const useWatchedWidth = (metadata, media) => {
 
   useEffect(() => {
     const checkForChanges = () => {
-      const newWidth = computeTotalRuntimeInPercentage(metadata, media.videoURL, media?.length)
+      const newWidth = computeTotalRuntimeInPercentage(metadata, media.videoURL, media?.duration)
       if (newWidth !== watchedWidth) {
         setWatchedWidth(newWidth)
       }
@@ -42,7 +42,7 @@ const useWatchedWidth = (metadata, media) => {
     return () => {
       clearInterval(intervalId)
     }
-  }, [metadata, media.videoURL, media?.length, watchedWidth])
+  }, [metadata, media.videoURL, media?.duration, watchedWidth])
 
   return watchedWidth
 }

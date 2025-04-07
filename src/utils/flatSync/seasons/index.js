@@ -5,7 +5,7 @@
 import clientPromise from '@src/lib/mongodb';
 import chalk from 'chalk';
 import { ObjectId } from 'mongodb';
-import { createSeasonInFlatDB, getSeasonFromFlatDB } from './database';
+import { createSeasonInFlatDB, getSeasonFromFlatDB, updateSeasonInFlatDB, updateSeasonShowId } from './database';
 import { getTVShowFromFlatDB } from '../tvShows/database';
 import { syncSeasonMetadata } from './metadata';
 import { syncSeasonPoster } from './poster';
@@ -13,6 +13,7 @@ import { syncSeasonPosterBlurhash } from './blurhash';
 import { fetchHashData, getStoredHash, storeHash } from '../hashStorage';
 import { isCurrentServerHighestPriorityForField } from '../../sync/utils';
 import { getShowFromMemory, getSeasonFromMemory, createSeasonInMemory } from '../memoryUtils';
+import { isEqual } from 'lodash';
 
 /**
  * Builds a new season object with proper defaults
@@ -130,7 +131,7 @@ async function syncSingleSeason(client, show, season, fileServerShowData, server
     
     // Fall back to database lookup if not found in memory
     if (!flatSeason) {
-      flatSeason = await getSeasonFromFlatDB(client, show.title, season.seasonNumber);
+      flatSeason = await getSeasonFromFlatDB(client, show.originalTitle, season.seasonNumber, true);
     }
     
     if (!flatSeason) {
@@ -333,13 +334,13 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
             // This shouldn't happen
             // but if it does, create a minimal season object
             console.warn(chalk.yellow(`Season ${seasonNumber} of "${showTitle}" not found in database, creating placeholder`));
-            season = { 
-              seasonNumber,
-              showTitle
+            season = flatDB.lookups.seasons.byNaturalKey.get(`${showTitle}-${seasonNumber}`);
+            if (!season) {
+              season = { seasonNumber, showId: dbShowEntry?._id, showTitle };
             }
           }
 
-          const seasonInDB_withMetadata = !!dbShowEntry?.seasons?.find(e => e.seasonNumber === seasonNumber).metadata;
+          const seasonInDB_withMetadata = !!dbShowEntry?.seasons?.find(e => e.seasonNumber === seasonNumber)?.metadata;
 
           // --- Revised season hash logic ---
           let currentSeasonHash = null;
@@ -376,6 +377,11 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
             continue;
           }
 
+          if (!isEqual(dbShowEntry._id, season.showId)) {
+            await updateSeasonShowId(client, showTitle, seasonNumber, dbShowEntry._id);
+            console.log(chalk.yellow(`Updated showId for season ${seasonNumber} of "${showTitle}"`));
+          }
+
           // Process the season with enhanced data if available
           const seasonResults = await syncSingleSeason(
             client,
@@ -407,9 +413,10 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
             await storeHash(client, 'tv', showTitle, seasonNumber, null, currentSeasonHash, serverConfig.id);
           }
         } catch (error) {
+          console.log(chalk.red(`Error processing season ${seasonNumber} of "${showTitle}"`));
+          console.log(error);
           results.errors.push({
             showTitle,
-            seasonKey,
             error: error.message
           });
         }

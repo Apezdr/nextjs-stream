@@ -123,6 +123,8 @@ const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrde
 
   const { data, error, isLoading } = useSWR(apiEndpoint, fetcher, {
     refreshInterval: 10000,
+    errorRetryCount: 4,
+    errorRetryInterval: 2000,
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
     dedupingInterval: 5000, // Adjust as needed

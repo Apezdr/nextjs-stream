@@ -4,11 +4,48 @@ import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import SignOutButton from '@components/SignOutButton'
 import SkeletonCard from '@components/SkeletonCard'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { memo, Suspense } from 'react'
+import { memo, Suspense, cache } from 'react'
 import Loading from '@src/app/loading'
 import MovieList from './cache/MovieList'
-import { getFlatAvailableMoviesCount, getFlatMoviesLastUpdatedTimestamp } from '@src/utils/flatDatabaseUtils'
-//export const dynamic = 'force-dynamic'
+import { 
+  getFlatAvailableMoviesCount,
+  getFlatPosters 
+} from '@src/utils/flatDatabaseUtils'
+import { unstable_noStore as noStore } from 'next/cache'
+
+// Use partial prerendering
+export const dynamic = 'force-dynamic'
+export const runtime = 'edge'
+
+// Cached count function that can be reused across requests
+const getCachedMovieCount = cache(
+  async () => {
+    return await getFlatAvailableMoviesCount();
+  },
+  ['movie-count'],
+  { revalidate: 60 } // Revalidate every minute
+);
+
+// Function to fetch the dynamic movie data - this will be loaded after the static shell
+async function MovieData() {
+  // Mark this component as dynamic - it won't be part of the static shell
+  noStore();
+  
+  // Define the custom projection - include the full metadata
+  const customProjection = {
+    duration: 1,
+    dimensions: 1,
+    captionURLs: 1,
+    metadata: 1 // Include all metadata which will have genres and release_date
+  };
+
+  // Get all movies with the enhanced projection
+  const movieList = await getFlatPosters('movie', false, 1, 0, customProjection);
+  
+  return (
+    <MovieList movieList={movieList} />
+  );
+}
 
 async function MovieListComponent() {
   const session = await auth()
@@ -30,13 +67,14 @@ async function MovieListComponent() {
       </UnauthenticatedPage>
     )
   }
+  
+  // This part is static and will be part of the initial HTML
   const {
     user: { name, email },
   } = session
   
-  // Get movie count and latest update timestamp using flat database functions
-  const moviesCount = await getFlatAvailableMoviesCount();
-  const latestUpdateTimestamp = await getFlatMoviesLastUpdatedTimestamp();
+  // Get movie count - this is cached and can be part of the static shell
+  const moviesCount = await getCachedMovieCount();
   
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
@@ -76,10 +114,54 @@ async function MovieListComponent() {
               />
             </div>
           </li>
+          {/* Dynamic part - will be loaded after the static shell with a proper loading state */}
           <Suspense
             fallback={
               <>
-                {Array.from({ length: moviesCount }, (_, i) => (
+                {/* Skeleton for filtering UI */}
+                <li className="col-span-full mb-6 border-b border-gray-700 pb-6">
+                  <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                    {/* Sort dropdown skeleton */}
+                    <div>
+                      <div className="block text-sm font-medium text-gray-300 mb-1 w-40 h-5 bg-gray-700 animate-pulse rounded"></div>
+                      <div className="w-36 h-9 bg-gray-800 animate-pulse rounded"></div>
+                    </div>
+                    
+                    {/* Genre filter buttons skeleton */}
+                    <div className="w-full md:w-auto">
+                      <div className="block text-sm font-medium text-gray-300 mb-1 w-32 h-5 bg-gray-700 animate-pulse rounded"></div>
+                      <div className="flex flex-wrap gap-2 max-w-3xl">
+                        {Array.from({ length: 8 }, (_, i) => (
+                          <div key={`genre-skeleton-${i}`} className="h-6 bg-gray-700 animate-pulse rounded-full" style={{ width: `${Math.floor(Math.random() * 40) + 60}px` }}></div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Pagination status skeleton */}
+                  <div className="mt-3 flex items-center justify-between">
+                    <div className="w-40 h-5 bg-gray-700 animate-pulse rounded"></div>
+                    
+                    {/* Pagination controls skeleton */}
+                    <div className="flex items-center space-x-2">
+                      <div className="w-8 h-8 bg-gray-700 animate-pulse rounded"></div>
+                      {Array.from({ length: 3 }, (_, i) => (
+                        <div key={`page-skeleton-${i}`} className="w-8 h-8 bg-gray-700 animate-pulse rounded"></div>
+                      ))}
+                      <div className="w-8 h-8 bg-gray-700 animate-pulse rounded"></div>
+                    </div>
+                  </div>
+                </li>
+
+                {/* Loading line animation */}
+                <li className="col-span-full py-2">
+                  <div className="w-full h-1 bg-gray-800 overflow-hidden">
+                    <div className="h-full bg-indigo-600 w-1/3 animate-[pulse_1.5s_ease-in-out_infinite]"></div>
+                  </div>
+                </li>
+                
+                {/* Movie card skeletons */}
+                {Array.from({ length: 16 }, (_, i) => (
                   <li key={i + '-skeleton'} className="relative min-w-[250px]">
                     <SkeletonCard key={i} heightClass={'h-[582px]'} />
                   </li>
@@ -87,7 +169,7 @@ async function MovieListComponent() {
               </>
             }
           >
-            <MovieList latestUpdateTimestamp={latestUpdateTimestamp} />
+            <MovieData />
           </Suspense>
         </ul>
       </div>

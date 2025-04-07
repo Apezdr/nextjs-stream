@@ -7,7 +7,7 @@ const MovieDetailsComponent = ({ media }) => {
     return <div className="text-center py-4">Loading...</div>
   }
 
-  const { title, backdrop, posterURL, logo, metadata, hdr, length,  } = media
+  const { title, backdrop, posterURL, logo, metadata, hdr, duration,  } = media
   const { release_date, genres, cast, overview, runtime, tagline, trailer_url } = metadata
   const collectionData = metadata?.belongs_to_collection
 
@@ -18,7 +18,7 @@ const MovieDetailsComponent = ({ media }) => {
     return `${hours}h ${remainingMinutes}m ${seconds}s`;
   }
 
-  const calculatedRuntime = length ? convertToLocaleTime(length / 60000) : runtime ? convertToLocaleTime(runtime) : null;
+  const calculatedRuntime = duration ? convertToLocaleTime(duration / 60000) : runtime ? convertToLocaleTime(runtime) : null;
 
   return (
     <div className="max-w-4xl mx-auto p-4">

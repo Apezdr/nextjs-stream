@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb'
 import isAuthenticated from '../../../../../utils/routeAuth'
 import clientPromise from '../../../../../lib/mongodb'
 import { validateURL } from '@src/utils/auth_utils'
+import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 
 export const POST = async (req) => {
   const authResult = await isAuthenticated(req)
@@ -42,7 +43,16 @@ export const POST = async (req) => {
         lastScanned = new Date().toISOString();
       }
       
-      // Update playback time for existing videoId (and validation info if needed)
+      // Check if we need to add or update the normalized video ID
+      const needsNormalizedId = !existingVideo.normalizedVideoId;
+      let normalizedVideoId = existingVideo.normalizedVideoId;
+      
+      if (needsNormalizedId) {
+        normalizedVideoId = generateNormalizedVideoId(videoId);
+        console.log(`Generated normalized ID for existing video: ${normalizedVideoId} (original: ${videoId})`);
+      }
+      
+      // Update playback time for existing videoId (and validation/normalized ID info if needed)
       await playbackStatusCollection.updateOne(
         { userId: userIdObj, 'videosWatched.videoId': videoId },
         {
@@ -52,6 +62,9 @@ export const POST = async (req) => {
             ...(needsValidation ? {
               'videosWatched.$.isValid': isValid,
               'videosWatched.$.lastScanned': lastScanned
+            } : {}),
+            ...(needsNormalizedId ? {
+              'videosWatched.$.normalizedVideoId': normalizedVideoId
             } : {})
           },
         }
@@ -60,13 +73,18 @@ export const POST = async (req) => {
       // For new videos, validate the URL before adding
       const isValid = await validateURL(videoId)
       
-      // Add new videoId with playback time and validation result
+      // Generate a normalized video ID for consistent lookup
+      const normalizedVideoId = generateNormalizedVideoId(videoId);
+      console.log(`Generated normalized ID for new video: ${normalizedVideoId} (original: ${videoId})`);
+      
+      // Add new videoId with playback time, validation result, and normalized ID
       await playbackStatusCollection.updateOne(
         { userId: userIdObj },
         { 
           $push: { 
             videosWatched: { 
               videoId, 
+              normalizedVideoId,
               playbackTime, 
               lastUpdated: new Date(),
               isValid,

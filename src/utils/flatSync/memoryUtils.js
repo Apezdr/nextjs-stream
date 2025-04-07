@@ -442,6 +442,57 @@ export function getMovieFromMemory(enhancedData, title, useOriginalTitle = false
 }
 
 /**
+ * Creates a movie in memory and updates all relevant lookup maps
+ * @param {Object} enhancedData - Enhanced data structure
+ * @param {Object} movieData - Movie data
+ * @returns {Object} Created movie
+ */
+export function createMovieInMemory(enhancedData, movieData) {
+  if (!enhancedData || !enhancedData.lookups || !enhancedData.lookups.movies) {
+    console.error('Enhanced data structure not properly initialized');
+    return movieData;
+  }
+  
+  // Ensure we have a new _id if one wasn't provided
+  if (!movieData._id) {
+    movieData._id = new ObjectId();
+  }
+  
+  // Add to our lookup maps
+  enhancedData.lookups.movies.byId.set(movieData._id.toString(), movieData);
+  
+  if (movieData.title) {
+    enhancedData.lookups.movies.byTitle.set(movieData.title, movieData);
+  }
+  
+  if (movieData.originalTitle) {
+    enhancedData.lookups.movies.byOriginalTitle.set(movieData.originalTitle, movieData);
+  }
+  
+  // Add to the movies array if it exists
+  if (enhancedData.movies) {
+    // Check if movie already exists in the movies array
+    const existingMovieIndex = enhancedData.movies.findIndex(m => 
+      m.title === movieData.title || 
+      (m._id && movieData._id && m._id.toString() === movieData._id.toString())
+    );
+    
+    if (existingMovieIndex === -1) {
+      // Add as a new movie
+      enhancedData.movies.push(movieData);
+    } else {
+      // Update existing movie with new data
+      enhancedData.movies[existingMovieIndex] = {
+        ...enhancedData.movies[existingMovieIndex],
+        ...movieData
+      };
+    }
+  }
+  
+  return movieData;
+}
+
+/**
  * Creates a TV show in memory and updates all relevant lookup maps
  * @param {Object} enhancedData - Enhanced data structure
  * @param {Object} showData - TV show data

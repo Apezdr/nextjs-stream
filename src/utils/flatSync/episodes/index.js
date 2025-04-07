@@ -8,10 +8,8 @@
 
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
-import { ObjectId } from 'mongodb'
-import { createEpisodeInFlatDB, getEpisodeFromFlatDB, updateEpisodeInFlatDB } from './database'
-import { getTVShowFromFlatDB } from '../tvShows/database'
-import { createSeasonInFlatDB, getSeasonFromFlatDB } from '../seasons/database'
+import { createEpisodeInFlatDB, getEpisodeFromFlatDB, updateEpisodeInFlatDB, updateEpisodeIds, updateEpisodeShowTitles } from './database'
+import { createSeasonInFlatDB } from '../seasons/database'
 import { 
   getShowFromMemory, 
   getSeasonFromMemory, 
@@ -79,6 +77,8 @@ async function syncSingleEpisode(
 
     if (!episodeFileName) return results
 
+    let forceTitlesUpdate = false
+
     // Get the file server episode data - early exit if not found
     const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName]
     if (!fileServerEpisodeData) return results
@@ -107,6 +107,10 @@ async function syncSingleEpisode(
             season.seasonNumber, 
             episode.episodeNumber
           );
+          if (flatEpisode.showTitle !== show.title) {
+            // If the original title doesn't match, we need to force an update
+            forceTitlesUpdate = true;
+          }
         }
       }
     }
@@ -163,6 +167,11 @@ async function syncSingleEpisode(
       );
     }
 
+    if (flatEpisode && flatEpisode.showTitle !== show.title) {
+      // If the original title doesn't match, we need to force an update
+      forceTitlesUpdate = true;
+    }
+
     if (!flatEpisode) {
       // Episode does not exist, explicitly create it
       const newVideoURL = createFullUrl(fileServerEpisodeData?.videoURL, serverConfig)
@@ -170,6 +179,7 @@ async function syncSingleEpisode(
         showId: flatShow._id,
         seasonId: flatSeason._id,
         showTitle: show.title,
+        originalTitle: show.originalTitle,
         seasonNumber: season.seasonNumber,
         episodeNumber: episode.episodeNumber,
         type: 'episode',
@@ -216,15 +226,27 @@ async function syncSingleEpisode(
             episode.episodeNumber
           );
 
-          // Ensure the episode has the correct seasonId
-          if (flatEpisode.seasonId.toString() !== flatSeason._id.toString()) {
+          // Ensure the episode has the correct seasonId and showId
+          if (flatEpisode.seasonId.toString() !== flatSeason._id.toString() || 
+              flatEpisode.showId.toString() !== flatShow._id.toString()) {
             console.log(
               chalk.yellow(
-                `Fixing inconsistent seasonId for episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`
+                `Fixing inconsistent IDs for episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`
               )
             );
+            // Use the specialized updateEpisodeIds function to avoid duplicate key errors
+            await updateEpisodeIds(
+              client, 
+              show.title, 
+              season.seasonNumber, 
+              episode.episodeNumber, 
+              flatShow._id, 
+              flatSeason._id
+            );
+            
+            // Update our local object as well
             flatEpisode.seasonId = flatSeason._id;
-            // Update will happen later with other fields
+            flatEpisode.showId = flatShow._id;
           }
         } else {
           // Otherwise use our new episode data
@@ -235,6 +257,10 @@ async function syncSingleEpisode(
           );
         }
       }
+    }
+
+    if (forceTitlesUpdate) {
+      await updateEpisodeShowTitles(client, show.title, season.seasonNumber, episode.episodeNumber, show.originalTitle);
     }
 
     // Prepare sync functions with common parameters
@@ -300,7 +326,7 @@ async function syncSingleEpisode(
     }
     
     // Video info sync - only run if mediaQuality exists
-    if (fileServerEpisodeData.mediaQuality) {
+    if (!!fileServerEpisodeData.mediaQuality || !!fileServerEpisodeData.mediaLastModified || !!fileServerEpisodeData.additionalMetadata) {
       syncFunctions.push(
         syncEpisodeVideoInfo(
           client,

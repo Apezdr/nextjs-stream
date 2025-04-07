@@ -2,15 +2,13 @@ import { Suspense, lazy } from 'react'
 import Loading from '@src/app/loading'
 import SyncClientWithServerWatched from './SyncClientWithServerWatched'
 import HorizontalScrollContainer from '@src/components/MediaScroll/HorizontalScrollContainer'
+import AsyncMediaCounts from './AsyncMediaCounts'
+import RecommendationSectionTitle from './RecommendationSectionTitle'
 
 const ReleaseCalendar = lazy(() => import('./Calendar/ReleaseCalendar'))
 
 export default function LandingPage({
   user = { name: '', email: '', limitedAccess: false },
-  moviesCount,
-  tvprogramsCount,
-  //recentlyaddedCount,
-  recentlywatchedCount,
 }) {
   const { name, email, limitedAccess } = user
   /* if (limitedAccess) {
@@ -26,8 +24,9 @@ export default function LandingPage({
               Welcome {name.split(' ')[0]},
             </h2>
             <h2 className="text-xl font-bold tracking-tight text-white pb-8 xl:pb-0 px-4 xl:px-0">
-              <Suspense fallback={<Loading />}>({moviesCount + tvprogramsCount})</Suspense>{' '}
-              Available TV Shows & Movies
+              <Suspense>
+                <AsyncMediaCounts suffix={` Available TV Shows & Movies`} />
+              </Suspense>
             </h2>
           </li>
         </ul>
@@ -35,10 +34,8 @@ export default function LandingPage({
       <div className="flex flex-col w-full mt-10">
         <h2 className="text-xl font-bold text-left mt-4 ml-4">Watch History</h2>
         <HorizontalScrollContainer type="recentlyWatched" />
-        <h2 className="text-xl font-bold text-left mt-4 ml-4">
-          {recentlywatchedCount > 0 ? "Recommended For You" : "Popular Content"}
-        </h2>
-        <HorizontalScrollContainer type="recommendations" />
+        {/* <RecommendationSectionTitle />
+        <HorizontalScrollContainer type="recommendations" /> */}
         <h2 className="text-xl font-bold text-left mt-4 ml-4">Recently Added</h2>
         <HorizontalScrollContainer type="recentlyAdded" />
         <h2 className="text-xl font-bold text-left mt-4 ml-4">Movies</h2>

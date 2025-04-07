@@ -5,6 +5,7 @@
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { isEqual } from 'lodash';
+import { generateNormalizedVideoId } from '../../flatDatabaseUtils';
 
 /**
  * Processes movie video URL updates
@@ -45,9 +46,13 @@ export async function syncMovieVideoURL(client, movie, fileServerData, serverCon
     return null;
   }
   
+  // Generate normalized video ID for consistent lookups across URL variations
+  const normalizedVideoId = generateNormalizedVideoId(newVideoURL);
+  
   const updateData = {
     videoURL: newVideoURL,
-    videoSource: serverConfig.id
+    videoSource: serverConfig.id,
+    normalizedVideoId, // Add normalized ID for reliable lookups regardless of URL encoding
     // Video info like dimensions, duration, mediaLastModified is handled by videoInfo.js
   };
   

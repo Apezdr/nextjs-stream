@@ -19,7 +19,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
     name = media.metadata.name
     guest_stars = media.metadata.guest_stars
   }
-  const { title, showTitle, backdrop, logo, hdr, episodeNumber, seasonNumber, cast, length } = media
+  const { title, showTitle, backdrop, logo, hdr, episodeNumber, seasonNumber, cast, duration } = media
 
   const thumbnail = media.thumbnail
   const posterURL = media.posterURL
@@ -31,7 +31,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
     return `${hours}h ${remainingMinutes}m ${seconds}s`;
   }
 
-  const calculatedRuntime = length ? convertToLocaleTime(length / 60000) : runtime ? convertToLocaleTime(runtime) : null;
+  const calculatedRuntime = duration ? convertToLocaleTime(duration / 60000) : runtime ? convertToLocaleTime(runtime) : null;
 
   return (
     <div className="max-w-4xl mx-auto p-4">

@@ -3,10 +3,6 @@
  */
 
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName, processCaptionURLs } from '../../sync/utils';
-import { updateEpisodeInFlatDB, getEpisodeFromFlatDB } from './database';
-import { getTVShowFromFlatDB } from '../tvShows/database';
-import { getSeasonFromFlatDB } from '../seasons/database';
-import { isEqual } from 'lodash';
 import { sortSubtitleEntries } from '../../sync/captions';
 
 /**

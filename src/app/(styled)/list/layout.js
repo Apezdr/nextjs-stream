@@ -48,7 +48,7 @@ export default async function ListLayout({ children }) {
           <Suspense>
             <ShouldRenderContent
               allowedPaths={['/list']}
-              suspenseSkeleton={<div className="relative w-full h-[40vh] md:h-[80vh] bg-black" />}
+              suspenseSkeleton={<div className="relative w-full h-[40vh] md:h-[79vh] bg-black" />}
             >
               <BannerWithVideoContainer />
             </ShouldRenderContent>

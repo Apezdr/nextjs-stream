@@ -129,18 +129,33 @@ async function extractTVShowDetailsFromMap(tvDetails, videoId) {
 
     // Optionally verify that the passed videoId matches the episode in tvDetails.
     let episode;
+    
+    // First, try direct match with videoId
     if (videoId && episodeFromTv.videoURL === videoId) {
       episode = episodeFromTv;
     } else {
-      // Fallback: search the season's episodes for the matching video URL.
-      episode = season.episodes.find((e) => e.videoURL === videoId);
-      if (!episode) {
-        if (process.env.DEBUG === 'true') {
-          console.log(`[PERF] Episode with videoId ${videoId} not found in season ${seasonNumber}`);
-          console.timeEnd('extractTVShowDetailsFromMap:processing');
-          console.timeEnd('extractTVShowDetailsFromMap:total');
+      // Try with normalized IDs if available
+      if (episodeFromTv.normalizedVideoId && videoId === episodeFromTv.normalizedVideoId) {
+        episode = episodeFromTv;
+      } else {
+        // Fallback: search the season's episodes for the matching video URL.
+        episode = season.episodes.find((e) => e.videoURL === videoId);
+        
+        // If not found, try with normalized ID
+        if (!episode) {
+          episode = season.episodes.find((e) => 
+            e.normalizedVideoId && e.normalizedVideoId === videoId
+          );
         }
-        return null;
+        
+        if (!episode) {
+          if (process.env.DEBUG === 'true') {
+            console.log(`[PERF] Episode with videoId ${videoId} not found in season ${seasonNumber}`);
+            console.timeEnd('extractTVShowDetailsFromMap:processing');
+            console.timeEnd('extractTVShowDetailsFromMap:total');
+          }
+          return null;
+        }
       }
     }
 
@@ -208,7 +223,19 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit,
     // If we've reached the limit, break out of the loop
     if (results.length >= limit) break
 
-    const movie = movieMap.get(video.videoId)
+    // Try direct video ID first
+    let movie = movieMap.get(video.videoId)
+    let tvDetails = null
+    
+    // If direct lookup failed, try with normalizedVideoId if available
+    if (!movie && video.normalizedVideoId) {
+      if (Boolean(process.env.DEBUG) == true) {
+        console.log(`[PERF] Trying normalizedVideoId lookup for ${video.videoId}`);
+      }
+      movie = movieMap.get(video.normalizedVideoId)
+    }
+    
+    // Process movie if found
     if (movie) {
       if (Boolean(process.env.DEBUG) == true) {
         console.time(`processWatchedDetails:sanitizeMovie:${results.length}`);
@@ -226,12 +253,31 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit,
       continue // Move to the next video
     }
 
-    const tvDetails = tvMap.get(video.videoId)
+    // Try direct TV lookup
+    tvDetails = tvMap.get(video.videoId)
+    
+    // If direct lookup failed, try with normalizedVideoId
+    if (!tvDetails && video.normalizedVideoId) {
+      if (Boolean(process.env.DEBUG) == true) {
+        console.log(`[PERF] Trying normalizedVideoId TV lookup for ${video.videoId}`);
+      }
+      tvDetails = tvMap.get(video.normalizedVideoId)
+    }
+    
+    // Process TV details if found
     if (tvDetails) {
       if (Boolean(process.env.DEBUG) == true) {
-          console.time(`processWatchedDetails:extractTVDetails:${results.length}`);
+        console.time(`processWatchedDetails:extractTVDetails:${results.length}`);
       }
-      const detailedTVShow = await extractTVShowDetailsFromMap(tvDetails, video.videoId)
+      
+      // First try with direct videoId
+      let detailedTVShow = await extractTVShowDetailsFromMap(tvDetails, video.videoId)
+      
+      // If that fails and we have a normalizedVideoId, try with that instead
+      if (!detailedTVShow && video.normalizedVideoId) {
+        detailedTVShow = await extractTVShowDetailsFromMap(tvDetails, video.normalizedVideoId)
+      }
+      
       if (Boolean(process.env.DEBUG) == true) {
         console.timeEnd(`processWatchedDetails:extractTVDetails:${results.length}`);
       }
@@ -250,6 +296,13 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit,
         if (sanitizedData) {
           results.push(sanitizedData)
         }
+      }
+    } else if (Boolean(process.env.DEBUG) == true) {
+      // Debug info about missed videos
+      if (video.normalizedVideoId) {
+        console.log(`[PERF] Video not found despite normalized ID: ${video.videoId} (normalized: ${video.normalizedVideoId})`);
+      } else {
+        console.log(`[PERF] Video not found and no normalized ID available: ${video.videoId}`);
       }
     }
   }
@@ -340,7 +393,7 @@ export async function sanitizeRecord(record, type, context = {}) {
         id: record.id,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         link: `${record.title}/${record.seasonNumber}/${record.episode.episodeNumber}`,
-        length: record.length ?? 0,
+        duration: record.duration ?? 0,
         posterURL: poster,
         posterBlurhash: record.posterBlurhash || null,
         backdrop: record.backdrop || getFullImageUrl(record.metadata?.backdrop_path) || null,
@@ -365,7 +418,7 @@ export async function sanitizeRecord(record, type, context = {}) {
             title: record.episode.title,
             videoURL: record.episode.videoURL,
             mediaLastModified: record.episode.mediaLastModified,
-            length: record.episode.length,
+            duration: record.episode.duration,
             dimensions: record.episode.dimensions,
             thumbnail: record.episode.thumbnail,
             thumbnailBlurhash: record.episode.thumbnailBlurhash || null,
@@ -380,7 +433,7 @@ export async function sanitizeRecord(record, type, context = {}) {
         id: record.id,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         link: encodeURIComponent(record.title),
-        length: record.length ?? 0,
+        duration: record.duration ?? 0,
         posterURL: poster,
         posterBlurhash: record.posterBlurhash || null,
         backdrop: record.backdrop || getFullImageUrl(record.metadata?.backdrop_path) || null,
@@ -560,7 +613,7 @@ export const generateClipVideoURL = cache((item, type, title) => {
   if (!item?.videoURL) return null
 
     const maxDuration = 50 // 50 seconds
-    const videoLength = Math.floor(item['length'] / 1000) // Convert ms to seconds
+    const videoLength = Math.floor(item['duration'] / 1000) // Convert ms to seconds
     let start = 3200 // Default start time
     let end = start + maxDuration // Default end time
 

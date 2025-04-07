@@ -6,12 +6,10 @@
  * and optimized hash-based sync for improved performance.
  */
 
-import { ObjectId } from 'mongodb';
 import { filterLockedFields, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName } from '../../sync/utils';
 import { updateEpisodeInFlatDB, getEpisodeFromFlatDB, createEpisodeInFlatDB } from './database';
-import { getTVShowFromFlatDB } from '../tvShows/database';
-import { createSeasonInFlatDB, getSeasonFromFlatDB } from '../seasons/database';
-import { difference, isEqual } from 'lodash';
+import { createSeasonInFlatDB } from '../seasons/database';
+import { isEqual } from 'lodash';
 import { fetchHashData, getStoredHash, storeHash } from '../hashStorage';
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
 import { buildNewSeasonObject } from '../seasons';

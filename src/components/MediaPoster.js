@@ -64,14 +64,14 @@ function _mediaPoster({
       )}
       {_media.videoURL ? (
         <TotalRuntime
-          length={_media.length ?? (_media.metadata?.runtime ? _media.metadata.runtime * 60000 : 0)}
+          length={_media.duration ?? (_media.metadata?.runtime ? _media.metadata.runtime * 60000 : 0)}
           metadata={_media.metadata}
           videoURL={_media.videoURL}
-          classNames="absolute bottom-0 w-full text-center z-[10] text-[0.55rem]"
+          classNames="absolute bottom-0 w-full text-center z-10 text-[0.55rem]"
         />
       ) : null}
       {!hideGenres && _media.metadata?.genres && (
-        <div className="bg-gray-900 text-center px-0.5 py-0.5 text-white transition-opacity duration-700 inset-0 text-xs opacity-75 group-hover:opacity-100 z-[10] relative">
+        <div className="bg-gray-900 text-center px-0.5 py-0.5 text-white transition-opacity duration-700 inset-0 text-xs opacity-75 group-hover:opacity-100 z-10 relative">
           <div className="whitespace-nowrap">
             {_media.metadata.genres.map((genre) => {
               const { fontColor, backgroundColor } = generateColors(genre?.name)

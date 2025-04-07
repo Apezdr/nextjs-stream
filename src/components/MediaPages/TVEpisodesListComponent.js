@@ -201,7 +201,7 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                 }
 
                 const episodeTitle = episodeMetadata?.name ?? episode.title
-                const listKey = episodeTitle ?? episode.id
+                const listKey = `episode-${episode.episodeNumber}-${episode._id || episodeIndex}`
 
                 return (
                   <li key={listKey + '-AnimationCont'} className="relative min-w-[250px]">
@@ -211,6 +211,7 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                         type: 'linear',
                         duration: 0.45,
                       }}
+                      key={listKey}
                     >
                       <Link
                         href={`/list/tv/${showTitle}/${season.seasonNumber}/${episode.episodeNumber}`}
