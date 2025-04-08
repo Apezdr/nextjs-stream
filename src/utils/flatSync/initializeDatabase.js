@@ -26,7 +26,8 @@ export async function createFlatDatabaseIndexes() {
       { key: { 'metadata.vote_average': -1 }, name: 'rating_index' },
       { key: { type: 1 }, name: 'type_index' },
       { key: { videoURL: 1 }, name: 'videoURL_index' },
-      { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' }
+      { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' },
+      { key: { duration: 1 }, name: 'duration_index' } // Add index for duration field
     ]);
     console.log(chalk.green('Created indexes for FlatMovies collection'));
     
@@ -56,7 +57,8 @@ export async function createFlatDatabaseIndexes() {
       { key: { airDate: -1 }, name: 'air_date_index' },
       { key: { type: 1 }, name: 'type_index' },
       { key: { videoURL: 1 }, name: 'videoURL_index' },
-      { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' }
+      { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' },
+      { key: { duration: 1 }, name: 'duration_index' } // Add index for duration field
     ]);
     console.log(chalk.green('Created indexes for FlatEpisodes collection'));
     
@@ -66,11 +68,13 @@ export async function createFlatDatabaseIndexes() {
       { key: { userId: 1 }, name: 'userId_index' },
       
       // Compound indexes for fast video lookups
-      { key: { userId: 1, 'videosWatched.videoId': 1 }, name: 'userId_videoId_index' },
       { key: { userId: 1, 'videosWatched.normalizedVideoId': 1 }, name: 'userId_normalizedId_index' },
       
       // Index for sorting by last updated timestamp
-      { key: { userId: 1, 'videosWatched.lastUpdated': -1 }, name: 'userId_lastUpdated_index' }
+      { key: { userId: 1, 'videosWatched.lastUpdated': -1 }, name: 'userId_lastUpdated_index' },
+      
+      // Index for lookups by normalizedVideoId without userId (for view count aggregation)
+      { key: { 'videosWatched.normalizedVideoId': 1 }, name: 'normalizedVideoId_index' }
     ]);
     console.log(chalk.green('Created indexes for PlaybackStatus collection'));
     

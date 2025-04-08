@@ -2,10 +2,13 @@
 import { useState, useEffect } from 'react'
 
 
-export default function AsyncMediaCounts({suffix = ''}) {
+export default function AsyncMediaCounts({suffix = '', showDuration = false}) {
   const [counts, setCounts] = useState({
     moviesCount: 0,
     tvProgramsCount: 0,
+    movieHours: 0,
+    tvHours: 0,
+    totalHours: 0,
     isLoading: true
   })
 
@@ -21,6 +24,9 @@ export default function AsyncMediaCounts({suffix = ''}) {
           setCounts({
             moviesCount: data.moviesCount || 0,
             tvProgramsCount: data.tvShowsCount || 0,
+            movieHours: data.movieHours || 0,
+            tvHours: data.tvHours || 0,
+            totalHours: data.totalHours || 0,
             isLoading: false
           })
         } else {
@@ -49,7 +55,17 @@ export default function AsyncMediaCounts({suffix = ''}) {
       {counts.isLoading ? (
         <></>
       ) : (
-        <>({counts.moviesCount + counts.tvProgramsCount}){suffix}</>
+        <>
+          {showDuration && (
+            <span className="block text-sm text-gray-100">
+              {counts.totalHours > 0 
+                ? `${counts.totalHours.toLocaleString()} hours total`
+                : ''}
+            </span>
+          )}
+          ({counts.moviesCount + counts.tvProgramsCount})
+          {suffix}
+        </>
       )}
     </span>
   )

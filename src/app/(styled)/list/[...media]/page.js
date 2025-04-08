@@ -17,7 +17,7 @@ import { fileServerURLWithPrefixPath } from '@src/utils/config'
 import RetryImage from '@components/RetryImage'
 import MovieDetailsComponent from '@components/MediaPages/MovieDetailsComponent'
 import TVEpisodeDetailsComponent from '@components/MediaPages/TVEpisodeDetailsComponent'
-import { getFlatRequestedMedia, getTrailerMedia } from '@src/utils/flatDatabaseUtils'
+import { countUniqueViewersByNormalizedId, getFlatRequestedMedia, getTrailerMedia } from '@src/utils/flatDatabaseUtils'
 
 async function validateVideoURL(url) {
   try {
@@ -102,7 +102,8 @@ async function MediaPage({ params, searchParams }) {
     mediaEpisode = null,
     mediaPlayerPage = null,
     limitedAccess = session && session.user?.limitedAccess,
-    media
+    media,
+    uniqueWatches = 0
   if (mediaType == 'tv') {
     mediaSeason = _params?.media?.[2] // Could be 'Season X'
     mediaEpisode = _params?.media?.[3] // Could be 'Episode Y'
@@ -133,11 +134,17 @@ async function MediaPage({ params, searchParams }) {
       season: mediaSeason,
       episode: mediaEpisode,
     })
+    uniqueWatches = await countUniqueViewersByNormalizedId(
+      media?.normalizedVideoId,
+    )
   } else if (mediaType === 'movie' && mediaTitle) {
     media = await getFlatRequestedMedia({
       type: mediaType,
       title: decodeURIComponent(mediaTitle),
     })
+    uniqueWatches = await countUniqueViewersByNormalizedId(
+      media?.normalizedVideoId,
+    )
   }
 
   let TVParams = ''
@@ -254,7 +261,7 @@ async function MediaPage({ params, searchParams }) {
             ) : (
             <Suspense fallback={<Loading />}>
               <div className='max-h-[90%] h-screen pt-16 w-full'>
-              <TVEpisodeDetailsComponent media={media} />
+              <TVEpisodeDetailsComponent media={media} uniqueWatches={uniqueWatches} />
               </div>
             </Suspense>
             )}
@@ -292,7 +299,7 @@ async function MediaPage({ params, searchParams }) {
         // ex. /list/movie/Inception
         <Suspense fallback={<Loading />}>
           <div className='max-h-[90%] h-screen pt-16 w-full'>
-          <MovieDetailsComponent media={media} />
+          <MovieDetailsComponent media={media} uniqueWatches={uniqueWatches} />
           </div>
         </Suspense>
         )}

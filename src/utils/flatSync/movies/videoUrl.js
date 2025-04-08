@@ -34,10 +34,12 @@ export async function syncMovieVideoURL(client, movie, fileServerData, serverCon
   if (!isHighestPriority) return null;
   
   const newVideoURL = createFullUrl(fileServerData.urls.mp4, serverConfig);
+  const normalizedVideoId = generateNormalizedVideoId(newVideoURL);
   
   // Primary logic: Check if the videoURL and source match
   // If they match, we don't need to update the URL itself
-  const skipUrlUpdate = isEqual(movie.videoURL, newVideoURL) && 
+  const skipUrlUpdate = normalizedVideoId === movie.normalizedVideoId &&
+                        isEqual(movie.videoURL, newVideoURL) && 
                        isSourceMatchingServer(movie, 'videoSource', serverConfig);
   
   if (skipUrlUpdate) {
@@ -47,7 +49,6 @@ export async function syncMovieVideoURL(client, movie, fileServerData, serverCon
   }
   
   // Generate normalized video ID for consistent lookups across URL variations
-  const normalizedVideoId = generateNormalizedVideoId(newVideoURL);
   
   const updateData = {
     videoURL: newVideoURL,

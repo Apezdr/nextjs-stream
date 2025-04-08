@@ -1,8 +1,9 @@
 import VirtualizedCastGrid from '@components/MediaScroll/VirtualizedCastGrid'
+import { EyeIcon } from '@heroicons/react/20/solid'
 import { classNames, getFullImageUrl } from '@src/utils'
 import Link from 'next/link'
 
-const TVEpisodeDetailsComponent = ({ media }) => {
+const TVEpisodeDetailsComponent = ({ media, uniqueWatches = 0 }) => {
   if (!media) {
     return <div className="text-center py-4">Loading...</div>
   }
@@ -75,6 +76,11 @@ const TVEpisodeDetailsComponent = ({ media }) => {
             <div className="flex flex-row w-full gap-2">
               <h1 className="text-3xl font-bold">{name ?? title}</h1>
               <strong>S{seasonNumber}E{episodeNumber}</strong>
+              {uniqueWatches ? (
+                <span className="ml-auto text-sm text-gray-100">
+                  <EyeIcon className='w-[17px] inline' /> Watched by {uniqueWatches} user{uniqueWatches > 1 ? "(s)" : ""}
+                </span>
+              ) : null}
             </div>
             <p className="text-gray-300 italic">{tagline}</p>
             {air_date ? (

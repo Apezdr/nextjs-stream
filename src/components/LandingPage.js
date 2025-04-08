@@ -25,7 +25,7 @@ export default function LandingPage({
             </h2>
             <h2 className="text-xl font-bold tracking-tight text-white pb-8 xl:pb-0 px-4 xl:px-0">
               <Suspense>
-                <AsyncMediaCounts suffix={` Available TV Shows & Movies`} />
+                <AsyncMediaCounts suffix={` Available TV Shows & Movies`} showDuration={true} />
               </Suspense>
             </h2>
           </li>

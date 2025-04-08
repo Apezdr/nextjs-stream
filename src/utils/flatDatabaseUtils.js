@@ -1027,13 +1027,13 @@ export async function getFlatRequestedMedia({
               episodeNumber: 1, 
               title: 1, 
               thumbnail: 1,
-              metadata: 1
+              metadata: 1,
             }
           });
           
           const result = {
             ...episodeData,
-            id: episodeData._id.toString(),
+            _id: episodeData._id.toString(),
             showId: episodeData.showId.toString(),
             seasonId: episodeData.seasonId.toString(),
             title: episodeData.title, // Use episode title
@@ -1061,7 +1061,6 @@ export async function getFlatRequestedMedia({
               trailer_url: tvShow.metadata?.trailer_url || null
             }
           };
-          delete result._id;
           
           // Handle next episode info
           if (nextEpisode) {
@@ -1131,14 +1130,27 @@ export async function getTrailerMedia(type, title) {
   return null;
 }
 
-// Function to get the count of available movies in the flat database
+// Function to get the count and total duration of available movies in the flat database
 export async function getFlatAvailableMoviesCount() {
   try {
     const client = await clientPromise;
-    return await client.db('Media').collection('FlatMovies').countDocuments();
+    const result = await client.db('Media').collection('FlatMovies').aggregate([
+      {
+        $group: {
+          _id: null,
+          count: { $sum: 1 },
+          totalDuration: { $sum: { $ifNull: ["$duration", 0] } }
+        }
+      }
+    ]).toArray();
+    
+    return {
+      count: result.length > 0 ? result[0].count : 0,
+      totalDuration: result.length > 0 ? result[0].totalDuration : 0
+    };
   } catch (error) {
-    console.error('Error fetching movie count:', error);
-    return 0;
+    console.error('Error fetching movie count and duration:', error);
+    return { count: 0, totalDuration: 0 };
   }
 }
 
@@ -1307,16 +1319,95 @@ export async function getFlatTVList(options = {}) {
 }
 
 /**
- * Get the count of available TV shows in the flat database.
+ * Get the count and total duration of available TV episodes in the flat database.
  * 
- * @returns {Promise<number>} The count of TV shows.
+ * @returns {Promise<Object>} Object containing count and totalDuration.
  */
 export async function getFlatAvailableTVShowsCount() {
   try {
     const client = await clientPromise;
-    return await client.db('Media').collection('FlatTVShows').countDocuments();
+    
+    // For TV shows, we need to get the sum of all episodes' durations
+    const result = await client.db('Media').collection('FlatEpisodes').aggregate([
+      {
+        $group: {
+          _id: null,
+          count: { $sum: 1 },
+          totalDuration: { $sum: { $ifNull: ["$duration", 0] } }
+        }
+      }
+    ]).toArray();
+    
+    // Also get the count of TV shows for the UI
+    const showCount = await client.db('Media').collection('FlatTVShows').countDocuments();
+    
+    return {
+      count: showCount,
+      episodeCount: result.length > 0 ? result[0].count : 0,
+      totalDuration: result.length > 0 ? result[0].totalDuration : 0
+    };
   } catch (error) {
-    console.error('Error fetching TV shows count:', error);
+    console.error('Error fetching TV shows count and duration:', error);
+    return { count: 0, episodeCount: 0, totalDuration: 0 };
+  }
+}
+
+/**
+ * Count unique users who have watched a specific media by its normalized video id.
+ * This function searches through the PlaybackStatus collection to find all users
+ * who have a video with the matching normalizedVideoId in their watched history.
+ *
+ * @param {string} normalizedVideoId - The normalized video ID to search for
+ * @returns {Promise<number>} The count of unique users who have watched this media
+ */
+export async function countUniqueViewersByNormalizedId(normalizedVideoId) {
+  try {
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('countUniqueViewersByNormalizedId:total');
+      console.log(`[PERF] Counting unique viewers for normalizedVideoId: ${normalizedVideoId}`);
+    }
+    
+    const client = await clientPromise;
+    
+    // Use MongoDB aggregation pipeline to count unique users
+    const result = await client
+      .db('Media')
+      .collection('PlaybackStatus')
+      .aggregate([
+        // Filter documents that have at least one video with the matching normalizedVideoId
+        { 
+          $match: { 
+            "videosWatched": { 
+              $elemMatch: { 
+                "normalizedVideoId": normalizedVideoId,
+                "isValid": { $ne: false } // Only count valid entries
+              } 
+            } 
+          } 
+        },
+        // Count unique users
+        { 
+          $group: { 
+            _id: null, 
+            uniqueViewers: { $sum: 1 } 
+          } 
+        }
+      ])
+      .toArray();
+    
+    const viewerCount = result.length > 0 ? result[0].uniqueViewers : 0;
+    
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('countUniqueViewersByNormalizedId:total');
+      console.log(`[PERF] Found ${viewerCount} unique viewers for normalizedVideoId: ${normalizedVideoId}`);
+    }
+    
+    return viewerCount;
+  } catch (error) {
+    console.error(`Error in countUniqueViewersByNormalizedId: ${error.message}`);
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('countUniqueViewersByNormalizedId:total');
+    }
     return 0;
   }
 }

@@ -29,18 +29,25 @@ export async function GET(req) {
       )
     }
     
-    // Default behavior - get counts in parallel
-    const [moviesCount, tvShowsCount] = await Promise.all([
+    // Default behavior - get counts and durations in parallel
+    const [movieData, tvData] = await Promise.all([
       getFlatAvailableMoviesCount(),
       getFlatAvailableTVShowsCount()
     ])
     
+    // Calculate hours from milliseconds
+    const movieHours = Math.round(movieData.totalDuration / (1000 * 60 * 60));
+    const tvHours = Math.round(tvData.totalDuration / (1000 * 60 * 60));
+    
     // Return as JSON
     return new Response(
       JSON.stringify({ 
-        moviesCount, 
-        tvShowsCount,
-        total: moviesCount + tvShowsCount
+        moviesCount: movieData.count, 
+        tvShowsCount: tvData.count,
+        total: movieData.count + tvData.count,
+        movieHours,
+        tvHours,
+        totalHours: movieHours + tvHours
       }), 
       { headers: { 'Content-Type': 'application/json' } }
     )

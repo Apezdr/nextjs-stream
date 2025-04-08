@@ -1,8 +1,9 @@
 import VirtualizedCastGrid from '@components/MediaScroll/VirtualizedCastGrid'
+import { EyeIcon } from '@heroicons/react/20/solid'
 import { classNames, getFullImageUrl } from '@src/utils'
 import Link from 'next/link'
 
-const MovieDetailsComponent = ({ media }) => {
+const MovieDetailsComponent = ({ media, uniqueWatches = 0 }) => {
   if (!media) {
     return <div className="text-center py-4">Loading...</div>
   }
@@ -59,7 +60,14 @@ const MovieDetailsComponent = ({ media }) => {
                 Go Back
               </button>
             </Link>
-            {title ? <h1 className="text-3xl font-bold">{title}</h1> : null}
+            <div className="flex flex-row w-full gap-2">
+              {title ? <h1 className="text-3xl font-bold">{title}</h1> : null}
+              {uniqueWatches ? (
+                <span className="ml-auto text-sm text-gray-100">
+                  <EyeIcon className='w-[17px] inline' /> Watched by {uniqueWatches} user{uniqueWatches > 1 ? "(s)" : ""}
+                </span>
+              ) : null}
+            </div>
             {tagline ? <p className="text-gray-300 italic">{tagline}</p> : null}
             {release_date ? (
               <p className="mt-2">

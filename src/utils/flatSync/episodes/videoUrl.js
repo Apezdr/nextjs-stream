@@ -51,10 +51,12 @@ export async function syncEpisodeVideoURL(client, show, season, episode, flatSho
   if (!isHighestPriority) return null;
   
   const newVideoURL = createFullUrl(fileServerEpisodeData.videoURL, serverConfig);
+  const normalizedVideoId = generateNormalizedVideoId(newVideoURL);
   
   // Primary logic: Check if the videoURL and source match
   // If they match, we don't need to update the URL itself
-  const skipUrlUpdate = isEqual(flatEpisode.videoURL, newVideoURL) &&
+  const skipUrlUpdate = normalizedVideoId === flatEpisode.normalizedVideoId &&
+                        isEqual(flatEpisode.videoURL, newVideoURL) &&
                        isSourceMatchingServer(flatEpisode, 'videoSource', serverConfig);
   
   if (skipUrlUpdate) {
@@ -64,7 +66,6 @@ export async function syncEpisodeVideoURL(client, show, season, episode, flatSho
   }
   
   // Generate normalized video ID for consistent lookups across URL variations
-  const normalizedVideoId = generateNormalizedVideoId(newVideoURL);
   
   const updateData = {
     videoURL: newVideoURL,

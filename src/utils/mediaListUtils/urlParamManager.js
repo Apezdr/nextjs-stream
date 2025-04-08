@@ -10,9 +10,15 @@ import { useState, useCallback, useTransition, useMemo, useEffect } from 'react'
  * @param {Array} mediaList - The list of media items (movies, TV shows, etc.)
  * @param {Function} extractGenres - Function to extract genres from the media list
  * @param {number} itemsPerPage - Number of items to show per page
+ * @param {Function} extractHdrTypes - Optional function to extract HDR types from the media list
  * @returns {Object} - All router state and handler functions
  */
-export function useMediaUrlParams(mediaList = [], extractGenres = () => [], itemsPerPage = 20) {
+export function useMediaUrlParams(
+  mediaList = [], 
+  extractGenres = () => [], 
+  itemsPerPage = 20, 
+  extractHdrTypes = null
+) {
   // Use Next.js router hooks
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -80,14 +86,21 @@ export function useMediaUrlParams(mediaList = [], extractGenres = () => [], item
     setAvailableGenres(genres);
     
     // Extract HDR types
-    const hdrTypes = new Set();
-    mediaList.forEach(item => {
-      if (item.hdr) {
-        hdrTypes.add(item.hdr);
-      }
-    });
-    setAvailableHdrTypes(Array.from(hdrTypes).sort());
-  }, [mediaList, extractGenres])
+    if (extractHdrTypes) {
+      // Use custom HDR extraction function if provided
+      const hdrTypes = extractHdrTypes(mediaList);
+      setAvailableHdrTypes(hdrTypes);
+    } else {
+      // Default behavior for movies/simple media
+      const hdrTypes = new Set();
+      mediaList.forEach(item => {
+        if (item.hdr) {
+          hdrTypes.add(item.hdr);
+        }
+      });
+      setAvailableHdrTypes(Array.from(hdrTypes).sort());
+    }
+  }, [mediaList, extractGenres, extractHdrTypes])
   
   // Handle toggling a genre selection with optimistic UI update - memoized with useCallback
   const handleGenreToggle = useCallback((genre) => {
@@ -189,8 +202,49 @@ export function useMediaUrlParams(mediaList = [], extractGenres = () => [], item
     // Apply HDR filter if any HDR types are selected
     if (selectedHdrTypes.length > 0) {
       filtered = filtered.filter(item => {
-        // Check if item has the HDR property and it matches one of the selected types
-        return item.hdr && selectedHdrTypes.includes(item.hdr);
+        // Direct HDR property (for movies)
+        if (item.hdr) {
+          if (typeof item.hdr === 'string') {
+            // Handle comma-separated HDR types (e.g., "HDR10, HLG")
+            const hdrValues = item.hdr.split(',').map(val => val.trim());
+            // Check if any of the HDR values match the selected types
+            if (hdrValues.some(val => selectedHdrTypes.includes(val))) {
+              return true;
+            }
+          } else if (selectedHdrTypes.includes(item.hdr)) {
+            return true;
+          }
+        }
+        
+        // Check nested episodes for TV shows with seasons structure
+        if (item.seasons && Array.isArray(item.seasons)) {
+          // Look through each season's episodes
+          for (const season of item.seasons) {
+            if (season.episodes && Array.isArray(season.episodes)) {
+              // Check if any episode has the matching HDR type
+              for (const episode of season.episodes) {
+                if (episode.hdr) {
+                  // If it's a string type of HDR (e.g., "HDR10", "Dolby Vision")
+                  if (typeof episode.hdr === 'string') {
+                    // Split HDR types if they contain commas (e.g., "HDR10, HLG")
+                    const hdrValues = episode.hdr.split(',').map(val => val.trim());
+                    // Check if any of the HDR values match the selected types
+                    if (hdrValues.some(val => selectedHdrTypes.includes(val))) {
+                      return true;
+                    }
+                  }
+                  // If it's just a boolean true and we're filtering for generic "HDR"
+                  else if (episode.hdr === true && selectedHdrTypes.includes('HDR')) {
+                    return true;
+                  }
+                }
+              }
+            }
+          }
+        }
+        
+        // No matching HDR found
+        return false;
       });
     }
     

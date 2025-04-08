@@ -20,7 +20,9 @@ export const runtime = 'edge'
 // Cached count function that can be reused across requests
 const getCachedMovieCount = cache(
   async () => {
-    return await getFlatAvailableMoviesCount();
+    const data = await getFlatAvailableMoviesCount();
+    // Handle both old (number) and new (object) return types for backward compatibility
+    return typeof data === 'object' ? data : { count: data, totalDuration: 0 };
   },
   ['movie-count'],
   { revalidate: 60 } // Revalidate every minute
@@ -73,8 +75,10 @@ async function MovieListComponent() {
     user: { name, email },
   } = session
   
-  // Get movie count - this is cached and can be part of the static shell
-  const moviesCount = await getCachedMovieCount();
+  // Get movie data - this is cached and can be part of the static shell
+  const movieData = await getCachedMovieCount();
+  const moviesCount = movieData.count;
+  const movieHours = Math.round(movieData.totalDuration / (1000 * 60 * 60));
   
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
@@ -83,7 +87,14 @@ async function MovieListComponent() {
         <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-2 xl:grid-cols-4 xl:gap-x-8">
           <li>
             <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
-              <Suspense fallback={<Loading />}>({moviesCount})</Suspense> Available Movies
+              <Suspense fallback={<Loading />}>
+                {movieHours > 0 && (
+                  <span className="block text-sm text-gray-100">
+                    {movieHours.toLocaleString()} hours total
+                  </span>
+                )}
+                ({moviesCount})
+              </Suspense> Available Movies
             </h2>
             <div className="flex flex-row gap-x-4 mt-4 justify-center">
               <Link href="/list" className="self-center">
@@ -156,7 +167,7 @@ async function MovieListComponent() {
                 {/* Loading line animation */}
                 <li className="col-span-full py-2">
                   <div className="w-full h-1 bg-gray-800 overflow-hidden">
-                    <div className="h-full bg-indigo-600 w-1/3 animate-[pulse_1.5s_ease-in-out_infinite]"></div>
+                    <div className="h-full bg-indigo-600 w-full animate-[pulse_1.5s_ease-in-out_infinite]"></div>
                   </div>
                 </li>
                 

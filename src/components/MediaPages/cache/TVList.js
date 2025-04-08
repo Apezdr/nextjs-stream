@@ -30,6 +30,41 @@ const extractGenresFromTVShows = (tvList) => {
   return Array.from(genres).sort();
 };
 
+/**
+ * Extracts HDR types from TV shows by looking at nested episode data
+ * @param {Array} tvList - List of TV shows with seasons and episodes
+ * @returns {Array} - Sorted list of unique HDR types
+ */
+const extractHdrTypesFromTVShows = (tvList) => {
+  const hdrTypes = new Set();
+  
+  tvList.forEach(tv => {
+    // Check each season and its episodes for HDR information
+    if (tv.seasons && Array.isArray(tv.seasons)) {
+      tv.seasons.forEach(season => {
+        if (season.episodes && Array.isArray(season.episodes)) {
+          season.episodes.forEach(episode => {
+            // If the episode has HDR and it's a string (e.g., "HDR10", "Dolby Vision")
+            if (episode.hdr && typeof episode.hdr === 'string') {
+              // Split HDR types if they contain commas (e.g., "HDR10, HLG")
+              const hdrValues = episode.hdr.split(',').map(val => val.trim());
+              hdrValues.forEach(val => {
+                if (val) hdrTypes.add(val);
+              });
+            }
+            // If it's just a boolean true, add a generic "HDR" type
+            else if (episode.hdr === true) {
+              hdrTypes.add('HDR');
+            }
+          });
+        }
+      });
+    }
+  });
+  
+  return Array.from(hdrTypes).sort();
+};
+
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
   enter: { opacity: 1, x: 0, y: 0 },
@@ -57,42 +92,6 @@ const TVCard = memo(({ tv, index }) => {
         <Suspense fallback={<SkeletonCard key={index} heightClass={'h-[582px]'} imageOnly />}>
           <Detailed tvShow={tv} check4kandHDR={true} />
         </Suspense>
-        
-        {tv.metadata?.first_air_date ? (
-          <PageContentAnimatePresence
-            _key={index + '-Metadata2'}
-            variants={variants_height}
-            transition={{ type: 'linear', delay: 0.21, duration: 2 }}
-          >
-            <p className="pointer-events-none mt-2 block text-sm font-medium text-gray-200 text-center">
-              {typeof tv.metadata.first_air_date.toLocaleDateString === 'function'
-                ? tv.metadata.first_air_date.toLocaleDateString()
-                : String(tv.metadata.first_air_date)}
-            </p>
-          </PageContentAnimatePresence>
-        ) : null}
-        
-        <PageContentAnimatePresence
-          _key={index + '-Metadata3'}
-          variants={variants_height}
-          transition={{ type: 'linear', delay: 0.75, duration: 2 }}
-        >
-          <span className="pointer-events-none mt-2 block truncate text-sm font-medium text-white">
-            <span className="underline">{tv.title}</span>
-          </span>
-        </PageContentAnimatePresence>
-        
-        {tv.metadata?.overview ? (
-          <PageContentAnimatePresence
-            _key={index + '-Metadata4'}
-            variants={variants_height}
-            transition={{ type: 'linear', delay: 0.75, duration: 2 }}
-          >
-            <p className="pointer-events-none mt-2 block text-sm font-medium text-gray-100">
-              {tv.metadata.overview}
-            </p>
-          </PageContentAnimatePresence>
-        ) : null}
       </Link>
     </PageContentAnimatePresence>
   );
@@ -193,7 +192,12 @@ const TVList = ({ tvList = [] }) => {
     copyShareLink,
     handleClearFilters,
     setAvailableGenres
-  } = useMediaUrlParams(tvList, extractGenresFromTVShows, ITEMS_PER_PAGE);
+  } = useMediaUrlParams(
+    tvList, 
+    extractGenresFromTVShows, 
+    ITEMS_PER_PAGE,
+    extractHdrTypesFromTVShows
+  );
 
   return (
     <>
