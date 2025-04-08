@@ -103,29 +103,6 @@ const MovieCard = memo(({ movie, index }) => {
             </p>
           </PageContentAnimatePresence>
         ) : null}
-        
-        {/* Display genres for each movie */}
-        {movie.metadata?.genres && movie.metadata.genres.length > 0 && (
-          <PageContentAnimatePresence
-            _key={index + '-Metadata5'}
-            variants={variants_height}
-            transition={{ type: 'linear', delay: 0.8, duration: 2 }}
-          >
-            <div className="flex flex-wrap gap-1 mt-2 justify-center">
-              {movie.metadata.genres.slice(0, 3).map(genre => (
-                <span 
-                  key={genre.id} 
-                  className="inline-flex text-xs px-2 py-0.5 bg-gray-800 text-gray-300 rounded-full"
-                >
-                  {genre.name}
-                </span>
-              ))}
-              {movie.metadata.genres.length > 3 && (
-                <span className="text-xs text-gray-400">+{movie.metadata.genres.length - 3} more</span>
-              )}
-            </div>
-          </PageContentAnimatePresence>
-        )}
       </Link>
     </PageContentAnimatePresence>
   );

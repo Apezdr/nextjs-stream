@@ -1,9 +1,18 @@
-import VirtualizedCastGrid from '@components/MediaScroll/VirtualizedCastGrid'
-import { EyeIcon } from '@heroicons/react/20/solid'
 import { classNames, getFullImageUrl } from '@src/utils'
 import Link from 'next/link'
+import { Suspense, lazy } from 'react'
+import ViewCount from './ViewCount'
+import Image from 'next/image'
+import dynamic from 'next/dynamic'
+import RetryImage from '@components/RetryImage'
 
-const MovieDetailsComponent = ({ media, uniqueWatches = 0 }) => {
+// Lazy load the cast grid section which can be heavy
+const CastSection = dynamic(() => 
+  import('./CastSection').then(mod => ({ default: props => <mod.default {...props} /> })),
+  { ssr: true, loading: () => <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse" /> }
+)
+
+const MovieDetailsComponent = ({ media }) => {
   if (!media) {
     return <div className="text-center py-4">Loading...</div>
   }
@@ -18,6 +27,14 @@ const MovieDetailsComponent = ({ media, uniqueWatches = 0 }) => {
     const seconds = Math.floor((minutes * 60) % 60);
     return `${hours}h ${remainingMinutes}m ${seconds}s`;
   }
+  
+  let blurhash = null
+
+  if (backdrop) {
+    blurhash = media.backdropBlurhash
+  } else if (posterURL) {
+    blurhash = media.posterBlurhash
+  }
 
   const calculatedRuntime = duration ? convertToLocaleTime(duration / 60000) : runtime ? convertToLocaleTime(runtime) : null;
 
@@ -26,16 +43,44 @@ const MovieDetailsComponent = ({ media, uniqueWatches = 0 }) => {
       <div className="flex flex-col gap-2">
         <div>
           <div className="relative">
-            <img
-              src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-              alt={`${title} backdrop`}
-              className="w-full h-64 object-cover rounded-lg shadow-md"
-            />
-            {logo && (
-              <div className="absolute top-4 left-4">
-                <img src={logo} alt={`${title} logo`} className="w-32 h-auto" />
-              </div>
-            )}
+            <Suspense fallback={<div className="w-full h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
+              {blurhash ? (
+                <RetryImage
+                  src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
+                  alt={`${title} backdrop`}
+                  quality={100}
+                  width={1200}
+                  height={256}
+                  placeholder="blur"
+                  blurDataURL={`data:image/png;base64,${blurhash}`}
+                  className="w-full h-64 object-cover rounded-lg shadow-md"
+                  priority={false}
+                />
+              ) : (
+                <RetryImage
+                  src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
+                  alt={`${title} backdrop`}
+                  quality={100}
+                  width={1200}
+                  height={256}
+                  className="w-full h-64 object-cover rounded-lg shadow-md"
+                  priority={false}
+                />
+              )}
+              {logo && (
+                <div className="absolute top-4 left-4">
+                  <RetryImage
+                    src={logo}
+                    alt={`${title} logo`}
+                    quality={100}
+                    width={128}
+                    height={40}
+                    className="w-32 h-auto"
+                    priority={true}
+                  />
+                </div>
+              )}
+            </Suspense>
           </div>
           <div className="mt-4">
             <Link href="/list/movie" className="self-center">
@@ -62,11 +107,11 @@ const MovieDetailsComponent = ({ media, uniqueWatches = 0 }) => {
             </Link>
             <div className="flex flex-row w-full gap-2">
               {title ? <h1 className="text-3xl font-bold">{title}</h1> : null}
-              {uniqueWatches ? (
-                <span className="ml-auto text-sm text-gray-100">
-                  <EyeIcon className='w-[17px] inline' /> Watched by {uniqueWatches} user{uniqueWatches > 1 ? "(s)" : ""}
-                </span>
-              ) : null}
+              <Suspense fallback={null}>
+                {media?.normalizedVideoId ? (
+                  <ViewCount normalizedVideoId={media.normalizedVideoId} />
+                ) : null}
+              </Suspense>
             </div>
             {tagline ? <p className="text-gray-300 italic">{tagline}</p> : null}
             {release_date ? (
@@ -174,10 +219,9 @@ const MovieDetailsComponent = ({ media, uniqueWatches = 0 }) => {
             </div>
           ) : null}
           {cast && cast.length > 0 ? (
-            <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg"> {/* Ensure a fixed height for virtualization */}
-                <h4 className="text-2xl text-black font-semibold mb-4">Cast</h4>
-                <VirtualizedCastGrid cast={cast} />
-            </div>
+            <Suspense fallback={<div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse"></div>}>
+              <CastSection cast={cast} />
+            </Suspense>
           ): null}
         </div>
       </div>
