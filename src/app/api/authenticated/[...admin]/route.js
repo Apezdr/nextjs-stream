@@ -6,6 +6,8 @@ import {
   getLastSynced,
   getRecentlyWatched,
 } from '@src/utils/admin_database'
+import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
+import { ObjectId } from 'mongodb'
 import {
   fetchRadarrQueue,
   fetchSABNZBDQueue,
@@ -135,10 +137,128 @@ export async function GET(request, props) {
         }
         break
 
+      case 'user-recently-watched':
+        {
+          try {
+            // Get userId from path
+            const userId = slugs[2];
+            if (!userId) {
+              throw new Error('User ID is required');
+            }
+            
+            // Parse pagination parameters
+            const url = new URL(request.url);
+            const page = parseInt(url.searchParams.get('page') || '0', 10);
+            const limit = parseInt(url.searchParams.get('limit') || '10', 10);
+            
+            // Validate user exists
+            const client = await clientPromise;
+            const user = await client
+              .db('Users')
+              .collection('AuthenticatedUsers')
+              .findOne({ _id: new ObjectId(userId) });
+              
+            if (!user) {
+              throw new Error(`User with ID ${userId} not found`);
+            }
+            
+            // Fetch data for this specific user with pagination
+            const watchedMedia = await getFlatRecentlyWatchedForUser({
+              userId: userId,
+              page: page,
+              limit: limit,
+              countOnly: false
+            });
+            
+            // Get total count for pagination info
+            const totalCount = await getFlatRecentlyWatchedForUser({
+              userId: userId,
+              countOnly: true
+            });
+            
+            // Format response with pagination metadata
+            responseData = {
+              data: watchedMedia || [],
+              user: {
+                id: user._id.toString(),
+                name: user.name,
+                image: user.image
+              },
+              pagination: {
+                page,
+                limit,
+                total: totalCount,
+                totalPages: Math.ceil(totalCount / limit),
+                hasMore: (page + 1) * limit < totalCount
+              }
+            };
+          } catch (error) {
+            console.error(`Error fetching user recently watched: ${error.message}`);
+            return new Response(JSON.stringify({ error: error.message }), {
+              status: 500,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+        }
+        break;
+        
       case 'recently-watched':
         {
-          const recentlyWatched = await getRecentlyWatched()
-          responseData = recentlyWatched
+          try {
+            // Get all users
+            const client = await clientPromise
+            const users = await client.db('Users').collection('AuthenticatedUsers').find({}).toArray()
+            
+            // For each user, get their recently watched media using the flat database approach
+            const lastWatchedPromises = users.map(async (user) => {
+              try {
+                // Use flat database function to get recently watched items
+                const watchedMedia = await getFlatRecentlyWatchedForUser({
+                  client,
+                  userId: user._id,
+                  page: 0,
+                  limit: 4, // Same limit as legacy function
+                  countOnly: false
+                })
+                
+                // Skip if no watched media found
+                if (!watchedMedia || watchedMedia.length === 0) {
+                  return null
+                }
+                
+                // Find the most recent watch time
+                let mostRecentWatch = null
+                watchedMedia.forEach(media => {
+                  const lastUpdated = media.lastWatchedVideo?.lastUpdated
+                  if (lastUpdated && (!mostRecentWatch || lastUpdated > mostRecentWatch)) {
+                    mostRecentWatch = lastUpdated
+                  }
+                })
+                
+                // Format the data to match the structure expected by the component
+                return {
+                  user: {
+                    _id: user._id.toString(), // Add the user ID for the modal functionality
+                    name: user.name,
+                    image: user.image,
+                  },
+                  videos: watchedMedia,
+                  mostRecentWatch
+                }
+              } catch (userError) {
+                console.error(`Error processing flat recently watched for user ${user.name}: ${userError.message}`)
+                return null
+              }
+            })
+            
+            const recentlyWatched = await Promise.all(lastWatchedPromises)
+            // Filter out nulls and sort by most recent watch
+            responseData = recentlyWatched
+              .filter(entry => entry)
+              .sort((a, b) => b.mostRecentWatch - a.mostRecentWatch)
+          } catch (error) {
+            console.error(`Error in recently-watched endpoint: ${error.message}`)
+          }
         }
         break
 

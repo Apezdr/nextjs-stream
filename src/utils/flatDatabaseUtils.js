@@ -218,13 +218,15 @@ export async function addCustomUrlToFlatMedia(mediaArray, type) {
  * Optimized version that uses MongoDB aggregation pipeline for filtering, sorting, and pagination.
  *
  * @param {Object} params - Parameters for the function.
- * @param {string} params.userId - The ID of the current user.
+ * @param {Object} params.client - MongoDB client instance.
+ * @param {string|object} params.userId - The ID of the current user.
  * @param {number} [params.page=0] - The page number for pagination (0-based).
  * @param {number} [params.limit=15] - The number of items per page.
  * @param {boolean} [params.countOnly=false] - Whether to only get the document count.
  * @returns {Promise<Array|number>} The recently watched media details or the document count.
  */
 export async function getFlatRecentlyWatchedForUser({
+  client = null,
   userId,
   page = 0,
   limit = 15,
@@ -236,18 +238,19 @@ export async function getFlatRecentlyWatchedForUser({
       console.log(`[PERF] Starting getFlatRecentlyWatchedForUser for userId: ${userId}, page: ${page}, limit: ${limit}, countOnly: ${countOnly}`);
     }
     
-    const client = await clientPromise;
+    const _client = client ?? await clientPromise;
     const validPage = Math.max(page, 0); // Ensure page is at least 0
-    const userObjectId = new ObjectId(userId);
+    const userObjectId = typeof(userId) === 'object' ? userId : new ObjectId(userId);
+    const userIdString = typeof(userId) === 'object' ? userId.toString() : userId;
 
     // Validate user exists
-    const userExists = await client
+    const userExists = await _client
       .db('Users')
       .collection('AuthenticatedUsers')
       .countDocuments({ _id: userObjectId }, { limit: 1 });
       
     if (!userExists) {
-      throw new Error(`User with ID ${userId} not found`);
+      throw new Error(`User with ID ${userIdString} not found`);
     }
 
     // Step 1: Use aggregation to get count of valid videos (for countOnly)
@@ -256,7 +259,7 @@ export async function getFlatRecentlyWatchedForUser({
         console.time('getFlatRecentlyWatchedForUser:count');
       }
       
-      const countResult = await client
+      const countResult = await _client
         .db('Media')
         .collection('PlaybackStatus')
         .aggregate([
@@ -317,7 +320,7 @@ export async function getFlatRecentlyWatchedForUser({
       }}
     ];
     
-    const watchedVideos = await client
+    const watchedVideos = await _client
       .db('Media')
       .collection('PlaybackStatus')
       .aggregate(aggregationPipeline)
@@ -366,23 +369,23 @@ export async function getFlatRecentlyWatchedForUser({
     
     // Step 4: Fetch movies and episodes in parallel - using both direct URL and hash matching
     const [movies, episodes] = await Promise.all([
-      client
+      _client
         .db('Media')
         .collection('FlatMovies')
         .find({ 
           $or: [
-            { videoURL: { $in: videoIds } },
-            { normalizedVideoId: { $in: normalizedVideoIds } }
+            { normalizedVideoId: { $in: normalizedVideoIds } },
+            { videoURL: { $in: videoIds } }
           ]
         }, { projection: movieProjection })
         .toArray(),
-      client
+        _client
         .db('Media')
         .collection('FlatEpisodes')
         .find({ 
           $or: [
-            { videoURL: { $in: videoIds } },
-            { normalizedVideoId: { $in: normalizedVideoIds } }
+            { normalizedVideoId: { $in: normalizedVideoIds } },
+            { videoURL: { $in: videoIds } }
           ]
         })
         .toArray()
@@ -420,12 +423,12 @@ export async function getFlatRecentlyWatchedForUser({
       
       // Batch fetch seasons and shows
       const [seasons, shows] = await Promise.all([
-        seasonIds.length > 0 ? client
+        seasonIds.length > 0 ? _client
           .db('Media')
           .collection('FlatSeasons')
           .find({ _id: { $in: seasonIds } })
           .toArray() : [],
-        showIds.length > 0 ? client
+        showIds.length > 0 ? _client
           .db('Media')
           .collection('FlatTVShows')
           .find({ _id: { $in: showIds } })
@@ -484,7 +487,7 @@ export async function getFlatRecentlyWatchedForUser({
     }));
     
     const lastWatched = [{
-      _id: userId,
+      _id: userObjectId,
       videosWatched: formattedWatchedVideos
     }];
     

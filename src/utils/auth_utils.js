@@ -333,8 +333,9 @@ export async function sanitizeRecord(record, type, context = {}) {
     
     // Last watched date - from watch history
     if (context.dateContext === 'watchHistory' || context.dateTypes?.includes('lastWatched')) {
-      if (context.lastWatchedVideo?.lastUpdated) {
+      if (context.lastWatchedVideo?.lastUpdated && context.lastWatchedVideo?.playbackTime) {
         dateValues.lastWatchedDate = formatDateToEST(context.lastWatchedVideo.lastUpdated);
+        dateValues.playbackTime = context.lastWatchedVideo.playbackTime;
       }
     }
     
@@ -377,6 +378,7 @@ export async function sanitizeRecord(record, type, context = {}) {
     let poster = record.posterURL || getFullImageUrl(record.metadata?.poster_path)
     if (!poster) {
       poster = `/sorry-image-not-available.jpg`
+      delete record.posterBlurhash;
     }
     if (record._id ?? record.id) {
       record.id = record._id ? record._id.toString() : record.id.toString()
@@ -393,7 +395,7 @@ export async function sanitizeRecord(record, type, context = {}) {
         id: record.id,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         link: `${record.title}/${record.seasonNumber}/${record.episode.episodeNumber}`,
-        duration: record.duration ?? 0,
+        duration: record.duration ?? record.episode.duration ?? 0,
         posterURL: poster,
         posterBlurhash: record.posterBlurhash || null,
         backdrop: record.backdrop || getFullImageUrl(record.metadata?.backdrop_path) || null,

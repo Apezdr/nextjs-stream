@@ -69,8 +69,15 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
     console.log(chalk.cyan(`Found ${flatDB.missingEpisodes.length} episodes that need to be created during sync`));
   }
   
-  // Sync in order: TV Shows -> Seasons -> Episodes -> Movies
+  // Sync in order: Movies -> TV Shows -> Seasons -> Episodes
   // This order ensures that parent entities exist before child entities
+
+  // Sync movies (independent of other entities)
+  console.log(chalk.blue(`Starting movie sync to flat structure...`));
+  const movieStartTime = performance.now();
+  const movieResults = await syncMovies(flatDB, fileServer, serverConfig, fieldAvailability);
+  const movieEndTime = performance.now();
+  console.log(chalk.blue(`Movie sync completed in ${((movieEndTime - movieStartTime) / 1000).toFixed(2)} seconds`));
   
   // First sync TV shows
   console.log(chalk.cyan(`Starting TV show sync to flat structure...`));
@@ -92,13 +99,6 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
   const episodeResults = await syncEpisodes(flatDB, fileServer, serverConfig, fieldAvailability);
   const episodeEndTime = performance.now();
   console.log(chalk.yellow(`Episode sync completed in ${((episodeEndTime - episodeStartTime) / 1000).toFixed(2)} seconds`));
-  
-  // Finally sync movies (independent of other entities)
-  console.log(chalk.blue(`Starting movie sync to flat structure...`));
-  const movieStartTime = performance.now();
-  const movieResults = await syncMovies(flatDB, fileServer, serverConfig, fieldAvailability);
-  const movieEndTime = performance.now();
-  console.log(chalk.blue(`Movie sync completed in ${((movieEndTime - movieStartTime) / 1000).toFixed(2)} seconds`));
   
   // Sync blurhashes using the most efficient available method
   console.log(chalk.magenta(`Starting blurhash sync to flat structure...`));
@@ -229,6 +229,8 @@ export {
   syncEpisodes,
   initializeFlatDatabase,
   MediaType,
+
+  doesFieldExistAcrossServers,
   
   // Export memory utilities
   buildEnhancedFlatDBStructure,

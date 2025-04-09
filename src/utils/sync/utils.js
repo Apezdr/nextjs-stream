@@ -80,6 +80,64 @@ export function filterLockedFields(existingDoc, updateData) {
 }
 
 /**
+ * Filters locked fields from update data while preserving object structure.
+ * Unlike filterLockedFields, this function preserves the nested structure of objects
+ * instead of flattening them with dot notation, making it suitable for MongoDB $set operations
+ * that need to replace entire objects.
+ * 
+ * @param {Object} existingDoc - Existing document
+ * @param {Object} updateData - Update data
+ * @returns {Object} Filtered update data with preserved structure
+ */
+export function filterLockedFieldsPreserveStructure(existingDoc, updateData) {
+  const lockedFields = existingDoc.lockedFields || {}
+  const result = {}
+
+  function isFieldLocked(fieldPath) {
+    const parts = fieldPath.split('.')
+    let current = lockedFields
+
+    for (const part of parts) {
+      if (current[part] === true) {
+        return true
+      } else if (typeof current[part] === 'object' && current[part] !== null) {
+        current = current[part]
+      } else {
+        return false
+      }
+    }
+    return false
+  }
+
+  function processStructured(obj, path = '') {
+    const resultObj = {}
+    let hasValues = false
+
+    for (const key in obj) {
+      const value = obj[key]
+      const fullPath = path ? `${path}.${key}` : key
+
+      if (isFieldLocked(fullPath)) continue
+
+      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        const processedChild = processStructured(value, fullPath)
+        if (Object.keys(processedChild).length > 0) {
+          resultObj[key] = processedChild
+          hasValues = true
+        }
+      } else {
+        resultObj[key] = value
+        hasValues = true
+      }
+    }
+
+    return hasValues ? resultObj : {}
+  }
+
+  return processStructured(updateData)
+}
+
+/**
  * Checks if source matches server.
  * @param {Object} item - Media item
  * @param {string} sourceKey - Source key
@@ -112,7 +170,7 @@ export function isCurrentServerHighestPriorityForField(
 ) {
   const serversWithData = fieldAvailability[mediaType][mediaTitle]?.[fieldPath] || []
   if (serversWithData.length === 0) {
-    return false
+    return true
   }
 
   const highestPriority = serversWithData.reduce((minPriority, serverId) => {

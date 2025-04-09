@@ -2,10 +2,11 @@
  * Movie captions sync utilities for flat structure
  */
 
-import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, processCaptionURLs } from '../../sync/utils';
+import { createFullUrl, filterLockedFieldsPreserveStructure, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, processCaptionURLs } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { isEqual } from 'lodash';
 import { sortSubtitleEntries } from '../../sync/captions';
+import { doesFieldExistAcrossServers } from '@src/utils/flatSync';
 
 /**
  * Gathers captions for a movie from a file server
@@ -65,14 +66,20 @@ export async function syncMovieCaptions(client, movie, fileServerData, serverCon
   const gatheredCaptions = gatherMovieCaptions(movie, fileServerData, serverConfig, fieldAvailability);
   if (!gatheredCaptions) return null;
   
+  console.log(`Movie: Found ${Object.keys(gatheredCaptions).length} captions for "${movieTitle}" from server ${serverConfig.id}`);
+  
   // Start with current captions
   const currentCaptions = movie.captionURLs || {};
   const finalCaptionURLs = { ...currentCaptions };
+  
+  // Track which languages we've seen from this server
+  const languagesSeenFromThisServer = new Set();
   let changed = false;
   
   // Update captions from the gathered data
   for (const [lang, captionObj] of Object.entries(gatheredCaptions)) {
     const currentCaption = finalCaptionURLs[lang];
+    languagesSeenFromThisServer.add(lang);
     
     // Only update if the caption doesn't exist or has changed
     if (!currentCaption || 
@@ -81,6 +88,35 @@ export async function syncMovieCaptions(client, movie, fileServerData, serverCon
         currentCaption.sourceServerId !== captionObj.sourceServerId) {
       
       finalCaptionURLs[lang] = captionObj;
+      changed = true;
+      console.log(`Movie: Updated caption for "${movieTitle}" - Language: ${lang}, URL: ${captionObj.url}`);
+    }
+  }
+  
+  // Remove captions that were sourced from this server but no longer exist on it
+  for (const [lang, caption] of Object.entries(finalCaptionURLs)) {
+    if (caption.sourceServerId === serverConfig.id && !languagesSeenFromThisServer.has(lang)) {
+      console.log(`Movie: Removing caption no longer on server - "${movieTitle}" - Language: ${lang}`);
+      delete finalCaptionURLs[lang];
+      changed = true;
+    }
+  }
+  
+  // Check if each caption exists on any server, and remove orphaned captions
+  for (const [lang, caption] of Object.entries(finalCaptionURLs)) {
+    const fieldPath = `urls.subtitles.${lang}.url`;
+    
+    // Check if any server has this caption available
+    const fieldExists = doesFieldExistAcrossServers(
+      fieldAvailability,
+      'movies',
+      movieTitle,
+      fieldPath
+    );
+    
+    if (!fieldExists) {
+      console.log(`Movie: Removing orphaned caption not available on any server - "${movieTitle}" - Language: ${lang}`);
+      delete finalCaptionURLs[lang];
       changed = true;
     }
   }
@@ -101,18 +137,30 @@ export async function syncMovieCaptions(client, movie, fileServerData, serverCon
     captionSource: newCaptionSource
   };
   
-  // Filter out locked fields
-  const filteredUpdateData = filterLockedFields(movie, updateData);
+  // Filter out locked fields while preserving structure
+  const filteredUpdateData = filterLockedFieldsPreserveStructure(movie, updateData);
   
-  if (!filteredUpdateData.captionURLs) return null;
+  if (Object.keys(filteredUpdateData).length === 0) {
+    console.log(`Movie: All fields are locked for "${movieTitle}", skipping update`);
+    return null;
+  }
   
   console.log(`Movie: Updating captions for "${movieTitle}" from server ${serverConfig.id}`);
   
-  // Update the movie in the flat database
+  if (filteredUpdateData.captionSource) {
+    console.log(`Caption source: ${filteredUpdateData.captionSource}`);
+  }
+  
+  if (filteredUpdateData.captionURLs) {
+    console.log(`Caption languages: ${Object.keys(filteredUpdateData.captionURLs).join(', ')}`);
+  }
+  
+  // Update the movie in the flat database with properly structured data
   await updateMovieInFlatDB(client, movieTitle, { $set: filteredUpdateData });
   
   return {
     field: 'captions',
-    updated: true
+    updated: true,
+    languages: filteredUpdateData.captionURLs ? Object.keys(filteredUpdateData.captionURLs) : []
   };
 }

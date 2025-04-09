@@ -11,14 +11,10 @@ import axios from 'axios'
 import Link from 'next/link'
 import RecentlyWatched from './RecentlyWatchedList'
 import { buildURL } from '@src/utils'
-import DownloadStatus from './Integrations/SABNZBDqueue'
-import TdarrProgressBar from './Integrations/TdarrQueue'
-import RadarrQueue from './Integrations/RadarrQueue'
-import SonarrQueue from './Integrations/SonarrQueue'
-import { PauseCircleIcon } from '@heroicons/react/20/solid'
 import WipeDbButton from '@src/app/(styled)/admin/WipeDBButton'
 import { ServerStats } from './Stats/ServerStats'
 import { ServerProcesses } from './Stats/ServerProcesses'
+import { QueueDashboard } from './Integrations';
 
 const processLastSyncTimeData = (lastSyncTimeData) => {
   const lastSyncTime =
@@ -386,37 +382,13 @@ export default function AdminOverviewPage({
       </div>
       <hr className="my-16 border-gray-300 w-full" />
       <RecentlyWatched recentlyWatched={recentlyWatched} />
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {sabnzbdQueue && (
-          <div>
-            <h2 className="text-xl font-bold mb-2">
-              Download Status
-              {sabnzbdQueue?.queue?.status?.toLowerCase() === 'paused' ? (
-                <PauseCircleIcon className="ml-2 w-8 inline-block" />
-              ) : null}
-            </h2>
-            <DownloadStatus data={sabnzbdQueue.queue} />
-          </div>
-        )}
-        {radarrQueue && (
-          <div>
-            <h2 className="text-xl font-bold mb-2">Radarr Queue</h2>
-            <RadarrQueue data={radarrQueue} />
-          </div>
-        )}
-        {sonarrQueue && (
-          <div>
-            <h2 className="text-xl font-bold mb-2">Sonarr Queue</h2>
-            <SonarrQueue data={sonarrQueue} />
-          </div>
-        )}
-        {tdarrQueue && (
-          <div>
-            <h2 className="text-xl font-bold mb-2">Tdarr Progress</h2>
-            <TdarrProgressBar data={tdarrQueue} />
-          </div>
-        )}
-      </div>
+      <QueueDashboard
+        sabnzbdQueue={sabnzbdQueue}
+        radarrQueue={radarrQueue}
+        sonarrQueue={sonarrQueue}
+        tdarrQueue={tdarrQueue}
+        unsupportedQueues={unsupportedQueues}
+      />
       {/* Optional: Display unsupported queues */}
       {unsupportedQueues.length > 0 && (
         <div className="mt-8 p-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
@@ -429,7 +401,7 @@ export default function AdminOverviewPage({
         </div>
       )}
       <div className="flex flex-col xl:flex-row">
-        <ListRecords
+        {/* <ListRecords
           title="Movies"
           subtitle="Overview of all movies"
           headers={_processedData.movies?.headers}
@@ -474,7 +446,7 @@ export default function AdminOverviewPage({
             setIsAdding(false)
             setIsOpen(true)
           }}
-        />
+        /> */}
       </div>
       <hr className="my-16 border-gray-300 w-full" />
       <div className="flex flex-col xl:flex-row w-full">
