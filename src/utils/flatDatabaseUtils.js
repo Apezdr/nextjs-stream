@@ -4,7 +4,8 @@ import { ObjectId } from 'mongodb'
 import {
   arrangeMediaByLatestModification,
   processWatchedDetails,
-  sanitizeRecord
+  sanitizeRecord,
+  generateClipVideoURL
 } from '@src/utils/auth_utils'
 import { getFullImageUrl } from '@src/utils'
 
@@ -1069,6 +1070,7 @@ export async function getFlatRequestedMedia({
           if (nextEpisode) {
             result.hasNextEpisode = true;
             result.nextEpisodeThumbnail = nextEpisode.thumbnail || nextEpisode.metadata?.still_path || null;
+            result.nextEpisodeThumbnailBlurhash = nextEpisode.thumbnailBlurhash ? `data:image/png;base64,${nextEpisode.thumbnailBlurhash}` : null
             result.nextEpisodeTitle = nextEpisode.title || nextEpisode.metadata?.name || null;
             result.nextEpisodeNumber = nextEpisode.episodeNumber;
           } else {
@@ -1527,13 +1529,19 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
       console.log(`[PERF] Found ${episodes.length} episodes for season ${seasonNumber} of "${showTitle}"`);
     }
     
-    // Add episodes to the season object with proper ID conversions
+    // Add episodes to the season object with proper ID conversions and clip URLs
     season.episodes = episodes.map((episode) => {
       const episodeObj = {
         ...episode,
         _id: episode._id.toString(),
         showId: episode.showId.toString(),
-        seasonId: episode.seasonId.toString()
+        seasonId: episode.seasonId.toString(),
+        // Generate and add the clip URL
+        clipVideoURL: generateClipVideoURL(
+          episode, 
+          'tv',
+          tvShow.title
+        )
       };
 
       return episodeObj;

@@ -38,6 +38,7 @@ export interface VideoLayoutProps {
     season_number: number
     nextEpisodeNumber: number
     nextEpisodeThumbnail: string
+    nextEpisodeThumbnailBlurhash?: string
     nextEpisodeTitle: string
     hasNextEpisode: boolean
     mediaLength: number
@@ -88,6 +89,7 @@ export function VideoLayout({
                 season_number={nextUpCard?.season_number}
                 nextEpisodeNumber={nextUpCard?.nextEpisodeNumber}
                 nextEpisodeThumbnail={nextUpCard?.nextEpisodeThumbnail}
+                nextEpisodeThumbnailBlurhash={nextUpCard?.nextEpisodeThumbnailBlurhash}
                 nextEpisodeTitle={nextUpCard?.nextEpisodeTitle}
                 hasNextEpisode={nextUpCard?.hasNextEpisode}
                 mediaLength={nextUpCard?.mediaLength}

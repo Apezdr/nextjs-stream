@@ -2,7 +2,7 @@
  * Movie metadata sync utilities for flat structure
  */
 
-import { filterLockedFields, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
+import { filterLockedFields, filterLockedFieldsPreserveStructure, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
 import { isEqual } from 'lodash';
@@ -52,11 +52,14 @@ export async function syncMovieMetadata(client, movie, fileServerData, serverCon
   // Compare last_updated timestamps
   const existingLastUpdated = new Date(movie.metadata?.last_updated || '1970-01-01');
   const newLastUpdated = new Date(movieMetadata.last_updated || '1970-01-01');
+  const isUnchanged = isEqual(movie.metadata, movieMetadata)
   
-  if (newLastUpdated <= existingLastUpdated && movie.metadataSource) return null;
+  // Skip if the metadata hasn't changed and the existing source is the same
+  // and the last updated date is not newer
+  if (newLastUpdated <= existingLastUpdated && isUnchanged && movie.metadataSource) return null;
   
   // Check if metadata has actually changed
-  if (isEqual(movie.metadata, movieMetadata) && movie.metadataSource === serverConfig.id) return null;
+  if (isUnchanged && movie.metadataSource === serverConfig.id) return null;
   
   const updateData = {
     metadata: movieMetadata,
@@ -64,7 +67,7 @@ export async function syncMovieMetadata(client, movie, fileServerData, serverCon
   };
   
   // Filter out locked fields
-  const filteredUpdateData = filterLockedFields(movie, updateData);
+  const filteredUpdateData = filterLockedFieldsPreserveStructure(movie, updateData);
   
   if (Object.keys(filteredUpdateData).length === 0) return null;
   

@@ -60,7 +60,9 @@ export function filterLockedFields(existingDoc, updateData) {
 
       const existingValue = existingObj ? existingObj[key] : undefined
 
-      if (
+      if (value instanceof Date) {
+        result[fullPath] = value
+      } else if (
         typeof value === 'object' &&
         value !== null &&
         !Array.isArray(value) &&
@@ -119,7 +121,11 @@ export function filterLockedFieldsPreserveStructure(existingDoc, updateData) {
 
       if (isFieldLocked(fullPath)) continue
 
-      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+      // Special handling for Date objects - treat them as primitive values
+      if (value instanceof Date) {
+        resultObj[key] = value
+        hasValues = true
+      } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
         const processedChild = processStructured(value, fullPath)
         if (Object.keys(processedChild).length > 0) {
           resultObj[key] = processedChild

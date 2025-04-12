@@ -24,12 +24,16 @@ const DashboardCard = ({ title, icon, children, count, status, onRefresh }) => {
           </h2>
         </div>
         <div className="flex items-center">
-          {status && (
+          {typeof(status) === "string" ? (
             <span className={`px-2 py-1 rounded-full text-xs font-medium mr-2 ${
-              status.toLowerCase() === 'paused' 
+              status?.toLowerCase() === 'paused' 
                 ? 'bg-yellow-100 text-yellow-800' 
                 : 'bg-green-100 text-green-800'
             }`}>
+              {status}
+            </span>
+          ) : (
+            <span className={`px-2 py-1 rounded-full text-xs font-medium mr-2`}>
               {status}
             </span>
           )}

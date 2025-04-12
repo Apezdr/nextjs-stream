@@ -16,6 +16,7 @@ function CardVideoPlayer({
   height,
   width,
   shouldPlay = false,
+  muted = null,
 }) {
   const playerRef = useRef(null)
   const [isPlayerReady, setPlayerReady] = useState(false)
@@ -106,6 +107,7 @@ function CardVideoPlayer({
         shouldPlay ? 'shouldPlay !opacity-100' : ''
       )}
       muted={
+        muted ? muted : // if muted is not passed, check localStorage
         typeof localStorage !== 'undefined' && localStorage?.getItem('videoMutedCard')
           ? localStorage.getItem('videoMutedCard') === 'true'
           : true

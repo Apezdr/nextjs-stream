@@ -1,9 +1,10 @@
 'use client';
 
-import React from 'react';
+import { useState } from 'react';
 import RadarrQueue from './RadarrQueue';
 import SonarrQueue from './SonarrQueue';
 import TdarrProgressBar from './TdarrProgressBar';
+import TdarrQueue from './TdarrQueue';
 import DashboardCard from './DashboardCard';
 import DownloadStatus from './SABNZBDdownload';
 
@@ -23,6 +24,8 @@ const QueueDashboard = ({
   tdarrQueue,
   unsupportedQueues = []
 }) => {
+  // State to track if we should display the detailed Tdarr view
+  const [showDetailedTdarr, setShowDetailedTdarr] = useState(false);
   return (
     <section aria-labelledby="media-queues-heading">
       <h2 id="media-queues-heading" className="text-2xl font-bold mb-4 mt-8">Media Processing Queues</h2>
@@ -75,9 +78,32 @@ const QueueDashboard = ({
         )}
         
         {/* Tdarr Queue */}
-        {tdarrQueue && (
+        {tdarrQueue && !showDetailedTdarr && (
           <div className="col-span-1 md:col-span-2 xl:col-span-1">
-            <TdarrProgressBar data={tdarrQueue} />
+            <div className="relative">
+              <div className="absolute top-4 right-4 z-10">
+                <button 
+                  onClick={() => setShowDetailedTdarr(true)}
+                  className="bg-blue-500 hover:bg-blue-600 text-white text-xs px-2 py-1 rounded flex items-center transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1zm0 4a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1z" clipRule="evenodd" />
+                  </svg>
+                  Detailed View
+                </button>
+              </div>
+              <TdarrProgressBar data={tdarrQueue} />
+            </div>
+          </div>
+        )}
+        
+        {/* Full width detailed Tdarr view when toggled */}
+        {tdarrQueue && showDetailedTdarr && (
+          <div className="col-span-full">
+            <TdarrQueue 
+              data={tdarrQueue} 
+              onViewChange={() => setShowDetailedTdarr(false)} 
+            />
           </div>
         )}
       </div>

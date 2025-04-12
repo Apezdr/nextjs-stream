@@ -1,5 +1,6 @@
 'use client'
 import { useMediaState } from '@vidstack/react'
+import Image from 'next/image'
 import Link from 'next/link'
 import { memo, useEffect, useRef, useState, useMemo, useCallback } from 'react'
 
@@ -8,6 +9,7 @@ function NextUpCard({
   season_number,
   nextEpisodeNumber,
   nextEpisodeThumbnail,
+  nextEpisodeThumbnailBlurhash,
   nextEpisodeTitle,
   hasNextEpisode,
   mediaLength,
@@ -100,6 +102,7 @@ function NextUpCard({
         mediaTitle={mediaTitle}
         progressBarWidth={progressBarWidth}
         nextEpisodeThumbnail={nextEpisodeThumbnail}
+        nextEpisodeThumbnailBlurhash={nextEpisodeThumbnailBlurhash}
         nextEpisodeTitle={nextEpisodeTitle}
         season_number={season_number}
         nextEpisodeNumber={nextEpisodeNumber}
@@ -113,14 +116,15 @@ const NextUpCardContent = memo(
     mediaTitle,
     progressBarWidth,
     nextEpisodeThumbnail,
+    nextEpisodeThumbnailBlurhash,
     nextEpisodeTitle,
     season_number,
     nextEpisodeNumber,
   }) => {
     return (
       <Link
-        href={`/list/tv/${mediaTitle}/${season_number}/${nextEpisodeNumber}`}
-        className="group pointer-events-auto"
+        href={`/list/tv/${mediaTitle}/${season_number}/${nextEpisodeNumber}/play?start=0`}
+        className="group pointer-events-auto max-h-20"
       >
         <div className="absolute rounded-lg bottom-10 right-4 z-10 flex flex-col items-center justify-center py-12 w-40 h-52 bg-black group-hover:bg-gray-900 bg-opacity-50">
           <div
@@ -128,10 +132,14 @@ const NextUpCardContent = memo(
             style={{ width: progressBarWidth }}
           ></div>
           <h5 className="font-sans font-bold text-white mb-2">Next Up:</h5>
-          <img
-            src={`https://image.tmdb.org/t/p/w780${nextEpisodeThumbnail}`}
+          <Image
+            src={nextEpisodeThumbnail}
             alt={nextEpisodeTitle}
-            className="w-32 h-auto rounded-lg opacity-50 group-hover:opacity-100"
+            className="!w-32 !h-auto rounded-lg opacity-50 group-hover:opacity-100"
+            placeholder={nextEpisodeThumbnailBlurhash ? "blur" : "empty"}
+            blurDataURL={nextEpisodeThumbnailBlurhash}
+            width={128}
+            height={180}
           />
           <h5 className="font-sans text-white mt-2 text-base">
             S{season_number} EP{nextEpisodeNumber}

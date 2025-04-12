@@ -3,8 +3,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useMediaPlayer, useMediaRemote, useMediaState } from '@vidstack/react';
 import throttle from 'lodash/throttle';
+import { useRouter, usePathname } from 'next/navigation';
 
-export default function WithPlayBackTracker({ videoURL }) {
+export default function WithPlayBackTracker({ videoURL, start = null }) {
   const player = useMediaPlayer();
   const canPlay = useMediaState('canPlay');
   const remote = useMediaRemote();
@@ -12,6 +13,11 @@ export default function WithPlayBackTracker({ videoURL }) {
   const isFetchingRef = useRef(false);
   const nextUpdateTimeRef = useRef(null);
   const updatePlaybackWorkerRef = useRef(null);
+  const hasAppliedStartRef = useRef(false);
+  
+  // Next.js routing hooks for URL manipulation
+  const router = useRouter();
+  const pathname = usePathname();
 
   // Restore saved playback time when the player is ready.
   useEffect(() => {
@@ -20,10 +26,28 @@ export default function WithPlayBackTracker({ videoURL }) {
     const savedData = localStorage.getItem(videoURL);
     const savedTime = savedData ? parseFloat(JSON.parse(savedData).playbackTime) : null;
 
-    if (!isNaN(savedTime) && savedTime !== null) {
-      remote.seek(savedTime);
+    if (!hasAppliedStartRef.current) {
+      // Important: Check if start is not null/undefined rather than just truthy check
+      // This is critical because start could be 0, which is falsy but valid
+      if (start !== null && start !== undefined) {
+        remote.seek(start);
+        
+        // Clean up the URL by removing query parameters
+        setTimeout(() => {
+          try {
+            // Use window.history directly since Next.js router methods might not be reliable
+            window.history.replaceState({}, '', pathname);
+          } catch (err) {
+            console.error("Error replacing URL:", err);
+          }
+        }, 100);
+      } else if (!isNaN(savedTime) && savedTime !== null) {
+        remote.seek(savedTime);
+      }
+      
+      hasAppliedStartRef.current = true;
     }
-  }, [remote, canPlay, videoURL]);
+  }, [remote, canPlay, videoURL, start, pathname]);
 
   // Initialize the web worker with error handling and fallback logic.
   useEffect(() => {

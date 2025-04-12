@@ -1,5 +1,7 @@
 const dynamic = 'force-dynamic'
 import MediaPlayerComponent from '@components/MediaPlayer/MediaPlayer'
+import EpisodeListComponent from '@components/MediaPlayer/EpisodeListComponent'
+import { PlaybackCoordinatorProvider } from '@src/contexts/PlaybackCoordinatorContext'
 import MovieListComponent from '@components/MediaPages/MovieListComponent'
 import TVListComponent from '@components/MediaPages/TVListComponent'
 import { auth } from '../../../../lib/auth'
@@ -112,7 +114,10 @@ async function MediaPage({ params, searchParams }) {
     mediaPlayerPage = _params?.media?.[2] === 'play' // ex. /list/movie/Inception/play
   }
   const _searchParams = await searchParams
-
+  
+  // Extract start parameter if it exists
+  const startTime = _searchParams.start ? parseInt(_searchParams.start) : null
+  
   // Handle if the user is limited and show the video for them
   if (limitedAccess) {
     /* mediaTitle = 'Big Buck Bunny'
@@ -234,32 +239,48 @@ async function MediaPage({ params, searchParams }) {
     const isValidVideoURL = media && media.videoURL && (await validateVideoURL(media.videoURL))
     if (media) {
       return (
-        <div className="flex flex-col items-center justify-center md:py-12 h-screen max-h-[90%]">
-          <SyncClientWithServerWatched once={true} />
-          <Suspense fallback={<Loading />}>
-            {mediaPlayerPage ? (
-              <MediaPlayerComponent
-                media={media}
-                mediaTitle={mediaTitle}
-                mediaType={mediaType}
-                goBack={
-                  mediaType
-                    ? `/list${mediaType ? '/' + mediaType : ''}${TVParams}`
-                    : '/list'
-                }
-                searchParams={_searchParams}
-                session={session}
-                isValidVideoURL={isValidVideoURL}
-              />
-            ) : (
+        <PlaybackCoordinatorProvider>
+          <>
+          <div className="flex flex-col items-center justify-center md:py-12 h-screen max-h-[90%]">
+            <SyncClientWithServerWatched once={true} />
             <Suspense fallback={<Loading />}>
-              <div className='max-h-[90%] h-screen pt-16 w-full'>
-              <TVEpisodeDetailsComponent media={media} />
-              </div>
+            {mediaPlayerPage ? (
+                <MediaPlayerComponent
+                  media={media}
+                  mediaTitle={mediaTitle}
+                  mediaType={mediaType}
+                  goBack={
+                    mediaType
+                      ? `/list${mediaType ? '/' + mediaType : ''}${TVParams}`
+                      : '/list'
+                  }
+                  searchParams={{..._searchParams, start: startTime}}
+                  session={session}
+                  isValidVideoURL={isValidVideoURL}
+                />
+              ) : (
+              <Suspense fallback={<Loading />}>
+                <div className='max-h-[90%] h-screen pt-16 w-full'>
+                <TVEpisodeDetailsComponent media={media} />
+                </div>
+              </Suspense>
+              )}
             </Suspense>
-            )}
+          </div>
+          {/* Episode list for easier navigation */}
+          {mediaPlayerPage ? (
+          <Suspense fallback={<Loading />}>
+            <div className="w-full">
+              <EpisodeListComponent 
+                mediaTitle={decodeURIComponent(mediaTitle)} 
+                mediaSeason={mediaSeason} 
+                mediaEpisode={mediaEpisode}
+              />
+            </div>
           </Suspense>
-        </div>
+          ) : null}
+          </>
+        </PlaybackCoordinatorProvider>
       )
     }
     // Handle episode not found
@@ -272,21 +293,23 @@ async function MediaPage({ params, searchParams }) {
         {mediaPlayerPage ? (
         // ex. /list/movie/Inception/play
         <Suspense fallback={<Loading />}>
-        <div className="flex flex-col items-center justify-center md:py-12 h-screen max-h-[90%]">
-          <MediaPlayerComponent
-            media={media}
-            mediaTitle={mediaTitle}
-            mediaType={mediaType}
-            goBack={
-              mediaType
-                ? `/list${mediaType ? '/' + mediaType + '/' + mediaTitle : ''}${MovieParams}`
-                : '/list'
-            }
-            searchParams={_searchParams}
-            session={session}
-            isValidVideoURL={isValidVideoURL}
-          />
-        </div>
+          <PlaybackCoordinatorProvider>
+            <div className="flex flex-col items-center justify-center md:py-12 h-screen max-h-[90%]">
+              <MediaPlayerComponent
+                media={media}
+                mediaTitle={mediaTitle}
+                mediaType={mediaType}
+                goBack={
+                  mediaType
+                    ? `/list${mediaType ? '/' + mediaType + '/' + mediaTitle : ''}${MovieParams}`
+                    : '/list'
+                }
+                searchParams={{..._searchParams, start: startTime}}
+                session={session}
+                isValidVideoURL={isValidVideoURL}
+              />
+            </div>
+          </PlaybackCoordinatorProvider>
         </Suspense>
         ) : (
         // ex. /list/movie/Inception
@@ -323,8 +346,6 @@ async function MediaPage({ params, searchParams }) {
               fill="none"
               viewBox="0 0 24 24"
               strokeWidth={1.5}
-              stroke="currentColor"
-              className="w-4 h-4 inline mr-1"
             >
               <path
                 strokeLinecap="round"

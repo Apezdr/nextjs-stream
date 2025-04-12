@@ -241,14 +241,17 @@ function handleEpisode(tvShow, seasonObj, seasonNumber, episodeNumber) {
     episodeObj.metadata.trailer_url = tvShow.metadata.trailer_url
   }
 
-  const nextAvailableEpisode = seasonMetadata?.episodes?.find(
-    (ep) => ep?.episode_number > episodeNumber
+  // seasonObj.episodes?.find((ep) => ep.episodeNumber === episodeNumber)
+  const nextAvailableEpisode = seasonObj?.episodes?.find(
+    (ep) => ep?.episode_number === episodeNumber + 1
   )
+
   if (nextAvailableEpisode) {
     episodeObj.hasNextEpisode = true
-    episodeObj.nextEpisodeThumbnail = nextAvailableEpisode.still_path
-    episodeObj.nextEpisodeTitle = nextAvailableEpisode.name
-    episodeObj.nextEpisodeNumber = nextAvailableEpisode.episode_number
+    episodeObj.nextEpisodeThumbnail = nextAvailableEpisode.thumbnail
+    episodeObj.nextEpisodeThumbnailBlurhash = `data:image/png;base64,${nextAvailableEpisode.thumbnailBlurhash}`
+    episodeObj.nextEpisodeTitle = nextAvailableEpisode.title
+    episodeObj.nextEpisodeNumber = nextAvailableEpisode.episodeNumber
   } else {
     episodeObj.hasNextEpisode = false
   }
