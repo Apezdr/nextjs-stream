@@ -42,7 +42,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
   const {
     headers = {},
     timeout = 5000,
-    responseType = 'json',
+    responseType = options.responseType ?? 'json',
     retry = {},
     ...restOptions
   } = options;

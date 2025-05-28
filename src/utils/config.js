@@ -178,6 +178,8 @@ const serverManager = new ServerManager(loadServerConfigurations())
 import { cache } from 'react'
 // Create URL handlers for all servers
 import { createURLHandler, createMultiServerURLHandler } from './url_utils'
+// Import webhook functions
+import { getWebhookServerMapping, getServerWebhookMapping, getWebhookIdForServer } from './webhookServer'
 
 /**
  * Determines whether the current server has higher priority than the existing source.
@@ -238,3 +240,6 @@ export const fileServerURLWithPrefixPath = (path) => urlHandlers.get(defaultServ
 // Version Format: 1.0000 (Major.Minor)
 export const fileServerVersionTV = 1.0001
 export const fileServerVersionMOVIES = 1.0000
+
+// Export webhook server mapping functions
+export { getWebhookServerMapping, getServerWebhookMapping, getWebhookIdForServer }

@@ -120,14 +120,10 @@ const PopupCard = ({
     setShouldPlay((!hideVideo || !afterVideo) && imageLoaded && videoReady)
   }, [hideVideo, afterVideo, imageLoaded, videoReady])
 
-  // Calculate the width for the popup
+  // Calculate the width for the popup - use 16:9 dimensions from Card component
   const calculateWidth = () => {
-    if (backdrop && isThumbnailLoaded) {
-      return data?.backdropWidth ? `w-[${data.backdropWidth}px]` : `w-[${imageDimensions.width}]`
-    }
-    return imagePosition.expandedWidth
-      ? `!w-[${imagePosition.expandedWidth}]`
-      : `w-[${imageDimensions.width}]`
+    // Always use the expandedWidth calculated by Card component (16:9 aspect ratio)
+    return imagePosition.expandedWidth ? `!w-[${imagePosition.expandedWidth}px]` : `w-[300px]`
   }
 
   // Function to determine which date to display
@@ -156,7 +152,7 @@ const PopupCard = ({
       style={{
         top: imagePosition.top,
         left: imagePosition.left,
-        height: imagePosition.height ?? imageDimensions.height,
+        height: imagePosition.height,
         opacity: 1,
       }}
       onClick={handleCollapse}

@@ -135,7 +135,7 @@ const NextUpCardContent = memo(
           <Image
             src={nextEpisodeThumbnail}
             alt={nextEpisodeTitle}
-            className="!w-32 !h-auto rounded-lg opacity-50 group-hover:opacity-100"
+            className="!w-auto !h-auto rounded-lg opacity-50 group-hover:opacity-100 max-h-full max-w-32"
             placeholder={nextEpisodeThumbnailBlurhash ? "blur" : "empty"}
             blurDataURL={nextEpisodeThumbnailBlurhash}
             width={128}

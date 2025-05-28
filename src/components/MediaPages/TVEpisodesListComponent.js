@@ -26,7 +26,7 @@ const variants = {
   enter: { opacity: 1, x: 0, y: 0 },
 }
 
-export default async function TVEpisodesListComponent({ showTitle, seasonNumber }) {
+export default async function TVEpisodesListComponent({ showTitle, originalTitle, seasonNumber }) {
   const session = await auth()
   if (!session || !session.user) {
     // Handle the case where the user is not authenticated
@@ -196,8 +196,8 @@ export default async function TVEpisodesListComponent({ showTitle, seasonNumber 
                 }
 
                 // Generate clip video URL if videoURL is available
-                if (episode.videoURL) {
-                  episode.clipVideoURL = generateClipVideoURL(episode, 'tv', showTitle)
+                if (episode.videoURL && originalTitle) {
+                  episode.clipVideoURL = generateClipVideoURL(episode, 'tv', originalTitle)
                 }
 
                 const episodeTitle = episodeMetadata?.name ?? episode.title

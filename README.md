@@ -56,7 +56,8 @@ To implement the NextJS-Stream app, follow these steps:
     NEXT_PUBLIC_BASE_URL=https://cinema.your-domain.com
     
     # Webhook Configuration
-    VALID_WEBHOOK_IDS=322fb39e4591514d2b8c1697sbc72c9c,521ebe9e6211514d2b8c1697sbc72c98
+    WEBHOOK_ID=322fb39e4591514d2b8c1697sbc72c9c
+    WEBHOOK_ID_2=521ebe9e6211514d2b8c1697sbc72c98
     
     # Radarr Configuration (Optional)
     # Only needed if you are using Radarr integration
@@ -108,7 +109,7 @@ To implement the NextJS-Stream app, follow these steps:
 
 
    ## Webhook
-   If you're using the auto sync feature you must set up the `VALID_WEBHOOK_IDS` with a randomized string to act as the key to be used by your `generate_list.sh` on the backend that runs to generate the JSON lists. It's also necessary to update the `generate_list.sh` file with the new webhook ID.
+   If you're using the auto sync feature you must set up the `WEBHOOK_ID` or if using multiple servers `WEBHOOK_ID_2` etc.; with a randomized string to act as the key. This also is used for node server health checks.
 
    **Endpoint:**
    
@@ -116,7 +117,7 @@ To implement the NextJS-Stream app, follow these steps:
    
    **Params**:
    
-   `X-Webhook-ID`: Use one of your ID's set up under `VALID_WEBHOOK_IDS`,
+   `X-Webhook-ID`: Use one of your ID's set up under `WEBHOOK_ID`,
    
    `Content-Type`: `application/json`
 

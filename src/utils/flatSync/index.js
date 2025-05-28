@@ -22,6 +22,8 @@ import {
 } from './videoAvailability';
 // Import blurhash sync module
 import { syncBlurhashData } from './blurhashSync';
+// Import PlaybackStatus validation module
+import { validatePlaybackStatusAgainstDatabase } from './playbackStatusValidation';
 
 /**
  * Syncs all media data from file servers to the flat database structure
@@ -219,6 +221,16 @@ export async function checkAvailabilityAcrossAllServers(allFileServers, fieldAva
     console.log(`Removed ${tvEpisodes?.length || 0} unavailable episodes`);
   }
   
+  // Now that availability checks are complete and database is cleaned,
+  // validate PlaybackStatus records against the current state
+  const validationStartTime = performance.now();
+  const validationResults = await validatePlaybackStatusAgainstDatabase();
+  const validationEndTime = performance.now();
+  const validationTimeSeconds = (validationEndTime - validationStartTime) / 1000;
+  
+  console.log(chalk.bold.green(`PlaybackStatus validation completed in ${validationTimeSeconds.toFixed(2)} seconds`));
+  
+  results.playbackValidation = validationResults;
   return results;
 }
 
@@ -240,4 +252,7 @@ export {
   
   // Export blurhash sync functions
   syncBlurhashData,
+  
+  // Export PlaybackStatus validation functions
+  validatePlaybackStatusAgainstDatabase,
 };

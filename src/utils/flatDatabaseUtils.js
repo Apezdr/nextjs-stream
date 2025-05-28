@@ -1069,10 +1069,30 @@ export async function getFlatRequestedMedia({
           // Handle next episode info
           if (nextEpisode) {
             result.hasNextEpisode = true;
-            result.nextEpisodeThumbnail = nextEpisode.thumbnail || nextEpisode.metadata?.still_path || null;
+            result.nextEpisodeThumbnail = nextEpisode.thumbnail || nextEpisode.metadata?.still_path || seasonData.posterURL || tvShow.posterURL || getFullImageUrl(tvShow.metadata?.poster_path) || null;
             result.nextEpisodeThumbnailBlurhash = nextEpisode.thumbnailBlurhash ? `data:image/png;base64,${nextEpisode.thumbnailBlurhash}` : null
             result.nextEpisodeTitle = nextEpisode.title || nextEpisode.metadata?.name || null;
             result.nextEpisodeNumber = nextEpisode.episodeNumber;
+
+            // determine which thumbnail is used; then based on that set the blurhash
+            if (result.nextEpisodeThumbnailBlurhash == null) {
+              if (
+                result.nextEpisodeThumbnail === tvShow.posterURL &&  
+                tvShow.posterBlurhash
+              ) {
+                result.nextEpisodeThumbnailBlurhash = `data:image/png;base64,${tvShow.posterBlurhash}`;
+              }
+              else if (
+                result.nextEpisodeThumbnail === seasonData.posterURL &&
+                seasonData.posterBlurhash
+              ) {
+                result.nextEpisodeThumbnailBlurhash = `data:image/png;base64,${seasonData.posterBlurhash}`;
+              }
+              else {
+                delete result.nextEpisodeThumbnailBlurhash; // Remove if not set
+
+              }
+            }
           } else {
             result.hasNextEpisode = false;
           }
@@ -1467,7 +1487,7 @@ export async function getFlatTVShowsLastUpdatedTimestamp() {
  * This function is specifically designed for the TVEpisodesListComponent.
  *
  * @param {Object} params - Parameters for fetching the season.
- * @param {string} params.showTitle - The title of the TV show.
+ * @param {string} params.showTitle - The title of the TV show. (not originalTitle)
  * @param {number} params.seasonNumber - The season number.
  * @returns {Promise<Object|null>} The season with its episodes or null if not found.
  */
@@ -1540,7 +1560,7 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
         clipVideoURL: generateClipVideoURL(
           episode, 
           'tv',
-          tvShow.title
+          tvShow.originalTitle || tvShow.title,
         )
       };
 

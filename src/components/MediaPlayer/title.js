@@ -92,6 +92,7 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
         <span
           className={classNames(
             `font-sans hidden sm:block max-w-sm xl:max-w-lg text-xl text-gray-300 media-HDR`,
+            mediaMetadata?.rating ? 'top-[10rem]' : 'top-8',
             isPaused ? '' : 'playing'
           )}
         >
@@ -131,6 +132,7 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
           {mediaMetadata?.season_number ? ` - S${mediaMetadata?.season_number}:` : ''}
           {mediaMetadata?.episode_number ? `E${mediaMetadata?.episode_number}` : ''}
         </div>
+        {mediaMetadata?.released && (
         <p
           className={classNames(
             `font-sans hidden sm:block max-w-sm xl:max-w-lg ml-4 mt-1 text-xs text-gray-400 media-released`,
@@ -140,6 +142,7 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
           <span className="font-bold">Released: </span>
           {mediaMetadata?.released}
         </p>
+        )}
         {mediaMetadata?.overview && (
           <p
             className={classNames(

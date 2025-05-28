@@ -19,11 +19,30 @@ import WithPlaybackCoordinator from '@components/built-in/WithPlaybackCoordinato
 
 const inconsolata = Inconsolata({ subsets: ['latin'] })
 
-async function validateVideoURL(url) {
+async function validateVideoURL(url, updateValidationStatus = null) {
   try {
     const response = await fetch(url, { method: 'HEAD' })
-    return response.ok
+    const isValid = response.ok
+    
+    // If validation fails and we have a callback, update the validation status
+    if (!isValid && updateValidationStatus) {
+      try {
+        await updateValidationStatus(url, false)
+      } catch (error) {
+        console.error('Failed to update validation status:', error)
+      }
+    }
+    
+    return isValid
   } catch (error) {
+    // If validation fails and we have a callback, update the validation status
+    if (updateValidationStatus) {
+      try {
+        await updateValidationStatus(url, false)
+      } catch (error) {
+        console.error('Failed to update validation status:', error)
+      }
+    }
     return false
   }
 }
@@ -39,7 +58,29 @@ async function VideoPlayer({
 }) {
   const { videoURL, metadata } = media
 
-  const isValidVideoURL = shouldValidateURL ? await validateVideoURL(videoURL) : true
+  // Function to update validation status in PlaybackStatus
+  const updateValidationStatus = async (videoId, isValid) => {
+    try {
+      const response = await fetch('/api/authenticated/sync/updateValidationStatus', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          videoId,
+          isValid
+        })
+      })
+      
+      if (!response.ok) {
+        console.error('Failed to update validation status:', response.statusText)
+      }
+    } catch (error) {
+      console.error('Error updating validation status:', error)
+    }
+  }
+
+  const isValidVideoURL = shouldValidateURL ? await validateVideoURL(videoURL, updateValidationStatus) : true
   if (!isValidVideoURL) {
     return (
       <div className="w-96">
@@ -105,11 +146,11 @@ async function VideoPlayer({
   const nodeServerUrl = serverConfig.syncEndpoint
 
   if (metadata && mediaType === 'tv') {
-    title = metadata.name || metadata.title // Use 'name' for TV show episodes, 'title' for general metadata
+    title = metadata.name || metadata.title || media.title // Use 'name' for TV show episodes, 'title' for general metadata
     released = metadata.air_date // Use 'air_date' for TV show episodes
     overview = metadata.overview // Use 'overview' for TV show episodes
-    episode_number = metadata.episode_number
-    season_number = metadata.season_number
+    episode_number = metadata.episode_number ?? media?.episodeNumber
+    season_number = metadata.season_number ?? media?.seasonNumber
     hasNextEpisode = media.hasNextEpisode
     nextEpisodeThumbnail = media.nextEpisodeThumbnail
     nextEpisodeThumbnailBlurhash = media.nextEpisodeThumbnailBlurhash
@@ -128,7 +169,7 @@ async function VideoPlayer({
         mediaTitle
       )}&type=${mediaType}&season=${season_number}&episode=${episode_number}`
       chapterThumbnailURL = `${nodeServerUrl}/frame/tv/${encodeURIComponent(
-        mediaTitle
+        media.originalTitle ?? mediaTitle
       )}/${season_number}/${episode_number}/`
     }
     thumbnailURL = `/api/authenticated/thumbnails?name=${encodeURIComponent(
@@ -195,9 +236,11 @@ async function VideoPlayer({
     }
   }
 
-  const mediaPlayerTitleLabel = `${decodeURIComponent(mediaTitle)} ${
+  const mediaPlayerTitleLabel = `${decodeURIComponent(mediaTitle ?? '')} ${
     season_number ? `Season ${season_number} ` : ''
-  }${episode_number ? `- Episode ${episode_number} - ` : ''}${mediaType !== 'movie' ? title : ''}`
+  }${episode_number ? `- Episode ${episode_number} - ` : ''}${
+    mediaType !== 'movie' ? (title ?? '') : ''
+  }`
 
   let captions = media?.captionURLs ? media?.captionURLs : null
 

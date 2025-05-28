@@ -608,7 +608,7 @@ export function sanitizeCardData(item, popup = false, context = {}) {
  *
  * @param {Object} item - The media item containing video information.
  * @param {string} type - The type of media.
- * @param {string} title - The title of the media.
+ * @param {string} title - The title of the media (use the originalTitle)
  * @returns {string|null} - The generated clip video URL or null if videoURL is missing.
  */
 export const generateClipVideoURL = cache((item, type, title) => {

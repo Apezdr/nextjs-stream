@@ -100,6 +100,7 @@ async function MediaPage({ params, searchParams }) {
   const _params = await params
   let mediaType = _params?.media?.[0], // 'movie' or 'tv'
     mediaTitle = _params?.media?.[1],
+    mediaOriginalTitle = null,
     mediaSeason = null,
     mediaEpisode = null,
     mediaPlayerPage = null,
@@ -153,6 +154,10 @@ async function MediaPage({ params, searchParams }) {
       const episode = mediaEpisode ? '/' + mediaEpisode : ''
       TVParams = `/${mediaTitle}${season}${episode}`
     }
+  }
+
+  if (media?.originalTitle) {
+    mediaOriginalTitle = media.originalTitle
   }
 
   // Handle the case where the user is not authenticated
@@ -231,7 +236,7 @@ async function MediaPage({ params, searchParams }) {
     // Specific season of a TV show is selected, but no episode
     return (
       <Suspense fallback={<Loading />}>
-        <TVEpisodesListComponent showTitle={mediaTitle} seasonNumber={mediaSeason} />
+        <TVEpisodesListComponent showTitle={mediaTitle} originalTitle={mediaOriginalTitle} seasonNumber={mediaSeason} />
       </Suspense>
     )
   } else if (mediaType === 'tv' && mediaTitle && mediaSeason && mediaEpisode) {

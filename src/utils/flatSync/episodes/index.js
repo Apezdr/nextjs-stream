@@ -107,7 +107,7 @@ async function syncSingleEpisode(
             season.seasonNumber, 
             episode.episodeNumber
           );
-          if (flatEpisode.showTitle !== show.title) {
+          if (flatEpisode?.showTitle !== show.title) {
             // If the original title doesn't match, we need to force an update
             forceTitlesUpdate = true;
           }
@@ -188,6 +188,10 @@ async function syncSingleEpisode(
           videoSource: serverConfig.id,
           videoURL: newVideoURL,
         }),
+      }
+
+      if (episode?.title) {
+        newEpisodeData.title = episode.title
       }
 
       // If we have enhancedData, also create the episode in memory
@@ -624,10 +628,15 @@ async function traditionalSync(client, flatDB, fileServer, serverConfig, fieldAv
 
         // Get the episode from database or create a simple object with basic properties
         const dbEpisode = dbSeasonEntry?.episodes?.[episodeNumber]
+        const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName]
         const episode = dbEpisode || {
           episodeNumber,
           seasonNumber, // Make sure we include seasonNumber for proper identification
           showTitle, // Make sure we include showTitle for proper identification
+        }
+
+        if (!episode.title && fileServerEpisodeData.derivedEpisodeName) {
+          episode.title = fileServerEpisodeData.derivedEpisodeName
         }
 
         // Process this episode
@@ -705,6 +714,10 @@ async function hashBasedSync(
     skippedSeasons: 0,
     skippedEpisodes: 0,
     newEpisodes: 0,
+    missingShowHashCount: 0,
+    missingShowHashTitles: [],
+    skippedMissingHashShows: 0,
+    skippedMissingHashShowTitles: []
   }
 
   // No file server TV data, nothing to do
@@ -739,9 +752,36 @@ async function hashBasedSync(
 
   // Process each TV show from the file server
   for (const [showTitle, fileServerShowData] of Object.entries(fileServer.tv)) {
-    // Skip shows not in hash data
-    if (!mediaHashData.titles[showTitle]) {
-      continue
+    const hashEntry = mediaHashData.titles[showTitle];
+
+    if (!hashEntry) {
+      // Check if this show has any episodes in the missingEpisodes array
+      const hasMissingEpisodes = flatDB.missingEpisodes && 
+                                flatDB.missingEpisodes.some(episode => episode.showTitle === showTitle);
+      
+      if (hasMissingEpisodes) {
+        console.warn(
+          chalk.yellow(
+            `No hash available for show "${showTitle}" but has missing episodes — falling back to full sync for episodes.`
+          )
+        );
+        // track for diagnostics
+        results.missingShowHashCount++;
+        results.missingShowHashTitles.push(showTitle);
+
+        // simulate a "hash mismatch" so we'll process metadata and all episodes
+        // skipMetadataProcessing remains at its default false
+      } else {
+        console.warn(
+          chalk.cyan(
+            `No hash available for show "${showTitle}" and no missing episodes - skipping show.`
+          )
+        );
+        // Track shows we skip due to no hash AND no missing episodes
+        results.skippedMissingHashShows++;
+        results.skippedMissingHashShowTitles.push(showTitle);
+        continue; // Skip this show entirely
+      }
     }
 
     // Get the show from database or create a simple object with just the title
@@ -749,7 +789,7 @@ async function hashBasedSync(
     const show = dbShowEntry?.show || { title: showTitle, originalTitle: showTitle, seasons: [] }
 
     // Check if show hash has changed
-    const currentShowHash = mediaHashData.titles[showTitle].hash
+    const currentShowHash = hashEntry ? hashEntry.hash : null;
     
     // Fetch all hashes for this show at once
     console.log(chalk.cyan(`Fetching all hashes for "${showTitle}" from database (show level)`));
@@ -910,6 +950,9 @@ async function hashBasedSync(
 
           const episodeNumber = parseInt(match[1], 10)
 
+          const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName]
+
+
           console.log(
             chalk.yellow(`Processing episode: "${showTitle}" S${seasonNumber}E${episodeNumber}`)
           )
@@ -919,6 +962,10 @@ async function hashBasedSync(
             episodeNumber,
             seasonNumber: season.seasonNumber,
             showTitle: show.title,
+          }
+
+          if (fileServerEpisodeData?.derivedEpisodeName) {
+            tempEpisode.title = fileServerEpisodeData.derivedEpisodeName
           }
 
           // Process this episode
@@ -1001,6 +1048,11 @@ async function hashBasedSync(
 
             // Get the existing episode
             const existingEpisode = existingEpisodesWithoutMetadata.get(episodeNumber)
+            const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName]
+
+            if (!existingEpisode.title && fileServerEpisodeData?.derivedEpisodeName) {
+              existingEpisode.title = fileServerEpisodeData.derivedEpisodeName
+            }
 
             // Process this episode
             missingEpisodesTasks.push(
@@ -1046,6 +1098,10 @@ async function hashBasedSync(
               episodeNumber,
               seasonNumber: season.seasonNumber,
               showTitle: show.title,
+            }
+
+            if (tempEpisode.derivedEpisodeName) {
+              tempEpisode.title = episode.derivedEpisodeName
             }
 
             // Process this episode
@@ -1176,6 +1232,11 @@ async function hashBasedSync(
           seasonNumber,
           episode.episodeNumber
         );
+        const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName]
+
+        if (!episode.title && fileServerEpisodeData?.derivedEpisodeName) {
+          episode.title = fileServerEpisodeData.derivedEpisodeName
+        }
         
         // Skip if episode not found in file server
         if (!episodeFileName) continue;
@@ -1311,6 +1372,20 @@ function logSyncResults(results, serverId, syncStrategy) {
         `Skipped ${results.skippedShows || 0} shows, ${results.skippedSeasons || 0} seasons, and ${results.skippedEpisodes || 0} episodes due to hash matches`
       )
     )
+    if (results.missingShowHashCount > 0) {
+      console.log(
+        chalk.yellow(
+          `Processed ${results.missingShowHashCount} shows with missing hash data (full sync)`
+        )
+      )
+    }
+    if (results.skippedMissingHashShows > 0) {
+      console.log(
+        chalk.cyan(
+          `Skipped ${results.skippedMissingHashShows} shows with missing hash data but no missing episodes`
+        )
+      )
+    }
   } else {
     console.log(chalk.green(`Successfully processed ${results.processed?.length || 0} episodes`))
   }

@@ -15,6 +15,7 @@ import {
   fetchTdarrQueue,
   processMediaData,
   processUserData,
+  storeSystemStatus,
 } from '@src/utils/admin_utils'
 import axios from 'axios'
 import chalk from 'chalk'
@@ -439,81 +440,174 @@ let startTime = null
 let activeSyncOperation = null
 let syncSubscribers = []
 
+/**
+ * Handle system status notification webhook request
+ * @param {Request} request - The request object
+ * @param {string} webhookId - The webhook ID from the request
+ * @param {string} serverId - The server ID associated with the webhook
+ * @returns {Promise<Response>} - Response to the webhook
+ */
+async function handleSystemStatusNotification(request, webhookId, serverId) {
+  try {
+    // Verify this is a webhook request
+    if (!webhookId) {
+      return new Response(JSON.stringify({ 
+        error: 'Unauthorized', 
+        message: 'This endpoint requires webhook authentication' 
+      }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
+    // Get status data from request body
+    let statusData;
+    try {
+      statusData = await request.json();
+    } catch (error) {
+      return new Response(JSON.stringify({ 
+        error: 'Bad Request', 
+        message: 'Invalid JSON in request body' 
+      }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
+    // Validate status data
+    if (!statusData || typeof statusData !== 'object') {
+      return new Response(JSON.stringify({ 
+        error: 'Bad Request', 
+        message: 'Invalid status data format' 
+      }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
+    // Store the status data (indicate this is from a webhook)
+    await storeSystemStatus(statusData, serverId, true);
+    
+    // Return success response
+    return new Response(JSON.stringify({ 
+      success: true,
+      message: 'System status notification received and processed',
+      receivedAt: new Date().toISOString(),
+      serverId
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Error processing system status notification:', error);
+    
+    return new Response(JSON.stringify({ 
+      error: 'Internal Server Error', 
+      message: 'Failed to process system status notification',
+      details: error.message
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+/**
+ * Handle sync operation request
+ * @param {Request} request - The request object
+ * @param {string} webhookId - The webhook ID from the request
+ * @returns {Promise<Response>} - Response to the sync request
+ */
+async function handleSyncOperation(request, webhookId) {
+  try {
+    // If there's an active sync operation, add this request to subscribers
+    if (activeSyncOperation) {
+      const result = await new Promise((resolve, reject) => {
+        syncSubscribers.push({ resolve, reject })
+      })
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: 'Sync operation completed successfully.',
+          startTime,
+          ...result,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    }
+
+    startTime = new Date().toISOString()
+    activeSyncOperation = handleSync(webhookId, request)
+
+    try {
+      const result = await activeSyncOperation
+      
+      syncSubscribers.forEach(subscriber => {
+        subscriber.resolve(result)
+      })
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: 'Sync operation completed successfully.',
+          startTime,
+          ...result,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    } catch (error) {
+      syncSubscribers.forEach(subscriber => {
+        subscriber.reject(error)
+      })
+      throw error
+    } finally {
+      activeSyncOperation = null
+      syncSubscribers = []
+    }
+  } catch (error) {
+    console.error('Sync operation failed:', error)
+    return new Response(
+      JSON.stringify({ error: 'Sync operation failed', details: error.toString() }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    )
+  }
+}
+
 export async function POST(request, props) {
   const params = await props.params
   const authResult = await isAdminOrWebhook(request)
   if (authResult instanceof Response) {
     return authResult
   }
+  
   const webhookId = request.headers.get('X-Webhook-ID') ?? null
+  const serverId = request.webhookServerId // This comes from enhanced webhookId validation
 
   const slugs = params.admin
-  const syncOperation = slugs.includes('sync') && slugs[0] === 'admin'
-
-  if (syncOperation) {
-    try {
-      // If there's an active sync operation, add this request to subscribers
-      if (activeSyncOperation) {
-        const result = await new Promise((resolve, reject) => {
-          syncSubscribers.push({ resolve, reject })
-        })
-        return new Response(
-          JSON.stringify({
-            success: true,
-            message: 'Sync operation completed successfully.',
-            startTime,
-            ...result,
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        )
-      }
-
-      startTime = new Date().toISOString()
-      activeSyncOperation = handleSync(webhookId, request)
-
-      try {
-        const result = await activeSyncOperation
-        
-        syncSubscribers.forEach(subscriber => {
-          subscriber.resolve(result)
-        })
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            message: 'Sync operation completed successfully.',
-            startTime,
-            ...result,
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        )
-      } catch (error) {
-        syncSubscribers.forEach(subscriber => {
-          subscriber.reject(error)
-        })
-        throw error
-      } finally {
-        activeSyncOperation = null
-        syncSubscribers = []
-      }
-    } catch (error) {
-      console.error('Sync operation failed:', error)
-      return new Response(
-        JSON.stringify({ error: 'Sync operation failed', details: error.toString() }),
-        {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      )
+  
+  // Route the request to the appropriate handler based on the path
+  if (slugs.length >= 2 && slugs[0] === 'admin') {
+    // Handle system status notification
+    if (slugs[1] === 'system-status-notification') {
+      return handleSystemStatusNotification(request, webhookId, serverId);
+    }
+    
+    // Handle sync operation
+    if (slugs.includes('sync')) {
+      return handleSyncOperation(request, webhookId);
     }
   }
 
+  // Unsupported operation
   return new Response(JSON.stringify({ error: 'Unsupported operation' }), {
     status: 400,
     headers: { 'Content-Type': 'application/json' },

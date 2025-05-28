@@ -2,8 +2,7 @@ import { auth } from '@src/lib/auth'
 import { buildURL } from '.'
 import { adminUserEmails } from './config'
 import axios from 'axios'
-
-const webhookIds = process.env.VALID_WEBHOOK_IDS
+import { validateWebhookId } from './webhookServer'
 
 export default async function isAuthenticated(req) {
   const sessionResponse = await fetch(buildURL(`/api/auth/session`), {
@@ -22,8 +21,10 @@ export async function isAdminOrWebhook(req) {
   // First, check for webhook identifier
   const webhookId = req.headers?.get('X-Webhook-ID') || req.query?.webhookId || false // Note: Header names are case-insensitive in HTTP
   if (webhookId) {
-    const isValidWebhookId = await validateWebhookId(webhookId) // Implement this function to validate the webhookId
-    if (isValidWebhookId) {
+    const validationResult = await validateWebhookId(webhookId)
+    if (validationResult.isValid) {
+      // Add server information to the request for downstream processing
+      req.webhookServerId = validationResult.serverId
       return true // Valid webhook ID, proceed with the request
     } else {
       return new Response(
@@ -48,13 +49,6 @@ export async function isAdminOrWebhook(req) {
       return true
     }
   }
-}
-
-async function validateWebhookId(webhookId) {
-  // Example validation logic
-  // This could involve checking the ID against a database, a list of IDs, or verifying a signature
-  const validWebhookIds = webhookIds?.split(',') || [] // Ideally, store and retrieve from a secure location
-  return validWebhookIds.includes(webhookId)
 }
 
 export async function isAdmin(req = false, redirect = true) {
@@ -88,8 +82,10 @@ export async function isAdmin(req = false, redirect = true) {
 export async function isValidWebhook(req) {
   const webhookId = req.headers?.get('X-Webhook-ID') || req.query?.webhookId || false
   if (webhookId) {
-    const isValidWebhookId = await validateWebhookId(webhookId)
-    if (isValidWebhookId) {
+    const validationResult = await validateWebhookId(webhookId)
+    if (validationResult.isValid) {
+      // Add server information to the request for downstream processing
+      req.webhookServerId = validationResult.serverId
       return true
     }
   }

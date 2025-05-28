@@ -136,7 +136,7 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
           videoURLResult,
           posterResult,
           backdropResult,
-          posterBlurhashResult,
+          //posterBlurhashResult,
           backdropBlurhashResult,
           logosResult,
           chaptersResult,

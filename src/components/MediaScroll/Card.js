@@ -69,6 +69,12 @@ const Card = ({
   // Get effective blurhash from either new or legacy structure
   const effectivePosterBlurhash = blurhash?.poster || posterBlurhash
   
+  // Calculate image dimensions based on container width
+  // Standard poster aspect ratio is 2:3 (width:height)
+  // Container height is fixed at 288px (h-72), so we use that as the height
+  const imageHeight = 288
+  const imageWidth = collapsedWidth
+  
   // Detect if the device is a touch device
   useEffect(() => {
     const isTouch =
@@ -78,7 +84,9 @@ const Card = ({
 
   const handleImageLoad = useCallback(({ target }) => {
     const { naturalWidth, naturalHeight } = target
+    // Store natural dimensions for popup (high quality - these are now the original dimensions)
     setImageDimensions({ width: naturalWidth, height: naturalHeight })
+    // Store rendered dimensions for position calculations
     setImagePosition({ width: naturalWidth, height: naturalHeight })
   }, [])
 
@@ -95,26 +103,37 @@ const Card = ({
       const height = rect.height
 
       const minimumWidth = 300
-
-      const expandedWidth = Math.max(
-        Math.min(Math.max(imageDimensions.width, collapsedWidth), MAX_EXPANDED_WIDTH),
-        minimumWidth
-      )
+      
+      // Calculate 16:9 aspect ratio dimensions for popup (ideal for backdrop/video content)
+      const aspectRatio = 16 / 9
+      const isMobile = window.innerWidth < 640
+      
+      // Base popup width on available screen space, not poster dimensions
+      let popupWidth
+      if (isMobile) {
+        popupWidth = Math.min(window.innerWidth - 40, MAX_EXPANDED_WIDTH)
+      } else {
+        popupWidth = Math.min(MAX_EXPANDED_WIDTH, window.innerWidth * 0.6)
+      }
+      
+      // Ensure minimum width
+      popupWidth = Math.max(popupWidth, minimumWidth)
+      
+      // Calculate height based on 16:9 aspect ratio
+      const popupHeight = popupWidth / aspectRatio
 
       let adjustedLeft = left
 
-      const isMobile = window.innerWidth < 640
-
       if (isMobile) {
-        adjustedLeft = window.scrollX + (window.innerWidth - expandedWidth) / 2
+        adjustedLeft = window.scrollX + (window.innerWidth - popupWidth) / 2
         adjustedLeft = Math.max(window.scrollX + 20, adjustedLeft)
       } else {
         const GAP = 20
-        const rightEdge = adjustedLeft + expandedWidth
+        const rightEdge = adjustedLeft + popupWidth
         const viewportRightEdge = window.scrollX + window.innerWidth
 
         if (rightEdge > viewportRightEdge - GAP) {
-          adjustedLeft = Math.max(window.scrollX + GAP, viewportRightEdge - expandedWidth - GAP)
+          adjustedLeft = Math.max(window.scrollX + GAP, viewportRightEdge - popupWidth - GAP)
         }
 
         if (adjustedLeft < window.scrollX + GAP) {
@@ -126,11 +145,11 @@ const Card = ({
         top,
         left: adjustedLeft,
         width,
-        height,
-        expandedWidth,
+        height: popupHeight, // Use calculated 16:9 height
+        expandedWidth: popupWidth, // Use calculated 16:9 width
       })
     }
-  }, [collapsedWidth, imageDimensions.width, MAX_EXPANDED_WIDTH])
+  }, [collapsedWidth, MAX_EXPANDED_WIDTH])
 
   const handleExpand = useCallback(() => {
     if (isAnimating) return
@@ -228,7 +247,10 @@ const Card = ({
   }
 
   useEffect(() => {
-    const handleResize = debounce(() => setCollapsedWidth(getCollapsedWidth()), 200)
+    const handleResize = debounce(() => {
+      const newWidth = getCollapsedWidth()
+      setCollapsedWidth(newWidth)
+    }, 200)
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [])
@@ -271,7 +293,7 @@ const Card = ({
     if (showPortal) {
       calculateImagePosition()
     }
-  }, [showPortal, imageDimensions.width, calculateImagePosition])
+  }, [showPortal, calculateImagePosition])
 
   return (
     <Fragment>
@@ -292,18 +314,22 @@ const Card = ({
         aria-expanded={isExpanded}
         onKeyDown={handleKeyDown}
       >
-        <div className="relative h-72 mx-auto transition-all duration-300 ease-in-out">
+        <div 
+          className="relative mx-auto transition-all duration-300 ease-in-out"
+          style={{ width: `${imageWidth}px`, height: `${imageHeight}px` }}
+        >
           <button className="block w-full h-full">
             <div className="relative w-full h-full">
               {logo && (
                 <RetryImage
                   quality={50}
-                  fill
+                  width={Math.floor(imageWidth * 0.7)}
+                  height={56}
                   src={logo}
                   alt={`${title} Logo`}
-                  className="absolute z-20 !top-[67%] max-w-[70%] mx-auto max-h-14 inset-0 object-contain"
+                  className="absolute z-20 top-[67%] left-1/2 transform -translate-x-1/2 max-w-[70%] max-h-14 object-contain"
                   loading="lazy"
-                  sizes="(max-width: 640px) 128px, (max-width: 1024px) 144px, 192px"
+                  sizes="(max-width: 640px) 90px, (max-width: 1024px) 101px, 134px"
                 />
               )}
               {seasonNumber && (
@@ -317,7 +343,7 @@ const Card = ({
               )}
               <RetryImage
                 ref={imageRef}
-                quality={50}
+                quality={80}
                 fill
                 src={posterURL}
                 placeholder={effectivePosterBlurhash ? 'blur' : 'empty'}
@@ -325,16 +351,19 @@ const Card = ({
                 alt={title}
                 className={classNames(
                   'rounded-lg shadow-xl transition-opacity duration-300 object-cover',
-                  'mx-auto relative',
                   'opacity-60 group-hover:opacity-100'
                 )}
                 loading="lazy"
+                sizes="(max-width: 640px) 128px, (max-width: 1024px) 144px, 192px"
                 onLoad={handleImageLoad}
                 onError={handleImageError}
               />
               {imageError && (
-                <div className="absolute inset-0 flex items-center justify-center bg-gray-200">
-                  <span className="text-red-500">Image failed to load</span>
+                <div 
+                  className="absolute inset-0 flex items-center justify-center bg-gray-200 rounded-lg"
+                  style={{ width: `${imageWidth}px`, height: `${imageHeight}px` }}
+                >
+                  <span className="text-red-500 text-xs text-center px-2">Image failed to load</span>
                 </div>
               )}
             </div>

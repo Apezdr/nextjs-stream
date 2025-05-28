@@ -6,6 +6,7 @@ import { classNames } from '@src/utils'
 import { fileServerURLWithPrefixPath, siteDescription, siteTitle } from '@src/utils/config'
 import { lazy } from 'react'
 
+const ServerStatusBanner = lazy(() => import('@components/system/ServerStatusBanner'))
 const TVLayout = lazy(() => import('@components/HOC/TVLayout'))
 const GeneralLayout = lazy(() => import('@components/HOC/GeneralLayout'))
 const MovieLayout = lazy(() => import('@components/HOC/MovieLayout'))
@@ -26,6 +27,7 @@ export default function styledLayout({ children }) {
     <div
       className={classNames(inter.className, `transition-colors duration-1000`)}
     >
+      <ServerStatusBanner />
       <GeneralLayout posterCollage={posterCollage} />
       <TVLayout posterCollage={posterCollage} />
       <MovieLayout posterCollage={posterCollage} />

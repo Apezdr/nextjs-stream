@@ -116,7 +116,7 @@ export function VideoLayout({
               chapterThumbnailURL={chapterThumbnailURL}
             />
           )}
-          <Menus.Settings placement="top end" tooltipPlacement="top" />
+          <Menus.Settings placement="top end" tooltipPlacement="top" hasCaptions={hasCaptions} />
           <Buttons.PIP tooltipPlacement="top" />
           <Buttons.Chromecast tooltipPlacement="top" videoURL={videoURL} captions={captions} />
           <Buttons.AirPlay tooltipPlacement="top" />

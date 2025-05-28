@@ -68,9 +68,9 @@ export const GET = async (req) => {
     let spriteURL
 
     if (type === 'movie') {
-      spriteURL = `${nodeServerUrl}/vtt/${type}/${name}/`
+      spriteURL = `${nodeServerUrl}/vtt/${type}/${encodeURIComponent(media.originalTitle)}/`
     } else if (type === 'tv') {
-      spriteURL = `${nodeServerUrl}/vtt/${type}/${name}/${season}/${episode}`
+      spriteURL = `${nodeServerUrl}/vtt/${type}/${encodeURIComponent(media.originalTitle)}/${season}/${episode}`
     }
 
     if (!spriteURL) {
