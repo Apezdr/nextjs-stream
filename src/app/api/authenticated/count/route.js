@@ -1,4 +1,4 @@
-import isAuthenticated from '@src/utils/routeAuth'
+import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
 import { 
   getFlatAvailableMoviesCount, 
   getFlatAvailableTVShowsCount 
@@ -7,8 +7,8 @@ import { hasWatchHistory } from '@src/utils/flatRecentlyWatchedChecker'
 
 export async function GET(req) {
   try {
-    // Check authentication
-    const authResult = await isAuthenticated(req)
+    // Check authentication (supports both web sessions and sessionId)
+    const authResult = await isAuthenticatedEither(req)
     if (authResult instanceof Response) {
       return authResult
     }
@@ -19,7 +19,7 @@ export async function GET(req) {
     
     // Handle request based on type
     if (type === 'recentlyWatched') {
-      const hasHistory = await hasWatchHistory(authResult.user.id)
+      const hasHistory = await hasWatchHistory(authResult.id)
       return new Response(
         JSON.stringify({ 
           hasWatchHistory: hasHistory,

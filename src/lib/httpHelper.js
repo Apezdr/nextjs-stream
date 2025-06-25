@@ -1,6 +1,8 @@
 // httpGet.js
 import got from 'got';
 import { getCache, setCache } from './cache';
+import crypto from 'crypto';
+import { Readable } from 'stream';
 
 /**
  * Sleep for a specified duration
@@ -23,6 +25,91 @@ const calculateBackoff = (retry, baseDelay = 1000, maxDelay = 10000) => {
 };
 
 /**
+ * Ensures a value is a proper Buffer object, handling various serialized forms
+ * @param {any} data - The data to convert to Buffer
+ * @param {boolean} [logErrors=false] - Whether to log conversion errors
+ * @returns {Buffer|null} - The converted Buffer or null if conversion failed
+ */
+function ensureBuffer(data, logErrors = false) {
+  // If it's already a Buffer, return it directly
+  if (Buffer.isBuffer(data)) return data;
+  
+  try {
+    // Case 1: Handle serialized Buffer from JSON with type and data properties
+    if (data && data.type === 'Buffer' && Array.isArray(data.data)) {
+      return Buffer.from(data.data);
+    }
+    
+    // Case 2: Handle ArrayBuffer-like objects
+    if (data && typeof data === 'object' && data.buffer instanceof ArrayBuffer) {
+      return Buffer.from(
+        data.buffer, 
+        data.byteOffset || 0, 
+        data.byteLength
+      );
+    }
+    
+    // Case 3: Handle serialized Buffer object with _dataType and data properties (our custom format)
+    if (data && typeof data === 'object' && data._dataType === 'buffer') {
+      if (Buffer.isBuffer(data.data)) {
+        return data.data;
+      } else if (data.data && data.data.type === 'Buffer' && Array.isArray(data.data.data)) {
+        return Buffer.from(data.data.data);
+      }
+    }
+    
+    // Case 4: Handle plain objects that might be serialized Buffers
+    if (data && typeof data === 'object') {
+      // Try to detect if this is a serialized Buffer by checking string form
+      const serialized = JSON.stringify(data);
+      if (serialized.includes('"type":"Buffer"') && serialized.includes('"data":[')) {
+        try {
+          const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+          return Buffer.from(parsed.data || []);
+        } catch (e) {
+          if (logErrors) console.error('Failed to parse serialized Buffer:', e);
+        }
+      }
+    }
+    
+    // Case 5: If data is an array of numbers, treat as Buffer data
+    if (Array.isArray(data) && data.every(item => typeof item === 'number')) {
+      return Buffer.from(data);
+    }
+  } catch (error) {
+    if (logErrors) console.error('Error converting to Buffer:', error);
+  }
+  
+  // If we can't convert it, return null
+  return null;
+}
+
+/**
+ * Formats byte size to human readable string
+ * @param {number} bytes - Size in bytes
+ * @returns {string} - Formatted size
+ */
+function formatBytes(bytes, decimals = 2) {
+  if (bytes === 0) return '0 Bytes';
+  
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
+}
+
+/**
+ * Cache logger for diagnostics
+ */
+const cacheLog = {
+  hit: (url, type, size) => console.debug(`Cache HIT: ${url} (${type}, ${formatBytes(size || 0)})`),
+  miss: (url, reason) => console.debug(`Cache MISS: ${url} (${reason})`),
+  store: (url, type, size) => console.debug(`Cache STORE: ${url} (${type}, ${formatBytes(size || 0)})`),
+  error: (url, error) => console.error(`Cache ERROR: ${url}`, error)
+};
+
+/**
  * Performs an HTTP GET request with HTTP/2 support, retry, and conditional caching.
  * @param {string} url - The URL to fetch.
  * @param {Object} [options={}] - Additional options for the request.
@@ -35,7 +122,7 @@ const calculateBackoff = (retry, baseDelay = 1000, maxDelay = 10000) => {
  * @param {number} [options.retry.maxDelay=10000] - Maximum delay between retries in milliseconds
  * @param {function} [options.retry.shouldRetry] - Custom function to determine if a request should be retried
  * @param {boolean} [returnCacheDataIfAvailable=false] - Return cached data if available
- * @returns {Promise<{ data: Object|string|Buffer|ReadableStream|null, headers: Object }>}
+ * @returns {Promise<{ data: Object|string|Buffer|ReadableStream|null, headers: Object, meta?: Object }>}
  * @throws {Error} - Throws an error if all retry attempts fail
  */
 export async function httpGet(url, options = {}, returnCacheDataIfAvailable = false) {
@@ -112,10 +199,36 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
           // Make sure to clean up the response before returning
           cleanupResponse(response);
           
-          //cachedEntry.data is the data that was stored in the
-          //cache when the data was last fetched
+          // Handle cached data properly based on response type
           if (returnCacheDataIfAvailable) {
-            return { data: cachedEntry.data, headers: responseHeaders };
+            // If this is a buffer response, ensure we return a proper Buffer
+            if (responseType === 'buffer') {
+              const cachedBuffer = ensureBuffer(cachedEntry.data, true);
+              
+              if (cachedBuffer) {
+                cacheLog.hit(url, 'buffer', cachedBuffer.length);
+                return { 
+                  data: cachedBuffer, 
+                  headers: responseHeaders,
+                  meta: { source: 'cache', originalType: 'buffer' }
+                };
+              } else {
+                // If we couldn't convert to Buffer, log it and treat as cache miss
+                cacheLog.miss(url, 'invalid buffer format in cache');
+                // Continue with the next attempt to get fresh data
+                continue;
+              }
+            }
+            
+            // For other types, return the cached data directly
+            cacheLog.hit(url, responseType, 
+              typeof cachedEntry.data === 'string' ? cachedEntry.data.length : undefined);
+            
+            return { 
+              data: cachedEntry.data, 
+              headers: responseHeaders,
+              meta: { source: 'cache', originalType: responseType }
+            };
           } else {
             return { data: null, headers: responseHeaders };
           }
@@ -141,6 +254,33 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
 
             case 'buffer':
               responseData = Buffer.from(response.rawBody);
+              
+              // Create a hash for integrity verification
+              const hash = crypto.createHash('md5').update(responseData).digest('hex');
+              
+              // Store with the buffer data and type metadata
+              await setCache(
+                url,
+                {
+                  _dataType: 'buffer',
+                  _hash: hash,
+                  _byteLength: responseData.byteLength,
+                  data: responseData
+                },
+                responseHeaders.etag || null,
+                responseHeaders['last-modified'] || null
+              );
+              
+              cacheLog.store(url, 'buffer', responseData.byteLength);
+              
+              // Clean up the response
+              cleanupResponse(response);
+              
+              return { 
+                data: responseData, 
+                headers: responseHeaders,
+                meta: { source: 'fresh', originalType: 'buffer' }
+              };
               break;
 
             case 'stream':
@@ -153,19 +293,41 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
           }
 
           // 3) Update the cache with new data and validation tokens
-          await setCache(
-            url,
-            responseData,
-            responseHeaders.etag || null,
-            responseHeaders['last-modified'] || null
-          );
-
-          // Clean up the response if we're not returning it directly (stream case)
-          if (responseType !== 'stream') {
+          // For non-buffer, non-stream responses
+          if (responseType !== 'buffer' && responseType !== 'stream') {
+            // Store with metadata about the type
+            await setCache(
+              url,
+              {
+                _dataType: responseType,
+                _isBuffer: false,
+                data: responseData
+              },
+              responseHeaders.etag || null,
+              responseHeaders['last-modified'] || null
+            );
+            
+            cacheLog.store(url, responseType, 
+              typeof responseData === 'string' ? responseData.length : undefined);
+            
+            // Clean up the response
             cleanupResponse(response);
+            
+            return { 
+              data: responseData, 
+              headers: responseHeaders,
+              meta: { source: 'fresh', originalType: responseType }
+            };
           }
-
-          return { data: responseData, headers: responseHeaders };
+          
+          // For stream responses, we don't cache and return directly
+          if (responseType === 'stream') {
+            return { 
+              data: responseData, 
+              headers: responseHeaders,
+              meta: { source: 'fresh', originalType: 'stream' }
+            };
+          }
         } catch (processingError) {
           console.error(`Error processing response for ${url}:`, processingError);
           
@@ -301,27 +463,52 @@ export async function fetchImageAsBuffer(url, options = {}) {
       ...options.headers,
       Accept: 'image/*',
     },
-  });
+  }, true); // Always return cached data if available for images
 
   if (response.data === null) {
     // Handle cached data appropriately by retrieving it directly
     const cachedEntry = await getCache(url);
     if (cachedEntry?.data) {
-      const buffer = cachedEntry.data.buffer.slice(
-        cachedEntry.data.byteOffset,
-        cachedEntry.data.byteOffset + cachedEntry.data.byteLength
-      );
-      return buffer;
+      // Try multiple methods to extract buffer from cached data
+      const buffer = ensureBuffer(cachedEntry.data, true);
+      
+      if (buffer) {
+        return buffer;
+      } else if (cachedEntry.data.buffer) {
+        return Buffer.from(
+          cachedEntry.data.buffer, 
+          cachedEntry.data.byteOffset || 0, 
+          cachedEntry.data.byteLength
+        );
+      } else {
+        throw new Error('Could not convert cached data to Buffer.');
+      }
     } else {
       throw new Error('No cached data available for image.');
     }
   }
 
-  // Convert Buffer to ArrayBuffer
-  return response.data.buffer.slice(
-    response.data.byteOffset,
-    response.data.byteOffset + response.data.byteLength
-  );
+  // If response.data is already a Buffer, return it directly
+  if (Buffer.isBuffer(response.data)) {
+    return response.data;
+  }
+  
+  // Otherwise, try to convert to Buffer
+  const buffer = ensureBuffer(response.data, true);
+  if (buffer) {
+    return buffer;
+  }
+  
+  // Last resort - try to convert using buffer slice if available
+  if (response.data.buffer) {
+    return Buffer.from(
+      response.data.buffer,
+      response.data.byteOffset || 0,
+      response.data.byteLength
+    );
+  }
+  
+  throw new Error('Could not convert response data to Buffer');
 }
 
 /**
@@ -338,15 +525,36 @@ export async function createImageStream(url, options = {}) {
       ...options.headers,
       Accept: 'image/*',
     },
-  });
+  }, true); // Always return cached data if available for images
 
   if (response.data === null) {
     // Handle cached data by retrieving it directly and converting to stream
     const cachedEntry = await getCache(url);
     if (cachedEntry?.data) {
-      const buffer = Buffer.from(cachedEntry.data);
-      const stream = Readable.from(buffer);
-      return stream;
+      // Try to convert the cached data to a buffer first
+      const buffer = ensureBuffer(cachedEntry.data, true);
+      
+      if (buffer) {
+        // Create a stream from the buffer
+        return Readable.from(buffer);
+      } else if (typeof cachedEntry.data === 'string') {
+        // If it's a string, convert to buffer first
+        return Readable.from(Buffer.from(cachedEntry.data));
+      } else if (cachedEntry.data._dataType === 'buffer' && cachedEntry.data.data) {
+        // Handle our wrapped buffer format
+        const nestedBuffer = ensureBuffer(cachedEntry.data.data, true);
+        if (nestedBuffer) {
+          return Readable.from(nestedBuffer);
+        }
+      }
+      
+      // Last resort - try direct conversion
+      try {
+        const buffer = Buffer.from(cachedEntry.data);
+        return Readable.from(buffer);
+      } catch (error) {
+        throw new Error(`Failed to create stream from cached data: ${error.message}`);
+      }
     } else {
       throw new Error('No cached data available for image.');
     }

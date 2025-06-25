@@ -87,6 +87,14 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
       }
     }
     
+    // Create a map to track newly created movies for notification purposes
+    const newlyCreatedMoviesMap = new Map();
+    if (newlyCreatedMovies.length > 0) {
+      for (const movie of newlyCreatedMovies) {
+        newlyCreatedMoviesMap.set(movie.title, movie);
+      }
+    }
+
     // Process each movie from the file server directly
     for (const [movieTitle, fileServerMovieData] of Object.entries(fileServer.movies)) {
       try {
@@ -118,6 +126,10 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
         // Use the movie for syncing
         const movieToSync = flatMovie;
         
+        // Check if this was a newly created movie
+        const isNewlyCreated = newlyCreatedMoviesMap.has(movieTitle);
+        const newlyCreatedMovie = isNewlyCreated ? newlyCreatedMoviesMap.get(movieTitle) : null;
+        
         // Sync different aspects of the movie
         const metadataResult = await syncMovieMetadata(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
         const videoURLResult = await syncMovieVideoURL(client, movieToSync, fileServerMovieData, serverConfig, fieldAvailability);
@@ -144,12 +156,22 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
           videoInfoResult // Add the result to the array
         ].filter(Boolean);
         
-        if (syncResults.length > 0) {
-          results.processed.push({
+        if (syncResults.length > 0 || isNewlyCreated) {
+          const movieResult = {
             title: movieTitle,
             serverId: serverConfig.id,
-            updates: syncResults.map(r => r.field)
-          });
+            updates: syncResults.map(r => r.field),
+            _id: movieToSync._id
+          };
+          
+          // Add creation information for newly created movies
+          if (isNewlyCreated && newlyCreatedMovie) {
+            movieResult.created = true;
+            movieResult.createdAt = newlyCreatedMovie.createdAt;
+            movieResult.isNew = true;
+          }
+          
+          results.processed.push(movieResult);
         }
       } catch (error) {
         results.errors.push({

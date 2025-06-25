@@ -1,7 +1,9 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import { createContext, useContext } from 'react';
 import { useSession } from 'next-auth/react';
+import useSWR from 'swr';
+import { fetcher } from '@src/utils';
 
 const SystemStatusContext = createContext();
 
@@ -12,71 +14,32 @@ const SystemStatusContext = createContext();
  */
 export function SystemStatusProvider({ children }) {
   const { data: session, status: authStatus } = useSession();
-  const [systemStatus, setSystemStatus] = useState({
-    overall: { level: 'normal', message: 'All systems operational' },
-    servers: []
-  });
-  const [loading, setLoading] = useState(true);
-  const [etag, setEtag] = useState(null);
   
-  const fetchSystemStatus = useCallback(async () => {
-    if (authStatus !== 'authenticated' || !session) {
-      return;
-    }
-    
-    try {
-      setLoading(true);
-      
-      // Include ETag from previous request if available
-      const headers = {};
-      if (etag) {
-        headers['If-None-Match'] = etag;
-      }
-      
-      const response = await fetch('/api/authenticated/system-status', {
-        headers,
-        cache: 'no-cache' // Force validation against the server
-      });
-      
-      // If 304 Not Modified, keep using current state
-      if (response.status === 304) {
-        setLoading(false);
-        return;
-      }
-      
-      if (!response.ok) {
-        throw new Error(`Failed to fetch system status: ${response.status}`);
-      }
-      
-      // Store new ETag for future requests
-      const newEtag = response.headers.get('etag');
-      if (newEtag) {
-        setEtag(newEtag);
-      }
-      
-      const data = await response.json();
-      setSystemStatus(data);
-    } catch (error) {
-      console.error('Error fetching system status:', error);
-    } finally {
-      setLoading(false);
-    }
-  }, [authStatus, session, etag]);
+  // Only fetch if the user is authenticated
+  const shouldFetch = authStatus === 'authenticated' && session;
   
-  useEffect(() => {
-    // Only fetch if the user is authenticated
-    if (authStatus !== 'authenticated' || !session) {
-      return;
+  // Use SWR for data fetching with automatic polling
+  const { 
+    data: systemStatus, 
+    error, 
+    isLoading: loading, 
+    mutate: refetch 
+  } = useSWR(
+    shouldFetch ? '/api/authenticated/system-status' : null,
+    fetcher,
+    {
+      refreshInterval: 30000, // Poll every 30 seconds
+      revalidateOnFocus: true, // Revalidate when window gains focus
+      revalidateOnReconnect: true, // Revalidate when network reconnects
+      dedupingInterval: 5000, // Dedupe requests within 5 seconds
+      errorRetryInterval: 10000, // Retry failed requests every 10 seconds
+      errorRetryCount: 3, // Retry failed requests up to 3 times
+      fallbackData: {
+        overall: { level: 'normal', message: 'All systems operational' },
+        servers: []
+      }
     }
-    
-    // Initial fetch
-    fetchSystemStatus();
-    
-    // Set up polling interval (every 30 seconds is a good balance)
-    const interval = setInterval(fetchSystemStatus, 30000);
-    
-    return () => clearInterval(interval);
-  }, [authStatus, session, fetchSystemStatus]);
+  );
   
   // If user is not authenticated, don't provide any status data
   if (authStatus !== 'authenticated' || !session) {
@@ -84,7 +47,14 @@ export function SystemStatusProvider({ children }) {
   }
   
   return (
-    <SystemStatusContext.Provider value={{ status: systemStatus, loading, refetch: fetchSystemStatus }}>
+    <SystemStatusContext.Provider 
+      value={{ 
+        status: systemStatus, 
+        loading, 
+        error,
+        refetch 
+      }}
+    >
       {children}
     </SystemStatusContext.Provider>
   );
@@ -92,7 +62,7 @@ export function SystemStatusProvider({ children }) {
 
 /**
  * Hook to access system status
- * @returns {Object} System status context
+ * @returns {Object} System status context including data, loading state, error, and refetch function
  */
 export function useSystemStatus() {
   const context = useContext(SystemStatusContext);

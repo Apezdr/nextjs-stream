@@ -219,10 +219,17 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit,
     console.log(`[PERF] Starting processWatchedDetails with ${lastWatched[0].videosWatched.length} videos, limit: ${limit}`);
   }
   const results = []
-  for (const video of lastWatched[0].videosWatched) {
+  const processingErrors = []
+  
+  for (let i = 0; i < lastWatched[0].videosWatched.length; i++) {
+    const video = lastWatched[0].videosWatched[i]
     // If we've reached the limit, break out of the loop
     if (results.length >= limit) break
 
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[ENHANCED_DEBUG] Processing video ${i+1}: ${video.videoId}`);
+    }
+    
     // Try direct video ID first
     let movie = movieMap.get(video.videoId)
     let tvDetails = null
@@ -305,6 +312,14 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit,
         console.log(`[PERF] Video not found and no normalized ID available: ${video.videoId}`);
       }
     }
+  }
+  
+  // Log processing errors summary
+  if (processingErrors.length > 0) {
+    console.warn(`[ENHANCED_DEBUG] Processing completed with ${processingErrors.length} errors:`);
+    processingErrors.forEach((error, index) => {
+      console.warn(`[ENHANCED_DEBUG] Error ${index + 1}: ${error.videoId} (${error.type}): ${error.error}`);
+    });
   }
   
   if (Boolean(process.env.DEBUG) == true) {

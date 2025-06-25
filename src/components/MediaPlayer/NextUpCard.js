@@ -2,6 +2,7 @@
 import { useMediaState } from '@vidstack/react'
 import Image from 'next/image'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { memo, useEffect, useRef, useState, useMemo, useCallback } from 'react'
 
 function NextUpCard({
@@ -21,6 +22,7 @@ function NextUpCard({
   const [timerInitialized, setTimerInitialized] = useState(false)
   const timerRef = useRef(null)
   const intervalRef = useRef(null)
+  const router = useRouter()
 
   const progressBarWidth = useMemo(() => {
     return `${(1 - remainingTime / 15000) * 100}%`
@@ -40,7 +42,7 @@ function NextUpCard({
 
       let endTime = Date.now() + duration
       timerRef.current = setTimeout(() => {
-        window.location.href = `/list/tv/${mediaTitle}/${season_number}/${nextEpisodeNumber}`
+        router.push(`/list/tv/${mediaTitle}/${season_number}/${nextEpisodeNumber}`)
       }, duration)
 
       intervalRef.current = setInterval(() => {

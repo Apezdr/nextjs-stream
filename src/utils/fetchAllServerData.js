@@ -32,68 +32,145 @@ async function fetchWithTimeout(url, timeoutMs = 10000) {
 }
 
 /**
- * Fetches data from a specific server with timeout.
+ * Sleep for a specified duration.
+ * @param {number} ms - Time to sleep in milliseconds.
+ * @returns {Promise<void>}
+ */
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+/**
+ * Calculate delay for exponential backoff with jitter.
+ * @param {number} attempt - Current attempt number (0-based).
+ * @param {number} baseDelay - Base delay in milliseconds.
+ * @param {number} maxDelay - Maximum delay in milliseconds.
+ * @returns {number} - Delay in milliseconds.
+ */
+function calculateBackoff(attempt, baseDelay = 1000, maxDelay = 30000) {
+  const delay = Math.min(baseDelay * Math.pow(2, attempt), maxDelay);
+  // Add jitter to prevent thundering herd (±25% variation)
+  const jitter = delay * 0.25 * (Math.random() * 2 - 1);
+  return Math.max(delay + jitter, 100); // Minimum 100ms delay
+}
+
+/**
+ * Determines if an error should trigger a retry.
+ * @param {Error} error - The error to evaluate.
+ * @param {number} attempt - Current attempt number.
+ * @param {number} maxRetries - Maximum number of retries.
+ * @returns {boolean} - Whether to retry the request.
+ */
+function shouldRetryRequest(error, attempt, maxRetries) {
+  if (attempt >= maxRetries) return false;
+  
+  // Always retry on timeout errors
+  if (error.message.includes('timed out')) return true;
+  
+  // Always retry on network errors (no response)
+  if (!error.response && error.message.includes('fetch')) return true;
+  
+  // Retry on server errors (5xx) and specific client errors
+  if (error.status) {
+    return error.status >= 500 || error.status === 429 || error.status === 408;
+  }
+  
+  // Default to retry for unknown errors (could be transient)
+  return true;
+}
+
+/**
+ * Fetches data from a specific server with retry logic and timeout.
  * @param {Object} server - Server configuration.
  * @param {number} timeoutMs - Timeout in milliseconds (default: 10000).
+ * @param {number} maxRetries - Maximum number of retry attempts (default: 3).
  * @returns {Promise<Object>} Server data.
  */
-async function fetchServerData(server, timeoutMs = 10000) {
+async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3) {
   const syncUrls = getSyncUrls(server.id);
+  let lastError = null;
   
-  try {
-    const [tvResponse, moviesResponse] = await Promise.all([
-      fetchWithTimeout(syncUrls.tv, timeoutMs),
-      fetchWithTimeout(syncUrls.movies, timeoutMs)
-    ]);
-
-    if (!tvResponse.ok) {
-      throw new Error(`Failed to fetch TV data from ${syncUrls.tv}`);
-    }
-    if (!moviesResponse.ok) {
-      throw new Error(`Failed to fetch movies data from ${syncUrls.movies}`);
-    }
-
-    const [tvData, moviesData] = await Promise.all([
-      tvResponse.json(),
-      moviesResponse.json()
-    ]);
-
-    if (tvData.version !== fileServerVersionTV) {
-      console.error(
-        `TV data version mismatch: ${tvData.version ?? "no version"} not equal to expected ${fileServerVersionTV} (${syncUrls.tv})`
-      );
-    }
-    if (moviesData.version !== fileServerVersionMOVIES) {
-      console.error(
-        `Movies data version mismatch: ${moviesData.version ?? "no version"} not equal to expected ${fileServerVersionMOVIES} (${syncUrls.movies})`
-      );
-    }
-    
-    // Remove version keys before returning the data.
-    delete tvData.version;
-    delete moviesData.version;
-
-    return {
-      id: server.id,
-      baseURL: server.baseURL,
-      prefixPath: server.prefixPath,
-      priority: server.priority,
-      data: {
-        tv: tvData,
-        movies: moviesData
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 0) {
+        const delay = calculateBackoff(attempt - 1);
+        console.log(`Retrying server ${server.id} fetch (attempt ${attempt + 1}/${maxRetries + 1}) after ${Math.round(delay)}ms...`);
+        await sleep(delay);
       }
-    };
-  } catch (error) {
-    console.error(`Error fetching data from server ${server.baseURL} / ${server.id}:`, error);
-    return {
-      id: server.id,
-      baseURL: server.baseURL,
-      prefixPath: server.prefixPath,
-      priority: server.priority,
-      error: error.message,
-      data: null
-    };
+      
+      const [tvResponse, moviesResponse] = await Promise.all([
+        fetchWithTimeout(syncUrls.tv, timeoutMs),
+        fetchWithTimeout(syncUrls.movies, timeoutMs)
+      ]);
+
+      if (!tvResponse.ok) {
+        const error = new Error(`Failed to fetch TV data from ${syncUrls.tv}: ${tvResponse.status} ${tvResponse.statusText}`);
+        error.status = tvResponse.status;
+        throw error;
+      }
+      if (!moviesResponse.ok) {
+        const error = new Error(`Failed to fetch movies data from ${syncUrls.movies}: ${moviesResponse.status} ${moviesResponse.statusText}`);
+        error.status = moviesResponse.status;
+        throw error;
+      }
+
+      const [tvData, moviesData] = await Promise.all([
+        tvResponse.json(),
+        moviesResponse.json()
+      ]);
+
+      if (tvData.version !== fileServerVersionTV) {
+        console.error(
+          `TV data version mismatch: ${tvData.version ?? "no version"} not equal to expected ${fileServerVersionTV} (${syncUrls.tv})`
+        );
+      }
+      if (moviesData.version !== fileServerVersionMOVIES) {
+        console.error(
+          `Movies data version mismatch: ${moviesData.version ?? "no version"} not equal to expected ${fileServerVersionMOVIES} (${syncUrls.movies})`
+        );
+      }
+      
+      // Remove version keys before returning the data.
+      delete tvData.version;
+      delete moviesData.version;
+
+      if (attempt > 0) {
+        console.log(`Successfully fetched data from server ${server.id} after ${attempt + 1} attempts`);
+      }
+
+      return {
+        id: server.id,
+        baseURL: server.baseURL,
+        prefixPath: server.prefixPath,
+        priority: server.priority,
+        data: {
+          tv: tvData,
+          movies: moviesData
+        }
+      };
+    } catch (error) {
+      lastError = error;
+      
+      if (shouldRetryRequest(error, attempt, maxRetries)) {
+        console.warn(`Server ${server.id} fetch failed (attempt ${attempt + 1}/${maxRetries + 1}): ${error.message}`);
+        continue;
+      } else {
+        console.error(`Server ${server.id} fetch failed after ${attempt + 1} attempts, giving up: ${error.message}`);
+        break;
+      }
+    }
   }
+  
+  // All retries exhausted
+  console.error(`Error fetching data from server ${server.baseURL} / ${server.id} after ${maxRetries + 1} attempts:`, lastError);
+  return {
+    id: server.id,
+    baseURL: server.baseURL,
+    prefixPath: server.prefixPath,
+    priority: server.priority,
+    error: lastError.message,
+    data: null
+  };
 }
 
 /**

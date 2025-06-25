@@ -35,6 +35,7 @@ export async function createMissingMovies(client, missingMovieTitles, serverConf
       title,
       originalTitle: title,
       type: 'movie',
+      createdAt: new Date(),
       initialDiscoveryDate: new Date(),
       initialDiscoveryServer: serverConfig.id
     };

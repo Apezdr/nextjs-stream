@@ -1,13 +1,11 @@
-//import isAuthenticated from '../../../../utils/routeAuth'
-import clientPromise from '../../../../lib/mongodb'
-import isAuthenticated from '@src/utils/routeAuth'
+import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
 import { getServer, multiServerHandler, nodeJSURL } from '@src/utils/config'
 import { httpGet } from '@src/lib/httpHelper'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 
 // This route is used to fetch spritesheet vtt file for a specific media item
 export const GET = async (req) => {
-  const authResult = await isAuthenticated(req)
+  const authResult = await isAuthenticatedEither(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@src/lib/auth';
+import { isAuthenticatedEither } from '@src/utils/routeAuth';
 import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils';
 
 /**
@@ -11,10 +11,10 @@ import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils';
  */
 export async function GET(request) {
   try {
-    // Verify authentication
-    const session = await auth();
-    if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    // Verify authentication (supports both web sessions and sessionId)
+    const authResult = await isAuthenticatedEither(request);
+    if (authResult instanceof Response) {
+      return authResult;
     }
 
     // Get query parameters

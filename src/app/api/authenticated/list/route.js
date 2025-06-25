@@ -1,5 +1,5 @@
 import { isAdminOrWebhook } from '../../../../utils/routeAuth'
-import { fetchAllServerData } from '@src/utils/fetchAllServerData';
+import { getFileServerData } from '@src/utils/fileServerDataService';
 
 export const GET = async (req) => {
   const authResult = await isAdminOrWebhook(req);
@@ -8,13 +8,10 @@ export const GET = async (req) => {
   }
 
   try {
-    const { fileServers, errors } = await fetchAllServerData();
-
+    const data = await getFileServerData();
+    
     return new Response(
-      JSON.stringify({
-        fileServers,
-        errors: errors.length > 0 ? errors : undefined
-      }),
+      JSON.stringify(data),
       {
         status: 200,
         headers: { 'Content-Type': 'application/json' }

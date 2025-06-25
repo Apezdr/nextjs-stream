@@ -1,4 +1,4 @@
-import isAuthenticated from '@src/utils/routeAuth'
+import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
 import {
   getFlatPosters,
   getFlatRecentlyAddedMedia,
@@ -21,8 +21,8 @@ const sortFunctions = {
 
 // API Route handler
 export const GET = async (req) => {
-  // Check authentication
-  const authResult = await isAuthenticated(req)
+  // Check authentication (supports both web sessions and sessionId)
+  const authResult = await isAuthenticatedEither(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution if not authenticated
   }

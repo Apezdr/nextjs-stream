@@ -24,6 +24,29 @@ import {
 import { syncBlurhashData } from './blurhashSync';
 // Import PlaybackStatus validation module
 import { validatePlaybackStatusAgainstDatabase } from './playbackStatusValidation';
+// Import notification system
+import { MediaNotificationOrchestrator } from '../notifications/MediaNotificationOrchestrator';
+
+/**
+ * Process new content notifications after sync operations
+ * @param {Object} syncResults - Results from sync operations
+ * @param {Object} options - Notification processing options
+ * @returns {Promise<Object>} Notification results
+ */
+async function processNewContentNotifications(syncResults, options = {}) {
+  try {
+    return await MediaNotificationOrchestrator.processSyncResults(syncResults, options);
+  } catch (error) {
+    console.error('Error processing new content notifications:', error);
+    return {
+      analysis: null,
+      notifications: [],
+      delivered: [],
+      errors: [{ type: 'notification_error', message: error.message }],
+      summary: { totalGenerated: 0, totalDelivered: 0, totalErrors: 1 }
+    };
+  }
+}
 
 /**
  * Syncs all media data from file servers to the flat database structure
@@ -169,6 +192,29 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
   
   console.log(chalk.bold.green(`Total sync time: ${totalTimeSeconds.toFixed(2)} seconds`));
   
+  // Process notifications for newly added content
+  console.log(chalk.green('Processing notifications for new content...'));
+  const notificationStartTime = performance.now();
+  const notificationResults = await processNewContentNotifications(results, {
+    enableNotifications: true,
+    analysisOptions: {
+      minSignificanceThreshold: 1,
+      timeWindow: 24 * 60 * 60 * 1000 // 24 hours
+    },
+    generationOptions: {
+      batchSimilarContent: true,
+      maxMoviesPerNotification: 5,
+      includeMetadata: true
+    },
+    deliveryOptions: {
+      targetAllUsers: true,
+      checkDuplicates: true,
+      duplicateWindow: 24 * 60 * 60 * 1000 // 24 hours
+    }
+  });
+  const notificationEndTime = performance.now();
+  console.log(chalk.green(`Notification processing completed in ${((notificationEndTime - notificationStartTime) / 1000).toFixed(2)} seconds`));
+  
   // NOTE: We don't perform availability checks here anymore.
   // Availability checks should be performed once after all servers have been processed,
   // using the checkAvailabilityAcrossAllServers function.
@@ -176,13 +222,15 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
   
   return {
     ...results,
+    notifications: notificationResults,
     performance: {
       totalTimeSeconds,
       tvShowTimeSeconds: (tvShowEndTime - tvShowStartTime) / 1000,
       seasonTimeSeconds: (seasonEndTime - seasonStartTime) / 1000,
       episodeTimeSeconds: (episodeEndTime - episodeStartTime) / 1000,
       movieTimeSeconds: (movieEndTime - movieStartTime) / 1000,
-      blurhashTimeSeconds: (blurhashEndTime - blurhashStartTime) / 1000
+      blurhashTimeSeconds: (blurhashEndTime - blurhashStartTime) / 1000,
+      notificationTimeSeconds: (notificationEndTime - notificationStartTime) / 1000
     }
   };
 }

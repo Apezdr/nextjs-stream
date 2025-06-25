@@ -60,6 +60,7 @@ async function syncSingleEpisode(
     updated: false,
     fields: [],
     errors: [],
+    _id: null, // Will be populated with database ID if episode exists/created
   }
 
   try {
@@ -506,6 +507,11 @@ async function syncSingleEpisode(
       results.updated = true
     } else {
       results.updated = hasUpdates
+    }
+
+    // Include the database ID in results for notification system
+    if (flatEpisode && flatEpisode._id) {
+      results._id = flatEpisode._id;
     }
 
     return results

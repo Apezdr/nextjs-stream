@@ -1,9 +1,9 @@
 import { sanitizeCardData } from '@src/utils/auth_utils'
-import isAuthenticated from '../../../../utils/routeAuth'
+import isAuthenticated, { isAuthenticatedEither } from '../../../../utils/routeAuth'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 
 export async function POST(req) {
-  const authResult = await isAuthenticated(req)
+  const authResult = await isAuthenticatedEither(req)
   if (authResult instanceof Response) {
     return authResult
   }
@@ -18,7 +18,7 @@ export async function POST(req) {
 
 export async function GET(req) {
   try {
-    const authResult = await isAuthenticated(req)
+    const authResult = await isAuthenticatedEither(req)
     if (authResult instanceof Response) {
       return authResult
     }

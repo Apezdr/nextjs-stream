@@ -12,6 +12,7 @@ import useScroll from './useScroll'
 
 const SearchInput = lazy(() => import('@components/Search/SearchInput'))
 const SignOutButton = lazy(() => import('@components/SignOutButton'))
+const NotificationBell = lazy(() => import('@components/notifications/NotificationBell'))
 
 const isMediaPageFunc = (pathname) => {
   const moviePattern = /^\/list\/movie\/[^/]+\/play$/
@@ -160,6 +161,11 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                     </div>
                   </div>
                   <div className="mr-2 sm:ml-4 sm:mr-0 flex items-center">
+                    {/* Notification Bell */}
+                    <Suspense fallback={<div className="w-10 h-10"></div>}>
+                      <NotificationBell />
+                    </Suspense>
+                    
                     {/* Profile dropdown */}
                     <Menu as="div" className="relative ml-4 flex-shrink-0 text-slate-700">
                       <div>

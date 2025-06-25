@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { useSystemStatus } from '@src/contexts/SystemStatusContext';
 
 /**
  * Format a date string as "time ago"
@@ -25,44 +26,24 @@ function formatTimeAgo(dateStr) {
 }
 
 /**
- * Fetches the latest system status from the API
- * @returns {Promise<Object|null>} The system status or null if fetch failed
- */
-async function fetchSystemStatus() {
-  try {
-    const response = await fetch('/api/authenticated/system-status', {
-      method: 'GET',
-      headers: {
-        'Cache-Control': 'no-cache',
-        'Pragma': 'no-cache'
-      },
-      next: { revalidate: 0 } // Ensure fresh data
-    });
-    
-    if (!response.ok) {
-      console.error('Failed to fetch system status:', response.statusText);
-      return null;
-    }
-    
-    return await response.json();
-  } catch (error) {
-    console.error('Error fetching system status:', error);
-    return null;
-  }
-}
-
-/**
  * Client-side banner component that handles dismissal and styling
- * Periodically refreshes status data
+ * Uses SystemStatusContext for data fetching with automatic refreshing
  */
 export default function StatusBannerClient({ status: initialStatus }) {
   const [visible, setVisible] = useState(true);
-  const [status, setStatus] = useState(initialStatus);
   const [timeAgoRefresh, setTimeAgoRefresh] = useState(0); // Trigger time ago refreshes
   
-  // Function to refresh status data
-  const refreshStatus = useCallback(async () => {
-    const freshStatus = await fetchSystemStatus();
+  // Use SystemStatusContext for consistent data fetching
+  const { status: contextStatus, loading: isLoading, refetch } = useSystemStatus();
+  
+  // Process the context data to determine the current status to display
+  const status = useMemo(() => {
+    // If context hasn't loaded data yet, use initial status
+    if (!contextStatus) {
+      return initialStatus;
+    }
+    
+    const freshStatus = contextStatus;
     if (freshStatus && freshStatus.servers) {
       const statusLevels = ['normal', 'heavy', 'critical'];
       
@@ -84,64 +65,48 @@ export default function StatusBannerClient({ status: initialStatus }) {
       if (serverWithWorstStatus && 
           (serverWithWorstStatus.level || serverWithWorstStatus.status) !== 'normal' &&
           (serverWithWorstStatus.level || serverWithWorstStatus.status) !== 'unknown') {
-        setStatus({
+        return {
           level: serverWithWorstStatus.level || serverWithWorstStatus.status,
           message: serverWithWorstStatus.message || freshStatus.overall.message,
           isIncidentActive: !!serverWithWorstStatus.incident,
           incidentStartedAt: serverWithWorstStatus.incident?.startedAt,
           serverId: serverWithWorstStatus.serverId
-        });
+        };
       } else if (freshStatus.overall.level !== 'normal') {
         // Use overall status if no server has issues
-        setStatus({
+        return {
           level: freshStatus.overall.level,
           message: freshStatus.overall.message,
           isIncidentActive: freshStatus.hasActiveIncidents,
           incidentStartedAt: null,
           serverId: null
-        });
-      } else {
-        // No status issues, clear any previous status
-        setStatus(initialStatus);
-      }
-      
-      // If status was previously dismissed but now there's a critical issue, show it again
-      if ((serverWithWorstStatus?.level === 'critical' || freshStatus.overall.level === 'critical') && !visible) {
-        setVisible(true);
+        };
       }
     }
-  }, [initialStatus, visible]);
-  
-  // Periodically refresh status data (every 2 minutes)
-  useEffect(() => {
-    const interval = setInterval(refreshStatus, 120000); // 2 minutes
     
-    // Refresh time ago display more frequently (every 30 seconds)
+    // No status issues, use initial status
+    return initialStatus;
+  }, [contextStatus, initialStatus]);
+  
+  // Reset visibility when status level changes to critical
+  useEffect(() => {
+    if (status.level === 'critical') {
+      setVisible(true);
+    }
+  }, [status.level]);
+  
+  // Refresh time ago display more frequently (every 30 seconds)
+  useEffect(() => {
     const timeAgoInterval = setInterval(() => {
       setTimeAgoRefresh(prev => prev + 1);
     }, 30000);
     
-    return () => {
-      clearInterval(interval);
-      clearInterval(timeAgoInterval);
-    };
-  }, [refreshStatus]);
+    return () => clearInterval(timeAgoInterval);
+  }, []);
   
-  // Reset visibility when status level changes to a more severe level
-  useEffect(() => {
-    if (status.level === 'critical' || !visible) {
-      setVisible(true);
-    }
-  }, [status.level, visible]);
-  
-  // Track loading state for refresh button
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  
-  // Handle manual refresh
+  // Handle manual refresh using context's refetch function
   const handleManualRefresh = async () => {
-    setIsRefreshing(true);
-    await refreshStatus();
-    setIsRefreshing(false);
+    await refetch(); // This will trigger a fresh fetch through the context
   };
   
   // Determine banner style based on status level
@@ -180,14 +145,14 @@ export default function StatusBannerClient({ status: initialStatus }) {
         <div className="flex items-center">
           <button 
             onClick={handleManualRefresh}
-            disabled={isRefreshing}
+            disabled={isLoading}
             className="text-white hover:text-gray-200 mr-3 flex items-center"
             aria-label="Refresh status"
             title="Check for status updates"
           >
             <svg 
               xmlns="http://www.w3.org/2000/svg" 
-              className={`h-5 w-5 ${isRefreshing ? 'animate-spin' : ''}`}
+              className={`h-5 w-5 ${isLoading ? 'animate-spin' : ''}`}
               viewBox="0 0 24 24" 
               fill="none" 
               stroke="currentColor" 

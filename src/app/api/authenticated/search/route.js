@@ -6,10 +6,10 @@ import {
   tvShowProjectionFields,
   sanitizeRecord
 } from '@src/utils/auth_utils'
-import isAuthenticated from '@src/utils/routeAuth'
+import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
 
 export const POST = async (req) => {
-  const authResult = await isAuthenticated(req)
+  const authResult = await isAuthenticatedEither(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }

@@ -1,4 +1,4 @@
-import { auth } from '@src/lib/auth'
+import { auth, getUserBySessionId, verifyMobileToken, getUserByMobileToken } from '@src/lib/auth'
 import { buildURL } from '.'
 import { adminUserEmails } from './config'
 import axios from 'axios'
@@ -90,4 +90,60 @@ export async function isValidWebhook(req) {
     }
   }
   return false
+}
+
+// Specifically for mobile/TV client authentication (JWT tokens and session IDs)
+export async function isAuthenticatedBySessionId(req) {
+  // First, try JWT token authentication (primary method for mobile/TV)
+  const authHeader = req.headers.get('authorization')
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7)
+    try {
+      // Use the new function that properly looks up the user by mobile token
+      const user = await getUserByMobileToken(token)
+      if (user) return user
+    } catch (error) {
+      console.error('JWT token verification failed:', error)
+      // Continue to try session ID authentication as fallback
+    }
+  }
+  
+  // Fallback: try session ID authentication
+  const sessionId = req.headers.get('x-session-id') || 
+                    new URL(req.url).searchParams.get('sessionId')
+  
+  if (!sessionId) {
+    return new Response(
+      JSON.stringify({ error: 'No valid authentication provided' }), 
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+  
+  try {
+    const user = await getUserBySessionId(sessionId)
+    if (user) return user
+    return new Response(
+      JSON.stringify({ error: 'Invalid session ID' }), 
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    )
+  } catch (error) {
+    console.error('SessionId auth failed:', error)
+    return new Response(
+      JSON.stringify({ error: 'Authentication failed' }), 
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+}
+
+// Combined method as a separate function
+export async function isAuthenticatedEither(req) {
+  // First try web session
+  const webAuthResult = await isAuthenticated(req)
+  if (!(webAuthResult instanceof Response)) {
+    return webAuthResult // User authenticated via web session
+  }
+  
+  // If web auth failed, try session ID
+  const sessionAuthResult = await isAuthenticatedBySessionId(req)
+  return sessionAuthResult // Either user object or error response
 }

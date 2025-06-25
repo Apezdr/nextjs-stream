@@ -27,8 +27,9 @@ import { getCpuUsage, getMemoryTotal, getMemoryUsage, getMemoryUsed } from '@src
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { syncAllServers } from '@src/utils/sync'
 import { getSyncVerificationReport } from '@src/utils/sync_verification'
-import { httpGet } from '@src/lib/httpHelper'
 import { handleQueueFetch } from '@src/utils/auth_utils'
+import { NotificationManager } from '@src/utils/notifications/NotificationManager.js'
+import { getFileServerData } from '@src/utils/fileServerDataService'
 
 /**
  * Extracts all server endpoints from the configuration.
@@ -623,59 +624,15 @@ export async function POST(request, props) {
 async function handleSync(webhookId, request) {
   // Add a flag to track whether this sync operation is still in progress
   let syncInProgress = true;
+  const syncStartTime = new Date();
   
   try {
     const headers = {}
     if (webhookId) headers['X-Webhook-ID'] = webhookId
     if (request.headers.get('cookie')) headers['cookie'] = request.headers.get('cookie')
 
-    // Add retry logic with exponential backoff for the initial data fetch
-    let response;
-    const maxRetries = 3;  // Configurable retry count
-    let retryCount = 0;
-    const initialBackoff = 1000;  // Start with 1 second delay
-    
-    while (syncInProgress && retryCount <= maxRetries) {
-      try {
-        if (retryCount > 0) {
-          console.log(`Attempt ${retryCount + 1}/${maxRetries + 1} to fetch server data...`);
-        }
-        
-        response = await httpGet(buildURL('/api/authenticated/list'), { headers, timeout: 10000, responseType: 'json'}, true);
-        break; // Success, exit the retry loop
-      } catch (error) {
-        retryCount++;
-        
-        // Only log and retry if the sync is still in progress
-        if (syncInProgress && retryCount <= maxRetries) {
-          // Calculate exponential backoff with jitter
-          const backoffTime = initialBackoff * Math.pow(2, retryCount - 1);
-          const jitter = Math.random() * 300; // Random jitter up to 300ms
-          const delay = backoffTime + jitter;
-          
-          console.log(`Server fetch failed (attempt ${retryCount}/${maxRetries + 1}). Retrying in ${Math.round(delay)}ms...`);
-          console.error(`Error details: ${error.message}`);
-          
-          // Wait before the next retry
-          await new Promise(resolve => setTimeout(resolve, delay));
-        } else {
-          // All retries exhausted or sync no longer in progress
-          console.error(`All ${maxRetries + 1} fetch attempts failed or sync operation was canceled.`);
-          
-          if (error.response && error.response.status === 502) {
-            throw new Error('Bad Gateway: Failed to fetch data from the server after multiple attempts.');
-          }
-          throw error;
-        }
-      }
-    }
-    
-    // If we don't have a response (due to cancellation), throw an error
-    if (!response) {
-      throw new Error('Sync operation was canceled or timed out during initial data fetch');
-    }
-    
-    const { fileServers, errors } = response.data
+    // Get file server(s) data directly (no internal HTTP call)
+    const { fileServers, errors } = await getFileServerData({skipAuth: true});
 
     // Initialize field-level availability maps
     const fieldAvailability = {
@@ -716,6 +673,34 @@ async function handleSync(webhookId, request) {
     
     // Mark sync as complete to prevent logging errors after completion
     syncInProgress = false;
+    
+    // Calculate sync duration
+    const syncEndTime = new Date();
+    const durationMs = syncEndTime.getTime() - syncStartTime.getTime();
+    const durationMinutes = Math.round(durationMs / 60000 * 10) / 10; // Round to 1 decimal place
+    
+    // Create admin-only sync completion notification
+    try {
+      // Determine server name - use first file server or default
+      const serverNames = Object.keys(fileServers);
+      const serverName = serverNames.length > 0 ? serverNames[0] : 'Unknown Server';
+      
+      // Extract sync statistics from the result
+      const stats = {
+        moviesAdded: result.moviesAdded || 0,
+        episodesAdded: result.episodesAdded || 0,
+        duration: `${durationMinutes} minutes`
+      };
+      
+      console.log(`Creating sync completion notification for admins. Server: ${serverName}, Stats:`, stats);
+      
+      await NotificationManager.createSyncCompleteForAdmins(serverName, stats);
+      
+      console.log('Admin sync completion notification created successfully');
+    } catch (notificationError) {
+      console.error('Failed to create sync completion notification:', notificationError);
+      // Don't fail the sync operation if notification creation fails
+    }
     
     return result;
   } catch (error) {

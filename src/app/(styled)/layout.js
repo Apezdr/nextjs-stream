@@ -5,6 +5,7 @@ import './globals.css'
 import { classNames } from '@src/utils'
 import { fileServerURLWithPrefixPath, siteDescription, siteTitle } from '@src/utils/config'
 import { lazy } from 'react'
+import { NotificationProvider } from '@src/contexts/NotificationContext'
 
 const ServerStatusBanner = lazy(() => import('@components/system/ServerStatusBanner'))
 const TVLayout = lazy(() => import('@components/HOC/TVLayout'))
@@ -24,14 +25,16 @@ export const metadata = {
 
 export default function styledLayout({ children }) {
   return (
-    <div
-      className={classNames(inter.className, `transition-colors duration-1000`)}
-    >
-      <ServerStatusBanner />
-      <GeneralLayout posterCollage={posterCollage} />
-      <TVLayout posterCollage={posterCollage} />
-      <MovieLayout posterCollage={posterCollage} />
-      {children}
-    </div>
+    <NotificationProvider>
+      <div
+        className={classNames(inter.className, `transition-colors duration-1000`)}
+      >
+        <ServerStatusBanner />
+        <GeneralLayout posterCollage={posterCollage} />
+        <TVLayout posterCollage={posterCollage} />
+        <MovieLayout posterCollage={posterCollage} />
+        {children}
+      </div>
+    </NotificationProvider>
   )
 }
