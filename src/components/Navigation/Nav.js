@@ -175,13 +175,33 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                         </MenuButton>
                       </div>
                       <Suspense>
-                        <MenuItems className="absolute right-0 z-[12] mt-2 w-48 origin-top-right rounded-md bg-white hover:bg-gray-400 py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                        <MenuItems className="absolute right-0 z-[12] mt-2 w-48 origin-top-right rounded-md bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                          <MenuItem>
+                            {({ active }) => (
+                              <Link
+                                href="/account/delete"
+                                className={`block px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${active ? 'bg-gray-100' : ''}`}
+                              >
+                                Account Settings
+                              </Link>
+                            )}
+                          </MenuItem>
+                          <MenuItem>
+                            {({ active }) => (
+                              <Link
+                                href="/privacy"
+                                className={`block px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${active ? 'bg-gray-100' : ''}`}
+                              >
+                                Privacy Policy
+                              </Link>
+                            )}
+                          </MenuItem>
                           <MenuItem>
                             {({ active }) => (
                               <SignOutButton
                                 signoutProps={{ callbackUrl: '/' }}
                                 fontcolorClass={null}
-                                className={`block w-full px-4 py-2 text-sm ${active ? 'bg-gray-100' : ''}`}
+                                className={`block w-full px-4 py-2 text-sm hover:bg-gray-400 ${active ? 'bg-gray-100' : ''}`}
                               />
                             )}
                           </MenuItem>

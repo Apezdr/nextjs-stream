@@ -22,6 +22,7 @@ import {
   XMarkIcon,
   ChevronDownIcon as ChevronDownIconOutline,
   Cog8ToothIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline'
 import { ArrowLeftIcon, ChevronDownIcon, InformationCircleIcon, MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import Link from 'next/link'
@@ -45,6 +46,7 @@ const navigation = [
     ],
   },
   { name: 'Calendar', href: '/admin/calendar', icon: CalendarIcon },
+  { name: 'Deletion Requests', href: '/admin/deletion-requests', icon: TrashIcon },
   { name: 'Settings', href: '/admin/settings', icon: Cog8ToothIcon },
   { name: 'Logs', href: '/admin/logs', icon: InformationCircleIcon },
 ]

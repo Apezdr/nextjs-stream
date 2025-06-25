@@ -1,4 +1,5 @@
-import { siteTitle, adminUserEmails } from '@src/utils/config'
+import { siteTitle, adminUserEmails, showAdminEmails } from '@src/utils/config'
+import Link from 'next/link'
 
 export const metadata = {
   title: `Privacy Policy - ${siteTitle}`,
@@ -6,7 +7,7 @@ export const metadata = {
 }
 
 export default function PrivacyPolicy() {
-  const hasAdminEmail = adminUserEmails && adminUserEmails.length > 0
+  const hasAdminEmail = adminUserEmails && adminUserEmails.length > 0 && showAdminEmails
   const adminEmail = hasAdminEmail ? adminUserEmails[0] : null
   const currentDate = new Date().toLocaleDateString('en-US', { 
     year: 'numeric', 
@@ -15,11 +16,11 @@ export default function PrivacyPolicy() {
   })
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-4xl">
+    <div className="container mx-auto px-12 py-8 max-w-4xl bg-gray-800">
       <div className="prose prose-lg max-w-none dark:prose-invert">
         <h1 className="text-3xl font-bold mb-6">Privacy Policy</h1>
         
-        <p className="text-sm text-gray-600 dark:text-gray-400 mb-8">
+        <p className="text-sm text-gray-300 mb-8">
           <strong>Last Updated:</strong> {currentDate}
         </p>
 
@@ -158,9 +159,30 @@ export default function PrivacyPolicy() {
 
           <h3 className="text-xl font-medium mb-3">How to Exercise Your Rights</h3>
           <p className="mb-4">
-            To exercise any of these rights, contact the instance administrator{hasAdminEmail ? ` at ${adminEmail}` : ''} or 
+            To exercise any of these rights, contact the instance administrator{hasAdminEmail ? ` at ${adminEmail}` : ''} or
             use the account deletion feature within the application.
           </p>
+          
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 mb-4">
+            <h4 className="text-lg font-medium text-red-800 dark:text-red-200 mb-2">
+              Request Account Deletion
+            </h4>
+            <p className="text-sm text-red-700 dark:text-red-300 mb-3">
+              You can request permanent deletion of your account and all associated personal data.
+              This action is irreversible after the 30-day grace period.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <Link
+                href="/privacy/delete-account"
+                className="inline-flex items-center justify-center rounded-md border border-transparent bg-red-600 px-4 py-2 text-sm font-medium text-white shadow-sm hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2"
+              >
+                Request Account Deletion
+              </Link>
+              <span className="text-xs text-red-600 dark:text-red-400 self-center">
+                Available for both authenticated and non-authenticated users
+              </span>
+            </div>
+          </div>
         </section>
 
         <section className="mb-8">

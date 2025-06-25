@@ -217,6 +217,9 @@ export const adminUserEmails = process.env.NEXT_PUBLIC_ADMIN_USER_EMAILS
   ? process.env.NEXT_PUBLIC_ADMIN_USER_EMAILS.split(',').map((email) => email.trim())
   : []
 
+// Privacy configuration
+export const showAdminEmails = process.env.SHOW_ADMIN_EMAILS !== 'false'
+
 // Export server management functions
 export const getServer = serverManager.getServer.bind(serverManager)
 export const getSyncUrls = serverManager.getSyncUrls.bind(serverManager)
