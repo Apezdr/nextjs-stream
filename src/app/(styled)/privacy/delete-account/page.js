@@ -126,7 +126,7 @@ export default function PublicDeleteAccountPage() {
             <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-4">
               <p className="text-sm text-yellow-800 dark:text-yellow-200">
                 <strong>Note:</strong> If you have an active account, please{' '}
-                <Link href="/auth/signin" className="underline hover:no-underline">
+                <Link href="/" className="underline hover:no-underline">
                   sign in
                 </Link>{' '}
                 to access the account deletion feature directly.
