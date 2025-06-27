@@ -82,7 +82,13 @@ export const GET = async (req) => {
         responseType: 'text',
       }, true)
       
-      if (!data) {
+      // Handle cached data format
+      let subtitleContent = data;
+      if (data && typeof data === 'object' && data._dataType === 'text' && data.data) {
+        subtitleContent = data.data;
+      }
+
+      if (!subtitleContent || typeof subtitleContent !== 'string') {
         return new Response(JSON.stringify({ error: 'Failed to fetch subtitle content' }), {
           status: 500,
           headers: { 'Content-Type': 'application/json' },
@@ -97,17 +103,17 @@ export const GET = async (req) => {
 
       // Convert SRT to WebVTT if needed
       if (fileExtension === 'srt') {
-        const vttData = srt2webvtt(data)
+        const vttData = srt2webvtt(subtitleContent)
         return new Response(vttData, { status: 200, headers: headers })
       } else {
         // Check if the VTT data is valid
-        if (data.trim() === '' || data.toLowerCase().includes('<!doctype html>')) {
+        if (subtitleContent.trim() === '' || subtitleContent.toLowerCase().includes('<!doctype html>')) {
           return new Response(JSON.stringify({ error: 'Invalid subtitle format received' }), {
             status: 500,
             headers: { 'Content-Type': 'application/json' },
           })
         }
-        return new Response(data, { status: 200, headers: headers })
+        return new Response(subtitleContent, { status: 200, headers: headers })
       }
     } catch (error) {
       console.error(`Error fetching subtitle file: ${error.message}`);
@@ -126,6 +132,12 @@ export const GET = async (req) => {
 }
 
 function srt2webvtt(data) {
+  // Add safety check
+  if (!data || typeof data !== 'string') {
+    console.error('srt2webvtt received invalid data:', typeof data);
+    return 'WEBVTT\n\n'; // Return minimal valid WebVTT
+  }
+  
   // Remove DOS newlines
   let srt = data.replace(/\r+/g, '')
 
