@@ -705,3 +705,179 @@ export async function validateURL(url) {
     return false
   }
 }
+
+/**
+ * Sanitizes media data specifically for TV devices (React Native Expo TV app).
+ * Optimizes data structure for TV navigation and removes web-specific features.
+ *
+ * @param {Object} media - The media object from getFlatRequestedMedia
+ * @param {Object} options - Configuration options for TV data processing
+ * @param {boolean} options.includeEpisodeList - Whether to include full episode list for seasons
+ * @param {boolean} options.includeNavigation - Whether to include navigation helpers
+ * @param {string} options.mediaType - The media type ('movie' or 'tv')
+ * @param {string} options.seasonNumber - Current season number (if applicable)
+ * @param {string} options.episodeNumber - Current episode number (if applicable)
+ * @returns {Object} TV-optimized media data
+ */
+export function sanitizeTVData(media, options = {}) {
+  if (!media) return null
+
+  const {
+    includeEpisodeList = false,
+    includeNavigation = true,
+    mediaType,
+    seasonNumber,
+    episodeNumber
+  } = options
+
+  try {
+    // Base TV data structure
+    const tvData = {
+      id: media.id || media._id?.toString(),
+      title: media.title,
+      type: media.type || mediaType,
+      
+      // TV-optimized images (higher quality for TV screens)
+      posterURL: media.posterURL || getFullImageUrl(media.metadata?.poster_path, 'w780'),
+      backdrop: media.backdrop || getFullImageUrl(media.metadata?.backdrop_path, 'original'),
+      
+      // Preserve blurhash data for smooth loading
+      posterBlurhash: media.posterBlurhash || null,
+      backdropBlurhash: media.backdropBlurhash || null,
+      
+      // Essential metadata for TV
+      metadata: {
+        overview: media.metadata?.overview,
+        genres: media.metadata?.genres,
+        rating: media.metadata?.vote_average || media.metadata?.rating,
+        runtime: media.metadata?.runtime || media.duration,
+        releaseDate: media.metadata?.release_date || media.metadata?.first_air_date,
+        trailer_url: media.metadata?.trailer_url
+      }
+    }
+
+    // Add logo if available
+    if (media.logo) {
+      tvData.logo = media.logo
+    }
+
+    // Handle TV show specific data
+    if (mediaType === 'tv' || media.type === 'tv') {
+      // Add season/episode context
+      if (seasonNumber) {
+        tvData.seasonNumber = parseInt(seasonNumber.replace('Season ', ''))
+      }
+      if (episodeNumber) {
+        tvData.episodeNumber = parseInt(episodeNumber.replace('Episode ', ''))
+      }
+
+      // For specific episodes, include episode details
+      if (media.episodeNumber || episodeNumber) {
+        tvData.episode = {
+          episodeNumber: media.episodeNumber || parseInt(episodeNumber?.replace('Episode ', '')),
+          title: media.title,
+          thumbnail: media.thumbnail,
+          thumbnailBlurhash: media.thumbnailBlurhash,
+          duration: media.duration,
+          videoURL: media.videoURL,
+          description: media.metadata?.overview
+        }
+
+        // Include next episode info if available
+        if (media.hasNextEpisode) {
+          tvData.nextEpisode = {
+            episodeNumber: media.nextEpisodeNumber,
+            title: media.nextEpisodeTitle,
+            thumbnail: media.nextEpisodeThumbnail,
+            thumbnailBlurhash: media.nextEpisodeThumbnailBlurhash
+          }
+        }
+      }
+
+      // Include episode list for season requests (TV navigation)
+      if (includeEpisodeList && media.episodes && Array.isArray(media.episodes)) {
+        tvData.episodes = media.episodes.map(episode => ({
+          episodeNumber: episode.episodeNumber,
+          title: episode.title,
+          thumbnail: episode.thumbnail,
+          thumbnailBlurhash: episode.thumbnailBlurhash,
+          duration: episode.duration,
+          description: episode.metadata?.overview,
+          // TV-specific: Include video URL for direct playback
+          videoURL: episode.videoURL,
+          // TV-specific: Include HDR info for quality indicators
+          hdr: episode.hdr || false,
+          dimensions: episode.dimensions
+        }))
+      }
+
+      // Add navigation helpers for TV interface
+      if (includeNavigation) {
+        tvData.navigation = generateTVNavigation(media, {
+          currentSeason: tvData.seasonNumber,
+          currentEpisode: tvData.episodeNumber,
+          totalSeasons: media.seasons?.length || 0
+        })
+      }
+    }
+
+    // For movies, add movie-specific TV data
+    if (mediaType === 'movie' || media.type === 'movie') {
+      tvData.duration = media.duration
+      tvData.videoURL = media.videoURL
+      tvData.hdr = media.hdr || false
+      tvData.dimensions = media.dimensions
+      
+      // Add cast information for TV browsing
+      if (media.cast) {
+        tvData.cast = media.cast.slice(0, 10) // Limit cast for TV interface
+      }
+    }
+
+    return tvData
+
+  } catch (error) {
+    console.error(`Error in sanitizeTVData for ${media?.title || 'unknown media'}:`, error)
+    
+    // Return minimal TV data to prevent complete failure
+    return {
+      id: media?.id || media?._id?.toString(),
+      title: media?.title || 'Unknown Title',
+      type: media?.type || mediaType,
+      posterURL: media?.posterURL || '/sorry-image-not-available.jpg',
+      error: 'Error processing TV data'
+    }
+  }
+}
+
+/**
+ * Generates navigation helpers for TV interface
+ * @param {Object} media - The media object
+ * @param {Object} context - Navigation context
+ * @returns {Object} Navigation data for TV interface
+ */
+function generateTVNavigation(media, context = {}) {
+  const { currentSeason, currentEpisode, totalSeasons } = context
+  
+  const navigation = {
+    seasons: {
+      current: currentSeason || 1,
+      total: totalSeasons,
+      hasPrevious: currentSeason > 1,
+      hasNext: currentSeason < totalSeasons
+    }
+  }
+
+  // Add episode navigation if we're viewing a specific episode
+  if (currentEpisode && media.episodes) {
+    const totalEpisodes = media.episodes.length
+    navigation.episodes = {
+      current: currentEpisode,
+      total: totalEpisodes,
+      hasPrevious: currentEpisode > 1,
+      hasNext: currentEpisode < totalEpisodes
+    }
+  }
+
+  return navigation
+}
