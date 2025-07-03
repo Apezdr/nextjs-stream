@@ -288,7 +288,21 @@ async function VideoPlayer({
         <MediaProvider>
           <VolumeRegulator />
           {poster ? <MediaPoster poster={poster} title={title} /> : null}
-          {videoURL ? <Suspense><WithPlaybackTracker videoURL={videoURL} start={start} /></Suspense> : null}
+          {videoURL ? (
+            <Suspense>
+              <WithPlaybackTracker
+                videoURL={videoURL}
+                start={start}
+                mediaMetadata={{
+                  mediaType: mediaType,
+                  mediaId: media._id,
+                  showId: mediaType === 'tv' ? media.showId : undefined,
+                  seasonNumber: mediaType === 'tv' ? season_number : undefined,
+                  episodeNumber: mediaType === 'tv' ? episode_number : undefined
+                }}
+              />
+            </Suspense>
+          ) : null}
           <Suspense fallback={null}><WithPlaybackCoordinator /></Suspense>
           {chapters ? <Track kind="chapters" src={chapters} lang="en-US" default /> : null}
           {captions

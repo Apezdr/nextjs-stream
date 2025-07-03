@@ -3,11 +3,13 @@ import {
   getFlatPosters,
   getFlatRecentlyAddedMedia,
   getFlatRecentlyWatchedForUser,
+  getFlatTVShowsWithEpisodeData,
 } from '@src/utils/flatDatabaseUtils'
 import { sanitizeCardData, sanitizeCardItems } from '@src/utils/auth_utils'
 import { getRecommendations } from '@src/utils/recommendations'
 import { getFlatRecommendations } from '@src/utils/flatRecommendations'
 import { getFullImageUrl } from '@src/utils'
+import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
 
 // Sorting functions
 const sortFunctions = {
@@ -34,6 +36,9 @@ export const GET = async (req) => {
   const sortOrder = searchParams.get('sortOrder') || 'desc'
   const page = parseInt(searchParams.get('page') || '0')
   const itemsPerPage = parseInt(searchParams.get('limit') || '30')
+  const isTVdevice = searchParams.get('isTVdevice') === 'true' ?? false
+  const shouldExposeAdditionalData = isTVdevice ?? false
+  const includeWatchHistory = searchParams.get('includeWatchHistory') === 'true'
 
   let items = []
   let previousItem = null
@@ -46,34 +51,50 @@ export const GET = async (req) => {
     // Function to fetch items for a given page
     const fetchItemsForPage = async (pageNumber, limit) => {
       switch (type) {
-        case 'movie':
-          return await getFlatPosters('movie', false, pageNumber, limit)
-        case 'tv':
-          return await getFlatPosters('tv', false, pageNumber, limit)
+        case 'movie': {
+          // For TV devices, include videoURL and duration in the projection for movies
+          const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
+          return await getFlatPosters('movie', false, pageNumber, limit, movieProjection)
+        }
+        case 'tv': {
+          // For TV devices, get TV shows with episode data for clipVideoURL generation
+          if (shouldExposeAdditionalData) {
+            return await getFlatTVShowsWithEpisodeData(authResult?.id, pageNumber, limit)
+          } else {
+            return await getFlatPosters('tv', false, pageNumber, limit)
+          }
+        }
         case 'recentlyWatched':
           return await getFlatRecentlyWatchedForUser({
             userId: authResult?.id,
             page: pageNumber,
             limit: limit,
+            shouldExposeAdditionalData,
           })
         case 'recentlyAdded':
-          return await getFlatRecentlyAddedMedia({ 
-            page: pageNumber, 
+          return await getFlatRecentlyAddedMedia({
+            page: pageNumber,
             limit: limit,
+            shouldExposeAdditionalData,
           })
         case 'recommendations':
           //const recommendations = await getRecommendations(authResult?.id, pageNumber, limit)
           const recommendations = await getFlatRecommendations(
-            authResult?.id, 
-            pageNumber, 
+            authResult?.id,
+            pageNumber,
             limit,
+            false, // countOnly
+            shouldExposeAdditionalData
           )
           return recommendations.items || []
         case 'all':
         default: {
+          const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
           const [moviePosters, tvPosters] = await Promise.all([
-            getFlatPosters('movie', false, pageNumber, limit),
-            getFlatPosters('tv', false, pageNumber, limit),
+            getFlatPosters('movie', false, pageNumber, limit, movieProjection),
+            shouldExposeAdditionalData
+              ? getFlatTVShowsWithEpisodeData(authResult?.id, pageNumber, limit)
+              : getFlatPosters('tv', false, pageNumber, limit),
           ])
           return [...moviePosters, ...tvPosters]
         }
@@ -90,12 +111,33 @@ export const GET = async (req) => {
       // For other item types that might not be fully sanitized, make sure thumbnails and posters are set for TV episodes
       if (type !== 'recentlyAdded') {
         for (const item of sorted) {
-          if (item.type === 'tv' && item.episode) {
+          // Handle TV shows with episodeData (from getFlatTVShowsWithEpisodeData)
+          if (item.type === 'tv' && item.episodeData) {
+            // Extract season/episode numbers from episodeData to top level for clipVideoURL generation
+            if (item.episodeData.seasonNumber && !item.seasonNumber) {
+              item.seasonNumber = item.episodeData.seasonNumber;
+            }
+            if (item.episodeData.episodeNumber && !item.episodeNumber) {
+              item.episodeNumber = item.episodeData.episodeNumber;
+            }
+            
+            // Use episode thumbnail as the posterURL for TV episodes
+            if (item.episodeData.thumbnail) {
+              item.posterURL = item.episodeData.thumbnail;
+              item.thumbnail = item.episodeData.thumbnail;
+            }
+            
+            if (item.episodeData.thumbnailBlurhash) {
+              item.thumbnailBlurhash = item.episodeData.thumbnailBlurhash;
+            }
+          }
+          // Handle TV shows with episode property (from other sources like recentlyWatched)
+          else if (item.type === 'tv' && item.episode) {
             // Make sure episode has a thumbnail (use metadata still_path or fallback to posterURL)
             if (!item.episode.thumbnail) {
-              item.episode.thumbnail = 
-                (item.episode.metadata?.still_path ? 
-                 getFullImageUrl(item.episode.metadata.still_path) : 
+              item.episode.thumbnail =
+                (item.episode.metadata?.still_path ?
+                 getFullImageUrl(item.episode.metadata.still_path) :
                  item.posterURL);
             }
             
@@ -113,6 +155,29 @@ export const GET = async (req) => {
             if (!item.episodeNumber && item.episode.episodeNumber) {
               item.episodeNumber = item.episode.episodeNumber;
             }
+            
+            // For TV devices, ensure videoURL is available at top level for clipVideoURL generation
+            if (shouldExposeAdditionalData && item.episode.videoURL && !item.videoURL) {
+              item.videoURL = item.episode.videoURL;
+              // Also ensure duration is available for clip generation
+              if (item.episode.duration && !item.duration) {
+                item.duration = item.episode.duration;
+              }
+            }
+          }
+          
+          // For movies, ensure videoURL is available when TV device mode is enabled
+          if (item.type === 'movie' && shouldExposeAdditionalData && !item.videoURL) {
+            // For movies, the videoURL might be in different locations depending on the data source
+            if (item.media?.videoURL) {
+              item.videoURL = item.media.videoURL;
+            } else if (item.url) {
+              item.videoURL = item.url;
+            }
+            // Ensure duration is available for clip generation
+            if (!item.duration && item.media?.duration) {
+              item.duration = item.media.duration;
+            }
           }
         }
       }
@@ -126,7 +191,20 @@ export const GET = async (req) => {
       };
       
       // Pass the appropriate context for this type of list
-      items = sanitizeCardItems(sorted, contextByType[type] || {})
+      items = sanitizeCardItems(sorted, contextByType[type] || {}, shouldExposeAdditionalData)
+      
+      // Add watch history if requested
+      if (includeWatchHistory && items.length > 0) {
+        try {
+          if (Boolean(process.env.DEBUG)) {
+            console.log(`[WATCH_HISTORY] Adding watch history to ${items.length} items for type: ${type}`)
+          }
+          items = await addWatchHistoryToItems(items, authResult?.id)
+        } catch (error) {
+          console.error('Error adding watch history to items:', error)
+          // Continue without watch history on error
+        }
+      }
     } else {
       items = []
     }
@@ -145,7 +223,18 @@ export const GET = async (req) => {
         };
         
         // Apply same context to previous item
-        previousItem = await sanitizeCardData(previousItem, false, contextByType[type] || {})
+        previousItem = await sanitizeCardData(previousItem, shouldExposeAdditionalData, contextByType[type] || {})
+        
+        // Add watch history to previous item if requested
+        if (includeWatchHistory && previousItem) {
+          try {
+            const previousItemWithHistory = await addWatchHistoryToItems([previousItem], authResult?.id)
+            previousItem = previousItemWithHistory[0]
+          } catch (error) {
+            console.error('Error adding watch history to previous item:', error)
+            // Continue without watch history on error
+          }
+        }
       }
     }
 
@@ -163,7 +252,18 @@ export const GET = async (req) => {
       };
       
       // Apply same context to next item
-      nextItem = await sanitizeCardData(nextItem, false, contextByType[type] || {})
+      nextItem = await sanitizeCardData(nextItem, shouldExposeAdditionalData, contextByType[type] || {})
+      
+      // Add watch history to next item if requested
+      if (includeWatchHistory && nextItem) {
+        try {
+          const nextItemWithHistory = await addWatchHistoryToItems([nextItem], authResult?.id)
+          nextItem = nextItemWithHistory[0]
+        } catch (error) {
+          console.error('Error adding watch history to next item:', error)
+          // Continue without watch history on error
+        }
+      }
     }
 
     // Return the items along with previous and next items

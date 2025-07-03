@@ -100,7 +100,11 @@ async function fetchOneStatus(server) {
     { ...DEFAULTS.HTTP_GET, headers },
     true // allow 304 caching
   );
-  return buildStatus(server, data, resp);
+  
+  // Normalize the response data structure to handle both cached and fresh responses
+  const responseData = data?.data || data;
+  
+  return buildStatus(server, responseData, resp);
 }
 
 async function processResponse(statuses, incomingETag) {

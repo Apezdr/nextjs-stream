@@ -1,5 +1,5 @@
 self.addEventListener('message', (e) => {
-  const { videoURL, currentTime } = e.data
+  const { videoURL, currentTime, mediaMetadata } = e.data
 
   fetch('/api/authenticated/sync/updatePlayback', {
     method: 'POST',
@@ -7,6 +7,7 @@ self.addEventListener('message', (e) => {
     body: JSON.stringify({
       videoId: videoURL,
       playbackTime: currentTime,
+      mediaMetadata: mediaMetadata,
     }),
   })
     .then((response) => {

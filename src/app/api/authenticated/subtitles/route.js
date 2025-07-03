@@ -82,11 +82,8 @@ export const GET = async (req) => {
         responseType: 'text',
       }, true)
       
-      // Handle cached data format
-      let subtitleContent = data;
-      if (data && typeof data === 'object' && data._dataType === 'text' && data.data) {
-        subtitleContent = data.data;
-      }
+      // Normalize the response data structure to handle both cached and fresh responses
+      const subtitleContent = data?.data || data;
 
       if (!subtitleContent || typeof subtitleContent !== 'string') {
         return new Response(JSON.stringify({ error: 'Failed to fetch subtitle content' }), {

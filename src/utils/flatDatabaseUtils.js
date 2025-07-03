@@ -88,6 +88,7 @@ export async function getFlatPosters(type, countOnly = false, page = 1, limit = 
   // Define default projections for fields to include
   const defaultProjection = {
     _id: 1,
+    normalizedVideoId: 1,
     title: 1,
     posterURL: 1,
     posterBlurhash: 1,
@@ -154,9 +155,10 @@ export async function getFlatPosters(type, countOnly = false, page = 1, limit = 
  *
  * @param {Array} mediaArray - Array of media objects.
  * @param {string} type - Media type ('movie' or 'tv').
+ * @param {boolean} [preserveAdditionalFields=false] - Whether to preserve videoURL and duration fields for TV device mode.
  * @returns {Promise<Array>} Media array with custom URLs added.
  */
-export async function addCustomUrlToFlatMedia(mediaArray, type) {
+export async function addCustomUrlToFlatMedia(mediaArray, type, preserveAdditionalFields = false) {
   return await Promise.all(
     mediaArray.map(async (media) => {
       const id = media._id.toString()
@@ -168,6 +170,16 @@ export async function addCustomUrlToFlatMedia(mediaArray, type) {
         link: encodeURIComponent(media.title) || null,
         description: media.metadata?.overview,
         type,
+        // Preserve additional fields for TV device mode when requested
+        ...(preserveAdditionalFields && type === 'movie' && {
+          videoURL: media.videoURL,
+          duration: media.duration
+        }),
+        // Preserve episode data for TV shows when TV device mode is enabled
+        // used for recently added
+        ...(preserveAdditionalFields && type === 'tv' && media.episode && {
+          episode: media.episode
+        })
       }
       
       // For TV episodes, use the episode thumbnail as the poster if available
@@ -232,6 +244,7 @@ export async function getFlatRecentlyWatchedForUser({
   page = 0,
   limit = 15,
   countOnly = false,
+  shouldExposeAdditionalData = false,
 }) {
   try {
     if (Boolean(process.env.DEBUG) == true) {
@@ -368,6 +381,25 @@ export async function getFlatRecentlyWatchedForUser({
       metadata: 1,
     };
     
+    // Define projections for episodes - include additional fields when TV device mode is enabled
+    const episodeProjection = {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      normalizedVideoId: 1,
+      episodeNumber: 1,
+      seasonNumber: 1,
+      seasonId: 1,
+      showId: 1,
+      thumbnail: 1,
+      thumbnailBlurhash: 1,
+      thumbnailBlurhashSource: 1,
+      metadata: 1,
+      ...(shouldExposeAdditionalData && {
+        duration: 1
+      })
+    };
+    
     // Step 4: Fetch movies and episodes in parallel - using both direct URL and hash matching
     const [movies, episodes] = await Promise.all([
       _client
@@ -383,12 +415,12 @@ export async function getFlatRecentlyWatchedForUser({
         _client
         .db('Media')
         .collection('FlatEpisodes')
-        .find({ 
+        .find({
           $or: [
             { normalizedVideoId: { $in: normalizedVideoIds } },
             { videoURL: { $in: videoIds } }
           ]
-        })
+        }, { projection: episodeProjection })
         .toArray()
     ]);
     
@@ -566,9 +598,10 @@ export async function getFlatRecentlyWatchedForUser({
  * @param {number} [params.page=0] - The page number for pagination (0-based).
  * @param {number} [params.limit=12] - The number of items per page.
  * @param {boolean} [params.countOnly=false] - Whether to only get the document count.
+ * @param {boolean} [params.shouldExposeAdditionalData=false] - Whether to expose additional data in the response ex. videoURL, duration
  * @returns {Promise<Array|number>} Recently added media or count.
  */
-export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnly = false }) {
+export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnly = false, shouldExposeAdditionalData = false }) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -576,6 +609,7 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
     // Define projection fields for flat movies
     const movieProjectionFields = {
       _id: 1,
+      normalizedVideoId: 1,
       title: 1,
       metadata: 1,
       posterURL: 1,
@@ -587,7 +621,11 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
       posterBlurhashSource: 1,
       backdropBlurhashSource: 1,
       posterSource: 1,
-      backdropSource: 1 
+      backdropSource: 1,
+      ...(shouldExposeAdditionalData && {
+        videoURL: 1,
+        duration: 1
+      })
     }
 
     // For non-count queries, get a larger pool of items to combine and paginate
@@ -630,6 +668,17 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
         
         if (show) {
           show.mediaLastModified = item.mediaLastModified
+          
+          // For TV device mode, include the most recent episode data for clip URL generation
+          if (shouldExposeAdditionalData) {
+            const recentEpisode = await db
+              .collection('FlatEpisodes')
+              .findOne({ _id: item.episodeId })
+            
+            if (recentEpisode) {
+              show.episode = recentEpisode
+            }
+          }
         }
         
         return show
@@ -668,8 +717,8 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
 
     // Add URLs to media
     const [moviesWithUrl, tvShowsWithUrl] = await Promise.all([
-      addCustomUrlToFlatMedia(movies, 'movie'),
-      addCustomUrlToFlatMedia(tvShows, 'tv'),
+      addCustomUrlToFlatMedia(movies, 'movie', shouldExposeAdditionalData),
+      addCustomUrlToFlatMedia(tvShows, 'tv', shouldExposeAdditionalData),
     ])
 
     // Arrange media by latest modification
@@ -754,38 +803,43 @@ export const fetchFlatBannerMedia = async () => {
  */
 export const fetchFlatRandomBannerMedia = async () => {
   try {
-    const client = await clientPromise
-    const db = client.db('Media')
+    const client = await clientPromise;
+    const db = client.db('Media');
     
-    // Randomly choose between Movies and TV collections
-    const collections = ['FlatMovies', 'FlatTVShows']
-    const randomCollection = collections[Math.floor(Math.random() * collections.length)]
+    // Define your collections along with the type you want to assign
+    const collectionConfigs = [
+      { name: 'FlatMovies',   type: 'movie' },
+      { name: 'FlatTVShows',  type: 'tv'    },
+    ];
     
-    const media = await db
-      .collection(randomCollection)
-      .aggregate([
-        { $sample: { size: 1 } }
-      ])
-      .toArray()
-
-    if (!media || media.length === 0) {
-      return { error: 'No media found', status: 404 }
+    // Pick one config at random
+    const { name: collectionName, type } =
+      collectionConfigs[Math.floor(Math.random() * collectionConfigs.length)];
+    
+    // Sample one document from the chosen collection
+    const [ item ] = await db
+      .collection(collectionName)
+      .aggregate([{ $sample: { size: 1 } }])
+      .toArray();
+    
+    if (!item) {
+      return { error: 'No media found', status: 404 };
     }
 
-    // Fetch metadata for backdropBlurhash if available
-    const item = media[0]
-    if (item && !item.backdrop) {
-      item.backdrop = getFullImageUrl(item.metadata.backdrop_path, 'original')
+    // Ensure we have a backdrop URL
+    if (!item.backdrop && item.metadata?.backdrop_path) {
+      item.backdrop = getFullImageUrl(item.metadata.backdrop_path, 'original');
     }
-    if (item && item._id) {
-      delete item._id
-    }
+    
+    // Directly assign the type from our config
+    item.type = type;
 
-    return item // Return single media object
+    return item;
   } catch (error) {
-    return { error: 'Failed to fetch media', status: 500 }
+    console.error('fetchFlatRandomBannerMedia error:', error);
+    return { error: 'Failed to fetch media', status: 500 };
   }
-}
+};
 
 /**
  * Gets requested media from the flat database structure.
@@ -1024,12 +1078,13 @@ export async function getFlatRequestedMedia({
             showId: tvShow._id,
             seasonId: seasonData._id,
             episodeNumber: { $gt: episodeNumber }
-          }, { 
+          }, {
             sort: { episodeNumber: 1 },
-            projection: { 
-              _id: 1, 
-              episodeNumber: 1, 
-              title: 1, 
+            projection: {
+              _id: 1,
+              normalizedVideoId: 1,
+              episodeNumber: 1,
+              title: 1,
               thumbnail: 1,
               metadata: 1,
             }
@@ -1286,12 +1341,13 @@ export async function getFlatTVList(options = {}) {
               .collection('FlatEpisodes')
               .find(
                 { seasonId: season._id },
-                { 
-                  projection: { 
-                    _id: 1, 
-                    episodeNumber: 1, 
-                    dimensions: 1, 
-                    hdr: 1 
+                {
+                  projection: {
+                    _id: 1,
+                    normalizedVideoId: 1,
+                    episodeNumber: 1,
+                    dimensions: 1,
+                    hdr: 1
                   }
                 }
               )
@@ -1581,5 +1637,186 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
       console.timeEnd('getFlatTVSeasonWithEpisodes:total');
     }
     throw error;
+  }
+}
+
+/**
+ * Get TV shows with episode data for TV device mode.
+ * For each TV show, gets the last episode the user watched, or the first episode if they haven't watched anything.
+ *
+ * @param {string} userId - The user ID to check watch history for
+ * @param {number} page - Page number for pagination (0-based)
+ * @param {number} limit - Number of items per page
+ * @returns {Promise<Array>} Array of TV shows enhanced with episode data
+ */
+export async function getFlatTVShowsWithEpisodeData(userId, page = 0, limit = 15) {
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+    
+    // Get TV shows with pagination
+    const skip = page * limit
+    const tvShows = await db.collection('FlatTVShows')
+      .find({})
+      .skip(skip)
+      .limit(limit)
+      .toArray()
+    
+    // Get user's watch history for TV episodes
+    const userObjectId = typeof(userId) === 'object' ? userId : new ObjectId(userId)
+    const userWatchHistory = await db.collection('PlaybackStatus')
+      .findOne({ userId: userObjectId })
+    
+    // Create a map of watched episodes by show with enhanced metadata-based logic
+    const watchedEpisodesByShow = new Map()
+    if (userWatchHistory?.videosWatched) {
+      // Filter valid videos and separate those with metadata from those without
+      const validVideos = userWatchHistory.videosWatched.filter(video => video.isValid !== false)
+      const videosWithMetadata = validVideos.filter(video => video.mediaType === 'tv' && video.showId)
+      const videosWithoutMetadata = validVideos.filter(video => !video.mediaType || video.mediaType !== 'tv' || !video.showId)
+      
+      // Process videos with metadata (new enhanced schema)
+      if (videosWithMetadata.length > 0) {
+        // Group by show and find the highest season/episode watched for each show
+        videosWithMetadata.forEach(watchedVideo => {
+          const showId = watchedVideo.showId.toString()
+          const seasonNumber = watchedVideo.seasonNumber || 1
+          const episodeNumber = watchedVideo.episodeNumber || 1
+          
+          if (!watchedEpisodesByShow.has(showId) ||
+              seasonNumber > watchedEpisodesByShow.get(showId).seasonNumber ||
+              (seasonNumber === watchedEpisodesByShow.get(showId).seasonNumber &&
+               episodeNumber > watchedEpisodesByShow.get(showId).episodeNumber)) {
+            watchedEpisodesByShow.set(showId, {
+              showId: watchedVideo.showId,
+              seasonNumber,
+              episodeNumber,
+              lastWatched: watchedVideo.lastUpdated,
+              hasMetadata: true
+            })
+          }
+        })
+      }
+      
+      // Fallback: Process videos without metadata (legacy approach)
+      if (videosWithoutMetadata.length > 0) {
+        const watchedVideoIds = videosWithoutMetadata.map(video => video.videoId)
+        
+        const watchedEpisodes = await db.collection('FlatEpisodes')
+          .find({ videoURL: { $in: watchedVideoIds } })
+          .toArray()
+        
+        // Group by show and find the most recently watched episode for each show (legacy logic)
+        watchedEpisodes.forEach(episode => {
+          const showId = episode.showId.toString()
+          const watchedVideo = videosWithoutMetadata.find(v => v.videoId === episode.videoURL)
+          
+          // Only use legacy logic if we don't already have metadata-based info for this show
+          if (watchedVideo && !watchedEpisodesByShow.has(showId)) {
+            watchedEpisodesByShow.set(showId, {
+              episode,
+              lastWatched: watchedVideo.lastUpdated,
+              hasMetadata: false
+            })
+          }
+        })
+      }
+    }
+    
+    // For each TV show, get the appropriate episode
+    const tvShowsWithEpisodes = await Promise.all(
+      tvShows.map(async (tvShow) => {
+        const showId = tvShow._id.toString()
+        let episodeToUse = null
+        
+        // Check if user has watched any episodes of this show
+        if (watchedEpisodesByShow.has(showId)) {
+          const watchedInfo = watchedEpisodesByShow.get(showId)
+          
+          if (watchedInfo.hasMetadata) {
+            // Use enhanced metadata to find the next episode to watch
+            const lastWatchedSeason = watchedInfo.seasonNumber
+            const lastWatchedEpisode = watchedInfo.episodeNumber
+            
+            // Try to find the next episode in the same season
+            let nextEpisode = await db.collection('FlatEpisodes')
+              .findOne({
+                showId: tvShow._id,
+                seasonNumber: lastWatchedSeason,
+                episodeNumber: lastWatchedEpisode + 1
+              })
+            
+            // If no next episode in current season, try first episode of next season
+            if (!nextEpisode) {
+              nextEpisode = await db.collection('FlatEpisodes')
+                .findOne({
+                  showId: tvShow._id,
+                  seasonNumber: { $gt: lastWatchedSeason }
+                }, {
+                  sort: { seasonNumber: 1, episodeNumber: 1 }
+                })
+            }
+            
+            // If still no next episode found, fall back to the last watched episode
+            if (!nextEpisode) {
+              nextEpisode = await db.collection('FlatEpisodes')
+                .findOne({
+                  showId: tvShow._id,
+                  seasonNumber: lastWatchedSeason,
+                  episodeNumber: lastWatchedEpisode
+                })
+            }
+            
+            episodeToUse = nextEpisode
+          } else {
+            // Legacy approach: use the most recently watched episode
+            episodeToUse = watchedInfo.episode
+          }
+        } else {
+          // Get the first episode of the first season
+          const firstSeason = await db.collection('FlatSeasons')
+            .findOne(
+              { showId: tvShow._id },
+              { sort: { seasonNumber: 1 } }
+            )
+          
+          if (firstSeason) {
+            episodeToUse = await db.collection('FlatEpisodes')
+              .findOne(
+                { seasonId: firstSeason._id },
+                { sort: { episodeNumber: 1 } }
+              )
+          }
+        }
+        
+        if (episodeToUse) {
+          return {
+            ...tvShow,
+            type: 'tv',
+            videoURL: episodeToUse.videoURL,
+            duration: episodeToUse.duration,
+            // Keep episode reference for potential future use
+            episodeData: {
+              episodeNumber: episodeToUse.episodeNumber,
+              seasonId: episodeToUse.seasonId,
+              seasonNumber: episodeToUse.seasonNumber,
+              thumbnail: episodeToUse.thumbnail || tvShow.posterURL || getFullImageUrl(tvShow.metadata?.poster_path),
+              thumbnailBlurhash: episodeToUse.thumbnailBlurhash || tvShow.posterBlurhash || null
+            }
+          }
+        }
+        
+        // If no episodes found, return the show without episode data
+        return {
+          ...tvShow,
+          type: 'tv'
+        }
+      })
+    )
+    
+    return tvShowsWithEpisodes
+  } catch (error) {
+    console.error(`Error in getFlatTVShowsWithEpisodeData: ${error.message}`)
+    throw error
   }
 }

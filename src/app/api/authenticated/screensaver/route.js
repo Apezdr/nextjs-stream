@@ -59,8 +59,12 @@ async function analyzeImageContrast(logoUrl, backdropUrl) {
       }, true)
     ])
     
+    // Normalize the response data structure to handle both cached and fresh responses
+    const logoData = logoResponse.data?.data || logoResponse.data;
+    const backdropData = backdropResponse.data?.data || backdropResponse.data;
+    
     // Check if we successfully fetched both images
-    if (!logoResponse.data || !backdropResponse.data) {
+    if (!logoData || !backdropData) {
       return {
         needsAdjustment: false,
         error: "Failed to fetch one or both images"
@@ -69,8 +73,8 @@ async function analyzeImageContrast(logoUrl, backdropUrl) {
     
     
     // Process images to extract relevant information
-    const logoInfo = await processLogoImage(logoResponse.data)
-    const backdropInfo = await processBackdropImage(backdropResponse.data)
+    const logoInfo = await processLogoImage(logoData)
+    const backdropInfo = await processBackdropImage(backdropData)
     
     if (!logoInfo || !backdropInfo) {
       return {
@@ -712,9 +716,11 @@ export const GET = async (req) => {
 
     // Extract required data
     const responseData = {
+      _id: mediaResult._id?.toString() || null,
       title: mediaResult.title || mediaResult.metadata?.title,
       logo: mediaResult.logo || null,
-      backdrop: mediaResult.backdrop || null
+      backdrop: mediaResult.backdrop || null,
+      type: mediaResult.type,
     }
 
     // Add blurhash if available

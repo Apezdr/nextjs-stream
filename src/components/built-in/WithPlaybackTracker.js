@@ -5,7 +5,11 @@ import { useMediaPlayer, useMediaRemote, useMediaState } from '@vidstack/react';
 import throttle from 'lodash/throttle';
 import { useRouter, usePathname } from 'next/navigation';
 
-export default function WithPlayBackTracker({ videoURL, start = null }) {
+export default function WithPlayBackTracker({
+  videoURL,
+  start = null,
+  mediaMetadata = null
+}) {
   const player = useMediaPlayer();
   const canPlay = useMediaState('canPlay');
   const remote = useMediaRemote();
@@ -117,6 +121,7 @@ export default function WithPlayBackTracker({ videoURL, start = null }) {
         updatePlaybackWorkerRef.current.postMessage({
           videoURL: videoURL,
           currentTime: currentTime,
+          mediaMetadata: mediaMetadata,
         });
       } else {
         nextUpdateTimeRef.current = currentTime;

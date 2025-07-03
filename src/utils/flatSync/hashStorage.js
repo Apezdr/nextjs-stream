@@ -217,12 +217,16 @@ export async function fetchHashData(serverConfig, mediaType, title = null, seaso
       }
     }, true);
     
-    if (!response.data) {
+    // Normalize the response data structure to handle both cached and fresh responses
+    // Cached responses wrap data in response.data.data, fresh responses use response.data
+    const responseData = response.data?.data || response.data;
+    
+    if (!responseData) {
       console.warn(`Failed to fetch hash data: ${response.headers[':status']}`);
       return null;
     }
     
-    return response.data;
+    return responseData;
   } catch (error) {
     console.error('Error fetching hash data:', error);
     return null;

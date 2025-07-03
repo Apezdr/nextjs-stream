@@ -1,6 +1,7 @@
 import { formatDateToEST, getFullImageUrl } from '@src/utils'
 import { getServer } from './config'
 import { cache } from 'react'
+import { normalize } from 'path'
 
 export const movieProjectionFields = {
   _id: 1,
@@ -408,6 +409,7 @@ export async function sanitizeRecord(record, type, context = {}) {
     if (type === 'tv' && record.episode) {
       result = {
         id: record.id,
+        normalizedVideoId: record.episode.normalizedVideoId,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         link: `${record.title}/${record.seasonNumber}/${record.episode.episodeNumber}`,
         duration: record.duration ?? record.episode.duration ?? 0,
@@ -422,8 +424,9 @@ export async function sanitizeRecord(record, type, context = {}) {
         metadata: record.metadata || null,
         seasons: record.seasons,
         // Add season/episode data at top level for UI components
-        seasonNumber: record.seasonNumber,
+        seasonNumber: record.seasonNumber ?? record.episode.seasonNumber,
         episodeNumber: record.episode.episodeNumber,
+        videoSource: record.videoSource || record.episode.videoSource || null,
         thumbnail: record.episode.thumbnail,
         thumbnailBlurhash: record.episode.thumbnailBlurhash || null,
         // Keep media object for API compatibility
@@ -431,6 +434,7 @@ export async function sanitizeRecord(record, type, context = {}) {
           showTitle: record.title,
           seasonNumber: record.seasonNumber,
           episode: {
+            normalizedVideoId: record.episode.normalizedVideoId,
             episodeNumber: record.episode.episodeNumber,
             title: record.episode.title,
             videoURL: record.episode.videoURL,
@@ -448,6 +452,7 @@ export async function sanitizeRecord(record, type, context = {}) {
     } else {
       result = {
         id: record.id,
+        normalizedVideoId: record.normalizedVideoId,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         link: encodeURIComponent(record.title),
         duration: record.duration ?? 0,
@@ -505,6 +510,7 @@ export function sanitizeCardData(item, popup = false, context = {}) {
     const {
       _id, // MongoDB ID
       id,
+      normalizedVideoId,
       title,
       originalTitle,
       posterURL,
@@ -531,6 +537,7 @@ export function sanitizeCardData(item, popup = false, context = {}) {
 
     // Basic properties that should always be included
     if (id || _id) sanitized.id = id ?? _id
+    if (normalizedVideoId) sanitized.normalizedVideoId = normalizedVideoId
     if (title) sanitized.title = title
     if (posterURL) sanitized.posterURL = posterURL
     if (type) sanitized.type = type
@@ -586,10 +593,23 @@ export function sanitizeCardData(item, popup = false, context = {}) {
         if (metadata?.overview) sanitized.description = metadata?.overview
         if (metadata?.name) sanitized.title = metadata?.name
         
-        // Video clip URL
-        if (item.videoURL) {
+        // Video clip URL - check multiple locations for videoURL
+        const videoURL = item.videoURL || item.media?.videoURL || item.episode?.videoURL || item.media?.episode?.videoURL
+        if (videoURL) {
           try {
-            sanitized.clipVideoURL = generateClipVideoURL(item, type, originalTitle || title);
+            // Create a copy of item with videoURL at top level for generateClipVideoURL
+            const itemForClipGeneration = {
+              ...item,
+              videoURL: videoURL,
+              // Ensure duration is available for clip generation
+              duration: item.duration || item.media?.duration || item.episode?.duration || item.media?.episode?.duration || 0,
+              // Ensure season/episode numbers are available for TV shows
+              seasonNumber: item.seasonNumber || item.media?.seasonNumber,
+              episodeNumber: item.episodeNumber || item.media?.episode?.episodeNumber
+            }
+            // Use original video quality for TV devices
+            const useOriginalVideo = context.isTVdevice === true;
+            sanitized.clipVideoURL = generateClipVideoURL(itemForClipGeneration, type, originalTitle || title, useOriginalVideo);
           } catch (clipError) {
             if (Boolean(process.env.DEBUG) == true) {
               console.warn(`Error generating clip URL for ${title}:`, clipError.message);
@@ -624,9 +644,10 @@ export function sanitizeCardData(item, popup = false, context = {}) {
  * @param {Object} item - The media item containing video information.
  * @param {string} type - The type of media.
  * @param {string} title - The title of the media (use the originalTitle)
+ * @param {boolean} useOriginalVideo - Whether to preserve original video quality
  * @returns {string|null} - The generated clip video URL or null if videoURL is missing.
  */
-export const generateClipVideoURL = cache((item, type, title) => {
+export const generateClipVideoURL = cache((item, type, title, useOriginalVideo = false) => {
   if (!item?.videoURL) return null
 
     const maxDuration = 50 // 50 seconds
@@ -655,7 +676,28 @@ export const generateClipVideoURL = cache((item, type, title) => {
     const nodeJSURL = getServer(
       item?.videoSource || item?.videoInfoSource || 'default'
     ).syncEndpoint
-    return `${nodeJSURL}/videoClip/${type}/${title}${item?.metadata?.season_number ? `/${item?.metadata.season_number}${item?.episodeNumber ? `/${item?.episodeNumber}` : ''}` : ''}?start=${start}&end=${end}`
+    
+    // For TV shows, check for season/episode data in multiple locations
+    let seasonEpisodePath = ''
+    if (type === 'tv') {
+      // Check for season/episode data at top level (from horizontal-list API)
+      const seasonNumber = item?.seasonNumber || item?.metadata?.season_number
+      const episodeNumber = item?.episodeNumber || item?.episode?.episodeNumber
+      
+      if (seasonNumber && episodeNumber) {
+        seasonEpisodePath = `/${seasonNumber}/${episodeNumber}`
+      }
+    }
+    
+    // Build the base URL with start and end parameters
+    let clipURL = `${nodeJSURL}/videoClip/${type}/${title}${seasonEpisodePath}?start=${start}&end=${end}`
+    
+    // Add useOriginalVideo parameter if requested
+    if (useOriginalVideo) {
+      clipURL += '&useOriginalVideo=true'
+    }
+    
+    return clipURL
 })
 
 /**
@@ -663,11 +705,12 @@ export const generateClipVideoURL = cache((item, type, title) => {
  *
  * @param {Array} items - The array of media items to sanitize.
  * @param {Object} context - Context parameters to pass through to sanitizeRecord.
+ * @param {boolean} shouldExposeAdditionalData - Whether to include additional data like video URLs.
  * @returns {Array} - The array of sanitized media items.
  */
-export function sanitizeCardItems(items, context = {}) {
+export function sanitizeCardItems(items, context = {}, shouldExposeAdditionalData = false) {
   if (!Array.isArray(items)) return []
-  return items.map((item) => sanitizeCardData(item, false, context)).filter(Boolean)
+  return items.map((item) => sanitizeCardData(item, shouldExposeAdditionalData, context)).filter(Boolean)
 }
 
 /**
@@ -756,9 +799,28 @@ export function sanitizeTVData(media, options = {}) {
       }
     }
 
+    // Preserve additional TV-specific fields
+    if (media.availableSeasons) {
+      tvData.availableSeasons = media.availableSeasons
+    }
+    if (media.totalSeasons) {
+      tvData.totalSeasons = media.totalSeasons
+    }
+    if (media.first_air_date) {
+      tvData.first_air_date = media.first_air_date
+    }
+    if (media.airDate) {
+      tvData.airDate = media.airDate
+    }
+
     // Add logo if available
     if (media.logo) {
       tvData.logo = media.logo
+    }
+
+    if (media.watchHistory) {
+      // Add watch history data if available
+      tvData.watchHistory = media.watchHistory
     }
 
     // Handle TV show specific data
@@ -780,7 +842,8 @@ export function sanitizeTVData(media, options = {}) {
           thumbnailBlurhash: media.thumbnailBlurhash,
           duration: media.duration,
           videoURL: media.videoURL,
-          description: media.metadata?.overview
+          description: media.metadata?.overview,
+          normalizedVideoId: media.normalizedVideoId,
         }
 
         // Include next episode info if available
@@ -807,7 +870,9 @@ export function sanitizeTVData(media, options = {}) {
           videoURL: episode.videoURL,
           // TV-specific: Include HDR info for quality indicators
           hdr: episode.hdr || false,
-          dimensions: episode.dimensions
+          dimensions: episode.dimensions,
+          normalizedVideoId: episode.normalizedVideoId,
+          watchHistory: episode.watchHistory || null
         }))
       }
 
@@ -854,7 +919,7 @@ export function sanitizeTVData(media, options = {}) {
  * Generates navigation helpers for TV interface
  * @param {Object} media - The media object
  * @param {Object} context - Navigation context
- * @returns {Object} Navigation data for TV interface
+ * @returns {Object} Navigation data for TV interfaceonst video: any
  */
 function generateTVNavigation(media, context = {}) {
   const { currentSeason, currentEpisode, totalSeasons } = context

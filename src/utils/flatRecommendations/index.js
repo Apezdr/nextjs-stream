@@ -40,7 +40,7 @@ import {
  * @param {number} limit - The number of items to return per page
  * @returns {Promise<Object>} Object containing hasWatched flag, recommended items, and genre info
  */
-export async function getFlatGenreBasedRecommendations(userId, page = 0, limit = 30) {
+export async function getFlatGenreBasedRecommendations(userId, page = 0, limit = 30, shouldExposeAdditionalData = false) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -306,8 +306,8 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
 
     // Process movies and TV shows to add necessary fields
     let [processedMovies, processedTVShows] = await Promise.all([
-      addCustomUrlToFlatMedia(recommendedMovies, 'movie'),
-      addCustomUrlToFlatMedia(tvRecommendations, 'tv')
+      addCustomUrlToFlatMedia(recommendedMovies, 'movie', shouldExposeAdditionalData),
+      addCustomUrlToFlatMedia(tvRecommendations, 'tv', shouldExposeAdditionalData)
     ])
 
     // Filter out any items that don't have valid URLs or required fields
@@ -328,7 +328,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
       const remainingItems = limit - recommendations.length
       
       // Fetch random movies and TV shows
-      const randomRecommendations = await getFlatRandomRecommendations(page, remainingItems)
+      const randomRecommendations = await getFlatRandomRecommendations(page, remainingItems, shouldExposeAdditionalData)
       
       // Add random recommendations to the list
       recommendations = [...recommendations, ...randomRecommendations]
@@ -387,7 +387,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
  * @param {number} limit - The number of items to return per page
  * @returns {Promise<Array>} Array of popular content items
  */
-export async function getFlatMostPopularContent(page = 0, limit = 30) {
+export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExposeAdditionalData = false) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -424,7 +424,7 @@ export async function getFlatMostPopularContent(page = 0, limit = 30) {
     
     // Skip if no valid video IDs
     if (allVideoIds.length === 0) {
-      return getFlatRandomRecommendations(page, limit)
+      return getFlatRandomRecommendations(page, limit, shouldExposeAdditionalData)
     }
     
     // Find corresponding movies and episodes in flat database
@@ -575,8 +575,8 @@ export async function getFlatMostPopularContent(page = 0, limit = 30) {
 
     // Process with addCustomUrlToFlatMedia
     let [processedMovies, processedTVShows] = await Promise.all([
-      addCustomUrlToFlatMedia(moviesWithWatchCount, 'movie'),
-      addCustomUrlToFlatMedia(tvShowsWithWatchCount, 'tv')
+      addCustomUrlToFlatMedia(moviesWithWatchCount, 'movie', shouldExposeAdditionalData),
+      addCustomUrlToFlatMedia(tvShowsWithWatchCount, 'tv', shouldExposeAdditionalData)
     ])
     
     // Filter out any items that don't have valid URLs or required fields
@@ -626,7 +626,7 @@ export async function getFlatMostPopularContent(page = 0, limit = 30) {
       const fetchLimit = Math.min(500, Math.max(100, limit * 5))
       
       // Get random recommendations with pagination
-      const randomRecommendations = await getFlatRandomRecommendations(page, fetchLimit)
+      const randomRecommendations = await getFlatRandomRecommendations(page, fetchLimit, shouldExposeAdditionalData)
       
       // Add random recommendations to the list, but only if they're not already included
       const randomWithIds = randomRecommendations.map(item => ({
@@ -651,7 +651,7 @@ export async function getFlatMostPopularContent(page = 0, limit = 30) {
     return paginatedItems
   } catch (error) {
     console.error('Error in getFlatMostPopularContent:', error)
-    return getFlatRandomRecommendations(page, limit)
+    return getFlatRandomRecommendations(page, limit, shouldExposeAdditionalData)
   }
 }
 
@@ -662,7 +662,7 @@ export async function getFlatMostPopularContent(page = 0, limit = 30) {
  * @param {number} limit - The number of items to return per page
  * @returns {Promise<Array>} Array of random content items
  */
-export async function getFlatRandomRecommendations(page = 0, limit = 30) {
+export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldExposeAdditionalData = false) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -750,8 +750,8 @@ export async function getFlatRandomRecommendations(page = 0, limit = 30) {
     
     // Process random movies and TV shows
     let [processedMovies, processedTVShows] = await Promise.all([
-      addCustomUrlToFlatMedia(randomMovies, 'movie'),
-      addCustomUrlToFlatMedia(processedRandomTVShows, 'tv')
+      addCustomUrlToFlatMedia(randomMovies, 'movie', shouldExposeAdditionalData),
+      addCustomUrlToFlatMedia(processedRandomTVShows, 'tv', shouldExposeAdditionalData)
     ])
     
     // Filter out any items that don't have valid URLs or required fields
@@ -837,9 +837,10 @@ async function getFlatLatestWatchTimestamp(userId) {
  * @param {number} page - The page number for pagination (0-based)
  * @param {number} limit - The number of items to return per page
  * @param {boolean} countOnly - Whether to only return the count of items
+ * @param {boolean} shouldExposeAdditionalData - Whether to expose additional data in the response ex. videoURL, duration
  * @returns {Promise<Object>} Object containing recommendations data
  */
-export async function getFlatRecommendations(userId, page = 0, limit = 30, countOnly = false) {
+export async function getFlatRecommendations(userId, page = 0, limit = 30, countOnly = false, shouldExposeAdditionalData = false) {
   try {
     // Get the latest watch timestamp for this user (for logging purposes only)
     const latestWatchTimestamp = await getFlatLatestWatchTimestamp(userId)
@@ -851,7 +852,7 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
     const context = { dateContext: 'recommendations' }
     
     // Get recommendations based on user's watch history
-    const recommendations = await getFlatGenreBasedRecommendations(userId, page, limit)
+    const recommendations = await getFlatGenreBasedRecommendations(userId, page, limit, shouldExposeAdditionalData)
     
     // If user has no watch history or we couldn't find genre-based recommendations,
     // fall back to most popular content
@@ -859,7 +860,7 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
     let hasWatched = recommendations.hasWatched
     
     if (!hasWatched || items.length === 0) {
-      items = await getFlatMostPopularContent(page, limit)
+      items = await getFlatMostPopularContent(page, limit, shouldExposeAdditionalData)
       hasWatched = false
     }
 
