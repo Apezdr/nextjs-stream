@@ -1,4 +1,4 @@
-import SignInButtons from '@components/SignInButtons'
+import SignInButtonsWrapper from '@components/SignInButtonsWrapper'
 
 export default function UnauthenticatedPage({ children, callbackUrl }) {
   return (
@@ -7,14 +7,14 @@ export default function UnauthenticatedPage({ children, callbackUrl }) {
         {children ? (
           <>
             {children}
-            <SignInButtons callbackUrl={callbackUrl} />
+            <SignInButtonsWrapper callbackUrl={callbackUrl} />
           </>
         ) : (
           <>
             <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
               Please Sign in first
             </h2>
-            <SignInButtons callbackUrl={callbackUrl} />
+            <SignInButtonsWrapper callbackUrl={callbackUrl} />
           </>
         )}
       </div>

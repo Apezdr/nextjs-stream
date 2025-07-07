@@ -842,6 +842,30 @@ export const fetchFlatRandomBannerMedia = async () => {
 };
 
 /**
+ * Helper function to find a TV show by title or originalTitle.
+ * Tries title first, then originalTitle if not found.
+ *
+ * @param {Object} db - MongoDB database instance.
+ * @param {string} searchTitle - The title to search for.
+ * @returns {Promise<Object|null>} The TV show with foundByOriginalTitle flag if found via originalTitle.
+ */
+async function findTVShowByTitleOrOriginal(db, searchTitle) {
+  // First try to find by title
+  let tvShow = await db.collection('FlatTVShows').findOne({ title: searchTitle });
+  
+  if (!tvShow) {
+    // If not found, try by originalTitle
+    tvShow = await db.collection('FlatTVShows').findOne({ originalTitle: searchTitle });
+    if (tvShow) {
+      // Return with a flag indicating it was found by originalTitle
+      return { ...tvShow, foundByOriginalTitle: true };
+    }
+  }
+  
+  return tvShow;
+}
+
+/**
  * Gets requested media from the flat database structure.
  * This function is a replacement for getRequestedMedia but uses the flat database collections.
  *
@@ -922,11 +946,6 @@ export async function getFlatRequestedMedia({
         console.time('getFlatRequestedMedia:fetchTV');
       }
       
-      // Build query
-      const query = {};
-      if (title) query.title = title;
-      if (id) query._id = new ObjectId(id);
-      
       if (!title && !id) {
         if (Boolean(process.env.DEBUG) == true) {
           console.timeEnd('getFlatRequestedMedia:total');
@@ -934,8 +953,21 @@ export async function getFlatRequestedMedia({
         return null;
       }
       
-      // Fetch TV show
-      const tvShow = await db.collection('FlatTVShows').findOne(query);
+      // Fetch TV show using enhanced search (title first, then originalTitle)
+      let tvShow;
+      let foundByOriginalTitle = false;
+      
+      if (title) {
+        // Use the helper function for title-based search
+        const searchResult = await findTVShowByTitleOrOriginal(db, title);
+        if (searchResult) {
+          tvShow = searchResult;
+          foundByOriginalTitle = searchResult.foundByOriginalTitle || false;
+        }
+      } else if (id) {
+        // Direct ID search for when using ObjectId
+        tvShow = await db.collection('FlatTVShows').findOne({ _id: new ObjectId(id) });
+      }
       
       if (!tvShow) {
         if (Boolean(process.env.DEBUG) == true) {
@@ -965,6 +997,10 @@ export async function getFlatRequestedMedia({
             seasonNumber: season.seasonNumber,
           }))
         };
+
+        if (foundByOriginalTitle) {
+          result.foundByOriginalTitle = foundByOriginalTitle; // Indicate it was found by originalTitle
+        }
         
         // Add cast data if available
         if (result.metadata?.cast) {
@@ -1049,6 +1085,10 @@ export async function getFlatRequestedMedia({
           };
           delete result._id;
           
+          if (foundByOriginalTitle) {
+            result.foundByOriginalTitle = foundByOriginalTitle;
+          }
+          
           if (Boolean(process.env.DEBUG) == true) {
             console.timeEnd('getFlatRequestedMedia:fetchTV');
             console.timeEnd('getFlatRequestedMedia:total');
@@ -1094,6 +1134,7 @@ export async function getFlatRequestedMedia({
             ...episodeData,
             _id: episodeData._id.toString(),
             showId: episodeData.showId.toString(),
+            showTitle: tvShow.title,
             seasonId: episodeData.seasonId.toString(),
             title: episodeData.title, // Use episode title
             originalTitle: tvShow.originalTitle,
@@ -1120,6 +1161,10 @@ export async function getFlatRequestedMedia({
               trailer_url: tvShow.metadata?.trailer_url || null
             }
           };
+          
+          if (foundByOriginalTitle) {
+            result.foundByOriginalTitle = foundByOriginalTitle;
+          }
           
           // Handle next episode info
           if (nextEpisode) {

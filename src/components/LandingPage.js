@@ -9,6 +9,7 @@ const ReleaseCalendar = lazy(() => import('./Calendar/ReleaseCalendar'))
 
 export default function LandingPage({
   user = { name: '', email: '', limitedAccess: false },
+  calendarConfig = { hasAnyCalendar: false },
 }) {
   const { name, email, limitedAccess } = user
   /* if (limitedAccess) {
@@ -43,9 +44,11 @@ export default function LandingPage({
         <HorizontalScrollContainer type="movie" sort="id" sortOrder="asc" />
         <h2 className="text-xl font-bold text-left mt-4 ml-4">TV</h2>
         <HorizontalScrollContainer type="tv" sort="id" sortOrder="asc" />
-        <Suspense>
-          <ReleaseCalendar />
-        </Suspense>
+        {calendarConfig.hasAnyCalendar && (
+          <Suspense>
+            <ReleaseCalendar calendarConfig={calendarConfig} />
+          </Suspense>
+        )}
       </div>
     </div>
   )

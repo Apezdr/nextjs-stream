@@ -2,7 +2,7 @@ const dynamic = 'force-dynamic'
 import Link from 'next/link'
 import { auth } from '../../lib/auth'
 import SignOutButton from '@components/SignOutButton'
-import SignInButtons from '@components/SignInButtons'
+import SignInButtonsWrapper from '@components/SignInButtonsWrapper'
 import ServerStatus from '@components/Login/Status'
 import { getServerConfig } from '../api/getserverconfig/config'
 import { buildURL } from '@src/utils'
@@ -82,7 +82,7 @@ export default async function Home() {
                 ) : (
                   <>
                     <span className="mb-2">To view our catalog of media, please sign in.</span>
-                    <SignInButtons />
+                    <SignInButtonsWrapper />
                   </>
                 )}
               </div>

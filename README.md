@@ -1,5 +1,7 @@
 # Notes for users that log into the app
-When a new user logs into the app their account will be rejected by default, unless they are an admin user. Admin users **exclusively** control who is permitted to log in, changing a users `Approved` flag will stop them from navigating around if they're active otherwise if they're not allowed it will prevent them from logging in and they will get a "Waiting for Approval" messaging.
+When a new user logs into the app their account will be rejected by default, unless they are an admin user or automatic approval is enabled. Admin users **exclusively** control who is permitted to log in, changing a users `Approved` flag will stop them from navigating around if they're active otherwise if they're not allowed it will prevent them from logging in and they will get a "Waiting for Approval" messaging.
+
+**New:** You can now configure automatic user approval using the `AUTO_APPROVE_USERS` environment variable. See the [User Approval System documentation](USER_APPROVAL_SYSTEM.md) for details.
 
 # Issues with Video Playback
 Unfortunately not all browsers support HEVC properly with HDR, so if you're playing a 4k designated video it will require you to cast it or use a browser that supports HEVC proper. There's a list on the web for HEVC with HDR supported browsers but I usually go to Microsoft Edge for my 4k video playback or any videos really. Seems to preload faster overall for videos in Edge.
@@ -93,6 +95,10 @@ To implement the NextJS-Stream app, follow these steps:
     
     # Sync URL, uses the node server
     NEXT_PUBLIC_NODE_SERVER_URL=http://localhost:3000
+    
+    # User Approval Settings (Optional)
+    # Set to 'true' to automatically approve new users, 'false' to require manual admin approval (default)
+    AUTO_APPROVE_USERS=false # Optional
 
    ```
 

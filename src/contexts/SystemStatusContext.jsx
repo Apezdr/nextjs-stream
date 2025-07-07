@@ -1,7 +1,6 @@
 'use client';
 
 import { createContext, useContext } from 'react';
-import { useSession } from 'next-auth/react';
 import useSWR from 'swr';
 import { fetcher } from '@src/utils';
 
@@ -13,19 +12,15 @@ const SystemStatusContext = createContext();
  * @param {React.ReactNode} props.children - Child components
  */
 export function SystemStatusProvider({ children }) {
-  const { data: session, status: authStatus } = useSession();
-  
-  // Only fetch if the user is authenticated
-  const shouldFetch = authStatus === 'authenticated' && session;
-  
   // Use SWR for data fetching with automatic polling
-  const { 
-    data: systemStatus, 
-    error, 
-    isLoading: loading, 
-    mutate: refetch 
+  // The API endpoint will handle authentication checks
+  const {
+    data: systemStatus,
+    error,
+    isLoading: loading,
+    mutate: refetch
   } = useSWR(
-    shouldFetch ? '/api/authenticated/system-status' : null,
+    '/api/authenticated/system-status',
     fetcher,
     {
       refreshInterval: 30000, // Poll every 30 seconds
@@ -37,24 +32,29 @@ export function SystemStatusProvider({ children }) {
       fallbackData: {
         overall: { level: 'normal', message: 'All systems operational' },
         servers: []
+      },
+      // Don't throw on error, just return fallback data
+      shouldRetryOnError: false,
+      onError: (error) => {
+        // Silently handle auth errors - API will return 401 for unauthenticated users
+        console.debug('System status fetch error (expected for unauthenticated users):', error.message);
       }
     }
   );
   
-  // If user is not authenticated, don't provide any status data
-  if (authStatus !== 'authenticated' || !session) {
-    return <>{children}</>;
-  }
+  // Always provide context, even if user is not authenticated
+  const contextValue = {
+    status: systemStatus || {
+      overall: { level: 'normal', message: 'All systems operational' },
+      servers: []
+    },
+    loading,
+    error,
+    refetch
+  };
   
   return (
-    <SystemStatusContext.Provider 
-      value={{ 
-        status: systemStatus, 
-        loading, 
-        error,
-        refetch 
-      }}
-    >
+    <SystemStatusContext.Provider value={contextValue}>
       {children}
     </SystemStatusContext.Provider>
   );

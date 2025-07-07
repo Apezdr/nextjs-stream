@@ -20,6 +20,7 @@ import RetryImage from '@components/RetryImage'
 import MovieDetailsComponent from '@components/MediaPages/MovieDetailsComponent'
 import TVEpisodeDetailsComponent from '@components/MediaPages/TVEpisodeDetailsComponent'
 import { getFlatRequestedMedia, getTrailerMedia } from '@src/utils/flatDatabaseUtils'
+import { redirect } from 'next/navigation'
 
 async function validateVideoURL(url) {
   try {
@@ -51,6 +52,30 @@ export async function generateMetadata(props, parent) {
       season: mediaSeason,
       episode: mediaEpisode,
     })
+    
+    // Handle redirect if TV show was found via originalTitle
+    if (media && media.foundByOriginalTitle) {
+      // Build the canonical URL using the actual title
+      const canonicalTitle = encodeURIComponent(media.title)
+      let redirectUrl = `/list/tv/${canonicalTitle}`
+      
+      // Preserve season and episode parameters in the redirect
+      if (mediaSeason) {
+        redirectUrl += `/${mediaSeason}`
+        if (mediaEpisode) {
+          redirectUrl += `/${mediaEpisode}`
+        }
+      }
+      
+      // Log the redirect for debugging
+      if (Boolean(process.env.DEBUG) == true) {
+        console.log(`[REDIRECT] TV show found via originalTitle in generateMetadata. Redirecting from "${decodeURIComponent(mediaTitle)}" to "${media.title}" at ${redirectUrl}`)
+      }
+      
+      // Perform server-side redirect (HTTP 301 for SEO)
+      redirect(redirectUrl)
+    }
+    
     overview = (await parent).description
     if (mediaTitle) {
       title = media?.title ?? title
@@ -139,6 +164,29 @@ async function MediaPage({ params, searchParams }) {
       season: mediaSeason,
       episode: mediaEpisode,
     })
+    
+    // Handle redirect if TV show was found via originalTitle
+    if (media && media.foundByOriginalTitle) {
+      // Build the canonical URL using the actual title
+      const canonicalTitle = encodeURIComponent(media.title)
+      let redirectUrl = `/list/tv/${canonicalTitle}`
+      
+      // Preserve season and episode parameters in the redirect
+      if (mediaSeason) {
+        redirectUrl += `/${mediaSeason}`
+        if (mediaEpisode) {
+          redirectUrl += `/${mediaEpisode}`
+        }
+      }
+      
+      // Log the redirect for debugging
+      if (Boolean(process.env.DEBUG) == true) {
+        console.log(`[REDIRECT] TV show found via originalTitle. Redirecting from "${decodeURIComponent(mediaTitle)}" to "${media.title}" at ${redirectUrl}`)
+      }
+      
+      // Perform server-side redirect (HTTP 301 for SEO)
+      redirect(redirectUrl)
+    }
   } else if (mediaType === 'movie' && mediaTitle) {
     media = await getFlatRequestedMedia({
       type: mediaType,

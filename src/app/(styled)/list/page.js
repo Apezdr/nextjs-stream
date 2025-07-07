@@ -29,9 +29,15 @@ async function MediaDirectory() {
     user: { name, email, limitedAccess },
   } = session
 
+  const calendarConfig = {
+    sonarr: !!process.env.SONARR_ICAL_LINK,
+    radarr: !!process.env.RADARR_ICAL_LINK,
+  }
+  calendarConfig.hasAnyCalendar = calendarConfig.sonarr || calendarConfig.radarr
+
   return (
     <Suspense>
-      <LandingPage user={{ name, email, limitedAccess }} />
+      <LandingPage user={{ name, email, limitedAccess }} calendarConfig={calendarConfig} />
     </Suspense>
   )
 }
