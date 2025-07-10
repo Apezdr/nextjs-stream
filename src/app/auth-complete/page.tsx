@@ -1,6 +1,6 @@
 // src/app/auth-complete/page.tsx
-import { auth } from '@src/lib/auth'
-import { storeSessionTokens, getAuthSession, generateMobileToken } from '@src/lib/auth'
+import { auth, AuthSession, QRAuthSession } from '@src/lib/auth'
+import { storeSessionTokens, getAuthSession, generateMobileToken, storeQRSessionTokens, getQRAuthSession } from '@src/lib/auth'
 import { getUserBySessionId } from '@src/lib/auth'
 import { redirect } from 'next/navigation'
 import CountdownClient from './countdown-client'
@@ -8,37 +8,47 @@ import CountdownClient from './countdown-client'
 export default async function AuthCompletePage({
   searchParams,
 }: {
-  searchParams: Promise<{ sessionId?: string; error?: string }>
+  searchParams: Promise<{ sessionId?: string; qrSessionId?: string; error?: string }>
 }) {
   // Await the searchParams object to access its properties
   const params = await searchParams
   const sessionId = params?.sessionId
+  // If the user signed in via QR code, we also check for qrSessionId
+  const qrSessionId = params?.qrSessionId
   const error = params?.error
   let tokenStored = false
   let errorMessage = error
   
-  if (sessionId && !error) {
+  if ((sessionId || qrSessionId) && !error) {
     try {
       // Get the current session and user
       const session = await auth()
       
       if (session?.user) {
-        // Get the existing auth session
-        const authSession = await getAuthSession(sessionId)
+        let authSession: AuthSession | QRAuthSession | null = null
+        let isQRAuth = false
+        
+        // Check if this is QR authentication or regular session authentication
+        if (qrSessionId) {
+          authSession = await getQRAuthSession(qrSessionId)
+          isQRAuth = true
+        } else if (sessionId) {
+          authSession = await getAuthSession(sessionId)
+          isQRAuth = false
+        }
         
         if (!authSession) {
-          errorMessage = 'Invalid session ID'
+          errorMessage = `Invalid ${isQRAuth ? 'QR session' : 'session'} ID`
         } else if (authSession.status === 'complete') {
           tokenStored = true
         } else {
           // Generate a mobile token
           const mobileSessionToken = await generateMobileToken(
-            session.user.id, 
+            session.user.id,
             session.user.id // Using same ID for both parameters as we don't have a separate internal ID
           )
           
-          // Store tokens with the session ID
-          await storeSessionTokens(sessionId, {
+          const tokenData = {
             user: {
               id: session.user.id,
               email: session.user.email || '',
@@ -49,14 +59,22 @@ export default async function AuthCompletePage({
               admin: (session.user as any).admin || false,
             },
             mobileSessionToken,
-            sessionId: sessionId,
-          })
+            sessionId: sessionId || qrSessionId || '',
+          }
+          
+          // Store tokens with the appropriate session ID
+          if (isQRAuth && qrSessionId) {
+            await storeQRSessionTokens(qrSessionId, tokenData)
+          } else if (sessionId) {
+            await storeSessionTokens(sessionId, tokenData)
+          }
           
           tokenStored = true
         }
       } else {
-        // No session - redirect to sign in
-        return redirect(`/api/auth/signin?callbackUrl=/auth-complete?sessionId=${sessionId}`)
+        // No session - redirect to sign in with appropriate callback
+        const callbackParam = qrSessionId ? `qrSessionId=${qrSessionId}` : `sessionId=${sessionId}`
+        return redirect(`/api/auth/signin?callbackUrl=/auth-complete?${callbackParam}`)
       }
     } catch (error) {
       console.error('Error processing authentication:', error)

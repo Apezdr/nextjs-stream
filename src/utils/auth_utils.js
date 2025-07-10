@@ -96,6 +96,7 @@ export const arrangeMediaByLatestModification = (moviesWithUrl, tvShowsWithUrl) 
 async function extractTVShowDetailsFromMap(tvDetails, videoId) {
   if (process.env.DEBUG === 'true') {
     console.time('extractTVShowDetailsFromMap:total');
+    console.log(`[EXTRACT_DEBUG] Starting extraction for videoId: ${videoId}`);
   }
   try {
     if (process.env.DEBUG === 'true') {
@@ -104,12 +105,16 @@ async function extractTVShowDetailsFromMap(tvDetails, videoId) {
 
     // Destructure required fields from tvDetails.
     const { title: showTitle, seasons, metadata } = tvDetails;
+    
+    if (process.env.DEBUG === 'true') {
+      console.log(`[EXTRACT_DEBUG] Show: ${showTitle}, Seasons count: ${seasons?.length || 0}`);
+    }
 
     // Use the episode info provided in tvDetails.
     const episodeFromTv = tvDetails.episode;
     if (!episodeFromTv) {
       if (process.env.DEBUG === 'true') {
-        console.log('[PERF] No episode info found in tvDetails');
+        console.log('[EXTRACT_DEBUG] No episode info found in tvDetails');
         console.timeEnd('extractTVShowDetailsFromMap:processing');
         console.timeEnd('extractTVShowDetailsFromMap:total');
       }
@@ -117,46 +122,83 @@ async function extractTVShowDetailsFromMap(tvDetails, videoId) {
     }
 
     const seasonNumber = episodeFromTv.seasonNumber;
+    if (process.env.DEBUG === 'true') {
+      console.log(`[EXTRACT_DEBUG] Episode season: ${seasonNumber}, episode: ${episodeFromTv.episodeNumber}`);
+      console.log(`[EXTRACT_DEBUG] Episode videoURL: ${episodeFromTv.videoURL}`);
+      console.log(`[EXTRACT_DEBUG] Episode normalizedVideoId: ${episodeFromTv.normalizedVideoId}`);
+    }
+    
     // Find the season using the seasonNumber from tvDetails.
     const season = seasons.find((s) => s.seasonNumber === seasonNumber);
     if (!season) {
       if (process.env.DEBUG === 'true') {
-        console.log(`[PERF] Season ${seasonNumber} not found`);
+        console.log(`[EXTRACT_DEBUG] Season ${seasonNumber} not found in available seasons: ${seasons.map(s => s.seasonNumber).join(', ')}`);
         console.timeEnd('extractTVShowDetailsFromMap:processing');
         console.timeEnd('extractTVShowDetailsFromMap:total');
       }
       return null;
     }
 
-    // Optionally verify that the passed videoId matches the episode in tvDetails.
+    // Verify that the passed videoId matches the episode in tvDetails.
     let episode;
     
-    // First, try direct match with videoId
+    if (process.env.DEBUG === 'true') {
+      console.log(`[EXTRACT_DEBUG] Attempting to match videoId: ${videoId}`);
+      console.log(`[EXTRACT_DEBUG] Against episodeFromTv.videoURL: ${episodeFromTv.videoURL}`);
+      console.log(`[EXTRACT_DEBUG] Against episodeFromTv.normalizedVideoId: ${episodeFromTv.normalizedVideoId}`);
+    }
+    
+    // First, try direct match with videoId (direct URL)
     if (videoId && episodeFromTv.videoURL === videoId) {
       episode = episodeFromTv;
-    } else {
-      // Try with normalized IDs if available
-      if (episodeFromTv.normalizedVideoId && videoId === episodeFromTv.normalizedVideoId) {
-        episode = episodeFromTv;
-      } else {
-        // Fallback: search the season's episodes for the matching video URL.
-        episode = season.episodes.find((e) => e.videoURL === videoId);
+      if (process.env.DEBUG === 'true') {
+        console.log(`[EXTRACT_DEBUG] Match found: Direct URL match`);
+      }
+    }
+    // Try with normalized IDs if available
+    else if (episodeFromTv.normalizedVideoId && videoId === episodeFromTv.normalizedVideoId) {
+      episode = episodeFromTv;
+      if (process.env.DEBUG === 'true') {
+        console.log(`[EXTRACT_DEBUG] Match found: Normalized ID match`);
+      }
+    }
+    // Fallback: search the season's episodes for the matching video
+    else {
+      if (process.env.DEBUG === 'true') {
+        console.log(`[EXTRACT_DEBUG] No direct match, searching season episodes (${season.episodes?.length || 0} episodes)`);
+      }
+      
+      // Try direct URL match first
+      episode = season.episodes.find((e) => e.videoURL === videoId);
+      
+      if (episode && process.env.DEBUG === 'true') {
+        console.log(`[EXTRACT_DEBUG] Match found: Season episode direct URL match`);
+      }
+      
+      // If not found by direct URL, try normalized ID match
+      if (!episode) {
+        episode = season.episodes.find((e) =>
+          e.normalizedVideoId && e.normalizedVideoId === videoId
+        );
         
-        // If not found, try with normalized ID
-        if (!episode) {
-          episode = season.episodes.find((e) => 
-            e.normalizedVideoId && e.normalizedVideoId === videoId
-          );
+        if (episode && process.env.DEBUG === 'true') {
+          console.log(`[EXTRACT_DEBUG] Match found: Season episode normalized ID match`);
         }
-        
-        if (!episode) {
-          if (process.env.DEBUG === 'true') {
-            console.log(`[PERF] Episode with videoId ${videoId} not found in season ${seasonNumber}`);
-            console.timeEnd('extractTVShowDetailsFromMap:processing');
-            console.timeEnd('extractTVShowDetailsFromMap:total');
-          }
-          return null;
+      }
+      
+      // If still not found, the episode doesn't exist in this season
+      if (!episode) {
+        if (process.env.DEBUG === 'true') {
+          console.log(`[EXTRACT_DEBUG] NO MATCH FOUND for videoId ${videoId} in season ${seasonNumber}`);
+          console.log(`[EXTRACT_DEBUG] Available episodes in season:`, season.episodes?.map(e => ({
+            videoURL: e.videoURL,
+            normalizedVideoId: e.normalizedVideoId,
+            episodeNumber: e.episodeNumber
+          })) || []);
+          console.timeEnd('extractTVShowDetailsFromMap:processing');
+          console.timeEnd('extractTVShowDetailsFromMap:total');
         }
+        return null;
       }
     }
 
@@ -224,8 +266,8 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit,
   
   for (let i = 0; i < lastWatched[0].videosWatched.length; i++) {
     const video = lastWatched[0].videosWatched[i]
-    // If we've reached the limit, break out of the loop
-    if (results.length >= limit) break
+    // Process all videos - pagination was already handled upstream in getFlatRecentlyWatchedForUser
+    // Removing the early break to ensure consistent pagination results
 
     if (Boolean(process.env.DEBUG) == true) {
       console.log(`[ENHANCED_DEBUG] Processing video ${i+1}: ${video.videoId}`);
@@ -276,21 +318,46 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit,
     if (tvDetails) {
       if (Boolean(process.env.DEBUG) == true) {
         console.time(`processWatchedDetails:extractTVDetails:${results.length}`);
+        console.log(`[ENHANCED_DEBUG] Found TV details for ${video.videoId}, attempting extraction...`);
       }
       
-      // First try with direct videoId
-      let detailedTVShow = await extractTVShowDetailsFromMap(tvDetails, video.videoId)
+      // Determine which ID to try first based on how we found the TV details
+      let primaryId = video.videoId;
+      let fallbackId = video.normalizedVideoId;
       
-      // If that fails and we have a normalizedVideoId, try with that instead
-      if (!detailedTVShow && video.normalizedVideoId) {
-        detailedTVShow = await extractTVShowDetailsFromMap(tvDetails, video.normalizedVideoId)
+      // If we found TV details using normalized ID, prioritize that for extraction
+      if (video.normalizedVideoId && tvMap.get(video.normalizedVideoId) === tvDetails) {
+        primaryId = video.normalizedVideoId;
+        fallbackId = video.videoId;
+        if (Boolean(process.env.DEBUG) == true) {
+          console.log(`[ENHANCED_DEBUG] TV details found by normalized ID, trying normalized ID first: ${primaryId}`);
+        }
+      } else if (Boolean(process.env.DEBUG) == true) {
+        console.log(`[ENHANCED_DEBUG] TV details found by direct videoId, trying direct videoId first: ${primaryId}`);
+      }
+      
+      // First try with the primary ID
+      let detailedTVShow = await extractTVShowDetailsFromMap(tvDetails, primaryId)
+      
+      // If that fails, try with the fallback ID
+      if (!detailedTVShow && fallbackId) {
+        if (Boolean(process.env.DEBUG) == true) {
+          console.log(`[ENHANCED_DEBUG] Primary ID failed, trying fallback ID: ${fallbackId}`);
+        }
+        detailedTVShow = await extractTVShowDetailsFromMap(tvDetails, fallbackId)
       }
       
       if (Boolean(process.env.DEBUG) == true) {
         console.timeEnd(`processWatchedDetails:extractTVDetails:${results.length}`);
+        console.log(`[ENHANCED_DEBUG] extractTVShowDetailsFromMap result: ${detailedTVShow ? 'SUCCESS' : 'FAILED'}`);
       }
 
       if (detailedTVShow) {
+        // Ensure we preserve the original videoId for consistency
+        if (detailedTVShow.episode) {
+          detailedTVShow.episode.videoURL = video.videoId;
+        }
+        
         if (Boolean(process.env.DEBUG) == true) {
           console.time(`processWatchedDetails:sanitizeTV:${results.length}`);
         }
@@ -299,11 +366,16 @@ export async function processWatchedDetails(lastWatched, movieMap, tvMap, limit,
         const sanitizedData = await sanitizeRecord(detailedTVShow, 'tv', mergedContext)
         if (Boolean(process.env.DEBUG) == true) {
           console.timeEnd(`processWatchedDetails:sanitizeTV:${results.length}`);
+          console.log(`[ENHANCED_DEBUG] sanitizeRecord result: ${sanitizedData ? 'SUCCESS' : 'FAILED'}`);
         }
 
         if (sanitizedData) {
           results.push(sanitizedData)
+        } else if (Boolean(process.env.DEBUG) == true) {
+          console.warn(`[ENHANCED_DEBUG] sanitizeRecord returned null for ${video.videoId}`);
         }
+      } else if (Boolean(process.env.DEBUG) == true) {
+        console.warn(`[ENHANCED_DEBUG] extractTVShowDetailsFromMap failed for ${video.videoId} despite finding TV details`);
       }
     } else if (Boolean(process.env.DEBUG) == true) {
       // Debug info about missed videos

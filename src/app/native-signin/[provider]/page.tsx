@@ -16,12 +16,16 @@ export default function NativeSignInPage({ params }: PageProps) {
   
   const search = useSearchParams()
   const sessionId = search?.get('sessionId')
+  const qrSessionId = search?.get('qrSessionId')
   const callback = search?.get('callbackUrl') || '/'
   
-  // For session-based auth, we need to pass the sessionId through the flow
-  const finalCallback = sessionId 
-    ? `${callback}${callback.includes('?') ? '&' : '?'}sessionId=${sessionId}`
-    : callback
+  // For session-based auth, we need to pass the sessionId or qrSessionId through the flow
+  let finalCallback = callback
+  if (sessionId) {
+    finalCallback = `${callback}${callback.includes('?') ? '&' : '?'}sessionId=${sessionId}`
+  } else if (qrSessionId) {
+    finalCallback = `${callback}${callback.includes('?') ? '&' : '?'}qrSessionId=${qrSessionId}`
+  }
 
   useEffect(() => {
     // This will:
