@@ -414,6 +414,9 @@ export async function sanitizeRecord(record, type, context = {}) {
     console.time('sanitizeRecord:total');
   }
   try {
+    // Extract shouldExposeAdditionalData from context for TV device handling
+    const shouldExposeAdditionalData = context.shouldExposeAdditionalData || false;
+    
     // Initialize an object to hold different types of dates
     let dateValues = {};
     
@@ -479,6 +482,10 @@ export async function sanitizeRecord(record, type, context = {}) {
 
     let result;
     if (type === 'tv' && record.episode) {
+      // For TV devices, use episode title as main title and add showTitle field
+      // For web clients, maintain backward compatibility with show title as main title
+      const mainTitle = shouldExposeAdditionalData && record.episode.title ? record.episode.title : record.title;
+      
       result = {
         id: record.id,
         normalizedVideoId: record.episode.normalizedVideoId,
@@ -489,7 +496,7 @@ export async function sanitizeRecord(record, type, context = {}) {
         posterBlurhash: record.posterBlurhash || null,
         backdrop: record.backdrop || getFullImageUrl(record.metadata?.backdrop_path) || null,
         backdropBlurhash: record.backdropBlurhash || null,
-        title: record.title || null,
+        title: mainTitle || null,
         showTitleFormatted: record.showTitleFormatted || null,
         logo: record.logo || getFullImageUrl(record.metadata?.logo_path) || null,
         type: type,
@@ -520,6 +527,11 @@ export async function sanitizeRecord(record, type, context = {}) {
             hdr: record.episode.hdr,
           },
         },
+      }
+      
+      // Add showTitle field for TV devices to provide easy access to show title
+      if (shouldExposeAdditionalData) {
+        result.showTitle = record.title;
       }
     } else {
       result = {
@@ -600,19 +612,34 @@ export function sanitizeCardData(item, popup = false, context = {}) {
       cast,
       // tv
       media,
-      showTitle,
       episodeNumber, // it may not exist on the record if it's not an specific episode
       seasonNumber, // it may not exist on the record if it's not an specific episode
     } = item
 
     const sanitized = {}
+    
+    // Handle TV episode title separation for TV devices
+    let finalTitle = title;
+    let finalShowTitle = title;
+    
+    // Check if this is a TV episode and we should expose additional data (TV device mode)
+    if (type === 'tv' && context.isTVdevice && item.media?.episode?.title) {
+      // For TV devices, use episode title as main title and show title as showTitle
+      finalTitle = item.media.episode.title;
+      finalShowTitle = item.media.showTitle || title;
+    }
 
     // Basic properties that should always be included
     if (id || _id) sanitized.id = id ?? _id
     if (normalizedVideoId) sanitized.normalizedVideoId = normalizedVideoId
-    if (title) sanitized.title = title
+    if (finalTitle) sanitized.title = finalTitle
     if (posterURL) sanitized.posterURL = posterURL
     if (type) sanitized.type = type
+    
+    // Add showTitle for TV devices when we have episode data
+    if (finalShowTitle && type === 'tv' && popup) {
+      sanitized.showTitle = finalShowTitle;
+    }
     
     // Properties that are safe to include if they exist
     try {
@@ -663,7 +690,7 @@ export function sanitizeCardData(item, popup = false, context = {}) {
         
         // Description and title
         if (metadata?.overview) sanitized.description = metadata?.overview
-        if (metadata?.name) sanitized.title = metadata?.name
+        if (metadata?.name && !sanitized.title) sanitized.title = metadata?.name
         
         // Video clip URL - check multiple locations for videoURL
         const videoURL = item.videoURL || item.media?.videoURL || item.episode?.videoURL || item.media?.episode?.videoURL

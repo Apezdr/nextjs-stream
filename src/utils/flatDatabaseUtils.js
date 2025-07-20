@@ -531,7 +531,10 @@ export async function getFlatRecentlyWatchedForUser({
     }
     
     // Step 7: Process watched details with flat database specific function
-    const contextObj = { dateContext: 'watchHistory' };
+    const contextObj = {
+      dateContext: 'watchHistory',
+      shouldExposeAdditionalData
+    };
     const watchedDetails = await processFlatWatchedDetails(
       lastWatched,
       movieMap,

@@ -191,7 +191,12 @@ export const GET = async (req) => {
       };
       
       // Pass the appropriate context for this type of list
-      items = sanitizeCardItems(sorted, contextByType[type] || {}, shouldExposeAdditionalData)
+      // Create context with TV device information
+      const context = {
+        ...contextByType[type] || {},
+        isTVdevice: isTVdevice
+      };
+      items = sanitizeCardItems(sorted, context, shouldExposeAdditionalData)
       
       // Add watch history if requested
       if (includeWatchHistory && items.length > 0) {
@@ -223,7 +228,12 @@ export const GET = async (req) => {
         };
         
         // Apply same context to previous item
-        previousItem = await sanitizeCardData(previousItem, shouldExposeAdditionalData, contextByType[type] || {})
+        // Create context with TV device information for previous item
+        const prevContext = {
+          ...contextByType[type] || {},
+          isTVdevice: isTVdevice
+        };
+        previousItem = await sanitizeCardData(previousItem, shouldExposeAdditionalData, prevContext)
         
         // Add watch history to previous item if requested
         if (includeWatchHistory && previousItem) {
@@ -252,7 +262,12 @@ export const GET = async (req) => {
       };
       
       // Apply same context to next item
-      nextItem = await sanitizeCardData(nextItem, shouldExposeAdditionalData, contextByType[type] || {})
+      // Create context with TV device information for next item
+      const nextContext = {
+        ...contextByType[type] || {},
+        isTVdevice: isTVdevice
+      };
+      nextItem = await sanitizeCardData(nextItem, shouldExposeAdditionalData, nextContext)
       
       // Add watch history to next item if requested
       if (includeWatchHistory && nextItem) {
