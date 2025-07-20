@@ -2065,3 +2065,456 @@ export async function getFlatTVShowsWithEpisodeData(userId, page = 0, limit = 15
     throw error
   }
 }
+
+/**
+ * Get all available genres with metadata and counts from flat database structure.
+ *
+ * @param {Object} params - Parameters for the function.
+ * @param {string} [params.type='all'] - Media type filter: 'movie', 'tv', 'all'.
+ * @param {boolean} [params.includeCounts=true] - Whether to include content counts per genre.
+ * @param {boolean} [params.countOnly=false] - Whether to only return the total genre count.
+ * @returns {Promise<Array|Object|number>} Available genres with metadata or count.
+ */
+export async function getFlatAvailableGenres({ type = 'all', includeCounts = true, countOnly = false } = {}) {
+  try {
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getFlatAvailableGenres:total');
+      console.log(`[PERF] Getting available genres for type: ${type}, includeCounts: ${includeCounts}, countOnly: ${countOnly}`);
+    }
+    
+    const client = await clientPromise;
+    const db = client.db('Media');
+    
+    // Determine which collections to query based on type
+    const collections = [];
+    if (type === 'all' || type === 'movie') {
+      collections.push({ name: 'FlatMovies', type: 'movie' });
+    }
+    if (type === 'all' || type === 'tv') {
+      collections.push({ name: 'FlatTVShows', type: 'tv' });
+    }
+    
+    if (countOnly) {
+      // Get unique genre count across all specified collections
+      const genreCountPromises = collections.map(async (collection) => {
+        const pipeline = [
+          { $unwind: "$metadata.genres" },
+          { $group: { _id: "$metadata.genres.name" } },
+          { $count: "uniqueGenres" }
+        ];
+        
+        const result = await db.collection(collection.name).aggregate(pipeline).toArray();
+        return result.length > 0 ? result[0].uniqueGenres : 0;
+      });
+      
+      const counts = await Promise.all(genreCountPromises);
+      // Use Set to get unique genres across collections
+      const allGenresSet = new Set();
+      
+      for (const collection of collections) {
+        const pipeline = [
+          { $unwind: "$metadata.genres" },
+          { $group: { _id: "$metadata.genres.name" } }
+        ];
+        
+        const genres = await db.collection(collection.name).aggregate(pipeline).toArray();
+        genres.forEach(genre => allGenresSet.add(genre._id));
+      }
+      
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd('getFlatAvailableGenres:total');
+      }
+      
+      return allGenresSet.size;
+    }
+    
+    // Get detailed genre information with counts
+    const genreDataMap = new Map();
+    
+    for (const collection of collections) {
+      if (Boolean(process.env.DEBUG) == true) {
+        console.time(`getFlatAvailableGenres:${collection.name}`);
+      }
+      
+      const pipeline = [
+        { $unwind: "$metadata.genres" },
+        { $group: {
+            _id: {
+              id: "$metadata.genres.id",
+              name: "$metadata.genres.name"
+            },
+            count: { $sum: 1 }
+          }
+        },
+        { $sort: { "_id.name": 1 } }
+      ];
+      
+      const genreResults = await db.collection(collection.name).aggregate(pipeline).toArray();
+      
+      genreResults.forEach(result => {
+        const genreName = result._id.name;
+        const genreId = result._id.id;
+        const count = result.count;
+        
+        if (!genreDataMap.has(genreName)) {
+          genreDataMap.set(genreName, {
+            id: genreId,
+            name: genreName,
+            movieCount: 0,
+            tvShowCount: 0,
+            totalCount: 0
+          });
+        }
+        
+        const genreData = genreDataMap.get(genreName);
+        if (collection.type === 'movie') {
+          genreData.movieCount = count;
+        } else if (collection.type === 'tv') {
+          genreData.tvShowCount = count;
+        }
+        genreData.totalCount += count;
+      });
+      
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd(`getFlatAvailableGenres:${collection.name}`);
+      }
+    }
+    
+    // Convert map to sorted array
+    const availableGenres = Array.from(genreDataMap.values())
+      .sort((a, b) => a.name.localeCompare(b.name));
+    
+    if (!includeCounts) {
+      // Return simplified genre list without counts
+      const result = availableGenres.map(genre => ({
+        id: genre.id,
+        name: genre.name
+      }));
+      
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd('getFlatAvailableGenres:total');
+      }
+      
+      return result;
+    }
+    
+    // Get total media counts for summary
+    const mediaTypeCounts = {
+      movies: 0,
+      tvShows: 0,
+      total: 0
+    };
+    
+    if (type === 'all' || type === 'movie') {
+      mediaTypeCounts.movies = await db.collection('FlatMovies').countDocuments();
+    }
+    if (type === 'all' || type === 'tv') {
+      mediaTypeCounts.tvShows = await db.collection('FlatTVShows').countDocuments();
+    }
+    mediaTypeCounts.total = mediaTypeCounts.movies + mediaTypeCounts.tvShows;
+    
+    const result = {
+      availableGenres,
+      totalGenres: availableGenres.length,
+      mediaTypeCounts
+    };
+    
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[PERF] Found ${availableGenres.length} unique genres`);
+      console.timeEnd('getFlatAvailableGenres:total');
+    }
+    
+    return result;
+  } catch (error) {
+    console.error(`Error in getFlatAvailableGenres: ${error.message}`);
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getFlatAvailableGenres:total');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Get content filtered by specific genres from flat database structure.
+ *
+ * @param {Object} params - Parameters for the function.
+ * @param {Array<string>} params.genres - Array of genre names to filter by.
+ * @param {string} [params.type='all'] - Media type filter: 'movie', 'tv', 'all'.
+ * @param {number} [params.page=0] - Page number for pagination (0-based).
+ * @param {number} [params.limit=30] - Number of items per page.
+ * @param {string} [params.sort='newest'] - Sort method: 'newest', 'oldest', 'title', 'rating'.
+ * @param {string} [params.sortOrder='desc'] - Sort direction: 'asc', 'desc'.
+ * @param {boolean} [params.shouldExposeAdditionalData=false] - Whether to expose additional data for TV devices.
+ * @param {string} [params.userId] - User ID for TV show episode data.
+ * @param {boolean} [params.countOnly=false] - Whether to only return the count of matching items.
+ * @returns {Promise<Array|number>} Filtered content or count.
+ */
+export async function getFlatContentByGenres({
+  genres,
+  type = 'all',
+  page = 0,
+  limit = 30,
+  sort = 'newest',
+  sortOrder = 'desc',
+  shouldExposeAdditionalData = false,
+  userId = null,
+  countOnly = false
+} = {}) {
+  try {
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getFlatContentByGenres:total');
+      console.log(`[PERF] Getting content by genres: ${genres.join(', ')}, type: ${type}, page: ${page}, limit: ${limit}`);
+    }
+    
+    const client = await clientPromise;
+    const db = client.db('Media');
+    
+    // Validate genres parameter
+    if (!genres || !Array.isArray(genres) || genres.length === 0) {
+      throw new Error('Genres parameter must be a non-empty array');
+    }
+    
+    // Build the genre filter query
+    const genreQuery = {
+      "metadata.genres.name": { $in: genres }
+    };
+    
+    if (countOnly) {
+      let totalCount = 0;
+      
+      if (type === 'all' || type === 'movie') {
+        totalCount += await db.collection('FlatMovies').countDocuments(genreQuery);
+      }
+      if (type === 'all' || type === 'tv') {
+        totalCount += await db.collection('FlatTVShows').countDocuments(genreQuery);
+      }
+      
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd('getFlatContentByGenres:total');
+      }
+      
+      return totalCount;
+    }
+    
+    // Define sort mappings
+    const sortMappings = {
+      newest: { field: 'metadata.release_date', order: -1, tvField: 'metadata.first_air_date' },
+      oldest: { field: 'metadata.release_date', order: 1, tvField: 'metadata.first_air_date' },
+      title: { field: 'title', order: 1 },
+      rating: { field: 'metadata.vote_average', order: -1 }
+    };
+    
+    const sortConfig = sortMappings[sort] || sortMappings.newest;
+    const sortDirection = sortOrder === 'asc' ? 1 : -1;
+    const finalSortDirection = sortConfig.order * sortDirection;
+    
+    // Fetch content based on type
+    let allContent = [];
+    
+    if (type === 'all' || type === 'movie') {
+      if (Boolean(process.env.DEBUG) == true) {
+        console.time('getFlatContentByGenres:movies');
+      }
+      
+      // Define movie projection with optional additional data
+      const movieProjection = {
+        _id: 1,
+        normalizedVideoId: 1,
+        title: 1,
+        posterURL: 1,
+        posterBlurhash: 1,
+        backdrop: 1,
+        backdropBlurhash: 1,
+        hdr: 1,
+        metadata: 1,
+        ...(shouldExposeAdditionalData && {
+          videoURL: 1,
+          duration: 1
+        })
+      };
+      
+      const movieSort = {};
+      movieSort[sortConfig.field] = finalSortDirection;
+      
+      const movies = await db.collection('FlatMovies')
+        .find(genreQuery, { projection: movieProjection })
+        .sort(movieSort)
+        .toArray();
+      
+      // Add type and process movies
+      const processedMovies = await addCustomUrlToFlatMedia(
+        movies.map(movie => ({ ...movie, type: 'movie' })),
+        'movie',
+        shouldExposeAdditionalData
+      );
+      
+      allContent.push(...processedMovies);
+      
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd('getFlatContentByGenres:movies');
+        console.log(`[PERF] Found ${movies.length} movies matching genres`);
+      }
+    }
+    
+    if (type === 'all' || type === 'tv') {
+      if (Boolean(process.env.DEBUG) == true) {
+        console.time('getFlatContentByGenres:tvShows');
+      }
+      
+      const tvSort = {};
+      tvSort[sortConfig.tvField || sortConfig.field] = finalSortDirection;
+      
+      let tvShows;
+      
+      if (shouldExposeAdditionalData && userId) {
+        // For TV devices, get TV shows with episode data
+        // First get matching TV shows
+        const matchingTVShows = await db.collection('FlatTVShows')
+          .find(genreQuery)
+          .sort(tvSort)
+          .toArray();
+        
+        // Then enhance with episode data using existing function
+        // We'll need to implement a way to filter getFlatTVShowsWithEpisodeData by specific shows
+        tvShows = await Promise.all(
+          matchingTVShows.map(async (show) => {
+            // Get episode data for this specific show
+            const showWithEpisodes = await getFlatTVShowsWithEpisodeData(userId, 0, 1);
+            const matchingShow = showWithEpisodes.find(s => s._id.toString() === show._id.toString());
+            return matchingShow || { ...show, type: 'tv' };
+          })
+        );
+      } else {
+        // Standard TV show retrieval
+        tvShows = await db.collection('FlatTVShows')
+          .find(genreQuery)
+          .sort(tvSort)
+          .toArray();
+        
+        // Add type and process TV shows
+        tvShows = await addCustomUrlToFlatMedia(
+          tvShows.map(show => ({ ...show, type: 'tv' })),
+          'tv',
+          shouldExposeAdditionalData
+        );
+      }
+      
+      allContent.push(...tvShows);
+      
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd('getFlatContentByGenres:tvShows');
+        console.log(`[PERF] Found ${tvShows.length} TV shows matching genres`);
+      }
+    }
+    
+    // Apply final sorting across all content types
+    if (type === 'all') {
+      allContent.sort((a, b) => {
+        let aValue, bValue;
+        
+        if (sort === 'newest' || sort === 'oldest') {
+          aValue = new Date(a.metadata?.release_date || a.metadata?.first_air_date || 0);
+          bValue = new Date(b.metadata?.release_date || b.metadata?.first_air_date || 0);
+        } else if (sort === 'title') {
+          aValue = a.title || '';
+          bValue = b.title || '';
+        } else if (sort === 'rating') {
+          aValue = a.metadata?.vote_average || 0;
+          bValue = b.metadata?.vote_average || 0;
+        }
+        
+        if (typeof aValue === 'string') {
+          return finalSortDirection > 0 ? aValue.localeCompare(bValue) : bValue.localeCompare(aValue);
+        } else {
+          return finalSortDirection > 0 ? aValue - bValue : bValue - aValue;
+        }
+      });
+    }
+    
+    // Apply pagination
+    const validPage = Math.max(page, 0);
+    const startIndex = validPage * limit;
+    const endIndex = startIndex + limit;
+    const paginatedContent = allContent.slice(startIndex, endIndex);
+    
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[PERF] Total content found: ${allContent.length}, returning page ${validPage} (${paginatedContent.length} items)`);
+      console.timeEnd('getFlatContentByGenres:total');
+    }
+    
+    return {
+      items: paginatedContent,
+      totalResults: allContent.length,
+      currentPage: validPage,
+      totalPages: Math.ceil(allContent.length / limit)
+    };
+  } catch (error) {
+    console.error(`Error in getFlatContentByGenres: ${error.message}`);
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getFlatContentByGenres:total');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Get genre statistics including content counts and metadata.
+ *
+ * @param {Object} params - Parameters for the function.
+ * @param {string} [params.type='all'] - Media type filter: 'movie', 'tv', 'all'.
+ * @param {Array<string>} [params.genres] - Specific genres to get statistics for.
+ * @returns {Promise<Object>} Genre statistics and metadata.
+ */
+export async function getFlatGenreStatistics({ type = 'all', genres = null } = {}) {
+  try {
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getFlatGenreStatistics:total');
+      console.log(`[PERF] Getting genre statistics for type: ${type}`);
+    }
+    
+    const client = await clientPromise;
+    const db = client.db('Media');
+    
+    // Get available genres with counts
+    const genreData = await getFlatAvailableGenres({ type, includeCounts: true });
+    
+    // Filter to specific genres if requested
+    let filteredGenres = genreData.availableGenres;
+    if (genres && Array.isArray(genres) && genres.length > 0) {
+      filteredGenres = genreData.availableGenres.filter(genre =>
+        genres.includes(genre.name)
+      );
+    }
+    
+    // Calculate additional statistics
+    const statistics = {
+      genreBreakdown: filteredGenres,
+      totalGenres: filteredGenres.length,
+      mediaTypeCounts: genreData.mediaTypeCounts,
+      topGenres: {
+        byTotalContent: [...filteredGenres]
+          .sort((a, b) => b.totalCount - a.totalCount)
+          .slice(0, 10),
+        byMovieContent: [...filteredGenres]
+          .sort((a, b) => b.movieCount - a.movieCount)
+          .slice(0, 10),
+        byTVContent: [...filteredGenres]
+          .sort((a, b) => b.tvShowCount - a.tvShowCount)
+          .slice(0, 10)
+      }
+    };
+    
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[PERF] Generated statistics for ${filteredGenres.length} genres`);
+      console.timeEnd('getFlatGenreStatistics:total');
+    }
+    
+    return statistics;
+  } catch (error) {
+    console.error(`Error in getFlatGenreStatistics: ${error.message}`);
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getFlatGenreStatistics:total');
+    }
+    throw error;
+  }
+}
