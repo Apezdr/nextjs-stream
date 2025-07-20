@@ -169,7 +169,7 @@ const WorkerProgressBar = ({ worker, nodeName }) => {
             onClick={() => setShowDetails(!showDetails)}
             title={`Worker ID: ${_id}\nFile: ${file}\nNode: ${nodeName}\nJob type: ${job?.type || 'Unknown'}`}
           >
-            <span className="block overflow-hidden overflow-ellipsis max-w-[250px] sm:max-w-[400px] md:max-w-[600px]">
+            <span className="block overflow-hidden text-ellipsis max-w-[250px] sm:max-w-[400px] md:max-w-[600px]">
               {fileName}
             </span>
           </h2>

@@ -302,7 +302,7 @@ const Card = ({
         className={classNames(
           'card',
           isPeek ? 'opacity-50 scale-95 cursor-default' : 'cursor-pointer',
-          'group relative flex-shrink-0 cursor-pointer transition-all duration-300 ease-in-out'
+          'group relative shrink-0 cursor-pointer transition-all duration-300 ease-in-out'
         )}
         style={{ width: `${containerWidth}px` }}
         onMouseEnter={handleCardMouseEnter}
@@ -334,7 +334,7 @@ const Card = ({
               )}
               {seasonNumber && (
                 <div className="absolute z-20 bottom-2 left-2 right-2">
-                  <div className="bg-gray-200 bg-opacity-20 rounded-xl flex flex-row gap-1 px-2 py-1 justify-center">
+                  <div className="bg-gray-200/20 rounded-xl flex flex-row gap-1 px-2 py-1 justify-center">
                     <span className="text-xs text-slate-800">S{seasonNumber}</span>
                     <span className="text-xs">|</span>
                     <span className="text-xs font-bold">E{episodeNumber}</span>

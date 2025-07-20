@@ -171,7 +171,7 @@ function MovieModalPopup({
               name={key}
               id={key}
               className={classNames(
-                'flex-grow mt-1 block w-full h-5 text-gray-600 border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm',
+                'grow mt-1 block w-full h-5 text-gray-600 border-gray-300 focus:border-indigo-500 focus:ring-indigo-500 sm:text-sm',
                 isLocked ? 'bg-gray-100 cursor-not-allowed' : ''
               )}
               value={formState[key]}
@@ -324,7 +324,7 @@ function MovieModalPopup({
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" />
+          <div className="fixed inset-0 bg-gray-500/75 transition-opacity" />
         </Transition.Child>
 
         <div className="fixed inset-0 z-10 w-screen overflow-y-auto">

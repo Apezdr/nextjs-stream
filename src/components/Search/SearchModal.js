@@ -43,7 +43,7 @@ const SearchModal = ({
           leaveTo="opacity-0"
         >
           <div
-            className="fixed inset-0 bg-gray-500 bg-opacity-25 transition-opacity"
+            className="fixed inset-0 bg-gray-500/25 transition-opacity"
             role="button"
             tabIndex={0}
             onClick={() => setOpen(false)}
@@ -107,7 +107,7 @@ const SearchModal = ({
                             <div
                               className={classNames(
                                 'max-h-[80vh] min-w-0 flex-auto scroll-py-4 overflow-y-auto px-6 py-4',
-                                activeOption && 'sm:h-[42rem]'
+                                activeOption && 'sm:h-168'
                               )}
                             >
                               {query === '' && (
@@ -175,7 +175,7 @@ const SearchModal = ({
                             </div>
 
                             {activeOption && (
-                              <div className="hidden h-[42rem] w-1/2 flex-none flex-col divide-y divide-gray-100 overflow-y-auto sm:flex">
+                              <div className="hidden h-168 w-1/2 flex-none flex-col divide-y divide-gray-100 overflow-y-auto sm:flex">
                                 <div className="flex-none p-6 text-center">
                                   {activeOption.type === 'tv' ? (
                                     <Detailed

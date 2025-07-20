@@ -29,13 +29,13 @@ export default function SignInButtons({ callbackUrl = '/list', enabledProviders 
       )}
       {isDiscordEnabled && (
         <DiscordLoginButton
-          className="max-w-[240px] !text-sm"
+          className="max-w-[240px] text-sm!"
           onClick={() => signIn('discord', { callbackUrl: callbackUrl })}
         />
       )}
       {isFacebookEnabled && (
         <FacebookLoginButton
-          className="max-w-[240px] !text-sm"
+          className="max-w-[240px] text-sm!"
           onClick={() => signIn('facebook', { callbackUrl: callbackUrl })}
         />
       )}

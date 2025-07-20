@@ -69,7 +69,7 @@ export function VideoLayout({
         className={`${captionStyles.captions} media-preview:opacity-0 media-controls:bottom-[85px] media-captions:opacity-100 absolute inset-0 bottom-2 z-10 select-none break-words opacity-0 transition-[opacity,bottom] duration-300`}
       />
       <Controls.Root
-        className={`${styles.controls} data-[visible]:opacity-100 absolute inset-0 z-10 flex h-full w-full flex-col bg-gradient-to-t from-black/10 to-transparent opacity-0 transition-opacity pointer-events-none`}
+        className={`${styles.controls} data-visible:opacity-100 absolute inset-0 z-10 flex h-full w-full flex-col bg-linear-to-t from-black/10 to-transparent opacity-0 transition-opacity pointer-events-none`}
       >
         {/* Top Bar */}
         <Controls.Group className="flex items-center px-2 relative w-16 h-12 left-1 top-4">
@@ -77,7 +77,7 @@ export function VideoLayout({
         </Controls.Group>
         {/* End Top Bar */}
         <div className="flex-1" />
-        <Controls.Group className="flex flex-col justify-end !h-auto !bottom-32 sm:!bottom-[60%] max-w-sm sm:max-w-lg xl:max-w-3xl !pointer-events-none">
+        <Controls.Group className="flex flex-col justify-end h-auto! bottom-32! sm:bottom-[60%]! max-w-sm sm:max-w-lg xl:max-w-3xl pointer-events-none!">
           <VideoMetadata dims={dimsVal} hdr={hdrVal} mediaMetadata={mediaMetadata} logo={logo} />
         </Controls.Group>
         <div className="flex-1" />

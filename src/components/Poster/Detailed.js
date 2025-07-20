@@ -113,7 +113,7 @@ function Detailed({
               : networkName === 'HBO'
                 ? 'bg-blue-400'
                 : // default
-                  'bg-gradient-to-bl from-gray-400 via-gray-200 to-gray-100'
+                  'bg-linear-to-bl from-gray-400 via-gray-200 to-gray-100'
           )}
         >
           {networkImage ? (

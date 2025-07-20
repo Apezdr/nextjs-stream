@@ -119,7 +119,7 @@ export default function DeletionStatusCard({
   return (
     <div className={`rounded-lg border p-6 ${config.bgColor} ${config.borderColor}`}>
       <div className="flex items-start">
-        <div className="flex-shrink-0">
+        <div className="shrink-0">
           <IconComponent className={`h-6 w-6 ${config.color}`} aria-hidden="true" />
         </div>
         <div className="ml-3 flex-1">

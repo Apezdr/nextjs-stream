@@ -69,7 +69,7 @@ export default function SyncMediaPopup({
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <div className="fixed inset-0 bg-gray-500 bg-opacity-75 transition-opacity" />
+          <div className="fixed inset-0 bg-gray-500/75 transition-opacity" />
         </Transition.Child>
 
         <div className="fixed inset-0 z-10 w-screen overflow-y-auto">
@@ -257,7 +257,7 @@ export default function SyncMediaPopup({
                           Display Sync Duration
                           ------------------------- */}
                       {syncstartTime && syncDuration && (
-                        <div className="mt-4 bg-gradient-to-r from-gray-50 to-gray-100 p-4 rounded-lg shadow-sm border border-gray-200">
+                        <div className="mt-4 bg-linear-to-r from-gray-50 to-gray-100 p-4 rounded-lg shadow-sm border border-gray-200">
                           <div className="space-y-3">
                             <div className="flex items-center justify-between p-3 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow duration-200">
                               <div className="flex items-center">

@@ -41,23 +41,23 @@ export const BarChartSkeleton = ({ height = "h-[300px]" }) => (
     <div className="space-y-4 w-full">
       <div className="flex items-center">
         <div className="h-4 w-32 bg-gray-300 rounded mr-4"></div>
-        <div className="h-6 flex-grow bg-gray-200 rounded"></div>
+        <div className="h-6 grow bg-gray-200 rounded"></div>
       </div>
       <div className="flex items-center">
         <div className="h-4 w-24 bg-gray-300 rounded mr-4"></div>
-        <div className="h-6 flex-grow bg-gray-200 rounded"></div>
+        <div className="h-6 grow bg-gray-200 rounded"></div>
       </div>
       <div className="flex items-center">
         <div className="h-4 w-36 bg-gray-300 rounded mr-4"></div>
-        <div className="h-6 flex-grow bg-gray-200 rounded"></div>
+        <div className="h-6 grow bg-gray-200 rounded"></div>
       </div>
       <div className="flex items-center">
         <div className="h-4 w-20 bg-gray-300 rounded mr-4"></div>
-        <div className="h-6 flex-grow bg-gray-200 rounded"></div>
+        <div className="h-6 grow bg-gray-200 rounded"></div>
       </div>
       <div className="flex items-center">
         <div className="h-4 w-28 bg-gray-300 rounded mr-4"></div>
-        <div className="h-6 flex-grow bg-gray-200 rounded"></div>
+        <div className="h-6 grow bg-gray-200 rounded"></div>
       </div>
     </div>
   </div>

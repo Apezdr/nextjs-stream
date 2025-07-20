@@ -12,7 +12,7 @@ import Loading from '@src/app/loading'
 import VirtualizedCastGrid from './VirtualizedCastGrid'
 import { InformationCircleIcon } from '@heroicons/react/20/solid'
 
-// Import the CardVideoPlayer with z-[40]
+// Import the CardVideoPlayer with z-40
 const CardVideoPlayer = dynamic(() => import('@src/components/MediaScroll/CardVideoPlayer'), {
   ssr: false,
 })
@@ -174,9 +174,9 @@ const PopupCard = ({
         ref={portalRef}
         tabIndex={0}
       >
-        {/* Close Button - put it on top at z-[60] */}
+        {/* Close Button - put it on top at z-60 */}
         <button
-          className="absolute top-2 right-2 text-gray-800 bg-white rounded-full px-2 py-1 hover:bg-gray-100 focus:outline-none z-[60]"
+          className="absolute top-2 right-2 text-gray-800 bg-white rounded-full px-2 py-1 hover:bg-gray-100 focus:outline-none z-60"
           onClick={handleCollapse}
           aria-label="Close"
         >
@@ -199,15 +199,15 @@ const PopupCard = ({
               src={data.logo}
               alt={`${title} Logo`}
               className={classNames(
-                //absolute max-w-[70%] mr-auto !w-auto max-h-14 inset-0 object-contain select-none z-[50]
-                "absolute !w-auto transform max-w-[185px] inset-0 object-contain select-none z-[50]",
+                //absolute max-w-[70%] mr-auto w-auto! max-h-14 inset-0 object-contain select-none z-50
+                "absolute w-auto! transform max-w-[185px] inset-0 object-contain select-none z-50",
                 "transition-all duration-[1.4s] ease-in-out",
                 // Fade in when loaded
                 logoLoaded ? 'opacity-100' : 'opacity-0',
                 // Dim it if the video is playing
                 shouldPlay ? 'opacity-45 hover:opacity-100' : '',
                 // Center it if the video is not playing
-                shouldPlay ? '!top-4 !left-8 max-h-5' : '!top-[67%] !left-1/2 max-h-14 -translate-x-1/2'           
+                shouldPlay ? 'top-4! left-8! max-h-5' : 'top-[67%]! left-1/2! max-h-14 -translate-x-1/2'           
               )}
               onLoad={handleLogoLoad}
             />
@@ -234,7 +234,7 @@ const PopupCard = ({
 
           {/* Overlapping transitions for backdrop/thumbnail/poster */}
           <AnimatePresence mode="sync">
-            {/* Poster fallback (lowest) => z-[10] */}
+            {/* Poster fallback (lowest) => z-10 */}
             {!shouldPlay && !data?.thumbnail && !backdrop && (
               <motion.div
                 key="poster"
@@ -242,7 +242,7 @@ const PopupCard = ({
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.4 }}
-                className="w-full h-full absolute inset-0 z-[10]"
+                className="w-full h-full absolute inset-0 z-10"
               >
                 <RetryImage
                   quality={100}
@@ -261,7 +261,7 @@ const PopupCard = ({
               </motion.div>
             )}
 
-            {/* Backdrop => z-[20] */}
+            {/* Backdrop => z-20 */}
             {!shouldPlay && backdrop && !isThumbnailLoaded && (
               <motion.div
                 key="backdrop"
@@ -269,7 +269,7 @@ const PopupCard = ({
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.4 }}
-                className="w-full h-full absolute inset-0 z-[20]"
+                className="w-full h-full absolute inset-0 z-20"
               >
                 <RetryImage
                   quality={100}
@@ -288,7 +288,7 @@ const PopupCard = ({
               </motion.div>
             )}
 
-            {/* Thumbnail => z-[30] */}
+            {/* Thumbnail => z-30 */}
             {!shouldPlay && data?.thumbnail && (
               <motion.div
                 key="thumbnail"
@@ -296,7 +296,7 @@ const PopupCard = ({
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.4 }}
-                className="w-full h-full absolute inset-0 z-[30]"
+                className="w-full h-full absolute inset-0 z-30"
               >
                 <RetryImage
                   quality={100}
@@ -364,7 +364,7 @@ const PopupCard = ({
             <h2 className={classNames(
               "text-2xl text-gray-900 font-bold mb-2 w-[88%] overflow-hidden",
               "w-full mr-4",
-              data?.seasonNumber || data?.episodeNumber ? "border-r-[1px] border-r-[#dfdfdf96]" : ""
+              data?.seasonNumber || data?.episodeNumber ? "border-r border-r-[#dfdfdf96]" : ""
             )}>{data?.title ?? showTitleFormatted ?? title}</h2>
             {(data?.seasonNumber || data?.episodeNumber) && (
               <motion.h2 className={classNames(
@@ -437,7 +437,7 @@ const PopupCard = ({
           )}
         </div>
         {data?.cast && Object.keys(data.cast).length > 0 && (
-          <div className="p-4 relative h-[31rem]"> {/* Ensure a fixed height for virtualization */}
+          <div className="p-4 relative h-124"> {/* Ensure a fixed height for virtualization */}
             <h2 className="text-2xl text-gray-900 font-bold mb-4">Starring:</h2>
 
             {/* Virtualized Cast Grid */}
@@ -445,7 +445,7 @@ const PopupCard = ({
 
             {/* Gradient Overlay */}
             {Object.values(data.cast).length > 16 && (
-              <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-white to-transparent pointer-events-none"></div>
+              <div className="absolute bottom-0 left-0 w-full h-32 bg-linear-to-t from-white to-transparent pointer-events-none"></div>
             )}
           </div>
         )}

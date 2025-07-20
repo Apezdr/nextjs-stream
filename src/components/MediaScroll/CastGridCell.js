@@ -38,7 +38,7 @@ const CastGridCell = memo(({
       >
         <div className="w-20 h-20 relative rounded-full overflow-hidden bg-gray-200 flex items-center justify-center">
           {isLoading && actor.profile_path && (
-            <div className="absolute inset-0 flex items-center justify-center bg-white bg-opacity-50">
+            <div className="absolute inset-0 flex items-center justify-center bg-white/50">
               <LoadingDots />
             </div>
           )}

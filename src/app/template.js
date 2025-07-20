@@ -23,7 +23,7 @@ export default function Template({ children }) {
             animate="enter"
             transition={{ type: 'linear', duration: 0.25 }}
             key="LandingPage"
-            className="!will-change-[unset]"
+            className="will-change-[unset]!"
           >
             <ToastContainer stacked />
             {children}

@@ -1,7 +1,4 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
+@import 'tailwindcss';
 
 :root {
   --foreground-rgb: 255, 255, 255;
@@ -88,13 +85,13 @@ body.playing #backdrop-cover {
 }
 
 .playing.media-labels{
-  @apply !bg-transparent;
+  @apply bg-transparent!;
 }
 .media-labels{
-  @apply ml-4 !transition-colors !duration-[.25s] delay-[1s] overflow-hidden;
+  @apply ml-4 transition-colors! duration-[.25s]! delay-[1s] overflow-hidden;
 }
 .media-labels:not(.playing){
-  @apply !duration-[2s] !delay-[4s] p-2;
+  @apply duration-[2s]! delay-[4s]! p-2;
   background-color: transparent !important;
 }
 

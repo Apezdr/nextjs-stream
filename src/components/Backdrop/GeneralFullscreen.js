@@ -23,7 +23,7 @@ export default function GeneralFullScreenBackdrop({ url }) {
         className="w-full h-screen backdrop-blur-sm absolute top-0 left-0 z-[-1]"
       />
       <div
-        className="w-full h-full !bg-[length:110%]"
+        className="w-full h-full bg-size-[110%]!"
         style={{
           backgroundImage: `url(${url})`,
           backgroundRepeat: 'repeat',

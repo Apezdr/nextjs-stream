@@ -27,7 +27,7 @@ export function Title() {
       <div
         className={classNames(
           'flex flex-col items-center justify-normal sm:min-h-0 sm:px-0 sm:pb-0 sm:bg-inherit sm:relative sm:translate-x-0 sm:left-0',
-          'bg-opacity-80 sm:transition-none transition-colors duration-1000 absolute left-1/2 -translate-x-1/2 rounded-b-lg px-4 pt-3 sm:pt-0 pb-2 sm:pb-0 min-h-14 justify-center',
+          'sm:transition-none transition-colors duration-1000 absolute left-1/2 -translate-x-1/2 rounded-b-lg px-4 pt-3 sm:pt-0 pb-2 sm:pb-0 min-h-14 justify-center',
           /* isPaused ? 'bg-black delay-1000' : 'bg-transparent delay-200', */
           'max-w-[98vw] w-[90vw] sm:w-auto sm:max-w-none'
         )}
@@ -47,8 +47,8 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
       <div
         className={classNames(
           'w-full h-full absolute top-0 left-0 z-0',
-          'bg-opacity-80 transition-all duration-1000',
-          isPaused ? 'bg-black delay-1000' : 'bg-transparent delay-200'
+          'transition-all duration-1000',
+          isPaused ? 'bg-black/80 delay-1000' : 'bg-transparent delay-200'
         )}
       ></div>
       {mediaMetadata?.rating && (
@@ -92,7 +92,7 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
         <span
           className={classNames(
             `font-sans hidden sm:block max-w-sm xl:max-w-lg text-xl text-gray-300 media-HDR`,
-            mediaMetadata?.rating ? 'top-[10rem]' : 'top-8',
+            mediaMetadata?.rating ? 'top-40' : 'top-8',
             isPaused ? '' : 'playing'
           )}
         >

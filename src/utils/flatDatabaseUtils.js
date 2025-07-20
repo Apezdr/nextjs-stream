@@ -897,10 +897,7 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
       const [moviesCount, episodeGroupsCount] = await Promise.all([
         // Get count of movies, but no more than half our maximum
         db.collection('FlatMovies')
-          .find({})
-          .sort({ mediaLastModified: -1 })
-          .limit(MAX_RECENTLY_ADDED_ITEMS / 2)
-          .count(),
+          .countDocuments({}, { limit: MAX_RECENTLY_ADDED_ITEMS / 2 }),
           
         // Get count of unique TV shows with recent episodes, but no more than half our maximum
         db.collection('FlatEpisodes')

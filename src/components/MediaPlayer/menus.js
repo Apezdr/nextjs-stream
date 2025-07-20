@@ -31,10 +31,10 @@ import Loading from '@src/app/loading'
 import ChaptersMenu from './chapter/chapters'
 
 export const menuClass =
-  'animate-out fade-out slide-out-to-bottom-2 data-[open]:animate-in data-[open]:fade-in data-[open]:slide-in-from-bottom-4 flex h-[var(--menu-height)] max-h-[60vh] min-w-[260px] flex-col overflow-y-auto overscroll-y-contain rounded-md border border-white/10 bg-black/95 p-2.5 font-sans text-[15px] font-medium outline-none backdrop-blur-sm transition-[height] duration-300 will-change-[height] data-[resizing]:overflow-hidden'
+  'animate-out fade-out slide-out-to-bottom-2 data-[open]:animate-in data-[open]:fade-in data-[open]:slide-in-from-bottom-4 flex h-(--menu-height) max-h-[60vh] min-w-[260px] flex-col overflow-y-auto overscroll-y-contain rounded-md border border-white/10 bg-black/95 p-2.5 font-sans text-[15px] font-medium outline-none backdrop-blur-sm transition-[height] duration-300 will-change-[height] data-resizing:overflow-hidden'
 
 export const submenuClass =
-  'hidden w-full flex-col items-start justify-center outline-none data-[keyboard]:mt-[3px] data-[open]:inline-block'
+  'hidden w-full flex-col items-start justify-center outline-none data-keyboard:mt-[3px] data-open:inline-block'
 
 export function Settings({ placement, tooltipPlacement, hasCaptions }) {
   let shouldShowSettingsButton = false
@@ -50,7 +50,7 @@ export function Settings({ placement, tooltipPlacement, hasCaptions }) {
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
           <Menu.Button className={buttonClass}>
-            <SettingsIcon className="h-8 w-8 transform transition-transform duration-200 ease-out group-data-[open]:rotate-90" />
+            <SettingsIcon className="h-8 w-8 transform transition-transform duration-200 ease-out group-data-open:rotate-90" />
           </Menu.Button>
         </Tooltip.Trigger>
         <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
@@ -82,7 +82,7 @@ export function Chapters({ placement, tooltipPlacement, chapterThumbnailURL }) {
         </Tooltip.Content>
       </Tooltip.Root>
       <Menu.Content
-        className={`vds-chapters-menu-items vds-menu-items sm:translate-x-0 !-translate-x-1/2 !left-1/2 sm:left-0 max-h-[60vh] bottom-1`}
+        className={`vds-chapters-menu-items vds-menu-items sm:translate-x-0 -translate-x-1/2! left-1/2! sm:left-0 max-h-[60vh] bottom-1`}
         //placement={placement}
       >
         <ChaptersMenu chapterThumbnailURL={chapterThumbnailURL} />
@@ -231,12 +231,12 @@ function Radio({ children, ...props }) {
     <Menu.Radio
       className={classNames(
         styles.radio,
-        'ring-media-focus group relative flex w-full cursor-pointer select-none items-center justify-start rounded-sm p-2.5 outline-none data-[hocus]:bg-white/10 data-[focus]:ring-[3px]'
+        'ring-media-focus group relative flex w-full cursor-pointer select-none items-center justify-start rounded-sm p-2.5 outline-none data-hocus:bg-white/10 data-focus:ring-[3px]'
       )}
       {...props}
     >
-      <RadioButtonIcon className="h-4 w-4 text-white group-data-[checked]:hidden" />
-      <RadioButtonSelectedIcon className="text-media-brand hidden h-4 w-4 group-data-[checked]:block" />
+      <RadioButtonIcon className="h-4 w-4 text-white group-data-checked:hidden" />
+      <RadioButtonSelectedIcon className="text-media-brand hidden h-4 w-4 group-data-checked:block" />
       <span className="ml-2 flex">{children}</span>
     </Menu.Radio>
   )
@@ -247,7 +247,7 @@ function SubmenuButton({ label, hint, icon: Icon, disabled, className = '', auto
     <Menu.Button
       className={classNames(
         className,
-        'ring-media-focus parent left-0 z-10 flex w-full cursor-pointer select-none items-center justify-start rounded-sm bg-black/60 p-2.5 outline-none ring-inset data-[open]:sticky data-[open]:-top-2.5 data-[hocus]:bg-white/10 data-[focus]:ring-[3px] aria-disabled:hidden'
+        'ring-media-focus parent left-0 z-10 flex w-full cursor-pointer select-none items-center justify-start rounded-sm bg-black/60 p-2.5 outline-none ring-inset data-open:sticky data-open:-top-2.5 data-hocus:bg-white/10 data-focus:ring-[3px] aria-disabled:hidden'
       )}
       disabled={disabled}
     >

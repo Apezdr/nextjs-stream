@@ -94,7 +94,7 @@ export default function NotificationBell() {
           {/* Unread Badge */}
           {unreadCount > 0 && (
             <span
-              className="absolute -top-1 -right-1 min-w-[1.125rem] h-4.5 px-1 text-xs font-medium text-white bg-red-500 rounded-full flex items-center justify-center"
+              className="absolute -top-1 -right-1 min-w-4.5 h-4.5 px-1 text-xs font-medium text-white bg-red-500 rounded-full flex items-center justify-center"
               aria-label={`${unreadCount} unread notifications`}
             >
               {unreadCount > 99 ? '99+' : unreadCount}

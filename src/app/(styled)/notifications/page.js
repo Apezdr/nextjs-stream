@@ -180,7 +180,7 @@ export default function NotificationsPage() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow relative">
           {/* Loading overlay for data fetching */}
           {validating && notifications.length > 0 && (
-            <div className="absolute inset-0 bg-white dark:bg-gray-800 bg-opacity-50 dark:bg-opacity-50 flex items-center justify-center z-10 rounded-lg">
+            <div className="absolute inset-0 bg-white/50 dark:bg-gray-800/50 flex items-center justify-center z-10 rounded-lg">
               <div className="flex items-center">
                 <div className="w-6 h-6 border-2 border-gray-300 border-t-blue-600 rounded-full animate-spin mr-3"></div>
                 <span className="text-gray-600 dark:text-gray-400">Updating notifications...</span>
