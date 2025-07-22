@@ -61,7 +61,7 @@ async function VideoPlayer({
   // Function to update validation status in PlaybackStatus
   const updateValidationStatus = async (videoId, isValid) => {
     try {
-      const response = await fetch('/api/authenticated/sync/updateValidationStatus', {
+      const response = await fetch(buildURL('/api/authenticated/sync/updateValidationStatus'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
