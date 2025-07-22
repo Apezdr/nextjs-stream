@@ -377,7 +377,7 @@ const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrde
   }
 
   return (
-    <div className="relative my-8 w-full flex flex-col justify-center overflow-hidden max-w-screen" {...swipeHandlers}>
+    <div className="relative my-8 w-full flex flex-col justify-center overflow-hidden max-w-[100vw]" {...swipeHandlers}>
       {/* Carousel Container */}
       <div className="flex flex-row items-center w-full relative" ref={containerRef}>
         {/* Left Arrow */}
@@ -400,7 +400,7 @@ const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrde
         <div
           ref={cardsContainerRef}
           className={classNames(
-            'relative flex grow overflow-visible h-88',
+            'relative flex flex-grow overflow-visible h-[22rem]',
             itemsToRender.length < itemsPerPage + numberOfPeeks && data && itemsToRender.length > 0
               ? 'justify-start'
               : 'justify-center'
@@ -436,7 +436,7 @@ const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrde
                   //   return (
                   //     <div
                   //       key={`empty-${index}`}
-                  //       className="w-32 md:w-36 lg:w-48 shrink-0 h-full"
+                  //       className="w-32 md:w-36 lg:w-48 flex-shrink-0 h-full"
                   //     />
                   //   )
                   // }

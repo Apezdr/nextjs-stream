@@ -24,20 +24,20 @@ export const MediaItemWithIssues = ({ item, type }) => {
   
   const getIssueColor = () => {
     if (item.issues.some(issue => issue.includes('videoURL') || issue.includes('metadata'))) {
-      return "bg-red-50 border-red-200 hover:bg-red-50/50"; // Critical issue
+      return "bg-red-50 border-red-200"; // Critical issue
     } else if (item.issues.some(issue => issue.includes('posterURL'))) {
-      return "bg-orange-50 border-orange-200 hover:bg-orange-50/50"; // Important issue
+      return "bg-orange-50 border-orange-200"; // Important issue
     } else if (item.issues.some(issue => issue.includes('overview') || issue.includes('title') || issue.includes('thumbnail'))) {
-      return "bg-yellow-50 border-yellow-200 hover:bg-yellow-50/50"; // Medium issue
+      return "bg-yellow-50 border-yellow-200"; // Medium issue
     }
-    return "bg-blue-50 border-blue-200 hover:bg-blue-50/50"; // Minor issue
+    return "bg-blue-50 border-blue-200"; // Minor issue
   };
   
   return (
     <div className={`mb-2 border rounded-lg overflow-hidden ${getIssueColor()}`}>
       <button 
         onClick={() => setIsOpen(!isOpen)}
-        className="flex justify-between items-center w-full p-3 text-left"
+        className="flex justify-between items-center w-full p-3 text-left hover:bg-opacity-50"
       >
         <div className="flex items-center">
           <span className="font-medium">{getTitle()}</span>

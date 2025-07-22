@@ -28,7 +28,7 @@ export default function SeasonItem({ season, showTitle }) {
         <Link href={`/list/tv/${showTitle}/${seasonNumber}`}>
           <div className="block mb-2 w-full lg:w-auto group">
             <MediaPoster
-              className="max-w-[200px] mx-auto! rounded-t-sm shadow-2xl"
+              className="max-w-[200px] !mx-auto rounded-t-sm shadow-2xl"
               contClassName="mx-auto"
               tv={season}
             />

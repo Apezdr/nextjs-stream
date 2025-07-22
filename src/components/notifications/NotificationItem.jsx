@@ -122,7 +122,7 @@ export default function NotificationItem({ notification, onClose }) {
       <div className="flex items-start space-x-3">
         {/* Icon */}
         <div className={`
-          shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm
+          flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-sm
           ${notification.read ? 'bg-gray-100 dark:bg-gray-700' : colorClasses}
         `}>
           <span>{icon}</span>

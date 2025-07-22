@@ -315,7 +315,6 @@ async function VideoPlayer({
                     label={language}
                     lang={captionObject.srcLang}
                     default={language.indexOf('English') > -1}
-                    className={inconsolata.className}
                   />
                 )
               })

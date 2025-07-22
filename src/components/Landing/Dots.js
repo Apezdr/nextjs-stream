@@ -15,10 +15,10 @@ const Dots = ({ mediaList, currentMediaIndex, handleDotClick, progress, progress
             {index === currentMediaIndex && (
               <>
                 <div
-                  className="absolute top-0 left-0 h-full bg-linear-to-r from-cyan-600 to-blue-500 rounded-full transition-[width] duration-200"
+                  className="absolute top-0 left-0 h-full bg-gradient-to-r from-cyan-600 to-blue-500 rounded-full transition-[width] duration-200"
                   style={{ width: `${progress}%` }} // Directly use the progress prop
                 ></div>
-                <span className="absolute w-full h-full text-center text-white -bottom-3 left-0 text-[8px] leading-2 select-none">
+                <span className="absolute w-full h-full text-center text-white -bottom-3 left-0 text-[8px] leading-[0.5rem] select-none">
                   {progressSeconds > 0 ? progressSeconds : ''}
                 </span>
               </>

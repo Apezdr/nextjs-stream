@@ -57,7 +57,7 @@ function _mediaPoster({
       style={isClient ? { '--watched-width': `${watchedWidth.toFixed(2)}%` } : {}}
     >
       {watchedWidth > 90 && (
-        <div className="absolute inset-0 bg-black/50 flex flex-col justify-center items-center z-9">
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex flex-col justify-center items-center z-[9]">
           <ArrowPathIcon className="text-white w-11 group-hover:animate-[spin_1s_ease-in-out_1]" />
           <span>Restart</span>
         </div>
@@ -123,7 +123,7 @@ function _mediaPoster({
         />
       )}
       {_media.dimensions && (
-        <div className="flex flex-col items-center bg-gray-900 justify-center content-center pb-4 pt-1 text-white transition-opacity duration-700 inset-0 text-xs h-auto opacity-75 group-hover:opacity-100 z-8 relative">
+        <div className="flex flex-col items-center bg-gray-900 justify-center content-center pb-4 pt-1 text-white transition-opacity duration-700 inset-0 text-xs h-auto opacity-75 group-hover:opacity-100 z-[8] relative">
           <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
             {is4k ? (
               <RetryImage

@@ -379,7 +379,7 @@ async function MediaPage({ params, searchParams }) {
   else if (mediaTitle && !media) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
-        <div className="flex flex-col max-w-(--breakpoint-sm)">
+        <div className="flex flex-col max-w-screen-sm">
           <img
             src={'/sorry-image-not-available.jpg'}
             alt="Not found"

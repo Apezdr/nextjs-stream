@@ -67,7 +67,7 @@ export default function EpisodeListComponent({ mediaTitle, mediaSeason, mediaEpi
   
   if (loading) {
     return (
-      <div className="w-full p-4 bg-gray-900/50 rounded-lg">
+      <div className="w-full p-4 bg-gray-900 bg-opacity-50 rounded-lg">
         <div className="animate-pulse space-y-2">
           <div className="h-5 bg-gray-700 rounded w-1/4"></div>
           <div className="h-10 bg-gray-700 rounded"></div>
@@ -83,7 +83,7 @@ export default function EpisodeListComponent({ mediaTitle, mediaSeason, mediaEpi
   
   if (error) {
     return (
-      <div className="w-full p-4 bg-gray-900/50 rounded-lg">
+      <div className="w-full p-4 bg-gray-900 bg-opacity-50 rounded-lg">
         <p className="text-red-500">{error}</p>
       </div>
     );
@@ -91,14 +91,14 @@ export default function EpisodeListComponent({ mediaTitle, mediaSeason, mediaEpi
   
   if (!episodes || episodes.length === 0) {
     return (
-      <div className="w-full p-4 bg-gray-900/50 mt-4 rounded-lg">
+      <div className="w-full p-4 bg-gray-900 bg-opacity-50 mt-4 rounded-lg">
         <p className="text-gray-400">No episodes found for this season.</p>
       </div>
     );
   }
   
   return (
-    <div className="w-full bg-gray-900/50 p-4 rounded-lg backdrop-blur-sm">
+    <div className="w-full bg-gray-900 bg-opacity-50 p-4 rounded-lg backdrop-blur-sm">
       <h3 className="text-xl font-semibold mb-4 text-white">
         {mediaTitle} - Season {seasonNum} Episodes
       </h3>

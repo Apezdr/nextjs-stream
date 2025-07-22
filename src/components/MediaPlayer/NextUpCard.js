@@ -128,7 +128,7 @@ const NextUpCardContent = memo(
         href={`/list/tv/${mediaTitle}/${season_number}/${nextEpisodeNumber}/play?start=0`}
         className="group pointer-events-auto max-h-20"
       >
-        <div className="absolute rounded-lg bottom-10 right-4 z-10 flex flex-col items-center justify-center py-12 w-40 h-52 bg-black group-hover:bg-gray-900/50">
+        <div className="absolute rounded-lg bottom-10 right-4 z-10 flex flex-col items-center justify-center py-12 w-40 h-52 bg-black group-hover:bg-gray-900 bg-opacity-50">
           <div
             className="h-1 bg-blue-500 absolute top-0 left-0 transition-[width]"
             style={{ width: progressBarWidth }}
@@ -137,7 +137,7 @@ const NextUpCardContent = memo(
           <Image
             src={nextEpisodeThumbnail}
             alt={nextEpisodeTitle}
-            className="w-auto! h-auto! rounded-lg opacity-50 group-hover:opacity-100 max-h-full max-w-32"
+            className="!w-auto !h-auto rounded-lg opacity-50 group-hover:opacity-100 max-h-full max-w-32"
             placeholder={nextEpisodeThumbnailBlurhash ? "blur" : "empty"}
             blurDataURL={nextEpisodeThumbnailBlurhash}
             width={128}

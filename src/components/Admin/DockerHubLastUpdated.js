@@ -40,7 +40,7 @@ export default function DockerHubLastUpdated() {
       <h1 className="text-2xl font-bold mb-4 text-center">Docker Images</h1>
       <ul className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {dockerData.map(({ repo, isUpToDate, last_updated, serverDigest  }) => (
-          <li key={repo} className="flex items-center justify-between p-4 rounded-lg shadow-lg bg-linear-to-r from-blue-100 to-blue-200">
+          <li key={repo} className="flex items-center justify-between p-4 rounded-lg shadow-lg bg-gradient-to-r from-blue-100 to-blue-200">
             <div className="w-full">
                 {
                     // If it has a server digest,

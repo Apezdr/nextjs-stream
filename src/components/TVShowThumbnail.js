@@ -33,7 +33,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
       style={isClient ? { '--watched-width': `${watchedWidth.toFixed(2)}%` } : {}}
     >
       {watchedWidth > 90 && (
-        <div className="absolute inset-0 bg-black/50 flex flex-col justify-center items-center z-9">
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex flex-col justify-center items-center z-[9]">
           <ArrowPathIcon className="text-white w-11 group-hover:animate-[spin_1s_ease-in-out_1]" />
           <span>Restart</span>
         </div>
@@ -43,7 +43,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
           length={episode.duration ?? episode.metadata.runtime * 60000 ?? 0}
           metadata={episode.metadata}
           videoURL={episode.videoURL}
-          classNames="absolute bottom-0 w-full text-center z-10 text-[0.55rem]"
+          classNames="absolute bottom-0 w-full text-center z-[10] text-[0.55rem]"
         />
       )}
       {blurDataURL ? (

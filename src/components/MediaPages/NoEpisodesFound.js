@@ -63,7 +63,7 @@ export default function NoEpisodesFound({ onRetry, showTitle, seasonNumber, seas
               <Image
                 src={season.posterURL}
                 alt={`Season ${seasonNumber}`}
-                className="max-w-full rounded-lg mx-auto!"
+                className="max-w-full rounded-lg !mx-auto"
                 width={300}
                 height={450}
               />
@@ -145,11 +145,11 @@ export default function NoEpisodesFound({ onRetry, showTitle, seasonNumber, seas
                   <Image
                     src="/emoji-movie-theatre.png"
                     alt="No episodes found"
-                    className="mx-auto w-auto! h-[45vh] rounded-lg shadow-lg"
+                    className="mx-auto !w-auto h-[45vh] rounded-lg shadow-lg"
                     width={430}
                     height={520}
                   />
-                  <div className="absolute inset-0 bg-black/50 rounded-lg"></div>
+                  <div className="absolute inset-0 bg-black bg-opacity-50 rounded-lg"></div>
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-4">
                     <div id="no-episodes-message" className="text-white font-bold text-lg">
                       No episodes found for this season

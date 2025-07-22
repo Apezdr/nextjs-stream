@@ -60,7 +60,7 @@ export default function EpisodeThumbnail({
     <Link 
       href={episodeLink}
       prefetch={false}
-      className={`shrink-0 relative group rounded-lg overflow-hidden transition-all duration-300 transform ${
+      className={`flex-shrink-0 relative group rounded-lg overflow-hidden transition-all duration-300 transform ${
         isCurrentEpisode 
           ? 'ring-2 ring-indigo-500 scale-105 z-10' 
           : 'hover:scale-110'
@@ -119,13 +119,13 @@ export default function EpisodeThumbnail({
         {/* Gradient overlay for text readability */}
         <div className={`absolute inset-0 ${
           isCurrentEpisode 
-            ? 'bg-linear-to-t from-indigo-900 to-transparent opacity-90'
-            : 'bg-linear-to-t from-gray-900 to-transparent opacity-70 group-hover:opacity-90'
+            ? 'bg-gradient-to-t from-indigo-900 to-transparent opacity-90'
+            : 'bg-gradient-to-t from-gray-900 to-transparent opacity-70 group-hover:opacity-90'
         }`}>
         </div>
         
         {/* Episode number badge */}
-        <div className="absolute top-2 left-2 bg-black/70 text-white text-xs px-2 py-1 rounded z-30">
+        <div className="absolute top-2 left-2 bg-black bg-opacity-70 text-white text-xs px-2 py-1 rounded z-30">
           EP {episode.episodeNumber}
         </div>
         

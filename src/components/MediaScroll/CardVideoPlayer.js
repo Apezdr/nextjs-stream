@@ -120,11 +120,11 @@ function CardVideoPlayer({
       aspectRatio="16/9"
       fullscreenOrientation="landscape"
       className={classNames(
-        "z-40",
+        "z-[40]",
         "absolute inset-0 w-full h-full select-none pointer-events-none media-playing:opacity-100 media-paused:opacity-0",
         "opacity-0 transition-opacity duration-700",
         className,
-        shouldPlay ? 'shouldPlay opacity-100!' : ''
+        shouldPlay ? 'shouldPlay !opacity-100' : ''
       )}
       muted={
         muted ? muted : // if muted is not passed, check localStorage
@@ -163,7 +163,7 @@ function CardVideoPlayer({
     >
       <MediaProvider />
       <GesturesNoFullscreen />
-      <Controls.Root className="absolute bottom-4 left-4 flex space-x-2 z-5">
+      <Controls.Root className="absolute bottom-4 left-4 flex space-x-2 z-[5]">
         <Controls.Group className="flex w-full items-center px-2">
           <Buttons.Mute tooltipPlacement="top" toggleSliderOnUnmute={true} />
         </Controls.Group>

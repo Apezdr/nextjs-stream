@@ -9,7 +9,7 @@ import RetryImage from '@components/RetryImage'
 // Lazy load the cast grid section which can be heavy
 const CastSection = dynamic(() => 
   import('./CastSection').then(mod => ({ default: props => <mod.default {...props} /> })),
-  { ssr: true, loading: () => <div className="p-4 relative h-124 bg-white/80 rounded-lg animate-pulse" /> }
+  { ssr: true, loading: () => <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse" /> }
 )
 
 const TVEpisodeDetailsComponent = ({ media }) => {
@@ -216,12 +216,12 @@ const TVEpisodeDetailsComponent = ({ media }) => {
         ) : null}
         <div className='flex flex-col gap-8'>
           {guest_stars && guest_stars.length > 0 ? (
-            <Suspense fallback={<div className="p-4 relative h-124 bg-white/80 rounded-lg animate-pulse"></div>}>
+            <Suspense fallback={<div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse"></div>}>
               <CastSection cast={guest_stars} title="Guest Stars" />
             </Suspense>
           ): null}
           {cast && cast.length > 0 ? (
-            <Suspense fallback={<div className="p-4 relative h-124 bg-white/80 rounded-lg animate-pulse"></div>}>
+            <Suspense fallback={<div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse"></div>}>
               <CastSection cast={cast} />
             </Suspense>
           ): null}

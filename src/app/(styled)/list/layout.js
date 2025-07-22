@@ -42,7 +42,7 @@ export default async function ListLayout({ children }) {
     <Fragment>
       {!email ? null : (
         <div className="relative">
-          <div className="w-full h-auto flex flex-col items-center justify-center text-center z-3">
+          <div className="w-full h-auto flex flex-col items-center justify-center text-center z-[3]">
             <Nav adminNavItems={adminNavItems} profileImage={profileImage} />
           </div>
           <Suspense>

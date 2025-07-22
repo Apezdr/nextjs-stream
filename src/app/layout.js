@@ -35,7 +35,7 @@ export default function RootLayout({ children }) {
         {process.env.NODE_ENV === 'development' && (
           <div className="w-screen relative">
             <div
-              className="-translate-x-2/4 left-[50%] fixed uppercase select-none top-0 h-7 text-xs bg-red-500 text-white flex items-center justify-center z-12 px-12 py-4 mx-auto rounded-b-xl whitespace-nowrap transition-opacity opacity-30 hover:opacity-100 cursor-help"
+              className="-translate-x-2/4 left-[50%] fixed uppercase select-none top-0 h-7 text-xs bg-red-500 text-white flex items-center justify-center z-[12] px-12 py-4 mx-auto rounded-b-xl whitespace-nowrap transition-opacity opacity-30 hover:opacity-100 cursor-help"
               title={
                 'Development Mode: \nThe app is undergoing changes, things may not work as expected.'
               }

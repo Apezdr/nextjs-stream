@@ -67,7 +67,7 @@ const BannerContent = ({
                 priority
               />
             ) : null}
-            <div className="absolute inset-0 bg-linear-to-t from-black/70 via-black/50 to-transparent"></div>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>
           </motion.div>
         )}
         {currentMedia?.metadata?.trailer_url && showVideo && (
@@ -111,7 +111,7 @@ const BannerContent = ({
               alt="Logo Image"
               width={300}
               height={300}
-              className="object-contain select-none pointer-events-none h-auto!"
+              className="object-contain select-none pointer-events-none !h-auto"
               loading="eager"
               priority
             />

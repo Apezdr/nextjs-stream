@@ -11,7 +11,7 @@
 const DashboardCard = ({ title, icon, children, count, status, onRefresh }) => {
   return (
     <div className="bg-white dark:bg-slate-800 rounded-lg shadow-md overflow-hidden border border-gray-200 dark:border-slate-700 flex flex-col h-full">
-      <div className="bg-linear-to-r from-indigo-600 to-blue-500 px-4 py-3 flex items-center justify-between">
+      <div className="bg-gradient-to-r from-indigo-600 to-blue-500 px-4 py-3 flex items-center justify-between">
         <div className="flex items-center">
           {icon && <span className="mr-2 text-white">{icon}</span>}
           <h2 className="text-lg font-semibold text-white flex items-center">
@@ -49,7 +49,7 @@ const DashboardCard = ({ title, icon, children, count, status, onRefresh }) => {
           )}
         </div>
       </div>
-      <div className="p-4 grow">{children}</div>
+      <div className="p-4 flex-grow">{children}</div>
     </div>
   );
 };

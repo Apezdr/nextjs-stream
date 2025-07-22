@@ -105,13 +105,13 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex, onVideoReady 
         }}
       >
         <MediaProvider />
-        <Controls.Root className="absolute bottom-4 left-4 flex space-x-2 z-5">
+        <Controls.Root className="absolute bottom-4 left-4 flex space-x-2 z-[5]">
           <Controls.Group className="flex w-full items-center px-2">
             <Buttons.Fullscreen tooltipPlacement="top end" />
             <Buttons.Mute tooltipPlacement="top" toggleSliderOnUnmute={true} />
           </Controls.Group>
         </Controls.Root>
-        <div className="absolute inset-0 bg-linear-to-t from-black/70 via-black/50 to-transparent"></div>
+        <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>
       </MediaPlayer>
     </motion.div>
   )

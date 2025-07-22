@@ -31,7 +31,7 @@ async function SettingsPage({ searchParams }) {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-8">
-      <div className="h-auto flex flex-col items-center justify-center md:mt-20 min-w-[90%] w-full md:w-auto max-w-screen">
+      <div className="h-auto flex flex-col items-center justify-center md:mt-20 min-w-[90%] w-full md:w-auto max-w-[100vw]">
         <DockerHubLastUpdated />
         <hr className='my-4' />
         <SettingsList settings={{ ...settings, webhookVisibility }} />

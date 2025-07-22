@@ -260,7 +260,7 @@ export function renderEventContent(eventInfo) {
         backgroundColor: backgroundColor,
         color: fontColor,
       }}
-      className="w-full rounded-md flex flex-col lg:flex-row"
+      className="w-full rounded-md bg-opacity-20 flex flex-col lg:flex-row"
     >
       <b className="self-center px-1 font-semibold">{eventInfo.timeText}</b>
       <i className="w-full flex flex-col border-t border-t-gray-600 lg:border-l lg:border-l-gray-600">
