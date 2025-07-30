@@ -195,7 +195,7 @@ const MovieDetailsComponent = ({ media }) => {
           {/* Add movie to watchlist button */}
           {media && (
             <WatchlistButton
-              mediaId={media._id?.toString()}
+              mediaId={media.id}
               tmdbId={media.metadata?.id}
               mediaType="movie"
               title={title}

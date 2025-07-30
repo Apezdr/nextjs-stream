@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { isAuthenticated } from '@src/utils/routeAuth'
+import isAuthenticated from '@src/utils/routeAuth'
 import { 
   createAuthenticatedDeletionRequest,
   cancelDeletionRequest,
