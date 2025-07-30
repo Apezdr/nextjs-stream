@@ -15,6 +15,7 @@ import WipeDbButton from '@src/app/(styled)/admin/WipeDBButton'
 import { ServerStats } from './Stats/ServerStats'
 import { ServerProcesses } from './Stats/ServerProcesses'
 import { QueueDashboard } from './Integrations';
+import { TMDBServerStatus } from './TMDBServerStatus';
 
 const processLastSyncTimeData = (lastSyncTimeData) => {
   const lastSyncTime =
@@ -381,6 +382,8 @@ export default function AdminOverviewPage({
         </Link>
       </div>
       <hr className="my-16 border-gray-300 w-full" />
+      <TMDBServerStatus />
+      <hr className="my-8 border-gray-300 w-full" />
       <RecentlyWatched recentlyWatched={recentlyWatched} />
       <QueueDashboard
         sabnzbdQueue={sabnzbdQueue}

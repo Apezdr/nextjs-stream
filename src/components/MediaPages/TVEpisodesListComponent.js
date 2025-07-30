@@ -6,7 +6,6 @@ import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import SkeletonCard from '@components/SkeletonCard'
 import MediaPoster from '@components/MediaPoster'
 import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence'
-import SignOutButton from '@components/SignOutButton'
 import TVShowThumbnail from '@components/TVShowThumbnail'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { Suspense } from 'react'
@@ -164,10 +163,6 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
                     Go Back
                   </button>
                 </Link>
-                <SignOutButton
-                  className="self-center bg-gray-600 hover:bg-gray-500 focus-visible:outline-gray-600"
-                  signoutProps={{ callbackUrl: '/' }}
-                />
               </div>
             </li>
             {/* Episodes List */}

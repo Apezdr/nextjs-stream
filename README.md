@@ -46,10 +46,10 @@ To implement the NextJS-Stream app, follow these steps:
     AUTH_DISCORD_ID=your_discord_client_id
     AUTH_DISCORD_SECRET=your_discord_client_secret
     
-    # Media API Keys (Optional)
-    # These variables are only needed if you want to use TMDB or OMDB APIs
-    TMDB_API_KEY=your_tmdb_api_key # Optional
-    OMDB_API_KEY=your_omdb_api_key # Optional
+    # TMDB Server Configuration (Optional)
+    # Dedicated TMDB server URL for external media integration
+    # Falls back to NEXT_PUBLIC_NODE_SERVER_URL if not set
+    TMDB_NODE_SERVER_URL=https://subdomain.your-domain.com/node/tmdb # Optional
     
     # Chromecast Configuration (Optional)
     CHROMECAST_RECEIVER_ID=your_chromecast_receiver_id # Optional
@@ -186,6 +186,169 @@ To implement the NextJS-Stream app, follow these steps:
 10. Explore the code in the repository to understand the implementation details and customize as needed for your project.
 
 Remember to keep your `.env.local` file secure and never commit it to version control.
+
+## Watchlist and TMDB Integration
+
+This application includes a comprehensive watchlist system with support for both internal library media and external TMDB-only content. Users can create custom playlists, share them with others, and manage their viewing preferences.
+
+### Watchlist Features
+
+- **Personal Watchlists**: Add movies and TV shows from your library or external TMDB content
+- **Custom Playlists**: Create and organize multiple themed playlists
+- **Playlist Sharing**: Share playlists with other users with configurable permissions
+- **External Media Support**: Add movies/shows not in your library via TMDB integration
+- **Dual Search System**: Comprehensive search across both internal database and TMDB
+- **Bulk Operations**: Manage multiple items at once
+- **Smart Filtering**: Advanced search and filter capabilities
+
+### TMDB Server Configuration
+
+The application supports a dedicated TMDB server configuration for enhanced external media integration:
+
+#### Environment Variables
+
+- `TMDB_API_KEY`: Your TMDB API key (required for external media features)
+- `TMDB_NODE_SERVER_URL`: Optional dedicated TMDB server URL
+  - Falls back to `NEXT_PUBLIC_NODE_SERVER_URL` if not specified
+  - Useful for load balancing or dedicated TMDB processing
+
+#### Configuration Examples
+
+**Basic Setup (using main server):**
+```env
+TMDB_API_KEY=your_tmdb_api_key
+NEXT_PUBLIC_NODE_SERVER_URL=https://your-server.com/node
+```
+
+**Dedicated TMDB Server:**
+```env
+TMDB_API_KEY=your_tmdb_api_key
+NEXT_PUBLIC_NODE_SERVER_URL=https://your-server.com/node
+TMDB_NODE_SERVER_URL=https://tmdb-server.your-domain.com/node
+```
+
+### Watchlist API Endpoints
+
+The watchlist system provides comprehensive REST API endpoints:
+
+#### Core Operations
+- `GET /api/authenticated/watchlist?action=list` - Get user's watchlist
+- `POST /api/authenticated/watchlist?action=add` - Add item to watchlist
+- `POST /api/authenticated/watchlist?action=toggle` - Toggle item in watchlist
+- `DELETE /api/authenticated/watchlist?action=remove` - Remove item from watchlist
+- `GET /api/authenticated/watchlist?action=status` - Check if item is in watchlist
+
+#### Playlist Operations
+- `GET /api/authenticated/watchlist?action=playlists` - Get user's playlists
+- `POST /api/authenticated/watchlist?action=create-playlist` - Create new playlist
+- `PUT /api/authenticated/watchlist?action=update-playlist` - Update playlist
+- `DELETE /api/authenticated/watchlist?action=delete-playlist` - Delete playlist
+- `POST /api/authenticated/watchlist?action=share-playlist` - Share playlist with users
+
+#### Bulk Operations
+- `POST /api/authenticated/watchlist?action=bulk-update` - Bulk update items
+- `DELETE /api/authenticated/watchlist?action=bulk-remove` - Bulk remove items
+- `POST /api/authenticated/watchlist?action=move-items` - Move items between playlists
+
+### Admin Features
+
+Administrators can monitor TMDB server status through the admin dashboard:
+
+- **Connection Status**: Real-time TMDB server connectivity monitoring
+- **Configuration Validation**: Verify API keys and server URLs
+- **Health Metrics**: Response times and service availability
+- **Error Diagnostics**: Detailed error reporting and troubleshooting
+
+### Troubleshooting TMDB Integration
+
+#### Common Issues
+
+**TMDB Server Not Configured:**
+- Ensure `TMDB_API_KEY` is set in your environment
+- Verify `TMDB_NODE_SERVER_URL` or `NEXT_PUBLIC_NODE_SERVER_URL` is configured
+- Check the admin dashboard for configuration status
+
+**Connection Failures:**
+- Verify server URLs are accessible
+- Check firewall and network settings
+- Review server logs for detailed error messages
+
+**API Key Issues:**
+- Ensure your TMDB API key is valid and active
+- Check API key permissions and rate limits
+- Verify the key is correctly set in environment variables
+
+#### Testing Configuration
+
+Use the admin dashboard to test your TMDB configuration:
+1. Navigate to the admin panel
+2. Check the "TMDB Server Status" section
+3. Use the refresh button to test connectivity
+4. Review any error messages for troubleshooting guidance
+
+### External Media Integration
+
+When adding external media (not in your library):
+
+1. **Search**: Use the TMDB search functionality to find content
+2. **Add to Watchlist**: External items are marked with TMDB metadata
+3. **Playlist Organization**: External and internal media can be mixed in playlists
+4. **Sharing**: Shared playlists include both internal and external content
+
+External media items include rich metadata from TMDB:
+- High-quality posters and backdrops
+- Detailed descriptions and cast information
+- Release dates and ratings
+- Genre classifications
+
+### Dual Search System
+
+The watchlist system features a comprehensive dual search approach that provides the best of both worlds:
+
+#### Search Strategy
+1. **Database Search**: Fast partial matching against your internal media library
+2. **TMDB Search**: Comprehensive search against The Movie Database
+3. **Smart Deduplication**: Automatically filters out TMDB results already in your library
+4. **Visual Grouping**: Clear categorization of search results by source
+
+#### Search Categories
+- **In Your Watchlist**: Items already added to your current playlist
+- **Available in Media Server**: Content from your library that can be added immediately
+- **Add from TMDB**: External content not in your library but available via TMDB
+
+#### Benefits
+- **Comprehensive Coverage**: Find content whether it's in your library or not
+- **Performance Optimized**: Database searches are lightning fast
+- **No Duplicates**: Smart filtering prevents showing the same content twice
+- **Rich Metadata**: All results include posters, descriptions, and release information
+
+### Deterministic Hydration Strategy
+
+The watchlist system uses an intelligent, deterministic approach to display content that ensures maximum performance and reliability:
+
+#### Hydration Strategy
+1. **Database-First**: Primary lookup using internal `mediaId` in flat collections (fastest)
+2. **TMDB Fallback**: If `mediaId` fails, lookup using `tmdbId` via `metadata.id` in flat collections
+3. **API Fallback**: If both database lookups fail, fetch display data from TMDB API
+
+#### Benefits
+- **Performance**: Database lookups are extremely fast compared to API calls
+- **Resilience**: Multiple fallback mechanisms ensure content is always displayed
+- **Automatic Detection**: Content automatically appears as "available" when added to your library
+- **Backward Compatibility**: Works with existing watchlist items regardless of how they were added
+
+#### How It Works
+1. **Playlist Loading**: When you view a playlist, each item goes through the hydration process
+2. **Smart Detection**: The system automatically determines if content is in your library or external
+3. **Seamless Experience**: Internal content shows with "Available now!" and direct links
+4. **External Display**: TMDB-only content shows with rich metadata but no direct links
+
+#### Visual Indicators
+- **Available Content**: Green checkmark with "Available now!" and clickable links
+- **External Content**: Yellow "EXTERNAL" badge with TMDB metadata for browsing
+- **Rich Metadata**: All content shows posters, descriptions, ratings, and genre information
+
+This approach ensures your watchlist always reflects the current state of your media library without requiring manual updates or complex synchronization processes.
 
 ## Deployment Note
 

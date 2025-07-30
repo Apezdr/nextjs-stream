@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { auth } from '../../lib/auth';
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage';
 import SkeletonCard from '@components/SkeletonCard';
-import SignOutButton from '@components/SignOutButton';
 import Detailed from '@components/Poster/Detailed';
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched';
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
@@ -162,10 +161,6 @@ export default async function TVShowSeasonsList({ showTitle }) {
                 Go Back
               </button>
             </Link>
-            <SignOutButton
-              className="self-center bg-gray-600 hover:bg-gray-500 focus-visible:outline-gray-600"
-              signoutProps={{ callbackUrl: '/' }}
-            />
           </div>
         </li>
         {/* Seasons List */}

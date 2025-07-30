@@ -1,0 +1,355 @@
+'use client'
+
+import { useState, useCallback } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
+import Link from 'next/link'
+import Image from 'next/image'
+import { toast } from 'react-toastify'
+import { classNames } from '@src/utils'
+export default function WatchlistCard({
+  item,
+  viewMode = 'grid',
+  selected = false,
+  onSelect,
+  onRefresh,
+  onItemRemoved,
+  onItemMoved,
+  onShowMoveModal,
+  currentPlaylist,
+  playlists,
+  api
+}) {
+  const [showActions, setShowActions] = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  const handleRemove = useCallback(async () => {
+    if (window.confirm(`Remove "${item.title}" from ${currentPlaylist?.name || 'watchlist'}?`)) {
+      setLoading(true)
+      try {
+        // Use optimistic update if available
+        if (onItemRemoved) {
+          onItemRemoved(item.id)
+        }
+        
+        await api.removeFromWatchlist(item.id)
+        toast.success('Item removed from watchlist')
+        
+        // Only refresh if optimistic update not available
+        if (!onItemRemoved) {
+          onRefresh()
+        }
+      } catch (error) {
+        console.error('Error removing item:', error)
+        toast.error('Failed to remove item')
+        
+        // On error, refresh to revert optimistic changes
+        if (onItemRemoved) {
+          onRefresh()
+        }
+      } finally {
+        setLoading(false)
+      }
+    }
+  }, [item.id, item.title, currentPlaylist?.name, onRefresh, onItemRemoved, api])
+
+  const handleShowMoveModal = useCallback(() => {
+    if (onShowMoveModal) {
+      onShowMoveModal(item)
+      setShowActions(false)
+    }
+  }, [item, onShowMoveModal])
+
+  const formatDate = useCallback((dateString) => {
+    if (!dateString) return ''
+    try {
+      return new Date(dateString).toLocaleDateString()
+    } catch {
+      return ''
+    }
+  }, [])
+
+  const formatGenres = useCallback((genres) => {
+    if (!genres || !Array.isArray(genres)) return ''
+    return genres.slice(0, 3).map(g => g.name || g).join(', ')
+  }, [])
+
+  const getRatingColor = useCallback((rating) => {
+    if (!rating) return 'text-gray-400'
+    if (rating >= 8) return 'text-green-400'
+    if (rating >= 6) return 'text-yellow-400'
+    return 'text-red-400'
+  }, [])
+
+  if (viewMode === 'list') {
+    return (
+      <motion.div className={classNames(
+        'bg-gray-800 rounded-lg p-4 flex items-center space-x-4 transition-all duration-200',
+        selected && 'ring-2 ring-indigo-500',
+        loading && 'opacity-50 pointer-events-none'
+      )}>
+        {/* Checkbox */}
+        <div className="flex-shrink-0">
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={(e) => onSelect(e.target.checked)}
+            className="w-4 h-4 text-indigo-600 bg-gray-700 border-gray-600 rounded focus:ring-indigo-500"
+          />
+        </div>
+
+        {/* Poster */}
+        <div className="flex-shrink-0 w-16 h-24 relative">
+          <Image
+            src={item.posterURL}
+            alt={item.title}
+            fill
+            className="object-cover rounded"
+            sizes="64px"
+          />
+          {item.mediaType && (
+            <div className="absolute top-1 right-1 bg-black bg-opacity-75 text-white text-xs px-1 py-0.5 rounded">
+              {item.mediaType === 'movie' ? 'M' : 'TV'}
+            </div>
+          )}
+        </div>
+
+        {/* Content */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start justify-between">
+            <div className="flex-1 min-w-0">
+              <h3 className="text-lg font-semibold text-white truncate">
+                {item.url ? (
+                  <Link href={item.url} className="hover:text-indigo-400 transition-colors">
+                    {item.title}
+                  </Link>
+                ) : (
+                  item.title
+                )}
+              </h3>
+              
+              <div className="flex items-center space-x-4 mt-1 text-sm text-gray-400">
+                {item.releaseDate && (
+                  <span>{formatDate(item.releaseDate)}</span>
+                )}
+                {item.voteAverage && (
+                  <span className={classNames('flex items-center', getRatingColor(item.voteAverage))}>
+                    <svg className="w-4 h-4 mr-1" fill="currentColor" viewBox="0 0 20 20">
+                      <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+                    </svg>
+                    {item.voteAverage.toFixed(1)}
+                  </span>
+                )}
+                <span>Added {formatDate(item.dateAdded)}</span>
+                {item.isExternal && (
+                  <span className="bg-yellow-600 text-white text-xs px-2 py-0.5 rounded">
+                    External
+                  </span>
+                )}
+              </div>
+
+              {item.overview && (
+                <p className="text-gray-300 text-sm mt-2 line-clamp-2">
+                  {item.overview}
+                </p>
+              )}
+
+              {item.genres && item.genres.length > 0 && (
+                <p className="text-gray-400 text-sm mt-1">
+                  {formatGenres(item.genres)}
+                </p>
+              )}
+            </div>
+
+            {/* Actions */}
+            <div className="flex-shrink-0 ml-4">
+              <div className="relative">
+                <button
+                  onClick={() => setShowActions(!showActions)}
+                  className="p-2 text-gray-400 hover:text-white rounded-md hover:bg-gray-700"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                  </svg>
+                </button>
+
+                {showActions && (
+                  <div className="absolute right-0 mt-2 w-48 bg-gray-700 rounded-md shadow-lg z-10">
+                    <div className="py-1">
+                      <button
+                        onClick={handleShowMoveModal}
+                        className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
+                      >
+                        Move to playlist
+                      </button>
+                      <button
+                        onClick={() => {
+                          handleRemove()
+                          setShowActions(false)
+                        }}
+                        className="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-600"
+                      >
+                        Remove from watchlist
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </motion.div>
+    )
+  }
+
+  // Grid view
+  return (
+    <motion.div className={classNames(
+      'group bg-gray-800 rounded-lg overflow-hidden transition-all duration-200 hover:scale-105 hover:shadow-xl',
+      selected && 'ring-2 ring-indigo-500',
+      loading && 'opacity-50 pointer-events-none'
+    )}>
+      {/* Poster */}
+      <div className="relative aspect-[2/3]">
+        <Image
+          src={item.posterURL}
+          alt={item.title}
+          fill
+          className={classNames("object-cover group-hover:opacity-100 group-focus:opacity-100 transition-opacity duration-700",
+            !item.url ? "opacity-25" : "",
+          )}
+          sizes="(max-width: 640px) 100vw, (max-width: 768px) 50vw, (max-width: 1024px) 33vw, (max-width: 1280px) 25vw, 20vw"
+        />
+        
+        {/* Overlay */}
+        <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-75 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100">
+          <div className="flex space-x-2">
+            <button
+              onClick={() => onSelect(!selected)}
+              className={classNames(
+                'p-2 rounded-full transition-colors',
+                selected ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+              )}
+              title={selected ? 'Deselect' : 'Select'}
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </button>
+            {/* Info button for internal media */}
+            {item.url && (
+              <Link href={item.url}>
+                <button
+                  className="p-3 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition-colors"
+                  title="View Details"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </button>
+              </Link>
+            )}
+            <button
+              onClick={() => setShowActions(!showActions)}
+              className="p-2 bg-gray-700 text-gray-300 rounded-full hover:bg-gray-600 transition-colors"
+              title="More actions"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Media type badge */}
+        {item.mediaType && (
+          <div className="absolute top-2 right-2 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded">
+            {item.mediaType === 'movie' ? 'Movie' : 'TV Show'}
+          </div>
+        )}
+
+        {/* External content indicator */}
+        {item.isExternal && (
+          <div className="absolute bottom-2 left-2 bg-yellow-600 text-white text-xs px-2 py-1 rounded">
+            EXTERNAL
+          </div>
+        )}
+
+        {/* Rating */}
+        {item.voteAverage ? (
+          <div className="absolute top-2 left-2 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded flex items-center">
+            <svg className="w-3 h-3 mr-1 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
+            </svg>
+            {item.voteAverage.toFixed(1)}
+          </div>
+        ) : null}
+      </div>
+
+      {/* Content */}
+      <div className="p-4">
+        <h3 className="font-semibold text-white text-sm line-clamp-2 mb-2">
+          {item.url ? (
+            <Link href={item.url} className="hover:text-indigo-400 transition-colors">
+              {item.title}
+            </Link>
+          ) : (
+            item.title
+          )}
+        </h3>
+        
+        <div className="text-xs text-gray-400 space-y-1">
+          {item.releaseDate && (
+            <div>{formatDate(item.releaseDate)}</div>
+          )}
+          {item.genres && item.genres.length > 0 && (
+            <div className="line-clamp-1">{formatGenres(item.genres)}</div>
+          )}
+          <div>Added {formatDate(item.dateAdded)}</div>
+        </div>
+
+        <div className="mt-2 text-sm line-clamp-3">
+          {item.url ? (
+            <div className="flex items-center text-green-400">
+              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+              Available now!
+            </div>
+          ) : (
+            <div className="flex items-center text-gray-400">
+              <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              Not available yet
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Actions Menu */}
+      {showActions && (
+        <div className="absolute top-24 right-2 w-48 bg-gray-700 rounded-md shadow-lg z-10">
+          <div className="py-1">
+            <button
+              onClick={handleShowMoveModal}
+              className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
+            >
+              Move to playlist
+            </button>
+            <button
+              onClick={() => {
+                handleRemove()
+                setShowActions(false)
+              }}
+              className="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-600"
+            >
+              Remove from watchlist
+            </button>
+          </div>
+        </div>
+      )}
+
+    </motion.div>
+  )
+}

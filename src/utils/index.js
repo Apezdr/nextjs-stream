@@ -26,6 +26,16 @@ export const convertToDate = cache((str) => {
   return date
 })
 
+// Format dates to simple YYYY-MM-DD format
+export const formatDate = (dateStr) => {
+  if (!dateStr) return null
+  try {
+    return new Date(dateStr).toISOString().split('T')[0]
+  } catch {
+    return dateStr
+  }
+}
+
 // Function to format time in milliseconds to hh:mm:ss
 export const formatTime = cache((milliseconds) => {
   let seconds = Math.floor(milliseconds / 1000)

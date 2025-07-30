@@ -1335,6 +1335,10 @@ export async function getFlatRequestedMedia({
             _id: episodeData._id.toString(),
             showId: episodeData.showId.toString(),
             showTitle: tvShow.title,
+            // Add parent show data for watchlist functionality
+            showMediaId: tvShow._id.toString(),
+            showTmdbId: tvShow.metadata?.id,
+            // Season data
             seasonId: episodeData.seasonId.toString(),
             title: episodeData.title, // Use episode title
             originalTitle: tvShow.originalTitle,

@@ -1,9 +1,6 @@
 import axios from 'axios'
 import { convertToDate, getFullImageUrl } from '../utils'
 
-const OMDB_API_KEY = process.env.OMDB_API_KEY
-const TMDB_API_KEY = process.env.TMDB_API_KEY
-
 async function getMetadata({ title, season = null, episode = null, type, tmdb_id = null }) {
   // Use TMDb for movies
   if (type === 'movie') {

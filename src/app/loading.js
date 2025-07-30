@@ -41,12 +41,12 @@ export default function Loading({ fullscreenClasses = 'min-h-screen', containerC
   )
 }
 
-export const LoadingDots = () => {
+export const LoadingDots = ({ dotClasses = 'w-2 h-2', color = 'bg-gray-400' }) => {
   return useMemo(() => (
     <div className="inset-0 flex items-center justify-center space-x-1">
-      <span className="dot w-2 h-2 bg-gray-400 rounded-full"></span>
-      <span className="dot w-2 h-2 bg-gray-400 rounded-full"></span>
-      <span className="dot w-2 h-2 bg-gray-400 rounded-full"></span>
+      <span className={`dot ${dotClasses} ${color} rounded-full`}></span>
+      <span className={`dot ${dotClasses} ${color} rounded-full`}></span>
+      <span className={`dot ${dotClasses} ${color} rounded-full`}></span>
     </div>
-  ), [])
+  ), [dotClasses, color])
 }

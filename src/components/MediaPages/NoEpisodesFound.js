@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence';
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched';
-import SignOutButton from '@components/SignOutButton';
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -124,10 +123,6 @@ export default function NoEpisodesFound({ onRetry, showTitle, seasonNumber, seas
                   Go Back
                 </button>
               </Link>
-              <SignOutButton
-                className="self-center bg-gray-600 hover:bg-gray-500 focus-visible:outline-gray-600"
-                signoutProps={{ callbackUrl: '/' }}
-              />
             </div>
           </li>
           

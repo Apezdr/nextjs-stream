@@ -5,6 +5,7 @@ import ViewCount from './ViewCount'
 import Image from 'next/image'
 import dynamic from 'next/dynamic'
 import RetryImage from '@components/RetryImage'
+import WatchlistButton from '@components/WatchlistButton'
 
 // Lazy load the cast grid section which can be heavy
 const CastSection = dynamic(() => 
@@ -191,6 +192,16 @@ const MovieDetailsComponent = ({ media }) => {
             Trailer
           </Link>
           ) : null}
+          {/* Add movie to watchlist button */}
+          {media && (
+            <WatchlistButton
+              mediaId={media._id?.toString()}
+              tmdbId={media.metadata?.id}
+              mediaType="movie"
+              title={title}
+              className="h-12 mt-4 px-4 py-2 rounded-md"
+            />
+          )}
           </div>
         </div>
         {collectionData || cast && cast.length > 0 ? (

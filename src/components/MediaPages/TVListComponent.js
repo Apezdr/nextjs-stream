@@ -1,7 +1,6 @@
 import Link from 'next/link'
 import { auth } from '../../lib/auth'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
-import SignOutButton from '@components/SignOutButton'
 import SkeletonCard from '@components/SkeletonCard'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { memo, Suspense, cache } from 'react'
@@ -110,10 +109,6 @@ async function TVListComponent() {
                     Go Back
                   </button>
                 </Link>
-                <SignOutButton
-                  className="self-center bg-gray-600 hover:bg-gray-500 focus-visible:outline-gray-600"
-                  signoutProps={{ callbackUrl: '/' }}
-                />
               </div>
             </li>
             <Suspense

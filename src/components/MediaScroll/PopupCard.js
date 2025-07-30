@@ -10,6 +10,7 @@ import useSWR, { preload } from 'swr'
 import RetryImage from '@components/RetryImage'
 import Loading from '@src/app/loading'
 import VirtualizedCastGrid from './VirtualizedCastGrid'
+import WatchlistButton from '@components/WatchlistButton'
 import { InformationCircleIcon } from '@heroicons/react/20/solid'
 
 // Import the CardVideoPlayer with z-[40]
@@ -433,6 +434,17 @@ const PopupCard = ({
                   View Details
                 </span>
               </Link>
+              
+              {/* Add WatchlistButton for movies and TV shows */}
+              {mediaId && (type === 'movie' || (type === 'tv')) && (
+                <WatchlistButton
+                  mediaId={mediaId}
+                  tmdbId={data?.metadata?.id}
+                  mediaType={type}
+                  title={episodeNumber ? title : (data?.title ?? title)}
+                  className="h-12 mt-4 px-4 py-2 rounded-full"
+                />
+              )}
             </div>
           )}
         </div>

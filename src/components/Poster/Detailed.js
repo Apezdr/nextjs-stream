@@ -4,6 +4,7 @@ import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
 import Image from 'next/image'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '@src/utils'
 import RetryImage from '@components/RetryImage'
+import WatchlistButton from '@components/WatchlistButton'
 import { cache } from 'react'
 
 function Detailed({
@@ -132,7 +133,20 @@ function Detailed({
       {posterOnly ? null : (
         <>
           <div className="mt-2 text-center text-gray-200 text-lg font-bold transition-all delay-150 duration-500">
-            <span>{tvShow.title}</span>
+            <div className="flex items-center justify-center gap-2">
+              {tvShow._id ? (
+                <WatchlistButton
+                  mediaId={tvShow._id?.toString()}
+                  tmdbId={tvShow.metadata?.id}
+                  mediaType="tv"
+                  title={tvShow.title}
+                  variant="icon-only"
+                  className="text-gray-200 hover:text-white"
+                />
+              ) : null}
+              
+              <span>{tvShow.title}</span>
+            </div>
           </div>
           <div
             className={classNames(
