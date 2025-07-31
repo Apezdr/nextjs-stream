@@ -39,7 +39,6 @@ export default function WatchlistButton({
     setChecking(true)
     try {
       const query = buildParams('status')
-      console.log('Fetching watchlist status:', `/api/authenticated/watchlist?${query}`)
       const res = await fetch(`/api/authenticated/watchlist?${query}`, {
         method: 'GET',
         cache: 'no-store',
@@ -195,7 +194,11 @@ export default function WatchlistButton({
 
   return (
     <motion.button
-      onClick={toggle}
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggle();
+      }}
       disabled={toggling}
       className={`${className} inline-flex items-center justify-center transition-all duration-300 ${
         variant === 'icon-only'
