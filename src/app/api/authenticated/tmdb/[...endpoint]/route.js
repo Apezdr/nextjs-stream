@@ -1,10 +1,11 @@
 import { tmdbNodeServerURL } from '@src/utils/config'
 import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { httpGet } from '@src/lib/httpHelper'
 
 /**
  * Dynamic TMDB proxy route
  * GET /api/authenticated/tmdb/[...endpoint]
- * Proxies all other TMDB requests to backend server
+ * Proxies all other TMDB requests to backend server with enhanced retry and caching
  *
  * Handles endpoints like:
  * - /comprehensive/movie or /comprehensive/tv
@@ -63,22 +64,31 @@ export async function GET(request, { params }) {
       headers['cookie'] = request.headers.get('cookie')
     }
     
-    // Proxy request to backend
-    const response = await fetch(backendUrl.toString(), {
-      method: 'GET',
-      headers,
-      // Add timeout
-      signal: AbortSignal.timeout(15000)
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Backend responded with ${response.status}: ${errorText}`)
-    }
-
-    const data = await response.json()
+    // Determine caching strategy based on endpoint
+    const shouldCache = endpointPath.includes('images') ||
+                       endpointPath.includes('cast') ||
+                       endpointPath.includes('videos') ||
+                       endpointPath.includes('comprehensive')
     
-    return Response.json(data)
+    // Use enhanced HTTP client with retry and caching
+    const response = await httpGet(backendUrl.toString(), {
+      headers,
+      timeout: 15000,
+      responseType: 'json',
+      retry: {
+        limit: 3,
+        baseDelay: 1000,
+        maxDelay: 5000,
+        shouldRetry: (error, attemptCount) => {
+          // Retry on network errors and 5xx/429 status codes
+          if (!error.response) return true
+          const statusCode = error.response.statusCode
+          return statusCode >= 500 || statusCode === 429
+        }
+      }
+    }, shouldCache) // Cache based on endpoint type
+    
+    return Response.json(response.data)
     
   } catch (error) {
     console.error('TMDB proxy error:', error)
@@ -140,23 +150,51 @@ export async function POST(request, { params }) {
       headers['cookie'] = request.headers.get('cookie')
     }
     
-    // Proxy request to backend
-    const response = await fetch(backendUrl, {
-      method: 'POST',
-      headers,
-      body: body || null,
-      // Add timeout
-      signal: AbortSignal.timeout(15000)
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Backend responded with ${response.status}: ${errorText}`)
-    }
-
-    const data = await response.json()
+    // For POST requests, we'll use a more direct approach since httpGet is optimized for GET
+    // but still add retry logic
+    let lastError
+    const maxRetries = 3
     
-    return Response.json(data)
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        const response = await fetch(backendUrl, {
+          method: 'POST',
+          headers,
+          body: body || null,
+          signal: AbortSignal.timeout(15000)
+        })
+
+        if (!response.ok) {
+          const errorText = await response.text()
+          const error = new Error(`Backend responded with ${response.status}: ${errorText}`)
+          
+          // Only retry on server errors or timeout
+          if (response.status >= 500 || response.status === 429) {
+            lastError = error
+            if (attempt < maxRetries) {
+              const delay = Math.min(1000 * Math.pow(2, attempt), 5000)
+              await new Promise(resolve => setTimeout(resolve, delay))
+              continue
+            }
+          }
+          throw error
+        }
+
+        const data = await response.json()
+        return Response.json(data)
+        
+      } catch (error) {
+        lastError = error
+        if (attempt < maxRetries && (!error.response || error.response.status >= 500)) {
+          const delay = Math.min(1000 * Math.pow(2, attempt), 5000)
+          await new Promise(resolve => setTimeout(resolve, delay))
+          continue
+        }
+        break
+      }
+    }
+    
+    throw lastError
     
   } catch (error) {
     console.error('TMDB proxy POST error:', error)

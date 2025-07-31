@@ -1,9 +1,10 @@
 import { tmdbNodeServerURL } from '@src/utils/config'
 import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { httpGet } from '@src/lib/httpHelper'
 
 /**
  * GET /api/authenticated/tmdb/health
- * Proxy TMDB health check to backend server
+ * Proxy TMDB health check to backend server with enhanced retry and caching
  */
 export async function GET(request) {
   try {
@@ -76,21 +77,25 @@ export async function GET(request) {
       headers['cookie'] = request.headers.get('cookie')
     }
     
-    // Proxy request to backend
-    const response = await fetch(backendUrl, {
-      method: 'GET',
+    // Use enhanced HTTP client with retry and caching
+    const response = await httpGet(backendUrl, {
       headers,
-      // Add timeout
-      signal: AbortSignal.timeout(10000)
-    })
-
-    if (!response.ok) {
-      throw new Error(`Backend responded with ${response.status}`)
-    }
-
-    const data = await response.json()
+      timeout: 10000,
+      responseType: 'json',
+      retry: {
+        limit: 2, // Fewer retries for health checks
+        baseDelay: 500,
+        maxDelay: 2000,
+        shouldRetry: (error, attemptCount) => {
+          // Be more selective with health check retries
+          if (!error.response) return true
+          const statusCode = error.response.statusCode
+          return statusCode >= 500 || statusCode === 429
+        }
+      }
+    }, false) // Don't cache health checks for real-time status
     
-    return Response.json(data)
+    return Response.json(response.data)
     
   } catch (error) {
     console.error('TMDB health check error:', error)

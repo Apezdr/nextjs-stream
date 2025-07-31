@@ -1,9 +1,10 @@
 import { tmdbNodeServerURL } from '@src/utils/config'
 import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { httpGet } from '@src/lib/httpHelper'
 
 /**
  * GET /api/authenticated/tmdb/details/[type]/[id]
- * Proxy TMDB details requests to backend server
+ * Proxy TMDB details requests to backend server with enhanced retry and caching
  * Params:
  * - type: 'movie' or 'tv'
  * - id: TMDB media ID
@@ -64,21 +65,25 @@ export async function GET(request, { params }) {
       headers['cookie'] = request.headers.get('cookie')
     }
     
-    // Proxy request to backend
-    const response = await fetch(backendUrl, {
-      method: 'GET',
+    // Use enhanced HTTP client with retry and caching
+    const response = await httpGet(backendUrl, {
       headers,
-      // Add timeout
-      signal: AbortSignal.timeout(15000)
-    })
-
-    if (!response.ok) {
-      throw new Error(`Backend responded with ${response.status}`)
-    }
-
-    const data = await response.json()
+      timeout: 15000,
+      responseType: 'json',
+      retry: {
+        limit: 3,
+        baseDelay: 1000,
+        maxDelay: 5000,
+        shouldRetry: (error, attemptCount) => {
+          // Retry on network errors and 5xx/429 status codes
+          if (!error.response) return true
+          const statusCode = error.response.statusCode
+          return statusCode >= 500 || statusCode === 429
+        }
+      }
+    }, true) // Enable cache for details - they don't change often
     
-    return Response.json(data)
+    return Response.json(response.data)
     
   } catch (error) {
     console.error('TMDB details error:', error)
