@@ -3,8 +3,10 @@
  * Uses the existing backend TMDB API endpoints with caching
  */
 
-import { buildURL } from '@src/utils'
-import { tmdbNodeServerURL } from '@src/utils/config'
+import { buildURL } from ".."
+
+// For client-side requests, use relative URLs to the current origin
+// The Next.js API routes will handle the server-side proxy logic
 
 /**
  * TMDB client error class
@@ -19,8 +21,8 @@ export class TMDBError extends Error {
 }
 
 /**
- * Make a request to the backend TMDB API
- * @param {string} endpoint - API endpoint (without /api/tmdb prefix)
+ * Make a request to the local TMDB API proxy
+ * @param {string} endpoint - API endpoint (without /api/authenticated/tmdb prefix)
  * @param {Object} [options] - Request options
  * @param {number} [options.retries=2] - Number of retry attempts
  * @param {number} [options.timeout=10000] - Request timeout in milliseconds
@@ -29,14 +31,12 @@ export class TMDBError extends Error {
 async function makeRequest(endpoint, options = {}) {
   const { method = 'GET', body = null, params = {}, retries = 2, timeout = 10000 } = options
 
-  // Check if TMDB server is configured
-  if (!tmdbNodeServerURL) {
-    throw new TMDBError('TMDB server URL not configured. Please set TMDB_NODE_SERVER_URL or NEXT_PUBLIC_NODE_SERVER_URL environment variable.')
-  }
+  // Build URL using local Next.js API routes (server-side proxy)
+  // Use relative URLs that work from the browser
+  const builtURL = buildURL(`/api/authenticated/tmdb${endpoint}`)
+  const url = new URL(builtURL, builtURL.startsWith('http') ? undefined : window.location.origin)
 
-  // Build URL with query parameters using the configured TMDB server
-  const baseUrl = tmdbNodeServerURL.endsWith('/') ? tmdbNodeServerURL.slice(0, -1) : tmdbNodeServerURL
-  const url = new URL(`${baseUrl}/api/tmdb${endpoint}`)
+  console.log(`TMDB Request: ${method} ${url.toString()}`, { params, body })
   Object.entries(params).forEach(([key, value]) => {
     if (value !== null && value !== undefined) {
       url.searchParams.append(key, value.toString())
@@ -54,10 +54,10 @@ async function makeRequest(endpoint, options = {}) {
         method,
         headers: {
           'Content-Type': 'application/json',
-          // Authentication will be handled by the session
         },
         body: body ? JSON.stringify(body) : null,
-        signal: controller.signal
+        signal: controller.signal,
+        credentials: 'include' // Include session cookies for Next.js authentication
       })
 
       clearTimeout(timeoutId)
@@ -123,8 +123,9 @@ export async function searchMedia(query, type = 'movie', options = {}) {
     throw new TMDBError('Type must be "movie" or "tv"')
   }
 
-  return await makeRequest(`/search/${type}`, {
+  return await makeRequest('/search', {
     params: {
+      type,
       query: query.trim(),
       page
     }
@@ -313,7 +314,7 @@ export async function testTMDBConnection() {
     
     return {
       success: true,
-      serverURL: tmdbNodeServerURL,
+      serverURL: 'Local Next.js API Proxy',
       tmdbConfigured: health.tmdb_configured === true,
       responseTime,
       timestamp: new Date().toISOString(),
@@ -322,7 +323,7 @@ export async function testTMDBConnection() {
   } catch (error) {
     return {
       success: false,
-      serverURL: tmdbNodeServerURL,
+      serverURL: 'Local Next.js API Proxy',
       tmdbConfigured: false,
       error: error.message,
       timestamp: new Date().toISOString()
@@ -337,9 +338,9 @@ export async function testTMDBConnection() {
 export async function validateTMDBConfiguration() {
   const validation = {
     serverURL: {
-      configured: !!tmdbNodeServerURL,
-      value: tmdbNodeServerURL,
-      valid: false
+      configured: true, // Always true for local proxy
+      value: 'Local Next.js API Proxy',
+      valid: true
     },
     connectivity: {
       reachable: false,
@@ -348,35 +349,21 @@ export async function validateTMDBConfiguration() {
     overall: false
   }
 
-  // Validate server URL format
-  if (validation.serverURL.configured) {
-    try {
-      new URL(tmdbNodeServerURL)
-      validation.serverURL.valid = true
-    } catch (error) {
-      validation.serverURL.error = 'Invalid URL format'
+  // Test connectivity through local proxy
+  try {
+    const connectionTest = await testTMDBConnection()
+    validation.connectivity.reachable = connectionTest.success
+    validation.connectivity.responseTime = connectionTest.responseTime
+    
+    if (!connectionTest.success) {
+      validation.connectivity.error = connectionTest.error
     }
-  }
-
-  // Test connectivity if URL is valid
-  if (validation.serverURL.valid) {
-    try {
-      const connectionTest = await testTMDBConnection()
-      validation.connectivity.reachable = connectionTest.success
-      validation.connectivity.responseTime = connectionTest.responseTime
-      validation.apiKey.valid = connectionTest.tmdbConfigured
-      
-      if (!connectionTest.success) {
-        validation.connectivity.error = connectionTest.error
-      }
-    } catch (error) {
-      validation.connectivity.error = error.message
-    }
+  } catch (error) {
+    validation.connectivity.error = error.message
   }
 
   // Overall validation
-  validation.overall = validation.serverURL.valid &&
-                      validation.connectivity.reachable
+  validation.overall = validation.serverURL.valid && validation.connectivity.reachable
 
   return validation
 }
@@ -428,7 +415,8 @@ export async function findInternalMediaByTMDBId(tmdbId, mediaType) {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ tmdbId, mediaType })
+      body: JSON.stringify({ tmdbId, mediaType }),
+      credentials: 'include' // Include session cookies for authentication
     })
     
     if (!response.ok) {

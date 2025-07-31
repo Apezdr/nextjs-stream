@@ -220,8 +220,8 @@ export const adminUserEmails = process.env.NEXT_PUBLIC_ADMIN_USER_EMAILS
 // Privacy configuration
 export const showAdminEmails = process.env.SHOW_ADMIN_EMAILS !== 'false'
 
-// TMDB server configuration
-export const tmdbNodeServerURL = process.env.TMDB_NODE_SERVER_URL || process.env.NEXT_PUBLIC_NODE_SERVER_URL
+// TMDB server configuration (used by server-side API routes)
+export const tmdbNodeServerURL = process.env.TMDB_NODE_SERVER_URL || process.env.NEXT_PUBLIC_NODE_SERVER_URL || 'http://localhost:3000'
 
 // Export server management functions
 export const getServer = serverManager.getServer.bind(serverManager)
