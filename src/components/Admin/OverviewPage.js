@@ -373,13 +373,15 @@ export default function AdminOverviewPage({
           Sync with Fileserver
         </button>
         <WipeDbButton />
-        <Link
-          className="block rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-          href={organizrURL}
-          target="_blank"
-        >
-          Organizr
-        </Link>
+        {organizrURL && (
+          <Link
+            className="block rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+            href={organizrURL}
+            target="_blank"
+          >
+            Organizr
+          </Link>
+        )}
       </div>
       <hr className="my-16 border-gray-300 w-full" />
       <TMDBServerStatus />

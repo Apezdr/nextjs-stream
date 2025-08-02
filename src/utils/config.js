@@ -210,7 +210,7 @@ const urlHandlers = new Map(
 export const multiServerHandler = createMultiServerURLHandler(serverManager.getAllServers())
 
 // Basic configuration exports
-export const organizrURL = process.env.NEXT_PUBLIC_ORGANIZR_URL || 'http://localhost:3000'
+export const organizrURL = process.env.ORGANIZR_URL || null
 export const siteTitle = process.env.NEXT_PUBLIC_SITE_TITLE || 'Cinema Sanctuary'
 export const siteDescription = process.env.NEXT_PUBLIC_SITE_DESCRIPTION || 'Sharing media content with friends and family.'
 export const adminUserEmails = process.env.NEXT_PUBLIC_ADMIN_USER_EMAILS
