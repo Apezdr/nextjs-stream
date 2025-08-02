@@ -10,6 +10,7 @@ import PlaylistGrid from './PlaylistGrid'
 import PlaylistControls from './PlaylistControls'
 import SharePlaylistModal from './SharePlaylistModal'
 import MoveToPlaylistModal from './MoveToPlaylistModal'
+import { HeaderSkeleton, ControlsSkeleton } from './WatchlistSkeletons'
 import { searchMedia } from '@src/utils/tmdb/client'
 import { classNames, formatDate } from '@src/utils'
 
@@ -162,8 +163,13 @@ export default function WatchlistPage({ user }) {
   const [currentPlaylist, setCurrentPlaylist] = useState(null)
   const [currentItems, setCurrentItems] = useState([])
   const [selectedPlaylistId, setSelectedPlaylistId] = useState('default')
-  const [loading, setLoading] = useState(true)
+  
+  // Granular loading states
+  const [playlistsLoading, setPlaylistsLoading] = useState(true)
   const [itemsLoading, setItemsLoading] = useState(false)
+  const [summaryLoading, setSummaryLoading] = useState(true)
+  const [initializing, setInitializing] = useState(true)
+  
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [isSearching, setIsSearching] = useState(false)
@@ -247,38 +253,121 @@ export default function WatchlistPage({ user }) {
   
   // Debouncing for sort changes
   const sortChangeTimeout = useRef(null)
+  
+  // Track last loaded playlist to prevent redundant loads
+  const lastLoadedPlaylistRef = useRef(null)
 
-  // Load initial data
-  useEffect(() => {
-    loadPlaylists()
-    loadSummary()
-  }, [])
+  // Create separate functions for data loading that return promises
+  const loadPlaylistsData = useCallback(async () => {
+    try {
+      const data = await api.getPlaylists()
+      return data.playlists || []
+    } catch (error) {
+      console.error('Error loading playlists:', error)
+      toast.error('Failed to load playlists')
+      return []
+    }
+  }, [api])
 
-  // Load playlist items and summary when selected playlist changes
+  const loadSummaryData = useCallback(async (playlistId = 'default') => {
+    try {
+      const summaryData = await api.getWatchlistSummary(playlistId)
+      return summaryData
+    } catch (error) {
+      console.error('Error loading summary:', error)
+      return null
+    }
+  }, [api])
+
+  // Unified initial data loading - runs only once on mount
   useEffect(() => {
-    if (selectedPlaylistId && playlists.length > 0) {
+    const initializeWatchlist = async () => {
+      setInitializing(true)
+      setPlaylistsLoading(true)
+      setSummaryLoading(true)
+      
+      try {
+        // Capture initial playlist param from URL
+        const initialPlaylistParam = searchParams.get('playlist')
+        
+        // Fetch playlists and summary in parallel
+        const [playlistsResult, summaryResult] = await Promise.allSettled([
+          loadPlaylistsData(),
+          loadSummaryData() // Load default summary initially
+        ])
+        
+        let loadedPlaylists = []
+        if (playlistsResult.status === 'fulfilled') {
+          loadedPlaylists = playlistsResult.value || []
+          setPlaylists(loadedPlaylists)
+        }
+        setPlaylistsLoading(false)
+        
+        if (summaryResult.status === 'fulfilled' && summaryResult.value) {
+          setSummary(summaryResult.value)
+        }
+        setSummaryLoading(false)
+        
+        // Determine selected playlist deterministically
+        let targetPlaylistId = 'default'
+        
+        if (initialPlaylistParam && loadedPlaylists.some(p => p.id === initialPlaylistParam)) {
+          // URL parameter exists and is valid
+          targetPlaylistId = initialPlaylistParam
+        } else if (loadedPlaylists.length > 0) {
+          // Find default playlist or fallback to first playlist
+          const defaultPlaylist = loadedPlaylists.find(p => p.isDefault) ||
+                                   loadedPlaylists.find(p => p.id === 'default') ||
+                                   loadedPlaylists[0]
+          if (defaultPlaylist) {
+            targetPlaylistId = defaultPlaylist.id
+          }
+        }
+        
+        // Load playlist items for the selected playlist
+        if (targetPlaylistId && loadedPlaylists.length > 0) {
+          await loadPlaylistItems(targetPlaylistId)
+          lastLoadedPlaylistRef.current = targetPlaylistId
+          
+          // Load specific summary for this playlist if it's not the default
+          if (targetPlaylistId !== 'default') {
+            const playlistSummary = await loadSummaryData(targetPlaylistId)
+            if (playlistSummary) {
+              setSummary(playlistSummary)
+            }
+          }
+        }
+        
+        // Set the selected playlist AFTER loading to avoid triggering secondary effect
+        setSelectedPlaylistId(targetPlaylistId)
+        
+        // Sync URL without triggering re-initialization
+        syncUrlToPlaylist(targetPlaylistId, loadedPlaylists, true)
+        
+      } catch (error) {
+        console.error('Error initializing watchlist:', error)
+        toast.error('Failed to initialize watchlist')
+      } finally {
+        setInitializing(false)
+      }
+    }
+
+    initializeWatchlist()
+  }, []) // Run only once on mount
+
+  // Handle playlist selection changes after initialization (user-initiated only)
+  useEffect(() => {
+    if (
+      !initializing &&
+      selectedPlaylistId &&
+      playlists.length > 0 &&
+      lastLoadedPlaylistRef.current !== selectedPlaylistId
+    ) {
       loadPlaylistItems(selectedPlaylistId)
       loadSummary(selectedPlaylistId)
+      lastLoadedPlaylistRef.current = selectedPlaylistId
     }
-  }, [selectedPlaylistId, playlists.length])
-
-  // Handle URL parameters and default playlist selection
-  useEffect(() => {
-    const playlistParam = searchParams.get('playlist')
-    
-    if (playlistParam) {
-      // If there's a playlist parameter in the URL, use it
-      if (playlistParam !== selectedPlaylistId) {
-        setSelectedPlaylistId(playlistParam)
-      }
-    } else if (playlists.length > 0) {
-      // If no playlist parameter and playlists are loaded, select the default playlist
-      const defaultPlaylist = playlists.find(p => p.isDefault) || playlists.find(p => p.id === 'default') || playlists[0]
-      if (defaultPlaylist && defaultPlaylist.id !== selectedPlaylistId) {
-        setSelectedPlaylistId(defaultPlaylist.id)
-      }
-    }
-  }, [searchParams, playlists, selectedPlaylistId])
+  }, [selectedPlaylistId, initializing])
 
   // Save view mode to localStorage whenever it changes
   useEffect(() => {
@@ -287,13 +376,12 @@ export default function WatchlistPage({ user }) {
     }
   }, [viewMode])
 
-  // Custom handler for playlist selection that updates URL
-  const handlePlaylistSelect = useCallback((playlistId) => {
-    // Update URL parameters with shallow routing to prevent re-rendering
+  // Helper function to sync URL to playlist selection
+  const syncUrlToPlaylist = useCallback((playlistId, playlistList = playlists, isInitialization = false) => {
     const params = new URLSearchParams(searchParams.toString())
     
     // Check if this is the default playlist
-    const defaultPlaylist = playlists.find(p => p.isDefault) || playlists.find(p => p.id === 'default')
+    const defaultPlaylist = playlistList.find(p => p.isDefault) || playlistList.find(p => p.id === 'default')
     const isDefaultPlaylist = defaultPlaylist && playlistId === defaultPlaylist.id
     
     if (isDefaultPlaylist) {
@@ -305,21 +393,36 @@ export default function WatchlistPage({ user }) {
     }
     
     const newUrl = params.toString() ? `?${params.toString()}` : '/watchlist'
-    router.push(newUrl, { scroll: false, shallow: true })
     
-    // State will be updated by the useEffect that watches searchParams
-    // This prevents double state updates and re-renders
+    // Use replace during initialization to avoid history pollution and re-triggering
+    if (isInitialization) {
+      router.replace(newUrl, { scroll: false, shallow: true })
+    } else {
+      router.push(newUrl, { scroll: false, shallow: true })
+    }
   }, [router, searchParams, playlists])
 
+  // Custom handler for playlist selection that updates URL
+  const handlePlaylistSelect = useCallback((playlistId) => {
+    // Update state immediately
+    setSelectedPlaylistId(playlistId)
+    
+    // Sync URL without triggering re-initialization
+    syncUrlToPlaylist(playlistId)
+  }, [syncUrlToPlaylist])
+
   const loadPlaylists = useCallback(async () => {
+    setPlaylistsLoading(true)
     try {
       const data = await api.getPlaylists()
       setPlaylists(data.playlists || [])
     } catch (error) {
       console.error('Error loading playlists:', error)
       toast.error('Failed to load playlists')
+    } finally {
+      setPlaylistsLoading(false)
     }
-  }, [api, selectedPlaylistId])
+  }, [api])
 
   const loadPlaylistItems = useCallback(async (playlistId) => {
     setItemsLoading(true)
@@ -358,17 +461,19 @@ export default function WatchlistPage({ user }) {
       toast.error('Failed to load playlist items')
     } finally {
       setItemsLoading(false)
-      setLoading(false)
     }
   }, [api, playlists])
 
 
   const loadSummary = useCallback(async (playlistId = selectedPlaylistId) => {
+    setSummaryLoading(true)
     try {
       const summaryData = await api.getWatchlistSummary(playlistId)
       setSummary(summaryData)
     } catch (error) {
       console.error('Error loading summary:', error)
+    } finally {
+      setSummaryLoading(false)
     }
   }, [api, selectedPlaylistId])
 
@@ -952,28 +1057,13 @@ export default function WatchlistPage({ user }) {
     return item.mediaType === filterType
   })
 
-  if (loading) {
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
-        <div className="h-auto flex items-center justify-center py-32 lg:py-0 px-4 xl:px-0 sm:mt-20">
-          <div className="text-center">
-            <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8">
-              Loading Watchlist...
-            </h2>
-            <div className="w-full h-1 bg-gray-800 overflow-hidden">
-              <div className="h-full bg-indigo-600 w-full animate-[pulse_1.5s_ease-in-out_infinite]"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
+  // Always render the layout, never show full-screen loader
   return (
     <div className="flex min-h-screen bg-gray-900">
       {/* Sidebar */}
       <PlaylistSidebar
         playlists={playlists}
+        playlistsLoading={playlistsLoading}
         selectedPlaylistId={selectedPlaylistId}
         onPlaylistSelect={handlePlaylistSelect}
         onCreatePlaylist={handleCreatePlaylist}
@@ -982,75 +1072,84 @@ export default function WatchlistPage({ user }) {
         onClearPlaylist={handleClearPlaylist}
         onSharePlaylist={handleSharePlaylist}
         summary={summary}
+        summaryLoading={summaryLoading}
       />
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        <div className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
-              <Link href="/list" className="text-gray-400 hover:text-white">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                </svg>
-              </Link>
-              <h1 className="text-2xl font-bold text-white">
-                {currentPlaylist?.name || 'My Watchlist'}
-              </h1>
-              {currentPlaylist?.description && (
-                <p className="text-gray-400 text-sm">{currentPlaylist.description}</p>
-              )}
-            </div>
-            <div className="flex items-center space-x-2">
-              <span className="text-sm text-gray-400">
-                {filteredItems.length} items
-              </span>
-              <button
-                onClick={handleRefresh}
-                className="p-2 text-gray-400 hover:text-white rounded-md hover:bg-gray-700"
-                title="Refresh"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                </svg>
-              </button>
+        {initializing ? (
+          <HeaderSkeleton />
+        ) : (
+          <div className="bg-gray-800 border-b border-gray-700 px-6 py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-4">
+                <Link href="/list" className="text-gray-400 hover:text-white">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                  </svg>
+                </Link>
+                <h1 className="text-2xl font-bold text-white">
+                  {currentPlaylist?.name || 'My Watchlist'}
+                </h1>
+                {currentPlaylist?.description && (
+                  <p className="text-gray-400 text-sm">{currentPlaylist.description}</p>
+                )}
+              </div>
+              <div className="flex items-center space-x-2">
+                <span className="text-sm text-gray-400">
+                  {filteredItems.length} items
+                </span>
+                <button
+                  onClick={handleRefresh}
+                  className="p-2 text-gray-400 hover:text-white rounded-md hover:bg-gray-700"
+                  title="Refresh"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Controls */}
-        <PlaylistControls
-          searchQuery={searchQuery}
-          onSearchChange={setSearchQuery}
-          onSearch={handleSearch}
-          searchResults={searchResults}
-          setSearchResults={setSearchResults}
-          isSearching={isSearching}
-          selectedItems={selectedItems}
-          onSelectAll={handleSelectAll}
-          onClearSelection={handleClearSelection}
-          onItemSelect={handleItemSelect}
-          viewMode={viewMode}
-          onViewModeChange={setViewMode}
-          sortBy={sortBy}
-          onSortChange={handleSortChange}
-          sortOrder={sortOrder}
-          filterType={filterType}
-          onFilterTypeChange={setFilterType}
-          currentPlaylist={currentPlaylist}
-          playlists={playlists}
-          onRefresh={handleRefresh}
-          onItemAdded={handleItemAdded}
-          onItemsRemoved={handleItemsRemoved}
-          onItemsMoved={handleItemsMoved}
-          onCustomReorder={handleCustomReorder}
-          api={api}
-          sortError={sortError}
-          sortLocked={sortLocked}
-          canEditPlaylist={canEditPlaylist()}
-          onToggleSortLock={handleToggleSortLock}
-        />
+        {initializing ? (
+          <ControlsSkeleton />
+        ) : (
+          <PlaylistControls
+            searchQuery={searchQuery}
+            onSearchChange={setSearchQuery}
+            onSearch={handleSearch}
+            searchResults={searchResults}
+            setSearchResults={setSearchResults}
+            isSearching={isSearching}
+            selectedItems={selectedItems}
+            onSelectAll={handleSelectAll}
+            onClearSelection={handleClearSelection}
+            onItemSelect={handleItemSelect}
+            viewMode={viewMode}
+            onViewModeChange={setViewMode}
+            sortBy={sortBy}
+            onSortChange={handleSortChange}
+            sortOrder={sortOrder}
+            filterType={filterType}
+            onFilterTypeChange={setFilterType}
+            currentPlaylist={currentPlaylist}
+            playlists={playlists}
+            onRefresh={handleRefresh}
+            onItemAdded={handleItemAdded}
+            onItemsRemoved={handleItemsRemoved}
+            onItemsMoved={handleItemsMoved}
+            onCustomReorder={handleCustomReorder}
+            api={api}
+            sortError={sortError}
+            sortLocked={sortLocked}
+            canEditPlaylist={canEditPlaylist()}
+            onToggleSortLock={handleToggleSortLock}
+          />
+        )}
 
         {/* Content */}
         <div className="flex-1 p-6">
@@ -1087,7 +1186,7 @@ export default function WatchlistPage({ user }) {
             >
               <PlaylistGrid
                 items={filteredItems}
-                loading={itemsLoading}
+                loading={itemsLoading || initializing}
                 viewMode={viewMode}
                 selectedItems={selectedItems}
                 onItemSelect={handleItemSelect}

@@ -163,7 +163,7 @@ export default function PlaylistGrid({
     )
   }
 
-  if (items.length === 0) {
+  if (!loading && items.length === 0) {
     return (
       <div className="text-center py-12">
         <div className="mx-auto w-24 h-24 bg-gray-700 rounded-full flex items-center justify-center mb-4">
@@ -175,7 +175,7 @@ export default function PlaylistGrid({
           {currentPlaylist?.name === 'My Watchlist' ? 'Your watchlist is empty' : 'This playlist is empty'}
         </h3>
         <p className="text-gray-400 mb-6">
-          {currentPlaylist?.name === 'My Watchlist' 
+          {currentPlaylist?.name === 'My Watchlist'
             ? 'Start adding movies and TV shows to your watchlist'
             : 'Add some items to this playlist to get started'
           }

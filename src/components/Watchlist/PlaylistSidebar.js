@@ -3,9 +3,11 @@
 import { useState, useCallback } from 'react'
 import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
+import { SummaryStatsSkeleton, PlaylistListSkeleton } from './WatchlistSkeletons'
 
 export default function PlaylistSidebar({
   playlists,
+  playlistsLoading,
   selectedPlaylistId,
   onPlaylistSelect,
   onCreatePlaylist,
@@ -13,7 +15,8 @@ export default function PlaylistSidebar({
   onDeletePlaylist,
   onClearPlaylist,
   onSharePlaylist,
-  summary
+  summary,
+  summaryLoading
 }) {
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingPlaylist, setEditingPlaylist] = useState(null)
@@ -108,7 +111,9 @@ export default function PlaylistSidebar({
         <h2 className="text-xl font-semibold text-white mb-4">Playlists</h2>
         
         {/* Summary Stats */}
-        {summary && (
+        {summaryLoading ? (
+          <SummaryStatsSkeleton />
+        ) : summary ? (
           <div className="bg-gray-700 rounded-lg p-4 mb-4">
             <div className="grid grid-cols-2 gap-4 text-center">
               <div>
@@ -131,7 +136,7 @@ export default function PlaylistSidebar({
               </div>
             </div>
           </div>
-        )}
+        ) : null}
 
         {/* Create Playlist Button */}
         <button
@@ -147,8 +152,11 @@ export default function PlaylistSidebar({
 
       {/* Playlist List */}
       <div className="flex-1 overflow-y-auto">
-        <div className="p-4 space-y-2">
-          {allPlaylists.map((playlist) => (
+        {playlistsLoading ? (
+          <PlaylistListSkeleton count={4} />
+        ) : (
+          <div className="p-4 space-y-2">
+            {allPlaylists.map((playlist) => (
             <div
               key={playlist.id}
               className={classNames(
@@ -224,8 +232,9 @@ export default function PlaylistSidebar({
                 )}
               </div>
             </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Create Playlist Modal */}
