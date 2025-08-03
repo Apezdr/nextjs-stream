@@ -22,7 +22,9 @@ export default function PlaylistGrid({
   api,
   sortBy,
   sortLocked,
-  canEditPlaylist
+  canEditPlaylist,
+  navigationLoadingItemId,
+  onNavigationStart
 }) {
   const [draggedItem, setDraggedItem] = useState(null)
   const [draggedIndex, setDraggedIndex] = useState(null)
@@ -220,6 +222,8 @@ export default function PlaylistGrid({
           {items.map((item, index) => {
             const isDragging = draggedIndex === index
             const isDropTarget = dragOverIndex === index && !isDragging
+            const isNavigating = navigationLoadingItemId === item.id
+            const isOtherNavigating = navigationLoadingItemId && navigationLoadingItemId !== item.id
             
             return (
               <motion.div
@@ -227,7 +231,7 @@ export default function PlaylistGrid({
                 layout
                 initial={{ opacity: 0, y: 20 }}
                 animate={{
-                  opacity: isDragging ? 0.3 : 1,
+                  opacity: isDragging ? 0.3 : isOtherNavigating ? 0.4 : 1,
                   y: 0,
                   scale: isDropTarget ? 1.05 : 1
                 }}
@@ -240,7 +244,8 @@ export default function PlaylistGrid({
                 className={classNames(
                   'relative',
                   isDropTarget && 'ring-2 ring-green-400 ring-opacity-50',
-                  selectedItems.has(item.id) && 'ring-2 ring-indigo-500 rounded-lg'
+                  selectedItems.has(item.id) && 'ring-2 ring-indigo-500 rounded-lg',
+                  isOtherNavigating && 'pointer-events-none'
                 )}
                 draggable={currentPlaylist?.isOwner !== false && !sortLocked}
                 onDragStart={(e) => handleDragStart(e, item, index)}
@@ -282,6 +287,9 @@ export default function PlaylistGrid({
                 currentPlaylist={currentPlaylist}
                 playlists={playlists}
                 api={api}
+                isNavigating={isNavigating}
+                isOtherNavigating={isOtherNavigating}
+                onNavigationStart={onNavigationStart}
               />
           </motion.div>
         )})}
@@ -315,6 +323,8 @@ export default function PlaylistGrid({
         {items.map((item, index) => {
           const isDragging = draggedIndex === index
           const isDropTarget = dragOverIndex === index && !isDragging
+          const isNavigating = navigationLoadingItemId === item.id
+          const isOtherNavigating = navigationLoadingItemId && navigationLoadingItemId !== item.id
           
           return (
             <motion.div
@@ -322,7 +332,7 @@ export default function PlaylistGrid({
               layout
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{
-                opacity: isDragging ? 0.3 : 1,
+                opacity: isDragging ? 0.3 : isOtherNavigating ? 0.4 : 1,
                 scale: isDropTarget ? 1.05 : 1
               }}
               exit={{ opacity: 0, scale: 0.8 }}
@@ -333,7 +343,8 @@ export default function PlaylistGrid({
               className={classNames(
                 'relative',
                 isDropTarget && 'ring-2 ring-green-400 ring-opacity-50',
-                selectedItems.has(item.id) && 'ring-2 ring-indigo-500 rounded-lg'
+                selectedItems.has(item.id) && 'ring-2 ring-indigo-500 rounded-lg',
+                isOtherNavigating && 'pointer-events-none'
               )}
               draggable={currentPlaylist?.isOwner !== false && !sortLocked}
               onDragStart={(e) => handleDragStart(e, item, index)}
@@ -376,6 +387,9 @@ export default function PlaylistGrid({
               currentPlaylist={currentPlaylist}
               playlists={playlists}
               api={api}
+              isNavigating={isNavigating}
+              isOtherNavigating={isOtherNavigating}
+              onNavigationStart={onNavigationStart}
             />
             </motion.div>
           )

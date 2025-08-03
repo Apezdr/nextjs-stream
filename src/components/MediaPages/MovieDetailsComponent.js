@@ -1,8 +1,7 @@
 import { classNames, getFullImageUrl } from '@src/utils'
 import Link from 'next/link'
-import { Suspense, lazy } from 'react'
+import { Suspense } from 'react'
 import ViewCount from './ViewCount'
-import Image from 'next/image'
 import dynamic from 'next/dynamic'
 import RetryImage from '@components/RetryImage'
 import WatchlistButton from '@components/WatchlistButton'
@@ -214,16 +213,15 @@ const MovieDetailsComponent = ({ media }) => {
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
                 <div key={collectionData.id} className="flex flex-col items-center">
                   <Link
-                    href={`https://www.themoviedb.org/collection/${collectionData.id}`}
-                    target="_blank"
-                    rel="noreferrer"
+                    href={`/list/collection/${collectionData.id}`}
+                    className="group transition-transform duration-300 hover:scale-105"
                   >
                     <img
                         src={getFullImageUrl(collectionData.poster_path)}
                         alt={collectionData.name}
-                        className="w-24 h-auto object-cover rounded-lg shadow-md"
+                        className="w-24 h-auto object-cover rounded-lg shadow-md group-hover:shadow-lg transition-shadow duration-300"
                     />
-                    <p className="mt-2 text-center">{collectionData.name}</p>
+                    <p className="mt-2 text-center text-blue-400 group-hover:text-blue-300 transition-colors duration-300">{collectionData.name}</p>
                   </Link>
                 </div>
               </div>

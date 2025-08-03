@@ -1,16 +1,17 @@
 'use client'
 
-import { useState, useEffect, useCallback, use, useRef } from 'react'
+import { useState, useEffect, useCallback, use, useRef, useMemo } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'react-toastify'
 import { motion, AnimatePresence } from 'framer-motion'
+import { debounce } from 'lodash'
 import PlaylistSidebar from './PlaylistSidebar'
 import PlaylistGrid from './PlaylistGrid'
 import PlaylistControls from './PlaylistControls'
 import SharePlaylistModal from './SharePlaylistModal'
 import MoveToPlaylistModal from './MoveToPlaylistModal'
-import { HeaderSkeleton, ControlsSkeleton } from './WatchlistSkeletons'
+import { ControlsSkeleton } from './WatchlistSkeletons'
 import { searchMedia } from '@src/utils/tmdb/client'
 import { classNames, formatDate } from '@src/utils'
 
@@ -162,13 +163,35 @@ export default function WatchlistPage({ user }) {
   const [playlists, setPlaylists] = useState([])
   const [currentPlaylist, setCurrentPlaylist] = useState(null)
   const [currentItems, setCurrentItems] = useState([])
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState('default')
+  
+  // Derive selected playlist ID from URL - single source of truth
+  const selectedPlaylistId = useMemo(() => {
+    const urlPlaylistParam = searchParams.get('playlist')
+    
+    // If URL has a valid playlist parameter, use it
+    if (urlPlaylistParam && playlists.some(p => p.id === urlPlaylistParam)) {
+      return urlPlaylistParam
+    }
+    
+    // Otherwise, determine default playlist
+    if (playlists.length > 0) {
+      const defaultPlaylist = playlists.find(p => p.isDefault) ||
+                              playlists.find(p => p.id === 'default') ||
+                              playlists[0]
+      return defaultPlaylist?.id || 'default'
+    }
+    
+    return 'default'
+  }, [searchParams, playlists])
   
   // Granular loading states
   const [playlistsLoading, setPlaylistsLoading] = useState(true)
   const [itemsLoading, setItemsLoading] = useState(false)
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [initializing, setInitializing] = useState(true)
+  
+  // Navigation loading state
+  const [navigationLoadingItemId, setNavigationLoadingItemId] = useState(null)
   
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
@@ -256,6 +279,9 @@ export default function WatchlistPage({ user }) {
   
   // Track last loaded playlist to prevent redundant loads
   const lastLoadedPlaylistRef = useRef(null)
+  
+  // Navigation loading timeout ref
+  const navigationTimeoutRef = useRef(null)
 
   // Create separate functions for data loading that return promises
   const loadPlaylistsData = useCallback(async () => {
@@ -308,7 +334,7 @@ export default function WatchlistPage({ user }) {
         }
         setSummaryLoading(false)
         
-        // Determine selected playlist deterministically
+        // Determine initial playlist from URL
         let targetPlaylistId = 'default'
         
         if (initialPlaylistParam && loadedPlaylists.some(p => p.id === initialPlaylistParam)) {
@@ -324,7 +350,7 @@ export default function WatchlistPage({ user }) {
           }
         }
         
-        // Load playlist items for the selected playlist
+        // Load playlist items for the initial playlist
         if (targetPlaylistId && loadedPlaylists.length > 0) {
           await loadPlaylistItems(targetPlaylistId)
           lastLoadedPlaylistRef.current = targetPlaylistId
@@ -338,11 +364,17 @@ export default function WatchlistPage({ user }) {
           }
         }
         
-        // Set the selected playlist AFTER loading to avoid triggering secondary effect
-        setSelectedPlaylistId(targetPlaylistId)
+        // Ensure URL reflects the correct playlist (handle default playlist case)
+        const defaultPlaylist = loadedPlaylists.find(p => p.isDefault) || loadedPlaylists.find(p => p.id === 'default')
+        const isDefaultPlaylist = defaultPlaylist && targetPlaylistId === defaultPlaylist.id
         
-        // Sync URL without triggering re-initialization
-        syncUrlToPlaylist(targetPlaylistId, loadedPlaylists, true)
+        if (isDefaultPlaylist && initialPlaylistParam) {
+          // Remove playlist param for default playlist
+          router.replace('/watchlist', { scroll: false, shallow: true })
+        } else if (!isDefaultPlaylist && !initialPlaylistParam) {
+          // Add playlist param for non-default playlist
+          router.replace(`/watchlist?playlist=${targetPlaylistId}`, { scroll: false, shallow: true })
+        }
         
       } catch (error) {
         console.error('Error initializing watchlist:', error)
@@ -355,19 +387,6 @@ export default function WatchlistPage({ user }) {
     initializeWatchlist()
   }, []) // Run only once on mount
 
-  // Handle playlist selection changes after initialization (user-initiated only)
-  useEffect(() => {
-    if (
-      !initializing &&
-      selectedPlaylistId &&
-      playlists.length > 0 &&
-      lastLoadedPlaylistRef.current !== selectedPlaylistId
-    ) {
-      loadPlaylistItems(selectedPlaylistId)
-      loadSummary(selectedPlaylistId)
-      lastLoadedPlaylistRef.current = selectedPlaylistId
-    }
-  }, [selectedPlaylistId, initializing])
 
   // Save view mode to localStorage whenever it changes
   useEffect(() => {
@@ -376,40 +395,69 @@ export default function WatchlistPage({ user }) {
     }
   }, [viewMode])
 
-  // Helper function to sync URL to playlist selection
-  const syncUrlToPlaylist = useCallback((playlistId, playlistList = playlists, isInitialization = false) => {
-    const params = new URLSearchParams(searchParams.toString())
+  // Navigation loading handlers
+  const handleNavigationStart = useCallback((itemId) => {
+    setNavigationLoadingItemId(itemId)
     
+    // Set a timeout to clear loading state if navigation takes too long
+    navigationTimeoutRef.current = setTimeout(() => {
+      setNavigationLoadingItemId(null)
+    }, 10000) // 10 second timeout
+  }, [])
+
+  const handleNavigationComplete = useCallback(() => {
+    setNavigationLoadingItemId(null)
+    if (navigationTimeoutRef.current) {
+      clearTimeout(navigationTimeoutRef.current)
+      navigationTimeoutRef.current = null
+    }
+  }, [])
+
+  // Router event listeners for navigation completion
+  useEffect(() => {
+    const handleRouteChangeStart = () => {
+      // Route change started, keep loading state active
+    }
+    
+    const handleRouteChangeComplete = () => {
+      handleNavigationComplete()
+    }
+    
+    const handleRouteChangeError = () => {
+      handleNavigationComplete()
+    }
+
+    // Listen for Next.js router events
+    router.events?.on?.('routeChangeStart', handleRouteChangeStart)
+    router.events?.on?.('routeChangeComplete', handleRouteChangeComplete)
+    router.events?.on?.('routeChangeError', handleRouteChangeError)
+
+    return () => {
+      router.events?.off?.('routeChangeStart', handleRouteChangeStart)
+      router.events?.off?.('routeChangeComplete', handleRouteChangeComplete)
+      router.events?.off?.('routeChangeError', handleRouteChangeError)
+      
+      // Clear timeout on cleanup
+      if (navigationTimeoutRef.current) {
+        clearTimeout(navigationTimeoutRef.current)
+      }
+    }
+  }, [router, handleNavigationComplete])
+
+  // Simple handler for playlist selection - only updates URL
+  const handlePlaylistSelect = useCallback((playlistId) => {
     // Check if this is the default playlist
-    const defaultPlaylist = playlistList.find(p => p.isDefault) || playlistList.find(p => p.id === 'default')
+    const defaultPlaylist = playlists.find(p => p.isDefault) || playlists.find(p => p.id === 'default')
     const isDefaultPlaylist = defaultPlaylist && playlistId === defaultPlaylist.id
     
     if (isDefaultPlaylist) {
       // For default playlist, remove the playlist parameter from URL
-      params.delete('playlist')
+      router.push('/watchlist', { scroll: false })
     } else {
       // For custom playlists, set the playlist parameter
-      params.set('playlist', playlistId)
+      router.push(`/watchlist?playlist=${playlistId}`, { scroll: false })
     }
-    
-    const newUrl = params.toString() ? `?${params.toString()}` : '/watchlist'
-    
-    // Use replace during initialization to avoid history pollution and re-triggering
-    if (isInitialization) {
-      router.replace(newUrl, { scroll: false, shallow: true })
-    } else {
-      router.push(newUrl, { scroll: false, shallow: true })
-    }
-  }, [router, searchParams, playlists])
-
-  // Custom handler for playlist selection that updates URL
-  const handlePlaylistSelect = useCallback((playlistId) => {
-    // Update state immediately
-    setSelectedPlaylistId(playlistId)
-    
-    // Sync URL without triggering re-initialization
-    syncUrlToPlaylist(playlistId)
-  }, [syncUrlToPlaylist])
+  }, [router, playlists])
 
   const loadPlaylists = useCallback(async () => {
     setPlaylistsLoading(true)
@@ -477,6 +525,30 @@ export default function WatchlistPage({ user }) {
     }
   }, [api, selectedPlaylistId])
 
+  // Debounced playlist loading function for rapid navigation
+  const debouncedLoadPlaylist = useCallback(
+    debounce((playlistId) => {
+      if (playlistId && playlists.length > 0 && lastLoadedPlaylistRef.current !== playlistId) {
+        loadPlaylistItems(playlistId)
+        loadSummary(playlistId)
+        lastLoadedPlaylistRef.current = playlistId
+      }
+    }, 400),
+    [loadPlaylistItems, loadSummary, playlists]
+  )
+
+  // Handle playlist selection changes after initialization with debouncing for rapid navigation
+  useEffect(() => {
+    if (!initializing && selectedPlaylistId) {
+      debouncedLoadPlaylist(selectedPlaylistId)
+    }
+    
+    // Cleanup function to cancel pending debounced calls
+    return () => {
+      debouncedLoadPlaylist.cancel()
+    }
+  }, [selectedPlaylistId, initializing, debouncedLoadPlaylist])
+
   const handleCreatePlaylist = useCallback(async (playlistData) => {
     try {
       const result = await api.createPlaylist(playlistData)
@@ -514,10 +586,15 @@ export default function WatchlistPage({ user }) {
       setPlaylists(updatedPlaylists)
       
       if (selectedPlaylistId === playlistId) {
-        // Find the default playlist from the remaining playlists
+        // Navigate to default playlist when current playlist is deleted
         const defaultPlaylist = updatedPlaylists.find(p => p.isDefault) || updatedPlaylists.find(p => p.id === 'default') || updatedPlaylists[0]
         if (defaultPlaylist) {
-          setSelectedPlaylistId(defaultPlaylist.id)
+          const isDefaultPlaylist = defaultPlaylist.isDefault || defaultPlaylist.id === 'default'
+          if (isDefaultPlaylist) {
+            router.push('/watchlist', { scroll: false })
+          } else {
+            router.push(`/watchlist?playlist=${defaultPlaylist.id}`, { scroll: false })
+          }
         }
       }
       toast.success('Playlist deleted successfully')
@@ -526,7 +603,7 @@ export default function WatchlistPage({ user }) {
       toast.error('Failed to delete playlist')
       throw error
     }
-  }, [api, selectedPlaylistId, playlists])
+  }, [api, selectedPlaylistId, playlists, router])
 
   const handleSearch = useCallback(async (query) => {
     if (!query.trim()) {
@@ -1078,41 +1155,60 @@ export default function WatchlistPage({ user }) {
       {/* Main Content */}
       <div className="flex-1 flex flex-col">
         {/* Header */}
-        {initializing ? (
-          <HeaderSkeleton />
-        ) : (
-          <div className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <Link href="/list" className="text-gray-400 hover:text-white">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-                  </svg>
-                </Link>
-                <h1 className="text-2xl font-bold text-white">
-                  {currentPlaylist?.name || 'My Watchlist'}
-                </h1>
-                {currentPlaylist?.description && (
-                  <p className="text-gray-400 text-sm">{currentPlaylist.description}</p>
-                )}
-              </div>
-              <div className="flex items-center space-x-2">
-                <span className="text-sm text-gray-400">
-                  {filteredItems.length} items
-                </span>
-                <button
-                  onClick={handleRefresh}
-                  className="p-2 text-gray-400 hover:text-white rounded-md hover:bg-gray-700"
-                  title="Refresh"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                  </svg>
-                </button>
-              </div>
+        <div className="bg-gray-800 border-b border-gray-700 px-6 py-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-4">
+              {/* Back button - always visible */}
+              <Link href="/list" className="text-gray-400 hover:text-white">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+              </Link>
+              
+              {/* Playlist title and description - show skeleton during initialization */}
+              {initializing ? (
+                <div className="flex items-center space-x-4">
+                  <div className="h-8 bg-gray-700 rounded w-48 animate-pulse"></div>
+                  <div className="h-4 bg-gray-700 rounded w-32 animate-pulse"></div>
+                </div>
+              ) : (
+                <>
+                  <h1 className="text-2xl font-bold text-white">
+                    {currentPlaylist?.name || 'My Watchlist'}
+                  </h1>
+                  {currentPlaylist?.description && (
+                    <p className="text-gray-400 text-sm">{currentPlaylist.description}</p>
+                  )}
+                </>
+              )}
+            </div>
+            
+            <div className="flex items-center space-x-2">
+              {/* Item count and refresh button - show skeleton during initialization */}
+              {initializing ? (
+                <div className="flex items-center space-x-2">
+                  <div className="h-5 bg-gray-700 rounded w-16 animate-pulse"></div>
+                  <div className="h-8 w-8 bg-gray-700 rounded animate-pulse"></div>
+                </div>
+              ) : (
+                <>
+                  <span className="text-sm text-gray-400">
+                    {filteredItems.length} items
+                  </span>
+                  <button
+                    onClick={handleRefresh}
+                    className="p-2 text-gray-400 hover:text-white rounded-md hover:bg-gray-700"
+                    title="Refresh"
+                  >
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                </>
+              )}
             </div>
           </div>
-        )}
+        </div>
 
         {/* Controls */}
         {initializing ? (
@@ -1201,6 +1297,8 @@ export default function WatchlistPage({ user }) {
                 sortBy={sortBy}
                 sortLocked={sortLocked}
                 canEditPlaylist={canEditPlaylist()}
+                navigationLoadingItemId={navigationLoadingItemId}
+                onNavigationStart={handleNavigationStart}
               />
             </motion.div>
           </AnimatePresence>

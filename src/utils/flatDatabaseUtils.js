@@ -2522,3 +2522,140 @@ export async function getFlatGenreStatistics({ type = 'all', genres = null } = {
     throw error;
   }
 }
+
+/**
+ * Get movies that belong to a specific TMDB collection from the flat database.
+ *
+ * @param {number} collectionId - The TMDB collection ID
+ * @returns {Promise<Array>} Array of movies in the collection
+ */
+export async function getFlatMoviesByCollectionId(collectionId) {
+  try {
+    if (Boolean(process.env.DEBUG) == true) {
+      console.time('getFlatMoviesByCollectionId:total');
+      console.log(`[PERF] Getting movies for collection ID: ${collectionId}`);
+    }
+    
+    const client = await clientPromise;
+    const db = client.db('Media');
+    
+    // Query movies that belong to this collection
+    const movies = await db.collection('FlatMovies')
+      .find({
+        'metadata.belongs_to_collection.id': parseInt(collectionId)
+      })
+      .toArray();
+    
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[PERF] Found ${movies.length} owned movies in collection ${collectionId}`);
+      console.timeEnd('getFlatMoviesByCollectionId:total');
+    }
+    
+    // Process movies to add proper URLs and format data
+    return await addCustomUrlToFlatMedia(movies.map(movie => ({
+      ...movie,
+      type: 'movie',
+      isOwned: true
+    })), 'movie');
+    
+  } catch (error) {
+    console.error(`Error in getFlatMoviesByCollectionId: ${error.message}`);
+    if (Boolean(process.env.DEBUG) == true) {
+      console.timeEnd('getFlatMoviesByCollectionId:total');
+    }
+    throw error;
+  }
+}
+
+/**
+ * Merge local owned movies with complete TMDB collection data.
+ *
+ * @param {Array} ownedMovies - Movies owned locally
+ * @param {Object} tmdbCollection - Complete TMDB collection data
+ * @returns {Object} Collection with ownership status for each movie
+ */
+export function mergeCollectionWithOwnership(ownedMovies, tmdbCollection) {
+  try {
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[COLLECTION] Merging ${ownedMovies.length} owned movies with TMDB collection data`);
+    }
+    
+    // Create a map of owned movies by TMDB ID for quick lookup
+    const ownedMoviesMap = new Map();
+    ownedMovies.forEach(movie => {
+      const tmdbId = movie.metadata?.id;
+      if (tmdbId) {
+        ownedMoviesMap.set(tmdbId, movie);
+      }
+    });
+    
+    // Process TMDB collection movies and mark ownership status
+    const moviesWithOwnership = tmdbCollection.parts?.map(tmdbMovie => {
+      const ownedMovie = ownedMoviesMap.get(tmdbMovie.id);
+      
+      if (ownedMovie) {
+        // Movie is owned - use local data with TMDB metadata
+        return {
+          ...ownedMovie,
+          isOwned: true,
+          tmdbData: tmdbMovie,
+          // Ensure we have poster and backdrop URLs
+          posterURL: ownedMovie.posterURL || getFullImageUrl(tmdbMovie.poster_path),
+          backdrop: ownedMovie.backdrop || getFullImageUrl(tmdbMovie.backdrop_path, 'original')
+        };
+      } else {
+        // Movie is not owned - use TMDB data only
+        return {
+          id: `tmdb-${tmdbMovie.id}`,
+          title: tmdbMovie.title,
+          isOwned: false,
+          tmdbData: tmdbMovie,
+          metadata: {
+            id: tmdbMovie.id,
+            overview: tmdbMovie.overview,
+            release_date: tmdbMovie.release_date,
+            genres: tmdbMovie.genres || [],
+            vote_average: tmdbMovie.vote_average,
+            vote_count: tmdbMovie.vote_count
+          },
+          posterURL: getFullImageUrl(tmdbMovie.poster_path),
+          backdrop: getFullImageUrl(tmdbMovie.backdrop_path, 'original'),
+          type: 'movie'
+        };
+      }
+    }) || [];
+    
+    // Sort movies by release date (newest first)
+    moviesWithOwnership.sort((a, b) => {
+      const dateA = new Date(a.metadata?.release_date || a.tmdbData?.release_date || 0);
+      const dateB = new Date(b.metadata?.release_date || b.tmdbData?.release_date || 0);
+      return dateB - dateA;
+    });
+    
+    // Calculate ownership statistics
+    const ownedCount = moviesWithOwnership.filter(movie => movie.isOwned).length;
+    const totalCount = moviesWithOwnership.length;
+    
+    const result = {
+      ...tmdbCollection,
+      parts: moviesWithOwnership,
+      ownershipStats: {
+        owned: ownedCount,
+        total: totalCount,
+        percentage: totalCount > 0 ? Math.round((ownedCount / totalCount) * 100) : 0
+      },
+      backdrop: tmdbCollection.backdrop_path ? getFullImageUrl(tmdbCollection.backdrop_path, 'original') : null,
+      posterURL: tmdbCollection.poster_path ? getFullImageUrl(tmdbCollection.poster_path) : null
+    };
+    
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[COLLECTION] Processed collection: ${ownedCount}/${totalCount} movies owned (${result.ownershipStats.percentage}%)`);
+    }
+    
+    return result;
+    
+  } catch (error) {
+    console.error(`Error in mergeCollectionWithOwnership: ${error.message}`);
+    throw error;
+  }
+}

@@ -4,8 +4,10 @@ import { useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Link from 'next/link'
 import Image from 'next/image'
+import { useRouter } from 'next/navigation'
 import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
+
 export default function WatchlistCard({
   item,
   viewMode = 'grid',
@@ -17,10 +19,22 @@ export default function WatchlistCard({
   onShowMoveModal,
   currentPlaylist,
   playlists,
-  api
+  api,
+  isNavigating = false,
+  isOtherNavigating = false,
+  onNavigationStart
 }) {
   const [showActions, setShowActions] = useState(false)
   const [loading, setLoading] = useState(false)
+  const router = useRouter()
+
+  // Custom navigation handler
+  const handleNavigationClick = useCallback((url) => {
+    if (!url || isNavigating || isOtherNavigating) return
+    
+    onNavigationStart(item.id)
+    router.push(url)
+  }, [item.id, onNavigationStart, router, isNavigating, isOtherNavigating])
 
   const handleRemove = useCallback(async () => {
     if (window.confirm(`Remove "${item.title}" from ${currentPlaylist?.name || 'watchlist'}?`)) {
@@ -80,13 +94,36 @@ export default function WatchlistCard({
     return 'text-red-400'
   }, [])
 
+  // Loading overlay component
+  const LoadingOverlay = () => (
+    <div className="absolute inset-0 bg-black/20 backdrop-blur-sm rounded-lg z-20 flex items-center justify-center">
+      <div className="bg-indigo-900/90 px-4 py-2 rounded-md shadow-lg flex items-center space-x-2">
+        <svg className="w-4 h-4 text-indigo-400 animate-spin" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+        </svg>
+        <span className="text-indigo-400 text-sm font-medium">Loading...</span>
+      </div>
+    </div>
+  )
+
   if (viewMode === 'list') {
     return (
       <motion.div className={classNames(
-        'bg-gray-800 rounded-lg p-4 flex items-center space-x-4 transition-all duration-200',
+        'bg-gray-800 rounded-lg p-4 flex items-center space-x-4 transition-all duration-200 relative',
         selected && 'ring-2 ring-indigo-500',
-        loading && 'opacity-50 pointer-events-none'
-      )}>
+        loading && 'opacity-50 pointer-events-none',
+        isNavigating && 'ring-2 ring-indigo-400 ring-opacity-75 shadow-lg shadow-indigo-400/25',
+        isOtherNavigating && 'opacity-40 pointer-events-none'
+      )}
+      animate={{
+        borderColor: isNavigating ? '#6366f1' : 'transparent',
+      }}
+      transition={{
+        borderColor: { duration: 1.5, repeat: isNavigating ? Infinity : 0, repeatType: "reverse" }
+      }}
+      >
+        {/* Loading overlay for navigating card */}
+        {isNavigating && <LoadingOverlay />}
         {/* Checkbox */}
         <div className="flex-shrink-0">
           <input
@@ -119,9 +156,13 @@ export default function WatchlistCard({
             <div className="flex-1 min-w-0">
               <h3 className="text-lg font-semibold text-white truncate">
                 {item.url ? (
-                  <Link href={item.url} className="hover:text-indigo-400 transition-colors">
+                  <button
+                    onClick={() => handleNavigationClick(item.url)}
+                    className="hover:text-indigo-400 transition-colors text-left w-full truncate"
+                    disabled={isNavigating || isOtherNavigating}
+                  >
                     {item.title}
-                  </Link>
+                  </button>
                 ) : (
                   item.title
                 )}
@@ -205,10 +246,21 @@ export default function WatchlistCard({
   // Grid view
   return (
     <motion.div className={classNames(
-      'group bg-gray-800 rounded-lg overflow-hidden transition-all duration-200 hover:scale-105 hover:shadow-xl',
+      'group bg-gray-800 rounded-lg overflow-hidden transition-all duration-200 hover:scale-105 hover:shadow-xl relative',
       selected && 'ring-2 ring-indigo-500',
-      loading && 'opacity-50 pointer-events-none'
-    )}>
+      loading && 'opacity-50 pointer-events-none',
+      isNavigating && 'ring-2 ring-indigo-400 ring-opacity-75 shadow-lg shadow-indigo-400/25',
+      isOtherNavigating && 'opacity-40 pointer-events-none'
+    )}
+    animate={{
+      borderColor: isNavigating ? '#6366f1' : 'transparent',
+    }}
+    transition={{
+      borderColor: { duration: 1.5, repeat: isNavigating ? Infinity : 0, repeatType: "reverse" }
+    }}
+    >
+      {/* Loading overlay for navigating card */}
+      {isNavigating && <LoadingOverlay />}
       {/* Poster */}
       <div className="relative aspect-[2/3]">
         <Image
@@ -238,16 +290,16 @@ export default function WatchlistCard({
             </button>
             {/* Info button for internal media */}
             {item.url && (
-              <Link href={item.url}>
-                <button
-                  className="p-3 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition-colors"
-                  title="View Details"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </button>
-              </Link>
+              <button
+                onClick={() => handleNavigationClick(item.url)}
+                className="p-3 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition-colors"
+                title="View Details"
+                disabled={isNavigating || isOtherNavigating}
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </button>
             )}
             <button
               onClick={() => setShowActions(!showActions)}
@@ -290,9 +342,13 @@ export default function WatchlistCard({
       <div className="p-4">
         <h3 className="font-semibold text-white text-sm line-clamp-2 mb-2">
           {item.url ? (
-            <Link href={item.url} className="hover:text-indigo-400 transition-colors">
+            <button
+              onClick={() => handleNavigationClick(item.url)}
+              className="hover:text-indigo-400 transition-colors text-left w-full line-clamp-2"
+              disabled={isNavigating || isOtherNavigating}
+            >
               {item.title}
-            </Link>
+            </button>
           ) : (
             item.title
           )}

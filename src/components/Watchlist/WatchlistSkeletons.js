@@ -55,34 +55,6 @@ export function PlaylistListSkeleton({ count = 3 }) {
   )
 }
 
-// Skeleton for the main content header (playlist title and description)
-export function HeaderSkeleton() {
-  return (
-    <div className="bg-gray-800 border-b border-gray-700 px-6 py-4 animate-pulse">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          {/* Back button skeleton */}
-          <div className="w-6 h-6 bg-gray-700 rounded"></div>
-          
-          {/* Title skeleton */}
-          <div className="h-8 bg-gray-700 rounded w-48"></div>
-          
-          {/* Description skeleton */}
-          <div className="h-4 bg-gray-700 rounded w-32"></div>
-        </div>
-        
-        <div className="flex items-center space-x-2">
-          {/* Item count skeleton */}
-          <div className="h-4 bg-gray-700 rounded w-16"></div>
-          
-          {/* Refresh button skeleton */}
-          <div className="w-9 h-9 bg-gray-700 rounded-md"></div>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 // Skeleton for the controls section (search, filters, etc.)
 export function ControlsSkeleton() {
   return (

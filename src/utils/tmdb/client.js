@@ -1,6 +1,7 @@
 /**
  * TMDB API client utility for interfacing with the backend Node.js server
  * Uses the existing backend TMDB API endpoints with caching
+ * Works in both server-side (SSR) and client-side contexts
  */
 
 import { buildURL } from ".."
@@ -30,13 +31,23 @@ export class TMDBError extends Error {
  */
 async function makeRequest(endpoint, options = {}) {
   const { method = 'GET', body = null, params = {}, retries = 2, timeout = 10000 } = options
+  const isServer = typeof window === 'undefined'
 
-  // Build URL using local Next.js API routes (server-side proxy)
-  // Use relative URLs that work from the browser
-  const builtURL = buildURL(`/api/authenticated/tmdb${endpoint}`)
-  const url = new URL(builtURL, builtURL.startsWith('http') ? undefined : window.location.origin)
+  // Build URL differently for server vs client
+  let url
+  if (isServer) {
+    // Server-side: use full URL with base URL from environment
+    const baseURL = process.env.NEXT_PUBLIC_BASE_URL ||
+                    `http://localhost:${process.env.PORT || 3000}`
+    const fullURL = `${baseURL}/api/authenticated/tmdb${endpoint}`
+    url = new URL(fullURL)
+  } else {
+    // Client-side: use relative URLs that work from the browser
+    const builtURL = buildURL(`/api/authenticated/tmdb${endpoint}`)
+    url = new URL(builtURL, builtURL.startsWith('http') ? undefined : window.location.origin)
+  }
 
-  console.log(`TMDB Request: ${method} ${url.toString()}`, { params, body })
+  console.log(`TMDB Request (${isServer ? 'server' : 'client'}): ${method} ${url.toString()}`, { params, body })
   Object.entries(params).forEach(([key, value]) => {
     if (value !== null && value !== undefined) {
       url.searchParams.append(key, value.toString())
@@ -50,15 +61,39 @@ async function makeRequest(endpoint, options = {}) {
       const controller = new AbortController()
       const timeoutId = setTimeout(() => controller.abort(), timeout)
 
-      const response = await fetch(url.toString(), {
+      // Build headers with proper authentication handling
+      const headers = {
+        'Content-Type': 'application/json',
+      }
+
+      // Handle authentication differently for server vs client
+      if (isServer) {
+        // Server-side: get cookies from headers() function
+        try {
+          const { headers: nextHeaders } = await import('next/headers')
+          const headersList = await nextHeaders()
+          const cookieHeader = headersList.get('cookie')
+          if (cookieHeader) {
+            headers['cookie'] = cookieHeader
+          }
+        } catch (error) {
+          console.warn('Failed to get cookies on server-side:', error.message)
+        }
+      }
+
+      const fetchOptions = {
         method,
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: body ? JSON.stringify(body) : null,
         signal: controller.signal,
-        credentials: 'include' // Include session cookies for Next.js authentication
-      })
+      }
+
+      // Only add credentials for client-side requests
+      if (!isServer) {
+        fetchOptions.credentials = 'include'
+      }
+
+      const response = await fetch(url.toString(), fetchOptions)
 
       clearTimeout(timeoutId)
 
@@ -69,6 +104,10 @@ async function makeRequest(endpoint, options = {}) {
           response.status,
           errorData
         )
+        
+        // Log the URL that caused the error for debugging
+        console.error(`TMDB API Error ${response.status} for URL: ${url.toString()}`)
+        console.error('Error details:', errorData)
         
         // Don't retry on client errors (4xx)
         if (response.status >= 400 && response.status < 500) {
@@ -148,6 +187,51 @@ export async function getMediaDetails(mediaId, type) {
   }
 
   return await makeRequest(`/details/${type}/${mediaId}`)
+}
+
+/**
+ * Get collection details by TMDB ID
+ * @param {number} collectionId - TMDB collection ID
+ * @returns {Promise<Object>} Collection details with movies
+ */
+export async function getCollectionDetails(collectionId) {
+  if (!collectionId || isNaN(collectionId) || collectionId <= 0) {
+    throw new TMDBError('Valid collection ID is required')
+  }
+
+  return await makeRequest(`/collection/${collectionId}`)
+}
+
+/**
+ * Search for collections by name
+ * @param {string} query - Search query
+ * @param {number} [page=1] - Page number
+ * @returns {Promise<Object>} Collection search results
+ */
+export async function searchCollections(query, page = 1) {
+  if (!query || typeof query !== 'string' || query.trim().length === 0) {
+    throw new TMDBError('Search query is required')
+  }
+
+  return await makeRequest('/search/collection', {
+    params: {
+      query: query.trim(),
+      page
+    }
+  })
+}
+
+/**
+ * Get collection images
+ * @param {number} collectionId - TMDB collection ID
+ * @returns {Promise<Object>} Collection images including backdrops and posters
+ */
+export async function getCollectionImages(collectionId) {
+  if (!collectionId || isNaN(collectionId) || collectionId <= 0) {
+    throw new TMDBError('Valid collection ID is required')
+  }
+
+  return await makeRequest(`/collection/${collectionId}/images`)
 }
 
 /**
