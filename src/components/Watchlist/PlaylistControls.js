@@ -5,6 +5,7 @@ import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
 import { formatForWatchlistWithInternalCheck } from '@src/utils/tmdb/client'
 import MoveToPlaylistModal from './MoveToPlaylistModal'
+import Image from 'next/image'
 
 export default function PlaylistControls({
   searchQuery,
@@ -377,7 +378,7 @@ export default function PlaylistControls({
                   </h4>
                   {searchResults.watchlist.map((item) => (
                     <div key={item.id} className="flex items-center space-x-3 p-2 hover:bg-gray-600 rounded">
-                      <img
+                      <Image
                         src={item.posterURL}
                         alt={item.title}
                         className="w-8 h-12 object-cover rounded"
@@ -416,7 +417,7 @@ export default function PlaylistControls({
                             : "hover:bg-gray-600"
                         )}
                       >
-                        <img
+                        <Image
                           src={item.poster_path || '/sorry-image-not-available.jpg'}
                           alt={item.title || item.name}
                           className="w-8 h-12 object-cover rounded"
@@ -465,7 +466,7 @@ export default function PlaylistControls({
                             : "hover:bg-gray-600"
                         )}
                       >
-                        <img
+                        <Image
                           src={item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : '/sorry-image-not-available.jpg'}
                           alt={item.title || item.name}
                           className="w-8 h-12 object-cover rounded"

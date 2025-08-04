@@ -13,6 +13,7 @@ export default function WatchlistButton({
   tmdbId,
   mediaType,
   title,
+  posterURL,
   size = 'md',
   variant = 'default',
   className = '',
@@ -76,6 +77,11 @@ export default function WatchlistButton({
       } else if (tmdbId) {
         body.tmdbId = tmdbId
       }
+      
+      // Include poster URL if available for better watchlist display
+      if (posterURL) {
+        body.posterURL = posterURL
+      }
 
       console.log('Toggling watchlist:', body)
       const res = await fetch(`/api/authenticated/watchlist?${buildParams('toggle')}`, {
@@ -116,6 +122,7 @@ export default function WatchlistButton({
     title,
     mediaId,
     tmdbId,
+    posterURL,
     buildParams,
     onStatusChange
   ])

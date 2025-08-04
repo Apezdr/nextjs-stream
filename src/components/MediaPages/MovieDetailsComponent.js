@@ -1,5 +1,6 @@
 import { classNames, getFullImageUrl } from '@src/utils'
 import Link from 'next/link'
+import Image from 'next/image'
 import { Suspense } from 'react'
 import ViewCount from './ViewCount'
 import dynamic from 'next/dynamic'
@@ -209,19 +210,65 @@ const MovieDetailsComponent = ({ media }) => {
         <div className='flex flex-col gap-8'>
           {collectionData ? (
             <div>
-              <h2 className="text-2xl font-semibold">Collection</h2>
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
-                <div key={collectionData.id} className="flex flex-col items-center">
+              <h2 className="text-2xl font-semibold mb-6">Collection</h2>
+              <div className="flex justify-center">
+                <div className="group relative max-w-xs">
                   <Link
                     href={`/list/collection/${collectionData.id}`}
-                    className="group transition-transform duration-300 hover:scale-105"
+                    className="block"
                   >
-                    <img
-                        src={getFullImageUrl(collectionData.poster_path)}
-                        alt={collectionData.name}
-                        className="w-24 h-auto object-cover rounded-lg shadow-md group-hover:shadow-lg transition-shadow duration-300"
-                    />
-                    <p className="mt-2 text-center text-blue-400 group-hover:text-blue-300 transition-colors duration-300">{collectionData.name}</p>
+                    <div className="relative rounded-xl overflow-hidden transition-all duration-500 transform group-hover:scale-105 group-hover:z-10">
+                      {/* Enhanced Shadow */}
+                      <div className="absolute inset-0 rounded-xl transition-all duration-500 pointer-events-none shadow-lg shadow-black/50 group-hover:shadow-2xl group-hover:shadow-indigo-500/20" />
+                      
+                      {/* Poster Container */}
+                      <div className="aspect-[2/3] relative bg-gray-900 w-48">
+                        {/* Poster Image */}
+                        <Image
+                          src={getFullImageUrl(collectionData.poster_path) || '/sorry-image-not-available.jpg'}
+                          alt={collectionData.name}
+                          fill
+                          className="object-cover transition-all duration-700"
+                          sizes="192px"
+                        />
+                        
+                        {/* Gradient Overlays */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-black via-transparent to-transparent opacity-90" />
+                        
+                        {/* Collection Badge */}
+                        <div className="absolute top-3 right-3">
+                          <div className="bg-indigo-600/90 backdrop-blur-sm text-white text-xs px-3 py-1.5 rounded-full font-medium flex items-center gap-1">
+                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                            </svg>
+                            Collection
+                          </div>
+                        </div>
+                        
+                        {/* Collection Title */}
+                        <div className="absolute bottom-0 left-0 right-0 p-4">
+                          <h3 className="font-bold text-white text-lg mb-1 line-clamp-2 drop-shadow-lg text-center">
+                            {collectionData.name}
+                          </h3>
+                        </div>
+                        
+                        {/* Hover Overlay Background */}
+                        <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/90 via-indigo-900/50 to-transparent transition-opacity duration-300 pointer-events-none opacity-0 group-hover:opacity-100" />
+                        
+                        {/* Hover Action Button */}
+                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                          <div className="transition-opacity duration-300 opacity-0 group-hover:opacity-100 pointer-events-auto w-[80%]">
+                            <div className="bg-white/20 backdrop-blur-sm text-white px-6 py-3 rounded-full font-medium flex items-center gap-2 transform transition-transform duration-300 group-hover:scale-110">
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                              </svg>
+                              View Collection
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </Link>
                 </div>
               </div>

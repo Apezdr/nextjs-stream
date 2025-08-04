@@ -23,7 +23,7 @@ export async function GET(request, { params }) {
     if (authResult instanceof Response) {
       return authResult
     }
-    const { endpoint } = params
+    const { endpoint } = await params
     const { searchParams } = new URL(request.url)
 
     // Validate endpoint array
@@ -114,7 +114,7 @@ export async function POST(request, { params }) {
     if (authResult instanceof Response) {
       return authResult
     }
-    const { endpoint } = params
+    const { endpoint } = await params
     const body = await request.text()
 
     // Validate endpoint array

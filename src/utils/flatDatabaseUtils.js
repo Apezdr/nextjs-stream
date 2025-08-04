@@ -2598,6 +2598,8 @@ export function mergeCollectionWithOwnership(ownedMovies, tmdbCollection) {
         return {
           ...ownedMovie,
           isOwned: true,
+          mediaId: ownedMovie.id || ownedMovie._id?.toString(), // Explicit mediaId for watchlist
+          tmdbId: tmdbMovie.id,                                 // Explicit tmdbId for watchlist
           tmdbData: tmdbMovie,
           // Ensure we have poster and backdrop URLs
           posterURL: ownedMovie.posterURL || getFullImageUrl(tmdbMovie.poster_path),
@@ -2609,6 +2611,8 @@ export function mergeCollectionWithOwnership(ownedMovies, tmdbCollection) {
           id: `tmdb-${tmdbMovie.id}`,
           title: tmdbMovie.title,
           isOwned: false,
+          mediaId: null,                                        // Explicit null for non-owned
+          tmdbId: tmdbMovie.id,                                 // Explicit tmdbId for watchlist
           tmdbData: tmdbMovie,
           metadata: {
             id: tmdbMovie.id,

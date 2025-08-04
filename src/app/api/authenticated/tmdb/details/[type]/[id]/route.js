@@ -16,7 +16,7 @@ export async function GET(request, { params }) {
     if (authResult instanceof Response) {
       return authResult
     }
-    const { type, id } = params
+    const { type, id } = await params
 
     // Validate parameters
     if (!type || !id) {

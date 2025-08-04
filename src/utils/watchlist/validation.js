@@ -118,6 +118,20 @@ export function validateWatchlistItem(item) {
   }
   validated.title = item.title.trim()
 
+  // Validate posterURL (optional, primarily for external media from collections)
+  if (item.posterURL) {
+    if (typeof item.posterURL !== 'string' || !item.posterURL.trim()) {
+      throw new WatchlistValidationError('posterURL must be a non-empty string', 'posterURL')
+    }
+    // Basic URL validation - should start with http/https or be a relative path
+    const posterURL = item.posterURL.trim()
+    if (posterURL.startsWith('http') || posterURL.startsWith('/')) {
+      validated.posterURL = posterURL
+    } else {
+      throw new WatchlistValidationError('posterURL must be a valid URL or path', 'posterURL')
+    }
+  }
+
   // Validate playlist ID (optional)
   if (item.playlistId) {
     if (typeof item.playlistId !== 'string' || !item.playlistId.trim()) {

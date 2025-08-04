@@ -43,8 +43,17 @@ export async function GET(request, { params }) {
       )
     }
 
+    // Extract query parameters from the request URL
+    const url = new URL(request.url)
+    const enhanced = url.searchParams.get('enhanced')
+    
     // Build backend URL with correct path
-    const backendUrl = `${backendServerURL}/api/tmdb/collection/${collectionIdInt}`
+    let backendUrl = `${backendServerURL}/api/tmdb/collection/${collectionIdInt}`
+    
+    // Forward the enhanced parameter to the backend if present
+    if (enhanced === 'true') {
+      backendUrl += '?enhanced=true'
+    }
     
     console.log('🎬 TMDB Collection URL:', backendUrl)
     

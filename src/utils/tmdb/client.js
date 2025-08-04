@@ -192,14 +192,43 @@ export async function getMediaDetails(mediaId, type) {
 /**
  * Get collection details by TMDB ID
  * @param {number} collectionId - TMDB collection ID
+ * @param {Object} [options] - Request options
+ * @param {boolean} [options.enhanced] - Whether to fetch enhanced collection data with aggregation
  * @returns {Promise<Object>} Collection details with movies
  */
-export async function getCollectionDetails(collectionId) {
+export async function getCollectionDetails(collectionId, options = {}) {
   if (!collectionId || isNaN(collectionId) || collectionId <= 0) {
     throw new TMDBError('Valid collection ID is required')
   }
 
-  return await makeRequest(`/collection/${collectionId}`)
+  const params = {}
+  if (options.enhanced) {
+    params.enhanced = 'true'
+  }
+
+  return await makeRequest(`/collection/${collectionId}`, { params })
+}
+
+/**
+ * Get enhanced media details including credits, videos, and images
+ * @param {number} mediaId - TMDB media ID
+ * @param {string} type - 'movie' or 'tv'
+ * @returns {Promise<Object>} Enhanced media details with credits, videos, and images
+ */
+export async function getEnhancedMediaDetails(mediaId, type) {
+  if (!mediaId || isNaN(mediaId) || mediaId <= 0) {
+    throw new TMDBError('Valid media ID is required')
+  }
+
+  if (!['movie', 'tv'].includes(type)) {
+    throw new TMDBError('Type must be "movie" or "tv"')
+  }
+
+  return await makeRequest(`/details/${type}/${mediaId}`, {
+    params: {
+      append_to_response: 'credits,videos,images'
+    }
+  })
 }
 
 /**
@@ -573,6 +602,150 @@ export async function isTMDBAvailable() {
     console.error('Error checking TMDB availability:', error)
     return false
   }
+}
+
+/**
+ * Get the most accurate duration for a movie/episode, prioritizing database data over TMDB
+ * @param {Object} item - Movie or episode object
+ * @returns {Object|null} Duration object with value in minutes and source info, or null if no duration found
+ */
+export function getAccurateDuration(item) {
+  if (!item) return null;
+
+  // Priority 1: Database duration (most accurate) - stored in milliseconds
+  if (item.duration && typeof item.duration === 'number' && item.duration > 0) {
+    return {
+      minutes: Math.round(item.duration / 60000), // Convert ms to minutes
+      source: 'database',
+      isAccurate: true
+    };
+  }
+
+  // Priority 2: Enhanced metadata runtime (from TMDB collection enhancement) - stored in minutes
+  if (item.enhancedMetadata?.runtime && typeof item.enhancedMetadata.runtime === 'number' && item.enhancedMetadata.runtime > 0) {
+    return {
+      minutes: item.enhancedMetadata.runtime,
+      source: 'tmdb_enhanced',
+      isAccurate: false
+    };
+  }
+
+  // Priority 3: TMDB metadata runtime - stored in minutes
+  if (item.metadata?.runtime && typeof item.metadata.runtime === 'number' && item.metadata.runtime > 0) {
+    return {
+      minutes: item.metadata.runtime,
+      source: 'tmdb_metadata',
+      isAccurate: false
+    };
+  }
+
+  // Priority 4: TMDB data runtime (alternative path) - stored in minutes
+  if (item.tmdbData?.runtime && typeof item.tmdbData.runtime === 'number' && item.tmdbData.runtime > 0) {
+    return {
+      minutes: item.tmdbData.runtime,
+      source: 'tmdb_data',
+      isAccurate: false
+    };
+  }
+
+  // Priority 5: Direct runtime property (fallback for collection movies)
+  if (item.runtime && typeof item.runtime === 'number' && item.runtime > 0) {
+    return {
+      minutes: item.runtime,
+      source: 'direct_runtime',
+      isAccurate: false
+    };
+  }
+
+  // Priority 6: Check for runtime in the root-level properties that might come from enhanced collection data
+  if (item.vote_average && item.release_date) {
+    // This might be a collection movie object that has runtime at root level
+    // Let's try to extract it from various possible locations
+    const possibleRuntime = item.runtime ||
+                           item.tmdbData?.runtime ||
+                           item.metadata?.runtime ||
+                           item.enhancedMetadata?.runtime;
+                           
+    if (possibleRuntime && typeof possibleRuntime === 'number' && possibleRuntime > 0) {
+      return {
+        minutes: possibleRuntime,
+        source: 'collection_fallback',
+        isAccurate: false
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Format duration in hours and minutes
+ * @param {number} totalMinutes - Total duration in minutes
+ * @returns {string} Formatted duration string (e.g., "2h 15m", "45m", "2h")
+ */
+export function formatDuration(totalMinutes) {
+  if (!totalMinutes || totalMinutes <= 0) return null;
+  
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  
+  if (hours === 0) {
+    return `${minutes}m`;
+  } else if (minutes === 0) {
+    return `${hours}h`;
+  } else {
+    return `${hours}h ${minutes}m`;
+  }
+}
+
+/**
+ * Get formatted duration string for display, prioritizing database data
+ * @param {Object} item - Movie or episode object
+ * @returns {string|null} Formatted duration string or null if no duration available
+ */
+export function getFormattedDuration(item) {
+  const duration = getAccurateDuration(item);
+  
+  // Debug logging for items without duration to help identify the issue
+  if (!duration && item && !item.isOwned) {
+    console.log('[Duration Debug] No duration found for non-owned item:', {
+      title: item.title,
+      id: item.id,
+      hasMetadata: !!item.metadata,
+      hasTmdbData: !!item.tmdbData,
+      hasEnhancedMetadata: !!item.enhancedMetadata,
+      metadataRuntime: item.metadata?.runtime,
+      tmdbDataRuntime: item.tmdbData?.runtime,
+      enhancedRuntime: item.enhancedMetadata?.runtime,
+      directRuntime: item.runtime
+    });
+  }
+  
+  return duration ? formatDuration(duration.minutes) : null;
+}
+
+/**
+ * Get duration data with source indicator for debugging/display purposes
+ * @param {Object} item - Movie or episode object
+ * @returns {Object|null} Object with formatted duration and source info
+ */
+export function getDurationWithSource(item) {
+  const duration = getAccurateDuration(item);
+  if (!duration) return null;
+  
+  return {
+    formatted: formatDuration(duration.minutes),
+    minutes: duration.minutes,
+    source: duration.source,
+    isAccurate: duration.isAccurate,
+    // Source labels for display
+    sourceLabel: {
+      'database': 'Database',
+      'tmdb_metadata': 'TMDB',
+      'tmdb_data': 'TMDB',
+      'tmdb_enhanced': 'TMDB'
+    }[duration.source] || 'Unknown'
+  };
 }
 
 // Export constants

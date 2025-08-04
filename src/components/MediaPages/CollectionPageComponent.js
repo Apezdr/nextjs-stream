@@ -5,6 +5,13 @@ import Link from 'next/link'
 import dynamic from 'next/dynamic'
 import { motion, AnimatePresence, animate } from 'framer-motion'
 import { classNames } from '@src/utils'
+import { getFormattedDuration } from '@src/utils/tmdb/client'
+import {
+  CollectionSummaryStrip,
+  FeaturedContributorsCarousel,
+  EnhancedTimelineView
+} from './Collection'
+import Image from 'next/image'
 const WatchlistButton = dynamic(() => import('@components/WatchlistButton'), { ssr: false })
 
 /**
@@ -113,10 +120,13 @@ const CollectionHeader = ({ collection, completionPercentage }) => {
       {backdrop && (
         <>
           <div className="absolute inset-0 overflow-hidden">
-            <img
+            <Image
               src={backdrop}
               alt={`${name} backdrop`}
-              className="w-full h-full object-cover transform scale-110 animate-slow-zoom"
+              fill
+              className="object-cover transform scale-110 animate-slow-zoom lg:!h-fit"
+              priority
+              sizes="100vw"
             />
             {/* Multiple gradient overlays for depth */}
             <div className="absolute inset-0 bg-gradient-to-t from-gray-950 via-gray-950/50 to-transparent" />
@@ -146,14 +156,33 @@ const CollectionHeader = ({ collection, completionPercentage }) => {
       <div className="relative min-h-96 flex items-end">
         <div className="w-full px-4 md:px-8 py-6 pt-24 pb-8">
           <div className="max-w-7xl mx-auto">
-            {/* Breadcrumb */}
+            {/* Enhanced Breadcrumb */}
             <nav className={classNames("mb-6 animate-fade-in", backdrop ? "mb-32" : "mb-6")}>
-              <Link
-                href="/list/movie"
-                className="inline-flex items-center text-indigo-400 hover:text-indigo-300 transition-all duration-300 group"
-              >
+              <div className="flex items-center text-sm">
+                {/* Movies Link */}
+                <Link
+                  href="/list/movie"
+                  className="inline-flex items-center text-indigo-400 hover:text-indigo-300 transition-all duration-300 group"
+                >
+                  <svg
+                    className="w-4 h-4 mr-2 transform group-hover:-translate-x-1 transition-transform"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M15 19l-7-7 7-7"
+                    />
+                  </svg>
+                  Movies
+                </Link>
+                
+                {/* Separator */}
                 <svg
-                  className="w-4 h-4 mr-2 transform group-hover:-translate-x-1 transition-transform"
+                  className="w-4 h-4 mx-3 text-gray-500"
                   fill="none"
                   stroke="currentColor"
                   viewBox="0 0 24 24"
@@ -162,11 +191,15 @@ const CollectionHeader = ({ collection, completionPercentage }) => {
                     strokeLinecap="round"
                     strokeLinejoin="round"
                     strokeWidth={2}
-                    d="M15 19l-7-7 7-7"
+                    d="M9 5l7 7-7 7"
                   />
                 </svg>
-                Back to Movies
-              </Link>
+                
+                {/* Current Collection */}
+                <span className="text-gray-300 font-medium">
+                  {name}
+                </span>
+              </div>
             </nav>
 
             <div className="text-center md:text-left">
@@ -401,6 +434,18 @@ const CollectionPageComponent = ({ collection, collectionId }) => {
         completionPercentage={completionPercentage}
       />
 
+      {/* Enhanced Collection Summary - Progressive Enhancement */}
+      {collectionId && (
+        <CollectionSummaryStrip collectionId={collectionId} />
+      )}
+
+      {/* Featured Contributors - Progressive Enhancement */}
+      {collectionId && (
+        <div className="max-w-7xl mx-auto px-4 md:px-8 py-6">
+          <FeaturedContributorsCarousel collectionId={collectionId} />
+        </div>
+      )}
+
       {/* Enhanced Filter and Sort Controls */}
       <div className="sticky top-16 z-20 bg-gray-900/95 backdrop-blur-xl border-b border-gray-800">
         <div className="max-w-7xl mx-auto px-4 md:px-8 py-4">
@@ -502,6 +547,11 @@ const CollectionPageComponent = ({ collection, collectionId }) => {
                 ))}
               </AnimatePresence>
             </div>
+          ) : collectionId ? (
+            <EnhancedTimelineView
+              movies={filteredAndSortedMovies}
+              collectionId={collectionId}
+            />
           ) : (
             <MemoizedTimelineView movies={filteredAndSortedMovies} />
           )
@@ -530,6 +580,7 @@ const MovieCard = memo(({ movie, index }) => {
     ? new Date(movie.metadata?.release_date || movie.tmdbData?.release_date).getFullYear()
     : null
   const rating = movie.metadata?.vote_average || movie.tmdbData?.vote_average
+  const duration = getFormattedDuration(movie)
 
   return (
     <div
@@ -545,13 +596,14 @@ const MovieCard = memo(({ movie, index }) => {
         {/* Poster Container */}
         <div className="aspect-[2/3] relative bg-gray-900">
           {/* Poster Image */}
-          <img
+          <Image
             src={movie.posterURL || '/sorry-image-not-available.jpg'}
             alt={movie.title}
-            className={`w-full h-full object-cover transition-all duration-700 ${
+            fill
+            className={`object-cover transition-all duration-700 ${
               isOwned ? '' : 'filter grayscale hover:grayscale-0'
             }`}
-            loading="lazy"
+            sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1024px) 25vw, (max-width: 1280px) 20vw, 16vw"
           />
 
           {/* Gradient Overlays */}
@@ -559,16 +611,26 @@ const MovieCard = memo(({ movie, index }) => {
 
           {/* Top badges */}
           <div className="absolute top-3 left-3 right-3 flex justify-between items-start">
-            {rating && rating > 0 && (
-              <div className="bg-black/70 backdrop-blur-sm text-white text-xs px-2.5 py-1.5 rounded-full font-medium flex items-center gap-1">
-                <span className="text-yellow-400">★</span>
-                {rating.toFixed(1)}
-              </div>
-            )}
+            <div className="flex flex-col gap-2">
+              {rating && rating > 0 && (
+                <div className="bg-black/70 backdrop-blur-sm text-white text-xs px-2.5 py-1.5 rounded-full font-medium flex items-center gap-1">
+                  <span className="text-yellow-400">★</span>
+                  {rating.toFixed(1)}
+                </div>
+              )}
+              {duration && (
+                <div className="bg-black/70 backdrop-blur-sm text-white text-xs px-2.5 py-1.5 rounded-full font-medium flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {duration}
+                </div>
+              )}
+            </div>
 
             <div className={`text-white text-xs px-3 py-1.5 rounded-full font-medium backdrop-blur-sm ${
-              isOwned 
-                ? 'bg-green-500/80 shadow-lg shadow-green-500/25' 
+              isOwned
+                ? 'bg-green-500/80 shadow-lg shadow-green-500/25'
                 : 'bg-gray-600/80'
             }`}>
               {isOwned ? 'In Library' : 'Not Available'}
@@ -596,10 +658,11 @@ const MovieCard = memo(({ movie, index }) => {
               <div className="absolute bottom-4 left-4 right-4 flex gap-2 transition-opacity duration-300 pointer-events-auto opacity-0 group-hover:opacity-100">
                 {(movie.tmdbId || movie.id) && (
                   <WatchlistButton
-                    mediaId={movie.id ?? null}
-                    tmdbId={movie.tmdbId ?? null}
+                    mediaId={movie.mediaId}
+                    tmdbId={movie.tmdbId}
                     mediaType="movie"
                     title={movie.title}
+                    posterURL={movie.posterURL}
                     variant="icon-only"
                     className="bg-gray-700/80 hover:bg-gray-600 text-white p-2 rounded-lg transition-colors duration-300"
                   />
@@ -616,10 +679,11 @@ const MovieCard = memo(({ movie, index }) => {
             {!isOwned && (movie.tmdbId || movie.id) && (
               <div className="absolute bottom-4 left-4 right-4 transition-opacity duration-300 pointer-events-auto opacity-0 group-hover:opacity-100">
                 <WatchlistButton
-                  mediaId={movie.id ?? null}
-                  tmdbId={movie.tmdbId ?? null}
+                  mediaId={movie.mediaId}
+                  tmdbId={movie.tmdbId}
                   mediaType="movie"
                   title={movie.title}
+                  posterURL={movie.posterURL}
                   variant="default"
                   className="w-full bg-gray-700 hover:bg-gray-600 hover:text-white py-2 rounded-lg font-medium transition-colors duration-300 border-0"
                 />
@@ -640,6 +704,7 @@ const TimelineMovieCardContent = memo(({ movie }) => {
   const releaseDate = movie.metadata?.release_date || movie.tmdbData?.release_date
   const year = releaseDate ? new Date(releaseDate).getFullYear() : 'Unknown'
   const rating = movie.metadata?.vote_average || movie.tmdbData?.vote_average
+  const duration = getFormattedDuration(movie)
 
   return (
     <>
@@ -651,13 +716,15 @@ const TimelineMovieCardContent = memo(({ movie }) => {
         }`}>
           <div className="flex gap-6">
             <div className="flex-shrink-0">
-              <img
+              <Image
                 src={movie.posterURL || '/sorry-image-not-available.jpg'}
                 alt={movie.title}
-                className={`w-24 h-36 object-cover rounded-lg ${
+                width={96}
+                height={144}
+                className={`object-cover rounded-lg ${
                   movie.isOwned ? '' : 'filter grayscale'
                 }`}
-                loading="lazy"
+                sizes="96px"
               />
             </div>
 
@@ -674,6 +741,16 @@ const TimelineMovieCardContent = memo(({ movie }) => {
                     <span className="text-white">{rating.toFixed(1)}</span>
                   </div>
                 )}
+                
+                {duration && (
+                  <div className="flex items-center gap-1 text-gray-400 text-sm">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>{duration}</span>
+                  </div>
+                )}
+                
                 <span className={`px-3 py-1 rounded-full text-xs font-medium ${
                   movie.isOwned
                     ? 'bg-green-500/20 text-green-400 border border-green-500/30'
@@ -698,10 +775,11 @@ const TimelineMovieCardContent = memo(({ movie }) => {
 
                 {(movie.tmdbId || movie.id) && (
                   <WatchlistButton
-                    mediaId={movie.id ?? null}
-                    tmdbId={movie.tmdbId ?? null}
+                    mediaId={movie.mediaId}
+                    tmdbId={movie.tmdbId}
                     mediaType="movie"
                     title={movie.title}
+                    posterURL={movie.posterURL}
                     variant={movie.isOwned ? 'icon-only' : 'default'}
                     className={movie.isOwned
                       ? 'text-gray-400 hover:text-gray-300 transition-colors bg-transparent border-0 p-1'

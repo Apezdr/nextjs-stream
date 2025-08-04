@@ -6,6 +6,26 @@ import { ObjectId } from 'mongodb'
 import { getFullImageUrl } from '@src/utils'
 
 /**
+ * Helper function to check if an input is a valid MongoDB ObjectId
+ * @param {string|Object} id - The ID to validate (string or ObjectId)
+ * @returns {boolean} True if the input is a valid ObjectId
+ */
+function isValidObjectId(id) {
+  // Handle ObjectId instances directly
+  if (id && typeof id === 'object' && id.constructor && id.constructor.name === 'ObjectId') {
+    return true
+  }
+  
+  // Handle string representation
+  if (!id || typeof id !== 'string') {
+    return false
+  }
+  
+  // MongoDB ObjectId is a 24 character hex string
+  return /^[0-9a-fA-F]{24}$/.test(id)
+}
+
+/**
  * Database operations for watchlist functionality with playlist support
  * Supports both internal media (in library) and external media (TMDB only)
  */
@@ -124,7 +144,7 @@ export async function getUserWatchlist({
           return {
             ...item,
             id: item._id.toString(),
-            posterURL: item.posterPath ? getFullImageUrl(item.posterPath, 'w500') : '/sorry-image-not-available.jpg',
+            posterURL: item.posterURL || (item.posterPath ? getFullImageUrl(item.posterPath, 'w500') : '/sorry-image-not-available.jpg'),
             backdropURL: item.backdropPath ? getFullImageUrl(item.backdropPath, 'original') : null,
             url: null, // No internal URL for external media
             link: null,
@@ -161,6 +181,7 @@ export async function getUserWatchlist({
  * @param {boolean} [item.isExternal=false] - Whether this is external TMDB-only media
  * @param {Object} [item.tmdbData] - TMDB metadata for external items
  * @param {string} [item.playlistId] - Playlist ID (null for default playlist)
+ * @param {string} [item.posterURL] - Poster URL (for external media)
  * @returns {Promise<Object>} Created watchlist item
  */
 export async function addToWatchlist({
@@ -170,7 +191,8 @@ export async function addToWatchlist({
   title,
   isExternal = false,
   tmdbData = {},
-  playlistId = null
+  playlistId = null,
+  posterURL = null
 }) {
   const session = await auth()
   
@@ -200,7 +222,18 @@ export async function addToWatchlist({
 
     if (mediaId) {
       // Primary check by mediaId for internal media
-      existingQuery.mediaId = new ObjectId(mediaId)
+      if (isValidObjectId(mediaId)) {
+        existingQuery.mediaId = new ObjectId(mediaId)
+      } else {
+        console.log(`Invalid mediaId format: ${mediaId}`)
+        // Continue with tmdbId check if available
+        if (tmdbId) {
+          existingQuery.tmdbId = tmdbId
+        } else {
+          // No valid IDs to check against
+          return null
+        }
+      }
     } else if (tmdbId) {
       // Fallback check by tmdbId for external media
       existingQuery.tmdbId = tmdbId
@@ -235,6 +268,11 @@ export async function addToWatchlist({
       watchlistItem.voteAverage = tmdbData.vote_average
       watchlistItem.voteCount = tmdbData.vote_count
       
+      // Store posterURL directly for external media (from collection views for example)
+      if (posterURL) {
+        watchlistItem.posterURL = posterURL
+      }
+      
       // TV-specific fields
       if (mediaType === 'tv') {
         watchlistItem.numberOfSeasons = tmdbData.number_of_seasons
@@ -244,7 +282,16 @@ export async function addToWatchlist({
       }
     } else {
       // Internal library media - store both mediaId (primary) and tmdbId (fallback) when available
-      watchlistItem.mediaId = new ObjectId(mediaId)
+      if (isValidObjectId(mediaId)) {
+        watchlistItem.mediaId = new ObjectId(mediaId)
+      } else {
+        console.log(`Invalid mediaId format for internal media: ${mediaId}, falling back to TMDB ID if available`)
+        // If mediaId is invalid but we have tmdbId, treat as external
+        if (!tmdbId) {
+          throw new Error('Invalid mediaId format and no tmdbId provided for fallback')
+        }
+        watchlistItem.isExternal = true
+      }
       
       // Also store tmdbId as fallback reference for resilience
       if (tmdbId) {
@@ -296,7 +343,7 @@ export async function addToWatchlist({
         userId: watchlistItem.userId.toString(),
         mediaId: watchlistItem.mediaId?.toString(),
         playlistId: watchlistItem.playlistId?.toString(),
-        posterURL: watchlistItem.posterPath ? getFullImageUrl(watchlistItem.posterPath, 'w500') : '/sorry-image-not-available.jpg',
+        posterURL: watchlistItem.posterURL || (watchlistItem.posterPath ? getFullImageUrl(watchlistItem.posterPath, 'w500') : '/sorry-image-not-available.jpg'),
         backdropURL: watchlistItem.backdropPath ? getFullImageUrl(watchlistItem.backdropPath, 'original') : null,
         url: null, // No internal URL for external media
         link: null,
@@ -373,11 +420,18 @@ export async function checkWatchlistStatus(mediaId, tmdbId, playlistId = null) {
     if (mediaId && tmdbId) {
       // If both IDs provided, use $or to find by either
       query.$or = [
-        { mediaId: new ObjectId(mediaId) },
+        // Validate mediaId is a valid ObjectId format before creating ObjectId
+        ...(isValidObjectId(mediaId) ? [{ mediaId: new ObjectId(mediaId) }] : []),
         { tmdbId: tmdbId }
       ]
     } else if (mediaId) {
-      query.mediaId = new ObjectId(mediaId)
+      // Validate mediaId is a valid ObjectId format
+      if (isValidObjectId(mediaId)) {
+        query.mediaId = new ObjectId(mediaId)
+      } else {
+        // Invalid mediaId format, return null as it won't be found
+        return null
+      }
     } else if (tmdbId) {
       query.tmdbId = tmdbId
     } else {
@@ -495,10 +549,15 @@ async function getMediaDataWithFallback(mediaId, tmdbId, mediaType) {
     // Primary: Try mediaId lookup
     if (mediaId) {
       try {
-        media = await db.collection(collection).findOne(
-          { _id: new ObjectId(mediaId) },
-          { projection }
-        )
+        // Validate mediaId format before attempting to create ObjectId
+        if (isValidObjectId(mediaId)) {
+          media = await db.collection(collection).findOne(
+            { _id: new ObjectId(mediaId) },
+            { projection }
+          )
+        } else {
+          console.log(`Invalid mediaId format: ${mediaId}`)
+        }
       } catch (error) {
         console.log(`MediaId lookup failed for ${mediaId}:`, error.message)
       }
