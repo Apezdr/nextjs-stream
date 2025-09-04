@@ -96,25 +96,56 @@ export async function GET(req) {
               console.log(`TV Device: Fetched full show data with ${fullShowData?.seasons?.length || 0} seasons`);
             }
             
-            // For season requests, also fetch episode list
-            if (mediaSeason && !mediaEpisode) {
-              const seasonWithEpisodes = await getFlatTVSeasonWithEpisodes({
-                showTitle: fullShowData?.title || media.title,
-                seasonNumber: parseInt(mediaSeason.replace('Season ', ''))
-              })
-              
-              if (seasonWithEpisodes && seasonWithEpisodes.episodes) {
-                // Add watch history to episodes if requested
-                let episodesWithHistory = seasonWithEpisodes.episodes
-                if (includeWatchHistory && authResult.id) {
-                  try {
-                    episodesWithHistory = await addWatchHistoryToItems(seasonWithEpisodes.episodes, authResult.id)
-                  } catch (watchHistoryError) {
-                    console.warn('Failed to add watch history to episodes:', watchHistoryError.message)
-                    // Continue with episodes without watch history
+              // For season requests, also fetch episode list
+              if (mediaSeason && !mediaEpisode) {
+                const seasonWithEpisodes = await getFlatTVSeasonWithEpisodes({
+                  showTitle: fullShowData?.title || media.title,
+                  seasonNumber: parseInt(mediaSeason.replace('Season ', ''))
+                })
+                
+                if (seasonWithEpisodes && seasonWithEpisodes.episodes) {
+                  // Add watch history to episodes if requested
+                  let episodesWithHistory = seasonWithEpisodes.episodes
+                  if (includeWatchHistory && authResult.id) {
+                    try {
+                      episodesWithHistory = await addWatchHistoryToItems(seasonWithEpisodes.episodes, authResult.id)
+                    } catch (watchHistoryError) {
+                      console.warn('Failed to add watch history to episodes:', watchHistoryError.message)
+                      // Continue with episodes without watch history
+                    }
                   }
-                }
 
+                  // Extract available season numbers from full show data
+                  const availableSeasons = fullShowData?.seasons
+                    ? fullShowData.seasons.map((season, index) => {
+                        return season.seasonNumber
+                      }).filter(num => num !== null && num !== undefined).sort((a, b) => a - b)
+                    : []
+
+                  // Merge the episode data and full show context
+                  enhancedMedia = {
+                    ...media, // Keep the current season/episode specific data
+                    episodes: episodesWithHistory, // Add episode list with watch history
+                    seasons: fullShowData?.seasons || media.seasons, // Ensure we have all seasons
+                    totalSeasons: fullShowData?.seasons?.length || 0, // Add total seasons count
+                    availableSeasons: availableSeasons, // Array of actual season numbers available
+                    logo: fullShowData?.logo || media.logo, // Preserve show logo
+                    // Preserve backdrop data from full show data (fix for TV device backdrop issue)
+                    backdrop: fullShowData?.backdrop || media.backdrop || null,
+                    backdropBlurhash: fullShowData?.backdropBlurhash || media.backdropBlurhash || null,
+                    backdropBlurhashSource: fullShowData?.backdropBlurhashSource || media.backdropBlurhashSource || null,
+                    backdropSource: fullShowData?.backdropSource || media.backdropSource || null,
+                    // Preserve first air date and air date for seasons
+                    // helpful to see when the show started vs when the season started
+                    first_air_date: media.first_air_date,
+                    airDate: media.metadata?.air_date // Explicit air_date for TV seasons
+                  }
+                
+                if (Boolean(process.env.DEBUG) == true) {
+                  console.log(`TV Device: Enhanced season data with ${seasonWithEpisodes.episodes.length} episodes and ${enhancedMedia.totalSeasons} total seasons`);
+                }
+              }
+            } else {
                 // Extract available season numbers from full show data
                 const availableSeasons = fullShowData?.seasons
                   ? fullShowData.seasons.map((season, index) => {
@@ -122,43 +153,22 @@ export async function GET(req) {
                     }).filter(num => num !== null && num !== undefined).sort((a, b) => a - b)
                   : []
 
-                // Merge the episode data and full show context
+                // For episode requests or show-level requests, merge full show data
                 enhancedMedia = {
-                  ...media, // Keep the current season/episode specific data
-                  episodes: episodesWithHistory, // Add episode list with watch history
-                  seasons: fullShowData?.seasons || media.seasons, // Ensure we have all seasons
-                  totalSeasons: fullShowData?.seasons?.length || 0, // Add total seasons count
+                  ...media, // Keep all original data
+                  seasons: fullShowData?.seasons || media.seasons,
+                  totalSeasons: fullShowData?.seasons?.length || 0,
                   availableSeasons: availableSeasons, // Array of actual season numbers available
-                  logo: fullShowData?.logo || media.logo, // Preserve show logo
-                  // Preserve first air date and air date for seasons
-                  // helpful to see when the show started vs when the season started
+                  logo: fullShowData?.logo || media.logo || null, // Preserve show logo
+                  // Preserve backdrop data from full show data (fix for TV device backdrop issue)
+                  backdrop: fullShowData?.backdrop || media.backdrop || null,
+                  backdropBlurhash: fullShowData?.backdropBlurhash || media.backdropBlurhash || null,
+                  backdropBlurhashSource: fullShowData?.backdropBlurhashSource || media.backdropBlurhashSource || null,
+                  backdropSource: fullShowData?.backdropSource || media.backdropSource || null,
+                  // Preserve date information for TV shows
                   first_air_date: media.first_air_date,
-                  airDate: media.metadata?.air_date // Explicit air_date for TV seasons
+                  airDate: media.metadata?.air_date // Season/episode air date if available
                 }
-                
-                if (Boolean(process.env.DEBUG) == true) {
-                  console.log(`TV Device: Enhanced season data with ${seasonWithEpisodes.episodes.length} episodes and ${enhancedMedia.totalSeasons} total seasons`);
-                }
-              }
-            } else {
-              // Extract available season numbers from full show data
-              const availableSeasons = fullShowData?.seasons
-                ? fullShowData.seasons.map((season, index) => {
-                    return season.seasonNumber
-                  }).filter(num => num !== null && num !== undefined).sort((a, b) => a - b)
-                : []
-
-              // For episode requests or show-level requests, merge full show data
-              enhancedMedia = {
-                ...media, // Keep all original data
-                seasons: fullShowData?.seasons || media.seasons,
-                totalSeasons: fullShowData?.seasons?.length || 0,
-                availableSeasons: availableSeasons, // Array of actual season numbers available
-                logo: fullShowData?.logo || media.logo || null, // Preserve show logo
-                // Preserve date information for TV shows
-                first_air_date: media.first_air_date,
-                airDate: media.metadata?.air_date // Season/episode air date if available
-              }
             }
           } catch (showDataError) {
             console.warn('Could not fetch full show data for TV device:', showDataError.message);
