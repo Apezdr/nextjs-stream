@@ -432,6 +432,16 @@ export async function sanitizeRecord(record, type, context = {}) {
       }
     }
     
+    // Extract device info from lastWatchedVideo if available
+    let deviceInfo = null;
+    if (context.lastWatchedVideo?.deviceInfo && context.lastWatchedVideo.deviceInfo.type) {
+      deviceInfo = {
+        deviceType: context.lastWatchedVideo.deviceInfo.type,
+        userAgentTruncated: context.lastWatchedVideo.deviceInfo.userAgent,
+        lastUpdated: context.lastWatchedVideo.deviceInfo.lastUsed
+      };
+    }
+    
     // Added date - for recently added media
     if (context.dateContext === 'recentlyAdded' || context.dateTypes?.includes('added')) {
       if (record.mediaLastModified) {
@@ -500,6 +510,8 @@ export async function sanitizeRecord(record, type, context = {}) {
         backdropBlurhash: record.backdropBlurhash || null,
         title: mainTitle || null,
         showTitleFormatted: record.showTitleFormatted || null,
+        showId: record.showId || null,
+        showTmdbId: record.showTmdbId || null,
         logo: record.logo || getFullImageUrl(record.metadata?.logo_path) || null,
         type: type,
         metadata: record.metadata || null,
@@ -510,25 +522,8 @@ export async function sanitizeRecord(record, type, context = {}) {
         videoSource: record.videoSource || record.episode.videoSource || null,
         thumbnail: record.episode.thumbnail,
         thumbnailBlurhash: record.episode.thumbnailBlurhash || null,
-        // Keep media object for API compatibility
-        media: {
-          showTitle: record.title,
-          seasonNumber: record.seasonNumber,
-          episode: {
-            normalizedVideoId: record.episode.normalizedVideoId,
-            episodeNumber: record.episode.episodeNumber,
-            title: record.episode.title,
-            videoURL: record.episode.videoURL,
-            mediaLastModified: record.episode.mediaLastModified,
-            duration: record.episode.duration,
-            dimensions: record.episode.dimensions,
-            thumbnail: record.episode.thumbnail,
-            thumbnailBlurhash: record.episode.thumbnailBlurhash || null,
-            captionURLs: record.episode.captionURLs,
-            metadata: record.episode.metadata,
-            hdr: record.episode.hdr,
-          },
-        },
+        // Add device info if available
+        deviceInfo: deviceInfo,
       }
       
       // Add showTitle field for TV devices to provide easy access to show title
@@ -550,7 +545,8 @@ export async function sanitizeRecord(record, type, context = {}) {
         type: type,
         metadata: record.metadata || null,
         hdr: record.hdr || null,
-        media: record,
+        // Add device info if available
+        deviceInfo: deviceInfo,
       }
     }
   // Conditionally add url property if it exists in the data passed to the function
@@ -616,7 +612,20 @@ export function sanitizeCardData(item, popup = false, context = {}) {
       media,
       episodeNumber, // it may not exist on the record if it's not an specific episode
       seasonNumber, // it may not exist on the record if it's not an specific episode
+      // Availability flags for TMDB-only items
+      isAvailable,
+      comingSoon,
+      comingSoonDate,
+      // TMDB snake_case fields and nested blurhash object
+      poster_blurhash,
+      backdrop_blurhash,
+      blurhash,
+      thumbnailBlurhash,
     } = item
+
+    // Normalize blurhash fields from different sources (TMDB snake_case, nested object, existing camelCase)
+    const normalizedPosterBlurhash = posterBlurhash || poster_blurhash || blurhash?.poster || thumbnailBlurhash || null;
+    const normalizedBackdropBlurhash = backdropBlurhash || backdrop_blurhash || blurhash?.backdrop || null;
 
     const sanitized = {}
     
@@ -638,6 +647,17 @@ export function sanitizeCardData(item, popup = false, context = {}) {
     if (posterURL) sanitized.posterURL = posterURL
     if (type) sanitized.type = type
     
+    // CRITICAL: Preserve availability flags for TMDB-only items (must always be included)
+    // Default to true if not explicitly set (backward compatibility with library items)
+    sanitized.isAvailable = typeof isAvailable === 'boolean' ? isAvailable : true
+    sanitized.comingSoon = comingSoon || false
+    sanitized.comingSoonDate = comingSoonDate || null
+    
+    // CRITICAL: Always preserve metadata for TMDB-only items (moved from try block)
+    if (metadata) {
+      sanitized.metadata = metadata
+    }
+    
     // Add showTitle for TV devices when we have episode data
     if (finalShowTitle && type === 'tv' && popup) {
       sanitized.showTitle = finalShowTitle;
@@ -645,12 +665,12 @@ export function sanitizeCardData(item, popup = false, context = {}) {
     
     // Properties that are safe to include if they exist
     try {
-      if (posterBlurhash) sanitized.posterBlurhash = posterBlurhash
+      if (normalizedPosterBlurhash) sanitized.posterBlurhash = normalizedPosterBlurhash
       if (backdrop) sanitized.backdrop = backdrop
       
       // Ensure backdropBlurhash is properly preserved with its source
-      if (backdropBlurhash) {
-        sanitized.backdropBlurhash = backdropBlurhash
+      if (normalizedBackdropBlurhash) {
+        sanitized.backdropBlurhash = normalizedBackdropBlurhash
         // Also preserve backdropBlurhashSource if available in the original item
         if (item.backdropBlurhashSource) sanitized.backdropBlurhashSource = item.backdropBlurhashSource
         if (item.backdropSource) sanitized.backdropSource = item.backdropSource
@@ -658,7 +678,7 @@ export function sanitizeCardData(item, popup = false, context = {}) {
       
       // Handle the different date types
       if (lastWatchedDate) sanitized.lastWatchedDate = lastWatchedDate
-      if (addedDate) sanitized.addedDate = addedDate 
+      if (addedDate) sanitized.addedDate = addedDate
       if (releaseDate) sanitized.releaseDate = releaseDate
       if (link) sanitized.link = link
       if (logo) sanitized.logo = logo
@@ -666,7 +686,9 @@ export function sanitizeCardData(item, popup = false, context = {}) {
       // TV specific properties
       if (episodeNumber) sanitized.episodeNumber = episodeNumber
       if (seasonNumber) sanitized.seasonNumber = seasonNumber
-      
+      // Episode specific handling, preserve showTmdbId if available for watchlist
+      if (item.showTmdbId) sanitized.showTmdbId = item.showTmdbId;
+      if (item.showId) sanitized.showId = item.showId;
       // Cast information
       if (cast) sanitized.cast = cast
 
@@ -893,11 +915,18 @@ export function sanitizeTVData(media, options = {}) {
       metadata: {
         overview: media.metadata?.overview,
         genres: media.metadata?.genres,
-        rating: media.metadata?.vote_average || media.metadata?.rating,
+        rating: media.metadata?.rating,
+        vote_average: media.metadata?.vote_average,
         runtime: media.metadata?.runtime || media.duration,
         releaseDate: media.metadata?.release_date || media.metadata?.first_air_date,
         trailer_url: media.metadata?.trailer_url
       }
+    }
+
+    // Add show title for TV shows/episodes
+    if (mediaType === 'tv' || media.type === 'tv') {
+      // For episodes, use showTitle if available, otherwise fall back to originalTitle
+      tvData.showTitle = media.showTitle || media.originalTitle
     }
 
     // Preserve additional TV-specific fields
@@ -945,7 +974,17 @@ export function sanitizeTVData(media, options = {}) {
           videoURL: media.videoURL,
           description: media.metadata?.overview,
           normalizedVideoId: media.normalizedVideoId,
+          hdr: media.hdr || false,
+          mediaQuality: media.mediaQuality || null,
+          dimensions: media.dimensions
         }
+
+        // Also add HDR and dimensions at top level for TV episodes
+        tvData.hdr = media.hdr || false
+        tvData.dimensions = media.dimensions
+        tvData.duration = media.duration
+        tvData.mediaQuality = media.mediaQuality || null
+        tvData.createdAt = media.createdAt || null
 
         // Include next episode info if available
         if (media.hasNextEpisode) {
@@ -996,7 +1035,17 @@ export function sanitizeTVData(media, options = {}) {
       
       // Add cast information for TV browsing
       if (media.cast) {
-        tvData.cast = media.cast.slice(0, 10) // Limit cast for TV interface
+        tvData.cast = media.cast
+      }
+    }
+
+    // Add cast and guest stars information for TV shows/episodes (for TV browsing)
+    if (mediaType === 'tv' || media.type === 'tv') {
+      if (media.cast) {
+        tvData.cast = media.cast
+      }
+      if (media.guestStars) {
+        tvData.guestStars = media.guestStars
       }
     }
 

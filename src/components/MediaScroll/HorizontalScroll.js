@@ -9,7 +9,6 @@ import {
   useLayoutEffect,
   useEffect,
   Fragment,
-  cache,
 } from 'react'
 import useSWR, { useSWRConfig, preload } from 'swr'
 import { classNames, fetcher } from '@src/utils'
@@ -75,7 +74,7 @@ const variants = {
 }
 
 // HorizontalScroll Component
-const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrder = 'desc' }) => {
+const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder = 'desc', playlistId = null }) => {
   const [currentPage, setCurrentPage] = useState(0)
   const [expandedCardId, setExpandedCardId] = useState(null)
   const [direction, setDirection] = useState(0) // Track direction
@@ -103,7 +102,11 @@ const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrde
   const areItems = numberOfItems > 0
 
   const totalPages = useMemo(
-    () => Math.ceil(numberOfItems / itemsPerPage),
+    () => {
+      // Ensure we always have at least 0 pages, handle edge cases
+      if (numberOfItems <= 0 || itemsPerPage <= 0) return 0
+      return Math.ceil(numberOfItems / itemsPerPage)
+    },
     [numberOfItems, itemsPerPage]
   )
 
@@ -111,6 +114,7 @@ const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrde
   const buildPrefetchURL = (pageIndex) => {
     const params = new URLSearchParams()
     if (listType) params.append('type', listType)
+    if (listType === 'playlist' && playlistId) params.append('playlistId', playlistId)
     if (sort) params.append('sort', sort)
     if (itemsPerPage) params.append('limit', itemsPerPage)
     if (sortOrder) params.append('sortOrder', sortOrder)
@@ -186,18 +190,31 @@ const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrde
   )
 
   useEffect(() => {
-    if (currentPage < totalPages - 1) {
-      prefetchPageData(currentPage - 1)
-      prefetchPageData(currentPage + 1)
+    // Only prefetch if we have valid pages
+    if (totalPages > 0) {
+      // Prefetch previous page (if exists)
+      if (currentPage > 0) {
+        prefetchPageData(currentPage - 1)
+      }
+      // Prefetch next page (if exists)
+      if (currentPage < totalPages - 1) {
+        prefetchPageData(currentPage + 1)
+      }
     }
   }, [currentPage, prefetchPageData, totalPages])
   // Prepare items including previous and next peek items
   const itemsToRender = useMemo(() => {
     if (!data) return []
-    const { previousItem, currentItems, nextItem } = data
+    
+    // Safely destructure with defaults to prevent undefined errors
+    const { previousItem, currentItems = [], nextItem } = data || {}
+    
+    // Validate that currentItems is an array
+    const safeCurrentItems = Array.isArray(currentItems) ? currentItems : []
+    
     const items = []
     if (previousItem) items.push({ item: previousItem, isPeek: 'previous' })
-    items.push(...currentItems.map((item) => ({ item, isPeek: false })))
+    items.push(...safeCurrentItems.map((item) => ({ item, isPeek: false })))
     if (nextItem) items.push({ item: nextItem, isPeek: 'next' })
     return items
   }, [data])
@@ -481,6 +498,13 @@ const HorizontalScroll = cache(({ numberOfItems, listType, sort = 'id', sortOrde
                         // tv
                         episodeNumber={item?.episodeNumber}
                         seasonNumber={item?.seasonNumber}
+                        showId={item?.showId}
+                        showTmdbId={item?.showTmdbId}
+                        // Availability flags for TMDB-only/Coming Soon items
+                        isAvailable={item.isAvailable}
+                        comingSoon={item.comingSoon}
+                        comingSoonDate={item.comingSoonDate}
+                        metadata={item.metadata}
                       />
                     </div>
                   )

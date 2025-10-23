@@ -108,7 +108,69 @@ export const generateColors = cache((str) => {
   }
 })
 
-export const fetcher = (...args) => fetch(...args).then((res) => res.json())
+export const fetcher = async (...args) => {
+  try {
+    const response = await fetch(...args)
+    
+    // Handle different HTTP status codes
+    if (!response.ok) {
+      // Handle specific error codes that we know about
+      if (response.status === 401) {
+        console.warn('Authentication expired, session may need refresh')
+        // Return safe fallback structure for authentication errors
+        return {
+          currentItems: [],
+          previousItem: null,
+          nextItem: null,
+          error: {
+            status: 401,
+            message: 'Authentication required'
+          }
+        }
+      }
+      
+      if (response.status >= 500) {
+        console.error(`Server error (${response.status}): ${response.statusText}`)
+        // Return safe fallback structure for server errors
+        return {
+          currentItems: [],
+          previousItem: null,
+          nextItem: null,
+          error: {
+            status: response.status,
+            message: 'Server error occurred'
+          }
+        }
+      }
+      
+      // For other HTTP errors, still try to parse response
+      const errorText = await response.text()
+      console.error(`HTTP error (${response.status}): ${errorText}`)
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+    
+    // Try to parse JSON response
+    const data = await response.json()
+    
+    // Validate that we got a reasonable response structure
+    if (typeof data === 'object' && data !== null) {
+      return data
+    }
+    
+    // If data is not an object, return safe fallback
+    console.warn('Received non-object response from API')
+    return {
+      currentItems: [],
+      previousItem: null,
+      nextItem: null
+    }
+    
+  } catch (error) {
+    console.error('Fetcher error:', error)
+    // For any other errors (network, parsing, etc), throw to let SWR handle retry
+    throw error
+  }
+}
 
 export const obfuscateString = cache((str) => {
   if (!str) return ''

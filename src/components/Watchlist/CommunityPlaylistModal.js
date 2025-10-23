@@ -17,7 +17,7 @@ export default function CommunityPlaylistModal({
   const [selectedTab, setSelectedTab] = useState('promote') // 'promote' or 'manage'
 
   // Check if user is Application Admin
-  const isApplicationAdmin = user?.role === 'Admin' || user?.permissions?.includes('Admin')
+  const isApplicationAdmin = session?.user?.role === 'admin' || session?.user?.isAdmin || user?.permissions?.includes('Admin')
 
   useEffect(() => {
     if (isOpen && isApplicationAdmin) {

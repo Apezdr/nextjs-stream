@@ -57,6 +57,10 @@ type CustomUser = {
   approved: boolean
   limitedAccess?: boolean
   admin?: boolean
+  preferences?: {
+    tvAppsNotificationDismissed?: boolean
+    tvAppsNotificationDismissedAt?: Date
+  }
 }
 
 const myMongoDBAdapterOptions = {
@@ -309,32 +313,36 @@ export async function updateQRSessionStatus(
     )
 }
 
-// TTL index function removed - using manual expiry checks for consistency
-// This ensures both QR and direct sessions have identical behavior
-//
-// Previously this function created a TTL index that only applied to QR sessions,
-// causing inconsistent behavior where QR sessions were hard-deleted by MongoDB
-// while direct sessions used soft expiry checks in application code.
-//
-// async function ensureQRSessionTTLIndex(): Promise<void> {
-//   const client = await clientPromise
-//   const collection = client.db('Users').collection('authSessions')
-//
-//   try {
-//     await collection.createIndex(
-//       { expiresAt: 1 },
-//       {
-//         expireAfterSeconds: 0,
-//         name: 'qr_session_ttl_index',
-//         partialFilterExpression: { isQRAuth: true }
-//       }
-//     )
-//   } catch (error) {
-//     if (error.code !== 85) {
-//       console.error('Error creating QR session TTL index:', error)
-//     }
-//   }
-// }
+// Helper function to synchronize user admin status in the database
+// This ensures the database record matches the admin status determined by config
+async function syncUserAdminStatus(userId: ObjectId | string, isAdmin: boolean): Promise<void> {
+  const client = await clientPromise
+  
+  if (typeof userId === 'string') {
+    userId = new ObjectId(userId)
+  }
+  
+  try {
+    await client
+      .db('Users')
+      .collection('AuthenticatedUsers')
+      .updateOne(
+        { _id: userId },
+        { 
+          $set: { 
+            admin: isAdmin,
+            // Also set approved to true for admins
+            ...(isAdmin ? { approved: true } : {}),
+            // Record when this status was last synced
+            adminStatusSyncedAt: new Date()
+          } 
+        }
+      )
+    console.log(`Updated admin status for user ${userId} to ${isAdmin}`)
+  } catch (error) {
+    console.error(`Error updating admin status for user ${userId}:`, error)
+  }
+}
 
 export const {
   handlers: { GET, POST },
@@ -359,11 +367,19 @@ export const {
       if (existingUser) {
         if (session.user) {
           const isAdmin = adminUserEmails.includes(existingUser.email)
+          
+          // Sync the admin status to database when it doesn't match config
+          const databaseAdminStatus = existingUser.admin === true
+          if (databaseAdminStatus !== isAdmin) {
+            await syncUserAdminStatus(existingUser._id, isAdmin)
+          }
+          
           session.user = {
             ...session.user,
             id: existingUser._id.toString() as string,
             approved: isAdmin ? true : (existingUser.approved as boolean), // Add the 'approved' flag to the session's user object
             limitedAccess: existingUser.limitedAccess as boolean, // Add the 'limitedAccess' flag to the session's user object; used to restrict access to content
+            preferences: existingUser.preferences || {}, // Include user preferences in session
           } as CustomUser
           if (isAdmin) {
             session.user = {
@@ -411,6 +427,12 @@ export const {
   },
   events: {
     async signIn({ user, account, isNewUser }) {
+      // When a user signs in, also sync their admin status based on email
+      if (user && user.email && user.id) {
+        const isAdmin = adminUserEmails.includes(user.email)
+        await syncUserAdminStatus(user.id, isAdmin)
+      }
+      
       // Handle session-based authentication
       // We'll check if there's a pending auth session to update
       // This is done in a middleware or in the mobile-redirect route
@@ -438,6 +460,12 @@ export async function getUserBySessionId(sessionId: string) {
   if (!user) return null
 
   const isAdmin = adminUserEmails.includes(user.email)
+  
+  // Sync admin status if needed (maintaining consistency)
+  if (isAdmin !== (user.admin === true)) {
+    await syncUserAdminStatus(user._id, isAdmin)
+  }
+  
   return {
     id: user._id.toString(),
     email: user.email,
@@ -477,6 +505,12 @@ export async function getUserByMobileToken(mobileToken: string): Promise<CustomU
     if (!user) return null
 
     const isAdmin = adminUserEmails.includes(user.email)
+    
+    // Sync admin status if needed (maintaining consistency)
+    if (isAdmin !== (user.admin === true)) {
+      await syncUserAdminStatus(user._id, isAdmin)
+    }
+    
     return {
       id: user._id.toString(),
       email: user.email,

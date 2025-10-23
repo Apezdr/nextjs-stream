@@ -104,9 +104,12 @@ export async function syncMissingMedia(missingMedia, fileServer, serverConfig, c
  * Performs a multi-server sync operation.
  * @param {Object} fileServers - File server data
  * @param {Object} fieldAvailability - Field availability map
+ * @param {Object} options - Additional sync options
+ * @param {boolean} options.useNewArchitecture - Force use of new architecture (overrides feature flag)
+ * @param {boolean} options.forceOldArchitecture - Force use of old architecture (overrides feature flag)
  * @returns {Promise<Object>} Sync results
  */
-export async function syncAllServers(fileServers, fieldAvailability) {
+export async function syncAllServers(fileServers, fieldAvailability, options = {}) {
   const client = await clientPromise
   const startTime = Date.now()
   console.info(
@@ -225,7 +228,10 @@ export async function syncAllServers(fileServers, fieldAvailability) {
         }
 
         // Use forceSync=true to override aggressive hash skipping
-        const syncResult = await syncToFlatStructure(fileServer, serverConfig, fieldAvailability, false, true);
+        const syncResult = await syncToFlatStructure(fileServer, serverConfig, fieldAvailability, false, true, {
+          useNewArchitecture: options.useNewArchitecture,
+          forceOldArchitecture: options.forceOldArchitecture
+        });
         
         // Store the sync results for reference
         results.flatSyncResults = results.flatSyncResults || {};

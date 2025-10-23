@@ -11,7 +11,7 @@ import { useMemo, useState } from 'react';
  */
 export function ServerProcesses() {
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
+  const [pageSize, setPageSize] = useState(5);
   
   const { data, error } = useSWR(buildURL('/api/authenticated/admin/server-processes'), fetcher, {
     refreshInterval: 5000, // Fetch every 5 seconds
@@ -77,7 +77,7 @@ export function ServerProcesses() {
   }
 
   return (
-    <div className="max-w-6xl mx-auto p-6 bg-white dark:bg-gray-800 shadow-md rounded-lg mb-4 overflow-x-auto">
+    <div className="max-w-[95vw] sm:max-w-6xl mx-auto p-6 bg-white dark:bg-gray-800 shadow-md rounded-lg mb-4 overflow-x-auto">
       <div className="flex justify-between items-center mb-4">
         <h3 className="text-2xl font-semibold text-gray-800 dark:text-gray-200">
           Server Processes (Full View)
@@ -271,7 +271,7 @@ export function MinimalizedServerProcesses() {
 
   // Filter out servers that have no active processes
   const activeServers = data.filter((server) =>
-    server.processes.some((proc) => proc.status !== 'completed')
+    server.processes && server.processes.some((proc) => proc.status !== 'completed')
   );
 
   // If no servers have active processes, render a simple message
@@ -287,9 +287,9 @@ export function MinimalizedServerProcesses() {
     <div className="w-full space-y-2">
       {activeServers.map((server) => {
         // Only look at processes that are not completed
-        const activeProcesses = server.processes.filter(
+        const activeProcesses = server.processes ? server.processes.filter(
           (proc) => proc.status !== 'completed'
-        );
+        ) : [];
 
         // Group processes by (process_type + message) so identical tasks are collapsed
         const processGroups = groupProcesses(activeProcesses);

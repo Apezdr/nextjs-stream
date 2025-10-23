@@ -8,6 +8,267 @@ import {
 import { getFullImageUrl } from '@src/utils'
 
 /**
+ * Projection profiles for different use cases to optimize data transfer
+ */
+const PROJECTION_PROFILES = {
+  // Minimal fields for admin overview - optimized for compact display
+  'admin-overview': {
+    movies: {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      posterURL: 1,
+      duration: 1,
+      normalizedVideoId: 1,
+      hdr: 1, // Keep for basic quality info
+    },
+    episodes: {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      episodeNumber: 1,
+      seasonNumber: 1,
+      seasonId: 1,
+      showId: 1,
+      thumbnail: 1,
+      duration: 1,
+      normalizedVideoId: 1,
+    },
+    shows: {
+      _id: 1,
+      title: 1,
+      posterURL: 1,
+    },
+    seasons: {
+      _id: 1,
+      seasonNumber: 1,
+    }
+  },
+
+  // Enhanced fields for TV devices - includes clip generation requirements
+  'tv-device': {
+    movies: {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      posterURL: 1,
+      posterBlurhash: 1,
+      posterBlurhashSource: 1,
+      duration: 1,
+      hdr: 1,
+      normalizedVideoId: 1,
+      'metadata.overview': 1, // For descriptions
+    },
+    episodes: {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      episodeNumber: 1,
+      seasonNumber: 1,
+      seasonId: 1,
+      showId: 1,
+      thumbnail: 1,
+      thumbnailBlurhash: 1,
+      thumbnailBlurhashSource: 1,
+      duration: 1,
+      normalizedVideoId: 1,
+    },
+    shows: {
+      _id: 1,
+      title: 1,
+      originalTitle: 1,
+      posterURL: 1,
+      posterBlurhash: 1,
+      posterBlurhashSource: 1,
+      logo: 1,
+    },
+    seasons: {
+      _id: 1,
+      seasonNumber: 1,
+      posterURL: 1,
+    }
+  },
+
+  // Standard fields for general web usage
+  'standard': {
+    movies: {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      posterURL: 1,
+      posterBlurhash: 1,
+      posterBlurhashSource: 1,
+      duration: 1,
+      hdr: 1,
+      normalizedVideoId: 1,
+      'metadata.overview': 1,
+    },
+    episodes: {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      duration: 1,
+      episodeNumber: 1,
+      seasonNumber: 1,
+      seasonId: 1,
+      showId: 1,
+      thumbnail: 1,
+      thumbnailBlurhash: 1,
+      thumbnailBlurhashSource: 1,
+      normalizedVideoId: 1,
+    },
+    shows: {
+      _id: 1,
+      title: 1,
+      posterURL: 1,
+      posterBlurhash: 1,
+      posterBlurhashSource: 1,
+      'metadata.overview': 1,
+    },
+    seasons: {
+      _id: 1,
+      seasonNumber: 1,
+    }
+  },
+
+  // Horizontal list profile - includes backdrop data for PopupCard preloading
+  'horizontal-list': {
+    movies: {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      posterURL: 1,
+      posterBlurhash: 1,
+      posterBlurhashSource: 1,
+      backdrop: 1,
+      backdropBlurhash: 1,
+      backdropBlurhashSource: 1,
+      backdropSource: 1,
+      duration: 1,
+      hdr: 1,
+      normalizedVideoId: 1,
+      'metadata.id': 1,
+      'metadata.overview': 1,
+    },
+    episodes: {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      duration: 1,
+      episodeNumber: 1,
+      seasonNumber: 1,
+      seasonId: 1,
+      showId: 1,
+      thumbnail: 1,
+      thumbnailBlurhash: 1,
+      thumbnailBlurhashSource: 1,
+      normalizedVideoId: 1,
+    },
+    shows: {
+      _id: 1,
+      title: 1,
+      posterURL: 1,
+      posterBlurhash: 1,
+      posterBlurhashSource: 1,
+      backdrop: 1,
+      backdropBlurhash: 1,
+      backdropBlurhashSource: 1,
+      backdropSource: 1,
+      'metadata.id': 1,
+      'metadata.overview': 1,
+      logo: 1,
+    },
+    seasons: {
+      _id: 1,
+      seasonNumber: 1,
+    }
+  },
+
+  // Full compatibility mode - returns all fields
+  'full': {
+    movies: {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      normalizedVideoId: 1,
+      posterURL: 1,
+      posterBlurhash: 1,
+      posterBlurhashSource: 1,
+      backdrop: 1,
+      backdropBlurhash: 1,
+      backdropBlurhashSource: 1,
+      hdr: 1,
+      duration: 1,
+      metadata: 1,
+    },
+    episodes: {
+      _id: 1,
+      title: 1,
+      videoURL: 1,
+      duration: 1,
+      normalizedVideoId: 1,
+      episodeNumber: 1,
+      seasonNumber: 1,
+      seasonId: 1,
+      showId: 1,
+      thumbnail: 1,
+      thumbnailBlurhash: 1,
+      thumbnailBlurhashSource: 1,
+      metadata: 1,
+      // Include duration conditionally based on shouldExposeAdditionalData
+    },
+    shows: {}, // Empty projection = all fields
+    seasons: {} // Empty projection = all fields
+  }
+}
+
+/**
+ * Selects the optimal projection profile based on context
+ */
+function selectProjectionProfile(projection, shouldExposeAdditionalData, contextHints = {}) {
+  // Explicit projection profile requested
+  if (projection && PROJECTION_PROFILES[projection]) {
+    return projection;
+  }
+  
+  // Auto-detect based on context hints
+  if (contextHints.isAdmin) {
+    return 'admin-overview';
+  }
+  
+  if (contextHints.horizontalList) {
+    return 'horizontal-list';
+  }
+  
+  if (shouldExposeAdditionalData || contextHints.isTVdevice) {
+    return 'tv-device';
+  }
+  
+  // Default to standard for general web usage
+  return 'standard';
+}
+
+/**
+ * Gets the appropriate projection for a collection based on the selected profile
+ */
+function getProjectionForCollection(profile, collection, shouldExposeAdditionalData = false) {
+  const projectionProfile = PROJECTION_PROFILES[profile];
+  if (!projectionProfile) {
+    // Fallback to full profile if unknown profile requested
+    return PROJECTION_PROFILES['full'][collection] || {};
+  }
+  
+  let projection = { ...projectionProfile[collection] };
+  
+  // Handle special cases for shouldExposeAdditionalData
+  if (shouldExposeAdditionalData && collection === 'episodes' && profile !== 'full') {
+    projection.duration = 1; // Always include duration for TV devices
+  }
+  
+  return projection;
+}
+
+/**
  * Generates a consistent hash identifier from a video URL.
  * Uses cryptographic hashing for reliability across different encoding variations.
  * 
@@ -243,17 +504,26 @@ export async function getFlatRecentlyWatchedForUser({
   limit = 15,
   countOnly = false,
   shouldExposeAdditionalData = false,
+  projection = null,
+  contextHints = {},
 }) {
   try {
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatRecentlyWatchedForUser:total');
-      console.log(`[PERF] Starting getFlatRecentlyWatchedForUser for userId: ${userId}, page: ${page}, limit: ${limit}, countOnly: ${countOnly}`);
+      console.log(`[PERF] Starting getFlatRecentlyWatchedForUser for userId: ${userId}, page: ${page}, limit: ${limit}, countOnly: ${countOnly}, projection: ${projection}`);
     }
     
     const _client = client ?? await clientPromise;
     const validPage = Math.max(page, 0); // Ensure page is at least 0
     const userObjectId = typeof(userId) === 'object' ? userId : new ObjectId(userId);
     const userIdString = typeof(userId) === 'object' ? userId.toString() : userId;
+
+    // Select appropriate projection profile based on parameters and context
+    const selectedProfile = selectProjectionProfile(projection, shouldExposeAdditionalData, contextHints);
+    
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[PERF] Selected projection profile: ${selectedProfile}`);
+    }
 
     // Validate user exists
     const userExists = await _client
@@ -325,12 +595,13 @@ export async function getFlatRecentlyWatchedForUser({
       { $skip: validPage * limit },
       { $limit: limit },
       
-      // Project only needed fields, including normalizedVideoId if available
+      // Project only needed fields, including normalizedVideoId and deviceInfo if available
       { $project: {
           videoId: "$videosWatched.videoId",
           playbackTime: "$videosWatched.playbackTime",
           lastUpdated: "$videosWatched.lastUpdated",
-          normalizedVideoId: "$videosWatched.normalizedVideoId"
+          normalizedVideoId: "$videosWatched.normalizedVideoId",
+          deviceInfo: "$videosWatched.deviceInfo"
       }}
     ];
     
@@ -364,41 +635,15 @@ export async function getFlatRecentlyWatchedForUser({
       console.log(`[PERF] Searching for ${videoIds.length} direct videoIds and ${normalizedVideoIds.length} normalized videoIds`);
     }
     
-    // Define projections to limit the fields returned
-    const movieProjection = {
-      _id: 1,
-      title: 1,
-      videoURL: 1,
-      normalizedVideoId: 1,
-      posterURL: 1,
-      posterBlurhash: 1,
-      posterBlurhashSource: 1,
-      backdrop: 1,
-      backdropBlurhash: 1,
-      backdropBlurhashSource: 1,
-      hdr: 1,
-      duration: 1,
-      metadata: 1,
-    };
+    // Get dynamic projections based on selected profile
+    const movieProjection = getProjectionForCollection(selectedProfile, 'movies', shouldExposeAdditionalData);
+    const episodeProjection = getProjectionForCollection(selectedProfile, 'episodes', shouldExposeAdditionalData);
+    const showProjection = getProjectionForCollection(selectedProfile, 'shows', shouldExposeAdditionalData);
+    const seasonProjection = getProjectionForCollection(selectedProfile, 'seasons', shouldExposeAdditionalData);
     
-    // Define projections for episodes - include additional fields when TV device mode is enabled
-    const episodeProjection = {
-      _id: 1,
-      title: 1,
-      videoURL: 1,
-      normalizedVideoId: 1,
-      episodeNumber: 1,
-      seasonNumber: 1,
-      seasonId: 1,
-      showId: 1,
-      thumbnail: 1,
-      thumbnailBlurhash: 1,
-      thumbnailBlurhashSource: 1,
-      metadata: 1,
-      ...(shouldExposeAdditionalData && {
-        duration: 1
-      })
-    };
+    if (Boolean(process.env.DEBUG) == true) {
+      console.log(`[PERF] Using projections - Movies: ${Object.keys(movieProjection).length} fields, Episodes: ${Object.keys(episodeProjection).length} fields`);
+    }
     
     // Step 4: Fetch movies and episodes in parallel - using both direct URL and hash matching
     const [movies, episodes] = await Promise.all([
@@ -459,12 +704,12 @@ export async function getFlatRecentlyWatchedForUser({
         seasonIds.length > 0 ? _client
           .db('Media')
           .collection('FlatSeasons')
-          .find({ _id: { $in: seasonIds } })
+          .find({ _id: { $in: seasonIds } }, { projection: seasonProjection })
           .toArray() : [],
         showIds.length > 0 ? _client
           .db('Media')
           .collection('FlatTVShows')
-          .find({ _id: { $in: showIds } })
+          .find({ _id: { $in: showIds } }, { projection: showProjection })
           .toArray() : []
       ]);
       
@@ -484,6 +729,8 @@ export async function getFlatRecentlyWatchedForUser({
           // Create the full episode object with show and season data
           const fullEpisodeObj = {
             ...show,
+            showId: show._id.toString(),
+            showTmdbId: show.metadata?.id || null,
             episode,
             seasons: [{
               ...season,
@@ -517,7 +764,8 @@ export async function getFlatRecentlyWatchedForUser({
       videoId: video.videoId,
       playbackTime: video.playbackTime,
       lastUpdated: video.lastUpdated,
-      normalizedVideoId: video.normalizedVideoId // Ensure this is preserved
+      normalizedVideoId: video.normalizedVideoId, // Ensure this is preserved
+      deviceInfo: video.deviceInfo // Include device information for admin display
     }));
     
     const lastWatched = [{
@@ -690,6 +938,8 @@ export async function processFlatWatchedDetails(lastWatched, movieMap, episodeMa
         // Create the TV show object in the format expected by sanitizeRecord
         const detailedTVShow = {
           id: episodeDetails._id?.toString() || episodeDetails.id,
+          showId: episodeDetails.episode.showId.toString() || null,
+          showTmdbId: episodeDetails.showTmdbId  || null,
           title: episodeDetails.title,
           showTitleFormatted: `${episodeDetails.title} S${episodeDetails.episode.seasonNumber?.toString().padStart(2, '0') || '01'}E${episodeDetails.episode.episodeNumber?.toString().padStart(2, '0') || '01'}`,
           seasonNumber: episodeDetails.episode.seasonNumber,
@@ -873,15 +1123,15 @@ export async function getFlatRecentlyAddedMedia({ page = 0, limit = 15, countOnl
           show.mediaLastModified = item.mediaLastModified
           
           // For TV device mode, include the most recent episode data for clip URL generation
-          if (shouldExposeAdditionalData) {
-            const recentEpisode = await db
-              .collection('FlatEpisodes')
-              .findOne({ _id: item.episodeId })
+          // if (shouldExposeAdditionalData) {
+          //   const recentEpisode = await db
+          //     .collection('FlatEpisodes')
+          //     .findOne({ _id: item.episodeId })
             
-            if (recentEpisode) {
-              show.episode = recentEpisode
-            }
-          }
+          //   if (recentEpisode) {
+          //     show.episode = recentEpisode
+          //   }
+          // }
         }
         
         return show
@@ -1295,7 +1545,7 @@ export async function getFlatRequestedMedia({
           }
           
           return result;
-        } 
+        }
         // Episode specified
         else {
           const episodeNumber = parseInt(episode.replace('Episode ', ''));
@@ -1401,7 +1651,7 @@ export async function getFlatRequestedMedia({
             result.hasNextEpisode = false;
           }
           
-          // Handle cast data
+          // Handle cast data - keep cast and guestStars separate
           if (tvShow.metadata?.cast) {
             const guestStars = episodeData.metadata?.guest_stars || [];
             const mainCast = tvShow.metadata.cast || [];
@@ -1409,14 +1659,12 @@ export async function getFlatRequestedMedia({
             // Create a map of guest stars for quick lookup
             const guestStarsMap = new Map(guestStars.map(star => [star.id, star]));
             
-            // Filter out guest stars from the main cast
+            // Filter out guest stars from the main cast to avoid duplicates
             const filteredMainCast = mainCast.filter(castMember => !guestStarsMap.has(castMember.id));
             
-            // Combine filtered main cast with guest stars
-            result.cast = [
-              ...filteredMainCast,
-              ...guestStars
-            ];
+            // Keep cast and guestStars separate
+            result.cast = filteredMainCast;
+            result.guestStars = guestStars;
           }
           
           if (Boolean(process.env.DEBUG) == true) {

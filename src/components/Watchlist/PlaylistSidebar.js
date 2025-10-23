@@ -5,6 +5,104 @@ import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
 import { SummaryStatsSkeleton, PlaylistListSkeleton } from './WatchlistSkeletons'
 
+// PlaylistItem component for rendering individual playlist items
+function PlaylistItem({
+  playlist,
+  selectedPlaylistId,
+  onPlaylistSelect,
+  onSharePlaylist,
+  onEditStart,
+  onDeleteClick,
+  isPublicView = false
+}) {
+  return (
+    <div
+      className={classNames(
+        'group relative rounded-lg p-3 cursor-pointer transition-colors',
+        selectedPlaylistId === playlist.id
+          ? 'bg-indigo-600 text-white'
+          : 'bg-gray-700 text-gray-300 hover:bg-gray-500'
+      )}
+      onClick={() => onPlaylistSelect(playlist.id)}
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center space-x-2">
+            <h3 className="font-medium truncate">{playlist.name}</h3>
+            {isPublicView && (
+              <svg className="w-4 h-4 flex-shrink-0 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            )}
+          </div>
+          {playlist.description && (
+            <p className="text-sm opacity-75 truncate">{playlist.description}</p>
+          )}
+          <div className="flex items-center space-x-2 mt-1">
+            <span className="text-xs opacity-75">{playlist.itemCount} items</span>
+            {playlist.privacy !== 'private' && !isPublicView && (
+              <span className="text-xs bg-gray-600 px-2 py-0.5 rounded">
+                {playlist.privacy}
+              </span>
+            )}
+            {isPublicView && playlist.ownerName && (
+              <span className="text-xs opacity-75">by {playlist.ownerName}</span>
+            )}
+          </div>
+        </div>
+
+        {/* Playlist Actions - only show for owned playlists */}
+        {playlist.isOwner && !isPublicView && onSharePlaylist && onEditStart && onDeleteClick && (
+          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onSharePlaylist(playlist.id)
+              }}
+              className="p-1 rounded hover:bg-gray-600"
+              title="Share playlist"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
+              </svg>
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onEditStart(playlist)
+              }}
+              className="p-1 rounded hover:bg-gray-600"
+              title="Edit playlist"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+              </svg>
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                onDeleteClick(playlist)
+              }}
+              className="p-1 rounded hover:bg-red-600"
+              title={playlist.isDefault ? "Clear all items" : "Delete playlist"}
+            >
+              {playlist.isDefault ? (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              )}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function PlaylistSidebar({
   playlists,
   playlistsLoading,
@@ -16,7 +114,9 @@ export default function PlaylistSidebar({
   onClearPlaylist,
   onSharePlaylist,
   summary,
-  summaryLoading
+  summaryLoading,
+  currentPlaylist,
+  onOpenManageRows // optional: open user modal to manage Show in App rows
 }) {
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingPlaylist, setEditingPlaylist] = useState(null)
@@ -97,12 +197,17 @@ export default function PlaylistSidebar({
     }
   }, [onDeletePlaylist])
 
-  // Find the default playlist from the database records
+  // Organize playlists into categories using API-provided flags
   const defaultPlaylist = playlists.find(p => p.isDefault) || playlists.find(p => p.id === 'default')
-  const customPlaylists = playlists.filter(p => !p.isDefault && p.id !== 'default')
   
-  // Arrange playlists with default first, then custom playlists
-  const allPlaylists = defaultPlaylist ? [defaultPlaylist, ...customPlaylists] : playlists
+  // Personal playlists (owned by user, not default)
+  const personalPlaylists = playlists.filter(p => p.isOwner && !p.isDefault && p.id !== 'default')
+  
+  // Shared playlists (user is collaborator, uses API flag)
+  const sharedPlaylists = playlists.filter(p => p.isCollaborator === true)
+  
+  // Public playlists from others (uses API flag)
+  const publicPlaylists = playlists.filter(p => p.isPublic === true)
 
   return (
     <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
@@ -148,6 +253,20 @@ export default function PlaylistSidebar({
           </svg>
           New Playlist
         </button>
+
+        {/* Manage App Rows button (per-user visibility) */}
+        {typeof onOpenManageRows === 'function' && (
+          <button
+            onClick={onOpenManageRows}
+            className="mt-2 w-full flex items-center justify-center px-4 py-2 bg-gray-700 text-white rounded-md hover:bg-gray-600 transition-colors"
+            title="Choose which playlists appear as rows on your home screen"
+          >
+            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+            </svg>
+            Manage App Rows
+          </button>
+        )}
       </div>
 
       {/* Playlist List */}
@@ -155,84 +274,92 @@ export default function PlaylistSidebar({
         {playlistsLoading ? (
           <PlaylistListSkeleton count={4} />
         ) : (
-          <div className="p-4 space-y-2">
-            {allPlaylists.map((playlist) => (
-            <div
-              key={playlist.id}
-              className={classNames(
-                'group relative rounded-lg p-3 cursor-pointer transition-colors',
-                selectedPlaylistId === playlist.id
-                  ? 'bg-indigo-600 text-white'
-                  : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
-              )}
-              onClick={() => onPlaylistSelect(playlist.id)}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex-1 min-w-0">
-                  <h3 className="font-medium truncate">{playlist.name}</h3>
-                  {playlist.description && (
-                    <p className="text-sm opacity-75 truncate">{playlist.description}</p>
-                  )}
-                  <div className="flex items-center space-x-2 mt-1">
-                    <span className="text-xs opacity-75">{playlist.itemCount} items</span>
-                    {playlist.privacy !== 'private' && (
-                      <span className="text-xs bg-gray-600 px-2 py-0.5 rounded">
-                        {playlist.privacy}
-                      </span>
-                    )}
-                  </div>
+          <div className="p-4 space-y-4">
+            {/* Default Playlist */}
+            {defaultPlaylist && (
+              <div>
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-1">
+                  Personal
+                </h3>
+                <div className="space-y-2">
+                  <PlaylistItem
+                    playlist={defaultPlaylist}
+                    selectedPlaylistId={selectedPlaylistId}
+                    onPlaylistSelect={onPlaylistSelect}
+                    onSharePlaylist={onSharePlaylist}
+                    onEditStart={handleEditStart}
+                    onDeleteClick={handleDeleteClick}
+                  />
                 </div>
-
-                {/* Playlist Actions */}
-                {playlist.isOwner && (
-                  <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onSharePlaylist(playlist.id)
-                      }}
-                      className="p-1 rounded hover:bg-gray-600"
-                      title="Share playlist"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleEditStart(playlist)
-                      }}
-                      className="p-1 rounded hover:bg-gray-600"
-                      title="Edit playlist"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                      </svg>
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        handleDeleteClick(playlist)
-                      }}
-                      className="p-1 rounded hover:bg-red-600"
-                      title={playlist.isDefault ? "Clear all items" : "Delete playlist"}
-                    >
-                      {playlist.isDefault ? (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      ) : (
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
-                      )}
-                    </button>
-                  </div>
-                )}
               </div>
-            </div>
-            ))}
+            )}
+            
+            {/* Personal Playlists */}
+            {personalPlaylists.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-1">
+                  My Playlists
+                </h3>
+                <div className="space-y-2">
+                  {personalPlaylists.map((playlist) => (
+                    <PlaylistItem
+                      key={playlist.id}
+                      playlist={playlist}
+                      selectedPlaylistId={selectedPlaylistId}
+                      onPlaylistSelect={onPlaylistSelect}
+                      onSharePlaylist={onSharePlaylist}
+                      onEditStart={handleEditStart}
+                      onDeleteClick={handleDeleteClick}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Shared Playlists */}
+            {sharedPlaylists.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-1">
+                  Shared With Me
+                </h3>
+                <div className="space-y-2">
+                  {sharedPlaylists.map((playlist) => (
+                    <PlaylistItem
+                      key={playlist.id}
+                      playlist={playlist}
+                      selectedPlaylistId={selectedPlaylistId}
+                      onPlaylistSelect={onPlaylistSelect}
+                      onSharePlaylist={onSharePlaylist}
+                      onEditStart={handleEditStart}
+                      onDeleteClick={handleDeleteClick}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Public Playlists */}
+            {publicPlaylists.length > 0 && (
+              <div>
+                <h3 className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2 px-1">
+                  Public Playlists
+                </h3>
+                <div className="space-y-2">
+                  {publicPlaylists.map((playlist) => (
+                    <PlaylistItem
+                      key={playlist.id}
+                      playlist={playlist}
+                      selectedPlaylistId={selectedPlaylistId}
+                      onPlaylistSelect={onPlaylistSelect}
+                      onSharePlaylist={null}
+                      onEditStart={null}
+                      onDeleteClick={null}
+                      isPublicView={true}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

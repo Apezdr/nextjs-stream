@@ -1,3 +1,4 @@
+// src/app/api/authenticated/horizontal-list/route.js
 import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
 import {
   getFlatPosters,
@@ -10,6 +11,8 @@ import { getRecommendations } from '@src/utils/recommendations'
 import { getFlatRecommendations } from '@src/utils/flatRecommendations'
 import { getFullImageUrl } from '@src/utils'
 import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
+// Watchlist playlist support
+import { getUserWatchlist, getPlaylistById, getMinimalCardDataForPlaylist, getPlaylistVisibility } from '@src/utils/watchlist'
 
 // Sorting functions
 const sortFunctions = {
@@ -39,6 +42,8 @@ export const GET = async (req) => {
   const isTVdevice = searchParams.get('isTVdevice') === 'true' ?? false
   const shouldExposeAdditionalData = isTVdevice ?? false
   const includeWatchHistory = searchParams.get('includeWatchHistory') === 'true'
+  // Playlist params (for type=playlist)
+  const playlistIdParam = searchParams.get('playlistId') || null
 
   let items = []
   let previousItem = null
@@ -57,12 +62,10 @@ export const GET = async (req) => {
           return await getFlatPosters('movie', false, pageNumber, limit, movieProjection)
         }
         case 'tv': {
-          // For TV devices, get TV shows with episode data for clipVideoURL generation
-          if (shouldExposeAdditionalData) {
-            return await getFlatTVShowsWithEpisodeData(authResult?.id, pageNumber, limit)
-          } else {
-            return await getFlatPosters('tv', false, pageNumber, limit)
-          }
+          // For regular TV show lists, always use getFlatPosters to show TV show posters/titles
+          // Episode targeting should only be used for recentlyWatched
+          const tvProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
+          return await getFlatPosters('tv', false, pageNumber, limit, tvProjection)
         }
         case 'recentlyWatched':
           return await getFlatRecentlyWatchedForUser({
@@ -70,6 +73,10 @@ export const GET = async (req) => {
             page: pageNumber,
             limit: limit,
             shouldExposeAdditionalData,
+            contextHints: {
+              isTVdevice: shouldExposeAdditionalData,
+              horizontalList: true
+            }
           })
         case 'recentlyAdded':
           return await getFlatRecentlyAddedMedia({
@@ -87,14 +94,55 @@ export const GET = async (req) => {
             shouldExposeAdditionalData
           )
           return recommendations.items || []
+        case 'playlist': {
+          if (!playlistIdParam) {
+            return []
+          }
+          
+          // Fetch playlist info first to get sorting preferences
+          let playlistInfo = null
+          try {
+            playlistInfo = await getPlaylistById(playlistIdParam)
+          } catch (e) {
+            console.error('Error fetching playlist info:', e)
+          }
+          
+          // Check user's visibility settings for this playlist to determine if they want to hide unavailable items
+          let hideUnavailable = false
+          try {
+            const visibility = await getPlaylistVisibility(authResult?.id, playlistIdParam)
+            hideUnavailable = visibility?.hideUnavailable ?? false
+          } catch (e) {
+            console.error('Error fetching playlist visibility:', e)
+            // Default to showing all content if visibility fetch fails
+          }
+          
+          // Get watchlist items based on user preference
+          // If hideUnavailable is true, filter to library-available items only
+          // If hideUnavailable is false (default), get all items (will be mixed in getFullMediaDocumentsForPlaylist)
+          const watchlistItems = await getUserWatchlist({
+            page: pageNumber,
+            limit: limit,
+            playlistId: playlistIdParam,
+            internalOnly: hideUnavailable  // Conditional filtering based on user preference
+          })
+          
+          // Get card media documents
+          // Pass playlist info to apply sorting preferences
+          // includeUnavailable is the inverse of hideUnavailable (if hide=true, include=false)
+          return await getMinimalCardDataForPlaylist(
+            watchlistItems,
+            playlistInfo,
+            !hideUnavailable  // Include unavailable items unless user wants to hide them
+          )
+        }
         case 'all':
         default: {
           const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
+          const tvProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
           const [moviePosters, tvPosters] = await Promise.all([
             getFlatPosters('movie', false, pageNumber, limit, movieProjection),
-            shouldExposeAdditionalData
-              ? getFlatTVShowsWithEpisodeData(authResult?.id, pageNumber, limit)
-              : getFlatPosters('tv', false, pageNumber, limit),
+            getFlatPosters('tv', false, pageNumber, limit, tvProjection),
           ])
           return [...moviePosters, ...tvPosters]
         }
@@ -105,63 +153,67 @@ export const GET = async (req) => {
     items = await fetchItemsForPage(page, itemsPerPage)
     if (items && items.length > 0) {
       // First sort the items
-      const sorted = items.sort(sortList)
+      // For playlist type, the DB already applies playlist-defined order, so skip additional sorting
+      const sorted = type === 'playlist' ? items : items.sort(sortList)
       
       // For recently added items, they're already sanitized with proper structure
       // For other item types that might not be fully sanitized, make sure thumbnails and posters are set for TV episodes
       if (type !== 'recentlyAdded') {
         for (const item of sorted) {
-          // Handle TV shows with episodeData (from getFlatTVShowsWithEpisodeData)
-          if (item.type === 'tv' && item.episodeData) {
-            // Extract season/episode numbers from episodeData to top level for clipVideoURL generation
-            if (item.episodeData.seasonNumber && !item.seasonNumber) {
-              item.seasonNumber = item.episodeData.seasonNumber;
+          // Only apply episode handling logic for recentlyWatched list type
+          if (type === 'recentlyWatched') {
+            // Handle TV shows with episodeData (from getFlatTVShowsWithEpisodeData)
+            if (item.type === 'tv' && item.episodeData) {
+              // Extract season/episode numbers from episodeData to top level for clipVideoURL generation
+              if (item.episodeData.seasonNumber && !item.seasonNumber) {
+                item.seasonNumber = item.episodeData.seasonNumber;
+              }
+              if (item.episodeData.episodeNumber && !item.episodeNumber) {
+                item.episodeNumber = item.episodeData.episodeNumber;
+              }
+              
+              // Use episode thumbnail as the posterURL for TV episodes
+              if (item.episodeData.thumbnail) {
+                item.posterURL = item.episodeData.thumbnail;
+                item.thumbnail = item.episodeData.thumbnail;
+              }
+              
+              if (item.episodeData.thumbnailBlurhash) {
+                item.thumbnailBlurhash = item.episodeData.thumbnailBlurhash;
+              }
             }
-            if (item.episodeData.episodeNumber && !item.episodeNumber) {
-              item.episodeNumber = item.episodeData.episodeNumber;
-            }
-            
-            // Use episode thumbnail as the posterURL for TV episodes
-            if (item.episodeData.thumbnail) {
-              item.posterURL = item.episodeData.thumbnail;
-              item.thumbnail = item.episodeData.thumbnail;
-            }
-            
-            if (item.episodeData.thumbnailBlurhash) {
-              item.thumbnailBlurhash = item.episodeData.thumbnailBlurhash;
-            }
-          }
-          // Handle TV shows with episode property (from other sources like recentlyWatched)
-          else if (item.type === 'tv' && item.episode) {
-            // Make sure episode has a thumbnail (use metadata still_path or fallback to posterURL)
-            if (!item.episode.thumbnail) {
-              item.episode.thumbnail =
-                (item.episode.metadata?.still_path ?
-                 getFullImageUrl(item.episode.metadata.still_path) :
-                 item.posterURL);
-            }
-            
-            // Use episode thumbnail as the posterURL for TV episodes
-            if (item.episode.thumbnail) {
-              item.posterURL = item.episode.thumbnail;
-              item.thumbnail = item.episode.thumbnail;
-            }
-            
-            if (item.episode.thumbnailBlurhash) {
-              item.thumbnailBlurhash = item.episode.thumbnailBlurhash;
-            }
-            
-            // Make sure episodeNumber is included at the top level
-            if (!item.episodeNumber && item.episode.episodeNumber) {
-              item.episodeNumber = item.episode.episodeNumber;
-            }
-            
-            // For TV devices, ensure videoURL is available at top level for clipVideoURL generation
-            if (shouldExposeAdditionalData && item.episode.videoURL && !item.videoURL) {
-              item.videoURL = item.episode.videoURL;
-              // Also ensure duration is available for clip generation
-              if (item.episode.duration && !item.duration) {
-                item.duration = item.episode.duration;
+            // Handle TV shows with episode property (from other sources like recentlyWatched)
+            else if (item.type === 'tv' && item.episode) {
+              // Make sure episode has a thumbnail (use metadata still_path or fallback to posterURL)
+              if (!item.episode.thumbnail) {
+                item.episode.thumbnail =
+                  (item.episode.metadata?.still_path ?
+                   getFullImageUrl(item.episode.metadata.still_path) :
+                   item.posterURL);
+              }
+              
+              // Use episode thumbnail as the posterURL for TV episodes
+              if (item.episode.thumbnail) {
+                item.posterURL = item.episode.thumbnail;
+                item.thumbnail = item.episode.thumbnail;
+              }
+              
+              if (item.episode.thumbnailBlurhash) {
+                item.thumbnailBlurhash = item.episode.thumbnailBlurhash;
+              }
+              
+              // Make sure episodeNumber is included at the top level
+              if (!item.episodeNumber && item.episode.episodeNumber) {
+                item.episodeNumber = item.episode.episodeNumber;
+              }
+              
+              // For TV devices, ensure videoURL is available at top level for clipVideoURL generation
+              if (shouldExposeAdditionalData && item.episode.videoURL && !item.videoURL) {
+                item.videoURL = item.episode.videoURL;
+                // Also ensure duration is available for clip generation
+                if (item.episode.duration && !item.duration) {
+                  item.duration = item.episode.duration;
+                }
               }
             }
           }
@@ -281,12 +333,30 @@ export const GET = async (req) => {
       }
     }
 
+    // For playlist type, also return the playlist metadata for client labeling if desired
+    let playlistMeta = null
+    if (type === 'playlist' && playlistIdParam) {
+      try {
+        const info = await getPlaylistById(playlistIdParam)
+        if (info) {
+          playlistMeta = {
+            id: info.id || playlistIdParam,
+            name: info.name,
+            description: info.description || null,
+            ownerId: info.ownerId || null,
+            privacy: info.privacy || null
+          }
+        }
+      } catch (_e) {}
+    }
+
     // Return the items along with previous and next items
     return new Response(
       JSON.stringify({
         currentItems: items,
         previousItem: previousItem || null,
         nextItem: nextItem || null,
+        playlist: playlistMeta
       }),
       {
         status: 200,

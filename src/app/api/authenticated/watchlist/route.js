@@ -17,6 +17,8 @@ import {
   validateWatchlistItem,
   validateWatchlistQuery,
   validatePlaylistData,
+  validatePlaylistVisibilityPayload,
+  validateComingSoonPayload,
   validateCollaborators,
   validateObjectId,
   WatchlistValidationError,
@@ -25,8 +27,23 @@ import {
   formatPlaylist,
   updatePlaylistSorting,
   updatePlaylistCustomOrder,
-  WATCHLIST_CONSTANTS
+  WATCHLIST_CONSTANTS,
+  findTMDBIdByMediaId,
+  // Per-user playlist visibility
+  listVisiblePlaylists,
+  getPlaylistVisibility,
+  setPlaylistVisibility,
+  bulkSetPlaylistVisibility,
+  resetVisibilityForPlaylist,
+  findUsersForAdmin,
+  // Coming Soon management
+  getComingSoonStatus,
+  setComingSoonStatus,
+  removeComingSoonStatus,
+  listAllComingSoon,
+  cleanExpiredComingSoon
 } from '@src/utils/watchlist/'
+import { ensureDefaultPlaylist, getPlaylistById } from '@src/utils/watchlist/database'
 
 /**
  * Rate limiting configuration
@@ -39,26 +56,53 @@ const ENABLE_RATE_LIMITING = false
  */
 function debugLog(message, data = null) {
   if (process.env.DEBUG === 'true') {
-    console.log(`[Watchlist API] ${message}`, data ? JSON.stringify(data, null, 2) : '')
+    let serialized = ''
+    if (data !== null && data !== undefined) {
+      try {
+        serialized = typeof data === 'string' ? data : JSON.stringify(data, null, 2)
+      } catch (_e) {
+        serialized = '[unserializable]'
+      }
+    }
+    console.log(`[Watchlist API] ${message}`, serialized)
   }
 }
 
 /**
  * Create standardized error response
  */
-function createErrorResponse(message, status = 400, details = null) {
-  const errorData = { error: message }
-  if (details) {
-    errorData.details = details
+function createErrorResponse(message, status = 400, details = null, error = null, code = null, field = null, extraHeaders = {}) {
+  const statusTextMap = {
+    400: 'Bad Request',
+    401: 'Unauthorized',
+    403: 'Forbidden',
+    404: 'Not Found',
+    409: 'Conflict',
+    422: 'Unprocessable Entity',
+    429: 'Too Many Requests',
+    500: 'Internal Server Error'
   }
-  
-  debugLog(`Error Response (${status}):`, errorData)
-  
+
+  const payload = {
+    success: false,
+    error: error || statusTextMap[status] || 'Error',
+    message
+  }
+
+  if (code) payload.code = code
+  if (field) payload.field = field
+  if (details !== null && details !== undefined) payload.details = details
+
+  debugLog(`Error Response (${status}):`, payload)
+
   return new Response(
-    JSON.stringify(errorData),
+    JSON.stringify(payload),
     {
       status,
-      headers: { 'Content-Type': 'application/json' }
+      headers: {
+        'Content-Type': 'application/json',
+        ...extraHeaders
+      }
     }
   )
 }
@@ -104,7 +148,8 @@ function applyRateLimit(req, operation = 'general') {
     updatePlaylist: { maxRequests: 100, windowMs: 60 * 60 * 1000 }, // 100 per hour (increased for sorting)
     deletePlaylist: { maxRequests: 5, windowMs: 60 * 60 * 1000 }, // 5 per hour
     sharePlaylist: { maxRequests: 10, windowMs: 60 * 60 * 1000 }, // 10 per hour
-    updateSorting: { maxRequests: 200, windowMs: 60 * 60 * 1000 } // 200 per hour for sorting operations
+    updateSorting: { maxRequests: 200, windowMs: 60 * 60 * 1000 }, // 200 per hour for sorting operations
+    comingSoon: { maxRequests: 50, windowMs: 60 * 60 * 1000 } // 50 per hour for coming soon operations
   }
 
   const config = rateLimitConfig[operation] || rateLimitConfig.general
@@ -112,19 +157,14 @@ function applyRateLimit(req, operation = 'general') {
   
   if (rateLimitResult.isLimited) {
     const headers = createRateLimitHeaders(rateLimitResult)
-    return new Response(
-      JSON.stringify({
-        error: 'Rate limit exceeded',
-        message: `Too many ${operation} requests. Please try again later.`,
-        retryAfter: rateLimitResult.retryAfter
-      }),
-      {
-        status: 429,
-        headers: {
-          'Content-Type': 'application/json',
-          ...headers
-        }
-      }
+    return createErrorResponse(
+      `Too many ${operation} requests. Please try again later.`,
+      429,
+      { retryAfter: rateLimitResult.retryAfter },
+      'Too Many Requests',
+      'RATE_LIMITED',
+      null,
+      headers
     )
   }
 
@@ -138,9 +178,14 @@ export async function POST(req) {
   debugLog('POST /watchlist - Request received')
   
   // Check authentication
-  const authResult = await isAuthenticatedEither(req)
+  let authResult
+  try {
+    authResult = await isAuthenticatedEither(req)
+  } catch (e) {
+    return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
+  }
   if (authResult instanceof Response) {
-    return authResult
+    return createErrorResponse('Authentication required', 401, null, 'Unauthorized', 'AUTH_REQUIRED')
   }
 
   // Parse URL to determine the specific operation
@@ -167,6 +212,10 @@ export async function POST(req) {
         return await handleBulkUpdateWatchlist(req, body, authResult)
       case 'move-items':
         return await handleMoveItemsToPlaylist(req, body, authResult)
+      case 'playlist-visibility-reset-all':
+        return await handleResetVisibilityForPlaylist(req, body, authResult)
+      case 'set-coming-soon':
+        return await handleSetComingSoon(req, body, authResult)
       default:
         return createErrorResponse(`Invalid action: ${action}`, 400)
     }
@@ -186,9 +235,14 @@ export async function GET(req) {
   debugLog('GET /watchlist - Request received')
   
   // Check authentication
-  const authResult = await isAuthenticatedEither(req)
+  let authResult
+  try {
+    authResult = await isAuthenticatedEither(req)
+  } catch (e) {
+    return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
+  }
   if (authResult instanceof Response) {
-    return authResult
+    return createErrorResponse('Authentication required', 401, null, 'Unauthorized', 'AUTH_REQUIRED')
   }
 
   // Parse URL parameters
@@ -205,8 +259,18 @@ export async function GET(req) {
         return await handleCheckWatchlistStatus(req, authResult)
       case 'playlists':
         return await handleGetPlaylists(req, authResult)
+      case 'playlist-by-id':
+        return await handleGetPlaylistById(req, authResult)
       case 'playlist-items':
         return await handleGetPlaylistItems(req, authResult)
+      case 'playlist-visibility':
+        return await handleGetPlaylistVisibility(req, authResult)
+      case 'playlist-visibility-list-users':
+        return await handleListUsersForVisibility(req, authResult)
+      case 'coming-soon-status':
+        return await handleGetComingSoonStatus(req, authResult)
+      case 'coming-soon-list':
+        return await handleListComingSoon(req, authResult)
       default:
         return createErrorResponse(`Invalid action: ${action}`, 400)
     }
@@ -223,9 +287,14 @@ export async function PUT(req) {
   debugLog('PUT /watchlist - Request received')
   
   // Check authentication
-  const authResult = await isAuthenticatedEither(req)
+  let authResult
+  try {
+    authResult = await isAuthenticatedEither(req)
+  } catch (e) {
+    return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
+  }
   if (authResult instanceof Response) {
-    return authResult
+    return createErrorResponse('Authentication required', 401, null, 'Unauthorized', 'AUTH_REQUIRED')
   }
 
   // Parse URL to determine the specific operation
@@ -245,6 +314,8 @@ export async function PUT(req) {
         return await handleUpdatePlaylistSorting(req, body, authResult)
       case 'update-playlist-order':
         return await handleUpdatePlaylistOrder(req, body, authResult)
+      case 'playlist-visibility':
+        return await handleSetPlaylistVisibility(req, body, authResult)
       default:
         return createErrorResponse(`Invalid action: ${action}`, 400)
     }
@@ -264,9 +335,14 @@ export async function DELETE(req) {
   debugLog('DELETE /watchlist - Request received')
   
   // Check authentication
-  const authResult = await isAuthenticatedEither(req)
+  let authResult
+  try {
+    authResult = await isAuthenticatedEither(req)
+  } catch (e) {
+    return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
+  }
   if (authResult instanceof Response) {
-    return authResult
+    return createErrorResponse('Authentication required', 401, null, 'Unauthorized', 'AUTH_REQUIRED')
   }
 
   // Parse URL to determine the specific operation
@@ -284,6 +360,8 @@ export async function DELETE(req) {
         return await handleBulkRemoveFromWatchlist(req, body, authResult)
       case 'delete-playlist':
         return await handleDeletePlaylist(req, authResult)
+      case 'remove-coming-soon':
+        return await handleRemoveComingSoon(req, authResult)
       default:
         return createErrorResponse(`Invalid action: ${action}`, 400)
     }
@@ -311,12 +389,31 @@ async function handleAddToWatchlist(req, body, user) {
   }
 
   try {
+    // Attempt to auto-resolve tmdbId from mediaId if needed
+    const url = new URL(req.url)
+    const mergedBody = { ...body }
+    if (!mergedBody.tmdbId) {
+      const mediaIdFromUrl = url.searchParams.get('mediaId')
+      const mediaIdCandidate = mergedBody.mediaId || mediaIdFromUrl
+      if (mediaIdCandidate) {
+        if (!mergedBody.mediaType) {
+          return createErrorResponse('mediaType is required when resolving tmdbId from mediaId', 400, { mediaId: mediaIdCandidate }, 'Bad Request', 'MISSING_MEDIA_TYPE')
+        }
+        const resolvedTmdbId = await findTMDBIdByMediaId(mediaIdCandidate, mergedBody.mediaType)
+        if (resolvedTmdbId) {
+          mergedBody.tmdbId = resolvedTmdbId
+        } else {
+          return createErrorResponse('tmdbId is required when mediaId cannot be resolved', 400, { mediaId: mediaIdCandidate }, 'Bad Request', 'MISSING_TMDB_ID')
+        }
+      }
+    }
+
     // Validate the item data
-    const validatedItem = validateWatchlistItem(body)
+    const validatedItem = validateWatchlistItem(mergedBody)
     debugLog('Validated item:', validatedItem)
 
     // Extract playlistId from the request body if present
-    const playlistId = body.playlistId || null
+    const playlistId = mergedBody.playlistId || null
     debugLog('Adding to playlist:', playlistId)
 
     // Add to watchlist with playlist context
@@ -336,14 +433,14 @@ async function handleAddToWatchlist(req, body, user) {
     
     if (error instanceof WatchlistValidationError) {
       const validationError = getValidationErrorResponse(error)
-      return createErrorResponse(validationError.message, validationError.status)
+      return createErrorResponse(validationError.message, validationError.status, null, 'Validation Error', 'VALIDATION_ERROR', validationError.field)
     }
     
     if (error.message.includes('already exists')) {
-      return createErrorResponse('Item already exists in this playlist', 409)
+      return createErrorResponse('Item already exists in this playlist', 409, null, 'Conflict', 'ALREADY_EXISTS')
     }
     
-    return createErrorResponse('Failed to add item to watchlist', 500, error.message)
+    return createErrorResponse('Failed to add item to watchlist', 500, error.message, 'Internal Server Error', 'INTERNAL_ERROR')
   }
 }
 
@@ -360,8 +457,34 @@ async function handleToggleWatchlist(req, body, user) {
   }
 
   try {
+    // Merge URL params with body to get complete item data
+    const url = new URL(req.url)
+    const mediaId = url.searchParams.get('mediaId')
+    const tmdbId = url.searchParams.get('tmdbId')
+    
+    const completeItemData = {
+      ...body,
+      mediaId: body.mediaId || mediaId,
+      tmdbId: body.tmdbId || (tmdbId ? parseInt(tmdbId) : undefined)
+    }
+    
+    // Attempt to auto-resolve tmdbId if missing but mediaId provided
+    if (!completeItemData.tmdbId && completeItemData.mediaId) {
+      if (!completeItemData.mediaType) {
+        return createErrorResponse('mediaType is required when resolving tmdbId from mediaId', 400, { mediaId: completeItemData.mediaId }, 'Bad Request', 'MISSING_MEDIA_TYPE')
+      }
+      const resolvedTmdbId = await findTMDBIdByMediaId(completeItemData.mediaId, completeItemData.mediaType)
+      if (resolvedTmdbId) {
+        completeItemData.tmdbId = resolvedTmdbId
+      } else {
+        return createErrorResponse('tmdbId is required when mediaId cannot be resolved', 400, { mediaId: completeItemData.mediaId }, 'Bad Request', 'MISSING_TMDB_ID')
+      }
+    }
+
+    debugLog('Complete item data for toggle:', completeItemData)
+    
     // Validate the item data
-    const validatedItem = validateWatchlistItem(body)
+    const validatedItem = validateWatchlistItem(completeItemData)
     debugLog('Validated item for toggle:', validatedItem)
 
     // Extract playlistId from the request body if present
@@ -392,10 +515,13 @@ async function handleToggleWatchlist(req, body, user) {
     
     if (error instanceof WatchlistValidationError) {
       const validationError = getValidationErrorResponse(error)
-      return createErrorResponse(validationError.message, validationError.status)
+      return createErrorResponse(validationError.message, validationError.status, null, 'Validation Error', 'VALIDATION_ERROR', validationError.field)
+    }
+    if (typeof error?.message === 'string' && error.message.includes('already exists')) {
+      return createErrorResponse('Item already exists in this playlist', 409, null, 'Conflict', 'ALREADY_EXISTS')
     }
     
-    return createErrorResponse('Failed to toggle watchlist status', 500, error.message)
+    return createErrorResponse('Failed to toggle watchlist status', 500, error.message, 'Internal Server Error', 'INTERNAL_ERROR')
   }
 }
 
@@ -675,18 +801,94 @@ async function handleGetPlaylists(req, user) {
     // Parse query parameters
     const url = new URL(req.url)
     const includeShared = url.searchParams.get('includeShared') !== 'false'
+    const showInAppOnly = url.searchParams.get('showInAppOnly') === 'true'
 
-    // Get playlists
-    const playlists = await getUserPlaylists({ includeShared })
-    
+    // Get all accessible playlists for this user
+    const allPlaylists = await getUserPlaylists({ includeShared })
+
+    if (!showInAppOnly) {
+      // Return all as before
+      return createSuccessResponse({
+        success: true,
+        playlists: allPlaylists.map(formatPlaylist)
+      }, 200, rateLimitResult.headers)
+    }
+
+    // When showInAppOnly=true: filter by user visibility preferences and sort by appOrder
+    const visible = await listVisiblePlaylists(user.id) // [{ playlistId, appOrder, appTitle }]
+    const visibleMap = new Map(visible.map(v => [v.playlistId, v]))
+
+    // Filter to those visible and accessible
+    const filtered = allPlaylists
+      .filter(p => visibleMap.has(p._id ? p._id.toString() : p.id))
+      .map(p => {
+        const pid = p._id ? p._id.toString() : p.id
+        const vis = visibleMap.get(pid)
+        const formatted = formatPlaylist(p)
+        // Apply title override if present
+        if (vis?.appTitle) {
+          formatted.name = vis.appTitle
+        }
+        // Attach appOrder for client sorting if needed
+        formatted.appOrder = typeof vis?.appOrder === 'number' ? vis.appOrder : 0
+        return formatted
+      })
+      .sort((a, b) => {
+        const ao = typeof a.appOrder === 'number' ? a.appOrder : 0
+        const bo = typeof b.appOrder === 'number' ? b.appOrder : 0
+        return ao - bo
+      })
+
     return createSuccessResponse({
       success: true,
-      playlists: playlists.map(formatPlaylist)
+      playlists: filtered
     }, 200, rateLimitResult.headers)
 
   } catch (error) {
     debugLog('Get playlists error:', error)
     return createErrorResponse('Failed to get playlists', 500, error.message)
+  }
+}
+
+/**
+ * Handle getting a single playlist by ID
+ */
+async function handleGetPlaylistById(req, user) {
+  debugLog('Handling get playlist by ID')
+  
+  // Apply rate limiting
+  const rateLimitResult = applyRateLimit(req, 'list')
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult
+  }
+
+  try {
+    // Parse query parameters
+    const url = new URL(req.url)
+    const playlistId = url.searchParams.get('playlistId')
+
+    if (!playlistId) {
+      return createErrorResponse('playlistId is required', 400)
+    }
+
+    // Validate playlist ID
+    validateObjectId(playlistId, 'playlistId')
+
+    // Get playlist by ID (includes public playlists)
+    const playlist = await getPlaylistById(playlistId)
+    
+    if (!playlist) {
+      return createErrorResponse('Playlist not found or not accessible', 404)
+    }
+
+    return createSuccessResponse({
+      success: true,
+      playlist: formatPlaylist(playlist)
+    }, 200, rateLimitResult.headers)
+
+  } catch (error) {
+    debugLog('Get playlist by ID error:', error)
+    return createErrorResponse('Failed to get playlist', 500, error.message)
   }
 }
 
@@ -727,22 +929,25 @@ async function handleGetPlaylistItems(req, user) {
       sortOrder
     })
 
-    // Get playlist metadata - all playlists are now database records
-    const playlists = await getUserPlaylists()
-    
+    // Get playlist metadata
+    // Use getPlaylistById which handles public playlists, not getUserPlaylists which only returns owned/shared
     let playlistInfo
     if (playlistId === 'default') {
-      // For 'default' playlistId, find the playlist with isDefault: true
+      // For 'default' playlistId, find the user's default playlist
+      const playlists = await getUserPlaylists()
       playlistInfo = playlists.find(p => p.isDefault === true)
       
       // If no default playlist found, create one
       if (!playlistInfo) {
-        const { ensureDefaultPlaylist } = await import('@src/utils/watchlist/')
         playlistInfo = await ensureDefaultPlaylist(user.id)
       }
     } else {
-      // For specific playlist IDs, find by ID
-      playlistInfo = playlists.find(p => p.id === playlistId)
+      // For specific playlist IDs, use getPlaylistById which includes public playlists
+      playlistInfo = await getPlaylistById(playlistId)
+      
+      if (!playlistInfo) {
+        return createErrorResponse('Playlist not found or not accessible', 404)
+      }
     }
     
     const formattedPlaylist = formatPlaylist(playlistInfo)
@@ -1164,5 +1369,368 @@ async function handleUpdatePlaylistOrder(req, body, user) {
     }
     
     return createErrorResponse('Failed to update playlist order', 500, error.message)
+  }
+}
+
+// ===== PLAYLIST VISIBILITY HANDLERS (PER-USER) =====
+
+function isAdminUser(user) {
+  return user?.role === 'admin'
+    || user?.role === 'Admin'
+    || user?.admin === true
+    || user?.isAdmin === true
+    || Array.isArray(user?.permissions) && user.permissions.includes('Admin')
+}
+
+/**
+ * GET handler: playlist-visibility
+ * - For regular users:
+ *    - ?playlistId=... -> returns single visibility doc for self
+ *    - otherwise -> returns listVisiblePlaylists for self
+ * - For admins:
+ *    - ?userId=... (and optional playlistId) -> fetch for target user
+ */
+async function handleGetPlaylistVisibility(req, user) {
+  // Rate limit as 'list'
+  const rateLimitResult = applyRateLimit(req, 'list')
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult
+  }
+
+  try {
+    const url = new URL(req.url)
+    const targetUserId = url.searchParams.get('userId') // admin only
+    const playlistId = url.searchParams.get('playlistId')
+
+    const admin = isAdminUser(user)
+    const effectiveUserId = admin && targetUserId ? targetUserId : user.id
+
+    if (playlistId) {
+      // Single visibility for playlist
+      try {
+        validateObjectId(playlistId, 'playlistId')
+      } catch (e) {
+        return createErrorResponse('Invalid playlistId', 400, null, 'Validation Error', 'INVALID_PLAYLIST_ID')
+      }
+      const vis = await getPlaylistVisibility(effectiveUserId, playlistId)
+      return createSuccessResponse({
+        success: true,
+        visibility: vis
+      }, 200, rateLimitResult.headers)
+    }
+
+    // List visible playlists for the user
+    const list = await listVisiblePlaylists(effectiveUserId)
+    return createSuccessResponse({
+      success: true,
+      visibility: list
+    }, 200, rateLimitResult.headers)
+  } catch (error) {
+    debugLog('Get playlist visibility error:', error)
+    return createErrorResponse('Failed to fetch playlist visibility', 500, error.message)
+  }
+}
+
+/**
+ * PUT handler: playlist-visibility
+ * - Regular users: set for themselves (requires playlistId)
+ * - Admins: may target userId or usersById[]
+ * Payload: { playlistId, showInApp?, appOrder?, appTitle?, userId?, usersById? }
+ */
+async function handleSetPlaylistVisibility(req, body, user) {
+  // Rate limit as 'updatePlaylist'
+  const rateLimitResult = applyRateLimit(req, 'updatePlaylist')
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult
+  }
+
+  try {
+    const { playlistId, userId: targetUserId, usersById } = body || {}
+
+    if (!playlistId) {
+      return createErrorResponse('playlistId is required', 400)
+    }
+
+    try {
+      validateObjectId(playlistId, 'playlistId')
+    } catch (e) {
+      return createErrorResponse('Invalid playlistId', 400, null, 'Validation Error', 'INVALID_PLAYLIST_ID')
+    }
+
+    // Validate payload fields
+    let validatedPayload
+    try {
+      validatedPayload = validatePlaylistVisibilityPayload(body || {})
+    } catch (e) {
+      const ve = getValidationErrorResponse(e)
+      return createErrorResponse(ve.message, ve.status, null, 'Validation Error', 'VALIDATION_ERROR', ve.field)
+    }
+
+    const admin = isAdminUser(user)
+
+    // Admin bulk targeting
+    if (admin && (Array.isArray(usersById) || typeof targetUserId === 'string')) {
+      const targets = []
+      if (Array.isArray(usersById)) {
+        for (const id of usersById) {
+          try {
+            validateObjectId(id, 'userId')
+            targets.push(id)
+          } catch (_e) {
+            // skip invalid ids
+          }
+        }
+      }
+      if (typeof targetUserId === 'string') {
+        try {
+          validateObjectId(targetUserId, 'userId')
+          targets.push(targetUserId)
+        } catch (_e) {
+          // ignore invalid
+        }
+      }
+
+      if (targets.length === 0) {
+        return createErrorResponse('No valid user targets provided', 400)
+      }
+
+      const result = await bulkSetPlaylistVisibility(playlistId, targets, validatedPayload)
+      return createSuccessResponse({
+        success: true,
+        message: 'Visibility updated for target users',
+        result
+      }, 200, rateLimitResult.headers)
+    }
+
+    // Self-service (regular user)
+    await setPlaylistVisibility(user.id, playlistId, validatedPayload)
+    return createSuccessResponse({
+      success: true,
+      message: 'Visibility updated'
+    }, 200, rateLimitResult.headers)
+  } catch (error) {
+    debugLog('Set playlist visibility error:', error)
+    return createErrorResponse('Failed to update playlist visibility', 500, error.message)
+  }
+}
+
+/**
+ * GET handler: playlist-visibility-list-users (admin only)
+ * Query: search, page, limit
+ */
+async function handleListUsersForVisibility(req, user) {
+  const rateLimitResult = applyRateLimit(req, 'list')
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult
+  }
+
+  try {
+    if (!isAdminUser(user)) {
+      return createErrorResponse('Forbidden', 403, null, 'Forbidden', 'FORBIDDEN')
+    }
+
+    const url = new URL(req.url)
+    const search = url.searchParams.get('search') || ''
+    const page = parseInt(url.searchParams.get('page') || '0')
+    const limit = parseInt(url.searchParams.get('limit') || '20')
+
+    const result = await findUsersForAdmin({ search, page, limit })
+
+    return createSuccessResponse({
+      success: true,
+      ...result
+    }, 200, rateLimitResult.headers)
+  } catch (error) {
+    debugLog('List users for visibility error:', error)
+    return createErrorResponse('Failed to list users', 500, error.message)
+  }
+}
+
+/**
+ * POST handler: playlist-visibility-reset-all (admin only)
+ * Body: { playlistId }
+ */
+async function handleResetVisibilityForPlaylist(req, body, user) {
+  const rateLimitResult = applyRateLimit(req, 'updatePlaylist')
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult
+  }
+
+  try {
+    if (!isAdminUser(user)) {
+      return createErrorResponse('Forbidden', 403, null, 'Forbidden', 'FORBIDDEN')
+    }
+
+    const { playlistId } = body || {}
+    if (!playlistId) {
+      return createErrorResponse('playlistId is required', 400)
+    }
+    try {
+      validateObjectId(playlistId, 'playlistId')
+    } catch (e) {
+      return createErrorResponse('Invalid playlistId', 400, null, 'Validation Error', 'INVALID_PLAYLIST_ID')
+    }
+
+    const result = await resetVisibilityForPlaylist(playlistId)
+    return createSuccessResponse({
+      success: true,
+      message: 'Visibility reset for all users',
+      result
+    }, 200, rateLimitResult.headers)
+  } catch (error) {
+    debugLog('Reset visibility for playlist error:', error)
+    return createErrorResponse('Failed to reset playlist visibility', 500, error.message)
+  }
+}
+
+// ===== COMING SOON HANDLERS (ADMIN) =====
+
+/**
+ * GET handler: coming-soon-status
+ * Get "Coming Soon" status for a specific TMDB item
+ * Query params: tmdbId, mediaType
+ */
+async function handleGetComingSoonStatus(req, user) {
+  const rateLimitResult = applyRateLimit(req, 'comingSoon')
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult
+  }
+
+  try {
+    const url = new URL(req.url)
+    const tmdbId = url.searchParams.get('tmdbId')
+    const mediaType = url.searchParams.get('mediaType')
+
+    if (!tmdbId || !mediaType) {
+      return createErrorResponse('tmdbId and mediaType are required', 400)
+    }
+
+    const status = await getComingSoonStatus(parseInt(tmdbId), mediaType)
+
+    return createSuccessResponse({
+      success: true,
+      comingSoon: status
+    }, 200, rateLimitResult.headers)
+  } catch (error) {
+    debugLog('Get coming soon status error:', error)
+    return createErrorResponse('Failed to get coming soon status', 500, error.message)
+  }
+}
+
+/**
+ * GET handler: coming-soon-list (admin only)
+ * List all "Coming Soon" items with pagination
+ * Query params: page, limit, mediaType, sortBy, sortOrder
+ */
+async function handleListComingSoon(req, user) {
+  const rateLimitResult = applyRateLimit(req, 'list')
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult
+  }
+
+  try {
+    if (!isAdminUser(user)) {
+      return createErrorResponse('Forbidden', 403, null, 'Forbidden', 'FORBIDDEN')
+    }
+
+    const url = new URL(req.url)
+    const page = parseInt(url.searchParams.get('page') || '0')
+    const limit = parseInt(url.searchParams.get('limit') || '50')
+    const mediaType = url.searchParams.get('mediaType')
+    const sortBy = url.searchParams.get('sortBy') || 'setAt'
+    const sortOrder = url.searchParams.get('sortOrder') || 'desc'
+
+    const result = await listAllComingSoon({ page, limit, mediaType, sortBy, sortOrder })
+
+    return createSuccessResponse({
+      success: true,
+      ...result
+    }, 200, rateLimitResult.headers)
+  } catch (error) {
+    debugLog('List coming soon error:', error)
+    return createErrorResponse('Failed to list coming soon items', 500, error.message)
+  }
+}
+
+/**
+ * POST handler: set-coming-soon (admin only)
+ * Set "Coming Soon" status for a TMDB item
+ * Body: { tmdbId, mediaType, comingSoonDate?, notes? }
+ */
+async function handleSetComingSoon(req, body, user) {
+  const rateLimitResult = applyRateLimit(req, 'comingSoon')
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult
+  }
+
+  try {
+    if (!isAdminUser(user)) {
+      return createErrorResponse('Forbidden', 403, null, 'Forbidden', 'FORBIDDEN')
+    }
+
+    // Validate payload
+    let validatedPayload
+    try {
+      validatedPayload = validateComingSoonPayload(body || {})
+    } catch (e) {
+      const ve = getValidationErrorResponse(e)
+      return createErrorResponse(ve.message, ve.status, null, 'Validation Error', 'VALIDATION_ERROR', ve.field)
+    }
+
+    // Set coming soon status with admin info
+    const result = await setComingSoonStatus({
+      ...validatedPayload,
+      setBy: user.id,
+      setByUsername: user.name || user.email || 'Admin'
+    })
+
+    return createSuccessResponse({
+      success: true,
+      message: 'Coming soon status set successfully',
+      result
+    }, 200, rateLimitResult.headers)
+  } catch (error) {
+    debugLog('Set coming soon error:', error)
+    return createErrorResponse('Failed to set coming soon status', 500, error.message)
+  }
+}
+
+/**
+ * DELETE handler: remove-coming-soon (admin only)
+ * Remove "Coming Soon" status for a TMDB item
+ * Query params: tmdbId, mediaType
+ */
+async function handleRemoveComingSoon(req, user) {
+  const rateLimitResult = applyRateLimit(req, 'comingSoon')
+  if (rateLimitResult instanceof Response) {
+    return rateLimitResult
+  }
+
+  try {
+    if (!isAdminUser(user)) {
+      return createErrorResponse('Forbidden', 403, null, 'Forbidden', 'FORBIDDEN')
+    }
+
+    const url = new URL(req.url)
+    const tmdbId = url.searchParams.get('tmdbId')
+    const mediaType = url.searchParams.get('mediaType')
+
+    if (!tmdbId || !mediaType) {
+      return createErrorResponse('tmdbId and mediaType are required', 400)
+    }
+
+    const success = await removeComingSoonStatus(parseInt(tmdbId), mediaType)
+
+    if (success) {
+      return createSuccessResponse({
+        success: true,
+        message: 'Coming soon status removed successfully'
+      }, 200, rateLimitResult.headers)
+    } else {
+      return createErrorResponse('Coming soon status not found', 404)
+    }
+  } catch (error) {
+    debugLog('Remove coming soon error:', error)
+    return createErrorResponse('Failed to remove coming soon status', 500, error.message)
   }
 }

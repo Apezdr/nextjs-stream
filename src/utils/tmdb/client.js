@@ -162,11 +162,11 @@ export async function searchMedia(query, type = 'movie', options = {}) {
     throw new TMDBError('Type must be "movie" or "tv"')
   }
 
-  return await makeRequest('/search', {
+  return await makeRequest(`/search/${type}`, {
     params: {
-      type,
       query: query.trim(),
-      page
+      page,
+      blurhash: 'true'
     }
   })
 }
@@ -186,7 +186,12 @@ export async function getMediaDetails(mediaId, type) {
     throw new TMDBError('Type must be "movie" or "tv"')
   }
 
-  return await makeRequest(`/details/${type}/${mediaId}`)
+  const params = {
+    tmdb_id: mediaId,
+    blurhash: 'true'
+  }
+
+  return await makeRequest(`/details/${type}`, { params })
 }
 
 /**
@@ -201,12 +206,16 @@ export async function getCollectionDetails(collectionId, options = {}) {
     throw new TMDBError('Valid collection ID is required')
   }
 
-  const params = {}
+  const params = {
+    tmdb_id: collectionId,
+    blurhash: 'true'
+  }
+  
   if (options.enhanced) {
     params.enhanced = 'true'
   }
 
-  return await makeRequest(`/collection/${collectionId}`, { params })
+  return await makeRequest('/collection', { params })
 }
 
 /**
@@ -224,9 +233,11 @@ export async function getEnhancedMediaDetails(mediaId, type) {
     throw new TMDBError('Type must be "movie" or "tv"')
   }
 
-  return await makeRequest(`/details/${type}/${mediaId}`, {
+  return await makeRequest(`/comprehensive/${type}`, {
     params: {
-      append_to_response: 'credits,videos,images'
+      tmdb_id: mediaId,
+      append_to_response: 'credits,videos,images',
+      blurhash: 'true'
     }
   })
 }
@@ -245,7 +256,8 @@ export async function searchCollections(query, page = 1) {
   return await makeRequest('/search/collection', {
     params: {
       query: query.trim(),
-      page
+      page,
+      blurhash: 'true'
     }
   })
 }
@@ -260,7 +272,12 @@ export async function getCollectionImages(collectionId) {
     throw new TMDBError('Valid collection ID is required')
   }
 
-  return await makeRequest(`/collection/${collectionId}/images`)
+  return await makeRequest('/images/collection', {
+    params: {
+      tmdb_id: collectionId,
+      blurhash: 'true'
+    }
+  })
 }
 
 /**
@@ -282,7 +299,9 @@ export async function getComprehensiveDetails(options) {
     throw new TMDBError('Type must be "movie" or "tv"')
   }
 
-  const params = {}
+  const params = {
+    blurhash: 'true'
+  }
   if (name) params.name = name
   if (tmdbId) params.tmdb_id = tmdbId
 
@@ -304,7 +323,11 @@ export async function getCast(mediaId, type) {
     throw new TMDBError('Type must be "movie" or "tv"')
   }
 
-  return await makeRequest(`/cast/${type}/${mediaId}`)
+  return await makeRequest(`/cast/${type}`, {
+    params: {
+      tmdb_id: mediaId
+    }
+  })
 }
 
 /**
@@ -322,7 +345,11 @@ export async function getVideos(mediaId, type) {
     throw new TMDBError('Type must be "movie" or "tv"')
   }
 
-  return await makeRequest(`/videos/${type}/${mediaId}`)
+  return await makeRequest(`/videos/${type}`, {
+    params: {
+      tmdb_id: mediaId
+    }
+  })
 }
 
 /**
@@ -340,7 +367,12 @@ export async function getImages(mediaId, type) {
     throw new TMDBError('Type must be "movie" or "tv"')
   }
 
-  return await makeRequest(`/images/${type}/${mediaId}`)
+  return await makeRequest(`/images/${type}`, {
+    params: {
+      tmdb_id: mediaId,
+      blurhash: 'true'
+    }
+  })
 }
 
 /**
@@ -358,7 +390,11 @@ export async function getRating(mediaId, type) {
     throw new TMDBError('Type must be "movie" or "tv"')
   }
 
-  return await makeRequest(`/rating/${type}/${mediaId}`)
+  return await makeRequest(`/rating/${type}`, {
+    params: {
+      tmdb_id: mediaId
+    }
+  })
 }
 
 /**
@@ -381,7 +417,14 @@ export async function getEpisodeDetails(showId, season, episode) {
     throw new TMDBError('Valid episode number is required')
   }
 
-  return await makeRequest(`/episode/${showId}/${season}/${episode}`)
+  return await makeRequest('/episode', {
+    params: {
+      tmdb_id: showId,
+      season: season,
+      episode: episode,
+      blurhash: 'true'
+    }
+  })
 }
 
 /**
@@ -404,7 +447,14 @@ export async function getEpisodeImages(showId, season, episode) {
     throw new TMDBError('Valid episode number is required')
   }
 
-  return await makeRequest(`/episode/${showId}/${season}/${episode}/images`)
+  const params = {
+    tmdb_id: showId,
+    season: season,
+    episode: episode,
+    blurhash: 'true'
+  }
+
+  return await makeRequest('/episode/images', { params })
 }
 
 /**

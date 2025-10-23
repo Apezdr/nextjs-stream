@@ -26,6 +26,9 @@ import { syncBlurhashData } from './blurhashSync';
 import { validatePlaybackStatusAgainstDatabase } from './playbackStatusValidation';
 // Import notification system
 import { MediaNotificationOrchestrator } from '../notifications/MediaNotificationOrchestrator';
+// Import feature flag utilities and new architecture adapter
+import { shouldUseNewArchitecture, logFeatureFlagDecision } from '../sync/featureFlags';
+import { syncWithNewArchitecture, validateNewArchitectureCompatibility } from './newArchitectureAdapter';
 
 /**
  * Process new content notifications after sync operations
@@ -55,10 +58,58 @@ async function processNewContentNotifications(syncResults, options = {}) {
  * @param {Object} fieldAvailability - Field availability map
  * @param {boolean} skipInitialization - Skip database initialization (default: false)
  * @param {boolean} forceSync - Force sync even if hashes match (default: false)
+ * @param {Object} options - Additional options
+ * @param {boolean} options.useNewArchitecture - Force use of new architecture (overrides feature flag)
+ * @param {boolean} options.forceOldArchitecture - Force use of old architecture (overrides feature flag)
  * @returns {Promise<Object>} Sync results
  */
-export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailability, skipInitialization = false, forceSync = false) {
+export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailability, skipInitialization = false, forceSync = false, options = {}) {
   console.log(chalk.bold.green(`Starting sync to flat structure for server ${serverConfig.id}...`));
+
+  // Check feature flag to determine which architecture to use
+  const useNewArchitecture = shouldUseNewArchitecture({
+    forceNew: options.useNewArchitecture,
+    forceOld: options.forceOldArchitecture
+  });
+
+  logFeatureFlagDecision('syncToFlatStructure', useNewArchitecture, 
+    options.useNewArchitecture ? 'runtime override' : 
+    options.forceOldArchitecture ? 'forced old architecture' : 'environment/default');
+
+  // If using new architecture, delegate to the adapter
+  if (useNewArchitecture) {
+    try {
+      // Validate compatibility first
+      const validation = validateNewArchitectureCompatibility(fileServer, serverConfig);
+      
+      if (!validation.isCompatible) {
+        console.warn(chalk.yellow('⚠️  New architecture compatibility issues detected:'));
+        validation.errors.forEach(error => console.warn(chalk.yellow(`   - ${error}`)));
+        console.warn(chalk.yellow('   Falling back to old architecture...'));
+        logFeatureFlagDecision('syncToFlatStructure', false, 'compatibility fallback');
+      } else {
+        // Show compatibility warnings
+        if (validation.warnings.length > 0) {
+          console.warn(chalk.yellow('⚠️  New architecture warnings:'));
+          validation.warnings.forEach(warning => console.warn(chalk.yellow(`   - ${warning}`)));
+        }
+
+        // Use new architecture
+        console.log(chalk.bold.cyan('🆕 Delegating to NEW domain-driven sync architecture...'));
+        return await syncWithNewArchitecture(fileServer, serverConfig, fieldAvailability, {
+          forceSync,
+          skipInitialization
+        });
+      }
+    } catch (error) {
+      console.error(chalk.red('❌ New architecture failed, falling back to old sync:'), error);
+      logFeatureFlagDecision('syncToFlatStructure', false, 'error fallback');
+      // Continue with old architecture below
+    }
+  }
+
+  // Continue with original flat sync implementation
+  console.log(chalk.bold.blue('🔄 Using ORIGINAL flat sync architecture...'));
 
   // Track performance
   const startTime = performance.now();

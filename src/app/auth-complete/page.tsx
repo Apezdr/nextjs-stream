@@ -117,7 +117,7 @@ export default async function AuthCompletePage({
         <p style={{ fontSize: '18px', marginBottom: '16px' }}>
           {errorMessage 
             ? `Error: ${errorMessage}`
-            : 'You can now return to the TV app.'}
+            : 'You can now return to the app.'}
         </p>
         
         <p style={{ fontSize: '16px', color: '#666' }}>

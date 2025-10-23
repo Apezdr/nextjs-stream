@@ -2,6 +2,8 @@ import { auth } from '@src/lib/auth'
 import { adminUserEmails } from '@src/utils/config'
 import { Fragment, lazy, Suspense } from 'react'
 import Nav from '@components/Navigation/Nav'
+import TVAppsNotification from '@src/components/system/TVAppsNotification'
+import TVAppsFooter from '@src/components/system/TVAppsFooter'
 const ShouldRenderContent = lazy(() => import('@components/HOC/ShouldRenderContent'))
 const BannerWithVideoContainer = lazy(() => import('@components/Landing/BannerWithVideoContainer'))
 
@@ -40,6 +42,9 @@ export default async function ListLayout({ children }) {
     : []
   return (
     <Fragment>
+      {/* TV Apps notification banner */}
+      <TVAppsNotification />
+      
       {!email ? null : (
         <div className="relative">
           <div className="w-full h-auto flex flex-col items-center justify-center text-center z-[3]">
@@ -56,6 +61,9 @@ export default async function ListLayout({ children }) {
         </div>
       )}
       {children}
+      
+      {/* TV Apps footer */}
+      {email && <TVAppsFooter />}
     </Fragment>
   )
 }

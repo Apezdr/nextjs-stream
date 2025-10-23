@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
@@ -17,16 +18,27 @@ export default function WatchlistCard({
   onItemRemoved,
   onItemMoved,
   onShowMoveModal,
+  onShowCopyModal,
   currentPlaylist,
   playlists,
   api,
+  canEditPlaylist = true,
   isNavigating = false,
   isOtherNavigating = false,
-  onNavigationStart
+  onNavigationStart,
+  user = null
 }) {
   const [showActions, setShowActions] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [showComingSoonModal, setShowComingSoonModal] = useState(false)
+  const [comingSoonForm, setComingSoonForm] = useState({
+    comingSoonDate: '',
+    notes: ''
+  })
   const router = useRouter()
+
+  // Check if user is admin
+  const isAdmin = user?.role === 'admin' || user?.admin || user?.permissions?.includes('Admin')
 
   // Custom navigation handler
   const handleNavigationClick = useCallback((url) => {
@@ -73,6 +85,13 @@ export default function WatchlistCard({
     }
   }, [item, onShowMoveModal])
 
+  const handleShowCopyModal = useCallback(() => {
+    if (onShowCopyModal) {
+      onShowCopyModal(item)
+      setShowActions(false)
+    }
+  }, [item, onShowCopyModal])
+
   const formatDate = useCallback((dateString) => {
     if (!dateString) return ''
     try {
@@ -93,6 +112,58 @@ export default function WatchlistCard({
     if (rating >= 6) return 'text-yellow-400'
     return 'text-red-400'
   }, [])
+
+  const handleSetComingSoon = useCallback(async () => {
+    try {
+      const payload = {
+        tmdbId: item.tmdbId,
+        mediaType: item.mediaType
+      }
+      
+      if (comingSoonForm.comingSoonDate) {
+        payload.comingSoonDate = comingSoonForm.comingSoonDate
+      }
+      
+      if (comingSoonForm.notes?.trim()) {
+        payload.notes = comingSoonForm.notes.trim()
+      }
+
+      await fetch('/api/authenticated/watchlist?action=set-coming-soon', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      })
+
+      toast.success('Marked as "Coming Soon"')
+      setShowComingSoonModal(false)
+      setComingSoonForm({ comingSoonDate: '', notes: '' })
+      onRefresh()
+    } catch (error) {
+      console.error('Error setting coming soon:', error)
+      toast.error('Failed to set coming soon status')
+    }
+  }, [item.tmdbId, item.mediaType, comingSoonForm, onRefresh])
+
+  const handleRemoveComingSoon = useCallback(async () => {
+    if (window.confirm(`Remove "Coming Soon" status from "${item.title}"?`)) {
+      try {
+        const response = await fetch(
+          `/api/authenticated/watchlist?action=remove-coming-soon&tmdbId=${item.tmdbId}&mediaType=${item.mediaType}`,
+          { method: 'DELETE' }
+        )
+
+        if (!response.ok) {
+          throw new Error('Failed to remove coming soon status')
+        }
+
+        toast.success('Coming soon status removed')
+        onRefresh()
+      } catch (error) {
+        console.error('Error removing coming soon:', error)
+        toast.error('Failed to remove coming soon status')
+      }
+    }
+  }, [item.tmdbId, item.mediaType, item.title, onRefresh])
 
   // Loading overlay component
   const LoadingOverlay = () => (
@@ -216,21 +287,60 @@ export default function WatchlistCard({
                 {showActions && (
                   <div className="absolute right-0 mt-2 w-48 bg-gray-700 rounded-md shadow-lg z-10">
                     <div className="py-1">
+                      {/* Copy to playlist - always available */}
                       <button
-                        onClick={handleShowMoveModal}
+                        onClick={handleShowCopyModal}
                         className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
                       >
-                        Move to playlist
+                        Copy to playlist
                       </button>
-                      <button
-                        onClick={() => {
-                          handleRemove()
-                          setShowActions(false)
-                        }}
-                        className="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-600"
-                      >
-                        Remove from watchlist
-                      </button>
+                      {/* Move and Remove - only for users with edit permissions */}
+                      {canEditPlaylist && (
+                        <>
+                          <button
+                            onClick={handleShowMoveModal}
+                            className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
+                          >
+                            Move to playlist
+                          </button>
+                          <button
+                            onClick={() => {
+                              handleRemove()
+                              setShowActions(false)
+                            }}
+                            className="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-600"
+                          >
+                            Remove from watchlist
+                          </button>
+                        </>
+                      )}
+                      {/* Admin-only Coming Soon controls - only for unavailable items */}
+                      {isAdmin && !item.isAvailable && (
+                        <>
+                          <div className="border-t border-gray-600 my-1"></div>
+                          {item.comingSoon ? (
+                            <button
+                              onClick={() => {
+                                handleRemoveComingSoon()
+                                setShowActions(false)
+                              }}
+                              className="block w-full text-left px-4 py-2 text-sm text-orange-400 hover:bg-gray-600"
+                            >
+                              Remove "Coming Soon"
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => {
+                                setShowComingSoonModal(true)
+                                setShowActions(false)
+                              }}
+                              className="block w-full text-left px-4 py-2 text-sm text-blue-400 hover:bg-gray-600"
+                            >
+                              Mark as "Coming Soon"
+                            </button>
+                          )}
+                        </>
+                      )}
                     </div>
                   </div>
                 )}
@@ -387,23 +497,146 @@ export default function WatchlistCard({
       {showActions && (
         <div className="absolute top-24 right-2 w-48 bg-gray-700 rounded-md shadow-lg z-10">
           <div className="py-1">
+            {/* Copy to playlist - always available */}
             <button
-              onClick={handleShowMoveModal}
+              onClick={handleShowCopyModal}
               className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
             >
-              Move to playlist
+              Copy to playlist
             </button>
-            <button
-              onClick={() => {
-                handleRemove()
-                setShowActions(false)
-              }}
-              className="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-600"
-            >
-              Remove from watchlist
-            </button>
+            {/* Move and Remove - only for users with edit permissions */}
+            {canEditPlaylist && (
+              <>
+                <button
+                  onClick={handleShowMoveModal}
+                  className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
+                >
+                  Move to playlist
+                </button>
+                <button
+                  onClick={() => {
+                    handleRemove()
+                    setShowActions(false)
+                  }}
+                  className="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-600"
+                >
+                  Remove from watchlist
+                </button>
+              </>
+            )}
+            {/* Admin-only Coming Soon controls - only for unavailable items */}
+            {isAdmin && !item.isAvailable && (
+              <>
+                <div className="border-t border-gray-600 my-1"></div>
+                {item.comingSoon ? (
+                  <button
+                    onClick={() => {
+                      handleRemoveComingSoon()
+                      setShowActions(false)
+                    }}
+                    className="block w-full text-left px-4 py-2 text-sm text-orange-400 hover:bg-gray-600"
+                  >
+                    Remove "Coming Soon"
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setShowComingSoonModal(true)
+                      setShowActions(false)
+                    }}
+                    className="block w-full text-left px-4 py-2 text-sm text-blue-400 hover:bg-gray-600"
+                  >
+                    Mark as "Coming Soon"
+                  </button>
+                )}
+              </>
+            )}
           </div>
         </div>
+      )}
+
+      {/* Coming Soon Modal (Admin only) - Render using portal to escape card container */}
+      {showComingSoonModal && typeof document !== 'undefined' && createPortal(
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setShowComingSoonModal(false)
+              setComingSoonForm({ comingSoonDate: '', notes: '' })
+            }
+          }}
+        >
+          <div
+            className="bg-gray-800 rounded-lg p-6 w-96 max-w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-lg font-semibold text-white mb-4">
+              Mark "{item.title}" as Coming Soon
+            </h3>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Expected Date (Optional)
+                </label>
+                <input
+                  type="date"
+                  value={comingSoonForm.comingSoonDate}
+                  onChange={(e) => setComingSoonForm(prev => ({ ...prev, comingSoonDate: e.target.value }))}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  When do you expect this content to be available?
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1">
+                  Notes (Optional)
+                </label>
+                <textarea
+                  value={comingSoonForm.notes}
+                  onChange={(e) => setComingSoonForm(prev => ({ ...prev, notes: e.target.value }))}
+                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  placeholder="E.g., Scheduled via Radarr, Coming to Netflix..."
+                  rows={3}
+                  maxLength={500}
+                />
+              </div>
+
+              <div className="flex space-x-3 pt-4">
+                <button
+                  onClick={handleSetComingSoon}
+                  className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  Mark as Coming Soon
+                </button>
+                <button
+                  onClick={() => {
+                    setShowComingSoonModal(false)
+                    setComingSoonForm({ comingSoonDate: '', notes: '' })
+                  }}
+                  className="flex-1 bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+
+            <div className="mt-4 p-3 bg-blue-900 bg-opacity-50 border border-blue-600 rounded-lg">
+              <div className="flex items-start space-x-2">
+                <svg className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div className="text-sm text-blue-200">
+                  <p className="font-medium mb-1">Server-wide Setting</p>
+                  <p>This will mark the item as "Coming Soon" for ALL users who have it in their watchlists.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
 
     </motion.div>

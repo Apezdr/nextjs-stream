@@ -30,7 +30,7 @@ export function hasHighestPriorityForAnyVideoInfoField(
     `seasons.Season ${seasonNumber}.dimensions.${episodeFileName}`,
     `seasons.Season ${seasonNumber}.lengths.${episodeFileName}`,
     `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.hdr`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.additionalMetadata.size`,
+    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.additionalMetadata.size.kb`, // Size in KB
     `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.format`,
     `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.bitDepth`,
     `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.colorSpace`,

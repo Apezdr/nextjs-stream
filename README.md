@@ -83,7 +83,7 @@ To implement the NextJS-Stream app, follow these steps:
     SABNZBD_API_KEY=your_sabnzbd_api_key # Optional
     
     # Public URLs and Paths
-    NEXT_PUBLIC_ORGANIZR_URL=http://localhost:3000
+    ORGANIZR_URL=http://localhost:3000
     NEXT_PUBLIC_FILE_SERVER_URL=https://subdomain.your-domain.com
     NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH= # Optional prefix path for file server
     NEXT_PUBLIC_ADMIN_USER_EMAILS=email1@xxxx.com,email2@zzzz.com

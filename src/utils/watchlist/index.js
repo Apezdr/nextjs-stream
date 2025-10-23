@@ -3,31 +3,51 @@
  * Provides a clean interface for watchlist and playlist operations
  */
 
-// Database operations
-export {
-  getUserWatchlist,
-  addToWatchlist,
-  removeFromWatchlist,
-  checkWatchlistStatus,
-  getWatchlistStats,
-  bulkRemoveFromWatchlist,
-  bulkUpdateWatchlist,
-  moveItemsToPlaylist,
-  createPlaylist,
-  getUserPlaylists,
-  updatePlaylist,
-  deletePlaylist,
-  sharePlaylist,
-  updatePlaylistSorting,
-  updatePlaylistCustomOrder,
-  ensureDefaultPlaylist
-} from './database.js'
+ // Database operations
+ export {
+   getUserWatchlist,
+   addToWatchlist,
+   removeFromWatchlist,
+   checkWatchlistStatus,
+   getWatchlistStats,
+   bulkRemoveFromWatchlist,
+   bulkUpdateWatchlist,
+   moveItemsToPlaylist,
+   createPlaylist,
+   getUserPlaylists,
+   getPlaylistById,
+   updatePlaylist,
+   deletePlaylist,
+   sharePlaylist,
+   updatePlaylistSorting,
+   updatePlaylistCustomOrder,
+   ensureDefaultPlaylist,
+   findTMDBIdByMediaId,
+   getFullMediaDocumentsForPlaylist,
+   getMinimalCardDataForPlaylist,
+   // Per-user playlist visibility (Show in App)
+   getPlaylistVisibility,
+   setPlaylistVisibility,
+   listVisiblePlaylists,
+   bulkSetPlaylistVisibility,
+   resetVisibilityForPlaylist,
+   findUsersForAdmin,
+   // Coming Soon management (global server-level)
+   getComingSoonStatus,
+   setComingSoonStatus,
+   removeComingSoonStatus,
+   bulkGetComingSoonStatus,
+   listAllComingSoon,
+   cleanExpiredComingSoon
+ } from './database.js'
 
 // Validation functions
 export {
   validateWatchlistItem,
   validateWatchlistQuery,
   validatePlaylistData,
+  validatePlaylistVisibilityPayload,
+  validateComingSoonPayload,
   validateCollaborators,
   validateObjectId,
   WatchlistValidationError,
@@ -36,6 +56,14 @@ export {
   VALID_PRIVACY_SETTINGS,
   VALID_PERMISSIONS
 } from './validation.js'
+
+// Media resolver for batch processing and caching
+export {
+  batchResolveMedia,
+  getMediaByTMDBId,
+  scheduleBackgroundUpdate,
+  clearMediaCache
+} from './mediaResolver.js'
 
 import { 
   addToWatchlist, 
@@ -119,18 +147,24 @@ export async function getCurrentUserId() {
 export function formatWatchlistItem(item) {
   return {
     id: item.id,
+    mediaId: item.mediaId,
+    tmdbId: item.tmdbId,
     title: item.title,
     mediaType: item.mediaType,
     isExternal: item.isExternal,
     dateAdded: item.dateAdded,
     posterURL: item.posterURL || '/sorry-image-not-available.jpg',
     backdropURL: item.backdropURL,
+    posterPath: item.posterPath,
+    backdropPath: item.backdropPath,
     url: item.url,
     link: item.link,
     overview: item.overview,
     releaseDate: item.releaseDate,
     genres: item.genres || [],
     voteAverage: item.voteAverage,
+    voteCount: item.voteCount,
+    originalLanguage: item.originalLanguage,
     playlistId: item.playlistId
   }
 }
@@ -147,8 +181,12 @@ export function formatPlaylist(playlist) {
     description: playlist.description,
     privacy: playlist.privacy,
     ownerId: playlist.ownerId,
+    ownerName: playlist.ownerName,
     isOwner: playlist.isOwner,
+    isCollaborator: playlist.isCollaborator,
+    isPublic: playlist.isPublic,
     isDefault: playlist.isDefault || false,
+    canEdit: playlist.canEdit,
     itemCount: playlist.itemCount,
     dateCreated: playlist.dateCreated,
     dateUpdated: playlist.dateUpdated,

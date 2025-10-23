@@ -56,7 +56,20 @@ async function VideoPlayer({
   shouldValidateURL = true,
   session,
 }) {
+  // Check if user is an admin
+  const isAdmin = session?.user?.admin === true
   const { videoURL, metadata } = media
+  
+  // Conditionally import the SubtitleEditor component only for admin users
+  let SubtitleEditor = null;
+  if (isAdmin) {
+    try {
+      const EditorModule = await import('@components/Admin/SubtitleEditor/SubtitleEditor');
+      SubtitleEditor = EditorModule.default;
+    } catch (error) {
+      console.error('Error loading SubtitleEditor:', error);
+    }
+  }
 
   // Function to update validation status in PlaybackStatus
   const updateValidationStatus = async (videoId, isValid) => {
@@ -342,6 +355,15 @@ async function VideoPlayer({
           chapterThumbnailURL={chapterThumbnailURL}
           hdrVal={hdr}
           dimsVal={media.dimensions}
+          isAdmin={isAdmin}
+          adminProps={isAdmin ? {
+            SubtitleEditor,
+            session,
+            mediaType,
+            mediaTitle,
+            season_number,
+            episode_number
+          } : null}
         />
       </MediaPlayer>
     </Suspense>

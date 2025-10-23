@@ -3,6 +3,7 @@ import isAuthenticated, { isAuthenticatedEither } from '../../../../../utils/rou
 import clientPromise from '../../../../../lib/mongodb'
 import { validateURL } from '@src/utils/auth_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { createPlaybackDeviceInfo, updatePlaybackDeviceInfo } from '@src/utils/deviceDetection'
 
 /**
  * Extracts and formats metadata for storage in PlaybackStatus
@@ -41,6 +42,10 @@ export const POST = async (req) => {
 
     // Extract and format metadata for storage
     const playbackMetadata = extractPlaybackMetadata(mediaMetadata)
+    
+    // Capture device information from User-Agent
+    const userAgent = req.headers.get('user-agent')
+    const deviceInfo = createPlaybackDeviceInfo(userAgent)
 
     // Convert userId string to ObjectId
     const userIdObj = new ObjectId(authResult.id)
@@ -86,6 +91,9 @@ export const POST = async (req) => {
                                   (playbackMetadata.mediaType && existingVideo.mediaType !== playbackMetadata.mediaType) ||
                                   (playbackMetadata.showId && existingVideo.showId !== playbackMetadata.showId?.toString());
       
+      // Update device information
+      const updatedDeviceInfo = updatePlaybackDeviceInfo(existingVideo.deviceInfo, userAgent)
+      
       // Build metadata update object conditionally
       let metadataUpdate = {}
       if (needsMetadataUpdate && playbackMetadata.mediaType) {
@@ -108,13 +116,14 @@ export const POST = async (req) => {
         }
       }
       
-      // Update playback time for existing videoId (and validation/normalized ID/metadata info if needed)
+      // Update playback time for existing videoId (and validation/normalized ID/metadata/device info if needed)
       await playbackStatusCollection.updateOne(
         { userId: userIdObj, 'videosWatched.videoId': videoId },
         {
           $set: {
             'videosWatched.$.playbackTime': playbackTime,
             'videosWatched.$.lastUpdated': new Date(),
+            'videosWatched.$.deviceInfo': updatedDeviceInfo,
             ...(needsValidation ? {
               'videosWatched.$.isValid': isValid,
               'videosWatched.$.lastScanned': lastScanned
@@ -141,7 +150,8 @@ export const POST = async (req) => {
         playbackTime,
         lastUpdated: new Date(),
         isValid,
-        lastScanned: new Date().toISOString()
+        lastScanned: new Date().toISOString(),
+        deviceInfo: deviceInfo
       }
 
       // Add metadata fields only if they exist and are relevant

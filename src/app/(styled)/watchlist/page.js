@@ -26,11 +26,7 @@ async function WatchlistPageComponent() {
     )
   }
 
-  const {
-    user: { name, email, limitedAccess },
-  } = session
-
-  return <WatchlistPage user={{ name, email, limitedAccess }} />
+  return <WatchlistPage user={session.user} />
 }
 
 export default withApprovedUser(WatchlistPageComponent)

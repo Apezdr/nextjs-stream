@@ -140,6 +140,27 @@ export function validateWatchlistItem(item) {
     validated.playlistId = item.playlistId.trim()
   }
 
+  // Validate comingSoon flag (optional, admin-settable)
+  if (item.comingSoon !== undefined) {
+    if (typeof item.comingSoon !== 'boolean') {
+      throw new WatchlistValidationError('comingSoon must be a boolean', 'comingSoon')
+    }
+    validated.comingSoon = item.comingSoon
+  }
+
+  // Validate comingSoonDate (optional, must be valid date if present)
+  if (item.comingSoonDate !== undefined) {
+    if (item.comingSoonDate === null) {
+      validated.comingSoonDate = null
+    } else if (typeof item.comingSoonDate === 'string' && isValidDateString(item.comingSoonDate)) {
+      validated.comingSoonDate = item.comingSoonDate
+    } else if (item.comingSoonDate instanceof Date && !isNaN(item.comingSoonDate)) {
+      validated.comingSoonDate = item.comingSoonDate
+    } else {
+      throw new WatchlistValidationError('comingSoonDate must be a valid date', 'comingSoonDate')
+    }
+  }
+
   // Validate TMDB data for external items
   if (validated.isExternal && item.tmdbData) {
     validated.tmdbData = validateTmdbData(item.tmdbData, validated.mediaType)
@@ -452,4 +473,137 @@ export function getValidationErrorResponse(error) {
     message: 'An unexpected error occurred',
     status: 500
   }
+}
+
+/**
+ * Validate per-user playlist visibility payload
+ * Fields:
+ *  - showInApp: boolean (optional)
+ *  - appOrder: integer >= 0 (optional)
+ *  - appTitle: string length <= 100 or null (optional)
+ */
+export function validatePlaylistVisibilityPayload(payload = {}) {
+  const validated = {}
+
+  if (payload.showInApp !== undefined) {
+    if (typeof payload.showInApp !== 'boolean') {
+      throw new WatchlistValidationError('showInApp must be a boolean', 'showInApp')
+    }
+    validated.showInApp = payload.showInApp
+  }
+
+  if (payload.appOrder !== undefined) {
+    const n = parseInt(payload.appOrder)
+    if (Number.isNaN(n) || n < 0) {
+      throw new WatchlistValidationError('appOrder must be a non-negative integer', 'appOrder')
+    }
+    validated.appOrder = n
+  }
+
+  if (payload.appTitle !== undefined) {
+    if (payload.appTitle === null) {
+      validated.appTitle = null
+    } else if (typeof payload.appTitle !== 'string') {
+      throw new WatchlistValidationError('appTitle must be a string or null', 'appTitle')
+    } else {
+      const trimmed = payload.appTitle.trim()
+      if (trimmed.length > 100) {
+        throw new WatchlistValidationError('appTitle must be 100 characters or less', 'appTitle')
+      }
+      validated.appTitle = trimmed
+    }
+  }
+
+  // Validate hideUnavailable flag (optional, defaults to false = show all)
+  if (payload.hideUnavailable !== undefined) {
+    if (typeof payload.hideUnavailable !== 'boolean') {
+      throw new WatchlistValidationError('hideUnavailable must be a boolean', 'hideUnavailable')
+    }
+    validated.hideUnavailable = payload.hideUnavailable
+  }
+
+  return validated
+}
+
+/**
+ * Validate ComingSoon payload for admin operations
+ * @param {Object} payload - Coming soon data
+ * @param {number} payload.tmdbId - TMDB ID
+ * @param {string} payload.mediaType - Media type
+ * @param {Date|string} [payload.comingSoonDate] - Optional target date
+ * @param {string} [payload.notes] - Optional admin notes
+ * @param {string} [payload.source] - Source: 'manual', 'radarr', 'sonarr'
+ * @returns {Object} Validated coming soon data
+ * @throws {WatchlistValidationError} If validation fails
+ */
+export function validateComingSoonPayload(payload) {
+  if (!payload || typeof payload !== 'object') {
+    throw new WatchlistValidationError('ComingSoon payload is required')
+  }
+
+  const validated = {}
+
+  // Validate tmdbId (required)
+  if (!payload.tmdbId) {
+    throw new WatchlistValidationError('tmdbId is required', 'tmdbId')
+  }
+  const tmdbId = parseInt(payload.tmdbId)
+  if (isNaN(tmdbId) || tmdbId <= 0) {
+    throw new WatchlistValidationError('tmdbId must be a positive integer', 'tmdbId')
+  }
+  validated.tmdbId = tmdbId
+
+  // Validate mediaType (required)
+  if (!payload.mediaType) {
+    throw new WatchlistValidationError('mediaType is required', 'mediaType')
+  }
+  if (!VALID_MEDIA_TYPES.includes(payload.mediaType)) {
+    throw new WatchlistValidationError(
+      `mediaType must be one of: ${VALID_MEDIA_TYPES.join(', ')}`,
+      'mediaType'
+    )
+  }
+  validated.mediaType = payload.mediaType
+
+  // Validate comingSoonDate (optional)
+  if (payload.comingSoonDate !== undefined) {
+    if (payload.comingSoonDate === null) {
+      validated.comingSoonDate = null
+    } else if (typeof payload.comingSoonDate === 'string' && isValidDateString(payload.comingSoonDate)) {
+      validated.comingSoonDate = payload.comingSoonDate
+    } else if (payload.comingSoonDate instanceof Date && !isNaN(payload.comingSoonDate)) {
+      validated.comingSoonDate = payload.comingSoonDate
+    } else {
+      throw new WatchlistValidationError('comingSoonDate must be a valid date or null', 'comingSoonDate')
+    }
+  }
+
+  // Validate notes (optional)
+  if (payload.notes !== undefined) {
+    if (payload.notes === null) {
+      validated.notes = null
+    } else if (typeof payload.notes !== 'string') {
+      throw new WatchlistValidationError('notes must be a string or null', 'notes')
+    } else if (payload.notes.length > 500) {
+      throw new WatchlistValidationError('notes must be 500 characters or less', 'notes')
+    } else {
+      validated.notes = payload.notes.trim()
+    }
+  }
+
+  // Validate source (optional)
+  if (payload.source !== undefined) {
+    const validSources = ['manual', 'radarr', 'sonarr']
+    if (!validSources.includes(payload.source)) {
+      throw new WatchlistValidationError(
+        `source must be one of: ${validSources.join(', ')}`,
+        'source'
+      )
+    }
+    validated.source = payload.source
+  } else {
+    validated.source = 'manual'
+  }
+
+  return validated
 }

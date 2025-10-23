@@ -16,6 +16,7 @@ export default function PlaylistGrid({
   onItemRemoved,
   onItemMoved,
   onShowMoveModal,
+  onShowCopyModal,
   currentPlaylist,
   playlists,
   onCustomReorder,
@@ -24,7 +25,8 @@ export default function PlaylistGrid({
   sortLocked,
   canEditPlaylist,
   navigationLoadingItemId,
-  onNavigationStart
+  onNavigationStart,
+  user
 }) {
   const [draggedItem, setDraggedItem] = useState(null)
   const [draggedIndex, setDraggedIndex] = useState(null)
@@ -284,12 +286,15 @@ export default function PlaylistGrid({
                 onItemRemoved={onItemRemoved}
                 onItemMoved={onItemMoved}
                 onShowMoveModal={onShowMoveModal}
+                onShowCopyModal={onShowCopyModal}
                 currentPlaylist={currentPlaylist}
                 playlists={playlists}
                 api={api}
+                canEditPlaylist={canEditPlaylist}
                 isNavigating={isNavigating}
                 isOtherNavigating={isOtherNavigating}
                 onNavigationStart={onNavigationStart}
+                user={user}
               />
           </motion.div>
         )})}
@@ -384,12 +389,15 @@ export default function PlaylistGrid({
               onItemRemoved={onItemRemoved}
               onItemMoved={onItemMoved}
               onShowMoveModal={onShowMoveModal}
+              onShowCopyModal={onShowCopyModal}
               currentPlaylist={currentPlaylist}
               playlists={playlists}
               api={api}
+              canEditPlaylist={canEditPlaylist}
               isNavigating={isNavigating}
               isOtherNavigating={isOtherNavigating}
               onNavigationStart={onNavigationStart}
+              user={user}
             />
             </motion.div>
           )

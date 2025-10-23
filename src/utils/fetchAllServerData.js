@@ -142,6 +142,7 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3) {
         id: server.id,
         baseURL: server.baseURL,
         prefixPath: server.prefixPath,
+        syncEndpoint: server.syncEndpoint,  // Node.js server URL for API endpoints
         priority: server.priority,
         data: {
           tv: tvData,
@@ -167,6 +168,7 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3) {
     id: server.id,
     baseURL: server.baseURL,
     prefixPath: server.prefixPath,
+    syncEndpoint: server.syncEndpoint,  // Node.js server URL for API endpoints
     priority: server.priority,
     error: lastError.message,
     data: null
@@ -199,6 +201,7 @@ export async function fetchAllServerData() {
           config: {
             baseURL: result.baseURL,
             prefixPath: result.prefixPath,
+            syncEndpoint: result.syncEndpoint,  // Node.js server URL for API endpoints
             priority: result.priority
           },
           ...result.data

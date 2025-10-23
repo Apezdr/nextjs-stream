@@ -26,7 +26,7 @@ export function hasHighestPriorityForAnyVideoInfoField(
     'dimensions', // Assuming dimensions are stored directly or keyed (e.g., by quality)
     'length',     // Assuming length is stored directly or keyed
     'hdr',
-    'additionalMetadata.size',
+    'additional_metadata.size.kb', // Size in KB
     'mediaQuality.format',
     'mediaQuality.bitDepth',
     'mediaQuality.colorSpace',

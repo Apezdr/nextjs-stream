@@ -5,16 +5,53 @@ import axios from 'axios'
 import { validateWebhookId } from './webhookServer'
 
 export default async function isAuthenticated(req) {
-  const sessionResponse = await fetch(buildURL(`/api/auth/session`), {
-    headers: {
-      cookie: req.headers.get('cookie') || '', // Forward the cookies from the original request
-    },
-  })
-  const session = await sessionResponse.json()
-  if (!session || !session.user) {
-    return new Response('You must be signed in.', { status: 401 })
+  try {
+    const sessionResponse = await fetch(buildURL(`/api/auth/session`), {
+      headers: {
+        cookie: req.headers.get('cookie') || '', // Forward the cookies from the original request
+      },
+    })
+
+    let session
+    try {
+      session = await sessionResponse.json()
+    } catch (parseError) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Authentication Error',
+          message: 'Failed to parse session response',
+          code: 'AUTH_PARSE_FAILED',
+          details: parseError?.message
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+
+    if (!session || !session.user) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Unauthorized',
+          message: 'You must be signed in.',
+          code: 'AUTH_REQUIRED'
+        }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+    return session.user
+  } catch (error) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Authentication Error',
+        message: 'Failed to fetch session',
+        code: 'AUTH_FETCH_FAILED',
+        details: error?.message
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    )
   }
-  return session.user
 }
 
 export async function isAdminOrWebhook(req) {
@@ -62,7 +99,16 @@ export async function isAdmin(req = false, redirect = true) {
         },
       })
     } catch (error) {
-      return new Response('Failed to fetch session.', { status: 500 })
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Authentication Error',
+          message: 'Failed to fetch session',
+          code: 'AUTH_FETCH_FAILED',
+          details: error?.message
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      )
     }
   }
 

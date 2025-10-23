@@ -66,8 +66,14 @@ export async function syncEpisodeCaptions(client, show, season, episode, flatSho
   const finalCaptionURLs = { ...currentCaptions };
   let changed = false;
   
+  // Track which languages we've seen from this server (for cleanup)
+  const languagesSeenFromThisServer = new Set();
+  
   // Update captions from the processed data
   for (const [lang, captionObj] of Object.entries(processedCaptions)) {
+    // Mark this language as seen from this server
+    languagesSeenFromThisServer.add(lang);
+    
     const currentCaption = finalCaptionURLs[lang];
     
     // Only update if the caption doesn't exist or has changed
@@ -77,6 +83,15 @@ export async function syncEpisodeCaptions(client, show, season, episode, flatSho
         currentCaption.sourceServerId !== captionObj.sourceServerId) {
       
       finalCaptionURLs[lang] = captionObj;
+      changed = true;
+    }
+  }
+  
+  // Remove captions that were sourced from this server but no longer exist on it
+  for (const [lang, caption] of Object.entries(finalCaptionURLs)) {
+    if (caption.sourceServerId === serverConfig.id && !languagesSeenFromThisServer.has(lang)) {
+      console.log(`Episode: Removing caption no longer on server - "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} - Language: ${lang}`);
+      delete finalCaptionURLs[lang];
       changed = true;
     }
   }

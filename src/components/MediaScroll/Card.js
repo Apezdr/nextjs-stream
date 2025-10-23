@@ -38,8 +38,15 @@ const Card = ({
   isPeek = false,
   onCardClick,
   // tv
+  showId = null,
+  showTmdbId = null,
   seasonNumber = null,
   episodeNumber = null,
+  // Availability status (for playlist items)
+  isAvailable = true,
+  comingSoon = false,
+  comingSoonDate = null,
+  metadata = null,
 }) => {
   const [imageDimensions, setImageDimensions] = useState({
     width: 0,
@@ -66,14 +73,100 @@ const Card = ({
 
   const isHovered = isMouseOverCard || isMouseOverPortal
 
+  // Shared date handling logic for both Card and PopupCard
+  const getDateInfo = useCallback(() => {
+    // For unavailable content, show release status first
+    if (isAvailable === false) {
+      const itemReleaseDate = metadata?.release_date || metadata?.first_air_date || releaseDate;
+      if (itemReleaseDate) {
+        const releaseDateObj = new Date(itemReleaseDate);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        releaseDateObj.setHours(0, 0, 0, 0);
+        
+        const isUnreleased = releaseDateObj > today || comingSoon;
+        const formattedDate = releaseDateObj.toLocaleDateString('en-US', {
+          month: '2-digit',
+          day: '2-digit',
+          year: 'numeric'
+        });
+        
+        return {
+          label: isUnreleased ? "Releasing" : "Released",
+          value: formattedDate,
+          color: isUnreleased ? "text-blue-300" : "text-orange-300",
+          popupColor: isUnreleased ? "text-blue-600" : "text-orange-600",
+          bgColor: isUnreleased ? 'bg-blue-100' : 'bg-orange-100',
+          textColor: isUnreleased ? 'text-blue-800' : 'text-orange-800',
+          borderColor: isUnreleased ? 'border-blue-200' : 'border-orange-200',
+          isReleaseStatus: true
+        };
+      }
+    }
+    
+    // Standard date priority for available content
+    if (lastWatchedDate) {
+      return {
+        label: "Last Watched",
+        value: lastWatchedDate,
+        color: "text-blue-300",
+        popupColor: "text-blue-600",
+        isReleaseStatus: false
+      };
+    } else if (addedDate) {
+      return {
+        label: "Added",
+        value: addedDate,
+        color: "text-green-300",
+        popupColor: "text-green-600",
+        isReleaseStatus: false
+      };
+    } else if (releaseDate) {
+      return {
+        label: "Released",
+        value: releaseDate,
+        color: "text-yellow-300",
+        popupColor: "text-yellow-600",
+        isReleaseStatus: false
+      };
+    } else if (date) {
+      return {
+        label: "Date",
+        value: date,
+        color: "text-gray-300",
+        popupColor: "text-gray-600",
+        isReleaseStatus: false
+      };
+    }
+    return null;
+  }, [isAvailable, metadata, releaseDate, comingSoon, lastWatchedDate, addedDate, date]);
+
+  const dateInfo = getDateInfo();
+
   // Get effective blurhash from either new or legacy structure
   const effectivePosterBlurhash = blurhash?.poster || posterBlurhash
   
+  // Detect image type: TV episodes have thumbnails (16:9), others have posters (2:3)
+  const isEpisodeThumbnail = seasonNumber && episodeNumber
+  
   // Calculate image dimensions based on container width
-  // Standard poster aspect ratio is 2:3 (width:height)
-  // Container height is fixed at 288px (h-72), so we use that as the height
+  // Container dimensions remain static for layout consistency
   const imageHeight = 288
   const imageWidth = collapsedWidth
+  
+  // Calculate optimal dimensions for Next.js Image optimization
+  let optimizedWidth, optimizedHeight
+  if (isEpisodeThumbnail) {
+    // Episode thumbnails: 16:9 aspect ratio
+    // For a 288px height container, optimal 16:9 image width would be ~512px
+    optimizedHeight = 288
+    optimizedWidth = Math.round(288 * (16 / 9)) // 512px
+  } else {
+    // Standard posters: 2:3 aspect ratio
+    // Use container dimensions for optimization
+    optimizedHeight = imageHeight
+    optimizedWidth = imageWidth
+  }
   
   // Detect if the device is a touch device
   useEffect(() => {
@@ -169,17 +262,25 @@ const Card = ({
   }, [isAnimating, onCollapse])
 
   const handleMouseEnter = useCallback(() => {
-    const apiEndpoint = buildURL(
-      type === 'tv'
-        ? `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&season=${seasonNumber}&episode=${episodeNumber}&card=true`
-        : `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&card=true`
-    )
     if (isAnimating || isExpanded || isTouchDevice) return
-    preload(apiEndpoint, fetcher)
+    
+    // Only preload API data for available items (in library)
+    // For TMDB-only items, PopupCard will use metadata directly
+    if (isAvailable === true) {
+      const apiEndpoint = buildURL(
+        type === 'tv'
+          ? `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&season=${seasonNumber}&episode=${episodeNumber}&card=true`
+          : `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&card=true`
+      )
+      preload(apiEndpoint, fetcher)
+    } else if (process.env.NODE_ENV === 'development') {
+      console.log(`[Card] Skipping API preload for unavailable item: ${title} (isAvailable: ${isAvailable})`)
+    }
+    
     hoverTimeoutRef.current = setTimeout(() => {
       handleExpand()
     }, 1000)
-  }, [isAnimating, isExpanded, handleExpand, isTouchDevice, mediaId, seasonNumber, episodeNumber, type])
+  }, [isAnimating, isExpanded, handleExpand, isTouchDevice, mediaId, seasonNumber, episodeNumber, type, isAvailable, title])
 
   const handleMouseLeave = useCallback(() => {
     if (hoverTimeoutRef.current) {
@@ -332,6 +433,32 @@ const Card = ({
                   sizes="(max-width: 640px) 90px, (max-width: 1024px) 101px, 134px"
                 />
               )}
+              {/* Status Badges */}
+              {!isAvailable && (
+                <div className="absolute z-20 top-2 right-2">
+                  {comingSoon ? (
+                    <div className="bg-blue-600 text-white text-xs px-2 py-1 rounded-md shadow-lg flex items-center gap-1">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <span>Coming Soon</span>
+                      {comingSoonDate && (
+                        <span className="ml-1 font-medium">
+                          {new Date(comingSoonDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                        </span>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="bg-gray-600 bg-opacity-90 text-white text-xs px-2 py-1 rounded-md shadow-lg flex items-center gap-1">
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                      </svg>
+                      <span>Not Available</span>
+                    </div>
+                  )}
+                </div>
+              )}
+              
               {seasonNumber && (
                 <div className="absolute z-20 bottom-2 left-2 right-2">
                   <div className="bg-gray-200 bg-opacity-20 rounded-xl flex flex-row gap-1 px-2 py-1 justify-center">
@@ -344,19 +471,28 @@ const Card = ({
               <RetryImage
                 ref={imageRef}
                 quality={80}
-                fill
+                width={optimizedWidth}
+                height={optimizedHeight}
                 src={posterURL}
                 placeholder={effectivePosterBlurhash ? 'blur' : 'empty'}
                 blurDataURL={effectivePosterBlurhash ? `data:image/png;base64,${effectivePosterBlurhash}` : undefined}
                 alt={title}
                 className={classNames(
                   'rounded-lg shadow-xl transition-opacity duration-300 object-cover',
-                  'opacity-60 group-hover:opacity-100'
+                  // Slightly dim unavailable items
+                  isAvailable
+                    ? 'opacity-60 group-hover:opacity-100'
+                    : 'opacity-40 group-hover:opacity-70'
                 )}
                 loading="lazy"
-                sizes="(max-width: 640px) 128px, (max-width: 1024px) 144px, 192px"
+                sizes={
+                  isEpisodeThumbnail
+                    ? "512px"  // Fixed size for 16:9 thumbnails
+                    : "(max-width: 640px) 128px, (max-width: 1024px) 144px, 192px"  // Responsive for posters
+                }
                 onLoad={handleImageLoad}
                 onError={handleImageError}
+                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
               {imageError && (
                 <div 
@@ -370,35 +506,18 @@ const Card = ({
           </button>
         </div>
 
-        {/* Title and Date - New semantically meaningful date fields */}
+        {/* Title and Date - Enhanced with release status */}
         <div className="mt-2 text-center w-full">
           <div className="text-sm truncate" title={title}>
             {title}
           </div>
-          {/* Different date types with appropriate labels - Improved visibility */}
-          {lastWatchedDate && (
+          {/* Display date with enhanced labels including release status */}
+          {dateInfo && (
             <>
-              <div className="text-xs font-medium text-blue-300">Last Watched:</div>
-              <div className="text-[10px] text-white truncate">{lastWatchedDate}</div>
-            </>
-          )}
-          {addedDate && !lastWatchedDate && (
-            <>
-              <div className="text-xs font-medium text-green-300">Added:</div>
-              <div className="text-[10px] text-white truncate">{addedDate}</div>
-            </>
-          )}
-          {releaseDate && !lastWatchedDate && !addedDate && (
-            <>
-              <div className="text-xs font-medium text-yellow-300">Released:</div>
-              <div className="text-[10px] text-white truncate">{releaseDate}</div>
-            </>
-          )}
-          {/* Fallback for legacy 'date' property for backward compatibility */}
-          {date && !lastWatchedDate && !addedDate && !releaseDate && (
-            <>
-              <div className="text-xs font-medium text-gray-300">Date:</div>
-              <div className="text-[10px] text-white truncate">{date}</div>
+              <div className={classNames("text-xs font-medium", dateInfo.color)}>
+                {dateInfo.label}:
+              </div>
+              <div className="text-[10px] text-white truncate">{dateInfo.value}</div>
             </>
           )}
         </div>
@@ -423,6 +542,8 @@ const Card = ({
             type={type}
             logo={logo}
             mediaId={mediaId}
+            showId={showId}
+            showTmdbId={showTmdbId}
             media={media}
             posterURL={posterURL}
             posterBlurhash={effectivePosterBlurhash}
@@ -434,6 +555,13 @@ const Card = ({
             handlePortalMouseLeave={handlePortalMouseLeave}
             isTouchDevice={isTouchDevice}
             blurhash={blurhash}
+            // Availability flags and metadata for TMDB-only items
+            isAvailable={isAvailable}
+            comingSoon={comingSoon}
+            comingSoonDate={comingSoonDate}
+            metadata={metadata}
+            // Pass the shared date info
+            dateInfo={dateInfo}
           />,
           document.body
         )}

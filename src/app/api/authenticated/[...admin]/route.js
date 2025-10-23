@@ -164,18 +164,22 @@ export async function GET(request, props) {
               throw new Error(`User with ID ${userId} not found`);
             }
             
-            // Fetch data for this specific user with pagination
+            // Fetch data for this specific user with pagination using admin-overview projection
             const watchedMedia = await getFlatRecentlyWatchedForUser({
               userId: userId,
               page: page,
               limit: limit,
-              countOnly: false
+              countOnly: false,
+              projection: 'admin-overview',
+              contextHints: { isAdmin: true }
             });
             
             // Get total count for pagination info
             const totalCount = await getFlatRecentlyWatchedForUser({
               userId: userId,
-              countOnly: true
+              countOnly: true,
+              projection: 'admin-overview',
+              contextHints: { isAdmin: true }
             });
             
             // Format response with pagination metadata
@@ -214,13 +218,24 @@ export async function GET(request, props) {
             // For each user, get their recently watched media using the flat database approach
             const lastWatchedPromises = users.map(async (user) => {
               try {
-                // Use flat database function to get recently watched items
+                // Use flat database function to get recently watched items with admin-overview projection
                 const watchedMedia = await getFlatRecentlyWatchedForUser({
                   client,
                   userId: user._id,
                   page: 0,
                   limit: 4, // Same limit as legacy function
-                  countOnly: false
+                  countOnly: false,
+                  projection: 'admin-overview',
+                  contextHints: { isAdmin: true }
+                })
+                
+                // Get total count for accurate "+X more" calculation
+                const totalCount = await getFlatRecentlyWatchedForUser({
+                  client,
+                  userId: user._id,
+                  countOnly: true,
+                  projection: 'admin-overview',
+                  contextHints: { isAdmin: true }
                 })
                 
                 // Skip if no watched media found
@@ -245,6 +260,7 @@ export async function GET(request, props) {
                     image: user.image,
                   },
                   videos: watchedMedia,
+                  totalCount: totalCount || 0, // Add total count for accurate display
                   mostRecentWatch
                 }
               } catch (userError) {
@@ -668,8 +684,23 @@ async function handleSync(webhookId, request) {
     const importSettings = await getFileServerImportSettings()
     console.log('Import Settings:', importSettings)
 
-    // Perform the actual sync
-    const result = await syncAllServers(fileServers, fieldAvailability)
+    // Parse URL parameters for sync architecture options
+    const url = new URL(request.url);
+    const useNewArchitecture = url.searchParams.get('useNewArchitecture') === 'true';
+    const forceOldArchitecture = url.searchParams.get('forceOldArchitecture') === 'true';
+    
+    // Log architecture choice for debugging
+    if (useNewArchitecture) {
+      console.log('🆕 Admin API: Using NEW sync architecture (query parameter override)');
+    } else if (forceOldArchitecture) {
+      console.log('🔄 Admin API: Forcing OLD sync architecture (query parameter override)');
+    }
+
+    // Perform the actual sync with architecture options
+    const result = await syncAllServers(fileServers, fieldAvailability, {
+      useNewArchitecture,
+      forceOldArchitecture
+    })
     
     // Mark sync as complete to prevent logging errors after completion
     syncInProgress = false;

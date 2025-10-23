@@ -12,6 +12,8 @@ import PlaylistControls from './PlaylistControls'
 import SharePlaylistModal from './SharePlaylistModal'
 import MoveToPlaylistModal from './MoveToPlaylistModal'
 import { ControlsSkeleton } from './WatchlistSkeletons'
+import ShowInAppUserModal from './ShowInAppUserModal'
+import ShowInAppAdminModal from './ShowInAppAdminModal'
 import { searchMedia } from '@src/utils/tmdb/client'
 import { classNames, formatDate } from '@src/utils'
 
@@ -19,11 +21,14 @@ import { classNames, formatDate } from '@src/utils'
 function useWatchlistAPI() {
   const apiCall = useCallback(async (endpoint, options = {}) => {
     const { method = 'GET', body, params } = options
-    
+
     let url = `/api/authenticated/watchlist${endpoint}`
-    if (params) {
-      const searchParams = new URLSearchParams(params)
-      url += `?${searchParams.toString()}`
+    if (params && typeof params === 'object') {
+      const entries = Object.entries(params).filter(([_, v]) => v !== undefined && v !== null && v !== 'undefined')
+      if (entries.length > 0) {
+        const searchParams = new URLSearchParams(entries)
+        url += `?${searchParams.toString()}`
+      }
     }
 
     const response = await fetch(url, {
@@ -44,10 +49,13 @@ function useWatchlistAPI() {
 
   return {
     // Playlist operations
-    getPlaylists: useCallback(() => 
-      apiCall('', { params: { action: 'playlists' } }), [apiCall]),
+    getPlaylists: useCallback((includeShared = true, options = {}) =>
+      apiCall('', { params: { action: 'playlists', includeShared, ...options } }), [apiCall]),
     
-    getPlaylistItems: useCallback((playlistId, options = {}) => 
+    getPlaylistById: useCallback((playlistId) =>
+      apiCall('', { params: { action: 'playlist-by-id', playlistId } }), [apiCall]),
+    
+    getPlaylistItems: useCallback((playlistId, options = {}) =>
       apiCall('', { 
         params: { 
           action: 'playlist-items', 
@@ -151,6 +159,33 @@ function useWatchlistAPI() {
         method: 'PUT',
         params: { action: 'update-playlist-order' },
         body: { playlistId, itemIds }
+      }), [apiCall]),
+
+    // Per-user playlist visibility (Show in App)
+    getPlaylistVisibility: useCallback((options = {}) =>
+      apiCall('', {
+        params: { action: 'playlist-visibility', ...options }
+      }), [apiCall]),
+
+    setPlaylistVisibility: useCallback((payload) =>
+      apiCall('', {
+        method: 'PUT',
+        params: { action: 'playlist-visibility' },
+        body: payload
+      }), [apiCall]),
+
+    // Admin: list users for visibility management
+    listUsersForVisibility: useCallback((options = {}) =>
+      apiCall('', {
+        params: { action: 'playlist-visibility-list-users', ...options }
+      }), [apiCall]),
+
+    // Admin: reset visibility for all users for a playlist
+    resetPlaylistVisibilityAll: useCallback((playlistId) =>
+      apiCall('', {
+        method: 'POST',
+        params: { action: 'playlist-visibility-reset-all' },
+        body: { playlistId }
       }), [apiCall])
   }
 }
@@ -167,10 +202,21 @@ export default function WatchlistPage({ user }) {
   // Derive selected playlist ID from URL - single source of truth
   const selectedPlaylistId = useMemo(() => {
     const urlPlaylistParam = searchParams.get('playlist')
+    const isSharedParam = searchParams.get('shared') === 'true'
     
-    // If URL has a valid playlist parameter, use it
-    if (urlPlaylistParam && playlists.some(p => p.id === urlPlaylistParam)) {
-      return urlPlaylistParam
+    // If URL has a playlist parameter (could be shared/public), use it
+    // We'll validate access when loading the playlist
+    if (urlPlaylistParam) {
+      // Check if it's in user's playlists first
+      if (playlists.some(p => p.id === urlPlaylistParam)) {
+        return urlPlaylistParam
+      }
+      
+      // If marked as shared, allow it even if not in user's list
+      // We'll fetch it separately to check if it's public/accessible
+      if (isSharedParam) {
+        return urlPlaylistParam
+      }
     }
     
     // Otherwise, determine default playlist
@@ -194,13 +240,18 @@ export default function WatchlistPage({ user }) {
   const [navigationLoadingItemId, setNavigationLoadingItemId] = useState(null)
   
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState([])
+  const [searchResults, setSearchResults] = useState({ watchlist: [], tmdbInternal: [], tmdbExternal: [] })
   const [isSearching, setIsSearching] = useState(false)
+  
+  // Request ID counter to prevent race conditions in search
+  const searchRequestIdRef = useRef(0)
   const [selectedItems, setSelectedItems] = useState(new Set())
   const [showShareModal, setShowShareModal] = useState(false)
   const [sharePlaylistId, setSharePlaylistId] = useState(null)
   const [showMoveModal, setShowMoveModal] = useState(false)
+  const [showCopyModal, setShowCopyModal] = useState(false)
   const [moveItemData, setMoveItemData] = useState(null)
+  const [showManageRows, setShowManageRows] = useState(false)
   const [viewMode, setViewMode] = useState(() => {
     // Initialize from localStorage if available, fallback to 'grid'
     if (typeof window !== 'undefined') {
@@ -218,22 +269,83 @@ export default function WatchlistPage({ user }) {
   
   // State for sort/order lock functionality
   const [sortLocked, setSortLocked] = useState(true) // Default to locked
+  const [showAdminRows, setShowAdminRows] = useState(false)
   
   // Helper function to check if user has edit permissions
-  const canEditPlaylist = useCallback(() => {
-    if (!user) return false
+  // Use the canEdit field from the playlist data (computed server-side)
+  const canEditPlaylist = useMemo(() => {
+    console.log('[canEditPlaylist] Computing canEdit permission')
+    console.log('[canEditPlaylist] currentPlaylist:', currentPlaylist)
+    console.log('[canEditPlaylist] currentPlaylist.canEdit:', currentPlaylist?.canEdit)
+    console.log('[canEditPlaylist] user:', user)
+    console.log('[canEditPlaylist] selectedPlaylistId:', selectedPlaylistId)
     
-    // Check if user is admin
-    if (user.role === 'Admin' || user.permissions?.includes('Admin')) return true
+    // Use server-provided canEdit field if available
+    if (currentPlaylist?.canEdit !== undefined) {
+      console.log('[canEditPlaylist] Using server-provided canEdit:', currentPlaylist.canEdit)
+      return currentPlaylist.canEdit
+    }
+    
+    console.log('[canEditPlaylist] canEdit not provided, using fallback logic')
+    
+    // Fallback logic if canEdit not provided (shouldn't happen with updated API)
+    if (!user) {
+      console.log('[canEditPlaylist] No user, returning false')
+      return false
+    }
+    
+    // Check if user is admin (check both role and admin flag)
+    if (user.role === 'Admin' || user.admin || user.permissions?.includes('Admin')) {
+      console.log('[canEditPlaylist] User is admin, returning true')
+      return true
+    }
     
     // Check if user has "Can Edit" permission
-    if (user.permissions?.includes('Can Edit')) return true
+    if (user.permissions?.includes('Can Edit')) {
+      console.log('[canEditPlaylist] User has Can Edit permission, returning true')
+      return true
+    }
     
-    // Check if user is the playlist owner
-    if (currentPlaylist?.isOwner) return true
+    // If currentPlaylist is not loaded yet, check the playlists array
+    if (!currentPlaylist && selectedPlaylistId) {
+      const playlistFromList = playlists.find(p => p.id === selectedPlaylistId)
+      console.log('[canEditPlaylist] Found playlist in list:', playlistFromList)
+      
+      if (playlistFromList) {
+        // Use canEdit from playlists array if available
+        if (playlistFromList.canEdit !== undefined) {
+          console.log('[canEditPlaylist] Using canEdit from playlist list:', playlistFromList.canEdit)
+          return playlistFromList.canEdit
+        }
+        // Check isOwner from playlists array
+        if (playlistFromList.isOwner) {
+          console.log('[canEditPlaylist] User is owner (from playlist list), returning true')
+          return true
+        }
+      }
+    }
     
+    // Check if user is the playlist owner from currentPlaylist
+    if (currentPlaylist?.isOwner) {
+      console.log('[canEditPlaylist] User is playlist owner, returning true')
+      return true
+    }
+    
+    console.log('[canEditPlaylist] No edit permission found, returning false')
     return false
-  }, [user, currentPlaylist])
+  }, [user, currentPlaylist, selectedPlaylistId, playlists])
+
+  // Admin detection for showing admin tools
+  const isAdmin = useMemo(() => {
+    if (!user) return false
+    return (
+      user.role === 'admin' ||
+      user.role === 'Admin' ||
+      user.admin === true ||
+      user.isAdmin === true ||
+      (Array.isArray(user.permissions) && user.permissions.includes('Admin'))
+    )
+  }, [user])
   
   // Helper function to sort items locally for optimistic updates
   const sortItemsLocally = useCallback((items, sortBy, sortOrder) => {
@@ -315,6 +427,7 @@ export default function WatchlistPage({ user }) {
       try {
         // Capture initial playlist param from URL
         const initialPlaylistParam = searchParams.get('playlist')
+        const isSharedParam = searchParams.get('shared') === 'true'
         
         // Fetch playlists and summary in parallel
         const [playlistsResult, summaryResult] = await Promise.allSettled([
@@ -337,11 +450,20 @@ export default function WatchlistPage({ user }) {
         // Determine initial playlist from URL
         let targetPlaylistId = 'default'
         
-        if (initialPlaylistParam && loadedPlaylists.some(p => p.id === initialPlaylistParam)) {
-          // URL parameter exists and is valid
-          targetPlaylistId = initialPlaylistParam
-        } else if (loadedPlaylists.length > 0) {
-          // Find default playlist or fallback to first playlist
+        if (initialPlaylistParam) {
+          // Check if it's in user's playlists
+          if (loadedPlaylists.some(p => p.id === initialPlaylistParam)) {
+            targetPlaylistId = initialPlaylistParam
+          }
+          // Or if it's marked as shared, allow it (will be fetched separately)
+          else if (isSharedParam) {
+            targetPlaylistId = initialPlaylistParam
+          }
+          // Otherwise fall through to default playlist
+        }
+        
+        // If no valid playlist ID from URL, use default
+        if (targetPlaylistId === 'default' && loadedPlaylists.length > 0) {
           const defaultPlaylist = loadedPlaylists.find(p => p.isDefault) ||
                                    loadedPlaylists.find(p => p.id === 'default') ||
                                    loadedPlaylists[0]
@@ -368,12 +490,13 @@ export default function WatchlistPage({ user }) {
         const defaultPlaylist = loadedPlaylists.find(p => p.isDefault) || loadedPlaylists.find(p => p.id === 'default')
         const isDefaultPlaylist = defaultPlaylist && targetPlaylistId === defaultPlaylist.id
         
-        if (isDefaultPlaylist && initialPlaylistParam) {
-          // Remove playlist param for default playlist
+        if (isDefaultPlaylist && initialPlaylistParam && !isSharedParam) {
+          // Remove playlist param for default playlist (but not if it's a shared link)
           router.replace('/watchlist', { scroll: false, shallow: true })
         } else if (!isDefaultPlaylist && !initialPlaylistParam) {
           // Add playlist param for non-default playlist
-          router.replace(`/watchlist?playlist=${targetPlaylistId}`, { scroll: false, shallow: true })
+          const sharedSuffix = isSharedParam ? '&shared=true' : ''
+          router.replace(`/watchlist?playlist=${targetPlaylistId}${sharedSuffix}`, { scroll: false, shallow: true })
         }
         
       } catch (error) {
@@ -489,8 +612,21 @@ export default function WatchlistPage({ user }) {
         setSortBy(data.playlist.sortBy || 'dateAdded')
         setSortOrder(data.playlist.sortOrder || 'desc')
       } else {
-        // Fallback: find playlist in local state
-        const playlist = playlists.find(p => p.id === playlistId)
+        // Fallback: find playlist in local state or fetch by ID
+        let playlist = playlists.find(p => p.id === playlistId)
+        
+        // If not in local state, try to fetch it (could be a public/shared playlist)
+        if (!playlist) {
+          try {
+            const playlistData = await api.getPlaylistById(playlistId)
+            if (playlistData?.playlist) {
+              playlist = playlistData.playlist
+            }
+          } catch (error) {
+            console.error('Error fetching playlist by ID:', error)
+          }
+        }
+        
         if (playlist) {
           const playlistInfo = {
             ...playlist,
@@ -607,15 +743,21 @@ export default function WatchlistPage({ user }) {
 
   const handleSearch = useCallback(async (query) => {
     if (!query.trim()) {
-      setSearchResults([])
+      setSearchResults({ watchlist: [], tmdbInternal: [], tmdbExternal: [] })
       setIsSearching(false)
       return
     }
 
+    // Increment request ID and capture it for this search
+    searchRequestIdRef.current += 1
+    const currentRequestId = searchRequestIdRef.current
+    
+    console.log(`[Search] Starting search #${currentRequestId} for query: "${query}"`)
+
     setIsSearching(true)
     try {
       // Dual search: Database + TMDB
-      const [databaseResults, tmdbMovies, tmdbTVShows] = await Promise.all([
+      const [databaseResults, tmdbMoviesRaw, tmdbTVShowsRaw] = await Promise.all([
         // Search internal database using existing endpoint
         fetch('/api/authenticated/search', {
           method: 'POST',
@@ -624,13 +766,23 @@ export default function WatchlistPage({ user }) {
         }).then(res => res.ok ? res.json() : { results: [] }).catch(() => ({ results: [] })),
         
         // Search TMDB
-        searchMedia(query, 'movie', { page: 1 }).catch(() => ({ results: [] })),
-        searchMedia(query, 'tv', { page: 1 }).catch(() => ({ results: [] }))
+        searchMedia(query, 'movie', { page: 1 }).catch(() => ({ data: { results: [] } })),
+        searchMedia(query, 'tv', { page: 1 }).catch(() => ({ data: { results: [] } }))
       ])
+      
+      // Handle both response formats: direct results or wrapped in data
+      const tmdbMovies = tmdbMoviesRaw?.data || tmdbMoviesRaw || { results: [] }
+      const tmdbTVShows = tmdbTVShowsRaw?.data || tmdbTVShowsRaw || { results: [] }
+
+      // Check if this is still the latest request
+      if (currentRequestId !== searchRequestIdRef.current) {
+        console.log(`[Search] Ignoring stale response #${currentRequestId} (current: ${searchRequestIdRef.current})`)
+        return
+      }
 
       // Filter watchlist items from current playlist
       const watchlistResults = currentItems.filter(item =>
-        item.title.toLowerCase().includes(query.toLowerCase())
+        item.title?.toLowerCase().includes(query.toLowerCase())
       ).slice(0, 10)
 
       // Create sets of existing items in current playlist for duplicate filtering
@@ -645,11 +797,23 @@ export default function WatchlistPage({ user }) {
       )
 
       // Process database results - these are already internal media
+      // Build a map of ALL database results by TMDB ID (before filtering) to check against external TMDB
+      const allDatabaseTmdbIds = new Set(
+        (databaseResults.results || [])
+          .map(item => item.metadata?.id)
+          .filter(Boolean)
+      )
+      
+      console.log(`[Search] Database returned ${databaseResults.results?.length || 0} results`)
+      console.log(`[Search] Database TMDB IDs:`, Array.from(allDatabaseTmdbIds).slice(0, 10))
+      console.log(`[Search] Existing playlist TMDB IDs:`, Array.from(existingTmdbIds))
+      console.log(`[Search] Existing playlist titles:`, Array.from(existingTitleTypes).slice(0, 10))
+
       const internalResults = (databaseResults.results || []).slice(0, 10).map(item => {
         return {
           id: item.metadata?.id, // Use TMDB ID for consistency
           title: item.title,
-          media_type: item.type === 'movie' ? 'movie' : 'tv',
+          media_type: item.type === 'movie' ? 'movie' : (item.type === 'tv' ? 'tv' : item.mediaType),
           poster_path: item.posterURL,
           release_date: formatDate(item.releaseDate || item.metadata?.release_date),
           first_air_date: formatDate(item.metadata?.first_air_date),
@@ -670,33 +834,72 @@ export default function WatchlistPage({ user }) {
 
       // Process TMDB results and check which ones are NOT in our database
       const allTmdbResults = [
-        ...tmdbMovies.results.slice(0, 5).map(item => ({ ...item, media_type: 'movie' })),
-        ...tmdbTVShows.results.slice(0, 5).map(item => ({ ...item, media_type: 'tv' }))
+        ...(tmdbMovies.results || []).slice(0, 5).map(item => ({ ...item, media_type: 'movie' })),
+        ...(tmdbTVShows.results || []).slice(0, 5).map(item => ({ ...item, media_type: 'tv' }))
       ]
+      
+      console.log(`[Search] TMDB returned ${tmdbMovies.results?.length || 0} movies, ${tmdbTVShows.results?.length || 0} TV shows`)
+      console.log(`[Search] Combined TMDB results (first 10):`, allTmdbResults.slice(0, 10).map(item => ({
+        id: item.id,
+        title: item.title || item.name,
+        media_type: item.media_type
+      })))
 
-      // Filter out TMDB results that are already in our database
-      const internalTmdbIds = new Set(internalResults.map(item => item.id).filter(Boolean))
+      // Filter external TMDB results using the complete database ID set
       const externalTmdbResults = allTmdbResults.filter(item => {
-        // Filter out items already in our database
-        if (internalTmdbIds.has(item.id)) return false
+        const titleType = `${(item.title || item.name)?.toLowerCase()}-${item.media_type}`
         
-        // Filter out items already in current playlist
-        const tmdbId = item.id
-        const titleType = `${item.title?.toLowerCase() || item.name?.toLowerCase()}-${item.media_type}`
+        // Debug first few items
+        if (allTmdbResults.indexOf(item) < 3) {
+          console.log(`[Search] Checking TMDB item:`, {
+            id: item.id,
+            title: item.title || item.name,
+            titleType,
+            inDatabase: allDatabaseTmdbIds.has(item.id),
+            inPlaylist: existingTmdbIds.has(item.id),
+            titleMatch: existingTitleTypes.has(titleType)
+          })
+        }
         
-        return !existingTmdbIds.has(tmdbId) && !existingTitleTypes.has(titleType)
+        // Filter out items already in our database (use allDatabaseTmdbIds, not filtered internalResults)
+        if (allDatabaseTmdbIds.has(item.id)) return false
+        
+        // Filter out items already in current playlist by TMDB ID
+        if (existingTmdbIds.has(item.id)) return false
+        
+        // Also check by title-type combination (use consistent format)
+        if (existingTitleTypes.has(titleType)) return false
+        
+        return true
       })
 
-      setSearchResults({
-        watchlist: watchlistResults,
-        tmdbInternal: internalResults,
-        tmdbExternal: externalTmdbResults
+      console.log(`[Search] Results #${currentRequestId}:`, {
+        watchlist: watchlistResults.length,
+        tmdbInternal: internalResults.length,
+        tmdbExternal: externalTmdbResults.length
       })
+
+      // Final check before setting state
+      if (currentRequestId === searchRequestIdRef.current) {
+        setSearchResults({
+          watchlist: watchlistResults,
+          tmdbInternal: internalResults,
+          tmdbExternal: externalTmdbResults
+        })
+      } else {
+        console.log(`[Search] Race detected - ignoring result #${currentRequestId}`)
+      }
     } catch (error) {
-      console.error('Error searching:', error)
-      toast.error('Search failed')
+      console.error(`[Search] Error in request #${currentRequestId}:`, error)
+      // Only show error if this is still the latest request
+      if (currentRequestId === searchRequestIdRef.current) {
+        toast.error('Search failed')
+      }
     } finally {
-      setIsSearching(false)
+      // Only clear loading state if this is still the latest request
+      if (currentRequestId === searchRequestIdRef.current) {
+        setIsSearching(false)
+      }
     }
   }, [currentItems])
 
@@ -960,9 +1163,21 @@ export default function WatchlistPage({ user }) {
     setShowMoveModal(true)
   }, [])
 
+  // Handler to show copy modal for a specific item
+  const handleShowCopyModal = useCallback((item) => {
+    setMoveItemData(item)
+    setShowCopyModal(true)
+  }, [])
+
   // Handler to close move modal
   const handleCloseMoveModal = useCallback(() => {
     setShowMoveModal(false)
+    setMoveItemData(null)
+  }, [])
+
+  // Handler to close copy modal
+  const handleCloseCopyModal = useCallback(() => {
+    setShowCopyModal(false)
     setMoveItemData(null)
   }, [])
 
@@ -996,6 +1211,80 @@ export default function WatchlistPage({ user }) {
     }
   }, [moveItemData, playlists, handleItemMoved, api, handleRefresh])
 
+  // Handler for copying item from modal
+  const handleCopyFromModal = useCallback(async (targetPlaylistId) => {
+    if (!moveItemData) return
+
+    try {
+      console.log('[handleCopyFromModal] Full moveItemData:', moveItemData)
+      console.log('[handleCopyFromModal] mediaId:', moveItemData.mediaId)
+      console.log('[handleCopyFromModal] tmdbId:', moveItemData.tmdbId)
+      
+      // Validate we have required IDs
+      if (!moveItemData.mediaId && !moveItemData.tmdbId) {
+        console.error('[handleCopyFromModal] Missing both mediaId and tmdbId!', moveItemData)
+        toast.error('Cannot copy item: missing required IDs')
+        throw new Error('Missing mediaId and tmdbId')
+      }
+      
+      // Prepare complete item data for copying
+      const watchlistItem = {
+        mediaType: moveItemData.mediaType,
+        title: moveItemData.title,
+        isExternal: moveItemData.isExternal || false,
+        playlistId: targetPlaylistId
+      }
+      
+      // Add IDs based on what's available
+      if (moveItemData.mediaId) {
+        watchlistItem.mediaId = moveItemData.mediaId
+      }
+      if (moveItemData.tmdbId) {
+        watchlistItem.tmdbId = moveItemData.tmdbId
+      }
+      
+      // For external items, include TMDB metadata
+      if (moveItemData.isExternal) {
+        watchlistItem.tmdbData = {
+          overview: moveItemData.overview,
+          release_date: moveItemData.releaseDate,
+          first_air_date: moveItemData.releaseDate,
+          poster_path: moveItemData.posterPath,
+          backdrop_path: moveItemData.backdropPath,
+          genres: moveItemData.genres,
+          original_language: moveItemData.originalLanguage,
+          vote_average: moveItemData.voteAverage,
+          vote_count: moveItemData.voteCount
+        }
+        
+        // Add posterURL if available
+        if (moveItemData.posterURL) {
+          watchlistItem.posterURL = moveItemData.posterURL
+        }
+      }
+      
+      console.log('[handleCopyFromModal] Sending watchlistItem:', watchlistItem)
+      
+      await api.addToWatchlist(watchlistItem)
+      
+      // Refresh playlists from server to get accurate counts from database
+      // This ensures sidebar shows true item counts instead of optimistic guesses
+      await loadPlaylists()
+      
+      const targetPlaylist = playlists.find(p => p.id === targetPlaylistId)
+      toast.success(`Copied "${moveItemData.title}" to ${targetPlaylist?.name || 'My Watchlist'}`)
+    } catch (error) {
+      console.error('Error copying item:', error)
+      if (error.message?.includes('already exists')) {
+        toast.info('Item already exists in target playlist')
+        // Don't throw - this is expected and not an error
+      } else {
+        toast.error('Failed to copy item')
+        throw error // Re-throw to let modal handle loading state
+      }
+    }
+  }, [moveItemData, playlists, api, loadPlaylists])
+
   const handleClearPlaylist = useCallback(async (playlistId) => {
     try {
       // Get all items in the playlist
@@ -1022,7 +1311,7 @@ export default function WatchlistPage({ user }) {
 
   // Handler for toggling sort lock
   const handleToggleSortLock = useCallback(() => {
-    if (!canEditPlaylist()) {
+    if (!canEditPlaylist) {
       toast.error('You do not have permission to modify sort settings')
       return
     }
@@ -1150,6 +1439,7 @@ export default function WatchlistPage({ user }) {
         onSharePlaylist={handleSharePlaylist}
         summary={summary}
         summaryLoading={summaryLoading}
+        currentPlaylist={currentPlaylist}
       />
 
       {/* Main Content */}
@@ -1204,6 +1494,22 @@ export default function WatchlistPage({ user }) {
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
                   </button>
+                  <button
+                    onClick={() => setShowManageRows(true)}
+                    className="ml-2 px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
+                    title="Manage Your App Rows"
+                  >
+                    Manage App Rows
+                  </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => setShowAdminRows(true)}
+                      className="ml-2 px-3 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors"
+                      title="Admin: Manage App Rows for Users"
+                    >
+                      Manage App Rows (Admin)
+                    </button>
+                  )}
                 </>
               )}
             </div>
@@ -1233,7 +1539,9 @@ export default function WatchlistPage({ user }) {
             filterType={filterType}
             onFilterTypeChange={setFilterType}
             currentPlaylist={currentPlaylist}
+            currentItems={currentItems}
             playlists={playlists}
+            setPlaylists={setPlaylists}
             onRefresh={handleRefresh}
             onItemAdded={handleItemAdded}
             onItemsRemoved={handleItemsRemoved}
@@ -1242,7 +1550,7 @@ export default function WatchlistPage({ user }) {
             api={api}
             sortError={sortError}
             sortLocked={sortLocked}
-            canEditPlaylist={canEditPlaylist()}
+            canEditPlaylist={canEditPlaylist}
             onToggleSortLock={handleToggleSortLock}
           />
         )}
@@ -1290,15 +1598,17 @@ export default function WatchlistPage({ user }) {
                 onItemRemoved={handleItemRemoved}
                 onItemMoved={handleItemMoved}
                 onShowMoveModal={handleShowMoveModal}
+                onShowCopyModal={handleShowCopyModal}
                 currentPlaylist={currentPlaylist}
                 playlists={playlists}
                 onCustomReorder={handleCustomReorder}
                 api={api}
                 sortBy={sortBy}
                 sortLocked={sortLocked}
-                canEditPlaylist={canEditPlaylist()}
+                canEditPlaylist={canEditPlaylist}
                 navigationLoadingItemId={navigationLoadingItemId}
                 onNavigationStart={handleNavigationStart}
+                user={user}
               />
             </motion.div>
           </AnimatePresence>
@@ -1332,6 +1642,42 @@ export default function WatchlistPage({ user }) {
         itemTitle={moveItemData?.title}
         isLoading={false}
         selectedPlaylistId={selectedPlaylistId}
+      />
+      
+      {/* Copy to Playlist Modal */}
+      <MoveToPlaylistModal
+        isOpen={showCopyModal}
+        onClose={handleCloseCopyModal}
+        onMoveToPlaylist={handleCopyFromModal}
+        playlists={playlists}
+        itemTitle={moveItemData?.title}
+        isLoading={false}
+        selectedPlaylistId={selectedPlaylistId}
+        isCopyMode={true}
+      />
+
+      {/* Manage Your App Rows (per-user visibility) */}
+      <ShowInAppUserModal
+        isOpen={showManageRows}
+        onClose={() => setShowManageRows(false)}
+        api={{
+          // Thin wrapper to conform to modal's expectations
+          getPlaylists: async (includeShared = true) => api.getPlaylists(includeShared),
+          getPlaylistVisibility: async (options = {}) => api.getPlaylistVisibility(options),
+          setPlaylistVisibility: async (payload) => api.setPlaylistVisibility(payload)
+        }}
+      />
+
+      {/* Admin: Manage App Rows for users */}
+      <ShowInAppAdminModal
+        isOpen={showAdminRows}
+        onClose={() => setShowAdminRows(false)}
+        api={{
+          getPlaylists: async (includeShared = true) => api.getPlaylists(includeShared),
+          listUsers: async (options = {}) => api.listUsersForVisibility(options),
+          setVisibilityBulk: async (payload) => api.setPlaylistVisibility(payload),
+          resetVisibilityAll: async (playlistId) => api.resetPlaylistVisibilityAll(playlistId)
+        }}
       />
     </div>
   )

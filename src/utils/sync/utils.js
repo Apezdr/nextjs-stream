@@ -174,8 +174,15 @@ export function isCurrentServerHighestPriorityForField(
   fieldPath,
   serverConfig
 ) {
+  // Handle edge case where mediaTitle is undefined (for legacy sync compatibility)
+  if (!mediaTitle) {
+    console.warn(`⚠️ isCurrentServerHighestPriorityForField: mediaTitle is undefined for ${fieldPath}, returning false`)
+    return false
+  }
+  
   const serversWithData = fieldAvailability[mediaType][mediaTitle]?.[fieldPath] || []
   if (serversWithData.length === 0) {
+    debugger
     return true
   }
 

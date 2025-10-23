@@ -8,6 +8,7 @@ import { auth } from '@src/lib/auth'
 import HorizontalScroll from '@src/components/MediaScroll/HorizontalScroll'
 import { getFlatRecommendations } from '@src/utils/flatRecommendations'
 import { getFlatPosters, getFlatRecentlyAddedMedia, getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
+import { getUserWatchlist, getPlaylistVisibility } from '@src/utils/watchlist'
 
 // Define personalized messages for each type
 const NO_CONTENT_MESSAGES = {
@@ -16,6 +17,7 @@ const NO_CONTENT_MESSAGES = {
   recentlyWatched: "👀 You haven't watched anything recently.",
   recentlyAdded: "🆕 No recently added media available.",
   recommendations: "🎯 No personalized recommendations available right now.",
+  playlist: "📂 No items in this playlist yet.",
   all: "📦 No media available at the moment.",
 }
 
@@ -23,6 +25,7 @@ export default async function HorizontalScrollContainer({
   type = 'all',
   sort = 'id',
   sortOrder = 'desc',
+  playlistId = null,
 }) {
   let moviePosters = 0,
     tvPosters = 0,
@@ -56,6 +59,29 @@ export default async function HorizontalScrollContainer({
       const recommendationsData = await getFlatRecommendations(session.user?.id, 0, limit, true)
       items = recommendationsData.count || 0
       break
+    case 'playlist':
+      // Count playlist items respecting user visibility settings (same logic as horizontal-list API)
+      if (playlistId) {
+        // Check user's visibility settings for this playlist to determine if they want to hide unavailable items
+        let hideUnavailable = false
+        try {
+          const visibility = await getPlaylistVisibility(session.user?.id, playlistId)
+          hideUnavailable = visibility?.hideUnavailable ?? false
+        } catch (e) {
+          console.error('Error fetching playlist visibility for count:', e)
+          // Default to showing all content if visibility fetch fails
+        }
+        
+        // Use same internalOnly logic as horizontal-list API
+        items = await getUserWatchlist({
+          playlistId,
+          countOnly: true,
+          internalOnly: hideUnavailable  // Conditional filtering based on user preference
+        })
+      } else {
+        items = 0
+      }
+      break
     case 'all':
     default:
       // Assuming getPosters returns a count when countOnly is true
@@ -73,7 +99,13 @@ export default async function HorizontalScrollContainer({
   return (
     <div className="my-8 w-full">
       {hasItems ? (
-        <HorizontalScroll numberOfItems={items} listType={type} sort={sort} sortOrder={sortOrder} />
+        <HorizontalScroll
+          numberOfItems={items}
+          listType={type}
+          sort={sort}
+          sortOrder={sortOrder}
+          playlistId={playlistId}
+        />
       ) : (
         <div className="py-12 flex flex-col gap-2 text-center text-gray-500">
           <span className="text-2xl text-white">{message}</span>

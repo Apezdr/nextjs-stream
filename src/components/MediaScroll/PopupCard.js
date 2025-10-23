@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, memo, cache } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Image from 'next/image'
 import Link from 'next/link'
@@ -34,6 +34,8 @@ const PopupCard = ({
   type,
   logo,
   mediaId,
+  showId,
+  showTmdbId,
   posterURL,
   posterBlurhash,
   backdrop,
@@ -42,24 +44,35 @@ const PopupCard = ({
   handlePortalMouseEnter,
   handlePortalMouseLeave,
   isTouchDevice,
+  // Availability flags for TMDB-only items
+  isAvailable,
+  comingSoon,
+  comingSoonDate,
+  metadata,
+  // Shared date info from Card
+  dateInfo,
 }) => {
-  const apiEndpoint = buildURL(
-    type === 'tv'
-      ? `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&season=${seasonNumber}&episode=${episodeNumber}&card=true`
-      : `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&card=true`
-  )
+  // Use consistent on-demand pattern for both library and TMDB items
+  const apiEndpoint = isAvailable !== false
+    ? buildURL(
+        type === 'tv'
+          ? `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&season=${seasonNumber}&episode=${episodeNumber}&card=true`
+          : `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&card=true`
+      )
+    : buildURL(`/api/authenticated/tmdb/comprehensive/${type}?tmdb_id=${metadata?.id}&blurhash=true`)
 
   const { data, error, isLoading } = useSWR(apiEndpoint, fetcher, {
     revalidateOnFocus: false,
     revalidateOnReconnect: true,
-    dedupingInterval: 15000, // Adjust as needed
+    dedupingInterval: 15000,
     errorRetryInterval: 2000,
     errorRetryCount: 20,
   })
 
-  // If either clipVideoURL OR trailer_url is missing, hasVideo = false
-  const hasVideo = !data?.clipVideoURL || !data?.trailer_url
+  // If either clipVideoURL OR trailer_url exists, hasVideo = true
+  const hasVideo = !!data?.clipVideoURL || !!data?.trailer_url
   const videoURL = data?.clipVideoURL || data?.trailer_url
+  const isTrailer = !data?.clipVideoURL && data?.trailer_url
   const hdr = data?.hdr || false
 
   const [imageLoaded, setImageLoaded] = useState(false)
@@ -72,6 +85,8 @@ const PopupCard = ({
 
   // Track thumbnail loading
   const [isThumbnailLoaded, setIsThumbnailLoaded] = useState(false)
+  const [showBackdrop, setShowBackdrop] = useState(false)
+  const [delayBackdropHide, setDelayBackdropHide] = useState(false)
 
   const portalRef = useRef(null)
 
@@ -101,7 +116,36 @@ const PopupCard = ({
     setAfterVideo(false)
     setHideVideo(hasVideo)
     setIsThumbnailLoaded(false)
+    setShowBackdrop(false)
+    setDelayBackdropHide(false)
   }, [videoURL, data?.thumbnail, hasVideo])
+
+  // Simple delay to prevent backdrop flash for episodes with thumbnails
+  useEffect(() => {
+    if (data?.thumbnail) {
+      // Small delay for episodes to give thumbnails time to load
+      const timer = setTimeout(() => {
+        setShowBackdrop(true)
+      }, 100)
+      return () => clearTimeout(timer)
+    } else {
+      // No delay for movies/shows without thumbnails
+      setShowBackdrop(true)
+    }
+  }, [data?.thumbnail])
+
+  // Delay backdrop hide when video starts playing
+  useEffect(() => {
+    if (shouldPlay && playingVideo) {
+      setDelayBackdropHide(true)
+      const timer = setTimeout(() => {
+        setDelayBackdropHide(false)
+      }, 800)
+      return () => clearTimeout(timer)
+    } else {
+      setDelayBackdropHide(false)
+    }
+  }, [shouldPlay, playingVideo])
 
   // 3.2-second delay after the image loads before allowing the video to start
   const handleImageLoad = useCallback(() => {
@@ -127,21 +171,33 @@ const PopupCard = ({
     return imagePosition.expandedWidth ? `!w-[${imagePosition.expandedWidth}px]` : `w-[300px]`
   }
 
-  // Function to determine which date to display
-  const getDisplayDate = () => {
-    if (lastWatchedDate) {
-      return { label: "Last Watched", value: lastWatchedDate };
-    } else if (addedDate) {
-      return { label: "Added", value: addedDate };
-    } else if (releaseDate) {
-      return { label: "Released", value: releaseDate };
-    } else if (date) {
-      return { label: "Date", value: date };
-    }
-    return null;
-  }
+  // Use the shared dateInfo from Card component
+  const displayDate = dateInfo;
+  
+  // For release status banner, use dateInfo if it's a release status
+  const releaseStatus = dateInfo?.isReleaseStatus ? dateInfo : null;
 
-  const displayDate = getDisplayDate();
+  // Precompute image sources and blurhashes to avoid repetition
+  const logoSrc = data?.logo || data?.logo_path || metadata?.logo_path;
+  const posterSrc = data?.posterURL || posterURL;
+  const posterBlur = data?.posterBlurhash || posterBlurhash;
+  const backdropSrc = backdrop ?? data?.backdrop ?? (data?.backdrop_path ? getFullImageUrl(data?.backdrop_path, 'w500') : null);
+  const backdropBlur = backdropBlurhash ?? data?.backdropBlurhash;
+  const thumbnailSrc = data?.thumbnail;
+  const thumbnailBlur = data?.blurhash?.thumbnail || data?.thumbnailBlurhash;
+  
+  // Compute what images should be displayed
+  const hasLogo = !!logoSrc;
+  const hasBackdrop = !!backdropSrc;
+  const hasPoster = !!posterSrc;
+  const hasThumbnail = !!thumbnailSrc;
+  
+  // Determine visibility for each layer
+  const shouldShowPoster = !shouldPlay && !hasBackdrop && !hasThumbnail && hasPoster;
+  const shouldShowBackdrop = (!shouldPlay || delayBackdropHide) &&
+                             hasBackdrop &&
+                             (hasThumbnail ? (!isThumbnailLoaded && showBackdrop) : true);
+  const shouldShowThumbnail = !shouldPlay && hasThumbnail;
 
   return (
     <div
@@ -191,13 +247,13 @@ const PopupCard = ({
           }}
         >
           {/* Logo if present (z-[50]) */}
-          {data?.logo && (
+          {hasLogo && (
             <RetryImage
               quality={25}
               fill
               loading="eager"
               priority
-              src={data.logo}
+              src={logoSrc}
               alt={`${title} Logo`}
               className={classNames(
                 //absolute max-w-[70%] mr-auto !w-auto max-h-14 inset-0 object-contain select-none z-[50]
@@ -236,7 +292,7 @@ const PopupCard = ({
           {/* Overlapping transitions for backdrop/thumbnail/poster */}
           <AnimatePresence mode="sync">
             {/* Poster fallback (lowest) => z-[10] */}
-            {!shouldPlay && !data?.thumbnail && !backdrop && (
+            {shouldShowPoster && (
               <motion.div
                 key="poster"
                 initial={{ opacity: 1 }}
@@ -247,11 +303,9 @@ const PopupCard = ({
               >
                 <RetryImage
                   quality={100}
-                  src={data?.posterURL}
-                  placeholder={posterBlurhash ? 'blur' : 'empty'}
-                  blurDataURL={
-                    posterBlurhash ? `data:image/png;base64,${posterBlurhash}` : undefined
-                  }
+                  src={posterSrc}
+                  placeholder={posterBlur ? 'blur' : 'empty'}
+                  blurDataURL={posterBlur ? `data:image/png;base64,${posterBlur}` : undefined}
                   alt={title}
                   loading="eager"
                   priority
@@ -263,22 +317,20 @@ const PopupCard = ({
             )}
 
             {/* Backdrop => z-[20] */}
-            {!shouldPlay && backdrop && !isThumbnailLoaded && (
+            {shouldShowBackdrop && (
               <motion.div
                 key="backdrop"
                 initial={{ opacity: 1 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.4 }}
+                transition={{ duration: 4.8 }}
                 className="w-full h-full absolute inset-0 z-[20]"
               >
                 <RetryImage
                   quality={100}
-                  src={backdrop}
-                  placeholder={backdropBlurhash ? 'blur' : 'empty'}
-                  blurDataURL={
-                    backdropBlurhash ? `data:image/png;base64,${backdropBlurhash}` : undefined
-                  }
+                  src={backdropSrc}
+                  placeholder={backdropBlur ? 'blur' : 'empty'}
+                  blurDataURL={backdropBlur ? `data:image/png;base64,${backdropBlur}` : undefined}
                   alt={title}
                   loading="eager"
                   priority
@@ -290,24 +342,20 @@ const PopupCard = ({
             )}
 
             {/* Thumbnail => z-[30] */}
-            {!shouldPlay && data?.thumbnail && (
+            {shouldShowThumbnail && (
               <motion.div
                 key="thumbnail"
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.4 }}
+                transition={{ duration: 0.3 }}
                 className="w-full h-full absolute inset-0 z-[30]"
               >
                 <RetryImage
                   quality={100}
-                  src={data?.thumbnail}
-                  placeholder={data?.blurhash?.thumbnail || data?.thumbnailBlurhash ? 'blur' : 'empty'}
-                  blurDataURL={
-                    data?.blurhash?.thumbnail || data?.thumbnailBlurhash
-                      ? `data:image/png;base64,${data?.blurhash?.thumbnail || data?.thumbnailBlurhash}`
-                      : undefined
-                  }
+                  src={thumbnailSrc}
+                  placeholder={thumbnailBlur ? 'blur' : 'empty'}
+                  blurDataURL={thumbnailBlur ? `data:image/png;base64,${thumbnailBlur}` : undefined}
                   alt={title}
                   loading="eager"
                   priority
@@ -355,6 +403,20 @@ const PopupCard = ({
                   </span>
                 </>
               )}
+              
+              {(hasVideo || videoURL) && (seasonNumber || episodeNumber)? (
+              <>
+                <span className="relative ml-auto text-xs bg-yellow-400 text-black font-bold px-2 py-1 rounded-bl-md z-[50]">
+                  {isTrailer ? "TRAILER" : "CLIP"}
+                  {/* Show Youtube button if trailer */}
+                  {isTrailer && (
+                    <Link href={data?.trailer_url} target='_blank' className="text-red-600 hover:text-red-800 text-xs font-bold ml-2 pl-2 border-l border-gray-800">
+                      YouTube
+                    </Link>
+                  )}
+                </span>
+              </>
+            ) : null}
             </div>
           )}
           <div className="flex flex-row relative">
@@ -362,6 +424,19 @@ const PopupCard = ({
               width: 100%;
               border-right: 1px solid #dfdfdf96;
               margin-right: 16px; */}
+            {(hasVideo || videoURL) && (!seasonNumber || !episodeNumber) ? (
+              <>
+                <span className="absolute top-0 right-0 text-xs bg-yellow-400 text-black font-bold px-2 py-1 rounded-bl-md z-[50]">
+                  {isTrailer ? "TRAILER" : "CLIP"}
+                  {/* Show Youtube button if trailer */}
+                  {isTrailer && (
+                    <Link href={data?.trailer_url} target='_blank' className="text-red-600 hover:text-red-800 text-xs font-bold ml-2 pl-2 border-l border-gray-800">
+                      YouTube
+                    </Link>
+                  )}
+                </span>
+              </>
+            ) : null}
             <h2 className={classNames(
               "text-2xl text-gray-900 font-bold mb-2 w-[88%] overflow-hidden",
               "w-full mr-4",
@@ -384,69 +459,88 @@ const PopupCard = ({
           </div>
           {displayDate && (
             <div className="flex items-center mb-1 gap-1">
-              <span className={classNames(
-                "text-sm font-medium",
-                displayDate.label === "Last Watched" ? "text-blue-600" : 
-                displayDate.label === "Added" ? "text-green-600" : 
-                displayDate.label === "Released" ? "text-yellow-600" : 
-                "text-gray-600"
-              )}>
+              <span className={classNames("text-sm font-medium", displayDate.popupColor)}>
                 {displayDate.label}:
               </span>
               <span className="text-sm text-gray-800 font-medium">{displayDate.value}</span>
             </div>
           )}
-          <div className="text-gray-500 mb-2">
-            {isLoading ? <Loading fullscreenClasses={false} /> : data?.description ?? 'No description available.'}
-          </div>
-
-          {link && (
-            <div className="flex flex-row gap-2">
-              {(type === 'tv' && seasonNumber && episodeNumber || type === 'movie') ? (
-                <Link
-                  href={`/list/${type}/${link}/play`}
-                  className={classNames(
-                    'relative inline-flex items-center gap-2 opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'
-                  )}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="currentColor"
-                    className="w-5 h-5"
-                  >
-                    <path
-                      fillRule="evenodd"
-                      d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  <span>Watch Now {hdr ? `in ${hdr}` : null}</span>
-                </Link>
-              ) : null
-              }
-              <Link
-                href={`/list/${type}/${link}`}
-                className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
-              >
-                <InformationCircleIcon className="size-6 mr-0 sm:mr-2" />
-                <span className="hidden sm:inline">
-                  View Details
-                </span>
-              </Link>
-              
-              {/* Add WatchlistButton for movies and TV shows */}
-              {mediaId && (type === 'movie' || (type === 'tv')) && (
-                <WatchlistButton
-                  mediaId={mediaId}
-                  tmdbId={data?.metadata?.id}
-                  mediaType={type}
-                  title={episodeNumber ? title : (data?.title ?? title)}
-                  className="h-12 mt-4 px-4 py-2 rounded-full"
-                />
+          
+          {/* Release Status Banner for unavailable content */}
+          {releaseStatus && (
+            <div className={classNames(
+              'inline-flex items-center px-3 py-1 rounded-full text-sm font-medium border mb-3',
+              releaseStatus.bgColor,
+              releaseStatus.textColor,
+              releaseStatus.borderColor
+            )}>
+              {releaseStatus.isUnreleased ? (
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              ) : (
+                <svg className="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
               )}
+              {releaseStatus.label}
             </div>
           )}
+          
+          <div className="text-gray-500 mb-2">
+            {isLoading ? <Loading fullscreenClasses={false} /> : data?.overview ?? data?.description ?? 'No description available.'}
+          </div>
+
+          <div className="flex flex-row gap-2">
+            {/* Watch Now and View Details buttons - only for internal content with link */}
+            {link && (
+              <>
+                {(type === 'tv' && seasonNumber && episodeNumber || type === 'movie') && (
+                  <Link
+                    href={`/list/${type}/${link}/play`}
+                    className={classNames(
+                      'relative inline-flex items-center gap-2 opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'
+                    )}
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 24 24"
+                      fill="currentColor"
+                      className="w-5 h-5"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z"
+                        clipRule="evenodd"
+                      />
+                    </svg>
+                    <span>Watch Now {hdr ? `in ${hdr}` : null}</span>
+                  </Link>
+                )}
+                <Link
+                  href={`/list/${type}/${link}`}
+                  className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
+                >
+                  <InformationCircleIcon className="size-6 mr-0 sm:mr-2" />
+                  <span className="hidden sm:inline">
+                    View Details
+                  </span>
+                </Link>
+              </>
+            )}
+            
+            {/* Add WatchlistButton for both internal and TMDB-only content */}
+            {(type === 'movie' || type === 'tv') && (mediaId || showId || showTmdbId || metadata?.id) && (
+              <WatchlistButton
+                mediaId={showId ?? mediaId}
+                tmdbId={showTmdbId ?? data?.metadata?.id ?? metadata?.id}
+                mediaType={type}
+                title={episodeNumber ? title : (data?.title ?? title)}
+                posterURL={data?.poster_path ? getFullImageUrl(data?.poster_path, 'w500') : data?.posterURL}
+                className="h-12 mt-4 px-4 py-2 rounded-full"
+              />
+            )}
+          </div>
         </div>
         {data?.cast && Object.keys(data.cast).length > 0 && (
           <div className="p-4 relative h-[31rem]"> {/* Ensure a fixed height for virtualization */}
@@ -456,7 +550,7 @@ const PopupCard = ({
             <VirtualizedCastGrid cast={data.cast} />
 
             {/* Gradient Overlay */}
-            {Object.values(data.cast).length > 16 && (
+            {(Array.isArray(data.cast) ? data.cast : Object.values(data.cast)).length > 16 && (
               <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-white to-transparent pointer-events-none"></div>
             )}
           </div>
@@ -466,4 +560,4 @@ const PopupCard = ({
   )
 }
 
-export default cache(PopupCard)
+export default PopupCard

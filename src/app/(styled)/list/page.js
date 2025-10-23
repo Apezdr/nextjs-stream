@@ -36,7 +36,7 @@ async function MediaDirectory() {
   calendarConfig.hasAnyCalendar = calendarConfig.sonarr || calendarConfig.radarr
 
   return (
-    <Suspense>
+    <Suspense fallback={<div className='flex min-h-screen flex-col items-center justify-between xl:py-24'></div>}>
       <LandingPage user={{ name, email, limitedAccess }} calendarConfig={calendarConfig} />
     </Suspense>
   )

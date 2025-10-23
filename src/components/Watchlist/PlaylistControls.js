@@ -26,7 +26,9 @@ export default function PlaylistControls({
   filterType,
   onFilterTypeChange,
   currentPlaylist,
+  currentItems,
   playlists,
+  setPlaylists,
   onRefresh,
   onItemAdded,
   onItemsRemoved,
@@ -41,6 +43,7 @@ export default function PlaylistControls({
   const [showSearchResults, setShowSearchResults] = useState(false)
   const [showBulkActions, setShowBulkActions] = useState(false)
   const [showMoveMenu, setShowMoveMenu] = useState(false)
+  const [showCopyMenu, setShowCopyMenu] = useState(false)
   const [bulkLoading, setBulkLoading] = useState(false)
   const searchRef = useRef(null)
   const searchTimeout = useRef(null)
@@ -320,6 +323,115 @@ export default function PlaylistControls({
     }
   }, [selectedItems, playlists, onRefresh, onSelectAll, onItemsMoved, api])
 
+  const handleBulkCopy = useCallback(async (targetPlaylistId) => {
+    if (selectedItems.size === 0) return
+    
+    setBulkLoading(true)
+    const itemIds = Array.from(selectedItems)
+    
+    try {
+      // Use currentItems prop to find selected items (no extra API call needed)
+      const itemsToCopy = currentItems.filter(item => itemIds.includes(item.id))
+      
+      if (itemsToCopy.length === 0) {
+        toast.error('No items found to copy')
+        return
+      }
+      
+      let copiedCount = 0
+      let skippedCount = 0
+      let failedCount = 0
+      const failedItems = []
+      
+      // Add each item to the target playlist
+      for (const item of itemsToCopy) {
+        // Prepare complete item data
+        const watchlistItem = {
+          mediaType: item.mediaType,
+          title: item.title,
+          isExternal: item.isExternal || false,
+          playlistId: targetPlaylistId
+        }
+        
+        // Add IDs based on what's available
+        if (item.mediaId) {
+          watchlistItem.mediaId = item.mediaId
+        }
+        if (item.tmdbId) {
+          watchlistItem.tmdbId = item.tmdbId
+        }
+        
+        // For external items, include TMDB metadata
+        if (item.isExternal) {
+          watchlistItem.tmdbData = {
+            overview: item.overview,
+            release_date: item.releaseDate,
+            first_air_date: item.releaseDate,
+            poster_path: item.posterPath,
+            backdrop_path: item.backdropPath,
+            genres: item.genres,
+            original_language: item.originalLanguage,
+            vote_average: item.voteAverage,
+            vote_count: item.voteCount
+          }
+          
+          if (item.posterURL) {
+            watchlistItem.posterURL = item.posterURL
+          }
+        }
+        
+        try {
+          await api.addToWatchlist(watchlistItem)
+          copiedCount++
+        } catch (error) {
+          // Continue with other items even if one fails
+          if (error.message?.includes('already exists')) {
+            skippedCount++
+          } else {
+            console.error(`Failed to copy "${item.title}":`, error)
+            failedCount++
+            failedItems.push(item.title)
+          }
+        }
+      }
+      
+      // Refresh playlists from server to get accurate counts from database
+      // This ensures sidebar shows true item counts instead of optimistic guesses
+      if (copiedCount > 0) {
+        await onRefresh()
+      }
+      
+      // Build success message
+      const targetPlaylist = playlists.find(p => p.id === targetPlaylistId)
+      const targetName = targetPlaylist?.name || 'My Watchlist'
+      
+      if (copiedCount > 0) {
+        let message = `Copied ${copiedCount} item${copiedCount !== 1 ? 's' : ''} to ${targetName}`
+        if (skippedCount > 0) {
+          message += ` (${skippedCount} already existed)`
+        }
+        if (failedCount > 0) {
+          message += ` (${failedCount} failed)`
+        }
+        toast.success(message)
+      } else if (skippedCount > 0) {
+        toast.info(`All ${skippedCount} items already exist in ${targetName}`)
+      } else if (failedCount > 0) {
+        toast.error(`Failed to copy ${failedCount} items: ${failedItems.join(', ')}`)
+      }
+      
+      // Clear selection after copy
+      onClearSelection()
+    } catch (error) {
+      console.error('Error in bulk copy operation:', error)
+      toast.error('Failed to copy items')
+    } finally {
+      setBulkLoading(false)
+      setShowBulkActions(false)
+      setShowCopyMenu(false)
+    }
+  }, [selectedItems, playlists, onClearSelection, api, currentItems, onRefresh])
+
   return (
     <div className="bg-gray-800 border-b border-gray-700 px-6 py-4">
       {/* Add Error Display */}
@@ -350,8 +462,15 @@ export default function PlaylistControls({
               type="text"
               value={searchQuery}
               onChange={(e) => handleSearchInput(e.target.value)}
-              placeholder="Search watchlist or add from TMDB..."
-              className="w-full pl-10 pr-4 py-2 bg-gray-700 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              placeholder={canEditPlaylist ? "Search watchlist or add from TMDB..." : "Search watchlist (read-only)"}
+              disabled={!canEditPlaylist}
+              className={classNames(
+                "w-full pl-10 pr-4 py-2 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent",
+                canEditPlaylist
+                  ? "bg-gray-700"
+                  : "bg-gray-600 cursor-not-allowed opacity-75"
+              )}
+              title={!canEditPlaylist ? "You don't have permission to add items to this playlist" : ""}
             />
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               {isSearching ? (
@@ -364,8 +483,8 @@ export default function PlaylistControls({
             </div>
           </div>
 
-          {/* Search Results */}
-          {showSearchResults && (searchResults?.watchlist?.length > 0 || searchResults?.tmdbInternal?.length > 0 || searchResults?.tmdbExternal?.length > 0) && (
+          {/* Search Results - only show add options if user can edit */}
+          {showSearchResults && canEditPlaylist && (searchResults?.watchlist?.length > 0 || searchResults?.tmdbInternal?.length > 0 || searchResults?.tmdbExternal?.length > 0) && (
             <div className="absolute top-full left-0 right-0 mt-1 bg-gray-700 border border-gray-600 rounded-md shadow-lg z-20 max-h-96 overflow-y-auto">
               {/* Watchlist Results */}
               {searchResults.watchlist?.length > 0 && (
@@ -381,6 +500,8 @@ export default function PlaylistControls({
                       <Image
                         src={item.posterURL}
                         alt={item.title}
+                        width={32}
+                        height={48}
                         className="w-8 h-12 object-cover rounded"
                       />
                       <div className="flex-1 min-w-0">
@@ -420,6 +541,8 @@ export default function PlaylistControls({
                         <Image
                           src={item.poster_path || '/sorry-image-not-available.jpg'}
                           alt={item.title || item.name}
+                          width={32}
+                          height={48}
                           className="w-8 h-12 object-cover rounded"
                         />
                         <div className="flex-1 min-w-0">
@@ -469,6 +592,8 @@ export default function PlaylistControls({
                         <Image
                           src={item.poster_path ? `https://image.tmdb.org/t/p/w92${item.poster_path}` : '/sorry-image-not-available.jpg'}
                           alt={item.title || item.name}
+                          width={32}
+                          height={48}
                           className="w-8 h-12 object-cover rounded"
                         />
                         <div className="flex-1 min-w-0">
@@ -512,21 +637,36 @@ export default function PlaylistControls({
               {showBulkActions && (
                 <div className="absolute top-full right-0 mt-1 w-48 bg-gray-700 rounded-md shadow-lg z-10">
                   <div className="py-1">
+                    {/* Copy to playlist - always available */}
                     <button
                       onClick={() => {
-                        setShowMoveMenu(true)
+                        setShowCopyMenu(true)
                         setShowBulkActions(false)
                       }}
                       className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
                     >
-                      Move to playlist
+                      Copy to playlist
                     </button>
-                    <button
-                      onClick={handleBulkRemove}
-                      className="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-600"
-                    >
-                      Remove from watchlist
-                    </button>
+                    {/* Move and Remove - only for users with edit permissions */}
+                    {canEditPlaylist && (
+                      <>
+                        <button
+                          onClick={() => {
+                            setShowMoveMenu(true)
+                            setShowBulkActions(false)
+                          }}
+                          className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
+                        >
+                          Move to playlist
+                        </button>
+                        <button
+                          onClick={handleBulkRemove}
+                          className="block w-full text-left px-4 py-2 text-sm text-red-400 hover:bg-gray-600"
+                        >
+                          Remove from watchlist
+                        </button>
+                      </>
+                    )}
                     <button
                       onClick={() => {
                         onSelectAll()
@@ -626,8 +766,8 @@ export default function PlaylistControls({
             <option value="dateAdded-asc">Oldest First</option>
             <option value="title-asc">Title A-Z</option>
             <option value="title-desc">Title Z-A</option>
-            <option value="releaseDate-desc">Newest Release</option>
-            <option value="releaseDate-asc">Oldest Release</option>
+            <option value="releaseDate-desc">Newest Releases First</option>
+            <option value="releaseDate-asc">Oldest Releases First</option>
             <option value="custom-asc">Custom Order</option>
           </select>
 
@@ -674,6 +814,18 @@ export default function PlaylistControls({
         itemTitle={`${selectedItems.size} items`}
         isLoading={bulkLoading}
         selectedPlaylistId={currentPlaylist?.id}
+      />
+      
+      {/* Bulk Copy Modal */}
+      <MoveToPlaylistModal
+        isOpen={showCopyMenu}
+        onClose={() => setShowCopyMenu(false)}
+        onMoveToPlaylist={handleBulkCopy}
+        playlists={playlists}
+        itemTitle={`Copy ${selectedItems.size} items`}
+        isLoading={bulkLoading}
+        selectedPlaylistId={currentPlaylist?.id}
+        isCopyMode={true}
       />
     </div>
   )

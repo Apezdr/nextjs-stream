@@ -29,13 +29,9 @@ const MovieDetailsComponent = ({ media }) => {
     return `${hours}h ${remainingMinutes}m ${seconds}s`;
   }
   
-  let blurhash = null
-
-  if (backdrop) {
-    blurhash = media.backdropBlurhash
-  } else if (posterURL) {
-    blurhash = media.posterBlurhash
-  }
+  // Separate blurhash handling for poster and backdrop
+  const posterBlurhash = media.posterBlurhash
+  const backdropBlurhash = media.backdropBlurhash || media.posterBlurhash // fallback to poster blurhash
 
   const calculatedRuntime = duration ? convertToLocaleTime(duration / 60000) : runtime ? convertToLocaleTime(runtime) : null;
 
@@ -43,45 +39,77 @@ const MovieDetailsComponent = ({ media }) => {
     <div className="max-w-4xl mx-auto p-4">
       <div className="flex flex-col gap-2">
         <div>
-          <div className="relative">
-            <Suspense fallback={<div className="w-full h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
-              {blurhash ? (
-                <RetryImage
-                  src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-                  alt={`${title} backdrop`}
-                  quality={100}
-                  width={1200}
-                  height={256}
-                  placeholder="blur"
-                  blurDataURL={`data:image/png;base64,${blurhash}`}
-                  className="w-full h-64 object-cover rounded-lg shadow-md"
-                  priority={false}
-                />
-              ) : (
-                <RetryImage
-                  src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-                  alt={`${title} backdrop`}
-                  quality={100}
-                  width={1200}
-                  height={256}
-                  className="w-full h-64 object-cover rounded-lg shadow-md"
-                  priority={false}
-                />
-              )}
-              {logo && (
-                <div className="absolute top-4 left-4">
+          <div className="flex gap-4 h-64">
+            {/* Poster on the left */}
+            <div className="flex-shrink-0">
+              <Suspense fallback={<div className="w-40 h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
+                {posterBlurhash ? (
                   <RetryImage
-                    src={logo}
-                    alt={`${title} logo`}
+                    src={posterURL ?? `/sorry-image-not-available.jpg`}
+                    alt={`${title} poster`}
                     quality={100}
-                    width={128}
-                    height={40}
-                    className="w-32 h-auto"
-                    priority={true}
+                    width={160}
+                    height={256}
+                    placeholder="blur"
+                    blurDataURL={`data:image/png;base64,${posterBlurhash}`}
+                    className="w-40 h-64 object-cover rounded-lg shadow-md"
+                    priority={false}
                   />
-                </div>
-              )}
-            </Suspense>
+                ) : (
+                  <RetryImage
+                    src={posterURL ?? `/sorry-image-not-available.jpg`}
+                    alt={`${title} poster`}
+                    quality={100}
+                    width={160}
+                    height={256}
+                    className="w-40 h-64 object-cover rounded-lg shadow-md"
+                    priority={false}
+                  />
+                )}
+              </Suspense>
+            </div>
+            
+            {/* Backdrop on the right */}
+            <div className="flex-grow relative">
+              <Suspense fallback={<div className="w-full h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
+                {backdropBlurhash ? (
+                  <RetryImage
+                    src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
+                    alt={`${title} backdrop`}
+                    quality={100}
+                    width={1200}
+                    height={256}
+                    placeholder="blur"
+                    blurDataURL={`data:image/png;base64,${backdropBlurhash}`}
+                    className="w-full h-64 object-cover rounded-lg shadow-md"
+                    priority={false}
+                  />
+                ) : (
+                  <RetryImage
+                    src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
+                    alt={`${title} backdrop`}
+                    quality={100}
+                    width={1200}
+                    height={256}
+                    className="w-full h-64 object-cover rounded-lg shadow-md"
+                    priority={false}
+                  />
+                )}
+                {logo && (
+                  <div className="absolute top-4 left-4">
+                    <RetryImage
+                      src={logo}
+                      alt={`${title} logo`}
+                      quality={100}
+                      width={128}
+                      height={40}
+                      className="w-32 h-auto"
+                      priority={true}
+                    />
+                  </div>
+                )}
+              </Suspense>
+            </div>
           </div>
           <div className="mt-4">
             <Link href="/list/movie" className="self-center">
