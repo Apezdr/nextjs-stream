@@ -252,7 +252,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
               responseData = response.body;
               break;
 
-            case 'buffer':
+            case 'buffer': {
               responseData = Buffer.from(response.rawBody);
               
               // Create a hash for integrity verification
@@ -281,7 +281,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
                 headers: responseHeaders,
                 meta: { source: 'fresh', originalType: 'buffer' }
               };
-              break;
+            }
 
             case 'stream':
               responseData = response;

@@ -1,7 +1,7 @@
 'use client';
 
 import { createPortal } from 'react-dom';
-import { useEffect, useState } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
 import { useNotifications } from '@src/hooks/useNotifications';
 import NotificationItem from './NotificationItem';
@@ -13,19 +13,20 @@ export default function NotificationDropdown({ isOpen, onClose, position }) {
   const router = useRouter();
   
   // Use the new useSWR-based hook for dropdown notifications
-  const { 
-    notifications, 
-    unreadCount, 
-    loading, 
+  const {
+    notifications,
+    unreadCount,
+    loading,
     markAllAsRead,
     refresh
   } = useNotifications({ limit: 10 });
 
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  // Use useSyncExternalStore for SSR-safe client detection
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
 
   useEffect(() => {
     if (isOpen) {

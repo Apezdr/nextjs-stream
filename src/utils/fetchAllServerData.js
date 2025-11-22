@@ -188,38 +188,34 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3) {
  * @throws {Error} If an unexpected error occurs during the data fetching process.
  */
 export async function fetchAllServerData() {
-  try {
-    const servers = getAllServers();
-    const serverResults = await Promise.all(
-      servers.map((server) => fetchServerData(server))
-    );
+  const servers = getAllServers();
+  const serverResults = await Promise.all(
+    servers.map((server) => fetchServerData(server))
+  );
 
-    // Build fileServers object for servers with data
-    const fileServers = serverResults.reduce((acc, result) => {
-      if (result.data) {
-        acc[result.id] = {
-          config: {
-            baseURL: result.baseURL,
-            prefixPath: result.prefixPath,
-            syncEndpoint: result.syncEndpoint,  // Node.js server URL for API endpoints
-            priority: result.priority
-          },
-          ...result.data
-        };
-      }
-      return acc;
-    }, {});
+  // Build fileServers object for servers with data
+  const fileServers = serverResults.reduce((acc, result) => {
+    if (result.data) {
+      acc[result.id] = {
+        config: {
+          baseURL: result.baseURL,
+          prefixPath: result.prefixPath,
+          syncEndpoint: result.syncEndpoint,  // Node.js server URL for API endpoints
+          priority: result.priority
+        },
+        ...result.data
+      };
+    }
+    return acc;
+  }, {});
 
-    // Collect any errors from servers that failed to provide data
-    const errors = serverResults
-      .filter(result => result.error)
-      .map(result => ({
-        serverId: result.id,
-        error: result.error
-      }));
+  // Collect any errors from servers that failed to provide data
+  const errors = serverResults
+    .filter(result => result.error)
+    .map(result => ({
+      serverId: result.id,
+      error: result.error
+    }));
 
-    return { fileServers, errors };
-  } catch (error) {
-    throw error;
-  }
+  return { fileServers, errors };
 }

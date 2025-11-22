@@ -1,10 +1,9 @@
-import { auth } from '../../../lib/auth'
+import { auth } from '../../../lib/cachedAuth'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import SkeletonCard from '@components/SkeletonCard'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import LandingPage from '@components/LandingPage'
 import { Suspense } from 'react'
-export const dynamic = 'force-dynamic'
 
 async function MediaDirectory() {
   const session = await auth()
@@ -26,7 +25,7 @@ async function MediaDirectory() {
     )
   }
   const {
-    user: { name, email, limitedAccess },
+    user: { id, name, email, limitedAccess },
   } = session
 
   const calendarConfig = {
@@ -37,7 +36,7 @@ async function MediaDirectory() {
 
   return (
     <Suspense fallback={<div className='flex min-h-screen flex-col items-center justify-between xl:py-24'></div>}>
-      <LandingPage user={{ name, email, limitedAccess }} calendarConfig={calendarConfig} />
+      <LandingPage user={{ id, name, email, limitedAccess }} calendarConfig={calendarConfig} />
     </Suspense>
   )
 }

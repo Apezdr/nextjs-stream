@@ -6,9 +6,9 @@ import {
   useCallback,
   useMemo,
   memo,
-  useLayoutEffect,
   useEffect,
   Fragment,
+  useSyncExternalStore,
 } from 'react'
 import useSWR, { useSWRConfig, preload } from 'swr'
 import { classNames, fetcher } from '@src/utils'
@@ -16,10 +16,10 @@ import { ChevronDoubleLeftIcon, ChevronDoubleRightIcon } from '@heroicons/react/
 import Card from './Card'
 import { motion, AnimatePresence } from 'framer-motion'
 import { v7 as uuidv7 } from 'uuid'
-import throttle from 'lodash.throttle'
 import debounce from 'lodash.debounce'
 import { useSwipeable } from 'react-swipeable'
 import SkeletonList from './SkeletonList'
+import { useItemsPerPage } from '@src/hooks/useItemsPerPage'
 
 // Define Peek Width
 const PEEK_WIDTH = 50 // Adjust based on design
@@ -27,11 +27,13 @@ const PEEK_WIDTH = 50 // Adjust based on design
 // PaginationIndicators Component
 const PaginationIndicators = memo(
   ({ totalPages, currentPage, goToPage, isAnimating, prefetchPageData }) => {
-    const [isClient, setIsClient] = useState(false)
-  
-    useEffect(() => {
-      setIsClient(true)
-    }, [])
+    // Use useSyncExternalStore for SSR-safe client detection
+    const isClient = useSyncExternalStore(
+      () => () => {},
+      () => true,
+      () => false
+    )
+    
     return (
       isClient ?
       <div className="flex justify-center mt-4 space-x-2">
@@ -79,7 +81,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   const [expandedCardId, setExpandedCardId] = useState(null)
   const [direction, setDirection] = useState(0) // Track direction
   const [isAnimating, setIsAnimating] = useState(false) // Track animation state
-  const uniqueId = useRef(uuidv7()) // Unique ID for this instance
+  const [uniqueId] = useState(() => uuidv7()) // Unique ID for this instance (use state instead of ref)
   const containerRef = useRef(null)
   const cardsContainerRef = useRef(null)
   const cardRef = useRef(null)
@@ -88,16 +90,8 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
 
   const { cache } = useSWRConfig()
 
-  const getDefaultItemsPerPage = () => {
-    if (typeof window !== 'undefined') {
-      const screenWidth = window.innerWidth
-      if (screenWidth >= 1200) return 6
-      if (screenWidth >= 768) return 4
-    }
-    return 2
-  }
-
-  const [itemsPerPage, setItemsPerPage] = useState(getDefaultItemsPerPage())
+  // Use shared hook for items per page calculation (eliminates redundant calculations)
+  const itemsPerPage = useItemsPerPage()
 
   const areItems = numberOfItems > 0
 
@@ -111,7 +105,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   )
 
   // Centralized URL Builder
-  const buildPrefetchURL = (pageIndex) => {
+  const buildPrefetchURL = useCallback((pageIndex) => {
     const params = new URLSearchParams()
     if (listType) params.append('type', listType)
     if (listType === 'playlist' && playlistId) params.append('playlistId', playlistId)
@@ -120,7 +114,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     if (sortOrder) params.append('sortOrder', sortOrder)
     params.append('page', pageIndex)
     return `/api/authenticated/horizontal-list?${params.toString()}`
-  }
+  }, [itemsPerPage, listType, sort, sortOrder, playlistId])
 
   // ex. /api/authenticated/horizontal-list?type=movie&sort=id&limit=6&sortOrder=desc&page=0
   const apiEndpoint = buildPrefetchURL(currentPage)
@@ -180,14 +174,22 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
           ongoingPrefetches.current.delete(pageIndex)
         })
     },
-    [cache, currentPage, totalPages]
+    [cache, currentPage, totalPages, buildPrefetchURL]
   )
 
   // Debounced version of prefetchPageData to prevent rapid calls
-  const debouncedPrefetchPageData = useMemo(
-    () => debounce(prefetchPageData, 200),
-    [prefetchPageData]
-  )
+  const debouncedPrefetchRef = useRef(null)
+  
+  useEffect(() => {
+    debouncedPrefetchRef.current = debounce(prefetchPageData, 200)
+    return () => {
+      debouncedPrefetchRef.current?.cancel()
+    }
+  }, [prefetchPageData])
+  
+  const debouncedPrefetchPageData = useCallback((pageIndex) => {
+    debouncedPrefetchRef.current?.(pageIndex)
+  }, [])
 
   useEffect(() => {
     // Only prefetch if we have valid pages
@@ -228,102 +230,6 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     if (currentPage > 0 && currentPage < totalPages - 1) return 2
     return 0
   }, [currentPage, totalPages, data])
-
-  const calculateItemsPerPage = useCallback(() => {
-    if (cardsContainerRef.current && cardRef.current && data) {
-      const containerWidth = cardsContainerRef.current.clientWidth
-      const cardWidth = cardRef.current.clientWidth
-
-      const flexContainer = cardsContainerRef.current.querySelector('.cards-row')
-      const gap = parseFloat(getComputedStyle(flexContainer).columnGap) || 0
-
-      let availableWidth = containerWidth
-
-      // Determine if the device is mobile based on screen width
-      const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
-
-      if (!isMobile) {
-        // Subtract the peek width based on the number of peeks
-        availableWidth -= PEEK_WIDTH * numberOfPeeks
-      }
-
-      let possibleItems = Math.floor((availableWidth + gap) / (cardWidth + gap))
-      const newItemsPerPage = possibleItems > 0 ? possibleItems : 1
-
-      // Round to nearest integer to avoid floating point issues
-      const roundedItemsPerPage = Math.round(newItemsPerPage)
-
-      console.log(
-        `Calculating itemsPerPage: roundedItemsPerPage=${roundedItemsPerPage}, current itemsPerPage=${itemsPerPage}`
-      )
-
-      if (roundedItemsPerPage !== itemsPerPage) {
-        console.log(
-          `itemsPerPage changed from ${itemsPerPage} to ${roundedItemsPerPage}. Updating itemsPerPage.`
-        )
-        setItemsPerPage(roundedItemsPerPage)
-
-        // After setting itemsPerPage, ensure currentPage is within new bounds
-        const newTotalPages = Math.ceil(numberOfItems / roundedItemsPerPage)
-        if (currentPage >= newTotalPages) {
-          console.log(`Adjusting currentPage from ${currentPage} to ${newTotalPages - 1}`)
-          setCurrentPage(newTotalPages - 1 >= 0 ? newTotalPages - 1 : 0)
-        }
-      }
-    }
-  }, [itemsPerPage, numberOfPeeks, data, currentPage, numberOfItems])
-
-  // Throttled version of calculateItemsPerPage to avoid frequent triggering
-  const throttledCalculateItemsPerPage = useMemo(
-    () => throttle(calculateItemsPerPage, 50),
-    [calculateItemsPerPage]
-  )
-
-  useLayoutEffect(() => {
-    const handleResize = () => {
-      throttledCalculateItemsPerPage()
-    }
-
-    window.addEventListener('resize', handleResize)
-
-    // Use ResizeObserver to recalculate the items per page
-    const resizeObserver = new ResizeObserver(() => {
-      throttledCalculateItemsPerPage()
-    })
-
-    if (cardsContainerRef.current) {
-      resizeObserver.observe(cardsContainerRef.current)
-    }
-    if (cardRef.current) {
-      resizeObserver.observe(cardRef.current)
-    }
-
-    // Initial calculation
-    calculateItemsPerPage()
-
-    return () => {
-      window.removeEventListener('resize', handleResize)
-      resizeObserver.disconnect()
-    }
-  }, [throttledCalculateItemsPerPage, calculateItemsPerPage, data, currentPage])
-
-  // Run the calculation when the component first mounts to ensure accurate value
-  useEffect(() => {
-    calculateItemsPerPage()
-  }, [calculateItemsPerPage])
-
-  // useEffect(() => {
-  //   if (totalPages === 0) {
-  //     setCurrentPage(0)
-  //     return
-  //   }
-
-  //   // If currentPage is out of bounds, set it to the last valid page
-  //   if (currentPage >= totalPages) {
-  //     console.log(`Adjusting currentPage from ${currentPage} to ${totalPages - 1}`)
-  //     setCurrentPage(totalPages - 1)
-  //   }
-  // }, [totalPages, currentPage])
 
   const handleCardExpand = useCallback((id) => {
     setExpandedCardId(id)
@@ -426,7 +332,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
           {/* AnimatePresence allows components to animate out when removed */}
           <AnimatePresence custom={direction} initial={false}>
             <motion.div
-              key={`${uniqueId.current}-${currentPage}`}
+              key={`${uniqueId}-${currentPage}`}
               className={classNames(
                 currentPage === 0 ? 'ml-3' : '',
                 'absolute inset-0 flex gap-x-4 justify-center items-start cards-row'

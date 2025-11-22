@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { redirect, usePathname } from 'next/navigation'
 import {
   Dialog,
@@ -66,12 +66,22 @@ function classNames(...classes) {
 
 export default function AdminLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [expandedItems, setExpandedItems] = useState({})
   const pathname = usePathname()
   const router = useRouter()
 
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [user, setUser] = useState(false)
+
+  // Derive expanded items from pathname to avoid setState in effect
+  const expandedItems = useMemo(() => {
+    const items = {}
+    navigation.forEach((item) => {
+      if (item.subItems && item.subItems.some((subItem) => pathname === subItem.href)) {
+        items[item.name] = true
+      }
+    })
+    return items
+  }, [pathname])
 
   useEffect(() => {
     const validateAuth = async () => {
@@ -103,24 +113,22 @@ export default function AdminLayout({ children }) {
     }
 
     validateAuth()
-  }, [])
+  }, [router])
+
+  // Use local state for manual toggle expansion
+  const [manuallyExpanded, setManuallyExpanded] = useState({})
 
   const toggleExpand = (itemName) => {
-    setExpandedItems((prev) => ({
+    setManuallyExpanded((prev) => ({
       ...prev,
       [itemName]: !prev[itemName],
     }))
   }
 
-  useEffect(() => {
-    const updatedExpandedItems = {}
-    navigation.forEach((item) => {
-      if (item.subItems && item.subItems.some((subItem) => pathname === subItem.href)) {
-        updatedExpandedItems[item.name] = true
-      }
-    })
-    setExpandedItems(updatedExpandedItems)
-  }, [pathname])
+  // Combine auto-expanded (based on pathname) with manually toggled items
+  const effectiveExpandedItems = useMemo(() => {
+    return { ...expandedItems, ...manuallyExpanded }
+  }, [expandedItems, manuallyExpanded])
 
   const renderNavItem = (item) => (
     <li key={item.name}>
@@ -144,12 +152,12 @@ export default function AdminLayout({ children }) {
             className="p-2 text-gray-400 hover:text-white"
           >
             <ChevronDownIconOutline
-              className={`h-5 w-5 transform ${expandedItems[item.name] ? 'rotate-180' : ''}`}
+              className={`h-5 w-5 transform ${effectiveExpandedItems[item.name] ? 'rotate-180' : ''}`}
             />
           </button>
         )}
       </div>
-      {item.subItems && expandedItems[item.name] && (
+      {item.subItems && effectiveExpandedItems[item.name] && (
         <ul className="mt-1 space-y-1 pl-10">
           {item.subItems.map((subItem) => (
             <li key={subItem.name}>

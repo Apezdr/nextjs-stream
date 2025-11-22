@@ -1,32 +1,37 @@
 'use client'
 
-import { useEffect, useRef, useState, useTransition } from 'react'
+import { useEffect, useRef, useState, useTransition, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
+import Image from 'next/image'
 
 export default function TVAppsNotificationClient() {
   const [isVisible, setIsVisible] = useState(true)
   const [isBackgroundExiting, setIsBackgroundExiting] = useState(false)
   const [isModalExiting, setIsModalExiting] = useState(false)
   const [isPending, startTransition] = useTransition()
-  const [origin, setOrigin] = useState('')
+  // Initialize origin using useState initializer to avoid setState in effect
+  const [origin] = useState(() =>
+    typeof window !== 'undefined' ? window.location.origin.replace(/^https?:\/\//, '') : ''
+  )
   const [copied, setCopied] = useState(false)
   const [step, setStep] = useState(0) // animates step checkmarks
   const confettiRef = useRef(null)
 
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setOrigin(window.location.origin.replace(/^https?:\/\//, ''))
-      // auto-progress the checklist for delight
-      setTimeout(() => setStep(1), 400)
-      setTimeout(() => setStep(2), 900)
-      setTimeout(() => setStep(3), 1400)
-    }
-  }, [])
+  // Generate stable random values for stars using useState initializer (only runs once)
+  const [stars] = useState(() =>
+    [...Array(42)].map(() => ({
+      top: Math.random() * 100,
+      left: Math.random() * 100,
+      duration: 6 + Math.random() * 6,
+      delay: Math.random() * 2,
+    }))
+  )
 
   useEffect(() => {
-    const onKey = (e) => (e.key === 'Escape' || e.key?.toLowerCase() === 'x') && handleDismiss()
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    // Auto-progress the checklist for delight
+    setTimeout(() => setStep(1), 400)
+    setTimeout(() => setStep(2), 900)
+    setTimeout(() => setStep(3), 1400)
   }, [])
 
   // Disable background scrolling and dim content when notification is visible
@@ -73,7 +78,7 @@ export default function TVAppsNotificationClient() {
     }
   }, [isVisible])
 
-  const handleDismiss = () => {
+  const handleDismiss = useCallback(() => {
     // Start background fade immediately
     setIsBackgroundExiting(true)
     
@@ -107,7 +112,13 @@ export default function TVAppsNotificationClient() {
         // since the user explicitly dismissed it and expects it gone
       }
     })
-  }
+  }, [startTransition])
+
+  useEffect(() => {
+    const onKey = (e) => (e.key === 'Escape' || e.key?.toLowerCase() === 'x') && handleDismiss()
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [handleDismiss])
 
   const launchConfetti = () => {
     const host = confettiRef.current
@@ -136,7 +147,7 @@ export default function TVAppsNotificationClient() {
       setCopied(true)
       launchConfetti()
       setTimeout(() => setCopied(false), 1200)
-    } catch {}
+    } catch { /* empty */ }
   }
 
   if (!isVisible) return null
@@ -158,14 +169,14 @@ export default function TVAppsNotificationClient() {
           <div className="absolute -inset-40 blur-3xl opacity-30 bg-[radial-gradient(ellipse_at_top,theme(colors.white/30),transparent_60%)] animate-pulse" />
           {/* stars */}
           <div className="pointer-events-none absolute inset-0">
-            {[...Array(42)].map((_, i) => (
+            {stars.map((star, i) => (
               <div
                 key={i}
                 className="absolute w-1 h-1 bg-white/60 rounded-full"
                 style={{
-                  top: `${Math.random() * 100}%`,
-                  left: `${Math.random() * 100}%`,
-                  animation: `floatStar ${6 + Math.random() * 6}s ease-in-out ${Math.random() * 2}s infinite`,
+                  top: `${star.top}%`,
+                  left: `${star.left}%`,
+                  animation: `floatStar ${star.duration}s ease-in-out ${star.delay}s infinite`,
                 }}
               />
             ))}
@@ -284,9 +295,11 @@ export default function TVAppsNotificationClient() {
               {origin && (
                 <div className="mt-6 flex items-center justify-center">
                   <div className="flex items-center gap-3 rounded-2xl border border-white/15 bg-white/10 p-3">
-                    <img
-                      alt="QR to site"
+                    <Image
+                      alt="QR code to access site"
                       className="h-16 w-16 sm:h-20 sm:w-20 rounded-md bg-white"
+                      width={160}
+                      height={160}
                       // lightweight QR service; replace with your own if needed
                       src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent('https://' + origin)}`}
                     />
@@ -318,10 +331,12 @@ export default function TVAppsNotificationClient() {
                   rel="noopener noreferrer"
                   className="btn-store flex flex-col items-center"
                 >
-                  <img
+                  <Image
                     src="/Google_Play_Store_logo.svg"
                     alt="Google Play Store"
                     className="h-6 w-auto shrink-0"
+                    width={24}
+                    height={24}
                   />
                   <span className="label text-[0.65rem]">Get it on Google Play</span>
                 </a>
@@ -333,10 +348,12 @@ export default function TVAppsNotificationClient() {
                   rel="noopener noreferrer"
                   className="btn-store flex flex-col items-center"
                 >
-                  <img
+                  <Image
                     src="/Amazon-appstore-logo.svg"
                     alt="Amazon Appstore"
                     className="h-6 w-auto shrink-0"
+                    width={24}
+                    height={24}
                   />
                   <span className="label text-sm">Amazon Appstore</span>
                 </a>

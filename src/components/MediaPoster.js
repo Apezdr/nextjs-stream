@@ -1,15 +1,14 @@
 'use client'
-import { cache, memo, use, useEffect, useState } from 'react'
+import { cache, useSyncExternalStore } from 'react'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '../utils'
 import HD4kBanner from '../../public/4kBanner.png'
 import hdr10PlusLogo from '../../public/HDR10+_Logo_light.svg'
-import Image from 'next/image'
 import useWatchedWidth from './useWatchedWidth'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import RetryImage from './RetryImage'
 
-function _mediaPoster({
+function MediaPoster({
   media,
   movie,
   tv,
@@ -22,15 +21,16 @@ function _mediaPoster({
   imagePriority = false,
   loadingType = undefined,
 }) {
-  const [isClient, setIsClient] = useState(false)
+  // Use useSyncExternalStore for SSR-safe client detection
+  const isClient = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  )
 
   // Determine whether to use movie or TV show data
   const _media = media || movie || tv
   const watchedWidth = useWatchedWidth(_media.metadata, _media)
-
-  useEffect(() => {
-    setIsClient(true)
-  }, [])
 
   // Determine the poster URL for movie or TV show
   const posterURL = _media.posterURL
@@ -154,4 +154,4 @@ function _mediaPoster({
   )
 }
 
-export default cache(_mediaPoster)
+export default cache(MediaPoster)

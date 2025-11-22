@@ -160,20 +160,20 @@ export function augmentItemsWithWatchHistory(items, watchHistoryMap) {
  */
 export async function addWatchHistoryToItems(items, userId) {
   try {
-    if (Boolean(process.env.DEBUG)) {
+    if (process.env.DEBUG) {
       console.time('addWatchHistoryToItems:total')
       console.log(`[PERF] Adding watch history to ${items?.length || 0} items for user ${userId}`)
     }
 
     const watchHistoryMap = await createWatchHistoryLookupMap(userId)
     
-    if (Boolean(process.env.DEBUG)) {
+    if (process.env.DEBUG) {
       console.log(`[PERF] Created watch history map with ${watchHistoryMap.size} entries`)
     }
 
     const augmentedItems = augmentItemsWithWatchHistory(items, watchHistoryMap)
 
-    if (Boolean(process.env.DEBUG)) {
+    if (process.env.DEBUG) {
       const itemsWithHistory = augmentedItems.filter(item => item.watchHistory?.isWatched).length
       console.log(`[PERF] ${itemsWithHistory} out of ${augmentedItems.length} items have watch history`)
       console.timeEnd('addWatchHistoryToItems:total')

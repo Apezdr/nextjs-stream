@@ -1,4 +1,4 @@
-import { auth } from '@src/lib/auth';
+import { auth } from '@src/lib/cachedAuth';
 import TVAppsNotificationClient from './TVAppsNotificationClient';
 
 /**

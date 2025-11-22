@@ -6,7 +6,6 @@ import {
   useChapterTitle,
 } from '@vidstack/react'
 import { classNames, getResolutionLabel } from '@src/utils'
-import Image from 'next/image'
 
 import GeneralAudiencesBadge from '@src/components/MediaPlayer/Ratings/general_audiences_badge.svg'
 import ParentalGuidanceBadge from '@src/components/MediaPlayer/Ratings/parental_guidance_badge.svg'
@@ -117,7 +116,12 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
       >
         <div className={classNames('media-title', isPaused ? '' : 'playing')}>
           {logo ? (
-            <img src={logo} className={'w-32 md:w-52 sm:max-w-32 md:max-w-48 xl:max-w-xs inline'} />
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logo}
+              alt={mediaMetadata?.title || mediaMetadata?.mediaTitle || 'Media Logo'}
+              className={'w-32 md:w-52 sm:max-w-32 md:max-w-48 xl:max-w-xs inline'}
+            />
           ) : (
             <h5 className={`font-sans max-w-sm xl:max-w-xl font-bold text-white ml-4`}>
               {mediaMetadata?.mediaTitle ? (

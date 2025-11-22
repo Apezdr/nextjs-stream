@@ -6,9 +6,11 @@ import BannerWithVideo from './BannerWithVideo'
 import { fetcher } from '@src/utils'
 import Loading from '@src/app/loading'
 
-const BannerWithVideoContainer = () => {
+const BannerWithVideoContainer = ({ initialData = null }) => {
   // Use useSWR to fetch data with a 4-second refresh interval
+  // initialData is pre-fetched server-side for instant display
   const { data: bannerMediaList, error } = useSWR('/api/authenticated/banner', fetcher, {
+    fallbackData: initialData, // Use server-side data as initial value
     refreshInterval: 4000, // 4 seconds
     dedupingInterval: 4000, // Prevents duplicate requests within this interval
     revalidateOnFocus: false,

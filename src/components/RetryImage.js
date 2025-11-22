@@ -11,15 +11,19 @@ const RetryImage = ({
   fallbackSrc, // Optional fallback image src
   ...props
 }) => {
+  // Use a key in the parent component to reset state, or derive state from props
   const [currentSrc, setCurrentSrc] = useState(src)
   const [attempt, setAttempt] = useState(0)
   const [hasError, setHasError] = useState(false)
+  const [lastSrc, setLastSrc] = useState(src)
 
-  useEffect(() => {
+  // Derive state reset from prop changes
+  if (src !== lastSrc) {
+    setLastSrc(src)
     setCurrentSrc(src)
     setAttempt(0)
     setHasError(false)
-  }, [src])
+  }
 
   useEffect(() => {
     if (attempt > 0 && attempt <= retryCount) {

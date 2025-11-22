@@ -87,11 +87,18 @@ export async function generateMetadata(props, parent) {
         : media?.metadata?.tvOverview
           ? media.metadata.tvOverview
           : overview
-      poster = media?.posterURL
-        ? media.posterURL
-        : media?.metadata?.poster_path
-          ? `https://image.tmdb.org/t/p/w780${media?.metadata?.poster_path}`
-          : `/sorry-image-not-available.jpg`
+      
+      // For TV episodes, prioritize episode thumbnail over season/show poster
+      if (mediaEpisode && media?.thumbnail) {
+        title = `${media?.showTitle} - ${title}` // Include show title for episodes
+        poster = media.thumbnail
+      } else {
+        poster = media?.posterURL
+          ? media.posterURL
+          : media?.metadata?.poster_path
+            ? `https://image.tmdb.org/t/p/w780${media?.metadata?.poster_path}`
+            : `/sorry-image-not-available.jpg`
+      }
     }
     if (mediaSeason) {
       title = `${title} - S${mediaSeason.replace('Season ', '').padStart(2, '0')}`
@@ -296,9 +303,11 @@ async function MediaPage({ params, searchParams }) {
               </>
             ) : mediaTitle && !media ? (
               <>
-                <img
+                <Image
                   src={'/sorry-image-not-available.jpg'}
                   alt="Not found"
+                  width={400}
+                  height={400}
                   className="w-3/5 h-auto mx-auto rounded-lg"
                 />
                 <h2 className="text-center text-lg text-white mt-2">
@@ -573,9 +582,11 @@ async function MediaPage({ params, searchParams }) {
             <div className="mb-6 flex items-center justify-center">
               <div className="flex items-center gap-3 px-4 py-2 bg-black/20 backdrop-blur rounded-lg border border-white/10">
                 {/* Tiny poster thumbnail */}
-                <img
+                <Image
                   src={contextualMedia.posterURL || '/sorry-image-not-available.jpg'}
                   alt={contextualMedia.title}
+                  width={32}
+                  height={48}
                   className="w-8 h-12 object-cover rounded"
                 />
                 
@@ -624,9 +635,11 @@ async function MediaPage({ params, searchParams }) {
             </div>
           ) : (
             <div className="flex justify-center mb-8">
-              <img
+              <Image
                 src={posterSrc}
                 alt={posterAltText}
+                width={400}
+                height={600}
                 className="w-3/5 max-w-sm h-auto mx-auto rounded-lg"
               />
             </div>

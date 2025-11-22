@@ -1538,9 +1538,8 @@ export async function syncBlurhashData(client, flatDB, fileServer, serverConfig,
   console.log(`Starting blurhash sync for server ${serverConfig.id}...`);
   
   // Detect capabilities fresh for each sync operation
-
-  // This defaults to unavailable until this is finished being implemented
-  const capability = "unavailable" ?? await detectBlurhashEndpointCapabilities(serverConfig);
+  // This defaults to unavailable until endpoint detection is fully implemented
+  const capability = "unavailable"; // TODO: Enable when ready: await detectBlurhashEndpointCapabilities(serverConfig) ?? "unavailable"
   
   console.log(`Using ${capability} blurhash sync method for server ${serverConfig.id}`);
   

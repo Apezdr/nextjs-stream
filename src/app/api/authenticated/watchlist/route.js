@@ -355,9 +355,10 @@ export async function DELETE(req) {
     switch (action) {
       case 'remove':
         return await handleRemoveFromWatchlist(req, authResult)
-      case 'bulk-remove':
+      case 'bulk-remove': {
         const body = await req.json()
         return await handleBulkRemoveFromWatchlist(req, body, authResult)
+      }
       case 'delete-playlist':
         return await handleDeletePlaylist(req, authResult)
       case 'remove-coming-soon':

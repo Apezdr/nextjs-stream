@@ -11,32 +11,24 @@ import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { getComprehensiveDetails } from '@src/utils/tmdb/client'
 
-// Simple request-level memoization to avoid duplicate API calls within same request
+// Request-level cache to deduplicate TMDB API calls within same request
+// In React Server Components, this Map is request-scoped (fresh per request)
+// and persists across multiple batchResolveMedia calls in the same request
 const requestCache = new Map()
-let requestId = 0
-
-/**
- * Get a unique request ID for this batch operation
- */
-function getRequestId() {
-  return ++requestId
-}
-
-/**
- * Clear request cache (called at start of each batch operation)
- */
-function clearRequestCache() {
-  requestCache.clear()
-}
 
 /**
  * Batch resolve media data for multiple items
  * @param {Array} items - Array of {tmdbId, mediaType} objects
+ * @param {Object} options - Optional parameters
+ * @param {Set<number>} [options.precomputedAvailability] - Pre-computed Set of available TMDB IDs (optimization)
  * @returns {Promise<Map>} Map of tmdbId -> media data
  */
-export async function batchResolveMedia(items) {
-  // Clear cache for this request
-  clearRequestCache()
+export async function batchResolveMedia(items, { precomputedAvailability = null } = {}) {
+  // Note: requestCache persists across calls in same request for deduplication
+  
+  console.log(`[batchResolveMedia ENTRY] Called with ${items.length} items:`, items.map(i => `${i.mediaType}/${i.tmdbId}`))
+  console.log(`[batchResolveMedia ENTRY] requestCache current size:`, requestCache.size)
+  console.log(`[batchResolveMedia ENTRY] requestCache contents:`, Array.from(requestCache.keys()))
   
   const results = new Map()
   const uniqueItems = new Map()
@@ -60,57 +52,125 @@ export async function batchResolveMedia(items) {
     .filter(item => item.mediaType === 'tv')
     .map(item => parseInt(item.tmdbId))
 
-  // Fetch from database first
-  const client = await clientPromise
-  const db = client.db('Media')
-  
-  const [movies, tvShows] = await Promise.all([
-    movieTmdbIds.length > 0 
-      ? db.collection('FlatMovies').find(
-          { 'metadata.id': { $in: movieTmdbIds } },
-          { 
-            projection: {
-              _id: 1,
-              title: 1,
-              posterURL: 1,
-              posterBlurhash: 1,
-              backdrop: 1,
-              backdropBlurhash: 1,
-              'metadata.id': 1,
-              'metadata.poster_path': 1,
-              'metadata.backdrop_path': 1,
-              'metadata.overview': 1,
-              'metadata.release_date': 1,
-              'metadata.genres': 1,
-              'metadata.vote_average': 1
-            }
-          }
-        ).toArray()
-      : [],
+  let movies = []
+  let tvShows = []
+
+  // Use pre-computed availability if provided (optimization to avoid duplicate queries)
+  if (precomputedAvailability) {
+    // Filter to only query items we know are available
+    const availableMovieIds = movieTmdbIds.filter(id => precomputedAvailability.has(id))
+    const availableTvIds = tvTmdbIds.filter(id => precomputedAvailability.has(id))
     
-    tvTmdbIds.length > 0
-      ? db.collection('FlatTVShows').find(
-          { 'metadata.id': { $in: tvTmdbIds } },
-          {
-            projection: {
-              _id: 1,
-              title: 1,
-              posterURL: 1,
-              posterBlurhash: 1,
-              backdrop: 1,
-              backdropBlurhash: 1,
-              'metadata.id': 1,
-              'metadata.poster_path': 1,
-              'metadata.backdrop_path': 1,
-              'metadata.overview': 1,
-              'metadata.first_air_date': 1,
-              'metadata.genres': 1,
-              'metadata.vote_average': 1
+    if (availableMovieIds.length === 0 && availableTvIds.length === 0) {
+      // No items are available in library, skip DB queries entirely
+      movies = []
+      tvShows = []
+    } else {
+      // Query only the items we know exist
+      const client = await clientPromise
+      const db = client.db('Media')
+      
+      ;[movies, tvShows] = await Promise.all([
+        availableMovieIds.length > 0
+          ? db.collection('FlatMovies').find(
+              { 'metadata.id': { $in: availableMovieIds } },
+              {
+                projection: {
+                  _id: 1,
+                  title: 1,
+                  posterURL: 1,
+                  posterBlurhash: 1,
+                  backdrop: 1,
+                  backdropBlurhash: 1,
+                  'metadata.id': 1,
+                  'metadata.poster_path': 1,
+                  'metadata.backdrop_path': 1,
+                  'metadata.overview': 1,
+                  'metadata.release_date': 1,
+                  'metadata.genres': 1,
+                  'metadata.vote_average': 1
+                }
+              }
+            ).toArray()
+          : [],
+        
+        availableTvIds.length > 0
+          ? db.collection('FlatTVShows').find(
+              { 'metadata.id': { $in: availableTvIds } },
+              {
+                projection: {
+                  _id: 1,
+                  title: 1,
+                  posterURL: 1,
+                  posterBlurhash: 1,
+                  backdrop: 1,
+                  backdropBlurhash: 1,
+                  'metadata.id': 1,
+                  'metadata.poster_path': 1,
+                  'metadata.backdrop_path': 1,
+                  'metadata.overview': 1,
+                  'metadata.first_air_date': 1,
+                  'metadata.genres': 1,
+                  'metadata.vote_average': 1
+                }
+              }
+            ).toArray()
+          : []
+      ])
+    }
+  } else {
+    // Fallback: fetch from database without pre-computed data
+    const client = await clientPromise
+    const db = client.db('Media')
+    
+    ;[movies, tvShows] = await Promise.all([
+      movieTmdbIds.length > 0
+        ? db.collection('FlatMovies').find(
+            { 'metadata.id': { $in: movieTmdbIds } },
+            {
+              projection: {
+                _id: 1,
+                title: 1,
+                posterURL: 1,
+                posterBlurhash: 1,
+                backdrop: 1,
+                backdropBlurhash: 1,
+                'metadata.id': 1,
+                'metadata.poster_path': 1,
+                'metadata.backdrop_path': 1,
+                'metadata.overview': 1,
+                'metadata.release_date': 1,
+                'metadata.genres': 1,
+                'metadata.vote_average': 1
+              }
             }
-          }
-        ).toArray()
-      : []
-  ])
+          ).toArray()
+        : [],
+      
+      tvTmdbIds.length > 0
+        ? db.collection('FlatTVShows').find(
+            { 'metadata.id': { $in: tvTmdbIds } },
+            {
+              projection: {
+                _id: 1,
+                title: 1,
+                posterURL: 1,
+                posterBlurhash: 1,
+                backdrop: 1,
+                backdropBlurhash: 1,
+                'metadata.id': 1,
+                'metadata.poster_path': 1,
+                'metadata.backdrop_path': 1,
+                'metadata.overview': 1,
+                'metadata.first_air_date': 1,
+                'metadata.genres': 1,
+                'metadata.vote_average': 1
+              }
+            }
+          ).toArray()
+        : []
+    ])
+  }
 
   // Process internal media (available in our library)
   const foundTmdbIds = new Set()
@@ -186,11 +246,16 @@ export async function batchResolveMedia(items) {
           const tmdbId = parseInt(item.tmdbId)
           const cacheKey = `${item.mediaType}-${tmdbId}`
           
+          console.log(`[batchResolveMedia CACHE CHECK] Checking cacheKey: ${cacheKey}, has: ${requestCache.has(cacheKey)}`)
+          
           // Check request cache first
           if (requestCache.has(cacheKey)) {
+            console.log(`[batchResolveMedia CACHE HIT] Using cached data for ${cacheKey}`)
             results.set(tmdbId, requestCache.get(cacheKey))
             return
           }
+          
+          console.log(`[batchResolveMedia CACHE MISS] Will fetch from TMDB for ${cacheKey}`)
           
           try {
             console.log(`[batchResolveMedia] Fetching TMDB data for ${item.mediaType}/${tmdbId}`)
@@ -303,6 +368,7 @@ export async function batchResolveMedia(items) {
             }
             
             // Cache for this request
+            console.log(`[batchResolveMedia CACHE STORE] Storing ${cacheKey} in requestCache (new size: ${requestCache.size + 1})`)
             requestCache.set(cacheKey, mediaData)
             results.set(tmdbId, mediaData)
             

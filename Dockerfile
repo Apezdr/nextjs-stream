@@ -1,4 +1,4 @@
-FROM node:18-alpine AS base
+FROM node:20-alpine AS base
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -9,7 +9,7 @@ WORKDIR /app
 # Install dependencies based on the preferred package manager
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* .npmrc* ./
 RUN \
-  if [ -f package-lock.json ]; then npm ci --force; \
+  if [ -f package-lock.json ]; then npm ci --force --legacy-peer-deps; \
   else echo "Lockfile not found." && exit 1; \
   fi
 
@@ -27,7 +27,7 @@ COPY . .
 
 RUN \
   if [ -f yarn.lock ]; then yarn run build; \
-  elif [ -f package-lock.json ]; then npm run build; \
+  elif [ -f package-lock.json ]; then npm run build --legacy-peer-deps; \
   elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm run build; \
   else echo "Lockfile not found." && exit 1; \
   fi

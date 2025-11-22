@@ -15,6 +15,7 @@ import {
   getTVManufacturerIcon,
   getTVManufacturerLabel
 } from '@src/utils/deviceDetection'
+import Image from 'next/image'
 
 const deviceConfig = {
   tv: {
@@ -99,19 +100,23 @@ const DeviceBadge = memo(function DeviceBadge({
         
         {/* Browser Icon (for non-TV devices) */}
         {browserIconPath && deviceType !== 'tv' && (
-          <img
+          <Image
             src={`/devices/browsers/${browserIconPath}`}
             alt={browserLabel}
-            className="w-4 h-4 opacity-80"
+            width={16}
+            height={16}
+            className="opacity-80"
           />
         )}
         
         {/* TV Manufacturer Icon (for TV devices only) */}
         {tvManufacturerIconPath && deviceType === 'tv' && (
-          <img
+          <Image
             src={`/devices/manufacturers/${tvManufacturerIconPath}`}
             alt={tvManufacturerLabel}
-            className="w-4 h-4 opacity-80"
+            width={16}
+            height={16}
+            className="opacity-80"
           />
         )}
       </div>
@@ -136,19 +141,23 @@ const DeviceBadge = memo(function DeviceBadge({
       
       {/* Browser Icon (for non-TV devices) */}
       {browserIconPath && deviceType !== 'tv' && (
-        <img
+        <Image
           src={`/devices/browsers/${browserIconPath}`}
           alt={browserLabel}
-          className={`${isSmall ? 'w-3 h-3 ml-1' : 'w-4 h-4 ml-1.5'}`}
+          width={isSmall ? 12 : 16}
+          height={isSmall ? 12 : 16}
+          className={`${isSmall ? 'ml-1' : 'ml-1.5'}`}
         />
       )}
       
       {/* TV Manufacturer Icon (for TV devices only) */}
       {tvManufacturerIconPath && deviceType === 'tv' && (
-        <img
+        <Image
           src={`/devices/manufacturers/${tvManufacturerIconPath}`}
           alt={tvManufacturerLabel}
-          className={`${isSmall ? 'w-3 h-3 ml-1' : 'w-4 h-4 ml-1.5'}`}
+          width={isSmall ? 12 : 16}
+          height={isSmall ? 12 : 16}
+          className={`${isSmall ? 'ml-1' : 'ml-1.5'}`}
         />
       )}
       

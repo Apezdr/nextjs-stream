@@ -30,7 +30,6 @@ function formatTimeAgo(dateStr) {
  * Uses SystemStatusContext for data fetching with automatic refreshing
  */
 export default function StatusBannerClient({ status: initialStatus }) {
-  const [visible, setVisible] = useState(true);
   const [timeAgoRefresh, setTimeAgoRefresh] = useState(0); // Trigger time ago refreshes
   
   // Use SystemStatusContext for consistent data fetching
@@ -88,12 +87,18 @@ export default function StatusBannerClient({ status: initialStatus }) {
     return initialStatus;
   }, [contextStatus, initialStatus]);
   
-  // Reset visibility when status level changes to critical
-  useEffect(() => {
-    if (status.level === 'critical') {
-      setVisible(true);
-    }
-  }, [status.level]);
+  // Track dismissal and status level changes
+  const [dismissed, setDismissed] = useState(false);
+  const [trackedLevel, setTrackedLevel] = useState(status.level);
+  
+  // Reset dismissal when status level changes (React-approved pattern for deriving state from props)
+  if (trackedLevel !== status.level) {
+    setTrackedLevel(status.level);
+    setDismissed(false);
+  }
+  
+  // Derive visibility: not dismissed (critical status forces visibility through reset above)
+  const visible = !dismissed;
   
   // Refresh time ago display more frequently (every 30 seconds)
   useEffect(() => {
@@ -162,8 +167,8 @@ export default function StatusBannerClient({ status: initialStatus }) {
             </svg>
           </button>
           
-          <button 
-            onClick={() => setVisible(false)}
+          <button
+            onClick={() => setDismissed(true)}
             className="text-white hover:text-gray-200"
             aria-label="Dismiss"
             title="Dismiss notification"

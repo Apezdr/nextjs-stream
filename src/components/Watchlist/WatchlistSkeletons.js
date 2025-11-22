@@ -86,6 +86,21 @@ export function ControlsSkeleton() {
     </div>
   )
 }
+// Skeleton for the header section
+export function HeaderSkeleton() {
+  return (
+    <div className="bg-gray-800 border-b border-gray-700 px-6 py-4 animate-pulse">
+      <div className="flex items-center justify-between">
+        <div className="h-8 bg-gray-700 rounded w-48"></div>
+        <div className="flex items-center space-x-3">
+          <div className="h-9 w-24 bg-gray-700 rounded"></div>
+          <div className="h-9 w-9 bg-gray-700 rounded"></div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 
 // Complete page skeleton for initial loading state
 export function WatchlistPageSkeleton() {

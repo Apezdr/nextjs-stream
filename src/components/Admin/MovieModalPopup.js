@@ -13,25 +13,32 @@ function MovieModalPopup({
   setIsOpen,
   updateProcessedData,
 }) {
-  // Local state for managing form fields
-  const [formState, setFormState] = useState({
-    tmdb_id: '',
-    title: '',
-    videoURL: '',
-    posterURL: '',
-    posterBlurhash: '',
-    chapterURL: '',
-    logo: '',
-    length: '',
-    dimensions: '',
-    backdrop: '',
-    backdropBlurhash: '',
+  // Local state for managing form fields - initialize from record
+  const [formState, setFormState] = useState(() => ({
+    tmdb_id: record?.metadata?.id || '',
+    title: record?.title || '',
+    videoURL: record?.videoURL || '',
+    posterURL: record?.posterURL || '',
+    posterBlurhash: record?.posterBlurhash || '',
+    chapterURL: record?.chapterURL || '',
+    logo: record?.logo || '',
+    length: record?.length || '',
+    dimensions: record?.dimensions || '',
+    backdrop: record?.backdrop || '',
+    backdropBlurhash: record?.backdropBlurhash || '',
     // Add other fields as necessary
-  })
+  }))
 
-  const [lockedFields, setLockedFields] = useState({})
+  const [lockedFields, setLockedFields] = useState(() => record.lockedFields || {})
   const [userLockedFields, setUserLockedFields] = useState({}) // New state to track user-locked fields
-  const [captionStore, setCaptionStore] = useState([])
+  const [captionStore, setCaptionStore] = useState(() => {
+    if (record.captionURLs && typeof record.captionURLs === 'object') {
+      return Object.entries(record.captionURLs).map(([label, { srcLang, url }]) => ({
+        [label]: { srcLang, url },
+      }))
+    }
+    return []
+  })
   const [newCaption, setNewCaption] = useState({
     label: '',
     srcLang: '',
@@ -39,42 +46,49 @@ function MovieModalPopup({
   })
 
   const cancelButtonRef = useRef(null)
-
+  
+  // Track the last record ID to detect when record changes
+  const lastRecordIdRef = useRef(record?.metadata?.id || record?.title)
+  
+  // Reset state when modal opens with a different record
   useEffect(() => {
-    // Initialize formState with record data
-    const initialState = {
-      tmdb_id: record?.metadata?.id || '',
-      title: record?.title || '',
-      videoURL: record?.videoURL || '',
-      posterURL: record?.posterURL || '',
-      posterBlurhash: record?.posterBlurhash || '',
-      chapterURL: record?.chapterURL || '',
-      logo: record?.logo || '',
-      length: record?.length || '',
-      dimensions: record?.dimensions || '',
-      backdrop: record?.backdrop || '',
-      backdropBlurhash: record?.backdropBlurhash || '',
-      // Initialize other fields
+    const currentRecordId = record?.metadata?.id || record?.title
+    
+    // Only update if the record has actually changed
+    if (isOpen && lastRecordIdRef.current !== currentRecordId) {
+      lastRecordIdRef.current = currentRecordId
+      
+      // Batch all state updates together
+      Promise.resolve().then(() => {
+        setFormState({
+          tmdb_id: record?.metadata?.id || '',
+          title: record?.title || '',
+          videoURL: record?.videoURL || '',
+          posterURL: record?.posterURL || '',
+          posterBlurhash: record?.posterBlurhash || '',
+          chapterURL: record?.chapterURL || '',
+          logo: record?.logo || '',
+          length: record?.length || '',
+          dimensions: record?.dimensions || '',
+          backdrop: record?.backdrop || '',
+          backdropBlurhash: record?.backdropBlurhash || '',
+        })
+
+        setLockedFields(record.lockedFields || {})
+
+        if (record.captionURLs && typeof record.captionURLs === 'object') {
+          const captionsArray = Object.entries(record.captionURLs).map(([label, { srcLang, url }]) => ({
+            [label]: { srcLang, url },
+          }))
+          setCaptionStore(captionsArray)
+        } else {
+          setCaptionStore([])
+        }
+
+        setUserLockedFields({})
+      })
     }
-    setFormState(initialState)
-
-    // Initialize lockedFields
-    const recordLockedFields = record.lockedFields || {}
-    setLockedFields(recordLockedFields)
-
-    // Initialize captions
-    if (record.captionURLs && typeof record.captionURLs === 'object') {
-      const captionsArray = Object.entries(record.captionURLs).map(([label, { srcLang, url }]) => ({
-        [label]: { srcLang, url },
-      }))
-      setCaptionStore(captionsArray)
-    } else {
-      setCaptionStore([])
-    }
-
-    // Reset userLockedFields when record changes
-    setUserLockedFields({})
-  }, [record])
+  }, [isOpen, record])
 
   // Define field mappings with dynamic locking for tmdb_id
   const fieldMappings = {

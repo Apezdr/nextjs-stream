@@ -16,6 +16,9 @@ import { unstable_noStore as noStore } from 'next/cache'
 export const dynamic = 'force-dynamic'
 export const runtime = 'edge'
 
+// Predetermined widths for skeleton genre buttons to avoid Math.random() during render
+const GENRE_SKELETON_WIDTHS = [80, 95, 70, 88, 75, 92, 68, 85]
+
 // Cached count function that can be reused across requests
 const getCachedMovieCount = cache(
   async () => {
@@ -138,7 +141,7 @@ async function MovieListComponent() {
                       <div className="block text-sm font-medium text-gray-300 mb-1 w-32 h-5 bg-gray-700 animate-pulse rounded"></div>
                       <div className="flex flex-wrap gap-2 max-w-3xl">
                         {Array.from({ length: 8 }, (_, i) => (
-                          <div key={`genre-skeleton-${i}`} className="h-6 bg-gray-700 animate-pulse rounded-full" style={{ width: `${Math.floor(Math.random() * 40) + 60}px` }}></div>
+                          <div key={`genre-skeleton-${i}`} className="h-6 bg-gray-700 animate-pulse rounded-full" style={{ width: `${GENRE_SKELETON_WIDTHS[i]}px` }}></div>
                         ))}
                       </div>
                     </div>

@@ -40,19 +40,19 @@ function CardVideoPlayer({
     }
   }, [])
 
+  const handleMuteChange = useCallback((player = playerRef?.current) => {
+    if (player) {
+      localStorage.setItem('videoMutedCard', player.muted)
+    }
+  }, [])
+
   const handleVolumeChange = useCallback(() => {
     const player = playerRef?.current
     if (player) {
       localStorage.setItem('videoVolumeCard', player.volume)
       handleMuteChange(player)
     }
-  }, [])
-
-  const handleMuteChange = useCallback((player = playerRef?.current) => {
-    if (player) {
-      localStorage.setItem('videoMutedCard', player.muted)
-    }
-  }, [])
+  }, [handleMuteChange])
 
   const handleVisibilityChange = useCallback(() => {
     const player = playerRef?.current

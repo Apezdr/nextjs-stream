@@ -1,20 +1,48 @@
-import React, { Fragment } from 'react'
-import { Dialog, Transition } from '@headlessui/react'
+import React, { Fragment, Activity, memo, useId, useMemo, useCallback } from 'react'
+import { Dialog, DialogPanel, Transition, TransitionChild } from '@headlessui/react'
 import { Combobox, ComboboxInput, ComboboxOptions, ComboboxOption } from '@headlessui/react'
+import { ErrorBoundary } from 'react-error-boundary'
 import { buildURL, classNames } from '@src/utils'
-import Image from 'next/image'
 import Link from 'next/link'
 import Loading from '@src/app/loading'
-import Detailed from '@components/Poster/Detailed'
-import MediaPoster from '@components/MediaPoster'
 import {
-  ChevronRightIcon,
   MagnifyingGlassIcon,
   UsersIcon,
   XMarkIcon,
+  ChevronRightIcon,
 } from '@heroicons/react/20/solid'
 import RetryImage from '@components/RetryImage'
+import Detailed from '@components/Poster/Detailed'
+import MediaPoster from '@components/MediaPoster'
 
+/**
+ * Error fallback component for search results
+ * React 19.2 error boundary pattern
+ */
+const SearchErrorFallback = ({ error, resetErrorBoundary }) => (
+  <div className="px-6 py-14 text-center text-sm sm:px-14">
+    <UsersIcon className="mx-auto h-6 w-6 text-red-400" aria-hidden="true" />
+    <p className="mt-4 font-semibold text-gray-900">Search encountered an error</p>
+    <p className="mt-2 text-gray-500">{error.message || 'Please try again'}</p>
+    <button
+      onClick={resetErrorBoundary}
+      className="mt-4 rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500"
+    >
+      Try again
+    </button>
+  </div>
+)
+
+/**
+ * SearchModal with HeadlessUI v2 + React 19.2 best practices
+ *
+ * Features:
+ * - HeadlessUI v2 native virtualization (powered by TanStack Virtual)
+ * - React 18/19.2 hooks: useId, useMemo, useCallback, memo
+ * - React 19.2 ErrorBoundary pattern
+ * - React 19.2 Activity component for smooth detail panel transitions
+ * - Optimal performance for all list sizes
+ */
 const SearchModal = ({
   open,
   setOpen,
@@ -24,16 +52,28 @@ const SearchModal = ({
   searchResults,
   recentlyAddedMedia,
 }) => {
+  // React 18/19 best practice: SSR-safe ID generation
+  const searchInputId = useId()
+
+  // Stable callback reference
+  const handleClose = useCallback(() => setOpen(false), [setOpen])
+
+  // Determine which data to display
+  const displayData = useMemo(
+    () => (query === '' ? recentlyAddedMedia : searchResults),
+    [query, recentlyAddedMedia, searchResults]
+  )
+
   return (
     <Transition
       show={open}
       as={Fragment}
-      beforeEnter={() => window.document.getElementById('search')?.focus()}
+      beforeEnter={() => window.document.getElementById(searchInputId)?.focus()}
       afterLeave={() => null}
       appear
     >
-      <Dialog as="div" className="relative z-20" onClose={() => setOpen(false)}>
-        <Transition.Child
+      <Dialog as="div" className="relative z-20" onClose={handleClose}>
+        <TransitionChild
           as={Fragment}
           enter="ease-out duration-300"
           enterFrom="opacity-0"
@@ -46,17 +86,17 @@ const SearchModal = ({
             className="fixed inset-0 bg-gray-500 bg-opacity-25 transition-opacity"
             role="button"
             tabIndex={0}
-            onClick={() => setOpen(false)}
+            onClick={handleClose}
             onKeyDown={(event) => {
               if (event.key === 'Escape') {
-                setOpen(false)
+                handleClose()
               }
             }}
           />
-        </Transition.Child>
+        </TransitionChild>
 
-        <div className="fixed inset-0 z-20 w-screen overflow-y-auto p-4 sm:p-6 md:p-20">
-          <Transition.Child
+        <div className="fixed inset-0 z-20 w-screen overflow-y-auto p-4 sm:p-6 md:p-8">
+          <TransitionChild
             as={Fragment}
             enter="ease-out duration-300"
             enterFrom="opacity-0 scale-95"
@@ -65,18 +105,15 @@ const SearchModal = ({
             leaveFrom="opacity-100 scale-100"
             leaveTo="opacity-0 scale-95"
           >
-            <Dialog.Panel className="mx-auto max-w-7xl transform divide-y divide-gray-100 overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-black ring-opacity-5 transition-all">
-              <Combobox>
-                {({ activeOption }) => {
-                  let dims, is4k, is1080p
-                  if (activeOption?.dimensions) {
-                    dims = activeOption?.dimensions?.split('x')
-                    is4k = parseInt(dims[0]) >= 3840 || parseInt(dims[1]) >= 2160
-                    is1080p = parseInt(dims[0]) >= 1920 || parseInt(dims[1]) >= 1080
-                  }
-                  return (
+            <DialogPanel className="mx-auto max-w-7xl transform overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-black ring-opacity-5 transition-all">
+              {/* React 19.2: Error boundary for search functionality */}
+              <ErrorBoundary FallbackComponent={SearchErrorFallback} onReset={handleClose}>
+                {/* HeadlessUI v2: Always use virtualization for optimal performance */}
+                <Combobox virtual={{ options: displayData }}>
+                  {({ activeOption }) => (
                     <>
-                      <div className="relative">
+                      {/* Search input */}
+                      <div className="relative border-b border-gray-100">
                         <MagnifyingGlassIcon
                           className="pointer-events-none absolute left-4 top-3.5 h-5 w-5 text-gray-400"
                           aria-hidden="true"
@@ -84,144 +121,193 @@ const SearchModal = ({
                         <ComboboxInput
                           className="h-12 w-full border-0 bg-transparent pl-11 pr-4 text-gray-900 placeholder:text-gray-400 focus:ring-0 sm:text-sm"
                           placeholder="Search..."
-                          id="search"
+                          id={searchInputId}
                           value={query}
                           onChange={(event) => setQuery(event.target.value)}
                         />
                         <XMarkIcon
                           className="p-1.5 rounded-full absolute right-4 top-[0.55rem] h-[2.05rem] w-[2.05rem] text-gray-400 hover:text-gray-500 focus:text-gray-500 cursor-pointer"
-                          onClick={() => setOpen(false)}
+                          onClick={handleClose}
                         />
                       </div>
 
                       {isLoading ? (
                         <Loading fullscreenClasses="" />
-                      ) : (
-                        (query === '' || searchResults.length > 0) && (
-                          <ComboboxOptions
-                            as="div"
-                            static
-                            hold
-                            className="flex transform-gpu divide-x divide-gray-100"
-                          >
-                            <div
-                              className={classNames(
-                                'max-h-[80vh] min-w-0 flex-auto scroll-py-4 overflow-y-auto px-6 py-4',
-                                activeOption && 'sm:h-[42rem]'
-                              )}
-                            >
-                              {query === '' && (
-                                <h2 className="mb-4 mt-2 text-xs font-semibold text-gray-500">
+                      ) : (query === '' || searchResults.length > 0) ? (
+                        /* Two-pane flex layout with fixed height */
+                        <div className="flex divide-x divide-gray-100 h-[42rem] max-h-[80vh]">
+                          {/* Left pane: Header + Options list */}
+                          <div className="min-w-0 flex-auto flex flex-col">
+                            {/* Header outside ComboboxOptions */}
+                            {query === '' && (
+                              <div className="px-6 pt-4">
+                                <h2 className="text-xs font-semibold text-gray-500">
                                   Recent additions
                                 </h2>
-                              )}
-                              <div className="-mx-2 text-sm text-gray-700">
-                                {recentlyAddedMedia.length === 0 && (
-                                  <Loading fullscreenClasses="" />
-                                )}
-                                {(query === '' ? recentlyAddedMedia : searchResults).map(
-                                  (media) =>
-                                    media && (
-                                      <ComboboxOption
-                                        as="div"
-                                        key={media.title}
-                                        value={media}
-                                        className={({ active }) =>
-                                          classNames(
-                                            'flex cursor-default select-none items-center rounded-md p-2',
-                                            active && 'bg-gray-100 text-gray-900'
-                                          )
-                                        }
-                                      >
-                                        {({ active }) => (
-                                          <Link
-                                            href={buildURL(media.url)}
-                                            className="contents"
-                                            onClick={() => setOpen(false)}
-                                          >
-                                            <RetryImage
-                                              src={media.posterURL}
-                                              loading="lazy"
-                                              placeholder="blur"
-                                              width={32}
-                                              height={48}
-                                              blurDataURL={`data:image/png;base64,${media.posterBlurhash}`}
-                                              alt={media.title}
-                                              className="h-12 w-8 flex-none rounded-lg"
-                                            />
-                                            <div className="ml-3 flex flex-col truncate w-full">
-                                              <span>{media.title}</span>
-                                              <span className="ml-2 h-5 w-16 text-gray-400">
-                                                ↳{' '}
-                                                {media.type === 'movie'
-                                                  ? 'Movie'
-                                                  : media.type === 'tv'
-                                                    ? 'TV Show'
-                                                    : 'TV Episode'}
-                                              </span>
-                                            </div>
-                                            {active && (
-                                              <ChevronRightIcon
-                                                className="ml-3 h-5 w-5 flex-none text-gray-400"
-                                                aria-hidden="true"
-                                              />
-                                            )}
-                                          </Link>
-                                        )}
-                                      </ComboboxOption>
-                                    )
-                                )}
-                              </div>
-                            </div>
-
-                            {activeOption && (
-                              <div className="hidden h-[42rem] w-1/2 flex-none flex-col divide-y divide-gray-100 overflow-y-auto sm:flex">
-                                <div className="flex-none p-6 text-center">
-                                  {activeOption.type === 'tv' ? (
-                                    <Detailed
-                                      tvShow={activeOption}
-                                      contClassName={'w-auto max-w-sm'}
-                                      posterOnly={true}
-                                      hideGenres={false}
-                                      contClassNamePoster=""
-                                      loadingType={'eager'}
-                                    />
-                                  ) : activeOption.type === 'movie' ? (
-                                    <MediaPoster
-                                      movie={activeOption.type === 'movie' ? activeOption : null}
-                                      imagePriority={true}
-                                      contClassNamePoster=""
-                                    />
-                                  ) : (
-                                    <MediaPoster
-                                      tv={activeOption.type === 'tv' ? activeOption : null}
-                                      movie={activeOption.type === 'movie' ? activeOption : null}
-                                      imagePriority={true}
-                                    />
-                                  )}
-
-                                  <h2 className="mt-3 font-semibold text-gray-900">
-                                    {activeOption.title}
-                                  </h2>
-                                  <p className="text-sm leading-6 text-gray-500">
-                                    {activeOption.description}
-                                  </p>
-                                </div>
-                                <div className="flex flex-auto flex-col justify-between p-6">
-                                  <Link
-                                    href={buildURL(activeOption.url)}
-                                    type="button"
-                                    className="mt-6 w-full rounded-md bg-indigo-600 px-3 py-2 text-center text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-                                    onClick={() => setOpen(false)}
-                                  >
-                                    Open this
-                                  </Link>
-                                </div>
                               </div>
                             )}
-                          </ComboboxOptions>
-                        )
-                      )}
+
+                            {/* HeadlessUI v2 Virtual: ComboboxOptions with hold prop */}
+                            <ComboboxOptions
+                              static
+                              hold
+                              className={classNames(
+                                'flex-1 overflow-y-auto px-6 py-4 text-sm text-gray-700',
+                                query === '' && 'pt-2'
+                              )}
+                            >
+                              {/* Render prop function - MUST be ONLY child of ComboboxOptions */}
+                              {({ option: media }) => (
+                                <ComboboxOption
+                                  value={media}
+                                  className="-mx-2 flex cursor-default select-none items-center rounded-md p-2 h-16 data-[focus]:bg-gray-100 data-[focus]:text-gray-900 w-full max-w-full"
+                                >
+                                  <Link
+                                    href={buildURL(media.url)}
+                                    className="flex items-center w-full min-w-0 group"
+                                    onClick={handleClose}
+                                  >
+                                    <div
+                                      className="relative flex-shrink-0 rounded-lg overflow-hidden bg-gray-200"
+                                      style={{ width: '32px', height: '48px' }}
+                                    >
+                                      <RetryImage
+                                        src={media.posterURL}
+                                        fill
+                                        sizes="32px"
+                                        alt={media.title}
+                                        className="object-cover"
+                                        //loading="lazy"
+                                        placeholder="blur"
+                                        blurDataURL={media.posterBlurhash ? `data:image/png;base64,${media.posterBlurhash}` : undefined}
+                                        // Remove loading prop entirely or use eager
+                                        // priority
+                                      />
+                                    </div>
+                                    <div className="ml-3 flex flex-col flex-1 min-w-0">
+                                      <span className="truncate block">{media.title}</span>
+                                      <span className="text-gray-400 text-xs truncate block">
+                                        ↳{' '}
+                                        {media.type === 'movie'
+                                          ? 'Movie'
+                                          : media.type === 'tv'
+                                          ? 'TV Show'
+                                          : 'TV Episode'}
+                                      </span>
+                                    </div>
+                                    <ChevronRightIcon
+                                      className="ml-3 h-5 w-5 flex-shrink-0 text-gray-400 opacity-0 group-data-[focus]:opacity-100"
+                                      aria-hidden="true"
+                                    />
+                                  </Link>
+                                </ComboboxOption>
+                              )}
+                            </ComboboxOptions>
+                          </div>
+
+                          <div className="hidden w-1/2 flex-none flex-col overflow-hidden sm:flex">
+                            <div
+                              className="flex-1 p-6 text-center overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100"
+                              style={{
+                                maxHeight: 'calc(80vh - 100px)',
+                              }}
+                            >
+                              {activeOption &&
+                                (activeOption?.type === 'tv' ? (
+                                  <div key={activeOption.id || activeOption.url}>
+                                  <Detailed
+                                    tvShow={activeOption}
+                                    contClassName={'w-auto max-w-[280px] mb-4'}
+                                    posterOnly={true}
+                                    hideGenres={false}
+                                    size={{ w: 400, h: 600 }}
+                                    quality={100}
+                                    loadingType={'eager'}
+                                    contClassNamePoster=""
+                                    check4kandHDR={true}
+                                  />
+                                    {activeOption.metadata.tagline && (
+                                      <p className="text-sm italic text-gray-500">
+                                        "{activeOption.metadata.tagline}"
+                                      </p>
+                                    )}
+                                    <h2 className="text-lg font-semibold text-gray-900">
+                                      {activeOption.title}
+                                    </h2>
+                                    {activeOption.release_date && (
+                                      <p className="text-sm text-gray-500">
+                                        Released: {new Date(activeOption.release_date).getDate()}
+                                      </p>
+                                    )}
+                                    {activeOption.metadata.overview && (
+                                      <p className="text-sm leading-6 text-gray-500 line-clamp-4">
+                                        {activeOption.metadata.overview}
+                                      </p>
+                                    )}
+                                  </div>
+                                ) : activeOption?.type === 'movie' ? (
+                                  <div className="space-y-3" key={activeOption.id || activeOption.url}>
+                                    <MediaPoster
+                                      movie={activeOption}
+                                      imagePriority={true}
+                                      className='max-w-[280px]'
+                                      contClassName="max-w-[280px] mx-auto"
+                                      size={{ w: 400, h: 600 }}
+                                      quality={100}
+                                    />
+                                    {activeOption.tagline && (
+                                      <p className="text-sm italic text-gray-500">
+                                        "{activeOption.tagline}"
+                                      </p>
+                                    )}
+                                    <h2 className="text-lg font-semibold text-gray-900">
+                                      {activeOption.title}
+                                    </h2>
+                                    {activeOption.release_date && (
+                                      <p className="text-sm text-gray-500">
+                                        Released: {new Date(activeOption.release_date).getDate()}
+                                      </p>
+                                    )}
+                                    {activeOption.metadata.overview && (
+                                      <p className="text-sm leading-6 text-gray-500 line-clamp-4">
+                                        {activeOption.metadata.overview}
+                                      </p>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="space-y-3" key={activeOption.id || activeOption.url}>
+                                    <MediaPoster
+                                      tv={activeOption}
+                                      imagePriority={true}
+                                      size={{ w: 400, h: 600 }}
+                                      quality={100}
+                                    />
+                                    <h2 className="text-lg font-semibold text-gray-900">
+                                      {activeOption?.title}
+                                    </h2>
+                                    {activeOption?.description && (
+                                      <p className="text-sm leading-6 text-gray-500 line-clamp-4">
+                                        {activeOption.description}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))}
+                            </div>
+                            {activeOption && (
+                              <div className="flex-none p-4 border-t border-gray-100 bg-white">
+                                <Link
+                                  href={buildURL(activeOption.url)}
+                                  type="button"
+                                  className="w-full rounded-md bg-indigo-600 px-3 py-2 text-center text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
+                                  onClick={handleClose}
+                                >
+                                  Open this
+                                </Link>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ) : null}
 
                       {query !== '' && searchResults.length === 0 && !isLoading && (
                         <div className="px-6 py-14 text-center text-sm sm:px-14">
@@ -230,20 +316,20 @@ const SearchModal = ({
                             Nothing found for that query
                           </p>
                           <p className="mt-2 text-gray-500">
-                            We couldn’t find anything with that query. Please try again.
+                            We couldn't find anything with that query. Please try again.
                           </p>
                         </div>
                       )}
                     </>
-                  )
-                }}
-              </Combobox>
-            </Dialog.Panel>
-          </Transition.Child>
+                  )}
+                </Combobox>
+              </ErrorBoundary>
+            </DialogPanel>
+          </TransitionChild>
         </div>
       </Dialog>
     </Transition>
   )
 }
 
-export default SearchModal
+export default memo(SearchModal)

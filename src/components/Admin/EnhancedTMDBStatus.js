@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { testTMDBConnection, validateTMDBConfiguration } from '@src/utils/tmdb/client'
 import { MaterialCard, MaterialCardHeader, MaterialCardContent, MaterialButton, StatusBadge } from './BaseComponents'
 
@@ -17,7 +17,7 @@ export function EnhancedTMDBStatus() {
 
   const [isRefreshing, setIsRefreshing] = useState(false)
 
-  const checkTMDBStatus = async () => {
+  const checkTMDBStatus = useCallback(async () => {
     try {
       const [connectionTest, validation] = await Promise.all([
         testTMDBConnection(),
@@ -43,7 +43,7 @@ export function EnhancedTMDBStatus() {
         lastChecked: new Date().toISOString()
       })
     }
-  }
+  }, [])
 
   const handleRefresh = async () => {
     setIsRefreshing(true)
@@ -52,10 +52,45 @@ export function EnhancedTMDBStatus() {
   }
 
   useEffect(() => {
-    checkTMDBStatus()
-    const interval = setInterval(checkTMDBStatus, 30000)
+    // Async function inside effect to satisfy ESLint rule
+    const fetchStatus = async () => {
+      try {
+        const [connectionTest, validation] = await Promise.all([
+          testTMDBConnection(),
+          validateTMDBConfiguration()
+        ])
+
+        setStatus({
+          loading: false,
+          connection: connectionTest,
+          validation,
+          lastChecked: new Date().toISOString()
+        })
+      } catch (error) {
+        console.error('Error checking TMDB status:', error)
+        setStatus({
+          loading: false,
+          connection: {
+            success: false,
+            error: error.message,
+            timestamp: new Date().toISOString()
+          },
+          validation: null,
+          lastChecked: new Date().toISOString()
+        })
+      }
+    }
+
+    // Initial fetch
+    fetchStatus()
+    
+    // Set up polling interval using the callback
+    const interval = setInterval(() => {
+      checkTMDBStatus()
+    }, 30000)
+    
     return () => clearInterval(interval)
-  }, [])
+  }, [checkTMDBStatus])
 
   const { connection, validation } = status
   const isOverallHealthy = connection?.success && validation?.overall

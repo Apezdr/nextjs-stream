@@ -55,7 +55,7 @@ export const GET = async (req) => {
     switch (action) {
       case 'list': {
         // Get available genres with optional counts
-        if (Boolean(process.env.DEBUG)) {
+        if (process.env.DEBUG) {
           console.log(`[GENRES_API] Getting available genres for type: ${type}, includeCounts: ${includeCounts}`)
         }
 
@@ -115,7 +115,7 @@ export const GET = async (req) => {
           )
         }
 
-        if (Boolean(process.env.DEBUG)) {
+        if (process.env.DEBUG) {
           console.log(`[GENRES_API] Getting content for genres: ${genres.join(', ')}, type: ${type}, page: ${page}`)
         }
 
@@ -155,7 +155,7 @@ export const GET = async (req) => {
           // Add watch history if requested
           if (includeWatchHistory && items.length > 0) {
             try {
-              if (Boolean(process.env.DEBUG)) {
+              if (process.env.DEBUG) {
                 console.log(`[GENRES_API] Adding watch history to ${items.length} items`)
               }
               items = await addWatchHistoryToItems(items, authResult?.id)
@@ -264,7 +264,7 @@ export const GET = async (req) => {
         // Get genre statistics
         const genreFilter = genreParam ? genreParam.split(',').map(g => g.trim()).filter(Boolean) : null
         
-        if (Boolean(process.env.DEBUG)) {
+        if (process.env.DEBUG) {
           console.log(`[GENRES_API] Getting genre statistics for type: ${type}`)
         }
 

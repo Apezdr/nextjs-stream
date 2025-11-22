@@ -48,13 +48,27 @@ function buildStatus(server, data = null, headers = {}, error = null) {
     lastUpdated: headers['last-modified'] ?? new Date().toISOString()
   };
 
+  console.log(`[ETAG DEBUG] buildStatus for ${server.id}:`, {
+    hasData: !!data,
+    hasError: !!error,
+    headersEtag: headers.etag || 'MISSING',
+    allHeaders: headers
+  });
+
   if (error) {
     return { ...base, level: 'unknown', message: error, error };
   }
   if (!data) {
     return { ...base, level: 'unknown', message: 'Status information not available' };
   }
-  return { ...base, ...data, etag: headers.etag ?? null };
+  
+  const result = { ...base, ...data, etag: headers.etag ?? null };
+  console.log(`[ETAG DEBUG] buildStatus result for ${server.id}:`, {
+    hasEtag: !!result.etag,
+    etagValue: result.etag || 'NULL'
+  });
+  
+  return result;
 }
 
 export async function GET(request) {
@@ -101,6 +115,12 @@ async function fetchOneStatus(server) {
     true // allow 304 caching
   );
   
+  console.log(`[ETAG DEBUG] fetchOneStatus for ${server.id}:`, {
+    hasData: !!data,
+    responseHeaders: resp,
+    etagInHeaders: resp?.etag || 'MISSING'
+  });
+  
   // Normalize the response data structure to handle both cached and fresh responses
   const responseData = data?.data || data;
   
@@ -108,7 +128,13 @@ async function fetchOneStatus(server) {
 }
 
 async function processResponse(statuses, incomingETag) {
+  console.log('[ETAG DEBUG] processResponse - incoming statuses:',
+    statuses.map(s => ({ serverId: s.serverId, hasEtag: !!s.etag, etag: s.etag })));
+  
   const { servers: cached, activeIncidents = [] } = await getLatestSystemStatus();
+  console.log('[ETAG DEBUG] processResponse - cached from DB:',
+    cached ? (Array.isArray(cached) ? cached.map(s => ({ serverId: s.serverId, hasEtag: !!s.etag, etag: s.etag })) : 'not an array') : 'no cached data');
+  
   const incidents = activeIncidents.filter(i => !i.resolvedAt);
 
   // merge incidents on top of live statuses
@@ -126,6 +152,9 @@ async function processResponse(statuses, incomingETag) {
     }
     return st;
   });
+  
+  console.log('[ETAG DEBUG] processResponse - merged result:',
+    merged.map(s => ({ serverId: s.serverId, hasEtag: !!s.etag, etag: s.etag })));
 
   // pick the worst level
   const levels = ['normal', 'heavy', 'critical'];

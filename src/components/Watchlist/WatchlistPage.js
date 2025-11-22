@@ -508,7 +508,8 @@ export default function WatchlistPage({ user }) {
     }
 
     initializeWatchlist()
-  }, []) // Run only once on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []) // Run only once on mount - dependencies are intentionally omitted as this is initialization
 
 
   // Save view mode to localStorage whenever it changes
@@ -661,29 +662,30 @@ export default function WatchlistPage({ user }) {
     }
   }, [api, selectedPlaylistId])
 
-  // Debounced playlist loading function for rapid navigation
-  const debouncedLoadPlaylist = useCallback(
-    debounce((playlistId) => {
+  // Debounced playlist loading function for rapid navigation - using ref pattern
+  const debouncedLoadPlaylistRef = useRef(null)
+  
+  // Initialize debounced function once
+  useEffect(() => {
+    debouncedLoadPlaylistRef.current = debounce((playlistId) => {
       if (playlistId && playlists.length > 0 && lastLoadedPlaylistRef.current !== playlistId) {
         loadPlaylistItems(playlistId)
         loadSummary(playlistId)
         lastLoadedPlaylistRef.current = playlistId
       }
-    }, 400),
-    [loadPlaylistItems, loadSummary, playlists]
-  )
+    }, 400)
+    
+    return () => {
+      debouncedLoadPlaylistRef.current?.cancel()
+    }
+  }, [loadPlaylistItems, loadSummary, playlists])
 
   // Handle playlist selection changes after initialization with debouncing for rapid navigation
   useEffect(() => {
     if (!initializing && selectedPlaylistId) {
-      debouncedLoadPlaylist(selectedPlaylistId)
+      debouncedLoadPlaylistRef.current?.(selectedPlaylistId)
     }
-    
-    // Cleanup function to cancel pending debounced calls
-    return () => {
-      debouncedLoadPlaylist.cancel()
-    }
-  }, [selectedPlaylistId, initializing, debouncedLoadPlaylist])
+  }, [selectedPlaylistId, initializing])
 
   const handleCreatePlaylist = useCallback(async (playlistData) => {
     try {
@@ -1372,7 +1374,7 @@ export default function WatchlistPage({ user }) {
         await loadPlaylistItems(selectedPlaylistId)
       }
     }, 500) // 500ms debounce
-  }, [currentPlaylist, api, loadPlaylistItems, selectedPlaylistId, sortBy, currentItems, sortItemsLocally, sortLocked, canEditPlaylist])
+  }, [currentPlaylist, api, loadPlaylistItems, selectedPlaylistId, sortBy, currentItems, sortItemsLocally, sortLocked])
 
   const handleCustomReorder = useCallback(async (draggedIndex, targetIndex) => {
     // Check if sort is locked - even admins/editors need to unlock first
@@ -1415,7 +1417,7 @@ export default function WatchlistPage({ user }) {
     } finally {
       setIsReordering(false)
     }
-  }, [currentPlaylist, api, currentItems, loadPlaylistItems, selectedPlaylistId, isReordering, sortLocked, canEditPlaylist])
+  }, [currentPlaylist, api, currentItems, loadPlaylistItems, selectedPlaylistId, isReordering, sortLocked])
 
   // Apply client-side filtering
   const filteredItems = currentItems.filter(item => {

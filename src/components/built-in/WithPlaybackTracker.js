@@ -137,7 +137,7 @@ export default function WithPlayBackTracker({
       unsubscribe();
       throttledUpdateServer.cancel();
     };
-  }, [player, videoURL, canPlay]);
+  }, [player, videoURL, canPlay, mediaMetadata]);
 
   return null;
 }

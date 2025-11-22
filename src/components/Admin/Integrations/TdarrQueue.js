@@ -1,5 +1,5 @@
 'use client'
-import React, { useState } from 'react'
+import { useState, useEffect } from 'react'
 import DashboardCard from './DashboardCard'
 
 // Helper function to format bytes to human-readable form
@@ -147,8 +147,21 @@ const WorkerProgressBar = ({ worker, nodeName }) => {
   const progressPercentage = Math.min(Math.max(percentage || 0, 0), 100)
   const statusColor = getStatusColor(status)
   
-  // Calculate elapsed time
-  const elapsedTime = startTime ? Math.floor((Date.now() - startTime) / 1000) : 0
+  // State for current time (updates every second for elapsed time calculation)
+  const [currentTime, setCurrentTime] = useState(() => Date.now())
+  const [showDetails, setShowDetails] = useState(false)
+  
+  // Update current time every second
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setCurrentTime(Date.now())
+    }, 1000)
+    
+    return () => clearInterval(interval)
+  }, [])
+  
+  // Calculate elapsed time using state
+  const elapsedTime = startTime ? Math.floor((currentTime - startTime) / 1000) : 0
   const hours = Math.floor(elapsedTime / 3600)
   const minutes = Math.floor((elapsedTime % 3600) / 60)
   const seconds = elapsedTime % 60
@@ -156,8 +169,6 @@ const WorkerProgressBar = ({ worker, nodeName }) => {
   
   // Get estimated CLI command for tooltip
   const cliCommand = preset ? preset.split(' ').slice(0, 6).join(' ') + '...' : 'N/A'
-  
-  const [showDetails, setShowDetails] = useState(false)
 
   return (
     <div className="mb-6 last:mb-0 bg-slate-600 p-4 rounded-lg shadow-md">

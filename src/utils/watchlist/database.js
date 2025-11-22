@@ -1,5 +1,6 @@
 'use server'
 
+import { cache } from 'react'
 import clientPromise from '@src/lib/mongodb'
 import { auth } from '@src/lib/auth'
 import { ObjectId } from 'mongodb'
@@ -26,10 +27,77 @@ function isValidObjectId(id) {
   return /^[0-9a-fA-F]{24}$/.test(id)
 }
 
+function stringifyCollaborators(collaborators = []) {
+  return collaborators.map((collab) => ({
+    ...collab,
+    userId: collab.userId?.toString() || null,
+  }))
+}
+
+function sanitizePlaylistDoc(playlist) {
+  if (!playlist) return playlist
+
+  const { _id, ownerId, collaborators, ...rest } = playlist
+  return {
+    ...rest,
+    id: _id?.toString() || null,
+    ownerId: ownerId?.toString() || null,
+    collaborators: stringifyCollaborators(collaborators),
+  }
+}
+
 /**
  * Database operations for watchlist functionality with playlist support
  * Supports both internal media (in library) and external media (TMDB only)
  */
+
+/**
+ * Cached helper: Check library availability for TMDB IDs
+ * Returns Set of available TMDB IDs
+ * @param {Array<number>} movieTmdbIds - Movie TMDB IDs to check
+ * @param {Array<number>} tvTmdbIds - TV TMDB IDs to check
+ * @returns {Promise<Set<number>>} Set of available TMDB IDs
+ */
+const checkLibraryAvailability = cache(async (movieTmdbIds, tvTmdbIds) => {
+  const client = await clientPromise
+  const db = client.db('Media')
+  
+  const [movieMatches, tvMatches] = await Promise.all([
+    movieTmdbIds.length > 0
+      ? db.collection('FlatMovies').find(
+          { 'metadata.id': { $in: movieTmdbIds } },
+          { projection: { 'metadata.id': 1 } }
+        ).toArray()
+      : Promise.resolve([]),
+    tvTmdbIds.length > 0
+      ? db.collection('FlatTVShows').find(
+          { 'metadata.id': { $in: tvTmdbIds } },
+          { projection: { 'metadata.id': 1 } }
+        ).toArray()
+      : Promise.resolve([])
+  ])
+  
+  return new Set([
+    ...movieMatches.map(m => m.metadata?.id).filter(Boolean),
+    ...tvMatches.map(t => t.metadata?.id).filter(Boolean)
+  ])
+})
+
+/**
+ * Cached helper: Get playlist metadata
+ * @param {string} playlistId - Playlist ID
+ * @returns {Promise<Object|null>} Playlist metadata
+ */
+const getPlaylistMetadata = cache(async (playlistId) => {
+  const client = await clientPromise
+  const db = client.db('Media')
+  const playlistsCollection = db.collection('Playlists')
+  
+  return await playlistsCollection.findOne(
+    { _id: new ObjectId(playlistId) },
+    { projection: { sortBy: 1, sortOrder: 1, customOrder: 1 } }
+  )
+})
 
 /**
  * Get user's watchlist with pagination and filtering
@@ -40,9 +108,10 @@ function isValidObjectId(id) {
  * @param {string} [options.playlistId] - Filter by playlist ID
  * @param {boolean} [options.countOnly=false] - Return only count
  * @param {boolean} [options.internalOnly=false] - Only count/return items currently in library (uses TMDB ID lookup)
+ * @param {string} [options.userId] - Optional user ID to skip auth() call
  * @returns {Promise<Array|number>} Watchlist items or count
  */
-export async function getUserWatchlist({
+export const getUserWatchlist = cache(async function getUserWatchlist({
   page = 0,
   limit = 20,
   mediaType,
@@ -51,12 +120,25 @@ export async function getUserWatchlist({
   sortBy,
   sortOrder,
   internalOnly = false,
+  userId = null,
 } = {}) {
-  const session = await auth()
-
-  if (!session?.user?.id) {
-    throw new Error('User not authenticated')
+  let userObjectId
+  
+  if (userId) {
+    // Use provided user ID (for cached components)
+    userObjectId = new ObjectId(userId)
+  } else {
+    // Fall back to auth() for backward compatibility
+    const session = await auth()
+    if (!session?.user?.id) {
+      throw new Error('User not authenticated')
+    }
+    userObjectId = new ObjectId(session.user.id)
   }
+
+  // Diagnostic logging to track cache effectiveness
+  const callId = Math.random().toString(36).substring(7)
+  console.log(`[getUserWatchlist ENTRY] callId=${callId}, playlistId=${playlistId || 'default'}, page=${page}, limit=${limit}, mediaType=${mediaType || 'all'}, internalOnly=${internalOnly}`)
 
   try {
     const client = await clientPromise
@@ -67,7 +149,7 @@ export async function getUserWatchlist({
     // Ensure valid playlist ID
     let actualPlaylistId = playlistId
     if (playlistId === 'default' || !playlistId) {
-      const defaultPlaylist = await ensureDefaultPlaylist(session.user.id)
+      const defaultPlaylist = await ensureDefaultPlaylist(userObjectId)
       actualPlaylistId = defaultPlaylist.id
     }
 
@@ -169,8 +251,10 @@ export async function getUserWatchlist({
       mediaType: item.mediaType,
     }))
 
-    // Resolve media data in batch
-    const resolvedMedia = await batchResolveMedia(itemsToResolve)
+    // Resolve media data in batch - pass pre-computed availability to eliminate duplicate queries
+    const resolvedMedia = await batchResolveMedia(itemsToResolve, {
+      precomputedAvailability: internalOnly ? availableTmdbIds : null
+    })
 
     // Combine watchlist items with resolved media data
     const enhancedItems = watchlistItems.map((item) => {
@@ -222,12 +306,13 @@ export async function getUserWatchlist({
 
     // Background updates removed in simplified version - data is always fresh
 
+    console.log(`[getUserWatchlist EXIT] callId=${callId}, returned ${enhancedItems.length} items for playlistId=${actualPlaylistId}`)
     return enhancedItems
   } catch (error) {
     console.error('Error fetching user watchlist:', error)
     throw new Error('Failed to fetch watchlist')
   }
-}
+})
 
 /**
  * Add item to watchlist
@@ -879,13 +964,23 @@ export async function createPlaylist({
  * Get user's playlists
  * @param {Object} options - Query options
  * @param {boolean} [options.includeShared=true] - Include shared playlists
+ * @param {boolean} [options.includePublic=true] - Include public playlists
+ * @param {string} [options.userId] - Optional user ID to skip auth() call
  * @returns {Promise<Array>} User's playlists
  */
-export async function getUserPlaylists({ includeShared = true, includePublic = true } = {}) {
-  const session = await auth()
-
-  if (!session?.user?.id) {
-    throw new Error('User not authenticated')
+export async function getUserPlaylists({ includeShared = true, includePublic = true, userId = null } = {}) {
+  let userObjectId
+  
+  if (userId) {
+    // Use provided user ID (for cached components)
+    userObjectId = new ObjectId(userId)
+  } else {
+    // Fall back to auth() for backward compatibility
+    const session = await auth()
+    if (!session?.user?.id) {
+      throw new Error('User not authenticated')
+    }
+    userObjectId = new ObjectId(session.user.id)
   }
 
   try {
@@ -895,16 +990,14 @@ export async function getUserPlaylists({ includeShared = true, includePublic = t
     const collection = db.collection('Playlists')
     const usersCollection = usersDb.collection('AuthenticatedUsers')
 
-    const userId = new ObjectId(session.user.id)
-
     // Build filter to include:
     // 1. User's own playlists
     // 2. Playlists shared with user (if includeShared)
     // 3. Public playlists (if includePublic)
-    const orConditions = [{ ownerId: userId }]
+    const orConditions = [{ ownerId: userObjectId }]
 
     if (includeShared) {
-      orConditions.push({ 'collaborators.userId': userId })
+      orConditions.push({ 'collaborators.userId': userObjectId })
     }
 
     if (includePublic) {
@@ -933,6 +1026,8 @@ export async function getUserPlaylists({ includeShared = true, includePublic = t
     const watchlistCollection = db.collection('Watchlist')
     const playlistsWithCounts = await Promise.all(
       playlists.map(async (playlist) => {
+        const sanitized = sanitizePlaylistDoc(playlist)
+
         // Count ALL items in the playlist (regardless of who added them)
         // This supports collaborative playlists where multiple users can add items
         const itemCount = await watchlistCollection.countDocuments({
@@ -940,37 +1035,29 @@ export async function getUserPlaylists({ includeShared = true, includePublic = t
         })
 
         // Determine relationship type for categorization
-        const isOwner = playlist.ownerId.equals(userId)
+        const isOwner = playlist.ownerId.equals(userObjectId)
         const isCollaborator =
-          !isOwner && playlist.collaborators?.some((collab) => collab.userId.equals(userId))
+          !isOwner && playlist.collaborators?.some((collab) => collab.userId.equals(userObjectId))
         const isPublic = playlist.privacy === 'public' && !isOwner && !isCollaborator
 
         // Determine if user can edit this playlist
         // Can edit if: owner, or collaborator with edit/admin permission
+        // Note: Admin check only works when session is available
         const collaboratorPermission = playlist.collaborators?.find((collab) =>
-          collab.userId.equals(userId)
+          collab.userId.equals(userObjectId)
         )?.permission
         const canEdit =
           isOwner ||
-          ['edit', 'admin'].includes(collaboratorPermission) ||
-          session?.user?.role === 'admin' ||
-          session?.user?.admin
+          ['edit', 'admin'].includes(collaboratorPermission)
 
         return {
-          ...playlist,
-          id: playlist._id.toString(),
-          ownerId: playlist.ownerId.toString(),
-          ownerName: ownerMap.get(playlist.ownerId.toString()) || 'Unknown User',
+          ...sanitized,
+          ownerName: ownerMap.get(sanitized.ownerId) || 'Unknown User',
           itemCount,
           isOwner,
           isCollaborator,
           isPublic,
           canEdit,
-          collaborators:
-            playlist.collaborators?.map((collab) => ({
-              ...collab,
-              userId: collab.userId.toString(),
-            })) || [],
         }
       })
     )
@@ -1048,21 +1135,16 @@ export async function getPlaylistById(playlistId) {
       session?.user?.role === 'admin' ||
       session?.user?.admin
 
+    const sanitized = sanitizePlaylistDoc(playlist)
+
     return {
-      ...playlist,
-      id: playlist._id.toString(),
-      ownerId: playlist.ownerId.toString(),
+      ...sanitized,
       ownerName,
       itemCount,
       isOwner,
       isCollaborator,
       isPublic,
       canEdit,
-      collaborators:
-        playlist.collaborators?.map((collab) => ({
-          ...collab,
-          userId: collab.userId.toString(),
-        })) || [],
     }
   } catch (error) {
     console.error('Error getting playlist by ID:', error)
@@ -2150,20 +2232,22 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
           let comparison = 0
           
           switch (sortBy) {
-            case 'title':
+            case 'title': {
               const titleA = (a.title || '').toLowerCase()
               const titleB = (b.title || '').toLowerCase()
               comparison = titleA.localeCompare(titleB)
               break
-            case 'releaseDate':
+            }
+            case 'releaseDate': {
               const aReleaseDate = a.metadata?.release_date || a.metadata?.first_air_date
               const bReleaseDate = b.metadata?.release_date || b.metadata?.first_air_date
               const dateA = aReleaseDate ? new Date(aReleaseDate) : new Date('9999-12-31')
               const dateB = bReleaseDate ? new Date(bReleaseDate) : new Date('9999-12-31')
               comparison = dateA - dateB
               break
+            }
             case 'dateAdded':
-            default:
+            default: {
               const aTmdbId = a.metadata?.id || a.tmdbId
               const bTmdbId = b.metadata?.id || b.tmdbId
               const aWatchlistItem = watchlistItems.find(item => parseInt(item.tmdbId) === parseInt(aTmdbId))
@@ -2172,6 +2256,7 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
               const bDate = new Date(bWatchlistItem?.dateAdded || 0)
               comparison = aDate - bDate
               break
+            }
           }
           
           return sortOrder === 'asc' ? comparison : -comparison
@@ -2589,12 +2674,13 @@ export async function getFullMediaDocumentsForPlaylist(watchlistItems, includeVi
           let comparison = 0
           
           switch (sortBy) {
-            case 'title':
+            case 'title': {
               const titleA = (a.title || '').toLowerCase()
               const titleB = (b.title || '').toLowerCase()
               comparison = titleA.localeCompare(titleB)
               break
-            case 'releaseDate':
+            }
+            case 'releaseDate': {
               // For items without release dates, use far-future date
               // This ensures they sort correctly based on context:
               // - desc (newest first): unreleased items appear at TOP (coming soon)
@@ -2605,8 +2691,9 @@ export async function getFullMediaDocumentsForPlaylist(watchlistItems, includeVi
               const dateB = bReleaseDate ? new Date(bReleaseDate) : new Date('9999-12-31')
               comparison = dateA - dateB
               break
+            }
             case 'dateAdded':
-            default:
+            default: {
               // For dateAdded, we need to match items back to watchlist items
               const aTmdbId = a.metadata?.id || a.tmdbId
               const bTmdbId = b.metadata?.id || b.tmdbId
@@ -2616,6 +2703,7 @@ export async function getFullMediaDocumentsForPlaylist(watchlistItems, includeVi
               const bDate = new Date(bWatchlistItem?.dateAdded || 0)
               comparison = aDate - bDate
               break
+            }
           }
           
           // Apply sort order (asc or desc)

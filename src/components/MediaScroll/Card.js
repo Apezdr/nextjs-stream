@@ -1,10 +1,10 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, Suspense, Fragment } from 'react'
+import { useState, useRef, useEffect, useCallback, Suspense, Fragment, useSyncExternalStore, useMemo, useEffectEvent } from 'react'
 import { debounce } from 'lodash'
 import Image from 'next/image'
-import { buildURL, classNames, fetcher } from '@src/utils'
-import { createPortal } from 'react-dom'
+import { buildURL, classNames, fetcher, buildNextOptimizedImageUrl } from '@src/utils'
+import { createPortal, preload as preloadResource } from 'react-dom'
 import dynamic from 'next/dynamic'
 import { preload } from 'swr'
 import RetryImage from '@components/RetryImage'
@@ -64,8 +64,23 @@ const Card = ({
   const [isMouseOverCard, setIsMouseOverCard] = useState(false)
   const [isMouseOverPortal, setIsMouseOverPortal] = useState(false)
   const [MAX_EXPANDED_WIDTH, setMaxExpandedWidth] = useState(600)
+  
+  // Helper function defined before usage
+  const getCollapsedWidth = () => {
+    const width = window.innerWidth
+    if (width < 640) return 128
+    if (width < 1024) return 144
+    return 192
+  }
+  
   const [collapsedWidth, setCollapsedWidth] = useState(() => getCollapsedWidth())
-  const [isTouchDevice, setIsTouchDevice] = useState(false)
+  
+  // Use useSyncExternalStore for SSR-safe touch device detection
+  const isTouchDevice = useSyncExternalStore(
+    () => () => {},
+    () => 'ontouchstart' in window || navigator.maxTouchPoints > 0 || navigator.msMaxTouchPoints > 0,
+    () => false
+  )
 
   const cardRef = useRef(null)
   const imageRef = useRef(null)
@@ -73,8 +88,8 @@ const Card = ({
 
   const isHovered = isMouseOverCard || isMouseOverPortal
 
-  // Shared date handling logic for both Card and PopupCard
-  const getDateInfo = useCallback(() => {
+  // Memoize expensive date calculations (React 19.2 optimization)
+  const dateInfo = useMemo(() => {
     // For unavailable content, show release status first
     if (isAvailable === false) {
       const itemReleaseDate = metadata?.release_date || metadata?.first_air_date || releaseDate;
@@ -141,40 +156,53 @@ const Card = ({
     return null;
   }, [isAvailable, metadata, releaseDate, comingSoon, lastWatchedDate, addedDate, date]);
 
-  const dateInfo = getDateInfo();
+  // Memoize image configuration (React 19.2 optimization)
+  const imageConfig = useMemo(() => {
+    // Get effective blurhash from either new or legacy structure
+    const effectivePosterBlurhash = blurhash?.poster || posterBlurhash
+    
+    // Detect image type: TV episodes have thumbnails (16:9), others have posters (2:3)
+    const isEpisodeThumbnail = seasonNumber && episodeNumber
+    
+    // Calculate image dimensions based on container width
+    // Container dimensions remain static for layout consistency
+    const imageHeight = 288
+    const imageWidth = collapsedWidth
+    
+    // Calculate optimal dimensions for Next.js Image optimization
+    let optimizedWidth, optimizedHeight
+    if (isEpisodeThumbnail) {
+      // Episode thumbnails: 16:9 aspect ratio
+      // For a 288px height container, optimal 16:9 image width would be ~512px
+      optimizedHeight = 288
+      optimizedWidth = Math.round(288 * (16 / 9)) // 512px
+    } else {
+      // Standard posters: 2:3 aspect ratio
+      // Use container dimensions for optimization
+      optimizedHeight = imageHeight
+      optimizedWidth = imageWidth
+    }
 
-  // Get effective blurhash from either new or legacy structure
-  const effectivePosterBlurhash = blurhash?.poster || posterBlurhash
-  
-  // Detect image type: TV episodes have thumbnails (16:9), others have posters (2:3)
-  const isEpisodeThumbnail = seasonNumber && episodeNumber
-  
-  // Calculate image dimensions based on container width
-  // Container dimensions remain static for layout consistency
-  const imageHeight = 288
-  const imageWidth = collapsedWidth
-  
-  // Calculate optimal dimensions for Next.js Image optimization
-  let optimizedWidth, optimizedHeight
-  if (isEpisodeThumbnail) {
-    // Episode thumbnails: 16:9 aspect ratio
-    // For a 288px height container, optimal 16:9 image width would be ~512px
-    optimizedHeight = 288
-    optimizedWidth = Math.round(288 * (16 / 9)) // 512px
-  } else {
-    // Standard posters: 2:3 aspect ratio
-    // Use container dimensions for optimization
-    optimizedHeight = imageHeight
-    optimizedWidth = imageWidth
-  }
-  
-  // Detect if the device is a touch device
-  useEffect(() => {
-    const isTouch =
-      'ontouchstart' in window || navigator.maxTouchPoints > 0 || navigator.msMaxTouchPoints > 0
-    setIsTouchDevice(isTouch)
-  }, [])
+    return {
+      effectivePosterBlurhash,
+      isEpisodeThumbnail,
+      imageHeight,
+      imageWidth,
+      optimizedWidth,
+      optimizedHeight
+    }
+  }, [blurhash, posterBlurhash, seasonNumber, episodeNumber, collapsedWidth])
 
+  // Destructure for easier access
+  const { 
+    effectivePosterBlurhash, 
+    isEpisodeThumbnail, 
+    imageHeight, 
+    imageWidth, 
+    optimizedWidth, 
+    optimizedHeight 
+  } = imageConfig
+  
   const handleImageLoad = useCallback(({ target }) => {
     const { naturalWidth, naturalHeight } = target
     // Store natural dimensions for popup (high quality - these are now the original dimensions)
@@ -242,7 +270,7 @@ const Card = ({
         expandedWidth: popupWidth, // Use calculated 16:9 width
       })
     }
-  }, [collapsedWidth, MAX_EXPANDED_WIDTH])
+  }, [MAX_EXPANDED_WIDTH])
 
   const handleExpand = useCallback(() => {
     if (isAnimating) return
@@ -251,7 +279,7 @@ const Card = ({
     onExpand(itemId)
     calculateImagePosition()
     setShowPortal(true)
-  }, [isAnimating, onExpand, itemId, calculateImagePosition])
+  }, [isAnimating, isPeek, onExpand, itemId, calculateImagePosition])
 
   const handleCollapse = useCallback(() => {
     if (isAnimating) return
@@ -264,15 +292,55 @@ const Card = ({
   const handleMouseEnter = useCallback(() => {
     if (isAnimating || isExpanded || isTouchDevice) return
     
-    // Only preload API data for available items (in library)
-    // For TMDB-only items, PopupCard will use metadata directly
+    // React 19.2 & Next.js 16 optimizations: Strategic preloading
     if (isAvailable === true) {
+      // SWR preload for API data
       const apiEndpoint = buildURL(
         type === 'tv'
           ? `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&season=${seasonNumber}&episode=${episodeNumber}&card=true`
           : `/api/authenticated/media?mediaId=${mediaId}&mediaType=${type}&card=true`
       )
       preload(apiEndpoint, fetcher)
+      
+      // React 19 image preloading with Next.js optimized URLs (matches actual Image component requests)
+      if (backdrop) {
+        // Backdrop for popup - high resolution 16:9 image
+        const optimizedBackdropUrl = buildNextOptimizedImageUrl(backdrop, 1920, 100)
+        if (optimizedBackdropUrl) {
+          preloadResource(optimizedBackdropUrl, { as: "image", fetchPriority: "high" })
+        }
+      }
+      
+      // Preload logo for better popup appearance - smaller size, lower quality
+      if (logo) {
+        const optimizedLogoUrl = buildNextOptimizedImageUrl(logo, 400, 50)
+        if (optimizedLogoUrl) {
+          preloadResource(optimizedLogoUrl, { as: "image" })
+        }
+      }
+      
+      // Preload poster with actual dimensions Next.js will request (accounting for device pixel ratio)
+      if (posterURL && posterURL !== backdrop) {
+        // Next.js applies device pixel ratio scaling, so actual requests are higher resolution
+        // For episode thumbnails: Next.js requests w=1920&q=100 (not our calculated 512px)
+        // For posters: Calculate based on largest responsive breakpoint with DPR scaling
+        let preloadWidth, preloadQuality;
+        
+        if (isEpisodeThumbnail) {
+          // Episode thumbnails: Next.js consistently requests 1920px width at 100% quality
+          preloadWidth = 1920;
+          preloadQuality = 100;
+        } else {
+          // Standard posters: Use largest responsive breakpoint (192px) * 3 for retina + margin
+          preloadWidth = 576; // 192px * 3 for high DPR devices
+          preloadQuality = 80;
+        }
+        
+        const optimizedPosterUrl = buildNextOptimizedImageUrl(posterURL, preloadWidth, preloadQuality)
+        if (optimizedPosterUrl) {
+          preloadResource(optimizedPosterUrl, { as: "image" })
+        }
+      }
     } else if (process.env.NODE_ENV === 'development') {
       console.log(`[Card] Skipping API preload for unavailable item: ${title} (isAvailable: ${isAvailable})`)
     }
@@ -280,7 +348,7 @@ const Card = ({
     hoverTimeoutRef.current = setTimeout(() => {
       handleExpand()
     }, 1000)
-  }, [isAnimating, isExpanded, handleExpand, isTouchDevice, mediaId, seasonNumber, episodeNumber, type, isAvailable, title])
+  }, [isAnimating, isExpanded, handleExpand, isTouchDevice, mediaId, seasonNumber, episodeNumber, type, isAvailable, title, backdrop, logo, posterURL, isEpisodeThumbnail, optimizedWidth])
 
   const handleMouseLeave = useCallback(() => {
     if (hoverTimeoutRef.current) {
@@ -328,11 +396,23 @@ const Card = ({
     [handleExpand]
   )
 
-  // Maximum width to prevent oversized expansions
+  // React 19.2 useEffectEvent: Non-reactive window resize logic
+  const updateMaxExpandedWidth = useEffectEvent(() => {
+    setMaxExpandedWidth(Math.min(600, window.innerWidth - 40))
+  })
+
+  const updateCollapsedWidth = useEffectEvent(() => {
+    const newWidth = getCollapsedWidth()
+    setCollapsedWidth(newWidth)
+  })
+
+  // Non-reactive scroll position calculation
+  const updateImagePosition = useEffectEvent(() => {
+    calculateImagePosition()
+  })
+
+  // Simplified effects using useEffectEvent (React 19.2 optimization)
   useEffect(() => {
-    const updateMaxExpandedWidth = () => {
-      setMaxExpandedWidth(Math.min(600, window.innerWidth - 40))
-    }
     updateMaxExpandedWidth()
     window.addEventListener('resize', updateMaxExpandedWidth)
     return () => {
@@ -340,20 +420,13 @@ const Card = ({
     }
   }, [])
 
-  function getCollapsedWidth() {
-    const width = window.innerWidth
-    if (width < 640) return 128
-    if (width < 1024) return 144
-    return 192
-  }
-
   useEffect(() => {
-    const handleResize = debounce(() => {
-      const newWidth = getCollapsedWidth()
-      setCollapsedWidth(newWidth)
-    }, 200)
+    const handleResize = debounce(updateCollapsedWidth, 200)
     window.addEventListener('resize', handleResize)
-    return () => window.removeEventListener('resize', handleResize)
+    return () => {
+      window.removeEventListener('resize', handleResize)
+      handleResize.cancel()
+    }
   }, [])
 
   const containerWidth = collapsedWidth
@@ -367,18 +440,23 @@ const Card = ({
     }
   }, [isAnimating])
 
+  // Use a ref to track previous hover state to avoid setState in effect
+  const prevIsHoveredRef = useRef(isHovered)
+  
   useEffect(() => {
-    if (!isTouchDevice && !isHovered && showPortal) {
+    // Only call handleCollapse when transitioning from hovered to not hovered
+    // This is intentional - we're synchronizing with user interaction state
+    if (!isTouchDevice && showPortal && prevIsHoveredRef.current && !isHovered) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       handleCollapse()
     }
-  }, [handleCollapse, isHovered, showPortal, isTouchDevice])
+    prevIsHoveredRef.current = isHovered
+  }, [isHovered, showPortal, isTouchDevice, handleCollapse])
 
   useEffect(() => {
     if (!showPortal) return
 
-    const handleScroll = debounce(() => {
-      calculateImagePosition()
-    }, 100)
+    const handleScroll = debounce(updateImagePosition, 100)
 
     window.addEventListener('scroll', handleScroll)
     window.addEventListener('resize', handleScroll)
@@ -388,13 +466,13 @@ const Card = ({
       window.removeEventListener('resize', handleScroll)
       handleScroll.cancel()
     }
-  }, [showPortal, calculateImagePosition])
+  }, [showPortal])
 
   useEffect(() => {
     if (showPortal) {
-      calculateImagePosition()
+      updateImagePosition()
     }
-  }, [showPortal, calculateImagePosition])
+  }, [showPortal])
 
   return (
     <Fragment>

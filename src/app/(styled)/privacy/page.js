@@ -1,12 +1,16 @@
 import { siteTitle, adminUserEmails, showAdminEmails } from '@src/utils/config'
 import Link from 'next/link'
+import { headers } from 'next/headers'
 
 export const metadata = {
   title: `Privacy Policy - ${siteTitle}`,
   description: 'Privacy policy for this NextJS-Stream instance',
 }
 
-export default function PrivacyPolicy() {
+export default async function PrivacyPolicy() {
+  // Access request headers to make this component dynamic
+  await headers()
+  
   const hasAdminEmail = adminUserEmails && adminUserEmails.length > 0 && showAdminEmails
   const adminEmail = hasAdminEmail ? adminUserEmails[0] : null
   const currentDate = new Date().toLocaleDateString('en-US', { 

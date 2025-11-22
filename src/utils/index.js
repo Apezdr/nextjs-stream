@@ -254,3 +254,23 @@ export const getResolutionLabel = cache((dims) => {
     is480p: resolutions['480p'],
   }
 })
+
+/**
+ * Builds a Next.js optimized image URL for preloading
+ * Replicates Next.js default loader behavior: /_next/image?url={encoded_src}&w={width}&q={quality}
+ * @param {string} src - The original image source URL
+ * @param {number} width - The desired width for optimization
+ * @param {number} quality - The desired quality (1-100, defaults to 75)
+ * @returns {string|null} The optimized Next.js image URL or null if no src
+ */
+export const buildNextOptimizedImageUrl = cache((src, width, quality = 75) => {
+  if (!src || !width) return null
+  
+  // Ensure quality is between 1-100
+  const clampedQuality = Math.min(100, Math.max(1, quality || 75))
+  
+  // Encode the source URL for the Next.js image optimization endpoint
+  const encodedSrc = encodeURIComponent(src)
+  
+  return `/_next/image?url=${encodedSrc}&w=${width}&q=${clampedQuality}`
+})

@@ -378,12 +378,8 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
         details: { deletionResults }
       }, session)
       
-      return { success: true, deletionResults }
+    return { success: true, deletionResults }
     })
-    
-    return { success: true }
-  } catch (error) {
-    throw error
   } finally {
     await session.endSession()
   }

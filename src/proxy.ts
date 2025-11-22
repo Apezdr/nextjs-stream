@@ -1,6 +1,6 @@
 //export { auth as middleware } from "./lib/auth"
 
-export default function middleware(req, res) {
+export default function proxy(req, res) {
   // This function intentionally does nothing.
 }
 

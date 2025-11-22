@@ -538,7 +538,7 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
               try {
                 // Get necessary database objects
                 const flatShow = show;
-                const flatSeason = seasons.find(s => s.seasonNumber === seasonNumber);
+                let flatSeason = seasons.find(s => s.seasonNumber === seasonNumber);
 
                 // No-op scenario - show not found
                 if (!flatShow) {

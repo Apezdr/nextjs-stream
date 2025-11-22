@@ -109,7 +109,7 @@ function QualitySubmenu() {
   const options = useVideoQualityOptions({ sort: 'descending' }),
     autoQuality = useMediaState('autoQuality'),
     remote = useMediaRemote(),
-    currentQualityText = options.selectedQuality?.height + 'p' ?? '',
+    currentQualityText = options.selectedQuality?.height ? `${options.selectedQuality.height}p` : '',
     hint = !autoQuality
       ? currentQualityText
       : `(${qualityLabelMap[currentQualityText] ?? currentQualityText}${

@@ -191,45 +191,43 @@ export class MovieMetadataStrategy implements SyncStrategy {
       
       // Note: canUpdateMetadata was already checked at the start (priority check)
       // We only reach here if we have priority for metadata
-      if (needsVersionUpgrade || true) {  // Always update if we have priority and passed hash check
-        // Apply metadata normalization (includes migrations for version upgrades)
-        const normalizedMetadata = this.normalizeMetadata(metadata)
+      // Apply metadata normalization (includes migrations for version upgrades)
+      const normalizedMetadata = this.normalizeMetadata(metadata)
+      
+      // For version upgrades, apply normalization but still check if values actually changed
+      // This ensures old data gets migrated to new schema (e.g., string → Date conversion)
+      const metadataChanged = !this.isMetadataEqual(movie?.metadata, normalizedMetadata)
+      
+      if (needsVersionUpgrade || metadataChanged) {
+        movieToSave.metadata = normalizedMetadata
+        movieToSave.metadataSource = context.serverConfig.id
+        movieToSave.syncVersion = this.currentVersion  // Update version after successful migration
         
-        // For version upgrades, apply normalization but still check if values actually changed
-        // This ensures old data gets migrated to new schema (e.g., string → Date conversion)
-        const metadataChanged = !this.isMetadataEqual(movie?.metadata, normalizedMetadata)
+        // Store metadata hash for future change detection
+        if (metadata._metadataHash) {
+          movieToSave.metadataHash = metadata._metadataHash
+          console.log(`📊 Storing metadata hash: ${metadata._metadataHash}`)
+        }
         
-        if (needsVersionUpgrade || metadataChanged) {
-          movieToSave.metadata = normalizedMetadata
-          movieToSave.metadataSource = context.serverConfig.id
-          movieToSave.syncVersion = this.currentVersion  // Update version after successful migration
-          
-          // Store metadata hash for future change detection
-          if (metadata._metadataHash) {
-            movieToSave.metadataHash = metadata._metadataHash
-            console.log(`📊 Storing metadata hash: ${metadata._metadataHash}`)
-          }
-          
-          if (needsVersionUpgrade && metadataChanged) {
-            changes.push(`Updated movie metadata (schema migration: ${movie?.syncVersion || 'none'} → ${this.currentVersion})`)
-            console.log(`🔄 Schema migration with changes: "${originalTitle}" ${movie?.syncVersion || 'none'} → ${this.currentVersion}`)
-          } else if (needsVersionUpgrade && !metadataChanged) {
-            changes.push(`Schema version updated (${movie?.syncVersion || 'none'} → ${this.currentVersion})`)
-            console.log(`📋 Schema version updated (no data changes): "${originalTitle}" ${movie?.syncVersion || 'none'} → ${this.currentVersion}`)
-          } else if (!needsVersionUpgrade && metadataChanged) {
-            changes.push('Updated movie metadata')
-            console.log(`🔄 Metadata changed for: "${originalTitle}"`)
-          } else {
-            // This case should never happen (both conditions false inside the parent if statement)
-            console.log(`⚠️ Unexpected condition in metadata update for: "${originalTitle}"`)
-          }
-          
-          // Log Date objects being saved for debugging
-          if (normalizedMetadata.release_date instanceof Date) {
-            console.log(`📅 Saving release_date as Date object: ${normalizedMetadata.release_date.toISOString()}`)
-          } else if (normalizedMetadata.release_date) {
-            console.log(`📅 Saving release_date as ${typeof normalizedMetadata.release_date}: ${normalizedMetadata.release_date}`)
-          }
+        if (needsVersionUpgrade && metadataChanged) {
+          changes.push(`Updated movie metadata (schema migration: ${movie?.syncVersion || 'none'} → ${this.currentVersion})`)
+          console.log(`🔄 Schema migration with changes: "${originalTitle}" ${movie?.syncVersion || 'none'} → ${this.currentVersion}`)
+        } else if (needsVersionUpgrade && !metadataChanged) {
+          changes.push(`Schema version updated (${movie?.syncVersion || 'none'} → ${this.currentVersion})`)
+          console.log(`📋 Schema version updated (no data changes): "${originalTitle}" ${movie?.syncVersion || 'none'} → ${this.currentVersion}`)
+        } else if (!needsVersionUpgrade && metadataChanged) {
+          changes.push('Updated movie metadata')
+          console.log(`🔄 Metadata changed for: "${originalTitle}"`)
+        } else {
+          // This case should never happen (both conditions false inside the parent if statement)
+          console.log(`⚠️ Unexpected condition in metadata update for: "${originalTitle}"`)
+        }
+        
+        // Log Date objects being saved for debugging
+        if (normalizedMetadata.release_date instanceof Date) {
+          console.log(`📅 Saving release_date as Date object: ${normalizedMetadata.release_date.toISOString()}`)
+        } else if (normalizedMetadata.release_date) {
+          console.log(`📅 Saving release_date as ${typeof normalizedMetadata.release_date}: ${normalizedMetadata.release_date}`)
         }
       }
 

@@ -13,6 +13,13 @@ import { getFullImageUrl } from '@src/utils'
 import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
 // Watchlist playlist support
 import { getUserWatchlist, getPlaylistById, getMinimalCardDataForPlaylist, getPlaylistVisibility } from '@src/utils/watchlist'
+// Cached data fetchers for improved performance
+import {
+  getCachedMovieList,
+  getCachedTVList,
+  getCachedRecentlyAdded,
+  getCachedAllMedia
+} from '@src/utils/cache/horizontalListData'
 
 // Sorting functions
 const sortFunctions = {
@@ -39,8 +46,8 @@ export const GET = async (req) => {
   const sortOrder = searchParams.get('sortOrder') || 'desc'
   const page = parseInt(searchParams.get('page') || '0')
   const itemsPerPage = parseInt(searchParams.get('limit') || '30')
-  const isTVdevice = searchParams.get('isTVdevice') === 'true' ?? false
-  const shouldExposeAdditionalData = isTVdevice ?? false
+  const isTVdevice = searchParams.get('isTVdevice') === 'true'
+  const shouldExposeAdditionalData = isTVdevice
   const includeWatchHistory = searchParams.get('includeWatchHistory') === 'true'
   // Playlist params (for type=playlist)
   const playlistIdParam = searchParams.get('playlistId') || null
@@ -53,21 +60,21 @@ export const GET = async (req) => {
   const sortList = (a, b) => sortFunctions[sort](a, b, sortOrder)
 
   try {
-    // Function to fetch items for a given page
+    // Function to fetch items for a given page - using cached functions where possible
     const fetchItemsForPage = async (pageNumber, limit) => {
       switch (type) {
         case 'movie': {
-          // For TV devices, include videoURL and duration in the projection for movies
+          // Use cached function for movie lists (1-minute cache)
           const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
-          return await getFlatPosters('movie', false, pageNumber, limit, movieProjection)
+          return await getCachedMovieList(pageNumber, limit, movieProjection)
         }
         case 'tv': {
-          // For regular TV show lists, always use getFlatPosters to show TV show posters/titles
-          // Episode targeting should only be used for recentlyWatched
+          // Use cached function for TV lists (1-minute cache)
           const tvProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
-          return await getFlatPosters('tv', false, pageNumber, limit, tvProjection)
+          return await getCachedTVList(pageNumber, limit, tvProjection)
         }
         case 'recentlyWatched':
+          // User-specific data - remain uncached for now due to dynamic API restrictions
           return await getFlatRecentlyWatchedForUser({
             userId: authResult?.id,
             page: pageNumber,
@@ -79,13 +86,10 @@ export const GET = async (req) => {
             }
           })
         case 'recentlyAdded':
-          return await getFlatRecentlyAddedMedia({
-            page: pageNumber,
-            limit: limit,
-            shouldExposeAdditionalData,
-          })
-        case 'recommendations':
-          //const recommendations = await getRecommendations(authResult?.id, pageNumber, limit)
+          // Use cached function for recently added (1-minute cache)
+          return await getCachedRecentlyAdded(pageNumber, limit, shouldExposeAdditionalData)
+        case 'recommendations': {
+          // User-specific data - remain uncached for now due to dynamic API restrictions
           const recommendations = await getFlatRecommendations(
             authResult?.id,
             pageNumber,
@@ -94,11 +98,13 @@ export const GET = async (req) => {
             shouldExposeAdditionalData
           )
           return recommendations.items || []
+        }
         case 'playlist': {
           if (!playlistIdParam) {
             return []
           }
           
+          // User-specific data - remain uncached for now due to dynamic API restrictions
           // Fetch playlist info first to get sorting preferences
           let playlistInfo = null
           try {
@@ -118,8 +124,6 @@ export const GET = async (req) => {
           }
           
           // Get watchlist items based on user preference
-          // If hideUnavailable is true, filter to library-available items only
-          // If hideUnavailable is false (default), get all items (will be mixed in getFullMediaDocumentsForPlaylist)
           const watchlistItems = await getUserWatchlist({
             page: pageNumber,
             limit: limit,
@@ -128,8 +132,6 @@ export const GET = async (req) => {
           })
           
           // Get card media documents
-          // Pass playlist info to apply sorting preferences
-          // includeUnavailable is the inverse of hideUnavailable (if hide=true, include=false)
           return await getMinimalCardDataForPlaylist(
             watchlistItems,
             playlistInfo,
@@ -138,13 +140,10 @@ export const GET = async (req) => {
         }
         case 'all':
         default: {
+          // Use cached function for combined movie/TV lists (1-minute cache)
           const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
           const tvProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
-          const [moviePosters, tvPosters] = await Promise.all([
-            getFlatPosters('movie', false, pageNumber, limit, movieProjection),
-            getFlatPosters('tv', false, pageNumber, limit, tvProjection),
-          ])
-          return [...moviePosters, ...tvPosters]
+          return await getCachedAllMedia(pageNumber, limit, movieProjection, tvProjection)
         }
       }
     }
@@ -253,7 +252,7 @@ export const GET = async (req) => {
       // Add watch history if requested
       if (includeWatchHistory && items.length > 0) {
         try {
-          if (Boolean(process.env.DEBUG)) {
+          if (process.env.DEBUG) {
             console.log(`[WATCH_HISTORY] Adding watch history to ${items.length} items for type: ${type}`)
           }
           items = await addWatchHistoryToItems(items, authResult?.id)
@@ -347,7 +346,7 @@ export const GET = async (req) => {
             privacy: info.privacy || null
           }
         }
-      } catch (_e) {}
+      } catch (_e) { /* empty */ }
     }
 
     // Return the items along with previous and next items

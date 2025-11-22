@@ -2,7 +2,7 @@ import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
 import {
   validatePlaybackVideoUrls,
-} from './sync/index'
+} from './sync/playbackValidation'
 import { updateLastSynced } from './sync/database'
 import { processMovie, processTVShow } from './sync_utils'
 import { syncToFlatStructure, buildEnhancedFlatDBStructure } from './flatSync'

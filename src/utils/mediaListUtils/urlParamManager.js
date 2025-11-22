@@ -32,14 +32,33 @@ export function useMediaUrlParams(
     const genres = searchParams.get('genres')
     return genres ? genres.split(',') : []
   })
-  const [availableGenres, setAvailableGenres] = useState([])
+  // Derive available genres from mediaList using useMemo
+  const availableGenres = useMemo(() => {
+    return extractGenres(mediaList);
+  }, [mediaList, extractGenres]);
   
   // HDR filter state
   const [selectedHdrTypes, setSelectedHdrTypes] = useState(() => {
     const hdrTypes = searchParams.get('hdr')
     return hdrTypes ? hdrTypes.split(',') : []
   })
-  const [availableHdrTypes, setAvailableHdrTypes] = useState([])
+  
+  // Derive available HDR types from mediaList using useMemo
+  const availableHdrTypes = useMemo(() => {
+    if (extractHdrTypes) {
+      // Use custom HDR extraction function if provided
+      return extractHdrTypes(mediaList);
+    } else {
+      // Default behavior for movies/simple media
+      const hdrTypes = new Set();
+      mediaList.forEach(item => {
+        if (item.hdr) {
+          hdrTypes.add(item.hdr);
+        }
+      });
+      return Array.from(hdrTypes).sort();
+    }
+  }, [mediaList, extractHdrTypes]);
   const [currentPage, setCurrentPage] = useState(() => 
     parseInt(searchParams.get('page') || '1', 10)
   )
@@ -77,31 +96,8 @@ export function useMediaUrlParams(
     
     // Use the router to update the URL without a full page reload
     window.history.replaceState(null, '', `${pathname}?${params.toString()}`)
-  }, [searchParams, router, pathname])
+  }, [searchParams, pathname])
 
-  // Extract all unique genres and HDR types when the component mounts or mediaList changes
-  useEffect(() => {
-    // Extract genres
-    const genres = extractGenres(mediaList);
-    setAvailableGenres(genres);
-    
-    // Extract HDR types
-    if (extractHdrTypes) {
-      // Use custom HDR extraction function if provided
-      const hdrTypes = extractHdrTypes(mediaList);
-      setAvailableHdrTypes(hdrTypes);
-    } else {
-      // Default behavior for movies/simple media
-      const hdrTypes = new Set();
-      mediaList.forEach(item => {
-        if (item.hdr) {
-          hdrTypes.add(item.hdr);
-        }
-      });
-      setAvailableHdrTypes(Array.from(hdrTypes).sort());
-    }
-  }, [mediaList, extractGenres, extractHdrTypes])
-  
   // Handle toggling a genre selection with optimistic UI update - memoized with useCallback
   const handleGenreToggle = useCallback((genre) => {
     // Pre-calculate new genres state
@@ -380,8 +376,6 @@ export function useMediaUrlParams(
     setSelectedGenres,
     setSelectedHdrTypes,
     setCurrentPage,
-    setAvailableGenres,
-    setAvailableHdrTypes,
     handleGenreToggle,
     handleHdrTypeToggle,
     handleSortOrderChange,

@@ -4,8 +4,6 @@ import SkeletonCard from '@components/SkeletonCard'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import WatchlistPage from '@components/Watchlist/WatchlistPage'
 
-export const dynamic = 'force-dynamic'
-
 async function WatchlistPageComponent() {
   const session = await auth()
   

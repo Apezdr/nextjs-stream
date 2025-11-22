@@ -1,6 +1,6 @@
 'use server';
 
-import { auth } from '@src/lib/auth';
+import { auth } from '@src/lib/cachedAuth';
 import { getLatestSystemStatus } from '@src/utils/admin_utils';
 import StatusBannerClient from './StatusBannerClient';
 

@@ -1,12 +1,14 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, useReducer, useMemo, useEffectEvent } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Image from 'next/image'
 import Link from 'next/link'
-import { buildURL, classNames, fetcher, getFullImageUrl } from '@src/utils'
+import { useRouter } from 'next/navigation'
+import { buildURL, classNames, fetcher, getFullImageUrl, buildNextOptimizedImageUrl } from '@src/utils'
 import dynamic from 'next/dynamic'
 import useSWR, { preload } from 'swr'
+import { preload as preloadResource } from 'react-dom'
 import RetryImage from '@components/RetryImage'
 import Loading from '@src/app/loading'
 import VirtualizedCastGrid from './VirtualizedCastGrid'
@@ -17,6 +19,9 @@ import { InformationCircleIcon } from '@heroicons/react/20/solid'
 const CardVideoPlayer = dynamic(() => import('@src/components/MediaScroll/CardVideoPlayer'), {
   ssr: false,
 })
+
+// Extract static function outside component to save memory
+const stopPropagation = (e) => e.stopPropagation()
 
 const PopupCard = ({
   imageDimensions,
@@ -67,6 +72,8 @@ const PopupCard = ({
     dedupingInterval: 15000,
     errorRetryInterval: 2000,
     errorRetryCount: 20,
+    keepPreviousData: true,  // Prevents flash of loading state during transitions
+    compare: (a, b) => JSON.stringify(a) === JSON.stringify(b), // Stable comparison for object data
   })
 
   // If either clipVideoURL OR trailer_url exists, hasVideo = true
@@ -75,24 +82,62 @@ const PopupCard = ({
   const isTrailer = !data?.clipVideoURL && data?.trailer_url
   const hdr = data?.hdr || false
 
+  // Use reducer for batched state updates to avoid cascading renders
+  const [state, dispatch] = useReducer(
+    (state, action) => {
+      switch (action.type) {
+        case 'RESET_FOR_NEW_VIDEO':
+          return {
+            ...state,
+            videoReady: false,
+            afterVideo: false,
+            hideVideo: action.hasVideo,
+            isThumbnailLoaded: false,
+            showBackdrop: false,
+            delayBackdropHide: false,
+          }
+        case 'SET_VIDEO_READY':
+          return { ...state, videoReady: true }
+        case 'SET_PLAYING_VIDEO':
+          return { ...state, playingVideo: action.value }
+        case 'SET_THUMBNAIL_LOADED':
+          return { ...state, isThumbnailLoaded: true }
+        case 'SET_SHOW_BACKDROP':
+          return { ...state, showBackdrop: true }
+        case 'SET_DELAY_BACKDROP_HIDE':
+          return { ...state, delayBackdropHide: action.value }
+        case 'VIDEO_ENDED':
+          return {
+            ...state,
+            playingVideo: false,
+            videoReady: false,
+            hideVideo: true,
+            afterVideo: true,
+          }
+        default:
+          return state
+      }
+    },
+    {
+      videoReady: false,
+      playingVideo: false,
+      hideVideo: hasVideo,
+      afterVideo: false,
+      isThumbnailLoaded: false,
+      showBackdrop: false,
+      delayBackdropHide: false,
+    }
+  )
+
   const [imageLoaded, setImageLoaded] = useState(false)
-  const [videoReady, setVideoReady] = useState(false)
-  const [playingVideo, setPlayingVideo] = useState(false)
-  const [hideVideo, setHideVideo] = useState(hasVideo)
-  const [afterVideo, setAfterVideo] = useState(false)
-  const [shouldPlay, setShouldPlay] = useState(false)
   const [logoLoaded, setLogoLoaded] = useState(false)
+  const [isNavigating, setIsNavigating] = useState(false)
 
-  // Track thumbnail loading
-  const [isThumbnailLoaded, setIsThumbnailLoaded] = useState(false)
-  const [showBackdrop, setShowBackdrop] = useState(false)
-  const [delayBackdropHide, setDelayBackdropHide] = useState(false)
+  // Derive shouldPlay from state instead of using an effect
+  const shouldPlay = (!state.hideVideo || !state.afterVideo) && imageLoaded && state.videoReady
 
+  const router = useRouter()
   const portalRef = useRef(null)
-
-  const stopPropagation = useCallback((e) => {
-    e.stopPropagation()
-  }, [])
 
   const handlePortalKeyDown = useCallback(
     (e) => {
@@ -103,49 +148,48 @@ const PopupCard = ({
     [handleCollapse]
   )
 
+  const handleNavigationWithLoading = useCallback((e, href) => {
+    e.preventDefault(); // Stop default Link behavior
+    setIsNavigating(true); // Show blur overlay
+    
+    // Navigate programmatically
+    router.push(href);
+    
+    // Collapse popup after navigation starts
+    setTimeout(() => {
+      handleCollapse();
+    }, 300); // Short delay for smooth transition
+  }, [router, handleCollapse]);
+
   const onVideoReady = useCallback((player) => {
     const timeout = setTimeout(() => {
-      setVideoReady(true)
+      dispatch({ type: 'SET_VIDEO_READY' })
     }, 200)
     return () => clearTimeout(timeout)
   }, [])
 
+  // Reset states when video URL or data changes
   useEffect(() => {
-    // Reset states each time data or the video URL changes
-    setVideoReady(false)
-    setAfterVideo(false)
-    setHideVideo(hasVideo)
-    setIsThumbnailLoaded(false)
-    setShowBackdrop(false)
-    setDelayBackdropHide(false)
+    dispatch({ type: 'RESET_FOR_NEW_VIDEO', hasVideo })
   }, [videoURL, data?.thumbnail, hasVideo])
 
-  // Simple delay to prevent backdrop flash for episodes with thumbnails
+  // Show backdrop immediately - no delay needed with proper preloading
   useEffect(() => {
-    if (data?.thumbnail) {
-      // Small delay for episodes to give thumbnails time to load
-      const timer = setTimeout(() => {
-        setShowBackdrop(true)
-      }, 100)
-      return () => clearTimeout(timer)
-    } else {
-      // No delay for movies/shows without thumbnails
-      setShowBackdrop(true)
-    }
+    dispatch({ type: 'SET_SHOW_BACKDROP' })
   }, [data?.thumbnail])
 
   // Delay backdrop hide when video starts playing
   useEffect(() => {
-    if (shouldPlay && playingVideo) {
-      setDelayBackdropHide(true)
+    if (shouldPlay && state.playingVideo) {
+      dispatch({ type: 'SET_DELAY_BACKDROP_HIDE', value: true })
       const timer = setTimeout(() => {
-        setDelayBackdropHide(false)
+        dispatch({ type: 'SET_DELAY_BACKDROP_HIDE', value: false })
       }, 800)
       return () => clearTimeout(timer)
     } else {
-      setDelayBackdropHide(false)
+      dispatch({ type: 'SET_DELAY_BACKDROP_HIDE', value: false })
     }
-  }, [shouldPlay, playingVideo])
+  }, [shouldPlay, state.playingVideo])
 
   // 3.2-second delay after the image loads before allowing the video to start
   const handleImageLoad = useCallback(() => {
@@ -160,16 +204,11 @@ const PopupCard = ({
     setLogoLoaded(true)
   }, [])
 
-  // Whenever these states change, recalc shouldPlay
-  useEffect(() => {
-    setShouldPlay((!hideVideo || !afterVideo) && imageLoaded && videoReady)
-  }, [hideVideo, afterVideo, imageLoaded, videoReady])
-
-  // Calculate the width for the popup - use 16:9 dimensions from Card component
-  const calculateWidth = () => {
+  // React 19.2 optimization: Memoize calculateWidth function
+  const calculatedWidth = useMemo(() => {
     // Always use the expandedWidth calculated by Card component (16:9 aspect ratio)
     return imagePosition.expandedWidth ? `!w-[${imagePosition.expandedWidth}px]` : `w-[300px]`
-  }
+  }, [imagePosition.expandedWidth])
 
   // Use the shared dateInfo from Card component
   const displayDate = dateInfo;
@@ -177,34 +216,66 @@ const PopupCard = ({
   // For release status banner, use dateInfo if it's a release status
   const releaseStatus = dateInfo?.isReleaseStatus ? dateInfo : null;
 
-  // Precompute image sources and blurhashes to avoid repetition
-  const logoSrc = data?.logo || data?.logo_path || metadata?.logo_path;
-  const posterSrc = data?.posterURL || posterURL;
-  const posterBlur = data?.posterBlurhash || posterBlurhash;
-  const backdropSrc = backdrop ?? data?.backdrop ?? (data?.backdrop_path ? getFullImageUrl(data?.backdrop_path, 'w500') : null);
-  const backdropBlur = backdropBlurhash ?? data?.backdropBlurhash;
-  const thumbnailSrc = data?.thumbnail;
-  const thumbnailBlur = data?.blurhash?.thumbnail || data?.thumbnailBlurhash;
-  
-  // Compute what images should be displayed
-  const hasLogo = !!logoSrc;
-  const hasBackdrop = !!backdropSrc;
-  const hasPoster = !!posterSrc;
-  const hasThumbnail = !!thumbnailSrc;
-  
-  // Determine visibility for each layer
-  const shouldShowPoster = !shouldPlay && !hasBackdrop && !hasThumbnail && hasPoster;
-  const shouldShowBackdrop = (!shouldPlay || delayBackdropHide) &&
-                             hasBackdrop &&
-                             (hasThumbnail ? (!isThumbnailLoaded && showBackdrop) : true);
-  const shouldShowThumbnail = !shouldPlay && hasThumbnail;
+  // React 19.2 optimization: Memoize computed image sources and blurhashes
+  const imageConfig = useMemo(() => {
+    const logoSrc = data?.logo || data?.logo_path || metadata?.logo_path;
+    const posterSrc = data?.posterURL || posterURL;
+    const posterBlur = data?.posterBlurhash || posterBlurhash;
+    const backdropSrc = backdrop ?? data?.backdrop ?? (data?.backdrop_path ? getFullImageUrl(data?.backdrop_path, 'w500') : null);
+    const backdropBlur = backdropBlurhash ?? data?.backdropBlurhash;
+    const thumbnailSrc = data?.thumbnail;
+    const thumbnailBlur = data?.blurhash?.thumbnail || data?.thumbnailBlurhash;
+    
+    return {
+      logoSrc,
+      posterSrc,
+      posterBlur,
+      backdropSrc,
+      backdropBlur,
+      thumbnailSrc,
+      thumbnailBlur,
+      hasLogo: !!logoSrc,
+      hasBackdrop: !!backdropSrc,
+      hasPoster: !!posterSrc,
+      hasThumbnail: !!thumbnailSrc,
+    };
+  }, [data?.logo, data?.logo_path, data?.posterURL, data?.posterBlurhash, data?.backdrop, data?.backdrop_path, data?.backdropBlurhash, data?.thumbnail, data?.blurhash?.thumbnail, data?.thumbnailBlurhash, metadata?.logo_path, posterURL, posterBlurhash, backdrop, backdropBlurhash]);
+
+  // Extract for easier access
+  const { 
+    logoSrc, posterSrc, posterBlur, backdropSrc, backdropBlur, thumbnailSrc, thumbnailBlur,
+    hasLogo, hasBackdrop, hasPoster, hasThumbnail 
+  } = imageConfig;
+
+  // React 19.2 optimization: Memoize visibility flags
+  const visibilityFlags = useMemo(() => {
+    const shouldShowPoster = !shouldPlay && !hasBackdrop && !hasThumbnail && hasPoster;
+    
+    // Simple fix: for thumbnails, never show backdrop once thumbnail loads
+    const shouldShowBackdrop = hasBackdrop && (
+      hasThumbnail 
+        ? (!state.isThumbnailLoaded && state.showBackdrop)  // Show backdrop until thumbnail loads, then never again
+        : (!shouldPlay || state.delayBackdropHide)          // Non-thumbnails: use delay logic
+    );
+    
+    const shouldShowThumbnail = !shouldPlay && hasThumbnail;
+    
+    return {
+      shouldShowPoster,
+      shouldShowBackdrop,
+      shouldShowThumbnail
+    };
+  }, [shouldPlay, hasBackdrop, hasThumbnail, hasPoster, state.isThumbnailLoaded, state.showBackdrop, state.delayBackdropHide]);
+
+  // Extract visibility flags
+  const { shouldShowPoster, shouldShowBackdrop, shouldShowThumbnail } = visibilityFlags;
 
   return (
     <div
       className={classNames(
         'absolute z-10 pointer-events-none transition-all duration-300 ease-in-out',
         'min-w-52',
-        calculateWidth()
+        calculatedWidth
       )}
       style={{
         top: imagePosition.top,
@@ -231,6 +302,30 @@ const PopupCard = ({
         ref={portalRef}
         tabIndex={0}
       >
+        {/* Loading Overlay - appears during navigation (z-[70]) */}
+        <AnimatePresence>
+          {isNavigating && (
+            <motion.div
+              key="loading-overlay"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="absolute inset-0 bg-white/60 backdrop-blur-sm z-[70] flex items-center justify-center rounded-lg"
+            >
+              <motion.div
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.3, delay: 0.1, ease: "easeOut" }}
+                className="flex flex-col items-center gap-3"
+              >
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <p className="text-sm text-gray-600 font-medium">Loading...</p>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Close Button - put it on top at z-[60] */}
         <button
           className="absolute top-2 right-2 text-gray-800 bg-white rounded-full px-2 py-1 hover:bg-gray-100 focus:outline-none z-[60]"
@@ -276,13 +371,10 @@ const PopupCard = ({
               height={imagePosition?.height}
               width={imagePosition?.expandedWidth}
               onVideoReady={onVideoReady}
-              playingVideo={playingVideo}
-              onPlaying={() => setPlayingVideo(true)}
+              playingVideo={state.playingVideo}
+              onPlaying={() => dispatch({ type: 'SET_PLAYING_VIDEO', value: true })}
               onVideoEnd={(player) => {
-                setPlayingVideo(false)
-                setVideoReady(false)
-                setHideVideo(true)
-                setAfterVideo(true)
+                dispatch({ type: 'VIDEO_ENDED' })
               }}
               videoURL={videoURL}
               shouldPlay={shouldPlay}
@@ -298,7 +390,7 @@ const PopupCard = ({
                 initial={{ opacity: 1 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.4 }}
+                transition={{ duration: 4.8 }}
                 className="w-full h-full absolute inset-0 z-[10]"
               >
                 <RetryImage
@@ -310,7 +402,7 @@ const PopupCard = ({
                   loading="eager"
                   priority
                   fill
-                  className={classNames("rounded-t-lg object-cover", afterVideo ? 'filter brightness-50' : '')}
+                  className={classNames("rounded-t-lg object-cover", state.afterVideo ? 'filter brightness-50' : '')}
                   onLoad={handleImageLoad}
                 />
               </motion.div>
@@ -335,7 +427,7 @@ const PopupCard = ({
                   loading="eager"
                   priority
                   fill
-                  className={classNames("rounded-t-lg object-cover", afterVideo || !isLoading && !videoURL ? 'filter brightness-50' : '')}
+                  className={classNames("rounded-t-lg object-cover", state.afterVideo || !isLoading && !videoURL ? 'filter brightness-50' : '')}
                   onLoad={handleImageLoad}
                 />
               </motion.div>
@@ -345,10 +437,10 @@ const PopupCard = ({
             {shouldShowThumbnail && (
               <motion.div
                 key="thumbnail"
-                initial={{ opacity: 0 }}
+                initial={{ opacity: shouldShowBackdrop ? 0 : 1 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                transition={{ duration: 0.3 }}
+                transition={{ duration: shouldShowBackdrop ? 0.3 : 4.8 }}
                 className="w-full h-full absolute inset-0 z-[30]"
               >
                 <RetryImage
@@ -360,9 +452,9 @@ const PopupCard = ({
                   loading="eager"
                   priority
                   fill
-                  className={classNames("rounded-t-lg object-cover", afterVideo ? 'filter brightness-50' : '')}
+                  className={classNames("rounded-t-lg object-cover", state.afterVideo ? 'filter brightness-50' : '')}
                   onLoad={() => {
-                    setIsThumbnailLoaded(true)
+                    dispatch({ type: 'SET_THUMBNAIL_LOADED' })
                     handleImageLoad()
                   }}
                 />
@@ -379,6 +471,7 @@ const PopupCard = ({
               <Link
                 href={`/list/${type}/${encodeURIComponent(title)}`}
                 className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${encodeURIComponent(title)}`)}
               >
                 {title}
               </Link>
@@ -389,6 +482,7 @@ const PopupCard = ({
                   <Link
                     href={`/list/${type}/${encodeURIComponent(title)}/${seasonNumber}`}
                     className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
+                    onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${encodeURIComponent(title)}/${seasonNumber}`)}
                   >
                     Season {seasonNumber}
                   </Link>
@@ -501,6 +595,7 @@ const PopupCard = ({
                     className={classNames(
                       'relative inline-flex items-center gap-2 opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'
                     )}
+                    onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${link}/play`)}
                   >
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
@@ -520,6 +615,7 @@ const PopupCard = ({
                 <Link
                   href={`/list/${type}/${link}`}
                   className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
+                  onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${link}`)}
                 >
                   <InformationCircleIcon className="size-6 mr-0 sm:mr-2" />
                   <span className="hidden sm:inline">

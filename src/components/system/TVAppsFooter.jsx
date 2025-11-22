@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { usePathname } from 'next/navigation';
+import Image from 'next/image';
 
 /**
  * Check if current page is a media player page (like Nav.js does)
@@ -41,10 +42,12 @@ export default function TVAppsFooter() {
               rel="noopener noreferrer"
               className="inline-flex items-center px-8 py-4 backdrop-blur-sm text-white font-medium rounded-lg transition-all duration-200 group"
             >
-              <img
+              <Image
                 src="/Google_Play_Store_logo.svg"
                 alt="Google Play Store"
-                className="h-6 group-hover:scale-105 transition-transform"
+                width={24}
+                height={24}
+                className="h-6 w-auto group-hover:scale-105 transition-transform"
               />
             </a>
             <a
@@ -53,10 +56,12 @@ export default function TVAppsFooter() {
               rel="noopener noreferrer"
               className="inline-flex items-center px-8 py-4 backdrop-blur-sm text-white font-medium rounded-lg transition-all duration-200 group"
             >
-              <img
+              <Image
                 src="/Amazon-appstore-logo.svg"
                 alt="Amazon Appstore"
-                className="h-6 group-hover:scale-105 transition-transform"
+                width={24}
+                height={24}
+                className="h-6 w-auto group-hover:scale-105 transition-transform"
               />
             </a>
           </div>

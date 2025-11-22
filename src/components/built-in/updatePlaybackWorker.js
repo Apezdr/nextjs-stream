@@ -1,7 +1,10 @@
 self.addEventListener('message', (e) => {
   const { videoURL, currentTime, mediaMetadata } = e.data
 
-  fetch('/api/authenticated/sync/updatePlayback', {
+  // Workers need absolute URLs - construct from self.location.origin
+  const apiUrl = `${self.location.origin}/api/authenticated/sync/updatePlayback`
+
+  fetch(apiUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({

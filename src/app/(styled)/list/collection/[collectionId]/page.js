@@ -8,6 +8,7 @@ import { getFlatMoviesByCollectionId, mergeCollectionWithOwnership } from '@src/
 import { getCollectionDetails } from '@src/utils/tmdb/client'
 import { redirect } from 'next/navigation'
 import CollectionPageComponent from '@components/MediaPages/CollectionPageComponent'
+import Link from 'next/link'
 
 export async function generateMetadata(props, parent) {
   const params = await props.params;
@@ -146,12 +147,12 @@ async function CollectionPage({ params, searchParams }) {
           <div className="text-sm text-gray-400 mb-6">
             Check the console for detailed error information including the failing URL.
           </div>
-          <a
+          <Link
             href="/list/movie"
             className="inline-flex items-center px-4 py-2 border border-transparent text-base font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
           >
             ← Back to Movies List
-          </a>
+          </Link>
         </div>
       </div>
     );
