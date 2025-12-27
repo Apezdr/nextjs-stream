@@ -48,7 +48,7 @@ To implement the NextJS-Stream app, follow these steps:
     
     # TMDB Server Configuration (Optional)
     # Dedicated TMDB server URL for external media integration
-    # Falls back to NEXT_PUBLIC_NODE_SERVER_URL if not set
+    # Falls back to NODE_SERVER_URL if not set
     TMDB_NODE_SERVER_URL=https://subdomain.your-domain.com/node/tmdb # Optional
     
     # Chromecast Configuration (Optional)
@@ -84,9 +84,9 @@ To implement the NextJS-Stream app, follow these steps:
     
     # Public URLs and Paths
     ORGANIZR_URL=http://localhost:3000
-    NEXT_PUBLIC_FILE_SERVER_URL=https://subdomain.your-domain.com
-    NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH= # Optional prefix path for file server
-    NEXT_PUBLIC_ADMIN_USER_EMAILS=email1@xxxx.com,email2@zzzz.com
+    FILE_SERVER_URL=https://subdomain.your-domain.com
+    FILE_SERVER_PREFIX_PATH= # Optional prefix path for file server
+    ADMIN_USER_EMAILS=email1@xxxx.com,email2@zzzz.com
     
     # Site Information (Optional)
     # Use these variables to customize the site title and description
@@ -94,7 +94,7 @@ To implement the NextJS-Stream app, follow these steps:
     NEXT_PUBLIC_SITE_DESCRIPTION=Sharing media content with friends and family. # Optional
     
     # Sync URL, uses the node server
-    NEXT_PUBLIC_NODE_SERVER_URL=http://localhost:3000
+    NODE_SERVER_URL=http://localhost:3000
     
     # User Approval Settings (Optional)
     # Set to 'true' to automatically approve new users, 'false' to require manual admin approval (default)
@@ -105,7 +105,7 @@ To implement the NextJS-Stream app, follow these steps:
     Replace the placeholder values with your actual credentials and API keys. Anywhere you see `cinema.your-domain.com` or `subdomain.your-domain.com` you don't have to use a subdomain but it would generally be the approach on the same host.
 
    ## Set up Admin users
-   To set up an admin user (until roles are implemented proper) you can set up admin users through the environment variable `NEXT_PUBLIC_ADMIN_USER_EMAILS` there can be one or multiple, seperate multiple with a comma.
+   To set up an admin user (until roles are implemented proper) you can set up admin users through the environment variable `ADMIN_USER_EMAILS` there can be one or multiple, seperate multiple with a comma.
 
    **Single:**
    `email1@xxxx.com`
@@ -209,7 +209,7 @@ The application supports a dedicated TMDB server configuration for enhanced exte
 
 - `TMDB_API_KEY`: Your TMDB API key (required for external media features)
 - `TMDB_NODE_SERVER_URL`: Optional dedicated TMDB server URL
-  - Falls back to `NEXT_PUBLIC_NODE_SERVER_URL` if not specified
+  - Falls back to `NODE_SERVER_URL` if not specified
   - Useful for load balancing or dedicated TMDB processing
 
 #### Configuration Examples
@@ -217,13 +217,13 @@ The application supports a dedicated TMDB server configuration for enhanced exte
 **Basic Setup (using main server):**
 ```env
 TMDB_API_KEY=your_tmdb_api_key
-NEXT_PUBLIC_NODE_SERVER_URL=https://your-server.com/node
+NODE_SERVER_URL=https://your-server.com/node
 ```
 
 **Dedicated TMDB Server:**
 ```env
 TMDB_API_KEY=your_tmdb_api_key
-NEXT_PUBLIC_NODE_SERVER_URL=https://your-server.com/node
+NODE_SERVER_URL=https://your-server.com/node
 TMDB_NODE_SERVER_URL=https://tmdb-server.your-domain.com/node
 ```
 
@@ -265,7 +265,7 @@ Administrators can monitor TMDB server status through the admin dashboard:
 
 **TMDB Server Not Configured:**
 - Ensure `TMDB_API_KEY` is set in your environment
-- Verify `TMDB_NODE_SERVER_URL` or `NEXT_PUBLIC_NODE_SERVER_URL` is configured
+- Verify `TMDB_NODE_SERVER_URL` or `NODE_SERVER_URL` is configured
 - Check the admin dashboard for configuration status
 
 **Connection Failures:**

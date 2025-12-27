@@ -337,6 +337,22 @@ export class MovieContentStrategy implements SyncStrategy {
           }
         }
 
+        // FIX: Add size field update logic here
+        // Check priority for any of the size subfields (gb, mb, kb)
+        const shouldUpdateSize =
+          this.shouldUpdateField('additional_metadata.size.gb', originalTitle, context) ||
+          this.shouldUpdateField('additional_metadata.size.mb', originalTitle, context) ||
+          this.shouldUpdateField('additional_metadata.size.kb', originalTitle, context)
+
+        if (videoMetadata.fileSize && shouldUpdateSize) {
+          if (currentMovie.size !== videoMetadata.fileSize) {
+            updates.size = videoMetadata.fileSize
+            console.log(`✅ Updating size from server ${context.serverConfig.id}: ${currentMovie.size} → ${videoMetadata.fileSize}`)
+          } else {
+            console.log(`📝 Size unchanged: ${videoMetadata.fileSize} (server ${context.serverConfig.id} has priority but value identical)`)
+          }
+        }
+
         if (videoMetadata.mediaQuality && this.shouldUpdateMediaQuality(videoMetadata.mediaQuality, originalTitle, context)) {
           const currentQuality = currentMovie.mediaQuality
           if (!this.isMediaQualityEqual(currentQuality, videoMetadata.mediaQuality)) {

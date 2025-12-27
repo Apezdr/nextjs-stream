@@ -1,0 +1,1 @@
+You should review the @docs/app-language files as necessary especially when discussing optimizations. The project uses React 19 and NextJS 16 so caching is a typical subject you should be prepared to plan around.

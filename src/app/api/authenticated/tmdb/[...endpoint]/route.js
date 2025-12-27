@@ -35,7 +35,7 @@ export async function GET(request, { params }) {
     }
 
     // Use base server URL to avoid double paths
-    const backendServerURL = process.env.NEXT_PUBLIC_NODE_SERVER_URL
+    const backendServerURL = process.env.NODE_SERVER_URL
     
     // Check if backend server is configured
     if (!backendServerURL) {
@@ -126,7 +126,7 @@ export async function POST(request, { params }) {
     }
 
     // Use base server URL to avoid double paths
-    const backendServerURL = process.env.NEXT_PUBLIC_NODE_SERVER_URL
+    const backendServerURL = process.env.NODE_SERVER_URL
     
     // Check if backend server is configured
     if (!backendServerURL) {

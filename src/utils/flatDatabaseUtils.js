@@ -1757,12 +1757,13 @@ export async function getFlatMoviesLastUpdatedTimestamp() {
  * This function is optimized for the TVList component with minimal projection fields.
  *
  * @param {Object} [options] - Optional parameters
+ * @param {number} [options.page=0] - Page number for pagination (0-based)
  * @param {number} [options.limit=0] - Optional limit for number of records to return (0 = no limit)
  * @param {boolean} [options.sort=true] - Whether to sort by last air date
  * @returns {Promise<Array>} Array of TV shows with fields needed by the TVList component
  */
 export async function getFlatTVList(options = {}) {
-  const { limit = 0, sort = true } = options;
+  const { page = 0, limit = 0, sort = true } = options;
   
   try {
     const client = await clientPromise;
@@ -1777,10 +1778,12 @@ export async function getFlatTVList(options = {}) {
       metadata: 1
     };
     
-    // Setup query options
+    // Setup query options with pagination
     const queryOptions = { projection };
     if (limit > 0) {
+      const skip = page * limit; // Calculate offset for pagination
       queryOptions.limit = limit;
+      queryOptions.skip = skip; // Add skip for pagination
     }
     
     // Fetch TV shows from flat database

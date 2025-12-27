@@ -1,8 +1,9 @@
 import { cacheLife, cacheTag } from 'next/cache';
-import { 
-  getFlatPosters, 
-  getFlatRecentlyAddedMedia, 
-  getFlatRecentlyWatchedForUser 
+import {
+  getFlatPosters,
+  getFlatRecentlyAddedMedia,
+  getFlatRecentlyWatchedForUser,
+  getFlatTVList
 } from '@src/utils/flatDatabaseUtils';
 import { getFlatRecommendations } from '@src/utils/flatRecommendations';
 
@@ -47,14 +48,18 @@ export async function getCachedMovieList(page, limit, projection) {
 }
 
 /**
- * Cached TV show list - 1 minute cache with media library tag  
+ * Cached TV show list - 1 minute cache with media library tag
+ * Uses getFlatTVList which already includes seasons/episodes with HDR data
+ * This eliminates expensive client-side nested loops for HDR filtering
  */
 export async function getCachedTVList(page, limit, projection) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'tv')
   
-  const data = await getFlatPosters('tv', false, page, limit, projection);
+  // getFlatTVList already includes all seasons with episodes (including HDR data)
+  // This pre-computes the data server-side for much faster client-side filtering
+  const data = await getFlatTVList({ page, limit, sort: true});
   return serializeForClient(data);
 }
 

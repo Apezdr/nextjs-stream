@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import WatchlistCard from './WatchlistCard'
 import SkeletonCard from '@components/SkeletonCard'
 import { classNames } from '@src/utils'
+import { useNavigation } from '@src/contexts/NavigationContext'
 
 export default function PlaylistGrid({
   items,
@@ -24,8 +25,6 @@ export default function PlaylistGrid({
   sortBy,
   sortLocked,
   canEditPlaylist,
-  navigationLoadingItemId,
-  onNavigationStart,
   user
 }) {
   const [draggedItem, setDraggedItem] = useState(null)
@@ -33,6 +32,9 @@ export default function PlaylistGrid({
   const [dragOverIndex, setDragOverIndex] = useState(null)
   
   const [reorderError, setReorderError] = useState(null)
+  
+  // Get navigation state for grid coordination
+  const { isNavigating: globalIsNavigating, targetUrl } = useNavigation()
 
   const handleDragStart = useCallback((e, item, index) => {
     setDraggedItem(item)
@@ -224,8 +226,10 @@ export default function PlaylistGrid({
           {items.map((item, index) => {
             const isDragging = draggedIndex === index
             const isDropTarget = dragOverIndex === index && !isDragging
-            const isNavigating = navigationLoadingItemId === item.id
-            const isOtherNavigating = navigationLoadingItemId && navigationLoadingItemId !== item.id
+            
+            // Navigation state for this card
+            const isThisCardNavigating = globalIsNavigating && targetUrl === item.url
+            const isOtherCardNavigating = globalIsNavigating && targetUrl !== item.url
             
             return (
               <motion.div
@@ -233,7 +237,7 @@ export default function PlaylistGrid({
                 layout
                 initial={{ opacity: 0, y: 20 }}
                 animate={{
-                  opacity: isDragging ? 0.3 : isOtherNavigating ? 0.4 : 1,
+                  opacity: isDragging ? 0.3 : (isOtherCardNavigating ? 0.4 : 1),
                   y: 0,
                   scale: isDropTarget ? 1.05 : 1
                 }}
@@ -247,7 +251,7 @@ export default function PlaylistGrid({
                   'relative',
                   isDropTarget && 'ring-2 ring-green-400 ring-opacity-50',
                   selectedItems.has(item.id) && 'ring-2 ring-indigo-500 rounded-lg',
-                  isOtherNavigating && 'pointer-events-none'
+                  isOtherCardNavigating && 'pointer-events-none'
                 )}
                 draggable={currentPlaylist?.isOwner !== false && !sortLocked}
                 onDragStart={(e) => handleDragStart(e, item, index)}
@@ -291,9 +295,6 @@ export default function PlaylistGrid({
                 playlists={playlists}
                 api={api}
                 canEditPlaylist={canEditPlaylist}
-                isNavigating={isNavigating}
-                isOtherNavigating={isOtherNavigating}
-                onNavigationStart={onNavigationStart}
                 user={user}
               />
           </motion.div>
@@ -328,8 +329,10 @@ export default function PlaylistGrid({
         {items.map((item, index) => {
           const isDragging = draggedIndex === index
           const isDropTarget = dragOverIndex === index && !isDragging
-          const isNavigating = navigationLoadingItemId === item.id
-          const isOtherNavigating = navigationLoadingItemId && navigationLoadingItemId !== item.id
+          
+          // Navigation state for this card
+          const isThisCardNavigating = globalIsNavigating && targetUrl === item.url
+          const isOtherCardNavigating = globalIsNavigating && targetUrl !== item.url
           
           return (
             <motion.div
@@ -337,7 +340,7 @@ export default function PlaylistGrid({
               layout
               initial={{ opacity: 0, scale: 0.8 }}
               animate={{
-                opacity: isDragging ? 0.3 : isOtherNavigating ? 0.4 : 1,
+                opacity: isDragging ? 0.3 : (isOtherCardNavigating ? 0.4 : 1),
                 scale: isDropTarget ? 1.05 : 1
               }}
               exit={{ opacity: 0, scale: 0.8 }}
@@ -349,7 +352,7 @@ export default function PlaylistGrid({
                 'relative',
                 isDropTarget && 'ring-2 ring-green-400 ring-opacity-50',
                 selectedItems.has(item.id) && 'ring-2 ring-indigo-500 rounded-lg',
-                isOtherNavigating && 'pointer-events-none'
+                isOtherCardNavigating && 'pointer-events-none'
               )}
               draggable={currentPlaylist?.isOwner !== false && !sortLocked}
               onDragStart={(e) => handleDragStart(e, item, index)}
@@ -394,9 +397,6 @@ export default function PlaylistGrid({
               playlists={playlists}
               api={api}
               canEditPlaylist={canEditPlaylist}
-              isNavigating={isNavigating}
-              isOtherNavigating={isOtherNavigating}
-              onNavigationStart={onNavigationStart}
               user={user}
             />
             </motion.div>

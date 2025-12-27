@@ -16,7 +16,7 @@ export async function getWebhookServerMapping() {
   
   // Additional servers
   let serverIndex = 2;
-  while (process.env[`NEXT_PUBLIC_NODE_SERVER_URL_${serverIndex}`]) {
+  while (process.env[`NODE_SERVER_URL_${serverIndex}`]) {
     const webhookId = process.env[`WEBHOOK_ID_${serverIndex}`];
     if (webhookId) {
       mapping.set(webhookId, `server${serverIndex}`);

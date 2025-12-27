@@ -236,8 +236,6 @@ export default function WatchlistPage({ user }) {
   const [summaryLoading, setSummaryLoading] = useState(true)
   const [initializing, setInitializing] = useState(true)
   
-  // Navigation loading state
-  const [navigationLoadingItemId, setNavigationLoadingItemId] = useState(null)
   
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState({ watchlist: [], tmdbInternal: [], tmdbExternal: [] })
@@ -392,8 +390,6 @@ export default function WatchlistPage({ user }) {
   // Track last loaded playlist to prevent redundant loads
   const lastLoadedPlaylistRef = useRef(null)
   
-  // Navigation loading timeout ref
-  const navigationTimeoutRef = useRef(null)
 
   // Create separate functions for data loading that return promises
   const loadPlaylistsData = useCallback(async () => {
@@ -519,54 +515,6 @@ export default function WatchlistPage({ user }) {
     }
   }, [viewMode])
 
-  // Navigation loading handlers
-  const handleNavigationStart = useCallback((itemId) => {
-    setNavigationLoadingItemId(itemId)
-    
-    // Set a timeout to clear loading state if navigation takes too long
-    navigationTimeoutRef.current = setTimeout(() => {
-      setNavigationLoadingItemId(null)
-    }, 10000) // 10 second timeout
-  }, [])
-
-  const handleNavigationComplete = useCallback(() => {
-    setNavigationLoadingItemId(null)
-    if (navigationTimeoutRef.current) {
-      clearTimeout(navigationTimeoutRef.current)
-      navigationTimeoutRef.current = null
-    }
-  }, [])
-
-  // Router event listeners for navigation completion
-  useEffect(() => {
-    const handleRouteChangeStart = () => {
-      // Route change started, keep loading state active
-    }
-    
-    const handleRouteChangeComplete = () => {
-      handleNavigationComplete()
-    }
-    
-    const handleRouteChangeError = () => {
-      handleNavigationComplete()
-    }
-
-    // Listen for Next.js router events
-    router.events?.on?.('routeChangeStart', handleRouteChangeStart)
-    router.events?.on?.('routeChangeComplete', handleRouteChangeComplete)
-    router.events?.on?.('routeChangeError', handleRouteChangeError)
-
-    return () => {
-      router.events?.off?.('routeChangeStart', handleRouteChangeStart)
-      router.events?.off?.('routeChangeComplete', handleRouteChangeComplete)
-      router.events?.off?.('routeChangeError', handleRouteChangeError)
-      
-      // Clear timeout on cleanup
-      if (navigationTimeoutRef.current) {
-        clearTimeout(navigationTimeoutRef.current)
-      }
-    }
-  }, [router, handleNavigationComplete])
 
   // Simple handler for playlist selection - only updates URL
   const handlePlaylistSelect = useCallback((playlistId) => {
@@ -1608,8 +1556,6 @@ export default function WatchlistPage({ user }) {
                 sortBy={sortBy}
                 sortLocked={sortLocked}
                 canEditPlaylist={canEditPlaylist}
-                navigationLoadingItemId={navigationLoadingItemId}
-                onNavigationStart={handleNavigationStart}
                 user={user}
               />
             </motion.div>

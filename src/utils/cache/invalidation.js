@@ -125,3 +125,90 @@ export async function invalidateAllLandingPageCache(userId = null) {
     return false
   }
 }
+
+// Invalidate movie details cache when movie is updated
+export async function invalidateMovieDetailsCache(movieTitle) {
+  if (!movieTitle) return false
+  
+  try {
+    const { movieDetailsTag, getAllMovieCacheTags } = await import('./mediaPagesTags')
+    const tags = getAllMovieCacheTags(movieTitle)
+    
+    // Revalidate all related tags with max profile for SWR
+    for (const tag of tags) {
+      revalidateTag(tag, 'max')
+    }
+    
+    console.log(`[Cache SWR] Invalidated movie details cache for: ${movieTitle}`)
+    return true
+  } catch (error) {
+    console.error('[Cache SWR] Failed to invalidate movie details cache:', error)
+    return false
+  }
+}
+
+// Invalidate TV show details cache when show is updated
+export async function invalidateTVShowDetailsCache(showTitle) {
+  if (!showTitle) return false
+  
+  try {
+    const { getAllTVShowCacheTags } = await import('./mediaPagesTags')
+    const tags = getAllTVShowCacheTags(showTitle)
+    
+    // Revalidate all related tags with max profile for SWR
+    for (const tag of tags) {
+      revalidateTag(tag, 'max')
+    }
+    
+    console.log(`[Cache SWR] Invalidated TV show details cache for: ${showTitle}`)
+    return true
+  } catch (error) {
+    console.error('[Cache SWR] Failed to invalidate TV show details cache:', error)
+    return false
+  }
+}
+
+// Invalidate episode details cache when episode is updated
+export async function invalidateEpisodeDetailsCache(showTitle, seasonNum, episodeNum) {
+  if (!showTitle || !seasonNum || !episodeNum) return false
+  
+  try {
+    const { getAllEpisodeCacheTags } = await import('./mediaPagesTags')
+    const tags = getAllEpisodeCacheTags(showTitle, seasonNum, episodeNum)
+    
+    // Revalidate all related tags with max profile for SWR
+    for (const tag of tags) {
+      revalidateTag(tag, 'max')
+    }
+    
+    console.log(`[Cache SWR] Invalidated episode details cache for: ${showTitle} S${seasonNum}E${episodeNum}`)
+    return true
+  } catch (error) {
+    console.error('[Cache SWR] Failed to invalidate episode details cache:', error)
+    return false
+  }
+}
+
+// Invalidate all media detail caches (for use during sync operations)
+export async function invalidateAllMediaDetailsCache() {
+  try {
+    const { MEDIA_CACHE_TAGS } = await import('./mediaPagesTags')
+    
+    // Invalidate all detail page caches
+    revalidateTag(MEDIA_CACHE_TAGS.MOVIE_DETAILS, 'max')
+    revalidateTag(MEDIA_CACHE_TAGS.TV_DETAILS, 'max')
+    revalidateTag(MEDIA_CACHE_TAGS.EPISODE_DETAILS, 'max')
+    revalidateTag(MEDIA_CACHE_TAGS.SEASON_DETAILS, 'max')
+    
+    // Also invalidate media library caches
+    revalidateTag('media-library', 'max')
+    revalidateTag('movies', 'max')
+    revalidateTag('tv', 'max')
+    
+    console.log('[Cache SWR] Invalidated all media details caches')
+    return true
+  } catch (error) {
+    console.error('[Cache SWR] Failed to invalidate all media details caches:', error)
+    return false
+  }
+}

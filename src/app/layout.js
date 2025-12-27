@@ -1,28 +1,20 @@
 import { Inter } from 'next/font/google'
 import './global.css'
 import './tailwind.css'
-import { siteDescription, siteTitle } from '@src/utils/config'
-import { getServerConfig } from './api/getserverconfig/config'
+import { siteDescription, siteTitle, fileServerURLWithPrefixPath } from '@src/utils/config'
 
 const inter = Inter({ subsets: ['latin'] })
-export async function generateMetadata() {
-  try {
-    const { defaultFileServer } = getServerConfig()
-    const posterCollage = `${defaultFileServer}poster_collage.jpg`
 
-    return {
-      title: siteTitle,
-      description: siteDescription,
-      openGraph: {
-        images: posterCollage,
-      },
-    }
-  } catch (error) {
-    console.error('Error generating metadata:', error)
-    return {
-      title: siteTitle,
-      description: siteDescription,
-    }
+// Dynamic metadata - evaluated at request time
+export async function generateMetadata() {
+  const posterCollage = fileServerURLWithPrefixPath('/poster_collage.jpg')
+  
+  return {
+    title: siteTitle,
+    description: siteDescription,
+    openGraph: {
+      images: [posterCollage],
+    },
   }
 }
 

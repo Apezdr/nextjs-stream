@@ -1,12 +1,13 @@
-"use cache"
+"use cache: private"
 import { cacheTag, cacheLife } from 'next/cache'
 
-// Cache user-specific playlist sections with SWR optimization
+// Cache user-specific playlist sections with private per-user caching
 // NOTE: This function accepts pre-fetched data to avoid dynamic data access inside cache
+// IMPORTANT: Uses "use cache: private" to ensure each user gets isolated cache (never shared between users)
 export async function getCachedUserPlaylistSections(userId, allPlaylists, visibilityPrefs) {
   if (!userId || !allPlaylists || !visibilityPrefs) return []
-  
-  cacheLife("max") // Use max for SWR - serve cached immediately while revalidating
+
+  cacheLife("userContent") // User-specific content: 1min client, 15min server, 1hr expire
   cacheTag(`user-playlists-${userId}`) // User-specific tag for selective revalidation
   cacheTag(`user-data-${userId}`) // Also tag with user for broader invalidation
   

@@ -6,8 +6,8 @@ import { fileServerURLWithPrefixPath } from '@src/utils/config'
  * 
  * Serves the poster collage image from the default file server.
  * This endpoint proxies the poster_collage.jpg file from the configured
- * file server, respecting the NEXT_PUBLIC_FILE_SERVER_URL and 
- * NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH environment variables.
+ * file server, respecting the FILE_SERVER_URL and 
+ * FILE_SERVER_PREFIX_PATH environment variables.
  * 
  * The image is proxied through this API to:
  * - Hide the internal file server path structure

@@ -5,9 +5,9 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { createPortal } from 'react-dom'
 import Link from 'next/link'
 import Image from 'next/image'
-import { useRouter } from 'next/navigation'
 import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
+import { useNavigation } from '@src/contexts/NavigationContext'
 
 export default function WatchlistCard({
   item,
@@ -23,9 +23,6 @@ export default function WatchlistCard({
   playlists,
   api,
   canEditPlaylist = true,
-  isNavigating = false,
-  isOtherNavigating = false,
-  onNavigationStart,
   user = null
 }) {
   const [showActions, setShowActions] = useState(false)
@@ -35,18 +32,23 @@ export default function WatchlistCard({
     comingSoonDate: '',
     notes: ''
   })
-  const router = useRouter()
-
+  
+  // Use our new navigation context for improved state management
+  const { navigate, isNavigating: globalIsNavigating, targetUrl } = useNavigation()
+  
   // Check if user is admin
   const isAdmin = user?.role === 'admin' || user?.admin || user?.permissions?.includes('Admin')
 
-  // Custom navigation handler
+  // Enhanced navigation handler using navigation context
   const handleNavigationClick = useCallback((url) => {
-    if (!url || isNavigating || isOtherNavigating) return
+    if (!url || globalIsNavigating) return
     
-    onNavigationStart(item.id)
-    router.push(url)
-  }, [item.id, onNavigationStart, router, isNavigating, isOtherNavigating])
+    // Use context navigation
+    navigate(url)
+  }, [navigate, globalIsNavigating])
+
+  // This card is navigating if global navigation is targeting THIS item's URL
+  const cardIsNavigating = globalIsNavigating && targetUrl === item.url
 
   const handleRemove = useCallback(async () => {
     if (window.confirm(`Remove "${item.title}" from ${currentPlaylist?.name || 'watchlist'}?`)) {
@@ -183,18 +185,17 @@ export default function WatchlistCard({
         'bg-gray-800 rounded-lg p-4 flex items-center space-x-4 transition-all duration-200 relative',
         selected && 'ring-2 ring-indigo-500',
         loading && 'opacity-50 pointer-events-none',
-        isNavigating && 'ring-2 ring-indigo-400 ring-opacity-75 shadow-lg shadow-indigo-400/25',
-        isOtherNavigating && 'opacity-40 pointer-events-none'
+        cardIsNavigating && 'ring-2 ring-indigo-400 ring-opacity-75 shadow-lg shadow-indigo-400/25'
       )}
       animate={{
-        borderColor: isNavigating ? '#6366f1' : 'transparent',
+        borderColor: cardIsNavigating ? '#6366f1' : 'transparent',
       }}
       transition={{
-        borderColor: { duration: 1.5, repeat: isNavigating ? Infinity : 0, repeatType: "reverse" }
+        borderColor: { duration: 1.5, repeat: cardIsNavigating ? Infinity : 0, repeatType: "reverse" }
       }}
       >
         {/* Loading overlay for navigating card */}
-        {isNavigating && <LoadingOverlay />}
+        {cardIsNavigating && <LoadingOverlay />}
         {/* Checkbox */}
         <div className="flex-shrink-0">
           <input
@@ -230,7 +231,7 @@ export default function WatchlistCard({
                   <button
                     onClick={() => handleNavigationClick(item.url)}
                     className="hover:text-indigo-400 transition-colors text-left w-full truncate"
-                    disabled={isNavigating || isOtherNavigating}
+                    disabled={cardIsNavigating}
                   >
                     {item.title}
                   </button>
@@ -359,18 +360,17 @@ export default function WatchlistCard({
       'group bg-gray-800 rounded-lg overflow-hidden transition-all duration-200 hover:scale-105 hover:shadow-xl relative',
       selected && 'ring-2 ring-indigo-500',
       loading && 'opacity-50 pointer-events-none',
-      isNavigating && 'ring-2 ring-indigo-400 ring-opacity-75 shadow-lg shadow-indigo-400/25',
-      isOtherNavigating && 'opacity-40 pointer-events-none'
+      cardIsNavigating && 'ring-2 ring-indigo-400 ring-opacity-75 shadow-lg shadow-indigo-400/25'
     )}
     animate={{
-      borderColor: isNavigating ? '#6366f1' : 'transparent',
+      borderColor: cardIsNavigating ? '#6366f1' : 'transparent',
     }}
     transition={{
-      borderColor: { duration: 1.5, repeat: isNavigating ? Infinity : 0, repeatType: "reverse" }
+      borderColor: { duration: 1.5, repeat: cardIsNavigating ? Infinity : 0, repeatType: "reverse" }
     }}
     >
       {/* Loading overlay for navigating card */}
-      {isNavigating && <LoadingOverlay />}
+      {cardIsNavigating && <LoadingOverlay />}
       {/* Poster */}
       <div className="relative aspect-[2/3]">
         <Image
@@ -404,7 +404,7 @@ export default function WatchlistCard({
                 onClick={() => handleNavigationClick(item.url)}
                 className="p-3 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition-colors"
                 title="View Details"
-                disabled={isNavigating || isOtherNavigating}
+                disabled={cardIsNavigating}
               >
                 <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -455,7 +455,7 @@ export default function WatchlistCard({
             <button
               onClick={() => handleNavigationClick(item.url)}
               className="hover:text-indigo-400 transition-colors text-left w-full line-clamp-2"
-              disabled={isNavigating || isOtherNavigating}
+              disabled={cardIsNavigating}
             >
               {item.title}
             </button>

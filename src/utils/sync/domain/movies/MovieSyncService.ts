@@ -466,6 +466,116 @@ export class MovieSyncService {
   }
 
   /**
+   * Cleanup movies that are no longer on the file server or have invalid content
+   */
+  async cleanup(
+    availableTitles: string[],
+    context: SyncContext
+  ): Promise<{
+    orphansRemoved: number
+    invalidRemoved: number
+    errors: string[]
+  }> {
+    const result = {
+      orphansRemoved: 0,
+      invalidRemoved: 0,
+      errors: [] as string[]
+    }
+
+    try {
+      syncEventBus.emitProgress(
+        'cleanup',
+        MediaType.Movie,
+        context.serverConfig.id,
+        SyncOperation.Validation, // Use Validation as operation type
+        { stage: 'starting', progress: 0 }
+      )
+
+      // 1. Get all movies from DB
+      const allMovies = await this.repository.getAllMoviesForCleanup()
+      const dbTitles = new Set(allMovies.map(m => m.originalTitle))
+      const availableSet = new Set(availableTitles)
+
+      // 2. Identify orphans (in DB but not in availableTitles)
+      const orphans = allMovies
+        .filter(m => !availableSet.has(m.originalTitle))
+        .map(m => m.originalTitle)
+
+      if (orphans.length > 0) {
+        console.log(`🧹 Found ${orphans.length} orphaned movies to remove`)
+        const deletedCount = await this.repository.deleteByOriginalTitles(orphans)
+        result.orphansRemoved = deletedCount
+        console.log(`✅ Removed ${deletedCount} orphaned movies`)
+      }
+
+      // 3. Identify invalid video URLs for remaining movies
+      const remainingMovies = allMovies.filter(m => availableSet.has(m.originalTitle))
+      const moviesWithVideo = remainingMovies.filter(m => m.videoURL)
+      
+      if (moviesWithVideo.length > 0) {
+        console.log(`🔍 Validating video URLs for ${moviesWithVideo.length} movies...`)
+        
+        // Validate in batches to avoid overwhelming the file server
+        const batchSize = 50
+        const invalidTitles: string[] = []
+
+        for (let i = 0; i < moviesWithVideo.length; i += batchSize) {
+          const batch = moviesWithVideo.slice(i, i + batchSize)
+          const urls = batch.map(m => m.videoURL!)
+          
+          try {
+            const availability = await this.fileAdapter.validateAvailability(urls)
+            
+            // Find movies associated with unavailable URLs
+            const unavailableUrls = new Set(availability.unavailable)
+            const batchInvalid = batch
+              .filter(m => unavailableUrls.has(m.videoURL!))
+              .map(m => m.originalTitle)
+            
+            invalidTitles.push(...batchInvalid)
+            
+            // Update progress
+            const progress = Math.round(((i + batch.length) / moviesWithVideo.length) * 100)
+            syncEventBus.emitProgress(
+              'cleanup',
+              MediaType.Movie,
+              context.serverConfig.id,
+              SyncOperation.Validation,
+              { stage: 'validating', progress }
+            )
+            
+          } catch (error) {
+            console.error(`Failed to validate batch ${i}-${i+batchSize}:`, error)
+            result.errors.push(`Failed to validate batch starting at index ${i}: ${error}`)
+          }
+        }
+
+        if (invalidTitles.length > 0) {
+          console.log(`🧹 Found ${invalidTitles.length} movies with invalid video URLs`)
+          const deletedCount = await this.repository.deleteByOriginalTitles(invalidTitles)
+          result.invalidRemoved = deletedCount
+          console.log(`✅ Removed ${deletedCount} movies with invalid video URLs`)
+        }
+      }
+
+      syncEventBus.emitProgress(
+        'cleanup',
+        MediaType.Movie,
+        context.serverConfig.id,
+        SyncOperation.Validation,
+        { stage: 'completed', progress: 100 }
+      )
+
+      return result
+
+    } catch (error) {
+      console.error('Cleanup failed:', error)
+      result.errors.push(error instanceof Error ? error.message : String(error))
+      return result
+    }
+  }
+
+  /**
    * Validate movie data
    */
   async validateMovie(movie: MovieEntity): Promise<boolean> {

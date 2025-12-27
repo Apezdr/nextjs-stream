@@ -1,5 +1,6 @@
 import { isAuthenticatedEither } from '@src/utils/routeAuth'
 import { checkRateLimit, createRateLimitHeaders, RATE_LIMITS } from '@src/utils/rateLimiter'
+import { revalidateTag } from 'next/cache'
 import {
   getUserWatchlist,
   addToWatchlist,
@@ -1496,6 +1497,13 @@ async function handleSetPlaylistVisibility(req, body, user) {
       }
 
       const result = await bulkSetPlaylistVisibility(playlistId, targets, validatedPayload)
+
+      // Invalidate cache for all affected users
+      for (const userId of targets) {
+        revalidateTag(`user-playlists-${userId}`)
+        revalidateTag(`user-data-${userId}`)
+      }
+
       return createSuccessResponse({
         success: true,
         message: 'Visibility updated for target users',
@@ -1505,6 +1513,11 @@ async function handleSetPlaylistVisibility(req, body, user) {
 
     // Self-service (regular user)
     await setPlaylistVisibility(user.id, playlistId, validatedPayload)
+
+    // Invalidate user-specific cache to reflect changes immediately
+    revalidateTag(`user-playlists-${user.id}`)
+    revalidateTag(`user-data-${user.id}`)
+
     return createSuccessResponse({
       success: true,
       message: 'Visibility updated'

@@ -51,6 +51,35 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
   }
 
   /**
+   * Get all movies with minimal fields for cleanup
+   */
+  async getAllMoviesForCleanup(): Promise<{ originalTitle: string; videoURL?: string }[]> {
+    try {
+      return await this.collection
+        .find({}, { projection: { originalTitle: 1, videoURL: 1 } })
+        .toArray() as unknown as { originalTitle: string; videoURL?: string }[]
+    } catch (error) {
+      throw new DatabaseError(`Failed to get movies for cleanup: ${error}`)
+    }
+  }
+
+  /**
+   * Delete movies by original titles
+   */
+  async deleteByOriginalTitles(originalTitles: string[]): Promise<number> {
+    if (originalTitles.length === 0) return 0
+
+    try {
+      const result = await this.collection.deleteMany({
+        originalTitle: { $in: originalTitles }
+      })
+      return result.deletedCount
+    } catch (error) {
+      throw new DatabaseError(`Failed to delete movies by original titles: ${error}`)
+    }
+  }
+
+  /**
    * Find movies with video URLs available
    */
   async findWithVideo(): Promise<MovieEntity[]> {

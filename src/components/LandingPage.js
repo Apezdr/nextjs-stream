@@ -1,4 +1,5 @@
 import { Suspense, lazy } from 'react'
+import { cacheLife } from 'next/cache'
 import Loading from '@src/app/loading'
 import SyncClientWithServerWatched from './SyncClientWithServerWatched'
 import HorizontalScrollContainer from '@src/components/MediaScroll/HorizontalScrollContainer'
@@ -10,7 +11,8 @@ const ReleaseCalendar = lazy(() => import('./Calendar/ReleaseCalendar'))
 // Cacheable welcome section - static content that can be prerendered
 async function WelcomeSection({ userName }) {
   "use cache"
-  
+  cacheLife('navigation') // Static UI elements - 5min client, 1hr server, 1 day expire
+
   return (
     <div className="h-auto flex pt-12 lg:py-0 px-4 xl:px-0 relative">
       <ul className="grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-4 gap-x-4 gap-y-8 sm:gap-x-6 xl:gap-x-8">
@@ -32,7 +34,8 @@ async function WelcomeSection({ userName }) {
 // Cacheable static media section - doesn't need user data and can be prerendered
 async function StaticMediaSections() {
   "use cache"
-  
+  cacheLife('mediaLists') // Media library lists - 1min client/server, 5min expire
+
   return (
     <>
       <h2 className="text-xl font-bold text-left mt-4 ml-4">Recently Added</h2>
@@ -76,28 +79,30 @@ async function UserDependentSections({ user }) {
   )
 }
 
-// Optimized cacheable component for user-specific content - no runtime API calls
+// User-specific content with private per-user caching
+// IMPORTANT: Uses "use cache: private" because data is personalized per-user
 async function UserSpecificSections({ user }) {
-  "use cache"
-  
+  "use cache: private"
+  cacheLife('userContent') // Per-user cache: 1min client, 15min server, 1hr expire
+
   const { getCachedUserPlaylistSections } = await import('@src/utils/cache/userPlaylistSections')
   const { getUserPlaylists, listVisiblePlaylists } = await import('@src/utils/watchlist')
 
-  // Load per-user "Show in App" playlist rows using Cache Components with SWR
+  // Load per-user "Show in App" playlist rows using private cache
   let appRows = []
   try {
     if (user?.id) {
       // Pass userId to avoid auth() call and enable caching
       const allPlaylists = await getUserPlaylists({ includeShared: true, includePublic: true, userId: user.id })
       const visibilityPrefs = await listVisiblePlaylists(user.id)
-      
-      // Use cached function with SWR optimization (now with pre-fetched data)
+
+      // Use cached function with private per-user caching (nested private cache is allowed)
       const userPlaylistSections = await getCachedUserPlaylistSections(
-        user.id, 
-        allPlaylists, 
+        user.id,
+        allPlaylists,
         visibilityPrefs
       )
-      
+
       // Convert sections to app rows format (preserving existing structure)
       appRows = userPlaylistSections.map(section => ({
         id: section.playlistId,
@@ -112,7 +117,7 @@ async function UserSpecificSections({ user }) {
 
   return (
     <>
-      {/* User-configured App Rows (per-user Show in App playlists) with Cache Components */}
+      {/* User-configured App Rows (per-user Show in App playlists) with Private Cache */}
       {appRows.length > 0 && appRows.map((p) => (
         <div key={p.id}>
           <h2 className="text-xl font-bold text-left mt-4 ml-4">{p.name}</h2>

@@ -60,7 +60,7 @@ Admins can manage user approvals through the admin panel:
 
 ## Security Considerations
 
-- Admin users (defined in `NEXT_PUBLIC_ADMIN_USER_EMAILS`) are always automatically approved regardless of the `AUTO_APPROVE_USERS` setting
+- Admin users (defined in `ADMIN_USER_EMAILS`) are always automatically approved regardless of the `AUTO_APPROVE_USERS` setting
 - The approval system works in conjunction with the `limitedAccess` flag for additional content restrictions
 - Users without approval cannot access any authenticated content
 

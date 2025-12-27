@@ -45,6 +45,9 @@ export type MovieFieldPath =
   // Video info fields (normalized in fieldAvailability under additional_metadata)
   | 'additional_metadata.duration'
   | 'additional_metadata.dimensions'
+  | 'additional_metadata.size.gb'
+  | 'additional_metadata.size.mb'
+  | 'additional_metadata.size.kb'
   | 'hdr'
   | 'normalizedVideoId'
   
@@ -92,6 +95,7 @@ export const MovieFieldPathMap = {
   // Video info - normalized under additional_metadata (NO "urls." prefix)
   duration: 'additional_metadata.duration',
   dimensions: 'additional_metadata.dimensions',
+  size: 'additional_metadata.size.gb', // Default to gb, but strategy checks all units
   hdr: 'hdr',
   normalizedVideoId: 'normalizedVideoId',
   

@@ -19,7 +19,7 @@ const MovieDetailsComponent = ({ media }) => {
   }
 
   const { title, backdrop, posterURL, logo, metadata, hdr, duration,  } = media
-  const { release_date, genres, cast, overview, runtime, tagline, trailer_url } = metadata
+  const { release_date, genres, cast, overview, runtime, tagline, trailer_url } = metadata || {}
   const collectionData = metadata?.belongs_to_collection
 
   const convertToLocaleTime = (minutes) => {

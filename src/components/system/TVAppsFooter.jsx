@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { Activity, useState } from 'react';
 import { usePathname } from 'next/navigation';
 import Image from 'next/image';
 
@@ -66,34 +66,32 @@ export default function TVAppsFooter() {
             </a>
           </div>
 
-          {/* Expandable Connection Instructions */}
-          {typeof window !== 'undefined' && window.location.origin && (
-            <div className="mt-6 mb-3 max-w-md mx-auto justify-items-center">
-              <button
-                onClick={() => setShowInstructions(!showInstructions)}
-                className="text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors duration-200 flex items-center gap-2"
+          <div className="mt-6 mb-3 max-w-md mx-auto justify-items-center">
+            <button
+              onClick={() => setShowInstructions((v) => !v)}
+              className="text-blue-400 hover:text-blue-300 text-sm font-medium transition-colors duration-200 flex items-center gap-2"
+            >
+              📱 How to Connect
+              <svg
+                className={`w-4 h-4 transition-transform duration-200 ${showInstructions ? 'rotate-180' : ''}`}
+                fill="currentColor"
+                viewBox="0 0 20 20"
               >
-                📱 How to Connect
-                <svg
-                  className={`w-4 h-4 transition-transform duration-200 ${showInstructions ? 'rotate-180' : ''}`}
-                  fill="currentColor"
-                  viewBox="0 0 20 20"
-                >
-                  <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-              
-              {showInstructions && (
-                <div className="mt-3 p-4 bg-white/10 rounded-lg backdrop-blur-sm border border-white/20 transition-all duration-300 ease-in-out">
-                  <p className="text-gray-300 text-sm">
-                    1. Install the TV app<br/>
-                    2. Enter the site: <strong className="text-white">{window.location.origin.replace('http://', '').replace('https://', '')}</strong><br/>
-                    3. Login with QR code
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
+                <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+
+            {/* Activity controls only the panel */}
+            <Activity mode={showInstructions ? "visible" : "hidden"}>
+              <div className="mt-3 p-4 bg-white/10 rounded-lg backdrop-blur-sm border border-white/20 transition-all duration-300 ease-in-out">
+                <p className="text-gray-300 text-sm">
+                  1. Install the TV app<br/>
+                  2. Enter the site: <strong className="text-white">{typeof window !== 'undefined' ? window.location.origin.replace('http://', '').replace('https://', '') : ''}</strong><br/>
+                  3. Login with QR code
+                </p>
+              </div>
+            </Activity>
+          </div>
           <p className="text-gray-400 text-sm mt-4">
             Stream your favorite movies and TV shows directly on your TV with enhanced features
           </p>

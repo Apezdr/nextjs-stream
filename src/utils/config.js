@@ -1,3 +1,7 @@
+// Create URL handlers for all servers
+import { createURLHandler, createMultiServerURLHandler } from './url_utils'
+// Import webhook functions
+import { getWebhookServerMapping, getServerWebhookMapping, getWebhookIdForServer } from './webhookServer'
 /**
  * @typedef {Object} SyncPaths
  * @property {string} tv - Path for TV show synchronization
@@ -32,19 +36,19 @@ const SYNC_PATHS = {
  * @param {string} serverBaseUrl - Base URL of the server
  * @returns {SyncPaths} Standardized sync paths
  */
-const createSyncUrls = cache((serverBaseUrl) => {
+const createSyncUrls = (serverBaseUrl) => {
   return {
     tv: `${serverBaseUrl}${SYNC_PATHS.TV}`,
     movies: `${serverBaseUrl}${SYNC_PATHS.MOVIES}`
   }
-})
+}
 
 /**
  * Creates a server configuration object
  * @param {Object} params - Server configuration parameters
  * @returns {FileServerConfig} Complete server configuration
  */
-const createServerConfig = cache(({ 
+const createServerConfig = ({ 
   id, 
   baseURL, 
   prefixPath = '', 
@@ -63,33 +67,46 @@ const createServerConfig = cache(({
     isDefault,
     priority
   }
-})
+}
 
 /**
  * Loads server configurations from environment variables
  * @returns {FileServerConfig[]} Array of server configurations
  */
-const loadServerConfigurations = cache(() => {
+const loadServerConfigurations = () => {
   const servers = []
+  
+  // Validate critical environment variables
+  if (!process.env.FILE_SERVER_URL) {
+    console.warn(
+      '[CONFIG WARNING] FILE_SERVER_URL is not set, using fallback localhost:3000'
+    )
+  }
+  
+  if (!process.env.NODE_SERVER_URL) {
+    console.warn(
+      '[CONFIG WARNING] NODE_SERVER_URL is not set, using fallback localhost:3000'
+    )
+  }
   
   // Always add the default server first
   servers.push(createServerConfig({
     id: 'default',
-    baseURL: process.env.NEXT_PUBLIC_FILE_SERVER_URL || 'http://localhost:3000',
-    prefixPath: process.env.NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH || '',
-    syncEndpoint: process.env.NEXT_PUBLIC_NODE_SERVER_URL || 'http://localhost:3000',
+    baseURL: process.env.FILE_SERVER_URL || 'http://localhost:3000',
+    prefixPath: process.env.FILE_SERVER_PREFIX_PATH || '',
+    syncEndpoint: process.env.NODE_SERVER_URL || 'http://localhost:3000',
     isDefault: true,
     priority: 1
   }))
 
   // Load additional servers
   let serverIndex = 2
-  while (process.env[`NEXT_PUBLIC_NODE_SERVER_URL_${serverIndex}`]) {
+  while (process.env[`NODE_SERVER_URL_${serverIndex}`]) {
     servers.push(createServerConfig({
       id: `server${serverIndex}`,
-      baseURL: process.env[`NEXT_PUBLIC_FILE_SERVER_URL_${serverIndex}`],
-      prefixPath: process.env[`NEXT_PUBLIC_FILE_SERVER_PREFIX_PATH_${serverIndex}`] || '',
-      syncEndpoint: process.env[`NEXT_PUBLIC_NODE_SERVER_URL_${serverIndex}`],
+      baseURL: process.env[`FILE_SERVER_URL_${serverIndex}`],
+      prefixPath: process.env[`FILE_SERVER_PREFIX_PATH_${serverIndex}`] || '',
+      syncEndpoint: process.env[`NODE_SERVER_URL_${serverIndex}`],
       isDefault: false,
       priority: serverIndex
     }))
@@ -97,7 +114,7 @@ const loadServerConfigurations = cache(() => {
   }
 
   return servers
-})
+}
 
 /**
  * Server manager class to handle multiple servers
@@ -175,12 +192,6 @@ class ServerManager {
 // Initialize server configurations
 const serverManager = new ServerManager(loadServerConfigurations())
 
-import { cache } from 'react'
-// Create URL handlers for all servers
-import { createURLHandler, createMultiServerURLHandler } from './url_utils'
-// Import webhook functions
-import { getWebhookServerMapping, getServerWebhookMapping, getWebhookIdForServer } from './webhookServer'
-
 /**
  * Determines whether the current server has higher priority than the existing source.
  * @param {string} existingSourceId - The server ID of the existing source.
@@ -213,15 +224,15 @@ export const multiServerHandler = createMultiServerURLHandler(serverManager.getA
 export const organizrURL = process.env.ORGANIZR_URL || null
 export const siteTitle = process.env.NEXT_PUBLIC_SITE_TITLE || 'Cinema Sanctuary'
 export const siteDescription = process.env.NEXT_PUBLIC_SITE_DESCRIPTION || 'Sharing media content with friends and family.'
-export const adminUserEmails = process.env.NEXT_PUBLIC_ADMIN_USER_EMAILS
-  ? process.env.NEXT_PUBLIC_ADMIN_USER_EMAILS.split(',').map((email) => email.trim())
+export const adminUserEmails = process.env.ADMIN_USER_EMAILS
+  ? process.env.ADMIN_USER_EMAILS.split(',').map((email) => email.trim())
   : []
 
 // Privacy configuration
 export const showAdminEmails = process.env.SHOW_ADMIN_EMAILS !== 'false'
 
 // TMDB server configuration (used by server-side API routes)
-export const tmdbNodeServerURL = process.env.TMDB_NODE_SERVER_URL || process.env.NEXT_PUBLIC_NODE_SERVER_URL || 'http://localhost:3000'
+export const tmdbNodeServerURL = process.env.TMDB_NODE_SERVER_URL || process.env.NODE_SERVER_URL || 'http://localhost:3000'
 
 // Export server management functions
 export const getServer = serverManager.getServer.bind(serverManager)

@@ -15,12 +15,12 @@ export async function GET(request) {
     }
     // Server-side environment variable resolution with debugging
     const serverOnlyTMDB = process.env.TMDB_NODE_SERVER_URL
-    const fallbackNodeServer = process.env.NEXT_PUBLIC_NODE_SERVER_URL
+    const fallbackNodeServer = process.env.NODE_SERVER_URL
     const configTMDB = tmdbNodeServerURL
     
     console.log('🔍 TMDB Health Route Debug:')
     console.log('  TMDB_NODE_SERVER_URL (server-only):', serverOnlyTMDB || 'undefined')
-    console.log('  NEXT_PUBLIC_NODE_SERVER_URL (fallback):', fallbackNodeServer || 'undefined')
+    console.log('  NODE_SERVER_URL (fallback):', fallbackNodeServer || 'undefined')
     console.log('  tmdbNodeServerURL (config):', configTMDB || 'undefined')
     
     // Use the base server URL (without /api/tmdb path) to avoid double paths
@@ -35,7 +35,7 @@ export async function GET(request) {
           status: 'error',
           debug_info: {
             TMDB_NODE_SERVER_URL: serverOnlyTMDB || 'undefined',
-            NEXT_PUBLIC_NODE_SERVER_URL: fallbackNodeServer || 'undefined',
+            NODE_SERVER_URL: fallbackNodeServer || 'undefined',
             config_tmdbNodeServerURL: configTMDB || 'undefined'
           }
         },
@@ -108,7 +108,7 @@ export async function GET(request) {
         debug_info: {
           backend_url: tmdbNodeServerURL,
           server_only_url: process.env.TMDB_NODE_SERVER_URL || 'undefined',
-          fallback_url: process.env.NEXT_PUBLIC_NODE_SERVER_URL || 'undefined',
+          fallback_url: process.env.NODE_SERVER_URL || 'undefined',
           error_details: error.message
         }
       },

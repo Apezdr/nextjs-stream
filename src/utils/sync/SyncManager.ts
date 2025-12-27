@@ -283,6 +283,49 @@ export class SyncManager {
   }
 
   /**
+   * Cleanup movies that are no longer on the file server or have invalid content
+   */
+  async cleanupMovies(
+    availableTitles: string[],
+    serverConfig: ServerConfig
+  ): Promise<{
+    orphansRemoved: number
+    invalidRemoved: number
+    errors: string[]
+  }> {
+    await this.initialize()
+
+    syncLogger.info(`Starting cleanup for ${availableTitles.length} available movies...`)
+
+    const context: SyncContext = {
+      mediaType: MediaType.Movie,
+      operation: SyncOperation.Validation,
+      serverConfig,
+      fieldAvailability: {} as any, // Not needed for cleanup
+      forceSync: false
+    }
+
+    try {
+      const result = await this.movieService!.cleanup(availableTitles, context)
+      
+      syncLogger.info(`Cleanup completed: Removed ${result.orphansRemoved} orphans and ${result.invalidRemoved} invalid entries`)
+      
+      if (result.errors.length > 0) {
+        syncLogger.warn(`Cleanup encountered ${result.errors.length} errors`)
+      }
+
+      return result
+    } catch (error) {
+      syncLogger.error('Cleanup failed:', error)
+      return {
+        orphansRemoved: 0,
+        invalidRemoved: 0,
+        errors: [error instanceof Error ? error.message : String(error)]
+      }
+    }
+  }
+
+  /**
    * Get comprehensive sync statistics
    */
   async getSyncStats(): Promise<{
@@ -492,4 +535,11 @@ export async function syncMoviesWithNewArchitecture(
 
 export async function getSyncSystemStats() {
   return syncManager.getSyncStats()
+}
+
+export async function cleanupMovies(
+  availableTitles: string[],
+  serverConfig: ServerConfig
+) {
+  return syncManager.cleanupMovies(availableTitles, serverConfig)
 }
