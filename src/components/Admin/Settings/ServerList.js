@@ -131,29 +131,31 @@ function ServerList({ servers, organizrURL }) {
           </div>
         ))}
 
-        {/* Global Settings Section */}
-        <div className="pt-6">
-          <h3 className="text-lg font-medium text-gray-800 mb-4">Global Settings</h3>
-          <dl className="space-y-6">
-            {/* Organizr URL */}
-            <div className="flex flex-col md:flex-row items-center justify-between">
-              <dt className="font-medium text-gray-900">Organizr URL</dt>
-              <dd className="flex items-center space-x-2">
-                <span className="text-gray-900 truncate" title={organizrURL}>
-                  {organizrURL}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => openModal('Organizr URL', 'URL for Organizr, which manages your web services.')}
-                  className="text-gray-500 hover:text-gray-700 focus:outline-none"
-                  aria-label="More info about Organizr URL"
-                >
-                  <QuestionMarkCircleIcon className="h-5 w-5" />
-                </button>
-              </dd>
-            </div>
-          </dl>
-        </div>
+        {/* Global Settings Section - only show if Organizr URL is configured */}
+        {organizrURL && (
+          <div className="pt-6">
+            <h3 className="text-lg font-medium text-gray-800 mb-4">Global Settings</h3>
+            <dl className="space-y-6">
+              {/* Organizr URL */}
+              <div className="flex flex-col md:flex-row items-center justify-between">
+                <dt className="font-medium text-gray-900">Organizr URL</dt>
+                <dd className="flex items-center space-x-2">
+                  <span className="text-gray-900 truncate" title={organizrURL}>
+                    {organizrURL}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => openModal('Organizr URL', 'URL for Organizr, which manages your web services.')}
+                    className="text-gray-500 hover:text-gray-700 focus:outline-none"
+                    aria-label="More info about Organizr URL"
+                  >
+                    <QuestionMarkCircleIcon className="h-5 w-5" />
+                  </button>
+                </dd>
+              </div>
+            </dl>
+          </div>
+        )}
       </div>
 
       {/* Modal */}
@@ -207,7 +209,7 @@ ServerList.propTypes = {
       }),
     })
   ).isRequired,
-  organizrURL: PropTypes.string.isRequired,
+  organizrURL: PropTypes.string,
 }
 
 export default memo(ServerList)

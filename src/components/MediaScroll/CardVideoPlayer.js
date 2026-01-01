@@ -16,15 +16,27 @@ function CardVideoPlayer({
   height,
   width,
   shouldPlay = false,
+  muted = null,
 }) {
   const playerRef = useRef(null)
   const [isPlayerReady, setPlayerReady] = useState(false)
+  const [playerKey, setPlayerKey] = useState(0) // Added key to force re-render when needed
 
-  const handleVolumeChange = useCallback(() => {
-    const player = playerRef?.current
-    if (player) {
-      localStorage.setItem('videoVolumeCard', player.volume)
-      handleMuteChange(player)
+  const handleError = useCallback((event) => {
+    const error = event.detail
+    console.error('Video player error:', error)
+    
+    // Check for "416 Range Not Satisfiable" error
+    // This can appear in different ways depending on the browser and network stack
+    if (
+      (error?.message && error.message.includes('Range Not Satisfiable')) ||
+      (error?.code === 416) || 
+      (error?.status === 416) ||
+      (error?.toString?.() && error.toString().includes('416'))
+    ) {
+      console.log('Detected 416 Range Not Satisfiable error, restarting video player')
+      // Increment the key to force a complete re-render of the MediaPlayer
+      setPlayerKey(prevKey => prevKey + 1)
     }
   }, [])
 
@@ -33,6 +45,14 @@ function CardVideoPlayer({
       localStorage.setItem('videoMutedCard', player.muted)
     }
   }, [])
+
+  const handleVolumeChange = useCallback(() => {
+    const player = playerRef?.current
+    if (player) {
+      localStorage.setItem('videoVolumeCard', player.volume)
+      handleMuteChange(player)
+    }
+  }, [handleMuteChange])
 
   const handleVisibilityChange = useCallback(() => {
     const player = playerRef?.current
@@ -87,6 +107,7 @@ function CardVideoPlayer({
 
   return (
     <MediaPlayer
+      key={playerKey} // Add key to force re-render when needed
       ref={playerRef}
       src={videoURL}
       height={height}
@@ -106,6 +127,7 @@ function CardVideoPlayer({
         shouldPlay ? 'shouldPlay !opacity-100' : ''
       )}
       muted={
+        muted ? muted : // if muted is not passed, check localStorage
         typeof localStorage !== 'undefined' && localStorage?.getItem('videoMutedCard')
           ? localStorage.getItem('videoMutedCard') === 'true'
           : true
@@ -136,6 +158,7 @@ function CardVideoPlayer({
       }}
       onCanPlay={handleCanPlay}
       onPlaying={handlePlaying}
+      onError={handleError} // Add error event handler
       loop={false}
     >
       <MediaProvider />

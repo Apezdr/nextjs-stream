@@ -1,6 +1,7 @@
 //import isAuthenticated from '../../../../utils/routeAuth'
 import clientPromise from '../../../../lib/mongodb'
 import { httpGet } from '@src/lib/httpHelper'
+import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 
 // This route is used to fetch subtitles for a specific media item
 // It is not protected by authentication because it is used by the media player
@@ -15,36 +16,25 @@ export const GET = async (req) => {
   const name = searchParams.get('name')
   const language = searchParams.get('language')
   const type = searchParams.get('type')
-  const season = searchParams.get('season') // New parameter for TV series
-  const episode = searchParams.get('episode') // New parameter for TV series
-  const collectionName = type === 'movie' ? 'Movies' : type === 'tv' ? 'TV' : null
+  const season = searchParams.get('season') // Parameter for TV series
+  const episode = searchParams.get('episode') // Parameter for TV series
 
-  if (!collectionName) {
-    return new Response(JSON.stringify({ error: 'Invalid type specified' }), {
+  if (!type || !name || !language) {
+    return new Response(JSON.stringify({ error: 'Missing required parameters' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
   try {
-    const client = await clientPromise
-    let media
-    if (type === 'movie') {
-      media = await client
-        .db('Media')
-        .collection(collectionName)
-        .findOne({ title: decodeURIComponent(name) })
-    } else if (type === 'tv') {
-      // Query for TV series
-      media = await client
-        .db('Media')
-        .collection(collectionName)
-        .findOne({
-          title: decodeURIComponent(name),
-          'seasons.seasonNumber': parseInt(season),
-        })
-    }
-
+    // Use the getFlatRequestedMedia function to fetch media from flat database structure
+    const media = await getFlatRequestedMedia({
+      type: type,
+      title: decodeURIComponent(name),
+      season: season,
+      episode: episode
+    })
+    
     if (!media) {
       return new Response(JSON.stringify({ error: 'Media not found' }), {
         status: 404,
@@ -52,20 +42,26 @@ export const GET = async (req) => {
       })
     }
 
+    // Extract subtitleUrl based on media type
     let subtitleUrl
+    
     if (type === 'movie') {
-      subtitleUrl = media.captionURLs[language]?.url
+      subtitleUrl = media.captionURLs?.[language]?.url
     } else if (type === 'tv') {
-      // Extract subtitle URL for the specific season and episode
-      const selectedSeason = media.seasons.find((s) => s.seasonNumber === parseInt(season))
-      const selectedEpisode = selectedSeason?.episodes.find(
-        (e) => e.episodeNumber === parseInt(episode)
-      )
-      subtitleUrl = selectedEpisode?.captionURLs[language]?.url
+      // For TV episodes, subtitle URLs are directly on the returned media object
+      if (episode) {
+        subtitleUrl = media.captionURLs?.[language]?.url
+      } else {
+        // For TV shows without specific episode, we can't determine subtitles
+        return new Response(JSON.stringify({ error: 'Episode number required for TV subtitles' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
     }
 
     if (!subtitleUrl) {
-      return new Response(JSON.stringify({ error: 'Subtitles unavailable' }), {
+      return new Response(JSON.stringify({ error: 'Subtitles unavailable for this language' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       })
@@ -81,21 +77,47 @@ export const GET = async (req) => {
       })
     }
     
-    const { data } = await httpGet(subtitleUrl, {
-      responseType: 'text',
-    }, true)
+    try {
+      const { data } = await httpGet(subtitleUrl, {
+        responseType: 'text',
+      }, true)
+      
+      // Normalize the response data structure to handle both cached and fresh responses
+      const subtitleContent = data?.data || data;
 
-    const fileExtension = subtitleUrl.split('.').pop()
-    const headers = {
-      'Access-Control-Allow-Origin': '*', // Allows all origins
-      'Content-Type': fileExtension === 'srt' ? 'text/vtt' : 'text/vtt', // Setting Content-Type
-    }
+      if (!subtitleContent || typeof subtitleContent !== 'string') {
+        return new Response(JSON.stringify({ error: 'Failed to fetch subtitle content' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
 
-    if (fileExtension === 'srt') {
-      const vttData = srt2webvtt(data)
-      return new Response(vttData, { status: 200, headers: headers })
-    } else {
-      return new Response(data, { status: 200, headers: headers })
+      const fileExtension = subtitleUrl.split('.').pop().toLowerCase()
+      const headers = {
+        'Access-Control-Allow-Origin': '*', // Allows all origins
+        'Content-Type': 'text/vtt', // Always setting Content-Type to text/vtt
+      }
+
+      // Convert SRT to WebVTT if needed
+      if (fileExtension === 'srt') {
+        const vttData = srt2webvtt(subtitleContent)
+        return new Response(vttData, { status: 200, headers: headers })
+      } else {
+        // Check if the VTT data is valid
+        if (subtitleContent.trim() === '' || subtitleContent.toLowerCase().includes('<!doctype html>')) {
+          return new Response(JSON.stringify({ error: 'Invalid subtitle format received' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        return new Response(subtitleContent, { status: 200, headers: headers })
+      }
+    } catch (error) {
+      console.error(`Error fetching subtitle file: ${error.message}`);
+      return new Response(JSON.stringify({ error: 'Failed to fetch subtitle content' }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
   } catch (error) {
     console.error('Failed to fetch subtitles:', error)
@@ -107,6 +129,12 @@ export const GET = async (req) => {
 }
 
 function srt2webvtt(data) {
+  // Add safety check
+  if (!data || typeof data !== 'string') {
+    console.error('srt2webvtt received invalid data:', typeof data);
+    return 'WEBVTT\n\n'; // Return minimal valid WebVTT
+  }
+  
   // Remove DOS newlines
   let srt = data.replace(/\r+/g, '')
 

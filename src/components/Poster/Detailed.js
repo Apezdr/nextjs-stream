@@ -4,6 +4,7 @@ import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
 import Image from 'next/image'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '@src/utils'
 import RetryImage from '@components/RetryImage'
+import WatchlistButton from '@components/WatchlistButton'
 import { cache } from 'react'
 
 function Detailed({
@@ -22,25 +23,26 @@ function Detailed({
   imagePriority = false,
   loadingType = undefined,
 }) {
+  const seasons = tvShow?.seasons || []
   let networkName = tvShow.metadata?.networks[0]?.name
   let networkImage = getFullImageUrl(tvShow.metadata?.networks[0]?.logo_path, 'w185')
-  const totalEpisodes = tvShow.seasons.reduce((total, season) => {
+  const totalEpisodes = seasons ? seasons.reduce((total, season) => {
     return total + (season.episodes ? season.episodes.length : 0)
-  }, 0)
+  }, 0) : null
 
   let has4k, hasHDR, hasHDR10
-  if (check4kandHDR) {
-    has4k = tvShow.seasons.some((season) =>
+  if (check4kandHDR && seasons.length > 0) {
+    has4k = seasons.some((season) =>
       season.episodes.every(
         (episode) => getResolutionLabel(episode?.dimensions).is4k
       )
     )
-    
-    hasHDR = tvShow.seasons.some((season) =>
+
+    hasHDR = seasons.some((season) =>
       season.episodes.every((episode) => episode?.hdr)
     )
-    
-    hasHDR10 = tvShow.seasons.some((season) =>
+
+    hasHDR10 = seasons.some((season) =>
       season.episodes.every((episode) => episode?.hdr === 'HDR10')
     )
   }
@@ -132,7 +134,20 @@ function Detailed({
       {posterOnly ? null : (
         <>
           <div className="mt-2 text-center text-gray-200 text-lg font-bold transition-all delay-150 duration-500">
-            <span>{tvShow.title}</span>
+            <div className="flex items-center justify-center gap-2">
+              {tvShow._id ? (
+                <WatchlistButton
+                  mediaId={tvShow._id?.toString()}
+                  tmdbId={tvShow.metadata?.id}
+                  mediaType="tv"
+                  title={tvShow.title}
+                  variant="icon-only"
+                  className="text-gray-200 hover:text-white"
+                />
+              ) : null}
+              
+              <span>{tvShow.title}</span>
+            </div>
           </div>
           <div
             className={classNames(
@@ -160,13 +175,14 @@ function Detailed({
             )}
           >
             {tvShow.metadata?.tagline ? (
-              <SeasonCount seasons={tvShow.seasons} metadata={tvShow.metadata} />
+              <SeasonCount seasons={seasons} metadata={tvShow.metadata} />
             ) : null}
             {tvShow.metadata?.tagline ? <EpisodeCount totalEpisodes={totalEpisodes} /> : null}
             <ShowMetadata
               metadata={tvShow.metadata}
               totalEpisodes={totalEpisodes}
               tvShow={tvShow}
+              seasons={seasons}
             />
           </div>
           <div className="mt-2 text-center text-sm font-medium text-gray-300 group-hover:text-white pt-2 border-t border-solid border-t-[#c1c1c133]">
@@ -210,10 +226,10 @@ function Detailed({
 }
 
 const SeasonCount = cache(({ seasons, metadata }) => {
-  const validSeasonsCount = seasons.filter((season) => season.seasonNumber !== 0).length
-  const totalSeasonsCount = metadata?.seasons.filter(
+  const validSeasonsCount = seasons?.filter((season) => season.seasonNumber !== 0).length
+  const totalSeasonsCount = metadata?.seasons ? metadata?.seasons?.filter(
     (season) => season.season_number !== 0 && season.episode_count > 0
-  ).length
+  ).length : 0
 
   return (
     <span className="text-base">
@@ -227,7 +243,7 @@ const EpisodeCount = cache(({ totalEpisodes }) => {
   return totalEpisodes ? <span className="text-xs">{totalEpisodes} Episodes</span> : null
 })
 
-const ShowMetadata = cache(({ metadata, totalEpisodes, tvShow }) => {
+const ShowMetadata = cache(({ metadata, totalEpisodes, tvShow, seasons }) => {
   return (
     <div className="grid grid-cols-3 text-center mt-4">
       <span className="block">
@@ -245,7 +261,7 @@ const ShowMetadata = cache(({ metadata, totalEpisodes, tvShow }) => {
           </div>
         ) : (
           <div className="flex flex-col">
-            <SeasonCount seasons={tvShow.seasons} metadata={tvShow.metadata} />
+            <SeasonCount seasons={seasons} metadata={tvShow.metadata} />
             <EpisodeCount totalEpisodes={totalEpisodes} />
           </div>
         )}

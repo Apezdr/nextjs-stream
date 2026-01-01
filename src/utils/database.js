@@ -30,7 +30,6 @@ export async function getRequestedMediaTrailer(type, title, season = null, episo
     return DBmovie
   } else if (type === 'tv') {
     const DBtvShow = await getTvShowData(client, collection, title, season, episode)
-    await processBlurhashes(DBtvShow)
 
     if (DBtvShow.metadata && DBtvShow.metadata.trailer_url) {
       // Fetch YouTube trailer
@@ -69,7 +68,6 @@ export async function getRequestedMedia({
     if (!title && !id) return null
 
     const DBmovie = await client.db('Media').collection(collection).findOne(query, { projection })
-    await processBlurhashes(DBmovie, type)
 
     if (DBmovie?.metadata?.cast) {
       DBmovie.cast = DBmovie.metadata.cast
@@ -78,7 +76,6 @@ export async function getRequestedMedia({
     return { type: type, ...DBmovie }
   } else if (type === 'tv') {
     const DBtvShow = await getTvShowData(client, collection, title, season, episode, id)
-    await processBlurhashes(DBtvShow, type)
     return { type: type, ...DBtvShow }
   }
 
@@ -122,8 +119,6 @@ async function getTvShowData(client, collection, title, season, episode, id) {
       return seasonObj
     }
   } else {
-    // Return the entire TV show if no season is specified
-    await processBlurhashes(tvShow)
     // Handle Cast
     if (tvShow.metadata.cast) {
       // Initialize a Map to store unique guest stars by their ID
@@ -246,45 +241,22 @@ function handleEpisode(tvShow, seasonObj, seasonNumber, episodeNumber) {
     episodeObj.metadata.trailer_url = tvShow.metadata.trailer_url
   }
 
-  const nextAvailableEpisode = seasonMetadata?.episodes?.find(
-    (ep) => ep?.episode_number > episodeNumber
+  // seasonObj.episodes?.find((ep) => ep.episodeNumber === episodeNumber)
+  const nextAvailableEpisode = seasonObj?.episodes?.find(
+    (ep) => ep?.episode_number === episodeNumber + 1
   )
+
   if (nextAvailableEpisode) {
     episodeObj.hasNextEpisode = true
-    episodeObj.nextEpisodeThumbnail = nextAvailableEpisode.still_path
-    episodeObj.nextEpisodeTitle = nextAvailableEpisode.name
-    episodeObj.nextEpisodeNumber = nextAvailableEpisode.episode_number
+    episodeObj.nextEpisodeThumbnail = nextAvailableEpisode.thumbnail
+    episodeObj.nextEpisodeThumbnailBlurhash = `data:image/png;base64,${nextAvailableEpisode.thumbnailBlurhash}`
+    episodeObj.nextEpisodeTitle = nextAvailableEpisode.title
+    episodeObj.nextEpisodeNumber = nextAvailableEpisode.episodeNumber
   } else {
     episodeObj.hasNextEpisode = false
   }
 
   return episodeObj
-}
-
-async function processBlurhashes(media, type) {
-  if (media?.posterBlurhash) {
-    if (media.posterBlurhash.startsWith('http')) {
-      media.posterBlurhash = await fetchMetadataMultiServer(
-        media.posterBlurhashSource,
-        media.posterBlurhash,
-        'blurhash',
-        type,
-        media.title
-      )
-    }
-  }
-
-  if (media?.backdropBlurhash) {
-    if (media.backdropBlurhash.startsWith('http')) {
-      media.backdropBlurhash = await fetchMetadataMultiServer(
-        media.backdropBlurhashSource,
-        media.backdropBlurhash,
-        'blurhash',
-        type,
-        media.title
-      )
-    }
-  }
 }
 
 export async function getAvailableMedia({ type = 'all' } = {}) {

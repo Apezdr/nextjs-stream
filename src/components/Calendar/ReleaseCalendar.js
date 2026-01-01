@@ -174,7 +174,7 @@ export default function ReleaseCalendar({
     isMountedRef.current = true
     fetchEvents()
     updateInitialView()
-  }, [])
+  }, [updateInitialView])
 
   return (
     <PageContentAnimatePresence

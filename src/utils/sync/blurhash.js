@@ -154,7 +154,7 @@ export async function processShowBlurhash(
   const isPosterBlurhashHighestPriority = isCurrentServerHighestPriorityForField(
     fieldAvailability,
     'tv',
-    showTitle,
+    show.originalTitle,
     posterBlurhashFieldPath,
     serverConfig
   )
@@ -181,7 +181,7 @@ export async function processShowBlurhash(
   const isBackdropBlurhashHighestPriority = isCurrentServerHighestPriorityForField(
     fieldAvailability,
     'tv',
-    showTitle,
+    show.originalTitle,
     backdropBlurhashFieldPath,
     serverConfig
   )
@@ -338,7 +338,7 @@ export async function syncBlurhash(currentDB, fileServer, serverConfig, fieldAva
                   client,
                   season,
                   fileServer?.tv?.[show.title]?.seasons?.[`Season ${season.seasonNumber}`],
-                  show.title,
+                  show.originalTitle,
                   serverConfig,
                   fieldAvailability
                 )

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { redirect, usePathname } from 'next/navigation'
 import {
   Dialog,
@@ -22,6 +22,7 @@ import {
   XMarkIcon,
   ChevronDownIcon as ChevronDownIconOutline,
   Cog8ToothIcon,
+  TrashIcon,
 } from '@heroicons/react/24/outline'
 import { ArrowLeftIcon, ChevronDownIcon, InformationCircleIcon, MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import Link from 'next/link'
@@ -45,6 +46,7 @@ const navigation = [
     ],
   },
   { name: 'Calendar', href: '/admin/calendar', icon: CalendarIcon },
+  { name: 'Deletion Requests', href: '/admin/deletion-requests', icon: TrashIcon },
   { name: 'Settings', href: '/admin/settings', icon: Cog8ToothIcon },
   { name: 'Logs', href: '/admin/logs', icon: InformationCircleIcon },
 ]
@@ -64,12 +66,22 @@ function classNames(...classes) {
 
 export default function AdminLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [expandedItems, setExpandedItems] = useState({})
   const pathname = usePathname()
   const router = useRouter()
 
   const [isAuthenticated, setIsAuthenticated] = useState(false)
   const [user, setUser] = useState(false)
+
+  // Derive expanded items from pathname to avoid setState in effect
+  const expandedItems = useMemo(() => {
+    const items = {}
+    navigation.forEach((item) => {
+      if (item.subItems && item.subItems.some((subItem) => pathname === subItem.href)) {
+        items[item.name] = true
+      }
+    })
+    return items
+  }, [pathname])
 
   useEffect(() => {
     const validateAuth = async () => {
@@ -101,24 +113,22 @@ export default function AdminLayout({ children }) {
     }
 
     validateAuth()
-  }, [])
+  }, [router])
+
+  // Use local state for manual toggle expansion
+  const [manuallyExpanded, setManuallyExpanded] = useState({})
 
   const toggleExpand = (itemName) => {
-    setExpandedItems((prev) => ({
+    setManuallyExpanded((prev) => ({
       ...prev,
       [itemName]: !prev[itemName],
     }))
   }
 
-  useEffect(() => {
-    const updatedExpandedItems = {}
-    navigation.forEach((item) => {
-      if (item.subItems && item.subItems.some((subItem) => pathname === subItem.href)) {
-        updatedExpandedItems[item.name] = true
-      }
-    })
-    setExpandedItems(updatedExpandedItems)
-  }, [pathname])
+  // Combine auto-expanded (based on pathname) with manually toggled items
+  const effectiveExpandedItems = useMemo(() => {
+    return { ...expandedItems, ...manuallyExpanded }
+  }, [expandedItems, manuallyExpanded])
 
   const renderNavItem = (item) => (
     <li key={item.name}>
@@ -142,12 +152,12 @@ export default function AdminLayout({ children }) {
             className="p-2 text-gray-400 hover:text-white"
           >
             <ChevronDownIconOutline
-              className={`h-5 w-5 transform ${expandedItems[item.name] ? 'rotate-180' : ''}`}
+              className={`h-5 w-5 transform ${effectiveExpandedItems[item.name] ? 'rotate-180' : ''}`}
             />
           </button>
         )}
       </div>
-      {item.subItems && expandedItems[item.name] && (
+      {item.subItems && effectiveExpandedItems[item.name] && (
         <ul className="mt-1 space-y-1 pl-10">
           {item.subItems.map((subItem) => (
             <li key={subItem.name}>
@@ -177,16 +187,16 @@ export default function AdminLayout({ children }) {
         <Dialog open={sidebarOpen} onClose={setSidebarOpen} className="relative z-50 lg:hidden">
           <DialogBackdrop
             transition
-            className="fixed inset-0 bg-gray-900/80 transition-opacity duration-300 ease-linear data-[closed]:opacity-0"
+            className="fixed inset-0 bg-gray-900/80 transition-opacity duration-300 ease-linear data-closed:opacity-0"
           />
 
           <div className="fixed inset-0 flex">
             <DialogPanel
               transition
-              className="relative mr-16 flex w-full max-w-xs flex-1 transform transition duration-300 ease-in-out data-[closed]:-translate-x-full"
+              className="relative mr-16 flex w-full max-w-xs flex-1 transform transition duration-300 ease-in-out data-closed:-translate-x-full"
             >
               <TransitionChild>
-                <div className="absolute left-full top-0 flex w-16 justify-center pt-5 duration-300 ease-in-out data-[closed]:opacity-0">
+                <div className="absolute left-full top-0 flex w-16 justify-center pt-5 duration-300 ease-in-out data-closed:opacity-0">
                   <button
                     type="button"
                     onClick={() => setSidebarOpen(false)}
@@ -379,13 +389,13 @@ export default function AdminLayout({ children }) {
                   </MenuButton>
                   <MenuItems
                     transition
-                    className="absolute right-0 z-10 mt-2.5 w-32 origin-top-right rounded-md bg-white py-2 shadow-lg ring-1 ring-gray-900/5 transition focus:outline-none data-[closed]:scale-95 data-[closed]:transform data-[closed]:opacity-0 data-[enter]:duration-100 data-[leave]:duration-75 data-[enter]:ease-out data-[leave]:ease-in"
+                    className="absolute right-0 z-10 mt-2.5 w-32 origin-top-right rounded-md bg-white py-2 shadow-lg ring-1 ring-gray-900/5 transition focus:outline-none data-closed:scale-95 data-closed:transform data-closed:opacity-0 data-enter:duration-100 data-leave:duration-75 data-enter:ease-out data-leave:ease-in"
                   >
                     {userNavigation.map((item) => (
                       <MenuItem key={item.name}>
                         <a
                           href={item.href}
-                          className="block px-3 py-1 text-sm leading-6 text-gray-900 data-[focus]:bg-gray-50"
+                          className="block px-3 py-1 text-sm leading-6 text-gray-900 data-focus:bg-gray-50"
                         >
                           {item.name}
                         </a>

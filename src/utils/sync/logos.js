@@ -24,12 +24,13 @@ export async function processShowLogo(
 
   const fieldPath = 'logo'
   const showTitle = show.title
+  const originalTitle = show.originalTitle
 
   // Check if the current server is the highest priority for the 'logo' field
   const isHighestPriority = isCurrentServerHighestPriorityForField(
     fieldAvailability,
     'tv',
-    showTitle,
+    originalTitle,
     fieldPath,
     serverConfig
   )

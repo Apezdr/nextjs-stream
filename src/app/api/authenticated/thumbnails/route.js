@@ -1,12 +1,11 @@
-//import isAuthenticated from '../../../../utils/routeAuth'
-import clientPromise from '../../../../lib/mongodb'
-import isAuthenticated from '@src/utils/routeAuth'
+import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
 import { getServer, multiServerHandler, nodeJSURL } from '@src/utils/config'
 import { httpGet } from '@src/lib/httpHelper'
+import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 
 // This route is used to fetch spritesheet vtt file for a specific media item
 export const GET = async (req) => {
-  const authResult = await isAuthenticated(req)
+  const authResult = await isAuthenticatedEither(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }
@@ -17,48 +16,47 @@ export const GET = async (req) => {
   const season = searchParams.get('season')
   const episode = searchParams.get('episode')
 
-  const collectionName = type === 'movie' ? 'Movies' : type === 'tv' ? 'TV' : null
-
-  if (!collectionName) {
-    return new Response(JSON.stringify({ error: 'Invalid type specified' }), {
+  if (!type || !name) {
+    return new Response(JSON.stringify({ error: 'Missing required parameters' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     })
   }
 
   try {
-    const client = await clientPromise
-    let media
-    let serverId
-
-    if (type === 'movie') {
-      media = await client
-        .db('Media')
-        .collection(collectionName)
-        .findOne({ title: decodeURIComponent(name) })
-      serverId = media?.videoSource ?? media?.videoInfoSource
-    } else if (type === 'tv') {
-      // Query for TV series
-      media = await client
-        .db('Media')
-        .collection(collectionName)
-        .findOne({
-          title: decodeURIComponent(name),
-          'seasons.seasonNumber': parseInt(season),
-        })
-      const selectedSeason = media.seasons.find((s) => s.seasonNumber === parseInt(season))
-      const selectedEpisode = selectedSeason?.episodes.find(
-        (e) => e.episodeNumber === parseInt(episode)
-      )
-      serverId = selectedEpisode?.videoSource ?? selectedEpisode?.videoInfoSource
-    }
-
+    // Use the getFlatRequestedMedia function to fetch media from flat database structure
+    const media = await getFlatRequestedMedia({
+      type: type,
+      title: decodeURIComponent(name),
+      season: season,
+      episode: episode
+    })
+    
     if (!media) {
       return new Response(JSON.stringify({ error: 'Media not found' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       })
     }
+
+    // Determine the server ID based on media type
+    let serverId
+    if (type === 'movie') {
+      serverId = media.videoSource || media.videoInfoSource
+    } else if (type === 'tv') {
+      if (episode) {
+        // For episodes, the videoSource is directly on the episode
+        serverId = media.videoSource || media.videoInfoSource
+      } else {
+        // For TV shows or seasons without episode, we can't determine the server
+        // We would need to fetch specific episode information
+        return new Response(JSON.stringify({ error: 'Episode number required for TV thumbnails' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+    }
+
     // Access the server configuration using the media's videoSource
     const serverConfig = getServer(serverId || 'default')
 
@@ -68,9 +66,9 @@ export const GET = async (req) => {
     let spriteURL
 
     if (type === 'movie') {
-      spriteURL = `${nodeServerUrl}/vtt/${type}/${name}/`
+      spriteURL = `${nodeServerUrl}/vtt/${type}/${encodeURIComponent(media.originalTitle)}/`
     } else if (type === 'tv') {
-      spriteURL = `${nodeServerUrl}/vtt/${type}/${name}/${season}/${episode}`
+      spriteURL = `${nodeServerUrl}/vtt/${type}/${encodeURIComponent(media.originalTitle)}/${season}/${episode}`
     }
 
     if (!spriteURL) {
@@ -85,9 +83,10 @@ export const GET = async (req) => {
         timeout: 480000, // 8 minutes
         responseType: 'text',
       })
+      
       if (!data) {
         return new Response(JSON.stringify({ error: 'Failed to fetch thumbnails' }), {
-          //status: response.status,
+          status: 500,
           headers: { 'Content-Type': 'application/json' },
         })
       }
@@ -106,12 +105,14 @@ export const GET = async (req) => {
 
       return new Response(data, { status: 200, headers: headers })
     } catch (error) {
+      console.error(`Error fetching thumbnails: ${error.message}`);
       return new Response(JSON.stringify({ error: 'Failed to fetch thumbnails' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       })
     }
   } catch (error) {
+    console.error(`Error in thumbnails route: ${error.message}`);
     return new Response(JSON.stringify({ error: 'Failed to fetch chapters/thumbnails' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

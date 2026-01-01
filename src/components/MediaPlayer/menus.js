@@ -36,8 +36,16 @@ export const menuClass =
 export const submenuClass =
   'hidden w-full flex-col items-start justify-center outline-none data-[keyboard]:mt-[3px] data-[open]:inline-block'
 
-export function Settings({ placement, tooltipPlacement }) {
+export function Settings({ placement, tooltipPlacement, hasCaptions }) {
+  let shouldShowSettingsButton = false
+  const audioOptions = useAudioOptions()
+  const qualityOptions = useVideoQualityOptions({ sort: 'descending' })
+  if (hasCaptions || audioOptions.length > 0 || qualityOptions.length > 1) {
+    shouldShowSettingsButton = true
+  }
+
   return (
+    shouldShowSettingsButton &&
     <Menu.Root className="parent">
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
@@ -50,7 +58,9 @@ export function Settings({ placement, tooltipPlacement }) {
         </Tooltip.Content>
       </Tooltip.Root>
       <Menu.Content className={menuClass} placement={placement}>
-        <CaptionSubmenu />
+        {hasCaptions && (
+          <CaptionSubmenu />
+        )}
         <AudioSubmenu />
         <QualitySubmenu />
       </Menu.Content>
@@ -99,7 +109,7 @@ function QualitySubmenu() {
   const options = useVideoQualityOptions({ sort: 'descending' }),
     autoQuality = useMediaState('autoQuality'),
     remote = useMediaRemote(),
-    currentQualityText = options.selectedQuality?.height + 'p' ?? '',
+    currentQualityText = options.selectedQuality?.height ? `${options.selectedQuality.height}p` : '',
     hint = !autoQuality
       ? currentQualityText
       : `(${qualityLabelMap[currentQualityText] ?? currentQualityText}${

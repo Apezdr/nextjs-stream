@@ -1,15 +1,14 @@
 'use client'
-import { cache, memo, use, useEffect, useState } from 'react'
+import { cache, useSyncExternalStore } from 'react'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '../utils'
 import HD4kBanner from '../../public/4kBanner.png'
 import hdr10PlusLogo from '../../public/HDR10+_Logo_light.svg'
-import Image from 'next/image'
 import useWatchedWidth from './useWatchedWidth'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import RetryImage from './RetryImage'
 
-function _mediaPoster({
+function MediaPoster({
   media,
   movie,
   tv,
@@ -22,15 +21,16 @@ function _mediaPoster({
   imagePriority = false,
   loadingType = undefined,
 }) {
-  const [isClient, setIsClient] = useState(false)
+  // Use useSyncExternalStore for SSR-safe client detection
+  const isClient = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  )
 
   // Determine whether to use movie or TV show data
   const _media = media || movie || tv
   const watchedWidth = useWatchedWidth(_media.metadata, _media)
-
-  useEffect(() => {
-    setIsClient(true)
-  }, [])
 
   // Determine the poster URL for movie or TV show
   const posterURL = _media.posterURL
@@ -41,11 +41,10 @@ function _mediaPoster({
         ? getFullImageUrl(_media.metadata.poster_path)
         : `/sorry-image-not-available.jpg`
 
-  let posterBlurhash = _media.posterBlurhash || _media.seasonPosterBlurhash || false
-
-  if (_media?.posterBlurhashPromise) {
-    posterBlurhash = use(_media?.posterBlurhashPromise) ?? false
-  }
+  let posterBlurhash = _media.posterBlurhash || 
+                        _media.blurhash?.seasonPoster || 
+                        _media.seasonPosterBlurhash || 
+                        false
 
   // Determine the resolution of the media
   const { res_width, is4k, is1080p } = getResolutionLabel(_media?.dimensions ?? null)
@@ -65,14 +64,14 @@ function _mediaPoster({
       )}
       {_media.videoURL ? (
         <TotalRuntime
-          length={_media.length ?? (_media.metadata?.runtime ? _media.metadata.runtime * 60000 : 0)}
+          length={_media.duration ?? (_media.metadata?.runtime ? _media.metadata.runtime * 60000 : 0)}
           metadata={_media.metadata}
           videoURL={_media.videoURL}
-          classNames="absolute bottom-0 w-full text-center z-[10] text-[0.55rem]"
+          classNames="absolute bottom-0 w-full text-center z-10 text-[0.55rem]"
         />
       ) : null}
       {!hideGenres && _media.metadata?.genres && (
-        <div className="bg-gray-900 text-center px-0.5 py-0.5 text-white transition-opacity duration-700 inset-0 text-xs opacity-75 group-hover:opacity-100 z-[10] relative">
+        <div className="bg-gray-900 text-center px-0.5 py-0.5 text-white transition-opacity duration-700 inset-0 text-xs opacity-75 group-hover:opacity-100 z-10 relative">
           <div className="whitespace-nowrap">
             {_media.metadata.genres.map((genre) => {
               const { fontColor, backgroundColor } = generateColors(genre?.name)
@@ -155,4 +154,4 @@ function _mediaPoster({
   )
 }
 
-export default cache(_mediaPoster)
+export default cache(MediaPoster)

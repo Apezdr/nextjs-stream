@@ -6,7 +6,6 @@ import SettingsList from '@components/Admin/Settings/SettingsList'
 import DockerHubLastUpdated from '@components/Admin/DockerHubLastUpdated'
 import { getServerSettings } from '@src/utils/sync_db'
 //import { updateAutomaticSync, updateSyncAggressiveness } from '@src/utils/actions/admin_settings'
-export const revalidate = 0 // Ensure fresh data on each request
 
 async function SettingsPage({ searchParams }) {
   const session = await auth()

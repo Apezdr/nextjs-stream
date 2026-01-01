@@ -35,7 +35,7 @@ function ListRecords({
     setLoadingStates((prev) => prev.map((loading, i) => (i === index ? false : loading)))
   }
   return (
-    <div>
+    <div className="max-w-[95vw] place-self-center">
       <div className="sm:flex sm:items-center">
         <div className="sm:flex-auto">
           <h1 className="text-base font-semibold leading-6 text-gray-200">{title}</h1>

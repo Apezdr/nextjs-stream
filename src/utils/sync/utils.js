@@ -60,7 +60,9 @@ export function filterLockedFields(existingDoc, updateData) {
 
       const existingValue = existingObj ? existingObj[key] : undefined
 
-      if (
+      if (value instanceof Date) {
+        result[fullPath] = value
+      } else if (
         typeof value === 'object' &&
         value !== null &&
         !Array.isArray(value) &&
@@ -77,6 +79,68 @@ export function filterLockedFields(existingDoc, updateData) {
 
   process(updateData)
   return result
+}
+
+/**
+ * Filters locked fields from update data while preserving object structure.
+ * Unlike filterLockedFields, this function preserves the nested structure of objects
+ * instead of flattening them with dot notation, making it suitable for MongoDB $set operations
+ * that need to replace entire objects.
+ * 
+ * @param {Object} existingDoc - Existing document
+ * @param {Object} updateData - Update data
+ * @returns {Object} Filtered update data with preserved structure
+ */
+export function filterLockedFieldsPreserveStructure(existingDoc, updateData) {
+  const lockedFields = existingDoc.lockedFields || {}
+  const result = {}
+
+  function isFieldLocked(fieldPath) {
+    const parts = fieldPath.split('.')
+    let current = lockedFields
+
+    for (const part of parts) {
+      if (current[part] === true) {
+        return true
+      } else if (typeof current[part] === 'object' && current[part] !== null) {
+        current = current[part]
+      } else {
+        return false
+      }
+    }
+    return false
+  }
+
+  function processStructured(obj, path = '') {
+    const resultObj = {}
+    let hasValues = false
+
+    for (const key in obj) {
+      const value = obj[key]
+      const fullPath = path ? `${path}.${key}` : key
+
+      if (isFieldLocked(fullPath)) continue
+
+      // Special handling for Date objects - treat them as primitive values
+      if (value instanceof Date) {
+        resultObj[key] = value
+        hasValues = true
+      } else if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+        const processedChild = processStructured(value, fullPath)
+        if (Object.keys(processedChild).length > 0) {
+          resultObj[key] = processedChild
+          hasValues = true
+        }
+      } else {
+        resultObj[key] = value
+        hasValues = true
+      }
+    }
+
+    return hasValues ? resultObj : {}
+  }
+
+  return processStructured(updateData)
 }
 
 /**
@@ -110,8 +174,16 @@ export function isCurrentServerHighestPriorityForField(
   fieldPath,
   serverConfig
 ) {
+  // Handle edge case where mediaTitle is undefined (for legacy sync compatibility)
+  if (!mediaTitle) {
+    console.warn(`⚠️ isCurrentServerHighestPriorityForField: mediaTitle is undefined for ${fieldPath}, returning false`)
+    return false
+  }
+  
   const serversWithData = fieldAvailability[mediaType][mediaTitle]?.[fieldPath] || []
   if (serversWithData.length === 0) {
+    if (fieldPath !== 'urls.mp4')
+    debugger
     return true
   }
 
@@ -122,6 +194,24 @@ export function isCurrentServerHighestPriorityForField(
   }, Infinity)
 
   return serverConfig.priority <= highestPriority
+}
+
+/**
+ * Checks if a field exists across any servers for a specific media item.
+ * @param {Object} fieldAvailability - Field availability mapping
+ * @param {string} mediaType - Media type (tv, movie)
+ * @param {string} mediaTitle - Media title identifier
+ * @param {string} fieldPath - Field path to check
+ * @returns {boolean} True if field exists on any server
+ */
+export function doesFieldExistAcrossServers(
+  fieldAvailability,
+  mediaType,
+  mediaTitle,
+  fieldPath
+) {
+  const serversWithData = fieldAvailability[mediaType][mediaTitle]?.[fieldPath] || []
+  return serversWithData.length > 0 ? true : false
 }
 
 /**

@@ -1,29 +1,67 @@
-import { auth } from '@src/lib/auth'
+import { auth, getUserBySessionId, verifyMobileToken, getUserByMobileToken } from '@src/lib/auth'
 import { buildURL } from '.'
 import { adminUserEmails } from './config'
 import axios from 'axios'
-
-const webhookIds = process.env.VALID_WEBHOOK_IDS
+import { validateWebhookId } from './webhookServer'
 
 export default async function isAuthenticated(req) {
-  const sessionResponse = await fetch(buildURL(`/api/auth/session`), {
-    headers: {
-      cookie: req.headers.get('cookie') || '', // Forward the cookies from the original request
-    },
-  })
-  const session = await sessionResponse.json()
-  if (!session || !session.user) {
-    return new Response('You must be signed in.', { status: 401 })
+  try {
+    const sessionResponse = await fetch(buildURL(`/api/auth/session`), {
+      headers: {
+        cookie: req.headers.get('cookie') || '', // Forward the cookies from the original request
+      },
+    })
+
+    let session
+    try {
+      session = await sessionResponse.json()
+    } catch (parseError) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Authentication Error',
+          message: 'Failed to parse session response',
+          code: 'AUTH_PARSE_FAILED',
+          details: parseError?.message
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+
+    if (!session || !session.user) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Unauthorized',
+          message: 'You must be signed in.',
+          code: 'AUTH_REQUIRED'
+        }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+    return session.user
+  } catch (error) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Authentication Error',
+        message: 'Failed to fetch session',
+        code: 'AUTH_FETCH_FAILED',
+        details: error?.message
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    )
   }
-  return session.user
 }
 
 export async function isAdminOrWebhook(req) {
   // First, check for webhook identifier
   const webhookId = req.headers?.get('X-Webhook-ID') || req.query?.webhookId || false // Note: Header names are case-insensitive in HTTP
   if (webhookId) {
-    const isValidWebhookId = await validateWebhookId(webhookId) // Implement this function to validate the webhookId
-    if (isValidWebhookId) {
+    const validationResult = await validateWebhookId(webhookId)
+    if (validationResult.isValid) {
+      // Add server information to the request for downstream processing
+      req.webhookServerId = validationResult.serverId
       return true // Valid webhook ID, proceed with the request
     } else {
       return new Response(
@@ -50,13 +88,6 @@ export async function isAdminOrWebhook(req) {
   }
 }
 
-async function validateWebhookId(webhookId) {
-  // Example validation logic
-  // This could involve checking the ID against a database, a list of IDs, or verifying a signature
-  const validWebhookIds = webhookIds?.split(',') || [] // Ideally, store and retrieve from a secure location
-  return validWebhookIds.includes(webhookId)
-}
-
 export async function isAdmin(req = false, redirect = true) {
   let sessionResponse
   //
@@ -68,7 +99,16 @@ export async function isAdmin(req = false, redirect = true) {
         },
       })
     } catch (error) {
-      return new Response('Failed to fetch session.', { status: 500 })
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Authentication Error',
+          message: 'Failed to fetch session',
+          code: 'AUTH_FETCH_FAILED',
+          details: error?.message
+        }),
+        { status: 500, headers: { 'Content-Type': 'application/json' } }
+      )
     }
   }
 
@@ -88,10 +128,68 @@ export async function isAdmin(req = false, redirect = true) {
 export async function isValidWebhook(req) {
   const webhookId = req.headers?.get('X-Webhook-ID') || req.query?.webhookId || false
   if (webhookId) {
-    const isValidWebhookId = await validateWebhookId(webhookId)
-    if (isValidWebhookId) {
+    const validationResult = await validateWebhookId(webhookId)
+    if (validationResult.isValid) {
+      // Add server information to the request for downstream processing
+      req.webhookServerId = validationResult.serverId
       return true
     }
   }
   return false
+}
+
+// Specifically for mobile/TV client authentication (JWT tokens and session IDs)
+export async function isAuthenticatedBySessionId(req) {
+  // First, try JWT token authentication (primary method for mobile/TV)
+  const authHeader = req.headers.get('authorization')
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7)
+    try {
+      // Use the new function that properly looks up the user by mobile token
+      const user = await getUserByMobileToken(token)
+      if (user) return user
+    } catch (error) {
+      console.error('JWT token verification failed:', error)
+      // Continue to try session ID authentication as fallback
+    }
+  }
+  
+  // Fallback: try session ID authentication
+  const sessionId = req.headers.get('x-session-id') || 
+                    new URL(req.url).searchParams.get('sessionId')
+  
+  if (!sessionId) {
+    return new Response(
+      JSON.stringify({ error: 'No valid authentication provided' }), 
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+  
+  try {
+    const user = await getUserBySessionId(sessionId)
+    if (user) return user
+    return new Response(
+      JSON.stringify({ error: 'Invalid session ID' }), 
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    )
+  } catch (error) {
+    console.error('SessionId auth failed:', error)
+    return new Response(
+      JSON.stringify({ error: 'Authentication failed' }), 
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+}
+
+// Combined method as a separate function
+export async function isAuthenticatedEither(req) {
+  // First try web session
+  const webAuthResult = await isAuthenticated(req)
+  if (!(webAuthResult instanceof Response)) {
+    return webAuthResult // User authenticated via web session
+  }
+  
+  // If web auth failed, try session ID
+  const sessionAuthResult = await isAuthenticatedBySessionId(req)
+  return sessionAuthResult // Either user object or error response
 }

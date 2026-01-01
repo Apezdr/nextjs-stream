@@ -1,14 +1,15 @@
 import clientPromise from '@src/lib/mongodb'
-import { addCustomUrlToMedia, fetchRecentlyAdded } from '@src/utils/auth_database'
+import { addCustomUrlToFlatMedia, getFlatRecentlyAddedMedia } from '@src/utils/flatDatabaseUtils'
 import {
   arrangeMediaByLatestModification,
   movieProjectionFields,
   tvShowProjectionFields,
+  sanitizeRecord
 } from '@src/utils/auth_utils'
-import isAuthenticated from '@src/utils/routeAuth'
+import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
 
 export const POST = async (req) => {
-  const authResult = await isAuthenticated(req)
+  const authResult = await isAuthenticatedEither(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }
@@ -51,32 +52,32 @@ async function searchMedia(query) {
     // Perform search if query is provided
     ;[movies, tvShows] = await Promise.all([
       db
-        .collection('Movies')
+        .collection('FlatMovies')
         .find({ title: { $regex: query, $options: 'i' } }, { projection: movieProjectionFields })
         .toArray(),
       db
-        .collection('TV')
+        .collection('FlatTVShows')
         .find({ title: { $regex: query, $options: 'i' } }, { projection: tvShowProjectionFields })
         .toArray(),
     ])
   } else {
     // Fetch recently added media if query is empty
-    ;[movies, tvShows] = await Promise.all([
-      fetchRecentlyAdded({ db: db, collectionName: 'Movies' }),
-      fetchRecentlyAdded({ db: db, collectionName: 'TV' }),
-    ])
-    recentlyAddedMediaQuery = true
+    const recentlyAddedMedia = await getFlatRecentlyAddedMedia({ limit: 15 })
+    return recentlyAddedMedia
   }
 
+  // First add custom URLs (without fetching blurhash data)
   const [moviesWithUrl, tvShowsWithUrl] = await Promise.all([
-    addCustomUrlToMedia(movies, 'movie'),
-    addCustomUrlToMedia(tvShows, 'tv'),
+    addCustomUrlToFlatMedia(movies, 'movie'),
+    addCustomUrlToFlatMedia(tvShows, 'tv'),
   ])
 
-  if (recentlyAddedMediaQuery) {
-    // Merge and sort based on the latest modification date
-    return arrangeMediaByLatestModification(moviesWithUrl, tvShowsWithUrl)
-  }
+  // Now sanitize each item to ensure proper blurhash processing
+  const sanitizedResults = await Promise.all(
+    [...moviesWithUrl, ...tvShowsWithUrl].map(item => 
+      sanitizeRecord(item, item.type)
+    )
+  );
 
-  return [...moviesWithUrl, ...tvShowsWithUrl]
+  return sanitizedResults.filter(Boolean); // Filter out any null results
 }

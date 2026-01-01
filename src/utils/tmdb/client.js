@@ -1,0 +1,808 @@
+/**
+ * TMDB API client utility for interfacing with the backend Node.js server
+ * Uses the existing backend TMDB API endpoints with caching
+ * Works in both server-side (SSR) and client-side contexts
+ */
+
+import { buildURL } from ".."
+
+// For client-side requests, use relative URLs to the current origin
+// The Next.js API routes will handle the server-side proxy logic
+
+/**
+ * TMDB client error class
+ */
+export class TMDBError extends Error {
+  constructor(message, status = null, response = null) {
+    super(message)
+    this.name = 'TMDBError'
+    this.status = status
+    this.response = response
+  }
+}
+
+/**
+ * Make a request to the local TMDB API proxy
+ * @param {string} endpoint - API endpoint (without /api/authenticated/tmdb prefix)
+ * @param {Object} [options] - Request options
+ * @param {number} [options.retries=2] - Number of retry attempts
+ * @param {number} [options.timeout=10000] - Request timeout in milliseconds
+ * @returns {Promise<Object>} API response data
+ */
+async function makeRequest(endpoint, options = {}) {
+  const { method = 'GET', body = null, params = {}, retries = 2, timeout = 10000 } = options
+  const isServer = typeof window === 'undefined'
+
+  // Build URL differently for server vs client
+  let url
+  if (isServer) {
+    // Server-side: use full URL with base URL from environment
+    const baseURL = process.env.NEXT_PUBLIC_BASE_URL ||
+                    `http://localhost:${process.env.PORT || 3000}`
+    const fullURL = `${baseURL}/api/authenticated/tmdb${endpoint}`
+    url = new URL(fullURL)
+  } else {
+    // Client-side: use relative URLs that work from the browser
+    const builtURL = buildURL(`/api/authenticated/tmdb${endpoint}`)
+    url = new URL(builtURL, builtURL.startsWith('http') ? undefined : window.location.origin)
+  }
+
+  console.log(`TMDB Request (${isServer ? 'server' : 'client'}): ${method} ${url.toString()}`, { params, body })
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined) {
+      url.searchParams.append(key, value.toString())
+    }
+  })
+
+  let lastError = null
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const controller = new AbortController()
+      const timeoutId = setTimeout(() => controller.abort(), timeout)
+
+      // Build headers with proper authentication handling
+      const headers = {
+        'Content-Type': 'application/json',
+      }
+
+      // Handle authentication differently for server vs client
+      if (isServer) {
+        // Server-side: get cookies from headers() function
+        try {
+          const { headers: nextHeaders } = await import('next/headers')
+          const headersList = await nextHeaders()
+          const cookieHeader = headersList.get('cookie')
+          if (cookieHeader) {
+            headers['cookie'] = cookieHeader
+          }
+        } catch (error) {
+          console.warn('Failed to get cookies on server-side:', error.message)
+        }
+      }
+
+      const fetchOptions = {
+        method,
+        headers,
+        body: body ? JSON.stringify(body) : null,
+        signal: controller.signal,
+      }
+
+      // Only add credentials for client-side requests
+      if (!isServer) {
+        fetchOptions.credentials = 'include'
+      }
+
+      const response = await fetch(url.toString(), fetchOptions)
+
+      clearTimeout(timeoutId)
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        const error = new TMDBError(
+          errorData.error || `HTTP ${response.status}: ${response.statusText}`,
+          response.status,
+          errorData
+        )
+        
+        // Log the URL that caused the error for debugging
+        console.error(`TMDB API Error ${response.status} for URL: ${url.toString()}`)
+        console.error('Error details:', errorData)
+        
+        // Don't retry on client errors (4xx)
+        if (response.status >= 400 && response.status < 500) {
+          throw error
+        }
+        
+        lastError = error
+        if (attempt === retries) throw error
+        
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000))
+        continue
+      }
+
+      return await response.json()
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        lastError = new TMDBError(`Request timeout after ${timeout}ms`)
+      } else if (error instanceof TMDBError) {
+        lastError = error
+      } else {
+        lastError = new TMDBError(`Network error: ${error.message}`)
+      }
+      
+      if (attempt === retries) {
+        throw lastError
+      }
+      
+      // Wait before retrying
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000))
+    }
+  }
+
+  throw lastError
+}
+
+/**
+ * Search for movies or TV shows
+ * @param {string} query - Search query
+ * @param {string} [type='movie'] - 'movie' or 'tv'
+ * @param {Object} [options] - Search options
+ * @returns {Promise<Object>} Search results
+ */
+export async function searchMedia(query, type = 'movie', options = {}) {
+  const { page = 1 } = options
+
+  if (!query || typeof query !== 'string' || query.trim().length === 0) {
+    throw new TMDBError('Search query is required')
+  }
+
+  if (!['movie', 'tv'].includes(type)) {
+    throw new TMDBError('Type must be "movie" or "tv"')
+  }
+
+  return await makeRequest(`/search/${type}`, {
+    params: {
+      query: query.trim(),
+      page,
+      blurhash: 'true'
+    }
+  })
+}
+
+/**
+ * Get media details by TMDB ID
+ * @param {number} mediaId - TMDB media ID
+ * @param {string} type - 'movie' or 'tv'
+ * @returns {Promise<Object>} Media details
+ */
+export async function getMediaDetails(mediaId, type) {
+  if (!mediaId || isNaN(mediaId) || mediaId <= 0) {
+    throw new TMDBError('Valid media ID is required')
+  }
+
+  if (!['movie', 'tv'].includes(type)) {
+    throw new TMDBError('Type must be "movie" or "tv"')
+  }
+
+  const params = {
+    tmdb_id: mediaId,
+    blurhash: 'true'
+  }
+
+  return await makeRequest(`/details/${type}`, { params })
+}
+
+/**
+ * Get collection details by TMDB ID
+ * @param {number} collectionId - TMDB collection ID
+ * @param {Object} [options] - Request options
+ * @param {boolean} [options.enhanced] - Whether to fetch enhanced collection data with aggregation
+ * @returns {Promise<Object>} Collection details with movies
+ */
+export async function getCollectionDetails(collectionId, options = {}) {
+  if (!collectionId || isNaN(collectionId) || collectionId <= 0) {
+    throw new TMDBError('Valid collection ID is required')
+  }
+
+  const params = {
+    tmdb_id: collectionId,
+    blurhash: 'true'
+  }
+  
+  if (options.enhanced) {
+    params.enhanced = 'true'
+  }
+
+  return await makeRequest('/collection', { params })
+}
+
+/**
+ * Get enhanced media details including credits, videos, and images
+ * @param {number} mediaId - TMDB media ID
+ * @param {string} type - 'movie' or 'tv'
+ * @returns {Promise<Object>} Enhanced media details with credits, videos, and images
+ */
+export async function getEnhancedMediaDetails(mediaId, type) {
+  if (!mediaId || isNaN(mediaId) || mediaId <= 0) {
+    throw new TMDBError('Valid media ID is required')
+  }
+
+  if (!['movie', 'tv'].includes(type)) {
+    throw new TMDBError('Type must be "movie" or "tv"')
+  }
+
+  return await makeRequest(`/comprehensive/${type}`, {
+    params: {
+      tmdb_id: mediaId,
+      append_to_response: 'credits,videos,images',
+      blurhash: 'true'
+    }
+  })
+}
+
+/**
+ * Search for collections by name
+ * @param {string} query - Search query
+ * @param {number} [page=1] - Page number
+ * @returns {Promise<Object>} Collection search results
+ */
+export async function searchCollections(query, page = 1) {
+  if (!query || typeof query !== 'string' || query.trim().length === 0) {
+    throw new TMDBError('Search query is required')
+  }
+
+  return await makeRequest('/search/collection', {
+    params: {
+      query: query.trim(),
+      page,
+      blurhash: 'true'
+    }
+  })
+}
+
+/**
+ * Get collection images
+ * @param {number} collectionId - TMDB collection ID
+ * @returns {Promise<Object>} Collection images including backdrops and posters
+ */
+export async function getCollectionImages(collectionId) {
+  if (!collectionId || isNaN(collectionId) || collectionId <= 0) {
+    throw new TMDBError('Valid collection ID is required')
+  }
+
+  return await makeRequest('/images/collection', {
+    params: {
+      tmdb_id: collectionId,
+      blurhash: 'true'
+    }
+  })
+}
+
+/**
+ * Get comprehensive media details including cast, trailer, logo, and rating
+ * @param {Object} options - Search options
+ * @param {string} [options.name] - Media name for search
+ * @param {number} [options.tmdbId] - TMDB ID
+ * @param {string} options.type - 'movie' or 'tv'
+ * @returns {Promise<Object>} Comprehensive media details
+ */
+export async function getComprehensiveDetails(options) {
+  const { name, tmdbId, type } = options
+
+  if (!name && !tmdbId) {
+    throw new TMDBError('Either name or tmdbId is required')
+  }
+
+  if (!['movie', 'tv'].includes(type)) {
+    throw new TMDBError('Type must be "movie" or "tv"')
+  }
+
+  const params = {
+    blurhash: 'true'
+  }
+  if (name) params.name = name
+  if (tmdbId) params.tmdb_id = tmdbId
+
+  return await makeRequest(`/comprehensive/${type}`, { params })
+}
+
+/**
+ * Get cast information for media
+ * @param {number} mediaId - TMDB media ID
+ * @param {string} type - 'movie' or 'tv'
+ * @returns {Promise<Array>} Cast information
+ */
+export async function getCast(mediaId, type) {
+  if (!mediaId || isNaN(mediaId) || mediaId <= 0) {
+    throw new TMDBError('Valid media ID is required')
+  }
+
+  if (!['movie', 'tv'].includes(type)) {
+    throw new TMDBError('Type must be "movie" or "tv"')
+  }
+
+  return await makeRequest(`/cast/${type}`, {
+    params: {
+      tmdb_id: mediaId
+    }
+  })
+}
+
+/**
+ * Get videos/trailers for media
+ * @param {number} mediaId - TMDB media ID
+ * @param {string} type - 'movie' or 'tv'
+ * @returns {Promise<Object>} Videos and trailer information
+ */
+export async function getVideos(mediaId, type) {
+  if (!mediaId || isNaN(mediaId) || mediaId <= 0) {
+    throw new TMDBError('Valid media ID is required')
+  }
+
+  if (!['movie', 'tv'].includes(type)) {
+    throw new TMDBError('Type must be "movie" or "tv"')
+  }
+
+  return await makeRequest(`/videos/${type}`, {
+    params: {
+      tmdb_id: mediaId
+    }
+  })
+}
+
+/**
+ * Get images for media
+ * @param {number} mediaId - TMDB media ID
+ * @param {string} type - 'movie' or 'tv'
+ * @returns {Promise<Object>} Images including logos, backdrops, and posters
+ */
+export async function getImages(mediaId, type) {
+  if (!mediaId || isNaN(mediaId) || mediaId <= 0) {
+    throw new TMDBError('Valid media ID is required')
+  }
+
+  if (!['movie', 'tv'].includes(type)) {
+    throw new TMDBError('Type must be "movie" or "tv"')
+  }
+
+  return await makeRequest(`/images/${type}`, {
+    params: {
+      tmdb_id: mediaId,
+      blurhash: 'true'
+    }
+  })
+}
+
+/**
+ * Get content rating for media
+ * @param {number} mediaId - TMDB media ID
+ * @param {string} type - 'movie' or 'tv'
+ * @returns {Promise<Object>} Content rating
+ */
+export async function getRating(mediaId, type) {
+  if (!mediaId || isNaN(mediaId) || mediaId <= 0) {
+    throw new TMDBError('Valid media ID is required')
+  }
+
+  if (!['movie', 'tv'].includes(type)) {
+    throw new TMDBError('Type must be "movie" or "tv"')
+  }
+
+  return await makeRequest(`/rating/${type}`, {
+    params: {
+      tmdb_id: mediaId
+    }
+  })
+}
+
+/**
+ * Get TV episode details
+ * @param {number} showId - TMDB show ID
+ * @param {number} season - Season number
+ * @param {number} episode - Episode number
+ * @returns {Promise<Object>} Episode details
+ */
+export async function getEpisodeDetails(showId, season, episode) {
+  if (!showId || isNaN(showId) || showId <= 0) {
+    throw new TMDBError('Valid show ID is required')
+  }
+
+  if (!season || isNaN(season) || season <= 0) {
+    throw new TMDBError('Valid season number is required')
+  }
+
+  if (!episode || isNaN(episode) || episode <= 0) {
+    throw new TMDBError('Valid episode number is required')
+  }
+
+  return await makeRequest('/episode', {
+    params: {
+      tmdb_id: showId,
+      season: season,
+      episode: episode,
+      blurhash: 'true'
+    }
+  })
+}
+
+/**
+ * Get TV episode images
+ * @param {number} showId - TMDB show ID
+ * @param {number} season - Season number
+ * @param {number} episode - Episode number
+ * @returns {Promise<Object>} Episode images
+ */
+export async function getEpisodeImages(showId, season, episode) {
+  if (!showId || isNaN(showId) || showId <= 0) {
+    throw new TMDBError('Valid show ID is required')
+  }
+
+  if (!season || isNaN(season) || season <= 0) {
+    throw new TMDBError('Valid season number is required')
+  }
+
+  if (!episode || isNaN(episode) || episode <= 0) {
+    throw new TMDBError('Valid episode number is required')
+  }
+
+  const params = {
+    tmdb_id: showId,
+    season: season,
+    episode: episode,
+    blurhash: 'true'
+  }
+
+  return await makeRequest('/episode/images', { params })
+}
+
+/**
+ * Check TMDB service health
+ * @returns {Promise<Object>} Health status
+ */
+export async function getHealth() {
+  return await makeRequest('/health')
+}
+
+/**
+ * Test TMDB server connectivity
+ * @returns {Promise<Object>} Connection test results
+ */
+export async function testTMDBConnection() {
+  try {
+    const startTime = Date.now()
+    const health = await getHealth()
+    const responseTime = Date.now() - startTime
+    
+    return {
+      success: true,
+      serverURL: 'Local Next.js API Proxy',
+      tmdbConfigured: health.tmdb_configured === true,
+      responseTime,
+      timestamp: new Date().toISOString(),
+      details: health
+    }
+  } catch (error) {
+    return {
+      success: false,
+      serverURL: 'Local Next.js API Proxy',
+      tmdbConfigured: false,
+      error: error.message,
+      timestamp: new Date().toISOString()
+    }
+  }
+}
+
+/**
+ * Validate TMDB server configuration
+ * @returns {Promise<Object>} Validation results
+ */
+export async function validateTMDBConfiguration() {
+  const validation = {
+    serverURL: {
+      configured: true, // Always true for local proxy
+      value: 'Local Next.js API Proxy',
+      valid: true
+    },
+    connectivity: {
+      reachable: false,
+      responseTime: null
+    },
+    overall: false
+  }
+
+  // Test connectivity through local proxy
+  try {
+    const connectionTest = await testTMDBConnection()
+    validation.connectivity.reachable = connectionTest.success
+    validation.connectivity.responseTime = connectionTest.responseTime
+    
+    if (!connectionTest.success) {
+      validation.connectivity.error = connectionTest.error
+    }
+  } catch (error) {
+    validation.connectivity.error = error.message
+  }
+
+  // Overall validation
+  validation.overall = validation.serverURL.valid && validation.connectivity.reachable
+
+  return validation
+}
+
+/**
+ * Format TMDB media item for watchlist
+ * @param {Object} item - TMDB media item
+ * @returns {Object} Formatted item for watchlist
+ */
+export function formatForWatchlist(item) {
+  const mediaType = item.media_type || (item.title ? 'movie' : 'tv')
+  
+  return {
+    tmdbId: item.id,
+    mediaType,
+    title: item.title || item.name,
+    isExternal: true,
+    tmdbData: {
+      overview: item.overview,
+      poster_path: item.poster_path,
+      backdrop_path: item.backdrop_path,
+      genres: item.genres || [],
+      original_language: item.original_language,
+      vote_average: item.vote_average,
+      vote_count: item.vote_count,
+      release_date: item.release_date,
+      first_air_date: item.first_air_date,
+      // TV-specific fields
+      number_of_seasons: item.number_of_seasons,
+      number_of_episodes: item.number_of_episodes,
+      status: item.status,
+      networks: item.networks || []
+    }
+  }
+}
+
+/**
+ * Check if TMDB item exists in internal database and return internal media data
+ * @param {number} tmdbId - TMDB ID
+ * @param {string} mediaType - 'movie' or 'tv'
+ * @returns {Promise<Object|null>} Internal media data if found, null otherwise
+ */
+export async function findInternalMediaByTMDBId(tmdbId, mediaType) {
+  if (!tmdbId || !mediaType) return null
+  
+  try {
+    const response = await fetch('/api/authenticated/media/find-by-tmdb', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ tmdbId, mediaType }),
+      credentials: 'include' // Include session cookies for authentication
+    })
+    
+    if (!response.ok) {
+      if (response.status === 404) return null
+      throw new Error(`HTTP ${response.status}`)
+    }
+    
+    const data = await response.json()
+    return data.media || null
+  } catch (error) {
+    console.error('Error finding internal media by TMDB ID:', error)
+    return null
+  }
+}
+
+/**
+ * Enhanced format function that checks for internal media first
+ * @param {Object} item - TMDB media item
+ * @returns {Promise<Object>} Formatted item for watchlist with proper internal/external detection
+ */
+export async function formatForWatchlistWithInternalCheck(item) {
+  const mediaType = item.media_type || (item.title ? 'movie' : 'tv')
+  const tmdbId = item.id
+  
+  // Check if this TMDB item exists in our internal database
+  const internalMedia = await findInternalMediaByTMDBId(tmdbId, mediaType)
+  
+  if (internalMedia) {
+    // This is internal media - include both mediaId (primary) and tmdbId (fallback)
+    return {
+      mediaId: internalMedia.id || internalMedia._id,
+      tmdbId, // Keep TMDB ID as fallback
+      mediaType,
+      title: internalMedia.title || item.title || item.name,
+      isExternal: false
+    }
+  } else {
+    // This is external media - use original format (tmdbId only)
+    return formatForWatchlist(item)
+  }
+}
+
+/**
+ * Get TMDB image URL (images from backend are already full URLs)
+ * @param {string} path - Image path from TMDB
+ * @param {string} [size='original'] - Image size (not used since backend returns full URLs)
+ * @returns {string|null} Full image URL or null
+ */
+export function getTMDBImageURL(path, size = 'original') {
+  if (!path) return null
+  
+  // If path is already a full URL, return as-is
+  if (path.startsWith('http')) {
+    return path
+  }
+  
+  // Otherwise, construct the URL
+  return `https://image.tmdb.org/t/p/${size}${path}`
+}
+
+/**
+ * Check if TMDB is available by checking health
+ * @returns {Promise<boolean>} True if TMDB is available
+ */
+export async function isTMDBAvailable() {
+  try {
+    const health = await getHealth()
+    return health.tmdb_configured === true
+  } catch (error) {
+    console.error('Error checking TMDB availability:', error)
+    return false
+  }
+}
+
+/**
+ * Get the most accurate duration for a movie/episode, prioritizing database data over TMDB
+ * @param {Object} item - Movie or episode object
+ * @returns {Object|null} Duration object with value in minutes and source info, or null if no duration found
+ */
+export function getAccurateDuration(item) {
+  if (!item) return null;
+
+  // Priority 1: Database duration (most accurate) - stored in milliseconds
+  if (item.duration && typeof item.duration === 'number' && item.duration > 0) {
+    return {
+      minutes: Math.round(item.duration / 60000), // Convert ms to minutes
+      source: 'database',
+      isAccurate: true
+    };
+  }
+
+  // Priority 2: Enhanced metadata runtime (from TMDB collection enhancement) - stored in minutes
+  if (item.enhancedMetadata?.runtime && typeof item.enhancedMetadata.runtime === 'number' && item.enhancedMetadata.runtime > 0) {
+    return {
+      minutes: item.enhancedMetadata.runtime,
+      source: 'tmdb_enhanced',
+      isAccurate: false
+    };
+  }
+
+  // Priority 3: TMDB metadata runtime - stored in minutes
+  if (item.metadata?.runtime && typeof item.metadata.runtime === 'number' && item.metadata.runtime > 0) {
+    return {
+      minutes: item.metadata.runtime,
+      source: 'tmdb_metadata',
+      isAccurate: false
+    };
+  }
+
+  // Priority 4: TMDB data runtime (alternative path) - stored in minutes
+  if (item.tmdbData?.runtime && typeof item.tmdbData.runtime === 'number' && item.tmdbData.runtime > 0) {
+    return {
+      minutes: item.tmdbData.runtime,
+      source: 'tmdb_data',
+      isAccurate: false
+    };
+  }
+
+  // Priority 5: Direct runtime property (fallback for collection movies)
+  if (item.runtime && typeof item.runtime === 'number' && item.runtime > 0) {
+    return {
+      minutes: item.runtime,
+      source: 'direct_runtime',
+      isAccurate: false
+    };
+  }
+
+  // Priority 6: Check for runtime in the root-level properties that might come from enhanced collection data
+  if (item.vote_average && item.release_date) {
+    // This might be a collection movie object that has runtime at root level
+    // Let's try to extract it from various possible locations
+    const possibleRuntime = item.runtime ||
+                           item.tmdbData?.runtime ||
+                           item.metadata?.runtime ||
+                           item.enhancedMetadata?.runtime;
+                           
+    if (possibleRuntime && typeof possibleRuntime === 'number' && possibleRuntime > 0) {
+      return {
+        minutes: possibleRuntime,
+        source: 'collection_fallback',
+        isAccurate: false
+      };
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Format duration in hours and minutes
+ * @param {number} totalMinutes - Total duration in minutes
+ * @returns {string} Formatted duration string (e.g., "2h 15m", "45m", "2h")
+ */
+export function formatDuration(totalMinutes) {
+  if (!totalMinutes || totalMinutes <= 0) return null;
+  
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  
+  if (hours === 0) {
+    return `${minutes}m`;
+  } else if (minutes === 0) {
+    return `${hours}h`;
+  } else {
+    return `${hours}h ${minutes}m`;
+  }
+}
+
+/**
+ * Get formatted duration string for display, prioritizing database data
+ * @param {Object} item - Movie or episode object
+ * @returns {string|null} Formatted duration string or null if no duration available
+ */
+export function getFormattedDuration(item) {
+  const duration = getAccurateDuration(item);
+  
+  // Debug logging for items without duration to help identify the issue
+  if (!duration && item && !item.isOwned) {
+    console.log('[Duration Debug] No duration found for non-owned item:', {
+      title: item.title,
+      id: item.id,
+      hasMetadata: !!item.metadata,
+      hasTmdbData: !!item.tmdbData,
+      hasEnhancedMetadata: !!item.enhancedMetadata,
+      metadataRuntime: item.metadata?.runtime,
+      tmdbDataRuntime: item.tmdbData?.runtime,
+      enhancedRuntime: item.enhancedMetadata?.runtime,
+      directRuntime: item.runtime
+    });
+  }
+  
+  return duration ? formatDuration(duration.minutes) : null;
+}
+
+/**
+ * Get duration data with source indicator for debugging/display purposes
+ * @param {Object} item - Movie or episode object
+ * @returns {Object|null} Object with formatted duration and source info
+ */
+export function getDurationWithSource(item) {
+  const duration = getAccurateDuration(item);
+  if (!duration) return null;
+  
+  return {
+    formatted: formatDuration(duration.minutes),
+    minutes: duration.minutes,
+    source: duration.source,
+    isAccurate: duration.isAccurate,
+    // Source labels for display
+    sourceLabel: {
+      'database': 'Database',
+      'tmdb_metadata': 'TMDB',
+      'tmdb_data': 'TMDB',
+      'tmdb_enhanced': 'TMDB'
+    }[duration.source] || 'Unknown'
+  };
+}
+
+// Export constants
+export const TMDB_CONSTANTS = {
+  IMAGE_BASE_URL: 'https://image.tmdb.org/t/p/',
+  POSTER_SIZES: ['w92', 'w154', 'w185', 'w342', 'w500', 'w780', 'original'],
+  BACKDROP_SIZES: ['w300', 'w780', 'w1280', 'original'],
+  PROFILE_SIZES: ['w45', 'w185', 'h632', 'original'],
+  LOGO_SIZES: ['w45', 'w92', 'w154', 'w185', 'w300', 'w500', 'original']
+}

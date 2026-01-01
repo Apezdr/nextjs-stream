@@ -197,11 +197,6 @@ const BannerWithVideo = ({ mediaList }) => {
     }
   }, [pauseTimer, resumeTimer])
 
-  // Start the slide cycle when the component mounts
-  useEffect(() => {
-    startSlideCycle()
-  }, [startSlideCycle])
-
   // Mute video by default
   useEffect(() => {
     localStorage.setItem('videoMutedBanner', true)
@@ -273,7 +268,7 @@ const BannerWithVideo = ({ mediaList }) => {
         <Suspense
           fallback={
             <div className="absolute bottom-4 right-4 flex gap-1">
-              {[...Array(1)].map((_, index) => (
+              {[...Array(mediaList?.length || 0)].map((_, index) => (
                 <div key={index} className="w-2 h-2 rounded-full bg-gray-400"></div>
               ))}
             </div>

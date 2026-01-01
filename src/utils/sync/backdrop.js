@@ -24,7 +24,7 @@ export function processBackdropUpdates(media, fileServerData, serverConfig, fiel
   const backdropIsHighestPriority = isCurrentServerHighestPriorityForField(
     fieldAvailability,
     mediaType,
-    mediaTitle,
+    media.originalTitle,
     backdropFieldPath,
     serverConfig
   )
@@ -56,7 +56,7 @@ export function processBackdropUpdates(media, fileServerData, serverConfig, fiel
   const blurhashIsHighestPriority = isCurrentServerHighestPriorityForField(
     fieldAvailability,
     mediaType,
-    mediaTitle,
+    media.originalTitle,
     backdropBlurhashFieldPath,
     serverConfig
   )

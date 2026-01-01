@@ -72,6 +72,8 @@ export async function getAllUsers() {
 
 export async function getLastSynced() {
   const client = await clientPromise
+
+  // ex. 2025-03-30T00:52:11.483+00:00
   const lastSyncTime = await client
     .db('app_config')
     .collection('syncInfo')

@@ -47,10 +47,13 @@ const RenderChapter = ({
       ref={setProgressVar}
     >
       {chapterThumbnailURL && (
-        <img
+        <Image
           className="vds-thumbnail"
           src={`${chapterThumbnailURL}${convertTimeFormat(startTimeText)}`}
           alt="Chapter Thumbnail"
+          width={160}
+          height={90}
+          unoptimized
         />
       )}
       <div className="vds-chapter-radio-content">

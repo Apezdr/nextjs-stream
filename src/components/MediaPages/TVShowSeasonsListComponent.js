@@ -1,10 +1,9 @@
 // TVShowSeasonsList.js
-import clientPromise from '../../lib/mongodb';
+import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils';
 import Link from 'next/link';
 import { auth } from '../../lib/auth';
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage';
 import SkeletonCard from '@components/SkeletonCard';
-import SignOutButton from '@components/SignOutButton';
 import Detailed from '@components/Poster/Detailed';
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched';
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
@@ -43,8 +42,11 @@ export default async function TVShowSeasonsList({ showTitle }) {
     user: { name, email },
   } = session;
 
-  // Fetch the TV show and its seasons
-  const tvShow = await getAndUpdateMongoDB(decodeURIComponent(showTitle));
+  // Fetch the TV show and its seasons from flat database
+  const tvShow = await getFlatRequestedMedia({
+    type: 'tv',
+    title: decodeURIComponent(showTitle)
+  });
 
   if (!tvShow) {
     // TV show not found
@@ -87,40 +89,29 @@ export default async function TVShowSeasonsList({ showTitle }) {
     );
   }
 
-  // Fetch posterBlurhash if available
-  if (tvShow.posterBlurhash) {
-    tvShow.posterBlurhash = await fetchMetadataMultiServer(
-      tvShow.posterBlurhashSource,
-      tvShow.posterBlurhash,
-      'blurhash',
-      'tv',
-      showTitle
-    );
-  }
-
   // Process all seasons: fetch blurhash and compute flags
+  // Note: getFlatRequestedMedia already processes the blurhashes
   const processedSeasons = await Promise.all(
     tvShow.seasons.map(async (season) => {
-      if (season.seasonPosterBlurhash) {
-        season.posterBlurhash = await fetchMetadataMultiServer(
-          season.seasonPosterBlurhashSource,
-          season.seasonPosterBlurhash,
-          'blurhash',
-          'tv',
-          showTitle
-        );
-      }
-
       // Check all episodes for HDR and 4k
-      const has4k = season.episodes.some(
+      const episodes = season.episodes || [];
+
+      const has4k = episodes.some(
         (episode) => getResolutionLabel(episode?.dimensions).is4k
       );
 
-      const hasHDR = season.episodes.some((episode) => episode?.hdr);
+      const hasHDR = episodes.some((episode) => episode?.hdr);
 
-      const hasHDR10 = season.episodes.some((episode) => episode?.hdr === 'HDR10');
+      const hasHDR10 = episodes.some((episode) => episode?.hdr === 'HDR10');
 
-      return { ...season, has4k, hasHDR, hasHDR10 };
+      return { 
+        ...season, 
+        has4k, 
+        hasHDR, 
+        hasHDR10,
+        // Ensure field naming is consistent with what the component expects
+        posterURL: season.posterURL || season.season_poster,
+      };
     })
   );
 
@@ -170,10 +161,6 @@ export default async function TVShowSeasonsList({ showTitle }) {
                 Go Back
               </button>
             </Link>
-            <SignOutButton
-              className="self-center bg-gray-600 hover:bg-gray-500 focus-visible:outline-gray-600"
-              signoutProps={{ callbackUrl: '/' }}
-            />
           </div>
         </li>
         {/* Seasons List */}
@@ -183,47 +170,4 @@ export default async function TVShowSeasonsList({ showTitle }) {
       </ul>
     </div>
   );
-}
-
-async function getAndUpdateMongoDB(showTitle) {
-  const client = await clientPromise;
-  // Use projection to only fetch necessary fields
-  const tvShow = await client
-    .db('Media')
-    .collection('TV')
-    .findOne(
-      { title: showTitle },
-      {
-        projection: {
-          title: 1,
-          metadata: 1,
-          posterURL: 1,
-          posterBlurhash: 1,
-          posterBlurhashSource: 1,
-          'seasons.seasonNumber': 1,
-          'seasons.episodes.hdr': 1,
-          'seasons.episodes.dimensions': 1,
-          'seasons.title': 1,
-          'seasons.season_poster': 1,
-          'seasons.posterSource': 1,
-          'seasons.seasonPosterBlurhash': 1,
-          'seasons.seasonPosterBlurhashSource': 1,
-          'seasons.metadata.Genre': 1,
-        },
-      }
-    );
-
-  if (!tvShow) {
-    return null;
-  }
-
-  return {
-    _id: tvShow._id.toString(),
-    title: tvShow.title,
-    metadata: tvShow.metadata,
-    seasons: tvShow.seasons,
-    posterURL: tvShow.posterURL,
-    posterBlurhash: tvShow.posterBlurhash,
-    posterBlurhashSource: tvShow.posterBlurhashSource,
-  };
 }

@@ -3,11 +3,13 @@ import { memo, Suspense, useMemo } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Image from 'next/image'
 import Link from 'next/link'
-import Loading from '@src/app/loading'
+import Loading, { LoadingDots } from '@src/app/loading'
 import { getFullImageUrl } from '@src/utils'
 import dynamic from 'next/dynamic'
 import RetryImage from '@components/RetryImage'
 import { InformationCircleIcon } from '@heroicons/react/20/solid'
+import WatchlistButton from '@components/WatchlistButton'
+import { HeartIcon } from '@heroicons/react/24/outline'
 
 const BannerVideoPlayer = dynamic(() => import('./BannerVideoPlayer'), {
   ssr: false,
@@ -119,64 +121,84 @@ const BannerContent = ({
             <div className="font-bold text-lg text-left">{currentMedia.title}</div>
           )}
           {currentMedia?.title ? (
-            <div className='flex flex-row md:flex-col gap-2 md:gap-0'>
-<div className="flex gap-2 text-xs sm:text-sm">
-              <Link
-                href={`/list/movie/${encodeURIComponent(currentMedia.title)}/play`}
-                className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={1.5}
-                  stroke="currentColor"
-                  className="size-6"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"
-                  />
-                </svg>
-                <span className="hidden sm:inline">
-                  Watch Now
-                </span>
-              </Link>
-              {currentMedia?.metadata?.trailer_url ? (
+            <div className="flex flex-row md:flex-col gap-2 md:gap-0">
+              <div className="flex gap-2 text-xs sm:text-sm">
                 <Link
-                  href={currentMedia.metadata.trailer_url}
-                  target={'_blank'}
-                  className="h-12 mt-4 px-6 py-2 text-slate-200 hover:text-white bg-blue-700 rounded-full hover:bg-blue-800 transition flex items-center gap-2"
+                  href={`/list/movie/${encodeURIComponent(currentMedia.title)}/play`}
+                  className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
                 >
                   <svg
                     xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 28.57 20"
-                    className="size-6 inline"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="size-6"
                   >
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28.57 20">
-                      <path
-                        fill="red"
-                        d="M27.973 3.123A3.578 3.578 0 0 0 25.447.597C23.22 0 14.285 0 14.285 0S5.35 0 3.123.597A3.578 3.578 0 0 0 .597 3.123C0 5.35 0 10 0 10s0 4.65.597 6.877a3.578 3.578 0 0 0 2.526 2.526C5.35 20 14.285 20 14.285 20s8.935 0 11.162-.597a3.578 3.578 0 0 0 2.526-2.526C28.57 14.65 28.57 10 28.57 10s-.002-4.65-.597-6.877Z"
-                      />
-                      <path fill="#fff" d="M11.425 14.285 18.848 10l-7.423-4.285v8.57Z" />
-                    </svg>
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z"
+                    />
                   </svg>
-                  <span className="hidden sm:inline">
-                    Trailer
-                  </span>
+                  <span className="hidden sm:inline">Watch Now</span>
                 </Link>
-              ) : null}
-            </div>
+                {currentMedia?.metadata?.trailer_url ? (
+                  <Link
+                    href={currentMedia.metadata.trailer_url}
+                    target={'_blank'}
+                    className="h-12 mt-4 px-6 py-2 text-slate-200 hover:text-white bg-blue-700 rounded-full hover:bg-blue-800 transition flex items-center gap-2"
+                  >
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      viewBox="0 0 28.57 20"
+                      className="size-6 inline"
+                    >
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28.57 20">
+                        <path
+                          fill="red"
+                          d="M27.973 3.123A3.578 3.578 0 0 0 25.447.597C23.22 0 14.285 0 14.285 0S5.35 0 3.123.597A3.578 3.578 0 0 0 .597 3.123C0 5.35 0 10 0 10s0 4.65.597 6.877a3.578 3.578 0 0 0 2.526 2.526C5.35 20 14.285 20 14.285 20s8.935 0 11.162-.597a3.578 3.578 0 0 0 2.526-2.526C28.57 14.65 28.57 10 28.57 10s-.002-4.65-.597-6.877Z"
+                        />
+                        <path fill="#fff" d="M11.425 14.285 18.848 10l-7.423-4.285v8.57Z" />
+                      </svg>
+                    </svg>
+                    <span className="hidden sm:inline">Trailer</span>
+                  </Link>
+                ) : null}
+
+                {/* Watchlist Button - Icon only */}
+                <Suspense
+                  fallback={
+                    <div className="h-12 mt-4 px-3 py-2 bg-blue-700 rounded-full inline-flex items-center justify-center">
+                      <HeartIcon className="w-5 h-5 text-white opacity-20" />
+                      <div className='absolute'><LoadingDots dotClasses="h-[0.3rem] w-[0.3rem]" color="bg-gray-200" /></div>
+                    </div>
+                  }
+                >
+                  <WatchlistButton
+                    mediaId={currentMedia.id}
+                    tmdbId={currentMedia.metadata?.id}
+                    mediaType="movie"
+                    title={currentMedia.title}
+                    variant="icon-only"
+                    className="h-12 mt-4 px-3 py-2 text-slate-200 hover:text-white bg-blue-700 rounded-full hover:bg-blue-800"
+                    onStatusChange={(isInWatchlist, item) => {
+                      console.log('Watchlist status changed:', {
+                        isInWatchlist,
+                        item,
+                        media: currentMedia.title,
+                      })
+                    }}
+                  />
+                </Suspense>
+              </div>
               <div>
                 <Link
                   href={`/list/movie/${encodeURIComponent(currentMedia.title)}`}
                   className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
                 >
                   <InformationCircleIcon className="size-6 mr-0 sm:mr-2" />
-                  <span className="hidden sm:inline">
-                    View Details
-                  </span>
+                  <span className="hidden sm:inline">View Details</span>
                 </Link>
               </div>
             </div>
@@ -191,10 +213,7 @@ function areEqual(prevProps, nextProps) {
   return (
     prevProps.mediaList === nextProps.mediaList &&
     prevProps.currentMediaIndex === nextProps.currentMediaIndex &&
-    prevProps.showVideo === nextProps.showVideo &&
-    prevProps.onImageLoad === nextProps.onImageLoad &&
-    prevProps.onVideoReady === nextProps.onVideoReady &&
-    prevProps.handleVideoEnd === nextProps.handleVideoEnd
+    prevProps.showVideo === nextProps.showVideo
   )
 }
 

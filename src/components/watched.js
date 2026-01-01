@@ -1,6 +1,6 @@
 'use client'
 
-import { cache, useEffect, useState } from 'react'
+import { cache, useMemo } from 'react'
 
 export function getWatchedTime(videoURL) {
   if (typeof window === 'undefined') return 0
@@ -41,16 +41,14 @@ export function formatWatchedTime(watchedSeconds, totalRuntime) {
 }
 
 export function TotalRuntime({ length, metadata, videoURL, classNames }) {
-  const [displayTime, setDisplayTime] = useState('Loading...')
-
-  useEffect(() => {
+  const displayTime = useMemo(() => {
     const watchedTimeInSeconds = getWatchedTime(videoURL)
     const formattedDisplayTime = formatWatchedTime(
       watchedTimeInSeconds,
       length ?? metadata?.runtime ?? 'Unknown'
     )
-    setDisplayTime(formattedDisplayTime)
-  }, [metadata, videoURL])
+    return formattedDisplayTime
+  }, [length, metadata, videoURL])
 
   return <span className={classNames}>{displayTime}</span>
 }

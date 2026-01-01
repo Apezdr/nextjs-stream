@@ -283,7 +283,7 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
         isCurrentServerHighestPriorityForField(
           fieldAvailability,
           MediaType.TV,
-          show.title,
+          show.originalTitle,
           field,
           serverConfig
         )
@@ -335,7 +335,7 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
         const isHighestPriority = isCurrentServerHighestPriorityForField(
           fieldAvailability,
           MediaType.TV,
-          show.title,
+          show.originalTitle,
           path,
           serverConfig
         )
@@ -374,7 +374,7 @@ export function gatherSeasonVideoInfoForAllServers(show, season, fileServers, fi
           const isHighestPriority = isCurrentServerHighestPriorityForField(
             fieldAvailability,
             MediaType.TV,
-            show.title,
+            show.originalTitle,
             fieldPath,
             serverConfig
           );

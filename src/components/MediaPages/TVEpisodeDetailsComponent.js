@@ -1,6 +1,17 @@
-import VirtualizedCastGrid from '@components/MediaScroll/VirtualizedCastGrid'
-import { classNames, getFullImageUrl } from '@src/utils'
+import { classNames } from '@src/utils'
 import Link from 'next/link'
+import { Suspense } from 'react'
+import ViewCount from './ViewCount'
+import Image from 'next/image'
+import dynamic from 'next/dynamic'
+import RetryImage from '@components/RetryImage'
+import WatchlistButton from '@components/WatchlistButton'
+
+// Lazy load the cast grid section which can be heavy
+const CastSection = dynamic(() => 
+  import('./CastSection').then(mod => ({ default: props => <mod.default {...props} /> })),
+  { ssr: true, loading: () => <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse" /> }
+)
 
 const TVEpisodeDetailsComponent = ({ media }) => {
   if (!media) {
@@ -19,10 +30,12 @@ const TVEpisodeDetailsComponent = ({ media }) => {
     name = media.metadata.name
     guest_stars = media.metadata.guest_stars
   }
-  const { title, backdrop, logo, hdr, episodeNumber, seasonNumber, cast, length } = media
+  const { title, showTitle, backdrop, logo, hdr, episodeNumber, seasonNumber, cast, duration } = media
 
   const thumbnail = media.thumbnail
   const posterURL = media.posterURL
+
+  let blurhash = null
 
   const convertToLocaleTime = (minutes) => {
     const hours = Math.floor(minutes / 60);
@@ -31,26 +44,64 @@ const TVEpisodeDetailsComponent = ({ media }) => {
     return `${hours}h ${remainingMinutes}m ${seconds}s`;
   }
 
-  const calculatedRuntime = length ? convertToLocaleTime(length / 60000) : runtime ? convertToLocaleTime(runtime) : null;
+  const calculatedRuntime = duration ? convertToLocaleTime(duration / 60000) : runtime ? convertToLocaleTime(runtime) : null;
+
+  if (backdrop) {
+    blurhash = media.backdropBlurhash
+  } else if (thumbnail) {
+    blurhash = media.thumbnailBlurhash
+  } else if (posterURL) {
+    blurhash = media.posterBlurhash
+  }
 
   return (
     <div className="max-w-4xl mx-auto p-4">
       <div className="flex flex-col gap-2">
         <div>
           <div className="relative">
-            <img
-              src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-              alt={`${title} backdrop`}
-              className="w-full h-64 object-cover rounded-lg shadow-md"
-            />
-            {logo && (
-              <div className="absolute top-4 left-4">
-                <img src={logo} alt={`${title} logo`} className="w-32 h-auto" />
-              </div>
-            )}
+            <Suspense fallback={<div className="w-full h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
+              {blurhash ?
+                <RetryImage
+                  src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
+                  alt={`${title} backdrop`}
+                  quality={100}
+                  width={1200}
+                  height={256}
+                  placeholder="blur"
+                  blurDataURL={`data:image/png;base64,${blurhash}`}
+                  className="w-full h-64 object-cover rounded-lg shadow-md"
+                  priority={false}
+                />
+                :
+                <RetryImage
+                  src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
+                  alt={`${title} backdrop`}
+                  quality={100}
+                  width={1200}
+                  height={256}
+                  placeholder="blur"
+                  blurDataURL={`data:image/png;base64,${blurhash}`}
+                  className="w-full h-64 object-cover rounded-lg shadow-md"
+                  priority={false}
+                />
+              }
+              {logo && (
+                <div className="absolute top-4 left-4">
+                  <RetryImage
+                    src={logo}
+                    alt={`${showTitle} logo`}
+                    quality={100}
+                    width={128}
+                    height={40}
+                    className="w-32 h-auto"
+                    priority={true}
+                  />
+                </div>
+              )}
+            </Suspense>
           </div>
           <div className="mt-4">
-            <Link href={`/list/tv/${title}/${seasonNumber}`} className="self-center">
+            <Link href={`/list/tv/${showTitle}/${seasonNumber}`} className="self-center">
               <button
                 type="button"
                 className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 mx-auto"
@@ -75,6 +126,11 @@ const TVEpisodeDetailsComponent = ({ media }) => {
             <div className="flex flex-row w-full gap-2">
               <h1 className="text-3xl font-bold">{name ?? title}</h1>
               <strong>S{seasonNumber}E{episodeNumber}</strong>
+              <Suspense fallback={null}>
+                {media?.normalizedVideoId ? (
+                  <ViewCount normalizedVideoId={media.normalizedVideoId} />
+                ) : null}
+              </Suspense>
             </div>
             <p className="text-gray-300 italic">{tagline}</p>
             {air_date ? (
@@ -112,7 +168,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
                     </div> */}
           <div className='flex flex-row justify-evenly'>
           <Link
-            href={`/list/tv/${title}/${seasonNumber}/${episodeNumber}/play`}
+            href={`/list/tv/${showTitle}/${seasonNumber}/${episodeNumber}/play`}
             className={classNames(
               'relative inline-flex flex-row items-center gap-2',
               'opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'
@@ -154,6 +210,16 @@ const TVEpisodeDetailsComponent = ({ media }) => {
             Trailer
           </Link>
           ) : null}
+          {/* Add show to watchlist button for episodes */}
+          {showTitle && (
+            <WatchlistButton
+              mediaId={media.showMediaId}
+              tmdbId={media.showTmdbId}
+              mediaType="tv"
+              title={showTitle}
+              className="h-12 mt-4 px-4 py-2 rounded-md"
+            />
+          )}
           </div>
         </div>
         {(cast && cast.length || guest_stars && guest_stars.length) ? (
@@ -161,16 +227,14 @@ const TVEpisodeDetailsComponent = ({ media }) => {
         ) : null}
         <div className='flex flex-col gap-8'>
           {guest_stars && guest_stars.length > 0 ? (
-            <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg"> {/* Ensure a fixed height for virtualization */}
-                <h4 className="text-2xl text-black font-semibold mb-4">Guest Stars</h4>
-                <VirtualizedCastGrid cast={guest_stars} />
-            </div>
+            <Suspense fallback={<div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse"></div>}>
+              <CastSection cast={guest_stars} title="Guest Stars" />
+            </Suspense>
           ): null}
           {cast && cast.length > 0 ? (
-            <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg"> {/* Ensure a fixed height for virtualization */}
-                <h4 className="text-2xl text-black font-semibold mb-4">Cast</h4>
-                <VirtualizedCastGrid cast={cast} />
-            </div>
+            <Suspense fallback={<div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse"></div>}>
+              <CastSection cast={cast} />
+            </Suspense>
           ): null}
         </div>
       </div>

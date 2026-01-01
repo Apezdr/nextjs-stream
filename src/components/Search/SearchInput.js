@@ -1,5 +1,5 @@
 'use client'
-import { lazy, Suspense, useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState, useEffectEvent, useRef } from 'react'
 import { MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 import debounce from 'lodash.debounce'
@@ -13,27 +13,52 @@ export default function SearchInput() {
   const [recentlyAddedMedia, setRecentlyAddedMedia] = useState([])
   const [open, setOpen] = useState(false)
 
-  // Function to fetch search results, debounced using lodash
-  const fetchSearchResults = debounce(async (query) => {
+  // Ref to hold abort controller for cleanup
+  const abortControllerRef = useRef(null)
+  // Ref to hold debounced function
+  const debouncedFetchRef = useRef(null)
+
+  // React 19.2 useEffectEvent: Extract the "event" logic that uses latest state
+  // This function always sees the latest state but doesn't trigger re-renders
+  const onSearchQuery = useEffectEvent(async (searchQuery) => {
+    // Cancel any ongoing request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+
+    // Create new abort controller for this request
+    abortControllerRef.current = new AbortController()
+    
     setIsLoading(true)
     try {
       const response = await fetch('/api/authenticated/search', {
         method: 'POST',
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ query: searchQuery }),
         headers: { 'Content-Type': 'application/json' },
+        signal: abortControllerRef.current.signal
       })
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`)
+      }
+      
       const data = await response.json()
-      setSearchResults(data.results)
+      setSearchResults(data.results || [])
     } catch (error) {
-      console.error('Error fetching data:', error)
+      // Ignore abort errors (they're expected when canceling)
+      if (error.name !== 'AbortError') {
+        console.error('Error fetching search data:', error)
+      }
     } finally {
       setIsLoading(false)
     }
-  }, 600)
+  })
 
-  // Fetch recently added media
+  // Fetch recently added media on mount
   useEffect(() => {
+    const maxAttempts = 3
     let attempts = 0
+    
     const fetchRecentlyAddedMedia = async () => {
       setIsLoading(true)
       try {
@@ -42,36 +67,55 @@ export default function SearchInput() {
           body: JSON.stringify({ query: '' }),
           headers: { 'Content-Type': 'application/json' },
         })
+        
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`)
+        }
+        
         const data = await response.json()
-        setRecentlyAddedMedia(data.results)
+        setRecentlyAddedMedia(data.results || [])
         attempts = 0
       } catch (error) {
         console.error('Error fetching recently added media:', error)
         attempts++
-        if (attempts <= 3) {
-          fetchRecentlyAddedMedia()
+        if (attempts < maxAttempts) {
+          // Retry with exponential backoff
+          setTimeout(() => fetchRecentlyAddedMedia(), Math.min(1000 * Math.pow(2, attempts), 5000))
         }
       } finally {
         setIsLoading(false)
       }
     }
+    
     fetchRecentlyAddedMedia()
   }, [])
 
-  // Trigger debounced search function when query changes
+  // Initialize debounced function once - it calls the Effect Event
+  useEffect(() => {
+    debouncedFetchRef.current = debounce((searchQuery) => {
+      onSearchQuery(searchQuery)
+    }, 600)
+    
+    return () => {
+      // Cancel any pending debounced calls
+      debouncedFetchRef.current?.cancel()
+      // Abort any ongoing fetch
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
+    }
+  }, []) // onSearchQuery is from useEffectEvent, stable reference
+
+  // Trigger search when query changes
   useEffect(() => {
     if (query) {
-      fetchSearchResults(query)
+      debouncedFetchRef.current?.(query)
     } else {
       setSearchResults(recentlyAddedMedia)
     }
+  }, [query, recentlyAddedMedia]) // ✅ Only reactive values, not functions
 
-    // Cleanup function to cancel debounced calls on unmount
-    return () => {
-      fetchSearchResults.cancel()
-    }
-  }, [query, recentlyAddedMedia])
-
+  // Reset query when modal closes
   useEffect(() => {
     if (!open) {
       setQuery('')

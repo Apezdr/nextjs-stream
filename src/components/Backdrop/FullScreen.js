@@ -29,12 +29,12 @@ export default function FullScreenBackdrop({ media }) {
       key={highResImageUrl}
       variants={backdropVariants}
       transition={{ duration: 0.5 }}
-      className="fixed top-0 left-0 h-screen w-full overflow-hidden z-[-1]"
+      className="fixed top-0 left-0 h-full w-full overflow-hidden z-[-1]"
       id="backdrop"
     >
       <div
         id="backdrop-cover"
-        className="w-screen h-screen backdrop-blur-sm absolute top-0 left-0 z-[-1]"
+        className="w-full h-full backdrop-blur-sm absolute top-0 left-0 z-[-1]"
       />
       <RetryImage
         src={highResImageUrl}

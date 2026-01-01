@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import useWatchedWidth from './useWatchedWidth'
 import Image from 'next/image'
 import { TotalRuntime } from './watched'
@@ -7,15 +7,16 @@ import { ArrowPathIcon } from '@heroicons/react/20/solid'
 import RetryImage from './RetryImage'
 
 export default function TVShowThumbnail({ episode, metadata }) {
-  const [isClient, setIsClient] = useState(false)
+  // Use useSyncExternalStore for SSR-safe client detection
+  const isClient = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  )
   const watchedWidth = useWatchedWidth(metadata, episode)
 
   const baseURL = 'https://image.tmdb.org/t/p/'
   const imageSize = 'w780'
-
-  useEffect(() => {
-    setIsClient(true)
-  }, [])
 
   const stillURL = episode.thumbnail
     ? episode.thumbnail
@@ -23,7 +24,8 @@ export default function TVShowThumbnail({ episode, metadata }) {
       ? `${baseURL}${imageSize}${metadata.still_path}`
       : '/sorry-image-not-available.jpg'
 
-  const blurDataURL = episode.thumbnailBlurhash || false
+  // Check for blurhash in both new and legacy structures
+  const blurDataURL = episode.blurhash?.thumbnail || episode.thumbnailBlurhash || false
   const clipURL = episode?.clipURL || false
 
   return (
@@ -37,9 +39,9 @@ export default function TVShowThumbnail({ episode, metadata }) {
           <span>Restart</span>
         </div>
       )}
-      {episode.length && (
+      {episode.duration && (
         <TotalRuntime
-          length={episode.length ?? episode.metadata.runtime * 60000 ?? 0}
+          length={episode.duration ?? (episode.metadata?.runtime ? episode.metadata.runtime * 60000 : 0)}
           metadata={episode.metadata}
           videoURL={episode.videoURL}
           classNames="absolute bottom-0 w-full text-center z-[10] text-[0.55rem]"
@@ -51,7 +53,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
           width={390}
           height={217}
           alt={metadata ? metadata.name : 'Episode Image'}
-          className="object-cover group-hover:opacity-75 max-w-sm rounded-t-lg max-h-[13.3rem]"
+          className="mx-auto object-cover group-hover:opacity-75 max-w-md rounded-t-lg max-h-[13.3rem]"
           loading="lazy"
           placeholder="blur"
           blurDataURL={`data:image/png;base64,${blurDataURL}`}
@@ -62,7 +64,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
           width={390}
           height={217}
           alt={metadata ? metadata.name : 'Episode Image'}
-          className="object-cover group-hover:opacity-75 max-w-sm rounded-t-lg max-h-[13.3rem]"
+          className="mx-auto object-cover group-hover:opacity-75 max-w-md rounded-t-lg max-h-[13.3rem]"
         />
       )}
     </div>

@@ -1,6 +1,7 @@
 'use client'
 import './nav.css'
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { Disclosure, Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react'
 import { Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline'
@@ -12,6 +13,12 @@ import useScroll from './useScroll'
 
 const SearchInput = lazy(() => import('@components/Search/SearchInput'))
 const SignOutButton = lazy(() => import('@components/SignOutButton'))
+const NotificationBell = lazy(() => import('@components/notifications/NotificationBell'))
+
+// Invisible fallbacks for immediate rendering
+const SearchFallback = () => <div className="w-full max-w-lg lg:max-w-xs h-10 bg-transparent" />
+const SignOutFallback = () => <div className="block w-full px-4 py-2 text-sm text-transparent">Sign out</div>
+const NotificationFallback = () => <div className="w-10 h-10 bg-transparent" />
 
 const isMediaPageFunc = (pathname) => {
   const moviePattern = /^\/list\/movie\/[^/]+\/play$/
@@ -90,6 +97,26 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
         </svg>
       ),
     },
+    {
+      href: '/watchlist',
+      label: 'My List',
+      icon: (
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          fill="none"
+          viewBox="0 0 24 24"
+          strokeWidth={1.5}
+          stroke="currentColor"
+          className="h-6 w-6"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z"
+          />
+        </svg>
+      ),
+    },
     // ... other nav items
     ...adminNavItems,
   ]
@@ -156,27 +183,62 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                   </div>
                   <div className="flex flex-1 items-center justify-start px-2 lg:ml-6 lg:justify-end">
                     <div className="w-full max-w-lg lg:max-w-xs">
-                      <SearchInput />
+                      <Suspense fallback={<SearchFallback />}>
+                        <SearchInput />
+                      </Suspense>
                     </div>
                   </div>
                   <div className="mr-2 sm:ml-4 sm:mr-0 flex items-center">
+                    {/* Notification Bell */}
+                    <Suspense fallback={<NotificationFallback />}>
+                      <NotificationBell />
+                    </Suspense>
+                    
                     {/* Profile dropdown */}
                     <Menu as="div" className="relative ml-4 flex-shrink-0 text-slate-700">
                       <div>
                         <MenuButton className="relative flex rounded-full bg-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2">
                           <span className="sr-only">Open user menu</span>
-                          <img alt="" src={profileImage} className="h-8 w-8 rounded-full" />
+                          <Image
+                            alt="User profile"
+                            src={profileImage}
+                            className="h-8 w-8 rounded-full"
+                            width={32}
+                            height={32}
+                          />
                         </MenuButton>
                       </div>
                       <Suspense>
-                        <MenuItems className="absolute right-0 z-[12] mt-2 w-48 origin-top-right rounded-md bg-white hover:bg-gray-400 py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
+                        <MenuItems className="absolute right-0 z-[12] mt-2 w-48 origin-top-right rounded-md bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
                           <MenuItem>
                             {({ active }) => (
-                              <SignOutButton
-                                signoutProps={{ callbackUrl: '/' }}
-                                fontcolorClass={null}
-                                className={`block w-full px-4 py-2 text-sm ${active ? 'bg-gray-100' : ''}`}
-                              />
+                              <Link
+                                href="/account/delete"
+                                className={`block px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${active ? 'bg-gray-100' : ''}`}
+                              >
+                                Account Settings
+                              </Link>
+                            )}
+                          </MenuItem>
+                          <MenuItem>
+                            {({ active }) => (
+                              <Link
+                                href="/privacy"
+                                className={`block px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${active ? 'bg-gray-100' : ''}`}
+                              >
+                                Privacy Policy
+                              </Link>
+                            )}
+                          </MenuItem>
+                          <MenuItem>
+                            {({ active }) => (
+                              <Suspense fallback={<SignOutFallback />}>
+                                <SignOutButton
+                                  signoutProps={{ callbackUrl: '/' }}
+                                  fontcolorClass={null}
+                                  className={`block w-full px-4 py-2 text-sm hover:bg-gray-400 ${active ? 'bg-gray-100' : ''}`}
+                                />
+                              </Suspense>
                             )}
                           </MenuItem>
                         </MenuItems>

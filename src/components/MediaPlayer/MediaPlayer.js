@@ -15,13 +15,34 @@ import Media_Poster from '../MediaPoster'
 import VolumeRegulator from './VolumeRegulator'
 import { getServer } from '@src/utils/config'
 import { Suspense } from 'react'
+import WithPlaybackCoordinator from '@components/built-in/WithPlaybackCoordinator'
+
 const inconsolata = Inconsolata({ subsets: ['latin'] })
 
-async function validateVideoURL(url) {
+async function validateVideoURL(url, updateValidationStatus = null) {
   try {
     const response = await fetch(url, { method: 'HEAD' })
-    return response.ok
+    const isValid = response.ok
+    
+    // If validation fails and we have a callback, update the validation status
+    if (!isValid && updateValidationStatus) {
+      try {
+        await updateValidationStatus(url, false)
+      } catch (error) {
+        console.error('Failed to update validation status:', error)
+      }
+    }
+    
+    return isValid
   } catch (error) {
+    // If validation fails and we have a callback, update the validation status
+    if (updateValidationStatus) {
+      try {
+        await updateValidationStatus(url, false)
+      } catch (error) {
+        console.error('Failed to update validation status:', error)
+      }
+    }
     return false
   }
 }
@@ -31,13 +52,48 @@ async function VideoPlayer({
   mediaTitle,
   mediaType,
   goBack,
-  searchParams = { clipStartTime: false, clipEndTime: false },
+  searchParams = { clipStartTime: false, clipEndTime: false, start: false },
   shouldValidateURL = true,
   session,
 }) {
+  // Check if user is an admin
+  const isAdmin = session?.user?.admin === true
   const { videoURL, metadata } = media
+  
+  // Conditionally import the SubtitleEditor component only for admin users
+  let SubtitleEditor = null;
+  if (isAdmin) {
+    try {
+      const EditorModule = await import('@components/Admin/SubtitleEditor/SubtitleEditor');
+      SubtitleEditor = EditorModule.default;
+    } catch (error) {
+      console.error('Error loading SubtitleEditor:', error);
+    }
+  }
 
-  const isValidVideoURL = shouldValidateURL ? await validateVideoURL(videoURL) : true
+  // Function to update validation status in PlaybackStatus
+  const updateValidationStatus = async (videoId, isValid) => {
+    try {
+      const response = await fetch(buildURL('/api/authenticated/sync/updateValidationStatus'), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          videoId,
+          isValid
+        })
+      })
+      
+      if (!response.ok) {
+        console.error('Failed to update validation status:', response.statusText)
+      }
+    } catch (error) {
+      console.error('Error updating validation status:', error)
+    }
+  }
+
+  const isValidVideoURL = shouldValidateURL ? await validateVideoURL(videoURL, updateValidationStatus) : true
   if (!isValidVideoURL) {
     return (
       <div className="w-96">
@@ -67,7 +123,10 @@ async function VideoPlayer({
     )
   }
 
-  let { clipStartTime, clipEndTime } = searchParams
+  // clipStartTime and clipEndTime are optional query parameters
+  // that can be used to specify a time range for the video playback
+  // start is the time in seconds to start playback in the video
+  let { clipStartTime, clipEndTime, start = null } = searchParams
 
   if (clipStartTime) {
     clipStartTime = parseInt(clipStartTime)
@@ -78,7 +137,7 @@ async function VideoPlayer({
   // Adjust metadata keys based on mediaType
   let title, released, overview, actors, episode_number, season_number, rating
   //
-  let hasNextEpisode, nextEpisodeThumbnail, nextEpisodeTitle, nextEpisodeNumber
+  let hasNextEpisode, nextEpisodeThumbnail, nextEpisodeThumbnailBlurhash, nextEpisodeTitle, nextEpisodeNumber
   //
   let hasCaptions = media?.captionURLs ? true : false
   let hasChapters = media?.chapterURL ? true : false
@@ -100,16 +159,17 @@ async function VideoPlayer({
   const nodeServerUrl = serverConfig.syncEndpoint
 
   if (metadata && mediaType === 'tv') {
-    title = metadata.name || metadata.title // Use 'name' for TV show episodes, 'title' for general metadata
+    title = metadata.name || metadata.title || media.title // Use 'name' for TV show episodes, 'title' for general metadata
     released = metadata.air_date // Use 'air_date' for TV show episodes
     overview = metadata.overview // Use 'overview' for TV show episodes
-    episode_number = metadata.episode_number
-    season_number = metadata.season_number
+    episode_number = metadata.episode_number ?? media?.episodeNumber
+    season_number = metadata.season_number ?? media?.seasonNumber
     hasNextEpisode = media.hasNextEpisode
     nextEpisodeThumbnail = media.nextEpisodeThumbnail
+    nextEpisodeThumbnailBlurhash = media.nextEpisodeThumbnailBlurhash
     nextEpisodeTitle = media.nextEpisodeTitle
     nextEpisodeNumber = media.nextEpisodeNumber
-    mediaLength = media.length
+    mediaLength = media.duration
     poster = metadata.high_quality_poster
     if (media.logo) {
       logo = media.logo
@@ -122,7 +182,7 @@ async function VideoPlayer({
         mediaTitle
       )}&type=${mediaType}&season=${season_number}&episode=${episode_number}`
       chapterThumbnailURL = `${nodeServerUrl}/frame/tv/${encodeURIComponent(
-        mediaTitle
+        media.originalTitle ?? mediaTitle
       )}/${season_number}/${episode_number}/`
     }
     thumbnailURL = `/api/authenticated/thumbnails?name=${encodeURIComponent(
@@ -141,6 +201,7 @@ async function VideoPlayer({
       season_number,
       hasNextEpisode,
       nextEpisodeThumbnail,
+      nextEpisodeThumbnailBlurhash,
       nextEpisodeTitle,
       nextEpisodeNumber,
       mediaLength,
@@ -156,7 +217,7 @@ async function VideoPlayer({
         ? 'N/A'
         : metadata.release_date?.toLocaleDateString()
     overview = metadata.overview
-    mediaLength = media.length
+    mediaLength = media.duration
     poster = media.posterURL ?? getFullImageUrl(metadata.poster_path)
     if (media.logo) {
       logo = media.logo
@@ -188,9 +249,11 @@ async function VideoPlayer({
     }
   }
 
-  const mediaPlayerTitleLabel = `${decodeURIComponent(mediaTitle)} ${
+  const mediaPlayerTitleLabel = `${decodeURIComponent(mediaTitle ?? '')} ${
     season_number ? `Season ${season_number} ` : ''
-  }${episode_number ? `- Episode ${episode_number} - ` : ''}${mediaType !== 'movie' ? title : ''}`
+  }${episode_number ? `- Episode ${episode_number} - ` : ''}${
+    mediaType !== 'movie' ? (title ?? '') : ''
+  }`
 
   let captions = media?.captionURLs ? media?.captionURLs : null
 
@@ -238,7 +301,22 @@ async function VideoPlayer({
         <MediaProvider>
           <VolumeRegulator />
           {poster ? <MediaPoster poster={poster} title={title} /> : null}
-          {videoURL ? <Suspense><WithPlaybackTracker videoURL={videoURL} /></Suspense> : null}
+          {videoURL ? (
+            <Suspense>
+              <WithPlaybackTracker
+                videoURL={videoURL}
+                start={start}
+                mediaMetadata={{
+                  mediaType: mediaType,
+                  mediaId: media._id,
+                  showId: mediaType === 'tv' ? media.showId : undefined,
+                  seasonNumber: mediaType === 'tv' ? season_number : undefined,
+                  episodeNumber: mediaType === 'tv' ? episode_number : undefined
+                }}
+              />
+            </Suspense>
+          ) : null}
+          <Suspense fallback={null}><WithPlaybackCoordinator /></Suspense>
           {chapters ? <Track kind="chapters" src={chapters} lang="en-US" default /> : null}
           {captions
             ? Object.entries(captions).map(([language, captionObject], index) => {
@@ -250,7 +328,6 @@ async function VideoPlayer({
                     label={language}
                     lang={captionObject.srcLang}
                     default={language.indexOf('English') > -1}
-                    className={inconsolata.className}
                   />
                 )
               })
@@ -270,6 +347,7 @@ async function VideoPlayer({
             season_number: season_number,
             nextEpisodeNumber: nextEpisodeNumber,
             nextEpisodeThumbnail: nextEpisodeThumbnail,
+            nextEpisodeThumbnailBlurhash: nextEpisodeThumbnailBlurhash,
             nextEpisodeTitle: nextEpisodeTitle,
             hasNextEpisode: hasNextEpisode,
             mediaLength: mediaLength,
@@ -277,6 +355,15 @@ async function VideoPlayer({
           chapterThumbnailURL={chapterThumbnailURL}
           hdrVal={hdr}
           dimsVal={media.dimensions}
+          isAdmin={isAdmin}
+          adminProps={isAdmin ? {
+            SubtitleEditor,
+            session,
+            mediaType,
+            mediaTitle,
+            season_number,
+            episode_number
+          } : null}
         />
       </MediaPlayer>
     </Suspense>

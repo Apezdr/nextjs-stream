@@ -206,7 +206,7 @@ export function gatherSeasonCaptionsForAllServers(show, season, fileServers, fie
         const isHighestPriority = isCurrentServerHighestPriorityForField(
           fieldAvailability,
           MediaType.TV,
-          show.title,
+          show.originalTitle,
           `seasons.Season ${season.seasonNumber}.episodes.${episodeFileName}.subtitles.${lang}.url`,
           serverConfig
         );

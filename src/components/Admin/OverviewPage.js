@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import useSWR from 'swr'
 import ListRecords from './ListRecords'
 import MovieModalPopup from './MovieModalPopup'
 import TVModalPopup from './TVModalPopup'
@@ -10,15 +12,18 @@ import SyncMediaPopup from './SyncMediaPopup'
 import axios from 'axios'
 import Link from 'next/link'
 import RecentlyWatched from './RecentlyWatchedList'
-import { buildURL } from '@src/utils'
-import DownloadStatus from './Integrations/SABNZBDqueue'
-import TdarrProgressBar from './Integrations/TdarrQueue'
-import RadarrQueue from './Integrations/RadarrQueue'
-import SonarrQueue from './Integrations/SonarrQueue'
-import { PauseCircleIcon } from '@heroicons/react/20/solid'
+import EnhancedRecentlyWatched from './EnhancedRecentlyWatched'
+import EnhancedQueueDashboard from './EnhancedQueueDashboard'
+import CompactUserManagement from './CompactUserManagement'
+import { buildURL, fetcher } from '@src/utils'
 import WipeDbButton from '@src/app/(styled)/admin/WipeDBButton'
-import { ServerStats } from './Stats/ServerStats'
-import { ServerProcesses } from './Stats/ServerProcesses'
+import EnhancedServerStats from './Stats/EnhancedServerStats'
+import EnhancedServerProcesses from './Stats/EnhancedServerProcesses'
+import { QueueDashboard } from './Integrations';
+import { TMDBServerStatus } from './TMDBServerStatus';
+import EnhancedTMDBStatus from './EnhancedTMDBStatus'
+import DashboardHeader from './DashboardHeader'
+import { MaterialCard, MaterialCardHeader, MaterialCardContent, MaterialButton } from './BaseComponents'
 
 const processLastSyncTimeData = (lastSyncTimeData) => {
   const lastSyncTime =
@@ -27,25 +32,11 @@ const processLastSyncTimeData = (lastSyncTimeData) => {
         ? lastSyncTimeData.lastSyncTime
         : lastSyncTimeData
       : lastSyncTimeData
+  
+  // Return the raw timestamp for DashboardHeader to process
+  // DashboardHeader will handle the display formatting and categorization
   if (!isNaN(Date.parse(lastSyncTime)) && lastSyncTime) {
-    const lastSyncDate = new Date(lastSyncTime)
-    const formattedTime = isSameDay(new Date(), lastSyncDate)
-      ? `Today at ${lastSyncDate.toLocaleString('en-US', {
-          hour: 'numeric',
-          minute: 'numeric',
-          second: 'numeric',
-          hour12: true,
-        })}`
-      : lastSyncDate.toLocaleString('en-US', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-          hour: 'numeric',
-          minute: 'numeric',
-          second: 'numeric',
-          hour12: true,
-        })
-    return String(formattedTime)
+    return lastSyncTime
   } else {
     return "Sync hasn't been run yet"
   }
@@ -57,6 +48,7 @@ export default function AdminOverviewPage({
   _lastSyncTime,
   organizrURL,
 }) {
+  const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [isSyncOpen, setIsSyncOpen] = useState(false)
   const [isAdding, setIsAdding] = useState(null)
@@ -71,182 +63,133 @@ export default function AdminOverviewPage({
   const [tdarrQueue, settdarrQueue] = useState(null)
   const [unsupportedQueues, setUnsupportedQueues] = useState([]) // Optional: To track unsupported queues
 
-  // Refs to store interval IDs
-  const sabnzbdIntervalRef = useRef(null)
-  const radarrIntervalRef = useRef(null)
-  const sonarrIntervalRef = useRef(null)
-  const tdarrIntervalRef = useRef(null)
-  const dataIntervalRef = useRef(null)
-  const recentlyWatchedIntervalRef = useRef(null)
+  // Track which queues are supported (used to disable SWR for unsupported queues)
+  const [sabnzbdSupported, setSabnzbdSupported] = useState(true)
+  const [radarrSupported, setRadarrSupported] = useState(true)
+  const [sonarrSupported, setSonarrSupported] = useState(true)
+  const [tdarrSupported, setTdarrSupported] = useState(true)
+
+  // Queue fetcher that handles 501 responses
+  const queueFetcher = async (url) => {
+    const response = await fetch(url)
+    if (response.status === 501) {
+      return { __unsupported: true }
+    }
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    return response.json()
+  }
+
+  // SWR hooks for data fetching
+  const { data: lastSyncData } = useSWR(
+    buildURL('/api/authenticated/admin/lastSynced'),
+    fetcher,
+    { refreshInterval: 15000 }
+  )
+
+  const { data: recentlyWatchedData } = useSWR(
+    buildURL('/api/authenticated/admin/recently-watched'),
+    fetcher,
+    { refreshInterval: 2000 }
+  )
+
+  const { data: sabnzbdData } = useSWR(
+    sabnzbdSupported ? buildURL('/api/authenticated/admin/sabnzbd') : null,
+    queueFetcher,
+    { refreshInterval: 2000 }
+  )
+
+  const { data: radarrData } = useSWR(
+    radarrSupported ? buildURL('/api/authenticated/admin/radarr') : null,
+    queueFetcher,
+    { refreshInterval: 2000 }
+  )
+
+  const { data: sonarrData } = useSWR(
+    sonarrSupported ? buildURL('/api/authenticated/admin/sonarr') : null,
+    queueFetcher,
+    { refreshInterval: 2000 }
+  )
+
+  const { data: tdarrData } = useSWR(
+    tdarrSupported ? buildURL('/api/authenticated/admin/tdarr') : null,
+    queueFetcher,
+    { refreshInterval: 2000 }
+  )
 
   const updateRecord = (newData) => {
     setRecord((prevRecord) => ({ ...prevRecord, ...newData }))
   }
 
-  const setLastSync = (lastSync) => processLastSyncTimeData(lastSync)
+  const setLastSync = (lastSync) => {
+    const processedTime = processLastSyncTimeData(lastSync)
+    setLastSyncTime(processedTime)
+  }
 
   const action = record && record.action
 
-  const fetchRecentlyWatched = async () => {
-    const response = await fetch(buildURL(`/api/authenticated/admin/recently-watched`))
-    const data = await response.json()
-    return data
-  }
-
-  const fetchLastSyncTime = async () => {
-    const response = await fetch(buildURL(`/api/authenticated/admin/lastSynced`))
-    const data = await response.json()
-    return data
-  }
-
-  const fetchSABNZBDqueue = async () => {
-    return fetch(buildURL(`/api/authenticated/admin/sabnzbd`))
-  }
-
-  const fetchRadarrqueue = async () => {
-    return fetch(buildURL(`/api/authenticated/admin/radarr`))
-  }
-
-  const fetchSonarrqueue = async () => {
-    return fetch(buildURL(`/api/authenticated/admin/sonarr`))
-  }
-
-  const fetchTdarrqueue = async () => {
-    return fetch(buildURL(`/api/authenticated/admin/tdarr`))
-  }
+  // Map SWR data to component state
+  useEffect(() => {
+    if (lastSyncData) {
+      const formattedTime = processLastSyncTimeData(lastSyncData)
+      setLastSyncTime(formattedTime)
+    }
+  }, [lastSyncData])
 
   useEffect(() => {
-    // Function to fetch general data
-    const fetchData = async () => {
-      try {
-        const lastSyncTimeData = await fetchLastSyncTime()
-        const formattedTime = processLastSyncTimeData(lastSyncTimeData)
-        setLastSyncTime(formattedTime)
-      } catch (error) {
-        console.error('Error fetching data:', error)
-      }
+    if (recentlyWatchedData) {
+      setRecentlyWatched(recentlyWatchedData)
     }
+  }, [recentlyWatchedData])
 
-    // Function to fetch recently watched data
-    const fetchRecentlyWatchedData = async () => {
-      try {
-        const recentlyWatched = await fetchRecentlyWatched()
-        setRecentlyWatched(recentlyWatched)
-      } catch (error) {
-        console.error('Error fetching recently watched data:', error)
-      }
-    }
-
-    // Function to fetch SABNZBD queue
-    const fetchSABNZBDdata = async () => {
-      try {
-        const response = await fetchSABNZBDqueue()
-        if (response.status === 501) { // 501 Not Implemented
-          clearInterval(sabnzbdIntervalRef.current)
-          sabnzbdIntervalRef.current = null
-          console.warn('SABNZBD not supported. Stopping interval.')
-          setUnsupportedQueues((prev) => [...prev, 'SABNZBD']) // Optional
-          return
-        }
-        if (!response.ok) {
-          throw new Error(`Error fetching SABNZBD queue: ${response.status}`)
-        }
-        const sabnzbdData = await response.json()
+  useEffect(() => {
+    if (sabnzbdData) {
+      if (sabnzbdData.__unsupported) {
+        setSabnzbdSupported(false)
+        setUnsupportedQueues((prev) => [...prev, 'SABNZBD'])
+        console.warn('SABNZBD not supported. Stopping polling.')
+      } else {
         setsabnzbdQueue(sabnzbdData)
-      } catch (error) {
-        console.error('Error fetching SABNZBD queue:', error)
       }
     }
+  }, [sabnzbdData])
 
-    // Function to fetch Radarr queue
-    const fetchRadarrdata = async () => {
-      try {
-        const response = await fetchRadarrqueue()
-        if (response.status === 501) {
-          clearInterval(radarrIntervalRef.current)
-          radarrIntervalRef.current = null
-          console.warn('Radarr not supported. Stopping interval.')
-          setUnsupportedQueues((prev) => [...prev, 'Radarr']) // Optional
-          return
-        }
-        if (!response.ok) {
-          throw new Error(`Error fetching Radarr queue: ${response.status}`)
-        }
-        const radarrData = await response.json()
+  useEffect(() => {
+    if (radarrData) {
+      if (radarrData.__unsupported) {
+        setRadarrSupported(false)
+        setUnsupportedQueues((prev) => [...prev, 'Radarr'])
+        console.warn('Radarr not supported. Stopping polling.')
+      } else {
         setradarrQueue(radarrData)
-      } catch (error) {
-        console.error('Error fetching Radarr queue:', error)
       }
     }
+  }, [radarrData])
 
-    // Function to fetch Sonarr queue
-    const fetchSonarrdata = async () => {
-      try {
-        const response = await fetchSonarrqueue()
-        if (response.status === 501) {
-          clearInterval(sonarrIntervalRef.current)
-          sonarrIntervalRef.current = null
-          console.warn('Sonarr not supported. Stopping interval.')
-          setUnsupportedQueues((prev) => [...prev, 'Sonarr']) // Optional
-          return
-        }
-        if (!response.ok) {
-          throw new Error(`Error fetching Sonarr queue: ${response.status}`)
-        }
-        const sonarrData = await response.json()
+  useEffect(() => {
+    if (sonarrData) {
+      if (sonarrData.__unsupported) {
+        setSonarrSupported(false)
+        setUnsupportedQueues((prev) => [...prev, 'Sonarr'])
+        console.warn('Sonarr not supported. Stopping polling.')
+      } else {
         setsonarrQueue(sonarrData)
-      } catch (error) {
-        console.error('Error fetching Sonarr queue:', error)
       }
     }
+  }, [sonarrData])
 
-    // Function to fetch Tdarr queue
-    const fetchTdarrdata = async () => {
-      try {
-        const response = await fetchTdarrqueue()
-        if (response.status === 501) {
-          clearInterval(tdarrIntervalRef.current)
-          tdarrIntervalRef.current = null
-          console.warn('Tdarr not supported. Stopping interval.')
-          setUnsupportedQueues((prev) => [...prev, 'Tdarr']) // Optional
-          return
-        }
-        if (!response.ok) {
-          throw new Error(`Error fetching Tdarr queue: ${response.status}`)
-        }
-        const tdarrData = await response.json()
+  useEffect(() => {
+    if (tdarrData) {
+      if (tdarrData.__unsupported) {
+        setTdarrSupported(false)
+        setUnsupportedQueues((prev) => [...prev, 'Tdarr'])
+        console.warn('Tdarr not supported. Stopping polling.')
+      } else {
         settdarrQueue(tdarrData)
-      } catch (error) {
-        console.error('Error fetching Tdarr queue:', error)
       }
     }
-
-    // Initial data fetch
-    fetchData()
-    fetchRecentlyWatchedData()
-    fetchSABNZBDdata()
-    fetchRadarrdata()
-    fetchSonarrdata()
-    fetchTdarrdata()
-
-    // Set intervals and store their IDs in refs
-    dataIntervalRef.current = setInterval(fetchData, 15000)
-    recentlyWatchedIntervalRef.current = setInterval(fetchRecentlyWatchedData, 2000)
-    sabnzbdIntervalRef.current = setInterval(fetchSABNZBDdata, 2000)
-    radarrIntervalRef.current = setInterval(fetchRadarrdata, 2000)
-    sonarrIntervalRef.current = setInterval(fetchSonarrdata, 2000)
-    tdarrIntervalRef.current = setInterval(fetchTdarrdata, 2000)
-
-    // Cleanup function to clear all intervals
-    return () => {
-      clearInterval(dataIntervalRef.current)
-      clearInterval(recentlyWatchedIntervalRef.current)
-      if (sabnzbdIntervalRef.current) clearInterval(sabnzbdIntervalRef.current)
-      if (radarrIntervalRef.current) clearInterval(radarrIntervalRef.current)
-      if (sonarrIntervalRef.current) clearInterval(sonarrIntervalRef.current)
-      if (tdarrIntervalRef.current) clearInterval(tdarrIntervalRef.current)
-    }
-  }, [])
+  }, [tdarrData])
 
   async function updateProcessedData(type) {
     let url = `/api/authenticated/admin`
@@ -286,207 +229,202 @@ export default function AdminOverviewPage({
   }
 
   return (
-    <>
-      {isSyncOpen && (
-        <SyncMediaPopup
-          isOpen={isSyncOpen}
-          setIsOpen={setIsSyncOpen}
-          updateProcessedData={updateProcessedData}
-          setLastSync={setLastSync}
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Modals */}
+        {isSyncOpen && (
+          <SyncMediaPopup
+            isOpen={isSyncOpen}
+            setIsOpen={setIsSyncOpen}
+            updateProcessedData={updateProcessedData}
+            setLastSync={setLastSync}
+          />
+        )}
+        {record && action !== 'delete' && record.type === 'movie' && (
+          <MovieModalPopup
+            record={record}
+            updateRecord={updateRecord}
+            isAdding={isAdding}
+            isOpen={isOpen}
+            setIsOpen={setIsOpen}
+            updateProcessedData={updateProcessedData}
+          />
+        )}
+        {record && action !== 'delete' && record.type === 'tv' && (
+          <TVModalPopup
+            record={record}
+            updateRecord={updateRecord}
+            isAdding={isAdding}
+            isOpen={isOpen}
+            setIsOpen={setIsOpen}
+            updateProcessedData={updateProcessedData}
+          />
+        )}
+        {record && action === 'delete' && (
+          <ConfirmDeletePopup
+            record={record}
+            updateRecord={updateRecord}
+            isAdding={isAdding}
+            isOpen={isOpen}
+            setIsOpen={setIsOpen}
+            updateProcessedData={updateProcessedData}
+          />
+        )}
+
+        {/* Dashboard Header */}
+        <DashboardHeader
+          onSyncClick={() => setIsSyncOpen(true)}
+          lastSyncTime={lastSyncTime}
+          organizrURL={organizrURL}
         />
-      )}
-      {record && action !== 'delete' && record.type === 'movie' && (
-        <MovieModalPopup
-          record={record}
-          updateRecord={updateRecord}
-          isAdding={isAdding}
-          isOpen={isOpen}
-          setIsOpen={setIsOpen}
-          updateProcessedData={updateProcessedData}
-        />
-      )}
-      {record && action !== 'delete' && record.type === 'tv' && (
-        <TVModalPopup
-          record={record}
-          updateRecord={updateRecord}
-          isAdding={isAdding}
-          isOpen={isOpen}
-          setIsOpen={setIsOpen}
-          updateProcessedData={updateProcessedData}
-        />
-      )}
-      {record && action === 'delete' && (
-        <ConfirmDeletePopup
-          record={record}
-          updateRecord={updateRecord}
-          isAdding={isAdding}
-          isOpen={isOpen}
-          setIsOpen={setIsOpen}
-          updateProcessedData={updateProcessedData}
-        />
-      )}
-      <h1 className="block">Admin Page</h1>
-      <ServerStats />
-      <ServerProcesses />
-      <div className="bg-white shadow-md rounded-lg">
-        <div className="bg-red-500 text-white flex flex-row justify-center rounded-t-md select-none">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-            strokeWidth={1.5}
-            stroke="currentColor"
-            className="w-6 h-6"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              d="M9.348 14.652a3.75 3.75 0 0 1 0-5.304m5.304 0a3.75 3.75 0 0 1 0 5.304m-7.425 2.121a6.75 6.75 0 0 1 0-9.546m9.546 0a6.75 6.75 0 0 1 0 9.546M5.106 18.894c-3.808-3.807-3.808-9.98 0-13.788m13.788 0c3.808 3.807 3.808 9.98 0 13.788M12 12h.008v.008H12V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"
-            />
-          </svg>
-          <span className="ml-1">LIVE</span>
-        </div>
-        <div className="px-6 pb-6 pt-3">
-          <div className="flex items-center justify-center">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-6 w-6 text-blue-500 mr-2"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+
+        {/* Main Dashboard Grid */}
+        <div className="space-y-8">
+          {/* System Status Section */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Server Statistics */}
+            <MaterialCard elevation="medium" className="h-fit">
+              <MaterialCardHeader
+                title="Server Resources"
+                subtitle="Real-time CPU and memory usage"
+                icon={
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                }
               />
-            </svg>
-            <span className="text-lg font-semibold text-black">Last Synced:</span>
+              <MaterialCardContent padding="none">
+                <EnhancedServerStats />
+              </MaterialCardContent>
+            </MaterialCard>
+
+            {/* Server Processes */}
+            <MaterialCard elevation="medium" className="h-fit">
+              <MaterialCardHeader
+                title="Active Processes"
+                subtitle="Currently running server tasks"
+                icon={
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                  </svg>
+                }
+              />
+              <MaterialCardContent padding="none">
+                <EnhancedServerProcesses />
+              </MaterialCardContent>
+            </MaterialCard>
           </div>
-          <p className="mt-2 text-gray-600">{lastSyncTime}</p>
+
+          {/* Services Section */}
+          <div className="space-y-6">
+            {/* TMDB Server Status */}
+            <EnhancedTMDBStatus />
+
+            {/* Media Processing Queues */}
+            <MaterialCard elevation="medium">
+              <MaterialCardContent>
+                <EnhancedQueueDashboard
+                  sabnzbdQueue={sabnzbdQueue}
+                  radarrQueue={radarrQueue}
+                  sonarrQueue={sonarrQueue}
+                  tdarrQueue={tdarrQueue}
+                  unsupportedQueues={unsupportedQueues}
+                />
+              </MaterialCardContent>
+            </MaterialCard>
+
+            {/* Unsupported Queues Warning */}
+            {unsupportedQueues.length > 0 && (
+              <MaterialCard variant="outlined" elevation="low">
+                <MaterialCardHeader
+                  title="Unsupported Integrations"
+                  icon={
+                    <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.998-.833-2.768 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                    </svg>
+                  }
+                />
+                <MaterialCardContent>
+                  <ul className="space-y-1 text-sm text-orange-700">
+                    {[...new Set(unsupportedQueues)].map((queue) => (
+                      <li key={queue} className="flex items-center space-x-2">
+                        <span className="w-2 h-2 bg-orange-400 rounded-full"></span>
+                        <span>{queue} is not supported</span>
+                      </li>
+                    ))}
+                  </ul>
+                </MaterialCardContent>
+              </MaterialCard>
+            )}
+          </div>
+
+          {/* Activity & Management Section */}
+          <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            {/* Recently Watched - Takes up 2 columns */}
+            <div className="xl:col-span-2">
+              <MaterialCard elevation="medium" className="h-full">
+                <MaterialCardHeader
+                  title="Recent Activity"
+                  subtitle="Live user watching activity"
+                  icon={
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                  }
+                />
+                <MaterialCardContent>
+                  <EnhancedRecentlyWatched recentlyWatched={recentlyWatched} />
+                </MaterialCardContent>
+              </MaterialCard>
+            </div>
+
+            {/* User Management - Takes up 1 column */}
+            <div className="xl:col-span-1">
+              <MaterialCard elevation="medium" className="h-full">
+                <MaterialCardHeader
+                  title="User Management"
+                  subtitle="System users overview"
+                  icon={
+                    <svg
+                      xmlns="http://www.w3.org/2000/svg"
+                      width={23}
+                      height={23}
+                      viewBox="0 0 512 512"
+                      fill="currentColor"
+                      stroke="none"
+                    >
+                      <path
+                        fillRule="evenodd"
+                        d="M200.876 277.332c-5.588 12.789-8.74 26.884-8.872 41.7L192 320v128H64v-85.333c0-46.676 37.427-84.569 83.922-85.322l1.411-.012h51.543Zm161.79-42.665C409.796 234.667 448 272.872 448 320v128H213.333V320c0-47.128 38.205-85.333 85.334-85.333h64ZM170.667 128c35.286 0 64 28.715 64 64s-28.714 64-64 64c-35.285 0-64-28.715-64-64s28.715-64 64-64Zm160-64c41.174 0 74.667 33.493 74.667 74.667 0 41.173-33.493 74.666-74.666 74.666-41.174 0-74.667-33.493-74.667-74.666C256 97.493 289.493 64 330.667 64Z"
+                      />
+                    </svg>
+                  }
+                  action={
+                    <Link href="/admin/users">
+                      <MaterialButton
+                        variant="text"
+                        size="small"
+                        color="primary"
+                      >
+                        View All
+                      </MaterialButton>
+                    </Link>
+                  }
+                />
+                <MaterialCardContent>
+                  <CompactUserManagement
+                    headers={_processedUserData.headers}
+                    data={_processedUserData.data}
+                    updateProcessedData={updateProcessedData}
+                    onViewAll={() => router.push('/admin/users')}
+                  />
+                </MaterialCardContent>
+              </MaterialCard>
+            </div>
+          </div>
         </div>
       </div>
-      <div className="flex flex-row gap-4 mt-8">
-        <button
-          type="button"
-          className="block rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-          onClick={() => setIsSyncOpen(true)}
-        >
-          Sync with Fileserver
-        </button>
-        <WipeDbButton />
-        <Link
-          className="block rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-          href={organizrURL}
-          target="_blank"
-        >
-          Organizr
-        </Link>
-      </div>
-      <hr className="my-16 border-gray-300 w-full" />
-      <RecentlyWatched recentlyWatched={recentlyWatched} />
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {sabnzbdQueue && (
-          <div>
-            <h2 className="text-xl font-bold mb-2">
-              Download Status
-              {sabnzbdQueue?.queue?.status?.toLowerCase() === 'paused' ? (
-                <PauseCircleIcon className="ml-2 w-8 inline-block" />
-              ) : null}
-            </h2>
-            <DownloadStatus data={sabnzbdQueue.queue} />
-          </div>
-        )}
-        {radarrQueue && (
-          <div>
-            <h2 className="text-xl font-bold mb-2">Radarr Queue</h2>
-            <RadarrQueue data={radarrQueue} />
-          </div>
-        )}
-        {sonarrQueue && (
-          <div>
-            <h2 className="text-xl font-bold mb-2">Sonarr Queue</h2>
-            <SonarrQueue data={sonarrQueue} />
-          </div>
-        )}
-        {tdarrQueue && (
-          <div>
-            <h2 className="text-xl font-bold mb-2">Tdarr Progress</h2>
-            <TdarrProgressBar data={tdarrQueue} />
-          </div>
-        )}
-      </div>
-      {/* Optional: Display unsupported queues */}
-      {unsupportedQueues.length > 0 && (
-        <div className="mt-8 p-4 bg-yellow-100 border border-yellow-400 text-yellow-700 rounded">
-          <h3 className="font-semibold">Unsupported Integrations:</h3>
-          <ul className="list-disc list-inside">
-            {[...new Set(unsupportedQueues)].map((queue) => (
-              <li key={queue}>{queue} is not supported.</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      <div className="flex flex-col xl:flex-row">
-        <ListRecords
-          title="Movies"
-          subtitle="Overview of all movies"
-          headers={_processedData.movies?.headers}
-          data={_processedData.movies?.data}
-          onEditClick={async (id) => {
-            const record = await getRecord({ type: 'movie', id })
-            setRecord({ type: 'movie', action: 'edit', ...record })
-            setIsAdding(false)
-            setIsOpen(true)
-          }}
-          onAddClick={() => {
-            setRecord({ type: 'movie', action: 'add', title: '', videoURL: '' })
-            setIsAdding(true)
-            setIsOpen(true)
-          }}
-          onDeleteClick={async (id) => {
-            const record = await getRecord({ type: 'movie', id })
-            setRecord({ type: 'movie', action: 'delete', ...record })
-            setIsAdding(false)
-            setIsOpen(true)
-          }}
-        />
-        <ListRecords
-          title="TV Shows"
-          subtitle="Overview of all TV shows"
-          headers={_processedData.tvShows?.headers}
-          data={_processedData.tvShows?.data}
-          onEditClick={async (id) => {
-            const record = await getRecord({ type: 'tv', id })
-            setRecord({ type: 'tv', ...record })
-            setIsAdding(false)
-            setIsOpen(true)
-          }}
-          onAddClick={() => {
-            setRecord({ type: 'tv', title: '', videoURL: '' })
-            setIsAdding(true)
-            setIsOpen(true)
-          }}
-          onDeleteClick={async (id) => {
-            const record = await getRecord({ type: 'tv', id })
-            setRecord({ type: 'tv', action: 'delete', ...record })
-            setIsAdding(false)
-            setIsOpen(true)
-          }}
-        />
-      </div>
-      <hr className="my-16 border-gray-300 w-full" />
-      <div className="flex flex-col xl:flex-row w-full">
-        <ListRecords
-          title="Users"
-          subtitle="Overview of all users"
-          headers={_processedUserData.headers}
-          data={_processedUserData.data}
-          updateProcessedData={updateProcessedData}
-        />
-      </div>
-    </>
+    </div>
   )
 }
 

@@ -1,11 +1,9 @@
-import { auth } from '../../../lib/auth'
+import { auth } from '../../../lib/cachedAuth'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import SkeletonCard from '@components/SkeletonCard'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import LandingPage from '@components/LandingPage'
-import { getAvailableMedia } from '@src/utils/database'
 import { Suspense } from 'react'
-export const dynamic = 'force-dynamic'
 
 async function MediaDirectory() {
   const session = await auth()
@@ -27,22 +25,18 @@ async function MediaDirectory() {
     )
   }
   const {
-    user: { name, email, limitedAccess },
+    user: { id, name, email, limitedAccess },
   } = session
 
-  // sync up with the server
-  //const serverVideoWatchedAmount = await getVideosWatched()
-  const { moviesCount, tvprogramsCount, recentlyaddedCount, recentlywatchedCount } =
-    await getAvailableMedia()
+  const calendarConfig = {
+    sonarr: !!process.env.SONARR_ICAL_LINK,
+    radarr: !!process.env.RADARR_ICAL_LINK,
+  }
+  calendarConfig.hasAnyCalendar = calendarConfig.sonarr || calendarConfig.radarr
+
   return (
-    <Suspense>
-      <LandingPage
-        user={{ name, email, limitedAccess }}
-        moviesCount={moviesCount}
-        tvprogramsCount={tvprogramsCount}
-        recentlyaddedCount={recentlyaddedCount}
-        recentlywatchedCount={recentlywatchedCount}
-      />
+    <Suspense fallback={<div className='flex min-h-screen flex-col items-center justify-between xl:py-24'></div>}>
+      <LandingPage user={{ id, name, email, limitedAccess }} calendarConfig={calendarConfig} />
     </Suspense>
   )
 }

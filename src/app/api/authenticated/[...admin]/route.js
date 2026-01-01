@@ -6,6 +6,8 @@ import {
   getLastSynced,
   getRecentlyWatched,
 } from '@src/utils/admin_database'
+import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
+import { ObjectId } from 'mongodb'
 import {
   fetchRadarrQueue,
   fetchSABNZBDQueue,
@@ -13,6 +15,7 @@ import {
   fetchTdarrQueue,
   processMediaData,
   processUserData,
+  storeSystemStatus,
 } from '@src/utils/admin_utils'
 import axios from 'axios'
 import chalk from 'chalk'
@@ -23,6 +26,10 @@ import clientPromise from '@src/lib/mongodb'
 import { getCpuUsage, getMemoryTotal, getMemoryUsage, getMemoryUsed } from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { syncAllServers } from '@src/utils/sync'
+import { getSyncVerificationReport } from '@src/utils/sync_verification'
+import { handleQueueFetch } from '@src/utils/auth_utils'
+import { NotificationManager } from '@src/utils/notifications/NotificationManager.js'
+import { getFileServerData } from '@src/utils/fileServerDataService'
 
 /**
  * Extracts all server endpoints from the configuration.
@@ -132,10 +139,144 @@ export async function GET(request, props) {
         }
         break
 
+      case 'user-recently-watched':
+        {
+          try {
+            // Get userId from path
+            const userId = slugs[2];
+            if (!userId) {
+              throw new Error('User ID is required');
+            }
+            
+            // Parse pagination parameters
+            const url = new URL(request.url);
+            const page = parseInt(url.searchParams.get('page') || '0', 10);
+            const limit = parseInt(url.searchParams.get('limit') || '10', 10);
+            
+            // Validate user exists
+            const client = await clientPromise;
+            const user = await client
+              .db('Users')
+              .collection('AuthenticatedUsers')
+              .findOne({ _id: new ObjectId(userId) });
+              
+            if (!user) {
+              throw new Error(`User with ID ${userId} not found`);
+            }
+            
+            // Fetch data for this specific user with pagination using admin-overview projection
+            const watchedMedia = await getFlatRecentlyWatchedForUser({
+              userId: userId,
+              page: page,
+              limit: limit,
+              countOnly: false,
+              projection: 'admin-overview',
+              contextHints: { isAdmin: true }
+            });
+            
+            // Get total count for pagination info
+            const totalCount = await getFlatRecentlyWatchedForUser({
+              userId: userId,
+              countOnly: true,
+              projection: 'admin-overview',
+              contextHints: { isAdmin: true }
+            });
+            
+            // Format response with pagination metadata
+            responseData = {
+              data: watchedMedia || [],
+              user: {
+                id: user._id.toString(),
+                name: user.name,
+                image: user.image
+              },
+              pagination: {
+                page,
+                limit,
+                total: totalCount,
+                totalPages: Math.ceil(totalCount / limit),
+                hasMore: (page + 1) * limit < totalCount
+              }
+            };
+          } catch (error) {
+            console.error(`Error fetching user recently watched: ${error.message}`);
+            return new Response(JSON.stringify({ error: error.message }), {
+              status: 500,
+              headers: { 'Content-Type': 'application/json' },
+            });
+          }
+        }
+        break;
+        
       case 'recently-watched':
         {
-          const recentlyWatched = await getRecentlyWatched()
-          responseData = recentlyWatched
+          try {
+            // Get all users
+            const client = await clientPromise
+            const users = await client.db('Users').collection('AuthenticatedUsers').find({}).toArray()
+            
+            // For each user, get their recently watched media using the flat database approach
+            const lastWatchedPromises = users.map(async (user) => {
+              try {
+                // Use flat database function to get recently watched items with admin-overview projection
+                const watchedMedia = await getFlatRecentlyWatchedForUser({
+                  client,
+                  userId: user._id,
+                  page: 0,
+                  limit: 4, // Same limit as legacy function
+                  countOnly: false,
+                  projection: 'admin-overview',
+                  contextHints: { isAdmin: true }
+                })
+                
+                // Get total count for accurate "+X more" calculation
+                const totalCount = await getFlatRecentlyWatchedForUser({
+                  client,
+                  userId: user._id,
+                  countOnly: true,
+                  projection: 'admin-overview',
+                  contextHints: { isAdmin: true }
+                })
+                
+                // Skip if no watched media found
+                if (!watchedMedia || watchedMedia.length === 0) {
+                  return null
+                }
+                
+                // Find the most recent watch time
+                let mostRecentWatch = null
+                watchedMedia.forEach(media => {
+                  const lastUpdated = media.lastWatchedVideo?.lastUpdated
+                  if (lastUpdated && (!mostRecentWatch || lastUpdated > mostRecentWatch)) {
+                    mostRecentWatch = lastUpdated
+                  }
+                })
+                
+                // Format the data to match the structure expected by the component
+                return {
+                  user: {
+                    _id: user._id.toString(), // Add the user ID for the modal functionality
+                    name: user.name,
+                    image: user.image,
+                  },
+                  videos: watchedMedia,
+                  totalCount: totalCount || 0, // Add total count for accurate display
+                  mostRecentWatch
+                }
+              } catch (userError) {
+                console.error(`Error processing flat recently watched for user ${user.name}: ${userError.message}`)
+                return null
+              }
+            })
+            
+            const recentlyWatched = await Promise.all(lastWatchedPromises)
+            // Filter out nulls and sort by most recent watch
+            responseData = recentlyWatched
+              .filter(entry => entry)
+              .sort((a, b) => b.mostRecentWatch - a.mostRecentWatch)
+          } catch (error) {
+            console.error(`Error in recently-watched endpoint: ${error.message}`)
+          }
         }
         break
 
@@ -247,6 +388,50 @@ export async function GET(request, props) {
           responseData = processes
         }
         break
+      case 'sync-verification':
+        {
+          // Get query parameter for comparison with file servers
+          const url = new URL(request.url);
+          const compareWithFileServers = url.searchParams.get('compare') !== 'false';
+          
+          responseData = await getSyncVerificationReport(compareWithFileServers);
+          
+          // Add extra context for better diagnostics
+          responseData.generatedAt = new Date().toISOString();
+          responseData.servers = getAllServers().map(server => server.id);
+          
+          // Reorganize response to highlight the most important information first
+          if (responseData.issueSummary) {
+            responseData = {
+              // Quick overview at the top
+              overview: {
+                totalIssues: responseData.totalIssues,
+                totalMedia: responseData.totalMedia,
+                issuePercentage: responseData.issuePercentage,
+                generatedAt: responseData.generatedAt,
+                servers: responseData.servers
+              },
+              // Top-level issue summary by category
+              topIssues: responseData.issueSummary.topIssues,
+              // Detailed breakdown by issue pattern
+              issuePatterns: responseData.issueSummary.byPattern,
+              // Original issue summary for full detail
+              issueSummary: {
+                total: responseData.issueSummary.total,
+                byCategory: responseData.issueSummary.byCategory
+              },
+              // Stats about overall content
+              stats: responseData.stats,
+              // Rest of the data
+              ...responseData
+            };
+            
+            // Remove duplicated data to clean up the response
+            delete responseData.issueSummary.topIssues;
+            delete responseData.issueSummary.byPattern;
+          }
+        }
+        break
       default: {
         return new Response(JSON.stringify({ error: 'No valid data type specified' }), {
           status: 400,
@@ -272,81 +457,174 @@ let startTime = null
 let activeSyncOperation = null
 let syncSubscribers = []
 
+/**
+ * Handle system status notification webhook request
+ * @param {Request} request - The request object
+ * @param {string} webhookId - The webhook ID from the request
+ * @param {string} serverId - The server ID associated with the webhook
+ * @returns {Promise<Response>} - Response to the webhook
+ */
+async function handleSystemStatusNotification(request, webhookId, serverId) {
+  try {
+    // Verify this is a webhook request
+    if (!webhookId) {
+      return new Response(JSON.stringify({ 
+        error: 'Unauthorized', 
+        message: 'This endpoint requires webhook authentication' 
+      }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
+    // Get status data from request body
+    let statusData;
+    try {
+      statusData = await request.json();
+    } catch (error) {
+      return new Response(JSON.stringify({ 
+        error: 'Bad Request', 
+        message: 'Invalid JSON in request body' 
+      }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
+    // Validate status data
+    if (!statusData || typeof statusData !== 'object') {
+      return new Response(JSON.stringify({ 
+        error: 'Bad Request', 
+        message: 'Invalid status data format' 
+      }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    
+    // Store the status data (indicate this is from a webhook)
+    await storeSystemStatus(statusData, serverId, true);
+    
+    // Return success response
+    return new Response(JSON.stringify({ 
+      success: true,
+      message: 'System status notification received and processed',
+      receivedAt: new Date().toISOString(),
+      serverId
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  } catch (error) {
+    console.error('Error processing system status notification:', error);
+    
+    return new Response(JSON.stringify({ 
+      error: 'Internal Server Error', 
+      message: 'Failed to process system status notification',
+      details: error.message
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+/**
+ * Handle sync operation request
+ * @param {Request} request - The request object
+ * @param {string} webhookId - The webhook ID from the request
+ * @returns {Promise<Response>} - Response to the sync request
+ */
+async function handleSyncOperation(request, webhookId) {
+  try {
+    // If there's an active sync operation, add this request to subscribers
+    if (activeSyncOperation) {
+      const result = await new Promise((resolve, reject) => {
+        syncSubscribers.push({ resolve, reject })
+      })
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: 'Sync operation completed successfully.',
+          startTime,
+          ...result,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    }
+
+    startTime = new Date().toISOString()
+    activeSyncOperation = handleSync(webhookId, request)
+
+    try {
+      const result = await activeSyncOperation
+      
+      syncSubscribers.forEach(subscriber => {
+        subscriber.resolve(result)
+      })
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          message: 'Sync operation completed successfully.',
+          startTime,
+          ...result,
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    } catch (error) {
+      syncSubscribers.forEach(subscriber => {
+        subscriber.reject(error)
+      })
+      throw error
+    } finally {
+      activeSyncOperation = null
+      syncSubscribers = []
+    }
+  } catch (error) {
+    console.error('Sync operation failed:', error)
+    return new Response(
+      JSON.stringify({ error: 'Sync operation failed', details: error.toString() }),
+      {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      }
+    )
+  }
+}
+
 export async function POST(request, props) {
   const params = await props.params
   const authResult = await isAdminOrWebhook(request)
   if (authResult instanceof Response) {
     return authResult
   }
+  
   const webhookId = request.headers.get('X-Webhook-ID') ?? null
+  const serverId = request.webhookServerId // This comes from enhanced webhookId validation
 
   const slugs = params.admin
-  const syncOperation = slugs.includes('sync') && slugs[0] === 'admin'
-
-  if (syncOperation) {
-    try {
-      // If there's an active sync operation, add this request to subscribers
-      if (activeSyncOperation) {
-        const result = await new Promise((resolve, reject) => {
-          syncSubscribers.push({ resolve, reject })
-        })
-        return new Response(
-          JSON.stringify({
-            success: true,
-            message: 'Sync operation completed successfully.',
-            startTime,
-            ...result,
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        )
-      }
-
-      startTime = new Date().toISOString()
-      activeSyncOperation = handleSync(webhookId, request)
-
-      try {
-        const result = await activeSyncOperation
-        
-        syncSubscribers.forEach(subscriber => {
-          subscriber.resolve(result)
-        })
-
-        return new Response(
-          JSON.stringify({
-            success: true,
-            message: 'Sync operation completed successfully.',
-            startTime,
-            ...result,
-          }),
-          {
-            status: 200,
-            headers: { 'Content-Type': 'application/json' },
-          }
-        )
-      } catch (error) {
-        syncSubscribers.forEach(subscriber => {
-          subscriber.reject(error)
-        })
-        throw error
-      } finally {
-        activeSyncOperation = null
-        syncSubscribers = []
-      }
-    } catch (error) {
-      console.error('Sync operation failed:', error)
-      return new Response(
-        JSON.stringify({ error: 'Sync operation failed', details: error.toString() }),
-        {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      )
+  
+  // Route the request to the appropriate handler based on the path
+  if (slugs.length >= 2 && slugs[0] === 'admin') {
+    // Handle system status notification
+    if (slugs[1] === 'system-status-notification') {
+      return handleSystemStatusNotification(request, webhookId, serverId);
+    }
+    
+    // Handle sync operation
+    if (slugs.includes('sync')) {
+      return handleSyncOperation(request, webhookId);
     }
   }
 
+  // Unsupported operation
   return new Response(JSON.stringify({ error: 'Unsupported operation' }), {
     status: 400,
     headers: { 'Content-Type': 'application/json' },
@@ -354,19 +632,23 @@ export async function POST(request, props) {
 }
 
 /**
- * Handles sync operation.
+ * Handles sync operation with improved error handling.
  * @param {string|null} webhookId - Webhook ID
  * @param {Request} request - Request object
  * @returns {Promise<Object>} Sync results
  */
 async function handleSync(webhookId, request) {
+  // Add a flag to track whether this sync operation is still in progress
+  let syncInProgress = true;
+  const syncStartTime = new Date();
+  
   try {
     const headers = {}
     if (webhookId) headers['X-Webhook-ID'] = webhookId
     if (request.headers.get('cookie')) headers['cookie'] = request.headers.get('cookie')
 
-    const response = await axios.get(buildURL('/api/authenticated/list'), { headers })
-    const { fileServers, currentDB, errors } = await response.data
+    // Get file server(s) data directly (no internal HTTP call)
+    const { fileServers, errors } = await getFileServerData({skipAuth: true});
 
     // Initialize field-level availability maps
     const fieldAvailability = {
@@ -376,32 +658,90 @@ async function handleSync(webhookId, request) {
 
     // Build availability maps per server
     for (const [serverId, fileServer] of Object.entries(fileServers)) {
-      // For Movies
-      for (const [movieTitle, movieData] of Object.entries(fileServer.movies || {})) {
-        if (!fieldAvailability.movies[movieTitle]) {
-          fieldAvailability.movies[movieTitle] = {}
-        }
+      // For Movies - add null check to avoid errors on undefined
+      if (fileServer.movies) {
+        for (const [movieTitle, movieData] of Object.entries(fileServer.movies)) {
+          if (!fieldAvailability.movies[movieTitle]) {
+            fieldAvailability.movies[movieTitle] = {}
+          }
 
-        collectFieldAvailability(movieData, '', serverId, fieldAvailability.movies[movieTitle])
+          collectFieldAvailability(movieData, '', serverId, fieldAvailability.movies[movieTitle])
+        }
       }
 
-      // For TV Shows
-      for (const [showTitle, showData] of Object.entries(fileServer.tv || {})) {
-        if (!fieldAvailability.tv[showTitle]) {
-          fieldAvailability.tv[showTitle] = {}
-        }
+      // For TV Shows - add null check to avoid errors on undefined
+      if (fileServer.tv) {
+        for (const [showTitle, showData] of Object.entries(fileServer.tv)) {
+          if (!fieldAvailability.tv[showTitle]) {
+            fieldAvailability.tv[showTitle] = {}
+          }
 
-        collectFieldAvailability(showData, '', serverId, fieldAvailability.tv[showTitle])
+          collectFieldAvailability(showData, '', serverId, fieldAvailability.tv[showTitle])
+        }
       }
     }
 
     const importSettings = await getFileServerImportSettings()
     console.log('Import Settings:', importSettings)
 
-    return await syncAllServers(currentDB, fileServers, fieldAvailability)
+    // Parse URL parameters for sync architecture options
+    const url = new URL(request.url);
+    const useNewArchitecture = url.searchParams.get('useNewArchitecture') === 'true';
+    const forceOldArchitecture = url.searchParams.get('forceOldArchitecture') === 'true';
+    
+    // Log architecture choice for debugging
+    if (useNewArchitecture) {
+      console.log('🆕 Admin API: Using NEW sync architecture (query parameter override)');
+    } else if (forceOldArchitecture) {
+      console.log('🔄 Admin API: Forcing OLD sync architecture (query parameter override)');
+    }
+
+    // Perform the actual sync with architecture options
+    const result = await syncAllServers(fileServers, fieldAvailability, {
+      useNewArchitecture,
+      forceOldArchitecture
+    })
+    
+    // Mark sync as complete to prevent logging errors after completion
+    syncInProgress = false;
+    
+    // Calculate sync duration
+    const syncEndTime = new Date();
+    const durationMs = syncEndTime.getTime() - syncStartTime.getTime();
+    const durationMinutes = Math.round(durationMs / 60000 * 10) / 10; // Round to 1 decimal place
+    
+    // Create admin-only sync completion notification
+    try {
+      // Determine server name - use first file server or default
+      const serverNames = Object.keys(fileServers);
+      const serverName = serverNames.length > 0 ? serverNames[0] : 'Unknown Server';
+      
+      // Extract sync statistics from the result
+      const stats = {
+        moviesAdded: result.moviesAdded || 0,
+        episodesAdded: result.episodesAdded || 0,
+        duration: `${durationMinutes} minutes`
+      };
+      
+      console.log(`Creating sync completion notification for admins. Server: ${serverName}, Stats:`, stats);
+      
+      await NotificationManager.createSyncCompleteForAdmins(serverName, stats);
+      
+      console.log('Admin sync completion notification created successfully');
+    } catch (notificationError) {
+      console.error('Failed to create sync completion notification:', notificationError);
+      // Don't fail the sync operation if notification creation fails
+    }
+    
+    return result;
   } catch (error) {
     console.error('Sync operation failed:', error)
-    throw error
+    // Update the flag to indicate sync is no longer in progress
+    syncInProgress = false;
+    throw error;
+  } finally {
+    // Ensure the flag is always updated in case of any errors
+    syncInProgress = false;
   }
 }
 
@@ -463,23 +803,38 @@ export async function DELETE(request, props) {
       const client = await clientPromise
       const db = client.db('Media')
 
-      const collections = ['Movies', 'TV']
+      // Update to include flat database collections instead of old structure
+      const collections = ['FlatMovies', 'FlatTVShows', 'FlatSeasons', 'FlatEpisodes']
+      
+      // Track results for detailed response
+      const results = {}
+      
       for (const collectionName of collections) {
         const collection = db.collection(collectionName)
-        await collection.deleteMany({})
+        const deleteResult = await collection.deleteMany({})
+        results[collectionName] = deleteResult.deletedCount
+        console.log(`Cleared ${deleteResult.deletedCount} documents from ${collectionName}`)
       }
       
-      console.log('Cleared all documents from collections')
-      return new Response(JSON.stringify({ message: 'Cleared all documents from collections' }), {
+      console.log('Cleared all documents from flat database collections')
+      return new Response(JSON.stringify({ 
+        message: 'Cleared all documents from flat database collections',
+        details: results 
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       })
     } catch (error) {
-      console.error('Error clearing collections:', error)
+      console.error('Error clearing flat database collections:', error)
       return new Response(JSON.stringify({ error: error.message }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       })
     }
   }
+  
+  return new Response(JSON.stringify({ error: 'Invalid operation' }), {
+    status: 400,
+    headers: { 'Content-Type': 'application/json' },
+  })
 }

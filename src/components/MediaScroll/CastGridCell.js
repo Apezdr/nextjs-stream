@@ -1,6 +1,6 @@
 'use client'
 
-import React, { memo, useState } from 'react'
+import { memo, useState } from 'react'
 import Link from 'next/link'
 import RetryImage from '@components/RetryImage'
 import { getFullImageUrl } from '@src/utils'
@@ -69,5 +69,7 @@ const CastGridCell = memo(({
     </div>
   )
 })
+
+CastGridCell.displayName = 'CastGridCell'
 
 export default CastGridCell

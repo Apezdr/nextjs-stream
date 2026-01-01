@@ -26,6 +26,16 @@ export const convertToDate = cache((str) => {
   return date
 })
 
+// Format dates to simple YYYY-MM-DD format
+export const formatDate = (dateStr) => {
+  if (!dateStr) return null
+  try {
+    return new Date(dateStr).toISOString().split('T')[0]
+  } catch {
+    return dateStr
+  }
+}
+
 // Function to format time in milliseconds to hh:mm:ss
 export const formatTime = cache((milliseconds) => {
   let seconds = Math.floor(milliseconds / 1000)
@@ -98,7 +108,69 @@ export const generateColors = cache((str) => {
   }
 })
 
-export const fetcher = (...args) => fetch(...args).then((res) => res.json())
+export const fetcher = async (...args) => {
+  try {
+    const response = await fetch(...args)
+    
+    // Handle different HTTP status codes
+    if (!response.ok) {
+      // Handle specific error codes that we know about
+      if (response.status === 401) {
+        console.warn('Authentication expired, session may need refresh')
+        // Return safe fallback structure for authentication errors
+        return {
+          currentItems: [],
+          previousItem: null,
+          nextItem: null,
+          error: {
+            status: 401,
+            message: 'Authentication required'
+          }
+        }
+      }
+      
+      if (response.status >= 500) {
+        console.error(`Server error (${response.status}): ${response.statusText}`)
+        // Return safe fallback structure for server errors
+        return {
+          currentItems: [],
+          previousItem: null,
+          nextItem: null,
+          error: {
+            status: response.status,
+            message: 'Server error occurred'
+          }
+        }
+      }
+      
+      // For other HTTP errors, still try to parse response
+      const errorText = await response.text()
+      console.error(`HTTP error (${response.status}): ${errorText}`)
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+    
+    // Try to parse JSON response
+    const data = await response.json()
+    
+    // Validate that we got a reasonable response structure
+    if (typeof data === 'object' && data !== null) {
+      return data
+    }
+    
+    // If data is not an object, return safe fallback
+    console.warn('Received non-object response from API')
+    return {
+      currentItems: [],
+      previousItem: null,
+      nextItem: null
+    }
+    
+  } catch (error) {
+    console.error('Fetcher error:', error)
+    // For any other errors (network, parsing, etc), throw to let SWR handle retry
+    throw error
+  }
+}
 
 export const obfuscateString = cache((str) => {
   if (!str) return ''
@@ -181,4 +253,24 @@ export const getResolutionLabel = cache((dims) => {
     is720p: resolutions['720p'],
     is480p: resolutions['480p'],
   }
+})
+
+/**
+ * Builds a Next.js optimized image URL for preloading
+ * Replicates Next.js default loader behavior: /_next/image?url={encoded_src}&w={width}&q={quality}
+ * @param {string} src - The original image source URL
+ * @param {number} width - The desired width for optimization
+ * @param {number} quality - The desired quality (1-100, defaults to 75)
+ * @returns {string|null} The optimized Next.js image URL or null if no src
+ */
+export const buildNextOptimizedImageUrl = cache((src, width, quality = 75) => {
+  if (!src || !width) return null
+  
+  // Ensure quality is between 1-100
+  const clampedQuality = Math.min(100, Math.max(1, quality || 75))
+  
+  // Encode the source URL for the Next.js image optimization endpoint
+  const encodedSrc = encodeURIComponent(src)
+  
+  return `/_next/image?url=${encodedSrc}&w=${width}&q=${clampedQuality}`
 })

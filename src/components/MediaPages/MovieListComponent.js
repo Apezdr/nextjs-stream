@@ -1,40 +1,47 @@
 import Link from 'next/link'
-import { auth } from '../../lib/auth'
-import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
-import SignOutButton from '@components/SignOutButton'
 import SkeletonCard from '@components/SkeletonCard'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import { memo, Suspense } from 'react'
 import Loading from '@src/app/loading'
-import { getAvailableMedia, getLastUpdatedTimestamp } from '@src/utils/database'
 import MovieList from './cache/MovieList'
-//export const dynamic = 'force-dynamic'
+import { getCachedMovieList } from '@src/utils/cache/horizontalListData'
+import { cacheLife, cacheTag } from 'next/cache'
+import { getFlatAvailableMoviesCount } from '@src/utils/flatDatabaseUtils'
+
+// Predetermined widths for skeleton genre buttons to avoid Math.random() during render
+const GENRE_SKELETON_WIDTHS = [80, 95, 70, 88, 75, 92, 68, 85]
+
+// Define projection as a constant to ensure stable cache keys
+const MOVIE_LIST_PROJECTION = {
+  duration: 1,
+  dimensions: 1,
+  captionURLs: 1,
+  metadata: 1 // Include all metadata which will have genres and release_date
+}
+
+// Cached count function using 'use cache' directive
+async function getCachedMovieCount() {
+  'use cache'
+  cacheLife('mediaLists')
+  cacheTag('media-library', 'movies', 'movie-count')
+
+  const data = await getFlatAvailableMoviesCount()
+  // Handle both old (number) and new (object) return types for backward compatibility
+  return typeof data === 'object' ? data : { count: data, totalDuration: 0 }
+}
 
 async function MovieListComponent() {
-  const session = await auth()
-  if (!session || !session.user) {
-    // Handle the case where the user is not authenticated
-    // For example, redirect to login or show an error message
-    return (
-      <UnauthenticatedPage callbackUrl={'/list/movie'}>
-        <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
-          Please Sign in first
-        </h2>
-        <div className="border border-white border-opacity-30 rounded-lg p-3 overflow-hidden skeleton-container">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 overflow-hidden">
-            <SkeletonCard />
-            <SkeletonCard className="hidden md:block" />
-            <SkeletonCard className="hidden lg:block" />
-          </div>
-        </div>
-      </UnauthenticatedPage>
-    )
-  }
-  const {
-    user: { name, email },
-  } = session
-  const { moviesCount } = await getAvailableMedia({ type: 'movie' })
-  const latestUpdateTimestamp = await getLastUpdatedTimestamp({ type: 'movie' })
+  // Auth is now handled by AuthGuard in page.js - no need to check again
+  // This allows the static shell to render immediately
+  
+  // Get movie data - now using 'use cache' for cross-request caching
+  const movieData = await getCachedMovieCount()
+  const moviesCount = movieData.count
+  const movieHours = Math.round(movieData.totalDuration / (1000 * 60 * 60))
+  
+  // Fetch cached movie list - uses constant projection for stable cache keys
+  const movieList = await getCachedMovieList(1, 0, MOVIE_LIST_PROJECTION)
+  
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
       <SyncClientWithServerWatched />
@@ -42,7 +49,12 @@ async function MovieListComponent() {
         <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-2 xl:grid-cols-4 xl:gap-x-8">
           <li>
             <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
-              <Suspense fallback={<Loading />}>({moviesCount})</Suspense> Available Movies
+              {movieHours > 0 && (
+                <span className="block text-sm text-gray-100">
+                  {movieHours.toLocaleString()} hours total
+                </span>
+              )}
+              ({moviesCount}) Available Movies
             </h2>
             <div className="flex flex-row gap-x-4 mt-4 justify-center">
               <Link href="/list" className="self-center">
@@ -67,25 +79,10 @@ async function MovieListComponent() {
                   Go Back
                 </button>
               </Link>
-              <SignOutButton
-                className="self-center bg-gray-600 hover:bg-gray-500 focus-visible:outline-gray-600"
-                signoutProps={{ callbackUrl: '/' }}
-              />
             </div>
           </li>
-          <Suspense
-            fallback={
-              <>
-                {Array.from({ length: moviesCount }, (_, i) => (
-                  <li key={i + '-skeleton'} className="relative min-w-[250px]">
-                    <SkeletonCard key={i} heightClass={'h-[582px]'} />
-                  </li>
-                ))}
-              </>
-            }
-          >
-            <MovieList latestUpdateTimestamp={latestUpdateTimestamp} />
-          </Suspense>
+          {/* Cached movie list - included in static shell for instant display */}
+          <MovieList movieList={movieList} />
         </ul>
       </div>
     </div>

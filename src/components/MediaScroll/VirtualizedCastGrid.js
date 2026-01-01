@@ -6,13 +6,13 @@ import AutoSizer from 'react-virtualized-auto-sizer'
 import CastGridCell from './CastGridCell'
 
 const VirtualizedCastGrid = ({ cast }) => {
+  const castItems = useMemo(() => cast ? Object.values(cast) : [], [cast])
+  
   if (!cast) return null
 
   const ITEM_WIDTH = 120
   const ITEM_HEIGHT = 200
   const GUTTER_SIZE = 8
-
-  const castItems = useMemo(() => Object.values(cast), [cast])
 
   return (
     <div className="w-full h-full">

@@ -58,7 +58,7 @@ export default function SyncClientWithServerWatched({ once = false }) {
 
     // Clean-up function to clear the interval when the component unmounts
     return () => clearInterval(intervalId)
-  }, []) // Empty dependency array ensures this runs only once on mount
+  }, [once]) // Include 'once' since it's used in the effect
 
   return null // This component doesn't render anything
 }

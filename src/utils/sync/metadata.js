@@ -7,7 +7,7 @@ import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { getCacheBatch } from '@src/lib/cache'
 import pLimit from 'p-limit'
 
-const CONCURRENCY_LIMIT = 200
+const CONCURRENCY_LIMIT = 10
 const limit = pLimit(CONCURRENCY_LIMIT)
 
 /**
@@ -420,7 +420,7 @@ export async function finalizeTvMetadata(client, show, aggregatedData, fieldAvai
   const isHighestPriorityForMetadata = isCurrentServerHighestPriorityForField(
     fieldAvailability,
     MediaType.TV,
-    show.title,
+    show.originalTitle,
     'metadata',
     { priority: aggregatedData.priority }
   );
@@ -548,7 +548,7 @@ export async function finalizeTvMetadata(client, show, aggregatedData, fieldAvai
       const isHighestPriorityForEpisode = isCurrentServerHighestPriorityForField(
         fieldAvailability,
         MediaType.TV,
-        show.title,
+        show.originalTitle,
         fieldPath,
         { priority: episodeMetadata.priority }
       );
