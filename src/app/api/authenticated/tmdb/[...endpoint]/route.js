@@ -86,7 +86,7 @@ export async function GET(request, { params }) {
           return statusCode >= 500 || statusCode === 429
         }
       }
-    }, shouldCache) // Cache based on endpoint type
+    }, shouldCache, shouldCache) // Cache based on endpoint type, disable ETag headers for fresh data
     
     return Response.json(response.data)
     

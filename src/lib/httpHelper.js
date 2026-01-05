@@ -121,11 +121,12 @@ const cacheLog = {
  * @param {number} [options.retry.baseDelay=1000] - Base delay for exponential backoff in milliseconds
  * @param {number} [options.retry.maxDelay=10000] - Maximum delay between retries in milliseconds
  * @param {function} [options.retry.shouldRetry] - Custom function to determine if a request should be retried
- * @param {boolean} [returnCacheDataIfAvailable=false] - Return cached data if available
+ * @param {boolean} [returnCacheDataIfAvailable=false] - Return cached data if available on 304 response
+ * @param {boolean} [sendEtagHeaders=true] - Send If-None-Match/If-Modified-Since headers for cache validation
  * @returns {Promise<{ data: Object|string|Buffer|ReadableStream|null, headers: Object, meta?: Object }>}
  * @throws {Error} - Throws an error if all retry attempts fail
  */
-export async function httpGet(url, options = {}, returnCacheDataIfAvailable = false) {
+export async function httpGet(url, options = {}, returnCacheDataIfAvailable = false, sendEtagHeaders = true) {
   const {
     headers = {},
     timeout = 5000,
@@ -153,11 +154,14 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
 
   // 1) Check the cache for existing ETag and Last-Modified
   const cachedEntry = await getCache(url);
-  if (cachedEntry?.etag) {
-    headers['If-None-Match'] = cachedEntry.etag;
-  }
-  if (cachedEntry?.lastModified) {
-    headers['If-Modified-Since'] = cachedEntry.lastModified;
+  // Only send ETag headers if explicitly enabled (default: true)
+  if (sendEtagHeaders) {
+    if (cachedEntry?.etag) {
+      headers['If-None-Match'] = cachedEntry.etag;
+    }
+    if (cachedEntry?.lastModified) {
+      headers['If-Modified-Since'] = cachedEntry.lastModified;
+    }
   }
 
   const requestOptions = {
@@ -230,6 +234,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
               meta: { source: 'cache', originalType: responseType }
             };
           } else {
+            console.log(`Cache valid for ${url}, but not returning cached data as per flag.`);
             return { data: null, headers: responseHeaders };
           }
         }
