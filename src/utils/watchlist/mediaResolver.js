@@ -278,6 +278,12 @@ export async function batchResolveMedia(items, { precomputedAvailability = null 
               castCount: tmdbData.cast?.length || 0
             })
             
+            // Validate TMDB data before processing
+            if (!tmdbData.title && !tmdbData.name) {
+              console.log(`[batchResolveMedia] Invalid TMDB data (no title) for ${item.mediaType}/${tmdbId}, skipping cache`)
+              return
+            }
+            
             const mediaData = {
               tmdbId,
               mediaType: item.mediaType,
@@ -374,6 +380,12 @@ export async function batchResolveMedia(items, { precomputedAvailability = null 
             
           } catch (error) {
             console.error(`Error fetching TMDB data for ${item.mediaType} ${item.tmdbId}:`, error)
+            // Remove from request cache if it was previously cached with bad data
+            if (requestCache.has(cacheKey)) {
+              console.log(`[batchResolveMedia ERROR CLEANUP] Removing ${cacheKey} from requestCache due to error`)
+              requestCache.delete(cacheKey)
+            }
+            // Don't add failed responses to results or cache
           }
         })
       )

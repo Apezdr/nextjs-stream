@@ -15,10 +15,12 @@ export const movieProjectionFields = {
   posterBlurhashSource: 1,
   backdropBlurhashSource: 1,
   hdr: 1,
+  mediaQuality: 1,
   'metadata.id': 1,
   'metadata.overview': 1,
   'metadata.release_date': 1,
   'metadata.genres': 1,
+  'metadata.cast': 1,
   'metadata.poster_path': 1,
   'metadata.trailer_url': 1,
 }
@@ -33,11 +35,15 @@ export const tvShowProjectionFields = {
   posterSource: 1,
   posterBlurhashSource: 1,
   backdropBlurhashSource: 1,
+  dimensions: 1,
+  mediaQuality: 1,
   'metadata.id': 1,
   'metadata.overview': 1,
   'metadata.last_air_date': 1,
+  'metadata.first_air_date': 1,
   'metadata.networks': 1,
   'metadata.genres': 1,
+  'metadata.cast': 1,
   'metadata.status': 1,
   'metadata.poster_path': 1,
   'metadata.trailer_url': 1,
@@ -515,6 +521,8 @@ export async function sanitizeRecord(record, type, context = {}) {
         logo: record.logo || getFullImageUrl(record.metadata?.logo_path) || null,
         type: type,
         metadata: record.metadata || null,
+        hdr: record.hdr || record.episode?.hdr || record.mediaQuality?.isHDR || null,
+        dimensions: record.dimensions || record.episode?.dimensions || null,
         seasons: record.seasons,
         // Add season/episode data at top level for UI components
         seasonNumber: record.seasonNumber ?? record.episode.seasonNumber,
@@ -544,7 +552,8 @@ export async function sanitizeRecord(record, type, context = {}) {
         title: record.title || record.metadata?.title || null,
         type: type,
         metadata: record.metadata || null,
-        hdr: record.hdr || null,
+        hdr: record.hdr || record.mediaQuality?.isHDR || null,
+        dimensions: record.dimensions || null,
         // Add device info if available
         deviceInfo: deviceInfo,
       }
@@ -552,6 +561,10 @@ export async function sanitizeRecord(record, type, context = {}) {
   // Conditionally add url property if it exists in the data passed to the function
   if (record.url) {
     result.url = record.url;
+  }
+  // Preserve matchType for search result grouping
+  if (record.matchType) {
+    result.matchType = record.matchType;
   }
   if (Boolean(process.env.DEBUG) == true) {
     console.timeEnd('sanitizeRecord:createReturnObject');

@@ -235,7 +235,13 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
         }
       }
 
-      if (statusCode >= 200 && statusCode < 300 || !cachedEntry) {
+      // Never cache error responses (4xx, 5xx) - throw immediately
+      if (statusCode >= 400) {
+        cleanupResponse(response);
+        throw new Error(`HTTP Error: ${statusCode} for URL: ${url}`);
+      }
+
+      if ((statusCode >= 200 && statusCode < 300) || !cachedEntry) {
         let responseData;
 
         try {

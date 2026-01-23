@@ -1,0 +1,734 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Search Modal UX Placeholder (with Filters)</title>
+  <style>
+    :root{
+      --bg: #0b0d12;
+      --overlay: rgba(0,0,0,.55);
+      --surface: rgba(255,255,255,.94);
+      --surface2: rgba(255,255,255,.90);
+      --panelTint: rgba(12, 16, 24, .04);
+      --border: rgba(0,0,0,.08);
+      --border2: rgba(0,0,0,.06);
+      --text: #0b1220;
+      --muted: rgba(11,18,32,.62);
+      --muted2: rgba(11,18,32,.45);
+      --chip: rgba(11,18,32,.06);
+      --shadow: 0 30px 80px rgba(0,0,0,.38);
+      --shadow2: 0 12px 40px rgba(0,0,0,.18);
+      --r-xl: 18px;
+      --r-lg: 14px;
+      --r-md: 12px;
+      --r-sm: 10px;
+      --primary: #3b82f6;
+      --primaryText: #fff;
+      --focus: rgba(59,130,246,.25);
+
+      --listW: 420px;
+      --maxInspector: 620px;
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      background: radial-gradient(900px 500px at 15% 10%, rgba(59,130,246,.18), transparent 55%),
+                  radial-gradient(850px 450px at 80% 30%, rgba(147,51,234,.12), transparent 55%),
+                  var(--bg);
+      color: var(--text);
+    }
+
+    .overlay{
+      position: fixed;
+      inset: 0;
+      background: var(--overlay);
+      display:grid;
+      place-items:center;
+      padding: 22px;
+    }
+
+    .modal{
+      width: min(1200px, 96vw);
+      height: min(720px, 88vh);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--r-xl);
+      box-shadow: var(--shadow);
+      overflow:hidden;
+      display:flex;
+      flex-direction:column;
+      backdrop-filter: blur(14px);
+      position:relative; /* anchor overlays */
+    }
+
+    /* Overlay layer: popovers/sheets live here so they NEVER affect layout */
+    .modal-overlay-layer{
+      position:absolute;
+      inset:0;
+      z-index: 90;
+      pointer-events:none;
+    }
+    .modal-overlay-layer > *{ pointer-events:auto; }
+
+    /* Optional scrim INSIDE modal (turn on when popover/sheet is open)
+       Add class="is-filtering" to .modal to enable. */
+    .modal.is-filtering:after{
+      content:"";
+      position:absolute;
+      inset:0;
+      background: rgba(0,0,0,.10);
+      pointer-events:none;
+      z-index: 70;
+    }
+    .modal.is-filtering .modal-overlay-layer{ z-index: 90; }
+    
+
+    /* Mobile filter sheet (base): overlay UI (never participates in layout flow) */
+    .filter-sheet{
+      position:absolute;
+      left: 10px;
+      right: 10px;
+      bottom: 10px;
+      border-radius: 22px;
+      overflow:hidden;
+      border: 1px solid rgba(255,255,255,.14);
+      background: rgba(255,255,255,.94);
+      box-shadow: 0 28px 80px rgba(0,0,0,.35);
+      z-index: 20;
+      max-height: min(70vh, 520px);
+      display:none; /* flip to block to preview */
+    }
+    .sheet-grab{height: 24px; display:flex; align-items:center; justify-content:center; background: rgba(11,18,32,.03);}
+    .sheet-grab .bar{ width: 48px; height: 5px; border-radius: 999px; background: rgba(11,18,32,.18); }
+    .sheet-head{padding: 12px; display:flex; align-items:center; justify-content:space-between; border-bottom: 1px solid rgba(11,18,32,.08);}      
+    .sheet-body{padding: 12px; display:flex; flex-direction:column; gap: 10px; max-height: 48vh; overflow:auto;}
+    .sheet-foot{padding: 12px; display:flex; gap: 10px; border-top: 1px solid rgba(11,18,32,.08); background: rgba(11,18,32,.02);}
+
+    /* Top bar */
+    .topbar{
+      display:flex;
+      align-items:center;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border2);
+      background: linear-gradient(to bottom, rgba(255,255,255,.92), rgba(255,255,255,.86));
+      flex-wrap: nowrap;              /* prevents Filters/Clear from dropping */
+    }
+
+    .search{
+      flex: 1;
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      padding: 12px 12px;
+      border-radius: 999px;
+      background: rgba(11,18,32,.05);
+      border: 1px solid rgba(11,18,32,.07);
+    }
+    .search:focus-within{ box-shadow: 0 0 0 4px var(--focus); }
+    .search svg{opacity:.7}
+    .search input{
+      border:0;
+      outline:0;
+      background: transparent;
+      width:100%;
+      font-size: 14px;
+      color: var(--text);
+    }
+
+    .top-actions{display:flex; align-items:center; gap: 8px;}
+    .icon-btn{
+      height: 36px;
+      border-radius: 12px;
+      border: 1px solid rgba(11,18,32,.08);
+      background: rgba(255,255,255,.8);
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 0 10px;
+      cursor: default;
+      user-select:none;
+      white-space:nowrap;
+      font-size: 13px;
+      color: rgba(11,18,32,.86);
+    }
+    .icon-btn:hover{ background: rgba(255,255,255,.96); }
+    .icon-btn .badge{
+      height: 18px;
+      padding: 0 7px;
+      border-radius: 999px;
+      background: rgba(59,130,246,.14);
+      border: 1px solid rgba(59,130,246,.22);
+      color: rgba(11,18,32,.78);
+      font-weight: 650;
+      font-size: 12px;
+      display:inline-flex;
+      align-items:center;
+    }
+
+    /* Active filters row: one line, scrollable, low-visual-noise */
+    .filterbar{
+      display:flex;
+      align-items:center;
+      gap: 10px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border2);
+      background: rgba(255,255,255,.78);
+      min-height: 52px;
+      flex-wrap: nowrap;              /* prevents chip row from creating a second line */
+      overflow: hidden;               /* keeps layout stable if chips get long */
+    }
+    .filterbar .label{
+      font-size: 12px;
+      color: rgba(11,18,32,.56);
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+      margin-right: 2px;
+      flex: 0 0 auto;
+    }
+    .chiprow{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      overflow-x:auto;
+      overscroll-behavior-x: contain;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+      flex: 1 1 auto;
+      padding: 2px 0;
+      min-width: 0;
+      white-space: nowrap;            /* never wrap chips; scroll instead */
+    }
+    .chiprow::-webkit-scrollbar{ display:none; }
+
+    .chip{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba(11,18,32,.06);
+      border: 1px solid rgba(11,18,32,.08);
+      color: rgba(11,18,32,.78);
+      font-size: 12px;
+      user-select:none;
+      white-space:nowrap;
+      flex: 0 0 auto;
+    }
+    .chip strong{font-weight:800}
+    .chip .x{
+      width: 18px;
+      height: 18px;
+      border-radius: 999px;
+      display:grid;
+      place-items:center;
+      background: rgba(11,18,32,.06);
+      border: 1px solid rgba(11,18,32,.06);
+      font-size: 12px;
+      opacity:.85;
+    }
+
+    .clearbtn{
+      flex: 0 0 auto;
+      height: 32px;
+      padding: 0 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(11,18,32,.10);
+      background: rgba(11,18,32,.03);
+      color: rgba(11,18,32,.74);
+      font-weight: 750;
+      font-size: 12px;
+      cursor: default;
+    }
+    .clearbtn:hover{ background: rgba(11,18,32,.05); }
+/* Body split */
+    .body{
+      flex:1;
+      display:grid;
+      grid-template-columns: var(--listW) 1fr;
+      min-height:0;
+    }
+
+    /* Left pane */
+    .left{
+      min-width: 0;
+      border-right: 1px solid var(--border2);
+      display:flex;
+      flex-direction:column;
+      min-height:0;
+    }
+
+    .tabs{
+      display:flex;
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border2);
+    }
+    .tab{
+      display:inline-flex;
+      align-items:center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 999px;
+      background: transparent;
+      color: rgba(11,18,32,.7);
+      border: 1px solid transparent;
+      font-size: 13px;
+      user-select:none;
+    }
+    .tab .count{
+      font-size:12px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: rgba(11,18,32,.06);
+      color: rgba(11,18,32,.6);
+    }
+    .tab.active{
+      background: rgba(59,130,246,.12);
+      border-color: rgba(59,130,246,.18);
+      color: rgba(11,18,32,.92);
+    }
+
+    /* Optional: compact inline filters (desktop)
+       NOTE: To reduce clutter, keep filters in ONE place.
+       Recommended: use the Filters button (popover on desktop / sheet on mobile).
+       If you really want inline filters, re-enable by removing display:none below. */
+    .inline-filters{ display:none; }
+
+    .results{
+
+      padding: 8px;
+      overflow:auto;
+      min-height:0;
+    }
+    .row{
+      display:flex;
+      align-items:center;
+      gap: 12px;
+      padding: 10px;
+      border-radius: var(--r-md);
+      border: 1px solid transparent;
+      cursor: default;
+    }
+    .row:hover{ background: rgba(11,18,32,.03); }
+    .row.selected{
+      background: rgba(59,130,246,.08);
+      border-color: rgba(59,130,246,.16);
+    }
+
+    .thumb{
+      width: 44px;
+      height: 66px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, rgba(11,18,32,.25), rgba(11,18,32,.05));
+      border: 1px solid rgba(11,18,32,.08);
+      box-shadow: 0 10px 22px rgba(0,0,0,.12);
+      flex: 0 0 auto;
+      position:relative;
+      overflow:hidden;
+    }
+    .thumb:after{
+      content:"";
+      position:absolute;
+      inset:-40% -40%;
+      background: radial-gradient(circle at 30% 20%, rgba(255,255,255,.35), transparent 55%);
+      transform: rotate(10deg);
+    }
+
+    .row-main{min-width:0; flex:1;}
+    .t{
+      font-size: 14px;
+      font-weight: 650;
+      white-space:nowrap;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      margin-bottom: 2px;
+    }
+    .sub{
+      display:flex;
+      align-items:center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .pill{
+      display:inline-flex;
+      align-items:center;
+      gap:6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: var(--chip);
+      border: 1px solid rgba(11,18,32,.06);
+      color: rgba(11,18,32,.72);
+      font-size: 12px;
+      line-height: 18px;
+    }
+    .pill.strong{ background: rgba(11,18,32,.08); }
+    .pill.hdr{ background: rgba(147,51,234,.10); border-color: rgba(147,51,234,.14); }
+    .pill.k4{ background: rgba(34,197,94,.10); border-color: rgba(34,197,94,.14); }
+    .row-meta{display:flex; gap:6px; align-items:center;}
+
+    /* Right inspector */
+    .right{
+      min-width:0;
+      background: linear-gradient(to bottom, var(--panelTint), transparent 45%);
+      display:flex;
+      justify-content:center;
+      min-height:0;
+    }
+
+    .inspector{
+      width: 100%;
+      max-width: var(--maxInspector);
+      padding: 14px 16px 0;
+      display:flex;
+      flex-direction:column;
+      min-height:0;
+      gap: 12px;
+    }
+
+    .inspector-head{
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      padding: 10px 10px;
+      border: 1px solid rgba(11,18,32,.08);
+      border-radius: var(--r-lg);
+      background: rgba(255,255,255,.88);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 26px rgba(0,0,0,.08);
+    }
+    .head-top{display:flex; align-items:flex-start; justify-content:space-between; gap: 10px;}
+    .head-title{min-width:0;}
+    .head-title .h1{font-size: 18px; font-weight: 750; letter-spacing: -.01em; margin: 0 0 4px 0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+    .head-title .h2{font-size: 13px; color: var(--muted); margin:0; display:flex; gap: 8px; align-items:center; flex-wrap:wrap;}
+
+    .hero{border-radius: var(--r-xl); border: 1px solid rgba(11,18,32,.08); overflow:hidden; box-shadow: var(--shadow2); background: rgba(11,18,32,.05);}
+    .backdrop{height: 210px; background: radial-gradient(800px 260px at 15% 20%, rgba(59,130,246,.28), transparent 60%), radial-gradient(700px 260px at 85% 20%, rgba(147,51,234,.22), transparent 60%), linear-gradient(135deg, rgba(11,18,32,.60), rgba(11,18,32,.15)); position:relative;}
+    .backdrop:after{content:""; position:absolute; inset:0; background: linear-gradient(to bottom, rgba(0,0,0,.0), rgba(0,0,0,.38));}
+    .poster{position:absolute; left: 14px; bottom: -42px; width: 98px; height: 145px; border-radius: 14px; background: linear-gradient(135deg, rgba(255,255,255,.20), rgba(255,255,255,.05)); border: 1px solid rgba(255,255,255,.26); box-shadow: 0 22px 55px rgba(0,0,0,.45); overflow:hidden;}
+    .poster:before{content:""; position:absolute; inset:-50% -40%; background: radial-gradient(circle at 30% 20%, rgba(255,255,255,.35), transparent 60%); transform: rotate(12deg);}    
+    .hero-body{padding: 58px 14px 14px 14px; display:flex; flex-direction:column; gap: 10px; background: rgba(255,255,255,.90);}    
+    .clamp{color: var(--muted); font-size: 13px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow:hidden;}
+    .chips{display:flex; gap: 8px; flex-wrap:wrap;}
+
+    .actions{position: sticky; bottom: 0; z-index: 3; margin-top: auto; padding: 12px 0 14px;}
+    .actionbar{display:flex; gap: 10px; padding: 12px; border-radius: var(--r-xl); background: rgba(255,255,255,.92); border: 1px solid rgba(11,18,32,.08); box-shadow: 0 18px 55px rgba(0,0,0,.12); backdrop-filter: blur(10px);}
+    .btn{border: 1px solid rgba(11,18,32,.10); background: rgba(11,18,32,.04); color: rgba(11,18,32,.86); padding: 11px 12px; border-radius: 14px; font-weight: 650; font-size: 13px; cursor: default; display:inline-flex; align-items:center; justify-content:center; gap: 8px; user-select:none; white-space:nowrap;}
+    .btn.primary{background: var(--primary); color: var(--primaryText); border-color: rgba(59,130,246,.35); flex: 1;}
+
+    /* Desktop filter popover (static placeholder) */
+    .popover{
+      position:absolute;
+      top: 116px; /* below topbar + filterbar */
+      left: calc(50% - 170px);
+      width: 340px;
+      border-radius: 18px;
+      border: 1px solid rgba(11,18,32,.10);
+      background: rgba(255,255,255,.95);
+      box-shadow: 0 28px 80px rgba(0,0,0,.22);
+      overflow:hidden;
+      display:none; /* turn to block to preview */
+      z-index: 50;  /* MUST sit above panes */
+      pointer-events: auto;
+    }
+    .popover-head{padding: 12px; display:flex; align-items:center; justify-content:space-between; border-bottom: 1px solid rgba(11,18,32,.08);}
+    .popover-head .h{font-weight: 850; letter-spacing:-.01em;}
+    .popover-body{padding: 12px; display:flex; flex-direction:column; gap: 10px; max-height: 360px; overflow:auto;}
+    .popover-foot{padding: 12px; display:flex; gap: 10px; border-top: 1px solid rgba(11,18,32,.08); background: rgba(11,18,32,.02);}
+    .btn.small{padding: 9px 10px; border-radius: 12px; font-size: 13px;}
+    .btn.ghost{background: rgba(11,18,32,.02);}
+
+    /* Mobile behavior */
+    @media (max-width: 880px){
+      .modal{ width:min(760px, 96vw); height:min(760px, 90vh); }
+      .body{ grid-template-columns: 1fr; }
+      .right{ display:none; }
+      .inline-filters{ display:none; }
+
+      /* Mobile filter sheet placeholder */
+      .filter-sheet{
+        position:absolute;
+        left: 10px;
+        right: 10px;
+        bottom: 10px;
+        border-radius: 22px;
+        overflow:hidden;
+        border: 1px solid rgba(255,255,255,.14);
+        background: rgba(255,255,255,.94);
+        box-shadow: 0 28px 80px rgba(0,0,0,.35);
+        z-index: 60; /* MUST overlay content, never reflow it */
+      }
+      .sheet-grab{height: 24px; display:flex; align-items:center; justify-content:center; background: rgba(11,18,32,.03);}
+      .sheet-grab .bar{ width: 48px; height: 5px; border-radius: 999px; background: rgba(11,18,32,.18); }
+      .sheet-head{padding: 12px; display:flex; align-items:center; justify-content:space-between; border-bottom: 1px solid rgba(11,18,32,.08);}      
+      .sheet-body{padding: 12px; display:flex; flex-direction:column; gap: 10px; max-height: 48vh; overflow:auto;}
+      .sheet-foot{padding: 12px; display:flex; gap: 10px; border-top: 1px solid rgba(11,18,32,.08); background: rgba(11,18,32,.02);}      
+      .filter-sheet{ display:none; /* flip to block to preview */ }
+      .popover{ display:none !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="overlay" role="dialog" aria-modal="true" aria-label="Search">
+    <div class="modal">
+      <!-- TOP: search + quick filter button -->
+      <div class="topbar">
+        <div class="search" aria-label="Search input">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M21 21l-4.35-4.35" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/>
+          </svg>
+          <input placeholder="Search by title, actor, genre, year, HDR, or resolution…" value="maverick" />
+        </div>
+        <div class="top-actions">
+          <!-- This is the entry point for filters. Keep it explicit, with a count. -->
+          <div class="icon-btn" aria-label="Filters" title="Filters">
+            <span style="display:inline-flex; align-items:center; gap:8px;">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M4 6h16M7 12h10M10 18h4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+              </svg>
+              Filters
+            </span>
+            <span class="badge">3</span>
+          </div>
+          <div class="icon-btn" title="Clear" aria-label="Clear">✕</div>
+        </div>
+      </div>
+
+      <!-- FILTER CHIPS: shows what’s active at a glance, without stealing the UI -->
+      <!-- ACTIVE FILTERS (minimal): show only when filters are applied. Keep it to ONE line + horizontal scroll. -->
+      <div class="filterbar" aria-label="Active filters">
+        <span class="label">Filters</span>
+        <div class="chiprow" aria-label="Filter chips">
+          <span class="chip"><strong>HDR</strong>: Dolby Vision <span class="x">×</span></span>
+          <span class="chip"><strong>Res</strong>: 4K <span class="x">×</span></span>
+          <span class="chip"><strong>Genre</strong>: Action <span class="x">×</span></span>
+        </div>
+        <button class="clearbtn" type="button" aria-label="Clear all">Clear</button>
+      </div>
+
+      <div class="body">
+        <!-- LEFT: (optional) inline filters + results -->
+        <aside class="left">
+          <div class="tabs" aria-label="Search scopes">
+            <div class="tab active">All <span class="count">128</span></div>
+            <div class="tab">Titles <span class="count">92</span></div>
+            <div class="tab">People <span class="count">36</span></div>
+          </div>
+
+          <!-- Desktop: compact inline filter controls work great when you have real estate.
+               Key idea: multi-select chips, NOT huge form controls. -->
+          <div class="inline-filters" aria-label="Inline filters">
+            <p class="title">Filters <span>Multi-select</span></p>
+            <div class="filter-grid">
+              <div class="filter-group">
+                <h4>HDR</h4>
+                <div class="options">
+                  <div class="opt on"><span class="dot"></span>Dolby Vision</div>
+                  <div class="opt"><span class="dot"></span>HDR10</div>
+                  <div class="opt"><span class="dot"></span>HDR10+</div>
+                  <div class="opt"><span class="dot"></span>HLG</div>
+                </div>
+              </div>
+              <div class="filter-group">
+                <h4>Resolution</h4>
+                <div class="options">
+                  <div class="opt on"><span class="dot"></span>4K</div>
+                  <div class="opt"><span class="dot"></span>1080p</div>
+                  <div class="opt"><span class="dot"></span>720p</div>
+                </div>
+              </div>
+              <div class="filter-group">
+                <h4>Genre</h4>
+                <div class="options">
+                  <div class="opt on"><span class="dot"></span>Action</div>
+                  <div class="opt"><span class="dot"></span>Comedy</div>
+                  <div class="opt"><span class="dot"></span>Sci‑Fi</div>
+                  <div class="opt"><span class="dot"></span>Horror</div>
+                  <div class="opt"><span class="dot"></span>Drama</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="results" role="list" aria-label="Results">
+            <div class="row selected" role="listitem">
+              <div class="thumb" aria-hidden="true"></div>
+              <div class="row-main">
+                <div class="t">Top Gun: Maverick</div>
+                <div class="sub">
+                  <span class="pill strong">Movie</span>
+                  <span>2022</span>
+                  <span>•</span>
+                  <span>2h 11m</span>
+                </div>
+              </div>
+              <div class="row-meta">
+                <span class="pill" style="background: rgba(147,51,234,.10); border-color: rgba(147,51,234,.14);">DV</span>
+                <span class="pill k4">4K</span>
+              </div>
+            </div>
+
+            <div class="row" role="listitem">
+              <div class="thumb" aria-hidden="true"></div>
+              <div class="row-main">
+                <div class="t">Mad Max: Fury Road</div>
+                <div class="sub"><span class="pill strong">Movie</span><span>2015</span><span>•</span><span>2h 0m</span></div>
+              </div>
+              <div class="row-meta"><span class="pill hdr">HDR10</span><span class="pill k4">4K</span></div>
+            </div>
+
+            <div class="row" role="listitem">
+              <div class="thumb" aria-hidden="true"></div>
+              <div class="row-main">
+                <div class="t">John Wick</div>
+                <div class="sub"><span class="pill strong">Movie</span><span>2014</span><span>•</span><span>1h 41m</span></div>
+              </div>
+              <div class="row-meta"><span class="pill k4">4K</span></div>
+            </div>
+          </div>
+        </aside>
+
+        <!-- RIGHT: inspector -->
+        <section class="right" aria-label="Inspector">
+          <div class="inspector">
+            <div class="inspector-head">
+              <div class="head-top">
+                <div class="head-title">
+                  <div class="h1">Top Gun: Maverick <span style="font-weight:650; color:var(--muted2);">(2022)</span></div>
+                  <div class="h2">
+                    <span class="pill strong">Movie</span>
+                    <span class="pill">Action</span>
+                    <span class="pill">2h 11m</span>
+                    <span class="pill" style="background: rgba(147,51,234,.10); border-color: rgba(147,51,234,.14);">Dolby Vision</span>
+                    <span class="pill k4">4K</span>
+                  </div>
+                </div>
+                <div class="pill" aria-hidden="true">Matched: Title</div>
+              </div>
+            </div>
+
+            <div class="hero" aria-label="Hero">
+              <div class="backdrop"><div class="poster" aria-hidden="true"></div></div>
+              <div class="hero-body">
+                <div class="chips">
+                  <span class="pill">Fighter pilots</span>
+                  <span class="pill">Aerial stunts</span>
+                  <span class="pill">Legacy sequel</span>
+                </div>
+                <div class="clamp">After more than thirty years of service, Maverick is where he belongs, pushing the envelope as a courageous test pilot and dodging the advancement in rank that would ground him.</div>
+              </div>
+            </div>
+
+            <div class="actions" aria-label="Actions">
+              <div class="actionbar">
+                <div class="btn primary">▶ Play</div>
+                <div class="btn">Details</div>
+                <div class="btn">＋ Watchlist</div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <!-- Overlay layer (critical): popover/sheet are true overlays and must not shrink the results pane -->
+      <div class="modal-overlay-layer" aria-hidden="true">
+
+        <!-- Desktop filter popover placeholder (disabled by default)
+             UX rule: use this when you want a focused filter editor without permanently taking list space.
+             Flip display to block to preview. -->
+        <div class="popover" aria-hidden="true">
+          <div class="popover-head">
+            <div class="h">Filters</div>
+            <div class="chip clear" style="padding:6px 10px;">Clear</div>
+          </div>
+          <div class="popover-body">
+            <div class="filter-group">
+              <h4>HDR</h4>
+              <div class="options">
+                <div class="opt on"><span class="dot"></span>Dolby Vision</div>
+                <div class="opt"><span class="dot"></span>HDR10</div>
+                <div class="opt"><span class="dot"></span>HDR10+</div>
+                <div class="opt"><span class="dot"></span>HLG</div>
+              </div>
+            </div>
+            <div class="filter-group">
+              <h4>Resolution</h4>
+              <div class="options">
+                <div class="opt on"><span class="dot"></span>4K</div>
+                <div class="opt"><span class="dot"></span>1080p</div>
+                <div class="opt"><span class="dot"></span>720p</div>
+              </div>
+            </div>
+            <div class="filter-group">
+              <h4>Genre</h4>
+              <div class="options">
+                <div class="opt on"><span class="dot"></span>Action</div>
+                <div class="opt"><span class="dot"></span>Comedy</div>
+                <div class="opt"><span class="dot"></span>Drama</div>
+                <div class="opt"><span class="dot"></span>Horror</div>
+                <div class="opt"><span class="dot"></span>Sci‑Fi</div>
+              </div>
+            </div>
+          </div>
+          <div class="popover-foot">
+            <div class="btn small ghost">Cancel</div>
+            <div class="btn small primary" style="flex:1;">Apply</div>
+          </div>
+        </div>
+
+        <!-- Mobile filter sheet placeholder (disabled by default)
+             Flip display to block in CSS to preview. -->
+        <div class="filter-sheet" aria-hidden="true">
+          <div class="sheet-grab"><div class="bar"></div></div>
+          <div class="sheet-head">
+            <div style="font-weight:850;">Filters</div>
+            <div class="chip clear" style="padding:6px 10px;">Clear</div>
+          </div>
+          <div class="sheet-body">
+            <div class="filter-group">
+              <h4>HDR</h4>
+              <div class="options">
+                <div class="opt on"><span class="dot"></span>Dolby Vision</div>
+                <div class="opt"><span class="dot"></span>HDR10</div>
+                <div class="opt"><span class="dot"></span>HDR10+</div>
+                <div class="opt"><span class="dot"></span>HLG</div>
+              </div>
+            </div>
+            <div class="filter-group">
+              <h4>Resolution</h4>
+              <div class="options">
+                <div class="opt on"><span class="dot"></span>4K</div>
+                <div class="opt"><span class="dot"></span>1080p</div>
+                <div class="opt"><span class="dot"></span>720p</div>
+              </div>
+            </div>
+            <div class="filter-group">
+              <h4>Genre</h4>
+              <div class="options">
+                <div class="opt on"><span class="dot"></span>Action</div>
+                <div class="opt"><span class="dot"></span>Comedy</div>
+                <div class="opt"><span class="dot"></span>Drama</div>
+                <div class="opt"><span class="dot"></span>Horror</div>
+                <div class="opt"><span class="dot"></span>Sci‑Fi</div>
+              </div>
+            </div>
+          </div>
+          <div class="sheet-foot">
+            <div class="btn small ghost">Cancel</div>
+            <div class="btn small primary" style="flex:1;">Apply</div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+</body>
+</html>
