@@ -67,7 +67,7 @@ export default function SubtitleSidebar({
   const handleEpisodeChange = (newEpisodeNumber) => {
     if (newEpisodeNumber && newEpisodeNumber !== selectedEpisode) {
       // Navigate to the new episode
-      const newUrl = `/list/tv/${mediaTitle}/${seasonNumber}/${newEpisodeNumber}/play`
+      const newUrl = `/list/tv/${encodeURIComponent(mediaTitle)}/${seasonNumber}/${newEpisodeNumber}/play`
       window.location.href = newUrl
     }
   }

@@ -8,6 +8,11 @@ import { SyncOperation, MediaType } from '../sync/core'
 import chalk from 'chalk'
 import { buildEnhancedFlatDBStructure } from './memoryUtils'
 import clientPromise from '@src/lib/mongodb'
+import { performance } from 'perf_hooks'
+// Import legacy TV sync functions for hybrid architecture
+import { syncTVShows } from './tvShows/index'
+import { syncSeasons } from './seasons/index'
+import { syncEpisodes } from './episodes/index'
 
 /**
  * Main adapter function to use new architecture instead of flat sync
@@ -111,8 +116,9 @@ export async function syncWithNewArchitecture(fileServer, serverConfig, fieldAva
       console.log(chalk.green(`✅ Movies: ${results.movies.processed} processed, ${results.movies.errors} errors`))
     }
 
-    // TODO: Add episode, season, and TV show processing when those services are implemented
-    console.log(chalk.yellow('📺 Episodes, seasons, and TV shows will use existing flat sync until new services are implemented'))
+    // HYBRID MODE: Use legacy sync for TV content until new architecture supports it
+    // This ensures TV shows like "What If...?" are not skipped
+    await syncTVContentWithLegacyArchitecture(flatDB, fileServer, serverConfig, fieldAvailability, results)
 
     // Calculate performance metrics
     const endTime = Date.now()
@@ -137,6 +143,75 @@ export async function syncWithNewArchitecture(fileServer, serverConfig, fieldAva
     results.performance.duration = Date.now() - startTime
 
     return results
+  }
+}
+
+/**
+ * Sync TV content using legacy sync architecture (temporary until new architecture supports it)
+ * @param {Object} flatDB - Enhanced flat database structure
+ * @param {Object} fileServer - File server data
+ * @param {Object} serverConfig - Server configuration
+ * @param {Object} fieldAvailability - Field availability mapping
+ * @param {Object} results - Results object to populate
+ * @returns {Promise<void>}
+ */
+async function syncTVContentWithLegacyArchitecture(flatDB, fileServer, serverConfig, fieldAvailability, results) {
+  console.log(chalk.blue('📺 Syncing TV content with LEGACY architecture (hybrid mode)...'))
+  const tvStartTime = performance.now()
+  
+  try {
+    // Log TV shows that will be processed
+    if (fileServer?.tv) {
+      const tvShowTitles = Object.keys(fileServer.tv)
+      console.log(chalk.blue(`  Found ${tvShowTitles.length} TV shows to process`))
+      
+      // Check for "What If...?" specifically
+      const whatIfShow = tvShowTitles.find(title => title.toLowerCase().includes('what if'))
+      if (whatIfShow) {
+        console.log(chalk.green(`  ✓ Found "${whatIfShow}" - will be processed by legacy sync`))
+      }
+    }
+    
+    // Sync TV shows
+    console.log(chalk.cyan('  → Syncing TV shows...'))
+    const tvShowResults = await syncTVShows(flatDB, fileServer, serverConfig, fieldAvailability)
+    results.tvShows = {
+      processed: tvShowResults.processed?.length || 0,
+      errors: tvShowResults.errors?.length || 0,
+      details: tvShowResults.processed || []
+    }
+    
+    // Sync seasons
+    console.log(chalk.magenta('  → Syncing seasons...'))
+    const seasonResults = await syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability)
+    results.seasons = {
+      processed: seasonResults.processed?.length || 0,
+      errors: seasonResults.errors?.length || 0,
+      details: seasonResults.processed || []
+    }
+    
+    // Sync episodes
+    console.log(chalk.yellow('  → Syncing episodes...'))
+    const episodeResults = await syncEpisodes(flatDB, fileServer, serverConfig, fieldAvailability)
+    results.episodes = {
+      processed: episodeResults.processed?.length || 0,
+      errors: episodeResults.errors?.length || 0,
+      details: episodeResults.processed || []
+    }
+    
+    const tvEndTime = performance.now()
+    const tvDuration = ((tvEndTime - tvStartTime) / 1000).toFixed(2)
+    
+    console.log(chalk.green(`✅ TV content synced in ${tvDuration}s: ${results.tvShows.processed} shows, ${results.seasons.processed} seasons, ${results.episodes.processed} episodes`))
+    
+  } catch (error) {
+    console.error(chalk.red('❌ TV content sync failed:'), error)
+    results.errors.push({
+      phase: 'tvContentSync',
+      error: error.message,
+      stack: error.stack,
+      serverId: serverConfig.id
+    })
   }
 }
 
@@ -327,17 +402,17 @@ export function validateNewArchitectureCompatibility(fileServer, serverConfig) {
       }
     }
 
-    // Add warnings for unsupported content
-    if (validation.summary.episodesFound > 0) {
-      validation.warnings.push(`${validation.summary.episodesFound} episodes found but episode service not yet implemented`)
+    // Add info about hybrid architecture for TV content
+    if (validation.summary.tvShowsFound > 0) {
+      validation.warnings.push(`${validation.summary.tvShowsFound} TV shows will use LEGACY sync (hybrid mode until new architecture supports TV)`)
     }
 
     if (validation.summary.seasonsFound > 0) {
-      validation.warnings.push(`${validation.summary.seasonsFound} seasons found but season service not yet implemented`)
+      validation.warnings.push(`${validation.summary.seasonsFound} seasons will use LEGACY sync (hybrid mode)`)
     }
 
-    if (validation.summary.tvShowsFound > 0) {
-      validation.warnings.push(`${validation.summary.tvShowsFound} TV shows found but TV show service not yet implemented`)
+    if (validation.summary.episodesFound > 0) {
+      validation.warnings.push(`${validation.summary.episodesFound} episodes will use LEGACY sync (hybrid mode)`)
     }
 
     return validation

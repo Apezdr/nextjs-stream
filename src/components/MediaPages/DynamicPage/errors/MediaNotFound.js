@@ -119,14 +119,14 @@ function getErrorConfig(notFoundType, mediaTitle, mediaSeason, mediaEpisode) {
     case 'season':
       return {
         errorMessage: `We found the show "${decodeURIComponent(mediaTitle)}", but Season ${mediaSeason || 'Unknown'} isn't available in our collection. Check out the available seasons above.`,
-        backHref: `/list/tv/${mediaTitle}`,
+        backHref: `/list/tv/${encodeURIComponent(mediaTitle)}`,
         backText: 'View Available Seasons'
       }
     
     case 'episode':
       return {
         errorMessage: `We found Season ${mediaSeason || 'Unknown'} of "${decodeURIComponent(mediaTitle)}", but Episode ${mediaEpisode || 'Unknown'} isn't available. Browse other episodes in this season.`,
-        backHref: `/list/tv/${mediaTitle}/${mediaSeason}`,
+        backHref: `/list/tv/${encodeURIComponent(mediaTitle)}/${mediaSeason}`,
         backText: 'View Season Episodes'
       }
     

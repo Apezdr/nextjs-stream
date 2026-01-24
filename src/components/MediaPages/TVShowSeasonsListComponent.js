@@ -23,7 +23,7 @@ export default async function TVShowSeasonsList({ showTitle }) {
   if (!session || !session.user) {
     // User is not authenticated
     return (
-      <UnauthenticatedPage callbackUrl={`/list/tv/${showTitle}`}>
+      <UnauthenticatedPage callbackUrl={`/list/tv/${encodeURIComponent(showTitle)}`}>
         <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
           Please Sign in first
         </h2>

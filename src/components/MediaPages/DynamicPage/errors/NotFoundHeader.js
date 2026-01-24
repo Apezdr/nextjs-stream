@@ -52,7 +52,7 @@ export default function NotFoundHeader({ showData, mediaTitle }) {
           
           {/* View show page link */}
           <Link
-            href={`/list/tv/${mediaTitle}`}
+            href={`/list/tv/${encodeURIComponent(mediaTitle)}`}
             className="text-xs text-blue-400 hover:text-blue-300 transition-colors flex items-center gap-1"
           >
             View show page

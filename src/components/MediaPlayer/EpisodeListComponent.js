@@ -62,7 +62,7 @@ export default function EpisodeListComponent({ mediaTitle, mediaSeason, mediaEpi
   
   // Navigate to an episode
   const navigateToEpisode = (episodeNumber) => {
-    router.push(`/list/tv/${mediaTitle}/${mediaSeason}/${episodeNumber}/play`);
+    router.push(`/list/tv/${encodeURIComponent(mediaTitle)}/${mediaSeason}/${episodeNumber}/play`);
   };
   
   if (loading) {
@@ -123,7 +123,7 @@ export default function EpisodeListComponent({ mediaTitle, mediaSeason, mediaEpi
         <div className="flex space-x-4 gap-6">
           {episodes.map((episode) => {
             const isCurrentEpisode = episode.episodeNumber === currentEpisodeNum;
-            const episodeLink = `/list/tv/${mediaTitle}/${mediaSeason}/${episode.episodeNumber}/play`;
+            const episodeLink = `/list/tv/${encodeURIComponent(mediaTitle)}/${mediaSeason}/${episode.episodeNumber}/play`;
             
             return (
               <EpisodeThumbnail

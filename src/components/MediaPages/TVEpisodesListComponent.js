@@ -141,7 +141,7 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
                 </div>
               ) : null}
               <div className="flex flex-row gap-x-4 mt-4 justify-center">
-                <Link href={`/list/tv/${season.showTitle || showTitle}`} className="self-center">
+                <Link href={`/list/tv/${encodeURIComponent(season.showTitle || showTitle)}`} className="self-center">
                   <button
                     type="button"
                     className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
@@ -209,7 +209,7 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
                       key={listKey}
                     >
                       <Link
-                        href={`/list/tv/${showTitle}/${season.seasonNumber}/${episode.episodeNumber}`}
+                        href={`/list/tv/${encodeURIComponent(showTitle)}/${season.seasonNumber}/${episode.episodeNumber}`}
                       >
                         <div className="group block mb-2 w-full">
                           <div className="flex flex-col">

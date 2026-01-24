@@ -42,7 +42,7 @@ function NextUpCard({
 
       let endTime = Date.now() + duration
       timerRef.current = setTimeout(() => {
-        router.push(`/list/tv/${mediaTitle}/${season_number}/${nextEpisodeNumber}`)
+        router.push(`/list/tv/${encodeURIComponent(mediaTitle)}/${season_number}/${nextEpisodeNumber}`)
       }, duration)
 
       intervalRef.current = setInterval(() => {
@@ -125,7 +125,7 @@ const NextUpCardContent = memo(
   }) => {
     return (
       <Link
-        href={`/list/tv/${mediaTitle}/${season_number}/${nextEpisodeNumber}/play?start=0`}
+        href={`/list/tv/${encodeURIComponent(mediaTitle)}/${season_number}/${nextEpisodeNumber}/play?start=0`}
         className="group pointer-events-auto max-h-20"
       >
         <div className="absolute rounded-lg bottom-10 right-4 z-10 flex flex-col items-center justify-center py-12 w-40 h-52 bg-black group-hover:bg-gray-900 bg-opacity-50">
