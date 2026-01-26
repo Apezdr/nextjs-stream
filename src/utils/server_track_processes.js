@@ -1,11 +1,12 @@
-import { getAllServers } from "./config"
+import { getAllServers } from './config'
 
 async function fetchProcesses() {
   const servers = getAllServers()
   const processes = []
   for (const server of servers) {
     try {
-      const response = await fetch(`${server.syncEndpoint}/processes`)
+      // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.
+      const response = await fetch(`${server.internalEndpoint || server.syncEndpoint}/processes`)
       const data = await response.json()
       processes.push({ server: server.id, processes: data.data })
     } catch (error) {
