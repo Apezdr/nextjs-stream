@@ -29,9 +29,9 @@ export const GET = async (req) => {
       type: type,
       title: decodeURIComponent(name),
       season: season,
-      episode: episode
+      episode: episode,
     })
-    
+
     if (!media) {
       return new Response(JSON.stringify({ error: 'Media not found' }), {
         status: 404,
@@ -50,10 +50,13 @@ export const GET = async (req) => {
       } else {
         // For TV shows or seasons without episode, we can't determine the server
         // We would need to fetch specific episode information
-        return new Response(JSON.stringify({ error: 'Episode number required for TV thumbnails' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        })
+        return new Response(
+          JSON.stringify({ error: 'Episode number required for TV thumbnails' }),
+          {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+          }
+        )
       }
     }
 
@@ -61,7 +64,8 @@ export const GET = async (req) => {
     const serverConfig = getServer(serverId || 'default')
 
     // Extract the Node.js server URL (syncEndpoint) from the server configuration
-    const nodeServerUrl = serverConfig.syncEndpoint
+    // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.
+    const nodeServerUrl = serverConfig.internalEndpoint || serverConfig.syncEndpoint
 
     let spriteURL
 
@@ -83,7 +87,7 @@ export const GET = async (req) => {
         timeout: 480000, // 8 minutes
         responseType: 'text',
       })
-      
+
       if (!data) {
         return new Response(JSON.stringify({ error: 'Failed to fetch thumbnails' }), {
           status: 500,
@@ -105,14 +109,14 @@ export const GET = async (req) => {
 
       return new Response(data, { status: 200, headers: headers })
     } catch (error) {
-      console.error(`Error fetching thumbnails: ${error.message}`);
+      console.error(`Error fetching thumbnails: ${error.message}`)
       return new Response(JSON.stringify({ error: 'Failed to fetch thumbnails' }), {
         status: 500,
         headers: { 'Content-Type': 'application/json' },
       })
     }
   } catch (error) {
-    console.error(`Error in thumbnails route: ${error.message}`);
+    console.error(`Error in thumbnails route: ${error.message}`)
     return new Response(JSON.stringify({ error: 'Failed to fetch chapters/thumbnails' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },

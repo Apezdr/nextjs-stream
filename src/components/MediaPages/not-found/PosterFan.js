@@ -74,7 +74,7 @@ export default function PosterFan({ seasons = [], showTitle, targetSeasonNumber 
           const isAvailable = s.isAvailable !== false // Default to true for backward compatibility
 
           // Build the season URL directly (only used if available)
-          const seasonUrl = `/list/tv/${showTitle}/${s.seasonNumber}`
+          const seasonUrl = `/list/tv/${encodeURIComponent(showTitle)}/${s.seasonNumber}`
 
           // Format air date for display
           const formatAirDate = (airDate) => {

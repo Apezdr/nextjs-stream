@@ -25,7 +25,7 @@ export default function SeasonItem({ season, showTitle }) {
           duration: 0.45,
         }}
       >
-        <Link href={`/list/tv/${showTitle}/${seasonNumber}`}>
+        <Link href={`/list/tv/${encodeURIComponent(showTitle)}/${seasonNumber}`}>
           <div className="block mb-2 w-full lg:w-auto group">
             <MediaPoster
               className="max-w-[200px] !mx-auto rounded-t-sm shadow-2xl"

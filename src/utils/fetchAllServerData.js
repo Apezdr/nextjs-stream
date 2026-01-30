@@ -1,9 +1,10 @@
-import { 
-  getAllServers, 
-  getSyncUrls, 
-  fileServerVersionTV, 
-  fileServerVersionMOVIES 
+import {
+  getAllServers,
+  getSyncUrls,
+  fileServerVersionTV,
+  fileServerVersionMOVIES
 } from "./config";
+import { getWebhookIdForServer } from './webhookServer.js';
 
 /**
  * Creates a timeout promise that rejects after specified milliseconds.
@@ -21,12 +22,13 @@ function timeout(timeoutMs) {
 /**
  * Wraps a fetch request with a timeout.
  * @param {string} url - URL to fetch.
+ * @param {Object} options - Fetch options (headers, method, etc.).
  * @param {number} timeoutMs - Timeout in milliseconds (default: 10000).
  * @returns {Promise<Response>} Fetch response.
  */
-async function fetchWithTimeout(url, timeoutMs = 10000) {
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
   return Promise.race([
-    fetch(url),
+    fetch(url, options),
     timeout(timeoutMs)
   ]);
 }
@@ -90,6 +92,34 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3) {
   const syncUrls = getSyncUrls(server.id);
   let lastError = null;
   
+  // Get the webhook ID for this server
+  const webhookId = await getWebhookIdForServer(server.id);
+  
+  console.log(`[AUTH DEBUG] Server: ${server.id}, Webhook ID: ${webhookId ? `${webhookId.substring(0, 8)}...` : 'NOT FOUND'}`);
+  console.log(`[AUTH DEBUG] Environment WEBHOOK_ID exists: ${!!process.env.WEBHOOK_ID}`);
+  
+  if (!webhookId) {
+    console.error(`No webhook ID configured for server ${server.id}. Check WEBHOOK_ID environment variable.`);
+    return {
+      id: server.id,
+      baseURL: server.baseURL,
+      prefixPath: server.prefixPath,
+      syncEndpoint: server.syncEndpoint,
+      priority: server.priority,
+      error: 'Missing webhook authentication configuration',
+      data: null
+    };
+  }
+  
+  // Create headers with webhook authentication
+  const headers = {
+    'x-webhook-id': webhookId,
+    'Content-Type': 'application/json'
+  };
+  
+  console.log(`[AUTH DEBUG] Request URLs - TV: ${syncUrls.tv}, Movies: ${syncUrls.movies}`);
+  console.log(`[AUTH DEBUG] Headers being sent:`, { 'x-webhook-id': webhookId.substring(0, 8) + '...', 'Content-Type': 'application/json' });
+  
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       if (attempt > 0) {
@@ -98,10 +128,14 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3) {
         await sleep(delay);
       }
       
+      console.log(`[AUTH DEBUG] Attempt ${attempt + 1}: Making authenticated request to sync endpoints`);
+      
       const [tvResponse, moviesResponse] = await Promise.all([
-        fetchWithTimeout(syncUrls.tv, timeoutMs),
-        fetchWithTimeout(syncUrls.movies, timeoutMs)
+        fetchWithTimeout(syncUrls.tv, { headers }, timeoutMs),
+        fetchWithTimeout(syncUrls.movies, { headers }, timeoutMs)
       ]);
+      
+      console.log(`[AUTH DEBUG] Response statuses - TV: ${tvResponse.status}, Movies: ${moviesResponse.status}`);
 
       if (!tvResponse.ok) {
         const error = new Error(`Failed to fetch TV data from ${syncUrls.tv}: ${tvResponse.status} ${tvResponse.statusText}`);

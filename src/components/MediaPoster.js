@@ -70,18 +70,19 @@ function MediaPoster({
           classNames="absolute bottom-0 w-full text-center z-10 text-[0.55rem]"
         />
       ) : null}
-      {!hideGenres && _media.metadata?.genres && (
+      {!hideGenres && Array.isArray(_media.metadata?.genres) && _media.metadata.genres.length > 0 && (
         <div className="bg-gray-900 text-center px-0.5 py-0.5 text-white transition-opacity duration-700 inset-0 text-xs opacity-75 group-hover:opacity-100 z-10 relative">
           <div className="whitespace-nowrap">
-            {_media.metadata.genres.map((genre) => {
-              const { fontColor, backgroundColor } = generateColors(genre?.name)
+            {_media.metadata.genres.map((genre, index) => {
+              const genreName = genre?.name || 'Unknown'
+              const { fontColor, backgroundColor } = generateColors(genreName)
               return (
                 <span
-                  key={genre.name}
+                  key={genre?.id || index}
                   className="text-xs font-medium me-2 px-2.5 rounded border border-gray-600"
                   style={{ backgroundColor: backgroundColor, color: fontColor }}
                 >
-                  {genre.name}
+                  {genreName}
                 </span>
               )
             })}

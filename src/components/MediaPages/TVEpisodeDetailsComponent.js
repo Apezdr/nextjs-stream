@@ -101,7 +101,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
             </Suspense>
           </div>
           <div className="mt-4">
-            <Link href={`/list/tv/${showTitle}/${seasonNumber}`} className="self-center">
+            <Link href={`/list/tv/${encodeURIComponent(showTitle)}/${seasonNumber}`} className="self-center">
               <button
                 type="button"
                 className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 mx-auto"
@@ -168,7 +168,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
                     </div> */}
           <div className='flex flex-row justify-evenly'>
           <Link
-            href={`/list/tv/${showTitle}/${seasonNumber}/${episodeNumber}/play`}
+            href={`/list/tv/${encodeURIComponent(showTitle)}/${seasonNumber}/${episodeNumber}/play`}
             className={classNames(
               'relative inline-flex flex-row items-center gap-2',
               'opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'

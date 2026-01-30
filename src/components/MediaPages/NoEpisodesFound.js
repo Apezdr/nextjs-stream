@@ -101,7 +101,7 @@ export default function NoEpisodesFound({ onRetry, showTitle, seasonNumber, seas
               </div>
             )}
             <div className="flex flex-row gap-x-4 mt-4 justify-center">
-              <Link href={`/list/tv/${showTitle}`} className="self-center">
+              <Link href={`/list/tv/${encodeURIComponent(showTitle)}`} className="self-center">
                 <button
                   type="button"
                   className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"

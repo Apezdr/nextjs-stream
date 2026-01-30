@@ -8,6 +8,11 @@ import { SyncOperation, MediaType } from '../sync/core'
 import chalk from 'chalk'
 import { buildEnhancedFlatDBStructure } from './memoryUtils'
 import clientPromise from '@src/lib/mongodb'
+import { performance } from 'perf_hooks'
+// Import legacy TV sync functions for hybrid architecture
+import { syncTVShows } from './tvShows/index'
+import { syncSeasons } from './seasons/index'
+import { syncEpisodes } from './episodes/index'
 
 /**
  * Main adapter function to use new architecture instead of flat sync
@@ -17,25 +22,34 @@ import clientPromise from '@src/lib/mongodb'
  * @param {Object} options - Additional options
  * @returns {Promise<Object>} Results in flat sync compatible format
  */
-export async function syncWithNewArchitecture(fileServer, serverConfig, fieldAvailability, options = {}) {
+export async function syncWithNewArchitecture(
+  fileServer,
+  serverConfig,
+  fieldAvailability,
+  options = {}
+) {
   console.log(chalk.bold.cyan(`🆕 Starting NEW architecture sync for server ${serverConfig.id}...`))
-  
+
   // Validate server configuration before proceeding
   if (!serverConfig || !serverConfig.baseURL) {
-    const error = new Error(`Invalid server configuration: missing baseURL for server ${serverConfig?.id || 'unknown'}`)
+    const error = new Error(
+      `Invalid server configuration: missing baseURL for server ${serverConfig?.id || 'unknown'}`
+    )
     console.error(chalk.red('❌ Server configuration validation failed:'), error.message)
     throw error
   }
 
-  console.log(chalk.green(`🔧 Server config validated: ${serverConfig.baseURL} (${serverConfig.id})`))
-  
+  console.log(
+    chalk.green(`🔧 Server config validated: ${serverConfig.baseURL} (${serverConfig.id})`)
+  )
+
   const startTime = Date.now()
-  
+
   // 🚀 PERFORMANCE OPTIMIZATION: Pre-fetch all movies from database
   console.log(chalk.blue(`📥 Pre-fetching movie database for cache...`))
   const client = await clientPromise
   const flatDB = await buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability)
-  
+
   console.log(chalk.green(`✅ Pre-fetched ${flatDB.movies?.size || 0} movies into cache`))
   if (flatDB.missingMovies?.length > 0) {
     console.log(chalk.cyan(`📝 Identified ${flatDB.missingMovies.length} new movies to create`))
@@ -44,30 +58,30 @@ export async function syncWithNewArchitecture(fileServer, serverConfig, fieldAva
     movies: {
       processed: 0,
       errors: 0,
-      details: []
+      details: [],
     },
     episodes: {
       processed: 0,
       errors: 0,
-      details: []
+      details: [],
     },
     seasons: {
       processed: 0,
       errors: 0,
-      details: []
+      details: [],
     },
     tvShows: {
       processed: 0,
       errors: 0,
-      details: []
+      details: [],
     },
     performance: {
       startTime: new Date(),
       endTime: null,
-      duration: 0
+      duration: 0,
     },
     notifications: [],
-    errors: []
+    errors: [],
   }
 
   try {
@@ -76,23 +90,30 @@ export async function syncWithNewArchitecture(fileServer, serverConfig, fieldAva
 
     // Extract movies from fileServer
     const movieTitles = extractMovieTitles(fileServer)
-    
+
     if (movieTitles.length > 0) {
-      console.log(chalk.green(`🎬 Processing ${movieTitles.length} movies with new architecture...`))
-      
+      console.log(
+        chalk.green(`🎬 Processing ${movieTitles.length} movies with new architecture...`)
+      )
+
       // Adapt server config to match new architecture expectations
       const adaptedServerConfig = {
         id: serverConfig.id,
         priority: serverConfig.priority || 1,
-        baseUrl: serverConfig.baseURL,        // File server URL (for media files)
-        nodeUrl: serverConfig.syncEndpoint,   // Node.js server URL (for API endpoints)
-        prefix: serverConfig.prefixPath,      // Map prefixPath → prefix
+        baseUrl: serverConfig.baseURL, // File server URL (for media files)
+        // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.
+        nodeUrl: serverConfig.internalEndpoint || serverConfig.syncEndpoint, // Node.js server URL (for API endpoints)
+        prefix: serverConfig.prefixPath, // Map prefixPath → prefix
         enabled: true,
-        timeout: 30000
+        timeout: 30000,
       }
-      
-      console.log(chalk.blue(`🔧 Adapted server config: ${adaptedServerConfig.baseUrl} (${adaptedServerConfig.id})`))
-      
+
+      console.log(
+        chalk.blue(
+          `🔧 Adapted server config: ${adaptedServerConfig.baseUrl} (${adaptedServerConfig.id})`
+        )
+      )
+
       const movieResults = await syncManager.syncMovies(
         movieTitles,
         adaptedServerConfig,
@@ -101,42 +122,132 @@ export async function syncWithNewArchitecture(fileServer, serverConfig, fieldAva
           operations: [SyncOperation.Metadata, SyncOperation.Assets, SyncOperation.Content],
           concurrency: options.concurrency || 5,
           fileServerData: fileServer, // Pass file server data to sync manager
-          movieCache: flatDB.movies    // 🚀 OPTIMIZATION: Pass pre-fetched movie cache
+          movieCache: flatDB.movies, // 🚀 OPTIMIZATION: Pass pre-fetched movie cache
         }
       )
 
       // Translate movie results to flat sync format
       results.movies = translateMovieResults(movieResults)
-      
-      console.log(chalk.green(`✅ Movies: ${results.movies.processed} processed, ${results.movies.errors} errors`))
+
+      console.log(
+        chalk.green(
+          `✅ Movies: ${results.movies.processed} processed, ${results.movies.errors} errors`
+        )
+      )
     }
 
-    // TODO: Add episode, season, and TV show processing when those services are implemented
-    console.log(chalk.yellow('📺 Episodes, seasons, and TV shows will use existing flat sync until new services are implemented'))
+    // HYBRID MODE: Use legacy sync for TV content until new architecture supports it
+    // This ensures TV shows like "What If...?" are not skipped
+    await syncTVContentWithLegacyArchitecture(
+      flatDB,
+      fileServer,
+      serverConfig,
+      fieldAvailability,
+      results
+    )
 
     // Calculate performance metrics
     const endTime = Date.now()
     results.performance.endTime = new Date()
     results.performance.duration = endTime - startTime
 
-    console.log(chalk.bold.green(`🎉 NEW architecture sync completed in ${results.performance.duration}ms`))
+    console.log(
+      chalk.bold.green(`🎉 NEW architecture sync completed in ${results.performance.duration}ms`)
+    )
 
     return results
-
   } catch (error) {
     console.error(chalk.red('❌ NEW architecture sync failed:'), error)
-    
+
     results.errors.push({
       phase: 'newArchitectureSync',
       error: error.message,
       stack: error.stack,
-      serverId: serverConfig.id
+      serverId: serverConfig.id,
     })
 
     results.performance.endTime = new Date()
     results.performance.duration = Date.now() - startTime
 
     return results
+  }
+}
+
+/**
+ * Sync TV content using legacy sync architecture (temporary until new architecture supports it)
+ * @param {Object} flatDB - Enhanced flat database structure
+ * @param {Object} fileServer - File server data
+ * @param {Object} serverConfig - Server configuration
+ * @param {Object} fieldAvailability - Field availability mapping
+ * @param {Object} results - Results object to populate
+ * @returns {Promise<void>}
+ */
+async function syncTVContentWithLegacyArchitecture(
+  flatDB,
+  fileServer,
+  serverConfig,
+  fieldAvailability,
+  results
+) {
+  console.log(chalk.blue('📺 Syncing TV content with LEGACY architecture (hybrid mode)...'))
+  const tvStartTime = performance.now()
+
+  try {
+    // Log TV shows that will be processed
+    if (fileServer?.tv) {
+      const tvShowTitles = Object.keys(fileServer.tv)
+      console.log(chalk.blue(`  Found ${tvShowTitles.length} TV shows to process`))
+
+      // Check for "What If...?" specifically
+      const whatIfShow = tvShowTitles.find((title) => title.toLowerCase().includes('what if'))
+      if (whatIfShow) {
+        console.log(chalk.green(`  ✓ Found "${whatIfShow}" - will be processed by legacy sync`))
+      }
+    }
+
+    // Sync TV shows
+    console.log(chalk.cyan('  → Syncing TV shows...'))
+    const tvShowResults = await syncTVShows(flatDB, fileServer, serverConfig, fieldAvailability)
+    results.tvShows = {
+      processed: tvShowResults.processed?.length || 0,
+      errors: tvShowResults.errors?.length || 0,
+      details: tvShowResults.processed || [],
+    }
+
+    // Sync seasons
+    console.log(chalk.magenta('  → Syncing seasons...'))
+    const seasonResults = await syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability)
+    results.seasons = {
+      processed: seasonResults.processed?.length || 0,
+      errors: seasonResults.errors?.length || 0,
+      details: seasonResults.processed || [],
+    }
+
+    // Sync episodes
+    console.log(chalk.yellow('  → Syncing episodes...'))
+    const episodeResults = await syncEpisodes(flatDB, fileServer, serverConfig, fieldAvailability)
+    results.episodes = {
+      processed: episodeResults.processed?.length || 0,
+      errors: episodeResults.errors?.length || 0,
+      details: episodeResults.processed || [],
+    }
+
+    const tvEndTime = performance.now()
+    const tvDuration = ((tvEndTime - tvStartTime) / 1000).toFixed(2)
+
+    console.log(
+      chalk.green(
+        `✅ TV content synced in ${tvDuration}s: ${results.tvShows.processed} shows, ${results.seasons.processed} seasons, ${results.episodes.processed} episodes`
+      )
+    )
+  } catch (error) {
+    console.error(chalk.red('❌ TV content sync failed:'), error)
+    results.errors.push({
+      phase: 'tvContentSync',
+      error: error.message,
+      stack: error.stack,
+      serverId: serverConfig.id,
+    })
   }
 }
 
@@ -152,7 +263,7 @@ function extractMovieTitles(fileServer) {
 
   const allKeys = Object.keys(fileServer.movies)
 
-  const validTitles = allKeys.filter(title => {
+  const validTitles = allKeys.filter((title) => {
     const movieData = fileServer.movies[title]
     return movieData && (movieData.urls || movieData.metadata || movieData.poster)
   })
@@ -170,7 +281,7 @@ function translateMovieResults(batchSyncResult) {
     processed: 0,
     errors: 0,
     details: [],
-    skipped: 0
+    skipped: 0,
   }
 
   if (!batchSyncResult || !batchSyncResult.results) {
@@ -179,7 +290,7 @@ function translateMovieResults(batchSyncResult) {
 
   // Group results by entity and status
   const resultsByEntity = new Map()
-  
+
   for (const result of batchSyncResult.results) {
     if (!resultsByEntity.has(result.entityId)) {
       resultsByEntity.set(result.entityId, [])
@@ -189,9 +300,9 @@ function translateMovieResults(batchSyncResult) {
 
   // Process each entity's results
   for (const [entityId, entityResults] of resultsByEntity) {
-    const completedOperations = entityResults.filter(r => r.status === 'completed')
-    const failedOperations = entityResults.filter(r => r.status === 'failed')
-    const skippedOperations = entityResults.filter(r => r.status === 'skipped')
+    const completedOperations = entityResults.filter((r) => r.status === 'completed')
+    const failedOperations = entityResults.filter((r) => r.status === 'failed')
+    const skippedOperations = entityResults.filter((r) => r.status === 'skipped')
 
     const detail = {
       title: entityId,
@@ -199,11 +310,11 @@ function translateMovieResults(batchSyncResult) {
       operations: {
         completed: completedOperations.length,
         failed: failedOperations.length,
-        skipped: skippedOperations.length
+        skipped: skippedOperations.length,
       },
-      changes: completedOperations.flatMap(r => r.changes),
-      errors: failedOperations.flatMap(r => r.errors),
-      timestamp: new Date()
+      changes: completedOperations.flatMap((r) => r.changes),
+      errors: failedOperations.flatMap((r) => r.errors),
+      timestamp: new Date(),
     }
 
     translated.details.push(detail)
@@ -234,7 +345,7 @@ export async function compareArchitecturePerformance(fileServer, serverConfig, f
   const comparison = {
     newArchitecture: null,
     oldArchitecture: null,
-    analysis: null
+    analysis: null,
   }
 
   try {
@@ -247,24 +358,25 @@ export async function compareArchitecturePerformance(fileServer, serverConfig, f
     comparison.newArchitecture = {
       duration: newDuration,
       results: newResults,
-      memoryUsage: process.memoryUsage()
+      memoryUsage: process.memoryUsage(),
     }
 
     // For old architecture comparison, we'd need to call the original flat sync
     // This would require importing and calling the existing flat sync functions
-    console.log(chalk.yellow('📊 Old architecture comparison would require calling existing flat sync'))
+    console.log(
+      chalk.yellow('📊 Old architecture comparison would require calling existing flat sync')
+    )
 
     // Analysis
     comparison.analysis = {
       speedImprovement: 'New architecture provides better observability and error handling',
       memoryEfficiency: `New architecture used ${Math.round(comparison.newArchitecture.memoryUsage.heapUsed / 1024 / 1024)}MB heap`,
       errorHandling: 'Improved granular error isolation and recovery',
-      observability: 'Real-time progress tracking and detailed metrics'
+      observability: 'Real-time progress tracking and detailed metrics',
     }
 
     console.log(chalk.bold.green('✅ Performance comparison completed'))
     return comparison
-
   } catch (error) {
     console.error(chalk.red('❌ Performance comparison failed:'), error)
     comparison.error = error.message
@@ -287,8 +399,8 @@ export function validateNewArchitectureCompatibility(fileServer, serverConfig) {
       moviesFound: 0,
       episodesFound: 0,
       seasonsFound: 0,
-      tvShowsFound: 0
-    }
+      tvShowsFound: 0,
+    },
   }
 
   try {
@@ -312,12 +424,12 @@ export function validateNewArchitectureCompatibility(fileServer, serverConfig) {
 
     if (fileServer.tv) {
       validation.summary.tvShowsFound = Object.keys(fileServer.tv).length
-      
+
       // Count episodes and seasons
       for (const showData of Object.values(fileServer.tv)) {
         if (showData.seasons) {
           validation.summary.seasonsFound += Object.keys(showData.seasons).length
-          
+
           for (const seasonData of Object.values(showData.seasons)) {
             if (seasonData.episodes) {
               validation.summary.episodesFound += seasonData.episodes.length
@@ -327,21 +439,26 @@ export function validateNewArchitectureCompatibility(fileServer, serverConfig) {
       }
     }
 
-    // Add warnings for unsupported content
-    if (validation.summary.episodesFound > 0) {
-      validation.warnings.push(`${validation.summary.episodesFound} episodes found but episode service not yet implemented`)
+    // Add info about hybrid architecture for TV content
+    if (validation.summary.tvShowsFound > 0) {
+      validation.warnings.push(
+        `${validation.summary.tvShowsFound} TV shows will use LEGACY sync (hybrid mode until new architecture supports TV)`
+      )
     }
 
     if (validation.summary.seasonsFound > 0) {
-      validation.warnings.push(`${validation.summary.seasonsFound} seasons found but season service not yet implemented`)
+      validation.warnings.push(
+        `${validation.summary.seasonsFound} seasons will use LEGACY sync (hybrid mode)`
+      )
     }
 
-    if (validation.summary.tvShowsFound > 0) {
-      validation.warnings.push(`${validation.summary.tvShowsFound} TV shows found but TV show service not yet implemented`)
+    if (validation.summary.episodesFound > 0) {
+      validation.warnings.push(
+        `${validation.summary.episodesFound} episodes will use LEGACY sync (hybrid mode)`
+      )
     }
 
     return validation
-
   } catch (error) {
     validation.errors.push(`Validation failed: ${error.message}`)
     validation.isCompatible = false

@@ -19,6 +19,7 @@ import { getWebhookServerMapping, getServerWebhookMapping, getWebhookIdForServer
  * @property {string} baseURL - Base URL for the file server
  * @property {string} prefixPath - Prefix path for media files
  * @property {string} syncEndpoint - Base endpoint for sync operations
+ * @property {string} internalEndpoint - Internal network endpoint for server-to-server calls (defaults to syncEndpoint)
  * @property {ServerPaths} paths - Server-specific paths
  * @property {boolean} isDefault - Whether this is the default server
  */
@@ -48,25 +49,37 @@ const createSyncUrls = (serverBaseUrl) => {
  * @param {Object} params - Server configuration parameters
  * @returns {FileServerConfig} Complete server configuration
  */
-const createServerConfig = ({ 
-  id, 
-  baseURL, 
-  prefixPath = '', 
-  syncEndpoint, 
+const createServerConfig = ({
+  id,
+  baseURL,
+  prefixPath = '',
+  syncEndpoint,
+  internalEndpoint,
   isDefault = false,
   priority = 1
 }) => {
-  return {
+  // Default internalEndpoint to syncEndpoint if not provided
+  const finalInternalEndpoint = internalEndpoint || syncEndpoint
+  
+  const config = {
     id,
     baseURL,
     prefixPath,
     syncEndpoint,
+    internalEndpoint: finalInternalEndpoint,
     paths: {
       sync: createSyncUrls(syncEndpoint)
     },
     isDefault,
     priority
   }
+  
+  // Log loaded configuration for debugging
+  console.debug(
+    `[CONFIG] Loaded server config for ${id}: syncEndpoint=${syncEndpoint} internalEndpoint=${finalInternalEndpoint}`
+  )
+  
+  return config
 }
 
 /**
@@ -90,11 +103,13 @@ const loadServerConfigurations = () => {
   }
   
   // Always add the default server first
+  const defaultSyncEndpoint = process.env.NODE_SERVER_URL || 'http://localhost:3000'
   servers.push(createServerConfig({
     id: 'default',
     baseURL: process.env.FILE_SERVER_URL || 'http://localhost:3000',
     prefixPath: process.env.FILE_SERVER_PREFIX_PATH || '',
-    syncEndpoint: process.env.NODE_SERVER_URL || 'http://localhost:3000',
+    syncEndpoint: defaultSyncEndpoint,
+    internalEndpoint: process.env.NODE_SERVER_INTERNAL_URL,
     isDefault: true,
     priority: 1
   }))
@@ -107,6 +122,7 @@ const loadServerConfigurations = () => {
       baseURL: process.env[`FILE_SERVER_URL_${serverIndex}`],
       prefixPath: process.env[`FILE_SERVER_PREFIX_PATH_${serverIndex}`] || '',
       syncEndpoint: process.env[`NODE_SERVER_URL_${serverIndex}`],
+      internalEndpoint: process.env[`NODE_SERVER_INTERNAL_URL_${serverIndex}`],
       isDefault: false,
       priority: serverIndex
     }))
