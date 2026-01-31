@@ -1,7 +1,7 @@
 'use server';
 
 import { auth } from '@src/lib/cachedAuth';
-import { getLatestSystemStatus } from '@src/utils/admin_utils';
+import { getProcessedSystemStatus } from '@src/utils/getProcessedSystemStatus';
 import StatusBannerClient from './StatusBannerClient';
 
 /**
@@ -17,78 +17,67 @@ export default async function ServerStatusBanner() {
     return null;
   }
   
-  // Get latest status from database
-  const latestStatus = await getLatestSystemStatus();
+  // TEMPORARY DEV MODE: Force show elevated notification for styling
+  const DEVELOPMENT_MODE = process.env.NODE_ENV !== 'production';
   
-  // If no status data or everything is normal, don't render anything
-  if (!latestStatus || 
-      !latestStatus.servers || 
-      Object.keys(latestStatus.servers).length === 0) {
-    return null;
-  }
+  let statusInfo;
   
-  // Determine worst status level across all servers
-  const statusLevels = ['normal', 'heavy', 'critical'];
-  let worstLevel = 'normal';
-  let incidentServer = null;
-  
-  // Extract active incidents
-  const currentIncidents = latestStatus.activeIncidents?.filter(
-    incident => !incident.resolvedAt
-  ) || [];
-  
-  // Check if any active incidents are still within display period
-  const now = new Date();
-  const activeIncidents = currentIncidents.filter(incident => 
-    new Date(incident.minDisplayUntil) > now
-  );
-  
-  // If we have active incidents, use their status
-  if (activeIncidents.length > 0) {
-    // Find the most severe incident
-    for (const incident of activeIncidents) {
-      const incidentLevelIndex = statusLevels.indexOf(incident.level);
-      const worstLevelIndex = statusLevels.indexOf(worstLevel);
-      
-      if (incidentLevelIndex > worstLevelIndex) {
-        worstLevel = incident.level;
-        incidentServer = incident;
-      }
-    }
+  if (DEVELOPMENT_MODE) {
+    // Show mock elevated status for styling purposes
+    statusInfo = {
+      level: 'elevated',
+      message: 'System resources are under increased load due to high user activity. Performance monitoring is active.',
+      isIncidentActive: true,
+      incidentStartedAt: '2026-01-31T02:05:00.000Z', // Static incident time for dev
+      serverId: 'server2'
+    };
   } else {
-    // Otherwise check server statuses
-    for (const [serverId, serverStatus] of Object.entries(latestStatus.servers)) {
-      const serverLevel = serverStatus.level || 'normal';
-      const serverLevelIndex = statusLevels.indexOf(serverLevel);
-      const worstLevelIndex = statusLevels.indexOf(worstLevel);
-      
-      if (serverLevelIndex > worstLevelIndex) {
-        worstLevel = serverLevel;
+    // Normal production logic
+    let statusData;
+    try {
+      statusData = await getProcessedSystemStatus();
+    } catch (error) {
+      console.error('Error fetching system status in banner:', error);
+      return null;
+    }
+    
+    if (!statusData || 
+        !statusData.servers || 
+        statusData.servers.length === 0) {
+      return null;
+    }
+    
+    const worstLevel = statusData.overall?.level || 'normal';
+    
+    if (worstLevel === 'normal') {
+      return null;
+    }
+    
+    const statusLevels = ['normal', 'elevated', 'heavy', 'critical'];
+    let incidentServer = null;
+    
+    for (const server of statusData.servers) {
+      if (server.isIncidentActive) {
+        if (!incidentServer || 
+            statusLevels.indexOf(server.level) > statusLevels.indexOf(incidentServer.level)) {
+          incidentServer = server;
+        }
       }
     }
+    
+    const message = statusData.overall?.message || 
+      (worstLevel === 'critical' ? 'Critical system load detected. Some features may be unavailable.' :
+       worstLevel === 'heavy' ? 'System is experiencing heavy load. Performance may be affected.' :
+       'System status unknown.');
+    
+    statusInfo = {
+      level: worstLevel,
+      message: incidentServer?.message || message,
+      isIncidentActive: !!incidentServer,
+      incidentStartedAt: incidentServer?.incidentStartedAt,
+      serverId: incidentServer?.serverId
+    };
   }
-  
-  // If everything is normal, don't render
-  if (worstLevel === 'normal') {
-    return null;
-  }
-  
-  // Prepare status message
-  let message = '';
-  if (worstLevel === 'critical') {
-    message = 'Critical system load detected. Some features may be unavailable.';
-  } else if (worstLevel === 'heavy') {
-    message = 'System is experiencing heavy load. Performance may be affected.';
-  }
-  
-  // Include incident information if applicable
-  const statusInfo = {
-    level: worstLevel,
-    message: incidentServer?.message || message,
-    isIncidentActive: !!incidentServer,
-    incidentStartedAt: incidentServer?.startedAt,
-    serverId: incidentServer?.serverId
-  };
   
   // Pass this data to a client component that handles visibility state
   return <StatusBannerClient status={statusInfo} />;
