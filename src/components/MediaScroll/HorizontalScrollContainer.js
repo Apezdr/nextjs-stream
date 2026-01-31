@@ -1,9 +1,17 @@
-import { Suspense } from 'react'
+import { Suspense, cache } from 'react'
 import HorizontalScroll from '@src/components/MediaScroll/HorizontalScroll'
 import { getFlatRecommendations } from '@src/utils/flatRecommendations'
 import { getFlatPosters, getFlatRecentlyAddedMedia, getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { getUserWatchlist, getPlaylistVisibility } from '@src/utils/watchlist'
 import HorizontalScrollSkeleton from './HorizontalScrollSkeleton'
+
+// Cached database functions for request-level deduplication (server-cache-react pattern)
+const getCachedPosters = cache(getFlatPosters)
+const getCachedRecentlyWatched = cache(getFlatRecentlyWatchedForUser)
+const getCachedRecentlyAdded = cache(getFlatRecentlyAddedMedia)
+const getCachedRecommendations = cache(getFlatRecommendations)
+const getCachedWatchlist = cache(getUserWatchlist)
+const getCachedPlaylistVisibility = cache(getPlaylistVisibility)
 
 // Define personalized messages for each type
 const NO_CONTENT_MESSAGES = {
@@ -31,15 +39,15 @@ async function DynamicMediaContent({
 
   switch (type) {
     case 'movie':
-      // Assuming getPosters returns a count when countOnly is true
-      items = await getFlatPosters('movie', true)
+      // Use cached function for request-level deduplication
+      items = await getCachedPosters('movie', true)
       break
     case 'tv':
-      items = await getFlatPosters('tv', true)
+      items = await getCachedPosters('tv', true)
       break
     case 'recentlyWatched':
       limit = 50
-      items = await getFlatRecentlyWatchedForUser({
+      items = await getCachedRecentlyWatched({
         userId: user?.id,
         countOnly: true,
         limit: limit,
@@ -47,45 +55,65 @@ async function DynamicMediaContent({
       break
     case 'recentlyAdded':
       limit = 32
-      items = await getFlatRecentlyAddedMedia({ limit: limit, countOnly: true })
+      items = await getCachedRecentlyAdded({ limit: limit, countOnly: true })
       break
     case 'recommendations': {
       limit = 30
-      // Fetch count from recommendations
-      const recommendationsData = await getFlatRecommendations(user?.id, 0, limit, true)
+      // Fetch count from recommendations using cached function
+      const recommendationsData = await getCachedRecommendations(user?.id, 0, limit, true)
       items = recommendationsData.count || 0
       break
     }
     case 'playlist':
       // Count playlist items respecting user visibility settings (same logic as horizontal-list API)
       if (playlistId) {
-        // Check user's visibility settings for this playlist to determine if they want to hide unavailable items
-        let hideUnavailable = false
-        try {
-          const visibility = await getPlaylistVisibility(user?.id, playlistId)
-          hideUnavailable = visibility?.hideUnavailable ?? false
-        } catch (e) {
-          console.error('Error fetching playlist visibility for count:', e)
-          // Default to showing all content if visibility fetch fails
-        }
+        // OPTIMIZATION: Use Promise.allSettled to run visibility and watchlist queries in parallel
+        const [visibilityResult, watchlistResult] = await Promise.allSettled([
+          getCachedPlaylistVisibility(user?.id, playlistId),
+          getCachedWatchlist({
+            playlistId,
+            countOnly: true,
+            internalOnly: false, // Get all items initially
+            userId: user?.id,
+          })
+        ])
         
-        // Use same internalOnly logic as horizontal-list API
-        items = await getUserWatchlist({
-          playlistId,
-          countOnly: true,
-          internalOnly: hideUnavailable,  // Conditional filtering based on user preference
-          userId: user?.id,
-        })
+        const hideUnavailable = visibilityResult.status === 'fulfilled' 
+          ? visibilityResult.value?.hideUnavailable ?? false 
+          : false
+        
+        if (watchlistResult.status === 'fulfilled') {
+          // If we need to hide unavailable items and got all items, re-fetch with filtering
+          if (hideUnavailable) {
+            items = await getCachedWatchlist({
+              playlistId,
+              countOnly: true,
+              internalOnly: true,
+              userId: user?.id,
+            })
+          } else {
+            items = watchlistResult.value
+          }
+        } else {
+          console.error('Error fetching playlist items for count:', watchlistResult.reason)
+          items = 0
+        }
       } else {
         items = 0
       }
       break
     case 'all':
-    default:
-      // Assuming getPosters returns a count when countOnly is true
-      moviePosters = await getFlatPosters('movie', true)
-      tvPosters = await getFlatPosters('tv', true)
+    default: {
+      // CRITICAL FIX: Run movie and TV queries in parallel (async-parallel pattern)
+      const [moviePostersResult, tvPostersResult] = await Promise.all([
+        getCachedPosters('movie', true),
+        getCachedPosters('tv', true)
+      ])
+      moviePosters = moviePostersResult
+      tvPosters = tvPostersResult
       items = moviePosters + tvPosters
+      break
+    }
   }
 
   // Determine if there are items to display

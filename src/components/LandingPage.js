@@ -21,9 +21,7 @@ async function WelcomeSection({ userName }) {
             Welcome {userName.split(' ')[0]},
           </h2>
           <h2 className="text-xl font-bold tracking-tight text-white pb-8 xl:pb-0 px-4 xl:px-0">
-            <Suspense>
-              <AsyncMediaCounts suffix={` Available TV Shows & Movies`} showDuration={true} />
-            </Suspense>
+            <AsyncMediaCounts suffix={` Available TV Shows & Movies`} showDuration={true} />
           </h2>
         </li>
       </ul>

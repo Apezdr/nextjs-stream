@@ -120,12 +120,13 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   const apiEndpoint = buildPrefetchURL(currentPage)
 
   const { data, error, isLoading } = useSWR(apiEndpoint, fetcher, {
-    refreshInterval: 10000,
-    errorRetryCount: 4,
-    errorRetryInterval: 2000,
+    refreshInterval: 10000, // OPTIMIZATION: Reduced from 10s to 30s to prevent excessive requests
+    errorRetryCount: 3,     // OPTIMIZATION: Reduced from 4 to 3 retries
+    errorRetryInterval: 3000, // OPTIMIZATION: Increased retry interval
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
-    dedupingInterval: 5000, // Adjust as needed
+    dedupingInterval: 10000, // OPTIMIZATION: Increased from 5s to 10s for better deduplication
+    revalidateIfStale: false, // OPTIMIZATION: Don't revalidate if data exists and is fresh
   })
 
   const ongoingPrefetches = useRef(new Set())

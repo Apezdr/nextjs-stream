@@ -225,9 +225,8 @@ export default function StatusBannerClient({ status: initialStatus }) {
     // Docked state - compact pill on left edge
     return (
       <div 
-        className="fixed bottom-4 sm:top-20 left-3 sm:left-3 z-50 group cursor-pointer"
+        className="fixed bottom-4 left-3 sm:left-3 z-50 group cursor-pointer"
         onClick={() => setExpanded(true)}
-        onMouseEnter={() => setExpanded(true)}
       >
         <div className="rounded-full bg-[rgba(18,18,24,0.55)] backdrop-blur-md border border-white/10 shadow-lg px-3 py-2 flex items-center gap-2 transition-all duration-300 hover:bg-[rgba(18,18,24,0.75)]">
           <span className="text-sm" aria-hidden="true">{statusInfo.icon}</span>
@@ -252,11 +251,7 @@ export default function StatusBannerClient({ status: initialStatus }) {
       )}
       
       {/* Floating pill */}
-      <div className={`fixed z-50 transition-all duration-300 ease-out ${
-        docked && expanded 
-          ? 'top-16 left-4 w-[min(92vw,480px)]' // Expanded from dock
-          : 'top-4 left-1/2 -translate-x-1/2 w-[min(92vw,560px)]' // Initial center position
-      }`}>
+      <div className={`fixed z-50 transition-all duration-300 ease-out top-4 left-1/2 -translate-x-1/2 w-[min(92vw,560px)]`}>
         <div className={`
           rounded-2xl bg-[rgba(18,18,24,0.62)] backdrop-blur-md 
           shadow-[0_12px_40px_rgba(0,0,0,0.45)] 

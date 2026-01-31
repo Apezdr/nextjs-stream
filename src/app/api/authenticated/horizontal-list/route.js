@@ -104,23 +104,22 @@ export const GET = async (req) => {
             return []
           }
           
-          // User-specific data - remain uncached for now due to dynamic API restrictions
-          // Fetch playlist info first to get sorting preferences
-          let playlistInfo = null
-          try {
-            playlistInfo = await getPlaylistById(playlistIdParam)
-          } catch (e) {
-            console.error('Error fetching playlist info:', e)
-          }
+          // OPTIMIZATION: Use Promise.allSettled to run playlist queries in parallel
+          const [playlistInfoResult, visibilityResult] = await Promise.allSettled([
+            getPlaylistById(playlistIdParam),
+            getPlaylistVisibility(authResult?.id, playlistIdParam)
+          ])
           
-          // Check user's visibility settings for this playlist to determine if they want to hide unavailable items
-          let hideUnavailable = false
-          try {
-            const visibility = await getPlaylistVisibility(authResult?.id, playlistIdParam)
-            hideUnavailable = visibility?.hideUnavailable ?? false
-          } catch (e) {
-            console.error('Error fetching playlist visibility:', e)
-            // Default to showing all content if visibility fetch fails
+          const playlistInfo = playlistInfoResult.status === 'fulfilled' ? playlistInfoResult.value : null
+          const hideUnavailable = visibilityResult.status === 'fulfilled' 
+            ? visibilityResult.value?.hideUnavailable ?? false 
+            : false
+          
+          if (playlistInfoResult.status === 'rejected') {
+            console.error('Error fetching playlist info:', playlistInfoResult.reason)
+          }
+          if (visibilityResult.status === 'rejected') {
+            console.error('Error fetching playlist visibility:', visibilityResult.reason)
           }
           
           // Get watchlist items based on user preference
@@ -265,55 +264,55 @@ export const GET = async (req) => {
       items = []
     }
 
-    // Fetch previous item
-    if (page > 0) {
-      const prevPageItems = await fetchItemsForPage(page - 1, itemsPerPage)
-      if (prevPageItems && prevPageItems.length > 0) {
-        prevPageItems.sort(sortList)
-        previousItem = prevPageItems[prevPageItems.length - 1] // Get the last item
-        const contextByType = {
-          recentlyWatched: { dateContext: 'watchHistory' },
-          recentlyAdded: { dateContext: 'recentlyAdded' },
-          recommendations: { dateContext: 'recommendations' },
-          // For other types, we'll rely on the default context
-        };
-        
-        // Apply same context to previous item
-        // Create context with TV device information for previous item
-        const prevContext = {
-          ...contextByType[type] || {},
-          isTVdevice: isTVdevice
-        };
-        previousItem = await sanitizeCardData(previousItem, shouldExposeAdditionalData, prevContext)
-        
-        // Add watch history to previous item if requested
-        if (includeWatchHistory && previousItem) {
-          try {
-            const previousItemWithHistory = await addWatchHistoryToItems([previousItem], authResult?.id)
-            previousItem = previousItemWithHistory[0]
-          } catch (error) {
-            console.error('Error adding watch history to previous item:', error)
-            // Continue without watch history on error
-          }
-        }
-      }
-    }
+    // OPTIMIZATION: Fetch previous and next items in parallel
+    const [prevPageItemsResult, nextPageItemsResult] = await Promise.allSettled([
+      page > 0 ? fetchItemsForPage(page - 1, itemsPerPage) : Promise.resolve(null),
+      fetchItemsForPage(page + 1, itemsPerPage)
+    ])
 
-    // Fetch next item
-    const nextPageItems = await fetchItemsForPage(page + 1, itemsPerPage)
-    if (nextPageItems && nextPageItems.length > 0) {
-      nextPageItems.sort(sortList)
-      nextItem = nextPageItems[0] // Get the first item
-      // Define context for next item (to match the previous implementations)
+    // Process previous item
+    if (prevPageItemsResult.status === 'fulfilled' && prevPageItemsResult.value && prevPageItemsResult.value.length > 0) {
+      const prevPageItems = prevPageItemsResult.value
+      prevPageItems.sort(sortList)
+      previousItem = prevPageItems[prevPageItems.length - 1] // Get the last item
+      
       const contextByType = {
         recentlyWatched: { dateContext: 'watchHistory' },
         recentlyAdded: { dateContext: 'recentlyAdded' },
         recommendations: { dateContext: 'recommendations' },
-        // For other types, we'll rely on the default context
+      };
+      
+      // Apply same context to previous item
+      const prevContext = {
+        ...contextByType[type] || {},
+        isTVdevice: isTVdevice
+      };
+      previousItem = await sanitizeCardData(previousItem, shouldExposeAdditionalData, prevContext)
+      
+      // Add watch history to previous item if requested
+      if (includeWatchHistory && previousItem) {
+        try {
+          const previousItemWithHistory = await addWatchHistoryToItems([previousItem], authResult?.id)
+          previousItem = previousItemWithHistory[0]
+        } catch (error) {
+          console.error('Error adding watch history to previous item:', error)
+        }
+      }
+    }
+
+    // Process next item
+    if (nextPageItemsResult.status === 'fulfilled' && nextPageItemsResult.value && nextPageItemsResult.value.length > 0) {
+      const nextPageItems = nextPageItemsResult.value
+      nextPageItems.sort(sortList)
+      nextItem = nextPageItems[0] // Get the first item
+      
+      const contextByType = {
+        recentlyWatched: { dateContext: 'watchHistory' },
+        recentlyAdded: { dateContext: 'recentlyAdded' },
+        recommendations: { dateContext: 'recommendations' },
       };
       
       // Apply same context to next item
-      // Create context with TV device information for next item
       const nextContext = {
         ...contextByType[type] || {},
         isTVdevice: isTVdevice
@@ -327,7 +326,6 @@ export const GET = async (req) => {
           nextItem = nextItemWithHistory[0]
         } catch (error) {
           console.error('Error adding watch history to next item:', error)
-          // Continue without watch history on error
         }
       }
     }
