@@ -127,7 +127,7 @@ To implement the NextJS-Stream app, follow these steps:
 
    ```yaml
    environment:
-     NODE_SERVER_URL: 'https://personalserver.adamdrumm.com/nodejs'
+     NODE_SERVER_URL: 'https://personalserver.example.com/nodejs'
      NODE_SERVER_INTERNAL_URL: 'http://192.168.1.39:3000'
    ```
 
@@ -167,6 +167,65 @@ To implement the NextJS-Stream app, follow these steps:
 
    **Multiple:**
    `email1@xxxx.com,email2@zzzz.com`
+
+   ## Cross-Domain Authentication
+
+   If your Next.js app and Node server are running on different subdomains of the same parent domain, you can enable cross-domain authentication to allow session cookies to work across both domains.
+
+   ### When to Use Cross-Domain Authentication
+
+   **Enable this feature when:**
+   - Next.js app: `cinema.example.com`
+   - Node server: `node.example.com`
+   - Both are subdomains of the same parent domain (`.example.com`)
+
+   **Don't use this feature when:**
+   - Both services are on the same domain (`cinema.example.com/node`)
+   - Services are on completely different domains (`cinema.com` and `nodeserver.net`)
+
+   ### Configuration
+
+   Add the following environment variable to enable cross-domain authentication:
+
+   ```env
+   # Cross-Domain Authentication (Optional)
+   # Set this to your parent domain with a leading dot
+   AUTH_COOKIE_DOMAIN=.example.com
+   ```
+
+   **Examples:**
+   - For `app.mysite.com` and `api.mysite.com`: `AUTH_COOKIE_DOMAIN=.mysite.com`
+
+   ### Security Considerations
+
+   - **Only use if you control all subdomains** of the parent domain
+   - Cookies will be accessible to **ALL subdomains** of the parent domain
+   - For completely different domains, use webhook authentication instead
+   - Requires HTTPS for secure cookie transmission
+
+   ### Troubleshooting Cross-Domain Authentication
+
+   **Authentication not working across domains:**
+
+   1. **Check domain configuration:**
+      - Verify `AUTH_COOKIE_DOMAIN` starts with a dot (`.example.com`)
+      - Ensure both domains are subdomains of the specified parent domain
+
+   2. **Verify HTTPS:**
+      - Cross-domain secure cookies require HTTPS on both domains
+      - Check browser console for cookie security errors
+
+   3. **Test configuration:**
+      - Check server logs for authentication configuration messages
+      - Look for `[AUTH CONFIG]` log entries showing your domain setup
+
+   **Browser console errors:**
+   - If you see cookie errors in browser console, verify the cookie domain matches your actual domain structure
+   - Ensure `sameSite: 'lax'` is compatible with your domain setup
+
+   **Alternative for different domains:**
+   - If domains are completely different, use the existing webhook authentication system instead
+   - Webhook auth works across any domain configuration
 
    ## Webhook
 

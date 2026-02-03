@@ -8,6 +8,7 @@ import { adminUserEmails } from '@src/utils/config'
 import { SignJWT, jwtVerify } from 'jose'
 import { nanoid } from 'nanoid'
 import { ObjectId } from 'mongodb'
+import { getAuthCookieConfig, logAuthConfig } from '@src/utils/authConfig'
 
 // Types for auth sessions (both regular tokenized auth and QR auth)
 // Status flow: pending -> authenticating -> complete/failed -> expired (via TTL)
@@ -344,6 +345,12 @@ async function syncUserAdminStatus(userId: ObjectId | string, isAdmin: boolean):
   }
 }
 
+// Get cookie configuration for cross-domain support
+const cookiesConfig = getAuthCookieConfig();
+
+// Log authentication configuration on startup
+logAuthConfig();
+
 export const {
   handlers: { GET, POST },
   auth,
@@ -357,6 +364,10 @@ export const {
 } = NextAuth({
   session: { strategy: 'database' },
   adapter: MongoDBCustomAdapter(clientPromise, myMongoDBAdapterOptions),
+  
+  // Add cookie configuration for cross-domain support if configured
+  ...(cookiesConfig && { cookies: cookiesConfig }),
+  
   callbacks: {
     async session({ session, user }: { session: Session; user?: User; token?: JWT }) {
       const client = await clientPromise

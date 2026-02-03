@@ -90,8 +90,8 @@ async function UserSpecificSections({ user }) {
   let appRows = []
   try {
     if (user?.id) {
-      // Pass userId to avoid auth() call and enable caching
-      const allPlaylists = await getUserPlaylists({ includeShared: true, includePublic: true, userId: user.id })
+      // Pass userId as primitive parameter to enable proper caching
+      const allPlaylists = await getUserPlaylists(user.id, true, true)
       const visibilityPrefs = await listVisiblePlaylists(user.id)
 
       // Use cached function with private per-user caching (nested private cache is allowed)

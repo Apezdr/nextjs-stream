@@ -8,6 +8,13 @@ import { getFullImageUrl } from '@src/utils'
 import { batchResolveMedia, getMediaByTMDBId } from './mediaResolver.js'
 
 /**
+ * Cached auth helper to avoid duplicate auth() calls
+ */
+const getCachedSession = cache(async function getCachedSession() {
+  return await auth()
+})
+
+/**
  * Helper function to check if an input is a valid MongoDB ObjectId
  * @param {string|Object} id - The ID to validate (string or ObjectId)
  * @returns {boolean} True if the input is a valid ObjectId
@@ -474,7 +481,11 @@ export async function removeFromWatchlist(watchlistId) {
  * @param {string} [playlistId] - Specific playlist to check (optional)
  * @returns {Promise<Object|null>} Watchlist item if exists, null otherwise
  */
-export async function checkWatchlistStatus(mediaId, tmdbId, playlistId = null) {
+export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
+  mediaId = null,
+  tmdbId = null, 
+  playlistId = null
+) {
   const session = await auth()
 
   if (!session?.user?.id) {
@@ -526,7 +537,7 @@ export async function checkWatchlistStatus(mediaId, tmdbId, playlistId = null) {
     console.error('Error checking watchlist status:', error)
     return null
   }
-}
+})
 
 /**
  * Get simple watchlist statistics for user
@@ -962,13 +973,16 @@ export async function createPlaylist({
 
 /**
  * Get user's playlists
- * @param {Object} options - Query options
- * @param {boolean} [options.includeShared=true] - Include shared playlists
- * @param {boolean} [options.includePublic=true] - Include public playlists
- * @param {string} [options.userId] - Optional user ID to skip auth() call
+ * @param {string} userId - User ID (required for caching)
+ * @param {boolean} [includeShared=true] - Include shared playlists
+ * @param {boolean} [includePublic=true] - Include public playlists
  * @returns {Promise<Array>} User's playlists
  */
-export async function getUserPlaylists({ includeShared = true, includePublic = true, userId = null } = {}) {
+export const getUserPlaylists = cache(async function getUserPlaylists(
+  userId, 
+  includeShared = true, 
+  includePublic = true
+) {
   let userObjectId
   
   if (userId) {
@@ -1067,7 +1081,7 @@ export async function getUserPlaylists({ includeShared = true, includePublic = t
     console.error('Error getting user playlists:', error)
     throw new Error('Failed to get playlists')
   }
-}
+})
 
 /**
  * Get a single playlist by ID (includes public playlists and those shared with user)
@@ -1550,7 +1564,7 @@ export async function setPlaylistVisibility(userId, playlistId, payload = {}) {
  * List visible playlists for a user (showInApp=true),
  * ordered by appOrder asc then dateUpdated desc
  */
-export async function listVisiblePlaylists(userId) {
+export const listVisiblePlaylists = cache(async function listVisiblePlaylists(userId) {
   if (!isValidObjectId(userId)) {
     throw new Error('Invalid userId')
   }
@@ -1579,7 +1593,7 @@ export async function listVisiblePlaylists(userId) {
     dateCreated: doc.dateCreated,
     dateUpdated: doc.dateUpdated,
   }))
-}
+})
 
 /**
  * Admin helper: bulk set visibility for a playlist across many users

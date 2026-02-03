@@ -5,7 +5,7 @@ import {
 } from './sync/playbackValidation'
 import { updateLastSynced } from './sync/database'
 import { processMovie, processTVShow } from './sync_utils'
-import { syncToFlatStructure, buildEnhancedFlatDBStructure } from './flatSync'
+import { syncToFlatStructure, buildEnhancedFlatDBStructure, checkAvailabilityAcrossAllServers } from './flatSync'
 
 /**
  * Syncs missing media items that are missing from the database.
@@ -237,12 +237,23 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
         results.flatSyncResults = results.flatSyncResults || {};
         results.flatSyncResults[serverId] = syncResult;
       } catch (error) {
-        console.error(`Error identifying missing media for server ${serverId}:`, error);
+        console.error(chalk.red(`❌ Error identifying missing media for server ${serverId}:`));
+        console.error(chalk.red(`   Error Type: ${error.constructor.name}`));
+        console.error(chalk.red(`   Message: ${error.message}`));
+        if (error.stack) {
+          console.error(chalk.dim(`   Stack: ${error.stack}`));
+        }
+        
         results.errors.push({
           serverId,
+          errorType: error.constructor.name,
           error: error.message,
           phase: 'missingMediaIdentification',
-          stack: error.stack
+          stack: error.stack,
+          context: {
+            hasFileServerData: !!fileServer,
+            hasFieldAvailability: !!fieldAvailability
+          }
         });
       }
       
@@ -256,12 +267,23 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
         try {
           await operation.fn();
         } catch (error) {
-          console.error(`Error in ${operation.name} sync for server ${serverId}:`, error);
+          console.error(chalk.red(`❌ Error in ${operation.name} sync for server ${serverId}:`));
+          console.error(chalk.red(`   Error Type: ${error.constructor.name}`));
+          console.error(chalk.red(`   Message: ${error.message}`));
+          if (error.stack) {
+            console.error(chalk.dim(`   Stack: ${error.stack}`));
+          }
+          
           results.errors.push({
             serverId,
+            errorType: error.constructor.name,
             error: error.message,
             phase: operation.name,
-            stack: error.stack
+            stack: error.stack,
+            context: {
+              operationName: operation.name,
+              serverCount: Object.keys(fileServers).length
+            }
           });
           // Continue with the next operation despite the error
         }
@@ -280,8 +302,23 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   try {
     console.log(chalk.bold.yellow('Performing final availability check across all servers...'));
     
-    // Import the checkAvailabilityAcrossAllServers function from flatSync
-    const { checkAvailabilityAcrossAllServers } = require('./flatSync');
+    // Validate inputs
+    if (!fileServers || typeof fileServers !== 'object') {
+      throw new Error(
+        `Invalid fileServers parameter: expected object, got ${typeof fileServers}. ` +
+        'fileServers should be an object mapping server IDs to their data.'
+      );
+    }
+    
+    if (!fieldAvailability || typeof fieldAvailability !== 'object') {
+      throw new Error(
+        `Invalid fieldAvailability parameter: expected object, got ${typeof fieldAvailability}. ` +
+        'fieldAvailability should be an object containing field availability mappings.'
+      );
+    }
+    
+    const serverIds = Object.keys(fileServers);
+    console.log(chalk.dim(`Checking availability across ${serverIds.length} server(s): ${serverIds.join(', ')}`));
     
     // Run availability check with all servers' data
     const finalAvailabilityResults = await checkAvailabilityAcrossAllServers(fileServers, fieldAvailability);
@@ -289,11 +326,52 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     
     console.log(chalk.bold.yellow('Final availability check complete'));
   } catch (error) {
-    console.error('Error during final availability check:', error);
+    console.error(chalk.red('❌ Error during final availability check:'));
+    console.error(chalk.red(`   Phase: final-availability-check`));
+    console.error(chalk.red(`   Error Type: ${error.constructor.name}`));
+    console.error(chalk.red(`   Message: ${error.message}`));
+    
+    if (error.stack) {
+      console.error(chalk.red(`   Stack Trace:`));
+      console.error(chalk.dim(error.stack));
+    }
+    
+    // Add context information
+    const serverCount = fileServers ? Object.keys(fileServers).length : 0;
+    const serverIds = fileServers ? Object.keys(fileServers) : [];
+    console.error(chalk.yellow(`   Context Information:`));
+    console.error(chalk.yellow(`     - Server count: ${serverCount}`));
+    console.error(chalk.yellow(`     - Server IDs: ${serverIds.length > 0 ? serverIds.join(', ') : 'none'}`));
+    console.error(chalk.yellow(`     - Has fieldAvailability: ${!!fieldAvailability}`));
+    console.error(chalk.yellow(`     - checkAvailabilityAcrossAllServers type: ${typeof checkAvailabilityAcrossAllServers}`));
+    
+    // Add troubleshooting suggestions
+    console.error(chalk.blue(`   Troubleshooting suggestions:`));
+    if (typeof checkAvailabilityAcrossAllServers !== 'function') {
+      console.error(chalk.blue(`     1. Check that flatSync/index.js properly exports checkAvailabilityAcrossAllServers`));
+      console.error(chalk.blue(`     2. Verify the import statement at the top of this file includes checkAvailabilityAcrossAllServers`));
+    } else if (!fileServers || typeof fileServers !== 'object') {
+      console.error(chalk.blue(`     1. Check that fileServers is being passed correctly from the calling function`));
+      console.error(chalk.blue(`     2. Verify server data fetching completed successfully`));
+    } else {
+      console.error(chalk.blue(`     1. Check server connectivity and data integrity`));
+      console.error(chalk.blue(`     2. Review the full stack trace above for the specific error location`));
+      console.error(chalk.blue(`     3. Check database connectivity and permissions`));
+    }
+    
     results.errors.push({
       phase: 'final-availability-check',
+      errorType: error.constructor.name,
       error: error.message,
-      stack: error.stack
+      stack: error.stack,
+      context: {
+        serverCount,
+        serverIds,
+        hasFieldAvailability: !!fieldAvailability,
+        checkFunctionType: typeof checkAvailabilityAcrossAllServers,
+        fileServersType: typeof fileServers,
+        fieldAvailabilityType: typeof fieldAvailability
+      }
     });
   }
 

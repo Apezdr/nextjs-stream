@@ -5,13 +5,14 @@ import { getFlatPosters, getFlatRecentlyAddedMedia, getFlatRecentlyWatchedForUse
 import { getUserWatchlist, getPlaylistVisibility } from '@src/utils/watchlist'
 import HorizontalScrollSkeleton from './HorizontalScrollSkeleton'
 
-// Cached database functions for request-level deduplication (server-cache-react pattern)
-const getCachedPosters = cache(getFlatPosters)
-const getCachedRecentlyWatched = cache(getFlatRecentlyWatchedForUser)
-const getCachedRecentlyAdded = cache(getFlatRecentlyAddedMedia)
-const getCachedRecommendations = cache(getFlatRecommendations)
-const getCachedWatchlist = cache(getUserWatchlist)
-const getCachedPlaylistVisibility = cache(getPlaylistVisibility)
+// Import already cached functions directly - no need to double-wrap with cache()
+// These functions are already cached in their respective modules
+const getCachedPosters = getFlatPosters
+const getCachedRecentlyWatched = getFlatRecentlyWatchedForUser
+const getCachedRecentlyAdded = getFlatRecentlyAddedMedia
+const getCachedRecommendations = getFlatRecommendations
+const getCachedWatchlist = getUserWatchlist
+const getCachedPlaylistVisibility = getPlaylistVisibility
 
 // Define personalized messages for each type
 const NO_CONTENT_MESSAGES = {

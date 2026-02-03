@@ -806,7 +806,7 @@ async function handleGetPlaylists(req, user) {
     const showInAppOnly = url.searchParams.get('showInAppOnly') === 'true'
 
     // Get all accessible playlists for this user
-    const allPlaylists = await getUserPlaylists({ includeShared })
+    const allPlaylists = await getUserPlaylists(user.id, includeShared, true)
 
     if (!showInAppOnly) {
       // Return all as before
