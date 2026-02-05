@@ -8,12 +8,6 @@
       "command": "npm run dev"
     },
     {
-      "name": "Next.js: debug server-side --turbo",
-      "type": "node-terminal",
-      "request": "launch",
-      "command": "npm run dev-turbo"
-    },
-    {
       "name": "Next.js: debug client-side",
       "type": "chrome",
       "request": "launch",
@@ -36,7 +30,7 @@
       "name": "Next.js: debug full stack",
       "type": "node",
       "request": "launch",
-      "program": "${workspaceFolder}/node_modules/.bin/next",
+      "program": "${workspaceFolder}/node_modules/next/dist/bin/next",
       "runtimeArgs": ["--inspect"],
       "skipFiles": ["<node_internals>/**"],
       "serverReadyAction": {

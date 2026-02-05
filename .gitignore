@@ -43,6 +43,10 @@ next-env.d.ts
 
 # AI
 cline_docs*/
+.roo*/
+.agents*/
+.cline*/
+.claude*/
 
 # AI Docs
 docs/

@@ -32,3 +32,11 @@ tests
 docs
 examples
 scripts
+
+# AI
+cline_docs
+.roo
+.agents
+.cline
+.claude
+.vercel
