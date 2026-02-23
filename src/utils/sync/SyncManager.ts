@@ -18,6 +18,7 @@ import {
 } from './core'
 
 import { syncLogger } from './core/logger'
+import { ResourceManager } from './core/ResourceManager'
 
 import {
   createDatabaseAdapter,
@@ -38,9 +39,11 @@ export class SyncManager {
   private fileAdapter: DefaultFileServerAdapter
   private movieService?: MovieSyncService
   private initialized = false
+  private resourceManager: ResourceManager
 
   constructor() {
     this.fileAdapter = new DefaultFileServerAdapter()
+    this.resourceManager = ResourceManager.getInstance()
   }
 
   /**
@@ -164,7 +167,8 @@ export class SyncManager {
       forceSync: options.forceSync || false,
       fileServerData: options.fileServerData, // Pass file server data through context
       movieCache: options.movieCache, // 🚀 OPTIMIZATION: Pass pre-fetched movie cache through context
-      metadataHashesCache: metadataHashes || undefined // 🚀 OPTIMIZATION: Pass metadata hashes for change detection
+      metadataHashesCache: metadataHashes || undefined, // 🚀 OPTIMIZATION: Pass metadata hashes for change detection
+      resourceManager: this.resourceManager, // 🚀 RESOURCE CONTROL: Throttle HTTP & monitor memory
     }
     
     // Log optimization statistics
@@ -188,10 +192,11 @@ export class SyncManager {
       const progressTracker = this.setupProgressTracking(movieTitles.length)
 
       // Sync all movies with controlled concurrency
-      const concurrency = options.concurrency || 5
+      // Use ResourceManager config as default; explicit option overrides
+      const concurrency = options.concurrency || this.resourceManager.config.syncConcurrency
       const allResults: SyncResult[] = []
       
-      syncLogger.info(`Processing ${movieTitles.length} movies with concurrency: ${concurrency}`)
+      syncLogger.info(`Processing ${movieTitles.length} movies with concurrency: ${concurrency} (HTTP limit: ${this.resourceManager.config.httpConcurrency})`)
       
       // Process movies in concurrent batches
       for (let i = 0; i < movieTitles.length; i += concurrency) {
@@ -248,9 +253,10 @@ export class SyncManager {
           }
         })
         
-        // Small delay between batches to prevent overwhelming the system
+        // Adaptive delay between batches — increases under memory pressure
         if (i + concurrency < movieTitles.length) {
-          await new Promise(resolve => setTimeout(resolve, 100))
+          this.resourceManager.logStats('Batch complete')
+          await this.resourceManager.waitBetweenBatches()
         }
       }
 
@@ -334,6 +340,7 @@ export class SyncManager {
       uptime: number
       memoryUsage: NodeJS.MemoryUsage
     }
+    resources: ReturnType<ResourceManager['getStats']>
     database: any
     movies: any
     cache: any
@@ -351,6 +358,7 @@ export class SyncManager {
         uptime: process.uptime(),
         memoryUsage: process.memoryUsage()
       },
+      resources: this.resourceManager.getStats(),
       database: dbStats,
       movies: movieStats,
       cache: this.fileAdapter.getCacheStats()
@@ -499,6 +507,13 @@ export class SyncManager {
    */
   getEventBus() {
     return syncEventBus
+  }
+
+  /**
+   * Get resource manager for external access / monitoring
+   */
+  getResourceManager(): ResourceManager {
+    return this.resourceManager
   }
 
   /**

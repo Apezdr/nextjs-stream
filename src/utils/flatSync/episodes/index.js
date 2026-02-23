@@ -7,7 +7,7 @@
  */
 
 import clientPromise from '@src/lib/mongodb'
-import chalk from 'chalk'
+import { createLogger, logError } from '@src/lib/logger'
 import { createEpisodeInFlatDB, getEpisodeFromFlatDB, updateEpisodeInFlatDB, updateEpisodeIds, updateEpisodeShowTitles } from './database'
 import { createSeasonInFlatDB } from '../seasons/database'
 import { 
@@ -128,7 +128,12 @@ async function syncSingleEpisode(
     if (!flatSeason) {
       flatSeason = season;
       if (!flatSeason) {
-        console.log(chalk.yellow(`Season ${season.seasonNumber} not found for "${show.title}" - creating it on-the-fly`));
+        const episodeLog = createLogger('FlatSync.Episodes.Single');
+        episodeLog.warn({ 
+          showTitle: show.title,
+          seasonNumber: season.seasonNumber,
+          context: 'season_not_found'
+        }, 'Season not found - creating it on-the-fly');
         
         // Create a new season in the flat database
         const newSeason = buildNewSeasonObject({_id: flatShow._id, ...show}, season);
@@ -144,9 +149,16 @@ async function syncSingleEpisode(
             flatSeason = newSeason;
           }
           
-          console.log(chalk.green(`Successfully created placeholder for Season ${season.seasonNumber} of "${show.title}"`));
+          episodeLog.info({ 
+            showTitle: show.title,
+            seasonNumber: season.seasonNumber
+          }, 'Successfully created placeholder season');
         } catch (error) {
-          console.error(`Error creating season ${season.seasonNumber} for "${show.title}":`, error);
+          logError(episodeLog, error, {
+            showTitle: show.title,
+            seasonNumber: season.seasonNumber,
+            context: 'season_creation_failed'
+          });
           results.errors.push({ field: 'general', error: 'Failed to create missing season: ' + error.message });
           return results;
         }
@@ -207,14 +219,26 @@ async function syncSingleEpisode(
         const createResult = await createEpisodeInFlatDB(client, newEpisodeData);
         
         if (createResult.existing) {
-          console.log(`Episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber} already exists in database`);
+          const episodeLog = createLogger('FlatSync.Episodes.Single');
+          episodeLog.debug({
+            showTitle: show.title,
+            seasonNumber: season.seasonNumber,
+            episodeNumber: episode.episodeNumber,
+            status: 'already_exists'
+          }, 'Episode already exists in database');
           // Update memory object with any database fields we might be missing
           if (createResult.matchedDocument) {
             Object.assign(flatEpisode, createResult.matchedDocument);
           }
         } else {
           results.created = true;
-          console.log(`Created new episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`);
+          const episodeLog = createLogger('FlatSync.Episodes.Single');
+          episodeLog.info({
+            showTitle: show.title,
+            seasonNumber: season.seasonNumber,
+            episodeNumber: episode.episodeNumber,
+            status: 'created'
+          }, 'Created new episode');
         }
       } else {
         // No enhanced data, just use database
@@ -234,11 +258,13 @@ async function syncSingleEpisode(
           // Ensure the episode has the correct seasonId and showId
           if (flatEpisode.seasonId.toString() !== flatSeason._id.toString() || 
               flatEpisode.showId.toString() !== flatShow._id.toString()) {
-            console.log(
-              chalk.yellow(
-                `Fixing inconsistent IDs for episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`
-              )
-            );
+            const episodeLog = createLogger('FlatSync.Episodes.Single');
+            episodeLog.warn({
+              showTitle: show.title,
+              seasonNumber: season.seasonNumber,
+              episodeNumber: episode.episodeNumber,
+              context: 'fixing_inconsistent_ids'
+            }, 'Fixing inconsistent IDs for episode');
             // Use the specialized updateEpisodeIds function to avoid duplicate key errors
             await updateEpisodeIds(
               client, 
@@ -257,9 +283,13 @@ async function syncSingleEpisode(
           // Otherwise use our new episode data
           flatEpisode = newEpisodeData;
           results.created = true;
-          console.log(
-            `Created new episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`
-          );
+          const episodeLog = createLogger('FlatSync.Episodes.Single');
+          episodeLog.info({
+            showTitle: show.title,
+            seasonNumber: season.seasonNumber,
+            episodeNumber: episode.episodeNumber,
+            status: 'created'
+          }, 'Created new episode');
         }
       }
     }
@@ -536,6 +566,7 @@ import { buildNewSeasonObject } from '../seasons'
  * @returns {Promise<Object>} Sync results
  */
 async function traditionalSync(client, flatDB, fileServer, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Episodes.Traditional');
   const results = {
     processed: [],
     errors: [],
@@ -544,7 +575,7 @@ async function traditionalSync(client, flatDB, fileServer, serverConfig, fieldAv
 
   // No file server TV data, nothing to do
   if (!fileServer?.tv) {
-    console.log(chalk.yellow(`No TV shows found in file server ${serverConfig.id}`))
+    log.info({ serverId: serverConfig.id }, 'No TV shows found in file server')
     return results
   }
 
@@ -617,7 +648,13 @@ async function traditionalSync(client, flatDB, fileServer, serverConfig, fieldAv
       
       // Store the season hash for future use if we successfully fetched it
       if (season_hashData && season_hashData.hash) {
-        console.log(`Storing season hash for "${showTitle}" Season ${seasonNumber} from server ${serverConfig.id} (traditional sync)`);
+        log.info({
+          serverId: serverConfig.id,
+          showTitle,
+          seasonNumber,
+          hashStored: true,
+          syncStrategy: 'traditional'
+        }, 'Storing season hash');
         await storeHash(client, 'tv', showTitle, seasonNumber, null, season_hashData.hash, serverConfig.id);
       }
 
@@ -685,9 +722,11 @@ async function traditionalSync(client, flatDB, fileServer, serverConfig, fieldAv
   }
 
   // Log the number of episodes being processed
-  console.log(
-    chalk.yellow(`Processing ${episodeSyncTasks.length} episodes with max concurrency of 120...`)
-  )
+  log.info({
+    serverId: serverConfig.id,
+    episodeTasksCount: episodeSyncTasks.length,
+    maxConcurrency: 120
+  }, 'Processing episodes with concurrency limit')
 
   // Execute all tasks in parallel with controlled concurrency
   await Promise.all(episodeSyncTasks)
@@ -713,6 +752,7 @@ async function hashBasedSync(
   fieldAvailability,
   mediaHashData
 ) {
+  const log = createLogger('FlatSync.Episodes.Hash');
   const results = {
     processed: [],
     errors: [],
@@ -728,7 +768,7 @@ async function hashBasedSync(
 
   // No file server TV data, nothing to do
   if (!fileServer?.tv) {
-    console.log(chalk.yellow(`No TV shows found in file server ${serverConfig.id}`))
+    log.info({ serverId: serverConfig.id }, 'No TV shows found in file server')
     return results
   }
 
@@ -766,11 +806,11 @@ async function hashBasedSync(
                                 flatDB.missingEpisodes.some(episode => episode.showTitle === showTitle);
       
       if (hasMissingEpisodes) {
-        console.warn(
-          chalk.yellow(
-            `No hash available for show "${showTitle}" but has missing episodes — falling back to full sync for episodes.`
-          )
-        );
+        log.warn({
+          showTitle,
+          serverId: serverConfig.id,
+          reason: 'missing_hash_with_missing_episodes'
+        }, 'No hash available for show but missing episodes found; falling back to full sync');
         // track for diagnostics
         results.missingShowHashCount++;
         results.missingShowHashTitles.push(showTitle);
@@ -778,11 +818,11 @@ async function hashBasedSync(
         // simulate a "hash mismatch" so we'll process metadata and all episodes
         // skipMetadataProcessing remains at its default false
       } else {
-        console.warn(
-          chalk.cyan(
-            `No hash available for show "${showTitle}" and no missing episodes - skipping show.`
-          )
-        );
+        log.warn({
+          showTitle,
+          serverId: serverConfig.id,
+          reason: 'missing_hash_no_missing_episodes'
+        }, 'No hash available for show and no missing episodes; skipping show');
         // Track shows we skip due to no hash AND no missing episodes
         results.skippedMissingHashShows++;
         results.skippedMissingHashShowTitles.push(showTitle);
@@ -798,7 +838,11 @@ async function hashBasedSync(
     const currentShowHash = hashEntry ? hashEntry.hash : null;
     
     // Fetch all hashes for this show at once
-    console.log(chalk.cyan(`Fetching all hashes for "${showTitle}" from database (show level)`));
+    log.debug({
+      showTitle,
+      serverId: serverConfig.id,
+      stage: 'show_level'
+    }, 'Fetching all hashes for show from database');
     if (!show._seasonsHashes){
       show._seasonsHashes = await getStoredHashesForShow(client, showTitle, serverConfig.id);
     }
@@ -832,11 +876,11 @@ async function hashBasedSync(
       // The file server showTitle corresponds to originalTitle in the flat database
       const flatShow = show;
       if (!flatShow) {
-        console.log(
-          chalk.yellow(
-            `Show "${showTitle}" not found in flat database - processing metadata`
-          )
-        );
+        log.warn({
+          showTitle,
+          serverId: serverConfig.id,
+          reason: 'flat_show_missing'
+        }, 'Show not found in flat database - processing metadata');
         skipMetadataProcessing = false;
       } else {
         const flatShowTitle = flatShow.title;
@@ -869,32 +913,42 @@ async function hashBasedSync(
 
         // Compare season counts, episode counts, and check metadata to decide if we can skip metadata processing
         if (flatSeasonCount >= fileServerSeasonCount && flatEpisodeCount >= expectedEpisodeCount && missingEpisodeMetadataCount === 0) {
-          console.log(
-            chalk.green(
-              `Show "${flatShowTitle}" hash unchanged, all ${flatSeasonCount}/${fileServerSeasonCount} seasons and ${flatEpisodeCount}/${expectedEpisodeCount} episodes exist with metadata - skipping metadata processing only`
-            )
-          );
+          log.info({
+            showTitle: flatShowTitle,
+            serverId: serverConfig.id,
+            flatSeasonCount,
+            fileServerSeasonCount,
+            flatEpisodeCount,
+            expectedEpisodeCount,
+            missingEpisodeMetadataCount: 0,
+            decision: 'skip_metadata'
+          }, 'Show hash unchanged and metadata complete - skipping metadata processing');
           skipMetadataProcessing = true;
         } else if (flatSeasonCount < fileServerSeasonCount) {
-          console.log(
-            chalk.yellow(
-              `Show "${flatShowTitle}" hash unchanged but only ${flatSeasonCount}/${fileServerSeasonCount} seasons exist in flat database - processing metadata`
-            )
-          );
+          log.info({
+            showTitle: flatShowTitle,
+            serverId: serverConfig.id,
+            flatSeasonCount,
+            fileServerSeasonCount,
+            decision: 'process_metadata_missing_seasons'
+          }, 'Show hash unchanged but seasons missing - processing metadata');
           skipMetadataProcessing = false;
         } else if (missingEpisodeMetadataCount > 0) {
-          console.log(
-            chalk.yellow(
-              `Show "${flatShowTitle}" hash unchanged but ${missingEpisodeMetadataCount} episodes are missing metadata - processing metadata`
-            )
-          );
+          log.info({
+            showTitle: flatShowTitle,
+            serverId: serverConfig.id,
+            missingEpisodeMetadataCount,
+            decision: 'process_metadata_missing_episodes'
+          }, 'Show hash unchanged but episodes missing metadata - processing metadata');
           skipMetadataProcessing = false;
         } else {
-          console.log(
-            chalk.yellow(
-              `Show "${flatShowTitle}" hash unchanged but only ${flatEpisodeCount}/${expectedEpisodeCount} episodes exist - checking for missing episodes`
-            )
-          );
+          log.info({
+            showTitle: flatShowTitle,
+            serverId: serverConfig.id,
+            flatEpisodeCount,
+            expectedEpisodeCount,
+            decision: 'process_metadata_check_missing_episodes'
+          }, 'Show hash unchanged but episode count incomplete - checking for missing episodes');
           skipMetadataProcessing = false;
         }
       }
@@ -921,7 +975,11 @@ async function hashBasedSync(
       
       // If this is the first season in this show, fetch all hashes for the show at once
       if (!show._seasonsHashes) {
-        console.log(chalk.cyan(`Fetching all hashes for "${showTitle}" from database (one-time operation)`));
+        log.debug({
+          showTitle,
+          serverId: serverConfig.id,
+          stage: 'one_time_hash_fetch'
+        }, 'Fetching all hashes for show from database');
         show._seasonsHashes = await getStoredHashesForShow(client, showTitle, serverConfig.id);
       }
       
@@ -929,12 +987,22 @@ async function hashBasedSync(
       const storedSeasonHash = show?._seasonsHashes?.seasons[seasonNumber];
       
       if (storedSeasonHash) {
-        console.log(chalk.green(`Using cached hash for "${showTitle}" Season ${seasonNumber} from database`));
+        log.debug({
+          showTitle,
+          seasonNumber,
+          serverId: serverConfig.id,
+          source: 'cached_db'
+        }, 'Using cached season hash from database');
         // Create a minimal hash data structure with the stored hash
         season_hashData = { hash: storedSeasonHash };
       } else {
         // If no stored hash, fetch from server
-        console.log(chalk.yellow(`No stored hash found for "${showTitle}" Season ${seasonNumber}, fetching from server`));
+        log.info({
+          showTitle,
+          seasonNumber,
+          serverId: serverConfig.id,
+          source: 'server_fetch'
+        }, 'No stored hash found; fetching from server');
         season_hashData = await fetchHashData(serverConfig, 'tv', show.originalTitle, seasonNumber);
       }
 
@@ -943,11 +1011,12 @@ async function hashBasedSync(
 
       // If there are no episodes in the database for this show, process all episodes from file server
       if (!hasEpisodesInDatabase) {
-        console.log(
-          chalk.yellow(
-            `No episodes found in database for "${showTitle}" - processing all episodes from file server`
-          )
-        )
+        log.info({
+          showTitle,
+          serverId: serverConfig.id,
+          seasonNumber,
+          reason: 'no_episodes_in_db'
+        }, 'No episodes found in database - processing all episodes from file server')
 
         for (const episodeFileName of fileServerEpisodeFileNames) {
           // Extract episode number from filename
@@ -959,9 +1028,13 @@ async function hashBasedSync(
           const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName]
 
 
-          console.log(
-            chalk.yellow(`Processing episode: "${showTitle}" S${seasonNumber}E${episodeNumber}`)
-          )
+          log.debug({
+            showTitle,
+            serverId: serverConfig.id,
+            seasonNumber,
+            episodeNumber,
+            reason: 'processing_episode'
+          }, 'Processing episode from file server')
 
           // Create a temporary episode object with all necessary identifiers
           const tempEpisode = {
@@ -1028,11 +1101,13 @@ async function hashBasedSync(
             (!flatEpisode.metadata || Object.keys(flatEpisode.metadata).length === 0)
           ) {
             existingEpisodesWithoutMetadata.set(episode.episodeNumber, flatEpisode)
-            console.log(
-              chalk.yellow(
-                `Found existing episode without metadata: "${showTitle}" S${seasonNumber}E${episode.episodeNumber}`
-              )
-            )
+            log.debug({
+              showTitle,
+              serverId: serverConfig.id,
+              seasonNumber,
+              episodeNumber: episode.episodeNumber,
+              reason: 'missing_metadata'
+            }, 'Found existing episode without metadata')
           }
         }
 
@@ -1046,11 +1121,13 @@ async function hashBasedSync(
 
           // Check if this episode exists in the database but is missing metadata
           if (existingEpisodesWithoutMetadata.has(episodeNumber)) {
-            console.log(
-              chalk.yellow(
-                `Processing existing episode without metadata: "${showTitle}" S${seasonNumber}E${episodeNumber}`
-              )
-            )
+            log.debug({
+              showTitle,
+              serverId: serverConfig.id,
+              seasonNumber,
+              episodeNumber,
+              reason: 'existing_episode_missing_metadata'
+            }, 'Processing existing episode without metadata')
 
             // Get the existing episode
             const existingEpisode = existingEpisodesWithoutMetadata.get(episodeNumber)
@@ -1093,11 +1170,13 @@ async function hashBasedSync(
           }
           // Check if this episode doesn't exist in the database at all
           else if (!existingEpisodeNumbers.has(episodeNumber)) {
-            console.log(
-              chalk.yellow(
-                `Found missing episode: "${showTitle}" S${seasonNumber}E${episodeNumber}`
-              )
-            )
+            log.info({
+              showTitle,
+              serverId: serverConfig.id,
+              seasonNumber,
+              episodeNumber,
+              reason: 'missing_episode'
+            }, 'Found missing episode in database')
 
             // Create a temporary episode object with all necessary identifiers
             const tempEpisode = {
@@ -1148,11 +1227,11 @@ async function hashBasedSync(
 
     // Process any missing episodes
     if (missingEpisodesTasks?.length > 0) {
-      console.log(
-        chalk.yellow(
-          `Processing ${missingEpisodesTasks?.length} missing episodes for "${showTitle}"`
-        )
-      )
+      log.info({
+        showTitle,
+        serverId: serverConfig.id,
+        missingEpisodesCount: missingEpisodesTasks?.length
+      }, 'Processing missing episodes')
       await Promise.all(missingEpisodesTasks)
     }
 
@@ -1171,11 +1250,11 @@ async function hashBasedSync(
         storedShowHash
       );
     } else {
-      console.log(
-        chalk.cyan(
-          `Skipping metadata processing for "${showTitle}" due to hash match - other fields will still be processed`
-        )
-      );
+      log.info({
+        showTitle,
+        serverId: serverConfig.id,
+        reason: 'hash_match_skip_metadata'
+      }, 'Skipping metadata processing due to hash match; other fields will still be processed');
       results.skippedEpisodes += show.seasons.reduce(
         (count, season) => count + (season.episodes?.length || 0),
         0
@@ -1201,7 +1280,11 @@ async function hashBasedSync(
       
       // If we didn't fetch the season hashes before, do it now
       if (!show._seasonsHashes) {
-        console.log(chalk.cyan(`Fetching all hashes for "${showTitle}" from database (non-metadata processing)`));
+        log.debug({
+          showTitle,
+          serverId: serverConfig.id,
+          stage: 'non_metadata_processing'
+        }, 'Fetching all hashes for show from database');
         show._seasonsHashes = await getStoredHashesForShow(client, showTitle, serverConfig.id);
       }
       
@@ -1209,17 +1292,35 @@ async function hashBasedSync(
       const storedSeasonHash = show?._seasonsHashes?.seasons[seasonNumber];
       
       if (storedSeasonHash) {
-        console.log(chalk.green(`Using cached hash for "${showTitle}" Season ${seasonNumber} from database (non-metadata processing)`));
+        log.debug({
+          showTitle,
+          seasonNumber,
+          serverId: serverConfig.id,
+          source: 'cached_db',
+          stage: 'non_metadata_processing'
+        }, 'Using cached season hash from database');
         // Create a minimal hash data structure with the stored hash
         season_hashData = { hash: storedSeasonHash };
       } else {
         // If no stored hash, fetch from server
-        console.log(chalk.yellow(`No stored hash found for "${showTitle}" Season ${seasonNumber}, fetching from server (non-metadata processing)`));
+        log.info({
+          showTitle,
+          seasonNumber,
+          serverId: serverConfig.id,
+          source: 'server_fetch',
+          stage: 'non_metadata_processing'
+        }, 'No stored hash found; fetching from server');
         season_hashData = await fetchHashData(serverConfig, 'tv', show.originalTitle, seasonNumber);
         
         // Store the hash for future use if we successfully fetched it
         if (season_hashData && season_hashData.hash) {
-          console.log(`Storing newly fetched season hash for "${showTitle}" Season ${seasonNumber} from server ${serverConfig.id}`);
+          log.info({
+            showTitle,
+            seasonNumber,
+            serverId: serverConfig.id,
+            hashStored: true,
+            stage: 'non_metadata_processing'
+          }, 'Storing newly fetched season hash');
           await storeHash(client, 'tv', showTitle, seasonNumber, null, season_hashData.hash, serverConfig.id);
           
           // Update our cached hashes
@@ -1268,11 +1369,13 @@ async function hashBasedSync(
                 // Only add to results if fields other than metadata were updated
                 const nonMetadataFields = episodeResults.fields.filter(f => f !== 'metadata');
                 if (nonMetadataFields.length > 0) {
-                  console.log(
-                    chalk.green(
-                      `Updated non-metadata fields for "${show.title}" S${seasonNumber}E${episode.episodeNumber}: ${nonMetadataFields.join(', ')}`
-                    )
-                  );
+                  log.debug({
+                    showTitle: show.title,
+                    seasonNumber,
+                    episodeNumber: episode.episodeNumber,
+                    serverId: serverConfig.id,
+                    updatedFields: nonMetadataFields
+                  }, 'Updated non-metadata fields for episode');
                   results.processed.push({
                     ...episodeResults,
                     fields: nonMetadataFields
@@ -1297,11 +1400,11 @@ async function hashBasedSync(
     
     // Process all non-metadata tasks
     if (nonMetadataTasks.length > 0) {
-      console.log(
-        chalk.yellow(
-          `Processing non-metadata fields for ${nonMetadataTasks.length} episodes of "${show.title}"`
-        )
-      );
+      log.info({
+        showTitle: show.title,
+        serverId: serverConfig.id,
+        nonMetadataTasksCount: nonMetadataTasks.length
+      }, 'Processing non-metadata fields for episodes');
       await Promise.all(nonMetadataTasks);
     }
 
@@ -1369,44 +1472,20 @@ function countExpectedEpisodesForServer(fileServer) {
  * @param {string} syncStrategy - Sync strategy used
  */
 function logSyncResults(results, serverId, syncStrategy) {
-  console.log(chalk.bold.cyan(`TV episode sync to flat structure complete for server ${serverId}`))
-  
-  if (syncStrategy === 'hash-based') {
-    console.log(chalk.green(`Successfully processed ${results.processed?.length || 0} shows/episodes`))
-    console.log(
-      chalk.cyan(
-        `Skipped ${results.skippedShows || 0} shows, ${results.skippedSeasons || 0} seasons, and ${results.skippedEpisodes || 0} episodes due to hash matches`
-      )
-    )
-    if (results.missingShowHashCount > 0) {
-      console.log(
-        chalk.yellow(
-          `Processed ${results.missingShowHashCount} shows with missing hash data (full sync)`
-        )
-      )
-    }
-    if (results.skippedMissingHashShows > 0) {
-      console.log(
-        chalk.cyan(
-          `Skipped ${results.skippedMissingHashShows} shows with missing hash data but no missing episodes`
-        )
-      )
-    }
-  } else {
-    console.log(chalk.green(`Successfully processed ${results.processed?.length || 0} episodes`))
-  }
-  
-  if (results.newEpisodes > 0) {
-    console.log(
-      chalk.yellow(
-        `Added ${results.newEpisodes} new episodes that were missing from the database`
-      )
-    )
-  }
-  
-  if (results.errors?.length > 0) {
-    console.log(chalk.red(`Encountered ${results.errors?.length} errors during episode sync`))
-  }
+  const log = createLogger('FlatSync.Episodes');
+
+  log.info({
+    serverId,
+    syncStrategy,
+    processedCount: results.processed?.length || 0,
+    skippedShows: results.skippedShows || 0,
+    skippedSeasons: results.skippedSeasons || 0,
+    skippedEpisodes: results.skippedEpisodes || 0,
+    missingShowHashCount: results.missingShowHashCount || 0,
+    skippedMissingHashShows: results.skippedMissingHashShows || 0,
+    newEpisodes: results.newEpisodes || 0,
+    errorCount: results.errors?.length || 0
+  }, 'TV episode sync to flat structure complete');
 }
 
 /**
@@ -1419,16 +1498,16 @@ function logSyncResults(results, serverId, syncStrategy) {
  */
 export async function syncEpisodes(flatDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise
-  console.log(
-    chalk.bold.cyan(`Starting TV episode sync to flat structure for server ${serverConfig.id}...`)
-  )
+  const log = createLogger('FlatSync.Episodes');
+  
+  log.info({ serverId: serverConfig.id }, 'Starting TV episode sync to flat structure');
 
   try {
     // 1. First, validate we have episodes to process
     const totalExpectedEpisodes = countExpectedEpisodesForServer(fileServer)
     
     if (totalExpectedEpisodes === 0) {
-      console.log(chalk.yellow(`No episodes found in fileserver for ${serverConfig.id} - skipping episode sync`))
+      log.info({ serverId: serverConfig.id }, 'No episodes found in fileserver - skipping episode sync');
       return { processed: [], errors: [], skipped: true }
     }
     
@@ -1441,11 +1520,17 @@ export async function syncEpisodes(flatDB, fileServer, serverConfig, fieldAvaila
       mediaHashResponse = await fetchHashData(serverConfig, 'tv')
       
       if (mediaHashResponse) {
-        console.log(chalk.cyan('Using hash-based sync for TV episodes'))
         syncStrategy = 'hash-based'
+        log.info({ 
+          serverId: serverConfig.id,
+          syncStrategy: 'hash-based'
+        }, 'Using hash-based sync for TV episodes');
       }
     } catch (hashError) {
-      console.warn(chalk.yellow('Hash-based sync failed, falling back to traditional sync:'), hashError.message)
+      log.warn({ 
+        serverId: serverConfig.id,
+        error: hashError.message
+      }, 'Hash-based sync failed, falling back to traditional sync');
     }
     
     // 3. If using hash-based sync, check server-specific episode count
@@ -1456,12 +1541,11 @@ export async function syncEpisodes(flatDB, fileServer, serverConfig, fieldAvaila
         .collection('FlatEpisodes')
         .countDocuments({ videoSource: serverConfig.id })
 
-      console.log(
-        chalk.cyan(`Found ${episodesWithSourceCount} episodes with source = ${serverConfig.id}`)
-      )
-      console.log(
-        chalk.cyan(`Server ${serverConfig.id} should have ${totalExpectedEpisodes} episodes`)
-      )
+      log.info({
+        serverId: serverConfig.id,
+        episodesWithSourceCount,
+        totalExpectedEpisodes
+      }, 'Server episode counts for hash-based sync');
 
       // Get the hash specifically for this server
       const storedMediaHash = await getStoredHash(client, 'tv', null, null, null, serverConfig.id)
@@ -1472,26 +1556,28 @@ export async function syncEpisodes(flatDB, fileServer, serverConfig, fieldAvaila
 
       // Log status but always continue processing
       if (canOptimizeMetadata && serverHasAllEpisodes) {
-        console.log(
-          chalk.cyan(
-            `Hash match for server ${serverConfig.id} - will optimize metadata requests but still process episodes`
-          )
-        )
+        log.info({
+          serverId: serverConfig.id,
+          canOptimizeMetadata,
+          serverHasAllEpisodes
+        }, 'Hash match; optimizing metadata requests but processing episodes');
       } else if (canOptimizeMetadata && !serverHasAllEpisodes) {
-        console.log(
-          chalk.yellow(
-            `Hash match but missing episodes for server ${serverConfig.id} (${episodesWithSourceCount}/${totalExpectedEpisodes}) - processing all episodes`
-          )
-        )
+        log.info({
+          serverId: serverConfig.id,
+          canOptimizeMetadata,
+          serverHasAllEpisodes,
+          episodesWithSourceCount,
+          totalExpectedEpisodes
+        }, 'Hash match but missing episodes; processing all episodes');
       } else {
-        console.log(
-          chalk.cyan(
-            `Hash mismatch or first sync - processing TV episodes for server ${serverConfig.id}`
-          )
-        )
+        log.info({
+          serverId: serverConfig.id,
+          canOptimizeMetadata,
+          serverHasAllEpisodes
+        }, 'Hash mismatch or first sync; processing TV episodes');
       }
     } else {
-      console.log(chalk.yellow('Using traditional sync for TV episodes'))
+      log.info({ serverId: serverConfig.id }, 'Using traditional sync for TV episodes')
     }
     
     // 4. Execute the appropriate sync strategy
@@ -1523,10 +1609,10 @@ export async function syncEpisodes(flatDB, fileServer, serverConfig, fieldAvaila
     
     return results
   } catch (error) {
-    console.error(
-      `Error during TV episode sync to flat structure for server ${serverConfig.id}:`,
-      error
-    )
+    logError(log, error, {
+      serverId: serverConfig.id,
+      context: 'episode_sync_general'
+    });
     return {
       processed: [],
       errors: [

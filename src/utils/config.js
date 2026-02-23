@@ -272,7 +272,7 @@ export const fileServerURLWithPrefixPath = (path) => urlHandlers.get(defaultServ
 // File Server code changes
 // Version Format: 1.0000 (Major.Minor)
 export const fileServerVersionTV = 1.0001
-export const fileServerVersionMOVIES = 1.0000
+export const fileServerVersionMOVIES = 1.0001
 
 // Export webhook server mapping functions
 export { getWebhookServerMapping, getServerWebhookMapping, getWebhookIdForServer }

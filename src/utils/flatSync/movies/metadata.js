@@ -2,6 +2,7 @@
  * Movie metadata sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { filterLockedFields, filterLockedFieldsPreserveStructure, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
@@ -17,6 +18,7 @@ import { isEqual } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncMovieMetadata(client, movie, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Movies.Metadata');
   if (!fileServerData?.urls?.metadata) return null;
   
   const fieldPath = 'urls.metadata';
@@ -71,7 +73,11 @@ export async function syncMovieMetadata(client, movie, fileServerData, serverCon
   
   if (Object.keys(filteredUpdateData).length === 0) return null;
   
-  console.log(`Movie: Updating metadata for "${movieTitle}" from server ${serverConfig.id}`);
+  log.info({
+    movieTitle,
+    serverId: serverConfig.id,
+    field: 'metadata'
+  }, 'Updating movie metadata');
   
   // Update the movie in the flat database
   await updateMovieInFlatDB(client, movieTitle, { $set: filteredUpdateData });

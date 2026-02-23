@@ -5,6 +5,7 @@
  * for efficient change detection during synchronization.
  */
 
+import { createLogger, logError } from '@src/lib/logger'
 import fetch from 'node-fetch'
 import { getServer, multiServerHandler } from '../config'
 import { httpGet } from '@src/lib/httpHelper'
@@ -29,6 +30,7 @@ export async function storeHash(
   hash,
   serverId
 ) {
+  const log = createLogger('FlatSync.HashStorage');
   try {
     await client
       .db('Media')
@@ -51,7 +53,14 @@ export async function storeHash(
       )
     return true
   } catch (error) {
-    console.error('Error storing hash:', error)
+    logError(log, error, {
+      mediaType,
+      title,
+      seasonNumber,
+      episodeNumber,
+      serverId,
+      context: 'store_hash'
+    })
     return false
   }
 }
@@ -74,6 +83,7 @@ export async function getStoredHash(
   episodeNumber,
   serverId
 ) {
+  const log = createLogger('FlatSync.HashStorage');
   try {
     const query = {}
     if (mediaType) query.mediaType = mediaType
@@ -85,15 +95,27 @@ export async function getStoredHash(
     const record = await client.db('Media').collection('MetadataHashes').findOne(query)
 
     if (!record) {
-      console.warn(
-        `No hash found for ${mediaType} ${title} (${seasonNumber ? `S${seasonNumber}` : ''}${episodeNumber ? `E${episodeNumber}` : ''}) on server ${serverId}`
-      )
+      log.warn({
+        mediaType,
+        title,
+        seasonNumber,
+        episodeNumber,
+        serverId,
+        context: 'hash_not_found'
+      }, 'No stored hash found for entity/server')
       return null
     }
 
     return record.hash
   } catch (error) {
-    console.error('Error retrieving hash:', error)
+    logError(log, error, {
+      mediaType,
+      title,
+      seasonNumber,
+      episodeNumber,
+      serverId,
+      context: 'get_stored_hash'
+    })
     return null
   }
 }
@@ -108,6 +130,7 @@ export async function getStoredHash(
  * @returns {Promise<Object>} Object mapping server IDs to their respective hashes
  */
 export async function getAllStoredHashes(client, mediaType, title, seasonNumber, episodeNumber) {
+  const log = createLogger('FlatSync.HashStorage');
   try {
     const records = await client
       .db('Media')
@@ -128,7 +151,13 @@ export async function getAllStoredHashes(client, mediaType, title, seasonNumber,
       return map
     }, {})
   } catch (error) {
-    console.error('Error retrieving all hashes:', error)
+    logError(log, error, {
+      mediaType,
+      title,
+      seasonNumber,
+      episodeNumber,
+      context: 'get_all_hashes'
+    })
     return {}
   }
 }
@@ -141,6 +170,7 @@ export async function getAllStoredHashes(client, mediaType, title, seasonNumber,
  * @returns {Promise<Object>} Hierarchical object containing all hashes for the show
  */
 export async function getStoredHashesForShow(client, showTitle, serverId) {
+  const log = createLogger('FlatSync.HashStorage');
   try {
     // Query all hashes related to this show from a specific server in a single database call
     const records = await client
@@ -183,7 +213,11 @@ export async function getStoredHashesForShow(client, showTitle, serverId) {
 
     return result
   } catch (error) {
-    console.error('Error retrieving show hashes:', error)
+    logError(log, error, {
+      showTitle,
+      serverId,
+      context: 'get_show_hashes'
+    })
     return { show: null, seasons: {}, episodes: {} }
   }
 }
@@ -197,10 +231,11 @@ export async function getStoredHashesForShow(client, showTitle, serverId) {
  * @returns {Promise<Object|null>} Hash data or null if fetch failed
  */
 export async function fetchHashData(serverConfig, mediaType, title = null, seasonNumber = null) {
+  const log = createLogger('FlatSync.HashStorage.Fetch');
   try {
     // Make sure we have a valid server config
     if (!serverConfig || !serverConfig.id) {
-      console.warn('Invalid server config for hash data fetch')
+      log.warn({ serverConfig, context: 'invalid_server_config' }, 'Invalid server config for hash data fetch')
       return null
     }
 
@@ -220,7 +255,7 @@ export async function fetchHashData(serverConfig, mediaType, title = null, seaso
     // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.
     const fullUrl = `${server.internalEndpoint || server.syncEndpoint}${path}`
 
-    console.log(`Fetching hash data from: ${fullUrl}`)
+    log.debug({ fullUrl, serverId: serverConfig.id }, 'Fetching hash data');
 
     const response = await httpGet(
       fullUrl,
@@ -241,13 +276,23 @@ export async function fetchHashData(serverConfig, mediaType, title = null, seaso
     const responseData = response.data?.data || response.data
 
     if (!responseData) {
-      console.warn(`Failed to fetch hash data: ${response.headers[':status']}`)
+      log.warn({
+        status: response.headers[':status'],
+        fullUrl,
+        context: 'fetch_hash_data_empty'
+      }, 'Failed to fetch hash data');
       return null
     }
 
     return responseData
   } catch (error) {
-    console.error('Error fetching hash data:', error)
+    logError(log, error, {
+      serverId: serverConfig?.id,
+      mediaType,
+      title,
+      seasonNumber,
+      context: 'fetch_hash_data'
+    })
     return null
   }
 }

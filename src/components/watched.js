@@ -40,15 +40,18 @@ export function formatWatchedTime(watchedSeconds, totalRuntime) {
   return `${formattedWatched} - ${convertRuntime(totalRuntime)}`
 }
 
-export function TotalRuntime({ length, metadata, videoURL, classNames }) {
+export function TotalRuntime({ length, metadata, videoURL, classNames, watchedSeconds }) {
   const displayTime = useMemo(() => {
-    const watchedTimeInSeconds = getWatchedTime(videoURL)
+    // Prefer server-provided watchedSeconds, fallback to localStorage
+    const watchedTimeInSeconds = (watchedSeconds !== undefined && watchedSeconds !== null)
+      ? watchedSeconds
+      : getWatchedTime(videoURL)
     const formattedDisplayTime = formatWatchedTime(
       watchedTimeInSeconds,
       length ?? metadata?.runtime ?? 'Unknown'
     )
     return formattedDisplayTime
-  }, [length, metadata, videoURL])
+  }, [length, metadata, videoURL, watchedSeconds])
 
   return <span className={classNames}>{displayTime}</span>
 }

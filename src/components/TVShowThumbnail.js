@@ -41,6 +41,7 @@ export default function TVShowThumbnail({ episode, metadata }) {
       )}
       {episode.duration && (
         <TotalRuntime
+          watchedSeconds={episode.watchHistory?.playbackTime ? Math.round(episode.watchHistory.playbackTime) : undefined}
           length={episode.duration ?? (episode.metadata?.runtime ? episode.metadata.runtime * 60000 : 0)}
           metadata={episode.metadata}
           videoURL={episode.videoURL}

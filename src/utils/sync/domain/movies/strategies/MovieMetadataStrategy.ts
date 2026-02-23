@@ -321,29 +321,38 @@ export class MovieMetadataStrategy implements SyncStrategy {
   /**
    * Extract metadata from file server using originalTitle (filesystem key)
    * Now uses fetchMetadataMultiServer for caching and reliability
+   * Respects ResourceManager HTTP throttling when available in context
    */
   private async extractMetadata(originalTitle: string, context: SyncContext): Promise<Record<string, any> | null> {
-    try {
-      // Get metadata URL from fileserver data if available
-      const fileServerData = context.fileServerData?.movies?.[originalTitle]
-      const metadataRelativePath = fileServerData?.urls?.metadata
-      
-      // Use fetchMetadataMultiServer from admin_utils for caching and reliability
-      const metadata = await fetchMetadataMultiServer(
-        context.serverConfig.id,
-        metadataRelativePath,
-        'file',
-        'movie',
-        originalTitle
-      )
-      
-      console.log(`✅ Fetched metadata for "${originalTitle}" from ${context.serverConfig.id}`)
-      return metadata
+    const doFetch = async () => {
+      try {
+        // Get metadata URL from fileserver data if available
+        const fileServerData = context.fileServerData?.movies?.[originalTitle]
+        const metadataRelativePath = fileServerData?.urls?.metadata
+        
+        // Use fetchMetadataMultiServer from admin_utils for caching and reliability
+        const metadata = await fetchMetadataMultiServer(
+          context.serverConfig.id,
+          metadataRelativePath,
+          'file',
+          'movie',
+          originalTitle
+        )
+        
+        console.log(`✅ Fetched metadata for "${originalTitle}" from ${context.serverConfig.id}`)
+        return metadata
 
-    } catch (error) {
-      console.error(`Failed to extract metadata for ${originalTitle}:`, error)
-      return null
+      } catch (error) {
+        console.error(`Failed to extract metadata for ${originalTitle}:`, error)
+        return null
+      }
     }
+
+    // Throttle through ResourceManager if available
+    if (context.resourceManager) {
+      return context.resourceManager.throttleHttp(doFetch)
+    }
+    return doFetch()
   }
 
   /**

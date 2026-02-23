@@ -2,6 +2,7 @@
  * Movie blurhash sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -16,6 +17,7 @@ import { isEqual } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncMovieBlurhash(client, movie, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Movies.Blurhash');
   // Process poster blurhash
   if (!fileServerData?.urls?.posterBlurhash) return null;
   
@@ -50,7 +52,11 @@ export async function syncMovieBlurhash(client, movie, fileServerData, serverCon
   
   if (!filteredUpdateData.posterBlurhash) return null;
   
-  console.log(`Movie: Updating poster blurhash for "${movieTitle}" from server ${serverConfig.id}`);
+  log.info({
+    movieTitle,
+    serverId: serverConfig.id,
+    field: 'posterBlurhash'
+  }, 'Updating movie poster blurhash');
   
   // Update the movie in the flat database
   await updateMovieInFlatDB(client, movieTitle, { $set: filteredUpdateData });
@@ -71,6 +77,7 @@ export async function syncMovieBlurhash(client, movie, fileServerData, serverCon
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncMovieBackdropBlurhash(client, movie, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Movies.Blurhash');
   // Process backdrop blurhash
   if (!fileServerData?.urls?.backdropBlurhash) return null;
   
@@ -105,7 +112,11 @@ export async function syncMovieBackdropBlurhash(client, movie, fileServerData, s
   
   if (!filteredUpdateData.backdropBlurhash) return null;
   
-  console.log(`Movie: Updating backdrop blurhash for "${movieTitle}" from server ${serverConfig.id}`);
+  log.info({
+    movieTitle,
+    serverId: serverConfig.id,
+    field: 'backdropBlurhash'
+  }, 'Updating movie backdrop blurhash');
   
   // Update the movie in the flat database
   await updateMovieInFlatDB(client, movieTitle, { $set: filteredUpdateData });

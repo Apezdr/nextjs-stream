@@ -12,6 +12,7 @@ import SyncClientWithServerWatched from '@src/components/SyncClientWithServerWat
 import Loading from '@src/app/loading'
 import { validateVideoURL } from '@src/utils/media/mediaFetcher'
 import { buildGoBackUrl } from '@src/utils/media/urlParser'
+import { getWatchTimeForVideo } from '@src/utils/watchHistoryServerUtils'
 
 /**
  * MoviePlayerView Component
@@ -29,6 +30,9 @@ export default async function MoviePlayerView({ media, session, searchParams, pa
   // Build go back URL
   const goBackUrl = buildGoBackUrl(parsedParams)
   
+  // Fetch saved playback position server-side (prevents flash on load)
+  const savedPlaybackTime = media?.videoURL ? await getWatchTimeForVideo(media.videoURL, session.user.id) : 0
+  
   return (
     <>
       <SyncClientWithServerWatched once={true} />
@@ -43,6 +47,7 @@ export default async function MoviePlayerView({ media, session, searchParams, pa
               searchParams={searchParams}
               session={session}
               isValidVideoURL={isValidVideoURL}
+              savedPlaybackTime={savedPlaybackTime}
             />
           </div>
         </PlaybackCoordinatorProvider>

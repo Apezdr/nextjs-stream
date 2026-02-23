@@ -2,6 +2,7 @@
  * TV show logos sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateTVShowInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -16,6 +17,7 @@ import { isEqual } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncTVShowLogos(client, show, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.TVShows.Logos');
   if (!fileServerData?.logo) return null;
   
   const fieldPath = 'logo';
@@ -50,7 +52,11 @@ export async function syncTVShowLogos(client, show, fileServerData, serverConfig
   
   if (!filteredUpdateData.logo) return null;
   
-  console.log(`TV Show: Updating logo for "${showTitle}" from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    serverId: serverConfig.id,
+    field: 'logo'
+  }, 'Updating TV show logo');
   
   // Update the TV show in the flat database
   await updateTVShowInFlatDB(client, originalTitle, { $set: filteredUpdateData });

@@ -629,6 +629,7 @@ export class MovieContentStrategy implements SyncStrategy {
 
   /**
    * Legacy method for extracting metadata from individual files (kept as fallback)
+   * Respects ResourceManager HTTP throttling when available in context
    */
   private async extractVideoMetadata(
     videoUrl: string, 
@@ -645,55 +646,63 @@ export class MovieContentStrategy implements SyncStrategy {
     fileSize?: number
     mediaQuality?: MediaQuality
   } | null> {
-    try {
-      console.log(`🔍 Extracting video metadata for: "${originalTitle}"`)
-
-      // Try to get metadata from server's metadata file first
-      const metadataPath = `/movies/${originalTitle}/video.json`
-      const metadataUrl = UrlBuilder.createFullUrl(metadataPath, context.serverConfig)
-
+    const doFetch = async () => {
       try {
-        const availability = await this.fileAdapter.validateAvailability([metadataUrl])
-        
-        if (availability.available.includes(metadataUrl)) {
-          const response = await fetch(metadataUrl, {
-            signal: AbortSignal.timeout(10000),
-            headers: {
-              'Accept': 'application/json',
-              'Cache-Control': 'no-cache'
-            }
-          })
+        console.log(`🔍 Extracting video metadata for: "${originalTitle}"`)
 
-          if (response.ok) {
-            const metadata = await response.json()
-            console.log(`✅ Found video metadata file for: "${originalTitle}"`)
-            
-            return {
-              duration: metadata.duration || metadata.length,
-              dimensions: metadata.dimensions || metadata.resolution,
-              codec: metadata.codec || metadata.video_codec,
-              bitrate: metadata.bitrate || metadata.video_bitrate,
-              frameRate: metadata.framerate || metadata.frame_rate,
-              audioCodec: metadata.audio_codec,
-              audioChannels: metadata.audio_channels,
-              fileSize: metadata.size || metadata.file_size,
-              mediaQuality: this.parseMediaQuality(metadata)
+        // Try to get metadata from server's metadata file first
+        const metadataPath = `/movies/${originalTitle}/video.json`
+        const metadataUrl = UrlBuilder.createFullUrl(metadataPath, context.serverConfig)
+
+        try {
+          const availability = await this.fileAdapter.validateAvailability([metadataUrl])
+          
+          if (availability.available.includes(metadataUrl)) {
+            const response = await fetch(metadataUrl, {
+              signal: AbortSignal.timeout(10000),
+              headers: {
+                'Accept': 'application/json',
+                'Cache-Control': 'no-cache'
+              }
+            })
+
+            if (response.ok) {
+              const metadata = await response.json()
+              console.log(`✅ Found video metadata file for: "${originalTitle}"`)
+              
+              return {
+                duration: metadata.duration || metadata.length,
+                dimensions: metadata.dimensions || metadata.resolution,
+                codec: metadata.codec || metadata.video_codec,
+                bitrate: metadata.bitrate || metadata.video_bitrate,
+                frameRate: metadata.framerate || metadata.frame_rate,
+                audioCodec: metadata.audio_codec,
+                audioChannels: metadata.audio_channels,
+                fileSize: metadata.size || metadata.file_size,
+                mediaQuality: this.parseMediaQuality(metadata)
+              }
             }
           }
+        } catch (error) {
+          console.warn(`⚠️ Failed to fetch video metadata for ${originalTitle}: ${error.message}`)
         }
+
+        // Fallback: Try to extract basic info from video file headers
+        const basicInfo = await this.extractBasicVideoInfo(videoUrl)
+        console.log(`📝 Extracted basic video info for: "${originalTitle}"`)
+        return basicInfo
+
       } catch (error) {
-        console.warn(`⚠️ Failed to fetch video metadata for ${originalTitle}: ${error.message}`)
+        console.error(`Failed to extract video metadata for ${originalTitle}:`, error)
+        return null
       }
-
-      // Fallback: Try to extract basic info from video file headers
-      const basicInfo = await this.extractBasicVideoInfo(videoUrl)
-      console.log(`📝 Extracted basic video info for: "${originalTitle}"`)
-      return basicInfo
-
-    } catch (error) {
-      console.error(`Failed to extract video metadata for ${originalTitle}:`, error)
-      return null
     }
+
+    // Throttle through ResourceManager if available
+    if (context.resourceManager) {
+      return context.resourceManager.throttleHttp(doFetch)
+    }
+    return doFetch()
   }
 
   /**

@@ -6,6 +6,7 @@
  * and optimized hash-based sync for improved performance.
  */
 
+import { createLogger, logError } from '@src/lib/logger';
 import { filterLockedFields, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName } from '../../sync/utils';
 import { updateEpisodeInFlatDB, getEpisodeFromFlatDB, createEpisodeInFlatDB } from './database';
 import { createSeasonInFlatDB } from '../seasons/database';
@@ -29,6 +30,7 @@ import { buildNewSeasonObject } from '../seasons';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncEpisodeMetadataLegacy(client, show, season, episode, flatShow, flatSeason, flatEpisode, fileServerSeasonData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Episodes.Metadata');
   // Early exit checks to avoid unnecessary processing
 
   // 1. Check if episode exists in file server data
@@ -78,19 +80,34 @@ export async function syncEpisodeMetadataLegacy(client, show, season, episode, f
 
     // Make sure we got valid metadata back
     if (!episodeMetadata || typeof episodeMetadata !== 'object' || episodeMetadata.error) {
-      console.warn(`Failed to fetch episode metadata for "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}: ${episodeMetadata?.error || 'Unknown error'
-        }`);
+      log.warn({
+        showTitle: show.title,
+        seasonNumber: season.seasonNumber,
+        episodeNumber: episode.episodeNumber,
+        error: episodeMetadata?.error || 'Unknown error',
+        context: 'episode_metadata_fetch_failed'
+      }, 'Failed to fetch episode metadata directly');
 
       // Try to fall back to season metadata
       if (seasonMetadata?.episodes && seasonMetadata.episodes.length > 0) {
         episodeMetadata = seasonMetadata.episodes.find(e => e?.episode_number === episode?.episodeNumber);
-        console.log(`Falling back to use season sourced metadata for episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`);
+        log.info({
+          showTitle: show.title,
+          seasonNumber: season.seasonNumber,
+          episodeNumber: episode.episodeNumber,
+          context: 'fallback_season_metadata'
+        }, 'Falling back to use season metadata for episode');
       }
     }
   } else if (seasonMetadata?.episodes && seasonMetadata.episodes.length > 0) {
     // If file server doesn't have metadata, try to find it in the season metadata
     episodeMetadata = seasonMetadata.episodes.find(e => e?.episode_number === episode?.episodeNumber);
-    console.log(`Attempting to use season sourced metadata for episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`);
+    log.info({
+      showTitle: show.title,
+      seasonNumber: season.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+      context: 'attempt_season_metadata'
+    }, 'Attempting to use season sourced metadata for episode');
   }
 
   if (!episodeMetadata) return null;
@@ -168,7 +185,13 @@ export async function syncEpisodeMetadataLegacy(client, show, season, episode, f
 
   if (Object.keys(filteredUpdateData).length === 0) return null;
 
-  console.log(`Episode: Updating metadata for "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    seasonNumber: season.seasonNumber,
+    episodeNumber: episode.episodeNumber,
+    serverId: serverConfig.id,
+    field: 'metadata'
+  }, 'Updating episode metadata');
 
   // Prepare the final update data (make a copy to avoid modifying the original)
   const finalUpdateData = {
@@ -198,6 +221,7 @@ export async function syncEpisodeMetadataLegacy(client, show, season, episode, f
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncEpisodeMetadata(client, show, season, episode, fileServerSeasonData, serverConfig, fieldAvailability, season_hashData) {
+  const log = createLogger('FlatSync.Episodes.Metadata.HashSync');
   try {
     const showTitle = show.title;
     const originalTitle = show.originalTitle;
@@ -226,7 +250,12 @@ export async function syncEpisodeMetadata(client, show, season, episode, fileSer
 
       // Force update if hash matches but metadata is missing
       if (storedHash === currentHash) {
-        console.log(`Hash match for S${season.seasonNumber}E${episode.episodeNumber} of "${showTitle}" but metadata is missing - forcing update`);
+        log.debug({
+          showTitle: show.title,
+          seasonNumber: season.seasonNumber,
+          episodeNumber: episode.episodeNumber,
+          context: 'episode_exists_metadata'
+        }, 'Episode exists; proceeding with metadata updates');
       }
 
       // Create episode if it doesn't exist
@@ -249,11 +278,21 @@ export async function syncEpisodeMetadata(client, show, season, episode, fileSer
         if (createResult.existing) {
           // Fetch the existing episode to make sure we have the full data
           flatEpisode = await getEpisodeFromFlatDB(client, showTitle, season.seasonNumber, episode.episodeNumber);
-          //console.log(`Episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber} exists (metadata), proceeding with updates.`);
+          log.debug({
+            showTitle: show.title,
+            seasonNumber: season.seasonNumber,
+            episodeNumber: episode.episodeNumber,
+            context: 'episode_exists_metadata'
+          }, 'Episode exists; proceeding with metadata updates');
         } else {
           // Otherwise use our new episode data
           flatEpisode = newEpisodeData;
-          console.log(`Created new episode "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} (metadata)`);
+          log.info({
+            showTitle,
+            seasonNumber: season.seasonNumber,
+            episodeNumber: episode.episodeNumber,
+            context: 'episode_created_metadata'
+          }, 'Created new episode during metadata sync');
         }
       }
 
@@ -284,7 +323,12 @@ export async function syncEpisodeMetadata(client, show, season, episode, fileSer
         // Actually update the episode in the database
         // Remove 'field' and 'updated' status fields before saving to database
         const { field, updated, ...cleanResult } = result;
-        console.log(`Saving metadata updates for "${show.title}" S${season.seasonNumber}E${episode.episodeNumber} to database from direct sync`);
+        log.info({
+          showTitle: show.title,
+          seasonNumber: season.seasonNumber,
+          episodeNumber: episode.episodeNumber,
+          context: 'saving_metadata_updates'
+        }, 'Saving metadata updates to database');
         await updateEpisodeInFlatDB(
           client,
           show.title,
@@ -295,10 +339,22 @@ export async function syncEpisodeMetadata(client, show, season, episode, fileSer
 
         // Only store hash if we're highest priority
         if (isHighestPriority) {
-          console.log(`Storing episode hash for "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id} (highest priority)`);
+          log.info({
+            showTitle,
+            seasonNumber: season.seasonNumber,
+            episodeNumber: episode.episodeNumber,
+            serverId: serverConfig.id,
+            context: 'store_episode_hash'
+          }, 'Storing episode hash post metadata update');
           await storeHash(client, 'tv', showTitle, season.seasonNumber, episode.episodeNumber, currentHash, serverConfig.id);
         } else {
-          console.log(`Skipping hash storage for "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id} (not highest priority)`);
+          log.debug({
+            showTitle,
+            seasonNumber: season.seasonNumber,
+            episodeNumber: episode.episodeNumber,
+            serverId: serverConfig.id,
+            context: 'skip_episode_hash'
+          }, 'Skipping hash storage because server not highest priority');
         }
       }
 
@@ -327,14 +383,24 @@ export async function syncEpisodeMetadata(client, show, season, episode, fileSer
       if (createResult.existing) {
         // Fetch the existing episode to make sure we have the full data
         flatEpisode = await getEpisodeFromFlatDB(client, showTitle, season.seasonNumber, episode.episodeNumber);
-        //console.log(`Episode "${show.title}" S${season.seasonNumber}E${episode.episodeNumber} exists (fallback), proceeding with updates.`);
+          log.debug({
+            showTitle: show.title,
+            seasonNumber: season.seasonNumber,
+            episodeNumber: episode.episodeNumber,
+            context: 'episode_exists_fallback'
+          }, 'Episode exists (fallback); proceeding with updates');
       } else {
         // Otherwise use our new episode data with the generated _id from MongoDB
         flatEpisode = {
           ...newEpisodeData,
           _id: createResult.insertedId
         };
-        console.log(`Created new episode "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} (fallback)`);
+        log.info({
+          showTitle,
+          seasonNumber: season.seasonNumber,
+          episodeNumber: episode.episodeNumber,
+          context: 'episode_created_fallback'
+        }, 'Created new episode during fallback metadata sync');
       }
     }
 
@@ -343,7 +409,12 @@ export async function syncEpisodeMetadata(client, show, season, episode, fileSer
       fileServerSeasonData, serverConfig, fieldAvailability
     );
   } catch (error) {
-    console.error(`Error in hash-based metadata sync for S${season.seasonNumber}E${episode.episodeNumber} of "${show.title}":`, error);
+    logError(log, error, {
+      showTitle: show.title,
+      seasonNumber: season.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+      context: 'hash_metadata_sync'
+    });
     return null;
   }
 }
@@ -360,7 +431,8 @@ export async function syncEpisodeMetadata(client, show, season, episode, fileSer
  * @returns {Promise<Object>} Sync results
  */
 export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, fileServerShowData, serverConfig, fieldAvailability, storedShowHash) {
-  console.log(`Starting hash-based metadata sync for "${show.title}"...`);
+  const log = createLogger('FlatSync.Episodes.Metadata.ShowHashSync');
+  log.info({ showTitle: show.title, serverId: serverConfig.id }, 'Starting hash-based metadata sync');
 
   const results = {
     updated: 0,
@@ -399,8 +471,13 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
       const missingSeasonsMetadataCount = flatSeasons.filter(season => !season.metadata).length;
 
       // Log the current state for debugging
-      console.log(`Show "${show.title}" check: Found ${flatEpisodes.length} episodes (${missingMetadataCount} missing metadata)`);
-      console.log(`Show "${show.title}" check: Found ${flatSeasons.length} seasons (${missingSeasonsMetadataCount} missing metadata)`);
+      log.info({
+        showTitle: show.title,
+        episodesFound: flatEpisodes.length,
+        episodesMissingMetadata: missingMetadataCount,
+        seasonsFound: flatSeasons.length,
+        seasonsMissingMetadata: missingSeasonsMetadataCount
+      }, 'Show metadata completeness check');
 
       // Create a map to store season hash data to avoid redundant API calls
       const seasonHashDataMap = new Map();
@@ -426,17 +503,31 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
       const hasAllSeasons = (flatSeasons.length >= expectedSeasonCount && missingSeasonsMetadataCount === 0);
 
       if (hasAllEpisodes && hasAllSeasons) {
-        console.log(`Show "${show.title}" hash unchanged and all ${allEpisodesCount} episodes and ${flatSeasons.length} seasons exist with metadata - skipping entire show`);
+        log.info({
+          showTitle: show.title,
+          episodeCount: allEpisodesCount,
+          seasonCount: flatSeasons.length
+        }, 'Show hash unchanged and data complete; skipping');
         results.unchanged += allEpisodesCount;
         return results;
       } else {
         // Log why we're not skipping
         if (!hasAllEpisodes) {
-          console.log(`Show "${show.title}" has matching hash but episode data is incomplete (have ${allEpisodesCount}/${expectedEpisodeCount}, missing metadata: ${missingMetadataCount})`);
+          log.info({
+            showTitle: show.title,
+            haveEpisodes: allEpisodesCount,
+            expectedEpisodes: expectedEpisodeCount,
+            missingEpisodeMetadata: missingMetadataCount
+          }, 'Episode data incomplete despite matching hash');
         }
 
         if (!hasAllSeasons) {
-          console.log(`Show "${show.title}" has matching hash but season data is incomplete (have ${flatSeasons.length}/${expectedSeasonCount}, missing metadata: ${missingSeasonsMetadataCount})`);
+          log.info({
+            showTitle: show.title,
+            haveSeasons: flatSeasons.length,
+            expectedSeasons: expectedSeasonCount,
+            missingSeasonsMetadata: missingSeasonsMetadataCount
+          }, 'Season data incomplete despite matching hash');
         }
       }
     }
@@ -491,13 +582,21 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
       if (storedSeasonHash === currentSeasonHash) {
         // Only skip if we have all episodes in the actual database AND they all have metadata
         if (actualEpisodeCount >= fileServerEpisodeCount && episodesWithoutMetadata === 0) {
-          //console.log(`Season ${seasonNumber} of "${show.title}" unchanged (hash match) and all ${actualEpisodeCount} episodes exist in database with metadata`);
           results.unchanged += fileServerEpisodeCount;
           continue;
         } else if (episodesWithoutMetadata > 0) {
-          console.log(`Season ${seasonNumber} of "${show.title}" hash unchanged but ${episodesWithoutMetadata} episodes are missing metadata - processing episodes`);
+          log.info({
+            showTitle: show.title,
+            seasonNumber,
+            episodesMissingMetadata: episodesWithoutMetadata
+          }, 'Season hash unchanged but episodes missing metadata; processing');
         } else {
-          console.log(`Season ${seasonNumber} of "${show.title}" hash unchanged but only ${actualEpisodeCount}/${fileServerEpisodeCount} episodes exist in database - processing missing episodes`);
+          log.info({
+            showTitle: show.title,
+            seasonNumber,
+            actualEpisodeCount,
+            fileServerEpisodeCount
+          }, 'Season hash unchanged but episodes missing from DB; processing');
         }
       }
 
@@ -505,7 +604,11 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
       const seasonHashData = await fetchHashData(serverConfig, 'tv', show.originalTitle, seasonNumber);
 
       if (!seasonHashData || !seasonHashData.episodes) {
-        console.warn(`Could not fetch hash data for season ${seasonNumber} of "${show.title}"`);
+        log.warn({
+          showTitle: show.title,
+          seasonNumber,
+          context: 'season_hash_missing'
+        }, 'Could not fetch season hash data');
         results.errors++;
         continue;
       }
@@ -542,14 +645,21 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
 
                 // No-op scenario - show not found
                 if (!flatShow) {
-                  console.error(`Show "${show.title}" not found in database`);
+                  log.error({
+                    showTitle: show.title,
+                    context: 'show_not_found'
+                  }, 'Show not found in database');
                   results.errors++;
                   return false;
                 }
 
                 // If season not found, try to create it
                 if (!flatSeason) {
-                  console.warn(`Season ${seasonNumber} of "${show.title}" not found in database - creating placeholder`);
+                  log.warn({
+                    showTitle: show.title,
+                    seasonNumber,
+                    context: 'season_missing_create_placeholder'
+                  }, 'Season not found; creating placeholder');
                   try {
                     // Create a placeholder season
                     const newSeason = buildNewSeasonObject(flatShow, { seasonNumber });
@@ -560,25 +670,41 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
                         ...newSeason,
                         _id: result.insertedId
                       };
-                      console.log(`Created placeholder for Season ${seasonNumber} of "${show.title}" during metadata sync`);
+                      log.info({
+                        showTitle: show.title,
+                        seasonNumber,
+                        context: 'created_season_placeholder'
+                      }, 'Created placeholder season during metadata sync');
                     } else if (result.upsertedId) {
                       flatSeason = {
                         ...newSeason,
                         _id: result.upsertedId
                       };
-                      console.log(`Created placeholder for Season ${seasonNumber} of "${show.title}" during metadata sync`);
+                      log.info({
+                        showTitle: show.title,
+                        seasonNumber,
+                        context: 'created_season_placeholder'
+                      }, 'Created placeholder season during metadata sync');
                     } else {
                       // Try to retrieve it in case it was created concurrently
                       flatSeason = seasons.find(s => s.seasonNumber === seasonNumber);
 
                       if (!flatSeason) {
-                        console.error(`Failed to create or retrieve season ${seasonNumber} for "${show.title}"`);
+                        log.error({
+                          showTitle: show.title,
+                          seasonNumber,
+                          context: 'season_create_retrieve_failed'
+                        }, 'Failed to create or retrieve season');
                         results.errors++;
                         return false;
                       }
                     }
                   } catch (error) {
-                    console.error(`Error creating season ${seasonNumber} for "${show.title}":`, error);
+                    logError(log, error, {
+                      showTitle: show.title,
+                      seasonNumber,
+                      context: 'season_create_error'
+                    });
                     results.errors++;
                     return false;
                   }
@@ -609,7 +735,12 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
                   // Actually update the episode in the database
                   // Remove 'field' and 'updated' status fields before saving to database
                   const { field, updated, ...cleanResult } = result;
-                  console.log(`Saving metadata updates for "${show.title}" S${seasonNumber}E${episode.episodeNumber} to database`);
+                  log.info({
+                    showTitle: show.title,
+                    seasonNumber,
+                    episodeNumber: episode.episodeNumber,
+                    context: 'saving_metadata_updates_batch'
+                  }, 'Saving metadata updates to database');
                   await updateEpisodeInFlatDB(
                     client,
                     show.title,
@@ -636,10 +767,22 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
 
                   // Only store hash if we're highest priority
                   if (isHighestPriority) {
-                    console.log(`Storing episode hash for "${show.title}" S${seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id} (highest priority)`);
+                    log.info({
+                      showTitle: show.title,
+                      seasonNumber,
+                      episodeNumber: episode.episodeNumber,
+                      serverId: serverConfig.id,
+                      context: 'store_episode_hash_batch'
+                    }, 'Storing episode hash after batch update');
                     await storeHash(client, 'tv', show.title, seasonNumber, episode.episodeNumber, currentEpisodeHash, serverConfig.id);
                   } else {
-                    console.log(`Skipping hash storage for "${show.title}" S${seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id} (not highest priority)`);
+                    log.debug({
+                      showTitle: show.title,
+                      seasonNumber,
+                      episodeNumber: episode.episodeNumber,
+                      serverId: serverConfig.id,
+                      context: 'skip_episode_hash_batch'
+                    }, 'Skipping hash storage (not highest priority)');
                   }
 
                   results.updated++;
@@ -648,16 +791,31 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
 
                 return false;
               } catch (error) {
-                console.error(`Error syncing episode ${episode.episodeNumber} of season ${seasonNumber}:`, error);
+                logError(log, error, {
+                  showTitle: show.title,
+                  seasonNumber,
+                  episodeNumber: episode.episodeNumber,
+                  context: 'sync_episode_error_batch'
+                });
                 results.errors++;
                 return false;
               }
             })()
           );
         }
-      } else {
+       } else {
+        log.info({
+          showTitle: show.title,
+          seasonNumber,
+          context: 'no_episodes_in_db'
+        }, 'No episodes in database; checking file server');
         // No episodes in database - check for episodes in file server
-        console.log(`No episodes found in database for season ${seasonNumber} of "${show.title}" - checking file server`);
+        log.info({
+          showTitle: show.title,
+          seasonNumber,
+          context: 'no_episodes_in_db_file_server_check'
+        },
+        `No episodes found in database for season ${seasonNumber} of "${show.title}" - checking file server`);
       }
 
       // Also check for episodes in the file server that aren't in the database
@@ -677,7 +835,12 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
 
         // If episode doesn't exist in database, process it
         if (!episodeExists) {
-          console.log(`Found missing episode: "${show.title}" S${seasonNumber}E${episodeNumber}`);
+          log.info({
+            showTitle: show.title,
+            seasonNumber,
+            episodeNumber,
+            context: 'missing_episode_found'
+          }, 'Found missing episode to sync');
 
           // Create a temporary episode object
           const tempEpisode = { episodeNumber };
@@ -692,7 +855,12 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
 
                 // No-op scenario - show or season not found
                 if (!flatShow || !flatSeason) {
-                  console.error(`Show "${show.title}" or season ${seasonNumber} not found in database`);
+                  log.error({
+                    showTitle: show.title,
+                    seasonNumber,
+                    episodeNumber: episode.episodeNumber,
+                    context: 'episode_or_season_missing'
+                  }, 'Show or season not found when processing episode');
                   results.errors++;
                   return false;
                 }
@@ -784,7 +952,12 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
                     ...cleanResult
                   };
 
-                  console.log(`Creating/updating episode "${show.title}" S${seasonNumber}E${episodeNumber} with duplicate checking`);
+                  log.info({
+                    showTitle: show.title,
+                    seasonNumber,
+                    episodeNumber,
+                    context: 'create_or_update_episode'
+                  }, 'Creating/updating episode with duplicate checking');
                   await createEpisodeInFlatDB(client, episodeData);
 
                   // Check if we're highest priority before storing hash for new episodes
@@ -800,7 +973,13 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
                   // Only store hash if we're highest priority
                   const episodeKey = `S${seasonNumber.toString().padStart(2, '0')}E${episodeNumber.toString().padStart(2, '0')}`;
                   if (seasonHashData.episodes[episodeKey] && isHighestPriority) {
-                    console.log(`Storing hash for new episode "${show.title}" S${seasonNumber}E${episodeNumber} from server ${serverConfig.id} (highest priority)`);
+                    log.info({
+                      showTitle: show.title,
+                      seasonNumber,
+                      episodeNumber,
+                      serverId: serverConfig.id,
+                      context: 'store_episode_hash_batch'
+                    }, 'Storing episode hash after batch metadata update');
                     await storeHash(
                       client,
                       'tv',
@@ -811,7 +990,13 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
                       serverConfig.id
                     );
                   } else if (seasonHashData.episodes[episodeKey]) {
-                    console.log(`Skipping hash storage for new episode "${show.title}" S${seasonNumber}E${episodeNumber} from server ${serverConfig.id} (not highest priority)`);
+                    log.debug({
+                      showTitle: show.title,
+                      seasonNumber,
+                      episodeNumber: episode.episodeNumber,
+                      serverId: serverConfig.id,
+                      context: 'skip_episode_hash_batch'
+                    }, 'Skipping episode hash storage (not highest priority)');
                   }
 
                   results.updated++;
@@ -820,7 +1005,12 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
 
                 return false;
               } catch (error) {
-                console.error(`Error syncing missing episode ${episodeNumber} of season ${seasonNumber}:`, error);
+                logError(log, error, {
+                  showTitle: show.title,
+                  seasonNumber,
+                  episodeNumber: episode.episodeNumber,
+                  context: 'sync_episode_error'
+                });
                 results.errors++;
                 return false;
               }
@@ -836,7 +1026,11 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
       // This prevents lower priority servers from storing hashes that would invalidate higher priority data
       const didUpdateAnyEpisode = updateResults.some(result => result === true);
       if (didUpdateAnyEpisode) {
-        console.log(`Storing season hash for "${show.title}" Season ${seasonNumber} from server ${serverConfig.id}`);
+        log.info({
+          showTitle: show.title,
+          seasonNumber,
+          serverId: serverConfig.id
+        }, 'Storing season hash after episode updates');
         await storeHash(client, 'tv', show.title, seasonNumber, null, currentSeasonHash, serverConfig.id);
       }
     }
@@ -844,18 +1038,32 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
     // Store the show-level hash if updates were made or we completed processing 
     // This will help future runs skip hash fetching entirely
     if (results.updated > 0) {
-      console.log(`Storing show-level hash for "${show.title}" from server ${serverConfig.id} after successful update`);
+      log.info({
+        showTitle: show.title,
+        serverId: serverConfig.id
+      }, 'Storing show-level hash after successful update');
       await storeHash(client, 'tv', show.title, null, null, showHashData.hash, serverConfig.id);
     } else if (showHashData.hash !== showHashData.hash && results.unchanged > 0) {
       // Also store hash if it's different but we processed all episodes successfully
-      console.log(`Updating show-level hash for "${show.title}" from server ${serverConfig.id} (all episodes verified)`);
+      log.info({
+        showTitle: show.title,
+        serverId: serverConfig.id
+      }, 'Updating show-level hash (all episodes verified)');
       await storeHash(client, 'tv', show.title, null, null, showHashData.hash, serverConfig.id);
     }
 
-    console.log(`Hash-based sync complete for "${show.title}": ${results.updated} updated, ${results.unchanged} unchanged, ${results.errors} errors`);
+    log.info({
+      showTitle: show.title,
+      updated: results.updated,
+      unchanged: results.unchanged,
+      errors: results.errors
+    }, 'Hash-based sync complete');
     return results;
   } catch (error) {
-    console.error(`Error in hash-based metadata sync for "${show.title}":`, error);
+    logError(log, error, {
+      showTitle: show.title,
+      context: 'hash_based_metadata_sync'
+    });
     return results;
   }
 }

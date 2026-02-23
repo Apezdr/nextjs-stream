@@ -2,6 +2,7 @@
  * Movie chapters sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -16,6 +17,7 @@ import { isEqual } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncMovieChapters(client, movie, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Movies.Chapters');
   if (!fileServerData?.urls?.chapters) return null;
   
   const fieldPath = 'urls.chapters';
@@ -49,7 +51,11 @@ export async function syncMovieChapters(client, movie, fileServerData, serverCon
   
   if (!filteredUpdateData.chapterURL) return null;
   
-  console.log(`Movie: Updating chapters for "${movieTitle}" from server ${serverConfig.id}`);
+  log.info({
+    movieTitle,
+    serverId: serverConfig.id,
+    field: 'chapters'
+  }, 'Updating movie chapters');
   
   // Update the movie in the flat database
   await updateMovieInFlatDB(client, movieTitle, { $set: filteredUpdateData });

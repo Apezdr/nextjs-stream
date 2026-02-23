@@ -8,7 +8,8 @@ import { useRouter, usePathname } from 'next/navigation';
 export default function WithPlayBackTracker({
   videoURL,
   start = null,
-  mediaMetadata = null
+  mediaMetadata = null,
+  savedPlaybackTime = null
 }) {
   const player = useMediaPlayer();
   const canPlay = useMediaState('canPlay');
@@ -27,31 +28,44 @@ export default function WithPlayBackTracker({
   useEffect(() => {
     if (!canPlay || !remote) return;
 
-    const savedData = localStorage.getItem(videoURL);
-    const savedTime = savedData ? parseFloat(JSON.parse(savedData).playbackTime) : null;
+    const restorePlaybackPosition = async () => {
+      // Try localStorage first (fastest)
+      const savedData = localStorage.getItem(videoURL);
+      const savedTime = savedData ? parseFloat(JSON.parse(savedData).playbackTime) : null;
 
-    if (!hasAppliedStartRef.current) {
-      // Important: Check if start is not null/undefined rather than just truthy check
-      // This is critical because start could be 0, which is falsy but valid
-      if (start !== null && start !== undefined) {
-        remote.seek(start);
-        
-        // Clean up the URL by removing query parameters
-        setTimeout(() => {
-          try {
-            // Use window.history directly since Next.js router methods might not be reliable
-            window.history.replaceState({}, '', pathname);
-          } catch (err) {
-            console.error("Error replacing URL:", err);
-          }
-        }, 100);
-      } else if (!isNaN(savedTime) && savedTime !== null) {
-        remote.seek(savedTime);
+      if (!hasAppliedStartRef.current) {
+        // Priority 1: URL parameter (deep links) - highest priority
+        if (start !== null && start !== undefined) {
+          remote.seek(start);
+          
+          // Clean up the URL by removing query parameters
+          setTimeout(() => {
+            try {
+              window.history.replaceState({}, '', pathname);
+            } catch (err) {
+              console.error("Error replacing URL:", err);
+            }
+          }, 100);
+        }
+        // Priority 2: Server-provided savedPlaybackTime (passed as prop from server)
+        else if (savedPlaybackTime !== null && savedPlaybackTime > 0) {
+          remote.seek(savedPlaybackTime);
+          // Cache it locally for future use
+          localStorage.setItem(videoURL, JSON.stringify({
+            playbackTime: savedPlaybackTime,
+            lastUpdated: new Date().toISOString()
+          }));
+        }
+        // Priority 3: localStorage (for recently synced videos)
+        else if (!isNaN(savedTime) && savedTime !== null) {
+          remote.seek(savedTime);
+        }
+        hasAppliedStartRef.current = true;
       }
-      
-      hasAppliedStartRef.current = true;
-    }
-  }, [remote, canPlay, videoURL, start, pathname]);
+    };
+
+    restorePlaybackPosition();
+  }, [remote, canPlay, videoURL, start, pathname, savedPlaybackTime]);
 
   // Initialize the web worker with error handling and fallback logic.
   useEffect(() => {

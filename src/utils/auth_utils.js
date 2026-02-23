@@ -35,6 +35,7 @@ export const tvShowProjectionFields = {
   backdropBlurhashSource: 1,
   'metadata.id': 1,
   'metadata.overview': 1,
+  'metadata.first_air_date': 1,
   'metadata.last_air_date': 1,
   'metadata.networks': 1,
   'metadata.genres': 1,

@@ -2,6 +2,7 @@
  * Movie video info sync utilities for flat structure
  */
 
+import { createLogger, logError } from '@src/lib/logger'
 import { filterLockedFields, isCurrentServerHighestPriorityForField } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -139,11 +140,12 @@ export function needsVideoInfoUpdate(movie, videoInfo, serverId) {
                       sizeChanged || mediaQualityChanged || mediaLastModifiedChanged;
   
   // Log which fields triggered the update (uncomment for debugging)
-  /*
   if (needsUpdate && changes.length > 0) {
-    console.log(`Movie video info needs update due to changes in: ${changes.join(', ')}`);
+    log.debug({
+      movieTitle: flatMovie.title,
+      changes
+    }, 'Movie video info requires update due to changed fields')
   }
-  */
   
   return needsUpdate;
 }
@@ -164,6 +166,7 @@ export async function syncMovieVideoInfo(
   serverConfig,
   fieldAvailability
 ) {
+  const log = createLogger('FlatSync.Movies.VideoInfo');
   // Basic check if essential data exists
   if (!fileServerData || (!fileServerData.mediaQuality && !fileServerData.dimensions && !fileServerData.length && !fileServerData.urls?.mediaLastModified)) {
       return null;
@@ -240,7 +243,11 @@ export async function syncMovieVideoInfo(
   
   if (Object.keys(filteredUpdateData).length === 0) return null;
   
-  console.log(`Movie: Updating video info for "${movieTitle}" from server ${serverConfig.id}`);
+  log.info({
+    movieTitle,
+    serverId: serverConfig.id,
+    field: 'videoInfo'
+  }, 'Updating movie video info');
   
   // Update the movie in the flat database
   await updateMovieInFlatDB(client, movieTitle, { $set: filteredUpdateData });

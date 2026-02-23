@@ -1,4 +1,10 @@
-const dynamic = 'force-dynamic'
+// Phase 1: Data Fetching Optimization with Vercel Best Practices
+// Removed 'force-dynamic' to enable ISR caching
+// Added React cache() for per-request deduplication
+// Using centralized cacheLife profiles from next.config.js
+// Converted to parallel Promise.all() fetching
+
+import { cache } from 'react'
 import { auth } from '../../../../../lib/auth'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
@@ -10,6 +16,48 @@ import { redirect } from 'next/navigation'
 import CollectionPageComponent from '@components/MediaPages/CollectionPageComponent'
 import Link from 'next/link'
 
+// *** VERCEL BEST PRACTICE: Cache Components Compatibility ***
+// Using centralized cacheLife profiles from next.config.js (cacheComponents: true)
+
+// *** VERCEL BEST PRACTICE: server-cache-react ***
+// Create cached fetcher using React.cache() for per-request deduplication
+// This eliminates duplicate API calls between generateMetadata and page component
+export const getCachedCollectionDetails = cache(async (collectionId) => {
+  console.log(`[CACHE] Fetching collection details for ${collectionId}`)
+  return getCollectionDetails(collectionId)
+})
+
+// *** VERCEL BEST PRACTICE: server-cache-react ***  
+// Create cached fetcher for owned movies to leverage React.cache() deduplication
+export const getCachedOwnedMovies = cache(async (collectionId) => {
+  console.log(`[CACHE] Fetching owned movies for collection ${collectionId}`)
+  return getFlatMoviesByCollectionId(collectionId)
+})
+
+// *** OPTIMIZED: Cached fetcher for enhanced collection data with aggregated crew info ***
+export const getCachedEnhancedCollectionDetails = cache(async (collectionId) => {
+  console.log(`[CACHE] Fetching enhanced collection details for ${collectionId}`)
+  
+  try {
+    // Use the existing enhanced endpoint that already aggregates director data!
+    const enhancedData = await getCollectionDetails(collectionId, { enhanced: true })
+    console.log(`[CACHE] Enhanced collection data retrieved for ${collectionId}`, {
+      hasAggregatedData: !!enhancedData?.aggregatedData,
+      topDirectorsCount: enhancedData?.aggregatedData?.topDirectors?.length || 0,
+      topCastCount: enhancedData?.aggregatedData?.topCast?.length || 0
+    })
+    
+    return enhancedData
+  } catch (error) {
+    console.error(`Error fetching enhanced collection data for ${collectionId}:`, error)
+    // Fallback to regular collection details
+    console.log(`[CACHE] Falling back to regular collection details for ${collectionId}`)
+    return getCollectionDetails(collectionId)
+  }
+})
+
+// *** VERCEL BEST PRACTICE: server-cache-react ***
+// Use cached fetcher to eliminate duplicate API calls between generateMetadata and page component
 export async function generateMetadata(props, parent) {
   const params = await props.params;
   const collectionId = params?.collectionId;
@@ -20,8 +68,10 @@ export async function generateMetadata(props, parent) {
 
   if (collectionId) {
     try {
-      // Get collection data for metadata
-      const tmdbCollection = await getCollectionDetails(collectionId);
+      // *** OPTIMIZATION: Use cached fetcher instead of direct API call ***
+      // This call will be deduplicated with the page component call automatically by React.cache()
+      console.log(`[METADATA] Using cached collection details for ${collectionId}`)
+      const tmdbCollection = await getCachedCollectionDetails(collectionId);
       
       if (tmdbCollection) {
         title = `${tmdbCollection.name} - Collection`;
@@ -72,91 +122,87 @@ async function CollectionPage({ params, searchParams }) {
     redirect('/list/movie');
   }
 
-  try {
-    // Always fetch owned movies from local database first
-    const ownedMovies = await getFlatMoviesByCollectionId(collectionId);
-    
-    // Try to fetch TMDB collection data, but gracefully handle failures
-    let tmdbCollection = null;
-    try {
-      console.log(`Attempting to fetch TMDB collection data for collection ${collectionId}...`);
-      tmdbCollection = await getCollectionDetails(collectionId);
-      console.log(`Successfully fetched TMDB collection data for ${collectionId}`);
-    } catch (tmdbError) {
-      console.error(`TMDB collection data unavailable for collection ${collectionId}:`, tmdbError);
-      console.error('Failed TMDB URL:', `/api/authenticated/tmdb/collection/${collectionId}`);
-      // TMDB might not be configured - continue with local data only
-    }
+  // *** CRITICAL: TRUE STREAMING ARCHITECTURE ***
+  // Return page shell IMMEDIATELY - no awaiting data!
+  // Each Suspense boundary will fetch its own data independently
+  console.log(`[STREAMING] Rendering instant shell for collection ${collectionId}`)
+  
+  // Import skeletons and components
+  const {
+    CollectionHeaderSkeleton,
+    CollectionSummarySkeleton,
+    FilterControlsSkeleton,
+    MovieGridSkeleton,
+    FeaturedContributorsSkeleton
+  } = await import('@components/MediaPages/Collection/Skeletons')
+  
+  const {
+    CollectionHeaderServerComponent,
+    CollectionSummaryStripServerComponent,
+    FeaturedContributorsServerComponent,
+    CollectionMoviesServerComponent
+  } = await import('@components/MediaPages/Collection/ServerComponents')
+  
+  const { CollectionSectionErrorBoundary } = await import('@components/MediaPages/Collection/ClientErrorBoundary')
 
-    // If we have no local movies and no TMDB data, redirect
-    if (!ownedMovies?.length && !tmdbCollection) {
-      console.warn(`No data found for collection ${collectionId} - redirecting to movie list`);
-      redirect('/list/movie');
-    }
-
-    // Create collection data with what we have
-    let collectionWithOwnership;
-    
-    if (tmdbCollection) {
-      // Full experience with TMDB data
-      collectionWithOwnership = mergeCollectionWithOwnership(ownedMovies, tmdbCollection);
-      console.log(`Collection ${collectionId}: Merged ${ownedMovies.length} owned movies with TMDB data`);
-    } else {
-      // Local-only experience when TMDB is unavailable
-      console.warn(`Collection ${collectionId}: Using local-only data (${ownedMovies.length} movies)`);
-      collectionWithOwnership = {
-        id: collectionId,
-        name: `Movie Collection ${collectionId}`,
-        overview: `Collection of ${ownedMovies.length} movie${ownedMovies.length !== 1 ? 's' : ''} from your library.`,
-        parts: ownedMovies,
-        ownershipStats: {
-          owned: ownedMovies.length,
-          total: ownedMovies.length,
-          percentage: 100
-        },
-        backdrop: ownedMovies[0]?.backdrop || null,
-        posterURL: ownedMovies[0]?.posterURL || null
-      };
-    }
-
-    return (
-      <Suspense fallback={<Loading />}>
-        <CollectionPageComponent
-          collection={collectionWithOwnership}
-          collectionId={collectionId}
-          tmdbUnavailable={!tmdbCollection}
-        />
+  return (
+    <div className="min-h-screen bg-gray-950">
+      {/* *** STREAM 1: Header - fetches its own data independently *** */}
+      <Suspense fallback={<CollectionHeaderSkeleton />}>
+        <CollectionSectionErrorBoundary
+          fallback={<CollectionHeaderSkeleton />}
+          sectionName="Collection Header"
+        >
+          <CollectionHeaderServerComponent collectionId={collectionId} />
+        </CollectionSectionErrorBoundary>
       </Suspense>
-    );
 
-  } catch (error) {
-    console.error(`Error loading collection page for collection ${collectionId}:`, error);
-    console.error('Collection page error details:', {
-      collectionId,
-      errorMessage: error.message,
-      errorStack: error.stack
-    });
-    
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-center px-4">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-white mb-4">Collection Error</h1>
-          <p className="text-gray-300 mb-6">
-            There was an error loading collection {collectionId}. This might be due to TMDB configuration issues or network problems.
-          </p>
-          <div className="text-sm text-gray-400 mb-6">
-            Check the console for detailed error information including the failing URL.
+      {/* *** STREAM 2: Collection Summary Strip - rich metadata like original *** */}
+      <Suspense fallback={<CollectionSummarySkeleton />}>
+        <CollectionSectionErrorBoundary
+          fallback={<CollectionSummarySkeleton />}
+          sectionName="Collection Metadata"
+        >
+          <CollectionSummaryStripServerComponent collectionId={collectionId} />
+        </CollectionSectionErrorBoundary>
+      </Suspense>
+
+      {/* *** STREAM 3: Featured Contributors - appears BEFORE movies like original *** */}
+      <Suspense fallback={<FeaturedContributorsSkeleton />}>
+        <CollectionSectionErrorBoundary
+          fallback={null}
+          sectionName="Featured Contributors"
+        >
+          <FeaturedContributorsServerComponent collectionId={collectionId} />
+        </CollectionSectionErrorBoundary>
+      </Suspense>
+
+      {/* *** STREAM 4: Movies Grid - main content streams independently *** */}
+      <Suspense fallback={
+        <>
+          <FilterControlsSkeleton />
+          <div className="max-w-7xl mx-auto px-4 md:px-8 py-8">
+            <MovieGridSkeleton count={12} />
           </div>
-          <Link
-            href="/list/movie"
-            className="inline-flex items-center px-4 py-2 border border-transparent text-base font-medium rounded-md text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
-          >
-            ← Back to Movies List
-          </Link>
-        </div>
-      </div>
-    );
-  }
+        </>
+      }>
+        <CollectionSectionErrorBoundary
+          fallback={
+            <div className="text-center py-16">
+              <div className="text-red-400 text-lg">Error loading movies</div>
+            </div>
+          }
+          sectionName="Movies Grid"
+        >
+          <CollectionMoviesServerComponent
+            collectionId={collectionId}
+            defaultFilter="all"
+            defaultSort="release_date"
+          />
+        </CollectionSectionErrorBoundary>
+      </Suspense>
+    </div>
+  );
 }
 
 export default withApprovedUser(CollectionPage);

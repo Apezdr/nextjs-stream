@@ -5,10 +5,10 @@
  * and traditional file-based methods, with automatic detection of available capabilities.
  */
 
+import { createLogger, logError } from '@src/lib/logger'
 import fetch from 'node-fetch'
 import { filterLockedFields, isCurrentServerHighestPriorityForField } from '../sync/utils'
 import { getServer } from '../config'
-import chalk from 'chalk'
 import { fetchMetadataMultiServer } from '../admin_utils'
 import { updateMovieInFlatDB } from './movies/database'
 import { getTVShowFromFlatDB } from './tvShows/database'
@@ -28,6 +28,7 @@ const BLURHASH_ENDPOINT_CAPABILITIES = {
  * @returns {Promise<boolean>} True if endpoint exists
  */
 async function checkEndpoint(serverConfig, endpoint) {
+  const log = createLogger('FlatSync.BlurhashSync');
   try {
     const controller = new AbortController()
     const timeoutId = setTimeout(() => controller.abort(), 2000) // 2 second timeout
@@ -36,7 +37,7 @@ async function checkEndpoint(serverConfig, endpoint) {
     // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.
     const fullUrl = `${server.internalEndpoint || server.syncEndpoint}${endpoint}`
 
-    console.log(`Checking blurhash endpoint: ${fullUrl}`)
+    log.debug({ fullUrl, endpoint }, 'Checking blurhash endpoint');
 
     const response = await fetch(fullUrl, {
       method: 'HEAD',
@@ -48,7 +49,7 @@ async function checkEndpoint(serverConfig, endpoint) {
     return response.status < 400
   } catch (error) {
     // AbortError or network error - endpoint doesn't exist or is unreachable
-    console.log(`Endpoint check failed: ${endpoint} - ${error.message}`)
+    log.debug({ endpoint, error: error.message }, 'Endpoint check failed');
     return false
   }
 }
@@ -59,14 +60,18 @@ async function checkEndpoint(serverConfig, endpoint) {
  * @returns {Promise<string>} Capability level
  */
 async function detectBlurhashEndpointCapabilities(serverConfig) {
+  const log = createLogger('FlatSync.BlurhashSync');
   try {
     // Check for forced method in server config
     if (serverConfig.forceBlurhashMethod) {
-      console.log(`Using forced blurhash method: ${serverConfig.forceBlurhashMethod}`)
+      log.info({
+        serverId: serverConfig.id,
+        method: serverConfig.forceBlurhashMethod
+      }, 'Using forced blurhash method');
       return serverConfig.forceBlurhashMethod
     }
 
-    console.log(`Detecting blurhash API capabilities for server ${serverConfig.id}...`)
+    log.info({ serverId: serverConfig.id }, 'Detecting blurhash API capabilities');
 
     // Run all checks in parallel
     const [changesResponse, movieResponse, tvResponse] = await Promise.allSettled([
@@ -77,7 +82,7 @@ async function detectBlurhashEndpointCapabilities(serverConfig) {
 
     // Check for optimized API
     if (changesResponse.status === 'fulfilled' && changesResponse.value) {
-      console.log(chalk.green(`Detected optimized blurhash API for server ${serverConfig.id}`))
+      log.info({ serverId: serverConfig.id }, 'Detected optimized blurhash API')
       return BLURHASH_ENDPOINT_CAPABILITIES.OPTIMIZED
     }
 
@@ -86,13 +91,16 @@ async function detectBlurhashEndpointCapabilities(serverConfig) {
       (movieResponse.status === 'fulfilled' && movieResponse.value) ||
       (tvResponse.status === 'fulfilled' && tvResponse.value)
     ) {
-      console.log(chalk.green(`Detected basic blurhash API for server ${serverConfig.id}`))
+      log.info({ serverId: serverConfig.id }, 'Detected basic blurhash API')
       return BLURHASH_ENDPOINT_CAPABILITIES.BASIC
     }
 
-    console.log(chalk.yellow(`No blurhash API detected for server ${serverConfig.id}`))
+    log.info({ serverId: serverConfig.id }, 'No blurhash API detected')
   } catch (error) {
-    console.log(`Blurhash API detection failed for server ${serverConfig.id}: ${error.message}`)
+    logError(log, error, {
+      serverId: serverConfig.id,
+      context: 'detect_capabilities'
+    });
   }
 
   // Default to unavailable
@@ -106,12 +114,13 @@ async function detectBlurhashEndpointCapabilities(serverConfig) {
  * @returns {Promise<Object>} Changes object with changes array
  */
 async function fetchBlurhashChanges(serverConfig, lastSyncTimestamp) {
+  const log = createLogger('FlatSync.BlurhashSync');
   try {
     const server = getServer(serverConfig.id)
     // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.
     const fullUrl = `${server.internalEndpoint || server.syncEndpoint}/api/blurhash-changes?since=${lastSyncTimestamp}`
 
-    console.log(`Fetching blurhash changes from: ${fullUrl}`)
+    log.debug({ fullUrl }, 'Fetching blurhash changes');
 
     const response = await fetch(fullUrl, {
       headers: { 'Cache-Control': 'no-cache' },
@@ -127,13 +136,18 @@ async function fetchBlurhashChanges(serverConfig, lastSyncTimestamp) {
     const movieChanges = data.changes?.filter((c) => c.mediaType === 'movies') || []
     const tvChanges = data.changes?.filter((c) => c.mediaType === 'tv') || []
 
-    console.log(
-      `Found ${movieChanges.length} movie and ${tvChanges.length} TV show blurhash changes`
-    )
+    log.info({
+      serverId: serverConfig.id,
+      movieChanges: movieChanges.length,
+      tvChanges: tvChanges.length
+    }, 'Fetched blurhash changes');
 
     return data
   } catch (error) {
-    console.error(`Error fetching blurhash changes: ${error.message}`)
+    logError(log, error, {
+      serverId: serverConfig.id,
+      context: 'fetch_blurhash_changes'
+    })
     return { timestamp: new Date().toISOString(), changes: [] }
   }
 }
@@ -145,6 +159,7 @@ async function fetchBlurhashChanges(serverConfig, lastSyncTimestamp) {
  * @returns {Promise<Object|null>} Blurhash data or null
  */
 async function fetchMovieBlurhash(serverConfig, movieTitle) {
+  const log = createLogger('FlatSync.BlurhashSync');
   try {
     const server = getServer(serverConfig.id)
     const encodedTitle = encodeURIComponent(movieTitle)
@@ -162,7 +177,11 @@ async function fetchMovieBlurhash(serverConfig, movieTitle) {
 
     return await response.json()
   } catch (error) {
-    console.error(`Error fetching movie blurhash for "${movieTitle}": ${error.message}`)
+    logError(log, error, {
+      serverId: serverConfig.id,
+      movieTitle,
+      context: 'fetch_movie_blurhash'
+    })
     return null
   }
 }
@@ -174,6 +193,7 @@ async function fetchMovieBlurhash(serverConfig, movieTitle) {
  * @returns {Promise<Object|null>} Blurhash data or null
  */
 async function fetchTVShowBlurhash(serverConfig, showTitle) {
+  const log = createLogger('FlatSync.BlurhashSync');
   try {
     const server = getServer(serverConfig.id)
     const encodedTitle = encodeURIComponent(showTitle)
@@ -191,7 +211,11 @@ async function fetchTVShowBlurhash(serverConfig, showTitle) {
 
     return await response.json()
   } catch (error) {
-    console.error(`Error fetching TV show blurhash for "${showTitle}": ${error.message}`)
+    logError(log, error, {
+      serverId: serverConfig.id,
+      showTitle,
+      context: 'fetch_tv_blurhash'
+    })
     return null
   }
 }
@@ -203,6 +227,7 @@ async function fetchTVShowBlurhash(serverConfig, showTitle) {
  * @returns {Promise<Object|null>} Bulk blurhash data or null
  */
 async function fetchBulkBlurhashes(serverConfig, items) {
+  const log = createLogger('FlatSync.BlurhashSync');
   try {
     const server = getServer(serverConfig.id)
     // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.
@@ -334,7 +359,10 @@ async function fetchBulkBlurhashes(serverConfig, items) {
 
     return result
   } catch (error) {
-    console.error(`Error fetching bulk blurhashes: ${error.message}`)
+    logError(log, error, {
+      serverId: serverConfig.id,
+      context: 'fetch_bulk_blurhashes'
+    })
     return null
   }
 }
@@ -348,6 +376,7 @@ async function fetchBulkBlurhashes(serverConfig, items) {
  * @returns {Promise<boolean>} Success indicator
  */
 async function updateMovieBlurhashInDB(client, movie, blurhashData, serverConfig) {
+  const log = createLogger('FlatSync.BlurhashSync');
   // Variables for cleanup later
   let posterBlurhash = null
   let backdropBlurhash = null
@@ -382,9 +411,10 @@ async function updateMovieBlurhashInDB(client, movie, blurhashData, serverConfig
           updateData.posterBlurhashSource = serverConfig.id
         }
       } catch (posterError) {
-        console.error(
-          `Error fetching poster blurhash for movie "${movie.title}": ${posterError.message}`
-        )
+        logError(log, posterError, {
+          movieTitle: movie.title,
+          context: 'fetch_movie_poster_blurhash'
+        })
         // Continue processing with other fields even if poster blurhash fails
       }
     }
@@ -413,9 +443,10 @@ async function updateMovieBlurhashInDB(client, movie, blurhashData, serverConfig
           updateData.backdropBlurhashSource = serverConfig.id
         }
       } catch (backdropError) {
-        console.error(
-          `Error fetching backdrop blurhash for movie "${movie.title}": ${backdropError.message}`
-        )
+        logError(log, backdropError, {
+          movieTitle: movie.title,
+          context: 'fetch_movie_backdrop_blurhash'
+        })
         // Continue processing with other fields even if backdrop blurhash fails
       }
     }
@@ -438,13 +469,17 @@ async function updateMovieBlurhashInDB(client, movie, blurhashData, serverConfig
 
       return result.modifiedCount > 0
     } catch (dbError) {
-      console.error(
-        `Database error updating blurhash for movie "${movie.title}": ${dbError.message}`
-      )
+      logError(log, dbError, {
+        movieTitle: movie.title,
+        context: 'db_update_movie_blurhash'
+      })
       return false
     }
   } catch (error) {
-    console.error(`Error updating movie blurhash for "${movie.title}": ${error.message}`)
+    logError(log, error, {
+      movieTitle: movie.title,
+      context: 'update_movie_blurhash'
+    })
     return false
   } finally {
     // Explicitly clean up references to help garbage collection
@@ -462,6 +497,7 @@ async function updateMovieBlurhashInDB(client, movie, blurhashData, serverConfig
  * @returns {Promise<Object>} Update results
  */
 async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig) {
+  const log = createLogger('FlatSync.BlurhashSync');
   // Variables for cleanup later
   let posterBlurhash = null
   let backdropBlurhash = null
@@ -505,9 +541,10 @@ async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig
             updateData.posterBlurhashSource = serverConfig.id
           }
         } catch (posterError) {
-          console.error(
-            `Error fetching TV show poster blurhash for "${show.title}": ${posterError.message}`
-          )
+          logError(log, posterError, {
+            showTitle: show.title,
+            context: 'fetch_tv_poster_blurhash'
+          })
           // Continue processing other blurhashes
         }
       }
@@ -535,9 +572,10 @@ async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig
             updateData.backdropBlurhashSource = serverConfig.id
           }
         } catch (backdropError) {
-          console.error(
-            `Error fetching TV show backdrop blurhash for "${show.title}": ${backdropError.message}`
-          )
+          logError(log, backdropError, {
+            showTitle: show.title,
+            context: 'fetch_tv_backdrop_blurhash'
+          })
           // Continue processing other blurhashes
         }
       }
@@ -555,10 +593,11 @@ async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig
 
             results.show = result.modifiedCount > 0
           }
-        } catch (dbError) {
-          console.error(
-            `Database error updating TV show blurhash for "${show.title}": ${dbError.message}`
-          )
+          } catch (dbError) {
+            logError(log, dbError, {
+              showTitle: show.title,
+              context: 'db_update_tv_blurhash'
+            })
           // Continue with other updates
         }
       }
@@ -619,16 +658,20 @@ async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig
                 }
               }
             } catch (dbError) {
-              console.error(
-                `Database error updating season blurhash for "${show.title}" Season ${seasonData.seasonNumber}: ${dbError.message}`
-              )
+              log.error({
+                showTitle: show.title,
+                seasonNumber: seasonData.seasonNumber,
+                error: dbError.message
+              }, 'Database error updating season blurhash')
               // Continue with other updates
             }
           }
         } catch (seasonError) {
-          console.error(
-            `Error processing season blurhash for "${show.title}" Season ${seasonData.seasonNumber}: ${seasonError.message}`
-          )
+          logError(log, seasonError, {
+            showTitle: show.title,
+            seasonNumber: seasonData.seasonNumber,
+            context: 'process_season_blurhash'
+          })
           // Continue with next season
         }
       }
@@ -700,16 +743,22 @@ async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig
                 }
               }
             } catch (dbError) {
-              console.error(
-                `Database error updating episode blurhash for "${show.title}" S${episodeData.seasonNumber}E${episodeData.episodeNumber}: ${dbError.message}`
-              )
+              logError(log, dbError, {
+                showTitle: show.title,
+                seasonNumber: episodeData.seasonNumber,
+                episodeNumber: episodeData.episodeNumber,
+                context: 'db_update_episode_blurhash'
+              })
               // Continue with other updates
             }
           }
         } catch (episodeError) {
-          console.error(
-            `Error processing episode blurhash for "${show.title}" S${episodeData.seasonNumber}E${episodeData.episodeNumber}: ${episodeError.message}`
-          )
+          logError(log, episodeError, {
+            showTitle: show.title,
+            seasonNumber: episodeData.seasonNumber,
+            episodeNumber: episodeData.episodeNumber,
+            context: 'process_episode_blurhash'
+          })
           // Continue with next episode
         }
       }
@@ -717,9 +766,10 @@ async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig
 
     return results
   } catch (error) {
-    console.error(
-      `Error updating TV show blurhash for "${show?.title || 'unknown'}": ${error.message}`
-    )
+    logError(log, error, {
+      showTitle: show?.title,
+      context: 'update_tv_blurhash'
+    })
     return { show: false, seasons: 0, episodes: 0 }
   } finally {
     // Explicitly clean up references to help garbage collection
@@ -738,10 +788,13 @@ async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig
  * @returns {Promise<Object>} Processing results
  */
 async function processBulkBlurhashChanges(client, changes, serverConfig) {
+  const log = createLogger('FlatSync.BlurhashSync');
   try {
-    console.log(
-      `Processing ${changes.movies.length} movies and ${changes.tvShows.length} TV shows in bulk`
-    )
+    log.info({
+      movieCount: changes.movies.length,
+      tvCount: changes.tvShows.length,
+      serverId: serverConfig.id
+    }, 'Processing blurhash changes in bulk');
 
     // Split into manageable batches of 20 items
     const batches = []
@@ -767,7 +820,7 @@ async function processBulkBlurhashChanges(client, changes, serverConfig) {
     // Process batches sequentially but process items within each batch concurrently
     // This prevents overwhelming the system with too many simultaneous operations
     for (const [index, batch] of batches.entries()) {
-      console.log(`Processing batch ${index + 1} of ${batches.length}`)
+      log.debug({ batch: index + 1, totalBatches: batches.length }, 'Processing blurhash batch');
 
       try {
         const batchData = await fetchBulkBlurhashes(serverConfig, batch)
@@ -813,7 +866,9 @@ async function processBulkBlurhashChanges(client, changes, serverConfig) {
                 })
               }
             } else if (result.status === 'rejected') {
-              console.error(`Error in movie processing promise: ${result.reason}`)
+              logError(log, result.reason, {
+                context: 'movie_processing_promise'
+              })
             }
           }
 
@@ -877,7 +932,9 @@ async function processBulkBlurhashChanges(client, changes, serverConfig) {
                 })
               }
             } else if (result.status === 'rejected') {
-              console.error(`Error in TV show processing promise: ${result.reason}`)
+              logError(log, result.reason, {
+                context: 'tv_processing_promise'
+              })
             }
           }
         }
@@ -885,13 +942,18 @@ async function processBulkBlurhashChanges(client, changes, serverConfig) {
         // Add a small delay between batches to allow for resource recovery
         await new Promise((resolve) => setTimeout(resolve, 100))
       } catch (batchError) {
-        console.error(`Error processing batch ${index + 1}: ${batchError.message}`)
+        logError(log, batchError, {
+          batch: index + 1,
+          context: 'process_bulk_batch'
+        })
       }
     }
 
     return results
   } catch (error) {
-    console.error(`Error processing bulk blurhash changes: ${error.message}`)
+    logError(log, error, {
+      context: 'process_bulk_blurhash_changes'
+    })
     return {
       movies: { processed: [], errors: [] },
       tvShows: { processed: [], errors: [] },
@@ -908,6 +970,7 @@ async function processBulkBlurhashChanges(client, changes, serverConfig) {
  * @returns {Promise<Object>} Processing results
  */
 async function processIndividualBlurhashChanges(client, changes, serverConfig) {
+  const log = createLogger('FlatSync.BlurhashSync');
   const results = {
     movies: { processed: [], errors: [] },
     tvShows: { processed: [], errors: [] },
@@ -921,9 +984,10 @@ async function processIndividualBlurhashChanges(client, changes, serverConfig) {
     // Break movies into smaller batches
     for (let i = 0; i < changes.movies.length; i += BATCH_SIZE) {
       const batch = changes.movies.slice(i, i + BATCH_SIZE)
-      console.log(
-        `Processing movie batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(changes.movies.length / BATCH_SIZE)}`
-      )
+      log.debug({
+        batch: Math.floor(i / BATCH_SIZE) + 1,
+        totalBatches: Math.ceil(changes.movies.length / BATCH_SIZE)
+      }, 'Processing movie blurhash batch');
 
       // Create promises for all movies in this batch
       const moviePromises = batch.map(async (movie) => {
@@ -982,7 +1046,9 @@ async function processIndividualBlurhashChanges(client, changes, serverConfig) {
             })
           }
         } else if (result.status === 'rejected') {
-          console.error(`Unexpected error in movie processing promise: ${result.reason}`)
+          logError(log, result.reason, {
+            context: 'movie_processing_promise'
+          })
         }
       }
 
@@ -1010,9 +1076,10 @@ async function processIndividualBlurhashChanges(client, changes, serverConfig) {
     // Break TV shows into smaller batches
     for (let i = 0; i < changes.tvShows.length; i += TV_BATCH_SIZE) {
       const batch = changes.tvShows.slice(i, i + TV_BATCH_SIZE)
-      console.log(
-        `Processing TV show batch ${Math.floor(i / TV_BATCH_SIZE) + 1}/${Math.ceil(changes.tvShows.length / TV_BATCH_SIZE)}`
-      )
+      log.debug({
+        batch: Math.floor(i / TV_BATCH_SIZE) + 1,
+        totalBatches: Math.ceil(changes.tvShows.length / TV_BATCH_SIZE)
+      }, 'Processing TV blurhash batch');
 
       // Create promises for all TV shows in this batch
       const tvPromises = batch.map(async (show) => {
@@ -1083,7 +1150,9 @@ async function processIndividualBlurhashChanges(client, changes, serverConfig) {
             })
           }
         } else if (result.status === 'rejected') {
-          console.error(`Unexpected error in TV show processing promise: ${result.reason}`)
+          logError(log, result.reason, {
+            context: 'tv_processing_promise'
+          })
         }
       }
 
@@ -1116,6 +1185,7 @@ async function processIndividualBlurhashChanges(client, changes, serverConfig) {
  */
 async function syncBlurhashOptimized(client, flatDB, serverConfig, fieldAvailability) {
   try {
+    const log = createLogger('FlatSync.BlurhashSync');
     // Get last sync timestamp
     let lastSyncTimestamp = await getLastSynced()
 
@@ -1161,13 +1231,15 @@ async function syncBlurhashOptimized(client, flatDB, serverConfig, fieldAvailabi
 
     // Early return if no changes
     if (!changes.movies.length && !changes.tvShows.length) {
-      console.log(`No blurhash changes detected for server ${serverConfig.id}`)
+      log.info({ serverId: serverConfig.id }, 'No blurhash changes detected')
       return { status: 'no_changes' }
     }
 
-    console.log(
-      `Processing ${changes.movies.length} movie and ${changes.tvShows.length} TV show blurhash changes`
-    )
+    log.info({ 
+      serverId: serverConfig.id,
+      movieCount: changes.movies.length,
+      tvShowCount: changes.tvShows.length 
+    }, 'Processing blurhash changes')
 
     // Process in batches based on count
     let results
@@ -1189,7 +1261,11 @@ async function syncBlurhashOptimized(client, flatDB, serverConfig, fieldAvailabi
       results,
     }
   } catch (error) {
-    console.error(`Error in optimized blurhash sync: ${error.message}`)
+    log.error({ 
+      error: error.message, 
+      context: 'optimized_blurhash_sync' 
+    }, 'Error in optimized blurhash sync')
+    
     return {
       status: 'error',
       method: 'optimized',
@@ -1207,11 +1283,18 @@ async function syncBlurhashOptimized(client, flatDB, serverConfig, fieldAvailabi
  * @returns {Promise<Object>} Sync results
  */
 async function syncBlurhashBasic(client, flatDB, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.BlurhashSync');
   try {
     const results = {
       movies: { processed: [], errors: [] },
       tvShows: { processed: [], errors: [] },
     }
+
+    log.info({
+      movieCount: flatDB.movies.length,
+      tvShowCount: flatDB.tv.length,
+      serverId: serverConfig.id
+    }, 'Starting basic blurhash sync');
 
     // Process a subset of movies to avoid processing too many at once
     // In a production implementation, you could process all movies or implement pagination
@@ -1219,15 +1302,31 @@ async function syncBlurhashBasic(client, flatDB, serverConfig, fieldAvailability
 
     for (const movie of moviesToProcess) {
       try {
+        log.debug({ movieTitle: movie.title }, 'Fetching movie blurhash');
         const blurhashData = await fetchMovieBlurhash(serverConfig, movie.title)
+        
         if (blurhashData) {
           const updated = await updateMovieBlurhashInDB(client, movie, blurhashData, serverConfig)
+          
           if (updated) {
+            log.info({ movieTitle: movie.title }, 'Movie blurhash updated successfully');
             results.movies.processed.push(movie.title)
+          } else {
+            log.debug({ movieTitle: movie.title }, 'No updates needed for movie blurhash');
           }
+        } else {
+          log.debug({ movieTitle: movie.title }, 'No blurhash data available for movie');
         }
       } catch (error) {
-        results.movies.errors.push({ title: movie.title, error: error.message })
+        log.error({ 
+          movieTitle: movie.title, 
+          error: error.message 
+        }, 'Error processing movie blurhash');
+        
+        results.movies.errors.push({ 
+          title: movie.title, 
+          error: error.message 
+        })
       }
     }
 
@@ -1236,22 +1335,51 @@ async function syncBlurhashBasic(client, flatDB, serverConfig, fieldAvailability
 
     for (const show of showsToProcess) {
       try {
+        log.debug({ showTitle: show.title }, 'Fetching TV show blurhash');
         const blurhashData = await fetchTVShowBlurhash(serverConfig, show.title)
+        
         if (blurhashData) {
           const updated = await updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig)
+          
           if (updated.show || updated.seasons > 0 || updated.episodes > 0) {
+            log.info({ 
+              showTitle: show.title, 
+              showUpdated: updated.show, 
+              seasonsUpdated: updated.seasons, 
+              episodesUpdated: updated.episodes 
+            }, 'TV show blurhash updated successfully');
+            
             results.tvShows.processed.push({
               title: show.title,
               show: updated.show,
               seasons: updated.seasons,
               episodes: updated.episodes,
             })
+          } else {
+            log.debug({ showTitle: show.title }, 'No updates needed for TV show blurhash');
           }
+        } else {
+          log.debug({ showTitle: show.title }, 'No blurhash data available for TV show');
         }
       } catch (error) {
-        results.tvShows.errors.push({ title: show.title, error: error.message })
+        log.error({ 
+          showTitle: show.title, 
+          error: error.message 
+        }, 'Error processing TV show blurhash');
+        
+        results.tvShows.errors.push({ 
+          title: show.title, 
+          error: error.message 
+        })
       }
     }
+
+    log.info({
+      moviesProcessed: results.movies.processed.length,
+      movieErrors: results.movies.errors.length,
+      tvShowsProcessed: results.tvShows.processed.length,
+      tvShowErrors: results.tvShows.errors.length
+    }, 'Basic blurhash sync completed');
 
     return {
       status: 'success',
@@ -1259,7 +1387,11 @@ async function syncBlurhashBasic(client, flatDB, serverConfig, fieldAvailability
       results,
     }
   } catch (error) {
-    console.error(`Error in basic blurhash sync: ${error.message}`)
+    log.error({ 
+      error: error.message, 
+      context: 'basic_blurhash_sync' 
+    }, 'Error in basic blurhash sync');
+    
     return {
       status: 'error',
       method: 'basic',
@@ -1284,10 +1416,9 @@ async function syncBlurhashTraditional(
   serverConfig,
   fieldAvailability
 ) {
+  const log = createLogger('FlatSync.BlurhashSync');
   try {
-    console.log(
-      chalk.yellow(`Using traditional file-based blurhash sync for server ${serverConfig.id}`)
-    )
+    log.info({ serverId: serverConfig.id }, 'Using traditional file-based blurhash sync');
 
     const results = {
       movies: { poster: 0, backdrop: 0, errors: [] },
@@ -1299,7 +1430,10 @@ async function syncBlurhashTraditional(
       try {
         const movieTitle = movie.title
         const fileServerData = fileServer?.movies?.[movie.originalTitle]
-        if (!fileServerData) continue
+        if (!fileServerData) {
+          log.debug({ movieTitle }, 'No file server data for movie');
+          continue
+        }
 
         // Process poster blurhash
         if (fileServerData.urls?.posterBlurhash) {
@@ -1317,6 +1451,11 @@ async function syncBlurhashTraditional(
           if (isHighestPriority) {
             // Use the poster URL as the hash key
             const posterBlurhashUrl = fileServerData.urls.posterBlurhash
+
+            log.debug({ 
+              movieTitle, 
+              posterBlurhashUrl 
+            }, 'Fetching movie poster blurhash');
 
             // Fetch the actual blurhash data using fetchMetadataMultiServer
             const posterBlurhash = await fetchMetadataMultiServer(
@@ -1345,7 +1484,10 @@ async function syncBlurhashTraditional(
                 // Update in database
                 await updateMovieInFlatDB(client, movie.originalTitle, { $set: filteredUpdateData })
                 results.movies.poster++
-                console.log(`Updated poster blurhash for "${movieTitle}"`)
+                log.info({ 
+                  movieTitle, 
+                  blurhash: posterBlurhash 
+                }, 'Updated poster blurhash for movie')
               }
             }
           }
@@ -1365,6 +1507,11 @@ async function syncBlurhashTraditional(
 
           if (isHighestPriority) {
             const backdropBlurhashUrl = fileServerData.urls.backdropBlurhash
+
+            log.debug({ 
+              movieTitle, 
+              backdropBlurhashUrl 
+            }, 'Fetching movie backdrop blurhash');
 
             const backdropBlurhash = await fetchMetadataMultiServer(
               serverConfig.id,
@@ -1389,12 +1536,19 @@ async function syncBlurhashTraditional(
               if (Object.keys(filteredUpdateData).length > 0) {
                 await updateMovieInFlatDB(client, movie.originalTitle, { $set: filteredUpdateData })
                 results.movies.backdrop++
-                console.log(`Updated backdrop blurhash for "${movieTitle}"`)
+                log.info({ 
+                  movieTitle, 
+                  blurhash: backdropBlurhash 
+                }, 'Updated backdrop blurhash for movie')
               }
             }
           }
         }
       } catch (error) {
+        log.error({ 
+          movieTitle: movie.title, 
+          error: error.message 
+        }, 'Error processing movie blurhash');
         results.movies.errors.push({ title: movie.title, error: error.message })
       }
     }
@@ -1404,7 +1558,10 @@ async function syncBlurhashTraditional(
       try {
         const showTitle = show.title
         const fileServerData = fileServer?.tv?.[show.originalTitle]
-        if (!fileServerData) continue
+        if (!fileServerData) {
+          log.debug({ showTitle }, 'No file server data for TV show');
+          continue
+        }
 
         // Process TV show poster blurhash
         if (fileServerData?.posterBlurhash) {
@@ -1420,6 +1577,11 @@ async function syncBlurhashTraditional(
 
           if (isHighestPriority) {
             const posterBlurhashURL = fileServerData.posterBlurhash
+
+            log.debug({ 
+              showTitle, 
+              posterBlurhashURL 
+            }, 'Fetching TV show poster blurhash');
 
             const posterBlurhash = await fetchMetadataMultiServer(
               serverConfig.id,
@@ -1447,7 +1609,10 @@ async function syncBlurhashTraditional(
                   .collection('FlatTVShows')
                   .updateOne({ title: showTitle }, { $set: filteredUpdateData })
                 results.tvShows.show++
-                console.log(`Updated TV show poster blurhash for "${showTitle}"`)
+                log.info({ 
+                  showTitle, 
+                  blurhash: posterBlurhash 
+                }, 'Updated TV show poster blurhash')
               }
             }
           }
@@ -1467,6 +1632,11 @@ async function syncBlurhashTraditional(
 
           if (isHighestPriority) {
             const backdropBlurhashUrl = fileServerData.backdropBlurhash
+
+            log.debug({ 
+              showTitle, 
+              backdropBlurhashUrl 
+            }, 'Fetching TV show backdrop blurhash');
 
             const backdropBlurhash = await fetchMetadataMultiServer(
               serverConfig.id,
@@ -1494,7 +1664,10 @@ async function syncBlurhashTraditional(
                   .collection('FlatTVShows')
                   .updateOne({ title: showTitle }, { $set: filteredUpdateData })
                 results.tvShows.show++
-                console.log(`Updated TV show backdrop blurhash for "${showTitle}"`)
+                log.info({ 
+                  showTitle, 
+                  blurhash: backdropBlurhash 
+                }, 'Updated TV show backdrop blurhash')
               }
             }
           }
@@ -1505,7 +1678,13 @@ async function syncBlurhashTraditional(
           try {
             const seasonNumber = season.seasonNumber
             const seasonData = fileServerData.seasons?.[`Season ${seasonNumber}`]
-            if (!seasonData || !seasonData?.seasonPosterBlurhash) continue
+            if (!seasonData || !seasonData?.seasonPosterBlurhash) {
+              log.debug({ 
+                showTitle, 
+                seasonNumber 
+              }, 'No season poster blurhash data');
+              continue
+            }
 
             const fieldPath = 'seasonPosterBlurhash'
 
@@ -1519,6 +1698,12 @@ async function syncBlurhashTraditional(
 
             if (isHighestPriority) {
               const posterBlurhashUrl = seasonData.seasonPosterBlurhash
+
+              log.debug({ 
+                showTitle, 
+                seasonNumber, 
+                posterBlurhashUrl 
+              }, 'Fetching season poster blurhash');
 
               const posterBlurhash = await fetchMetadataMultiServer(
                 serverConfig.id,
@@ -1549,22 +1734,40 @@ async function syncBlurhashTraditional(
                     { $set: filteredUpdateData }
                   )
                   results.tvShows.seasons++
-                  console.log(
-                    `Updated season poster blurhash for "${showTitle}" Season ${seasonNumber}`
-                  )
+                  log.info({ 
+                    showTitle, 
+                    seasonNumber, 
+                    blurhash: posterBlurhash 
+                  }, 'Updated season poster blurhash')
                 }
               }
             }
           } catch (error) {
-            console.error(
-              `Error processing season ${season.seasonNumber} for show "${showTitle}": ${error.message}`
-            )
+            log.error({ 
+              showTitle, 
+              seasonNumber: season.seasonNumber, 
+              error: error.message 
+            }, 'Error processing season blurhash');
           }
         }
       } catch (error) {
+        log.error({ 
+          showTitle: show.title, 
+          error: error.message 
+        }, 'Error processing TV show blurhash');
         results.tvShows.errors.push({ title: show.title, error: error.message })
       }
     }
+
+    log.info({
+      serverId: serverConfig.id,
+      moviePosters: results.movies.poster,
+      movieBackdrops: results.movies.backdrop,
+      tvShowPosters: results.tvShows.show,
+      tvShowSeasons: results.tvShows.seasons,
+      movieErrors: results.movies.errors.length,
+      tvShowErrors: results.tvShows.errors.length
+    }, 'Traditional blurhash sync completed');
 
     return {
       status: 'success',
@@ -1572,7 +1775,11 @@ async function syncBlurhashTraditional(
       results,
     }
   } catch (error) {
-    console.error(`Error in traditional blurhash sync: ${error.message}`)
+    log.error({ 
+      error: error.message, 
+      context: 'traditional_blurhash_sync' 
+    }, 'Error in traditional blurhash sync');
+    
     return {
       status: 'error',
       method: 'traditional',
@@ -1597,13 +1804,17 @@ export async function syncBlurhashData(
   serverConfig,
   fieldAvailability
 ) {
-  console.log(`Starting blurhash sync for server ${serverConfig.id}...`)
+  const log = createLogger('FlatSync.BlurhashSync');
+  log.info({ serverId: serverConfig.id }, 'Starting blurhash sync')
 
   // Detect capabilities fresh for each sync operation
   // This defaults to unavailable until endpoint detection is fully implemented
   const capability = 'unavailable' // TODO: Enable when ready: await detectBlurhashEndpointCapabilities(serverConfig) ?? "unavailable"
 
-  console.log(`Using ${capability} blurhash sync method for server ${serverConfig.id}`)
+  log.info({ 
+    serverId: serverConfig.id, 
+    capability 
+  }, 'Using blurhash sync method')
 
   // Choose sync method based on capability
   switch (capability) {

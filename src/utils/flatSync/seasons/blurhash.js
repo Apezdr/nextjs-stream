@@ -2,6 +2,7 @@
  * TV season blurhash sync utilities for flat structure
  */
 
+import { createLogger, logError } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateSeasonInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -19,6 +20,7 @@ import { createAndPersistSeason } from '.';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncSeasonPosterBlurhash(client, show, season, fileServerSeasonData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Seasons.Blurhash');
   if (!fileServerSeasonData?.seasonPosterBlurhash) return null;
   
   const fieldPath = `seasons.Season ${season.seasonNumber}.seasonPosterBlurhash`;
@@ -46,9 +48,17 @@ export async function syncSeasonPosterBlurhash(client, show, season, fileServerS
     try {
       // Create a new season properly persisting it to the database
       flatSeason = await createAndPersistSeason(client, flatShow, season);
-      console.log(`Created new season ${season.seasonNumber} for "${showTitle}" during blurhash sync`);
+      log.info({
+        showTitle,
+        seasonNumber: season.seasonNumber,
+        context: 'create_season_blurhash'
+      }, 'Created new season during blurhash sync');
     } catch (error) {
-      console.error(`Failed to create season during blurhash sync: ${error.message}`);
+      logError(log, error, {
+        showTitle,
+        seasonNumber: season.seasonNumber,
+        context: 'create_season_blurhash_failed'
+      });
       return null;
     }
   }
@@ -76,7 +86,12 @@ export async function syncSeasonPosterBlurhash(client, show, season, fileServerS
   
   if (!filteredUpdateData.posterBlurhash) return null;
   
-  console.log(`Season: Updating poster blurhash for "${showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    seasonNumber: season.seasonNumber,
+    serverId: serverConfig.id,
+    field: 'posterBlurhash'
+  }, 'Updating season poster blurhash');
   
   // Update the season in the flat database
   await updateSeasonInFlatDB(client, showTitle, originalTitle, season.seasonNumber, { $set: filteredUpdateData });

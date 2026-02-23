@@ -264,7 +264,7 @@ export class MovieAssetStrategy implements SyncStrategy {
           
           const blurhashUrl = await this.findBlurhashUrl(originalTitle, type as 'poster' | 'backdrop', context)
           if (blurhashUrl) {
-            const blurhashData = await this.fetchBlurhashData(blurhashUrl)
+            const blurhashData = await this.fetchBlurhashData(blurhashUrl, context)
             // Only add blurhash fields if data was successfully fetched
             // If blurhashData is null, fields are OMITTED (not set to null in database)
             if (blurhashData) {
@@ -349,48 +349,57 @@ export class MovieAssetStrategy implements SyncStrategy {
    * Fetch actual blurhash data from URL using httpHelper
    * httpHelper handles caching and HTTP errors internally
    * Returns null on failure so the field is OMITTED (not set to null in database)
+   * Respects ResourceManager HTTP throttling when available in context
    */
-  private async fetchBlurhashData(blurhashUrl: string): Promise<string | null> {
-    try {
-      const response = await httpGet(
-        blurhashUrl,
-        {
-          timeout: 3000,  // 3 second timeout for blurhash (matches legacy)
-          responseType: 'text',
-          headers: {
-            'Accept': 'text/plain, */*'
-          }
-        },
-        true  // returnCacheDataIfAvailable - return cached data on 304
-      )
-      
-      // Check Content-Type header - should be text/plain, not text/html (error page)
-      const contentType = response.headers['content-type'] || response.headers['Content-Type'] || ''
-      if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
-        console.warn(`⚠️ Blurhash URL returned HTML (error page), Content-Type: ${contentType}`)
+  private async fetchBlurhashData(blurhashUrl: string, context?: SyncContext): Promise<string | null> {
+    const doFetch = async () => {
+      try {
+        const response = await httpGet(
+          blurhashUrl,
+          {
+            timeout: 3000,  // 3 second timeout for blurhash (matches legacy)
+            responseType: 'text',
+            headers: {
+              'Accept': 'text/plain, */*'
+            }
+          },
+          true  // returnCacheDataIfAvailable - return cached data on 304
+        )
+        
+        // Check Content-Type header - should be text/plain, not text/html (error page)
+        const contentType = response.headers['content-type'] || response.headers['Content-Type'] || ''
+        if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
+          console.warn(`⚠️ Blurhash URL returned HTML (error page), Content-Type: ${contentType}`)
+          return null
+        }
+        
+        // Extract data from wrapper if it's a cached response with _dataType
+        // httpHelper stores text as: { _dataType: 'text', _isBuffer: false, data: actualText }
+        let blurhashData = response.data
+        if (blurhashData && typeof blurhashData === 'object' && blurhashData._dataType === 'text') {
+          blurhashData = blurhashData.data
+        }
+        
+        const trimmedData = blurhashData ? blurhashData.trim() : null
+        
+        if (!trimmedData) {
+          return null
+        }
+        
+        return trimmedData
+      } catch (error) {
+        // httpHelper throws on HTTP errors (404, 500, timeouts, etc)
+        // Return null so field is OMITTED from database update (not set to null)
+        console.warn(`⚠️ Failed to fetch blurhash:`, error instanceof Error ? error.message : String(error))
         return null
       }
-      
-      // Extract data from wrapper if it's a cached response with _dataType
-      // httpHelper stores text as: { _dataType: 'text', _isBuffer: false, data: actualText }
-      let blurhashData = response.data
-      if (blurhashData && typeof blurhashData === 'object' && blurhashData._dataType === 'text') {
-        blurhashData = blurhashData.data
-      }
-      
-      const trimmedData = blurhashData ? blurhashData.trim() : null
-      
-      if (!trimmedData) {
-        return null
-      }
-      
-      return trimmedData
-    } catch (error) {
-      // httpHelper throws on HTTP errors (404, 500, timeouts, etc)
-      // Return null so field is OMITTED from database update (not set to null)
-      console.warn(`⚠️ Failed to fetch blurhash:`, error instanceof Error ? error.message : String(error))
-      return null
     }
+
+    // Throttle through ResourceManager if available
+    if (context?.resourceManager) {
+      return context.resourceManager.throttleHttp(doFetch)
+    }
+    return doFetch()
   }
 
   /**

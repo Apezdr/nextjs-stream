@@ -18,6 +18,8 @@ import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
 import { generateClipVideoURL } from '@src/utils/auth_utils'
 import RetryImage from '@components/RetryImage'
 import Image from 'next/image'
+import { getCurrentUserWatchHistory } from '@src/utils/watchHistoryServerUtils'
+import { createWatchHistoryLookupMap } from '@src/utils/watchHistoryUtils'
 export const dynamic = 'force-dynamic'
 
 const variants = {
@@ -81,6 +83,21 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
       />
     )
   }
+  
+  // Fetch watch history once for all episodes (server-side with React.cache)
+  // Use createWatchHistoryLookupMap directly with session.user.id since we already have it
+  const watchHistoryMap = await createWatchHistoryLookupMap(session.user.id)
+  
+  // Augment episodes with watch history data
+  const episodesWithHistory = season.episodes.map(episode => ({
+    ...episode,
+    watchHistory: watchHistoryMap.get(episode.videoURL) || {
+      playbackTime: 0,
+      lastWatched: null,
+      isWatched: false,
+      normalizedVideoId: null
+    }
+  }))
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
@@ -101,19 +118,21 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
               <h2 className="mx-auto max-w-2xl text-2xl font-bold tracking-tight text-white sm:text-3xl pb-8 xl:pb-0 px-4 xl:px-0">
                 {season.episodes.length} Episodes
               </h2>
-              <div className="flex flex-row gap-x-4 justify-center">
-                Originally Aired: {seasonMetadata?.airDate
-                  ? new Date(seasonMetadata?.airDate).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                    })
-                  : new Date(season?.airDate).toLocaleDateString('en-US', {
-                      year: 'numeric',
-                      month: 'long',
-                      day: 'numeric',
-                    })}
-              </div>
+              {(seasonMetadata?.airDate || season?.airDate) && (
+                <div className="flex flex-row gap-x-4 justify-center">
+                  Originally Aired: {seasonMetadata?.airDate
+                    ? new Date(seasonMetadata?.airDate).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                      })
+                    : new Date(season?.airDate).toLocaleDateString('en-US', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                      })}
+                </div>
+              )}
               <div className="mt-2 text-center text-sm font-medium text-gray-300 group-hover:text-white pt-2 border-t border-solid border-t-[#c1c1c133]">
                 {seasonMetadata?.overview || season.overview}
               </div>
@@ -167,7 +186,7 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
             </li>
             {/* Episodes List */}
             {await Promise.all(
-              season.episodes.map(async (episode, episodeIndex) => {
+              episodesWithHistory.map(async (episode, episodeIndex) => {
                 // Get episode metadata from season metadata if available
                 let episodeMetadata = seasonMetadata?.episodes?.find(
                   (ep) => ep?.episode_number === episode?.episodeNumber

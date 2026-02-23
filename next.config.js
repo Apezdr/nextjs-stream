@@ -33,6 +33,12 @@ const nextConfig = {
       revalidate: 900,  // 15 minutes server revalidation
       expire: 3600,     // 1 hour expiration
     },
+    // External API data (TMDB, etc.) - infrequent updates, expensive to fetch
+    externalData: {
+      stale: 300,       // 5 minutes client cache
+      revalidate: 3600, // 1 hour server revalidation (TMDB data rarely changes)
+      expire: 86400,    // 1 day expiration for better performance
+    },
     // System status - frequently updated
     systemStatus: {
       stale: 30,        // 30 seconds client cache
@@ -78,6 +84,37 @@ const nextConfig = {
     //       },
     //     ],
   },
+  // CRITICAL: Include OpenTelemetry packages in standalone output
+  // Without this, the OTEL packages won't be available at runtime
+  outputFileTracingIncludes: {
+  '*': [
+    // Core OpenTelemetry packages
+    './node_modules/@opentelemetry/**/*',
+    './node_modules/@vercel/**/*',
+    // Instrumentation file (should be src/ since you're using src folder)
+    './src/instrumentation.ts',
+  ],
+},
+
+  // Packages that should not be bundled (they need to be required at runtime)
+  serverExternalPackages: [
+    '@opentelemetry/sdk-node',
+    '@opentelemetry/auto-instrumentations-node',
+    '@opentelemetry/exporter-trace-otlp-http',
+    '@opentelemetry/exporter-metrics-otlp-http',
+    '@opentelemetry/exporter-logs-otlp-http',
+    '@opentelemetry/resources',
+    '@opentelemetry/semantic-conventions',
+    '@opentelemetry/sdk-trace-base',
+    '@opentelemetry/sdk-metrics',
+    '@opentelemetry/sdk-logs',
+    '@opentelemetry/instrumentation-http',
+    '@opentelemetry/instrumentation-fetch',
+    '@opentelemetry/instrumentation-pino',
+    '@opentelemetry/api',
+    '@vercel/otel',
+    'pino',
+  ],
   // Additional Next.js configurations can be added here
   /* webpack(config) {
     Object.defineProperty(config, 'devtool', {

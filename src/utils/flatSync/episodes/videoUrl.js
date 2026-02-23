@@ -2,6 +2,7 @@
  * TV episode video URL sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName } from '../../sync/utils';
 import { isEqual } from 'lodash';
 import { generateNormalizedVideoId } from '../../flatDatabaseUtils';
@@ -21,6 +22,7 @@ import { generateNormalizedVideoId } from '../../flatDatabaseUtils';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncEpisodeVideoURL(client, show, season, episode, flatShow, flatSeason, flatEpisode, fileServerSeasonData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Episodes.VideoUrl');
   const episodeFileName = findEpisodeFileName(
     Object.keys(fileServerSeasonData.episodes || {}),
     season.seasonNumber,
@@ -28,7 +30,12 @@ export async function syncEpisodeVideoURL(client, show, season, episode, flatSho
   );
   
   if (!episodeFileName) {
-    console.warn(`Episode: Episode file name not found for "${show.title}" S${season.seasonNumber}E${episode.episodeNumber}`);
+    log.warn({
+      showTitle: show.title,
+      seasonNumber: season.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+      context: 'episode_filename_missing'
+    }, 'Episode file name not found for sync');
     return null;
   }
   
@@ -78,7 +85,13 @@ export async function syncEpisodeVideoURL(client, show, season, episode, flatSho
   
   if (!filteredUpdateData.videoURL) return null;
   
-  console.log(`Episode: Updating video URL for "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    seasonNumber: season.seasonNumber,
+    episodeNumber: episode.episodeNumber,
+    serverId: serverConfig.id,
+    field: 'videoURL'
+  }, 'Updating episode video URL');
   // Note: Related metadata fields are included here for convenience, but the primary
   // purpose of this function is to update the video URL itself
   

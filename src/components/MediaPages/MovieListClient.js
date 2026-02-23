@@ -58,6 +58,7 @@ const MovieCard = memo(({movie, index }) => {
             length={movie.metadata?.runtime ? movie.metadata.runtime * 60000 : 0}
             metadata={movie.metadata}
             videoURL={movie.videoURL}
+            watchedSeconds={movie.watchHistory?.playbackTime !== undefined ? Math.round(movie.watchHistory.playbackTime) : undefined}
           />
         </p>
         {movie.metadata?.release_date ? (
@@ -155,7 +156,7 @@ HdrTypeButton.displayName = 'HdrTypeButton';
  * 
  * Client is source of truth for filters, server is source of truth for data
  */
-export default function MovieListClient({ initialFilters, initialData }) {
+export default function MovieListClient({ initialFilters, initialData, userId }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -202,7 +203,8 @@ export default function MovieListClient({ initialFilters, initialData }) {
       startTransition(async () => {
         const nextData = await getMovieListData({
           ...filters,
-          page
+          page,
+          userId
         });
         
         // Only apply if this is still the latest request
@@ -217,7 +219,7 @@ export default function MovieListClient({ initialFilters, initialData }) {
         clearTimeout(fetchDebounceRef.current);
       }
     };
-  }, [filters, page, initialFilters]);
+  }, [filters, page, initialFilters, userId]);
   
   /**
    * Sync URL cosmetically for sharing (debounced, write-only)

@@ -2,6 +2,7 @@
  * TV show poster sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateTVShowInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -16,6 +17,7 @@ import { isEqual } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncTVShowPoster(client, show, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.TVShows.Poster');
   if (!fileServerData?.poster) return null;
   
   const fieldPath = 'poster';
@@ -52,7 +54,11 @@ export async function syncTVShowPoster(client, show, fileServerData, serverConfi
   
   if (!filteredUpdateData.posterURL) return null;
   
-  console.log(`TV Show: Updating poster URL for "${showTitle}" from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    serverId: serverConfig.id,
+    field: 'posterURL'
+  }, 'Updating TV show poster URL');
   
   // Update the TV show in the flat database
   await updateTVShowInFlatDB(client, originalTitle, { $set: filteredUpdateData });

@@ -2,9 +2,7 @@
  * Movie initialization utilities for flat structure
  */
 
-import { ObjectId } from 'mongodb';
-import chalk from 'chalk';
-import { createMovieInFlatDB } from './database';
+import { createLogger, logError } from '@src/lib/logger';
 
 /**
  * Creates missing movies in the database
@@ -14,6 +12,7 @@ import { createMovieInFlatDB } from './database';
  * @returns {Promise<Object>} Results showing created movies and their data
  */
 export async function createMissingMovies(client, missingMovieTitles, serverConfig) {
+  const log = createLogger('FlatSync.Movies.Initialize');
   const results = {
     created: 0,
     createdMovies: []
@@ -23,7 +22,7 @@ export async function createMissingMovies(client, missingMovieTitles, serverConf
     return results;
   }
 
-  console.log(chalk.cyan(`Creating ${missingMovieTitles.length} missing movies in database...`));
+  log.info({ count: missingMovieTitles.length }, 'Creating missing movies in database');
   
   // Prepare bulk operations for better performance
   const createOperations = [];
@@ -60,9 +59,9 @@ export async function createMissingMovies(client, missingMovieTitles, serverConf
     results.created = bulkResult.insertedCount || movieDataArray.length;
     results.createdMovies = movieDataArray;
     
-    console.log(chalk.green(`Successfully created ${results.created} missing movie records.`));
+    log.info({ created: results.created }, 'Successfully created missing movie records');
   } catch (error) {
-    console.error('Error during bulk movie creation:', error);
+    logError(log, error, { context: 'bulk_create_missing_movies' });
     
     // Even if there was an error with the bulk operation,
     // some documents might have been inserted successfully

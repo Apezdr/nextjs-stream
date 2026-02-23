@@ -2,6 +2,7 @@
  * Movie poster sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -16,6 +17,7 @@ import { isEqual } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncMoviePoster(client, movie, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Movies.Poster');
   if (!fileServerData?.urls?.poster) return null;
   
   const fieldPath = 'urls.poster';
@@ -49,7 +51,11 @@ export async function syncMoviePoster(client, movie, fileServerData, serverConfi
   
   if (!filteredUpdateData.posterURL) return null;
   
-  console.log(`Movie: Updating poster URL for "${movieTitle}" from server ${serverConfig.id}`);
+  log.info({
+    movieTitle,
+    serverId: serverConfig.id,
+    field: 'posterURL'
+  }, 'Updating movie poster URL');
   
   // Update the movie in the flat database
   await updateMovieInFlatDB(client, movieTitle, { $set: filteredUpdateData });

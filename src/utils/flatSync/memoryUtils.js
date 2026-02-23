@@ -5,9 +5,8 @@
  * to reduce database calls during sync operations.
  */
 
+import { createLogger, logError } from '@src/lib/logger';
 import { ObjectId } from 'mongodb';
-import chalk from 'chalk';
-import { createFullUrl } from '../sync/utils';
 
 /**
  * Builds an enhanced flat database structure with optimized lookup maps
@@ -17,8 +16,9 @@ import { createFullUrl } from '../sync/utils';
  * @returns {Promise<Object>} Enhanced data structure with lookup maps
  */
 export async function buildEnhancedFlatDBStructure(client, fileServer = null, fieldAvailability) {
+  const log = createLogger('FlatSync.MemoryUtils');
   try {
-    console.log(chalk.cyan('Building enhanced data structure with optimized lookups...'));
+    log.info('Building enhanced data structure with optimized lookups...');
     
     // Get all TV shows from FlatTVShows collection
     const flatTVShows = await client
@@ -227,7 +227,7 @@ export async function buildEnhancedFlatDBStructure(client, fileServer = null, fi
         }
         
         if (missingMovies.length > 0) {
-          console.log(chalk.yellow(`Identified ${missingMovies.length} movies missing from database`));
+          log.info({ missingMovieCount: missingMovies.length }, 'Identified movies missing from database');
         }
       }
       
@@ -280,7 +280,11 @@ export async function buildEnhancedFlatDBStructure(client, fileServer = null, fi
               const seasonNumber = parseInt(seasonKey.replace('Season ', ''), 10);
               
               if (isNaN(seasonNumber)) {
-                console.warn(`Invalid season key format: ${seasonKey} for show ${showTitle}`);
+                log.warn({
+                  seasonKey,
+                  showTitle,
+                  context: 'invalid_season_key'
+                }, 'Invalid season key format in file server data');
                 continue;
               }
               
@@ -339,7 +343,7 @@ export async function buildEnhancedFlatDBStructure(client, fileServer = null, fi
       }
     };
   } catch (error) {
-    console.error('Error building enhanced flat database structure:', error);
+    logError(log, error, { context: 'build_structure' });
     return { tv: [], movies: [] };
   }
 }
@@ -449,7 +453,8 @@ export function getMovieFromMemory(enhancedData, title, useOriginalTitle = false
  */
 export function createMovieInMemory(enhancedData, movieData) {
   if (!enhancedData || !enhancedData.lookups || !enhancedData.lookups.movies) {
-    console.error('Enhanced data structure not properly initialized');
+    const log = createLogger('FlatSync.MemoryUtils');
+    log.error('Enhanced data structure not properly initialized');
     return movieData;
   }
   
@@ -500,7 +505,8 @@ export function createMovieInMemory(enhancedData, movieData) {
  */
 export function createShowInMemory(enhancedData, showData) {
   if (!enhancedData || !enhancedData.lookups || !enhancedData.lookups.tvShows) {
-    console.error('Enhanced data structure not properly initialized');
+    const log = createLogger('FlatSync.MemoryUtils');
+    log.error('Enhanced data structure not properly initialized');
     return showData;
   }
   
@@ -556,7 +562,8 @@ export function createShowInMemory(enhancedData, showData) {
  */
 export function createEpisodeInMemory(enhancedData, episodeData) {
   if (!enhancedData || !enhancedData.lookups || !enhancedData.lookups.episodes) {
-    console.error('Enhanced data structure not properly initialized');
+    const log = createLogger('FlatSync.MemoryUtils');
+    log.error('Enhanced data structure not properly initialized');
     return episodeData;
   }
   
@@ -608,7 +615,8 @@ export function createEpisodeInMemory(enhancedData, episodeData) {
  */
 export function createSeasonInMemory(enhancedData, seasonData) {
   if (!enhancedData || !enhancedData.lookups || !enhancedData.lookups.seasons) {
-    console.error('Enhanced data structure not properly initialized');
+    const log = createLogger('FlatSync.MemoryUtils');
+    log.error('Enhanced data structure not properly initialized');
     return seasonData;
   }
   

@@ -2571,7 +2571,7 @@ export async function getFlatContentByGenres({
         console.time('getFlatContentByGenres:movies');
       }
       
-      // Define movie projection with optional additional data
+      // Define movie projection - minimal fields only for performance
       const movieProjection = {
         _id: 1,
         normalizedVideoId: 1,
@@ -2580,8 +2580,12 @@ export async function getFlatContentByGenres({
         posterBlurhash: 1,
         backdrop: 1,
         backdropBlurhash: 1,
+        logo: 1,
         hdr: 1,
-        metadata: 1,
+        // Only fetch metadata fields needed for sorting/filtering
+        'metadata.release_date': 1,
+        'metadata.vote_average': 1,
+        'metadata.genres': 1,
         ...(shouldExposeAdditionalData && {
           videoURL: 1,
           duration: 1
@@ -2621,28 +2625,34 @@ export async function getFlatContentByGenres({
       
       let tvShows;
       
-      if (shouldExposeAdditionalData && userId) {
-        // For TV devices, get TV shows with episode data
-        // First get matching TV shows
-        const matchingTVShows = await db.collection('FlatTVShows')
-          .find(genreQuery)
-          .sort(tvSort)
-          .toArray();
-        
-        // Then enhance with episode data using existing function
-        // We'll need to implement a way to filter getFlatTVShowsWithEpisodeData by specific shows
-        tvShows = await Promise.all(
-          matchingTVShows.map(async (show) => {
-            // Get episode data for this specific show
-            const showWithEpisodes = await getFlatTVShowsWithEpisodeData(userId, 0, 1);
-            const matchingShow = showWithEpisodes.find(s => s._id.toString() === show._id.toString());
-            return matchingShow || { ...show, type: 'tv' };
-          })
-        );
-      } else {
-        // Standard TV show retrieval
+      // Define TV show projection - minimal fields only for performance
+      const tvProjection = {
+        _id: 1,
+        normalizedVideoId: 1,
+        title: 1,
+        posterURL: 1,
+        posterBlurhash: 1,
+        backdrop: 1,
+        backdropBlurhash: 1,
+        logo: 1,
+        hdr: 1,
+        // Only fetch metadata fields needed for sorting/filtering
+        'metadata.first_air_date': 1,
+        'metadata.vote_average': 1,
+        'metadata.genres': 1,
+        ...(shouldExposeAdditionalData && {
+          totalEpisodeCount: 1,
+          availableEpisodeCount: 1
+        })
+      };
+      
+      // For genre filtering, we don't need full episode data
+      // Just get the TV shows with basic info - episode data is too expensive here
+      // If needed, episode data should be fetched separately when viewing a specific show
+      {
+        // Standard TV show retrieval with minimal projection
         tvShows = await db.collection('FlatTVShows')
-          .find(genreQuery)
+          .find(genreQuery, { projection: tvProjection })
           .sort(tvSort)
           .toArray();
         

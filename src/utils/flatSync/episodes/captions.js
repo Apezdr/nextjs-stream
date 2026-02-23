@@ -2,6 +2,7 @@
  * TV episode captions sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName, processCaptionURLs } from '../../sync/utils';
 import { sortSubtitleEntries } from '../../sync/captions';
 
@@ -20,13 +21,22 @@ import { sortSubtitleEntries } from '../../sync/captions';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncEpisodeCaptions(client, show, season, episode, flatShow, flatSeason, flatEpisode, fileServerSeasonData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Episodes.Captions');
   const episodeFileName = findEpisodeFileName(
     Object.keys(fileServerSeasonData.episodes || {}),
     season.seasonNumber,
     episode.episodeNumber
   );
   
-  if (!episodeFileName) return null;
+  if (!episodeFileName) {
+    log.warn({
+      showTitle: show.title,
+      seasonNumber: season.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+      context: 'episode_filename_missing'
+    }, 'Episode file name not found for captions sync');
+    return null;
+  }
   
   const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName];
   if (!fileServerEpisodeData?.subtitles) return null;
@@ -90,7 +100,13 @@ export async function syncEpisodeCaptions(client, show, season, episode, flatSho
   // Remove captions that were sourced from this server but no longer exist on it
   for (const [lang, caption] of Object.entries(finalCaptionURLs)) {
     if (caption.sourceServerId === serverConfig.id && !languagesSeenFromThisServer.has(lang)) {
-      console.log(`Episode: Removing caption no longer on server - "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} - Language: ${lang}`);
+      log.info({
+        showTitle,
+        seasonNumber: season.seasonNumber,
+        episodeNumber: episode.episodeNumber,
+        language: lang,
+        context: 'remove_caption_not_on_server'
+      }, 'Removing caption no longer available on server');
       delete finalCaptionURLs[lang];
       changed = true;
     }
@@ -117,7 +133,13 @@ export async function syncEpisodeCaptions(client, show, season, episode, flatSho
   
   if (!filteredUpdateData.captionURLs) return null;
   
-  console.log(`Episode: Updating captions for "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    seasonNumber: season.seasonNumber,
+    episodeNumber: episode.episodeNumber,
+    serverId: serverConfig.id,
+    field: 'captions'
+  }, 'Updating episode captions');
   
   // Return both the status and the update data
   return {

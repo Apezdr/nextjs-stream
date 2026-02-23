@@ -3,7 +3,7 @@
  */
 
 import clientPromise from '@src/lib/mongodb';
-import chalk from 'chalk';
+import { createLogger, logError } from '@src/lib/logger';
 import { ObjectId } from 'mongodb';
 import { createTVShowInFlatDB, getTVShowFromFlatDB } from './database';
 import { syncTVShowMetadata } from './metadata';
@@ -24,6 +24,8 @@ import { getShowFromMemory, createShowInMemory, hasTVShowValidVideoURLs } from '
  * @returns {Promise<Object>} Sync results for this show
  */
 async function syncSingleTVShow(client, showTitle, fileServerData, serverConfig, fieldAvailability, enhancedData) {
+  const log = createLogger('FlatSync.TVShows');
+  
   const results = {
     title: showTitle,
     updated: false,
@@ -36,7 +38,11 @@ async function syncSingleTVShow(client, showTitle, fileServerData, serverConfig,
     const hasValidVideoURLs = hasTVShowValidVideoURLs(fileServerData);
     
     if (!hasValidVideoURLs) {
-      console.log(chalk.yellow(`Skipping TV show "${showTitle}" as it doesn't have any episodes with valid videoURLs`));
+      log.debug({ 
+        serverId: serverConfig.id,
+        showTitle,
+        reason: 'no_valid_video_urls' 
+      }, 'Skipping TV show - no episodes with valid videoURLs');
       results.skipped = true;
       results.skippedReason = 'no_valid_video_urls';
       return results;
@@ -56,7 +62,11 @@ async function syncSingleTVShow(client, showTitle, fileServerData, serverConfig,
       }
       
       if (flatShow) {
-        console.log(chalk.green(`Found TV show "${showTitle}" in memory lookups`));
+        log.debug({ 
+          serverId: serverConfig.id,
+          showTitle,
+          lookupMethod: 'memory'
+        }, 'Found TV show in memory lookups');
       }
     }
     
@@ -159,7 +169,9 @@ async function syncSingleTVShow(client, showTitle, fileServerData, serverConfig,
  */
 export async function syncTVShows(flatDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise;
-  console.log(chalk.bold.green(`Starting TV show sync to flat structure for server ${serverConfig.id}...`));
+  const log = createLogger('FlatSync.TVShows');
+  
+  log.info({ serverId: serverConfig.id }, 'Starting TV show sync to flat structure');
   
   const results = {
     processed: [],
@@ -169,17 +181,18 @@ export async function syncTVShows(flatDB, fileServer, serverConfig, fieldAvailab
   try {
     // No file server TV data, nothing to do
     if (!fileServer?.tv) {
-      console.log(chalk.yellow(`No TV shows found in file server ${serverConfig.id}`));
+      log.info({ serverId: serverConfig.id }, 'No TV shows found in file server');
       return results;
     }
     
     // Check if we have enhanced data with lookup maps
     const hasEnhancedData = flatDB.lookups && flatDB.lookups.tvShows;
-    if (hasEnhancedData) {
-      console.log(chalk.green('Using enhanced in-memory lookups for TV show sync'));
-    } else {
-      console.log(chalk.yellow('Enhanced memory lookups not available, using database queries'));
-    }
+    const lookupMethod = hasEnhancedData ? 'enhanced_memory' : 'database_queries';
+    log.info({ 
+      serverId: serverConfig.id,
+      lookupMethod,
+      hasEnhancedData 
+    }, 'TV show sync lookup method selected');
     
     // Process each TV show from the file server
     for (const [showTitle, fileServerShowData] of Object.entries(fileServer.tv)) {
@@ -202,10 +215,17 @@ export async function syncTVShows(flatDB, fileServer, serverConfig, fieldAvailab
       }
     }
     
-    console.log(chalk.bold.green(`TV show sync to flat structure complete for server ${serverConfig.id}`));
+    log.info({ 
+      serverId: serverConfig.id,
+      processedCount: results.processed.length,
+      errorCount: results.errors.length
+    }, 'TV show sync to flat structure complete');
     return results;
   } catch (error) {
-    console.error(`Error during TV show sync to flat structure for server ${serverConfig.id}:`, error);
+    logError(log, error, {
+      serverId: serverConfig.id,
+      context: 'tvshow_sync_general'
+    });
     results.errors.push({
       general: true,
       error: error.message

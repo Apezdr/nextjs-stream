@@ -2,6 +2,7 @@
  * TV show blurhash sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateTVShowInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -16,6 +17,7 @@ import { isEqual } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncTVShowPosterBlurhash(client, show, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.TVShows.Blurhash');
   if (!fileServerData?.posterBlurhash) return null;
   
   const fieldPath = 'posterBlurhash';
@@ -50,7 +52,11 @@ export async function syncTVShowPosterBlurhash(client, show, fileServerData, ser
   
   if (!filteredUpdateData.posterBlurhash) return null;
   
-  console.log(`TV Show: Updating poster blurhash for "${showTitle}" from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    serverId: serverConfig.id,
+    field: 'posterBlurhash'
+  }, 'Updating TV show poster blurhash');
   
   // Update the TV show in the flat database
   await updateTVShowInFlatDB(client, originalTitle, { $set: filteredUpdateData });
@@ -71,6 +77,7 @@ export async function syncTVShowPosterBlurhash(client, show, fileServerData, ser
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncTVShowBackdropBlurhash(client, show, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.TVShows.Blurhash');
   if (!fileServerData?.backdropBlurhash) return null;
   
   const fieldPath = 'backdropBlurhash';
@@ -105,7 +112,11 @@ export async function syncTVShowBackdropBlurhash(client, show, fileServerData, s
   
   if (!filteredUpdateData.backdropBlurhash) return null;
   
-  console.log(`TV Show: Updating backdrop blurhash for "${showTitle}" from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    serverId: serverConfig.id,
+    field: 'backdropBlurhash'
+  }, 'Updating TV show backdrop blurhash');
   
   // Update the TV show in the flat database
   await updateTVShowInFlatDB(client, originalTitle, { $set: filteredUpdateData });

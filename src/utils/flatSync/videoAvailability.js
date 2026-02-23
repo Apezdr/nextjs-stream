@@ -5,11 +5,9 @@
  * and remove unavailable videos from the flat database structure.
  */
 
-import { MediaType, findEpisodeFileName } from '../sync/utils';
+import { createLogger, logError } from '@src/lib/logger';
 import clientPromise from '@src/lib/mongodb';
 import { getRedisClient } from '@src/lib/redisClient';
-import chalk from 'chalk';
-import { ObjectId } from 'mongodb';
 import { hasTVShowValidVideoURLs } from './memoryUtils';
 
 /**
@@ -21,7 +19,8 @@ import { hasTVShowValidVideoURLs } from './memoryUtils';
  * @returns {Promise<Object>} Results showing how many movies were removed
  */
 async function cleanupMissingMovies(client, flatDB, fileServers, fieldAvailability) {
-  console.log(chalk.yellow('Checking for movies that don\'t exist in any file servers...'));
+  const log = createLogger('FlatSync.VideoAvailability.Movies');
+  log.info('Checking for movies that do not exist in any file servers...');
   
   try {
     // Use the movies from flatDB instead of making a new database query
@@ -64,10 +63,11 @@ async function cleanupMissingMovies(client, flatDB, fileServers, fieldAvailabili
           // Special case - if movie exists on some servers but none are responsible,
           // we should still not remove it to avoid data loss
           if (!isAvailableOnResponsibleServer) {
-            console.log(chalk.yellow(
-              `Movie "${movie.title}" exists on servers ${serversWithMovie.join(', ')} but none are ` +
-              `responsible according to field availability - keeping anyway to prevent data loss`
-            ));
+            log.info({
+              movieTitle: movie.title,
+              serversWithMovie,
+              context: 'movie_not_on_responsible_server'
+            }, 'Movie exists on servers but none responsible per field availability; keeping');
             shouldRemove = false;
           }
         } else {
@@ -78,7 +78,7 @@ async function cleanupMissingMovies(client, flatDB, fileServers, fieldAvailabili
       
       // If the movie doesn't exist in any file server (or exists but fails field checks), remove it
       if (shouldRemove) {
-        console.log(`Movie "${movie.title}" not found in any file server, removing...`);
+        log.info({ movieTitle: movie.title }, 'Removing movie missing from all file servers');
         
         // Delete the movie
         await client.db('Media').collection('FlatMovies').deleteOne({ _id: movie._id });
@@ -94,7 +94,7 @@ async function cleanupMissingMovies(client, flatDB, fileServers, fieldAvailabili
       details: removedMovies
     };
   } catch (error) {
-    console.error('Error cleaning up missing movies:', error);
+    logError(log, error, { context: 'cleanup_missing_movies' });
     return {
       moviesRemoved: 0,
       error: error.message
@@ -112,7 +112,8 @@ async function cleanupMissingMovies(client, flatDB, fileServers, fieldAvailabili
  * @returns {Promise<Object>} Results showing how many shows were removed
  */
 async function cleanupMissingTVShows(client, flatDB, fileServers, fieldAvailability) {
-  console.log(chalk.yellow('Checking for TV shows that don\'t exist in any file servers or have no valid videoURLs...'));
+  const log = createLogger('FlatSync.VideoAvailability.TVShows');
+  log.info('Checking for TV shows missing from file servers or lacking valid video URLs...');
   
   try {
     // Use the TV shows from flatDB instead of making a new database query
@@ -154,9 +155,11 @@ async function cleanupMissingTVShows(client, flatDB, fileServers, fieldAvailabil
       
       // If we're considering removal because of no valid videoURLs, log it
       if (foundInAnyServer && !hasValidVideoURLsInAnyServer) {
-        console.log(chalk.yellow(
-          `TV show "${show.title}" exists on servers ${serversWithShow.join(', ')} but has no valid videoURLs in any episode`
-        ));
+        log.info({
+          showTitle: show.title,
+          serversWithShow,
+          context: 'tv_show_no_valid_videos'
+        }, 'TV show has no valid video URLs in any episode');
       }
       
       // If the show exists in some servers but we have field availability, check priorities
@@ -196,10 +199,11 @@ async function cleanupMissingTVShows(client, flatDB, fileServers, fieldAvailabil
           
           // Even if not responsible, keep show to avoid data loss
           if (!isResponsibleForAnyField && serversWithShow.length > 0) {
-            console.log(chalk.yellow(
-              `TV show "${show.title}" exists on servers ${serversWithShow.join(', ')} but none are ` +
-              `responsible according to field availability - keeping anyway to prevent data loss`
-            ));
+            log.info({
+              showTitle: show.title,
+              serversWithShow,
+              context: 'tv_show_not_on_responsible_servers'
+            }, 'TV show exists on servers but none responsible; keeping to avoid data loss');
             shouldRemove = false;
           }
         }
@@ -207,7 +211,7 @@ async function cleanupMissingTVShows(client, flatDB, fileServers, fieldAvailabil
       
       // If the show doesn't exist in any file server (or exists but fails field checks), remove it and its related data
       if (shouldRemove) {
-        console.log(`TV show "${show.title}" not found in any file server, removing...`);
+        log.info({ showTitle: show.title }, 'Removing TV show missing from all file servers');
         
         // Store the ID for deleting related content
         const showId = show._id;
@@ -234,7 +238,7 @@ async function cleanupMissingTVShows(client, flatDB, fileServers, fieldAvailabil
       details: removedShows
     };
   } catch (error) {
-    console.error('Error cleaning up missing TV shows:', error);
+    logError(log, error, { context: 'cleanup_missing_tv_shows' });
     return {
       tvShowsRemoved: 0,
       error: error.message
@@ -251,7 +255,8 @@ async function cleanupMissingTVShows(client, flatDB, fileServers, fieldAvailabil
  * @returns {Promise<Object>} Results showing how many seasons were removed
  */
 async function cleanupMissingSeasons(client, flatDB, fileServers, fieldAvailability) {
-  console.log(chalk.yellow('Checking for seasons that don\'t exist in any file servers...'));
+  const log = createLogger('FlatSync.VideoAvailability.Seasons');
+  log.info('Checking for seasons missing from file servers...');
   
   try {
     // Get all seasons from flatDB 
@@ -331,10 +336,12 @@ async function cleanupMissingSeasons(client, flatDB, fileServers, fieldAvailabil
           
           // Even if not responsible, keep season to avoid data loss
           if (!isResponsibleForAnyField && serversWithSeason.length > 0) {
-            console.log(chalk.yellow(
-              `Season ${season.seasonNumber} of "${season.showTitle}" exists on servers ${serversWithSeason.join(', ')} but none are ` +
-              `responsible according to field availability - keeping anyway to prevent data loss`
-            ));
+            log.info({
+              showTitle: season.showTitle,
+              seasonNumber: season.seasonNumber,
+              serversWithSeason,
+              context: 'season_not_on_responsible_servers'
+            }, 'Season exists on servers but none responsible; keeping to avoid data loss');
             shouldRemove = false;
           }
         }
@@ -342,7 +349,10 @@ async function cleanupMissingSeasons(client, flatDB, fileServers, fieldAvailabil
       
       // If the season doesn't exist in any file server, remove it and its episodes
       if (shouldRemove) {
-        console.log(`Season ${season.seasonNumber} of "${season.showTitle}" not found in any file server, removing...`);
+        log.info({
+          showTitle: season.showTitle,
+          seasonNumber: season.seasonNumber
+        }, 'Removing season missing from all file servers');
         
         // Store the ID for deleting related content
         const seasonId = season._id;
@@ -366,7 +376,7 @@ async function cleanupMissingSeasons(client, flatDB, fileServers, fieldAvailabil
       details: removedSeasons
     };
   } catch (error) {
-    console.error('Error cleaning up missing seasons:', error);
+    logError(log, error, { context: 'cleanup_missing_seasons' });
     return {
       seasonsRemoved: 0,
       error: error.message
@@ -383,7 +393,8 @@ async function cleanupMissingSeasons(client, flatDB, fileServers, fieldAvailabil
  * @returns {Promise<Object>} Results showing how many episodes were removed
  */
 async function cleanupMissingEpisodes(client, flatDB, fileServers, fieldAvailability) {
-  console.log(chalk.yellow('Checking for episodes that don\'t exist in any file servers...'));
+  const log = createLogger('FlatSync.VideoAvailability.Episodes');
+  log.info('Checking for episodes missing from file servers...');
   
   try {
     // Get all episodes from flatDB 
@@ -477,10 +488,13 @@ async function cleanupMissingEpisodes(client, flatDB, fileServers, fieldAvailabi
           
           // Even if not responsible, keep episode to avoid data loss
           if (!isResponsibleForAnyField && serversWithEpisode.length > 0) {
-            console.log(chalk.yellow(
-              `Episode S${episode.seasonNumber}E${episode.episodeNumber} of "${episode.showTitle}" exists on servers ${serversWithEpisode.join(', ')} but none are ` +
-              `responsible according to field availability - keeping anyway to prevent data loss`
-            ));
+            log.info({
+              showTitle: episode.showTitle,
+              seasonNumber: episode.seasonNumber,
+              episodeNumber: episode.episodeNumber,
+              serversWithEpisode,
+              context: 'episode_not_on_responsible_servers'
+            }, 'Episode exists on servers but none responsible; keeping to avoid data loss');
             shouldRemove = false;
           }
         }
@@ -488,7 +502,11 @@ async function cleanupMissingEpisodes(client, flatDB, fileServers, fieldAvailabi
       
       // If the episode doesn't exist in any file server, remove it
       if (shouldRemove) {
-        console.log(`Episode S${episode.seasonNumber}E${episode.episodeNumber} of "${episode.showTitle}" not found in any file server, removing...`);
+        log.info({
+          showTitle: episode.showTitle,
+          seasonNumber: episode.seasonNumber,
+          episodeNumber: episode.episodeNumber
+        }, 'Removing episode missing from all file servers');
         
         // Delete the episode
         await client.db('Media').collection('FlatEpisodes').deleteOne({ _id: episode._id });
@@ -507,7 +525,7 @@ async function cleanupMissingEpisodes(client, flatDB, fileServers, fieldAvailabi
       details: removedEpisodes
     };
   } catch (error) {
-    console.error('Error cleaning up missing episodes:', error);
+    logError(log, error, { context: 'cleanup_missing_episodes' });
     return {
       episodesRemoved: 0,
       error: error.message
@@ -521,9 +539,10 @@ async function cleanupMissingEpisodes(client, flatDB, fileServers, fieldAvailabi
  * @returns {Promise<Object>} Cache clearing results
  */
 async function clearCacheEntries(removedContent) {
+  const log = createLogger('FlatSync.VideoAvailability.Cache');
   const redisClient = await getRedisClient();
   if (!redisClient) {
-    console.log('Redis not configured. Skipping cache clearing.');
+    log.info('Redis not configured. Skipping cache clearing.');
     return { cleared: 0, errors: 0 };
   }
   
@@ -534,7 +553,7 @@ async function clearCacheEntries(removedContent) {
   };
   
   try {
-    console.log(chalk.bold.blue(`Clearing Redis cache entries for removed content...`));
+    log.info('Clearing Redis cache entries for removed content...');
     
     // Clear cache for movies
     for (const movieTitle of removedContent.movies) {
@@ -557,7 +576,10 @@ async function clearCacheEntries(removedContent) {
           }
         }
       } catch (error) {
-        console.error(`Error clearing cache for movie "${movieTitle}":`, error);
+        logError(log, error, {
+          movieTitle,
+          context: 'clear_cache_movie'
+        });
         results.errors++;
       }
     }
@@ -585,7 +607,10 @@ async function clearCacheEntries(removedContent) {
           }
         }
       } catch (error) {
-        console.error(`Error clearing cache for TV show "${showTitle}":`, error);
+        logError(log, error, {
+          showTitle,
+          context: 'clear_cache_tv_show'
+        });
         results.errors++;
       }
     }
@@ -616,7 +641,10 @@ async function clearCacheEntries(removedContent) {
           }
         }
       } catch (error) {
-        console.error(`Error clearing cache for season "${seasonTitle}":`, error);
+        logError(log, error, {
+          seasonTitle,
+          context: 'clear_cache_season'
+        });
         results.errors++;
       }
     }
@@ -647,15 +675,18 @@ async function clearCacheEntries(removedContent) {
           }
         }
       } catch (error) {
-        console.error(`Error clearing cache for episode "${episodeTitle}":`, error);
+        logError(log, error, {
+          episodeTitle,
+          context: 'clear_cache_episode'
+        });
         results.errors++;
       }
     }
     
-    console.log(chalk.bold.blue(`Cache clearing complete. Cleared ${results.cleared} entries with ${results.errors} errors.`));
+    log.info({ cleared: results.cleared, errors: results.errors }, 'Cache clearing complete');
     return results;
   } catch (error) {
-    console.error(`Error during cache clearing:`, error);
+    logError(log, error, { context: 'cache_clearing' });
     return { cleared: 0, errors: 1, details: [error.message] };
   }
 }
@@ -670,8 +701,9 @@ async function clearCacheEntries(removedContent) {
  */
 export async function checkAndRemoveUnavailableVideosFlat(flatDB, fileServers, fieldAvailability) {
   const client = await clientPromise;
+  const log = createLogger('FlatSync.VideoAvailability');
   try {
-    console.log(chalk.bold.red(`Checking and removing unavailable content from flat structure...`));
+    log.info('Checking and removing unavailable content from flat structure...');
     
     // Pass the flatDB to the cleanup functions to avoid additional database queries
     // The functions will use this data instead of making their own database calls
@@ -709,7 +741,11 @@ export async function checkAndRemoveUnavailableVideosFlat(flatDB, fileServers, f
         totalEpisodes += item.deletedEpisodes || 0;
       }
       
-      console.log(chalk.yellow(`Removed ${missingTVShowsResults.tvShowsRemoved} TV shows with ${totalSeasons} seasons and ${totalEpisodes} episodes`));
+      log.info({
+        tvShowsRemoved: missingTVShowsResults.tvShowsRemoved,
+        totalSeasons,
+        totalEpisodes
+      }, 'Removed TV shows with associated seasons/episodes');
     }
     
     // Log individual season cleanup results
@@ -718,16 +754,19 @@ export async function checkAndRemoveUnavailableVideosFlat(flatDB, fileServers, f
       for (const item of missingSeasonsResults.details) {
         totalEpisodesFromSeasons += item.deletedEpisodes || 0;
       }
-      console.log(chalk.yellow(`Removed ${missingSeasonsResults.seasonsRemoved} orphaned seasons with ${totalEpisodesFromSeasons} episodes`));
+      log.info({
+        seasonsRemoved: missingSeasonsResults.seasonsRemoved,
+        totalEpisodesFromSeasons
+      }, 'Removed orphaned seasons');
     }
     
     // Log individual episode cleanup results
     if (missingEpisodesResults.episodesRemoved > 0) {
-      console.log(chalk.yellow(`Removed ${missingEpisodesResults.episodesRemoved} orphaned episodes`));
+      log.info({ episodesRemoved: missingEpisodesResults.episodesRemoved }, 'Removed orphaned episodes');
     }
     
     if (missingMoviesResults.moviesRemoved > 0) {
-      console.log(chalk.yellow(`Removed ${missingMoviesResults.moviesRemoved} movies`));
+      log.info({ moviesRemoved: missingMoviesResults.moviesRemoved }, 'Removed movies missing from file servers');
     }
     
     // Clear cache for removed content (including seasons and episodes)
@@ -740,7 +779,7 @@ export async function checkAndRemoveUnavailableVideosFlat(flatDB, fileServers, f
     
     return results;
   } catch (error) {
-    console.error('Error in check and remove process for flat structure:', error);
+    logError(log, error, { context: 'check_and_remove' });
     return {
       removed: { movies: [], tvShows: [], tvSeasons: [], tvEpisodes: [] },
       errors: { general: { message: error.message, stack: error.stack } }

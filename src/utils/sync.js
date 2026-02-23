@@ -228,9 +228,11 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
         }
 
         // Use forceSync=true to override aggressive hash skipping
+        // Pass pre-built flatDB to avoid building it again inside syncToFlatStructure
         const syncResult = await syncToFlatStructure(fileServer, serverConfig, fieldAvailability, false, true, {
           useNewArchitecture: options.useNewArchitecture,
-          forceOldArchitecture: options.forceOldArchitecture
+          forceOldArchitecture: options.forceOldArchitecture,
+          preBuiltFlatDB: flatDB
         });
         
         // Store the sync results for reference

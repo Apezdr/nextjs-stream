@@ -3,7 +3,7 @@
  */
 
 import clientPromise from '@src/lib/mongodb';
-import chalk from 'chalk';
+import { createLogger, logError } from '@src/lib/logger';
 import { ObjectId } from 'mongodb';
 import { createSeasonInFlatDB, getSeasonFromFlatDB, updateSeasonInFlatDB, updateSeasonShowId } from './database';
 import { getTVShowFromFlatDB } from '../tvShows/database';
@@ -41,6 +41,8 @@ export function buildNewSeasonObject(show, season) {
  * @returns {Promise<Object>} Created season object
  */
 export async function createAndPersistSeason(client, show, seasonInfo, enhancedData = null) {
+  const log = createLogger('FlatSync.Seasons');
+  
   // Create the season object
   const newSeason = buildNewSeasonObject(show, seasonInfo);
   
@@ -48,7 +50,11 @@ export async function createAndPersistSeason(client, show, seasonInfo, enhancedD
   const result = await createSeasonInFlatDB(client, newSeason);
   
   if (result.error) {
-    console.error(`Failed to create season ${seasonInfo.seasonNumber} for "${show.title}" in database:`, result.error);
+    logError(log, result.error, {
+      showTitle: show.title,
+      seasonNumber: seasonInfo.seasonNumber,
+      context: 'create_season_persist'
+    });
     throw new Error(`Failed to create season: ${result.error.message || 'Unknown error'}`);
   }
   
@@ -85,7 +91,12 @@ async function syncSingleSeason(client, show, season, fileServerShowData, server
     const seasonKey = `Season ${season.seasonNumber}`;
     const fileServerSeasonData = fileServerShowData?.seasons?.[seasonKey];
     if (!fileServerSeasonData) {
-      console.error(`No file server data found for "${show.title}" Season ${season.seasonNumber}`);
+      const log = createLogger('FlatSync.Seasons.Single');
+      logError(log, new Error('No file server data found'), {
+        showTitle: show.title,
+        seasonNumber: season.seasonNumber,
+        context: 'file_server_data_missing'
+      });
       results.errors.push({ field: 'fileServer', error: `No file server data found for "${show.title}" Season ${season.seasonNumber}` });
       return results;
     }
@@ -105,7 +116,11 @@ async function syncSingleSeason(client, show, season, fileServerShowData, server
       }
       
       if (flatShow) {
-        console.log(chalk.green(`Found TV show "${show.title}" in memory lookups for season processing`));
+        const log = createLogger('FlatSync.Seasons.Single');
+        log.debug({ 
+          showTitle: show.title,
+          lookupMethod: 'memory'
+        }, 'Found TV show in memory lookups for season processing');
       }
     }
     
@@ -125,7 +140,12 @@ async function syncSingleSeason(client, show, season, fileServerShowData, server
       flatSeason = getSeasonFromMemory(enhancedData, flatShow.title, season.seasonNumber);
       
       if (flatSeason) {
-        console.log(chalk.green(`Found Season ${season.seasonNumber} for "${show.title}" in memory lookups`));
+        const log = createLogger('FlatSync.Seasons.Single');
+        log.debug({ 
+          showTitle: show.title,
+          seasonNumber: season.seasonNumber,
+          lookupMethod: 'memory'
+        }, 'Found season in memory lookups');
       }
     }
     
@@ -201,7 +221,9 @@ async function syncSingleSeason(client, show, season, fileServerShowData, server
  */
 export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise;
-  console.log(chalk.bold.magenta(`Starting TV season sync to flat structure for server ${serverConfig.id}...`));
+  const log = createLogger('FlatSync.Seasons');
+  
+  log.info({ serverId: serverConfig.id }, 'Starting TV season sync to flat structure');
 
   const results = {
     processed: [],
@@ -212,7 +234,7 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
   try {
     // No file server TV data, nothing to do
     if (!fileServer?.tv) {
-      console.log(chalk.yellow(`No TV shows found in file server ${serverConfig.id}`));
+      log.info({ serverId: serverConfig.id }, 'No TV shows found in file server');
       return results;
     }
 
@@ -224,20 +246,27 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
       // Try to get hash data from server
       mediaHashResponse = await fetchHashData(serverConfig, 'tv');
       if (mediaHashResponse) {
-        console.log(chalk.cyan('Using hash-based sync for TV seasons'));
         syncStrategy = 'hash-based';
+        log.info({ 
+          serverId: serverConfig.id,
+          syncStrategy: 'hash-based'
+        }, 'Using hash-based sync for TV seasons');
       }
     } catch (hashError) {
-      console.warn(chalk.yellow('Hash-based sync failed, falling back to traditional sync:'), hashError.message);
+      log.warn({ 
+        serverId: serverConfig.id,
+        error: hashError.message
+      }, 'Hash-based sync failed, falling back to traditional sync');
     }
 
     // Check if we have enhanced data with lookup maps
     const hasEnhancedData = flatDB.lookups && flatDB.lookups.tvShows && flatDB.lookups.seasons;
-    if (hasEnhancedData) {
-      console.log(chalk.green('Using enhanced in-memory lookups for TV season sync'));
-    } else {
-      console.log(chalk.yellow('Enhanced memory lookups not available, using database queries'));
-    }
+    const lookupMethod = hasEnhancedData ? 'enhanced_memory' : 'database_queries';
+    log.info({ 
+      serverId: serverConfig.id,
+      lookupMethod,
+      hasEnhancedData 
+    }, 'TV season sync lookup method selected');
 
     // First, collect all unique seasons across all shows from the database
     const allKnownSeasons = new Map(); // Map of showTitle -> Set of season numbers
@@ -273,7 +302,10 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
       }
     }
     
-    console.log(chalk.cyan(`Found ${Array.from(allKnownSeasons.keys()).length} shows with seasons to process`));
+    log.info({ 
+      serverId: serverConfig.id,
+      showsWithSeasonsCount: Array.from(allKnownSeasons.keys()).length
+    }, 'Found shows with seasons to process');
 
     // Process each TV show
     for (const [showTitle, seasonNumbers] of allKnownSeasons.entries()) {
@@ -281,7 +313,10 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
       
       // Skip if no file server data for this show
       if (!fileServerShowData) {
-        console.log(chalk.yellow(`No file server data for "${showTitle}" - skipping seasons`));
+        log.debug({ 
+          serverId: serverConfig.id,
+          showTitle
+        }, 'No file server data for show - skipping seasons');
         continue;
       }
       
@@ -304,13 +339,19 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
       
       // If show not found in enhanced data or db map, fetch directly from database
       if (!show) {
-        console.warn(chalk.yellow(`Show "${showTitle}" not found in memory, fetching from database...`));
+        log.warn({ 
+          serverId: serverConfig.id,
+          showTitle
+        }, 'Show not found in memory, fetching from database');
         show = await getTVShowFromFlatDB(client, showTitle);
       }
       
       // Last resort - barebones object (should rarely happen)
       if (!show) {
-        console.error(chalk.red(`Show "${showTitle}" not found in any data source, using minimal placeholder`));
+        log.error({ 
+          serverId: serverConfig.id,
+          showTitle
+        }, 'Show not found in any data source, using minimal placeholder');
         show = { title: showTitle, originalTitle: showTitle };
       }
 
@@ -333,7 +374,11 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
           if (!season) {
             // This shouldn't happen
             // but if it does, create a minimal season object
-            console.warn(chalk.yellow(`Season ${seasonNumber} of "${showTitle}" not found in database, creating placeholder`));
+            log.warn({ 
+              serverId: serverConfig.id,
+              showTitle,
+              seasonNumber
+            }, 'Season not found in database, creating placeholder');
             season = flatDB.lookups.seasons.byNaturalKey.get(`${showTitle}-${seasonNumber}`);
             if (!season) {
               season = { seasonNumber, showId: dbShowEntry?._id, showTitle };
@@ -361,11 +406,23 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
             const storedSeasonHash = await getStoredHash(client, 'tv', showTitle, seasonNumber, null, serverConfig.id);
             if (storedSeasonHash === currentSeasonHash && seasonInDB_withMetadata) {
               // Only skip if the season is actually in the DB
-              console.log(chalk.green(`Season hash unchanged for "${showTitle}" Season ${seasonNumber} - skipping processing`));
+              log.debug({ 
+                serverId: serverConfig.id,
+                showTitle,
+                seasonNumber,
+                hashMatch: true,
+                skippedReason: 'hash_unchanged'
+              }, 'Season hash unchanged - skipping processing');
               results.skippedSeasons++;
               continue; // Skip to the next season
             } else {
-              console.log(chalk.yellow(`Season hash changed or not stored OR metadata isn't available in db yet for "${showTitle}" Season ${seasonNumber} - processing`));
+              log.info({ 
+                serverId: serverConfig.id,
+                showTitle,
+                seasonNumber,
+                hashMatch: false,
+                reason: 'hash_changed_or_missing_metadata'
+              }, 'Season hash changed or metadata missing - processing');
             }
           }
           // --- End revised season hash logic ---
@@ -373,13 +430,21 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
           // If the season doesn't exist on this server, log it but still try to process
           // This allows seasons that only exist on other servers to be created
           if (!fileServerSeasonData) {
-            console.log(chalk.yellow(`Season ${seasonNumber} of "${showTitle}" doesn't exist on server ${serverConfig.id} but may exist elsewhere`));
+            log.debug({ 
+              serverId: serverConfig.id,
+              showTitle,
+              seasonNumber
+            }, 'Season does not exist on server but may exist elsewhere');
             continue;
           }
 
           if (!isEqual(dbShowEntry._id, season.showId)) {
             await updateSeasonShowId(client, showTitle, seasonNumber, dbShowEntry._id);
-            console.log(chalk.yellow(`Updated showId for season ${seasonNumber} of "${showTitle}"`));
+            log.info({ 
+              serverId: serverConfig.id,
+              showTitle,
+              seasonNumber
+            }, 'Updated showId for season');
           }
 
           // Process the season with enhanced data if available
@@ -409,12 +474,21 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
 
           // For hash-based sync, unconditionally store the season hash (if available) after processing
           if (syncStrategy === 'hash-based' && currentSeasonHash && isHighestPriority) {
-            console.log(chalk.magenta(`Storing season hash for "${showTitle}" Season ${seasonNumber} from server ${serverConfig.id}`));
+            log.info({ 
+              serverId: serverConfig.id,
+              showTitle,
+              seasonNumber,
+              hashStored: true
+            }, 'Storing season hash');
             await storeHash(client, 'tv', showTitle, seasonNumber, null, currentSeasonHash, serverConfig.id);
           }
         } catch (error) {
-          console.log(chalk.red(`Error processing season ${seasonNumber} of "${showTitle}"`));
-          console.log(error);
+          logError(log, error, {
+            serverId: serverConfig.id,
+            showTitle,
+            seasonNumber,
+            context: 'season_processing_error'
+          });
           results.errors.push({
             showTitle,
             error: error.message
@@ -424,24 +498,24 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
     }
 
     // Log results in a consistent format
-    console.log(chalk.bold.magenta(`TV season sync to flat structure complete for server ${serverConfig.id}`));
-    if (syncStrategy === 'hash-based') {
-      console.log(chalk.green(`Successfully processed ${results.processed.length} seasons`));
-      console.log(chalk.cyan(`Skipped ${results.skippedSeasons} seasons due to hash matches`));
-    } else {
-      console.log(chalk.green(`Successfully processed ${results.processed.length} seasons`));
-    }
-    if (results.errors.length > 0) {
-      console.log(chalk.red(`Encountered ${results.errors.length} errors during season sync`));
-    }
+    log.info({
+      serverId: serverConfig.id,
+      syncStrategy,
+      processedCount: results.processed.length,
+      skippedCount: results.skippedSeasons,
+      errorCount: results.errors.length
+    }, 'TV season sync to flat structure complete');
 
     return results;
   } catch (error) {
-    console.error(`Error during TV season sync to flat structure for server ${serverConfig.id}:`, error);
+    logError(log, error, {
+      serverId: serverConfig.id,
+      context: 'season_sync_general'
+    });
     results.errors.push({
       general: true,
       error: error.message
     });
-    return results;
+    return results;  
   }
 }

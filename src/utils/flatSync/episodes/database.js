@@ -3,6 +3,7 @@
  */
 
 import { ObjectId } from 'mongodb'
+import { createLogger, logError } from '@src/lib/logger'
 
 /**
  * Updates a TV episode in the flat database structure
@@ -20,6 +21,7 @@ export async function updateEpisodeInFlatDB(
   episodeNumber,
   updates
 ) {
+  const log = createLogger('FlatSync.Episodes.Database')
   try {
     // First, get the TV show ID
     const tvShow = await client
@@ -65,10 +67,12 @@ export async function updateEpisodeInFlatDB(
 
     return result
   } catch (error) {
-    console.error(
-      `Error updating episode ${episodeNumber} of season ${seasonNumber} of "${showTitle}" in flat structure:`,
-      error
-    )
+    logError(log, error, {
+      showTitle,
+      seasonNumber,
+      episodeNumber,
+      context: 'update_episode_failed'
+    })
     return { error }
   }
 }
@@ -89,6 +93,7 @@ export async function getEpisodeFromFlatDB(
   episodeNumber,
   forceOriginalTitleLookup = false
 ) {
+  const log = createLogger('FlatSync.Episodes.Database')
   try {
     const lookupQuery = forceOriginalTitleLookup
       ? { originalTitle: showTitle }
@@ -165,10 +170,12 @@ export async function getEpisodeFromFlatDB(
     // Episode not found by any means
     return null
   } catch (error) {
-    console.error(
-      `Error getting episode ${episodeNumber} of season ${seasonNumber} of "${showTitle}" from flat structure:`,
-      error
-    )
+    logError(log, error, {
+      showTitle,
+      seasonNumber,
+      episodeNumber,
+      context: 'get_episode_failed'
+    })
     return null
   }
 }
@@ -180,10 +187,14 @@ export async function getEpisodeFromFlatDB(
  * @returns {Promise<Object|null>} Episode document or null
  */
 export async function getEpisodeByIdFromFlatDB(client, id) {
+  const log = createLogger('FlatSync.Episodes.Database')
   try {
     return await client.db('Media').collection('FlatEpisodes').findOne({ _id: id })
   } catch (error) {
-    console.error(`Error getting episode by ID "${id}" from flat structure:`, error)
+    logError(log, error, {
+      id,
+      context: 'get_episode_by_id_failed'
+    })
     return null
   }
 }
@@ -199,6 +210,7 @@ export async function getEpisodeByIdFromFlatDB(client, id) {
  * @returns {Promise<Object>} Operation result
  */
 export async function createEpisodeInFlatDB(client, episodeData) {
+  const log = createLogger('FlatSync.Episodes.Database')
   try {
     // Ensure required fields are present
     if (!episodeData.showTitle || !episodeData.seasonNumber || !episodeData.episodeNumber) {
@@ -216,9 +228,12 @@ export async function createEpisodeInFlatDB(client, episodeData) {
 
     // If episode already exists, update it
     if (existingEpisode) {
-      console.log(
-        `Episode ${episodeData.showTitle} S${episodeData.seasonNumber}E${episodeData.episodeNumber} already exists, updating instead of creating`
-      )
+      log.info({
+        showTitle: episodeData.showTitle,
+        seasonNumber: episodeData.seasonNumber,
+        episodeNumber: episodeData.episodeNumber,
+        context: 'episode_exists'
+      }, 'Episode already exists; updating instead of creating')
 
       // Keep the existing _id
       const { _id, ...updateFields } = episodeData
@@ -251,9 +266,12 @@ export async function createEpisodeInFlatDB(client, episodeData) {
     // Double check we have the correct showId and seasonId
     // This should already be set by the calling function, but just to be safe
     if (!episodeData.showId || !episodeData.seasonId) {
-      console.log(
-        `Warning: Episode ${episodeData.showTitle} S${episodeData.seasonNumber}E${episodeData.episodeNumber} missing IDs, will be looked up`
-      )
+      log.warn({
+        showTitle: episodeData.showTitle,
+        seasonNumber: episodeData.seasonNumber,
+        episodeNumber: episodeData.episodeNumber,
+        context: 'missing_ids'
+      }, 'Episode missing IDs; will be looked up')
 
       // Get correct IDs if needed
       const show = await client
@@ -293,10 +311,13 @@ export async function createEpisodeInFlatDB(client, episodeData) {
       existing: false,
     }
   } catch (error) {
-    console.error(
-      `Error creating/updating episode ${episodeData.episodeNumber} of season ID "${episodeData.seasonId}" in flat structure:`,
-      error
-    )
+    logError(log, error, {
+      showTitle: episodeData.showTitle,
+      seasonNumber: episodeData.seasonNumber,
+      episodeNumber: episodeData.episodeNumber,
+      seasonId: episodeData.seasonId,
+      context: 'create_or_update_episode_failed'
+    })
     return { error }
   }
 }
@@ -317,6 +338,7 @@ export async function updateEpisodeShowTitles(
   episodeNumber,
   showOriginalTitle
 ) {
+  const log = createLogger('FlatSync.Episodes.Database')
   try {
     if (!showTitle || !showOriginalTitle) {
       throw new Error('Cannot update episode with null showTitle or showOriginalTitle')
@@ -340,19 +362,29 @@ export async function updateEpisodeShowTitles(
       )
 
     if (result.matchedCount === 0) {
-      console.warn(
-        `No episode found for "${showTitle}" S${seasonNumber}E${episodeNumber} to update IDs`
-      )
+      log.warn({
+        showTitle,
+        seasonNumber,
+        episodeNumber,
+        context: 'episode_not_found_for_titles'
+      }, 'No episode found to update show titles')
     } else {
-      console.log(`Updated IDs for "${showTitle}" S${seasonNumber}E${episodeNumber}`)
+      log.info({
+        showTitle,
+        seasonNumber,
+        episodeNumber,
+        context: 'show_titles_updated'
+      }, 'Updated show titles for episode')
     }
 
     return result
   } catch (error) {
-    console.error(
-      `Error updating IDs for episode ${episodeNumber} of season ${seasonNumber} of "${showTitle}":`,
-      error
-    )
+    logError(log, error, {
+      showTitle,
+      seasonNumber,
+      episodeNumber,
+      context: 'update_show_titles_failed'
+    })
     return { error }
   }
 }
@@ -375,6 +407,7 @@ export async function updateEpisodeIds(
   newShowId,
   newSeasonId
 ) {
+  const log = createLogger('FlatSync.Episodes.Database')
   try {
     if (!showTitle) {
       throw new Error('Cannot update episode with null showTitle')
@@ -400,19 +433,29 @@ export async function updateEpisodeIds(
       )
 
     if (result.matchedCount === 0) {
-      console.warn(
-        `No episode found for "${showTitle}" S${seasonNumber}E${episodeNumber} to update IDs`
-      )
+      log.warn({
+        showTitle,
+        seasonNumber,
+        episodeNumber,
+        context: 'episode_not_found_for_ids'
+      }, 'No episode found to update IDs')
     } else {
-      console.log(`Updated IDs for "${showTitle}" S${seasonNumber}E${episodeNumber}`)
+      log.info({
+        showTitle,
+        seasonNumber,
+        episodeNumber,
+        context: 'episode_ids_updated'
+      }, 'Updated IDs for episode')
     }
 
     return result
   } catch (error) {
-    console.error(
-      `Error updating IDs for episode ${episodeNumber} of season ${seasonNumber} of "${showTitle}":`,
-      error
-    )
+    logError(log, error, {
+      showTitle,
+      seasonNumber,
+      episodeNumber,
+      context: 'update_episode_ids_failed'
+    })
     return { error }
   }
 }
@@ -425,6 +468,7 @@ export async function updateEpisodeIds(
  * @returns {Promise<Array<Object>>} Array of episode documents
  */
 export async function getAllEpisodesForSeasonFromFlatDB(client, showTitle, seasonNumber) {
+  const log = createLogger('FlatSync.Episodes.Database')
   try {
     // First, get the TV show ID
     const tvShow = await client
@@ -462,10 +506,11 @@ export async function getAllEpisodesForSeasonFromFlatDB(client, showTitle, seaso
       .sort({ episodeNumber: 1 })
       .toArray()
   } catch (error) {
-    console.error(
-      `Error getting all episodes for season ${seasonNumber} of "${showTitle}" from flat structure:`,
-      error
-    )
+    logError(log, error, {
+      showTitle,
+      seasonNumber,
+      context: 'get_all_episodes_failed'
+    })
     return []
   }
 }

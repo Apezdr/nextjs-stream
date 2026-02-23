@@ -85,15 +85,9 @@ export async function invalidateUserWatchHistoryCache(userId) {
   if (!userId) return false
   
   try {
-    // Use updateTag for immediate watch history updates in Server Actions
-    if (typeof updateTag === 'function') {
-      updateTag(`user-watch-history-${userId}`)
-      updateTag(`user-content-${userId}`)
-    } else {
-      // Fallback to revalidateTag with max profile for SWR
-      revalidateTag(`user-watch-history-${userId}`, 'max')
-      revalidateTag(`user-content-${userId}`, 'max')
-    }
+    // Use revalidateTag for watch history updates (works in both Server Actions and Route Handlers)
+    revalidateTag(`user-watch-history-${userId}`, 'max')
+    revalidateTag(`user-content-${userId}`, 'max')
     
     // Also invalidate general watch history updates
     revalidateTag('watch-history-updates', 'max')

@@ -1,29 +1,8 @@
 import isAuthenticated from '../../../../../utils/routeAuth'
+import { httpGet } from '@src/lib/httpHelper'
 
 const sonarrIcalLink = process.env.SONARR_ICAL_LINK
 const radarrIcalLink = process.env.RADARR_ICAL_LINK
-
-const MAX_RETRIES = 3
-const RETRY_DELAY = 1000 // 1 second
-
-async function fetchWithRetry(url, retries, delay) {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      const response = await fetch(url)
-      if (response.ok) {
-        return response
-      } else {
-        throw new Error(`Failed to fetch: ${response.statusText}`)
-      }
-    } catch (error) {
-      if (attempt < retries - 1) {
-        await new Promise((resolve) => setTimeout(resolve, delay))
-      } else {
-        throw error
-      }
-    }
-  }
-}
 
 export async function GET(req, props) {
   const params = await props.params;
@@ -54,8 +33,11 @@ export async function GET(req, props) {
         })
     }
 
-    const iCalRequest = await fetchWithRetry(icalLink, MAX_RETRIES, RETRY_DELAY)
-    const iCalData = await iCalRequest.text()
+    const { data: iCalData } = await httpGet(icalLink, {
+      responseType: 'text',
+      timeout: 10000,
+      retry: { limit: 3, baseDelay: 1000 },
+    })
 
     return new Response(iCalData, {
       status: 200,

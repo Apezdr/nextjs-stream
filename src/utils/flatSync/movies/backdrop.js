@@ -2,6 +2,7 @@
  * Movie backdrop sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -16,6 +17,7 @@ import { isEqual } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncMovieBackdrop(client, movie, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Movies.Backdrop');
   if (!fileServerData?.urls?.backdrop) return null;
   
   const fieldPath = 'urls.backdrop';
@@ -49,7 +51,11 @@ export async function syncMovieBackdrop(client, movie, fileServerData, serverCon
   
   if (!filteredUpdateData.backdrop) return null;
   
-  console.log(`Movie: Updating backdrop for "${movieTitle}" from server ${serverConfig.id}`);
+  log.info({
+    movieTitle,
+    serverId: serverConfig.id,
+    field: 'backdrop'
+  }, 'Updating movie backdrop');
   
   // Update the movie in the flat database
   await updateMovieInFlatDB(client, movieTitle, { $set: filteredUpdateData });

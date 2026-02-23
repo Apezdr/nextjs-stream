@@ -2,6 +2,7 @@
  * Movie video URL sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -17,6 +18,7 @@ import { generateNormalizedVideoId } from '../../flatDatabaseUtils';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncMovieVideoURL(client, movie, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Movies.VideoUrl');
   if (!fileServerData?.urls?.mp4) return null;
   
   const fieldPath = 'urls.mp4';
@@ -62,7 +64,11 @@ export async function syncMovieVideoURL(client, movie, fileServerData, serverCon
   
   if (!filteredUpdateData.videoURL) return null;
   
-  console.log(`Movie: Updating video URL for "${movieTitle}" from server ${serverConfig.id}`);
+  log.info({
+    movieTitle,
+    serverId: serverConfig.id,
+    field: 'videoURL'
+  }, 'Updating movie video URL');
   // Note: Related metadata fields are handled by videoInfo.js
   
   // Update the movie in the flat database

@@ -2,6 +2,7 @@
  * TV episode chapters sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName } from '../../sync/utils';
 import { isEqual } from 'lodash';
 
@@ -20,13 +21,22 @@ import { isEqual } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncEpisodeChapters(client, show, season, episode, flatShow, flatSeason, flatEpisode, fileServerSeasonData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Episodes.Chapters');
   const episodeFileName = findEpisodeFileName(
     Object.keys(fileServerSeasonData.episodes || {}),
     season.seasonNumber,
     episode.episodeNumber
   );
   
-  if (!episodeFileName) return null;
+  if (!episodeFileName) {
+    log.warn({
+      showTitle: show.title,
+      seasonNumber: season.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+      context: 'episode_filename_missing'
+    }, 'Episode file name not found for chapters sync');
+    return null;
+  }
   
   const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName];
   if (!fileServerEpisodeData?.chapters) return null;
@@ -63,7 +73,13 @@ export async function syncEpisodeChapters(client, show, season, episode, flatSho
   
   if (!filteredUpdateData.chapterURL) return null;
   
-  console.log(`Episode: Updating chapters for "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    seasonNumber: season.seasonNumber,
+    episodeNumber: episode.episodeNumber,
+    serverId: serverConfig.id,
+    field: 'chapters'
+  }, 'Updating episode chapters');
   
   // Return both the status and the update data
   return {

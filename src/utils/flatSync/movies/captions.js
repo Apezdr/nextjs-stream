@@ -2,6 +2,7 @@
  * Movie captions sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFieldsPreserveStructure, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, processCaptionURLs } from '../../sync/utils';
 import { updateMovieInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -60,13 +61,18 @@ function gatherMovieCaptions(movie, fileServerData, serverConfig, fieldAvailabil
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncMovieCaptions(client, movie, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Movies.Captions');
   const movieTitle = movie.originalTitle || movie.title;
   
   // Gather captions from the file server
   const gatheredCaptions = gatherMovieCaptions(movie, fileServerData, serverConfig, fieldAvailability);
   if (!gatheredCaptions) return null;
   
-  console.log(`Movie: Found ${Object.keys(gatheredCaptions).length} captions for "${movieTitle}" from server ${serverConfig.id}`);
+  log.info({
+    movieTitle,
+    serverId: serverConfig.id,
+    captionsCount: Object.keys(gatheredCaptions).length
+  }, 'Found captions for movie from server');
   
   // Start with current captions
   const currentCaptions = movie.captionURLs || {};
@@ -89,14 +95,25 @@ export async function syncMovieCaptions(client, movie, fileServerData, serverCon
       
       finalCaptionURLs[lang] = captionObj;
       changed = true;
-      console.log(`Movie: Updated caption for "${movieTitle}" - Language: ${lang}, URL: ${captionObj.url}`);
+      log.debug({
+        movieTitle,
+        serverId: serverConfig.id,
+        language: lang,
+        url: captionObj.url,
+        action: 'updated_caption'
+      }, 'Updated caption for movie');
     }
   }
   
   // Remove captions that were sourced from this server but no longer exist on it
   for (const [lang, caption] of Object.entries(finalCaptionURLs)) {
     if (caption.sourceServerId === serverConfig.id && !languagesSeenFromThisServer.has(lang)) {
-      console.log(`Movie: Removing caption no longer on server - "${movieTitle}" - Language: ${lang}`);
+      log.info({
+        movieTitle,
+        serverId: serverConfig.id,
+        language: lang,
+        action: 'remove_caption_not_on_server'
+      }, 'Removing caption no longer on server');
       delete finalCaptionURLs[lang];
       changed = true;
     }
@@ -115,7 +132,12 @@ export async function syncMovieCaptions(client, movie, fileServerData, serverCon
     );
     
     if (!fieldExists) {
-      console.log(`Movie: Removing orphaned caption not available on any server - "${movieTitle}" - Language: ${lang}`);
+      log.info({
+        movieTitle,
+        serverId: serverConfig.id,
+        language: lang,
+        action: 'remove_orphaned_caption'
+      }, 'Removing orphaned caption not available on any server');
       delete finalCaptionURLs[lang];
       changed = true;
     }
@@ -141,18 +163,34 @@ export async function syncMovieCaptions(client, movie, fileServerData, serverCon
   const filteredUpdateData = filterLockedFieldsPreserveStructure(movie, updateData);
   
   if (Object.keys(filteredUpdateData).length === 0) {
-    console.log(`Movie: All fields are locked for "${movieTitle}", skipping update`);
+    log.debug({
+      movieTitle,
+      serverId: serverConfig.id,
+      action: 'skip_locked_fields'
+    }, 'All caption fields locked; skipping update');
     return null;
   }
   
-  console.log(`Movie: Updating captions for "${movieTitle}" from server ${serverConfig.id}`);
+  log.info({
+    movieTitle,
+    serverId: serverConfig.id,
+    action: 'update_captions'
+  }, 'Updating movie captions');
   
   if (filteredUpdateData.captionSource) {
-    console.log(`Caption source: ${filteredUpdateData.captionSource}`);
+    log.debug({
+      movieTitle,
+      serverId: serverConfig.id,
+      captionSource: filteredUpdateData.captionSource
+    }, 'Caption source selected');
   }
   
   if (filteredUpdateData.captionURLs) {
-    console.log(`Caption languages: ${Object.keys(filteredUpdateData.captionURLs).join(', ')}`);
+    log.debug({
+      movieTitle,
+      serverId: serverConfig.id,
+      captionLanguages: Object.keys(filteredUpdateData.captionURLs)
+    }, 'Caption languages set');
   }
   
   // Update the movie in the flat database with properly structured data

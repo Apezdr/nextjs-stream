@@ -2,6 +2,7 @@
  * TV episode video info sync utilities for flat structure
  */
 
+import { createLogger, logError } from '@src/lib/logger'
 import { filterLockedFields, isCurrentServerHighestPriorityForField, findEpisodeFileName } from '../../sync/utils';
 import { isEqual } from 'lodash';
 
@@ -114,11 +115,14 @@ export function needsVideoInfoUpdate(flatEpisode, videoInfo, serverId) {
                       sizeChanged || mediaQualityChanged || mediaLastModifiedChanged;
   
   // Log which fields triggered the update (uncomment for debugging)
-  /*
   if (needsUpdate && changes.length > 0) {
-    console.log(`Video info needs update due to changes in: ${changes.join(', ')}`);
+    log.debug({
+      showTitle: episode.showTitle,
+      seasonNumber: episode.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+      changes
+    }, 'Episode video info requires update due to changed fields');
   }
-  */
   
   return needsUpdate;
 }
@@ -149,6 +153,7 @@ export async function syncEpisodeVideoInfo(
   serverConfig,
   fieldAvailability
 ) {
+  const log = createLogger('FlatSync.Episodes.VideoInfo');
   // ex. `S01E01`
   const episodeFileName = findEpisodeFileName(
     Object.keys(fileServerSeasonData.episodes || {}),
@@ -157,6 +162,12 @@ export async function syncEpisodeVideoInfo(
   );
   
   if (!episodeFileName) {
+    log.warn({
+      showTitle: show.title,
+      seasonNumber: season.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+      context: 'episode_filename_missing'
+    }, 'Episode file name not found for video info sync');
     return null;
   }
   
@@ -219,7 +230,13 @@ export async function syncEpisodeVideoInfo(
   
   if (Object.keys(filteredUpdateData).length === 0) return null;
   
-  console.log(`Episode: Updating video info for "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    seasonNumber: season.seasonNumber,
+    episodeNumber: episode.episodeNumber,
+    serverId: serverConfig.id,
+    field: 'videoInfo'
+  }, 'Updating episode video info');
   
   // Return both the status and the update data
   return {

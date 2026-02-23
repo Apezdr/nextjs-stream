@@ -24,8 +24,8 @@ function Detailed({
   loadingType = undefined,
 }) {
   const seasons = tvShow?.seasons || []
-  let networkName = tvShow.metadata?.networks[0]?.name
-  let networkImage = getFullImageUrl(tvShow.metadata?.networks[0]?.logo_path, 'w185')
+  let networkName = tvShow.metadata?.networks?.[0]?.name
+  let networkImage = getFullImageUrl(tvShow.metadata?.networks?.[0]?.logo_path, 'w185')
   const totalEpisodes = seasons ? seasons.reduce((total, season) => {
     return total + (season.episodes ? season.episodes.length : 0)
   }, 0) : null
@@ -155,7 +155,7 @@ function Detailed({
             )}
           >
             <div className="flex flex-row justify-center">
-              {tvShow.metadata?.genres.map((genre, index) => {
+              {(tvShow.metadata?.genres || []).map((genre, index) => {
                 const { fontColor, backgroundColor } = generateColors(genre?.name)
                 return (
                   <span
@@ -234,7 +234,7 @@ const SeasonCount = cache(({ seasons, metadata }) => {
   return (
     <span className="text-base">
       {validSeasonsCount} Season{validSeasonsCount > 1 ? 's' : ''}
-      {validSeasonsCount === totalSeasonsCount ? '' : ` of ${totalSeasonsCount}`}
+      {totalSeasonsCount > 0 && validSeasonsCount !== totalSeasonsCount ? ` of ${totalSeasonsCount}` : ''}
     </span>
   )
 })

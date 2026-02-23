@@ -4,6 +4,7 @@ import clientPromise from '../../../../../lib/mongodb'
 import { validateURL } from '@src/utils/auth_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { createPlaybackDeviceInfo, updatePlaybackDeviceInfo } from '@src/utils/deviceDetection'
+import { invalidateUserWatchHistoryCache } from '@src/utils/cache/invalidation'
 
 /**
  * Extracts and formats metadata for storage in PlaybackStatus
@@ -261,6 +262,9 @@ export const POST = async (req) => {
         console.log(`Added new video with normalized ID: ${normalizedVideoId} (validation: ${isValid ? 'valid' : 'invalid'})`);
       }
     }
+
+    // Invalidate user's watch history cache to ensure fresh data on next page load
+    await invalidateUserWatchHistoryCache(authResult.id)
 
     return new Response(JSON.stringify({ message: 'Playbook status updated successfully' }), {
       status: 200,

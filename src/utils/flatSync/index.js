@@ -10,10 +10,10 @@ import { syncTVShows } from './tvShows/index';
 import { syncSeasons } from './seasons/index';
 import { syncEpisodes } from './episodes/index';
 import { doesFieldExistAcrossServers, MediaType } from '../sync/utils';
-import chalk from 'chalk';
 import { initializeFlatDatabase } from './initializeDatabase';
 import { performance } from 'perf_hooks';
 import clientPromise from '@src/lib/mongodb';
+import { createLogger, logError } from '@src/lib/logger';
 // Import memory utilities for optimized data access
 import { buildEnhancedFlatDBStructure, hasTVShowValidVideoURLs } from './memoryUtils';
 // Import video availability functions
@@ -37,10 +37,11 @@ import { syncWithNewArchitecture, validateNewArchitectureCompatibility } from '.
  * @returns {Promise<Object>} Notification results
  */
 async function processNewContentNotifications(syncResults, options = {}) {
+  const log = createLogger('FlatSync');
   try {
     return await MediaNotificationOrchestrator.processSyncResults(syncResults, options);
   } catch (error) {
-    console.error('Error processing new content notifications:', error);
+    logError(log, error, { context: 'notification_processing' });
     return {
       analysis: null,
       notifications: [],
@@ -64,7 +65,15 @@ async function processNewContentNotifications(syncResults, options = {}) {
  * @returns {Promise<Object>} Sync results
  */
 export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailability, skipInitialization = false, forceSync = false, options = {}) {
-  console.log(chalk.bold.green(`Starting sync to flat structure for server ${serverConfig.id}...`));
+  const log = createLogger('FlatSync');
+  
+  log.info({ 
+    serverId: serverConfig.id, 
+    skipInitialization, 
+    forceSync,
+    useNewArchitecture: options.useNewArchitecture,
+    forceOldArchitecture: options.forceOldArchitecture
+  }, 'Starting sync to flat structure');
 
   // Check feature flag to determine which architecture to use
   const useNewArchitecture = shouldUseNewArchitecture({
@@ -83,33 +92,40 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
       const validation = validateNewArchitectureCompatibility(fileServer, serverConfig);
       
       if (!validation.isCompatible) {
-        console.warn(chalk.yellow('⚠️  New architecture compatibility issues detected:'));
-        validation.errors.forEach(error => console.warn(chalk.yellow(`   - ${error}`)));
-        console.warn(chalk.yellow('   Falling back to old architecture...'));
+        log.warn({ 
+          serverId: serverConfig.id,
+          errors: validation.errors 
+        }, 'New architecture compatibility issues detected, falling back to old architecture');
         logFeatureFlagDecision('syncToFlatStructure', false, 'compatibility fallback');
       } else {
         // Show compatibility warnings
         if (validation.warnings.length > 0) {
-          console.warn(chalk.yellow('⚠️  New architecture warnings:'));
-          validation.warnings.forEach(warning => console.warn(chalk.yellow(`   - ${warning}`)));
+          log.warn({ 
+            serverId: serverConfig.id,
+            warnings: validation.warnings 
+          }, 'New architecture warnings detected');
         }
 
-        // Use new architecture
-        console.log(chalk.bold.cyan('🆕 Delegating to NEW domain-driven sync architecture...'));
+        // Use new architecture — pass pre-built flatDB if available to avoid double loading
+        log.info({ serverId: serverConfig.id }, 'Delegating to NEW domain-driven sync architecture');
         return await syncWithNewArchitecture(fileServer, serverConfig, fieldAvailability, {
           forceSync,
-          skipInitialization
+          skipInitialization,
+          preBuiltFlatDB: options.preBuiltFlatDB
         });
       }
     } catch (error) {
-      console.error(chalk.red('❌ New architecture failed, falling back to old sync:'), error);
+      logError(log, error, { 
+        serverId: serverConfig.id,
+        context: 'new_architecture_fallback' 
+      });
       logFeatureFlagDecision('syncToFlatStructure', false, 'error fallback');
       // Continue with old architecture below
     }
   }
 
   // Continue with original flat sync implementation
-  console.log(chalk.bold.blue('🔄 Using ORIGINAL flat sync architecture...'));
+  log.info({ serverId: serverConfig.id }, 'Using ORIGINAL flat sync architecture');
 
   // Track performance
   const startTime = performance.now();
@@ -119,7 +135,10 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
     try {
       await initializeFlatDatabase();
     } catch (error) {
-      console.error('Error initializing database:', error);
+      logError(log, error, { 
+        serverId: serverConfig.id,
+        context: 'database_initialization' 
+      });
       // Continue with sync even if initialization fails
     }
   }
@@ -128,60 +147,87 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
   const client = await clientPromise;
   
   // Build the enhanced data structure with optimized lookups
-  console.log(chalk.green('Using enhanced in-memory data structure for improved performance...'));
-  const flatDB = await buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability);
+  // Re-use pre-built flatDB from caller if available to avoid double loading
+  log.info({ serverId: serverConfig.id }, 'Using enhanced in-memory data structure for improved performance');
+  const flatDB = options.preBuiltFlatDB || await buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability);
   
-  // Log missing media info
-  if (flatDB.missingMovies && flatDB.missingMovies.length > 0) {
-    console.log(chalk.cyan(`Found ${flatDB.missingMovies.length} movies that need to be created during sync`));
-  }
-  if (flatDB.missingTVShows && flatDB.missingTVShows.length > 0) {
-    console.log(chalk.cyan(`Found ${flatDB.missingTVShows.length} TV shows that need to be created during sync`));
-  }
-  if (flatDB.missingSeasons && flatDB.missingSeasons.length > 0) {
-    console.log(chalk.cyan(`Found ${flatDB.missingSeasons.length} seasons that need to be created during sync`));
-  }
-  if (flatDB.missingEpisodes && flatDB.missingEpisodes.length > 0) {
-    console.log(chalk.cyan(`Found ${flatDB.missingEpisodes.length} episodes that need to be created during sync`));
+  // Log missing media info with structured data
+  const missingCounts = {
+    movies: flatDB.missingMovies?.length || 0,
+    tvShows: flatDB.missingTVShows?.length || 0,
+    seasons: flatDB.missingSeasons?.length || 0,
+    episodes: flatDB.missingEpisodes?.length || 0
+  };
+  
+  if (missingCounts.movies > 0 || missingCounts.tvShows > 0 || missingCounts.seasons > 0 || missingCounts.episodes > 0) {
+    log.info({ 
+      serverId: serverConfig.id,
+      missingCounts 
+    }, 'Found missing media that needs to be created during sync');
   }
   
   // Sync in order: Movies -> TV Shows -> Seasons -> Episodes
   // This order ensures that parent entities exist before child entities
 
   // Sync movies (independent of other entities)
-  console.log(chalk.blue(`Starting movie sync to flat structure...`));
+  log.info({ serverId: serverConfig.id, phase: 'movies' }, 'Starting sync phase');
   const movieStartTime = performance.now();
   const movieResults = await syncMovies(flatDB, fileServer, serverConfig, fieldAvailability);
   const movieEndTime = performance.now();
-  console.log(chalk.blue(`Movie sync completed in ${((movieEndTime - movieStartTime) / 1000).toFixed(2)} seconds`));
+  const movieDurationSec = ((movieEndTime - movieStartTime) / 1000);
+  log.info({ 
+    serverId: serverConfig.id, 
+    phase: 'movies', 
+    durationSec: parseFloat(movieDurationSec.toFixed(2)) 
+  }, 'Sync phase completed');
   
   // First sync TV shows
-  console.log(chalk.cyan(`Starting TV show sync to flat structure...`));
+  log.info({ serverId: serverConfig.id, phase: 'tvShows' }, 'Starting sync phase');
   const tvShowStartTime = performance.now();
   const tvShowResults = await syncTVShows(flatDB, fileServer, serverConfig, fieldAvailability);
   const tvShowEndTime = performance.now();
-  console.log(chalk.cyan(`TV show sync completed in ${((tvShowEndTime - tvShowStartTime) / 1000).toFixed(2)} seconds`));
+  const tvShowDurationSec = ((tvShowEndTime - tvShowStartTime) / 1000);
+  log.info({ 
+    serverId: serverConfig.id, 
+    phase: 'tvShows', 
+    durationSec: parseFloat(tvShowDurationSec.toFixed(2)) 
+  }, 'Sync phase completed');
   
   // Then sync seasons (which depend on TV shows)
-  console.log(chalk.magenta(`Starting season sync to flat structure...`));
+  log.info({ serverId: serverConfig.id, phase: 'seasons' }, 'Starting sync phase');
   const seasonStartTime = performance.now();
   const seasonResults = await syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability);
   const seasonEndTime = performance.now();
-  console.log(chalk.magenta(`Season sync completed in ${((seasonEndTime - seasonStartTime) / 1000).toFixed(2)} seconds`));
+  const seasonDurationSec = ((seasonEndTime - seasonStartTime) / 1000);
+  log.info({ 
+    serverId: serverConfig.id, 
+    phase: 'seasons', 
+    durationSec: parseFloat(seasonDurationSec.toFixed(2)) 
+  }, 'Sync phase completed');
   
   // Then sync episodes (which depend on seasons)
-  console.log(chalk.yellow(`Starting episode sync to flat structure...`));
+  log.info({ serverId: serverConfig.id, phase: 'episodes' }, 'Starting sync phase');
   const episodeStartTime = performance.now();
   const episodeResults = await syncEpisodes(flatDB, fileServer, serverConfig, fieldAvailability);
   const episodeEndTime = performance.now();
-  console.log(chalk.yellow(`Episode sync completed in ${((episodeEndTime - episodeStartTime) / 1000).toFixed(2)} seconds`));
+  const episodeDurationSec = ((episodeEndTime - episodeStartTime) / 1000);
+  log.info({ 
+    serverId: serverConfig.id, 
+    phase: 'episodes', 
+    durationSec: parseFloat(episodeDurationSec.toFixed(2)) 
+  }, 'Sync phase completed');
   
   // Sync blurhashes using the most efficient available method
-  console.log(chalk.magenta(`Starting blurhash sync to flat structure...`));
+  log.info({ serverId: serverConfig.id, phase: 'blurhash' }, 'Starting sync phase');
   const blurhashStartTime = performance.now();
   const blurhashResults = await syncBlurhashData(client, flatDB, fileServer, serverConfig, fieldAvailability);
   const blurhashEndTime = performance.now();
-  console.log(chalk.magenta(`Blurhash sync completed in ${((blurhashEndTime - blurhashStartTime) / 1000).toFixed(2)} seconds`));
+  const blurhashDurationSec = ((blurhashEndTime - blurhashStartTime) / 1000);
+  log.info({ 
+    serverId: serverConfig.id, 
+    phase: 'blurhash', 
+    durationSec: parseFloat(blurhashDurationSec.toFixed(2)) 
+  }, 'Sync phase completed');
   
   const results = {
     tvShows: tvShowResults,
@@ -195,56 +241,69 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
   const endTime = performance.now();
   const totalTimeSeconds = (endTime - startTime) / 1000;
   
-  // Log summary of results
-  console.log(chalk.bold.green(`Completed sync to flat structure for server ${serverConfig.id}`));
-  
   // Count skipped TV shows due to no valid videoURLs
   const skippedTVShows = tvShowResults.processed?.filter(show => show.skipped && show.skippedReason === 'no_valid_video_urls')?.length || 0;
   const actualProcessedTVShows = (tvShowResults.processed?.length || 0) - skippedTVShows;
   
-  console.log(`TV Shows processed: ${actualProcessedTVShows}, skipped due to no valid videoURLs: ${skippedTVShows}, errors: ${tvShowResults.errors?.length || 0}`);
-  console.log(`Seasons processed: ${seasonResults.processed?.length || 0}, errors: ${seasonResults.errors?.length || 0}`);
-  console.log(`Episodes processed: ${episodeResults.processed?.length || 0}, errors: ${episodeResults.errors?.length || 0}`);
-  console.log(`Movies processed: ${movieResults.processed?.length || 0}, errors: ${movieResults.errors?.length || 0}`);
+  // Log summary of results with structured data
+  const syncSummary = {
+    serverId: serverConfig.id,
+    totalDurationSec: parseFloat(totalTimeSeconds.toFixed(2)),
+    processed: {
+      movies: movieResults.processed?.length || 0,
+      tvShows: actualProcessedTVShows,
+      tvShowsSkipped: skippedTVShows,
+      seasons: seasonResults.processed?.length || 0,
+      episodes: episodeResults.processed?.length || 0
+    },
+    errors: {
+      movies: movieResults.errors?.length || 0,
+      tvShows: tvShowResults.errors?.length || 0,
+      seasons: seasonResults.errors?.length || 0,
+      episodes: episodeResults.errors?.length || 0
+    }
+  };
+  
+  log.info(syncSummary, 'Completed sync to flat structure');
   
   // Log blurhash sync results if available
   if (blurhashResults) {
     const method = blurhashResults.method || 'unknown';
-    console.log(chalk.cyan(`Blurhash sync method: ${method}`));
+    const blurhashSummary = { 
+      serverId: serverConfig.id, 
+      method,
+      status: blurhashResults.status
+    };
     
     if (method === 'traditional') {
       const movieResults = blurhashResults.results?.movies;
       const tvResults = blurhashResults.results?.tvShows;
       
-      if (movieResults) {
-        console.log(`Blurhash movie posters processed: ${movieResults.poster || 0}, backdrops: ${movieResults.backdrop || 0}`);
-      }
-      
-      if (tvResults) {
-        console.log(`Blurhash TV shows processed: ${tvResults.show || 0}, seasons: ${tvResults.seasons || 0}`);
-      }
+      blurhashSummary.processed = {
+        moviePosters: movieResults?.poster || 0,
+        movieBackdrops: movieResults?.backdrop || 0,
+        tvShows: tvResults?.show || 0,
+        seasons: tvResults?.seasons || 0
+      };
     } else if (method === 'optimized' || method === 'basic') {
       const movieResults = blurhashResults.results?.movies;
       const tvResults = blurhashResults.results?.tvShows;
       
-      if (movieResults) {
-        console.log(`Blurhash movies processed: ${movieResults.processed?.length || 0}, errors: ${movieResults.errors?.length || 0}`);
-      }
-      
-      if (tvResults) {
-        console.log(`Blurhash TV shows processed: ${tvResults.processed?.length || 0}, errors: ${tvResults.errors?.length || 0}`);
-      }
+      blurhashSummary.processed = {
+        movies: movieResults?.processed?.length || 0,
+        tvShows: tvResults?.processed?.length || 0
+      };
+      blurhashSummary.errors = {
+        movies: movieResults?.errors?.length || 0,
+        tvShows: tvResults?.errors?.length || 0
+      };
     }
     
-    if (blurhashResults.status === 'no_changes') {
-      console.log(chalk.green(`No blurhash changes detected`));
-    }
+    log.info(blurhashSummary, 'Blurhash sync results');
   }
   
-  console.log(chalk.bold.green(`Total sync time: ${totalTimeSeconds.toFixed(2)} seconds`));
-  
   // Process notifications for newly added content
-  console.log(chalk.green('Processing notifications for new content...'));
+  log.info({ serverId: serverConfig.id, phase: 'notifications' }, 'Starting notification processing');
   const notificationStartTime = performance.now();
   const notificationResults = await processNewContentNotifications(results, {
     enableNotifications: true,
@@ -264,7 +323,12 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
     }
   });
   const notificationEndTime = performance.now();
-  console.log(chalk.green(`Notification processing completed in ${((notificationEndTime - notificationStartTime) / 1000).toFixed(2)} seconds`));
+  const notificationDurationSec = ((notificationEndTime - notificationStartTime) / 1000);
+  log.info({ 
+    serverId: serverConfig.id, 
+    phase: 'notifications',
+    durationSec: parseFloat(notificationDurationSec.toFixed(2))
+  }, 'Notification processing completed');
   
   // NOTE: We don't perform availability checks here anymore.
   // Availability checks should be performed once after all servers have been processed,
@@ -293,41 +357,47 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
  * @returns {Promise<Object>} Availability check results
  */
 export async function checkAvailabilityAcrossAllServers(allFileServers, fieldAvailability) {
-  console.log(chalk.bold.yellow('Performing final availability check across all servers...'));
+  const log = createLogger('FlatSync.Availability');
+  
+  log.info({ serverCount: Object.keys(allFileServers).length }, 'Performing final availability check across all servers');
   const startTime = performance.now();
   
   // Get MongoDB client
   const client = await clientPromise;
   
   // Build the enhanced data structure with optimized lookups
-  console.log(chalk.green('Using enhanced in-memory data structure for improved performance...'));
+  log.info({}, 'Using enhanced in-memory data structure for improved performance');
   const flatDB = await buildEnhancedFlatDBStructure(client, null, fieldAvailability);
   
   // Perform the availability check with all servers' data
   const results = await checkAndRemoveUnavailableVideosFlat(flatDB, allFileServers, fieldAvailability);
   
   const endTime = performance.now();
-  const timeSeconds = (endTime - startTime) / 1000;
-  
-  console.log(chalk.bold.yellow(`Final availability check completed in ${timeSeconds.toFixed(2)} seconds`));
+  const durationSec = (endTime - startTime) / 1000;
   
   // Log summary of removed items
-  if (results.removed) {
-    const { movies, tvShows, tvSeasons, tvEpisodes } = results.removed;
-    console.log(`Removed ${movies?.length || 0} unavailable movies`);
-    console.log(`Removed ${tvShows?.length || 0} unavailable TV shows`);
-    console.log(`Removed ${tvSeasons?.length || 0} unavailable seasons`);
-    console.log(`Removed ${tvEpisodes?.length || 0} unavailable episodes`);
-  }
+  const removalSummary = {
+    durationSec: parseFloat(durationSec.toFixed(2)),
+    removed: results.removed ? {
+      movies: results.removed.movies?.length || 0,
+      tvShows: results.removed.tvShows?.length || 0,
+      seasons: results.removed.tvSeasons?.length || 0,
+      episodes: results.removed.tvEpisodes?.length || 0
+    } : { movies: 0, tvShows: 0, seasons: 0, episodes: 0 }
+  };
+  
+  log.info(removalSummary, 'Final availability check completed');
   
   // Now that availability checks are complete and database is cleaned,
   // validate PlaybackStatus records against the current state
   const validationStartTime = performance.now();
   const validationResults = await validatePlaybackStatusAgainstDatabase();
   const validationEndTime = performance.now();
-  const validationTimeSeconds = (validationEndTime - validationStartTime) / 1000;
+  const validationDurationSec = (validationEndTime - validationStartTime) / 1000;
   
-  console.log(chalk.bold.green(`PlaybackStatus validation completed in ${validationTimeSeconds.toFixed(2)} seconds`));
+  log.info({ 
+    durationSec: parseFloat(validationDurationSec.toFixed(2))
+  }, 'PlaybackStatus validation completed');
   
   results.playbackValidation = validationResults;
   return results;

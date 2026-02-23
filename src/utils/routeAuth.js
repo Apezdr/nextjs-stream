@@ -181,15 +181,56 @@ export async function isAuthenticatedBySessionId(req) {
   }
 }
 
+// Server-side authentication using direct auth() call (no HTTP overhead)
+// This is optimal for Next.js 16 App Router - avoids server-to-server fetch
+export async function isAuthenticatedServer() {
+  try {
+    const session = await auth()
+
+    if (!session || !session.user) {
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: 'Unauthorized',
+          message: 'You must be signed in.',
+          code: 'AUTH_REQUIRED'
+        }),
+        { status: 401, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+
+    return session.user
+  } catch (error) {
+    return new Response(
+      JSON.stringify({
+        success: false,
+        error: 'Authentication Error',
+        message: 'Failed to fetch session',
+        code: 'AUTH_FETCH_FAILED',
+        details: error?.message
+      }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+}
+
 // Combined method as a separate function
 export async function isAuthenticatedEither(req) {
-  // First try web session
-  const webAuthResult = await isAuthenticated(req)
-  if (!(webAuthResult instanceof Response)) {
-    return webAuthResult // User authenticated via web session
+  // First, check for mobile/TV authentication headers (fast, no network calls)
+  const authHeader = req.headers.get('authorization')
+  const sessionId = req.headers.get('x-session-id') ||
+                    new URL(req.url).searchParams.get('sessionId')
+
+  // If mobile auth headers are present, try that first (instant)
+  if (authHeader?.startsWith('Bearer ') || sessionId) {
+    const mobileAuthResult = await isAuthenticatedBySessionId(req)
+    if (!(mobileAuthResult instanceof Response)) {
+      return mobileAuthResult // Mobile auth succeeded
+    }
+    // Mobile auth failed, fall through to web auth
   }
-  
-  // If web auth failed, try session ID
-  const sessionAuthResult = await isAuthenticatedBySessionId(req)
-  return sessionAuthResult // Either user object or error response
+
+  // Fallback to server-side web session authentication (direct auth() call)
+  const webAuthResult = await isAuthenticatedServer()
+  return webAuthResult // Either user object or error response
 }

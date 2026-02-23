@@ -87,6 +87,14 @@ export interface SyncContext {
       generated: string
     }>
   }
+  
+  // Resource manager for throttling HTTP requests and monitoring memory
+  // Strategies should use context.resourceManager?.throttleHttp() for outbound calls
+  resourceManager?: {
+    throttleHttp: <T>(fn: () => Promise<T>) => Promise<T>
+    isMemoryPressure: () => boolean
+    getHeapUsedMb: () => number
+  }
 }
 
 export interface SyncResult {

@@ -67,7 +67,17 @@ export function SystemStatusProvider({ children }) {
 export function useSystemStatus() {
   const context = useContext(SystemStatusContext);
   if (context === undefined) {
-    throw new Error('useSystemStatus must be used within a SystemStatusProvider');
+    // During hydration, the context might not be available yet
+    // Return a safe fallback instead of throwing an error
+    return {
+      status: {
+        overall: { level: 'normal', message: 'All systems operational' },
+        servers: []
+      },
+      loading: false,
+      error: null,
+      refetch: () => Promise.resolve()
+    };
   }
   return context;
 }

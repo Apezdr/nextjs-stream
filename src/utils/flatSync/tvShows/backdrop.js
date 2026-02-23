@@ -2,6 +2,7 @@
  * TV show backdrop sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateTVShowInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -16,6 +17,7 @@ import { isEqual } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncTVShowBackdrop(client, show, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.TVShows.Backdrop');
   if (!fileServerData?.backdrop) return null;
   
   const fieldPath = 'backdrop';
@@ -52,7 +54,11 @@ export async function syncTVShowBackdrop(client, show, fileServerData, serverCon
   
   if (!filteredUpdateData.backdrop) return null;
   
-  console.log(`TV Show: Updating backdrop for "${showTitle}" from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    serverId: serverConfig.id,
+    field: 'backdrop'
+  }, 'Updating TV show backdrop');
   
   // Update the TV show in the flat database
   await updateTVShowInFlatDB(client, originalTitle, { $set: filteredUpdateData });

@@ -1,6 +1,5 @@
 import axios from 'axios'
 import { getFullImageUrl } from '@src/utils'
-import { getLastUpdatedTimestamp } from '@src/utils/database'
 import {
   radarrAPIKey,
   radarrURL,
@@ -128,26 +127,6 @@ function getYearFromDate(dateString) {
   return dateString ? new Date(dateString).getFullYear() : null
 }
 
-// Function to fetch
-
-/**
- * Retry function with exponential backoff
- */
-async function fetchWithRetry(fetchFunction, retries = 3, delay = 200) {
-  for (let attempt = 1; attempt <= retries; attempt++) {
-    try {
-      return await fetchFunction();
-    } catch (error) {
-      if (attempt === retries) {
-        throw error;
-      }
-      console.warn(`Fetch attempt ${attempt} failed. Retrying in ${delay}ms...`);
-      await new Promise(res => setTimeout(res, delay));
-      delay *= 2; // Exponential backoff
-    }
-  }
-}
-
 /**
  * Enhanced fetchMetadataMultiServer with Redis caching, conditional requests, controlled concurrency, and retry logic
  * @param {string} serverId - The ID of the file server to fetch from
@@ -218,24 +197,17 @@ export async function fetchMetadataMultiServer(
       throw new Error(`URL is incorrectly normalized: ${normalizedUrl}`);
     }
 
-    // Define the fetch function with a timeout
+    // Define the fetch function
     const fetchFunction = async () => {
       try {
-        // Create a promise that rejects after the timeout
-        const timeoutPromise = new Promise((_, reject) => {
-          const timeoutMs = type === 'blurhash' ? 3000 : 5000; // Shorter timeout for blurhash
-          setTimeout(() => reject(new Error(`Fetch timeout after ${timeoutMs}ms`)), timeoutMs);
-        });
-        
-        // Race the fetch against the timeout
-        const fetchPromise = httpGet(normalizedUrl, {
+        const timeoutMs = type === 'blurhash' ? 3000 : 5000;
+        const { data, headers: responseHeaders } = await httpGet(normalizedUrl, {
           headers,
-          timeout: type === 'blurhash' ? 3000 : 5000, // Shorter timeout for blurhash
+          timeout: timeoutMs,
           responseType: type === 'blurhash' ? 'text' : 'json',
           http2: true,
+          retry: { limit: 2, baseDelay: 300 },
         });
-        
-        const { data, headers: responseHeaders } = await Promise.race([fetchPromise, timeoutPromise]);
 
         // Handle 304 Not Modified
         if (data === null && cachedEntry) {
@@ -274,8 +246,8 @@ export async function fetchMetadataMultiServer(
       }
     };
 
-    // Use concurrency limiter and retry logic
-    const data = await limit(() => fetchWithRetry(fetchFunction, 2, 300)); // Reduced retries for faster failure
+    // Use concurrency limiter (retry is handled by httpGet)
+    const data = await limit(fetchFunction);
 
     return data;
   } catch (error) {

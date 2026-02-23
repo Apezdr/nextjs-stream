@@ -21,13 +21,20 @@ import { parseSearchParamsToFilters } from '@src/utils/mediaListUtils/shared'
  * 
  * @param {Object} props
  * @param {Object} props.searchParams - URL search parameters for filtering/pagination
+ * @param {Object} props.session - User session object (passed from parent component)
  */
-export default async function TVListView({ searchParams = {} }) {
+export default async function TVListView({ searchParams = {}, session }) {
   // Parse search params into filter options
   const initialFilters = parseSearchParamsToFilters(searchParams);
   
+  // Add userId to the filter options for watch history
+  const filtersWithUserId = {
+    ...initialFilters,
+    userId: session?.user?.id
+  };
+  
   // Fetch initial data using Server Action (cached)
-  const initialData = await getTVListData(initialFilters);
+  const initialData = await getTVListData(filtersWithUserId);
   
   // Extract statistics for header display
   const { statistics } = initialData;

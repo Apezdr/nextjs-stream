@@ -40,6 +40,28 @@ ENV NODE_ENV=production
 # Uncomment the following line in case you want to disable telemetry during runtime.
 # ENV NEXT_TELEMETRY_DISABLED=1
 
+# ============================================================================
+# OpenTelemetry Configuration for SigNoz Integration
+# ============================================================================
+# These can be overridden at runtime via docker-compose or docker run
+ENV OTEL_ENABLED="false"
+ENV OTEL_SERVICE_NAME="nextjs-stream"
+ENV OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
+ENV OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+
+# Resource attributes for better trace identification in SigNoz
+ENV OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,service.version=latest,service.namespace=nextjs-stream"
+
+# Distributed tracing propagators
+ENV OTEL_PROPAGATORS="tracecontext,baggage"
+
+# Sampling configuration - sample everything by default
+ENV OTEL_TRACES_SAMPLER="always_on"
+
+# Next.js OpenTelemetry verbose logging (0=off, 1=on)
+ENV NEXT_OTEL_VERBOSE="0"
+# ============================================================================
+
 RUN apk add --no-cache libc6-compat docker-cli
 RUN apk add --no-cache wget tar && \
     wget -O /tmp/dotenvx.tar.gz https://github.com/dotenvx/dotenvx/releases/download/v1.52.0/dotenvx-1.52.0-linux-x86_64.tar.gz && \
@@ -54,6 +76,17 @@ COPY --from=builder /app/public ./public
 # https://nextjs.org/docs/advanced-features/output-file-tracing
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# ============================================================================
+# Copy OpenTelemetry instrumentation files
+# These are needed for the instrumentation to work with standalone output
+# ============================================================================
+COPY --from=builder /app/src/instrumentation.ts ./src/instrumentation.ts
+COPY --from=builder /app/node_modules/@vercel ./node_modules/@vercel
+COPY --from=builder /app/node_modules/@opentelemetry ./node_modules/@opentelemetry
+COPY --from=builder /app/node_modules/pino ./node_modules/pino
+# If you have the lib/tracing.ts utilities, they'll be bundled automatically
+# ============================================================================
 
 RUN dotenvx ext prebuild
 

@@ -171,7 +171,7 @@ function MediaRouter({ media, notFoundType, session, searchParams, parsedParams 
   
   // List views
   if (isListView) {
-    return isMovie ? <MovieListView searchParams={searchParams} /> : <TVListView searchParams={searchParams} />
+    return isMovie ? <MovieListView searchParams={searchParams} session={session} /> : <TVListView searchParams={searchParams} session={session} />
   }
   
   // Fallback: show not found

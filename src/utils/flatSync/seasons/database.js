@@ -3,6 +3,7 @@
  */
 
 import { ObjectId } from 'mongodb';
+import { createLogger, logError } from '@src/lib/logger';
 
 /**
  * Updates a TV season in the flat database structure
@@ -14,6 +15,7 @@ import { ObjectId } from 'mongodb';
  * @returns {Promise<Object>} Update result
  */
 export async function updateSeasonInFlatDB(client, showTitle, originalTitle, seasonNumber, updates) {
+  const log = createLogger('FlatSync.Seasons.Database');
   try {
     // Validate inputs to prevent null showTitle
     if (!showTitle) {
@@ -56,7 +58,11 @@ export async function updateSeasonInFlatDB(client, showTitle, originalTitle, sea
     
     return result;
   } catch (error) {
-    console.error(`Error updating season ${seasonNumber} of "${showTitle}" in flat structure:`, error);
+    logError(log, error, {
+      showTitle,
+      seasonNumber,
+      context: 'update_season_failed'
+    });
     return { error };
   }
 }
@@ -70,6 +76,7 @@ export async function updateSeasonInFlatDB(client, showTitle, originalTitle, sea
  * @returns {Promise<Object|null>} Season document or null
  */
 export async function getSeasonFromFlatDB(client, showTitle, seasonNumber, forceOriginalTitleLookup = false) {
+  const log = createLogger('FlatSync.Seasons.Database');
   try {
     // Determine whether to lookup by title or originalTitle based on parameter
     const lookupQuery = forceOriginalTitleLookup ? { originalTitle: showTitle } : { title: showTitle };
@@ -128,7 +135,11 @@ export async function getSeasonFromFlatDB(client, showTitle, seasonNumber, force
     // Season not found by any means
     return null;
   } catch (error) {
-    console.error(`Error getting season ${seasonNumber} of "${showTitle}" from flat structure:`, error);
+    logError(log, error, {
+      showTitle,
+      seasonNumber,
+      context: 'get_season_failed'
+    });
     return null;
   }
 }
@@ -140,13 +151,17 @@ export async function getSeasonFromFlatDB(client, showTitle, seasonNumber, force
  * @returns {Promise<Object|null>} Season document or null
  */
 export async function getSeasonByIdFromFlatDB(client, id) {
+  const log = createLogger('FlatSync.Seasons.Database');
   try {
     return await client
       .db('Media')
       .collection('FlatSeasons')
       .findOne({ _id: id });
   } catch (error) {
-    console.error(`Error getting season by ID "${id}" from flat structure:`, error);
+    logError(log, error, {
+      id,
+      context: 'get_season_by_id_failed'
+    });
     return null;
   }
 }
@@ -158,6 +173,7 @@ export async function getSeasonByIdFromFlatDB(client, id) {
  * @returns {Promise<Object>} Insert result
  */
 export async function createSeasonInFlatDB(client, seasonData) {
+  const log = createLogger('FlatSync.Seasons.Database');
   try {
     // Check for required fields
     if (!seasonData.showId) {
@@ -195,7 +211,10 @@ export async function createSeasonInFlatDB(client, seasonData) {
         });
         
       if (existingNullTitleSeason) {
-        console.log(`Found existing season with null showTitle and same seasonNumber ${seasonData.seasonNumber}, updating instead of creating new`);
+        log.info({
+          seasonNumber: seasonData.seasonNumber,
+          context: 'existing_null_title_season'
+        }, 'Found existing season with null showTitle; updating instead of creating new');
         
         // Create a copy of seasonData without the _id field
         const { _id, ...seasonDataWithoutId } = seasonData;
@@ -218,7 +237,10 @@ export async function createSeasonInFlatDB(client, seasonData) {
       }
     } catch (lookupError) {
       // Non-critical error, just log and continue
-      console.warn(`Error checking for duplicate null showTitle: ${lookupError.message}`);
+      log.warn({
+        error: lookupError.message,
+        context: 'duplicate_null_showtitle_lookup'
+      }, 'Error checking for duplicate null showTitle');
     }
     
     // Ensure the season has an _id
@@ -238,7 +260,11 @@ export async function createSeasonInFlatDB(client, seasonData) {
     
     return result;
   } catch (error) {
-    console.error(`Error creating season ${seasonData.seasonNumber} of show ID "${seasonData.showId}" in flat structure:`, error);
+    logError(log, error, {
+      seasonNumber: seasonData.seasonNumber,
+      showId: seasonData.showId,
+      context: 'create_season_failed'
+    });
     return { error };
   }
 }
@@ -252,6 +278,7 @@ export async function createSeasonInFlatDB(client, seasonData) {
  * @returns {Promise<Object>} Update result
  */
 export async function updateSeasonShowId(client, showTitle, seasonNumber, newShowId) {
+  const log = createLogger('FlatSync.Seasons.Database');
   try {
     if (!showTitle) {
       throw new Error('Cannot update season with null showTitle');
@@ -273,14 +300,26 @@ export async function updateSeasonShowId(client, showTitle, seasonNumber, newSho
       );
     
     if (result.matchedCount === 0) {
-      console.warn(`No season found for "${showTitle}" season ${seasonNumber} to update showId`);
+      log.warn({
+        showTitle,
+        seasonNumber,
+        context: 'season_not_found_for_showid_update'
+      }, 'No season found to update showId');
     } else {
-      console.log(`Updated showId for "${showTitle}" season ${seasonNumber}`);
+      log.info({
+        showTitle,
+        seasonNumber,
+        context: 'showid_updated'
+      }, 'Updated showId for season');
     }
     
     return result;
   } catch (error) {
-    console.error(`Error updating showId for season ${seasonNumber} of "${showTitle}":`, error);
+    logError(log, error, {
+      showTitle,
+      seasonNumber,
+      context: 'update_showid_failed'
+    });
     return { error };
   }
 }
@@ -292,6 +331,7 @@ export async function updateSeasonShowId(client, showTitle, seasonNumber, newSho
  * @returns {Promise<Array<Object>>} Array of season documents
  */
 export async function getAllSeasonsForShowFromFlatDB(client, showTitle) {
+  const log = createLogger('FlatSync.Seasons.Database');
   try {
     // First, get the TV show ID
     const tvShow = await client
@@ -310,7 +350,10 @@ export async function getAllSeasonsForShowFromFlatDB(client, showTitle) {
       .sort({ seasonNumber: 1 })
       .toArray();
   } catch (error) {
-    console.error(`Error getting all seasons for "${showTitle}" from flat structure:`, error);
+    logError(log, error, {
+      showTitle,
+      context: 'get_all_seasons_failed'
+    });
     return [];
   }
 }

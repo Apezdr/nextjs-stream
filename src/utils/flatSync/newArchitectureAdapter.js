@@ -5,7 +5,7 @@
 
 import { syncManager } from '../sync/SyncManager'
 import { SyncOperation, MediaType } from '../sync/core'
-import chalk from 'chalk'
+import { createLogger, logError } from '@src/lib/logger'
 import { buildEnhancedFlatDBStructure } from './memoryUtils'
 import clientPromise from '@src/lib/mongodb'
 import { performance } from 'perf_hooks'
@@ -28,32 +28,51 @@ export async function syncWithNewArchitecture(
   fieldAvailability,
   options = {}
 ) {
-  console.log(chalk.bold.cyan(`🆕 Starting NEW architecture sync for server ${serverConfig.id}...`))
+  const log = createLogger('FlatSync.NewArch');
+  
+  log.info({ 
+    serverId: serverConfig.id,
+    architecture: 'new',
+    options 
+  }, 'Starting NEW architecture sync');
 
   // Validate server configuration before proceeding
   if (!serverConfig || !serverConfig.baseURL) {
     const error = new Error(
       `Invalid server configuration: missing baseURL for server ${serverConfig?.id || 'unknown'}`
     )
-    console.error(chalk.red('❌ Server configuration validation failed:'), error.message)
+    logError(log, error, { 
+      serverId: serverConfig?.id,
+      context: 'server_config_validation' 
+    });
     throw error
   }
 
-  console.log(
-    chalk.green(`🔧 Server config validated: ${serverConfig.baseURL} (${serverConfig.id})`)
-  )
+  log.info({
+    serverId: serverConfig.id,
+    baseURL: serverConfig.baseURL
+  }, 'Server config validated');
 
   const startTime = Date.now()
 
-  // 🚀 PERFORMANCE OPTIMIZATION: Pre-fetch all movies from database
-  console.log(chalk.blue(`📥 Pre-fetching movie database for cache...`))
-  const client = await clientPromise
-  const flatDB = await buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability)
-
-  console.log(chalk.green(`✅ Pre-fetched ${flatDB.movies?.size || 0} movies into cache`))
-  if (flatDB.missingMovies?.length > 0) {
-    console.log(chalk.cyan(`📝 Identified ${flatDB.missingMovies.length} new movies to create`))
+  // 🚀 PERFORMANCE OPTIMIZATION: Re-use pre-built flatDB if passed in, otherwise build it
+  let flatDB;
+  if (options.preBuiltFlatDB) {
+    flatDB = options.preBuiltFlatDB;
+    log.info({ serverId: serverConfig.id }, 'Re-using pre-built database cache (avoiding double load)');
+  } else {
+    log.info({ serverId: serverConfig.id }, 'Pre-fetching movie database for cache');
+    const client = await clientPromise
+    flatDB = await buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability)
   }
+
+  const cacheStats = {
+    serverId: serverConfig.id,
+    moviesCached: flatDB.movies?.size || 0,
+    missingMovies: flatDB.missingMovies?.length || 0
+  };
+  
+  log.info(cacheStats, 'Database cache pre-fetched');
   const results = {
     movies: {
       processed: 0,
@@ -92,9 +111,11 @@ export async function syncWithNewArchitecture(
     const movieTitles = extractMovieTitles(fileServer)
 
     if (movieTitles.length > 0) {
-      console.log(
-        chalk.green(`🎬 Processing ${movieTitles.length} movies with new architecture...`)
-      )
+      log.info({
+        serverId: serverConfig.id,
+        movieCount: movieTitles.length,
+        architecture: 'new'
+      }, 'Processing movies with new architecture');
 
       // Adapt server config to match new architecture expectations
       const adaptedServerConfig = {
@@ -108,11 +129,12 @@ export async function syncWithNewArchitecture(
         timeout: 30000,
       }
 
-      console.log(
-        chalk.blue(
-          `🔧 Adapted server config: ${adaptedServerConfig.baseUrl} (${adaptedServerConfig.id})`
-        )
-      )
+      log.debug({
+        serverId: adaptedServerConfig.id,
+        baseUrl: adaptedServerConfig.baseUrl,
+        nodeUrl: adaptedServerConfig.nodeUrl,
+        priority: adaptedServerConfig.priority
+      }, 'Adapted server config for new architecture');
 
       const movieResults = await syncManager.syncMovies(
         movieTitles,
@@ -120,7 +142,8 @@ export async function syncWithNewArchitecture(
         fieldAvailability,
         {
           operations: [SyncOperation.Metadata, SyncOperation.Assets, SyncOperation.Content],
-          concurrency: options.concurrency || 5,
+          // Let SyncManager use ResourceManager defaults unless explicitly overridden
+          concurrency: options.concurrency || undefined,
           fileServerData: fileServer, // Pass file server data to sync manager
           movieCache: flatDB.movies, // 🚀 OPTIMIZATION: Pass pre-fetched movie cache
         }
@@ -129,11 +152,12 @@ export async function syncWithNewArchitecture(
       // Translate movie results to flat sync format
       results.movies = translateMovieResults(movieResults)
 
-      console.log(
-        chalk.green(
-          `✅ Movies: ${results.movies.processed} processed, ${results.movies.errors} errors`
-        )
-      )
+      log.info({
+        serverId: serverConfig.id,
+        processed: results.movies.processed,
+        errors: results.movies.errors,
+        skipped: results.movies.skipped
+      }, 'Movie processing completed');
     }
 
     // HYBRID MODE: Use legacy sync for TV content until new architecture supports it
@@ -151,13 +175,19 @@ export async function syncWithNewArchitecture(
     results.performance.endTime = new Date()
     results.performance.duration = endTime - startTime
 
-    console.log(
-      chalk.bold.green(`🎉 NEW architecture sync completed in ${results.performance.duration}ms`)
-    )
+    log.info({
+      serverId: serverConfig.id,
+      durationMs: results.performance.duration,
+      architecture: 'new'
+    }, 'NEW architecture sync completed');
 
     return results
   } catch (error) {
-    console.error(chalk.red('❌ NEW architecture sync failed:'), error)
+    logError(log, error, {
+      serverId: serverConfig.id,
+      phase: 'newArchitectureSync',
+      architecture: 'new'
+    });
 
     results.errors.push({
       phase: 'newArchitectureSync',
@@ -189,24 +219,35 @@ async function syncTVContentWithLegacyArchitecture(
   fieldAvailability,
   results
 ) {
-  console.log(chalk.blue('📺 Syncing TV content with LEGACY architecture (hybrid mode)...'))
+  const log = createLogger('FlatSync.NewArch.TV');
+  
+  log.info({ 
+    serverId: serverConfig.id,
+    architecture: 'legacy_hybrid'
+  }, 'Syncing TV content with LEGACY architecture (hybrid mode)');
   const tvStartTime = performance.now()
 
   try {
     // Log TV shows that will be processed
     if (fileServer?.tv) {
       const tvShowTitles = Object.keys(fileServer.tv)
-      console.log(chalk.blue(`  Found ${tvShowTitles.length} TV shows to process`))
+      const tvStats = {
+        serverId: serverConfig.id,
+        tvShowCount: tvShowTitles.length
+      };
 
       // Check for "What If...?" specifically
       const whatIfShow = tvShowTitles.find((title) => title.toLowerCase().includes('what if'))
       if (whatIfShow) {
-        console.log(chalk.green(`  ✓ Found "${whatIfShow}" - will be processed by legacy sync`))
+        tvStats.whatIfShow = whatIfShow;
+        log.info(tvStats, 'Found TV shows to process');
+      } else {
+        log.info(tvStats, 'Found TV shows to process');
       }
     }
 
     // Sync TV shows
-    console.log(chalk.cyan('  → Syncing TV shows...'))
+    log.info({ serverId: serverConfig.id, phase: 'tvShows' }, 'Starting TV show sync');
     const tvShowResults = await syncTVShows(flatDB, fileServer, serverConfig, fieldAvailability)
     results.tvShows = {
       processed: tvShowResults.processed?.length || 0,
@@ -215,7 +256,7 @@ async function syncTVContentWithLegacyArchitecture(
     }
 
     // Sync seasons
-    console.log(chalk.magenta('  → Syncing seasons...'))
+    log.info({ serverId: serverConfig.id, phase: 'seasons' }, 'Starting season sync');
     const seasonResults = await syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability)
     results.seasons = {
       processed: seasonResults.processed?.length || 0,
@@ -224,7 +265,7 @@ async function syncTVContentWithLegacyArchitecture(
     }
 
     // Sync episodes
-    console.log(chalk.yellow('  → Syncing episodes...'))
+    log.info({ serverId: serverConfig.id, phase: 'episodes' }, 'Starting episode sync');
     const episodeResults = await syncEpisodes(flatDB, fileServer, serverConfig, fieldAvailability)
     results.episodes = {
       processed: episodeResults.processed?.length || 0,
@@ -233,15 +274,23 @@ async function syncTVContentWithLegacyArchitecture(
     }
 
     const tvEndTime = performance.now()
-    const tvDuration = ((tvEndTime - tvStartTime) / 1000).toFixed(2)
+    const tvDurationSec = ((tvEndTime - tvStartTime) / 1000);
 
-    console.log(
-      chalk.green(
-        `✅ TV content synced in ${tvDuration}s: ${results.tvShows.processed} shows, ${results.seasons.processed} seasons, ${results.episodes.processed} episodes`
-      )
-    )
+    log.info({
+      serverId: serverConfig.id,
+      durationSec: parseFloat(tvDurationSec.toFixed(2)),
+      processed: {
+        tvShows: results.tvShows.processed,
+        seasons: results.seasons.processed, 
+        episodes: results.episodes.processed
+      }
+    }, 'TV content sync completed with legacy architecture');
   } catch (error) {
-    console.error(chalk.red('❌ TV content sync failed:'), error)
+    logError(log, error, {
+      serverId: serverConfig.id,
+      phase: 'tvContentSync',
+      architecture: 'legacy_hybrid'
+    });
     results.errors.push({
       phase: 'tvContentSync',
       error: error.message,
@@ -340,7 +389,9 @@ function translateMovieResults(batchSyncResult) {
  * @returns {Promise<Object>} Performance comparison results
  */
 export async function compareArchitecturePerformance(fileServer, serverConfig, fieldAvailability) {
-  console.log(chalk.bold.magenta('🔬 Starting architecture performance comparison...'))
+  const log = createLogger('FlatSync.NewArch.Perf');
+  
+  log.info({ serverId: serverConfig.id }, 'Starting architecture performance comparison');
 
   const comparison = {
     newArchitecture: null,
@@ -350,7 +401,7 @@ export async function compareArchitecturePerformance(fileServer, serverConfig, f
 
   try {
     // Test new architecture
-    console.log(chalk.cyan('Testing NEW architecture...'))
+    log.info({ serverId: serverConfig.id, architecture: 'new' }, 'Testing NEW architecture');
     const newStart = Date.now()
     const newResults = await syncWithNewArchitecture(fileServer, serverConfig, fieldAvailability)
     const newDuration = Date.now() - newStart
@@ -363,9 +414,7 @@ export async function compareArchitecturePerformance(fileServer, serverConfig, f
 
     // For old architecture comparison, we'd need to call the original flat sync
     // This would require importing and calling the existing flat sync functions
-    console.log(
-      chalk.yellow('📊 Old architecture comparison would require calling existing flat sync')
-    )
+    log.info({ serverId: serverConfig.id }, 'Old architecture comparison would require calling existing flat sync');
 
     // Analysis
     comparison.analysis = {
@@ -375,10 +424,17 @@ export async function compareArchitecturePerformance(fileServer, serverConfig, f
       observability: 'Real-time progress tracking and detailed metrics',
     }
 
-    console.log(chalk.bold.green('✅ Performance comparison completed'))
+    log.info({ 
+      serverId: serverConfig.id,
+      newDurationMs: newDuration,
+      heapUsedMB: Math.round(comparison.newArchitecture.memoryUsage.heapUsed / 1024 / 1024)
+    }, 'Performance comparison completed');
     return comparison
   } catch (error) {
-    console.error(chalk.red('❌ Performance comparison failed:'), error)
+    logError(log, error, { 
+      serverId: serverConfig.id,
+      context: 'performance_comparison'
+    });
     comparison.error = error.message
     return comparison
   }

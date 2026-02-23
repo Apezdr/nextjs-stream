@@ -2,6 +2,7 @@
  * TV episode thumbnail sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { createFullUrl, filterLockedFields, isSourceMatchingServer, isCurrentServerHighestPriorityForField, MediaType, findEpisodeFileName } from '../../sync/utils';
 import { isEqual } from 'lodash';
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
@@ -21,13 +22,22 @@ import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncEpisodeThumbnail(client, show, season, episode, flatShow, flatSeason, flatEpisode, fileServerSeasonData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Episodes.Thumbnail');
   const episodeFileName = findEpisodeFileName(
     Object.keys(fileServerSeasonData.episodes || {}),
     season.seasonNumber,
     episode.episodeNumber
   );
   
-  if (!episodeFileName) return null;
+  if (!episodeFileName) {
+    log.warn({
+      showTitle: show.title,
+      seasonNumber: season.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+      context: 'episode_filename_missing'
+    }, 'Episode file name not found for thumbnail sync');
+    return null;
+  }
   
   const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName];
   if (!fileServerEpisodeData?.thumbnail) return null;
@@ -64,7 +74,13 @@ export async function syncEpisodeThumbnail(client, show, season, episode, flatSh
   
   if (!filteredUpdateData.thumbnail) return null;
   
-  console.log(`Episode: Updating thumbnail for "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    seasonNumber: season.seasonNumber,
+    episodeNumber: episode.episodeNumber,
+    serverId: serverConfig.id,
+    field: 'thumbnail'
+  }, 'Updating episode thumbnail');
   
   // Return both the status and the update data
   return {
@@ -89,13 +105,22 @@ export async function syncEpisodeThumbnail(client, show, season, episode, flatSh
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncEpisodeThumbnailBlurhash(client, show, season, episode, flatShow, flatSeason, flatEpisode, fileServerSeasonData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Episodes.Thumbnail');
   const episodeFileName = findEpisodeFileName(
     Object.keys(fileServerSeasonData.episodes || {}),
     season.seasonNumber,
     episode.episodeNumber
   );
   
-  if (!episodeFileName) return null;
+  if (!episodeFileName) {
+    log.warn({
+      showTitle: show.title,
+      seasonNumber: season.seasonNumber,
+      episodeNumber: episode.episodeNumber,
+      context: 'episode_filename_missing'
+    }, 'Episode file name not found for thumbnail blurhash sync');
+    return null;
+  }
   
   const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName];
   if (!fileServerEpisodeData?.thumbnailBlurhash) return null;
@@ -146,7 +171,13 @@ export async function syncEpisodeThumbnailBlurhash(client, show, season, episode
   
   if (!filteredUpdateData.thumbnailBlurhash) return null;
   
-  console.log(`Episode: Updating thumbnail blurhash for "${showTitle}" S${season.seasonNumber}E${episode.episodeNumber} from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    seasonNumber: season.seasonNumber,
+    episodeNumber: episode.episodeNumber,
+    serverId: serverConfig.id,
+    field: 'thumbnailBlurhash'
+  }, 'Updating episode thumbnail blurhash');
   
   // Return both the status and the update data
   return {

@@ -55,6 +55,7 @@ async function VideoPlayer({
   searchParams = { clipStartTime: false, clipEndTime: false, start: false },
   shouldValidateURL = true,
   session,
+  savedPlaybackTime = null,
 }) {
   // Check if user is an admin
   const isAdmin = session?.user?.admin === true
@@ -306,6 +307,7 @@ async function VideoPlayer({
               <WithPlaybackTracker
                 videoURL={videoURL}
                 start={start}
+                savedPlaybackTime={savedPlaybackTime}
                 mediaMetadata={{
                   mediaType: mediaType,
                   mediaId: media._id,

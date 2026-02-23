@@ -13,7 +13,7 @@ import { syncMovieCaptions } from './captions';
 import { syncMovieVideoInfo } from './videoInfo'; // Import the new video info sync function
 import { createMissingMovies } from './initialize'; // Import the new function
 import clientPromise from '@src/lib/mongodb';
-import chalk from 'chalk';
+import { createLogger, logError } from '@src/lib/logger';
 import { getMovieFromMemory, createMovieInMemory } from '../memoryUtils';
 
 /**
@@ -26,7 +26,9 @@ import { getMovieFromMemory, createMovieInMemory } from '../memoryUtils';
  */
 export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailability) {
   const client = await clientPromise;
-  console.log(chalk.bold.blue(`Starting movie sync to flat structure for server ${serverConfig.id}...`));
+  const log = createLogger('FlatSync.Movies');
+  
+  log.info({ serverId: serverConfig.id }, 'Starting movie sync to flat structure');
   
   const results = {
     processed: [],
@@ -37,7 +39,7 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
   try {
     // No file server movie data, nothing to do
     if (!fileServer?.movies) {
-      console.log(chalk.yellow(`No movies found in file server ${serverConfig.id}`));
+      log.info({ serverId: serverConfig.id }, 'No movies found in file server');
       return results;
     }
     
@@ -49,11 +51,12 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
 
     // Check if we have enhanced data with memory lookups
     const hasEnhancedData = flatDB.lookups && flatDB.lookups.movies;
-    if (hasEnhancedData) {
-      console.log(chalk.green('Using enhanced in-memory lookups for movie sync'));
-    } else {
-      console.log(chalk.yellow('Enhanced memory lookups not available, falling back to simple map'));
-    }
+    const lookupMethod = hasEnhancedData ? 'enhanced_memory' : 'simple_map';
+    log.info({ 
+      serverId: serverConfig.id,
+      lookupMethod,
+      hasEnhancedData 
+    }, 'Movie sync lookup method selected');
     
     // Create a simple map for lookups if we don't have enhanced data
     const flatMoviesMap = !hasEnhancedData ? flatDB.movies.reduce((map, movie) => {
@@ -64,7 +67,10 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
     // If we have missing movies, create them
     let newlyCreatedMovies = [];
     if (missingMovieTitles.length > 0) {
-      console.log(chalk.yellow(`Found ${missingMovieTitles.length} missing movies to create before syncing`));
+      log.info({ 
+        serverId: serverConfig.id,
+        missingMovieCount: missingMovieTitles.length
+      }, 'Found missing movies to create before syncing');
       const createResults = await createMissingMovies(client, missingMovieTitles, serverConfig);
       results.initialized.created = createResults.created;
       results.initialized.movies = createResults.createdMovies;
@@ -74,7 +80,10 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
       if (newlyCreatedMovies.length > 0) {
         // If we have enhanced data, also update the in-memory structure
         if (hasEnhancedData) {
-          console.log(chalk.green(`Updating in-memory structure with ${newlyCreatedMovies.length} newly created movies`));
+          log.debug({ 
+            serverId: serverConfig.id,
+            newMovieCount: newlyCreatedMovies.length
+          }, 'Updating in-memory structure with newly created movies');
           for (const newMovie of newlyCreatedMovies) {
             createMovieInMemory(flatDB, newMovie);
           }
@@ -119,7 +128,10 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
         }
         
         if (!flatMovie) {
-          console.log(chalk.yellow(`Movie "${movieTitle}" not found in flat structure, skipping`));
+          log.debug({ 
+            serverId: serverConfig.id,
+            movieTitle 
+          }, 'Movie not found in flat structure, skipping');
           continue; // Skip if the movie is not found in the flat structure
         }
         
@@ -182,10 +194,18 @@ export async function syncMovies(flatDB, fileServer, serverConfig, fieldAvailabi
       }
     }
     
-    console.log(chalk.bold.blue(`Movie sync to flat structure complete for server ${serverConfig.id}`));
+    log.info({ 
+      serverId: serverConfig.id,
+      processedCount: results.processed.length,
+      errorCount: results.errors.length,
+      initializedCount: results.initialized.created
+    }, 'Movie sync to flat structure complete');
     return results;
   } catch (error) {
-    console.error(`Error during movie sync to flat structure for server ${serverConfig.id}:`, error);
+    logError(log, error, {
+      serverId: serverConfig.id,
+      context: 'movie_sync_general'
+    });
     results.errors.push({
       general: true,
       error: error.message,

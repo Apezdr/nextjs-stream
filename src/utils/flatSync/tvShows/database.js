@@ -3,6 +3,7 @@
  */
 
 import { ObjectId } from 'mongodb';
+import { createLogger, logError } from '@src/lib/logger';
 
 /**
  * Updates a TV show in the flat database structure
@@ -12,6 +13,7 @@ import { ObjectId } from 'mongodb';
  * @returns {Promise<Object>} Update result
  */
 export async function updateTVShowInFlatDB(client, title, updates) {
+  const log = createLogger('FlatSync.TVShows.Database');
   try {
     const result = await client
       .db('Media')
@@ -19,13 +21,19 @@ export async function updateTVShowInFlatDB(client, title, updates) {
       .updateOne({ originalTitle: title }, updates, { upsert: true });
 
     if (result.upsertedCount == 0 && result.modifiedCount == 0) {
-      console.log(`TV show "${title}" not found in flat structure`);
       debugger;
+      log.warn({
+        title,
+        context: 'tvshow_not_found'
+      }, 'TV show not found in flat structure');
     }
 
     return result;
   } catch (error) {
-    console.error(`Error updating TV show "${title}" in flat structure:`, error);
+    logError(log, error, {
+      title,
+      context: 'update_tvshow_failed'
+    });
     return { error };
   }
 }
@@ -37,13 +45,17 @@ export async function updateTVShowInFlatDB(client, title, updates) {
  * @returns {Promise<Object|null>} TV show document or null
  */
 export async function getTVShowFromFlatDB(client, title) {
+  const log = createLogger('FlatSync.TVShows.Database');
   try {
     return await client
       .db('Media')
       .collection('FlatTVShows')
       .findOne({ originalTitle: title });
   } catch (error) {
-    console.error(`Error getting TV show "${title}" from flat structure:`, error);
+    logError(log, error, {
+      title,
+      context: 'get_tvshow_failed'
+    });
     return null;
   }
 }
@@ -55,13 +67,17 @@ export async function getTVShowFromFlatDB(client, title) {
  * @returns {Promise<Object|null>} TV show document or null
  */
 export async function getTVShowByIdFromFlatDB(client, id) {
+  const log = createLogger('FlatSync.TVShows.Database');
   try {
     return await client
       .db('Media')
       .collection('FlatTVShows')
       .findOne({ _id: id });
   } catch (error) {
-    console.error(`Error getting TV show by ID "${id}" from flat structure:`, error);
+    logError(log, error, {
+      id,
+      context: 'get_tvshow_by_id_failed'
+    });
     return null;
   }
 }
@@ -73,6 +89,7 @@ export async function getTVShowByIdFromFlatDB(client, id) {
  * @returns {Promise<Object>} Insert result
  */
 export async function createTVShowInFlatDB(client, tvShowData) {
+  const log = createLogger('FlatSync.TVShows.Database');
   try {
     // Ensure the TV show has an _id
     if (!tvShowData._id) {
@@ -96,7 +113,10 @@ export async function createTVShowInFlatDB(client, tvShowData) {
     
     return result;
   } catch (error) {
-    console.error(`Error creating TV show "${tvShowData.title}" in flat structure:`, error);
+    logError(log, error, {
+      title: tvShowData.title,
+      context: 'create_tvshow_failed'
+    });
     return { error };
   }
 }

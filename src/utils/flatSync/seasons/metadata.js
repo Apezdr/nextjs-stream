@@ -2,6 +2,7 @@
  * TV season metadata sync utilities for flat structure
  */
 
+import { createLogger, logError } from '@src/lib/logger';
 import { filterLockedFields, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateSeasonInFlatDB } from './database';
 import { isEqual } from 'lodash';
@@ -19,6 +20,7 @@ import { createAndPersistSeason } from '.';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncSeasonMetadata(client, show, season, fileServerSeasonData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.Seasons.Metadata');
   // Season metadata is always stored within the show metadata, not as separate files
   // Get the season metadata from the show metadata array
   const showTitle = show.title;
@@ -28,11 +30,18 @@ export async function syncSeasonMetadata(client, show, season, fileServerSeasonD
   const seasonMetadata = showMetadata.seasons?.find(s => s.season_number === season.seasonNumber);
   
   if (Object.keys(showMetadata).length === 0) {
-    console.error(`No metadata found for "${show.title}" in show metadata - skipping season metadata sync`);
+    logError(log, new Error('season_metadata_missing'), {
+      showTitle: show.title,
+      context: 'show_metadata_missing'
+    });
   }
 
   if (!seasonMetadata) {
-    console.log(`No season metadata found for "${show.title}" Season ${season.seasonNumber} in show metadata`);
+    log.info({
+      showTitle: show.title,
+      seasonNumber: season.seasonNumber,
+      context: 'season_metadata_not_in_show'
+    }, 'Season metadata missing in show metadata');
     
     // Check if any season metadata exists at all for this show
     const hasAnySeasons = showMetadata.seasons && showMetadata.seasons.length > 0;
@@ -51,17 +60,30 @@ export async function syncSeasonMetadata(client, show, season, fileServerSeasonD
       );
       
       if (!isHighestPriority) {
-        console.log(`Server ${serverConfig.id} is not highest priority for metadata of "${showTitle}" and no seasons metadata found - skipping season metadata sync`);
+        log.info({
+          showTitle,
+          serverId: serverConfig.id,
+          context: 'not_highest_priority_no_season_metadata'
+        }, 'Skipping season metadata sync due to priority');
         return null;
       }
     } else {
       // If other seasons exist but this specific one is missing, allow this server to provide it
       // This is the key change - if a server has a season that others don't have, allow it to sync that season
-      console.log(`No metadata found for Season ${season.seasonNumber} of "${show.title}" but other seasons exist - allowing ${serverConfig.id} to provide metadata`);
+      log.info({
+        showTitle: show.title,
+        seasonNumber: season.seasonNumber,
+        serverId: serverConfig.id,
+        context: 'allow_missing_season_metadata'
+      }, 'Allowing server to provide missing season metadata');
       
       // Still, we need to make sure we have some kind of season metadata to process
       if (!fileServerSeasonData || !fileServerSeasonData.metadata) {
-        console.log(`No valid metadata available for Season ${season.seasonNumber} of "${show.title}" - skipping metadata sync`);
+        log.info({
+          showTitle: show.title,
+          seasonNumber: season.seasonNumber,
+          context: 'no_valid_season_metadata'
+        }, 'Skipping season metadata sync due to missing file server metadata');
         return null;
       }
     }
@@ -79,7 +101,12 @@ export async function syncSeasonMetadata(client, show, season, fileServerSeasonD
     );
     
     if (!isHighestPriority) {
-      console.log(`Server ${serverConfig.id} is not highest priority for metadata of "${showTitle}" - checking if this season exists in primary server`);
+      log.info({
+        showTitle,
+        seasonNumber: season.seasonNumber,
+        serverId: serverConfig.id,
+        context: 'not_highest_priority_check'
+      }, 'Checking if highest priority server already has metadata');
       
       // Get the highest priority server
       const highestPriorityServer = fieldAvailability?.tv?.[originalTitle]?.[fieldPath]?.[0];
@@ -87,17 +114,31 @@ export async function syncSeasonMetadata(client, show, season, fileServerSeasonD
       if (highestPriorityServer) {
         // If we have the season but it doesn't have metadata, allow this server to provide it
         if (season && (!season.metadata || Object.keys(season.metadata).length === 0)) {
-          console.log(`Season ${season.seasonNumber} of "${showTitle}" exists but has no metadata - allowing ${serverConfig.id} to provide metadata`);
+          log.info({
+            showTitle,
+            seasonNumber: season.seasonNumber,
+            serverId: serverConfig.id,
+            context: 'allow_metadata_for_empty_season'
+          }, 'Allowing server to provide metadata for existing season with no metadata');
         } else if (!season) {
           // If the season doesn't exist at all, allow this server to provide it
-          console.log(`Season ${season.seasonNumber} of "${showTitle}" doesn't exist in database - allowing ${serverConfig.id} to provide metadata`);
+          log.info({
+            showTitle,
+            seasonNumber: season.seasonNumber,
+            serverId: serverConfig.id,
+            context: 'allow_metadata_for_missing_season'
+          }, 'Allowing server to provide metadata for missing season');
         } else {
           // Otherwise skip since we're not highest priority and the season already has metadata
           return null;
         }
       } else {
         // If there's no highest priority server defined, allow this one
-        console.log(`No highest priority server defined for "${showTitle}" - allowing ${serverConfig.id} to provide metadata`);
+        log.info({
+          showTitle,
+          serverId: serverConfig.id,
+          context: 'no_priority_defined'
+        }, 'Allowing server to provide metadata (no priority defined)');
       }
     }
   }
@@ -108,9 +149,17 @@ export async function syncSeasonMetadata(client, show, season, fileServerSeasonD
     try {
       // Create a new season properly persisting it to the database
       flatSeason = await createAndPersistSeason(client, show, season);
-      console.log(`Created new season ${season.seasonNumber} for "${showTitle}" during metadata sync`);
+      log.info({
+        showTitle,
+        seasonNumber: season.seasonNumber,
+        context: 'season_created_during_metadata_sync'
+      }, 'Created new season during metadata sync');
     } catch (error) {
-      console.error(`Failed to create season during metadata sync: ${error.message}`);
+      logError(log, error, {
+        showTitle,
+        seasonNumber: season.seasonNumber,
+        context: 'season_creation_failed'
+      });
       return null;
     }
   }
@@ -171,7 +220,12 @@ export async function syncSeasonMetadata(client, show, season, fileServerSeasonD
   
   if (Object.keys(filteredUpdateData).length === 0) return null;
   
-  console.log(`Season: Updating metadata for "${showTitle}" Season ${season.seasonNumber} from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    seasonNumber: season.seasonNumber,
+    serverId: serverConfig.id,
+    field: 'metadata'
+  }, 'Updating season metadata');
   
   // Update the season in the flat database
   await updateSeasonInFlatDB(client, showTitle, originalTitle, season.seasonNumber, { $set: filteredUpdateData });

@@ -5,10 +5,8 @@ import './globals.css'
 import { classNames } from '@src/utils'
 import { fileServerURLWithPrefixPath, siteDescription, siteTitle } from '@src/utils/config'
 import { lazy, Suspense } from 'react'
-import { NotificationProvider } from '@src/contexts/NotificationContext'
-import { SystemStatusProvider } from '@src/contexts/SystemStatusContext'
 import { connection } from 'next/server'
-import { NavigationProvider } from '@src/contexts/NavigationContext'
+import ClientProviders from '@components/providers/ClientProviders'
 import ServerStatusBanner from '@components/system/ServerStatusBanner'
 import TVLayout from '@components/HOC/TVLayout'
 import GeneralLayout from '@components/HOC/GeneralLayout'
@@ -36,29 +34,25 @@ export default async function styledLayout({ children }) {
   
   return (
     <Suspense>
-      <NotificationProvider>
-        <SystemStatusProvider>
-          <div
-            className={classNames(inter.className, `transition-colors duration-1000`)}
-          >
-            <Suspense>
-              <ServerStatusBanner />
-            </Suspense>
-            <Suspense>
-              <GeneralLayout posterCollage={posterCollage} />
-            </Suspense>
-            <Suspense>
-              <TVLayout posterCollage={posterCollage} />
-            </Suspense>
-            <Suspense>
-              <MovieLayout posterCollage={posterCollage} />
-            </Suspense>
-            <NavigationProvider>
-              {children}
-            </NavigationProvider>
-          </div>
-        </SystemStatusProvider>
-      </NotificationProvider>
+      <ClientProviders>
+        <div
+          className={classNames(inter.className, `transition-colors duration-1000`)}
+        >
+          <Suspense>
+            <ServerStatusBanner />
+          </Suspense>
+          <Suspense>
+            <GeneralLayout posterCollage={posterCollage} />
+          </Suspense>
+          <Suspense>
+            <TVLayout posterCollage={posterCollage} />
+          </Suspense>
+          <Suspense>
+            <MovieLayout posterCollage={posterCollage} />
+          </Suspense>
+          {children}
+        </div>
+      </ClientProviders>
     </Suspense>
   )
 }

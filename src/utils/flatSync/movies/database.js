@@ -3,6 +3,7 @@
  */
 
 import { ObjectId } from 'mongodb';
+import { createLogger, logError } from '@src/lib/logger';
 
 /**
  * Updates a movie in the flat database structure
@@ -12,6 +13,7 @@ import { ObjectId } from 'mongodb';
  * @returns {Promise<Object>} Update result
  */
 export async function updateMovieInFlatDB(client, title, updates) {
+  const log = createLogger('FlatSync.Movies.Database');
   try {
     const result = await client
       .db('Media')
@@ -20,7 +22,10 @@ export async function updateMovieInFlatDB(client, title, updates) {
     
     return result;
   } catch (error) {
-    console.error(`Error updating movie "${title}" in flat structure:`, error);
+    logError(log, error, {
+      title,
+      context: 'update_movie_failed'
+    });
     return { error };
   }
 }
@@ -32,13 +37,17 @@ export async function updateMovieInFlatDB(client, title, updates) {
  * @returns {Promise<Object|null>} Movie document or null
  */
 export async function getMovieFromFlatDB(client, title) {
+  const log = createLogger('FlatSync.Movies.Database');
   try {
     return await client
       .db('Media')
       .collection('FlatMovies')
       .findOne({ originalTitle: title });
   } catch (error) {
-    console.error(`Error getting movie "${title}" from flat structure:`, error);
+    logError(log, error, {
+      title,
+      context: 'get_movie_failed'
+    });
     return null;
   }
 }
@@ -50,6 +59,7 @@ export async function getMovieFromFlatDB(client, title) {
  * @returns {Promise<Object>} Insert result
  */
 export async function createMovieInFlatDB(client, movieData) {
+  const log = createLogger('FlatSync.Movies.Database');
   try {
     // Ensure the movie has an _id
     if (!movieData._id) {
@@ -73,7 +83,10 @@ export async function createMovieInFlatDB(client, movieData) {
     
     return result;
   } catch (error) {
-    console.error(`Error creating movie "${movieData.title}" in flat structure:`, error);
+    logError(log, error, {
+      title: movieData.title,
+      context: 'create_movie_failed'
+    });
     return { error };
   }
 }

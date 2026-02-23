@@ -64,6 +64,7 @@ function MediaPoster({
       )}
       {_media.videoURL ? (
         <TotalRuntime
+          watchedSeconds={_media.watchHistory?.playbackTime ? Math.round(_media.watchHistory.playbackTime) : undefined}
           length={_media.duration ?? (_media.metadata?.runtime ? _media.metadata.runtime * 60000 : 0)}
           metadata={_media.metadata}
           videoURL={_media.videoURL}

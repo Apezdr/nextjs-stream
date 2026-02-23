@@ -2,6 +2,7 @@
  * TV show metadata sync utilities for flat structure
  */
 
+import { createLogger } from '@src/lib/logger';
 import { filterLockedFields, isCurrentServerHighestPriorityForField, MediaType } from '../../sync/utils';
 import { updateTVShowInFlatDB } from './database';
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
@@ -17,6 +18,7 @@ import { isEqual, difference } from 'lodash';
  * @returns {Promise<Object|null>} Update result or null
  */
 export async function syncTVShowMetadata(client, show, fileServerData, serverConfig, fieldAvailability) {
+  const log = createLogger('FlatSync.TVShows.Metadata');
   if (!fileServerData?.metadata) return null;
   
   const fieldPath = 'metadata';
@@ -106,7 +108,11 @@ export async function syncTVShowMetadata(client, show, fileServerData, serverCon
   
   if (Object.keys(filteredUpdateData).length === 0) return null;
   
-  console.log(`TV Show: Updating metadata for "${showTitle}" from server ${serverConfig.id}`);
+  log.info({
+    showTitle,
+    serverId: serverConfig.id,
+    field: 'metadata'
+  }, 'Updating TV show metadata');
   
   // Update the TV show in the flat database
   await updateTVShowInFlatDB(client, originalTitle, { $set: filteredUpdateData });

@@ -1,5 +1,5 @@
+import { createLogger, logError } from '@src/lib/logger'
 import clientPromise from '@src/lib/mongodb'
-import chalk from 'chalk'
 import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 
@@ -11,7 +11,8 @@ import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
  * @returns {Promise<Object>} Validation results
  */
 export async function validatePlaybackStatusAgainstDatabase() {
-  console.log(chalk.bold.blue('Starting PlaybackStatus bulk validation against cleaned database...'));
+  const log = createLogger('FlatSync.PlaybackStatusValidation');
+  log.info('Starting PlaybackStatus bulk validation against cleaned database...');
   
   const client = await clientPromise;
   const db = client.db('Media');
@@ -31,7 +32,7 @@ export async function validatePlaybackStatusAgainstDatabase() {
     const flatEpisodesCollection = db.collection('FlatEpisodes');
     
     // Build lookup maps for faster validation
-    console.log(chalk.blue('Building validation lookup maps...'));
+    log.info('Building validation lookup maps...');
     
     // Get all valid movie videoURLs
     const movieVideoUrls = new Set();
@@ -57,7 +58,10 @@ export async function validatePlaybackStatusAgainstDatabase() {
       }
     }
     
-    console.log(chalk.blue(`Found ${movieVideoUrls.size} valid movie videos and ${tvVideoUrls.size} valid TV episode videos`));
+    log.info({
+      movieCount: movieVideoUrls.size,
+      tvCount: tvVideoUrls.size
+    }, 'Built video URL lookup sets');
     
     // Combine all valid videoURLs
     const allValidVideoUrls = new Set([...movieVideoUrls, ...tvVideoUrls]);
@@ -66,7 +70,7 @@ export async function validatePlaybackStatusAgainstDatabase() {
     const playbackRecords = await playbackStatusCollection.find({}).toArray();
     results.processed = playbackRecords.length;
     
-    console.log(chalk.blue(`Processing ${playbackRecords.length} PlaybackStatus records...`));
+    log.info({ totalRecords: playbackRecords.length }, 'Processing PlaybackStatus records');
     
     for (const record of playbackRecords) {
       try {
@@ -127,7 +131,10 @@ export async function validatePlaybackStatusAgainstDatabase() {
         }
         
       } catch (error) {
-        console.error(`Error processing PlaybackStatus record for user ${record.userId}:`, error);
+        logError(log, error, {
+          userId: record.userId instanceof ObjectId ? record.userId.toString() : record.userId,
+          context: 'process_record'
+        });
         results.errors.push({
           userId: record.userId instanceof ObjectId ? record.userId.toString() : record.userId,
           error: error.message
@@ -135,13 +142,17 @@ export async function validatePlaybackStatusAgainstDatabase() {
       }
     }
     
-    console.log(chalk.bold.blue(`PlaybackStatus bulk validation complete.`));
-    console.log(chalk.blue(`Valid: ${results.markedValid}, Invalid: ${results.markedInvalid}, Already correct: ${results.alreadyValid}, Errors: ${results.errors.length}`));
+    log.info({
+      markedValid: results.markedValid,
+      markedInvalid: results.markedInvalid,
+      alreadyValid: results.alreadyValid,
+      errorCount: results.errors.length
+    }, 'PlaybackStatus bulk validation complete');
     
     return results;
     
   } catch (error) {
-    console.error(`Error during PlaybackStatus bulk validation:`, error);
+    logError(log, error, { context: 'bulk_validation' });
     results.errors.push({
       general: true,
       error: error.message,
@@ -157,7 +168,8 @@ export async function validatePlaybackStatusAgainstDatabase() {
  * @returns {Promise<Object>} Validation results for the user
  */
 export async function validateUserPlaybackStatus(userId) {
-  console.log(chalk.blue(`Validating PlaybackStatus for user ${userId}...`));
+  const log = createLogger('FlatSync.PlaybackStatusValidation.User');
+  log.info({ userId }, 'Validating PlaybackStatus for user');
   
   const client = await clientPromise;
   const db = client.db('Media');
@@ -208,7 +220,7 @@ export async function validateUserPlaybackStatus(userId) {
     const userRecord = await playbackStatusCollection.findOne({ userId: userIdObj });
     
     if (!userRecord) {
-      console.log(chalk.yellow(`No PlaybackStatus record found for user ${userId}`));
+      log.info({ userId, context: 'record_missing' }, 'No PlaybackStatus record found for user');
       return results;
     }
     
@@ -263,12 +275,17 @@ export async function validateUserPlaybackStatus(userId) {
       );
     }
     
-    console.log(chalk.blue(`User validation complete. Valid: ${results.markedValid}, Invalid: ${results.markedInvalid}, Already correct: ${results.alreadyValid}`));
+    log.info({
+      userId,
+      markedValid: results.markedValid,
+      markedInvalid: results.markedInvalid,
+      alreadyValid: results.alreadyValid
+    }, 'User PlaybackStatus validation complete');
     
     return results;
     
   } catch (error) {
-    console.error(`Error validating PlaybackStatus for user ${userId}:`, error);
+    logError(log, error, { userId, context: 'user_validation' });
     results.errors.push({
       error: error.message,
       stack: error.stack

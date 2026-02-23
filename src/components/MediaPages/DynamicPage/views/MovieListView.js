@@ -21,13 +21,20 @@ import { parseSearchParamsToFilters } from '@src/utils/mediaListUtils/shared'
  * 
  * @param {Object} props
  * @param {Object} props.searchParams - URL search parameters for filtering/pagination
+ * @param {Object} props.session - User session object (passed from parent component)
  */
-export default async function MovieListView({ searchParams = {} }) {
+export default async function MovieListView({ searchParams = {}, session }) {
   // Parse search params into filter options
   const initialFilters = parseSearchParamsToFilters(searchParams);
   
-  // Fetch initial data using Server Action (cached)
-  const initialData = await getMovieListData(initialFilters);
+  // Add userId to the filter options for watch history
+  const filtersWithUserId = {
+    ...initialFilters,
+    userId: session?.user?.id
+  };
+  
+  // Fetch initial data using Server Action (cached) - now includes watchHistory
+  const initialData = await getMovieListData(filtersWithUserId);
   
   // Extract statistics for header display
   const { statistics } = initialData;
@@ -77,6 +84,7 @@ export default async function MovieListView({ searchParams = {} }) {
           <MovieListClient
             initialFilters={initialFilters}
             initialData={initialData}
+            userId={session?.user?.id}
           />
         </ul>
       </div>

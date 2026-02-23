@@ -18,6 +18,10 @@ export * from './logger'
 // Field path mappings (type-safe fieldAvailability lookups)
 export * from './fieldPaths'
 
+// Resource management (throttling, memory monitoring)
+export { ResourceManager, getResourceConfig } from './ResourceManager'
+export type { ResourceConfig } from './ResourceManager'
+
 // Re-export commonly used items for convenience
 export {
   MediaType,

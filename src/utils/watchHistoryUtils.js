@@ -1,13 +1,16 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { cache } from 'react'
 
 /**
  * Fetches user's watch history and creates a lookup map for efficient matching
+ * Wrapped with React.cache() for per-request deduplication in Server Components
+ *
  * @param {string|ObjectId} userId - The user ID
  * @returns {Promise<Map>} Map with normalizedVideoId as key and watch data as value
  */
-export async function createWatchHistoryLookupMap(userId) {
+export const createWatchHistoryLookupMap = cache(async function(userId) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -84,7 +87,7 @@ export async function createWatchHistoryLookupMap(userId) {
     console.error('Error creating watch history lookup map:', error)
     return new Map() // Return empty map on error to allow graceful degradation
   }
-}
+})
 
 /**
  * Augments media items with watch history data

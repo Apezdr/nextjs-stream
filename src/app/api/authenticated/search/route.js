@@ -16,11 +16,11 @@ export const POST = async (req) => {
 
   try {
     const body = await req.json()
-    const { query } = body
+    const { query, limit } = body
 
     // Assuming 'query' is a string you want to search for
     try {
-      const results = await searchMedia(query)
+      const results = await searchMedia(query, limit)
       return new Response(JSON.stringify({ results }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -41,7 +41,7 @@ export const POST = async (req) => {
   }
 }
 
-async function searchMedia(query) {
+async function searchMedia(query, limit) {
   const client = await clientPromise
   const db = client.db('Media')
   let recentlyAddedMediaQuery = false
@@ -62,7 +62,9 @@ async function searchMedia(query) {
     ])
   } else {
     // Fetch recently added media if query is empty
-    const recentlyAddedMedia = await getFlatRecentlyAddedMedia({ limit: 15 })
+    // Default to 15, max 50
+    const requestedLimit = limit ? Math.min(Math.max(1, parseInt(limit)), 50) : 15
+    const recentlyAddedMedia = await getFlatRecentlyAddedMedia({ limit: requestedLimit })
     return recentlyAddedMedia
   }
 
