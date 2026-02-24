@@ -26,7 +26,7 @@ function minimizeMediaItemsForUX(items) {
     hdr: item.hdr,
     thumbnailUrl: item.posterURL,
     thumbnailBlurhash: item.posterBlurhash,
-    mediaType: item.type,
+    type: item.type,
     link: item.link,
     backdropUrl: item.backdrop,
     backdropBlurhash: item.backdropBlurhash,
