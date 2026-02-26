@@ -13,6 +13,7 @@ export default function WithPlayBackTracker({
 }) {
   const player = useMediaPlayer();
   const canPlay = useMediaState('canPlay');
+  const duration = useMediaState('duration');
   const remote = useMediaRemote();
   const [lastTimeSent, setLastTimeSent] = useState(0);
   const isFetchingRef = useRef(false);
@@ -111,9 +112,13 @@ export default function WithPlayBackTracker({
     });
 
     return () => {
+      // Send stop heartbeat before terminating worker to clear active session
+      if (worker) {
+        worker.postMessage({ videoURL: videoURL, action: 'stop' });
+      }
       worker.terminate();
     };
-  }, []);
+  }, [videoURL]);
 
   // Subscribe to the media player's current time and throttle updates to the worker.
   useEffect(() => {
@@ -136,6 +141,7 @@ export default function WithPlayBackTracker({
           videoURL: videoURL,
           currentTime: currentTime,
           mediaMetadata: mediaMetadata,
+          duration: duration || null,
         });
       } else {
         nextUpdateTimeRef.current = currentTime;
@@ -151,7 +157,7 @@ export default function WithPlayBackTracker({
       unsubscribe();
       throttledUpdateServer.cancel();
     };
-  }, [player, videoURL, canPlay, mediaMetadata]);
+  }, [player, videoURL, canPlay, mediaMetadata, duration]);
 
   return null;
 }
