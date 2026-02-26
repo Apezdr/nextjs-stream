@@ -17,13 +17,14 @@ import { httpGet } from '@src/lib/httpHelper'
  * - /episode/123/1/1/images
  */
 export async function GET(request, { params }) {
+  const { endpoint } = await params
+  
   try {
     // Check authentication
     const authResult = await isAuthenticatedEither(request)
     if (authResult instanceof Response) {
       return authResult
     }
-    const { endpoint } = await params
     const { searchParams } = new URL(request.url)
 
     // Validate endpoint array
@@ -49,15 +50,20 @@ export async function GET(request, { params }) {
       backendUrl.searchParams.append(key, value)
     })
 
-    // Build headers with authentication
+    // Build headers with authentication - forward ALL auth methods
     const headers = {
       'Content-Type': 'application/json',
     }
 
-    // Forward cookies for authentication with backend
-    if (request.headers.get('cookie')) {
-      headers['cookie'] = request.headers.get('cookie')
-    }
+    // Forward all authentication headers to backend
+    // This supports: web cookies, Bearer tokens (TV/mobile), and session tokens
+    const authHeadersToForward = ['authorization', 'x-session-token', 'x-mobile-token', 'cookie']
+    authHeadersToForward.forEach(headerName => {
+      const headerValue = request.headers.get(headerName)
+      if (headerValue) {
+        headers[headerName] = headerValue
+      }
+    })
 
     // Determine caching strategy based on endpoint
     const shouldCache =
@@ -95,7 +101,7 @@ export async function GET(request, { params }) {
     return Response.json(
       {
         error: `TMDB request failed: ${error.message}`,
-        endpoint: params.endpoint?.join('/') || 'unknown',
+        endpoint: endpoint?.join('/') || 'unknown',
       },
       { status: 500 }
     )

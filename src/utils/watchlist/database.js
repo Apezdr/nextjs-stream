@@ -278,8 +278,29 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
           rating: item.rating,
           ...mediaData,
         }
+      } else if (!internalOnly) {
+        // When not filtering to internal-only, preserve unresolved items
+        // so getMinimalCardDataForPlaylist can handle them with its includeUnavailable logic
+        return {
+          id: item._id.toString(),
+          watchlistId: item._id.toString(),
+          userId: item.userId.toString(),
+          playlistId: item.playlistId.toString(),
+          tmdbId: parseInt(item.tmdbId),
+          mediaType: item.mediaType,
+          title: item.title || 'Unknown Title',
+          dateAdded: item.dateAdded,
+          notes: item.notes,
+          rating: item.rating,
+          isAvailable: false,  // Explicitly mark as unavailable
+          // Preserve any cached poster/backdrop data stored on the watchlist item
+          posterURL: item.posterURL || null,
+          posterBlurhash: item.posterBlurhash || null,
+          backdrop: item.backdrop || null,
+          backdropBlurhash: item.backdropBlurhash || null,
+        }
       } else {
-        // If resolution failed, return minimal data (item will be excluded from results)
+        // internalOnly mode — drop unavailable items as intended
         return null
       }
     }).filter(Boolean) // Remove null entries
@@ -2061,9 +2082,12 @@ export async function cleanExpiredComingSoon() {
  * @param {Array} watchlistItems - Watchlist items with mediaIds
  * @param {Object} [playlist=null] - Playlist object with sorting preferences
  * @param {boolean} [includeUnavailable=true] - Whether to include unavailable (TMDB-only) items
+ * @param {Object} [options={}] - Additional options
+ * @param {Object} [options.authHeaders] - Authentication headers for server-to-server TMDB calls
  * @returns {Promise<Array>} Minimal card data optimized for horizontal list performance
  */
-export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = null, includeUnavailable = true) {
+export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = null, includeUnavailable = true, options = {}) {
+  const { authHeaders = null } = options
   if (!watchlistItems || watchlistItems.length === 0) {
     return []
   }
@@ -2145,6 +2169,44 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
       }
     })
 
+    // Identify external items that need TMDB data fetching
+    const externalItems = watchlistItems.filter(item => {
+      const tmdbId = parseInt(item.tmdbId)
+      return !availableMediaMap.has(tmdbId) && includeUnavailable
+    })
+
+    // Fetch TMDB metadata for external items using batchResolveMedia
+    let externalTmdbData = new Map()
+    if (externalItems.length > 0) {
+      try {
+        console.log(`[getMinimalCardDataForPlaylist] Fetching TMDB data for ${externalItems.length} external items:`,
+          externalItems.map(item => `${item.mediaType}/${item.tmdbId}`).join(', '))
+        
+        const tmdbResults = await batchResolveMedia(
+          externalItems.map(item => ({
+            tmdbId: parseInt(item.tmdbId),
+            mediaType: item.mediaType
+          })),
+          { authHeaders }  // Forward auth headers for authentication
+        )
+        externalTmdbData = tmdbResults
+        
+        // Log TMDB fetch success/failure
+        const successCount = externalTmdbData.size
+        const failureCount = externalItems.length - successCount
+        console.log(`[getMinimalCardDataForPlaylist] TMDB fetch results: ${successCount} success, ${failureCount} failures`)
+        
+        if (failureCount > 0) {
+          const failedItems = externalItems.filter(item => !externalTmdbData.has(parseInt(item.tmdbId)))
+          console.warn(`[getMinimalCardDataForPlaylist] Failed to fetch TMDB data for items:`,
+            failedItems.map(item => `${item.mediaType}/${item.tmdbId}`).join(', '))
+        }
+      } catch (error) {
+        console.error('[getMinimalCardDataForPlaylist] Error fetching TMDB data for external items:', error)
+        // Continue with empty data - fallback to 'Unknown Title' / placeholder images
+      }
+    }
+
     // Bulk fetch "Coming Soon" status for all watchlist items
     const comingSoonMap = await bulkGetComingSoonStatus(
       watchlistItems.map((item) => ({
@@ -2180,11 +2242,19 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
           dateAdded: watchlistItem.dateAdded
         }
       } else if (includeUnavailable) {
-        // Item is NOT in library - use existing watchlist data with minimal structure
-        const title = watchlistItem.title || 'Unknown Title'
-        const posterURL = watchlistItem.posterURL || '/sorry-image-not-available.jpg'
-        const backdropURL = watchlistItem.backdrop || watchlistItem.backdropURL || null
-        const releaseDate = watchlistItem.tmdbMetadata?.release_date || watchlistItem.tmdbMetadata?.first_air_date
+        // Item is NOT in library - fetch TMDB data or use fallback
+        const tmdbData = externalTmdbData.get(tmdbId)
+        
+        // Use TMDB data if available, otherwise fall back to cached watchlist data
+        const title = tmdbData?.title || watchlistItem.title || 'Unknown Title'
+        const posterURL = tmdbData?.posterURL || watchlistItem.posterURL || '/sorry-image-not-available.jpg'
+        const backdropURL = tmdbData?.backdrop || watchlistItem.backdrop || watchlistItem.backdropURL || null
+        const posterBlurhash = tmdbData?.posterBlurhash || watchlistItem.posterBlurhash || null
+        const backdropBlurhash = tmdbData?.backdropBlurhash || watchlistItem.backdropBlurhash || null
+        const releaseDate = tmdbData?.metadata?.release_date ||
+                           tmdbData?.metadata?.first_air_date ||
+                           watchlistItem.tmdbMetadata?.release_date ||
+                           watchlistItem.tmdbMetadata?.first_air_date
         
         return {
           _id: watchlistItem._id?.toString() || watchlistItem.id,
@@ -2194,10 +2264,10 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
           mediaType: watchlistItem.mediaType,
           title: title,
           posterURL: posterURL,
-          posterBlurhash: watchlistItem.posterBlurhash || null,
+          posterBlurhash: posterBlurhash,
           // Include backdrop for PopupCard immediate display
           backdrop: backdropURL,
-          backdropBlurhash: watchlistItem.backdropBlurhash || null,
+          backdropBlurhash: backdropBlurhash,
           // Minimal metadata for card display - only essential fields
           metadata: {
             id: tmdbId,

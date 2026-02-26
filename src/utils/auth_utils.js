@@ -683,6 +683,7 @@ export function sanitizeCardData(item, popup = false, context = {}) {
       if (releaseDate) sanitized.releaseDate = releaseDate
       if (link) sanitized.link = link
       if (logo) sanitized.logo = logo
+      if (item.tmdbId) sanitized.tmdbId = item.tmdbId
       
       // TV specific properties
       if (episodeNumber) sanitized.episodeNumber = episodeNumber

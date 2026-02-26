@@ -2,7 +2,7 @@
 
 /**
  * Simplified Media Resolver
- * 
+ *
  * Uses React's cache() for proper request-scoped memoization.
  * Replaced manual Map cache with React Server Components best practices.
  */
@@ -16,7 +16,7 @@ import { getComprehensiveDetails } from '@src/utils/tmdb/client'
  * Internal implementation (not cached) - does the actual work
  */
 async function batchResolveMediaInternal(items, options = {}) {
-  let { precomputedAvailability = null } = options
+  let { precomputedAvailability = null, authHeaders = null } = options
   
   // Convert Array back to Set if needed (from JSON deserialization)
   if (precomputedAvailability && Array.isArray(precomputedAvailability)) {
@@ -233,7 +233,7 @@ async function batchResolveMediaInternal(items, options = {}) {
     console.log(`[batchResolveMediaInternal] Fetching ${externalItems.length} external items from TMDB API`)
     
     // Use cached TMDB fetching per item to avoid duplicate API calls within the same request
-    const tmdbPromises = externalItems.map(item => getCachedTMDBDetails(parseInt(item.tmdbId), item.mediaType))
+    const tmdbPromises = externalItems.map(item => getCachedTMDBDetails(parseInt(item.tmdbId), item.mediaType, authHeaders))
     const tmdbResults = await Promise.allSettled(tmdbPromises)
     
     // Process results
@@ -345,14 +345,16 @@ async function batchResolveMediaInternal(items, options = {}) {
 
 /**
  * Cached TMDB details fetching - uses React cache() with primitives for proper memoization
+ * Accepts optional authHeaders for server-to-server authentication
  */
-const getCachedTMDBDetails = cache(async function getCachedTMDBDetails(tmdbId, mediaType) {
-  console.log(`[getCachedTMDBDetails] Fetching TMDB data for ${mediaType}/${tmdbId}`)
+const getCachedTMDBDetails = cache(async function getCachedTMDBDetails(tmdbId, mediaType, authHeaders = null) {
+  console.log(`[getCachedTMDBDetails] Fetching TMDB data for ${mediaType}/${tmdbId}`, authHeaders ? '(with auth)' : '(no auth)')
   
   try {
     const tmdbData = await getComprehensiveDetails({
       tmdbId: tmdbId,
-      type: mediaType
+      type: mediaType,
+      authHeaders  // Forward auth headers for authentication
     })
     
     if (!tmdbData) {

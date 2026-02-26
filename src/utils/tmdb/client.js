@@ -30,7 +30,7 @@ export class TMDBError extends Error {
  * @returns {Promise<Object>} API response data
  */
 async function makeRequest(endpoint, options = {}) {
-  const { method = 'GET', body = null, params = {}, retries = 2, timeout = 10000 } = options
+  const { method = 'GET', body = null, params = {}, retries = 2, timeout = 10000, authHeaders = null } = options
   const isServer = typeof window === 'undefined'
 
   // Build URL differently for server vs client
@@ -68,16 +68,22 @@ async function makeRequest(endpoint, options = {}) {
 
       // Handle authentication differently for server vs client
       if (isServer) {
-        // Server-side: get cookies from headers() function
-        try {
-          const { headers: nextHeaders } = await import('next/headers')
-          const headersList = await nextHeaders()
-          const cookieHeader = headersList.get('cookie')
-          if (cookieHeader) {
-            headers['cookie'] = cookieHeader
+        // If auth headers were explicitly provided, use them (for nested server calls)
+        if (authHeaders && typeof authHeaders === 'object') {
+          // Forward all provided authentication headers
+          Object.assign(headers, authHeaders)
+        } else {
+          // Fall back to trying next/headers() (works in immediate request context only)
+          try {
+            const { headers: nextHeaders } = await import('next/headers')
+            const headersList = await nextHeaders()
+            const extractedCookie = headersList.get('cookie')
+            if (extractedCookie) {
+              headers['cookie'] = extractedCookie
+            }
+          } catch (error) {
+            console.warn('Failed to get cookies from next/headers() - may be called from nested context:', error.message)
           }
-        } catch (error) {
-          console.warn('Failed to get cookies on server-side:', error.message)
         }
       }
 
@@ -289,7 +295,7 @@ export async function getCollectionImages(collectionId) {
  * @returns {Promise<Object>} Comprehensive media details
  */
 export async function getComprehensiveDetails(options) {
-  const { name, tmdbId, type } = options
+  const { name, tmdbId, type, authHeaders = null } = options
 
   if (!name && !tmdbId) {
     throw new TMDBError('Either name or tmdbId is required')
@@ -305,7 +311,7 @@ export async function getComprehensiveDetails(options) {
   if (name) params.name = name
   if (tmdbId) params.tmdb_id = tmdbId
 
-  return await makeRequest(`/comprehensive/${type}`, { params })
+  return await makeRequest(`/comprehensive/${type}`, { params, authHeaders })
 }
 
 /**
