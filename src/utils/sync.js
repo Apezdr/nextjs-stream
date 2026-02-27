@@ -1,7 +1,7 @@
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
 import {
-  validatePlaybackVideoUrls,
+  validateWatchHistoryVideoUrls,
 } from './sync/playbackValidation'
 import { updateLastSynced } from './sync/database'
 import { processMovie, processTVShow } from './sync_utils'
@@ -261,7 +261,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       
       // Perform sync operations with server-specific configuration
       const syncOperations = [
-        { name: 'Playback Status Validation', fn: () => validatePlaybackVideoUrls(fileServers) }
+        { name: 'WatchHistory Validation', fn: () => validateWatchHistoryVideoUrls(fileServers) }
       ];
 
       // Execute each sync operation and catch any errors

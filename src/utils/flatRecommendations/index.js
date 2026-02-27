@@ -45,17 +45,18 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
     const client = await clientPromise
     const db = client.db('Media')
 
-    // Get user's watched videos
-    const userPlayback = await db
-      .collection('PlaybackStatus')
-      .findOne({ userId: new ObjectId(userId) })
+    // Get user's watched videos from WatchHistory collection
+    const userWatchHistoryEntries = await db
+      .collection('WatchHistory')
+      .find({ userId: new ObjectId(userId), isValid: true })
+      .toArray()
 
-    if (!userPlayback || !userPlayback.videosWatched || userPlayback.videosWatched.length === 0) {
+    if (!userWatchHistoryEntries || userWatchHistoryEntries.length === 0) {
       return { hasWatched: false, items: [] }
     }
 
-    // Extract video IDs from watched videos and filter out null/undefined values
-    const videoIds = userPlayback.videosWatched
+    // Extract video IDs from watch history entries and filter out null/undefined values
+    const videoIds = userWatchHistoryEntries
       .map(video => video.videoId)
       .filter(Boolean) // This will filter out null, undefined, empty strings
 
@@ -151,7 +152,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
 
     // Create a map of watched video URLs with their metadata for quick lookup
     const watchedVideoURLsMap = new Map();
-    userPlayback.videosWatched.forEach(video => {
+    userWatchHistoryEntries.forEach(video => {
       if (video.videoId) {
         watchedVideoURLsMap.set(video.videoId, video);
       }
@@ -392,30 +393,26 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
     const client = await clientPromise
     const db = client.db('Media')
 
-    // Aggregate watch counts from PlaybackStatus collection
-    const allWatchedVideos = await db.collection('PlaybackStatus')
+    // Aggregate watch counts from WatchHistory collection
+    const allWatchHistoryEntries = await db.collection('WatchHistory')
       .find({})
-      .project({ videosWatched: 1 })
+      .project({ videoId: 1 })
       .toArray()
     
     // Create a map of videoId to watch count and metadata
     const watchCountMap = new Map()
     const watchedVideoURLsMap = new Map()
     
-    allWatchedVideos.forEach(user => {
-      if (user.videosWatched) {
-        user.videosWatched.forEach(video => {
-          if (video.videoId) { // Only process valid videoIds
-            // Update watch count
-            const count = watchCountMap.get(video.videoId) || 0
-            watchCountMap.set(video.videoId, count + 1)
-            
-            // Store video metadata for validation
-            if (!watchedVideoURLsMap.has(video.videoId)) {
-              watchedVideoURLsMap.set(video.videoId, video)
-            }
-          }
-        })
+    allWatchHistoryEntries.forEach(video => {
+      if (video.videoId) { // Only process valid videoIds
+        // Update watch count
+        const count = watchCountMap.get(video.videoId) || 0
+        watchCountMap.set(video.videoId, count + 1)
+        
+        // Store video metadata for validation
+        if (!watchedVideoURLsMap.has(video.videoId)) {
+          watchedVideoURLsMap.set(video.videoId, video)
+        }
       }
     })
     
@@ -804,25 +801,18 @@ async function getFlatLatestWatchTimestamp(userId) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
+    const userObjectId = typeof userId === 'object' ? userId : new ObjectId(userId)
     
-    const userPlayback = await db
-      .collection('PlaybackStatus')
-      .findOne({ userId: new ObjectId(userId) })
+    // Get the most recent watch history entry for this user
+    const latestWatch = await db
+      .collection('WatchHistory')
+      .findOne({ userId: userObjectId }, { sort: { lastUpdated: -1 } })
     
-    if (!userPlayback || !userPlayback.videosWatched || userPlayback.videosWatched.length === 0) {
+    if (!latestWatch || !latestWatch.lastUpdated) {
       return 'no-watch-history'
     }
     
-    // Find the most recent lastUpdated timestamp
-    let latestTimestamp = new Date(0) // Start with epoch time
-    
-    userPlayback.videosWatched.forEach(video => {
-      if (video.lastUpdated && new Date(video.lastUpdated) > latestTimestamp) {
-        latestTimestamp = new Date(video.lastUpdated)
-      }
-    })
-    
-    return latestTimestamp.toISOString()
+    return new Date(latestWatch.lastUpdated).toISOString()
   } catch (error) {
     console.error('Error getting latest watch timestamp:', error)
     return 'error-getting-timestamp'

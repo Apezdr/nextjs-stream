@@ -22,13 +22,15 @@ import {
 } from './videoAvailability';
 // Import blurhash sync module
 import { syncBlurhashData } from './blurhashSync';
-// Import PlaybackStatus validation module
-import { validatePlaybackStatusAgainstDatabase } from './playbackStatusValidation';
+// Import WatchHistory validation module
+import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation';
 // Import notification system
 import { MediaNotificationOrchestrator } from '../notifications/MediaNotificationOrchestrator';
 // Import feature flag utilities and new architecture adapter
 import { shouldUseNewArchitecture, logFeatureFlagDecision } from '../sync/featureFlags';
 import { syncWithNewArchitecture, validateNewArchitectureCompatibility } from './newArchitectureAdapter';
+// Import WatchHistory migration
+import { migratePlaybackStatusIfNeeded } from '../watchHistory/migrate';
 
 /**
  * Process new content notifications after sync operations
@@ -389,17 +391,32 @@ export async function checkAvailabilityAcrossAllServers(allFileServers, fieldAva
   log.info(removalSummary, 'Final availability check completed');
   
   // Now that availability checks are complete and database is cleaned,
-  // validate PlaybackStatus records against the current state
+  // Run PlaybackStatus to WatchHistory migration (if needed)
+  const migrationStartTime = performance.now();
+  try {
+    await migratePlaybackStatusIfNeeded();
+  } catch (error) {
+    log.warn({ error }, 'WatchHistory migration encountered an issue, but sync continues');
+  }
+  const migrationEndTime = performance.now();
+  const migrationDurationSec = (migrationEndTime - migrationStartTime) / 1000;
+  
+  log.info({ 
+    durationSec: parseFloat(migrationDurationSec.toFixed(2))
+  }, 'WatchHistory migration triggered');
+  
+  // Validate WatchHistory records against the current state
   const validationStartTime = performance.now();
-  const validationResults = await validatePlaybackStatusAgainstDatabase();
+  const validationResults = await validateWatchHistoryAgainstDatabase();
   const validationEndTime = performance.now();
   const validationDurationSec = (validationEndTime - validationStartTime) / 1000;
   
   log.info({ 
     durationSec: parseFloat(validationDurationSec.toFixed(2))
-  }, 'PlaybackStatus validation completed');
+  }, 'WatchHistory validation completed');
   
-  results.playbackValidation = validationResults;
+  results.watchHistoryValidation = validationResults;
+  results.migration = { durationSec: parseFloat(migrationDurationSec.toFixed(2)) };
   return results;
 }
 
@@ -422,6 +439,6 @@ export {
   // Export blurhash sync functions
   syncBlurhashData,
   
-  // Export PlaybackStatus validation functions
-  validatePlaybackStatusAgainstDatabase,
+  // Export WatchHistory validation functions
+  validateWatchHistoryAgainstDatabase,
 };

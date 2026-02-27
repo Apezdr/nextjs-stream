@@ -541,27 +541,13 @@ export async function getFlatRecentlyWatchedForUser({
         console.time('getFlatRecentlyWatchedForUser:count');
       }
       
-      const countResult = await _client
+      const count = await _client
         .db('Media')
-        .collection('PlaybackStatus')
-        .aggregate([
-          { $match: { userId: userObjectId } },
-          { $project: {
-              validVideosCount: {
-                $size: {
-                  $filter: {
-                    input: "$videosWatched",
-                    as: "video",
-                    cond: { $eq: ["$$video.isValid", true] }
-                  }
-                }
-              }
-            }
-          }
-        ])
-        .toArray();
-      
-      const count = countResult.length > 0 ? countResult[0].validVideosCount : 0;
+        .collection('WatchHistory')
+        .countDocuments({
+          userId: userObjectId,
+          isValid: true
+        });
       
       if (Boolean(process.env.DEBUG) == true) {
         console.timeEnd('getFlatRecentlyWatchedForUser:count');
@@ -572,43 +558,33 @@ export async function getFlatRecentlyWatchedForUser({
       return count;
     }
     
-    // Step 2: Use aggregation pipeline to get paginated, sorted valid videos
-    // Modified approach: Filter valid videos first, then apply pagination to the filtered results
+    // Step 2: Query WatchHistory for much faster, lock-free access to watched videos
+    // Each WatchHistory document = one user+video pair (no arrays, no locks)
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatRecentlyWatchedForUser:aggregate');
     }
     
-    const aggregationPipeline = [
-      // Match the user's document
-      { $match: { userId: userObjectId } },
-      
-      // Unwind the videosWatched array to work with individual videos
-      { $unwind: "$videosWatched" },
-      
-      // Filter to only valid videos
-      { $match: { "videosWatched.isValid": true } },
-      
-      // Sort by lastUpdated (most recent first), then by videoId for deterministic ordering
-      { $sort: { "videosWatched.lastUpdated": -1, "videosWatched.videoId": 1 } },
-      
-      // Apply pagination to the filtered valid videos
-      { $skip: validPage * limit },
-      { $limit: limit },
-      
-      // Project only needed fields, including normalizedVideoId and deviceInfo if available
-      { $project: {
-          videoId: "$videosWatched.videoId",
-          playbackTime: "$videosWatched.playbackTime",
-          lastUpdated: "$videosWatched.lastUpdated",
-          normalizedVideoId: "$videosWatched.normalizedVideoId",
-          deviceInfo: "$videosWatched.deviceInfo"
-      }}
-    ];
-    
     const watchedVideos = await _client
       .db('Media')
-      .collection('PlaybackStatus')
-      .aggregate(aggregationPipeline)
+      .collection('WatchHistory')
+      .find(
+        { 
+          userId: userObjectId,
+          isValid: true 
+        },
+        {
+          projection: {
+            videoId: 1,
+            playbackTime: 1,
+            lastUpdated: 1,
+            normalizedVideoId: 1,
+            deviceInfo: 1
+          }
+        }
+      )
+      .sort({ lastUpdated: -1 }) // Sort by most recent first
+      .skip(validPage * limit)
+      .limit(limit)
       .toArray();
     
     if (Boolean(process.env.DEBUG) == true) {
@@ -1935,7 +1911,7 @@ export async function getFlatAvailableTVShowsCount() {
 
 /**
  * Count unique users who have watched a specific media by its normalized video id.
- * This function searches through the PlaybackStatus collection to find all users
+  * This function searches through the WatchHistory collection to find all users
  * who have a video with the matching normalizedVideoId in their watched history.
  *
  * @param {string} normalizedVideoId - The normalized video ID to search for
@@ -1950,28 +1926,33 @@ export async function countUniqueViewersByNormalizedId(normalizedVideoId) {
     
     const client = await clientPromise;
     
-    // Use MongoDB aggregation pipeline to count unique users
+    // Query WatchHistory collection - much faster, no array operations or locks
+    // Each document = one user+video pair, so simple distinct query on userId
     const result = await client
       .db('Media')
-      .collection('PlaybackStatus')
+      .collection('WatchHistory')
       .aggregate([
-        // Filter documents that have at least one video with the matching normalizedVideoId
+        // Match videos with this normalizedVideoId and valid status
         { 
           $match: { 
-            "videosWatched": { 
-              $elemMatch: { 
-                "normalizedVideoId": normalizedVideoId,
-                "isValid": { $ne: false } // Only count valid entries
-              } 
-            } 
+            normalizedVideoId: normalizedVideoId,
+            isValid: true // Only count valid entries
           } 
         },
-        // Count unique users
+        // Count distinct users
         { 
           $group: { 
             _id: null, 
-            uniqueViewers: { $sum: 1 } 
+            uniqueViewers: { $sum: 1 },
+            uniqueUserCount: { $addToSet: "$userId" }
           } 
+        },
+        // Get the actual count of unique users
+        {
+          $project: {
+            _id: 0,
+            uniqueViewers: { $size: "$uniqueUserCount" }
+          }
         }
       ])
       .toArray();
@@ -2162,18 +2143,18 @@ export async function getFlatTVShowsWithEpisodeData(userId, page = 0, limit = 15
       .limit(limit)
       .toArray()
     
-    // Get user's watch history for TV episodes
+    // Get user's watch history for TV episodes from WatchHistory collection
     const userObjectId = typeof(userId) === 'object' ? userId : new ObjectId(userId)
-    const userWatchHistory = await db.collection('PlaybackStatus')
-      .findOne({ userId: userObjectId })
+    const watchHistoryDocs = await db.collection('WatchHistory')
+      .find({ userId: userObjectId, isValid: true })
+      .toArray()
     
     // Create a map of watched episodes by show with enhanced metadata-based logic
     const watchedEpisodesByShow = new Map()
-    if (userWatchHistory?.videosWatched) {
-      // Filter valid videos and separate those with metadata from those without
-      const validVideos = userWatchHistory.videosWatched.filter(video => video.isValid !== false)
-      const videosWithMetadata = validVideos.filter(video => video.mediaType === 'tv' && video.showId)
-      const videosWithoutMetadata = validVideos.filter(video => !video.mediaType || video.mediaType !== 'tv' || !video.showId)
+    if (watchHistoryDocs && watchHistoryDocs.length > 0) {
+      // Filter for TV shows with metadata (showId present)
+      const videosWithMetadata = watchHistoryDocs.filter(video => video.mediaType === 'tv' && video.showId)
+      const videosWithoutMetadata = watchHistoryDocs.filter(video => !video.mediaType || video.mediaType !== 'tv' || !video.showId)
       
       // Process videos with metadata (new enhanced schema)
       if (videosWithMetadata.length > 0) {

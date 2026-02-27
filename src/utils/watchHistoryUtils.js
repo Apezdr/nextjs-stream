@@ -16,33 +16,32 @@ export const createWatchHistoryLookupMap = cache(async function(userId) {
     const db = client.db('Media')
     const userObjectId = typeof userId === 'object' ? userId : new ObjectId(userId)
 
-    // Fetch user's watch history with projection for efficiency
-    const watchHistory = await db
-      .collection('PlaybackStatus')
-      .findOne(
-        { userId: userObjectId },
+    // Fetch user's watch history from WatchHistory collection
+    // Each document is a separate video entry (no arrays)
+    const watchHistoryEntries = await db
+      .collection('WatchHistory')
+      .find(
+        { userId: userObjectId, isValid: true },
         {
           projection: {
-            'videosWatched.videoId': 1,
-            'videosWatched.normalizedVideoId': 1,
-            'videosWatched.playbackTime': 1,
-            'videosWatched.lastUpdated': 1,
-            'videosWatched.isValid': 1,
-            'videosWatched.mediaType': 1,
-            'videosWatched.showId': 1,
-            'videosWatched.seasonNumber': 1,
-            'videosWatched.episodeNumber': 1
+            videoId: 1,
+            normalizedVideoId: 1,
+            playbackTime: 1,
+            lastUpdated: 1,
+            mediaType: 1,
+            showId: 1,
+            seasonNumber: 1,
+            episodeNumber: 1
           }
         }
       )
+      .toArray()
 
     const lookupMap = new Map()
 
-    if (watchHistory?.videosWatched) {
-      // Filter valid entries and create lookup map
-      watchHistory.videosWatched
-        .filter(entry => entry.isValid !== false)
-        .forEach(entry => {
+    if (watchHistoryEntries && watchHistoryEntries.length > 0) {
+      // Process each watch history entry and create lookup map
+      watchHistoryEntries.forEach(entry => {
           // Use normalizedVideoId if available, otherwise generate it
           let normalizedId = entry.normalizedVideoId
           if (!normalizedId && entry.videoId) {

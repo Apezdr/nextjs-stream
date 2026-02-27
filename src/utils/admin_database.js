@@ -136,25 +136,22 @@ export async function getRecentlyWatched() {
 
     const lastWatchedPromises = users.map(async (user) => {
       try {
-        const lastWatched = await client
+        // Query WatchHistory collection for this user's recent watches
+        const lastWatchedVideos = await client
           .db('Media')
-          .collection('PlaybackStatus')
-          .aggregate([
-            { $match: { userId: user._id } },
-            { $unwind: '$videosWatched' },
-            { $sort: { 'videosWatched.lastUpdated': -1 } },
-            { $limit: 4 },
-            { $group: { _id: '$_id', videosWatched: { $push: '$videosWatched' } } },
-          ])
+          .collection('WatchHistory')
+          .find({ userId: user._id, isValid: true })
+          .sort({ lastUpdated: -1 })
+          .limit(4)
           .toArray()
 
-        if (lastWatched.length === 0 || !lastWatched[0].videosWatched) {
+        if (lastWatchedVideos.length === 0) {
           return null
         }
 
         let mostRecentWatch = null
         const watchedDetails = await Promise.all(
-          lastWatched[0].videosWatched.map(async (video) => {
+          lastWatchedVideos.map(async (video) => {
             // Update mostRecentWatch with the latest timestamp
             if (!mostRecentWatch || video.lastUpdated > mostRecentWatch) {
               mostRecentWatch = video.lastUpdated

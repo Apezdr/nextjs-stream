@@ -162,13 +162,13 @@ function isVideoUrlValid(videoId, fileServers) {
 }
 
 /**
- * Validates video URLs in the PlaybackStatus collection.
+ * Validates video URLs in the WatchHistory collection.
  * @param {Object} fileServers - All file servers data
  * @returns {Promise<Object>} Validation results
  */
-export async function validatePlaybackVideoUrls(fileServers) {
+export async function validateWatchHistoryVideoUrls(fileServers) {
   const client = await clientPromise;
-  console.log(chalk.bold.magenta(`Starting PlaybackStatus video URL validation...`));
+  console.log(chalk.bold.magenta(`Starting WatchHistory video URL validation...`));
   
   const results = {
     processed: 0,
@@ -179,16 +179,16 @@ export async function validatePlaybackVideoUrls(fileServers) {
   
   try {
     const db = client.db('Media');
-    const playbackStatusCollection = db.collection('PlaybackStatus');
+    const watchHistoryCollection = db.collection('WatchHistory');
     
-    // Get all PlaybackStatus records
-    const playbackRecords = await playbackStatusCollection.find({}).toArray();
-    results.processed = playbackRecords.length;
+    // Get all WatchHistory records
+    const watchHistoryRecords = await watchHistoryCollection.find({}).toArray();
+    results.processed = watchHistoryRecords.length;
     
-    console.log(chalk.magenta(`Found ${playbackRecords.length} PlaybackStatus records to validate`));
+    console.log(chalk.magenta(`Found ${watchHistoryRecords.length} WatchHistory records to validate`));
     
     // Process each record
-    for (const record of playbackRecords) {
+    for (const record of watchHistoryRecords) {
       try {
         const userId = record.userId;
         const videosWatched = record.videosWatched || [];
@@ -229,13 +229,13 @@ export async function validatePlaybackVideoUrls(fileServers) {
         
         // Update the record in the database if changes were made
         if (updatedVideosWatched) {
-          await playbackStatusCollection.updateOne(
+          await watchHistoryCollection.updateOne(
             { _id: record._id },
             { $set: { videosWatched } }
           );
         }
       } catch (error) {
-        console.error(`Error processing PlaybackStatus record for user ${record.userId}:`, error);
+        console.error(`Error processing WatchHistory record for user ${record.userId}:`, error);
         results.errors.push({
           userId: record.userId instanceof ObjectId ? record.userId.toString() : record.userId,
           error: error.message
@@ -243,10 +243,10 @@ export async function validatePlaybackVideoUrls(fileServers) {
       }
     }
     
-    console.log(chalk.bold.magenta(`PlaybackStatus validation complete. Valid: ${results.valid}, Invalid: ${results.invalid}, Errors: ${results.errors.length}`));
+    console.log(chalk.bold.magenta(`WatchHistory validation complete. Valid: ${results.valid}, Invalid: ${results.invalid}, Errors: ${results.errors.length}`));
     return results;
   } catch (error) {
-    console.error(`Error during PlaybackStatus validation:`, error);
+    console.error(`Error during WatchHistory validation:`, error);
     results.errors.push({
       general: true,
       error: error.message,

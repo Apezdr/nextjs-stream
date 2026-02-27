@@ -24,33 +24,35 @@ export const POST = async (req) => {
 
     const client = await clientPromise
     const db = client.db('Media')
-    const playbackStatusCollection = db.collection('PlaybackStatus')
+    
+    // Update the WatchHistory collection
+    const watchHistoryCollection = db.collection('WatchHistory')
 
-    // Update the isValid flag for the specific video in user's watch history
-    const result = await playbackStatusCollection.updateOne(
+    // Update WatchHistory by videoId (primary identifier)
+    const result = await watchHistoryCollection.updateOne(
       { 
         userId: userIdObj, 
-        'videosWatched.videoId': videoId 
+        videoId: videoId
       },
       {
         $set: {
-          'videosWatched.$.isValid': isValid,
-          'videosWatched.$.lastScanned': new Date().toISOString()
+          isValid: isValid,
+          lastScanned: new Date().toISOString()
         }
       }
     )
 
     // Also try with normalizedVideoId if the direct videoId update didn't work
     if (result.modifiedCount === 0) {
-      await playbackStatusCollection.updateOne(
+      await watchHistoryCollection.updateOne(
         { 
           userId: userIdObj, 
-          'videosWatched.normalizedVideoId': videoId 
+          normalizedVideoId: videoId 
         },
         {
           $set: {
-            'videosWatched.$.isValid': isValid,
-            'videosWatched.$.lastScanned': new Date().toISOString()
+            isValid: isValid,
+            lastScanned: new Date().toISOString()
           }
         }
       )
