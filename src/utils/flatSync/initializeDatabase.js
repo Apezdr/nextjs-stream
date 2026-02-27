@@ -82,6 +82,7 @@ export async function createFlatDatabaseIndexes() {
       { key: { videoURL: 1 }, name: 'videoURL_index' },
       { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' },
       { key: { duration: 1 }, name: 'duration_index' },
+      { key: { videoSource: 1 }, name: 'videoSource_index' },
       
       // CRITICAL: Compound indexes for genre filtering + sorting (fixes 30s query delays)
       // These allow MongoDB to filter by genre AND return sorted results using a single index
@@ -148,7 +149,8 @@ export async function createFlatDatabaseIndexes() {
       { key: { type: 1 }, name: 'type_index' },
       { key: { videoURL: 1 }, name: 'videoURL_index' },
       { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' },
-      { key: { duration: 1 }, name: 'duration_index' }
+      { key: { duration: 1 }, name: 'duration_index' },
+      { key: { videoSource: 1 }, name: 'videoSource_index' }
     ];
     results.FlatEpisodes = await createCollectionIndexes(
       client.db('Media').collection('FlatEpisodes'),
