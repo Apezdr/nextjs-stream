@@ -23,27 +23,20 @@ export async function hasWatchHistory(userId) {
       return false
     }
     
-    // Check if user has any valid watch history
-    const playbackStatus = await client
+    // Check if user has any valid watch history in WatchHistory collection
+    const watchHistoryEntry = await client
       .db('Media')
-      .collection('PlaybackStatus')
+      .collection('WatchHistory')
       .findOne(
         { 
           userId: user._id,
-          videosWatched: { 
-            $elemMatch: { 
-              $or: [
-                { isValid: { $exists: false } },
-                { isValid: true }
-              ]
-            }
-          }
+          isValid: true
         },
         { projection: { _id: 1 } }
       )
     
     // If we found a document, the user has watch history
-    return !!playbackStatus
+    return !!watchHistoryEntry
   } catch (error) {
     console.error(`Error in hasWatchHistory: ${error.message}`)
     return false // Default to false on error

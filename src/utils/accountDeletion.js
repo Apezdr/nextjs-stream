@@ -435,11 +435,11 @@ async function deleteUserDataAcrossCollections(userId, userEmail, session) {
   results.usedTokens = usedTokensResult.deletedCount
   
   // Delete user activity data from Media database
-  const playbackResult = await mediaDb.collection('PlaybackStatus').deleteMany(
-    { userId: userId.toString() },
+  const watchHistoryResult = await mediaDb.collection('WatchHistory').deleteMany(
+    { userId },
     { session }
   )
-  results.PlaybackStatus = playbackResult.deletedCount
+  results.WatchHistory = watchHistoryResult.deletedCount
   
   // Delete notifications
   const notificationsResult = await mediaDb.collection('Notifications').deleteMany(

@@ -21,15 +21,16 @@ export async function getVideosWatched() {
 
   const client = await clientPromise
   const db = client.db('Media')
-  const data = await db
-    .collection('PlaybackStatus')
-    .findOne({ userId: new ObjectId(session.user.id) })
+  
+  // Query WatchHistory collection
+  // Each document is a separate video entry = much faster queries + zero lock contention
+  const watchHistory = await db
+    .collection('WatchHistory')
+    .find({ userId: new ObjectId(session.user.id) })
+    .toArray()
 
-  if (data?.videosWatched) {
-    return data.videosWatched
-  }
-
-  return {}
+  // Return array of watch entries (compatible with existing code)
+  return watchHistory && watchHistory.length > 0 ? watchHistory : []
 }
 
 export const fetchBannerMedia = async () => {
@@ -269,19 +270,26 @@ export async function getRecentlyWatchedForUser({
 
     const validPage = Math.max(page, 0); // Ensure page is at least 0
     
-    // Get the user's watch history first - this is more efficient than doing it in the aggregation
+    // Get the user's watch history from WatchHistory collection
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getRecentlyWatchedForUser:fetchWatchHistory');
     }
-    const userPlayback = await client
+    
+    const validVideos = await client
       .db('Media')
-      .collection('PlaybackStatus')
-      .findOne({ userId: user._id }, { projection: { videosWatched: 1 } }); // Only fetch the videosWatched field
+      .collection('WatchHistory')
+      .find(
+        { userId: user._id, isValid: true },
+        { projection: { videoId: 1, playbackTime: 1, lastUpdated: 1, normalizedVideoId: 1 } }
+      )
+      .sort({ lastUpdated: -1 })
+      .toArray();
+
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getRecentlyWatchedForUser:fetchWatchHistory');
     }
 
-    if (!userPlayback || !userPlayback.videosWatched || userPlayback.videosWatched.length === 0) {
+    if (!validVideos || validVideos.length === 0) {
       if (Boolean(process.env.DEBUG) == true) {
         console.log('[PERF] No watch history found');
         console.timeEnd('getRecentlyWatchedForUser:total');
@@ -289,14 +297,9 @@ export async function getRecentlyWatchedForUser({
       return countOnly ? 0 : null;
     }
     if (Boolean(process.env.DEBUG) == true) {
-      console.log(`[PERF] Total videos in watch history: ${userPlayback.videosWatched.length}`);
+      console.log(`[PERF] Total videos in watch history: ${validVideos.length}`);
       console.time('getRecentlyWatchedForUser:filterValidVideos');
     }
-    
-    // Filter valid videos in memory - more efficient than doing it in the aggregation
-    const validVideos = userPlayback.videosWatched.filter(video => 
-      video.isValid === undefined || video.isValid === true
-    );
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getRecentlyWatchedForUser:filterValidVideos');
     

@@ -275,7 +275,7 @@ export class NotificationManager {
    * @returns {Promise<Array>} The created notifications
    */
   static async createNewEpisodeForWatchers(mediaTitle, episodeTitle, seasonNumber, episodeNumber) {
-    // This would require querying PlaybackStatus to find users who have watched this show
+    // This would require querying WatchHistory to find users who have watched this show
     // For now, we'll create a generic implementation that can be enhanced later
     
     const template = NotificationTemplates.newContent(
@@ -283,7 +283,7 @@ export class NotificationManager {
       'episode'
     );
 
-    // Get users who have watched this show (implementation would need to query PlaybackStatus)
+    // Get users who have watched this show (implementation would need to query WatchHistory)
     // For now, broadcast to all users
     const userIds = await getAllUserIds();
     

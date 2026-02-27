@@ -295,13 +295,13 @@ export async function getUnreadNotificationCount(userId) {
 export async function getAllUserIds() {
   const client = await clientPromise;
   const db = client.db('Media');
-  const collection = db.collection('PlaybackStatus');
+  const collection = db.collection('WatchHistory');
 
-  // Get unique user IDs from PlaybackStatus collection and convert to ObjectIds
+  // Get unique user IDs from WatchHistory collection and convert to ObjectIds
   const userIds = await collection.distinct('userId');
   return userIds
-    .filter(id => id && id.toString().trim() !== '')
-    .map(id => new ObjectId(id));
+    .filter(id => id && id.toString && id.toString().trim && id.toString().trim() !== '')
+    .map(id => typeof id === 'string' ? new ObjectId(id) : id);
 }
 
 /**

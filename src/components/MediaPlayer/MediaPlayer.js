@@ -72,7 +72,7 @@ async function VideoPlayer({
     }
   }
 
-  // Function to update validation status in PlaybackStatus
+  // Function to update validation status in WatchHistory
   const updateValidationStatus = async (videoId, isValid) => {
     try {
       const response = await fetch(buildURL('/api/authenticated/sync/updateValidationStatus'), {

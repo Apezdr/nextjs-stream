@@ -189,7 +189,7 @@ The system deletes data from the following collections:
 - `usedTokens` - Used authentication tokens
 
 **Media Database:**
-- `PlaybackStatus` - User viewing history and progress
+- `WatchHistory` - User viewing history and progress
 - `Notifications` - User notifications
 - `UserPreferences` - User preferences and settings
 

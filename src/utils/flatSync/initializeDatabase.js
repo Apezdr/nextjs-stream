@@ -150,7 +150,12 @@ export async function createFlatDatabaseIndexes() {
       { key: { videoURL: 1 }, name: 'videoURL_index' },
       { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' },
       { key: { duration: 1 }, name: 'duration_index' },
-      { key: { videoSource: 1 }, name: 'videoSource_index' }
+      { key: { videoSource: 1 }, name: 'videoSource_index' },
+      
+      // CRITICAL: Index for sorting by mediaLastModified (fixes COLLSCAN in recent episodes aggregation)
+      // This enables the aggregation pipeline to efficiently sort and group episodes by modification time
+      // Used by: recently modified episodes queries, sync aggregation pipeline
+      { key: { mediaLastModified: -1 }, name: 'mediaLastModified_index' }
     ];
     results.FlatEpisodes = await createCollectionIndexes(
       client.db('Media').collection('FlatEpisodes'),
@@ -159,28 +164,6 @@ export async function createFlatDatabaseIndexes() {
       'FlatEpisodes'
     );
     log.info(`FlatEpisodes indexes: ${results.FlatEpisodes.successCount}/${results.FlatEpisodes.totalCount} created`);
-    
-    // Create indexes for PlaybackStatus collection
-    const playbackStatusIndexes = [
-      // Standard user lookup index
-      { key: { userId: 1 }, name: 'userId_index' },
-      
-      // Compound indexes for fast video lookups
-      { key: { userId: 1, 'videosWatched.normalizedVideoId': 1 }, name: 'userId_normalizedId_index' },
-      
-      // Index for sorting by last updated timestamp
-      { key: { userId: 1, 'videosWatched.lastUpdated': -1 }, name: 'userId_lastUpdated_index' },
-      
-      // Index for lookups by normalizedVideoId without userId (for view count aggregation)
-      { key: { 'videosWatched.normalizedVideoId': 1 }, name: 'normalizedVideoId_index' }
-    ];
-    results.PlaybackStatus = await createCollectionIndexes(
-      client.db('Media').collection('PlaybackStatus'),
-      playbackStatusIndexes,
-      log,
-      'PlaybackStatus'
-    );
-    log.info(`PlaybackStatus indexes: ${results.PlaybackStatus.successCount}/${results.PlaybackStatus.totalCount} created`);
     
     // Create indexes for Notifications collection
     const notificationsIndexes = [
