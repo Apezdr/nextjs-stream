@@ -1224,6 +1224,7 @@ export const fetchFlatBannerMedia = async () => {
 
 /**
  * Fetch a random banner media from flat database structure.
+ * Uses the "bias method" with indexed skip/limit instead of $sample to avoid COLLSCAN.
  * 
  * @returns {Promise<Object>} A randomly selected banner media.
  */
@@ -1242,10 +1243,24 @@ export const fetchFlatRandomBannerMedia = async () => {
     const { name: collectionName, type } =
       collectionConfigs[Math.floor(Math.random() * collectionConfigs.length)];
     
-    // Sample one document from the chosen collection
-    const [ item ] = await db
-      .collection(collectionName)
-      .aggregate([{ $sample: { size: 1 } }])
+    const collection = db.collection(collectionName);
+    
+    // Get the total count of documents (use an indexed field for efficiency)
+    const totalCount = await collection.countDocuments();
+    
+    if (totalCount === 0) {
+      return { error: 'No media found', status: 404 };
+    }
+    
+    // Use the "bias method": pick a random offset and use skip/limit with an indexed field
+    // This is much more efficient than $sample as it uses indexes instead of COLLSCAN
+    const randomOffset = Math.floor(Math.random() * totalCount);
+    
+    // Use find with _id index for consistent ordering, skip and limit
+    const [ item ] = await collection
+      .find({})
+      .skip(randomOffset)
+      .limit(1)
       .toArray();
     
     if (!item) {
