@@ -4,10 +4,17 @@ import { memo, useEffect, useState } from 'react'
 import useSWR from 'swr'
 import { MaterialButton, StatusBadge, MetricCard } from './BaseComponents'
 import { buildURL, fetcher } from '@src/utils'
-import { isSameDay } from '@src/utils/admin_utils'
 import WipeDbButton from '@src/app/(styled)/admin/WipeDBButton'
 
 // --- Module-level helpers (stable, not recreated on render) ---
+
+function isSameDay(date1, date2) {
+  return (
+    date1.getFullYear() === date2.getFullYear() &&
+    date1.getMonth() === date2.getMonth() &&
+    date1.getDate() === date2.getDate()
+  )
+}
 
 function getHealthStatus(health) {
   switch (health) {
