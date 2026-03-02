@@ -11,6 +11,13 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex, onVideoReady 
   const { videoURL } = media
   const playerRef = useRef(null)
   const [isPlayerReady, setPlayerReady] = useState(false)
+  
+  // Use lazy state initialization to read localStorage only once
+  const [initialMuted] = useState(() => localStorage.getItem('videoMutedBanner') === 'true')
+  const [initialVolume] = useState(() => {
+    const stored = localStorage.getItem('videoVolumeBanner')
+    return stored ? Number(stored) : 1
+  })
 
   const handleVolumeChange = useCallback(() => {
     const player = playerRef.current
@@ -73,8 +80,8 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex, onVideoReady 
         aspectRatio="16/9"
         fullscreenOrientation="landscape"
         className="absolute inset-0 w-full h-full select-none pointer-events-none z-0"
-        muted={localStorage.getItem('videoMutedBanner') === 'true'}
-        volume={localStorage.getItem('videoVolumeBanner') || 1}
+        muted={initialMuted}
+        volume={initialVolume}
         onPause={() => {
           const player = playerRef.current
           if (
@@ -118,8 +125,8 @@ function BannerVideoPlayer({ media, onVideoEnd, currentMediaIndex, onVideoReady 
 }
 
 export default memo(BannerVideoPlayer, (prevProps, nextProps) => {
+  // Compare only props, not internal state (isPlayerReady is state, not a prop)
   return (
-    prevProps.isPlayerReady === nextProps.isPlayerReady &&
     prevProps.media.videoURL === nextProps.media.videoURL &&
     prevProps.currentMediaIndex === nextProps.currentMediaIndex &&
     prevProps.onVideoEnd === nextProps.onVideoEnd &&

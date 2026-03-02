@@ -1,4 +1,4 @@
-import { Suspense, cache } from 'react'
+import { Suspense } from 'react'
 import HorizontalScroll from '@src/components/MediaScroll/HorizontalScroll'
 import { getFlatRecommendations } from '@src/utils/flatRecommendations'
 import { getFlatPosters, getFlatRecentlyAddedMedia, getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
@@ -25,18 +25,24 @@ const NO_CONTENT_MESSAGES = {
   all: "📦 No media available at the moment.",
 }
 
+// Empty state component for consistent no-content display
+function EmptyState({ message }) {
+  return (
+    <div className="py-12 flex flex-col gap-2 text-center text-gray-500">
+      <span className="text-2xl text-white">{message}</span>
+    </div>
+  )
+}
+
 // Dynamic component that performs fresh database queries
 async function DynamicMediaContent({
   type = 'all',
   sort = 'id',
   sortOrder = 'desc',
   playlistId = null,
-  user = null, // Accept user as prop instead of calling auth()
+  userId = null, // Accept userId as prop instead of calling auth()
 }) {
-  let moviePosters = 0,
-    tvPosters = 0,
-    items = 0,
-    limit = null
+  let items = 0
 
   switch (type) {
     case 'movie':
@@ -46,36 +52,45 @@ async function DynamicMediaContent({
     case 'tv':
       items = await getCachedPosters('tv', true)
       break
-    case 'recentlyWatched':
-      limit = 50
+    case 'recentlyWatched': {
+      const limit = 50
       items = await getCachedRecentlyWatched({
-        userId: user?.id,
+        userId: userId,
         countOnly: true,
         limit: limit,
       })
       break
-    case 'recentlyAdded':
-      limit = 32
+    }
+    case 'recentlyAdded': {
+      const limit = 32
       items = await getCachedRecentlyAdded({ limit: limit, countOnly: true })
       break
+    }
     case 'recommendations': {
-      limit = 30
+      const limit = 30
       // Fetch count from recommendations using cached function
-      const recommendationsData = await getCachedRecommendations(user?.id, 0, limit, true)
+      const recommendationsData = await getCachedRecommendations(userId, 0, limit, true)
       items = recommendationsData.count || 0
       break
     }
     case 'playlist':
       // Count playlist items respecting user visibility settings (same logic as horizontal-list API)
       if (playlistId) {
-        // OPTIMIZATION: Use Promise.allSettled to run visibility and watchlist queries in parallel
-        const [visibilityResult, watchlistResult] = await Promise.allSettled([
-          getCachedPlaylistVisibility(user?.id, playlistId),
+        // OPTIMIZATION: Fetch visibility + both watchlist variants (all and filtered) in parallel
+        // to eliminate conditional waterfalls. React.cache() will deduplicate identical calls.
+        const [visibilityResult, allItemsResult, filteredItemsResult] = await Promise.allSettled([
+          getCachedPlaylistVisibility(userId, playlistId),
           getCachedWatchlist({
             playlistId,
             countOnly: true,
-            internalOnly: false, // Get all items initially
-            userId: user?.id,
+            internalOnly: false,
+            userId: userId,
+          }),
+          getCachedWatchlist({
+            playlistId,
+            countOnly: true,
+            internalOnly: true,
+            userId: userId,
           })
         ])
         
@@ -83,21 +98,15 @@ async function DynamicMediaContent({
           ? visibilityResult.value?.hideUnavailable ?? false 
           : false
         
-        if (watchlistResult.status === 'fulfilled') {
-          // If we need to hide unavailable items and got all items, re-fetch with filtering
-          if (hideUnavailable) {
-            items = await getCachedWatchlist({
-              playlistId,
-              countOnly: true,
-              internalOnly: true,
-              userId: user?.id,
-            })
-          } else {
-            items = watchlistResult.value
-          }
+        // Use the appropriate result based on hideUnavailable setting
+        if (hideUnavailable) {
+          items = filteredItemsResult.status === 'fulfilled' ? filteredItemsResult.value : 0
         } else {
-          console.error('Error fetching playlist items for count:', watchlistResult.reason)
-          items = 0
+          items = allItemsResult.status === 'fulfilled' ? allItemsResult.value : 0
+        }
+        
+        if (allItemsResult.status === 'rejected' && filteredItemsResult.status === 'rejected') {
+          console.error('Error fetching playlist items for count')
         }
       } else {
         items = 0
@@ -110,9 +119,7 @@ async function DynamicMediaContent({
         getCachedPosters('movie', true),
         getCachedPosters('tv', true)
       ])
-      moviePosters = moviePostersResult
-      tvPosters = tvPostersResult
-      items = moviePosters + tvPosters
+      items = moviePostersResult + tvPostersResult
       break
     }
   }
@@ -132,9 +139,7 @@ async function DynamicMediaContent({
       playlistId={playlistId}
     />
   ) : (
-    <div className="py-12 flex flex-col gap-2 text-center text-gray-500">
-      <span className="text-2xl text-white">{message}</span>
-    </div>
+    <EmptyState message={message} />
   )
 }
 
@@ -144,7 +149,7 @@ export default function HorizontalScrollContainer({
   sort = 'id',
   sortOrder = 'desc',
   playlistId = null,
-  user = null, // Accept user as prop
+  userId = null, // Accept userId as prop (primitive, not full user object)
 }) {
   return (
     <div className="my-8 w-full">
@@ -155,7 +160,7 @@ export default function HorizontalScrollContainer({
           sort={sort}
           sortOrder={sortOrder}
           playlistId={playlistId}
-          user={user}
+          userId={userId}
         />
       </Suspense>
     </div>

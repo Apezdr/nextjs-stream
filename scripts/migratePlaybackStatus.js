@@ -54,35 +54,13 @@ async function connectToDb() {
 
 /**
  * Create indexes on WatchHistory collection
+ * NOTE: Index creation has been moved to src/utils/flatSync/initializeDatabase.js
+ * This function is kept for backward compatibility with existing migration scripts
  */
 async function createWatchHistoryIndexes(db) {
-  const collection = db.collection(NEW_COLLECTION)
-
-  const indexes = [
-    { key: { userId: 1, normalizedVideoId: 1 }, unique: true, name: 'userId_normalizedId_unique' },
-    { key: { userId: 1 }, name: 'userId_index' },
-    { key: { normalizedVideoId: 1 }, name: 'normalizedVideoId_index' },
-    { key: { userId: 1, lastUpdated: -1 }, name: 'userId_lastUpdated_index' }
-  ]
-
-  console.log('Creating indexes on WatchHistory collection...')
-
-  for (const indexSpec of indexes) {
-    try {
-      await collection.createIndex(indexSpec.key, {
-        name: indexSpec.name,
-        unique: indexSpec.unique || false
-      })
-      console.log(`  ✓ ${indexSpec.name}`)
-    } catch (error) {
-      if (error.code === 85 || error.code === 86) {
-        // Index already exists - this is fine
-        console.log(`  ~ ${indexSpec.name} (already exists)`)
-      } else {
-        throw error
-      }
-    }
-  }
+  console.log('NOTE: Index creation is now handled by initializeDatabase.js')
+  console.log('Indexes will be created automatically during database initialization')
+  return Promise.resolve()
 }
 
 /**

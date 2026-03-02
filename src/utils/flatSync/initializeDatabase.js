@@ -88,7 +88,12 @@ export async function createFlatDatabaseIndexes() {
       // These allow MongoDB to filter by genre AND return sorted results using a single index
       { key: { 'metadata.genres.name': 1, 'metadata.release_date': -1 }, name: 'genres_release_date_index' },
       { key: { 'metadata.genres.name': 1, 'metadata.vote_average': -1 }, name: 'genres_rating_index' },
-      { key: { 'metadata.genres.name': 1, 'title': 1 }, name: 'genres_title_index' }
+      { key: { 'metadata.genres.name': 1, 'title': 1 }, name: 'genres_title_index' },
+      
+      // CRITICAL: Covered query index for validation scans (fixes COLLSCAN in watchHistoryValidation)
+      // Enables index-only lookups without reading documents from disk
+      // Used by: validateWatchHistoryAgainstDatabase() - improves performance from COLLSCAN to IXSCAN
+      { key: { videoURL: 1, normalizedVideoId: 1 }, name: 'videoURL_normalizedId_covered_index' }
     ];
     results.FlatMovies = await createCollectionIndexes(
       client.db('Media').collection('FlatMovies'),
@@ -155,7 +160,12 @@ export async function createFlatDatabaseIndexes() {
       // CRITICAL: Index for sorting by mediaLastModified (fixes COLLSCAN in recent episodes aggregation)
       // This enables the aggregation pipeline to efficiently sort and group episodes by modification time
       // Used by: recently modified episodes queries, sync aggregation pipeline
-      { key: { mediaLastModified: -1 }, name: 'mediaLastModified_index' }
+      { key: { mediaLastModified: -1 }, name: 'mediaLastModified_index' },
+      
+      // CRITICAL: Covered query index for validation scans (fixes COLLSCAN in watchHistoryValidation)
+      // Enables index-only lookups without reading documents from disk
+      // Used by: validateWatchHistoryAgainstDatabase() - improves performance from COLLSCAN to IXSCAN
+      { key: { videoURL: 1, normalizedVideoId: 1 }, name: 'videoURL_normalizedId_covered_index' }
     ];
     results.FlatEpisodes = await createCollectionIndexes(
       client.db('Media').collection('FlatEpisodes'),
@@ -188,6 +198,29 @@ export async function createFlatDatabaseIndexes() {
       'Notifications'
     );
     log.info(`Notifications indexes: ${results.Notifications.successCount}/${results.Notifications.totalCount} created`);
+    
+    // Create indexes for WatchHistory collection
+    const watchHistoryIndexes = [
+      // CRITICAL: Compound unique index prevents duplicate watch history entries per user+video
+      // Used by: playback sync, watch history queries, migration from old PlaybackStatus schema
+      { key: { userId: 1, normalizedVideoId: 1 }, unique: true, name: 'userId_normalizedId_unique' },
+      
+      // Index for user-specific queries
+      { key: { userId: 1 }, name: 'userId_index' },
+      
+      // Index for video-specific queries
+      { key: { normalizedVideoId: 1 }, name: 'normalizedVideoId_index' },
+      
+      // Index for sorting by last updated (recent watch history)
+      { key: { userId: 1, lastUpdated: -1 }, name: 'userId_lastUpdated_index' }
+    ];
+    results.WatchHistory = await createCollectionIndexes(
+      client.db('Media').collection('WatchHistory'),
+      watchHistoryIndexes,
+      log,
+      'WatchHistory'
+    );
+    log.info(`WatchHistory indexes: ${results.WatchHistory.successCount}/${results.WatchHistory.totalCount} created`);
     
     // Summary
     const totalSuccess = Object.values(results).reduce((sum, r) => sum + r.successCount, 0);

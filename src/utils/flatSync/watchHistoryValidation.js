@@ -36,7 +36,7 @@ export async function validateWatchHistoryAgainstDatabase() {
     
     // Get all valid movie videoURLs
     const movieVideoUrls = new Set();
-    const movieCursor = flatMoviesCollection.find({}, { projection: { videoURL: 1, normalizedVideoId: 1 } });
+    const movieCursor = flatMoviesCollection.find({}, { projection: { _id: 0, videoURL: 1, normalizedVideoId: 1 } });
     for await (const movie of movieCursor) {
       if (movie.videoURL) {
         movieVideoUrls.add(movie.videoURL);
@@ -48,7 +48,7 @@ export async function validateWatchHistoryAgainstDatabase() {
     
     // Get all valid TV episode videoURLs
     const tvVideoUrls = new Set();
-    const episodeCursor = flatEpisodesCollection.find({}, { projection: { videoURL: 1, normalizedVideoId: 1 } });
+    const episodeCursor = flatEpisodesCollection.find({}, { projection: { _id: 0, videoURL: 1, normalizedVideoId: 1 } });
     for await (const episode of episodeCursor) {
       if (episode.videoURL) {
         tvVideoUrls.add(episode.videoURL);
@@ -185,7 +185,7 @@ export async function validateUserWatchHistory(userId) {
     
     // Build lookup maps for faster validation (smaller scope for single user)
     const movieVideoUrls = new Set();
-    const movieCursor = flatMoviesCollection.find({}, { projection: { videoURL: 1, normalizedVideoId: 1 } });
+    const movieCursor = flatMoviesCollection.find({}, { projection: { _id: 0, videoURL: 1, normalizedVideoId: 1 } });
     for await (const movie of movieCursor) {
       if (movie.videoURL) {
         movieVideoUrls.add(movie.videoURL);
@@ -196,7 +196,7 @@ export async function validateUserWatchHistory(userId) {
     }
     
     const tvVideoUrls = new Set();
-    const episodeCursor = flatEpisodesCollection.find({}, { projection: { videoURL: 1, normalizedVideoId: 1 } });
+    const episodeCursor = flatEpisodesCollection.find({}, { projection: { _id: 0, videoURL: 1, normalizedVideoId: 1 } });
     for await (const episode of episodeCursor) {
       if (episode.videoURL) {
         tvVideoUrls.add(episode.videoURL);

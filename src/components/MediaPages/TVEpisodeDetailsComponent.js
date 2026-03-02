@@ -2,7 +2,6 @@ import { classNames } from '@src/utils'
 import Link from 'next/link'
 import { Suspense } from 'react'
 import ViewCount from './ViewCount'
-import Image from 'next/image'
 import dynamic from 'next/dynamic'
 import RetryImage from '@components/RetryImage'
 import WatchlistButton from '@components/WatchlistButton'
@@ -12,6 +11,7 @@ const CastSection = dynamic(() =>
   import('./CastSection').then(mod => ({ default: props => <mod.default {...props} /> })),
   { ssr: true, loading: () => <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse" /> }
 )
+
 
 const TVEpisodeDetailsComponent = ({ media }) => {
   if (!media) {

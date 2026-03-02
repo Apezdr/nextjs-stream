@@ -1,20 +1,20 @@
 'use client'
 
+import { useMemo } from 'react'
 import { MaterialButton, StatusBadge } from './BaseComponents'
 import { classNames } from '@src/utils'
 
 /**
  * Compact User Management component designed to fit in sidebar space
  */
-const CompactUserManagement = ({ 
-  headers, 
-  data, 
+const CompactUserManagement = ({
+  headers,
+  data,
   updateProcessedData,
   onViewAll
 }) => {
-  // Take only first 3 users for compact view
-  const compactData = data?.slice(0, 3) || []
-  const totalUsers = data?.length || 0
+  const compactData = useMemo(() => data?.slice(0, 3) ?? [], [data])
+  const totalUsers = data?.length ?? 0
 
   if (!data || data.length === 0) {
     return (
@@ -48,8 +48,8 @@ const CompactUserManagement = ({
 
       {/* User List */}
       <div className="flex-1 space-y-2 overflow-y-auto">
-        {compactData.map((user, index) => (
-          <UserCard key={index} user={user} headers={headers} />
+        {compactData.map((user) => (
+          <UserCard key={user.email || user._id || user.id} user={user} headers={headers} />
         ))}
       </div>
 

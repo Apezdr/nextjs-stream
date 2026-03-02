@@ -1,40 +1,44 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import useSWR from 'swr'
-import ListRecords from './ListRecords'
 import MovieModalPopup from './MovieModalPopup'
 import TVModalPopup from './TVModalPopup'
 import ConfirmDeletePopup from './ConfirmDeletePopup'
-import { getRecord } from '../../utils/admin_frontend_database'
 import SyncMediaPopup from './SyncMediaPopup'
 import axios from 'axios'
 import Link from 'next/link'
-import RecentlyWatched from './RecentlyWatchedList'
 import EnhancedRecentlyWatched from './EnhancedRecentlyWatched'
 import EnhancedQueueDashboard from './EnhancedQueueDashboard'
 import CompactUserManagement from './CompactUserManagement'
 import { buildURL, fetcher } from '@src/utils'
-import WipeDbButton from '@src/app/(styled)/admin/WipeDBButton'
 import EnhancedServerStats from './Stats/EnhancedServerStats'
 import EnhancedServerProcesses from './Stats/EnhancedServerProcesses'
-import { QueueDashboard } from './Integrations';
-import { TMDBServerStatus } from './TMDBServerStatus';
 import EnhancedTMDBStatus from './EnhancedTMDBStatus'
 import DashboardHeader from './DashboardHeader'
 import { MaterialCard, MaterialCardHeader, MaterialCardContent, MaterialButton } from './BaseComponents'
 
-const processLastSyncTimeData = (lastSyncTimeData) => {
+// Module-level: stable reference, not recreated on each render
+async function queueFetcher(url) {
+  const response = await fetch(url)
+  if (response.status === 501) {
+    return { __unsupported: true }
+  }
+  if (!response.ok) {
+    throw new Error(`HTTP error! status: ${response.status}`)
+  }
+  return response.json()
+}
+
+function processLastSyncTimeData(lastSyncTimeData) {
   const lastSyncTime =
     typeof lastSyncTimeData === 'object'
       ? lastSyncTimeData?.lastSyncTime
         ? lastSyncTimeData.lastSyncTime
         : lastSyncTimeData
       : lastSyncTimeData
-  
-  // Return the raw timestamp for DashboardHeader to process
-  // DashboardHeader will handle the display formatting and categorization
+
   if (!isNaN(Date.parse(lastSyncTime)) && lastSyncTime) {
     return lastSyncTime
   } else {
@@ -55,34 +59,21 @@ export default function AdminOverviewPage({
   const [record, setRecord] = useState(null)
   const [_processedData, setProcessedData] = useState(processedData)
   const [_processedUserData, setProcessedUserData] = useState(processedUserData)
-  const [recentlyWatched, setRecentlyWatched] = useState(false)
-  const [lastSyncTime, setLastSyncTime] = useState(() => processLastSyncTimeData(_lastSyncTime))
-  const [sabnzbdQueue, setsabnzbdQueue] = useState(null)
-  const [radarrQueue, setradarrQueue] = useState(null)
-  const [sonarrQueue, setsonarrQueue] = useState(null)
-  const [tdarrQueue, settdarrQueue] = useState(null)
-  const [unsupportedQueues, setUnsupportedQueues] = useState([]) // Optional: To track unsupported queues
 
-  // Track which queues are supported (used to disable SWR for unsupported queues)
-  const [sabnzbdSupported, setSabnzbdSupported] = useState(true)
-  const [radarrSupported, setRadarrSupported] = useState(true)
-  const [sonarrSupported, setSonarrSupported] = useState(true)
-  const [tdarrSupported, setTdarrSupported] = useState(true)
+  // Single Set tracking which queues returned 501 (not supported)
+  const [unsupportedQueues, setUnsupportedQueues] = useState(() => new Set())
 
-  // Queue fetcher that handles 501 responses
-  const queueFetcher = async (url) => {
-    const response = await fetch(url)
-    if (response.status === 501) {
-      return { __unsupported: true }
-    }
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`)
-    }
-    return response.json()
+  function markUnsupported(name) {
+    setUnsupportedQueues(prev => {
+      if (prev.has(name)) return prev // already tracked, skip re-render
+      const next = new Set(prev)
+      next.add(name)
+      return next
+    })
   }
 
-  // SWR hooks for data fetching
-  const { data: lastSyncData } = useSWR(
+  // SWR hooks — data used directly, no intermediate state or effects
+  const { data: lastSyncData, mutate: mutateLastSync } = useSWR(
     buildURL('/api/authenticated/admin/lastSynced'),
     fetcher,
     { refreshInterval: 15000 }
@@ -95,101 +86,41 @@ export default function AdminOverviewPage({
   )
 
   const { data: sabnzbdData } = useSWR(
-    sabnzbdSupported ? buildURL('/api/authenticated/admin/sabnzbd') : null,
+    unsupportedQueues.has('sabnzbd') ? null : buildURL('/api/authenticated/admin/sabnzbd'),
     queueFetcher,
-    { refreshInterval: 2000 }
+    { refreshInterval: 2000, onSuccess: (d) => { if (d?.__unsupported) markUnsupported('sabnzbd') } }
   )
 
   const { data: radarrData } = useSWR(
-    radarrSupported ? buildURL('/api/authenticated/admin/radarr') : null,
+    unsupportedQueues.has('radarr') ? null : buildURL('/api/authenticated/admin/radarr'),
     queueFetcher,
-    { refreshInterval: 2000 }
+    { refreshInterval: 2000, onSuccess: (d) => { if (d?.__unsupported) markUnsupported('radarr') } }
   )
 
   const { data: sonarrData } = useSWR(
-    sonarrSupported ? buildURL('/api/authenticated/admin/sonarr') : null,
+    unsupportedQueues.has('sonarr') ? null : buildURL('/api/authenticated/admin/sonarr'),
     queueFetcher,
-    { refreshInterval: 2000 }
+    { refreshInterval: 2000, onSuccess: (d) => { if (d?.__unsupported) markUnsupported('sonarr') } }
   )
 
   const { data: tdarrData } = useSWR(
-    tdarrSupported ? buildURL('/api/authenticated/admin/tdarr') : null,
+    unsupportedQueues.has('tdarr') ? null : buildURL('/api/authenticated/admin/tdarr'),
     queueFetcher,
-    { refreshInterval: 2000 }
+    { refreshInterval: 2000, onSuccess: (d) => { if (d?.__unsupported) markUnsupported('tdarr') } }
   )
+
+  // Derived during render — no useState/useEffect needed
+  const lastSyncTime = processLastSyncTimeData(lastSyncData ?? _lastSyncTime)
+  const sabnzbdQueue = sabnzbdData?.__unsupported ? null : sabnzbdData
+  const radarrQueue = radarrData?.__unsupported ? null : radarrData
+  const sonarrQueue = sonarrData?.__unsupported ? null : sonarrData
+  const tdarrQueue = tdarrData?.__unsupported ? null : tdarrData
 
   const updateRecord = (newData) => {
     setRecord((prevRecord) => ({ ...prevRecord, ...newData }))
   }
 
-  const setLastSync = (lastSync) => {
-    const processedTime = processLastSyncTimeData(lastSync)
-    setLastSyncTime(processedTime)
-  }
-
   const action = record && record.action
-
-  // Map SWR data to component state
-  useEffect(() => {
-    if (lastSyncData) {
-      const formattedTime = processLastSyncTimeData(lastSyncData)
-      setLastSyncTime(formattedTime)
-    }
-  }, [lastSyncData])
-
-  useEffect(() => {
-    if (recentlyWatchedData) {
-      setRecentlyWatched(recentlyWatchedData)
-    }
-  }, [recentlyWatchedData])
-
-  useEffect(() => {
-    if (sabnzbdData) {
-      if (sabnzbdData.__unsupported) {
-        setSabnzbdSupported(false)
-        setUnsupportedQueues((prev) => [...prev, 'SABNZBD'])
-        console.warn('SABNZBD not supported. Stopping polling.')
-      } else {
-        setsabnzbdQueue(sabnzbdData)
-      }
-    }
-  }, [sabnzbdData])
-
-  useEffect(() => {
-    if (radarrData) {
-      if (radarrData.__unsupported) {
-        setRadarrSupported(false)
-        setUnsupportedQueues((prev) => [...prev, 'Radarr'])
-        console.warn('Radarr not supported. Stopping polling.')
-      } else {
-        setradarrQueue(radarrData)
-      }
-    }
-  }, [radarrData])
-
-  useEffect(() => {
-    if (sonarrData) {
-      if (sonarrData.__unsupported) {
-        setSonarrSupported(false)
-        setUnsupportedQueues((prev) => [...prev, 'Sonarr'])
-        console.warn('Sonarr not supported. Stopping polling.')
-      } else {
-        setsonarrQueue(sonarrData)
-      }
-    }
-  }, [sonarrData])
-
-  useEffect(() => {
-    if (tdarrData) {
-      if (tdarrData.__unsupported) {
-        setTdarrSupported(false)
-        setUnsupportedQueues((prev) => [...prev, 'Tdarr'])
-        console.warn('Tdarr not supported. Stopping polling.')
-      } else {
-        settdarrQueue(tdarrData)
-      }
-    }
-  }, [tdarrData])
 
   async function updateProcessedData(type) {
     let url = `/api/authenticated/admin`
@@ -216,14 +147,14 @@ export default function AdminOverviewPage({
           setProcessedUserData(processedUserData)
         }
 
-        return // Success, exit the function
+        return
       } catch (error) {
         retries++
         if (retries === maxRetries) {
           console.error(`Failed to fetch data after ${maxRetries} attempts:`, error)
-          throw error // Rethrow the error if all retries fail
+          throw error
         }
-        await new Promise((resolve) => setTimeout(resolve, 1000 * retries)) // Wait before retrying
+        await new Promise((resolve) => setTimeout(resolve, 1000 * retries))
       }
     }
   }
@@ -237,7 +168,7 @@ export default function AdminOverviewPage({
             isOpen={isSyncOpen}
             setIsOpen={setIsSyncOpen}
             updateProcessedData={updateProcessedData}
-            setLastSync={setLastSync}
+            setLastSync={() => mutateLastSync()}
           />
         )}
         {record && action !== 'delete' && record.type === 'movie' && (
@@ -275,6 +206,7 @@ export default function AdminOverviewPage({
         <DashboardHeader
           onSyncClick={() => setIsSyncOpen(true)}
           lastSyncTime={lastSyncTime}
+          totalUsers={_processedUserData.data?.length ?? 0}
           organizrURL={organizrURL}
         />
 
@@ -328,13 +260,13 @@ export default function AdminOverviewPage({
                   radarrQueue={radarrQueue}
                   sonarrQueue={sonarrQueue}
                   tdarrQueue={tdarrQueue}
-                  unsupportedQueues={unsupportedQueues}
+                  unsupportedQueues={[...unsupportedQueues]}
                 />
               </MaterialCardContent>
             </MaterialCard>
 
             {/* Unsupported Queues Warning */}
-            {unsupportedQueues.length > 0 && (
+            {unsupportedQueues.size > 0 && (
               <MaterialCard variant="outlined" elevation="low">
                 <MaterialCardHeader
                   title="Unsupported Integrations"
@@ -346,7 +278,7 @@ export default function AdminOverviewPage({
                 />
                 <MaterialCardContent>
                   <ul className="space-y-1 text-sm text-orange-700">
-                    {[...new Set(unsupportedQueues)].map((queue) => (
+                    {[...unsupportedQueues].map((queue) => (
                       <li key={queue} className="flex items-center space-x-2">
                         <span className="w-2 h-2 bg-orange-400 rounded-full"></span>
                         <span>{queue} is not supported</span>
@@ -373,7 +305,7 @@ export default function AdminOverviewPage({
                   }
                 />
                 <MaterialCardContent>
-                  <EnhancedRecentlyWatched recentlyWatched={recentlyWatched} />
+                  <EnhancedRecentlyWatched recentlyWatched={recentlyWatchedData} />
                 </MaterialCardContent>
               </MaterialCard>
             </div>
@@ -425,13 +357,5 @@ export default function AdminOverviewPage({
         </div>
       </div>
     </div>
-  )
-}
-
-function isSameDay(date1, date2) {
-  return (
-    date1.getFullYear() === date2.getFullYear() &&
-    date1.getMonth() === date2.getMonth() &&
-    date1.getDate() === date2.getDate()
   )
 }

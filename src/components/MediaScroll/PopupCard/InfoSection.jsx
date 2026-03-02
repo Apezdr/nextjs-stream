@@ -1,11 +1,15 @@
 'use client'
 
 import Link from 'next/link'
+import dynamic from 'next/dynamic'
 import { motion } from 'framer-motion'
 import { InformationCircleIcon } from '@heroicons/react/20/solid'
 import { classNames, getFullImageUrl } from '@src/utils'
-import WatchlistButton from '@components/WatchlistButton'
 import Loading from '@src/app/loading'
+
+const WatchlistButton = dynamic(() => import('@components/WatchlistButton'), {
+  ssr: false,
+})
 
 /**
  * InfoSection Component

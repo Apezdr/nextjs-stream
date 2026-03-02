@@ -1,12 +1,39 @@
 'use client'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { HeartIcon } from '@heroicons/react/24/outline'
 import { HeartIcon as HeartIconSolid } from '@heroicons/react/24/solid'
 import { toast } from 'react-toastify'
 import { useSession } from 'next-auth/react'
 import { LoadingDots } from '@src/app/loading'
 import { AnimatePresence, motion } from 'framer-motion'
+
+// Hoist static animation variants outside component to avoid recreating on each render
+const loadingVariants = {
+  animate: {
+    scale: [1, 1.1, 1],
+    opacity: [0.7, 1, 0.7],
+    transition: {
+      duration: 1.5,
+      repeat: Infinity,
+      ease: "easeInOut"
+    }
+  }
+}
+
+const iconVariants = {
+  initial: { scale: 1 },
+  hover: { scale: 1.1 },
+  tap: { scale: 0.95 },
+  toggling: {
+    rotate: [0, 10, -10, 0],
+    transition: {
+      duration: 0.6,
+      repeat: Infinity,
+      ease: "easeInOut"
+    }
+  }
+}
 
 export default function WatchlistButton({
   mediaId,
@@ -83,7 +110,6 @@ export default function WatchlistButton({
         body.posterURL = posterURL
       }
 
-      console.log('Toggling watchlist:', body)
       const res = await fetch(`/api/authenticated/watchlist?${buildParams('toggle')}`, {
         method: 'POST',
         cache: 'no-store',
@@ -126,57 +152,6 @@ export default function WatchlistButton({
     buildParams,
     onStatusChange
   ])
-
-  // Animation variants for text transitions
-  const textVariants = {
-    initial: { opacity: 0, y: 10, scale: 0.95 },
-    animate: {
-      opacity: 1,
-      y: 0,
-      scale: 1,
-      transition: {
-        duration: 0.3,
-        ease: [0.4, 0, 0.2, 1]
-      }
-    },
-    exit: {
-      opacity: 0,
-      y: -10,
-      scale: 0.95,
-      transition: {
-        duration: 0.2,
-        ease: [0.4, 0, 0.2, 1]
-      }
-    }
-  }
-
-  // Loading animation variants
-  const loadingVariants = {
-    animate: {
-      scale: [1, 1.1, 1],
-      opacity: [0.7, 1, 0.7],
-      transition: {
-        duration: 1.5,
-        repeat: Infinity,
-        ease: "easeInOut"
-      }
-    }
-  }
-
-  // Icon animation variants
-  const iconVariants = {
-    initial: { scale: 1 },
-    hover: { scale: 1.1 },
-    tap: { scale: 0.95 },
-    toggling: {
-      rotate: [0, 10, -10, 0],
-      transition: {
-        duration: 0.6,
-        repeat: Infinity,
-        ease: "easeInOut"
-      }
-    }
-  }
 
   // While loading session or status
   if (status === 'loading' || checking) {
@@ -239,7 +214,7 @@ export default function WatchlistButton({
           }`}
         />
       </motion.div>
-      {variant !== 'icon-only' && (
+      {variant !== 'icon-only' ? (
         <div className="relative overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.span
@@ -269,7 +244,7 @@ export default function WatchlistButton({
             </motion.span>
           </AnimatePresence>
         </div>
-      )}
+      ) : null}
     </motion.button>
   )
 }

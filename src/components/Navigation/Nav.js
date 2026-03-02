@@ -3,7 +3,7 @@ import './nav.css'
 import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
-import { Disclosure, Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react'
+import { Disclosure, DisclosureButton, DisclosurePanel, Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react'
 import { Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline'
 import { lazy, Suspense } from 'react'
 import { siteTitle } from '@src/utils/config'
@@ -30,6 +30,34 @@ const isMediaListPageFunc = (pathname) => {
   const moviePattern = /^\/list\/movie(\/[^/]+)?$/
   const tvPattern = /^\/list\/tv(\/[^/]+(\/\d+)?(\/\d+)?)?$/
   return moviePattern.test(pathname) || tvPattern.test(pathname)
+}
+
+// Helper to get icon for a nav item - renders admin icon if item.isAdmin is true
+const getItemIcon = (item) => {
+  if (item.isAdmin) {
+    return (
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        fill="none"
+        viewBox="0 0 24 24"
+        strokeWidth="1.5"
+        stroke="currentColor"
+        className="size-6"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z"
+        />
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"
+        />
+      </svg>
+    )
+  }
+  return item.icon
 }
 
 const Nav = ({ adminNavItems = [], profileImage = '' }) => {
@@ -175,7 +203,7 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                               : 'border-transparent text-gray-300 hover:border-gray-300 hover:text-gray-800'
                           }`}
                         >
-                          {item.icon}
+                          {getItemIcon(item)}
                           <span className="ml-2">{item.label}</span>
                         </Link>
                       ))}
@@ -211,32 +239,32 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                       <Suspense>
                         <MenuItems className="absolute right-0 z-[12] mt-2 w-48 origin-top-right rounded-md bg-white py-1 shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none">
                           <MenuItem>
-                            {({ active }) => (
+                            {({ focus }) => (
                               <Link
                                 href="/account/delete"
-                                className={`block px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${active ? 'bg-gray-100' : ''}`}
+                                className={`block px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${focus ? 'bg-gray-100' : ''}`}
                               >
                                 Account Settings
                               </Link>
                             )}
                           </MenuItem>
                           <MenuItem>
-                            {({ active }) => (
+                            {({ focus }) => (
                               <Link
                                 href="/privacy"
-                                className={`block px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${active ? 'bg-gray-100' : ''}`}
+                                className={`block px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${focus ? 'bg-gray-100' : ''}`}
                               >
                                 Privacy Policy
                               </Link>
                             )}
                           </MenuItem>
                           <MenuItem>
-                            {({ active }) => (
+                            {({ focus }) => (
                               <Suspense fallback={<SignOutFallback />}>
                                 <SignOutButton
                                   signoutProps={{ callbackUrl: '/' }}
                                   fontcolorClass={null}
-                                  className={`block w-full px-4 py-2 text-sm hover:bg-gray-400 ${active ? 'bg-gray-100' : ''}`}
+                                  className={`block w-full px-4 py-2 text-sm hover:bg-gray-400 ${focus ? 'bg-gray-100' : ''}`}
                                 />
                               </Suspense>
                             )}
@@ -246,19 +274,19 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                     </Menu>
                   </div>
                   <div className="flex items-center lg:hidden">
-                    <Disclosure.Button className="inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500">
+                    <DisclosureButton className="inline-flex items-center justify-center rounded-md p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-500 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-indigo-500">
                       <span className="sr-only">Open main menu</span>
                       {open ? (
                         <XMarkIcon className="block h-6 w-6" aria-hidden="true" />
                       ) : (
                         <Bars3Icon className="block h-6 w-6" aria-hidden="true" />
                       )}
-                    </Disclosure.Button>
+                    </DisclosureButton>
                   </div>
                 </div>
               </div>
 
-              <Disclosure.Panel className={classNames(
+              <DisclosurePanel className={classNames(
                 "lg:hidden",
                 open ? 'bg-[#2f70cc] lg:bg-transparent' : ''
               )}>
@@ -267,7 +295,7 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                   open ? 'bg-[#2f70cc] lg:bg-transparent' : ''
                 )}>
                   {navItems.map((item) => (
-                    <Disclosure.Button
+                    <DisclosureButton
                       key={item.href}
                       as={Link}
                       href={item.href}
@@ -278,12 +306,12 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                           : 'border-transparent text-gray-300 hover:border-gray-300 hover:bg-gray-50 hover:text-gray-500'
                       }`}
                     >
-                      {item.icon}
+                      {getItemIcon(item)}
                       {item.label}
-                    </Disclosure.Button>
+                    </DisclosureButton>
                   ))}
                 </div>
-              </Disclosure.Panel>
+              </DisclosurePanel>
             </>
           )}
         </Disclosure>

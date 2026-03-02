@@ -23,18 +23,17 @@ async function BannerDataFetcher() {
 }
 
 // Main wrapper with Suspense boundary for PPR
-// Fetch banner count outside Suspense for skeleton
+// Derive banner count from fetched data length (eliminates redundant count query)
 export default async function BannerWithVideoWrapper() {
+  // Default bannerCount for skeleton - will be refined after data fetch
   let bannerCount = 3 // Default fallback
   
   try {
-    const client = await clientPromise
-    const db = client.db('Media')
-    
-    // Quick count query - more efficient than fetching full data
-    const totalCount = await db.collection('FlatMovies').countDocuments({})
-    
-    bannerCount = Math.min(totalCount, 8) // Cap at 8 (our limit in fetchFlatBannerMedia)
+    const mediaResult = await fetchFlatBannerMedia()
+    // Derive count from actual data instead of separate count query (eliminates waterfall)
+    if (!mediaResult.error && Array.isArray(mediaResult)) {
+      bannerCount = Math.min(mediaResult.length, 8)
+    }
   } catch (error) {
     console.error('Error fetching banner count:', error)
   }

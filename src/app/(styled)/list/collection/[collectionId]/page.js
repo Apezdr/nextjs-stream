@@ -9,12 +9,9 @@ import { auth } from '../../../../../lib/auth'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { Suspense } from 'react'
-import Loading from '@src/app/loading'
-import { getFlatMoviesByCollectionId, mergeCollectionWithOwnership } from '@src/utils/flatDatabaseUtils'
+import { getFlatMoviesByCollectionId } from '@src/utils/flatDatabaseUtils'
 import { getCollectionDetails } from '@src/utils/tmdb/client'
 import { redirect } from 'next/navigation'
-import CollectionPageComponent from '@components/MediaPages/CollectionPageComponent'
-import Link from 'next/link'
 
 // *** VERCEL BEST PRACTICE: Cache Components Compatibility ***
 // Using centralized cacheLife profiles from next.config.js (cacheComponents: true)

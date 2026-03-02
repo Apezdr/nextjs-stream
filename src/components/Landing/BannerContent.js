@@ -1,15 +1,14 @@
 'use client'
 import { memo, Suspense, useMemo } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import Image from 'next/image'
 import Link from 'next/link'
 import Loading, { LoadingDots } from '@src/app/loading'
 import { getFullImageUrl } from '@src/utils'
 import dynamic from 'next/dynamic'
 import RetryImage from '@components/RetryImage'
 import { InformationCircleIcon } from '@heroicons/react/20/solid'
-import WatchlistButton from '@components/WatchlistButton'
 import { HeartIcon } from '@heroicons/react/24/outline'
+import WatchlistButton from '@components/WatchlistButton'
 
 const BannerVideoPlayer = dynamic(() => import('./BannerVideoPlayer'), {
   ssr: false,
@@ -72,7 +71,7 @@ const BannerContent = ({
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>
           </motion.div>
         )}
-        {currentMedia?.metadata?.trailer_url && showVideo && (
+        {currentMedia?.metadata?.trailer_url && showVideo ? (
           <motion.div
             key={`video-${currentMediaIndex}`} // Video-specific key
             initial={{ opacity: 0 }}
@@ -94,7 +93,7 @@ const BannerContent = ({
               </AnimatePresence>
             </Suspense>
           </motion.div>
-        )}
+        ) : null}
       </AnimatePresence>
 
       {/* Logo and Buttons AnimatePresence */}

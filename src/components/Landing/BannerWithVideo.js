@@ -3,12 +3,9 @@
 import { useState, useEffect, useCallback, useMemo, memo, Suspense } from 'react'
 import { useSwipeable } from 'react-swipeable'
 import { useTimer } from 'react-timer-hook'
-import { lazy } from 'react'
-
-// Lazy load components
-const Dots = lazy(() => import('./Dots'))
-const Loading = lazy(() => import('@src/app/loading'))
-const BannerContent = lazy(() => import('./BannerContent'))
+import Dots from './Dots'
+import Loading from '@src/app/loading'
+import BannerContent from './BannerContent'
 
 // Define steps for clarity
 const STEP = {

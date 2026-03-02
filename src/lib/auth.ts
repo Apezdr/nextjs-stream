@@ -362,8 +362,10 @@ export const {
   signIn: any
   signOut: any
 } = NextAuth({
+  ...authConfig,
   session: { strategy: 'database' },
   adapter: MongoDBCustomAdapter(clientPromise, myMongoDBAdapterOptions),
+  debug: process.env.DEBUG_AUTH === 'true' || false,
   
   // Add cookie configuration for cross-domain support if configured
   ...(cookiesConfig && { cookies: cookiesConfig }),
@@ -449,7 +451,6 @@ export const {
       // This is done in a middleware or in the mobile-redirect route
     }
   },
-  ...authConfig,
 })
 
 // Helper function to get user data by session ID (for real-time updates)

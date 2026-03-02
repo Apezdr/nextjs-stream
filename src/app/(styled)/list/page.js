@@ -7,6 +7,9 @@ import { Suspense } from 'react'
 
 async function MediaDirectory() {
   const session = await auth()
+  if (session?.error === "RefreshTokenError") {
+    await signIn("google") // Force sign in to obtain a new set of access and refresh tokens
+  }
   if (!session || !session.user) {
     // Handle the case where the user is not authenticated
     return (

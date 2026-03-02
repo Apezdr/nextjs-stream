@@ -1,12 +1,14 @@
-import { Suspense, lazy } from 'react'
+import { Suspense } from 'react'
+import dynamic from 'next/dynamic'
 import { cacheLife } from 'next/cache'
-import Loading from '@src/app/loading'
 import SyncClientWithServerWatched from './SyncClientWithServerWatched'
 import HorizontalScrollContainer from '@src/components/MediaScroll/HorizontalScrollContainer'
 import RecommendationSectionTitle from './RecommendationSectionTitle'
 import AsyncMediaCounts from './AsyncMediaCounts'
+import { getCachedUserPlaylistSections } from '@src/utils/cache/userPlaylistSections'
+import { getUserPlaylists, listVisiblePlaylists } from '@src/utils/watchlist/database'
 
-const ReleaseCalendar = lazy(() => import('./Calendar/ReleaseCalendar'))
+const ReleaseCalendar = dynamic(() => import('./Calendar/ReleaseCalendar'))
 
 // Cacheable welcome section - static content that can be prerendered
 async function WelcomeSection({ userName }) {
@@ -66,12 +68,12 @@ async function CalendarSection({ calendarConfig }) {
 }
 
 // User-dependent sections that need user data and can't be cached
-async function UserDependentSections({ user }) {
+async function UserDependentSections({ userId }) {
   return (
     <>
       <h2 className="text-xl font-bold text-left mt-4 ml-4">Watch History</h2>
       <Suspense>
-        <HorizontalScrollContainer type="recentlyWatched" user={user} />
+        <HorizontalScrollContainer type="recentlyWatched" userId={userId} />
       </Suspense>
     </>
   )
@@ -79,24 +81,23 @@ async function UserDependentSections({ user }) {
 
 // User-specific content with private per-user caching
 // IMPORTANT: Uses "use cache: private" because data is personalized per-user
-async function UserSpecificSections({ user }) {
+async function UserSpecificSections({ userId }) {
   "use cache: private"
   cacheLife('userContent') // Per-user cache: 1min client, 15min server, 1hr expire
-
-  const { getCachedUserPlaylistSections } = await import('@src/utils/cache/userPlaylistSections')
-  const { getUserPlaylists, listVisiblePlaylists } = await import('@src/utils/watchlist')
 
   // Load per-user "Show in App" playlist rows using private cache
   let appRows = []
   try {
-    if (user?.id) {
+    if (userId) {
       // Pass userId as primitive parameter to enable proper caching
-      const allPlaylists = await getUserPlaylists(user.id, true, true)
-      const visibilityPrefs = await listVisiblePlaylists(user.id)
+      const [allPlaylists, visibilityPrefs] = await Promise.all([
+        getUserPlaylists(userId, true, true),
+        listVisiblePlaylists(userId),
+      ])
 
       // Use cached function with private per-user caching (nested private cache is allowed)
       const userPlaylistSections = await getCachedUserPlaylistSections(
-        user.id,
+        userId,
         allPlaylists,
         visibilityPrefs
       )
@@ -116,14 +117,14 @@ async function UserSpecificSections({ user }) {
   return (
     <>
       {/* User-configured App Rows (per-user Show in App playlists) with Private Cache */}
-      {appRows.length > 0 && appRows.map((p) => (
+      {appRows.length > 0 ? appRows.map((p) => (
         <div key={p.id}>
           <h2 className="text-xl font-bold text-left mt-4 ml-4">{p.name}</h2>
           <Suspense>
-            <HorizontalScrollContainer type="playlist" playlistId={p.id} user={user} />
+            <HorizontalScrollContainer type="playlist" playlistId={p.id} userId={userId} />
           </Suspense>
         </div>
-      ))}
+      )) : null}
     </>
   )
 }
@@ -132,7 +133,7 @@ export default async function LandingPage({
   user = { id: null, name: '', email: '', limitedAccess: false },
   calendarConfig = { hasAnyCalendar: false },
 }) {
-  const { id, name, email, limitedAccess } = user
+  const { id, name } = user
 
   /* if (limitedAccess) {
     redirect('/list/movie/Big Buck Bunny')
@@ -147,12 +148,12 @@ export default async function LandingPage({
       <div className="flex flex-col w-full mt-10">
         {/* User-dependent sections (Watch History) */}
         <Suspense>
-          <UserDependentSections user={user} />
+          <UserDependentSections userId={id} />
         </Suspense>
         
         {/* User-specific content wrapped in Suspense for partial prerendering */}
         <Suspense>
-          <UserSpecificSections user={user} />
+          <UserSpecificSections userId={id} />
         </Suspense>
         
         {/* <RecommendationSectionTitle />*/}

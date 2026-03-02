@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { memo, useCallback, useEffect, useState, useMemo } from 'react'
 import { redirect, usePathname } from 'next/navigation'
 import {
   Dialog,
@@ -64,6 +64,59 @@ function classNames(...classes) {
   return classes.filter(Boolean).join(' ')
 }
 
+// Extracted outside AdminLayout so it's not recreated on every render.
+// memo() ensures it only re-renders when its own props change.
+const NavItem = memo(function NavItem({ item, pathname, effectiveExpandedItems, toggleExpand }) {
+  return (
+    <li>
+      <div className="flex items-center">
+        <Link
+          href={item.href}
+          className={classNames(
+            pathname === item.href ||
+              (item.subItems && item.subItems.some((subItem) => pathname === subItem.href))
+              ? 'bg-gray-800 text-white'
+              : 'text-gray-400 hover:bg-gray-800 hover:text-white',
+            'group flex flex-1 gap-x-3 rounded-md p-2 text-sm font-semibold leading-6'
+          )}
+        >
+          <item.icon aria-hidden="true" className="h-6 w-6 shrink-0" />
+          {item.name}
+        </Link>
+        {item.subItems && (
+          <button
+            onClick={() => toggleExpand(item.name)}
+            className="p-2 text-gray-400 hover:text-white"
+          >
+            <ChevronDownIconOutline
+              className={`h-5 w-5 transform ${effectiveExpandedItems[item.name] ? 'rotate-180' : ''}`}
+            />
+          </button>
+        )}
+      </div>
+      {item.subItems && effectiveExpandedItems[item.name] && (
+        <ul className="mt-1 space-y-1 pl-10">
+          {item.subItems.map((subItem) => (
+            <li key={subItem.name}>
+              <Link
+                href={subItem.href}
+                className={classNames(
+                  pathname === subItem.href
+                    ? 'bg-gray-800 text-white'
+                    : 'text-gray-400 hover:bg-gray-800 hover:text-white',
+                  'block rounded-md p-2 text-sm'
+                )}
+              >
+                {subItem.name}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  )
+})
+
 export default function AdminLayout({ children }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const pathname = usePathname()
@@ -118,69 +171,31 @@ export default function AdminLayout({ children }) {
   // Use local state for manual toggle expansion
   const [manuallyExpanded, setManuallyExpanded] = useState({})
 
-  const toggleExpand = (itemName) => {
+  // useCallback gives NavItem a stable reference so memo() can bail out
+  const toggleExpand = useCallback((itemName) => {
     setManuallyExpanded((prev) => ({
       ...prev,
       [itemName]: !prev[itemName],
     }))
-  }
+  }, [])
 
   // Combine auto-expanded (based on pathname) with manually toggled items
   const effectiveExpandedItems = useMemo(() => {
     return { ...expandedItems, ...manuallyExpanded }
   }, [expandedItems, manuallyExpanded])
 
-  const renderNavItem = (item) => (
-    <li key={item.name}>
-      <div className="flex items-center">
-        <Link
-          href={item.href}
-          className={classNames(
-            pathname === item.href ||
-              (item.subItems && item.subItems.some((subItem) => pathname === subItem.href))
-              ? 'bg-gray-800 text-white'
-              : 'text-gray-400 hover:bg-gray-800 hover:text-white',
-            'group flex flex-1 gap-x-3 rounded-md p-2 text-sm font-semibold leading-6'
-          )}
-        >
-          <item.icon aria-hidden="true" className="h-6 w-6 shrink-0" />
-          {item.name}
-        </Link>
-        {item.subItems && (
-          <button
-            onClick={() => toggleExpand(item.name)}
-            className="p-2 text-gray-400 hover:text-white"
-          >
-            <ChevronDownIconOutline
-              className={`h-5 w-5 transform ${effectiveExpandedItems[item.name] ? 'rotate-180' : ''}`}
-            />
-          </button>
-        )}
-      </div>
-      {item.subItems && effectiveExpandedItems[item.name] && (
-        <ul className="mt-1 space-y-1 pl-10">
-          {item.subItems.map((subItem) => (
-            <li key={subItem.name}>
-              <Link
-                href={subItem.href}
-                className={classNames(
-                  pathname === subItem.href
-                    ? 'bg-gray-800 text-white'
-                    : 'text-gray-400 hover:bg-gray-800 hover:text-white',
-                  'block rounded-md p-2 text-sm'
-                )}
-              >
-                {subItem.name}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
-    </li>
-  )
-
   if (!isAuthenticated) {
-    return null // or a loading spinner
+    return (
+      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
+        <div className="flex flex-col items-center space-y-4 text-gray-400">
+          <svg className="animate-spin h-8 w-8" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+          </svg>
+          <span className="text-sm">Verifying access...</span>
+        </div>
+      </div>
+    )
   }
   return (
       <div>
@@ -215,7 +230,15 @@ export default function AdminLayout({ children }) {
                 <nav className="flex flex-1 flex-col">
                   <ul className="flex flex-1 flex-col gap-y-7">
                     <li>
-                      <ul className="-mx-2 space-y-1">{navigation.map(renderNavItem)}</ul>
+                      <ul className="-mx-2 space-y-1">{navigation.map(item => (
+                        <NavItem
+                          key={item.name}
+                          item={item}
+                          pathname={pathname}
+                          effectiveExpandedItems={effectiveExpandedItems}
+                          toggleExpand={toggleExpand}
+                        />
+                      ))}</ul>
                     </li>
                     <li>
                       <div className="text-xs font-semibold leading-6 text-gray-400">
@@ -276,14 +299,22 @@ export default function AdminLayout({ children }) {
             <nav className="flex flex-1 flex-col">
               <ul className="flex flex-1 flex-col gap-y-7">
                 <li>
-                  <ul className="-mx-2 space-y-1">{navigation.map(renderNavItem)}</ul>
+                  <ul className="-mx-2 space-y-1">{navigation.map(item => (
+                        <NavItem
+                          key={item.name}
+                          item={item}
+                          pathname={pathname}
+                          effectiveExpandedItems={effectiveExpandedItems}
+                          toggleExpand={toggleExpand}
+                        />
+                      ))}</ul>
                 </li>
                 <li>
                   <div className="text-xs font-semibold leading-6 text-gray-400">Your teams</div>
                   <ul className="-mx-2 mt-2 space-y-1">
                     {teams.map((team) => (
                       <li key={team.name}>
-                        <a
+                        <Link
                           href={team.href}
                           className={classNames(
                             team.current
@@ -296,7 +327,7 @@ export default function AdminLayout({ children }) {
                             {team.initial}
                           </span>
                           <span className="truncate">{team.name}</span>
-                        </a>
+                        </Link>
                       </li>
                     ))}
                   </ul>

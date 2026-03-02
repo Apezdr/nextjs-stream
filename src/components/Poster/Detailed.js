@@ -1,7 +1,6 @@
 import MediaPoster from '@components/MediaPoster'
 import HD4kBanner from '../../../public/4kBanner.png'
 import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
-import Image from 'next/image'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '@src/utils'
 import RetryImage from '@components/RetryImage'
 import WatchlistButton from '@components/WatchlistButton'

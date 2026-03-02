@@ -1,5 +1,3 @@
-'use client'
-
 import SkeletonCard from './SkeletonCard'
 
 export default function HorizontalScrollSkeleton({ type }) {

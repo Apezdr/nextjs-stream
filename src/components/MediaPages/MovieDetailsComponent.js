@@ -13,6 +13,7 @@ const CastSection = dynamic(() =>
   { ssr: true, loading: () => <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse" /> }
 )
 
+
 const MovieDetailsComponent = ({ media }) => {
   if (!media) {
     return <div className="text-center py-4">Loading...</div>
