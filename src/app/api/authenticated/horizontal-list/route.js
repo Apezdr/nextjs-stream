@@ -1,5 +1,5 @@
 // src/app/api/authenticated/horizontal-list/route.js
-import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
+import isAuthenticated, { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import {
   getFlatPosters,
   getFlatRecentlyAddedMedia,
@@ -20,6 +20,8 @@ import {
   getCachedRecentlyAdded,
   getCachedAllMedia
 } from '@src/utils/cache/horizontalListData'
+// ETag support for HTTP caching
+import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
 
 // Sorting functions
 const sortFunctions = {
@@ -33,8 +35,8 @@ const sortFunctions = {
 
 // API Route handler
 export const GET = async (req) => {
-  // Check authentication (supports both web sessions and sessionId)
-  const authResult = await isAuthenticatedEither(req)
+  // Check authentication and approval (supports both web sessions and sessionId)
+  const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution if not authenticated
   }
@@ -347,19 +349,32 @@ export const GET = async (req) => {
       } catch (_e) { /* empty */ }
     }
 
+    // Build response data
+    const responseData = {
+      currentItems: items,
+      previousItem: previousItem || null,
+      nextItem: nextItem || null,
+      playlist: playlistMeta
+    }
+
+    // Generate ETag from actual response content
+    const responseString = JSON.stringify(responseData)
+    const etag = generateETag(responseString)
+
+    // Check if client has current version
+    if (hasMatchingETag(req, etag)) {
+      return createNotModifiedResponse(etag)
+    }
+
     // Return the items along with previous and next items
     return new Response(
-      JSON.stringify({
-        currentItems: items,
-        previousItem: previousItem || null,
-        nextItem: nextItem || null,
-        playlist: playlistMeta
-      }),
+      responseString,
       {
         status: 200,
         headers: {
           'Access-Control-Allow-Origin': '*', // Allows all origins
           'Content-Type': 'application/json',
+          ...createCacheHeaders(etag)
         },
       }
     )

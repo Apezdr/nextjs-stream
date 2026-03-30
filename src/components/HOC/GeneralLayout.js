@@ -3,10 +3,10 @@
 import GeneralFullScreenBackdrop from '@components/Backdrop/GeneralFullscreen'
 import { AnimatePresence } from 'framer-motion'
 import { useParams } from 'next/navigation'
-import { useSession } from 'next-auth/react'
+import { authClient } from '@src/lib/auth-client'
 
 export default function GeneralLayout({ posterCollage }) {
-  const { data: session, status } = useSession()
+  const { data: session, isPending } = authClient.useSession()
   const params = useParams()
 
   // Destructure parameters and decode if necessary
@@ -17,7 +17,7 @@ export default function GeneralLayout({ posterCollage }) {
     (mediaType === 'tv' && !mediaTitle) ||
     (mediaType === 'movie' && !mediaTitle) ||
     (mediaType !== 'tv' && mediaType !== 'movie') ||
-    (status !== 'authenticated' && mediaTitle) // Show for unauthenticated users on specific media pages
+    ((isPending || !session) && mediaTitle) // Show for unauthenticated users on specific media pages
 
   return (
     <AnimatePresence mode="wait">

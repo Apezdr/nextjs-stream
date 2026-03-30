@@ -1,5 +1,6 @@
-import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { httpGet } from '@src/lib/httpHelper'
+import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 
 /**
  * GET /api/authenticated/tmdb/collection/[collectionId]
@@ -10,7 +11,7 @@ import { httpGet } from '@src/lib/httpHelper'
 export async function GET(request, { params }) {
   try {
     // Check authentication
-    const authResult = await isAuthenticatedEither(request)
+    const authResult = await isAuthenticatedAndApproved(request)
     if (authResult instanceof Response) {
       return authResult
     }
@@ -52,11 +53,7 @@ export async function GET(request, { params }) {
     // Build headers with authentication
     const headers = {
       'Content-Type': 'application/json',
-    }
-
-    // Forward cookies for authentication with backend
-    if (request.headers.get('cookie')) {
-      headers['cookie'] = request.headers.get('cookie')
+      ...await getBackendAuthHeaders(request),
     }
 
     // Use enhanced HTTP client with retry and caching

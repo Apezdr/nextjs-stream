@@ -1,14 +1,14 @@
-import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
-import { 
-  getFlatAvailableMoviesCount, 
-  getFlatAvailableTVShowsCount 
+import isAuthenticated, { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import {
+  getFlatAvailableMoviesCount,
+  getFlatAvailableTVShowsCount
 } from '@src/utils/flatDatabaseUtils'
 import { hasWatchHistory } from '@src/utils/flatRecentlyWatchedChecker'
 
 export async function GET(req) {
   try {
-    // Check authentication (supports both web sessions and sessionId)
-    const authResult = await isAuthenticatedEither(req)
+    // Check authentication and approval (supports both web sessions and sessionId)
+    const authResult = await isAuthenticatedAndApproved(req)
     if (authResult instanceof Response) {
       return authResult
     }

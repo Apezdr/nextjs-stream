@@ -1,5 +1,5 @@
 import { getFullImageUrl } from '@src/utils'
-import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { fetchFlatRandomBannerMedia } from '@src/utils/flatDatabaseUtils'
 import { httpGet } from '@src/lib/httpHelper'
 import sharp from 'sharp'
@@ -699,7 +699,7 @@ export const GET = async (req) => {
     const preferPosition = url.searchParams.get('preferPosition') // Optional preferred position (top, center, bottom)
     
     // Check authentication first
-    const authResult = await isAuthenticatedEither(req)
+    const authResult = await isAuthenticatedAndApproved(req)
     if (authResult instanceof Response) {
       // Authentication failed, return the error response
       return authResult

@@ -253,7 +253,7 @@ export default function PlaylistGrid({
                   selectedItems.has(item.id) && 'ring-2 ring-indigo-500 rounded-lg',
                   isOtherCardNavigating && 'pointer-events-none'
                 )}
-                draggable={currentPlaylist?.isOwner !== false && !sortLocked}
+                draggable={canEditPlaylist && !sortLocked}
                 onDragStart={(e) => handleDragStart(e, item, index)}
                 onDragOver={(e) => handleDragOver(e, index)}
                 onDragLeave={handleDragLeave}
@@ -354,7 +354,7 @@ export default function PlaylistGrid({
                 selectedItems.has(item.id) && 'ring-2 ring-indigo-500 rounded-lg',
                 isOtherCardNavigating && 'pointer-events-none'
               )}
-              draggable={currentPlaylist?.isOwner !== false && !sortLocked}
+              draggable={canEditPlaylist && !sortLocked}
               onDragStart={(e) => handleDragStart(e, item, index)}
               onDragOver={(e) => handleDragOver(e, index)}
               onDragLeave={handleDragLeave}

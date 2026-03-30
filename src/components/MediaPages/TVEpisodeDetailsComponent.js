@@ -14,7 +14,7 @@ const CastSection = dynamic(() =>
 
 
 const TVEpisodeDetailsComponent = ({ media }) => {
-  if (!media) {
+   if (!media) {
     return <div className="text-center py-4">Loading...</div>
   }
 

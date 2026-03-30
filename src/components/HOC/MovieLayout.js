@@ -4,11 +4,15 @@ import FullScreenBackdrop from '@components/Backdrop/FullScreen'
 import { AnimatePresence } from 'framer-motion'
 import { useParams } from 'next/navigation'
 import { useState, useEffect } from 'react'
+import { authClient } from '@src/lib/auth-client'
 
 export default function MovieLayout({ posterCollage }) {
   const routeParams = useParams()
   const [params, setParams] = useState(routeParams)
   const [media, setMedia] = useState(null)
+  
+  // Get client-side session to check authentication before API calls
+  const { data: session, isPending } = authClient.useSession()
 
   // Destructure parameters and decode if necessary
   const mediaType = params?.media?.[0] // 'movie' or 'tv'
@@ -19,6 +23,11 @@ export default function MovieLayout({ posterCollage }) {
   }, [routeParams])
 
   useEffect(() => {
+    // Don't fetch if not authenticated or still loading session
+    if (!session?.user || isPending) {
+      return
+    }
+
     if (media && media.title !== mediaTitle) {
       setMedia(null)
     }
@@ -48,13 +57,13 @@ export default function MovieLayout({ posterCollage }) {
           console.error('Fetch error:', error)
         })
     }
-  }, [params]) // Dependency array
+  }, [params, session, isPending]) // Include session and isPending in dependencies
 
   const hasBackdropAvailable = media?.backdrop?.length || media?.metadata?.backdrop_path
 
   return (
     <AnimatePresence mode="wait">
-      {mediaType === 'movie' && mediaTitle && media && hasBackdropAvailable ? (
+      {session?.user && mediaType === 'movie' && mediaTitle && media && hasBackdropAvailable ? (
         <FullScreenBackdrop key={mediaTitle} media={media} />
       ) : null}
     </AnimatePresence>

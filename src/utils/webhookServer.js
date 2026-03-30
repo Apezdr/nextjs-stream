@@ -1,29 +1,73 @@
 "use server";
 
+function getWebhookEnvKeys() {
+  const keys = Object.keys(process.env).filter(
+    (key) => key === 'WEBHOOK_ID' || /^WEBHOOK_ID_\d+$/.test(key)
+  );
+
+  return keys.sort((a, b) => {
+    const getIndex = (key) => {
+      if (key === 'WEBHOOK_ID') return 1;
+      const match = key.match(/^WEBHOOK_ID_(\d+)$/);
+      return match ? parseInt(match[1], 10) : Number.MAX_SAFE_INTEGER;
+    };
+
+    return getIndex(a) - getIndex(b);
+  });
+}
+
+/**
+ * Gets all configured webhook IDs with metadata about server association.
+ * @returns {Promise<Array<{webhookId: string, envKey: string, serverId: string | null, isWildcard: boolean}>>}
+ */
+export async function getAllWebhookConfigs() {
+  const envKeys = getWebhookEnvKeys();
+
+  return envKeys
+    .map((envKey) => {
+      const webhookId = process.env[envKey];
+      if (!webhookId) return null;
+
+      if (envKey === 'WEBHOOK_ID') {
+        return {
+          webhookId,
+          envKey,
+          serverId: 'default',
+          isWildcard: false,
+        };
+      }
+
+      const match = envKey.match(/^WEBHOOK_ID_(\d+)$/);
+      if (!match) return null;
+
+      const index = parseInt(match[1], 10);
+      const nodeServerKey = `NODE_SERVER_URL_${index}`;
+      const serverId = process.env[nodeServerKey] ? `server${index}` : null;
+
+      return {
+        webhookId,
+        envKey,
+        serverId,
+        isWildcard: !serverId,
+      };
+    })
+    .filter(Boolean);
+}
+
 /**
  * Gets the mapping between webhook IDs and server IDs
  * @returns {Promise<Map<string, string>>} A map of webhook IDs to server IDs
  */
 export async function getWebhookServerMapping() {
-  // Build webhook to server mapping
+  const webhookConfigs = await getAllWebhookConfigs();
   const mapping = new Map();
-  
-  // Default server
-  const defaultWebhookId = process.env.WEBHOOK_ID;
-  if (defaultWebhookId) {
-    mapping.set(defaultWebhookId, 'default');
-  }
-  
-  // Additional servers
-  let serverIndex = 2;
-  while (process.env[`NODE_SERVER_URL_${serverIndex}`]) {
-    const webhookId = process.env[`WEBHOOK_ID_${serverIndex}`];
-    if (webhookId) {
-      mapping.set(webhookId, `server${serverIndex}`);
+
+  for (const config of webhookConfigs) {
+    if (config.serverId) {
+      mapping.set(config.webhookId, config.serverId);
     }
-    serverIndex++;
   }
-  
+
   return mapping;
 }
 
@@ -34,13 +78,14 @@ export async function getWebhookServerMapping() {
  */
 export async function validateWebhookId(webhookId) {
   if (!webhookId) return { isValid: false, serverId: null };
-  
-  const mapping = await getWebhookServerMapping();
-  const serverId = mapping.get(webhookId);
-  
+
+  const webhookConfigs = await getAllWebhookConfigs();
+  const matchedConfig = webhookConfigs.find((config) => config.webhookId === webhookId);
+
   return {
-    isValid: !!serverId,
-    serverId: serverId || null
+    isValid: !!matchedConfig,
+    serverId: matchedConfig?.serverId || null,
+    isWildcard: matchedConfig?.isWildcard || false,
   };
 }
 

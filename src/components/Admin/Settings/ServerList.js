@@ -4,6 +4,7 @@ import { Dialog } from '@headlessui/react'
 import { QuestionMarkCircleIcon, XMarkIcon } from '@heroicons/react/24/outline' // Optional: For icons
 import NodeJSDocumentation from './ServerInfo/NodeJSDocumentation'
 import PropTypes from 'prop-types'
+import { formatServerLabel } from '@src/utils/serverLabel'
 
 function ServerList({ servers, organizrURL }) {
   const [isOpen, setIsOpen] = useState(false)
@@ -27,11 +28,14 @@ function ServerList({ servers, organizrURL }) {
 
       <div className="mt-6 space-y-8 divide-y divide-gray-200">
         {/* Iterate through each server and render its settings */}
-        {servers.map((server, index) => (
-          <div key={server.id} className="pt-6">
+        {servers.map((server) => {
+          const serverLabel = formatServerLabel(server.id)
+
+          return (
+            <div key={server.id} className="pt-6">
             {/* Server Header */}
             <h3 className="text-lg font-medium text-gray-800 mb-4">
-              Server: <span className="font-semibold">{server.id}</span>
+              Server: <span className="font-semibold">{serverLabel}</span>
             </h3>
 
             <dl className="space-y-6">
@@ -44,9 +48,9 @@ function ServerList({ servers, organizrURL }) {
                   </span>
                   <button
                     type="button"
-                    onClick={() => openModal(`File Server URL (${server.id})`, `This is the base URL for the ${server.id} File Server. Ensure it is correctly configured in your Docker setup.`)}
+                    onClick={() => openModal(`File Server URL (${serverLabel})`, `This is the base URL for the ${serverLabel} file server. Ensure it is correctly configured in your Docker setup.`)}
                     className="text-gray-500 hover:text-gray-700 focus:outline-none"
-                    aria-label={`More info about File Server URL (${server.id})`}
+                    aria-label={`More info about File Server URL (${serverLabel})`}
                   >
                     <QuestionMarkCircleIcon className="h-5 w-5" />
                   </button>
@@ -62,9 +66,9 @@ function ServerList({ servers, organizrURL }) {
                   </span>
                   <button
                     type="button"
-                    onClick={() => openModal(`File Server Prefix Path (${server.id})`, `The prefix path for accessing files on the ${server.id} File Server. This should match your server configuration.`)}
+                    onClick={() => openModal(`File Server Prefix Path (${serverLabel})`, `The prefix path for accessing files on the ${serverLabel} file server. This should match your server configuration.`)}
                     className="text-gray-500 hover:text-gray-700 focus:outline-none"
-                    aria-label={`More info about File Server Prefix Path (${server.id})`}
+                    aria-label={`More info about File Server Prefix Path (${serverLabel})`}
                   >
                     <QuestionMarkCircleIcon className="h-5 w-5" />
                   </button>
@@ -80,9 +84,9 @@ function ServerList({ servers, organizrURL }) {
                   </span>
                   <button
                     type="button"
-                    onClick={() => openModal(`NodeJS URL (${server.id})`, <NodeJSDocumentation nodeJSURL={server.syncEndpoint} />)}
+                    onClick={() => openModal(`NodeJS URL (${serverLabel})`, <NodeJSDocumentation nodeJSURL={server.syncEndpoint} />)}
                     className="text-gray-500 hover:text-gray-700 focus:outline-none"
-                    aria-label={`More info about NodeJS URL (${server.id})`}
+                    aria-label={`More info about NodeJS URL (${serverLabel})`}
                   >
                     <QuestionMarkCircleIcon className="h-5 w-5" />
                   </button>
@@ -98,9 +102,9 @@ function ServerList({ servers, organizrURL }) {
                   </span>
                   <button
                     type="button"
-                    onClick={() => openModal(`Sync TV URL (${server.id})`, `URL for synchronizing TV data on the ${server.id} server.`)}
+                    onClick={() => openModal(`Sync TV URL (${serverLabel})`, `URL for synchronizing TV data on ${serverLabel}.`)}
                     className="text-gray-500 hover:text-gray-700 focus:outline-none"
-                    aria-label={`More info about Sync TV URL (${server.id})`}
+                    aria-label={`More info about Sync TV URL (${serverLabel})`}
                   >
                     <QuestionMarkCircleIcon className="h-5 w-5" />
                   </button>
@@ -116,9 +120,9 @@ function ServerList({ servers, organizrURL }) {
                   </span>
                   <button
                     type="button"
-                    onClick={() => openModal(`Sync Movies URL (${server.id})`, `URL for synchronizing Movies data on the ${server.id} server.`)}
+                    onClick={() => openModal(`Sync Movies URL (${serverLabel})`, `URL for synchronizing Movies data on ${serverLabel}.`)}
                     className="text-gray-500 hover:text-gray-700 focus:outline-none"
-                    aria-label={`More info about Sync Movies URL (${server.id})`}
+                    aria-label={`More info about Sync Movies URL (${serverLabel})`}
                   >
                     <QuestionMarkCircleIcon className="h-5 w-5" />
                   </button>
@@ -128,8 +132,9 @@ function ServerList({ servers, organizrURL }) {
 
             {/* Add a divider between servers, except after the last server */}
             {/* {index < servers.length - 1 && <hr className="mt-6 border-gray-300" />} */}
-          </div>
-        ))}
+            </div>
+          )
+        })}
 
         {/* Global Settings Section - only show if Organizr URL is configured */}
         {organizrURL && (

@@ -1,6 +1,7 @@
 import { tmdbNodeServerURL } from '@src/utils/config'
-import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { httpGet } from '@src/lib/httpHelper'
+import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 
 /**
  * Dynamic TMDB proxy route
@@ -21,7 +22,7 @@ export async function GET(request, { params }) {
   
   try {
     // Check authentication
-    const authResult = await isAuthenticatedEither(request)
+    const authResult = await isAuthenticatedAndApproved(request)
     if (authResult instanceof Response) {
       return authResult
     }
@@ -50,20 +51,11 @@ export async function GET(request, { params }) {
       backendUrl.searchParams.append(key, value)
     })
 
-    // Build headers with authentication - forward ALL auth methods
+    // Build headers with authentication
     const headers = {
       'Content-Type': 'application/json',
+      ...await getBackendAuthHeaders(request),
     }
-
-    // Forward all authentication headers to backend
-    // This supports: web cookies, Bearer tokens (TV/mobile), and session tokens
-    const authHeadersToForward = ['authorization', 'x-session-token', 'x-mobile-token', 'cookie']
-    authHeadersToForward.forEach(headerName => {
-      const headerValue = request.headers.get(headerName)
-      if (headerValue) {
-        headers[headerName] = headerValue
-      }
-    })
 
     // Determine caching strategy based on endpoint
     const shouldCache =
@@ -115,7 +107,7 @@ export async function GET(request, { params }) {
 export async function POST(request, { params }) {
   try {
     // Check authentication
-    const authResult = await isAuthenticatedEither(request)
+    const authResult = await isAuthenticatedAndApproved(request)
     if (authResult instanceof Response) {
       return authResult
     }
@@ -143,11 +135,7 @@ export async function POST(request, { params }) {
     // Build headers with authentication
     const headers = {
       'Content-Type': 'application/json',
-    }
-
-    // Forward cookies for authentication with backend
-    if (request.headers.get('cookie')) {
-      headers['cookie'] = request.headers.get('cookie')
+      ...await getBackendAuthHeaders(request),
     }
 
     // For POST requests, we'll use a more direct approach since httpGet is optimized for GET

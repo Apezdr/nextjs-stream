@@ -1,18 +1,10 @@
 import pino from 'pino'
 
 // Create the root logger with configurable level
+// Note: Don't use pino-pretty transport here - it causes bundling issues with OTel instrumentation
+// OpenTelemetry logging is already structured and captured automatically
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',
-  // For production, use JSON format (structured)
-  // For development, you can optionally use pretty-print
-  ...(process.env.NODE_ENV === 'development' && {
-    transport: {
-      target: 'pino-pretty',
-      options: {
-        colorize: true,
-      },
-    },
-  }),
 })
 
 /**

@@ -6,21 +6,21 @@ import {
   tvShowProjectionFields,
   sanitizeRecord
 } from '@src/utils/auth_utils'
-import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
+import isAuthenticated, { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 
 export const POST = async (req) => {
-  const authResult = await isAuthenticatedEither(req)
+  const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }
 
   try {
     const body = await req.json()
-    const { query, limit } = body
+    const { query, limit, isTVdevice } = body
 
     // Assuming 'query' is a string you want to search for
     try {
-      const results = await searchMedia(query, limit)
+      const results = await searchMedia(query, limit, isTVdevice)
       return new Response(JSON.stringify({ results }), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -41,7 +41,7 @@ export const POST = async (req) => {
   }
 }
 
-async function searchMedia(query, limit) {
+async function searchMedia(query, limit, isTVdevice = false) {
   const client = await clientPromise
   const db = client.db('Media')
   let recentlyAddedMediaQuery = false
@@ -64,7 +64,10 @@ async function searchMedia(query, limit) {
     // Fetch recently added media if query is empty
     // Default to 15, max 50
     const requestedLimit = limit ? Math.min(Math.max(1, parseInt(limit)), 50) : 15
-    const recentlyAddedMedia = await getFlatRecentlyAddedMedia({ limit: requestedLimit })
+    const recentlyAddedMedia = await getFlatRecentlyAddedMedia({
+      limit: requestedLimit,
+      shouldExposeAdditionalData: isTVdevice
+    })
     return recentlyAddedMedia
   }
 
@@ -74,10 +77,16 @@ async function searchMedia(query, limit) {
     addCustomUrlToFlatMedia(tvShows, 'tv'),
   ])
 
+  // Build context for TV devices to expose additional data
+  const context = {
+    shouldExposeAdditionalData: isTVdevice,
+    isTVdevice: isTVdevice
+  }
+
   // Now sanitize each item to ensure proper blurhash processing
   const sanitizedResults = await Promise.all(
-    [...moviesWithUrl, ...tvShowsWithUrl].map(item => 
-      sanitizeRecord(item, item.type)
+    [...moviesWithUrl, ...tvShowsWithUrl].map(item =>
+      sanitizeRecord(item, item.type, context)
     )
   );
 

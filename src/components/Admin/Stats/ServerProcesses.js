@@ -5,6 +5,18 @@ import { buildURL, fetcher } from '@src/utils';
 import Loading from '@src/app/loading';
 import { useMemo, useState } from 'react';
 
+function normalizeServerProcessesPayload(payload) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  if (payload && Array.isArray(payload.data)) {
+    return payload.data;
+  }
+
+  return [];
+}
+
 /**
  * Renders a table displaying the full view of server processes, including details such as server, process ID, file key, type, status, and last updated time.
  * This component fetches server process data from the API and displays the information in a tabular format with pagination.
@@ -17,12 +29,15 @@ export function ServerProcesses() {
     refreshInterval: 5000, // Fetch every 5 seconds
   });
 
+  const hasDataError = Boolean(data && !Array.isArray(data) && data.error);
+  const serverProcesses = useMemo(() => normalizeServerProcessesPayload(data), [data]);
+
   // Flatten all processes from all servers into a single array
   const allProcesses = useMemo(() => {
-    if (!data) return [];
+    if (!serverProcesses.length) return [];
     
     const processes = [];
-    data.forEach((server) => {
+    serverProcesses.forEach((server) => {
       if (server.processes && server.processes.length > 0) {
         server.processes.forEach((process) => {
           processes.push({
@@ -33,7 +48,7 @@ export function ServerProcesses() {
       }
     });
     return processes;
-  }, [data]);
+  }, [serverProcesses]);
 
   // Calculate pagination
   const totalProcesses = allProcesses.length;
@@ -52,7 +67,7 @@ export function ServerProcesses() {
     setCurrentPage(Math.max(1, Math.min(newPage, totalPages)));
   };
 
-  if (error) {
+  if (error || hasDataError) {
     return (
       <div className="max-w-6xl mx-auto p-6 bg-white dark:bg-gray-800 shadow-md rounded-lg mb-4">
         <h3 className="text-2xl font-semibold text-gray-800 dark:text-gray-200 mb-4 text-center">
@@ -251,7 +266,10 @@ export function MinimalizedServerProcesses() {
     refreshInterval: 5000,
   });
 
-  if (error) {
+  const hasDataError = Boolean(data && !Array.isArray(data) && data.error);
+  const serverProcesses = useMemo(() => normalizeServerProcessesPayload(data), [data]);
+
+  if (error || hasDataError) {
     return (
       <div className="w-full px-2 py-2 bg-gray-800 rounded-md mb-4">
         <div className="text-red-400 text-center text-sm">Failed to load process data.</div>
@@ -270,7 +288,7 @@ export function MinimalizedServerProcesses() {
   }
 
   // Filter out servers that have no active processes
-  const activeServers = data.filter((server) =>
+  const activeServers = serverProcesses.filter((server) =>
     server.processes && server.processes.some((proc) => proc.status !== 'completed')
   );
 

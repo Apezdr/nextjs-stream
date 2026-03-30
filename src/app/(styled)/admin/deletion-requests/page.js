@@ -1,8 +1,8 @@
-import { auth } from '@src/lib/auth'
 import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { adminUserEmails, siteTitle } from '@src/utils/config'
 import DeletionRequestsAdmin from '@components/Admin/DeletionRequests/DeletionRequestsAdmin'
+import { getSession } from '@src/lib/cachedAuth'
 
 export const metadata = {
   title: `Deletion Requests - Admin - ${siteTitle}`,
@@ -10,7 +10,7 @@ export const metadata = {
 }
 
 async function DeletionRequestsAdminPage() {
-  const session = await auth()
+  const session = await getSession()
 
   if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
     return redirect('/', 'replace')

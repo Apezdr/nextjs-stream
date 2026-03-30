@@ -1,4 +1,4 @@
-import { auth } from '../../lib/auth'
+import { getSession } from '@src/lib/cachedAuth'
 import { getServerStatus } from '@src/utils/serverStatus'
 import SignOutButton from '@components/SignOutButton'
 import SignInButtonsWrapper from '@components/SignInButtonsWrapper'
@@ -14,7 +14,7 @@ export default async function ServerStatusCheck() {
 
   let session = null
   if (_serverStatus?.ok) {
-    session = await auth()
+    session = await getSession()
   }
 
   return (

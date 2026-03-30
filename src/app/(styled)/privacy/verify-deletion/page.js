@@ -54,7 +54,7 @@ export default function VerifyDeletionPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
+    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-[#060916e8]">
       <Link href="/" className="self-start mt-16">
         <button
           type="button"

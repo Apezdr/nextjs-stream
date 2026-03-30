@@ -1,15 +1,12 @@
-import { cache } from 'react';
-import { auth as nextAuth } from '@src/lib/auth';
+import { cache } from 'react'
+import { auth } from '@src/lib/auth'
+import { headers } from 'next/headers'
 
 /**
  * Request-level cached auth function.
- * Deduplicates multiple auth() calls within a single server request.
- * All RSC components should import this instead of the original auth.
- * 
- * Benefits:
- * - Single auth check per request across all components
- * - Maintains Auth.js session optimization (JWT cookies, session tokens)
- * - Preserves existing "use cache" cross-request caching
- * - PPR-compatible (server-side only)
+ * Deduplicates multiple getSession() calls within a single server request.
+ * All RSC components should import this instead of calling auth.api.getSession() directly.
  */
-export const auth = cache(nextAuth);
+export const getSession = cache(async () => {
+  return auth.api.getSession({ headers: await headers() })
+})

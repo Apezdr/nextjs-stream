@@ -1,4 +1,4 @@
-import { auth } from '@src/lib/auth'
+import { getSession } from '@src/lib/cachedAuth'
 import { getRecentlyWatchedForUser } from '@src/utils/auth_database'
 import isAuthenticated, { isValidWebhook } from '@src/utils/routeAuth'
 
@@ -6,8 +6,8 @@ async function getUserID(request, isWebhook) {
   if (isWebhook) {
     return request.headers.get('X-Webhook-User-ID')
   } else {
-    const session = await auth()
-    return session?.userId
+    const session = await getSession()
+    return session?.user?.id
   }
 }
 

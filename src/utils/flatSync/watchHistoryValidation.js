@@ -2,6 +2,7 @@ import { createLogger, logError } from '@src/lib/logger'
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { getAllPlaybackEntries, findPlaybackForUser, updateValidationStatus } from '@src/utils/watchHistory/database'
 
 /**
  * Validates all WatchHistory records against the current state of the database
@@ -66,8 +67,8 @@ export async function validateWatchHistoryAgainstDatabase() {
     // Combine all valid videoURLs
     const allValidVideoUrls = new Set([...movieVideoUrls, ...tvVideoUrls]);
     
-    // Process WatchHistory records (one document per video)
-    const watchHistoryRecords = await watchHistoryCollection.find({}).toArray();
+    // Process WatchHistory records using centralized function
+    const watchHistoryRecords = await getAllPlaybackEntries();
     results.processed = watchHistoryRecords.length;
     
     log.info({ totalRecords: watchHistoryRecords.length }, 'Processing WatchHistory records');
@@ -102,18 +103,20 @@ export async function validateWatchHistoryAgainstDatabase() {
           }
         }
         
-        // Update isValid flag if it's different from current state
+        // Update isValid flag using centralized function if different from current state
         if (isValidInDatabase && currentIsValid !== true) {
-          await watchHistoryCollection.updateOne(
-            { _id: record._id },
-            { $set: { isValid: true, lastScanned: new Date().toISOString() } }
-          );
+          await updateValidationStatus({
+            userId: record.userId,
+            normalizedVideoId: record.normalizedVideoId,
+            isValid: { $ne: false }
+          });
           results.markedValid++;
         } else if (!isValidInDatabase && currentIsValid !== false) {
-          await watchHistoryCollection.updateOne(
-            { _id: record._id },
-            { $set: { isValid: false, lastScanned: new Date().toISOString() } }
-          );
+          await updateValidationStatus({
+            userId: record.userId,
+            normalizedVideoId: record.normalizedVideoId,
+            isValid: false
+          });
           results.markedInvalid++;
         } else if (currentIsValid === isValidInDatabase) {
           results.alreadyValid++;
@@ -208,8 +211,8 @@ export async function validateUserWatchHistory(userId) {
     
     const allValidVideoUrls = new Set([...movieVideoUrls, ...tvVideoUrls]);
     
-    // Query all WatchHistory documents for this user
-    const userWatchHistoryRecords = await watchHistoryCollection.find({ userId: userIdObj }).toArray();
+    // Query all WatchHistory documents for this user using centralized function
+    const userWatchHistoryRecords = await findPlaybackForUser(userId);
     results.videosChecked = userWatchHistoryRecords.length;
     
     if (userWatchHistoryRecords.length === 0) {
@@ -248,18 +251,20 @@ export async function validateUserWatchHistory(userId) {
           }
         }
         
-        // Update isValid flag if it's different from current state
+        // Update isValid flag using centralized function if different from current state
         if (isValidInDatabase && currentIsValid !== true) {
-          await watchHistoryCollection.updateOne(
-            { _id: record._id },
-            { $set: { isValid: true, lastScanned: new Date().toISOString() } }
-          );
+          await updateValidationStatus({
+            userId: record.userId,
+            normalizedVideoId: record.normalizedVideoId,
+            isValid: { $ne: false }
+          });
           results.markedValid++;
         } else if (!isValidInDatabase && currentIsValid !== false) {
-          await watchHistoryCollection.updateOne(
-            { _id: record._id },
-            { $set: { isValid: false, lastScanned: new Date().toISOString() } }
-          );
+          await updateValidationStatus({
+            userId: record.userId,
+            normalizedVideoId: record.normalizedVideoId,
+            isValid: false
+          });
           results.markedInvalid++;
         } else if (currentIsValid === isValidInDatabase) {
           results.alreadyValid++;

@@ -1,7 +1,12 @@
 // Create URL handlers for all servers
 import { createURLHandler, createMultiServerURLHandler } from './url_utils'
 // Import webhook functions
-import { getWebhookServerMapping, getServerWebhookMapping, getWebhookIdForServer } from './webhookServer'
+import {
+  getAllWebhookConfigs,
+  getWebhookServerMapping,
+  getServerWebhookMapping,
+  getWebhookIdForServer,
+} from './webhookServer'
 /**
  * @typedef {Object} SyncPaths
  * @property {string} tv - Path for TV show synchronization
@@ -275,4 +280,9 @@ export const fileServerVersionTV = 1.0001
 export const fileServerVersionMOVIES = 1.0001
 
 // Export webhook server mapping functions
-export { getWebhookServerMapping, getServerWebhookMapping, getWebhookIdForServer }
+export {
+  getAllWebhookConfigs,
+  getWebhookServerMapping,
+  getServerWebhookMapping,
+  getWebhookIdForServer,
+}

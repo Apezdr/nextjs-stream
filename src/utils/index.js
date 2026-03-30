@@ -108,9 +108,35 @@ export const generateColors = cache((str) => {
   }
 })
 
+// Module-level ETag cache: Maps URLs to their ETags and cached data
+const etagCache = new Map()
+
 export const fetcher = async (...args) => {
   try {
-    const response = await fetch(...args)
+    const url = args[0]
+    const options = args[1] || {}
+    
+    // Build headers with ETag support
+    const headers = {
+      ...options.headers,
+    }
+    
+    // Include If-None-Match header if we have a cached ETag for this URL
+    if (etagCache.has(url)) {
+      const cached = etagCache.get(url)
+      headers['If-None-Match'] = cached.etag
+    }
+    
+    const response = await fetch(url, { ...options, headers })
+    
+    // Handle 304 Not Modified - return cached data
+    if (response.status === 304) {
+      const cached = etagCache.get(url)
+      if (cached) {
+        return cached.data
+      }
+      // If we don't have cached data, fall through to normal error handling
+    }
     
     // Handle different HTTP status codes
     if (!response.ok) {
@@ -131,16 +157,10 @@ export const fetcher = async (...args) => {
       
       if (response.status >= 500) {
         console.error(`Server error (${response.status}): ${response.statusText}`)
-        // Return safe fallback structure for server errors
-        return {
-          currentItems: [],
-          previousItem: null,
-          nextItem: null,
-          error: {
-            status: response.status,
-            message: 'Server error occurred'
-          }
-        }
+        // Throw to enable SWR's retry logic for transient server errors
+        const error = new Error(`Server error (${response.status}): ${response.statusText}`)
+        error.status = response.status
+        throw error
       }
       
       // For other HTTP errors, still try to parse response
@@ -151,6 +171,12 @@ export const fetcher = async (...args) => {
     
     // Try to parse JSON response
     const data = await response.json()
+    
+    // Cache the ETag if present (for 200 OK responses)
+    const etag = response.headers.get('ETag')
+    if (etag) {
+      etagCache.set(url, { etag, data })
+    }
     
     // Validate that we got a reasonable response structure
     if (typeof data === 'object' && data !== null) {

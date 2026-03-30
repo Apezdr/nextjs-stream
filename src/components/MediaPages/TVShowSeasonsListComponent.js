@@ -1,7 +1,6 @@
 // TVShowSeasonsList.js
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils';
 import Link from 'next/link';
-import { auth } from '../../lib/auth';
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage';
 import SkeletonCard from '@components/SkeletonCard';
 import Detailed from '@components/Poster/Detailed';
@@ -10,6 +9,7 @@ import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
 import { getResolutionLabel } from '@src/utils';
 import { classNames } from '@src/utils';
 import SeasonItem from './Item/SeasonItem';
+import { getSession } from '@src/lib/cachedAuth';
 export const dynamic = 'force-dynamic';
 
 const variants = {
@@ -18,7 +18,7 @@ const variants = {
 };
 
 export default async function TVShowSeasonsList({ showTitle }) {
-  const session = await auth();
+  const session = await getSession()
 
   if (!session || !session.user) {
     // User is not authenticated
@@ -51,7 +51,7 @@ export default async function TVShowSeasonsList({ showTitle }) {
   if (!tvShow) {
     // TV show not found
     return (
-      <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
+      <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-transparent">
         <div>
           <SkeletonCard />
           <h2 className="text-center mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0 mt-4">
@@ -126,7 +126,7 @@ export default async function TVShowSeasonsList({ showTitle }) {
   }, 0);
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
+    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-transparent">
       <SyncClientWithServerWatched />
       <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-6 xl:gap-x-2 mt-32">
         {/* Summary Poster */}

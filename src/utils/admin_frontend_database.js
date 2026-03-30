@@ -3,6 +3,7 @@
 import { ObjectId } from 'mongodb'
 import clientPromise from '@src/lib/mongodb'
 import { updateMetadata } from '@src/utils/admin_database'
+import { userQueries } from '@src/lib/userQueries'
 
 /**
  * Get a record from the database by type and id
@@ -378,11 +379,7 @@ export async function deleteRecordById(formData) {
 
 export async function updateUserLimitedAccessFlag({ limitedAccess = false, userID }) {
   if (userID) {
-    const client = await clientPromise
-    const users = await client
-      .db('Users')
-      .collection('AuthenticatedUsers')
-      .updateOne({ _id: new ObjectId(userID) }, { $set: { limitedAccess: limitedAccess } })
+    const users = await userQueries.updateById(userID, { limitedAccess })
     return users
   }
   return false
@@ -390,11 +387,7 @@ export async function updateUserLimitedAccessFlag({ limitedAccess = false, userI
 
 export async function updateUserApprovedFlag({ approved = false, userID }) {
   if (userID) {
-    const client = await clientPromise
-    const users = await client
-      .db('Users')
-      .collection('AuthenticatedUsers')
-      .updateOne({ _id: new ObjectId(userID) }, { $set: { approved: approved } })
+    const users = await userQueries.updateById(userID, { approved })
     return users
   }
   return false

@@ -51,7 +51,7 @@ const CastGridCell = memo(({
               className="rounded-full"
               width={80}
               height={80}
-              quality={40}
+              quality={50}
               onLoad={() => setIsLoading(false)}
               onError={() => setIsLoading(false)}
             />

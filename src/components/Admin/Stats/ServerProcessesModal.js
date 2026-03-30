@@ -19,12 +19,15 @@ export default function ServerProcessesModal({ isOpen, setIsOpen }) {
     }
   )
 
+  const hasDataError = Boolean(data && !Array.isArray(data) && data.error)
+  const serverProcesses = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []
+
   // Flatten all processes from all servers into a single array
   const allProcesses = useMemo(() => {
-    if (!data) return [];
+    if (!serverProcesses.length) return [];
     
     const processes = [];
-    data.forEach((server) => {
+    serverProcesses.forEach((server) => {
       if (server.processes && server.processes.length > 0) {
         server.processes.forEach((process) => {
           processes.push({
@@ -35,7 +38,7 @@ export default function ServerProcessesModal({ isOpen, setIsOpen }) {
       }
     });
     return processes;
-  }, [data]);
+  }, [serverProcesses]);
 
   // Calculate pagination
   const totalProcesses = allProcesses.length;
@@ -136,7 +139,7 @@ export default function ServerProcessesModal({ isOpen, setIsOpen }) {
 
                 {/* Content */}
                 <div className="bg-white px-6 py-4">
-                  {error ? (
+                  {error || hasDataError ? (
                     <div className="text-center py-12">
                       <div className="text-red-600 text-sm">Failed to load server processes</div>
                     </div>

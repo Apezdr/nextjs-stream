@@ -1,5 +1,4 @@
-import { auth } from '@src/lib/auth';
-import { isAuthenticatedEither } from '@src/utils/routeAuth';
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth';
 import { 
   getUserNotifications, 
   generateNotificationETag,
@@ -7,6 +6,9 @@ import {
 } from '@src/utils/notifications/notificationDatabase.js';
 import { MediaDataEnricher } from '@src/utils/notifications/utils/MediaDataEnricher.js';
 import { NextResponse } from 'next/server';
+import { getSession } from '@src/lib/cachedAuth';
+// Use shared ETag helpers for consistency across all endpoints
+import { hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers';
 
 /**
  * GET /api/authenticated/notifications
@@ -14,8 +16,8 @@ import { NextResponse } from 'next/server';
  */
 export async function GET(request) {
   try {
-    // Check authentication (supports both web sessions and sessionId)
-    const authResult = await isAuthenticatedEither(request);
+    // Check authentication and approval (supports both web sessions and sessionId)
+    const authResult = await isAuthenticatedAndApproved(request);
     if (authResult instanceof Response) {
       return authResult;
     }
@@ -31,15 +33,10 @@ export async function GET(request) {
     // Generate ETag for caching
     const etag = await generateNotificationETag(authResult.id);
     
-    // Check if client has current version
-    const ifNoneMatch = request.headers.get('if-none-match');
-    if (ifNoneMatch === etag) {
-      return new NextResponse(null, { 
-        status: 304,
-        headers: {
-          'ETag': etag,
-          'Cache-Control': 'no-cache'
-        }
+    // Check if client has current version using shared helper
+    if (hasMatchingETag(request, etag)) {
+      return createNotModifiedResponse(etag, {
+        'Cache-Control': 'no-cache'
       });
     }
 
@@ -62,10 +59,11 @@ export async function GET(request) {
       }
     }
 
+    // Return notifications with ETag header for efficient polling
     return NextResponse.json(result, {
       headers: {
-        'ETag': etag,
-        'Cache-Control': 'no-cache'
+        'Cache-Control': 'no-cache',
+        ...createCacheHeaders(etag)
       }
     });
 
@@ -84,10 +82,14 @@ export async function GET(request) {
  */
 export async function HEAD(request) {
   try {
-    const session = await auth();
+    const session = await getSession()
     
     if (!session?.user?.id) {
       return new NextResponse(null, { status: 401 });
+    }
+    
+    if (session.user.approved === false) {
+      return new NextResponse(null, { status: 403 });
     }
 
     const { searchParams } = new URL(request.url);
@@ -97,11 +99,19 @@ export async function HEAD(request) {
       const unreadCount = await getUnreadNotificationCount(session.user.id);
       const etag = await generateNotificationETag(session.user.id);
       
+      // Check if client has current version using shared helper
+      if (hasMatchingETag(request, etag)) {
+        return createNotModifiedResponse(etag, {
+          'Cache-Control': 'no-cache',
+          'X-Unread-Count': unreadCount.toString()
+        });
+      }
+      
       return new NextResponse(null, {
         headers: {
           'X-Unread-Count': unreadCount.toString(),
-          'ETag': etag,
-          'Cache-Control': 'no-cache'
+          'Cache-Control': 'no-cache',
+          ...createCacheHeaders(etag)
         }
       });
     }

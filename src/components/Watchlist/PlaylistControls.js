@@ -37,6 +37,7 @@ export default function PlaylistControls({
   api,
   sortError,
   sortLocked,
+  canAddPlaylist,
   canEditPlaylist,
   onToggleSortLock
 }) {
@@ -81,6 +82,11 @@ export default function PlaylistControls({
   }, [onSearchChange])
 
   const handleAddFromTMDB = useCallback(async (tmdbItem) => {
+    if (!canAddPlaylist) {
+      toast.error("You don't have permission to add items to this playlist")
+      return
+    }
+
     const itemKey = `external-${tmdbItem.media_type}-${tmdbItem.id}`
     
     // Prevent duplicate additions
@@ -161,9 +167,14 @@ export default function PlaylistControls({
         toast.error('Failed to add item to watchlist')
       }
     }
-  }, [currentPlaylist, onRefresh, onSearchChange, api, addingItems])
+  }, [canAddPlaylist, currentPlaylist, onRefresh, onSearchChange, api, addingItems])
 
   const handleAddInternalMedia = useCallback(async (tmdbItem) => {
+    if (!canAddPlaylist) {
+      toast.error("You don't have permission to add items to this playlist")
+      return
+    }
+
     const itemKey = `internal-${tmdbItem.media_type}-${tmdbItem.id}`
     
     // Prevent duplicate additions
@@ -250,7 +261,7 @@ export default function PlaylistControls({
         toast.error('Failed to add item to watchlist')
       }
     }
-  }, [currentPlaylist, onRefresh, onSearchChange, api, addingItems])
+  }, [canAddPlaylist, currentPlaylist, onRefresh, onSearchChange, api, addingItems])
 
   const handleBulkRemove = useCallback(async () => {
     if (selectedItems.size === 0) return
@@ -462,15 +473,15 @@ export default function PlaylistControls({
               type="text"
               value={searchQuery}
               onChange={(e) => handleSearchInput(e.target.value)}
-              placeholder={canEditPlaylist ? "Search watchlist or add from TMDB..." : "Search watchlist (read-only)"}
-              disabled={!canEditPlaylist}
+              placeholder={canAddPlaylist ? "Search watchlist or add from TMDB..." : "Search watchlist (read-only)"}
+              disabled={!canAddPlaylist}
               className={classNames(
                 "w-full pl-10 pr-4 py-2 border border-gray-600 rounded-md text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent",
-                canEditPlaylist
+                canAddPlaylist
                   ? "bg-gray-700"
                   : "bg-gray-600 cursor-not-allowed opacity-75"
               )}
-              title={!canEditPlaylist ? "You don't have permission to add items to this playlist" : ""}
+              title={!canAddPlaylist ? "You don't have permission to add items to this playlist" : ""}
             />
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               {isSearching ? (
@@ -484,7 +495,7 @@ export default function PlaylistControls({
           </div>
 
           {/* Search Results - only show add options if user can edit */}
-          {showSearchResults && canEditPlaylist && (searchResults?.watchlist?.length > 0 || searchResults?.tmdbInternal?.length > 0 || searchResults?.tmdbExternal?.length > 0) && (
+          {showSearchResults && canAddPlaylist && (searchResults?.watchlist?.length > 0 || searchResults?.tmdbInternal?.length > 0 || searchResults?.tmdbExternal?.length > 0) && (
             <div className="absolute top-full left-0 right-0 mt-1 bg-gray-700 border border-gray-600 rounded-md shadow-lg z-20 max-h-96 overflow-y-auto">
               {/* Watchlist Results */}
               {searchResults.watchlist?.length > 0 && (

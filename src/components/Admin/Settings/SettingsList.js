@@ -10,6 +10,7 @@ import ServerList from './ServerList'
 export default function SettingsList({ settings }) {
   const {
     webhookIds,
+    webhookKeys,
     fileImport,
     fileServerURL,
     fileServerPrefixPath,
@@ -25,11 +26,16 @@ export default function SettingsList({ settings }) {
     automated,
   } = settings
 
-  // Split webhookIds string by comma to create an array
-  const webhookIdsArray = webhookIds ? webhookIds.split(',') : []
+  const normalizedWebhookKeys = webhookKeys?.length
+    ? webhookKeys
+    : (webhookIds ? webhookIds.split(',') : []).map((key, index) => ({
+        key,
+        label: `Webhook Key ${index + 1}`,
+        type: 'server',
+      }))
 
   // Initialize visibility states from server or default to false
-  const initialVisibility = webhookVisibility || webhookIdsArray.map(() => false)
+  const initialVisibility = webhookVisibility || normalizedWebhookKeys.map(() => false)
 
   const syncSettings = [
     {
@@ -51,7 +57,7 @@ export default function SettingsList({ settings }) {
           <ServerList {...settings} />
           {/* Integrate the WebhookSettings client component */}
           <WebhookSettings
-            webhookIdsArray={webhookIdsArray}
+            webhookKeys={normalizedWebhookKeys}
             initialVisibility={initialVisibility}
           />
         </div>

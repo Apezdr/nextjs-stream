@@ -1,6 +1,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { nanoid } from 'nanoid'
+import { userQueries } from '@src/lib/userQueries'
 
 /**
  * Account deletion utility functions
@@ -18,7 +19,7 @@ export async function createAuthenticatedDeletionRequest(userId, reason = null) 
   const db = client.db('Users')
   
   // Check if user exists
-  const user = await db.collection('AuthenticatedUsers').findOne({ _id: new ObjectId(userId) })
+  const user = await userQueries.findById(userId)
   if (!user) {
     throw new Error('User not found')
   }
@@ -77,7 +78,7 @@ export async function createPublicDeletionRequest(email, reason = null, clientIp
   }
   
   // Check if user exists
-  const user = await db.collection('AuthenticatedUsers').findOne({ email })
+  const user = await userQueries.findByEmail(email)
   if (!user) {
     throw new Error('No account found with this email address')
   }
@@ -252,7 +253,7 @@ export async function getDeletionRequests(filters = {}, pagination = { page: 0, 
     { $limit: limit },
     {
       $lookup: {
-        from: 'AuthenticatedUsers',
+        from: 'user',
         localField: 'userId',
         foreignField: '_id',
         as: 'user'
@@ -399,12 +400,13 @@ async function deleteUserDataAcrossCollections(userId, userEmail, session) {
   
   const results = {}
   
-  // Delete from AuthenticatedUsers
-  const userResult = await usersDb.collection('AuthenticatedUsers').deleteOne(
-    { _id: userId },
+  // Delete from user collection
+  // Note: Using collection() directly because we need session support
+  const userResult = await userQueries.collection().deleteOne(
+    { _id: userQueries.toUserId(userId) },
     { session }
   )
-  results.AuthenticatedUsers = userResult.deletedCount
+  results.user = userResult.deletedCount
   
   // Delete from SSOAccounts
   const ssoResult = await usersDb.collection('SSOAccounts').deleteMany(
@@ -434,11 +436,8 @@ async function deleteUserDataAcrossCollections(userId, userEmail, session) {
   )
   results.usedTokens = usedTokensResult.deletedCount
   
-  // Delete user activity data from Media database
-  const watchHistoryResult = await mediaDb.collection('WatchHistory').deleteMany(
-    { userId },
-    { session }
-  )
+  // Delete user activity data from Media database using centralized function
+  const watchHistoryResult = await deletePlaybackForUser(userId, session)
   results.WatchHistory = watchHistoryResult.deletedCount
   
   // Delete notifications
@@ -499,7 +498,7 @@ export async function getDeletionAuditLogs(deletionRequestId) {
     { $sort: { performedAt: 1 } },
     {
       $lookup: {
-        from: 'AuthenticatedUsers',
+        from: 'user',
         localField: 'performedBy',
         foreignField: '_id',
         as: 'performer'

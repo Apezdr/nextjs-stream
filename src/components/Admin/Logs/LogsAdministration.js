@@ -4,6 +4,7 @@ import { LazyLog, ScrollFollow } from '@melloware/react-logviewer';
 import DockerHubLastUpdated from '../DockerHubLastUpdated';
 import { buildURL } from '@src/utils';
 import SyncVerificationPanel from './SyncVerification';
+import { formatServerLabel } from '@src/utils/serverLabel';
 
 export default function LogsAdministration() {
   const [activeTab, setActiveTab] = useState('logs'); // 'logs' or 'syncVerification'
@@ -168,7 +169,7 @@ export default function LogsAdministration() {
                   <option value="">Select Server(s)</option>
                   {servers.map((server) => (
                     <option key={server.id} value={server.syncEndpoint}>
-                      {server.id} ({server.baseURL})
+                      {formatServerLabel(server.id)} ({server.baseURL})
                     </option>
                   ))}
                 </select>

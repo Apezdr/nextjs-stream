@@ -20,6 +20,7 @@ import RetryImage from '@components/RetryImage'
 import Image from 'next/image'
 import { getCurrentUserWatchHistory } from '@src/utils/watchHistoryServerUtils'
 import { createWatchHistoryLookupMap } from '@src/utils/watchHistoryUtils'
+import { getSession } from '@src/lib/cachedAuth'
 export const dynamic = 'force-dynamic'
 
 const variants = {
@@ -28,7 +29,7 @@ const variants = {
 }
 
 export default async function TVEpisodesListComponent({ showTitle, originalTitle, seasonNumber }) {
-  const session = await auth()
+  const session = await getSession()
   if (!session || !session.user) {
     // Handle the case where the user is not authenticated
     // For example, redirect to login or show an error message
@@ -61,7 +62,7 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
   if (!season) {
     // Handle the case where the TV show or season is not found
     return (
-      <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
+      <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-transparent">
         TV Season Episodes not found
       </div>
     )
@@ -100,7 +101,7 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
   }))
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
+    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-transparent">
       <SyncClientWithServerWatched />
       <div className="h-auto flex items-center justify-center py-32 lg:py-0 px-4 xl:px-0 sm:mt-20">
         <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-4 gap-y-8 sm:gap-x-6 xl:gap-x-8">

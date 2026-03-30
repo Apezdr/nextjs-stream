@@ -56,9 +56,10 @@ async function VideoPlayer({
   shouldValidateURL = true,
   session,
   savedPlaybackTime = null,
+  hasFullAccess = true,
 }) {
   // Check if user is an admin
-  const isAdmin = session?.user?.admin === true
+  const isAdmin = session?.user?.role === 'admin'
   const { videoURL, metadata } = media
   
   // Conditionally import the SubtitleEditor component only for admin users
@@ -256,7 +257,8 @@ async function VideoPlayer({
     mediaType !== 'movie' ? (title ?? '') : ''
   }`
 
-  let captions = media?.captionURLs ? media?.captionURLs : null
+  // Only provide captions to users with full access (approved and not limited)
+  let captions = (hasFullAccess && media?.captionURLs) ? media?.captionURLs : null
 
   if (captions) {
     const updatedCaptions = {}

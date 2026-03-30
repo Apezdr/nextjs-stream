@@ -1,9 +1,7 @@
 'use server'
 
 import clientPromise from '@src/lib/mongodb'
-import { auth } from '../lib/auth'
-import { ObjectId } from 'mongodb'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+import { userQueries } from '@src/lib/userQueries'
 import {
   arrangeMediaByLatestModification,
   movieProjectionFields,
@@ -11,23 +9,18 @@ import {
   tvShowProjectionFields,
 } from '@src/utils/auth_utils'
 import { getFullImageUrl } from '@src/utils'
+import { getSession } from '@src/lib/cachedAuth'
+import { findPlaybackForUser } from '@src/utils/watchHistory/database'
 
 export async function getVideosWatched() {
-  const session = await auth()
+  const session = await getSession();
 
-  if (!session) {
+  if (!session?.user) {
     return null
   }
 
-  const client = await clientPromise
-  const db = client.db('Media')
-  
-  // Query WatchHistory collection
-  // Each document is a separate video entry = much faster queries + zero lock contention
-  const watchHistory = await db
-    .collection('WatchHistory')
-    .find({ userId: new ObjectId(session.user.id) })
-    .toArray()
+  // Query WatchHistory using centralized function
+  const watchHistory = await findPlaybackForUser(session.user.id)
 
   // Return array of watch entries (compatible with existing code)
   return watchHistory && watchHistory.length > 0 ? watchHistory : []
@@ -256,10 +249,7 @@ export async function getRecentlyWatchedForUser({
     }
     
     const client = await clientPromise;
-    const user = await client
-      .db('Users')
-      .collection('AuthenticatedUsers')
-      .findOne({ _id: new ObjectId(userId) }, { projection: { _id: 1 } }); // Only fetch the _id field
+    const user = await userQueries.findById(userId, { _id: 1 }); // Only fetch the _id field
       if (Boolean(process.env.DEBUG) == true) {
         console.timeEnd('getRecentlyWatchedForUser:findUser');
       }
@@ -270,20 +260,16 @@ export async function getRecentlyWatchedForUser({
 
     const validPage = Math.max(page, 0); // Ensure page is at least 0
     
-    // Get the user's watch history from WatchHistory collection
+    // Get the user's watch history using centralized function
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getRecentlyWatchedForUser:fetchWatchHistory');
     }
     
-    const validVideos = await client
-      .db('Media')
-      .collection('WatchHistory')
-      .find(
-        { userId: user._id, isValid: true },
-        { projection: { videoId: 1, playbackTime: 1, lastUpdated: 1, normalizedVideoId: 1 } }
-      )
-      .sort({ lastUpdated: -1 })
-      .toArray();
+    const validVideos = await findPlaybackForUser(userId, {
+      filter: { isValid: { $ne: false } },
+      projection: { videoId: 1, playbackTime: 1, lastUpdated: 1, normalizedVideoId: 1 },
+      sort: { lastUpdated: -1 }
+    });
 
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getRecentlyWatchedForUser:fetchWatchHistory');

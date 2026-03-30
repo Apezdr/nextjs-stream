@@ -20,6 +20,7 @@ import debounce from 'lodash.debounce'
 import { useSwipeable } from 'react-swipeable'
 import SkeletonList from './SkeletonList'
 import { useItemsPerPage } from '@src/hooks/useItemsPerPage'
+import { useLandingPagePopup } from '@src/contexts/LandingPagePopupContext'
 
 // Define Peek Width
 const PEEK_WIDTH = 50 // Adjust based on design
@@ -78,7 +79,8 @@ const variants = {
 // HorizontalScroll Component
 const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder = 'desc', playlistId = null }) => {
   const [currentPage, setCurrentPage] = useState(0)
-  const [expandedCardId, setExpandedCardId] = useState(null)
+  // Use shared popup context instead of local state for single popup per page
+  const { expandedCardId, expandCard, collapseCard } = useLandingPagePopup()
   const [direction, setDirection] = useState(0) // Track direction
   const [isAnimating, setIsAnimating] = useState(false) // Track animation state
   const [uniqueId] = useState(() => uuidv7()) // Unique ID for this instance (use state instead of ref)
@@ -233,12 +235,12 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   }, [currentPage, totalPages, data])
 
   const handleCardExpand = useCallback((id) => {
-    setExpandedCardId(id)
-  }, [])
+    expandCard(id)
+  }, [expandCard])
 
   const handleCardCollapse = useCallback(() => {
-    setExpandedCardId(null)
-  }, [])
+    collapseCard()
+  }, [collapseCard])
 
   const moveScroll = useCallback(
     (direction) => {
@@ -412,6 +414,8 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
                         comingSoon={item.comingSoon}
                         comingSoonDate={item.comingSoonDate}
                         metadata={item.metadata}
+                        // Trailer/external video flag
+                        isTrailer={item.isTrailer}
                       />
                     </div>
                   )

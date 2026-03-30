@@ -1,12 +1,12 @@
-import { auth } from '../../lib/auth'
+import { getSession } from '@src/lib/cachedAuth'
 import { redirect } from 'next/navigation'
 
 export const withApprovedUser = (WrappedComponent) => {
   return async function ApprovedUserComponent(props) {
-    const session = await auth()
+    const session = await getSession();
 
     // Redirect if not signed in or not approved
-    if (session && session.user?.approved == false) {
+    if (session?.user && session.user.approved === false) {
       redirect('/auth/error?error=APPROVAL_PENDING')
     }
 

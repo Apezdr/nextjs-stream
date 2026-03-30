@@ -56,11 +56,13 @@ async function fetchAllStatuses(servers) {
 async function fetchOneStatus(server) {
   const webhookId = await getWebhookIdForServer(server.id)
   const headers = webhookId ? { 'X-Webhook-ID': webhookId } : {}
+  const endpoint = `${server.internalEndpoint || server.syncEndpoint}${SERVER_ENDPOINT}`
+  const useHttp2 = endpoint.startsWith('https://')
 
   // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.
   const { data, headers: resp } = await httpGet(
-    `${server.internalEndpoint || server.syncEndpoint}${SERVER_ENDPOINT}`,
-    { ...DEFAULTS.HTTP_GET, headers },
+    endpoint,
+    { ...DEFAULTS.HTTP_GET, headers, http2: useHttp2 },
     true // allow 304 caching
   )
 

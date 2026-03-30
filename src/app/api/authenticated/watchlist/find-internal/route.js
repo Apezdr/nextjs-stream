@@ -1,4 +1,4 @@
-import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 
@@ -8,7 +8,7 @@ import { ObjectId } from 'mongodb'
  */
 export async function POST(req) {
   // Check authentication
-  const authResult = await isAuthenticatedEither(req)
+  const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
     return authResult
   }

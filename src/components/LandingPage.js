@@ -7,6 +7,7 @@ import RecommendationSectionTitle from './RecommendationSectionTitle'
 import AsyncMediaCounts from './AsyncMediaCounts'
 import { getCachedUserPlaylistSections } from '@src/utils/cache/userPlaylistSections'
 import { getUserPlaylists, listVisiblePlaylists } from '@src/utils/watchlist/database'
+import { LandingPagePopupProvider } from '@src/contexts/LandingPagePopupContext'
 
 const ReleaseCalendar = dynamic(() => import('./Calendar/ReleaseCalendar'))
 
@@ -140,32 +141,36 @@ export default async function LandingPage({
   } */
   
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between xl:py-24">
+    <div className="flex min-h-screen flex-col items-center justify-between xl:py-24 bg-[#060916e8]">
       <Suspense>
         <SyncClientWithServerWatched />
       </Suspense>
       <WelcomeSection userName={name} />
-      <div className="flex flex-col w-full mt-10">
-        {/* User-dependent sections (Watch History) */}
-        <Suspense>
-          <UserDependentSections userId={id} />
-        </Suspense>
-        
-        {/* User-specific content wrapped in Suspense for partial prerendering */}
-        <Suspense>
-          <UserSpecificSections userId={id} />
-        </Suspense>
-        
-        {/* <RecommendationSectionTitle />*/}
-        {/* <h2 className="text-xl font-bold text-left mt-4 ml-4">Recommendations</h2>
-        <HorizontalScrollContainer type="recommendations" />  */}
-        
-        {/* Static media sections (can be prerendered) */}
-        <StaticMediaSections />
-        
-        {/* Calendar section (client component, cannot be cached) */}
-        <CalendarSection calendarConfig={calendarConfig} />
-      </div>
+      
+      {/* Wrap scrollable content with popup context provider */}
+      <LandingPagePopupProvider>
+        <div className="flex flex-col w-full mt-10">
+          {/* User-dependent sections (Watch History) */}
+          <Suspense>
+            <UserDependentSections userId={id} />
+          </Suspense>
+          
+          {/* User-specific content wrapped in Suspense for partial prerendering */}
+          <Suspense>
+            <UserSpecificSections userId={id} />
+          </Suspense>
+          
+          {/* <RecommendationSectionTitle />*/}
+          {/* <h2 className="text-xl font-bold text-left mt-4 ml-4">Recommendations</h2>
+          <HorizontalScrollContainer type="recommendations" />  */}
+          
+          {/* Static media sections (can be prerendered) */}
+          <StaticMediaSections />
+          
+          {/* Calendar section (client component, cannot be cached) */}
+          <CalendarSection calendarConfig={calendarConfig} />
+        </div>
+      </LandingPagePopupProvider>
     </div>
   )
 }

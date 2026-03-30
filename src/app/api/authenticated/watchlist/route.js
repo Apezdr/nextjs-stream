@@ -1,6 +1,8 @@
-import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { checkRateLimit, createRateLimitHeaders, RATE_LIMITS } from '@src/utils/rateLimiter'
 import { revalidateTag } from 'next/cache'
+// ETag support for HTTP caching
+import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
 import {
   getUserWatchlist,
   addToWatchlist,
@@ -181,7 +183,7 @@ export async function POST(req) {
   // Check authentication
   let authResult
   try {
-    authResult = await isAuthenticatedEither(req)
+    authResult = await isAuthenticatedAndApproved(req)
   } catch (e) {
     return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
   }
@@ -238,7 +240,7 @@ export async function GET(req) {
   // Check authentication
   let authResult
   try {
-    authResult = await isAuthenticatedEither(req)
+    authResult = await isAuthenticatedAndApproved(req)
   } catch (e) {
     return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
   }
@@ -290,7 +292,7 @@ export async function PUT(req) {
   // Check authentication
   let authResult
   try {
-    authResult = await isAuthenticatedEither(req)
+    authResult = await isAuthenticatedAndApproved(req)
   } catch (e) {
     return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
   }
@@ -338,7 +340,7 @@ export async function DELETE(req) {
   // Check authentication
   let authResult
   try {
-    authResult = await isAuthenticatedEither(req)
+    authResult = await isAuthenticatedAndApproved(req)
   } catch (e) {
     return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
   }
@@ -440,6 +442,14 @@ async function handleAddToWatchlist(req, body, user) {
     
     if (error.message.includes('already exists')) {
       return createErrorResponse('Item already exists in this playlist', 409, null, 'Conflict', 'ALREADY_EXISTS')
+    }
+
+    if (error.message.includes('Insufficient permission')) {
+      return createErrorResponse('You do not have permission to add items to this playlist', 403, null, 'Forbidden', 'INSUFFICIENT_PERMISSION')
+    }
+
+    if (error.message.includes('Playlist not found')) {
+      return createErrorResponse('Playlist not found or not accessible', 404, null, 'Not Found', 'PLAYLIST_NOT_FOUND')
     }
     
     return createErrorResponse('Failed to add item to watchlist', 500, error.message, 'Internal Server Error', 'INTERNAL_ERROR')
@@ -627,11 +637,34 @@ async function handleCheckWatchlistStatus(req, user) {
       playlistId === 'default' ? null : playlistId
     )
     
-    return createSuccessResponse({
+    // Build response data
+    const responseData = {
       success: true,
       inWatchlist: !!item,
       item: item ? formatWatchlistItem(item) : null
-    }, 200, rateLimitResult.headers)
+    }
+    
+    // Generate ETag from response data
+    const responseString = JSON.stringify(responseData)
+    const etag = generateETag(responseString)
+    
+    // Check if client has current version (304 Not Modified)
+    if (hasMatchingETag(req, etag)) {
+      return createNotModifiedResponse(etag, {
+        ...createCacheHeaders(etag),
+        ...rateLimitResult.headers
+      })
+    }
+    
+    // Return response with ETag header
+    return new Response(responseString, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        ...createCacheHeaders(etag),
+        ...rateLimitResult.headers
+      }
+    })
 
   } catch (error) {
     debugLog('Check watchlist status error:', error)
@@ -657,8 +690,9 @@ async function handleRemoveFromWatchlist(req, user) {
     const itemId = url.searchParams.get('id')
     const mediaId = url.searchParams.get('mediaId')
     const tmdbId = url.searchParams.get('tmdbId')
+    const playlistId = url.searchParams.get('playlistId')
 
-    debugLog('Remove params:', { itemId, mediaId, tmdbId })
+    debugLog('Remove params:', { itemId, mediaId, tmdbId, playlistId })
 
     let success = false
 
@@ -669,8 +703,8 @@ async function handleRemoveFromWatchlist(req, user) {
       }
       success = await removeFromWatchlist(itemId)
     } else if (mediaId || tmdbId) {
-      // Find item by media/TMDB ID and remove
-      const item = await checkWatchlistStatus(mediaId, tmdbId ? parseInt(tmdbId) : undefined)
+      // Find item by media/TMDB ID and remove (with playlist context)
+      const item = await checkWatchlistStatus(mediaId, tmdbId ? parseInt(tmdbId) : undefined, playlistId)
       if (item) {
         success = await removeFromWatchlist(item.id)
       } else {
@@ -936,7 +970,7 @@ async function handleGetPlaylistItems(req, user) {
     let playlistInfo
     if (playlistId === 'default') {
       // For 'default' playlistId, find the user's default playlist
-      const playlists = await getUserPlaylists()
+      const playlists = await getUserPlaylists(user.id)
       playlistInfo = playlists.find(p => p.isDefault === true)
       
       // If no default playlist found, create one
@@ -995,7 +1029,7 @@ async function handleUpdatePlaylist(req, body, user) {
     validateObjectId(playlistId, 'playlistId')
 
     // Validate updates (partial playlist data)
-    const allowedUpdates = ['name', 'description', 'privacy']
+    const allowedUpdates = ['name', 'description', 'privacy', 'ownerId', 'isDefault']
     const updates = {}
     
     for (const [key, value] of Object.entries(body)) {
@@ -1006,6 +1040,17 @@ async function handleUpdatePlaylist(req, body, user) {
 
     if (Object.keys(updates).length === 0) {
       return createErrorResponse('No valid updates provided', 400)
+    }
+
+    if (updates.ownerId !== undefined) {
+      if (!isAdminUser(user)) {
+        return createErrorResponse('Only admins can transfer playlist ownership', 403)
+      }
+      validateObjectId(updates.ownerId, 'ownerId')
+    }
+
+    if (updates.isDefault !== undefined && typeof updates.isDefault !== 'boolean') {
+      return createErrorResponse('isDefault must be a boolean', 400)
     }
 
     // Update playlist
@@ -1022,6 +1067,14 @@ async function handleUpdatePlaylist(req, body, user) {
 
   } catch (error) {
     debugLog('Update playlist error:', error)
+
+    if (error?.status === 409) {
+      return createErrorResponse(error.message || 'Playlist update conflict', 409)
+    }
+
+    if (error?.status === 400) {
+      return createErrorResponse(error.message || 'Invalid update payload', 400)
+    }
     
     if (error instanceof WatchlistValidationError) {
       const validationError = getValidationErrorResponse(error)
@@ -1092,24 +1145,55 @@ async function handleSharePlaylist(req, body, user) {
   }
 
   try {
-    const { playlistId, collaborators } = body
+    const { playlistId, collaborators = [], globalPermission, removeCollaborators = [] } = body
 
     if (!playlistId) {
       return createErrorResponse('playlistId is required', 400)
     }
 
-    if (!collaborators) {
-      return createErrorResponse('collaborators array is required', 400)
-    }
-
     // Validate playlist ID
     validateObjectId(playlistId, 'playlistId')
 
-    // Validate collaborators
-    const validatedCollaborators = validateCollaborators(collaborators)
+    // Validate collaborators (optional)
+    const validatedCollaborators = Array.isArray(collaborators)
+      ? validateCollaborators(collaborators)
+      : (() => {
+          return createErrorResponse('collaborators must be an array', 400)
+        })()
+
+    if (validatedCollaborators instanceof Response) {
+      return validatedCollaborators
+    }
+
+    const validatedRemoveCollaborators = Array.isArray(removeCollaborators)
+      ? removeCollaborators
+          .map((email) => typeof email === 'string' ? email.trim().toLowerCase() : '')
+          .filter(Boolean)
+      : (() => {
+          return createErrorResponse('removeCollaborators must be an array of emails', 400)
+        })()
+
+    if (validatedRemoveCollaborators instanceof Response) {
+      return validatedRemoveCollaborators
+    }
+
+    const validEmailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (validatedRemoveCollaborators.some((email) => !validEmailRegex.test(email))) {
+      return createErrorResponse('removeCollaborators must contain valid email addresses', 400)
+    }
+
+    // Validate optional global permission
+    const allowedGlobalPermissions = ['view', 'add', 'edit', 'admin', 'none', null]
+    if (!allowedGlobalPermissions.includes(globalPermission ?? null) && globalPermission !== undefined) {
+      return createErrorResponse('globalPermission must be one of: view, add, edit, admin, none', 400)
+    }
+
+    if (validatedCollaborators.length === 0 && validatedRemoveCollaborators.length === 0 && globalPermission === undefined) {
+      return createErrorResponse('Provide collaborators, removeCollaborators, and/or globalPermission', 400)
+    }
 
     // Share playlist
-    const success = await sharePlaylist(playlistId, validatedCollaborators)
+    const success = await sharePlaylist(playlistId, validatedCollaborators, globalPermission, validatedRemoveCollaborators)
     
     if (success) {
       return createSuccessResponse({
@@ -1379,8 +1463,6 @@ async function handleUpdatePlaylistOrder(req, body, user) {
 function isAdminUser(user) {
   return user?.role === 'admin'
     || user?.role === 'Admin'
-    || user?.admin === true
-    || user?.isAdmin === true
     || Array.isArray(user?.permissions) && user.permissions.includes('Admin')
 }
 

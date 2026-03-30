@@ -4,6 +4,7 @@ import { getFlatRecommendations } from '@src/utils/flatRecommendations'
 import { getFlatPosters, getFlatRecentlyAddedMedia, getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { getUserWatchlist, getPlaylistVisibility } from '@src/utils/watchlist'
 import HorizontalScrollSkeleton from './HorizontalScrollSkeleton'
+import EmptyStateWithRetry from './EmptyStateWithRetry'
 
 // Import already cached functions directly - no need to double-wrap with cache()
 // These functions are already cached in their respective modules
@@ -23,15 +24,6 @@ const NO_CONTENT_MESSAGES = {
   recommendations: "🎯 No personalized recommendations available right now.",
   playlist: "📂 No items in this playlist yet.",
   all: "📦 No media available at the moment.",
-}
-
-// Empty state component for consistent no-content display
-function EmptyState({ message }) {
-  return (
-    <div className="py-12 flex flex-col gap-2 text-center text-gray-500">
-      <span className="text-2xl text-white">{message}</span>
-    </div>
-  )
 }
 
 // Dynamic component that performs fresh database queries
@@ -139,7 +131,13 @@ async function DynamicMediaContent({
       playlistId={playlistId}
     />
   ) : (
-    <EmptyState message={message} />
+    <EmptyStateWithRetry
+      message={message}
+      listType={type}
+      sort={sort}
+      sortOrder={sortOrder}
+      playlistId={playlistId}
+    />
   )
 }
 

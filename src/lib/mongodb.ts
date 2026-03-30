@@ -28,9 +28,19 @@ class Singleton {
     }
     return this._instance.clientPromise
   }
+
+  public static get client(): MongoClient {
+    if (!this._instance) {
+      this._instance = new Singleton()
+    }
+    return this._instance.client
+  }
 }
 const clientPromise = Singleton.instance
 
 // Export a module-scoped MongoClient promise. By doing this in a
 // separate module, the client can be shared across functions.
 export default clientPromise
+
+// Synchronous client reference (connected lazily) — used where a Db instance is needed synchronously
+export const mongoClient = Singleton.client

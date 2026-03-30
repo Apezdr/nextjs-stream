@@ -1,11 +1,11 @@
-import { auth } from '../../../../lib/auth'
 import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { adminUserEmails } from '@src/utils/config'
 import LogsAdministration from '@components/Admin/Logs/LogsAdministration'
+import { getSession } from '@src/lib/cachedAuth'
 
 async function LogsAdminPage() {
-  const session = await auth()
+  const session = await getSession()
 
   if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
     return redirect('/', 'replace')

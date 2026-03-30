@@ -1,5 +1,4 @@
-import { auth } from '@src/lib/cachedAuth'
-import { adminUserEmails } from '@src/utils/config'
+import { getSession } from '@src/lib/cachedAuth'
 import { Fragment, Suspense } from 'react'
 import dynamic from 'next/dynamic'
 import Nav from '@components/Navigation/Nav'
@@ -10,10 +9,10 @@ const BannerWithVideoWrapper = dynamic(() => import('@components/Landing/BannerW
 
 // Cacheable navigation with admin items determined at layout level
 async function CacheableNavigation({ email, profileImage, adminNavItems }) {
-  "use cache"
-  
+  'use cache'
+
   if (!email) return null
-  
+
   return (
     <div className="w-full h-auto flex flex-col items-center justify-center text-center z-[3]">
       <Nav adminNavItems={adminNavItems} profileImage={profileImage} />
@@ -37,10 +36,11 @@ function BannerSection() {
 
 export default async function ListLayout({ children }) {
   // Single auth() call to determine all user data upfront
-  const user = await auth()
-  const email = user?.user?.email
-  const profileImage = user?.user?.image
-  const isAdmin = adminUserEmails.includes(email)
+  const session = await getSession()
+  const email = session?.user?.email
+  const profileImage = session?.user?.image
+  const isAdmin = session?.user?.role === 'admin'
+  const isApproved = session?.user?.approved !== false
 
   // Build admin nav items once if user is admin
   const adminNavItems = isAdmin
@@ -57,24 +57,28 @@ export default async function ListLayout({ children }) {
     <Fragment>
       {/* TVAppsNotification - dynamic due to auth() usage */}
       <TVAppsNotification />
-      
+
       {/* Navigation - fully cached with all data determined upfront */}
-      <div className='relative'>
-        <CacheableNavigation 
-          email={email} 
-          profileImage={profileImage} 
-          adminNavItems={adminNavItems}
-        />
-        <Suspense fallback={<div className="relative w-full h-[40vh] md:h-[79vh] bg-black" />}>
-          <BannerSection />
-        </Suspense>
+      <div className="relative">
+        {email && isApproved && (
+          <>
+            <CacheableNavigation
+              email={email}
+              profileImage={profileImage}
+              adminNavItems={adminNavItems}
+            />
+            <Suspense fallback={<div className="relative w-full h-[40vh] md:h-[79vh] bg-black" />}>
+              <BannerSection />
+            </Suspense>
+          </>
+        )}
       </div>
-      
+
       {/* Dynamic page content */}
       {children}
-      
-      {/* Footer - dynamic for now */}
-      {email && <TVAppsFooter />}
+
+      {/* Footer - only show for authenticated AND approved users */}
+      {email && isApproved && <TVAppsFooter />}
     </Fragment>
   )
 }

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useNotifications } from '@src/hooks/useNotifications';
 import { getNotificationIcon, getNotificationColor } from '@src/utils/notifications/NotificationTypes';
-import { useSession } from 'next-auth/react';
+import { authClient } from '@src/lib/auth-client';
 import { classNames } from '@src/utils';
 import { useRouter } from 'next/navigation';
 
@@ -13,7 +13,7 @@ import { useRouter } from 'next/navigation';
 export default function NotificationItem({ notification, onClose }) {
   // Use the new useSWR-based hooks for actions
   const { markAsRead, dismissNotification } = useNotifications();
-  const { data: session } = useSession();
+  const { data: session } = authClient.useSession();
   const [isDismissing, setIsDismissing] = useState(false);
   const [isMarkingAsRead, setIsMarkingAsRead] = useState(false);
   const router = useRouter();
@@ -89,7 +89,7 @@ export default function NotificationItem({ notification, onClose }) {
     notification.type === 'sync_complete';
 
   // Check if current user is admin (basic check)
-  const isUserAdmin = session?.user?.role === 'admin' || session?.user?.isAdmin;
+  const isUserAdmin = session?.user?.role === 'admin';
 
   const colorClasses = getNotificationColor(notification.priority);
   const icon = getNotificationIcon(notification.type);

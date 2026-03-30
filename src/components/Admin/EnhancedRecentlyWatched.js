@@ -20,6 +20,11 @@ export default memo(function EnhancedRecentlyWatched({ recentlyWatched }) {
   const [totalPages, setTotalPages] = useState(1)
   const [sortType, setSortType] = useState('lastWatched') // 'alphabetical' or 'lastWatched'
   const [sortOrder, setSortOrder] = useState('desc') // 'asc' or 'desc'
+  const normalizedRecentlyWatched = Array.isArray(recentlyWatched)
+    ? recentlyWatched
+    : Array.isArray(recentlyWatched?.data)
+      ? recentlyWatched.data
+      : []
 
   useEffect(() => {
     if (selectedUser) setCurrentPage(0)
@@ -58,7 +63,7 @@ export default memo(function EnhancedRecentlyWatched({ recentlyWatched }) {
   }, [selectedUser, totalPages, fetchUserData])
 
   // Sorting logic
-  const sortedRecentlyWatched = recentlyWatched ? [...recentlyWatched].sort((a, b) => {
+  const sortedRecentlyWatched = normalizedRecentlyWatched.length > 0 ? [...normalizedRecentlyWatched].sort((a, b) => {
     if (sortType === 'alphabetical') {
       const nameA = a.user?.name?.toLowerCase() || ''
       const nameB = b.user?.name?.toLowerCase() || ''
@@ -75,7 +80,7 @@ export default memo(function EnhancedRecentlyWatched({ recentlyWatched }) {
       
       return sortOrder === 'asc' ? timestampA - timestampB : timestampB - timestampA
     }
-  }) : null
+  }) : []
 
   return (
     <div className="h-full">

@@ -1,6 +1,6 @@
 'use server';
 
-import { auth } from '@src/lib/cachedAuth';
+import { getSession } from '@src/lib/cachedAuth';
 import { getProcessedSystemStatus } from '@src/utils/getProcessedSystemStatus';
 import StatusBannerClient from './StatusBannerClient';
 
@@ -10,7 +10,7 @@ import StatusBannerClient from './StatusBannerClient';
  */
 export default async function ServerStatusBanner() {
   // Check authentication on server side
-  const session = await auth();
+  const session = await getSession();
   
   // Only show for authenticated users
   if (!session || !session.user) {

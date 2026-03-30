@@ -65,6 +65,7 @@ export {
   clearMediaCache
 } from './mediaResolver.js'
 
+import { getSession } from '@src/lib/cachedAuth.js'
 import { 
   addToWatchlist, 
   checkWatchlistStatus, 
@@ -130,8 +131,7 @@ export async function toggleWatchlist(item) {
  */
 export async function getCurrentUserId() {
   try {
-    const { auth } = await import('@src/lib/auth')
-    const session = await auth()
+    const session = await getSession()
     return session?.user?.id || null
   } catch (error) {
     console.error('Error getting current user:', error)
@@ -186,6 +186,8 @@ export function formatPlaylist(playlist) {
     isCollaborator: playlist.isCollaborator,
     isPublic: playlist.isPublic,
     isDefault: playlist.isDefault || false,
+    globalPermission: playlist.globalPermission,
+    canAdd: playlist.canAdd,
     canEdit: playlist.canEdit,
     itemCount: playlist.itemCount,
     dateCreated: playlist.dateCreated,

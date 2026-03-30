@@ -3,6 +3,7 @@
 import { createContext, useContext } from 'react';
 import useSWR from 'swr';
 import { fetcher } from '@src/utils';
+import { authClient } from '@src/lib/auth-client';
 
 const SystemStatusContext = createContext();
 
@@ -12,15 +13,21 @@ const SystemStatusContext = createContext();
  * @param {React.ReactNode} props.children - Child components
  */
 export function SystemStatusProvider({ children }) {
+  // Check auth state to avoid unnecessary API calls
+  const { data: session, isPending } = authClient.useSession();
+  
+  // Only fetch system status if user is authenticated
+  // This prevents 401 errors for unauthenticated users
+  const shouldFetch = Boolean(session?.user && !isPending);
+  
   // Use SWR for data fetching with automatic polling
-  // The API endpoint will handle authentication checks
   const {
     data: systemStatus,
     error,
     isLoading: loading,
     mutate: refetch
   } = useSWR(
-    '/api/authenticated/system-status',
+    shouldFetch ? '/api/authenticated/system-status' : null,
     fetcher,
     {
       refreshInterval: 30000, // Poll every 30 seconds

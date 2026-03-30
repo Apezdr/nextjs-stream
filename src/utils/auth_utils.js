@@ -485,8 +485,7 @@ export async function sanitizeRecord(record, type, context = {}) {
       delete record.posterBlurhash;
     }
     if (record._id ?? record.id) {
-      record.id = record._id ? record._id.toString() : record.id.toString()
-      delete record?._id
+      record._id = typeof(record._id) === 'object' ? record._id.toString() : record._id
     }
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('sanitizeRecord:initialProcessing');
@@ -500,7 +499,7 @@ export async function sanitizeRecord(record, type, context = {}) {
       const mainTitle = shouldExposeAdditionalData && record.episode.title ? record.episode.title : record.title;
       
       result = {
-        id: record.id,
+        _id: record._id,
         normalizedVideoId: record.episode.normalizedVideoId,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         link: `${record.title}/${record.seasonNumber}/${record.episode.episodeNumber}`,
@@ -530,10 +529,17 @@ export async function sanitizeRecord(record, type, context = {}) {
       // Add showTitle field for TV devices to provide easy access to show title
       if (shouldExposeAdditionalData) {
         result.showTitle = record.title;
+        // Add tmdbId at top level for TV devices (for watchlist operations)
+        if (record.metadata?.id) {
+          result.tmdbId = record.metadata.id;
+        }
+        if (record.showTmdbId) {
+          result.tmdbId = record.showTmdbId;
+        }
       }
     } else {
       result = {
-        id: record.id,
+        _id: record._id,
         normalizedVideoId: record.normalizedVideoId,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         link: encodeURIComponent(record.title),
@@ -549,11 +555,28 @@ export async function sanitizeRecord(record, type, context = {}) {
         // Add device info if available
         deviceInfo: deviceInfo,
       }
+      
+      // Add tmdbId at top level for TV devices (for watchlist operations)
+      if (shouldExposeAdditionalData && record.metadata?.id) {
+        result.tmdbId = record.metadata.id;
+      }
     }
+    
   // Conditionally add url property if it exists in the data passed to the function
   if (record.url) {
     result.url = record.url;
   }
+  
+  // Conditionally add trailer/external flags if they exist
+  if (record.isTrailer) {
+    result.isTrailer = record.isTrailer;
+  }
+  // if (record.isExternal) {
+  //   result.isExternal = record.isExternal;
+  // }
+  // if (record.externalSource) {
+  //   result.externalSource = record.externalSource;
+  // }
   if (Boolean(process.env.DEBUG) == true) {
     console.timeEnd('sanitizeRecord:createReturnObject');
     console.timeEnd('sanitizeRecord:total');
@@ -607,6 +630,7 @@ export function sanitizeCardData(item, popup = false, context = {}) {
       releaseDate,
       link,
       logo,
+      url, // External video URL (e.g., YouTube trailer)
       metadata,
       cast,
       // tv
@@ -617,6 +641,10 @@ export function sanitizeCardData(item, popup = false, context = {}) {
       isAvailable,
       comingSoon,
       comingSoonDate,
+      // Trailer/external video flags
+      isTrailer,
+      isExternal,
+      externalSource,
       // TMDB snake_case fields and nested blurhash object
       poster_blurhash,
       backdrop_blurhash,
@@ -654,6 +682,11 @@ export function sanitizeCardData(item, popup = false, context = {}) {
     sanitized.comingSoon = comingSoon || false
     sanitized.comingSoonDate = comingSoonDate || null
     
+    // CRITICAL: Preserve trailer/external video flags (for trailer badges in UI)
+    if (isTrailer) sanitized.isTrailer = isTrailer
+    if (isExternal) sanitized.isExternal = isExternal
+    if (externalSource) sanitized.externalSource = externalSource
+    
     // CRITICAL: Always preserve metadata for TMDB-only items (moved from try block)
     if (metadata) {
       sanitized.metadata = metadata
@@ -683,7 +716,10 @@ export function sanitizeCardData(item, popup = false, context = {}) {
       if (releaseDate) sanitized.releaseDate = releaseDate
       if (link) sanitized.link = link
       if (logo) sanitized.logo = logo
+      if (url) sanitized.url = url // Preserve external video URL (e.g., YouTube trailer)
       if (item.tmdbId) sanitized.tmdbId = item.tmdbId
+      // Also preserve TMDB ID from metadata.id (primary location in database)
+      if (metadata?.id && !sanitized.tmdbId) sanitized.tmdbId = metadata.id
       
       // TV specific properties
       if (episodeNumber) sanitized.episodeNumber = episodeNumber
@@ -923,6 +959,19 @@ export function sanitizeTVData(media, options = {}) {
         releaseDate: media.metadata?.release_date || media.metadata?.first_air_date,
         trailer_url: media.metadata?.trailer_url
       }
+    }
+
+    // Add tmdbId at top level for TV devices (for watchlist operations)
+    if (media.metadata?.id) {
+      tvData.tmdbId = media.metadata.id
+    }
+    // Also check for tmdbId at top level (from some API responses)
+    if (media.tmdbId && !tvData.tmdbId) {
+      tvData.tmdbId = media.tmdbId
+    }
+    // For TV show episodes, include showTmdbId for watchlist operations
+    if (media.showTmdbId) {
+      tvData.showTmdbId = media.showTmdbId
     }
 
     // Add show title for TV shows/episodes

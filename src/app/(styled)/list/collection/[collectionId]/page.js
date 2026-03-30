@@ -5,13 +5,14 @@
 // Converted to parallel Promise.all() fetching
 
 import { cache } from 'react'
-import { auth } from '../../../../../lib/auth'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { Suspense } from 'react'
 import { getFlatMoviesByCollectionId } from '@src/utils/flatDatabaseUtils'
 import { getCollectionDetails } from '@src/utils/tmdb/client'
 import { redirect } from 'next/navigation'
+import { getSession } from '@src/lib/cachedAuth'
+import { AuthGuard } from '@components/MediaPages/DynamicPage'
 
 // *** VERCEL BEST PRACTICE: Cache Components Compatibility ***
 // Using centralized cacheLife profiles from next.config.js (cacheComponents: true)
@@ -58,12 +59,16 @@ export const getCachedEnhancedCollectionDetails = cache(async (collectionId) => 
 export async function generateMetadata(props, parent) {
   const params = await props.params;
   const collectionId = params?.collectionId;
+  
+  // Check if user is authenticated before fetching collection data
+  const session = await getSession();
 
   let title = (await parent).title.absolute;
   let description = (await parent).description;
   let poster = `/sorry-image-not-available.jpg`;
 
-  if (collectionId) {
+  // Only fetch collection details if user is authenticated
+  if (collectionId && session?.user) {
     try {
       // *** OPTIMIZATION: Use cached fetcher instead of direct API call ***
       // This call will be deduplicated with the page component call automatically by React.cache()
@@ -84,6 +89,10 @@ export async function generateMetadata(props, parent) {
       title = `Movie Collection ${collectionId}`;
       description = `Browse movies in this collection.`;
     }
+  } else if (collectionId && !session?.user) {
+    // Unauthenticated user - use generic metadata
+    title = `Movie Collection - Sign in to view`;
+    description = `Sign in to browse this movie collection.`;
   }
 
   return {
@@ -96,35 +105,15 @@ export async function generateMetadata(props, parent) {
 }
 
 async function CollectionPage({ params, searchParams }) {
-  const session = await auth();
+  const session = await getSession()
   const _params = await params;
   const collectionId = _params?.collectionId;
-
-  // Handle unauthenticated users
-  if (!session || !session.user) {
-    return (
-      <UnauthenticatedPage callbackUrl={`/list/collection/${collectionId}`}>
-        <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
-          Please Sign in first
-        </h2>
-        <div className="text-center text-gray-300 mt-4">
-          Sign in to browse movie collections and see what's available in the library.
-        </div>
-      </UnauthenticatedPage>
-    );
-  }
 
   // Validate collection ID
   if (!collectionId || isNaN(collectionId)) {
     redirect('/list/movie');
   }
 
-  // *** CRITICAL: TRUE STREAMING ARCHITECTURE ***
-  // Return page shell IMMEDIATELY - no awaiting data!
-  // Each Suspense boundary will fetch its own data independently
-  console.log(`[STREAMING] Rendering instant shell for collection ${collectionId}`)
-  
-  // Import skeletons and components
   const {
     CollectionHeaderSkeleton,
     CollectionSummarySkeleton,
@@ -143,62 +132,71 @@ async function CollectionPage({ params, searchParams }) {
   const { CollectionSectionErrorBoundary } = await import('@components/MediaPages/Collection/ClientErrorBoundary')
 
   return (
-    <div className="min-h-screen bg-gray-950">
-      {/* *** STREAM 1: Header - fetches its own data independently *** */}
-      <Suspense fallback={<CollectionHeaderSkeleton />}>
-        <CollectionSectionErrorBoundary
-          fallback={<CollectionHeaderSkeleton />}
-          sectionName="Collection Header"
-        >
-          <CollectionHeaderServerComponent collectionId={collectionId} />
-        </CollectionSectionErrorBoundary>
-      </Suspense>
+    <AuthGuard
+      session={session}
+      callbackUrl={`/list/collection/${collectionId}`}
+      variant="skeleton"
+      description="Sign in to browse movie collections and see what's available in the library."
+    >
+      {session?.user && (
+        <div className="min-h-screen bg-gray-950">
+          {/* *** STREAM 1: Header - fetches its own data independently *** */}
+          <Suspense fallback={<CollectionHeaderSkeleton />}>
+            <CollectionSectionErrorBoundary
+              fallback={<CollectionHeaderSkeleton />}
+              sectionName="Collection Header"
+            >
+              <CollectionHeaderServerComponent collectionId={collectionId} />
+            </CollectionSectionErrorBoundary>
+          </Suspense>
 
-      {/* *** STREAM 2: Collection Summary Strip - rich metadata like original *** */}
-      <Suspense fallback={<CollectionSummarySkeleton />}>
-        <CollectionSectionErrorBoundary
-          fallback={<CollectionSummarySkeleton />}
-          sectionName="Collection Metadata"
-        >
-          <CollectionSummaryStripServerComponent collectionId={collectionId} />
-        </CollectionSectionErrorBoundary>
-      </Suspense>
+          {/* *** STREAM 2: Collection Summary Strip - rich metadata like original *** */}
+          <Suspense fallback={<CollectionSummarySkeleton />}>
+            <CollectionSectionErrorBoundary
+              fallback={<CollectionSummarySkeleton />}
+              sectionName="Collection Metadata"
+            >
+              <CollectionSummaryStripServerComponent collectionId={collectionId} />
+            </CollectionSectionErrorBoundary>
+          </Suspense>
 
-      {/* *** STREAM 3: Featured Contributors - appears BEFORE movies like original *** */}
-      <Suspense fallback={<FeaturedContributorsSkeleton />}>
-        <CollectionSectionErrorBoundary
-          fallback={null}
-          sectionName="Featured Contributors"
-        >
-          <FeaturedContributorsServerComponent collectionId={collectionId} />
-        </CollectionSectionErrorBoundary>
-      </Suspense>
+          {/* *** STREAM 3: Featured Contributors - appears BEFORE movies like original *** */}
+          <Suspense fallback={<FeaturedContributorsSkeleton />}>
+            <CollectionSectionErrorBoundary
+              fallback={null}
+              sectionName="Featured Contributors"
+            >
+              <FeaturedContributorsServerComponent collectionId={collectionId} />
+            </CollectionSectionErrorBoundary>
+          </Suspense>
 
-      {/* *** STREAM 4: Movies Grid - main content streams independently *** */}
-      <Suspense fallback={
-        <>
-          <FilterControlsSkeleton />
-          <div className="max-w-7xl mx-auto px-4 md:px-8 py-8">
-            <MovieGridSkeleton count={12} />
-          </div>
-        </>
-      }>
-        <CollectionSectionErrorBoundary
-          fallback={
-            <div className="text-center py-16">
-              <div className="text-red-400 text-lg">Error loading movies</div>
-            </div>
-          }
-          sectionName="Movies Grid"
-        >
-          <CollectionMoviesServerComponent
-            collectionId={collectionId}
-            defaultFilter="all"
-            defaultSort="release_date"
-          />
-        </CollectionSectionErrorBoundary>
-      </Suspense>
-    </div>
+          {/* *** STREAM 4: Movies Grid - main content streams independently *** */}
+          <Suspense fallback={
+            <>
+              <FilterControlsSkeleton />
+              <div className="max-w-7xl mx-auto px-4 md:px-8 py-8">
+                <MovieGridSkeleton count={12} />
+              </div>
+            </>
+          }>
+            <CollectionSectionErrorBoundary
+              fallback={
+                <div className="text-center py-16">
+                  <div className="text-red-400 text-lg">Error loading movies</div>
+                </div>
+              }
+              sectionName="Movies Grid"
+            >
+              <CollectionMoviesServerComponent
+                collectionId={collectionId}
+                defaultFilter="all"
+                defaultSort="release_date"
+              />
+            </CollectionSectionErrorBoundary>
+          </Suspense>
+        </div>
+      )}
+    </AuthGuard>
   );
 }
 

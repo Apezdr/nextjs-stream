@@ -1,4 +1,4 @@
-import { auth } from '@src/lib/auth';
+import { getSession } from '@src/lib/cachedAuth';
 import { 
   markNotificationAsRead, 
   markNotificationsAsRead,
@@ -17,7 +17,7 @@ import { NextResponse } from 'next/server';
  */
 export async function POST(request) {
   try {
-    const session = await auth();
+    const session = await getSession()
     
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

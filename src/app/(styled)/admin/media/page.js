@@ -1,13 +1,13 @@
-import { auth } from '../../../../lib/auth'
 import { getAllMedia, getLastSynced } from '../../../../utils/admin_database'
 import { processMediaData } from '../../../../utils/admin_utils'
 import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { adminUserEmails, organizrURL } from '@src/utils/config'
 import AllMediaAdministration from '@components/Admin/Media/AllMediaAdministration'
+import { getSession } from '@src/lib/cachedAuth'
 
 async function TVAdministrationPage() {
-  const session = await auth()
+  const session = await getSession()
   const allRecords = await getAllMedia({ type: 'all' })
   const _lastSyncTime = await getLastSynced()
   const processedData = processMediaData(allRecords)

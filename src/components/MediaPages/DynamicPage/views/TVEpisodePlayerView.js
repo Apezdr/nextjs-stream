@@ -23,8 +23,9 @@ import { getWatchTimeForVideo } from '@src/utils/watchHistoryServerUtils'
  * @param {Object} props.session - NextAuth session
  * @param {Object} props.searchParams - URL search parameters (includes start time)
  * @param {Object} props.parsedParams - Parsed URL parameters
+ * @param {boolean} props.hasFullAccess - Whether user has full access (approved and not limited)
  */
-export default async function TVEpisodePlayerView({ media, session, searchParams, parsedParams }) {
+export default async function TVEpisodePlayerView({ media, session, searchParams, parsedParams, hasFullAccess }) {
   const { mediaTitle, mediaSeason, mediaEpisode } = parsedParams
   
   // Validate video URL
@@ -41,7 +42,6 @@ export default async function TVEpisodePlayerView({ media, session, searchParams
   
   // Fetch saved playback position server-side (prevents flash on load)
   const savedPlaybackTime = media?.videoURL ? await getWatchTimeForVideo(media.videoURL, session.user.id) : 0
-  
   return (
     <PlaybackCoordinatorProvider>
       <>
@@ -57,20 +57,23 @@ export default async function TVEpisodePlayerView({ media, session, searchParams
               session={session}
               isValidVideoURL={isValidVideoURL}
               savedPlaybackTime={savedPlaybackTime}
+              hasFullAccess={hasFullAccess}
             />
           </Suspense>
         </div>
         
-        {/* Episode list for easier navigation */}
-        <Suspense fallback={<Loading />}>
-          <div className="w-full md:py-12">
-            <EpisodeListComponent
-              mediaTitle={decodeURIComponent(mediaTitle)}
-              mediaSeason={mediaSeason}
-              mediaEpisode={mediaEpisode}
-            />
-          </div>
-        </Suspense>
+        {/* Episode list for easier navigation - only shown to approved users with full access */}
+        {hasFullAccess && (
+          <Suspense fallback={<Loading />}>
+            <div className="w-full md:py-12">
+              <EpisodeListComponent
+                mediaTitle={decodeURIComponent(mediaTitle)}
+                mediaSeason={mediaSeason}
+                mediaEpisode={mediaEpisode}
+              />
+            </div>
+          </Suspense>
+        )}
       </>
     </PlaybackCoordinatorProvider>
   )

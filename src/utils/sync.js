@@ -1,11 +1,12 @@
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
-import {
-  validateWatchHistoryVideoUrls,
-} from './sync/playbackValidation'
 import { updateLastSynced } from './sync/database'
 import { processMovie, processTVShow } from './sync_utils'
-import { syncToFlatStructure, buildEnhancedFlatDBStructure, checkAvailabilityAcrossAllServers } from './flatSync'
+import {
+  syncToFlatStructure,
+  buildEnhancedFlatDBStructure,
+  checkAvailabilityAcrossAllServers,
+} from './flatSync'
 
 /**
  * Syncs missing media items that are missing from the database.
@@ -23,7 +24,9 @@ export async function syncMissingMedia(missingMedia, fileServer, serverConfig, c
   }
 
   // Filter out contentAddedToDB from missingMedia
-  missingMedia.movies = missingMedia.movies.filter((movie) => !contentAddedToDB.movies.includes(movie))
+  missingMedia.movies = missingMedia.movies.filter(
+    (movie) => !contentAddedToDB.movies.includes(movie)
+  )
   missingMedia.tv = missingMedia.tv.filter((show) => !contentAddedToDB.tv.includes(show))
 
   try {
@@ -153,99 +156,106 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       }
 
       // Initialize missing media tracking for this server
-      results.missingMedia[serverId] = { movies: [], tv: [] };
-      results.missingMp4[serverId] = { movies: [], tv: [] };
+      results.missingMedia[serverId] = { movies: [], tv: [] }
+      results.missingMp4[serverId] = { movies: [], tv: [] }
 
       try {
         // Get client for database access
-        const client = await clientPromise;
-        
+        const client = await clientPromise
+
         // First build the enhanced flat DB structure to identify missing media
-        const flatDB = await buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability);
-        
+        const flatDB = await buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability)
+
         // Process missing movies
         if (flatDB.missingMovies && flatDB.missingMovies.length > 0) {
-          results.missingMedia[serverId].movies = flatDB.missingMovies;
+          results.missingMedia[serverId].movies = flatDB.missingMovies
         }
-        
+
         // Process missing TV shows
         if (flatDB.missingTVShows && flatDB.missingTVShows.length > 0) {
           // Format missing TV shows for the frontend
-          const missingTV = flatDB.missingTVShows.map(show => ({
+          const missingTV = flatDB.missingTVShows.map((show) => ({
             showTitle: show.title,
-            seasons: []
-          }));
-          
-          results.missingMedia[serverId].tv = missingTV;
+            seasons: [],
+          }))
+
+          results.missingMedia[serverId].tv = missingTV
         }
-        
+
         // Identify missing MP4 files from fileServer data
         // Simple implementation - check for missing video URLs
         if (fileServer.movies) {
-          Object.keys(fileServer.movies).forEach(movieTitle => {
+          Object.keys(fileServer.movies).forEach((movieTitle) => {
             if (!fileServer.movies[movieTitle].urls?.mp4) {
-              results.missingMp4[serverId].movies.push(movieTitle);
+              results.missingMp4[serverId].movies.push(movieTitle)
             }
-          });
+          })
         }
-        
+
         if (fileServer.tv) {
-          Object.keys(fileServer.tv).forEach(showTitle => {
-            let hasValidEpisodes = false;
-            
-            const showData = fileServer.tv[showTitle];
+          Object.keys(fileServer.tv).forEach((showTitle) => {
+            let hasValidEpisodes = false
+
+            const showData = fileServer.tv[showTitle]
             if (!showData.seasons || Object.keys(showData.seasons).length === 0) {
-              results.missingMp4[serverId].tv.push(showTitle);
-              return;
+              results.missingMp4[serverId].tv.push(showTitle)
+              return
             }
-            
+
             for (const seasonKey of Object.keys(showData.seasons)) {
-              const seasonData = showData.seasons[seasonKey];
-              
+              const seasonData = showData.seasons[seasonKey]
+
               if (!seasonData.episodes || Object.keys(seasonData.episodes).length === 0) {
-                results.missingMp4[serverId].tv.push(`${showTitle} - ${seasonKey}`);
-                continue;
+                results.missingMp4[serverId].tv.push(`${showTitle} - ${seasonKey}`)
+                continue
               }
-              
-              let validEpisodesFound = false;
+
+              let validEpisodesFound = false
               for (const episodeKey of Object.keys(seasonData.episodes)) {
                 if (seasonData.episodes[episodeKey].videoURL) {
-                  validEpisodesFound = true;
-                  hasValidEpisodes = true;
-                  break;
+                  validEpisodesFound = true
+                  hasValidEpisodes = true
+                  break
                 }
               }
-              
+
               if (!validEpisodesFound) {
-                results.missingMp4[serverId].tv.push(`${showTitle} - ${seasonKey}`);
+                results.missingMp4[serverId].tv.push(`${showTitle} - ${seasonKey}`)
               }
             }
-            
+
             if (!hasValidEpisodes && !results.missingMp4[serverId].tv.includes(showTitle)) {
-              results.missingMp4[serverId].tv.push(showTitle);
+              results.missingMp4[serverId].tv.push(showTitle)
             }
-          });
+          })
         }
 
         // Use forceSync=true to override aggressive hash skipping
         // Pass pre-built flatDB to avoid building it again inside syncToFlatStructure
-        const syncResult = await syncToFlatStructure(fileServer, serverConfig, fieldAvailability, false, true, {
-          useNewArchitecture: options.useNewArchitecture,
-          forceOldArchitecture: options.forceOldArchitecture,
-          preBuiltFlatDB: flatDB
-        });
-        
+        const syncResult = await syncToFlatStructure(
+          fileServer,
+          serverConfig,
+          fieldAvailability,
+          false,
+          true,
+          {
+            useNewArchitecture: options.useNewArchitecture,
+            forceOldArchitecture: options.forceOldArchitecture,
+            preBuiltFlatDB: flatDB,
+          }
+        )
+
         // Store the sync results for reference
-        results.flatSyncResults = results.flatSyncResults || {};
-        results.flatSyncResults[serverId] = syncResult;
+        results.flatSyncResults = results.flatSyncResults || {}
+        results.flatSyncResults[serverId] = syncResult
       } catch (error) {
-        console.error(chalk.red(`❌ Error identifying missing media for server ${serverId}:`));
-        console.error(chalk.red(`   Error Type: ${error.constructor.name}`));
-        console.error(chalk.red(`   Message: ${error.message}`));
+        console.error(chalk.red(`❌ Error identifying missing media for server ${serverId}:`))
+        console.error(chalk.red(`   Error Type: ${error.constructor.name}`))
+        console.error(chalk.red(`   Message: ${error.message}`))
         if (error.stack) {
-          console.error(chalk.dim(`   Stack: ${error.stack}`));
+          console.error(chalk.dim(`   Stack: ${error.stack}`))
         }
-        
+
         results.errors.push({
           serverId,
           errorType: error.constructor.name,
@@ -254,113 +264,111 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
           stack: error.stack,
           context: {
             hasFileServerData: !!fileServer,
-            hasFieldAvailability: !!fieldAvailability
-          }
-        });
-      }
-      
-      // Perform sync operations with server-specific configuration
-      const syncOperations = [
-        { name: 'WatchHistory Validation', fn: () => validateWatchHistoryVideoUrls(fileServers) }
-      ];
-
-      // Execute each sync operation and catch any errors
-      for (const operation of syncOperations) {
-        try {
-          await operation.fn();
-        } catch (error) {
-          console.error(chalk.red(`❌ Error in ${operation.name} sync for server ${serverId}:`));
-          console.error(chalk.red(`   Error Type: ${error.constructor.name}`));
-          console.error(chalk.red(`   Message: ${error.message}`));
-          if (error.stack) {
-            console.error(chalk.dim(`   Stack: ${error.stack}`));
-          }
-          
-          results.errors.push({
-            serverId,
-            errorType: error.constructor.name,
-            error: error.message,
-            phase: operation.name,
-            stack: error.stack,
-            context: {
-              operationName: operation.name,
-              serverCount: Object.keys(fileServers).length
-            }
-          });
-          // Continue with the next operation despite the error
-        }
+            hasFieldAvailability: !!fieldAvailability,
+          },
+        })
       }
     } catch (error) {
-      console.error(`Error processing server ${serverId}:`, error)
+      // Catch errors from outer try block (server processing)
+      console.error(chalk.red(`❌ Error processing server ${serverId}:`))
+      console.error(chalk.red(`   Error: ${error.message}`))
       results.errors.push({
         serverId,
         error: error.message,
-        phase: 'sync',
+        phase: 'server_processing',
+        stack: error.stack,
       })
     }
   }
 
   // Now that all servers have been processed, run a final availability check
   try {
-    console.log(chalk.bold.yellow('Performing final availability check across all servers...'));
-    
+    console.log(chalk.bold.yellow('Performing final availability check across all servers...'))
+
     // Validate inputs
     if (!fileServers || typeof fileServers !== 'object') {
       throw new Error(
         `Invalid fileServers parameter: expected object, got ${typeof fileServers}. ` +
-        'fileServers should be an object mapping server IDs to their data.'
-      );
+          'fileServers should be an object mapping server IDs to their data.'
+      )
     }
-    
+
     if (!fieldAvailability || typeof fieldAvailability !== 'object') {
       throw new Error(
         `Invalid fieldAvailability parameter: expected object, got ${typeof fieldAvailability}. ` +
-        'fieldAvailability should be an object containing field availability mappings.'
-      );
+          'fieldAvailability should be an object containing field availability mappings.'
+      )
     }
-    
-    const serverIds = Object.keys(fileServers);
-    console.log(chalk.dim(`Checking availability across ${serverIds.length} server(s): ${serverIds.join(', ')}`));
-    
+
+    const serverIds = Object.keys(fileServers)
+    console.log(
+      chalk.dim(
+        `Checking availability across ${serverIds.length} server(s): ${serverIds.join(', ')}`
+      )
+    )
+
     // Run availability check with all servers' data
-    const finalAvailabilityResults = await checkAvailabilityAcrossAllServers(fileServers, fieldAvailability);
-    results.finalAvailabilityResults = finalAvailabilityResults;
-    
-    console.log(chalk.bold.yellow('Final availability check complete'));
+    const finalAvailabilityResults = await checkAvailabilityAcrossAllServers(
+      fileServers,
+      fieldAvailability
+    )
+    results.finalAvailabilityResults = finalAvailabilityResults
+
+    console.log(chalk.bold.yellow('Final availability check complete'))
   } catch (error) {
-    console.error(chalk.red('❌ Error during final availability check:'));
-    console.error(chalk.red(`   Phase: final-availability-check`));
-    console.error(chalk.red(`   Error Type: ${error.constructor.name}`));
-    console.error(chalk.red(`   Message: ${error.message}`));
-    
+    console.error(chalk.red('❌ Error during final availability check:'))
+    console.error(chalk.red(`   Phase: final-availability-check`))
+    console.error(chalk.red(`   Error Type: ${error.constructor.name}`))
+    console.error(chalk.red(`   Message: ${error.message}`))
+
     if (error.stack) {
-      console.error(chalk.red(`   Stack Trace:`));
-      console.error(chalk.dim(error.stack));
+      console.error(chalk.red(`   Stack Trace:`))
+      console.error(chalk.dim(error.stack))
     }
-    
+
     // Add context information
-    const serverCount = fileServers ? Object.keys(fileServers).length : 0;
-    const serverIds = fileServers ? Object.keys(fileServers) : [];
-    console.error(chalk.yellow(`   Context Information:`));
-    console.error(chalk.yellow(`     - Server count: ${serverCount}`));
-    console.error(chalk.yellow(`     - Server IDs: ${serverIds.length > 0 ? serverIds.join(', ') : 'none'}`));
-    console.error(chalk.yellow(`     - Has fieldAvailability: ${!!fieldAvailability}`));
-    console.error(chalk.yellow(`     - checkAvailabilityAcrossAllServers type: ${typeof checkAvailabilityAcrossAllServers}`));
-    
+    const serverCount = fileServers ? Object.keys(fileServers).length : 0
+    const serverIds = fileServers ? Object.keys(fileServers) : []
+    console.error(chalk.yellow(`   Context Information:`))
+    console.error(chalk.yellow(`     - Server count: ${serverCount}`))
+    console.error(
+      chalk.yellow(`     - Server IDs: ${serverIds.length > 0 ? serverIds.join(', ') : 'none'}`)
+    )
+    console.error(chalk.yellow(`     - Has fieldAvailability: ${!!fieldAvailability}`))
+    console.error(
+      chalk.yellow(
+        `     - checkAvailabilityAcrossAllServers type: ${typeof checkAvailabilityAcrossAllServers}`
+      )
+    )
+
     // Add troubleshooting suggestions
-    console.error(chalk.blue(`   Troubleshooting suggestions:`));
+    console.error(chalk.blue(`   Troubleshooting suggestions:`))
     if (typeof checkAvailabilityAcrossAllServers !== 'function') {
-      console.error(chalk.blue(`     1. Check that flatSync/index.js properly exports checkAvailabilityAcrossAllServers`));
-      console.error(chalk.blue(`     2. Verify the import statement at the top of this file includes checkAvailabilityAcrossAllServers`));
+      console.error(
+        chalk.blue(
+          `     1. Check that flatSync/index.js properly exports checkAvailabilityAcrossAllServers`
+        )
+      )
+      console.error(
+        chalk.blue(
+          `     2. Verify the import statement at the top of this file includes checkAvailabilityAcrossAllServers`
+        )
+      )
     } else if (!fileServers || typeof fileServers !== 'object') {
-      console.error(chalk.blue(`     1. Check that fileServers is being passed correctly from the calling function`));
-      console.error(chalk.blue(`     2. Verify server data fetching completed successfully`));
+      console.error(
+        chalk.blue(
+          `     1. Check that fileServers is being passed correctly from the calling function`
+        )
+      )
+      console.error(chalk.blue(`     2. Verify server data fetching completed successfully`))
     } else {
-      console.error(chalk.blue(`     1. Check server connectivity and data integrity`));
-      console.error(chalk.blue(`     2. Review the full stack trace above for the specific error location`));
-      console.error(chalk.blue(`     3. Check database connectivity and permissions`));
+      console.error(chalk.blue(`     1. Check server connectivity and data integrity`))
+      console.error(
+        chalk.blue(`     2. Review the full stack trace above for the specific error location`)
+      )
+      console.error(chalk.blue(`     3. Check database connectivity and permissions`))
     }
-    
+
     results.errors.push({
       phase: 'final-availability-check',
       errorType: error.constructor.name,
@@ -372,9 +380,9 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
         hasFieldAvailability: !!fieldAvailability,
         checkFunctionType: typeof checkAvailabilityAcrossAllServers,
         fileServersType: typeof fileServers,
-        fieldAvailabilityType: typeof fieldAvailability
-      }
-    });
+        fieldAvailabilityType: typeof fieldAvailability,
+      },
+    })
   }
 
   await updateLastSynced(client)

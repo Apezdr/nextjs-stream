@@ -1,52 +1,43 @@
 'use server'
 
 import { getProcessedSystemStatus } from '@src/utils/getProcessedSystemStatus'
-import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import isAuthenticated from '@src/utils/routeAuth'
+// Use shared ETag helpers for consistency across all endpoints
+import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
+import { connection } from 'next/server'
 
 const DEFAULTS = {
   CACHE_CONTROL: 'private, must-revalidate, max-age=30',
 }
 
-/** Generate a simple hash-based ETag from any object */
-function generateETag(obj) {
-  const s = JSON.stringify(obj),
-    len = s.length
-  let h = 0
-  for (let i = 0; i < len; i++) {
-    h = (h << 5) - h + s.charCodeAt(i)
-    h |= 0
-  }
-  return `"${h.toString(36)}"`
-}
-
 export async function GET(request) {
+  await connection();
   // auth
-  const auth = await isAuthenticatedEither(request)
+  const auth = await isAuthenticated(request)
   if (auth instanceof Response) return auth
-
-  const incomingETag = request.headers.get('If-None-Match')
 
   try {
     // Use the shared helper function to get processed system status
     const response = await getProcessedSystemStatus()
 
-    const etag = generateETag(response)
-    if (incomingETag === etag) {
-      return new Response(null, {
-        status: 304,
-        headers: {
-          'Cache-Control': DEFAULTS.CACHE_CONTROL,
-          ETag: etag,
-        },
+    // Generate ETag from response data using shared helper
+    const responseString = JSON.stringify(response)
+    const etag = generateETag(responseString)
+
+    // Check if client has current version
+    if (hasMatchingETag(request, etag)) {
+      return createNotModifiedResponse(etag, {
+        'Cache-Control': DEFAULTS.CACHE_CONTROL,
       })
     }
 
-    return new Response(JSON.stringify(response), {
+    // Return system status with ETag header for efficient polling
+    return new Response(responseString, {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': DEFAULTS.CACHE_CONTROL,
-        ETag: etag,
+        ...createCacheHeaders(etag),
       },
     })
   } catch (err) {
@@ -63,13 +54,16 @@ export async function GET(request) {
       hasActiveIncidents: false,
     }
 
-    const etag = generateETag(errorResponse)
-    return new Response(JSON.stringify(errorResponse), {
+    // Generate ETag for error response as well
+    const errorString = JSON.stringify(errorResponse)
+    const etag = generateETag(errorString)
+
+    return new Response(errorString, {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
         'Cache-Control': 'private, must-revalidate, max-age=10',
-        ETag: etag,
+        ...createCacheHeaders(etag),
         'X-Status': 'error',
       },
     })

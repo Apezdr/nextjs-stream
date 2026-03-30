@@ -1,11 +1,13 @@
-import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { fetchBannerMedia } from '@src/utils/auth_database'
 import { fetchFlatBannerMedia } from '@src/utils/flatDatabaseUtils'
 import { generateClipVideoURL } from '@src/utils/auth_utils'
+// ETag support for HTTP caching
+import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
 
 // /api/authenticated/banner
 export const GET = async (req) => {
-  const authResult = await isAuthenticatedEither(req)
+  const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }
@@ -39,11 +41,22 @@ export const GET = async (req) => {
     })
   }
 
-  return new Response(JSON.stringify(processedMediaResult), {
+  // Generate ETag from response data
+  const responseString = JSON.stringify(processedMediaResult)
+  const etag = generateETag(responseString)
+
+  // Check if client has current version
+  if (hasMatchingETag(req, etag)) {
+    return createNotModifiedResponse(etag)
+  }
+
+  // Return the banner media with ETag header for efficient polling
+  return new Response(responseString, {
     status: 200,
     headers: {
       'Access-Control-Allow-Origin': '*', // Allows all origins
       'Content-Type': 'application/json',
+      ...createCacheHeaders(etag),
     },
   })
 }

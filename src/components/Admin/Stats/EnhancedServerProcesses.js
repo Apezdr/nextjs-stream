@@ -85,7 +85,10 @@ const EnhancedServerProcesses = () => {
         refreshInterval: 5000,
     })
 
-    if (error) {
+    const hasDataError = Boolean(data && !Array.isArray(data) && data.error)
+    const serverProcesses = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []
+
+    if (error || hasDataError) {
         return (
             <div className="p-6 text-center">
                 <div className="text-red-600 text-sm">Failed to load server processes</div>
@@ -113,7 +116,7 @@ const EnhancedServerProcesses = () => {
         )
     }
 
-    const activeServers = data.filter(server => 
+    const activeServers = serverProcesses.filter(server => 
         server.processes && 
         server.processes.some(proc => proc.status !== 'completed')
     )

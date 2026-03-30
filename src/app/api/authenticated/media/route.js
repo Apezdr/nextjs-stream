@@ -1,10 +1,10 @@
 import { sanitizeCardData, sanitizeTVData } from '@src/utils/auth_utils'
-import isAuthenticated, { isAuthenticatedEither } from '../../../../utils/routeAuth'
+import isAuthenticated, { isAuthenticatedAndApproved } from '../../../../utils/routeAuth'
 import { getFlatRequestedMedia, getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils'
 import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
 
 export async function POST(req) {
-  const authResult = await isAuthenticatedEither(req)
+  const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
     return authResult
   }
@@ -19,7 +19,7 @@ export async function POST(req) {
 
 export async function GET(req) {
   try {
-    const authResult = await isAuthenticatedEither(req)
+    const authResult = await isAuthenticatedAndApproved(req)
     if (authResult instanceof Response) {
       return authResult
     }

@@ -1,11 +1,11 @@
-import { auth } from '../../../../lib/auth'
 import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { adminUserEmails } from '@src/utils/config'
 import CalendarAdmin from '@components/Admin/Calendar/CalendarAdministration'
+import { getSession } from '@src/lib/cachedAuth'
 
 async function CalendarAdminPage() {
-  const session = await auth()
+  const session = await getSession();
 
   if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
     return redirect('/', 'replace')

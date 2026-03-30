@@ -5,6 +5,8 @@ import { LoggerProvider, BatchLogRecordProcessor } from '@opentelemetry/sdk-logs
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http'
 import { registerInstrumentations } from '@opentelemetry/instrumentation'
 import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino'
+import { resourceFromAttributes } from '@opentelemetry/resources'
+import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions'
 
 declare global {
   // Prevent double-init in dev / hot reload
@@ -16,11 +18,16 @@ function startOtelLogsOnce() {
   if (globalThis.__otelLogsStarted) return
   globalThis.__otelLogsStarted = true
 
+  const resource = resourceFromAttributes({
+    [ATTR_SERVICE_NAME]: process.env.OTEL_SERVICE_NAME || 'nextjs-stream',
+  })
+
   // Uses OTEL_EXPORTER_OTLP_ENDPOINT / OTEL_EXPORTER_OTLP_HEADERS automatically
   // (SigNoz documents this behavior for OTLP log exporter)
   const logExporter = new OTLPLogExporter()
 
   const loggerProvider = new LoggerProvider({
+    resource,
     processors: [new BatchLogRecordProcessor(logExporter)],
   })
 
@@ -35,15 +42,6 @@ function startOtelLogsOnce() {
         // disableLogCorrelation: false,
       }),
     ],
-  })
-
-  // Flush on shutdown (nice for containers)
-  process.on('SIGTERM', async () => {
-    try {
-      await loggerProvider.shutdown()
-    } finally {
-      process.exit(0)
-    }
   })
 }
 
