@@ -44,7 +44,7 @@ function normalizeUserId(id) {
       // Invalid format, return as-is (will likely fail query)
       return id
     } catch (err) {
-      console.warn(`Failed to convert userId to ObjectId: ${id}`, err)
+      console.warn('Failed to convert userId to ObjectId:', id, err)
       return id
     }
   }
