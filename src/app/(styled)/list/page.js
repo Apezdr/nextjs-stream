@@ -1,46 +1,34 @@
-import { auth } from '../../../lib/cachedAuth'
-import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
-import SkeletonCard from '@components/SkeletonCard'
+import { getSession } from '../../../lib/cachedAuth'
+import AuthGuard from '@components/MediaPages/DynamicPage/guards/AuthGuard'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import LandingPage from '@components/LandingPage'
 import { Suspense } from 'react'
 
 async function MediaDirectory() {
-  const session = await auth()
-  if (session?.error === "RefreshTokenError") {
-    await signIn("google") // Force sign in to obtain a new set of access and refresh tokens
-  }
-  if (!session || !session.user) {
-    // Handle the case where the user is not authenticated
-    return (
-      <UnauthenticatedPage callbackUrl={'/list'}>
-        <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
-          Please Sign in first
-        </h2>
-        <div className="border border-white border-opacity-30 rounded-lg p-3 overflow-hidden skeleton-container">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 overflow-hidden">
-            <SkeletonCard />
-            <SkeletonCard className="hidden md:block" />
-            <SkeletonCard className="hidden lg:block" />
-          </div>
-        </div>
-      </UnauthenticatedPage>
-    )
-  }
-  const {
-    user: { id, name, email, limitedAccess },
-  } = session
-
+  const session = await getSession()
+  
   const calendarConfig = {
     sonarr: !!process.env.SONARR_ICAL_LINK,
     radarr: !!process.env.RADARR_ICAL_LINK,
   }
   calendarConfig.hasAnyCalendar = calendarConfig.sonarr || calendarConfig.radarr
-
+  
   return (
-    <Suspense fallback={<div className='flex min-h-screen flex-col items-center justify-between xl:py-24'></div>}>
-      <LandingPage user={{ id, name, email, limitedAccess }} calendarConfig={calendarConfig} />
-    </Suspense>
+    <AuthGuard session={session} callbackUrl="/list" variant="skeleton">
+      {session?.user && (
+        <Suspense fallback={<div className='flex min-h-screen flex-col items-center justify-between xl:py-24 bg-[#060916e8]'></div>}>
+          <LandingPage
+            user={{
+              id: session.user.id,
+              name: session.user.name,
+              email: session.user.email,
+              limitedAccess: session.user.limitedAccess
+            }}
+            calendarConfig={calendarConfig}
+          />
+        </Suspense>
+      )}
+    </AuthGuard>
   )
 }
 

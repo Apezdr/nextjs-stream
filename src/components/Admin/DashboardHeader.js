@@ -144,15 +144,26 @@ const DashboardHeader = ({
     { refreshInterval: 5000 }
   )
 
+  const serverProcesses = Array.isArray(processesData)
+    ? processesData
+    : Array.isArray(processesData?.data)
+      ? processesData.data
+      : []
+  const hasProcessesDataError = Boolean(
+    processesData && !Array.isArray(processesData) && processesData.error
+  )
+
   // Derived during render — no useState/useEffect needed
   const isLoading = !processesData
-  const activeProcessCount = processesData?.reduce((total, server) => {
-    return total + server.processes.filter(p => p.status !== 'completed').length
+  const activeProcessCount = serverProcesses.reduce((total, server) => {
+    const processes = Array.isArray(server?.processes) ? server.processes : []
+    return total + processes.filter(p => p.status !== 'completed').length
   }, 0) ?? 0
 
   const systemHealth =
     lastSyncTime === "Sync hasn't been run yet" ? 'warning'
     : activeProcessCount > 10                   ? 'warning'
+    : hasProcessesDataError                     ? 'error'
     : processesData                             ? 'success'
     : 'unknown'
 

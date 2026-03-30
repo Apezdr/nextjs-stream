@@ -8,6 +8,7 @@ import {
 } from '@src/utils/admin_database'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { ObjectId } from 'mongodb'
+import { userQueries } from '@src/lib/userQueries'
 import {
   fetchRadarrQueue,
   fetchSABNZBDQueue,
@@ -155,10 +156,7 @@ export async function GET(request, props) {
             
             // Validate user exists
             const client = await clientPromise;
-            const user = await client
-              .db('Users')
-              .collection('AuthenticatedUsers')
-              .findOne({ _id: new ObjectId(userId) });
+            const user = await userQueries.findById(userId);
               
             if (!user) {
               throw new Error(`User with ID ${userId} not found`);
@@ -213,7 +211,7 @@ export async function GET(request, props) {
           try {
             // Get all users
             const client = await clientPromise
-            const users = await client.db('Users').collection('AuthenticatedUsers').find({}).toArray()
+            const users = await userQueries.findAll()
             
             // For each user, get their recently watched media using the flat database approach
             const lastWatchedPromises = users.map(async (user) => {
@@ -645,7 +643,6 @@ async function handleSync(webhookId, request) {
   try {
     const headers = {}
     if (webhookId) headers['X-Webhook-ID'] = webhookId
-    if (request.headers.get('cookie')) headers['cookie'] = request.headers.get('cookie')
 
     // Get file server(s) data directly (no internal HTTP call)
     const { fileServers, errors } = await getFileServerData({skipAuth: true});

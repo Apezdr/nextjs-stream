@@ -4,8 +4,8 @@ import Link from 'next/link'
 import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { Disclosure, DisclosureButton, DisclosurePanel, Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/react'
-import { Bars3Icon, XMarkIcon } from '@heroicons/react/24/outline'
-import { lazy, Suspense } from 'react'
+import { Bars3Icon, TvIcon, XMarkIcon } from '@heroicons/react/24/outline'
+import { lazy, Suspense, useState } from 'react'
 import { siteTitle } from '@src/utils/config'
 import Logo from '@src/app/logo'
 import { classNames } from '@src/utils'
@@ -14,6 +14,7 @@ import useScroll from './useScroll'
 const SearchInput = lazy(() => import('@components/Search/SearchInput'))
 const SignOutButton = lazy(() => import('@components/SignOutButton'))
 const NotificationBell = lazy(() => import('@components/notifications/NotificationBell'))
+const DeviceLinkModal = lazy(() => import('./DeviceLinkModal'))
 
 // Invisible fallbacks for immediate rendering
 const SearchFallback = () => <div className="w-full max-w-lg lg:max-w-xs h-10 bg-transparent" />
@@ -61,6 +62,7 @@ const getItemIcon = (item) => {
 }
 
 const Nav = ({ adminNavItems = [], profileImage = '' }) => {
+  const [isDeviceLinkModalOpen, setIsDeviceLinkModalOpen] = useState(false)
   const pathname = usePathname()
   const isScrolled = useScroll(0) // Threshold set to 0; adjust if needed
 
@@ -260,6 +262,17 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                           </MenuItem>
                           <MenuItem>
                             {({ focus }) => (
+                              <button
+                                onClick={() => setIsDeviceLinkModalOpen(true)}
+                                className={`block w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${focus ? 'bg-gray-100' : ''}`}
+                              >
+                                <TvIcon className="inline-block h-5 w-5 mr-2" aria-hidden="true" />
+                                Link a Device
+                              </button>
+                            )}
+                          </MenuItem>
+                          <MenuItem>
+                            {({ focus }) => (
                               <Suspense fallback={<SignOutFallback />}>
                                 <SignOutButton
                                   signoutProps={{ callbackUrl: '/' }}
@@ -316,6 +329,14 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
           )}
         </Disclosure>
       )}
+      
+      {/* Device Link Modal */}
+      <Suspense>
+        <DeviceLinkModal 
+          isOpen={isDeviceLinkModalOpen} 
+          onClose={() => setIsDeviceLinkModalOpen(false)} 
+        />
+      </Suspense>
     </>
   )
 }

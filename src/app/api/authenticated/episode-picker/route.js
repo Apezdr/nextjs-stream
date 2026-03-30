@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isAuthenticatedEither } from '@src/utils/routeAuth';
+import { isAuthenticatedWithFullAccess } from '@src/utils/routeAuth';
 import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils';
 
 /**
@@ -11,8 +11,8 @@ import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils';
  */
 export async function GET(request) {
   try {
-    // Verify authentication (supports both web sessions and sessionId)
-    const authResult = await isAuthenticatedEither(request);
+    // Verify authentication and full access (supports both web sessions and sessionId)
+    const authResult = await isAuthenticatedWithFullAccess(request);
     if (authResult instanceof Response) {
       return authResult;
     }

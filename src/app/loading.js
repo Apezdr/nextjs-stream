@@ -1,3 +1,5 @@
+'use client'
+
 import { classNames } from '@src/utils'
 import { useMemo } from 'react'
 

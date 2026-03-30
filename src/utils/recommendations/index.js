@@ -1,6 +1,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { addCustomUrlToMedia } from '@src/utils/auth_database'
+import { findPlaybackForUser, getAllPlaybackEntries } from '@src/utils/watchHistory/database'
 
   // Import utility functions
 import {
@@ -47,11 +48,10 @@ export async function getGenreBasedRecommendations(userId, page = 0, limit = 30)
     const client = await clientPromise
     const db = client.db('Media')
 
-    // Get user's watched videos from WatchHistory collection
-    const userWatchHistoryEntries = await db
-      .collection('WatchHistory')
-      .find({ userId: new ObjectId(userId), isValid: true })
-      .toArray()
+    // Get user's watched videos using centralized function
+    const userWatchHistoryEntries = await findPlaybackForUser(userId, {
+      filter: { isValid: { $ne: false } }
+    })
 
     if (!userWatchHistoryEntries || userWatchHistoryEntries.length === 0) {
       return { hasWatched: false, items: [] }
@@ -432,11 +432,10 @@ export async function getMostPopularContent(page = 0, limit = 30) {
     const client = await clientPromise
     const db = client.db('Media')
 
-    // Aggregate watch counts from WatchHistory collection
-    const allWatchHistoryEntries = await db.collection('WatchHistory')
-      .find({})
-      .project({ videoId: 1 })
-      .toArray()
+    // Aggregate watch counts from WatchHistory using centralized function
+    const allWatchHistoryEntries = await getAllPlaybackEntries({
+      projection: { videoId: 1 }
+    })
     
     // Create a map of videoId to watch count and metadata
     const watchCountMap = new Map()

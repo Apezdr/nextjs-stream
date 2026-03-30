@@ -1,9 +1,11 @@
 import { getVideosWatched } from '@src/utils/auth_database'
-import { isAuthenticatedServer } from '@src/utils/routeAuth'
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+// ETag support for HTTP caching
+import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
 
 export async function GET(req) {
   // Authenticate the user (using direct auth() call - no HTTP fetch overhead)
-  const authResult = await isAuthenticatedServer()
+  const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
     return authResult // Return unauthorized response if not authenticated
   }
@@ -38,8 +40,21 @@ export async function GET(req) {
   // Apply limit if requested
   const result = limit > 0 ? sorted.slice(0, limit) : sorted
 
-  return new Response(JSON.stringify(result), {
+  // Generate ETag from response data
+  const responseString = JSON.stringify(result)
+  const etag = generateETag(responseString)
+
+  // Check if client has current version
+  if (hasMatchingETag(req, etag)) {
+    return createNotModifiedResponse(etag)
+  }
+
+  // Return the results with ETag header for caching
+  return new Response(responseString, {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      ...createCacheHeaders(etag),
+    },
   })
 }

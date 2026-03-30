@@ -10,7 +10,7 @@ export default function GeneralFullScreenBackdrop({ url }) {
 
   return (
     <motion.div
-      initial="hidden"
+      initial="visible"
       animate="visible"
       exit="hidden"
       variants={backdropVariants}

@@ -1,7 +1,7 @@
 'use client';
 
 import useSWR, { mutate } from 'swr';
-import { useSession } from 'next-auth/react';
+import { authClient } from '@src/lib/auth-client';
 import { useCallback, useMemo } from 'react';
 import { fetcher } from '@src/utils';
 
@@ -57,9 +57,9 @@ const paginateNotifications = (notifications, page = 1, limit = 20) => {
  * @returns {Object} SWR data and utility functions
  */
 export function useNotifications(options = {}) {
-  const { data: session, status: authStatus } = useSession();
-  
-  const isAuthenticated = authStatus === 'authenticated' && session;
+  const { data: session, isPending: authPending } = authClient.useSession();
+
+  const isAuthenticated = !authPending && !!session;
   
   // Master notifications query - fetch all notifications once
   const { 
@@ -343,7 +343,7 @@ export function useNotifications(options = {}) {
       notifications: [],
       unreadCount: 0,
       totalPages: 1,
-      loading: authStatus === 'loading',
+      loading: authPending,
       error: null,
       markAsRead: async () => false,
       markAllAsRead: async () => false,
@@ -372,8 +372,8 @@ export function useNotifications(options = {}) {
  * Hook specifically for unread count (lightweight, but now shares the same unified approach)
  */
 export function useUnreadCount() {
-  const { data: session, status: authStatus } = useSession();
-  const isAuthenticated = authStatus === 'authenticated' && session;
+  const { data: session, isPending } = authClient.useSession();
+  const isAuthenticated = !isPending && !!session;
   
   const { data, error, isLoading } = useSWR(
     isAuthenticated ? UNREAD_COUNT_KEY : null, 

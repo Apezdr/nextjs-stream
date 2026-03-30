@@ -38,13 +38,13 @@ To implement the NextJS-Stream app, follow these steps:
    MONGODB_DB=Media
    MONGODB_DB_USERS=Users
 
-   # NextAuth Configuration
-   NEXTAUTH_SECRET=your_nextauth_secret
-   AUTH_TRUST_HOST="true"
-   AUTH_GOOGLE_ID=your_google_client_id
-   AUTH_GOOGLE_SECRET=your_google_client_secret
-   AUTH_DISCORD_ID=your_discord_client_id
-   AUTH_DISCORD_SECRET=your_discord_client_secret
+   # Better Auth Configuration
+   BETTER_AUTH_URL=https://your-domain.com
+   BETTER_AUTH_SECRET=your_better_auth_secret
+   GOOGLE_CLIENT_ID=your_google_client_id
+   GOOGLE_CLIENT_SECRET=your_google_client_secret
+   DISCORD_CLIENT_ID=your_discord_client_id
+   DISCORD_CLIENT_SECRET=your_discord_client_secret
 
    # TMDB Server Configuration (Optional)
    # Dedicated TMDB server URL for external media integration

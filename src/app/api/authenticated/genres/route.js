@@ -1,5 +1,5 @@
 import { cache } from 'react'
-import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import {
   getFlatAvailableGenres,
   getFlatContentByGenres,
@@ -16,12 +16,15 @@ const getCachedGenreContent = cache(async (params) => {
 /**
  * Transform media items to only include fields used in UX
  * Reduces payload size by ~60-70% for genre browsing
+ * @param {Array} items - Media items to minimize
+ * @param {boolean} includeAdditionalData - Whether to include additional fields like tmdbId (for TV devices)
  */
-function minimizeMediaItemsForUX(items) {
+function minimizeMediaItemsForUX(items, includeAdditionalData = false) {
   if (!items || !Array.isArray(items)) return []
   
   return items.map(item => ({
     id: item.id || item._id?.toString(),
+    ...(includeAdditionalData && { tmdbId: item.tmdbId }),
     title: item.title,
     hdr: item.hdr,
     thumbnailUrl: item.posterURL,
@@ -59,8 +62,8 @@ const sortFunctions = {
 
 // API Route handler
 export const GET = async (req) => {
-  // Check authentication (supports both web sessions and mobile JWT tokens)
-  const authResult = await isAuthenticatedEither(req)
+  // Check authentication and approval (supports both web sessions and mobile JWT tokens)
+  const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution if not authenticated
   }
@@ -285,9 +288,9 @@ export const GET = async (req) => {
 
         // Minimize payload: only return fields used in UX
         const response = {
-          currentItems: minimizeMediaItemsForUX(items),
-          previousItem: previousItem ? minimizeMediaItemsForUX([previousItem])[0] : null,
-          nextItem: nextItem ? minimizeMediaItemsForUX([nextItem])[0] : null,
+          currentItems: minimizeMediaItemsForUX(items, shouldExposeAdditionalData),
+          previousItem: previousItem ? minimizeMediaItemsForUX([previousItem], shouldExposeAdditionalData)[0] : null,
+          nextItem: nextItem ? minimizeMediaItemsForUX([nextItem], shouldExposeAdditionalData)[0] : null,
           pagination: {
             currentPage,
             totalPages,

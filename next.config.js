@@ -114,7 +114,6 @@ const nextConfig = {
     '@opentelemetry/api',
     '@vercel/otel',
     'pino',
-    'pino-pretty',
   ],
   // Additional Next.js configurations can be added here
   /* webpack(config) {

@@ -1,14 +1,14 @@
-import { auth } from '@src/lib/auth'
 import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { adminUserEmails } from '@src/utils/config'
 import SettingsList from '@components/Admin/Settings/SettingsList'
 import DockerHubLastUpdated from '@components/Admin/DockerHubLastUpdated'
 import { getServerSettings } from '@src/utils/sync_db'
+import { getSession } from '@src/lib/cachedAuth'
 //import { updateAutomaticSync, updateSyncAggressiveness } from '@src/utils/actions/admin_settings'
 
 async function SettingsPage({ searchParams }) {
-  const session = await auth()
+  const session = await getSession()
   const settings = await getServerSettings()
   const params = await searchParams
 

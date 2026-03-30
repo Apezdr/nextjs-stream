@@ -1,0 +1,37 @@
+import Image from 'next/image'
+import NotFoundContent from '@src/components/MediaPages/DynamicPage/errors/NotFoundContent'
+
+export default function NotFound() {
+  return (
+    <div className="flex min-h-[90vh] items-center justify-center px-4 py-16 sm:px-6 lg:px-8">
+      <div className="w-full max-w-4xl rounded-2xl border border-white/10 bg-black/30 p-6 backdrop-blur sm:p-8">
+        <div className="grid items-center gap-8 md:grid-cols-[280px_minmax(0,1fr)]">
+          <div className="mx-auto w-full max-w-[280px]">
+            <div className="overflow-hidden rounded-xl border border-white/10 bg-black/40">
+              <Image
+                src="/Confused-Pup.png"
+                alt="Missing admin page"
+                width={278}
+                height={278}
+                className="h-auto w-full object-cover"
+                priority
+              />
+            </div>
+          </div>
+
+          <div className="text-center md:text-left">
+            <p className="text-sm font-medium uppercase tracking-wide text-indigo-300">404 • Not Found</p>
+            <h1 className="mt-2 text-3xl font-semibold text-white sm:text-4xl">This admin page doesn't exist</h1>
+            <div className="mt-2 md:text-left">
+              <NotFoundContent
+                errorMessage="That admin page doesn't exist."
+                backHref="/admin"
+                backText="Go to Admin Dashboard"
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}

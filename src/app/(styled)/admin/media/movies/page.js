@@ -1,13 +1,13 @@
-import { auth } from '../../../../../lib/auth'
 import { getAllMedia, getLastSynced } from '../../../../../utils/admin_database'
 import { processMediaData } from '../../../../../utils/admin_utils'
 import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { adminUserEmails, organizrURL } from '@src/utils/config'
 import MovieAdministration from '@components/Admin/Media/Movie/MovieAdministration'
+import { getSession } from '@src/lib/cachedAuth'
 
 async function MovieAdministrationPage() {
-  const session = await auth()
+  const session = await getSession()
   const allRecords = await getAllMedia({ type: 'movie' })
   const _lastSyncTime = await getLastSynced()
   const processedData = processMediaData(allRecords)

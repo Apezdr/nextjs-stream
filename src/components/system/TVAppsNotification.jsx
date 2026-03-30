@@ -1,14 +1,19 @@
-import { auth } from '@src/lib/cachedAuth';
+import { getSession } from '@src/lib/cachedAuth';
 import TVAppsNotificationClient from './TVAppsNotificationClient';
 
 /**
  * Server component that checks if user has dismissed TV apps notification
  */
 export default async function TVAppsNotification() {
-  const session = await auth();
+  const session = await getSession();
   
   // Don't show if user is not authenticated
   if (!session?.user?.id) {
+    return null;
+  }
+
+  // Don't show if user is not approved
+  if (session.user.approved === false) {
     return null;
   }
 

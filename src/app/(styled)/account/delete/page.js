@@ -1,8 +1,8 @@
-import { auth } from '@src/lib/auth'
 import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { siteTitle } from '@src/utils/config'
 import AccountDeletionPage from './AccountDeletionPage'
+import { getSession } from '@src/lib/cachedAuth'
 
 export const metadata = {
   title: `Delete Account - ${siteTitle}`,
@@ -10,7 +10,7 @@ export const metadata = {
 }
 
 async function DeleteAccountPage() {
-  const session = await auth()
+  const session = await getSession();
 
   if (!session || !session.user) {
     return redirect('/auth/signin?callbackUrl=/account/delete')

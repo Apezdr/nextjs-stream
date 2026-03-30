@@ -42,7 +42,7 @@ export default async function MovieListView({ searchParams = {}, session }) {
   const movieHours = Math.round((statistics?.totalDuration || 0) / (1000 * 60 * 60));
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
+    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-[#060916e8]">
       <SyncClientWithServerWatched />
       <div className="h-auto flex items-center justify-center py-32 lg:py-0 px-4 xl:px-0 sm:mt-20">
         <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-2 xl:grid-cols-4 xl:gap-x-8">

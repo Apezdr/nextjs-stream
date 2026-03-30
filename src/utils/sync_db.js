@@ -2,6 +2,7 @@
 
 import clientPromise from '@src/lib/mongodb'
 import {
+  getAllWebhookConfigs,
   fileServerPrefixPath,
   fileServerURLWithPrefixPath,
   getAllServers,
@@ -11,6 +12,7 @@ import {
   syncTVURL,
 } from '@src/utils/config'
 import { AutoSyncManager, getLastSynced } from './admin_database'
+import { formatServerLabel } from '@src/utils/serverLabel'
 
 async function getFileServerImportSettings() {
   const client = await clientPromise
@@ -46,10 +48,21 @@ async function getServerSettings() {
   const fileImportSettings = await getFileServerImportSettings()
   const automaticSyncEnabled = await autoSync.getAutoSync()
   const servers = getAllServers()
-  const webhookIds = process.env.VALID_WEBHOOK_IDS
+  const webhookConfigs = await getAllWebhookConfigs()
+  const webhookKeys = webhookConfigs.map((config) => ({
+    key: config.webhookId,
+    envKey: config.envKey,
+    serverId: config.serverId,
+    type: config.isWildcard ? 'wildcard' : 'server',
+    label: config.isWildcard
+      ? `Wildcard (${config.envKey})`
+      : `${config.serverId === 'default' ? 'Server Default' : formatServerLabel(config.serverId)} (${config.envKey})`,
+  }))
+  const webhookIds = webhookKeys.map((entry) => entry.key).join(',')
 
   return {
     webhookIds: webhookIds,
+    webhookKeys,
     fileImport: fileImportSettings,
     // Urls
     servers: servers,

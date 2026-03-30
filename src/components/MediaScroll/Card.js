@@ -47,6 +47,8 @@ const Card = ({
   comingSoon = false,
   comingSoonDate = null,
   metadata = null,
+  // Trailer/External video flags
+  isTrailer = false,
 }) => {
   const [imageDimensions, setImageDimensions] = useState({
     width: 0,
@@ -333,7 +335,7 @@ const Card = ({
         } else {
           // Standard posters: Use largest responsive breakpoint (192px) * 3 for retina + margin
           preloadWidth = 576; // 192px * 3 for high DPR devices
-          preloadQuality = 80;
+          preloadQuality = 90;
         }
         
         const optimizedPosterUrl = buildNextOptimizedImageUrl(posterURL, preloadWidth, preloadQuality)
@@ -537,6 +539,32 @@ const Card = ({
                 </div>
               )}
               
+              {/* Trailer Badge - shows for limited-access preview content */}
+              {isTrailer && (
+                <div className="absolute z-20 top-2 left-2">
+                  <div className="bg-purple-600 bg-opacity-90 text-white text-xs px-2 py-1 rounded-md shadow-lg flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>Trailer</span>
+                  </div>
+                </div>
+              )}
+              
+              {/* Trailer Badge - shows for limited-access preview content */}
+              {isTrailer && (
+                <div className="absolute z-20 top-2 left-2">
+                  <div className="bg-purple-600 bg-opacity-90 text-white text-xs px-2 py-1 rounded-md shadow-lg flex items-center gap-1">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>Trailer</span>
+                  </div>
+                </div>
+              )}
+              
               {seasonNumber && (
                 <div className="absolute z-20 bottom-2 left-2 right-2">
                   <div className="bg-gray-200 bg-opacity-20 rounded-xl flex flex-row gap-1 px-2 py-1 justify-center">
@@ -548,7 +576,7 @@ const Card = ({
               )}
               <RetryImage
                 ref={imageRef}
-                quality={80}
+                quality={90}
                 width={optimizedWidth}
                 height={optimizedHeight}
                 src={posterURL}

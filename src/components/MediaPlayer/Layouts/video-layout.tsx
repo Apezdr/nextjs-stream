@@ -231,8 +231,12 @@ export function VideoLayout({
               
               // Extract media info from the URL structure
               if (!activeTrack.src) return;
-              const url = new URL(activeTrack.src);
-              const params = new URLSearchParams(url.search);
+              
+              // Parse query parameters from the src (handles both relative and absolute URLs)
+              const srcUrl = activeTrack.src;
+              const queryStart = srcUrl.indexOf('?');
+              const params = queryStart !== -1 ? new URLSearchParams(srcUrl.substring(queryStart)) : new URLSearchParams();
+              
               const mediaTitle = params.get('name') || adminProps.mediaTitle;
               const mediaType = params.get('type') || adminProps.mediaType;
               const season = params.get('season') || adminProps.season_number?.toString();

@@ -1,6 +1,6 @@
 // src/app/api/authenticated/watchlist-content/route.js
 import { cache } from 'react'
-import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { isAuthenticatedAndApproved, isAdmin } from '@src/utils/routeAuth'
 import {
   getUserWatchlist,
   getUserPlaylists,
@@ -12,6 +12,7 @@ import {
 import { sanitizeCardItems } from '@src/utils/auth_utils'
 import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
 import { ObjectId } from 'mongodb'
+import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 
 /**
  * Watchlist Content API
@@ -75,7 +76,7 @@ const getCachedWatchlistContent = cache(async (params) => {
 // API Route handler
 export const GET = async (req) => {
   // Check authentication (supports both web sessions and mobile JWT tokens)
-  const authResult = await isAuthenticatedEither(req)
+  const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution if not authenticated
   }
@@ -94,21 +95,8 @@ export const GET = async (req) => {
   const includeUnavailableParam = searchParams.get('includeUnavailable')
   const shouldExposeAdditionalData = isTVdevice
 
-  // Extract ALL authentication headers for forwarding to backend TMDB server
-  // This allows server-side code to fetch TMDB metadata for external items
-  // Supports: Bearer tokens (TV/mobile), session tokens, mobile tokens, and cookies (web)
-  const authHeaders = {}
-  const authorization = req.headers.get('authorization')
-  const xSessionToken = req.headers.get('x-session-token')
-  const xMobileToken = req.headers.get('x-mobile-token')
-  const cookie = req.headers.get('cookie')
-  
-  if (authorization) authHeaders['authorization'] = authorization
-  if (xSessionToken) authHeaders['x-session-token'] = xSessionToken
-  if (xMobileToken) authHeaders['x-mobile-token'] = xMobileToken
-  if (cookie) authHeaders['cookie'] = cookie
-  
-  const hasAuthHeaders = Object.keys(authHeaders).length > 0
+  // Build auth headers for downstream Node backend calls (TMDB metadata fetching)
+  const authHeaders = await getBackendAuthHeaders(req)
 
   try {
     // Handle different actions
@@ -116,17 +104,33 @@ export const GET = async (req) => {
       case 'playlists': {
         /**
          * ACTION: List user's playlists with metadata and item counts
-         * 
+         *
          * Returns lightweight playlist metadata for UI population
          * Includes total/available/unavailable item counts when requested
+         *
+         * For admin users viewing others' playlists, owner name is appended
+         * to the playlist name (e.g., "My Watchlist (John Doe)")
          */
         
         if (process.env.DEBUG) {
           console.log(`[WATCHLIST_CONTENT_API] Getting playlists for user: ${authResult?.id}, includeItemCounts: ${includeItemCounts}`)
         }
 
+        // Check if current user is an admin
+        const userIsAdmin = await isAdmin(req)
+        const isAdminUser = userIsAdmin && typeof userIsAdmin === 'object'
+
         // Get all user playlists
         const playlists = await getUserPlaylists(authResult?.id)
+        
+        // For admin users, append owner name to playlists they don't own
+        if (isAdminUser && playlists?.length > 0) {
+          playlists.forEach(playlist => {
+            if (!playlist.isOwner && playlist.ownerName) {
+              playlist.name = `${playlist.name} (${playlist.ownerName})`
+            }
+          })
+        }
 
         // Ensure default playlist exists
         let defaultPlaylistId = null
@@ -200,6 +204,16 @@ export const GET = async (req) => {
           })
 
           const enrichedPlaylists = await Promise.all(countPromises)
+          
+          // For admin users, append owner name to enriched playlists they don't own
+          if (isAdminUser && enrichedPlaylists?.length > 0) {
+            enrichedPlaylists.forEach(playlist => {
+              // Only append if not already appended (in case it was done earlier)
+              if (!playlist.isOwner && playlist.ownerName && !playlist.name.includes(`(${playlist.ownerName})`)) {
+                playlist.name = `${playlist.name} (${playlist.ownerName})`
+              }
+            })
+          }
 
           return new Response(JSON.stringify({
             playlists: enrichedPlaylists,
@@ -366,7 +380,7 @@ export const GET = async (req) => {
             items,
             playlistInfo,
             !shouldHideUnavailable,  // includeUnavailable (inverted)
-            hasAuthHeaders ? { authHeaders } : {}  // Forward auth headers for TMDB authentication
+            { authHeaders }  // Forward auth headers for TMDB authentication
           )
           
           // Apply TV device handling for episodes and movies
@@ -425,7 +439,7 @@ export const GET = async (req) => {
             prevPageResult,
             playlistInfo,
             !shouldHideUnavailable,
-            hasAuthHeaders ? { authHeaders } : {}
+            { authHeaders }
           )
           
           if (prevCardItems.length > 0) {
@@ -442,7 +456,7 @@ export const GET = async (req) => {
             nextPageResult,
             playlistInfo,
             !shouldHideUnavailable,
-            hasAuthHeaders ? { authHeaders } : {}
+            { authHeaders }
           )
           
           if (nextCardItems.length > 0) {

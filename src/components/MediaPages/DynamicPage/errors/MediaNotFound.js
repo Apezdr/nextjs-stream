@@ -75,7 +75,7 @@ async function buildAvailableSeasonsData(contextualMedia) {
  * Get appropriate poster for not found errors
  */
 async function getPosterForError(notFoundType, contextualMedia, mediaTitle, mediaSeason) {
-  let posterSrc = '/sorry-image-not-available.jpg'
+  let posterSrc = '/Confused-Pup.png'
   let posterAltText = 'Not found'
   
   if (notFoundType === 'episode' && contextualMedia) {
@@ -191,7 +191,7 @@ export default async function MediaNotFound({
   )
   
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
+    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-[#060916e8] transition-opacity duration-300">
       <div className="flex flex-col max-w-screen-lg w-full">
         {/* Identity Header for Show Context */}
         {showPosterFan && contextualMedia && (

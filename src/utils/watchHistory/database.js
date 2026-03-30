@@ -196,11 +196,12 @@ export async function getViewCount(normalizedVideoId) {
 
 /**
  * Delete all playback entries for a user (e.g., on account deletion)
- * 
+ *
  * @param {string|ObjectId} userId - User ID
+ * @param {Object} session - Optional MongoDB session for transactions
  * @returns {Promise<Object>} DeleteResult with deletedCount
  */
-export async function deletePlaybackForUser(userId) {
+export async function deletePlaybackForUser(userId, session = null) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -208,7 +209,8 @@ export async function deletePlaybackForUser(userId) {
 
     const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
 
-    const result = await collection.deleteMany({ userId: userIdObj })
+    const options = session ? { session } : {}
+    const result = await collection.deleteMany({ userId: userIdObj }, options)
 
     log.info({ userId: userIdObj.toString(), deletedCount: result.deletedCount }, 'Deleted playback for user')
 
@@ -220,9 +222,65 @@ export async function deletePlaybackForUser(userId) {
 }
 
 /**
+ * Bulk update validation status for multiple entries
+ * Used by: validation processes that need to update many entries atomically
+ *
+ * @example
+ * import { bulkUpdateValidationStatus } from '@src/utils/watchHistory/database'
+ * await bulkUpdateValidationStatus([
+ *   { userId: 'user1', normalizedVideoId: 'hash1', isValid: { $ne: false } },
+ *   { userId: 'user2', normalizedVideoId: 'hash2', isValid: false }
+ * ])
+ *
+ * @param {Array<Object>} updates - Array of update objects
+ * @param {string|ObjectId} updates[].userId - User ID
+ * @param {string} updates[].normalizedVideoId - Normalized video ID
+ * @param {boolean} updates[].isValid - Whether the video is valid
+ * @returns {Promise<Object>} BulkWriteResult
+ */
+export async function bulkUpdateValidationStatus(updates) {
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+    const collection = db.collection('WatchHistory')
+
+    const bulkOps = updates.map(({ userId, normalizedVideoId, isValid }) => ({
+      updateOne: {
+        filter: {
+          userId: typeof userId === 'string' ? new ObjectId(userId) : userId,
+          normalizedVideoId
+        },
+        update: {
+          $set: {
+            isValid,
+            lastScanned: new Date().toISOString()
+          }
+        }
+      }
+    }))
+
+    const result = await collection.bulkWrite(bulkOps)
+
+    log.info(
+      {
+        requestedUpdates: updates.length,
+        matchedCount: result.matchedCount,
+        modifiedCount: result.modifiedCount
+      },
+      'Bulk validation status updated'
+    )
+
+    return result
+  } catch (error) {
+    log.error({ error, updateCount: updates.length }, 'Failed to bulk update validation status')
+    throw error
+  }
+}
+
+/**
  * Clear validation status for a user's entries
  * Called when media validity needs re-checking
- * 
+ *
  * @param {string|ObjectId} userId - User ID
  * @returns {Promise<Object>} UpdateResult
  */
@@ -288,7 +346,7 @@ export async function updateValidationStatus({ userId, normalizedVideoId, isVali
 
 /**
  * Bulk get watch history for multiple users (admin/analytics)
- * 
+ *
  * @param {Array<string|ObjectId>} userIds - Array of user IDs
  * @returns {Promise<Map>} Map of userId -> array of watch history entries
  */
@@ -317,6 +375,218 @@ export async function getBulkPlaybackForUsers(userIds) {
     return result
   } catch (error) {
     log.error({ error, userCount: userIds.length }, 'Failed to get bulk playback')
+    throw error
+  }
+}
+
+/**
+ * Count watch history entries for a user with optional filter
+ *
+ * @example
+ * // Count all entries
+ * const total = await countPlaybackForUser(userId)
+ *
+ * @example
+ * // Count only valid entries
+ * const valid = await countPlaybackForUser(userId, { isValid: { $ne: false } })
+ *
+ * @param {string|ObjectId} userId - User ID
+ * @param {Object} filter - Additional filter criteria (optional)
+ * @returns {Promise<number>} Count of matching documents
+ */
+export async function countPlaybackForUser(userId, filter = {}) {
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+    const collection = db.collection('WatchHistory')
+
+    const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
+
+    const count = await collection.countDocuments({ userId: userIdObj, ...filter })
+
+    log.debug({ userId: userIdObj.toString(), filter, count }, 'Counted playback entries')
+
+    return count
+  } catch (error) {
+    log.error({ error, userId, filter }, 'Failed to count playback for user')
+    throw error
+  }
+}
+
+/**
+ * Get distinct user IDs from watch history (for notifications, analytics)
+ *
+ * @example
+ * import { getAllWatchHistoryUserIds } from '@src/utils/watchHistory/database'
+ * const userIds = await getAllWatchHistoryUserIds()
+ *
+ * @returns {Promise<Array<ObjectId>>} Array of unique user IDs
+ */
+export async function getAllWatchHistoryUserIds() {
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+    const collection = db.collection('WatchHistory')
+
+    const userIds = await collection.distinct('userId')
+
+    log.debug({ userCount: userIds.length }, 'Retrieved distinct user IDs')
+
+    return userIds
+  } catch (error) {
+    log.error({ error }, 'Failed to get all watch history user IDs')
+    throw error
+  }
+}
+
+/**
+ * Check if user has any watch history (existence check)
+ * Used by: flatRecentlyWatchedChecker.js, recommendation systems
+ *
+ * @example
+ * import { hasWatchHistory } from '@src/utils/watchHistory/database'
+ * if (await hasWatchHistory(userId)) {
+ *   // Show personalized content
+ * }
+ *
+ * @param {string|ObjectId} userId - User ID
+ * @returns {Promise<boolean>} True if user has valid watch history
+ */
+export async function hasWatchHistory(userId) {
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+    const collection = db.collection('WatchHistory')
+
+    const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
+
+    const entry = await collection.findOne(
+      { userId: userIdObj, isValid: { $ne: false } },
+      { projection: { _id: 1 } }
+    )
+
+    log.debug({ userId: userIdObj.toString(), hasHistory: !!entry }, 'Checked watch history existence')
+
+    return !!entry
+  } catch (error) {
+    log.error({ error, userId }, 'Failed to check watch history')
+    return false // Return false on error for graceful degradation
+  }
+}
+
+/**
+ * Find watch history with custom query options (for complex queries)
+ *
+ * @example
+ * // Get recent valid entries with projection
+ * import { findPlaybackForUser } from '@src/utils/watchHistory/database'
+ * const entries = await findPlaybackForUser(userId, {
+ *   filter: { isValid: { $ne: false } },
+ *   sort: { lastUpdated: -1 },
+ *   limit: 10,
+ *   projection: { videoId: 1, playbackTime: 1, lastUpdated: 1 }
+ * })
+ *
+ * @param {string|ObjectId} userId - User ID
+ * @param {Object} options - Query options
+ * @param {Object} options.filter - Additional filter criteria (e.g., { isValid: { $ne: false } })
+ * @param {Object} options.projection - Fields to return
+ * @param {Object} options.sort - Sort order (e.g., { lastUpdated: -1 })
+ * @param {number} options.skip - Documents to skip (pagination)
+ * @param {number} options.limit - Maximum documents to return
+ * @returns {Promise<Array>} Array of watch history documents
+ */
+export async function findPlaybackForUser(userId, options = {}) {
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+    const collection = db.collection('WatchHistory')
+
+    const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
+
+    // Build query with user ID and optional filters
+    const query = { userId: userIdObj }
+    if (options.filter) {
+      Object.assign(query, options.filter)
+    }
+
+    // Build cursor with projection
+    let cursor = collection.find(
+      query,
+      options.projection ? { projection: options.projection } : {}
+    )
+
+    // Apply query modifiers
+    if (options.sort) cursor = cursor.sort(options.sort)
+    if (options.skip) cursor = cursor.skip(options.skip)
+    if (options.limit) cursor = cursor.limit(options.limit)
+
+    const entries = await cursor.toArray()
+
+    log.debug(
+      {
+        userId: userIdObj.toString(),
+        options,
+        count: entries.length
+      },
+      'Found playback entries with custom options'
+    )
+
+    return entries
+  } catch (error) {
+    log.error({ error, userId, options }, 'Failed to find playback for user')
+    throw error
+  }
+}
+
+/**
+ * Get ALL playback entries across all users (for analytics, popularity scoring)
+ * Use with caution - this queries the entire collection
+ *
+ * @example
+ * // Get all videoIds for popularity analysis
+ * import { getAllPlaybackEntries } from '@src/utils/watchHistory/database'
+ * const entries = await getAllPlaybackEntries({ projection: { videoId: 1 } })
+ *
+ * @param {Object} options - Query options
+ * @param {Object} options.filter - Filter criteria (e.g., { isValid: { $ne: false } })
+ * @param {Object} options.projection - Fields to return
+ * @param {Object} options.sort - Sort order
+ * @param {number} options.limit - Maximum documents to return
+ * @returns {Promise<Array>} Array of watch history documents
+ */
+export async function getAllPlaybackEntries(options = {}) {
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+    const collection = db.collection('WatchHistory')
+
+    // Build query with optional filters
+    const query = options.filter || {}
+
+    // Build cursor with projection
+    let cursor = collection.find(
+      query,
+      options.projection ? { projection: options.projection } : {}
+    )
+
+    // Apply query modifiers
+    if (options.sort) cursor = cursor.sort(options.sort)
+    if (options.limit) cursor = cursor.limit(options.limit)
+
+    const entries = await cursor.toArray()
+
+    log.debug(
+      {
+        filter: options.filter,
+        count: entries.length
+      },
+      'Retrieved all playback entries'
+    )
+
+    return entries
+  } catch (error) {
+    log.error({ error, options }, 'Failed to get all playback entries')
     throw error
   }
 }

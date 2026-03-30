@@ -1,14 +1,16 @@
 /**
  * Authentication Guard Component
- * 
- * Wraps content and shows UnauthenticatedPage when user is not logged in.
- * Extracted from inline authentication logic in the original page.js
+ *
+ * Central gatekeeping mechanism for authentication across the app.
+ * Wraps content and shows appropriate unauthenticated state when user is not logged in.
+ *
+ * This is the SINGLE SOURCE OF TRUTH for authentication checks - all pages should use this.
  */
 
 import UnauthenticatedPage from '@src/components/system/UnauthenticatedPage'
+import UnauthenticatedWithSkeleton from '@src/components/system/UnauthenticatedWithSkeleton'
 import RetryImage from '@src/components/RetryImage'
 import Image from 'next/image'
-import SkeletonCard from '@src/components/SkeletonCard'
 import { buildCallbackUrl } from '@src/utils/media/urlParser'
 
 /**
@@ -49,77 +51,111 @@ function UnauthMediaNotFound() {
   return (
     <>
       <Image
-        src={'/sorry-image-not-available.jpg'}
+        src={'/Confused-Pup.png'}
         alt="Not found"
-        width={400}
-        height={400}
+        width={278}
+        height={278}
         className="w-3/5 h-auto mx-auto rounded-lg"
+        unoptimized
       />
       <h2 className="text-center text-lg text-white mt-2">
-        We couldn&apos;t find that one, but sign in and check out what we have.
+        We couldn't find that one, but sign in and check out what we have.
       </h2>
-    </>
-  )
-}
-
-/**
- * Default content when no specific media requested
- */
-function UnauthDefaultContent() {
-  return (
-    <>
-      <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
-        Please Sign in first
-      </h2>
-      <div className="border border-white border-opacity-30 rounded-lg p-3 overflow-hidden skeleton-container">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 overflow-hidden">
-          <SkeletonCard />
-          <SkeletonCard className="hidden md:block" />
-          <SkeletonCard className="hidden lg:block" />
-        </div>
-      </div>
     </>
   )
 }
 
 /**
  * AuthGuard Component
- * 
- * Checks if user is authenticated and shows appropriate content.
- * If not authenticated, shows UnauthenticatedPage with media preview.
- * 
+ *
+ * Centralized authentication guard that shows appropriate content based on auth state.
+ *
+ * USAGE PATTERNS:
+ *
+ * 1. Dynamic media routes (with parsedParams):
+ *    <AuthGuard session={session} parsedParams={parsedParams} media={media}>
+ *      <AuthenticatedContent />
+ *    </AuthGuard>
+ *
+ * 2. Simple pages with skeleton (list, watchlist, etc.):
+ *    <AuthGuard session={session} callbackUrl="/list" variant="skeleton">
+ *      <AuthenticatedContent />
+ *    </AuthGuard>
+ *
+ * 3. Custom unauthenticated content:
+ *    <AuthGuard session={session} callbackUrl="/custom" variant="skeleton"
+ *               title="Custom Title" description="Custom description">
+ *      <AuthenticatedContent />
+ *    </AuthGuard>
+ *
  * @param {Object} props
  * @param {Object} props.session - NextAuth session object
- * @param {Object} props.parsedParams - Parsed URL parameters
- * @param {Object} [props.media] - Media object (if found)
+ * @param {string} [props.callbackUrl] - URL to redirect to after login (required if no parsedParams)
+ * @param {Object} [props.parsedParams] - Parsed URL parameters (for dynamic routes)
+ * @param {Object} [props.media] - Media object (if found, for dynamic routes)
+ * @param {string} [props.variant] - Type of unauthenticated content: "skeleton" | "default" (default: "default")
+ * @param {string} [props.title] - Custom title for unauthenticated page (variant="skeleton" only)
+ * @param {string} [props.description] - Custom description (variant="skeleton" only)
  * @param {React.ReactNode} props.children - Content to show when authenticated
  */
-export default function AuthGuard({ session, parsedParams, media, children }) {
+export default function AuthGuard({
+  session,
+  callbackUrl,
+  parsedParams,
+  media,
+  variant = "default",
+  title,
+  description,
+  children
+}) {
   // If user is authenticated, show the protected content
   if (session?.user) {
     return children
   }
   
-  // Build callback URL for redirect after login
-  const callbackUrl = buildCallbackUrl(parsedParams)
+  // Build callback URL - use provided callbackUrl or build from parsedParams
+  const finalCallbackUrl = callbackUrl || (parsedParams ? buildCallbackUrl(parsedParams) : '/')
   
-  // Determine what content to show based on whether media was found
-  let content
-  if (media) {
-    content = <UnauthMediaContent media={media} />
-  } else if (parsedParams.hasTitle) {
-    content = <UnauthMediaNotFound />
-  } else {
-    content = <UnauthDefaultContent />
+  // VARIANT 1: Skeleton variant (for list pages, watchlists, etc.)
+  if (variant === "skeleton") {
+    return (
+      <UnauthenticatedWithSkeleton
+        callbackUrl={finalCallbackUrl}
+        title={title}
+        description={description}
+      />
+    )
   }
   
-  return (
-    <UnauthenticatedPage callbackUrl={callbackUrl}>
-      <div className="flex flex-col items-center justify-between">
-        <div className="flex flex-col max-w-screen-sm">
-          {content}
+  // VARIANT 2: Dynamic media routes (legacy behavior for parsedParams-based routes)
+  if (parsedParams) {
+    let content
+    if (media) {
+      content = <UnauthMediaContent media={media} />
+    } else if (parsedParams.hasTitle) {
+      content = <UnauthMediaNotFound />
+    } else {
+      // Fallback to skeleton for dynamic routes without specific media
+      return (
+        <UnauthenticatedWithSkeleton
+          callbackUrl={finalCallbackUrl}
+          title={title}
+          description={description}
+        />
+      )
+    }
+    
+    return (
+      <UnauthenticatedPage callbackUrl={finalCallbackUrl}>
+        <div className="flex flex-col items-center justify-between">
+          <div className="flex flex-col max-w-screen-sm">
+            {content}
+          </div>
         </div>
-      </div>
-    </UnauthenticatedPage>
-  )
+      </UnauthenticatedPage>
+    )
+  }
+  
+  // VARIANT 3: Default - just use UnauthenticatedPage's built-in default
+  return <UnauthenticatedPage callbackUrl={finalCallbackUrl} />
 }

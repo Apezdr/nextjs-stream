@@ -1,10 +1,12 @@
 'use client'
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useCallback } from 'react'
+import useSWR from 'swr'
+import useSWRMutation from 'swr/mutation'
 import { HeartIcon } from '@heroicons/react/24/outline'
 import { HeartIcon as HeartIconSolid } from '@heroicons/react/24/solid'
 import { toast } from 'react-toastify'
-import { useSession } from 'next-auth/react'
+import { authClient } from '@src/lib/auth-client'
 import { LoadingDots } from '@src/app/loading'
 import { AnimatePresence, motion } from 'framer-motion'
 
@@ -35,6 +37,33 @@ const iconVariants = {
   }
 }
 
+// SWR fetcher with ETag support
+const statusFetcher = async (url) => {
+  const res = await fetch(url, {
+    method: 'GET',
+    credentials: 'include',
+    headers: { Accept: 'application/json' }
+  })
+  if (!res.ok) throw new Error(`Status ${res.status}`)
+  return res.json()
+}
+
+// Toggle mutation fetcher
+const toggleFetcher = async (url, { arg: body }) => {
+  const res = await fetch(url, {
+    method: 'POST',
+    cache: 'no-store',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  if (!res.ok) {
+    const err = await res.json()
+    throw new Error(err.error || res.statusText)
+  }
+  return res.json()
+}
+
 export default function WatchlistButton({
   mediaId,
   tmdbId,
@@ -46,12 +75,27 @@ export default function WatchlistButton({
   className = '',
   onStatusChange
 }) {
-  const { data: session, status } = useSession()
-  const [inWatchlist, setInWatchlist] = useState(false)
-  const [checking, setChecking] = useState(true)
-  const [toggling, setToggling] = useState(false)
+  const { data: session, isPending } = authClient.useSession()
 
-  // Build query params helper
+  // Build the SWR key - all instances with same mediaId/tmdbId share this cache entry
+  const statusKey = session 
+    ? `/api/authenticated/watchlist?action=status&mediaId=${mediaId}&tmdbId=${tmdbId}`
+    : null
+
+  // Fetch watchlist status - shared across all instances
+  const { data: statusData, isLoading: isChecking, mutate } = useSWR(
+    statusKey,
+    statusFetcher,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: true,
+      dedupingInterval: 60000 // 1 minute
+    }
+  )
+
+  const inWatchlist = !!statusData?.inWatchlist
+
+  // Build query params for toggle
   const buildParams = useCallback((action) => {
     const params = new URLSearchParams()
     params.set('action', action)
@@ -60,101 +104,64 @@ export default function WatchlistButton({
     return params.toString()
   }, [mediaId, tmdbId])
 
-  // Fetch status
-  const fetchStatus = useCallback(async () => {
-    if (status !== 'authenticated') return
+  // Toggle mutation - after success, mutate() updates ALL instances
+  const { trigger: toggle, isMutating } = useSWRMutation(
+    `/api/authenticated/watchlist?${buildParams('toggle')}`,
+    toggleFetcher,
+    {
+      onSuccess: async (result) => {
+        const added = result.action === 'added'
+        
+        // Update this instance's state
+        onStatusChange?.(added, result.item)
 
-    setChecking(true)
-    try {
-      const query = buildParams('status')
-      const res = await fetch(`/api/authenticated/watchlist?${query}`, {
-        method: 'GET',
-        cache: 'no-store',
-        credentials: 'include',
-        headers: { Accept: 'application/json' }
-      })
-      if (!res.ok) throw new Error(`Status ${res.status}`)
-      const { inWatchlist: flag } = await res.json()
-      setInWatchlist(!!flag)
-    } catch (err) {
-      console.error('checkWatchlistStatus error', err)
-    } finally {
-      setChecking(false)
+        // Revalidate the status key to update ALL instances with same mediaId/tmdbId
+        await mutate(statusData => ({
+          ...statusData,
+          inWatchlist: added,
+          item: added ? result.item : null
+        }), false)
+
+        toast[added ? 'success' : 'info'](
+          <div className="flex flex-col">
+            <span className="font-medium">
+              {added ? 'Added to Watchlist' : 'Removed from Watchlist'}
+            </span>
+            <span className="text-xs opacity-75">{title}</span>
+          </div>
+        )
+      },
+      onError: (error) => {
+        console.error('toggleWatchlist error', error)
+        toast.error(error.message || 'Something went wrong')
+      }
     }
-  }, [status, buildParams])
+  )
 
-  useEffect(() => {
-    if (status === 'authenticated') fetchStatus()
-    else if (status === 'unauthenticated') setChecking(false)
-  }, [status, fetchStatus])
+  const handleToggle = async (e) => {
+    e.preventDefault()
+    e.stopPropagation()
 
-  // Toggle add/remove
-  const toggle = useCallback(async () => {
-    if (checking || toggling || status !== 'authenticated') {
-      if (status !== 'authenticated') toast.error('Please sign in')
+    if (isPending || isChecking || isMutating || !session) {
+      if (!session) toast.error('Please sign in')
       return
     }
 
-    setToggling(true)
-    try {
-      const body = { mediaType, title }
-      // Prioritize mediaId for internal media, only use tmdbId if no mediaId
-      if (mediaId) {
-        body.mediaId = mediaId
-      } else if (tmdbId) {
-        body.tmdbId = tmdbId
-      }
-      
-      // Include poster URL if available for better watchlist display
-      if (posterURL) {
-        body.posterURL = posterURL
-      }
-
-      const res = await fetch(`/api/authenticated/watchlist?${buildParams('toggle')}`, {
-        method: 'POST',
-        cache: 'no-store',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      })
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error || res.statusText)
-      }
-      const { action: result, item } = await res.json()
-      const added = result === 'added'
-      setInWatchlist(added)
-      onStatusChange?.(added, item)
-
-      toast[added ? 'success' : 'info'](
-        <div className="flex flex-col">
-          <span className="font-medium">
-            {added ? 'Added to Watchlist' : 'Removed from Watchlist'}
-          </span>
-          <span className="text-xs opacity-75">{title}</span>
-        </div>
-      )
-    } catch (err) {
-      console.error('toggleWatchlist error', err)
-      toast.error(err.message || 'Something went wrong')
-    } finally {
-      setToggling(false)
+    const body = { mediaType, title }
+    if (mediaId) {
+      body.mediaId = mediaId
+    } else if (tmdbId) {
+      body.tmdbId = tmdbId
     }
-  }, [
-    checking,
-    toggling,
-    status,
-    mediaType,
-    title,
-    mediaId,
-    tmdbId,
-    posterURL,
-    buildParams,
-    onStatusChange
-  ])
+    if (posterURL) {
+      body.posterURL = posterURL
+    }
+
+    await toggle(body)
+  }
 
   // While loading session or status
-  if (status === 'loading' || checking) {
+  if (isPending || isChecking) {
     return (
       <div className={`inline-flex items-center justify-center ${className}`}>
         <motion.div
@@ -167,21 +174,17 @@ export default function WatchlistButton({
       </div>
     )
   }
-  if (status === 'unauthenticated') return null
+  if (!isPending && !session) return null
 
   // Pick icon/text
   const Icon = inWatchlist ? HeartIconSolid : HeartIcon
   const label = inWatchlist ? 'In Watchlist' : 'Add to Watchlist'
-  const togglingLabel = toggling ? (inWatchlist ? 'Removing…' : 'Adding…') : label
+  const togglingLabel = isMutating ? (inWatchlist ? 'Removing…' : 'Adding…') : label
 
   return (
     <motion.button
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        toggle();
-      }}
-      disabled={toggling}
+      onClick={handleToggle}
+      disabled={isMutating}
       className={`${className} inline-flex items-center justify-center transition-all duration-300 ${
         variant === 'icon-only'
           ? 'p-2 rounded-full'
@@ -197,7 +200,7 @@ export default function WatchlistButton({
       whileTap={{ scale: 0.98 }}
     >
       <motion.div
-        animate={toggling ? {
+        animate={isMutating ? {
           rotate: [0, 10, -10, 0],
           transition: {
             duration: 0.6,
@@ -218,7 +221,7 @@ export default function WatchlistButton({
         <div className="relative overflow-hidden">
           <AnimatePresence mode="wait">
             <motion.span
-              key={toggling ? 'toggling' : inWatchlist ? 'in-watchlist' : 'add-to-watchlist'}
+              key={isMutating ? 'toggling' : inWatchlist ? 'in-watchlist' : 'add-to-watchlist'}
               initial={{ opacity: 0, y: 10, scale: 0.95 }}
               animate={{
                 opacity: 1,

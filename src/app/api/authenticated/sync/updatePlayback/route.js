@@ -1,10 +1,8 @@
 import { ObjectId } from 'mongodb'
-import { isAuthenticatedEither } from '../../../../../utils/routeAuth'
-import { 
-  upsertPlayback,
-  extractPlaybackMetadata,
-  validatePlaybackEntry
-} from '@src/utils/watchHistory'
+import { isAuthenticatedAndApproved } from '../../../../../utils/routeAuth'
+import { upsertPlayback } from '@src/utils/watchHistory/database'
+import { extractPlaybackMetadata } from '@src/utils/watchHistory/metadata'
+import { validatePlaybackEntry } from '@src/utils/watchHistory/validation'
 import { createPlaybackDeviceInfo } from '@src/utils/deviceDetection'
 import { invalidateUserWatchHistoryCache } from '@src/utils/cache/invalidation'
 import { createLogger } from '@src/lib/logger'
@@ -12,7 +10,7 @@ import { createLogger } from '@src/lib/logger'
 const log = createLogger('API.UpdatePlayback')
 
 export const POST = async (req) => {
-  const authResult = await isAuthenticatedEither(req)
+  const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }

@@ -37,7 +37,7 @@ export default function WatchlistCard({
   const { navigate, isNavigating: globalIsNavigating, targetUrl } = useNavigation()
   
   // Check if user is admin
-  const isAdmin = user?.role === 'admin' || user?.admin || user?.permissions?.includes('Admin')
+  const isAdmin = user?.role === 'admin' || user?.permissions?.includes('Admin')
 
   // Enhanced navigation handler using navigation context
   const handleNavigationClick = useCallback((url) => {

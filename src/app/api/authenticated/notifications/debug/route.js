@@ -1,13 +1,13 @@
-import { auth } from '@src/lib/auth';
 import { NextResponse } from 'next/server';
 import clientPromise from '@src/lib/mongodb';
+import { getSession } from '@src/lib/cachedAuth';
 
 /**
  * Debug endpoint to check notification data and user ID formats
  */
 export async function GET(request) {
   try {
-    const session = await auth();
+    const session = await getSession()
     
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -47,7 +47,7 @@ export async function GET(request) {
         try {
           const { ObjectId } = require('mongodb');
           return db.collection('Notifications')
-            .find({ userId: new ObjectId(session.user.id) })
+            .find({ userId: session.user.id })
             .limit(10)
             .toArray();
         } catch (e) {

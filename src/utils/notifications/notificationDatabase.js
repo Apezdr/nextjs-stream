@@ -1,5 +1,7 @@
 import clientPromise from '@src/lib/mongodb';
 import { ObjectId } from 'mongodb';
+import { userQueries } from '@src/lib/userQueries';
+import { getAllWatchHistoryUserIds } from '@src/utils/watchHistory/database';
 
 /**
  * Database operations for notifications
@@ -293,12 +295,9 @@ export async function getUnreadNotificationCount(userId) {
  * @returns {Promise<Array>} Array of user IDs as ObjectIds
  */
 export async function getAllUserIds() {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('WatchHistory');
-
-  // Get unique user IDs from WatchHistory collection and convert to ObjectIds
-  const userIds = await collection.distinct('userId');
+  // Use centralized WatchHistory query function
+  const userIds = await getAllWatchHistoryUserIds();
+  
   return userIds
     .filter(id => id && id.toString && id.toString().trim && id.toString().trim() !== '')
     .map(id => typeof id === 'string' ? new ObjectId(id) : id);
@@ -314,15 +313,11 @@ export async function getAdminUserIds(adminEmails) {
     return [];
   }
 
-  const client = await clientPromise;
-  const db = client.db('Users');
-  const collection = db.collection('AuthenticatedUsers');
-
   // Get users with admin email addresses
-  const adminUsers = await collection.find(
+  const adminUsers = await userQueries.find(
     { email: { $in: adminEmails } },
-    { projection: { _id: 1 } }
-  ).toArray();
+    { _id: 1 }
+  );
   
   return adminUsers.map(user => user._id); // Already ObjectIds from MongoDB
 }

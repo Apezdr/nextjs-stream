@@ -1,14 +1,13 @@
 import AdminOverviewPage from '@components/Admin/OverviewPage'
-import { auth } from '@src/lib/auth'
 import { getAllMedia, getAllUsers, getLastSynced } from '@src/utils/admin_database'
 import { processMediaData, processUserData } from '@src/utils/admin_utils'
 import { redirect } from 'next/navigation'
-import Link from 'next/link'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { adminUserEmails, organizrURL } from '@src/utils/config'
+import { getSession } from '@src/lib/cachedAuth'
 
 async function AdminPage() {
-  const session = await auth()
+  const session = await getSession();
   const allRecords = await getAllMedia()
   const allUsers = await getAllUsers()
   const _lastSyncTime = await getLastSynced()

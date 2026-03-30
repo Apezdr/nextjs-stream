@@ -1,14 +1,13 @@
-import { auth } from '@src/lib/auth'
 import { adminUserEmails } from '@src/utils/config'
-import { Fragment, lazy, Suspense } from 'react'
+import { Fragment, lazy } from 'react'
 import Nav from '@components/Navigation/Nav'
-const ShouldRenderContent = lazy(() => import('@components/HOC/ShouldRenderContent'))
-const BannerWithVideoContainer = lazy(() => import('@components/Landing/BannerWithVideoContainer'))
+import { getSession } from '@src/lib/cachedAuth'
 
 export default async function ListLayout({ children }) {
-  const user = await auth()
-  const email = user?.user?.email
-  const profileImage = user?.user?.image
+  const session = await getSession()
+  const email = session?.user?.email
+  const profileImage = session?.user?.image
+  const isApproved = session?.user?.approved !== false
   const adminNavItems = adminUserEmails.includes(email)
     ? [
         {
@@ -40,13 +39,13 @@ export default async function ListLayout({ children }) {
     : []
   return (
     <Fragment>
-      {!email ? null : (
+      {email && isApproved ? (
         <div className="relative">
           <div className="w-full h-auto flex flex-col items-center justify-center text-center z-[3]">
             <Nav adminNavItems={adminNavItems} profileImage={profileImage} />
           </div>
         </div>
-      )}
+      ) : null}
       {children}
     </Fragment>
   )

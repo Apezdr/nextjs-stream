@@ -2,17 +2,11 @@
 
 import { cache } from 'react'
 import clientPromise from '@src/lib/mongodb'
-import { auth } from '@src/lib/auth'
 import { ObjectId } from 'mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { batchResolveMedia, getMediaByTMDBId } from './mediaResolver.js'
-
-/**
- * Cached auth helper to avoid duplicate auth() calls
- */
-const getCachedSession = cache(async function getCachedSession() {
-  return await auth()
-})
+import { getSession } from '@src/lib/cachedAuth.js'
+import { userQueries } from '@src/lib/userQueries'
 
 /**
  * Helper function to check if an input is a valid MongoDB ObjectId
@@ -51,6 +45,101 @@ function sanitizePlaylistDoc(playlist) {
     ownerId: ownerId?.toString() || null,
     collaborators: stringifyCollaborators(collaborators),
   }
+}
+
+function toObjectId(value) {
+  if (!value) return null
+  if (value instanceof ObjectId) return value
+  if (typeof value === 'string' && isValidObjectId(value)) return new ObjectId(value)
+
+  if (typeof value === 'object') {
+    if (typeof value.$oid === 'string' && isValidObjectId(value.$oid)) {
+      return new ObjectId(value.$oid)
+    }
+
+    if (typeof value.toHexString === 'function') {
+      const hex = value.toHexString()
+      if (isValidObjectId(hex)) return new ObjectId(hex)
+    }
+
+    if (typeof value.toString === 'function') {
+      const stringValue = value.toString()
+      if (isValidObjectId(stringValue)) return new ObjectId(stringValue)
+    }
+  }
+
+  return null
+}
+
+function normalizePlaylistIdentityFields(playlist) {
+  if (!playlist) return playlist
+
+  const ownerId = toObjectId(playlist.ownerId)
+  const collaborators = Array.isArray(playlist.collaborators)
+    ? playlist.collaborators.map((collab) => ({
+        ...collab,
+        userId: toObjectId(collab?.userId),
+      }))
+    : []
+
+  return {
+    ...playlist,
+    ownerId,
+    collaborators,
+  }
+}
+
+function getCollaboratorPermission(playlist, userObjectId) {
+  return playlist.collaborators?.find((collab) => collab.userId?.equals(userObjectId))?.permission || null
+}
+
+function canCollaboratorAdd(permission) {
+  return ['add', 'edit', 'admin'].includes(permission)
+}
+
+function canCollaboratorEdit(permission) {
+  return ['edit', 'admin'].includes(permission)
+}
+
+function isAdminPermission(permission) {
+  return permission === 'admin'
+}
+
+function getGlobalPermission(playlist) {
+  const permission = playlist?.globalPermission
+  return ['view', 'add', 'edit', 'admin'].includes(permission) ? permission : null
+}
+
+function isGlobalAdminUser(user) {
+  if (!user) return false
+  return (
+    user.role === 'admin' ||
+    user.role === 'Admin' ||
+    (Array.isArray(user.permissions) && user.permissions.includes('Admin'))
+  )
+}
+
+/**
+ * Get a map of owner IDs to display names (name or email)
+ * Simplified to use userQueries factory - no more manual database handling
+ * @param {Array} ownerIds - Array of owner ID strings
+ * @returns {Promise<Map>} Map of userId string -> display name
+ */
+async function getOwnerNameMap(ownerIds = []) {
+  const validOwnerIds = ownerIds.filter((id) => isValidObjectId(id))
+  if (validOwnerIds.length === 0) return new Map()
+
+  const ownerObjectIds = validOwnerIds.map((id) => new ObjectId(id))
+
+  // Single query using userQueries factory (handles all database logic internally)
+  const ownerDocs = await userQueries.find(
+    { _id: { $in: ownerObjectIds } },
+    { _id: 1, name: 1, email: 1 }
+  )
+
+  return new Map(
+    ownerDocs.map((owner) => [owner._id.toString(), owner.name || owner.email || null])
+  )
 }
 
 /**
@@ -133,14 +222,14 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
   
   if (userId) {
     // Use provided user ID (for cached components)
-    userObjectId = new ObjectId(userId)
+    userObjectId = userId
   } else {
-    // Fall back to auth() for backward compatibility
-    const session = await auth()
+    // Fall back to getSession() for backward compatibility
+    const session = await getSession()
     if (!session?.user?.id) {
       throw new Error('User not authenticated')
     }
-    userObjectId = new ObjectId(session.user.id)
+    userObjectId = session.user.id
   }
 
   // Diagnostic logging to track cache effectiveness
@@ -367,7 +456,7 @@ export async function addToWatchlist({
   notes = null,
   rating = null,
 }) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -381,17 +470,35 @@ export async function addToWatchlist({
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Watchlist')
+    const playlistsCollection = db.collection('Playlists')
+    const userObjectId = new ObjectId(session.user.id)
+    const isGlobalAdmin = isGlobalAdminUser(session?.user)
 
     // Ensure valid playlist ID
     let actualPlaylistId = playlistId
     if (!playlistId || playlistId === 'default') {
       const defaultPlaylist = await ensureDefaultPlaylist(session.user.id)
       actualPlaylistId = defaultPlaylist.id
+    } else {
+      const playlistRaw = await playlistsCollection.findOne({ _id: new ObjectId(actualPlaylistId) })
+      const playlist = normalizePlaylistIdentityFields(playlistRaw)
+
+      if (!playlist) {
+        throw new Error('Playlist not found')
+      }
+
+      const isOwner = playlist.ownerId?.equals(userObjectId) || false
+      const collaboratorPermission = getCollaboratorPermission(playlist, userObjectId)
+      const globalPermission = getGlobalPermission(playlist)
+
+      if (!isOwner && !canCollaboratorAdd(collaboratorPermission) && !canCollaboratorAdd(globalPermission) && !isGlobalAdmin) {
+        throw new Error('Insufficient permission to add items to this playlist')
+      }
     }
 
     // Check for duplicate using TMDB ID (primary key)
     const existingItem = await collection.findOne({
-      userId: new ObjectId(session.user.id),
+      userId: userObjectId,
       playlistId: new ObjectId(actualPlaylistId),
       tmdbId: parseInt(tmdbId),
     })
@@ -402,7 +509,7 @@ export async function addToWatchlist({
 
     // Create minimal watchlist entry with TMDB ID as primary key
     const watchlistItem = {
-      userId: new ObjectId(session.user.id),
+      userId: userObjectId,
       playlistId: new ObjectId(actualPlaylistId),
       tmdbId: parseInt(tmdbId),
       mediaType,
@@ -459,7 +566,11 @@ export async function addToWatchlist({
     }
   } catch (error) {
     console.error('Error adding to watchlist:', error)
-    if (error.message === 'Item already exists in this playlist') {
+    if (
+      error.message === 'Item already exists in this playlist' ||
+      error.message === 'Playlist not found' ||
+      error.message === 'Insufficient permission to add items to this playlist'
+    ) {
       throw error
     }
     throw new Error('Failed to add item to watchlist')
@@ -472,7 +583,7 @@ export async function addToWatchlist({
  * @returns {Promise<boolean>} Success status
  */
 export async function removeFromWatchlist(watchlistId) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -482,10 +593,11 @@ export async function removeFromWatchlist(watchlistId) {
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Watchlist')
+    const userObjectId = new ObjectId(session.user.id)
 
     const result = await collection.deleteOne({
       _id: new ObjectId(watchlistId),
-      userId: new ObjectId(session.user.id),
+      userId: userObjectId,
     })
 
     return result.deletedCount > 0
@@ -507,7 +619,7 @@ export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
   tmdbId = null, 
   playlistId = null
 ) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     return null
@@ -517,6 +629,7 @@ export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Watchlist')
+    const userObjectId = new ObjectId(session.user.id)
 
     // Ensure we have a valid playlist ID
     let actualPlaylistId = playlistId
@@ -526,7 +639,7 @@ export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
     }
 
     const query = {
-      userId: new ObjectId(session.user.id),
+      userId: userObjectId,
       playlistId: new ObjectId(actualPlaylistId),
     }
 
@@ -565,7 +678,7 @@ export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
  * @returns {Promise<Object>} Watchlist statistics
  */
 export async function getWatchlistStats() {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -575,9 +688,10 @@ export async function getWatchlistStats() {
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Watchlist')
+    const userObjectId = new ObjectId(session.user.id)
 
     const pipeline = [
-      { $match: { userId: new ObjectId(session.user.id) } },
+      { $match: { userId: userObjectId } },
       {
         $group: {
           _id: null,
@@ -664,7 +778,7 @@ export async function findTMDBIdByMediaId(mediaId, mediaType) {
  * @returns {Promise<Array>} Results of updates
  */
 export async function bulkUpdateWatchlist(updates) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -674,12 +788,13 @@ export async function bulkUpdateWatchlist(updates) {
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Watchlist')
+    const userObjectId = new ObjectId(session.user.id)
 
     const bulkOps = updates.map(({ id, updates: itemUpdates }) => ({
       updateOne: {
         filter: {
           _id: new ObjectId(id),
-          userId: new ObjectId(session.user.id),
+          userId: userObjectId,
         },
         update: {
           $set: {
@@ -707,7 +822,7 @@ export async function bulkUpdateWatchlist(updates) {
  * @returns {Promise<number>} Number of deleted items
  */
 export async function bulkRemoveFromWatchlist(watchlistIds) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -717,10 +832,11 @@ export async function bulkRemoveFromWatchlist(watchlistIds) {
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Watchlist')
+    const userObjectId = new ObjectId(session.user.id)
 
     const result = await collection.deleteMany({
       _id: { $in: watchlistIds.map((id) => new ObjectId(id)) },
-      userId: new ObjectId(session.user.id),
+      userId: userObjectId,
     })
 
     return result.deletedCount
@@ -740,7 +856,7 @@ export async function bulkRemoveFromWatchlist(watchlistIds) {
  * @returns {Promise<number>} Number of moved items
  */
 export async function moveItemsToPlaylist(itemIds, targetPlaylistId) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -750,6 +866,7 @@ export async function moveItemsToPlaylist(itemIds, targetPlaylistId) {
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Watchlist')
+    const userObjectId = new ObjectId(session.user.id)
 
     // Ensure we have a valid target playlist ID
     let actualTargetPlaylistId = targetPlaylistId
@@ -762,7 +879,7 @@ export async function moveItemsToPlaylist(itemIds, targetPlaylistId) {
     const itemsToMove = await collection
       .find({
         _id: { $in: itemIds.map((id) => new ObjectId(id)) },
-        userId: new ObjectId(session.user.id),
+        userId: userObjectId,
       })
       .toArray()
 
@@ -785,7 +902,7 @@ export async function moveItemsToPlaylist(itemIds, targetPlaylistId) {
       // Check if item already exists in target playlist
       // Prioritize TMDB ID as primary key
       let targetQuery = {
-        userId: new ObjectId(session.user.id),
+        userId: userObjectId,
         playlistId: targetPlaylistObjectId,
       }
 
@@ -839,9 +956,8 @@ export async function moveItemsToPlaylist(itemIds, targetPlaylistId) {
  * @returns {Promise<Object>} Default playlist
  */
 export async function ensureDefaultPlaylist(userId) {
-  const session = await auth()
 
-  if (!session?.user?.id) {
+  if (!userId) {
     throw new Error('User not authenticated')
   }
 
@@ -851,7 +967,7 @@ export async function ensureDefaultPlaylist(userId) {
     const collection = db.collection('Playlists')
     const watchlistCollection = db.collection('Watchlist')
 
-    const ownerObjectId = new ObjectId(userId || session.user.id)
+    const ownerObjectId = new ObjectId(userId)
     const now = new Date()
 
     // 1) Consolidate any existing duplicate default playlists for this user (safety + legacy cleanup)
@@ -912,7 +1028,6 @@ export async function ensureDefaultPlaylist(userId) {
           isDefault: true,
           collaborators: [],
           dateCreated: now,
-          itemCount: 0,
           sortBy: 'dateAdded',
           sortOrder: 'desc',
           customOrder: [],
@@ -954,7 +1069,7 @@ export async function createPlaylist({
   privacy = 'private',
   isDefault = false,
 }) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -964,16 +1079,16 @@ export async function createPlaylist({
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Playlists')
+    const ownerObjectId = new ObjectId(session.user.id)
 
     const playlist = {
       name: name.trim(),
       description: description.trim(),
       privacy,
-      ownerId: new ObjectId(session.user.id),
+      ownerId: ownerObjectId,
       collaborators: [],
       dateCreated: new Date(),
       dateUpdated: new Date(),
-      itemCount: 0,
       sortBy: 'dateAdded', // Default sort field
       sortOrder: 'desc', // Default sort order
       customOrder: [], // Array of item IDs for manual ordering
@@ -1004,6 +1119,9 @@ export const getUserPlaylists = cache(async function getUserPlaylists(
   includeShared = true, 
   includePublic = true
 ) {
+  const session = await getSession()
+  const isGlobalAdmin = isGlobalAdminUser(session?.user)
+
   let userObjectId
   
   if (userId) {
@@ -1011,7 +1129,6 @@ export const getUserPlaylists = cache(async function getUserPlaylists(
     userObjectId = new ObjectId(userId)
   } else {
     // Fall back to auth() for backward compatibility
-    const session = await auth()
     if (!session?.user?.id) {
       throw new Error('User not authenticated')
     }
@@ -1021,9 +1138,7 @@ export const getUserPlaylists = cache(async function getUserPlaylists(
   try {
     const client = await clientPromise
     const db = client.db('Media')
-    const usersDb = client.db('Users')
     const collection = db.collection('Playlists')
-    const usersCollection = usersDb.collection('AuthenticatedUsers')
 
     // Build filter to include:
     // 1. User's own playlists
@@ -1039,23 +1154,14 @@ export const getUserPlaylists = cache(async function getUserPlaylists(
       orConditions.push({ privacy: 'public' })
     }
 
-    const filter = { $or: orConditions }
+    const filter = isGlobalAdmin ? {} : { $or: orConditions }
 
-    const playlists = await collection.find(filter).sort({ dateUpdated: -1 }).toArray()
+    const playlistsRaw = await collection.find(filter).sort({ dateUpdated: -1 }).toArray()
+    const playlists = playlistsRaw.map((playlist) => normalizePlaylistIdentityFields(playlist))
 
     // Get unique owner IDs to fetch owner names in batch
-    const ownerIds = [...new Set(playlists.map((p) => p.ownerId.toString()))]
-    const owners = await usersCollection
-      .find(
-        { _id: { $in: ownerIds.map((id) => new ObjectId(id)) } },
-        { projection: { _id: 1, name: 1, email: 1 } }
-      )
-      .toArray()
-
-    // Create owner lookup map
-    const ownerMap = new Map(
-      owners.map((owner) => [owner._id.toString(), owner.name || owner.email || 'Unknown User'])
-    )
+    const ownerIds = [...new Set(playlists.map((p) => p.ownerId?.toString()).filter(Boolean))]
+    const ownerMap = await getOwnerNameMap(ownerIds)
 
     // Get item counts for each playlist
     const watchlistCollection = db.collection('Watchlist')
@@ -1070,28 +1176,39 @@ export const getUserPlaylists = cache(async function getUserPlaylists(
         })
 
         // Determine relationship type for categorization
-        const isOwner = playlist.ownerId.equals(userObjectId)
+        const isOwner = playlist.ownerId?.equals(userObjectId) || false
         const isCollaborator =
-          !isOwner && playlist.collaborators?.some((collab) => collab.userId.equals(userObjectId))
+          !isOwner && playlist.collaborators?.some((collab) => collab.userId?.equals(userObjectId))
         const isPublic = playlist.privacy === 'public' && !isOwner && !isCollaborator
 
         // Determine if user can edit this playlist
         // Can edit if: owner, or collaborator with edit/admin permission
         // Note: Admin check only works when session is available
-        const collaboratorPermission = playlist.collaborators?.find((collab) =>
-          collab.userId.equals(userObjectId)
-        )?.permission
+        const collaboratorPermission = getCollaboratorPermission(playlist, userObjectId)
+        const globalPermission = getGlobalPermission(playlist)
+        const canAdd =
+          isOwner ||
+          canCollaboratorAdd(collaboratorPermission) ||
+          canCollaboratorAdd(globalPermission) ||
+          isGlobalAdmin
         const canEdit =
           isOwner ||
-          ['edit', 'admin'].includes(collaboratorPermission)
+          canCollaboratorEdit(collaboratorPermission) ||
+          canCollaboratorEdit(globalPermission) ||
+          isGlobalAdmin
 
         return {
           ...sanitized,
-          ownerName: ownerMap.get(sanitized.ownerId) || 'Unknown User',
+          ownerName:
+            ownerMap.get(sanitized.ownerId) ||
+            (sanitized.ownerId
+              ? `Unknown User (${String(sanitized.ownerId).slice(0, 8)})`
+              : 'Unknown User'),
           itemCount,
           isOwner,
           isCollaborator,
           isPublic,
+          canAdd,
           canEdit,
         }
       })
@@ -1110,7 +1227,7 @@ export const getUserPlaylists = cache(async function getUserPlaylists(
  * @returns {Promise<Object|null>} Playlist or null if not found/not accessible
  */
 export async function getPlaylistById(playlistId) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -1119,32 +1236,46 @@ export async function getPlaylistById(playlistId) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
-    const usersDb = client.db('Users')
     const collection = db.collection('Playlists')
-    const watchlistCollection = db.collection('Watchlist')
-    const usersCollection = usersDb.collection('AuthenticatedUsers')
 
-    const userId = new ObjectId(session.user.id)
+    const watchlistCollection = db.collection('Watchlist')
+
+    const userId = session.user.id
+    const userObjectId = new ObjectId(userId)
+    const isGlobalAdmin = isGlobalAdminUser(session?.user)
 
     // Find playlist that is either:
     // 1. Owned by user
     // 2. User is a collaborator
-    // 3. Public (privacy='public')
-    const playlist = await collection.findOne({
-      _id: new ObjectId(playlistId),
-      $or: [{ ownerId: userId }, { 'collaborators.userId': userId }, { privacy: 'public' }],
-    })
+    // 3. Shared (privacy='shared')
+    // 4. Public (privacy='public')
+    const playlistRaw = await collection.findOne(
+      isGlobalAdmin
+        ? { _id: new ObjectId(playlistId) }
+        : {
+            _id: new ObjectId(playlistId),
+            $or: [
+              { ownerId: userObjectId },
+              { 'collaborators.userId': userObjectId },
+              { privacy: 'shared' },
+              { privacy: 'public' },
+            ],
+          }
+    )
+
+    const playlist = normalizePlaylistIdentityFields(playlistRaw)
 
     if (!playlist) {
       return null
     }
 
     // Get owner name
-    const owner = await usersCollection.findOne(
-      { _id: playlist.ownerId },
-      { projection: { name: 1, email: 1 } }
-    )
-    const ownerName = owner?.name || owner?.email || 'Unknown User'
+    const ownerNameMap = await getOwnerNameMap([playlist.ownerId?.toString()].filter(Boolean))
+    const ownerName =
+      ownerNameMap.get(playlist.ownerId?.toString()) ||
+      (playlist.ownerId
+        ? `Unknown User (${String(playlist.ownerId).slice(0, 8)})`
+        : 'Unknown User')
 
     // Get item count for this playlist
     // Count ALL items in the playlist (regardless of who added them)
@@ -1154,21 +1285,25 @@ export async function getPlaylistById(playlistId) {
     })
 
     // Determine relationship type for categorization
-    const isOwner = playlist.ownerId.equals(userId)
+    const isOwner = playlist.ownerId?.equals(userObjectId) || false
     const isCollaborator =
-      !isOwner && playlist.collaborators?.some((collab) => collab.userId.equals(userId))
+      !isOwner && playlist.collaborators?.some((collab) => collab.userId?.equals(userObjectId))
     const isPublic = playlist.privacy === 'public' && !isOwner && !isCollaborator
 
     // Determine if user can edit this playlist
     // Can edit if: owner, or collaborator with edit/admin permission, or user is admin
-    const collaboratorPermission = playlist.collaborators?.find((collab) =>
-      collab.userId.equals(userId)
-    )?.permission
+    const collaboratorPermission = getCollaboratorPermission(playlist, userObjectId)
+    const globalPermission = getGlobalPermission(playlist)
+    const canAdd =
+      isOwner ||
+      canCollaboratorAdd(collaboratorPermission) ||
+      canCollaboratorAdd(globalPermission) ||
+      isGlobalAdmin
     const canEdit =
       isOwner ||
-      ['edit', 'admin'].includes(collaboratorPermission) ||
-      session?.user?.role === 'admin' ||
-      session?.user?.admin
+      canCollaboratorEdit(collaboratorPermission) ||
+      canCollaboratorEdit(globalPermission) ||
+      isGlobalAdmin
 
     const sanitized = sanitizePlaylistDoc(playlist)
 
@@ -1179,6 +1314,7 @@ export async function getPlaylistById(playlistId) {
       isOwner,
       isCollaborator,
       isPublic,
+      canAdd,
       canEdit,
     }
   } catch (error) {
@@ -1194,38 +1330,118 @@ export async function getPlaylistById(playlistId) {
  * @returns {Promise<boolean>} Success status
  */
 export async function updatePlaylist(playlistId, updates) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
   }
+
+  const userObjectId = new ObjectId(session.user.id)
+  const isGlobalAdmin = isGlobalAdminUser(session?.user)
 
   try {
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Playlists')
 
-    const result = await collection.updateOne(
-      {
-        _id: new ObjectId(playlistId),
-        $or: [
-          { ownerId: new ObjectId(session.user.id) },
-          {
-            'collaborators.userId': new ObjectId(session.user.id),
-            'collaborators.permission': { $in: ['edit', 'admin'] },
+    const playlistRaw = await collection.findOne({ _id: new ObjectId(playlistId) })
+    const playlist = normalizePlaylistIdentityFields(playlistRaw)
+    if (!playlist) {
+      return false
+    }
+
+    const isOwner = playlist.ownerId?.equals(userObjectId) || false
+    const collaboratorPermission = getCollaboratorPermission(playlist, userObjectId)
+    const globalPermission = getGlobalPermission(playlist)
+    const canEdit =
+      isOwner ||
+      canCollaboratorEdit(collaboratorPermission) ||
+      canCollaboratorEdit(globalPermission) ||
+      isGlobalAdmin
+
+    if (!canEdit) {
+      return false
+    }
+
+    const normalizedUpdates = {
+      ...updates,
+    }
+
+    const now = new Date()
+    const playlistObjectId = new ObjectId(playlistId)
+    const previousOwnerId = playlist.ownerId
+    let nextOwnerId = playlist.ownerId
+
+    if (normalizedUpdates.ownerId !== undefined) {
+      const parsedOwnerId = toObjectId(normalizedUpdates.ownerId)
+      if (!parsedOwnerId) {
+        const invalidOwnerError = new Error('Invalid ownerId')
+        invalidOwnerError.status = 400
+        throw invalidOwnerError
+      }
+      normalizedUpdates.ownerId = parsedOwnerId
+      nextOwnerId = parsedOwnerId
+    }
+
+    if (normalizedUpdates.isDefault !== undefined && typeof normalizedUpdates.isDefault !== 'boolean') {
+      const invalidDefaultError = new Error('isDefault must be a boolean')
+      invalidDefaultError.status = 400
+      throw invalidDefaultError
+    }
+
+    const ownerChanged = !previousOwnerId?.equals(nextOwnerId)
+    const nextIsDefault =
+      normalizedUpdates.isDefault !== undefined
+        ? normalizedUpdates.isDefault
+        : Boolean(playlist.isDefault)
+
+    if (nextIsDefault) {
+      await collection.updateMany(
+        {
+          _id: { $ne: playlistObjectId },
+          ownerId: nextOwnerId,
+          isDefault: true,
+        },
+        {
+          $set: {
+            isDefault: false,
+            dateUpdated: now,
           },
-        ],
-      },
+        }
+      )
+    }
+
+    const result = await collection.updateOne(
+      { _id: playlistObjectId },
       {
         $set: {
-          ...updates,
-          dateUpdated: new Date(),
+          ...normalizedUpdates,
+          dateUpdated: now,
         },
       }
     )
 
+    if (ownerChanged && previousOwnerId && (playlist.isDefault || nextIsDefault)) {
+      await ensureDefaultPlaylist(previousOwnerId.toString())
+    }
+
+    if (!ownerChanged && playlist.isDefault && !nextIsDefault && previousOwnerId) {
+      await ensureDefaultPlaylist(previousOwnerId.toString())
+    }
+
     return result.modifiedCount > 0
   } catch (error) {
+    if (error?.status) {
+      throw error
+    }
+
+    if (error?.code === 11000) {
+      const duplicateKeyError = new Error('Cannot transfer a default playlist to a user who already has a default playlist')
+      duplicateKeyError.status = 409
+      duplicateKeyError.code = 'DEFAULT_PLAYLIST_OWNER_CONFLICT'
+      throw duplicateKeyError
+    }
+
     console.error('Error updating playlist:', error)
     throw new Error('Failed to update playlist')
   }
@@ -1237,7 +1453,7 @@ export async function updatePlaylist(playlistId, updates) {
  * @returns {Promise<boolean>} Success status
  */
 export async function deletePlaylist(playlistId) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -1246,12 +1462,18 @@ export async function deletePlaylist(playlistId) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
+    const userObjectId = new ObjectId(session.user.id)
+    const isGlobalAdmin = isGlobalAdminUser(session?.user)
 
-    // Only owner can delete playlist (and never allow deleting the default)
-    const playlistDoc = await db.collection('Playlists').findOne({
-      _id: new ObjectId(playlistId),
-      ownerId: new ObjectId(session.user.id),
-    })
+    // Owner or global admin can delete playlist (never allow deleting default)
+    const playlistDoc = await db.collection('Playlists').findOne(
+      isGlobalAdmin
+        ? { _id: new ObjectId(playlistId) }
+        : {
+            _id: new ObjectId(playlistId),
+            ownerId: userObjectId,
+          }
+    )
     if (!playlistDoc) {
       return false
     }
@@ -1260,17 +1482,22 @@ export async function deletePlaylist(playlistId) {
       throw new Error('Cannot delete default playlist')
     }
 
-    const playlistResult = await db.collection('Playlists').deleteOne({
-      _id: new ObjectId(playlistId),
-      ownerId: new ObjectId(session.user.id),
-    })
+    const playlistResult = await db.collection('Playlists').deleteOne(
+      isGlobalAdmin
+        ? { _id: new ObjectId(playlistId) }
+        : {
+            _id: new ObjectId(playlistId),
+            ownerId: userObjectId,
+          }
+    )
 
     if (playlistResult.deletedCount > 0) {
-      // Move all items in this playlist to the user's default playlist
-      const defaultPlaylist = await ensureDefaultPlaylist(session.user.id)
+      // Move all items in this playlist to the owner's default playlist
+      const playlistOwnerId = playlistDoc.ownerId?.toString()
+      const defaultPlaylist = await ensureDefaultPlaylist(playlistOwnerId)
       await db.collection('Watchlist').updateMany(
         {
-          userId: new ObjectId(session.user.id),
+          userId: playlistDoc.ownerId,
           playlistId: new ObjectId(playlistId),
         },
         {
@@ -1293,10 +1520,11 @@ export async function deletePlaylist(playlistId) {
  * Share playlist with users
  * @param {string} playlistId - Playlist ID
  * @param {Array} collaborators - Array of {email, permission} objects
+ * @param {Array} removeCollaborators - Array of collaborator emails to remove
  * @returns {Promise<boolean>} Success status
  */
-export async function sharePlaylist(playlistId, collaborators) {
-  const session = await auth()
+export async function sharePlaylist(playlistId, collaborators = [], globalPermission, removeCollaborators = []) {
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -1305,38 +1533,84 @@ export async function sharePlaylist(playlistId, collaborators) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
-    const usersDb = client.db('Users')
+    const userObjectId = new ObjectId(session.user.id)
+    const isGlobalAdmin = isGlobalAdminUser(session?.user)
+
+    const playlistRaw = await db.collection('Playlists').findOne({ _id: new ObjectId(playlistId) })
+    const playlist = normalizePlaylistIdentityFields(playlistRaw)
+    if (!playlist) {
+      return false
+    }
+
+    const isOwner = playlist.ownerId?.equals(userObjectId) || false
+    const collaboratorPermission = getCollaboratorPermission(playlist, userObjectId)
+    const existingGlobalPermission = getGlobalPermission(playlist)
+    const canAdmin =
+      isOwner ||
+      isAdminPermission(collaboratorPermission) ||
+      isAdminPermission(existingGlobalPermission) ||
+      isGlobalAdmin
+
+    if (!canAdmin) {
+      return false
+    }
 
     // Get user IDs for the emails
     const userIds = await Promise.all(
       collaborators.map(async ({ email, permission }) => {
-        const user = await usersDb.collection('AuthenticatedUsers').findOne({ email })
-        return user
-          ? {
-              userId: user._id,
-              email,
-              permission,
-              dateAdded: new Date(),
-            }
-          : null
+        const user = await userQueries.findByEmail(email)
+        const collaboratorUserId = toObjectId(user?._id)
+        if (!user || !collaboratorUserId) {
+          return null
+        }
+
+        return {
+          userId: collaboratorUserId,
+          email,
+          permission,
+          dateAdded: new Date(),
+        }
       })
     )
 
     const validCollaborators = userIds.filter(Boolean)
+    const validRemoveCollaborators = Array.isArray(removeCollaborators)
+      ? [...new Set(removeCollaborators
+          .map((email) => (typeof email === 'string' ? email.trim().toLowerCase() : ''))
+          .filter(Boolean))]
+      : []
 
-    const result = await db.collection('Playlists').updateOne(
-      {
-        _id: new ObjectId(playlistId),
-        ownerId: new ObjectId(session.user.id),
+    const updateDoc = {
+      $set: {
+        dateUpdated: new Date(),
       },
-      {
-        $addToSet: {
-          collaborators: { $each: validCollaborators },
-        },
-        $set: {
-          dateUpdated: new Date(),
+    }
+
+    if (validCollaborators.length > 0) {
+      updateDoc.$addToSet = {
+        collaborators: { $each: validCollaborators },
+      }
+    }
+
+    if (validRemoveCollaborators.length > 0) {
+      updateDoc.$pull = {
+        collaborators: {
+          email: { $in: validRemoveCollaborators },
         },
       }
+    }
+
+    if (globalPermission !== undefined) {
+      if (globalPermission === null || globalPermission === 'none') {
+        updateDoc.$unset = { globalPermission: '' }
+      } else {
+        updateDoc.$set.globalPermission = globalPermission
+      }
+    }
+
+    const result = await db.collection('Playlists').updateOne(
+      { _id: new ObjectId(playlistId) },
+      updateDoc
     )
 
     return result.modifiedCount > 0
@@ -1354,7 +1628,7 @@ export async function sharePlaylist(playlistId, collaborators) {
  * @returns {Promise<boolean>} Success status
  */
 export async function updatePlaylistSorting(playlistId, sortBy, sortOrder) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -1364,18 +1638,30 @@ export async function updatePlaylistSorting(playlistId, sortBy, sortOrder) {
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Playlists')
+    const userObjectId = new ObjectId(session.user.id)
+    const isGlobalAdmin = isGlobalAdminUser(session?.user)
+
+    const playlistRaw = await collection.findOne({ _id: new ObjectId(playlistId) })
+    const playlist = normalizePlaylistIdentityFields(playlistRaw)
+    if (!playlist) {
+      return false
+    }
+
+    const isOwner = playlist.ownerId?.equals(userObjectId) || false
+    const collaboratorPermission = getCollaboratorPermission(playlist, userObjectId)
+    const globalPermission = getGlobalPermission(playlist)
+    const canEdit =
+      isOwner ||
+      canCollaboratorEdit(collaboratorPermission) ||
+      canCollaboratorEdit(globalPermission) ||
+      isGlobalAdmin
+
+    if (!canEdit) {
+      return false
+    }
 
     const result = await collection.updateOne(
-      {
-        _id: new ObjectId(playlistId),
-        $or: [
-          { ownerId: new ObjectId(session.user.id) },
-          {
-            'collaborators.userId': new ObjectId(session.user.id),
-            'collaborators.permission': { $in: ['edit', 'admin'] },
-          },
-        ],
-      },
+      { _id: new ObjectId(playlistId) },
       {
         $set: {
           sortBy,
@@ -1399,7 +1685,7 @@ export async function updatePlaylistSorting(playlistId, sortBy, sortOrder) {
  * @returns {Promise<boolean>} Success status
  */
 export async function updatePlaylistCustomOrder(playlistId, itemIds) {
-  const session = await auth()
+  const session = await getSession()
 
   if (!session?.user?.id) {
     throw new Error('User not authenticated')
@@ -1409,18 +1695,30 @@ export async function updatePlaylistCustomOrder(playlistId, itemIds) {
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Playlists')
+    const userObjectId = new ObjectId(session.user.id)
+    const isGlobalAdmin = isGlobalAdminUser(session?.user)
+
+    const playlistRaw = await collection.findOne({ _id: new ObjectId(playlistId) })
+    const playlist = normalizePlaylistIdentityFields(playlistRaw)
+    if (!playlist) {
+      return false
+    }
+
+    const isOwner = playlist.ownerId?.equals(userObjectId) || false
+    const collaboratorPermission = getCollaboratorPermission(playlist, userObjectId)
+    const globalPermission = getGlobalPermission(playlist)
+    const canEdit =
+      isOwner ||
+      canCollaboratorEdit(collaboratorPermission) ||
+      canCollaboratorEdit(globalPermission) ||
+      isGlobalAdmin
+
+    if (!canEdit) {
+      return false
+    }
 
     const result = await collection.updateOne(
-      {
-        _id: new ObjectId(playlistId),
-        $or: [
-          { ownerId: new ObjectId(session.user.id) },
-          {
-            'collaborators.userId': new ObjectId(session.user.id),
-            'collaborators.permission': { $in: ['edit', 'admin'] },
-          },
-        ],
-      },
+      { _id: new ObjectId(playlistId) },
       {
         $set: {
           customOrder: itemIds,
@@ -1699,10 +1997,6 @@ export async function resetVisibilityForPlaylist(playlistId) {
  * Returns minimal identity info for moderation panel
  */
 export async function findUsersForAdmin({ search = '', page = 0, limit = 20 } = {}) {
-  const client = await clientPromise
-  const usersDb = client.db('Users')
-  const usersCollection = usersDb.collection('AuthenticatedUsers')
-
   const filter = {}
   if (search && typeof search === 'string') {
     const re = new RegExp(search.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i')
@@ -1712,14 +2006,15 @@ export async function findUsersForAdmin({ search = '', page = 0, limit = 20 } = 
   const safeLimit = Math.max(1, Math.min(100, parseInt(limit)))
   const safePage = Math.max(0, parseInt(page))
 
-  const cursor = usersCollection
+  // Use userQueries.collection() for complex query with sorting and pagination
+  const cursor = userQueries.collection()
     .find(filter, { projection: { _id: 1, name: 1, email: 1 } })
     .sort({ name: 1, email: 1 })
     .skip(safePage * safeLimit)
     .limit(safeLimit)
 
   const users = await cursor.toArray()
-  const total = await usersCollection.countDocuments(filter)
+  const total = await userQueries.collection().countDocuments(filter)
   return {
     users: users.map((u) => ({
       userId: u._id.toString(),

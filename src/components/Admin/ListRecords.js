@@ -103,7 +103,7 @@ function ListRecords({
                                 <div className="h-4">
                                   <div className="text-center cursor-pointer bg-blue-600 rounded-xl px-2">
                                     {loadingStates[index] ? (
-                                      <div>Loading...</div> // Your loading overlay here
+                                      <div>Loading...</div>
                                     ) : (
                                       <div>
                                         <button
@@ -172,7 +172,7 @@ function ListRecords({
                                 className="whitespace-nowrap py-4 pl-4 pr-3 text-sm font-medium text-blue-100 sm:pl-2 bg-gray-800"
                               >
                                 {loadingStates[index] ? (
-                                  <div>Loading...</div> // Your loading overlay here
+                                  <div>Loading...</div>
                                 ) : (
                                   <div>
                                     <button

@@ -9,6 +9,7 @@ import { NotificationManager } from './NotificationManager.js';
 import { NOTIFICATION_TYPES } from './NotificationTypes.js';
 import clientPromise from '@src/lib/mongodb';
 import { ObjectId } from 'mongodb';
+import { userQueries } from '@src/lib/userQueries';
 
 export class MediaNotificationOrchestrator {
   /**
@@ -195,17 +196,14 @@ export class MediaNotificationOrchestrator {
    */
   static async getTargetUsers(targetAllUsers = true, specificUsers = []) {
     try {
-      const client = await clientPromise;
-      const db = client.db('Users'); // Use Users database
-      
       let query = {};
       
       if (!targetAllUsers && specificUsers.length > 0) {
         query = { _id: { $in: specificUsers.map(id => new ObjectId(id)) } };
       }
 
-      // Get all users or specific users from AuthenticatedUsers collection
-      const users = await db.collection('AuthenticatedUsers').find(query).toArray();
+      // Get all users or specific users from user collection
+      const users = await userQueries.find(query);
       
       console.log(`Found ${users.length} target users for notifications`);
       return users;

@@ -41,7 +41,10 @@ function useWatchlistAPI() {
 
     if (!response.ok) {
       const error = await response.json().catch(() => ({ error: 'Request failed' }))
-      throw new Error(error.error || `HTTP ${response.status}`)
+      const requestError = new Error(error.message || error.error || `HTTP ${response.status}`)
+      requestError.status = response.status
+      requestError.payload = error
+      throw requestError
     }
 
     return response.json()
@@ -84,11 +87,11 @@ function useWatchlistAPI() {
         params: { action: 'delete-playlist', playlistId } 
       }), [apiCall]),
     
-    sharePlaylist: useCallback((playlistId, collaborators) => 
+    sharePlaylist: useCallback((playlistId, collaborators = [], globalPermission, removeCollaborators = []) => 
       apiCall('', { 
         method: 'POST', 
         params: { action: 'share-playlist' },
-        body: { playlistId, collaborators } 
+        body: { playlistId, collaborators, globalPermission, removeCollaborators } 
       }), [apiCall]),
     
     // Watchlist operations
@@ -198,37 +201,44 @@ export default function WatchlistPage({ user }) {
   const [playlists, setPlaylists] = useState([])
   const [currentPlaylist, setCurrentPlaylist] = useState(null)
   const [currentItems, setCurrentItems] = useState([])
+
+  const ownerDefaultPlaylist = useMemo(() => {
+    return (
+      playlists.find((p) => p.isOwner && p.isDefault) ||
+      playlists.find((p) => p.isOwner && p.id === 'default') ||
+      null
+    )
+  }, [playlists])
   
   // Derive selected playlist ID from URL - single source of truth
   const selectedPlaylistId = useMemo(() => {
     const urlPlaylistParam = searchParams.get('playlist')
-    const isSharedParam = searchParams.get('shared') === 'true'
     
     // If URL has a playlist parameter (could be shared/public), use it
-    // We'll validate access when loading the playlist
+    // We'll validate access when loading the playlist via API
     if (urlPlaylistParam) {
-      // Check if it's in user's playlists first
-      if (playlists.some(p => p.id === urlPlaylistParam)) {
-        return urlPlaylistParam
-      }
-      
-      // If marked as shared, allow it even if not in user's list
-      // We'll fetch it separately to check if it's public/accessible
-      if (isSharedParam) {
-        return urlPlaylistParam
-      }
+      return urlPlaylistParam
     }
     
     // Otherwise, determine default playlist
     if (playlists.length > 0) {
-      const defaultPlaylist = playlists.find(p => p.isDefault) ||
-                              playlists.find(p => p.id === 'default') ||
-                              playlists[0]
+      const defaultPlaylist = ownerDefaultPlaylist || playlists[0]
       return defaultPlaylist?.id || 'default'
     }
     
     return 'default'
-  }, [searchParams, playlists])
+  }, [searchParams, playlists, ownerDefaultPlaylist])
+
+  const resolvedSelectedPlaylistId = useMemo(() => {
+    if (selectedPlaylistId !== 'default') return selectedPlaylistId
+    return ownerDefaultPlaylist?.id || 'default'
+  }, [selectedPlaylistId, ownerDefaultPlaylist])
+
+  const matchesPlaylistId = useCallback((playlist, playlistId) => {
+    if (!playlist || !playlistId) return false
+    if (playlist.id === playlistId) return true
+    return playlistId === 'default' && playlist.isOwner && playlist.isDefault
+  }, [])
   
   // Granular loading states
   const [playlistsLoading, setPlaylistsLoading] = useState(true)
@@ -277,12 +287,17 @@ export default function WatchlistPage({ user }) {
     console.log('[canEditPlaylist] currentPlaylist.canEdit:', currentPlaylist?.canEdit)
     console.log('[canEditPlaylist] user:', user)
     console.log('[canEditPlaylist] selectedPlaylistId:', selectedPlaylistId)
+    console.log('[canEditPlaylist] resolvedSelectedPlaylistId:', resolvedSelectedPlaylistId)
     
     // Use server-provided canEdit field if available
     if (currentPlaylist?.canEdit !== undefined) {
       console.log('[canEditPlaylist] Using server-provided canEdit:', currentPlaylist.canEdit)
       return currentPlaylist.canEdit
     }
+
+    const playlistFromList = resolvedSelectedPlaylistId
+      ? playlists.find(p => p.id === resolvedSelectedPlaylistId)
+      : null
     
     console.log('[canEditPlaylist] canEdit not provided, using fallback logic')
     
@@ -293,7 +308,7 @@ export default function WatchlistPage({ user }) {
     }
     
     // Check if user is admin (check both role and admin flag)
-    if (user.role === 'Admin' || user.admin || user.permissions?.includes('Admin')) {
+    if (user.role === 'admin' || user.role === 'Admin' || user.permissions?.includes('Admin')) {
       console.log('[canEditPlaylist] User is admin, returning true')
       return true
     }
@@ -304,22 +319,18 @@ export default function WatchlistPage({ user }) {
       return true
     }
     
-    // If currentPlaylist is not loaded yet, check the playlists array
-    if (!currentPlaylist && selectedPlaylistId) {
-      const playlistFromList = playlists.find(p => p.id === selectedPlaylistId)
-      console.log('[canEditPlaylist] Found playlist in list:', playlistFromList)
-      
-      if (playlistFromList) {
-        // Use canEdit from playlists array if available
-        if (playlistFromList.canEdit !== undefined) {
-          console.log('[canEditPlaylist] Using canEdit from playlist list:', playlistFromList.canEdit)
-          return playlistFromList.canEdit
-        }
-        // Check isOwner from playlists array
-        if (playlistFromList.isOwner) {
-          console.log('[canEditPlaylist] User is owner (from playlist list), returning true')
-          return true
-        }
+    console.log('[canEditPlaylist] Found playlist in list:', playlistFromList)
+
+    if (playlistFromList) {
+      // Use canEdit from playlists array if available
+      if (playlistFromList.canEdit !== undefined) {
+        console.log('[canEditPlaylist] Using canEdit from playlist list:', playlistFromList.canEdit)
+        return playlistFromList.canEdit
+      }
+      // Check isOwner from playlists array
+      if (playlistFromList.isOwner) {
+        console.log('[canEditPlaylist] User is owner (from playlist list), returning true')
+        return true
       }
     }
     
@@ -331,7 +342,62 @@ export default function WatchlistPage({ user }) {
     
     console.log('[canEditPlaylist] No edit permission found, returning false')
     return false
-  }, [user, currentPlaylist, selectedPlaylistId, playlists])
+  }, [user, currentPlaylist, selectedPlaylistId, resolvedSelectedPlaylistId, playlists])
+
+  const canAddPlaylist = useMemo(() => {
+    if (currentPlaylist?.canAdd !== undefined) {
+      return currentPlaylist.canAdd
+    }
+
+    if (currentPlaylist?.canEdit !== undefined) {
+      return currentPlaylist.canEdit
+    }
+
+    const playlistFromList = resolvedSelectedPlaylistId
+      ? playlists.find(p => p.id === resolvedSelectedPlaylistId)
+      : null
+
+    if (playlistFromList?.canAdd !== undefined) return playlistFromList.canAdd
+    if (playlistFromList?.canEdit !== undefined) return playlistFromList.canEdit
+    if (playlistFromList?.isOwner) return true
+
+    if (!user) return false
+
+    if (user.role === 'admin' || user.role === 'Admin' || user.permissions?.includes('Admin')) {
+      return true
+    }
+
+    if (currentPlaylist?.isOwner) {
+      return true
+    }
+
+    return false
+  }, [user, currentPlaylist, resolvedSelectedPlaylistId, playlists])
+
+  // Temporary debug logs for playlist selection/permission transitions
+  useEffect(() => {
+    if (process.env.NODE_ENV !== 'development') return
+
+    console.log('[playlist-debug-temp] selection state', {
+      selectedPlaylistId,
+      resolvedSelectedPlaylistId,
+      currentPlaylistId: currentPlaylist?.id || null,
+      currentPlaylistName: currentPlaylist?.name || null,
+      currentPlaylistCanAdd: currentPlaylist?.canAdd,
+      currentPlaylistCanEdit: currentPlaylist?.canEdit,
+      currentPlaylistIsOwner: currentPlaylist?.isOwner,
+      playlistsCount: playlists.length,
+    })
+  }, [
+    selectedPlaylistId,
+    resolvedSelectedPlaylistId,
+    currentPlaylist?.id,
+    currentPlaylist?.name,
+    currentPlaylist?.canAdd,
+    currentPlaylist?.canEdit,
+    currentPlaylist?.isOwner,
+    playlists.length,
+  ])
 
   // Admin detection for showing admin tools
   const isAdmin = useMemo(() => {
@@ -339,8 +405,6 @@ export default function WatchlistPage({ user }) {
     return (
       user.role === 'admin' ||
       user.role === 'Admin' ||
-      user.admin === true ||
-      user.isAdmin === true ||
       (Array.isArray(user.permissions) && user.permissions.includes('Admin'))
     )
   }, [user])
@@ -423,7 +487,6 @@ export default function WatchlistPage({ user }) {
       try {
         // Capture initial playlist param from URL
         const initialPlaylistParam = searchParams.get('playlist')
-        const isSharedParam = searchParams.get('shared') === 'true'
         
         // Fetch playlists and summary in parallel
         const [playlistsResult, summaryResult] = await Promise.allSettled([
@@ -447,22 +510,16 @@ export default function WatchlistPage({ user }) {
         let targetPlaylistId = 'default'
         
         if (initialPlaylistParam) {
-          // Check if it's in user's playlists
-          if (loadedPlaylists.some(p => p.id === initialPlaylistParam)) {
-            targetPlaylistId = initialPlaylistParam
-          }
-          // Or if it's marked as shared, allow it (will be fetched separately)
-          else if (isSharedParam) {
-            targetPlaylistId = initialPlaylistParam
-          }
-          // Otherwise fall through to default playlist
+          // Allow explicit playlist URL param; backend validates access.
+          targetPlaylistId = initialPlaylistParam
         }
         
         // If no valid playlist ID from URL, use default
         if (targetPlaylistId === 'default' && loadedPlaylists.length > 0) {
-          const defaultPlaylist = loadedPlaylists.find(p => p.isDefault) ||
-                                   loadedPlaylists.find(p => p.id === 'default') ||
-                                   loadedPlaylists[0]
+          const defaultPlaylist =
+            loadedPlaylists.find((p) => p.isOwner && p.isDefault) ||
+            loadedPlaylists.find((p) => p.isOwner && p.id === 'default') ||
+            loadedPlaylists[0]
           if (defaultPlaylist) {
             targetPlaylistId = defaultPlaylist.id
           }
@@ -470,11 +527,11 @@ export default function WatchlistPage({ user }) {
         
         // Load playlist items for the initial playlist
         if (targetPlaylistId && loadedPlaylists.length > 0) {
-          await loadPlaylistItems(targetPlaylistId)
+          const loadedPlaylistData = await loadPlaylistItems(targetPlaylistId)
           lastLoadedPlaylistRef.current = targetPlaylistId
           
           // Load specific summary for this playlist if it's not the default
-          if (targetPlaylistId !== 'default') {
+          if (loadedPlaylistData && targetPlaylistId !== 'default') {
             const playlistSummary = await loadSummaryData(targetPlaylistId)
             if (playlistSummary) {
               setSummary(playlistSummary)
@@ -483,16 +540,17 @@ export default function WatchlistPage({ user }) {
         }
         
         // Ensure URL reflects the correct playlist (handle default playlist case)
-        const defaultPlaylist = loadedPlaylists.find(p => p.isDefault) || loadedPlaylists.find(p => p.id === 'default')
+        const defaultPlaylist =
+          loadedPlaylists.find((p) => p.isOwner && p.isDefault) ||
+          loadedPlaylists.find((p) => p.isOwner && p.id === 'default')
         const isDefaultPlaylist = defaultPlaylist && targetPlaylistId === defaultPlaylist.id
         
-        if (isDefaultPlaylist && initialPlaylistParam && !isSharedParam) {
-          // Remove playlist param for default playlist (but not if it's a shared link)
+        if (isDefaultPlaylist && initialPlaylistParam) {
+          // Remove playlist param for default playlist.
           router.replace('/watchlist', { scroll: false, shallow: true })
         } else if (!isDefaultPlaylist && !initialPlaylistParam) {
           // Add playlist param for non-default playlist
-          const sharedSuffix = isSharedParam ? '&shared=true' : ''
-          router.replace(`/watchlist?playlist=${targetPlaylistId}${sharedSuffix}`, { scroll: false, shallow: true })
+          router.replace(`/watchlist?playlist=${targetPlaylistId}`, { scroll: false, shallow: true })
         }
         
       } catch (error) {
@@ -519,7 +577,7 @@ export default function WatchlistPage({ user }) {
   // Simple handler for playlist selection - only updates URL
   const handlePlaylistSelect = useCallback((playlistId) => {
     // Check if this is the default playlist
-    const defaultPlaylist = playlists.find(p => p.isDefault) || playlists.find(p => p.id === 'default')
+    const defaultPlaylist = ownerDefaultPlaylist
     const isDefaultPlaylist = defaultPlaylist && playlistId === defaultPlaylist.id
     
     if (isDefaultPlaylist) {
@@ -529,7 +587,7 @@ export default function WatchlistPage({ user }) {
       // For custom playlists, set the playlist parameter
       router.push(`/watchlist?playlist=${playlistId}`, { scroll: false })
     }
-  }, [router, playlists])
+  }, [router, ownerDefaultPlaylist])
 
   const loadPlaylists = useCallback(async () => {
     setPlaylistsLoading(true)
@@ -551,8 +609,15 @@ export default function WatchlistPage({ user }) {
       
       // Use playlist info returned by API
       if (data.playlist) {
+        const playlistFromList = playlists.find(p => p.id === (data.playlist.id || playlistId))
         const playlistInfo = {
+          ...playlistFromList,
           ...data.playlist,
+          canAdd: data.playlist.canAdd ?? playlistFromList?.canAdd,
+          canEdit: data.playlist.canEdit ?? playlistFromList?.canEdit,
+          isOwner: data.playlist.isOwner ?? playlistFromList?.isOwner,
+          isCollaborator: data.playlist.isCollaborator ?? playlistFromList?.isCollaborator,
+          isPublic: data.playlist.isPublic ?? playlistFromList?.isPublic,
           itemCount: data.items?.length || 0
         }
         setCurrentPlaylist(playlistInfo)
@@ -589,13 +654,33 @@ export default function WatchlistPage({ user }) {
       
       // Items are now hydrated and sorted by the backend
       setCurrentItems(data.items || [])
+      return data
     } catch (error) {
       console.error('Error loading playlist items:', error)
-      toast.error('Failed to load playlist items')
+
+      const accessLost =
+        error?.status === 403 ||
+        error?.status === 404 ||
+        /not accessible|not found|forbidden/i.test(error?.message || '')
+
+      if (accessLost) {
+        setCurrentItems([])
+        setCurrentPlaylist(null)
+
+        if (playlistId && playlistId !== 'default') {
+          toast.warn('This playlist is no longer accessible. Redirecting to your default playlist.')
+          router.replace('/watchlist', { scroll: false })
+        }
+
+        return null
+      }
+
+      toast.error(error?.message || 'Failed to load playlist items')
+      return null
     } finally {
       setItemsLoading(false)
     }
-  }, [api, playlists])
+  }, [api, playlists, router])
 
 
   const loadSummary = useCallback(async (playlistId = selectedPlaylistId) => {
@@ -660,7 +745,7 @@ export default function WatchlistPage({ user }) {
       toast.success('Playlist updated successfully')
     } catch (error) {
       console.error('Error updating playlist:', error)
-      toast.error('Failed to update playlist')
+      toast.error(error?.message || 'Failed to update playlist')
       throw error
     }
   }, [api, currentPlaylist, loadPlaylists])
@@ -673,7 +758,10 @@ export default function WatchlistPage({ user }) {
       
       if (selectedPlaylistId === playlistId) {
         // Navigate to default playlist when current playlist is deleted
-        const defaultPlaylist = updatedPlaylists.find(p => p.isDefault) || updatedPlaylists.find(p => p.id === 'default') || updatedPlaylists[0]
+        const defaultPlaylist =
+          updatedPlaylists.find((p) => p.isOwner && p.isDefault) ||
+          updatedPlaylists.find((p) => p.isOwner && p.id === 'default') ||
+          updatedPlaylists[0]
         if (defaultPlaylist) {
           const isDefaultPlaylist = defaultPlaylist.isDefault || defaultPlaylist.id === 'default'
           if (isDefaultPlaylist) {
@@ -882,11 +970,13 @@ export default function WatchlistPage({ user }) {
     setShowShareModal(true)
   }, [])
 
-  const handleRefresh = useCallback(() => {
-    loadPlaylists()
-    loadPlaylistItems(selectedPlaylistId)
-    loadSummary(selectedPlaylistId)
-  }, [loadPlaylists, loadPlaylistItems, selectedPlaylistId, loadSummary])
+  const handleRefresh = useCallback(async () => {
+    await loadPlaylists()
+    const loadedPlaylistData = await loadPlaylistItems(resolvedSelectedPlaylistId)
+    if (loadedPlaylistData) {
+      await loadSummary(resolvedSelectedPlaylistId)
+    }
+  }, [loadPlaylists, loadPlaylistItems, resolvedSelectedPlaylistId, loadSummary])
 
   // Optimistic item addition handler
   const handleItemAdded = useCallback((newItem) => {
@@ -927,7 +1017,7 @@ export default function WatchlistPage({ user }) {
     // Update playlist item counts optimistically
     setPlaylists(prevPlaylists => {
       return prevPlaylists.map(playlist => {
-        if (playlist.id === selectedPlaylistId || (selectedPlaylistId === 'default' && playlist.isDefault)) {
+        if (matchesPlaylistId(playlist, selectedPlaylistId)) {
           return {
             ...playlist,
             itemCount: playlist.itemCount + 1
@@ -947,7 +1037,7 @@ export default function WatchlistPage({ user }) {
         tvCount: newItem.mediaType === 'tv' ? prevSummary.tvCount + 1 : prevSummary.tvCount
       }
     })
-  }, [sortBy, sortOrder, sortItemsLocally, selectedPlaylistId])
+  }, [sortBy, sortOrder, sortItemsLocally, selectedPlaylistId, matchesPlaylistId])
 
   // Optimistic item removal handler
   const handleItemRemoved = useCallback((removedItemId) => {
@@ -958,7 +1048,7 @@ export default function WatchlistPage({ user }) {
     // Update playlist item counts optimistically
     setPlaylists(prevPlaylists => {
       return prevPlaylists.map(playlist => {
-        if (playlist.id === selectedPlaylistId || (selectedPlaylistId === 'default' && playlist.isDefault)) {
+        if (matchesPlaylistId(playlist, selectedPlaylistId)) {
           return {
             ...playlist,
             itemCount: Math.max(0, playlist.itemCount - 1)
@@ -981,7 +1071,7 @@ export default function WatchlistPage({ user }) {
         tvCount: removedItem.mediaType === 'tv' ? Math.max(0, prevSummary.tvCount - 1) : prevSummary.tvCount
       }
     })
-  }, [currentItems, selectedPlaylistId])
+  }, [currentItems, selectedPlaylistId, matchesPlaylistId])
 
   // Optimistic bulk removal handler
   const handleItemsRemoved = useCallback((removedItemIds) => {
@@ -992,7 +1082,7 @@ export default function WatchlistPage({ user }) {
     // Update playlist item counts optimistically
     setPlaylists(prevPlaylists => {
       return prevPlaylists.map(playlist => {
-        if (playlist.id === selectedPlaylistId || (selectedPlaylistId === 'default' && playlist.isDefault)) {
+        if (matchesPlaylistId(playlist, selectedPlaylistId)) {
           return {
             ...playlist,
             itemCount: Math.max(0, playlist.itemCount - removedItemIds.length)
@@ -1019,7 +1109,7 @@ export default function WatchlistPage({ user }) {
     
     // Clear selection
     setSelectedItems(new Set())
-  }, [currentItems, selectedPlaylistId])
+  }, [currentItems, selectedPlaylistId, matchesPlaylistId])
 
   // Optimistic item move handler (removes from current playlist)
   const handleItemMoved = useCallback((movedItemId, targetPlaylistId = null) => {
@@ -1030,13 +1120,13 @@ export default function WatchlistPage({ user }) {
     // Update playlist item counts optimistically (decrease source, increase target)
     setPlaylists(prevPlaylists => {
       return prevPlaylists.map(playlist => {
-        if (playlist.id === selectedPlaylistId || (selectedPlaylistId === 'default' && playlist.isDefault)) {
+        if (matchesPlaylistId(playlist, selectedPlaylistId)) {
           // Decrease source playlist count
           return {
             ...playlist,
             itemCount: Math.max(0, playlist.itemCount - 1)
           }
-        } else if (targetPlaylistId && (playlist.id === targetPlaylistId || (targetPlaylistId === 'default' && playlist.isDefault))) {
+        } else if (targetPlaylistId && matchesPlaylistId(playlist, targetPlaylistId)) {
           // Increase target playlist count
           return {
             ...playlist,
@@ -1060,7 +1150,7 @@ export default function WatchlistPage({ user }) {
         tvCount: movedItem.mediaType === 'tv' ? Math.max(0, prevSummary.tvCount - 1) : prevSummary.tvCount
       }
     })
-  }, [currentItems, selectedPlaylistId])
+  }, [currentItems, selectedPlaylistId, matchesPlaylistId])
 
   // Optimistic bulk move handler (removes from current playlist)
   const handleItemsMoved = useCallback((movedItemIds, targetPlaylistId = null) => {
@@ -1071,13 +1161,13 @@ export default function WatchlistPage({ user }) {
     // Update playlist item counts optimistically (decrease source, increase target)
     setPlaylists(prevPlaylists => {
       return prevPlaylists.map(playlist => {
-        if (playlist.id === selectedPlaylistId || (selectedPlaylistId === 'default' && playlist.isDefault)) {
+        if (matchesPlaylistId(playlist, selectedPlaylistId)) {
           // Decrease source playlist count
           return {
             ...playlist,
             itemCount: Math.max(0, playlist.itemCount - movedItemIds.length)
           }
-        } else if (targetPlaylistId && (playlist.id === targetPlaylistId || (targetPlaylistId === 'default' && playlist.isDefault))) {
+        } else if (targetPlaylistId && matchesPlaylistId(playlist, targetPlaylistId)) {
           // Increase target playlist count
           return {
             ...playlist,
@@ -1105,7 +1195,7 @@ export default function WatchlistPage({ user }) {
     
     // Clear selection
     setSelectedItems(new Set())
-  }, [currentItems, selectedPlaylistId])
+  }, [currentItems, selectedPlaylistId, matchesPlaylistId])
 
   // Handler to show move modal for a specific item
   const handleShowMoveModal = useCallback((item) => {
@@ -1305,7 +1395,7 @@ export default function WatchlistPage({ user }) {
     sortChangeTimeout.current = setTimeout(async () => {
       try {
         // Save sort preferences to playlist if user has edit permissions
-        if (currentPlaylist && currentPlaylist.isOwner) {
+        if (currentPlaylist?.id && canEditPlaylist) {
           await api.updatePlaylistSorting(currentPlaylist.id, newSortBy, newSortOrder)
           // Update local playlist state
           setCurrentPlaylist(prev => ({ ...prev, sortBy: newSortBy, sortOrder: newSortOrder }))
@@ -1322,7 +1412,7 @@ export default function WatchlistPage({ user }) {
         await loadPlaylistItems(selectedPlaylistId)
       }
     }, 500) // 500ms debounce
-  }, [currentPlaylist, api, loadPlaylistItems, selectedPlaylistId, sortBy, currentItems, sortItemsLocally, sortLocked])
+  }, [currentPlaylist, canEditPlaylist, api, loadPlaylistItems, selectedPlaylistId, sortBy, currentItems, sortItemsLocally, sortLocked])
 
   const handleCustomReorder = useCallback(async (draggedIndex, targetIndex) => {
     // Check if sort is locked - even admins/editors need to unlock first
@@ -1331,7 +1421,7 @@ export default function WatchlistPage({ user }) {
       throw new Error('Sort settings are locked')
     }
     
-    if (!currentPlaylist || !currentPlaylist.isOwner) {
+    if (!currentPlaylist?.id || !canEditPlaylist) {
       throw new Error('No permission to reorder items')
     }
     
@@ -1365,7 +1455,7 @@ export default function WatchlistPage({ user }) {
     } finally {
       setIsReordering(false)
     }
-  }, [currentPlaylist, api, currentItems, loadPlaylistItems, selectedPlaylistId, isReordering, sortLocked])
+  }, [currentPlaylist, canEditPlaylist, api, currentItems, loadPlaylistItems, selectedPlaylistId, isReordering, sortLocked])
 
   // Apply client-side filtering
   const filteredItems = currentItems.filter(item => {
@@ -1380,7 +1470,7 @@ export default function WatchlistPage({ user }) {
       <PlaylistSidebar
         playlists={playlists}
         playlistsLoading={playlistsLoading}
-        selectedPlaylistId={selectedPlaylistId}
+        selectedPlaylistId={resolvedSelectedPlaylistId}
         onPlaylistSelect={handlePlaylistSelect}
         onCreatePlaylist={handleCreatePlaylist}
         onUpdatePlaylist={handleUpdatePlaylist}
@@ -1390,6 +1480,8 @@ export default function WatchlistPage({ user }) {
         summary={summary}
         summaryLoading={summaryLoading}
         currentPlaylist={currentPlaylist}
+        isAdmin={isAdmin}
+        onListUsers={isAdmin ? api.listUsersForVisibility : undefined}
       />
 
       {/* Main Content */}
@@ -1500,6 +1592,7 @@ export default function WatchlistPage({ user }) {
             api={api}
             sortError={sortError}
             sortLocked={sortLocked}
+            canAddPlaylist={canAddPlaylist}
             canEditPlaylist={canEditPlaylist}
             onToggleSortLock={handleToggleSortLock}
           />

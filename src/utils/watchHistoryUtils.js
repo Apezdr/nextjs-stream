@@ -21,7 +21,7 @@ export const createWatchHistoryLookupMap = cache(async function(userId) {
     const watchHistoryEntries = await db
       .collection('WatchHistory')
       .find(
-        { userId: userObjectId, isValid: true },
+        { userId: userObjectId, isValid: { $ne: false } },
         {
           projection: {
             videoId: 1,

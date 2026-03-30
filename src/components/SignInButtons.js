@@ -1,6 +1,6 @@
 'use client'
 
-import { signIn } from 'next-auth/react'
+import { authClient } from '@src/lib/auth-client'
 import GoogleButton from 'react-google-button'
 import { DiscordLoginButton, FacebookLoginButton } from 'react-social-login-buttons'
 
@@ -25,18 +25,18 @@ export default function SignInButtons({ callbackUrl = '/list', enabledProviders 
   return (
     <>
       {isGoogleEnabled && (
-        <GoogleButton onClick={() => signIn('google', { callbackUrl: callbackUrl })} />
+        <GoogleButton onClick={() => authClient.signIn.social({ provider: 'google', callbackURL: callbackUrl })} />
       )}
       {isDiscordEnabled && (
         <DiscordLoginButton
           className="max-w-[240px] !text-sm"
-          onClick={() => signIn('discord', { callbackUrl: callbackUrl })}
+          onClick={() => authClient.signIn.social({ provider: 'discord', callbackURL: callbackUrl })}
         />
       )}
       {isFacebookEnabled && (
         <FacebookLoginButton
           className="max-w-[240px] !text-sm"
-          onClick={() => signIn('facebook', { callbackUrl: callbackUrl })}
+          onClick={() => authClient.signIn.social({ provider: 'facebook', callbackURL: callbackUrl })}
         />
       )}
     </>

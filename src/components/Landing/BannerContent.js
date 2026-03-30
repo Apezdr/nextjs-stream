@@ -112,7 +112,7 @@ const BannerContent = ({
               alt="Logo Image"
               width={300}
               height={300}
-              className="object-contain select-none pointer-events-none !h-auto"
+              className="object-contain select-none pointer-events-none !h-auto max-h-[4.7rem] md:max-h-40 lg:max-h-44"
               loading="eager"
               priority
             />

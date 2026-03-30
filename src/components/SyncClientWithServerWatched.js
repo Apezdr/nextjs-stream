@@ -1,71 +1,109 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 const MAX_CACHED_VIDEOS = 200 // Keep at most 200 videos in localStorage
 const RETENTION_DAYS = 30 // Only sync videos updated in last 30 days
 const SYNC_INTERVAL_MS = 5000 // Sync every 5 seconds
 
 export default function SyncClientWithServerWatched({ once = false }) {
+  // Track ETags per sync URL for efficient conditional requests
+  const etagCacheRef = useRef(new Map())
+  // Track the last known server data for 304 responses
+  const lastServerDataRef = useRef(null)
+
   useEffect(() => {
     // Define the function to fetch and process video watch data
-    const fetchAndProcessData = () => {
-      // Only fetch videos updated in last 30 days, max 200 items
-      fetch(`/api/authenticated/sync/pullPlayback?days=${RETENTION_DAYS}&limit=${MAX_CACHED_VIDEOS}`)
-        .then((response) => {
-          if (!response.ok) {
-            console.log(`Error Pulling Playback: ${response.status}`)
-            return null
+    const fetchAndProcessData = async () => {
+      const syncUrl = `/api/authenticated/sync/pullPlayback?days=${RETENTION_DAYS}&limit=${MAX_CACHED_VIDEOS}`
+      
+      try {
+        // Build headers with ETag support for conditional requests
+        const headers = {}
+        const cachedEtag = etagCacheRef.current.get(syncUrl)
+        if (cachedEtag) {
+          headers['If-None-Match'] = cachedEtag
+        }
+
+        const response = await fetch(syncUrl, { headers })
+
+        // Handle 304 Not Modified - use cached data
+        if (response.status === 304) {
+          const serverData = lastServerDataRef.current
+          if (serverData && serverData.length > 0) {
+            // Process the cached data (timestamps haven't changed)
+            processSyncData(serverData)
           }
-          return response.json()
-        })
-        .then((serverData) => {
-          if (serverData && serverData.length) {
-            let updatedCount = 0
-            
-            serverData.forEach((item) => {
-              const { videoId, playbackTime, lastUpdated: serverLastUpdated } = item
+          return
+        }
 
-              const localDataJSON = localStorage.getItem(videoId)
-              let shouldUpdate = true
+        // Handle error responses
+        if (!response.ok) {
+          console.log(`Error Pulling Playback: ${response.status}`)
+          return
+        }
 
-              if (localDataJSON) {
-                try {
-                  const localData = JSON.parse(localDataJSON)
+        // Handle 200 OK response - cache the ETag for next request
+        const etag = response.headers.get('ETag')
+        if (etag && etagCacheRef?.current) {
+          etagCacheRef.current?.set(syncUrl, etag)
+        }
 
-                  // Only update if server timestamp is newer
-                  const serverTime = new Date(serverLastUpdated).getTime()
-                  const localTime = new Date(localData.lastUpdated).getTime()
-                  shouldUpdate = serverTime > localTime
-                } catch (e) {
-                  // Invalid local data, will overwrite
-                  shouldUpdate = true
-                }
-              }
+        const serverData = await response.json()
+        
+        // Cache the data for 304 responses
+        lastServerDataRef.current = serverData
 
-              if (shouldUpdate) {
-                localStorage.setItem(
-                  videoId,
-                  JSON.stringify({
-                    playbackTime,
-                    lastUpdated: serverLastUpdated,
-                  })
-                )
-                updatedCount++
-              }
-            })
-            
-            if (updatedCount > 0) {
-              console.log(`[WatchHistory] Synced ${updatedCount}/${serverData.length} recent videos`)
+        processSyncData(serverData)
+      } catch (error) {
+        console.error('Failed to fetch videos watched:', error)
+      }
+    }
+
+    // Helper function to process and sync video data
+    const processSyncData = (serverData) => {
+      if (serverData && serverData.length) {
+        let updatedCount = 0
+        
+        serverData.forEach((item) => {
+          const { videoId, playbackTime, lastUpdated: serverLastUpdated } = item
+
+          const localDataJSON = localStorage.getItem(videoId)
+          let shouldUpdate = true
+
+          if (localDataJSON) {
+            try {
+              const localData = JSON.parse(localDataJSON)
+
+              // Only update if server timestamp is newer
+              const serverTime = new Date(serverLastUpdated).getTime()
+              const localTime = new Date(localData.lastUpdated).getTime()
+              shouldUpdate = serverTime > localTime
+            } catch (e) {
+              // Invalid local data, will overwrite
+              shouldUpdate = true
             }
-            
-            // Clean up old entries after sync
-            cleanupOldEntries()
+          }
+
+          if (shouldUpdate) {
+            localStorage.setItem(
+              videoId,
+              JSON.stringify({
+                playbackTime,
+                lastUpdated: serverLastUpdated,
+              })
+            )
+            updatedCount++
           }
         })
-        .catch((error) => {
-          console.error('Failed to fetch videos watched:', error)
-        })
+        
+        if (updatedCount > 0) {
+          console.log(`[WatchHistory] Synced ${updatedCount}/${serverData.length} recent videos`)
+        }
+        
+        // Clean up old entries after sync
+        cleanupOldEntries()
+      }
     }
 
     // Fetch data immediately and set up the interval

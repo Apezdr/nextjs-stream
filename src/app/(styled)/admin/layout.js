@@ -1,7 +1,8 @@
 'use client'
 
 import { memo, useCallback, useEffect, useState, useMemo } from 'react'
-import { redirect, usePathname } from 'next/navigation'
+import { usePathname } from 'next/navigation'
+import { authClient } from '@src/lib/auth-client'
 import {
   Dialog,
   DialogBackdrop,
@@ -27,7 +28,6 @@ import {
 import { ArrowLeftIcon, ChevronDownIcon, InformationCircleIcon, MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import Link from 'next/link'
 import { siteTitle } from '@src/utils/config'
-import { buildURL } from '@src/utils'
 import { useRouter } from 'next/navigation'
 import Logo from '../../logo'
 import { MinimalServerStats } from '@components/Admin/Stats/ServerStats'
@@ -57,7 +57,7 @@ const teams = [
 ]
 const userNavigation = [
   //{ name: 'Your profile', href: '#' },
-  { name: 'Sign out', href: '/api/auth/signout' },
+  { name: 'Sign out', href: '#' },
 ]
 
 function classNames(...classes) {
@@ -122,8 +122,9 @@ export default function AdminLayout({ children }) {
   const pathname = usePathname()
   const router = useRouter()
 
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
-  const [user, setUser] = useState(false)
+  const { data: session, isPending } = authClient.useSession()
+  const isAdmin = !isPending && session?.user?.role === 'admin'
+  const user = session?.user ?? false
 
   // Derive expanded items from pathname to avoid setState in effect
   const expandedItems = useMemo(() => {
@@ -137,36 +138,10 @@ export default function AdminLayout({ children }) {
   }, [pathname])
 
   useEffect(() => {
-    const validateAuth = async () => {
-      try {
-        const response = await fetch(buildURL('/api/auth/session'), {
-          method: 'GET',
-        })
-        if (response.ok) {
-          const session = await response.json()
-          if (session && session.user && session.user?.admin == true) {
-            setIsAuthenticated(true)
-            setUser(session.user)
-          } else {
-            setIsAuthenticated(false)
-            // Redirect to login page or show error
-            router.replace('/')
-          }
-        } else {
-          setIsAuthenticated(false)
-          // Redirect to login page or show error
-          router.replace('/')
-        }
-      } catch (error) {
-        console.error('Authentication validation failed:', error)
-        setIsAuthenticated(false)
-        // Redirect to login page or show error
-        redirect('/')
-      }
+    if (!isPending && !isAdmin) {
+      router.replace('/')
     }
-
-    validateAuth()
-  }, [router])
+  }, [isPending, isAdmin, router])
 
   // Use local state for manual toggle expansion
   const [manuallyExpanded, setManuallyExpanded] = useState({})
@@ -184,7 +159,7 @@ export default function AdminLayout({ children }) {
     return { ...expandedItems, ...manuallyExpanded }
   }, [expandedItems, manuallyExpanded])
 
-  if (!isAuthenticated) {
+  if (isPending || !isAdmin) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="flex flex-col items-center space-y-4 text-gray-400">
@@ -424,12 +399,29 @@ export default function AdminLayout({ children }) {
                   >
                     {userNavigation.map((item) => (
                       <MenuItem key={item.name}>
-                        <a
-                          href={item.href}
-                          className="block px-3 py-1 text-sm leading-6 text-gray-900 data-focus:bg-gray-50"
-                        >
-                          {item.name}
-                        </a>
+                        {item.name === 'Sign out' ? (
+                          <button
+                            onClick={async () => {
+                              await authClient.signOut({
+                                fetchOptions: {
+                                  onSuccess: () => {
+                                    router.push('/')
+                                  },
+                                },
+                              })
+                            }}
+                            className="block w-full text-left px-3 py-1 text-sm leading-6 text-gray-900 data-focus:bg-gray-50 hover:bg-gray-50 cursor-pointer"
+                          >
+                            {item.name}
+                          </button>
+                        ) : (
+                          <a
+                            href={item.href}
+                            className="block px-3 py-1 text-sm leading-6 text-gray-900 data-focus:bg-gray-50"
+                          >
+                            {item.name}
+                          </a>
+                        )}
                       </MenuItem>
                     ))}
                   </MenuItems>

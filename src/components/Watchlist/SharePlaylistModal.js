@@ -19,6 +19,12 @@ export default function SharePlaylistModal({
   const [loading, setLoading] = useState(false)
   const [shareLink, setShareLink] = useState('')
   const [linkCopied, setLinkCopied] = useState(false)
+  const [globalPermission, setGlobalPermission] = useState(playlist?.globalPermission || 'none')
+  const [removeCollaboratorEmails, setRemoveCollaboratorEmails] = useState([])
+
+  const normalizedCurrentCollaboratorEmails = (playlist?.collaborators || [])
+    .map((collaborator) => collaborator?.email?.trim().toLowerCase())
+    .filter(Boolean)
 
   const handleAddCollaborator = useCallback(() => {
     if (!newCollaborator.email.trim()) {
@@ -31,29 +37,56 @@ export default function SharePlaylistModal({
       return
     }
 
-    if (collaborators.some(c => c.email === newCollaborator.email)) {
+    const normalizedEmail = newCollaborator.email.trim().toLowerCase()
+
+    if (collaborators.some(c => c.email === normalizedEmail)) {
       toast.error('This email is already added')
       return
     }
 
-    setCollaborators(prev => [...prev, { ...newCollaborator }])
+    if (normalizedCurrentCollaboratorEmails.includes(normalizedEmail) && !removeCollaboratorEmails.includes(normalizedEmail)) {
+      toast.error('This user is already a collaborator')
+      return
+    }
+
+    if (removeCollaboratorEmails.includes(normalizedEmail)) {
+      setRemoveCollaboratorEmails((prev) => prev.filter((email) => email !== normalizedEmail))
+    }
+
+    setCollaborators(prev => [...prev, { ...newCollaborator, email: normalizedEmail }])
     setNewCollaborator({ email: '', permission: 'view' })
-  }, [newCollaborator, collaborators])
+  }, [newCollaborator, collaborators, normalizedCurrentCollaboratorEmails, removeCollaboratorEmails])
 
   const handleRemoveCollaborator = useCallback((index) => {
     setCollaborators(prev => prev.filter((_, i) => i !== index))
   }, [])
 
+  const toggleRemoveExistingCollaborator = useCallback((email) => {
+    const normalizedEmail = email?.trim().toLowerCase()
+    if (!normalizedEmail) return
+
+    setRemoveCollaboratorEmails((prev) => (
+      prev.includes(normalizedEmail)
+        ? prev.filter((value) => value !== normalizedEmail)
+        : [...prev, normalizedEmail]
+    ))
+  }, [])
+
+  const hasChanges =
+    collaborators.length > 0 ||
+    removeCollaboratorEmails.length > 0 ||
+    globalPermission !== (playlist?.globalPermission || 'none')
+
   const handleShare = useCallback(async () => {
-    if (collaborators.length === 0) {
-      toast.error('Please add at least one collaborator')
+    if (!hasChanges) {
+      toast.error('No sharing changes to save')
       return
     }
 
     setLoading(true)
     try {
-      await api.sharePlaylist(playlistId, collaborators)
-      toast.success('Playlist shared successfully')
+      await api.sharePlaylist(playlistId, collaborators, globalPermission, removeCollaboratorEmails)
+      toast.success('Playlist sharing settings updated')
       onSuccess()
     } catch (error) {
       console.error('Error sharing playlist:', error)
@@ -61,11 +94,11 @@ export default function SharePlaylistModal({
     } finally {
       setLoading(false)
     }
-  }, [playlistId, collaborators, onSuccess, api])
+  }, [playlistId, collaborators, globalPermission, removeCollaboratorEmails, hasChanges, onSuccess, api])
 
   const generateShareLink = useCallback(() => {
     const baseUrl = window.location.origin
-    const link = `${baseUrl}/watchlist?playlist=${playlistId}&shared=true`
+    const link = `${baseUrl}/watchlist?playlist=${playlistId}`
     setShareLink(link)
   }, [playlistId])
 
@@ -148,12 +181,38 @@ export default function SharePlaylistModal({
             </button>
           </div>
           <p className="text-sm text-gray-400 mt-2">
-            Anyone with this link can view the playlist (if set to public)
+            This link opens the playlist. Access is still controlled by the playlist privacy setting and any collaborator/global permissions.
           </p>
         </div>
 
         {/* Add Collaborators */}
         <div className="mb-6">
+          <h3 className="text-lg font-medium text-white mb-3">Global Access</h3>
+
+          <div className="bg-gray-700 rounded-lg p-4 mb-4">
+            <label className="block text-sm font-medium text-gray-300 mb-2">
+              Allow any authenticated user to access this playlist as:
+            </label>
+            <select
+              value={globalPermission}
+              onChange={(e) => setGlobalPermission(e.target.value)}
+              className="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option value="none">No global access</option>
+              {permissionOptions.map((option) => (
+                <option key={`global-${option.value}`} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-gray-400 mt-2">
+              This grants access to all authenticated users without specifying individual emails, but only when the playlist privacy allows link access.
+            </p>
+            <p className="text-xs text-gray-500 mt-1">
+              Private playlists remain restricted unless users are explicitly added as collaborators.
+            </p>
+          </div>
+
           <h3 className="text-lg font-medium text-white mb-3">Invite Collaborators</h3>
           
           <div className="flex space-x-2 mb-4">
@@ -237,20 +296,49 @@ export default function SharePlaylistModal({
             <h3 className="text-lg font-medium text-white mb-3">Current Collaborators</h3>
             <div className="space-y-2">
               {playlist.collaborators.map((collaborator, index) => (
+                (() => {
+                  const collaboratorEmail = collaborator?.email?.trim().toLowerCase()
+                  const markedForRemoval = collaboratorEmail && removeCollaboratorEmails.includes(collaboratorEmail)
+
+                  return (
                 <div
                   key={index}
-                  className="flex items-center justify-between bg-gray-700 rounded-lg p-3"
+                  className={classNames(
+                    'flex items-center justify-between rounded-lg p-3',
+                    markedForRemoval
+                      ? 'bg-red-900/30 border border-red-600/40'
+                      : 'bg-gray-700'
+                  )}
                 >
                   <div className="flex-1">
-                    <div className="text-white">{collaborator.email}</div>
-                    <div className="text-sm text-gray-400 capitalize">
-                      {permissionOptions.find(p => p.value === collaborator.permission)?.label}
+                    <div className={classNames('text-white', markedForRemoval && 'line-through opacity-70')}>
+                      {collaborator.email}
+                    </div>
+                    <div className={classNames('text-sm capitalize', markedForRemoval ? 'text-red-300' : 'text-gray-400')}>
+                      {markedForRemoval
+                        ? 'Will be removed'
+                        : permissionOptions.find(p => p.value === collaborator.permission)?.label}
                     </div>
                   </div>
-                  <div className="text-sm text-gray-400">
-                    Added {new Date(collaborator.dateAdded).toLocaleDateString()}
+                  <div className="flex items-center space-x-3">
+                    <div className="text-sm text-gray-400">
+                      Added {new Date(collaborator.dateAdded).toLocaleDateString()}
+                    </div>
+                    <button
+                      onClick={() => toggleRemoveExistingCollaborator(collaborator.email)}
+                      className={classNames(
+                        'text-xs px-2 py-1 rounded-md transition-colors',
+                        markedForRemoval
+                          ? 'bg-gray-600 text-white hover:bg-gray-500'
+                          : 'bg-red-700 text-white hover:bg-red-600'
+                      )}
+                    >
+                      {markedForRemoval ? 'Undo' : 'Remove'}
+                    </button>
                   </div>
                 </div>
+                  )
+                })()
               ))}
             </div>
           </div>
@@ -260,15 +348,35 @@ export default function SharePlaylistModal({
         <div className="flex space-x-3">
           <button
             onClick={handleShare}
-            disabled={loading || collaborators.length === 0}
+            disabled={
+              loading ||
+              !hasChanges
+            }
             className={classNames(
               'flex-1 py-2 px-4 rounded-md transition-colors',
-              loading || collaborators.length === 0
+              loading ||
+                !hasChanges
                 ? 'bg-gray-600 text-gray-400 cursor-not-allowed'
                 : 'bg-indigo-600 text-white hover:bg-indigo-700'
             )}
           >
-            {loading ? 'Sharing...' : `Share with ${collaborators.length} collaborator${collaborators.length !== 1 ? 's' : ''}`}
+            {loading
+              ? 'Saving...'
+              : (() => {
+                  const addCount = collaborators.length
+                  const removeCount = removeCollaboratorEmails.length
+                  if (addCount > 0 || removeCount > 0) {
+                    const parts = []
+                    if (addCount > 0) {
+                      parts.push(`add ${addCount}`)
+                    }
+                    if (removeCount > 0) {
+                      parts.push(`remove ${removeCount}`)
+                    }
+                    return `Save settings + ${parts.join(' / ')} collaborator${addCount + removeCount !== 1 ? 's' : ''}`
+                  }
+                  return 'Save sharing settings'
+                })()}
           </button>
           <button
             onClick={onClose}

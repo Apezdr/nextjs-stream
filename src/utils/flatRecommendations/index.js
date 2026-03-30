@@ -2,6 +2,7 @@ import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { addCustomUrlToFlatMedia } from '@src/utils/flatDatabaseUtils'
 import { sanitizeRecord } from '@src/utils/auth_utils'
+import { findPlaybackForUser, getAllPlaybackEntries } from '@src/utils/watchHistory/database'
 
 // Import utility functions
 import {
@@ -45,11 +46,10 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
     const client = await clientPromise
     const db = client.db('Media')
 
-    // Get user's watched videos from WatchHistory collection
-    const userWatchHistoryEntries = await db
-      .collection('WatchHistory')
-      .find({ userId: new ObjectId(userId), isValid: true })
-      .toArray()
+    // Get user's watched videos using centralized function
+    const userWatchHistoryEntries = await findPlaybackForUser(userId, {
+      filter: { isValid: { $ne: false } }
+    })
 
     if (!userWatchHistoryEntries || userWatchHistoryEntries.length === 0) {
       return { hasWatched: false, items: [] }
@@ -393,10 +393,9 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
     const client = await clientPromise
     const db = client.db('Media')
 
-    // Aggregate watch counts from WatchHistory collection
+    // Aggregate watch counts from WatchHistory using centralized query
     const allWatchHistoryEntries = await db.collection('WatchHistory')
-      .find({})
-      .project({ videoId: 1 })
+      .find({}, { projection: { videoId: 1 } })
       .toArray()
     
     // Create a map of videoId to watch count and metadata

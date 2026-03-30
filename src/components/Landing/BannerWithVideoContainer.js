@@ -8,10 +8,12 @@ import Loading from '@src/app/loading'
 
 const BannerWithVideoContainer = ({ initialData = null }) => {
   // Use useSWR to fetch data with a 4-second refresh interval
+  // The fetcher (src/utils/index.js) handles ETag caching behind the scenes
+  // Frequent 4-second polls result in lightweight 304 Not Modified responses
   // initialData is pre-fetched server-side for instant display
   const { data: bannerMediaList, error } = useSWR('/api/authenticated/banner', fetcher, {
     fallbackData: initialData, // Use server-side data as initial value
-    refreshInterval: 4000, // 4 seconds
+    refreshInterval: 4000, // 4 seconds - efficient with ETag caching
     dedupingInterval: 4000, // Prevents duplicate requests within this interval
     revalidateOnFocus: false,
     revalidateOnReconnect: false,

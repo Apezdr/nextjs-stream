@@ -10,7 +10,7 @@ export default function Template({ children }) {
   return (
     <motion.main
       variants={variants}
-      initial="hidden"
+      initial="enter"
       exit="hidden"
       animate="enter"
       transition={{ type: 'linear' }}

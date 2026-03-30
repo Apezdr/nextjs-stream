@@ -7,7 +7,7 @@ export const metadata = {
   description: 'Privacy policy for this NextJS-Stream instance',
 }
 
-export default async function PrivacyPolicy() {
+async function PrivacyPolicy() {
   // Access request headers to make this component dynamic
   await headers()
   
@@ -272,3 +272,5 @@ export default async function PrivacyPolicy() {
     </div>
   )
 }
+
+export default PrivacyPolicy;

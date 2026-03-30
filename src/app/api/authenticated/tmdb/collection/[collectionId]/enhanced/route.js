@@ -1,4 +1,4 @@
-import { isAuthenticatedEither } from '@src/utils/routeAuth'
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { getFlatMoviesByCollectionId, mergeCollectionWithOwnership } from '@src/utils/flatDatabaseUtils'
 import { getCollectionDetails } from '@src/utils/tmdb/client'
 
@@ -22,7 +22,7 @@ import { getCollectionDetails } from '@src/utils/tmdb/client'
 export async function GET(request, { params }) {
   try {
     // Check authentication
-    const authResult = await isAuthenticatedEither(request)
+    const authResult = await isAuthenticatedAndApproved(request)
     if (authResult instanceof Response) {
       return authResult
     }

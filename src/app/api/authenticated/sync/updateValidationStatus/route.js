@@ -1,6 +1,7 @@
 import { ObjectId } from 'mongodb'
 import isAuthenticated from '../../../../../utils/routeAuth'
-import clientPromise from '../../../../../lib/mongodb'
+import { generateNormalizedVideoId } from '../../../../../utils/flatDatabaseUtils'
+import { updateValidationStatus } from '../../../../../utils/watchHistory/database'
 
 /**
  * @param {*} req
@@ -19,44 +20,13 @@ export const POST = async (req) => {
     const body = await req.json()
     const { videoId, isValid } = body
 
-    // Convert userId string to ObjectId
-    const userIdObj = new ObjectId(authResult.id)
-
-    const client = await clientPromise
-    const db = client.db('Media')
-    
-    // Update the WatchHistory collection
-    const watchHistoryCollection = db.collection('WatchHistory')
-
-    // Update WatchHistory by videoId (primary identifier)
-    const result = await watchHistoryCollection.updateOne(
-      { 
-        userId: userIdObj, 
-        videoId: videoId
-      },
-      {
-        $set: {
-          isValid: isValid,
-          lastScanned: new Date().toISOString()
-        }
-      }
-    )
-
-    // Also try with normalizedVideoId if the direct videoId update didn't work
-    if (result.modifiedCount === 0) {
-      await watchHistoryCollection.updateOne(
-        { 
-          userId: userIdObj, 
-          normalizedVideoId: videoId 
-        },
-        {
-          $set: {
-            isValid: isValid,
-            lastScanned: new Date().toISOString()
-          }
-        }
-      )
-    }
+    // Use centralized function to update validation status
+    const normalizedVideoId = generateNormalizedVideoId(videoId)
+    const result = await updateValidationStatus({
+      userId: authResult.id,
+      normalizedVideoId,
+      isValid
+    })
 
     console.log(`Updated validation status for video ${videoId}: isValid = ${isValid}`)
 

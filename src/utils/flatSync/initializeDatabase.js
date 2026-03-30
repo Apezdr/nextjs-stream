@@ -81,6 +81,9 @@ export async function createFlatDatabaseIndexes() {
       { key: { type: 1 }, name: 'type_index' },
       { key: { videoURL: 1 }, name: 'videoURL_index' },
       { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' },
+      // Index for trailer URL lookups (e.g., YouTube trailers stored on metadata.trailer_url)
+      // Used by: getFlatRecentlyWatchedForUser when resolving trailer watch entries to movies
+      { key: { 'metadata.trailer_url': 1 }, name: 'trailer_url_index' },
       { key: { duration: 1 }, name: 'duration_index' },
       { key: { videoSource: 1 }, name: 'videoSource_index' },
       
@@ -110,6 +113,7 @@ export async function createFlatDatabaseIndexes() {
       { key: { 'metadata.genres.name': 1 }, name: 'genres_index' },
       { key: { 'metadata.first_air_date': -1 }, name: 'first_air_date_index' },
       { key: { 'metadata.vote_average': -1 }, name: 'rating_index' },
+      { key: { 'metadata.trailer_url': 1 }, name: 'trailer_url_index' },
       { key: { type: 1 }, name: 'type_index' },
       
       // CRITICAL: Compound indexes for genre filtering + sorting (fixes 30s query delays)

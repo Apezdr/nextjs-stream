@@ -3,6 +3,8 @@ import clientPromise from '../lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { extractTVShowDetails } from './admin_frontend_database'
 import { fileServerURLWithPrefixPath } from './config'
+import { userQueries } from '@src/lib/userQueries'
+import { findPlaybackForUser } from '@src/utils/watchHistory/database'
 
 export async function getAllMedia({ type = 'all' } = {}) {
   const client = await clientPromise
@@ -65,8 +67,7 @@ export async function updateMetadata({ type, media_title, tvSeriesData = null, t
 }
 
 export async function getAllUsers() {
-  const client = await clientPromise
-  const users = await client.db('Users').collection('AuthenticatedUsers').find({}).toArray()
+  const users = await userQueries.findAll()
   return users
 }
 
@@ -132,18 +133,16 @@ export class SyncAggressivenessManager {
 export async function getRecentlyWatched() {
   try {
     const client = await clientPromise
-    const users = await client.db('Users').collection('AuthenticatedUsers').find({}).toArray()
+    const users = await userQueries.findAll()
 
     const lastWatchedPromises = users.map(async (user) => {
       try {
-        // Query WatchHistory collection for this user's recent watches
-        const lastWatchedVideos = await client
-          .db('Media')
-          .collection('WatchHistory')
-          .find({ userId: user._id, isValid: true })
-          .sort({ lastUpdated: -1 })
-          .limit(4)
-          .toArray()
+        // Query WatchHistory using centralized function for this user's recent watches
+        const lastWatchedVideos = await findPlaybackForUser(user._id, {
+          filter: { isValid: { $ne: false } },
+          sort: { lastUpdated: -1 },
+          limit: 4
+        })
 
         if (lastWatchedVideos.length === 0) {
           return null

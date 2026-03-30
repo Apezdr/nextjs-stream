@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { auth } from '@src/lib/auth';
 import { deleteNotification } from '@src/utils/notifications/notificationDatabase';
+import { getSession } from '@src/lib/cachedAuth';
 
 /**
  * POST /api/authenticated/notifications/dismiss
@@ -8,7 +8,7 @@ import { deleteNotification } from '@src/utils/notifications/notificationDatabas
  */
 export async function POST(request) {
   try {
-    const session = await auth();
+    const session = await getSession()
     
     if (!session?.user?.id) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

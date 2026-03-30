@@ -94,7 +94,7 @@ export default function AccountDeletionPage({ user }) {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
+      <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-[#060916e8]">
         <div className="h-auto flex flex-col items-center justify-center py-32 lg:py-0 sm:mt-20">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
         </div>
@@ -103,7 +103,7 @@ export default function AccountDeletionPage({ user }) {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
+    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-[#060916e8]">
       <Link href="/list" className="self-start mt-16">
         <button
           type="button"

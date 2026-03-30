@@ -1,14 +1,15 @@
-import isAuthenticated, { isAuthenticatedEither } from '@src/utils/routeAuth'
+import isAuthenticated, { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { getServer } from '@src/utils/config'
+import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 
 export async function POST(req) {
   // Ensure user is authenticated and has admin rights
-  const authResult = await isAuthenticatedEither(req) // second param = requireAdmin
+  const authResult = await isAuthenticatedAndApproved(req) // second param = requireAdmin
   if (authResult instanceof Response) {
     return authResult // Return the unauthorized response if not admin
   }
 
-  if (!authResult.admin) {
+  if (authResult.role !== 'admin') {
     return new Response(
       JSON.stringify({
         success: false,
@@ -50,39 +51,10 @@ export async function POST(req) {
     let saveUrl = `${nodeServerUrl}/api/admin/subtitles/save`
     console.log(`Saving subtitles to URL: ${saveUrl}`)
 
-    // Prepare headers for authentication to the backend
+    // Build headers with authentication
     const headers = {
       'Content-Type': 'application/json',
-      Cookie: req.headers.get('cookie') || '', // Forward cookies from the original request
-    }
-
-    // Authentication forwarding priority:
-    // 1. Authorization header (Bearer token)
-    // 2. Session token
-    // 3. Mobile token
-    // 4. Auth result token (from isAuthenticated)
-
-    // Forward Authorization header if present
-    const authHeader = req.headers.get('authorization')
-    if (authHeader) {
-      headers['Authorization'] = authHeader
-    }
-
-    // Forward session token if present
-    const sessionToken = req.headers.get('x-session-token')
-    if (sessionToken) {
-      headers['x-session-token'] = sessionToken
-    }
-
-    // Forward mobile token if present
-    const mobileToken = req.headers.get('x-mobile-token')
-    if (mobileToken) {
-      headers['x-mobile-token'] = mobileToken
-    }
-
-    // If we have a token from auth check and no Authorization header yet, use it
-    if (!headers['Authorization'] && authResult.token) {
-      headers['Authorization'] = `Bearer ${authResult.token}`
+      ...await getBackendAuthHeaders(req),
     }
 
     // Send the subtitle content to the server using fetch with authentication
