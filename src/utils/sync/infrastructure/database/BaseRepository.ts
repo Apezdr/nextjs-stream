@@ -99,7 +99,7 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
       const entityWithTimestamp = {
         ...entity,
         lastSynced: now,
-        createdAt: entity.metadata?.createdAt || now,
+        createdAt: entity.createdAt || now,
         updatedAt: now
       }
 
