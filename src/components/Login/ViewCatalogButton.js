@@ -1,23 +1,34 @@
 'use client'
 
-import { useNavigate } from '@src/hooks/useNavigate'
-import { preload } from 'react-dom'
+import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+import { useTransition } from 'react'
 
 /**
  * Client component for the "View media catalog" button
- * with loading state during navigation
+ * with loading state during navigation and automatic prefetching
  */
 export default function ViewCatalogButton() {
-  const { navigate, isNavigating } = useNavigate()
+  const router = useRouter()
+  const [isPending, startTransition] = useTransition()
+  
+  const handleClick = (e) => {
+    e.preventDefault()
+    startTransition(() => {
+      router.push('/list')
+    })
+  }
   
   return (
-    <button
-      onClick={() => navigate('/list')}
-      onMouseEnter={() => preload('/list')}
-      disabled={isNavigating}
-      className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 disabled:opacity-50 disabled:cursor-not-allowed transition-opacity"
+    <Link
+      href="/list"
+      prefetch={true}
+      onClick={handleClick}
+      className={`flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 transition-opacity ${
+        isPending ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''
+      }`}
     >
-      {isNavigating ? (
+      {isPending ? (
         <>
           {/* Loading spinner */}
           <svg
@@ -62,6 +73,6 @@ export default function ViewCatalogButton() {
           <span>View media catalog</span>
         </>
       )}
-    </button>
+    </Link>
   )
 }

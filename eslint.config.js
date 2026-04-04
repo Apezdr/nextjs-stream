@@ -1,7 +1,6 @@
 const js = require("@eslint/js");
 const nextConfig = require("eslint-config-next");
 const globals = require("globals");
-const tsEslintPlugin = require("@typescript-eslint/eslint-plugin");
 
 module.exports = [
     {
@@ -15,11 +14,6 @@ module.exports = [
     },
     js.configs.recommended,
     ...nextConfig,
-    {
-        plugins: {
-            "@typescript-eslint": tsEslintPlugin
-        }
-    },
     {
         // Add TypeScript specific rules here if needed, e.g.:
         // files: ["**/*.ts", "**/*.tsx"],
