@@ -15,6 +15,9 @@ import { syncSeasons } from './seasons/index'
 import { syncEpisodes } from './episodes/index'
 // Import notification system
 import { MediaNotificationOrchestrator } from '../notifications/MediaNotificationOrchestrator'
+// Import post-sync operations
+import { migratePlaybackStatusIfNeeded } from '../watchHistory/migrate'
+import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation'
 
 /**
  * Main adapter function to use new architecture instead of flat sync
@@ -103,6 +106,8 @@ export async function syncWithNewArchitecture(
     },
     notifications: [],
     errors: [],
+    migration: null,
+    watchHistoryValidation: null,
   }
 
   try {
@@ -214,6 +219,23 @@ export async function syncWithNewArchitecture(
       phase: 'notifications',
       durationSec: parseFloat(notificationDurationSec.toFixed(2))
     }, 'Notification processing completed');
+
+    // Run PlaybackStatus → WatchHistory migration (if needed)
+    try {
+      await migratePlaybackStatusIfNeeded()
+      results.migration = { completed: true }
+    } catch (migrationError) {
+      log.warn({ error: migrationError }, 'WatchHistory migration encountered an issue, but sync continues')
+      results.migration = { completed: false, error: migrationError.message }
+    }
+
+    // Validate WatchHistory records against the current database state
+    try {
+      results.watchHistoryValidation = await validateWatchHistoryAgainstDatabase()
+    } catch (validationError) {
+      log.warn({ error: validationError }, 'WatchHistory validation encountered an issue, but sync continues')
+      results.watchHistoryValidation = { error: validationError.message }
+    }
 
     return results
   } catch (error) {
