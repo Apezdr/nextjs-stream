@@ -18,6 +18,7 @@ import { MediaNotificationOrchestrator } from '../notifications/MediaNotificatio
 // Import post-sync operations
 import { migratePlaybackStatusIfNeeded } from '../watchHistory/migrate'
 import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation'
+import { getAllServers } from '../config'
 
 /**
  * Main adapter function to use new architecture instead of flat sync
@@ -311,9 +312,13 @@ async function syncTVContentWithLegacyArchitecture(
       details: tvShowResults.processed || [],
     }
 
-    // Sync seasons
+    // Sync seasons – pass all server configs so the hash cache is pre-warmed
+    // from every server before the per-season loop begins.  This prevents the
+    // expensive 4-retry HTTP loops that occur when a show lives on a different
+    // server than the one currently syncing.
     log.info({ serverId: serverConfig.id, phase: 'seasons' }, 'Starting season sync');
-    const seasonResults = await syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability)
+    const allServerConfigs = getAllServers();
+    const seasonResults = await syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability, allServerConfigs)
     results.seasons = {
       processed: seasonResults.processed?.length || 0,
       errors: seasonResults.errors?.length || 0,

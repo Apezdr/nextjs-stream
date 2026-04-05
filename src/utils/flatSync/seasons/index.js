@@ -10,7 +10,7 @@ import { getTVShowFromFlatDB } from '../tvShows/database';
 import { syncSeasonMetadata } from './metadata';
 import { syncSeasonPoster } from './poster';
 import { syncSeasonPosterBlurhash } from './blurhash';
-import { fetchHashData, getStoredHash, storeHash } from '../hashStorage';
+import { fetchHashData, getStoredHash, storeHash, getHashFromAllServers, getHashFromCache } from '../hashStorage';
 import { isCurrentServerHighestPriorityForField } from '../../sync/utils';
 import { getShowFromMemory, getSeasonFromMemory, createSeasonInMemory } from '../memoryUtils';
 import { isEqual } from 'lodash';
@@ -217,9 +217,10 @@ async function syncSingleSeason(client, show, season, fileServerShowData, server
  * @param {Object} fileServer - File server data
  * @param {Object} serverConfig - Server configuration
  * @param {Object} fieldAvailability - Field availability map
+ * @param {Object[]} [allServerConfigs] - All server configs (used for pre-warming hash cache)
  * @returns {Promise<Object>} Sync results
  */
-export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability) {
+export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability, allServerConfigs = null) {
   const client = await clientPromise;
   const log = createLogger('FlatSync.Seasons');
   
@@ -243,7 +244,16 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
     let mediaHashResponse = null;
 
     try {
-      // Try to get hash data from server
+      // Pre-warm the in-memory hash cache from ALL servers upfront.
+      // This avoids per-season HTTP round-trips (and the expensive 4-retry loop
+      // when a show belongs to a different server than the one currently syncing).
+      const configsToFetch = allServerConfigs && allServerConfigs.length > 0
+        ? allServerConfigs
+        : [serverConfig];
+
+      await getHashFromAllServers(configsToFetch, 'tv');
+
+      // Try to get hash data from the current server (for the show-level hash map)
       mediaHashResponse = await fetchHashData(serverConfig, 'tv');
       if (mediaHashResponse) {
         syncStrategy = 'hash-based';
@@ -394,10 +404,17 @@ export async function syncSeasons(flatDB, fileServer, serverConfig, fieldAvailab
             if (showHashData && showHashData.seasons && showHashData.seasons[seasonNumber]) {
               currentSeasonHash = showHashData.seasons[seasonNumber].hash;
             } else {
-              // If not available, try fetching hash data directly for this season
-              const seasonHashData = await fetchHashData(serverConfig, 'tv', show.originalTitle, seasonNumber);
-              if (seasonHashData && seasonHashData.hash) {
-                currentSeasonHash = seasonHashData.hash;
+              // Check the pre-warmed in-memory cache first (avoids per-season HTTP calls
+              // and the 4-retry loop when the show lives on a different server).
+              const cachedHash = getHashFromCache('tv', serverConfig.id, show.originalTitle, seasonNumber);
+              if (cachedHash) {
+                currentSeasonHash = cachedHash;
+              } else {
+                // Cache miss – fall back to a direct HTTP fetch (should be rare after warm-up)
+                const seasonHashData = await fetchHashData(serverConfig, 'tv', show.originalTitle, seasonNumber);
+                if (seasonHashData && seasonHashData.hash) {
+                  currentSeasonHash = seasonHashData.hash;
+                }
               }
             }
           }
