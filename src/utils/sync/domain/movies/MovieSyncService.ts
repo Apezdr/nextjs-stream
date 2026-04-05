@@ -90,7 +90,14 @@ export class MovieSyncService {
 
           // Update movie entity if changes were made
           if (operationResult.status === SyncStatus.Completed && operationResult.changes.length > 0) {
-            movie = await this.repository.findByTitle(title) // Refresh from DB
+            // 🚀 OPTIMIZATION: Check cache first, then database (mirrors MovieMetadataStrategy pattern)
+            if (context.movieCache?.has(effectiveOriginalTitle)) {
+              movie = context.movieCache.get(effectiveOriginalTitle)!
+              console.log(`💾 Cache HIT for "${effectiveOriginalTitle}" (post-operation refresh)`)
+            } else {
+              console.log(`🔍 Cache MISS for "${effectiveOriginalTitle}", querying database for refresh...`)
+              movie = await this.repository.findByTitle(title) // Refresh from DB
+            }
           }
 
         } catch (error) {
