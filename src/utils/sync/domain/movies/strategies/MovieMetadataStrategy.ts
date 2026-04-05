@@ -18,6 +18,8 @@ import {
   MovieFieldPathMap
 } from '../../../core'
 
+import { syncLogger } from '../../../core/logger'
+
 import {
   MovieRepository,
   UrlBuilder
@@ -64,7 +66,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
     const title = context.entityTitle || entity?.title
     const originalTitle = context.entityOriginalTitle || entity?.originalTitle || title
     
-    console.log(`🎬 MovieMetadataStrategy starting for: "${title}"`)
+    syncLogger.debug(`🎬 MovieMetadataStrategy starting for: "${title}"`)
     
     if (!title || title.trim().length === 0) {
       return this.createResult(
@@ -103,9 +105,9 @@ export class MovieMetadataStrategy implements SyncStrategy {
         // 🚀 OPTIMIZATION: Check cache first, then database
         if (context.movieCache?.has(originalTitle)) {
           movie = context.movieCache.get(originalTitle)!
-          console.log(`💾 Cache HIT for "${originalTitle}"`)
+          syncLogger.debug(`💾 Cache HIT for "${originalTitle}"`)
         } else {
-          console.log(`🔍 Cache MISS for "${originalTitle}", querying database...`)
+          syncLogger.debug(`🔍 Cache MISS for "${originalTitle}", querying database...`)
           movie = await this.repository.findByOriginalTitle(originalTitle)
         }
       }
@@ -117,7 +119,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
       const canUpdateMetadata = this.shouldUpdateField(getFieldPath('metadata'), originalTitle, context)
       
       if (!canUpdateMetadata) {
-        console.log(`⏭️ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does not have priority for metadata, skipping`)
+        syncLogger.debug(`⏭️ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does not have priority for metadata, skipping`)
         return this.createResult(
           title,
           context,
@@ -131,7 +133,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
         )
       }
       
-      console.log(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has priority for metadata, proceeding`)
+      syncLogger.debug(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has priority for metadata, proceeding`)
       
       // Check if we have metadata hash from context for change detection
       const metadataHashInfo = context.metadataHashesCache?.titles?.[originalTitle]
@@ -139,7 +141,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
       
       // If we have both hashes and they match, skip metadata fetch (optimization)
       if (metadataHashInfo?.hash && currentMetadataHash && metadataHashInfo.hash === currentMetadataHash) {
-        console.log(`📝 Metadata hash unchanged for "${originalTitle}" (${metadataHashInfo.hash}), skipping fetch`)
+        syncLogger.debug(`📝 Metadata hash unchanged for "${originalTitle}" (${metadataHashInfo.hash}), skipping fetch`)
         
         // Still return success but with no changes
         return this.createResult(
@@ -156,14 +158,14 @@ export class MovieMetadataStrategy implements SyncStrategy {
       }
       
       if (metadataHashInfo?.hash) {
-        console.log(`🔄 Metadata hash changed for "${originalTitle}": ${currentMetadataHash || 'none'} → ${metadataHashInfo.hash}`)
+        syncLogger.debug(`🔄 Metadata hash changed for "${originalTitle}": ${currentMetadataHash || 'none'} → ${metadataHashInfo.hash}`)
       }
       
       let metadata = await this.extractMetadata(originalTitle, context)
 
       // If metadata extraction failed, create basic metadata
       if (!metadata) {
-        console.log(`📝 Metadata extraction failed for "${title}", creating basic metadata`)
+        syncLogger.debug(`📝 Metadata extraction failed for "${title}", creating basic metadata`)
         metadata = {
           title,
           source: context.serverConfig.id,
@@ -206,28 +208,28 @@ export class MovieMetadataStrategy implements SyncStrategy {
         // Store metadata hash for future change detection
         if (metadata._metadataHash) {
           movieToSave.metadataHash = metadata._metadataHash
-          console.log(`📊 Storing metadata hash: ${metadata._metadataHash}`)
+          syncLogger.debug(`📊 Storing metadata hash: ${metadata._metadataHash}`)
         }
         
         if (needsVersionUpgrade && metadataChanged) {
           changes.push(`Updated movie metadata (schema migration: ${movie?.syncVersion || 'none'} → ${this.currentVersion})`)
-          console.log(`🔄 Schema migration with changes: "${originalTitle}" ${movie?.syncVersion || 'none'} → ${this.currentVersion}`)
+          syncLogger.debug(`🔄 Schema migration with changes: "${originalTitle}" ${movie?.syncVersion || 'none'} → ${this.currentVersion}`)
         } else if (needsVersionUpgrade && !metadataChanged) {
           changes.push(`Schema version updated (${movie?.syncVersion || 'none'} → ${this.currentVersion})`)
-          console.log(`📋 Schema version updated (no data changes): "${originalTitle}" ${movie?.syncVersion || 'none'} → ${this.currentVersion}`)
+          syncLogger.debug(`📋 Schema version updated (no data changes): "${originalTitle}" ${movie?.syncVersion || 'none'} → ${this.currentVersion}`)
         } else if (!needsVersionUpgrade && metadataChanged) {
           changes.push('Updated movie metadata')
-          console.log(`🔄 Metadata changed for: "${originalTitle}"`)
+          syncLogger.debug(`🔄 Metadata changed for: "${originalTitle}"`)
         } else {
           // This case should never happen (both conditions false inside the parent if statement)
-          console.log(`⚠️ Unexpected condition in metadata update for: "${originalTitle}"`)
+          syncLogger.debug(`⚠️ Unexpected condition in metadata update for: "${originalTitle}"`)
         }
         
         // Log Date objects being saved for debugging
         if (normalizedMetadata.release_date instanceof Date) {
-          console.log(`📅 Saving release_date as Date object: ${normalizedMetadata.release_date.toISOString()}`)
+          syncLogger.debug(`📅 Saving release_date as Date object: ${normalizedMetadata.release_date.toISOString()}`)
         } else if (normalizedMetadata.release_date) {
-          console.log(`📅 Saving release_date as ${typeof normalizedMetadata.release_date}: ${normalizedMetadata.release_date}`)
+          syncLogger.debug(`📅 Saving release_date as ${typeof normalizedMetadata.release_date}: ${normalizedMetadata.release_date}`)
         }
       }
 
@@ -240,12 +242,12 @@ export class MovieMetadataStrategy implements SyncStrategy {
         movieToSave.title = metadata.title
         movieToSave.titleSource = context.serverConfig.id
         changes.push(`Updated title from metadata: "${metadata.title}"`)
-        console.log(`📝 Title from metadata: "${metadata.title}"`)
+        syncLogger.debug(`📝 Title from metadata: "${metadata.title}"`)
       }
 
       // originalTitle should always be set as it's the filesystem key, but only update if changed
       if (movie?.originalTitle !== originalTitle) {
-        console.log(`🔄 OriginalTitle change detected: "${movie?.originalTitle}" → "${originalTitle}"`)
+        syncLogger.debug(`🔄 OriginalTitle change detected: "${movie?.originalTitle}" → "${originalTitle}"`)
         movieToSave.originalTitle = originalTitle
         movieToSave.originalTitleSource = context.serverConfig.id
         changes.push('Updated originalTitle')
@@ -339,11 +341,11 @@ export class MovieMetadataStrategy implements SyncStrategy {
           originalTitle
         )
         
-        console.log(`✅ Fetched metadata for "${originalTitle}" from ${context.serverConfig.id}`)
+        syncLogger.debug(`✅ Fetched metadata for "${originalTitle}" from ${context.serverConfig.id}`)
         return metadata
 
       } catch (error) {
-        console.error(`Failed to extract metadata for ${originalTitle}:`, error)
+        syncLogger.error(`Failed to extract metadata for ${originalTitle}:`, error)
         return null
       }
     }
@@ -360,14 +362,14 @@ export class MovieMetadataStrategy implements SyncStrategy {
    */
   private normalizeMetadata(metadata: Record<string, any>): Record<string, any> {
     if (!metadata || typeof metadata !== 'object') {
-      console.log('🔧 Normalizing metadata: input is null or not an object')
+      syncLogger.debug('🔧 Normalizing metadata: input is null or not an object')
       return metadata
     }
 
     const normalized = { ...metadata }
     let hasChanges = false
 
-    console.log(`🔧 Normalizing metadata with ${Object.keys(metadata).length} fields`)
+    syncLogger.debug(`🔧 Normalizing metadata with ${Object.keys(metadata).length} fields`)
 
     // Convert release_date to Date object if it's a string
     if (normalized.release_date) {
@@ -382,21 +384,21 @@ export class MovieMetadataStrategy implements SyncStrategy {
           if (!isNaN(dateObj.getTime())) {
             normalized.release_date = dateObj
             hasChanges = true
-            console.log(`✅ Normalized release_date: "${originalValue}" (${originalType}) -> ${dateObj.toISOString()} (Date object)`)
+            syncLogger.debug(`✅ Normalized release_date: "${originalValue}" (${originalType}) -> ${dateObj.toISOString()} (Date object)`)
           } else {
-            console.warn(`⚠️ Invalid date string, keeping original: ${originalValue}`)
+            syncLogger.warn(`⚠️ Invalid date string, keeping original: ${originalValue}`)
           }
         } catch (error) {
-          console.warn(`⚠️ Failed to convert release_date to Date: ${originalValue} - ${error.message}`)
+          syncLogger.warn(`⚠️ Failed to convert release_date to Date: ${originalValue} - ${error.message}`)
           // Keep original value if conversion fails
         }
       } else if (normalized.release_date instanceof Date) {
-        console.log(`✅ release_date already a Date object: ${normalized.release_date.toISOString()}`)
+        syncLogger.debug(`✅ release_date already a Date object: ${normalized.release_date.toISOString()}`)
       } else {
-        console.log(`ℹ️ release_date is ${originalType}, no normalization needed: ${originalValue}`)
+        syncLogger.debug(`ℹ️ release_date is ${originalType}, no normalization needed: ${originalValue}`)
       }
     } else {
-      console.log('ℹ️ No release_date field found in metadata')
+      syncLogger.debug('ℹ️ No release_date field found in metadata')
     }
 
     // Add other normalization rules here as needed
@@ -407,14 +409,14 @@ export class MovieMetadataStrategy implements SyncStrategy {
       if (!isNaN(runtimeNum)) {
         normalized.runtime = runtimeNum
         hasChanges = true
-        console.log(`✅ Normalized runtime: "${metadata.runtime}" -> ${runtimeNum} (number)`)
+        syncLogger.debug(`✅ Normalized runtime: "${metadata.runtime}" -> ${runtimeNum} (number)`)
       }
     }
 
     if (hasChanges) {
-      console.log(`🔧 Metadata normalization completed with changes`)
+      syncLogger.debug(`🔧 Metadata normalization completed with changes`)
     } else {
-      console.log(`🔧 Metadata normalization completed - no changes needed`)
+      syncLogger.debug(`🔧 Metadata normalization completed - no changes needed`)
     }
 
     return normalized
@@ -430,7 +432,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
     // Check if any new keys or different values
     for (const key of incomingKeys) {
       if (!this.valuesEqual(current[key], incoming[key])) {
-        console.log(`🔍 Metadata difference found for key "${key}": ${current[key]} !== ${incoming[key]}`)
+        syncLogger.debug(`🔍 Metadata difference found for key "${key}": ${current[key]} !== ${incoming[key]}`)
         return false
       }
     }
@@ -451,7 +453,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
     if (current instanceof Date && incoming instanceof Date) {
       const result = current.getTime() === incoming.getTime()
       if (!result) {
-        console.log(`🔍 Date comparison: ${current.toISOString()} !== ${incoming.toISOString()}`)
+        syncLogger.debug(`🔍 Date comparison: ${current.toISOString()} !== ${incoming.toISOString()}`)
       }
       return result
     }
@@ -462,7 +464,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
         const incomingDate = new Date(incoming)
         const result = current.getTime() === incomingDate.getTime()
         if (!result) {
-          console.log(`🔍 Date vs string comparison: ${current.toISOString()} !== ${incoming}`)
+          syncLogger.debug(`🔍 Date vs string comparison: ${current.toISOString()} !== ${incoming}`)
         }
         return result
       } catch {
@@ -475,7 +477,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
         const currentDate = new Date(current)
         const result = currentDate.getTime() === incoming.getTime()
         if (!result) {
-          console.log(`🔍 String vs Date comparison: ${current} !== ${incoming.toISOString()}`)
+          syncLogger.debug(`🔍 String vs Date comparison: ${current} !== ${incoming.toISOString()}`)
         }
         return result
       } catch {
@@ -509,24 +511,24 @@ export class MovieMetadataStrategy implements SyncStrategy {
    * CRITICAL: Always use originalTitle (filesystem key) for fieldAvailability lookups
    */
   private shouldUpdateField(fieldPath: string, originalTitle: string, context: SyncContext): boolean {
-    console.log(`🔍 Priority check: field="${fieldPath}", originalTitle="${originalTitle}", server=${context.serverConfig.id}`)
+    syncLogger.debug(`🔍 Priority check: field="${fieldPath}", originalTitle="${originalTitle}", server=${context.serverConfig.id}`)
     
     // Check if fieldAvailability exists
     if (!context.fieldAvailability) {
-      console.log(`⚠️ No fieldAvailability in context, defaulting to true for ${fieldPath}`)
+      syncLogger.debug(`⚠️ No fieldAvailability in context, defaulting to true for ${fieldPath}`)
       return true
     }
     
     // Check if movie exists in fieldAvailability (using originalTitle as key)
     const movieFields = context.fieldAvailability?.movies?.[originalTitle]
     if (!movieFields) {
-      console.log(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true`)
+      syncLogger.debug(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true`)
       return true
     }
     
     // Get servers that have this field
     const serversWithField = movieFields[fieldPath] || []
-    console.log(`📊 Servers with ${fieldPath}: ${JSON.stringify(serversWithField)} (${serversWithField.length} total)`)
+    syncLogger.debug(`📊 Servers with ${fieldPath}: ${JSON.stringify(serversWithField)} (${serversWithField.length} total)`)
     
     // Check priority
     const hasHighestPriority = isCurrentServerHighestPriorityForField(
@@ -538,9 +540,9 @@ export class MovieMetadataStrategy implements SyncStrategy {
     )
     
     if (hasHighestPriority) {
-      console.log(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has highest priority for ${fieldPath}`)
+      syncLogger.debug(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has highest priority for ${fieldPath}`)
     } else {
-      console.log(`❌ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does NOT have highest priority for ${fieldPath}`)
+      syncLogger.debug(`❌ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does NOT have highest priority for ${fieldPath}`)
     }
     
     return hasHighestPriority

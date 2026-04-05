@@ -28,6 +28,7 @@ import {
 
 import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
 import { httpGet } from '@src/lib/httpHelper'
+import { syncLogger } from '../../../core/logger'
 
 export class MovieAssetStrategy implements SyncStrategy {
   readonly name = 'MovieAssetStrategy'
@@ -68,12 +69,12 @@ export class MovieAssetStrategy implements SyncStrategy {
         // 🚀 OPTIMIZATION: Check cache first, then database
         if (context.movieCache?.has(originalTitle)) {
           movie = context.movieCache.get(originalTitle)!
-          console.log(`💾 Cache HIT for "${originalTitle}"`)
+          syncLogger.debug(`💾 Cache HIT for "${originalTitle}"`)
         } else {
-          console.log(`🔍 Cache MISS for "${originalTitle}", querying database...`)
+          syncLogger.debug(`🔍 Cache MISS for "${originalTitle}", querying database...`)
           movie = await this.repository.findByOriginalTitle(originalTitle)
           if (!movie) {
-            console.log(`🎬 Movie not in database, creating basic entity for assets: "${originalTitle}"`)
+            syncLogger.debug(`🎬 Movie not in database, creating basic entity for assets: "${originalTitle}"`)
             movie = {
               title,
               originalTitle,
@@ -190,7 +191,7 @@ export class MovieAssetStrategy implements SyncStrategy {
     // Get file server data for this movie
     const fileServerData = context.fileServerData?.movies?.[originalTitle]
     if (!fileServerData?.urls) {
-      console.log(`⏭️ No fileServerData.urls found for "${originalTitle}"`)
+      syncLogger.debug(`⏭️ No fileServerData.urls found for "${originalTitle}"`)
       return updates
     }
 
@@ -207,7 +208,7 @@ export class MovieAssetStrategy implements SyncStrategy {
       const assetRelativePath = fileServerData.urls[fileServerKey]
       
       if (!assetRelativePath) {
-        console.log(`⏭️ No ${type} path in fileServerData.urls for "${originalTitle}"`)
+        syncLogger.debug(`⏭️ No ${type} path in fileServerData.urls for "${originalTitle}"`)
         continue
       }
       
@@ -215,7 +216,7 @@ export class MovieAssetStrategy implements SyncStrategy {
       // CRITICAL: Use type-safe field path mapping (e.g., posterURL → "urls.poster")
       const fieldPath = getFieldPath(urlField as keyof typeof MovieFieldPathMap)
       if (!this.shouldUpdateField(fieldPath, originalTitle, context)) {
-        console.log(`⏭️ Skipping ${urlField} - server ${context.serverConfig.id} does not have highest priority for ${fieldPath}`)
+        syncLogger.debug(`⏭️ Skipping ${urlField} - server ${context.serverConfig.id} does not have highest priority for ${fieldPath}`)
         continue
       }
       
@@ -228,7 +229,7 @@ export class MovieAssetStrategy implements SyncStrategy {
       const currentHash = currentUrl ? this.extractHashFromUrl(currentUrl) : null
       const assetChanged = newHash !== currentHash
       
-      console.log(`🔍 Asset comparison for ${type}:`, {
+      syncLogger.debug(`🔍 Asset comparison for ${type}:`, {
         newHash,
         currentHash,
         changed: assetChanged
@@ -237,7 +238,7 @@ export class MovieAssetStrategy implements SyncStrategy {
       // Update asset URL if changed
       if (assetChanged) {
         updates[urlField] = newAssetUrl
-        console.log(`✅ Updating ${urlField} from server ${context.serverConfig.id} (hash changed: ${currentHash} → ${newHash})`)
+        syncLogger.debug(`✅ Updating ${urlField} from server ${context.serverConfig.id} (hash changed: ${currentHash} → ${newHash})`)
       }
       
       // Handle blurhash for poster and backdrop
@@ -258,7 +259,7 @@ export class MovieAssetStrategy implements SyncStrategy {
           const blurhashFieldPath = getFieldPath(blurhashField as keyof typeof MovieFieldPathMap)
           
           if (!this.shouldUpdateField(blurhashFieldPath, originalTitle, context)) {
-            console.log(`⏭️ Skipping ${blurhashField} - server ${context.serverConfig.id} does not have highest priority for ${blurhashFieldPath}`)
+            syncLogger.debug(`⏭️ Skipping ${blurhashField} - server ${context.serverConfig.id} does not have highest priority for ${blurhashFieldPath}`)
             continue
           }
           
@@ -271,13 +272,13 @@ export class MovieAssetStrategy implements SyncStrategy {
               updates[blurhashField] = blurhashData
               updates[blurhashSourceField] = context.serverConfig.id
               const reason = assetChanged ? `image hash changed (${currentHash} → ${newHash})` : 'blurhash missing'
-              console.log(`✅ Fetched ${blurhashField} from file server (${reason})`)
+              syncLogger.debug(`✅ Fetched ${blurhashField} from file server (${reason})`)
             } else {
-              console.log(`⏭️ Skipping ${blurhashField} - fetch returned null (field will be omitted)`)
+              syncLogger.debug(`⏭️ Skipping ${blurhashField} - fetch returned null (field will be omitted)`)
             }
           }
         } else {
-          console.log(`⏭️ Skipping ${blurhashField} - image hash unchanged and blurhash exists`)
+          syncLogger.debug(`⏭️ Skipping ${blurhashField} - image hash unchanged and blurhash exists`)
         }
       }
     }
@@ -311,7 +312,7 @@ export class MovieAssetStrategy implements SyncStrategy {
     // Check if file server data has blurhash URLs
     const fileServerData = context.fileServerData?.movies?.[originalTitle]
     
-    console.log(`🔍 Looking for blurhash URL:`, {
+    syncLogger.debug(`🔍 Looking for blurhash URL:`, {
       originalTitle,
       assetType,
       hasFileServerData: !!fileServerData,
@@ -320,28 +321,28 @@ export class MovieAssetStrategy implements SyncStrategy {
     })
     
     if (!fileServerData?.urls) {
-      console.log(`⚠️ No fileServerData.urls found for "${originalTitle}"`)
+      syncLogger.debug(`⚠️ No fileServerData.urls found for "${originalTitle}"`)
       return null
     }
     
     const blurhashField = assetType === 'poster' ? 'posterBlurhash' : 'backdropBlurhash'
     const blurhashRelativePath = fileServerData.urls[blurhashField]
     
-    console.log(`🔍 Blurhash path lookup:`, {
+    syncLogger.debug(`🔍 Blurhash path lookup:`, {
       blurhashField,
       blurhashRelativePath,
       found: !!blurhashRelativePath
     })
     
     if (!blurhashRelativePath) {
-      console.log(`⚠️ No blurhash path found at fileServerData.urls.${blurhashField}`)
+      syncLogger.debug(`⚠️ No blurhash path found at fileServerData.urls.${blurhashField}`)
       return null
     }
     
     // Use UrlBuilder with empty prefix since fileServerData paths already include the prefix
     const fullUrl = UrlBuilder.createFullUrl(blurhashRelativePath, { ...context.serverConfig, prefix: '' })
     
-    console.log(`✅ Built blurhash URL: ${fullUrl}`)
+    syncLogger.debug(`✅ Built blurhash URL: ${fullUrl}`)
     return fullUrl
   }
   
@@ -369,7 +370,7 @@ export class MovieAssetStrategy implements SyncStrategy {
         // Check Content-Type header - should be text/plain, not text/html (error page)
         const contentType = response.headers['content-type'] || response.headers['Content-Type'] || ''
         if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
-          console.warn(`⚠️ Blurhash URL returned HTML (error page), Content-Type: ${contentType}`)
+          syncLogger.warn(`⚠️ Blurhash URL returned HTML (error page), Content-Type: ${contentType}`)
           return null
         }
         
@@ -390,7 +391,7 @@ export class MovieAssetStrategy implements SyncStrategy {
       } catch (error) {
         // httpHelper throws on HTTP errors (404, 500, timeouts, etc)
         // Return null so field is OMITTED from database update (not set to null)
-        console.warn(`⚠️ Failed to fetch blurhash:`, error instanceof Error ? error.message : String(error))
+        syncLogger.warn(`⚠️ Failed to fetch blurhash:`, error instanceof Error ? error.message : String(error))
         return null
       }
     }
@@ -431,24 +432,24 @@ export class MovieAssetStrategy implements SyncStrategy {
    * CRITICAL: Always use originalTitle (filesystem key) for fieldAvailability lookups
    */
   private shouldUpdateField(fieldPath: string, originalTitle: string, context: SyncContext): boolean {
-    console.log(`🔍 Priority check: field="${fieldPath}", originalTitle="${originalTitle}", server=${context.serverConfig.id}`)
+    syncLogger.debug(`🔍 Priority check: field="${fieldPath}", originalTitle="${originalTitle}", server=${context.serverConfig.id}`)
     
     // Check if fieldAvailability exists
     if (!context.fieldAvailability) {
-      console.log(`⚠️ No fieldAvailability in context, defaulting to true for ${fieldPath}`)
+      syncLogger.debug(`⚠️ No fieldAvailability in context, defaulting to true for ${fieldPath}`)
       return true
     }
     
     // Check if movie exists in fieldAvailability (using originalTitle as key)
     const movieFields = context.fieldAvailability?.movies?.[originalTitle]
     if (!movieFields) {
-      console.log(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true`)
+      syncLogger.debug(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true`)
       return true
     }
     
     // Get servers that have this field
     const serversWithField = movieFields[fieldPath] || []
-    console.log(`📊 Servers with ${fieldPath}: ${JSON.stringify(serversWithField)} (${serversWithField.length} total)`)
+    syncLogger.debug(`📊 Servers with ${fieldPath}: ${JSON.stringify(serversWithField)} (${serversWithField.length} total)`)
     
     // Check priority
     const hasHighestPriority = isCurrentServerHighestPriorityForField(
@@ -460,9 +461,9 @@ export class MovieAssetStrategy implements SyncStrategy {
     )
     
     if (hasHighestPriority) {
-      console.log(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has highest priority for ${fieldPath}`)
+      syncLogger.debug(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has highest priority for ${fieldPath}`)
     } else {
-      console.log(`❌ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does NOT have highest priority for ${fieldPath}`)
+      syncLogger.debug(`❌ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does NOT have highest priority for ${fieldPath}`)
     }
     
     return hasHighestPriority

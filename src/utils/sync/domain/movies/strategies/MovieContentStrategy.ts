@@ -33,6 +33,7 @@ import {
 } from '../../../core'
 
 import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
+import { syncLogger } from '../../../core/logger'
 
 export class MovieContentStrategy implements SyncStrategy {
   readonly name = 'MovieContentStrategy'
@@ -68,7 +69,7 @@ export class MovieContentStrategy implements SyncStrategy {
     const title = context.entityTitle || entity?.title || 'unknown'
     const originalTitle = context.entityOriginalTitle || entity?.originalTitle || title
 
-    console.log(`🎬 MovieContentStrategy starting for: "${title}"`)
+    syncLogger.debug(`🎬 MovieContentStrategy starting for: "${title}"`)
 
     if (!originalTitle || originalTitle.trim().length === 0) {
       return this.createResult(
@@ -96,12 +97,12 @@ export class MovieContentStrategy implements SyncStrategy {
         // 🚀 OPTIMIZATION: Check cache first, then database
         if (context.movieCache?.has(originalTitle)) {
           movie = context.movieCache.get(originalTitle)!
-          console.log(`💾 Cache HIT for "${originalTitle}"`)
+          syncLogger.debug(`💾 Cache HIT for "${originalTitle}"`)
         } else {
-          console.log(`🔍 Cache MISS for "${originalTitle}", querying database...`)
+          syncLogger.debug(`🔍 Cache MISS for "${originalTitle}", querying database...`)
           movie = await this.repository.findByOriginalTitle(originalTitle)
           if (!movie) {
-            console.log(`🎬 Movie not in database, creating basic entity for content: "${originalTitle}"`)
+            syncLogger.debug(`🎬 Movie not in database, creating basic entity for content: "${originalTitle}"`)
             movie = {
               title,
               originalTitle,
@@ -255,19 +256,19 @@ export class MovieContentStrategy implements SyncStrategy {
     }
     
     // Enhanced logging to debug the video URL check
-    console.log(`🔍 Debug - videoUrl: ${videoUrl ? 'exists' : 'missing'}, currentUrl: ${currentMovie.videoURL ? 'exists' : 'missing'}`)
+    syncLogger.debug(`🔍 Debug - videoUrl: ${videoUrl ? 'exists' : 'missing'}, currentUrl: ${currentMovie.videoURL ? 'exists' : 'missing'}`)
     
     const shouldUpdate = this.shouldUpdateField(getFieldPath('videoURL'), originalTitle, context)
-    console.log(`🔍 Debug - shouldUpdateField for videoURL: ${shouldUpdate}`)
+    syncLogger.debug(`🔍 Debug - shouldUpdateField for videoURL: ${shouldUpdate}`)
     
     // Adjusted to also process content when existing video URL exists in currentMovie
     if ((videoUrl || currentMovie.videoURL) && (shouldUpdate || !currentMovie.videoURL)) {
       const currentUrl = currentMovie.videoURL
       if (currentUrl !== videoUrl) {
         updates.videoURL = videoUrl
-        console.log(`✅ Updating videoURL from server ${context.serverConfig.id}: "${currentUrl}" → "${videoUrl}"`)
+        syncLogger.debug(`✅ Updating videoURL from server ${context.serverConfig.id}: "${currentUrl}" → "${videoUrl}"`)
       } else {
-        console.log(`📝 VideoURL unchanged: "${videoUrl}" (server ${context.serverConfig.id} has priority but value identical)`)
+        syncLogger.debug(`📝 VideoURL unchanged: "${videoUrl}" (server ${context.serverConfig.id} has priority but value identical)`)
       }
     }
 
@@ -300,18 +301,18 @@ export class MovieContentStrategy implements SyncStrategy {
         if (videoMetadata.duration && this.shouldUpdateField(getFieldPath('duration'), originalTitle, context)) {
           if (currentMovie.duration !== videoMetadata.duration) {
             updates.duration = videoMetadata.duration
-            console.log(`✅ Updating duration from server ${context.serverConfig.id}: ${currentMovie.duration} → ${videoMetadata.duration}`)
+            syncLogger.debug(`✅ Updating duration from server ${context.serverConfig.id}: ${currentMovie.duration} → ${videoMetadata.duration}`)
           } else {
-            console.log(`📝 Duration unchanged: ${videoMetadata.duration} (server ${context.serverConfig.id} has priority but value identical)`)
+            syncLogger.debug(`📝 Duration unchanged: ${videoMetadata.duration} (server ${context.serverConfig.id} has priority but value identical)`)
           }
         }
 
         if (videoMetadata.dimensions && this.shouldUpdateField(getFieldPath('dimensions'), originalTitle, context)) {
           if (currentMovie.dimensions !== videoMetadata.dimensions) {
             updates.dimensions = videoMetadata.dimensions
-            console.log(`✅ Updating dimensions from server ${context.serverConfig.id}: "${currentMovie.dimensions}" → "${videoMetadata.dimensions}"`)
+            syncLogger.debug(`✅ Updating dimensions from server ${context.serverConfig.id}: "${currentMovie.dimensions}" → "${videoMetadata.dimensions}"`)
           } else {
-            console.log(`📝 Dimensions unchanged: "${videoMetadata.dimensions}" (server ${context.serverConfig.id} has priority but value identical)`)
+            syncLogger.debug(`📝 Dimensions unchanged: "${videoMetadata.dimensions}" (server ${context.serverConfig.id} has priority but value identical)`)
           }
         }
         
@@ -319,7 +320,7 @@ export class MovieContentStrategy implements SyncStrategy {
         if (videoMetadata.hdr && this.shouldUpdateField(getFieldPath('hdr'), originalTitle, context)) {
           if (currentMovie.hdr !== videoMetadata.hdr) {
             updates.hdr = videoMetadata.hdr
-            console.log(`✅ Updating hdr from server ${context.serverConfig.id}: "${currentMovie.hdr}" → "${videoMetadata.hdr}"`)
+            syncLogger.debug(`✅ Updating hdr from server ${context.serverConfig.id}: "${currentMovie.hdr}" → "${videoMetadata.hdr}"`)
           } else {
             console.log(`📝 HDR unchanged: "${videoMetadata.hdr}" (server ${context.serverConfig.id} has priority but value identical)`)
           }
@@ -377,9 +378,9 @@ export class MovieContentStrategy implements SyncStrategy {
       const normalizedId = this.generateNormalizedVideoId(videoUrl, originalTitle, fileServerMovieData)
       if (currentMovie.normalizedVideoId !== normalizedId) {
         updates.normalizedVideoId = normalizedId
-        console.log(`✅ Updating normalizedVideoId from server ${context.serverConfig.id}: "${currentMovie.normalizedVideoId}" → "${normalizedId}"`)
+        syncLogger.debug(`✅ Updating normalizedVideoId from server ${context.serverConfig.id}: "${currentMovie.normalizedVideoId}" → "${normalizedId}"`)
       } else {
-        console.log(`📝 NormalizedVideoId unchanged: "${normalizedId}" (computed from ${hasFileServerId ? 'fileServer._id' : 'videoUrl hash'})`)
+        syncLogger.debug(`📝 NormalizedVideoId unchanged: "${normalizedId}" (computed from ${hasFileServerId ? 'fileServer._id' : 'videoUrl hash'})`)
       }
     }
 
@@ -401,11 +402,11 @@ export class MovieContentStrategy implements SyncStrategy {
           // Check if filtered captions have changed
           if (!this.areCaptionsEqual(currentMovie.captionURLs, filteredCaptions)) {
             updates.captionURLs = filteredCaptions
-            console.log(`✅ Updating captionURLs from server ${context.serverConfig.id}`)
-            console.log(`   Found ${Object.keys(filteredCaptions).length} caption(s): ${Object.keys(filteredCaptions).join(', ')}`)
-            console.log(`   Filtered from ${Object.keys(allCaptions).length} available caption(s) based on field availability`)
+            syncLogger.debug(`✅ Updating captionURLs from server ${context.serverConfig.id}`)
+            syncLogger.debug(`   Found ${Object.keys(filteredCaptions).length} caption(s): ${Object.keys(filteredCaptions).join(', ')}`)
+            syncLogger.debug(`   Filtered from ${Object.keys(allCaptions).length} available caption(s) based on field availability`)
           } else {
-            console.log(`📝 CaptionURLs unchanged (server ${context.serverConfig.id} has priority for some fields but values identical)`)
+            syncLogger.debug(`📝 CaptionURLs unchanged (server ${context.serverConfig.id} has priority for some fields but values identical)`)
           }
         } else {
           console.log(`⚠️ Server ${context.serverConfig.id} has no priority for any caption fields, skipping caption update`)
@@ -420,9 +421,9 @@ export class MovieContentStrategy implements SyncStrategy {
       if (chapterUrl && this.shouldUpdateField(getFieldPath('chapterURL'), originalTitle, context)) {
         if (currentMovie.chapterURL !== chapterUrl) {
           updates.chapterURL = chapterUrl
-          console.log(`✅ Updating chapterURL from server ${context.serverConfig.id}: "${chapterUrl}"`)
+          syncLogger.debug(`✅ Updating chapterURL from server ${context.serverConfig.id}: "${chapterUrl}"`)
         } else {
-          console.log(`📝 ChapterURL unchanged: "${chapterUrl}" (server ${context.serverConfig.id} has priority but value identical)`)
+          syncLogger.debug(`📝 ChapterURL unchanged: "${chapterUrl}" (server ${context.serverConfig.id} has priority but value identical)`)
         }
       }
     }
@@ -456,7 +457,7 @@ export class MovieContentStrategy implements SyncStrategy {
         }
         
         const videoUrl = UrlBuilder.createFullUrl(relativePath, context.serverConfig)
-        console.log(`✅ Found video URL from urls.mp4 (final path: ${relativePath}) -> full: ${videoUrl}`)
+        syncLogger.debug(`✅ Found video URL from urls.mp4 (final path: ${relativePath}) -> full: ${videoUrl}`)
         return videoUrl
       }
       
@@ -466,7 +467,7 @@ export class MovieContentStrategy implements SyncStrategy {
         if (mp4File) {
           const relativePath = `/movies/${originalTitle}/${mp4File}`
           const videoUrl = UrlBuilder.createFullUrl(relativePath, context.serverConfig)
-          console.log(`✅ Found video file via fileNames (relative: ${relativePath}) -> full: ${videoUrl}`)
+          syncLogger.debug(`✅ Found video file via fileNames (relative: ${relativePath}) -> full: ${videoUrl}`)
           return videoUrl
         }
       }
@@ -859,17 +860,17 @@ export class MovieContentStrategy implements SyncStrategy {
   ): string {
     // Priority 1: Use _id from fileserver data if available
     if (fileServerData?._id) {
-      console.log(`✅ Using fileserver _id as normalizedVideoId for "${originalTitle}": ${fileServerData._id}`)
+      syncLogger.debug(`✅ Using fileserver _id as normalizedVideoId for "${originalTitle}": ${fileServerData._id}`)
       return fileServerData._id
     }
     
     // Priority 2: Fallback to hash generation if no _id
     if (!videoUrl) {
-      console.warn(`⚠️ No videoUrl or _id available for "${originalTitle}", cannot generate normalizedVideoId`)
+      syncLogger.warn(`⚠️ No videoUrl or _id available for "${originalTitle}", cannot generate normalizedVideoId`)
       return ''
     }
     
-    console.log(`⚠️ No _id in fileserver data for "${originalTitle}", falling back to URL hash`)
+    syncLogger.debug(`⚠️ No _id in fileserver data for "${originalTitle}", falling back to URL hash`)
     
     try {
       const crypto = require('crypto')
@@ -906,7 +907,7 @@ export class MovieContentStrategy implements SyncStrategy {
       // Return first 16 characters (matches legacy format)
       return hash.digest('hex').substring(0, 16)
     } catch (error) {
-      console.error(`Error generating normalized video ID for URL: ${videoUrl}`, error)
+      syncLogger.error(`Error generating normalized video ID for URL: ${videoUrl}`, error)
       
       // Fallback to simple string manipulation
       const fallbackStr = videoUrl.toLowerCase().replace(/[^a-z0-9]/g, '')
@@ -937,10 +938,7 @@ export class MovieContentStrategy implements SyncStrategy {
     if (!current && !incoming) return true
     if (!current || !incoming) return false
 
-    // Enable detailed logging with DEBUG_SYNC=true env var
-    const debugEnabled = process.env.DEBUG_SYNC === 'true';
-    if (debugEnabled) {
-      console.log(`🔍 Comparing MediaQuality objects:
+    syncLogger.debug(`🔍 Comparing MediaQuality objects:
 Current: ${JSON.stringify(current)}
 Incoming: ${JSON.stringify(incoming)}`);
     }
@@ -953,14 +951,14 @@ Incoming: ${JSON.stringify(incoming)}`);
     const hdrFormatEqual = this.areValuesEqual(current.hdrFormat, incoming.hdrFormat);
     const enhancedViewingEqual = this.areValuesEqual(current.enhancedViewing, incoming.enhancedViewing);
 
-    // Log any differences if debug is enabled
-    if (debugEnabled) {
-      if (!formatEqual) console.log(`⚠️ MediaQuality format differs: ${current.format} vs ${incoming.format}`);
-      if (!bitDepthEqual) console.log(`⚠️ MediaQuality bitDepth differs: ${current.bitDepth} vs ${incoming.bitDepth}`);
-      if (!colorSpaceEqual) console.log(`⚠️ MediaQuality colorSpace differs: ${current.colorSpace} vs ${incoming.colorSpace}`);
-      if (!transferCharEqual) console.log(`⚠️ MediaQuality transferCharacteristics differs: ${current.transferCharacteristics} vs ${incoming.transferCharacteristics}`);
-      if (!hdrFormatEqual) console.log(`⚠️ MediaQuality hdrFormat differs: ${current.hdrFormat} vs ${incoming.hdrFormat}`);
-      if (!enhancedViewingEqual) console.log(`⚠️ MediaQuality enhancedViewing differs: ${current.enhancedViewing} vs ${incoming.enhancedViewing}`);
+    // Log any differences
+    {
+      if (!formatEqual) syncLogger.debug(`⚠️ MediaQuality format differs: ${current.format} vs ${incoming.format}`);
+      if (!bitDepthEqual) syncLogger.debug(`⚠️ MediaQuality bitDepth differs: ${current.bitDepth} vs ${incoming.bitDepth}`);
+      if (!colorSpaceEqual) syncLogger.debug(`⚠️ MediaQuality colorSpace differs: ${current.colorSpace} vs ${incoming.colorSpace}`);
+      if (!transferCharEqual) syncLogger.debug(`⚠️ MediaQuality transferCharacteristics differs: ${current.transferCharacteristics} vs ${incoming.transferCharacteristics}`);
+      if (!hdrFormatEqual) syncLogger.debug(`⚠️ MediaQuality hdrFormat differs: ${current.hdrFormat} vs ${incoming.hdrFormat}`);
+      if (!enhancedViewingEqual) syncLogger.debug(`⚠️ MediaQuality enhancedViewing differs: ${current.enhancedViewing} vs ${incoming.enhancedViewing}`);
     }
 
     return formatEqual && bitDepthEqual && colorSpaceEqual && 
@@ -974,10 +972,7 @@ Incoming: ${JSON.stringify(incoming)}`);
     if (!current && !incoming) return true
     if (!current || !incoming) return false
 
-    // Enable detailed logging with DEBUG_SYNC=true env var
-    const debugEnabled = process.env.DEBUG_SYNC === 'true';
-    if (debugEnabled) {
-      console.log(`🔍 Comparing VideoInfo objects:
+    syncLogger.debug(`🔍 Comparing VideoInfo objects:
 Current: ${JSON.stringify(current)}
 Incoming: ${JSON.stringify(incoming)}`);
     }
@@ -993,17 +988,17 @@ Incoming: ${JSON.stringify(incoming)}`);
     const fileSizeEqual = this.areValuesEqual(current.fileSize, incoming.fileSize);
     const mediaQualityEqual = this.isMediaQualityEqual(current.mediaQuality, incoming.mediaQuality);
 
-    // Log any differences if debug is enabled
-    if (debugEnabled) {
-      if (!durationEqual) console.log(`⚠️ VideoInfo duration differs: ${current.duration} vs ${incoming.duration}`);
-      if (!resolutionEqual) console.log(`⚠️ VideoInfo resolution differs: ${current.resolution} vs ${incoming.resolution}`);
-      if (!codecEqual) console.log(`⚠️ VideoInfo codec differs: ${current.codec} vs ${incoming.codec}`);
-      if (!bitrateEqual) console.log(`⚠️ VideoInfo bitrate differs: ${current.bitrate} vs ${incoming.bitrate}`);
-      if (!frameRateEqual) console.log(`⚠️ VideoInfo frameRate differs: ${current.frameRate} vs ${incoming.frameRate}`);
-      if (!audioCodecEqual) console.log(`⚠️ VideoInfo audioCodec differs: ${current.audioCodec} vs ${incoming.audioCodec}`);
-      if (!audioChannelsEqual) console.log(`⚠️ VideoInfo audioChannels differs: ${current.audioChannels} vs ${incoming.audioChannels}`);
-      if (!fileSizeEqual) console.log(`⚠️ VideoInfo fileSize differs: ${current.fileSize} vs ${incoming.fileSize}`);
-      if (!mediaQualityEqual) console.log(`⚠️ VideoInfo mediaQuality differs (see above for details)`);
+    // Log any differences
+    {
+      if (!durationEqual) syncLogger.debug(`⚠️ VideoInfo duration differs: ${current.duration} vs ${incoming.duration}`);
+      if (!resolutionEqual) syncLogger.debug(`⚠️ VideoInfo resolution differs: ${current.resolution} vs ${incoming.resolution}`);
+      if (!codecEqual) syncLogger.debug(`⚠️ VideoInfo codec differs: ${current.codec} vs ${incoming.codec}`);
+      if (!bitrateEqual) syncLogger.debug(`⚠️ VideoInfo bitrate differs: ${current.bitrate} vs ${incoming.bitrate}`);
+      if (!frameRateEqual) syncLogger.debug(`⚠️ VideoInfo frameRate differs: ${current.frameRate} vs ${incoming.frameRate}`);
+      if (!audioCodecEqual) syncLogger.debug(`⚠️ VideoInfo audioCodec differs: ${current.audioCodec} vs ${incoming.audioCodec}`);
+      if (!audioChannelsEqual) syncLogger.debug(`⚠️ VideoInfo audioChannels differs: ${current.audioChannels} vs ${incoming.audioChannels}`);
+      if (!fileSizeEqual) syncLogger.debug(`⚠️ VideoInfo fileSize differs: ${current.fileSize} vs ${incoming.fileSize}`);
+      if (!mediaQualityEqual) syncLogger.debug(`⚠️ VideoInfo mediaQuality differs (see above for details)`);
     }
 
     return durationEqual && resolutionEqual && codecEqual && bitrateEqual && 
@@ -1025,11 +1020,11 @@ Incoming: ${JSON.stringify(incoming)}`);
     sourceServerId?: string
   }> | null {
     try {
-      console.log(`🎬 Extracting captions for: "${originalTitle}"`)
+      syncLogger.debug(`🎬 Extracting captions for: "${originalTitle}"`)
       
       // Check if we have subtitles in the file server data
       if (!fileServerData?.urls?.subtitles) {
-        console.log(`❌ No subtitles found in file server data for: "${originalTitle}"`)
+        syncLogger.debug(`❌ No subtitles found in file server data for: "${originalTitle}"`)
         return null
       }
 
@@ -1066,13 +1061,13 @@ Incoming: ${JSON.stringify(incoming)}`);
             sourceServerId: context.serverConfig.id
           }
           
-          console.log(`✅ Found caption for ${language}: ${fullUrl}`)
+          syncLogger.debug(`✅ Found caption for ${language}: ${fullUrl}`)
         }
       }
 
       return Object.keys(captionURLs).length > 0 ? captionURLs : null
     } catch (error) {
-      console.error(`Failed to extract captions for ${originalTitle}:`, error)
+      syncLogger.error(`Failed to extract captions for ${originalTitle}:`, error)
       return null
     }
   }
@@ -1086,11 +1081,11 @@ Incoming: ${JSON.stringify(incoming)}`);
     context: SyncContext
   ): string | null {
     try {
-      console.log(`🎬 Extracting chapter data for: "${originalTitle}"`)
+      syncLogger.debug(`🎬 Extracting chapter data for: "${originalTitle}"`)
       
       // Check if we have chapter data in the file server data
       if (!fileServerData?.urls?.chapters) {
-        console.log(`❌ No chapters found in file server data for: "${originalTitle}"`)
+        syncLogger.debug(`❌ No chapters found in file server data for: "${originalTitle}"`)
         return null
       }
 
@@ -1103,11 +1098,11 @@ Incoming: ${JSON.stringify(incoming)}`);
       }
       
       const fullUrl = UrlBuilder.createFullUrl(cleanPath, context.serverConfig)
-      console.log(`✅ Found chapter data: ${fullUrl}`)
+      syncLogger.debug(`✅ Found chapter data: ${fullUrl}`)
       
       return fullUrl
     } catch (error) {
-      console.error(`Failed to extract chapter data for ${originalTitle}:`, error)
+      syncLogger.error(`Failed to extract chapter data for ${originalTitle}:`, error)
       return null
     }
   }
@@ -1117,24 +1112,24 @@ Incoming: ${JSON.stringify(incoming)}`);
    * Only updates if this server has priority for at least one mediaQuality subfield
    */
   private shouldUpdateMediaQuality(mediaQuality: MediaQuality, originalTitle: string, context: SyncContext): boolean {
-    console.log(`🔍 MediaQuality priority check for: "${originalTitle}", server=${context.serverConfig.id}`)
+    syncLogger.debug(`🔍 MediaQuality priority check for: "${originalTitle}", server=${context.serverConfig.id}`)
 
     // Check if fieldAvailability is present in context
     if (!context.fieldAvailability) {
-      console.log(`⚠️ No fieldAvailability in context, defaulting to true for mediaQuality`)
+      syncLogger.debug(`⚠️ No fieldAvailability in context, defaulting to true for mediaQuality`)
       return true
     }
 
     // Ensure mediaType exists in fieldAvailability
     if (!context.fieldAvailability[MediaTypesFieldAvailability.Movie]) {
-      console.log(`⚠️ MediaType.Movie not found in fieldAvailability, defaulting to true for mediaQuality`)
+      syncLogger.debug(`⚠️ MediaType.Movie not found in fieldAvailability, defaulting to true for mediaQuality`)
       return true
     }
 
     // Check if the movie exists in fieldAvailability (using originalTitle as key)
     const movieFields = context.fieldAvailability[MediaTypesFieldAvailability.Movie][originalTitle]
     if (!movieFields) {
-      console.log(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true for mediaQuality`)
+      syncLogger.debug(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true for mediaQuality`)
       return true
     }
 
@@ -1155,14 +1150,14 @@ Incoming: ${JSON.stringify(incoming)}`);
     // Check if this server has priority for any mediaQuality subfield
     for (const fieldPath of mediaQualityFields) {
       if (this.shouldUpdateField(fieldPath, originalTitle, context)) {
-        console.log(`✅ Server ${context.serverConfig.id} has priority for ${fieldPath}`)
+        syncLogger.debug(`✅ Server ${context.serverConfig.id} has priority for ${fieldPath}`)
         return true
       } else {
-        console.log(`❌ Server ${context.serverConfig.id} does NOT have priority for ${fieldPath}`)
+        syncLogger.debug(`❌ Server ${context.serverConfig.id} does NOT have priority for ${fieldPath}`)
       }
     }
 
-    console.log(`⚠️ Server ${context.serverConfig.id} has no priority for any mediaQuality fields, skipping update`)
+    syncLogger.debug(`⚠️ Server ${context.serverConfig.id} has no priority for any mediaQuality fields, skipping update`)
     return false
   }
 
@@ -1171,30 +1166,30 @@ Incoming: ${JSON.stringify(incoming)}`);
    * CRITICAL: Always use originalTitle (filesystem key) for fieldAvailability lookups
    */
   private shouldUpdateField(field: string, originalTitle: string, context: SyncContext): boolean {
-    console.log(`🔍 Priority check: field="${field}", originalTitle="${originalTitle}", server=${context.serverConfig.id}`)
+    syncLogger.debug(`🔍 Priority check: field="${field}", originalTitle="${originalTitle}", server=${context.serverConfig.id}`)
     
     // Check if fieldAvailability is present in context
     if (!context.fieldAvailability) {
-      console.log(`⚠️ No fieldAvailability in context, defaulting to true for ${field}`)
+      syncLogger.debug(`⚠️ No fieldAvailability in context, defaulting to true for ${field}`)
       return true
     }
 
     // Ensure mediaType exists in fieldAvailability
     if (!context.fieldAvailability[MediaTypesFieldAvailability.Movie]) {
-      console.log(`⚠️ MediaType.Movie not found in fieldAvailability, defaulting to true for ${field}`)
+      syncLogger.debug(`⚠️ MediaType.Movie not found in fieldAvailability, defaulting to true for ${field}`)
       return true
     }
 
     // Check if the movie exists in fieldAvailability (using originalTitle as key)
     const movieFields = context.fieldAvailability[MediaTypesFieldAvailability.Movie][originalTitle]
     if (!movieFields) {
-      console.log(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true`)
+      syncLogger.debug(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true`)
       return true
     }
 
     // Get servers that have this field
     const serversWithField = movieFields[field] || []
-    console.log(`📊 Servers with ${field}: ${JSON.stringify(serversWithField)} (${serversWithField.length} total)`)
+    syncLogger.debug(`📊 Servers with ${field}: ${JSON.stringify(serversWithField)} (${serversWithField.length} total)`)
 
     // Check priority
     const hasHighestPriority = isCurrentServerHighestPriorityForField(
@@ -1206,9 +1201,9 @@ Incoming: ${JSON.stringify(incoming)}`);
     )
     
     if (hasHighestPriority) {
-      console.log(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has highest priority for ${field}`)
+      syncLogger.debug(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has highest priority for ${field}`)
     } else {
-      console.log(`❌ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does NOT have highest priority for ${field}`)
+      syncLogger.debug(`❌ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does NOT have highest priority for ${field}`)
     }
     
     return hasHighestPriority
@@ -1234,10 +1229,7 @@ Incoming: ${JSON.stringify(incoming)}`);
     if (!current && !incoming) return true
     if (!current || !incoming) return false
     
-    // Enable detailed logging with DEBUG_SYNC=true env var
-    const debugEnabled = process.env.DEBUG_SYNC === 'true';
-    if (debugEnabled) {
-      console.log(`🔍 Comparing caption objects:
+    syncLogger.debug(`🔍 Comparing caption objects:
 Current: ${JSON.stringify(current)}
 Incoming: ${JSON.stringify(incoming)}`);
     }
@@ -1246,10 +1238,10 @@ Incoming: ${JSON.stringify(incoming)}`);
     const incomingKeys = Object.keys(incoming).sort()
     
     if (currentKeys.length !== incomingKeys.length) {
-      if (debugEnabled) {
-        console.log(`⚠️ Caption key count differs: ${currentKeys.length} vs ${incomingKeys.length}`);
-        console.log(`Current keys: ${currentKeys.join(', ')}`);
-        console.log(`Incoming keys: ${incomingKeys.join(', ')}`);
+      {
+        syncLogger.debug(`⚠️ Caption key count differs: ${currentKeys.length} vs ${incomingKeys.length}`);
+        syncLogger.debug(`Current keys: ${currentKeys.join(', ')}`);
+        syncLogger.debug(`Incoming keys: ${incomingKeys.join(', ')}`);
       }
       return false
     }
@@ -1257,7 +1249,7 @@ Incoming: ${JSON.stringify(incoming)}`);
     for (let i = 0; i < currentKeys.length; i++) {
       const key = currentKeys[i]
       if (key !== incomingKeys[i]) {
-        if (debugEnabled) console.log(`⚠️ Caption key order differs: ${key} vs ${incomingKeys[i]}`);
+        syncLogger.debug(`⚠️ Caption key order differs: ${key} vs ${incomingKeys[i]}`);
         return false
       }
       
@@ -1266,9 +1258,9 @@ Incoming: ${JSON.stringify(incoming)}`);
       const srcLangEqual = this.areValuesEqual(current[key].srcLang, incoming[key].srcLang);
       
       if (!urlEqual || !srcLangEqual) {
-        if (debugEnabled) {
-          if (!urlEqual) console.log(`⚠️ Caption URL differs for ${key}: ${current[key].url} vs ${incoming[key].url}`);
-          if (!srcLangEqual) console.log(`⚠️ Caption srcLang differs for ${key}: ${current[key].srcLang} vs ${incoming[key].srcLang}`);
+        {
+          if (!urlEqual) syncLogger.debug(`⚠️ Caption URL differs for ${key}: ${current[key].url} vs ${incoming[key].url}`);
+          if (!srcLangEqual) syncLogger.debug(`⚠️ Caption srcLang differs for ${key}: ${current[key].srcLang} vs ${incoming[key].srcLang}`);
         }
         return false
       }
