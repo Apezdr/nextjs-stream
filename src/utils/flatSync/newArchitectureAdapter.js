@@ -13,6 +13,8 @@ import { performance } from 'perf_hooks'
 import { syncTVShows } from './tvShows/index'
 import { syncSeasons } from './seasons/index'
 import { syncEpisodes } from './episodes/index'
+// Import notification system
+import { MediaNotificationOrchestrator } from '../notifications/MediaNotificationOrchestrator'
 
 /**
  * Main adapter function to use new architecture instead of flat sync
@@ -180,6 +182,38 @@ export async function syncWithNewArchitecture(
       durationMs: results.performance.duration,
       architecture: 'new'
     }, 'NEW architecture sync completed');
+
+    // Process notifications for newly added content
+    log.info({ serverId: serverConfig.id, phase: 'notifications' }, 'Starting notification processing');
+    const notificationStartTime = performance.now();
+    try {
+      results.notifications = await MediaNotificationOrchestrator.processSyncResults(results, {
+        enableNotifications: true,
+        analysisOptions: {
+          minSignificanceThreshold: 1,
+          timeWindow: 24 * 60 * 60 * 1000 // 24 hours
+        },
+        generationOptions: {
+          batchSimilarContent: true,
+          maxMoviesPerNotification: 5,
+          includeMetadata: true
+        },
+        deliveryOptions: {
+          targetAllUsers: true,
+          checkDuplicates: true,
+          duplicateWindow: 24 * 60 * 60 * 1000 // 24 hours
+        }
+      });
+    } catch (notificationError) {
+      logError(log, notificationError, { serverId: serverConfig.id, context: 'notification_processing' });
+    }
+    const notificationEndTime = performance.now();
+    const notificationDurationSec = ((notificationEndTime - notificationStartTime) / 1000);
+    log.info({
+      serverId: serverConfig.id,
+      phase: 'notifications',
+      durationSec: parseFloat(notificationDurationSec.toFixed(2))
+    }, 'Notification processing completed');
 
     return results
   } catch (error) {
