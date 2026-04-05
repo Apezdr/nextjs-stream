@@ -32,13 +32,17 @@ import {
   MovieMetadataStrategy,
   MovieAssetStrategy,
   MovieContentStrategy,
-  BlurhashStrategy
+  BlurhashStrategy,
+  TVShowSyncService,
+  SeasonSyncService,
+  EpisodeSyncService
 } from './domain'
 
 export class SyncManager {
   private dbAdapter?: DatabaseAdapter
   private fileAdapter: DefaultFileServerAdapter
   private movieService?: MovieSyncService
+  private tvShowService?: TVShowSyncService
   private initialized = false
   private resourceManager: ResourceManager
 
@@ -76,6 +80,19 @@ export class SyncManager {
         ]
       )
       syncLogger.info('Movie sync service initialized (with BlurhashStrategy)')
+
+      // Initialize TV domain services
+      const episodeSyncService = new EpisodeSyncService(
+        this.dbAdapter.episodes,
+        this.dbAdapter.seasons
+      )
+      const seasonSyncService = new SeasonSyncService(this.dbAdapter.seasons)
+      this.tvShowService = new TVShowSyncService(
+        this.dbAdapter.tvShows,
+        seasonSyncService,
+        episodeSyncService
+      )
+      syncLogger.info('TV sync services initialized')
 
       this.initialized = true
       syncLogger.info('Sync manager ready!')
@@ -338,6 +355,63 @@ export class SyncManager {
   }
 
   /**
+   * Sync one or more TV shows (including all seasons and episodes) using bulk writes.
+   *
+   * Bulk-write guarantee:
+   *  - Seasons  → SeasonRepository.bulkUpsertShow()  called once per show.
+   *  - Episodes → EpisodeRepository.bulkUpsertSeason() called once per season.
+   *  - TV show header → TVShowRepository.upsert() called once per show (low volume).
+   */
+  async syncTVShows(
+    showTitles: string[],
+    serverConfig: ServerConfig,
+    fieldAvailability: FieldAvailability,
+    options: {
+      concurrency?: number
+      forceSync?: boolean
+      fileServerData?: any
+    } = {}
+  ): Promise<BatchSyncResult> {
+    await this.initialize()
+
+    const startTime = Date.now()
+
+    const context: SyncContext = {
+      mediaType: MediaType.TVShow,
+      operation: SyncOperation.Metadata,
+      serverConfig,
+      fieldAvailability,
+      forceSync: options.forceSync || false,
+      fileServerData: options.fileServerData,
+      resourceManager: this.resourceManager
+    }
+
+    syncLogger.info(`Starting TV sync for ${showTitles.length} shows`)
+
+    try {
+      const result = await this.tvShowService!.syncTVShows(
+        showTitles,
+        context,
+        options.concurrency || 3
+      )
+      syncLogger.info(
+        `TV sync completed in ${result.duration}ms — ` +
+        `${result.summary.completed} completed, ${result.summary.failed} failed`
+      )
+      return result
+    } catch (error) {
+      const duration = Date.now() - startTime
+      syncLogger.error('TV sync failed:', error)
+      return {
+        results: [],
+        summary: { total: showTitles.length, completed: 0, failed: showTitles.length, skipped: 0 },
+        duration,
+        errors: [error instanceof Error ? error.message : String(error)]
+      }
+    }
+  }
+
+  /**
    * Get comprehensive sync statistics
    */
   async getSyncStats(): Promise<{
@@ -563,4 +637,17 @@ export async function cleanupMovies(
   serverConfig: ServerConfig
 ) {
   return syncManager.cleanupMovies(availableTitles, serverConfig)
+}
+
+/**
+ * Sync TV shows using the new bulk-write architecture.
+ * Seasons → bulkUpsertShow(), Episodes → bulkUpsertSeason() per season.
+ */
+export async function syncTVShowsWithNewArchitecture(
+  showTitles: string[],
+  serverConfig: ServerConfig,
+  fieldAvailability: FieldAvailability,
+  options: { concurrency?: number; forceSync?: boolean; fileServerData?: any } = {}
+): Promise<BatchSyncResult> {
+  return syncManager.syncTVShows(showTitles, serverConfig, fieldAvailability, options)
 }

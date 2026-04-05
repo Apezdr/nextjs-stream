@@ -9,6 +9,9 @@ export * from './movies'
 // Shared cross-domain strategies
 export * from './shared'
 
+// TV domain (TVShowSyncService, SeasonSyncService, EpisodeSyncService)
+export * from './tv'
+
 // Re-export key domain services for convenience
 export {
   MovieSyncService,
@@ -17,3 +20,9 @@ export {
 } from './movies'
 
 export { BlurhashStrategy } from './shared'
+
+export {
+  TVShowSyncService,
+  SeasonSyncService,
+  EpisodeSyncService
+} from './tv'
