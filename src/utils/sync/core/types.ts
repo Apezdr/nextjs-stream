@@ -23,7 +23,8 @@ export enum SyncOperation {
   Metadata = 'metadata',
   Assets = 'assets',      // posters, backdrops, logos
   Content = 'content',    // video URLs, captions, chapters
-  Validation = 'validation'
+  Validation = 'validation',
+  Blurhash = 'blurhash'  // post-entity blurhash computation (poster + backdrop)
 }
 
 export enum SyncStatus {

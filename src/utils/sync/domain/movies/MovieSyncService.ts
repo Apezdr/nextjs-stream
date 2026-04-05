@@ -397,7 +397,8 @@ export class MovieSyncService {
           [SyncOperation.Metadata]: 0, // Would need to calculate based on missing metadata
           [SyncOperation.Assets]: missingPosters + missingBackdrops,
           [SyncOperation.Content]: missingVideo,
-          [SyncOperation.Validation]: 0
+          [SyncOperation.Validation]: 0,
+          [SyncOperation.Blurhash]: 0  // Would need to calculate based on missing blurhashes
         }
       }
     } catch (error) {

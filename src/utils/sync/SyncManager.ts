@@ -31,7 +31,8 @@ import {
   MovieSyncService,
   MovieMetadataStrategy,
   MovieAssetStrategy,
-  MovieContentStrategy
+  MovieContentStrategy,
+  BlurhashStrategy
 } from './domain'
 
 export class SyncManager {
@@ -67,10 +68,14 @@ export class SyncManager {
         [
           new MovieMetadataStrategy(this.dbAdapter.movies, this.fileAdapter),
           new MovieAssetStrategy(this.dbAdapter.movies, this.fileAdapter),
-          new MovieContentStrategy(this.dbAdapter.movies, this.fileAdapter)
+          new MovieContentStrategy(this.dbAdapter.movies, this.fileAdapter),
+          // BlurhashStrategy is post-entity: runs after the entity is saved by
+          // Metadata/Asset strategies. It skips computation when the blurhash is
+          // already stored and gates on isCurrentServerHighestPriorityForField.
+          new BlurhashStrategy(this.dbAdapter.movies)
         ]
       )
-      syncLogger.info('Movie sync service initialized')
+      syncLogger.info('Movie sync service initialized (with BlurhashStrategy)')
 
       this.initialized = true
       syncLogger.info('Sync manager ready!')
@@ -182,7 +187,8 @@ export class SyncManager {
     const operations = options.operations || [
       SyncOperation.Metadata,
       SyncOperation.Assets,
-      SyncOperation.Content // Now implemented!
+      SyncOperation.Content,    // Now implemented!
+      SyncOperation.Blurhash    // Post-entity blurhash computation
     ]
 
     syncLogger.info(`Starting sync for ${movieTitles.length} movies with operations: ${operations.join(', ')}`)
