@@ -149,7 +149,7 @@ export async function syncWithNewArchitecture(
         adaptedServerConfig,
         fieldAvailability,
         {
-          operations: [SyncOperation.Metadata, SyncOperation.Assets, SyncOperation.Content],
+          operations: [SyncOperation.Metadata, SyncOperation.Assets, SyncOperation.Content, SyncOperation.Blurhash],
           // Let SyncManager use ResourceManager defaults unless explicitly overridden
           concurrency: options.concurrency || undefined,
           fileServerData: fileServer, // Pass file server data to sync manager
@@ -312,13 +312,11 @@ async function syncTVContentWithLegacyArchitecture(
       details: tvShowResults.processed || [],
     }
 
-    // Sync seasons – pass all server configs so the hash cache is pre-warmed
-    // from every server before the per-season loop begins.  This prevents the
-    // expensive 4-retry HTTP loops that occur when a show lives on a different
-    // server than the one currently syncing.
+    // Sync seasons – use only current server config to maintain context isolation in hybrid mode
+    // This prevents server context confusion when new architecture (single-server context)
+    // transitions to legacy TV sync (multi-server capable). Each server will optimize its own content.
     log.info({ serverId: serverConfig.id, phase: 'seasons' }, 'Starting season sync');
-    const allServerConfigs = getAllServers();
-    const seasonResults = await syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability, allServerConfigs)
+    const seasonResults = await syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability, [serverConfig])
     results.seasons = {
       processed: seasonResults.processed?.length || 0,
       errors: seasonResults.errors?.length || 0,

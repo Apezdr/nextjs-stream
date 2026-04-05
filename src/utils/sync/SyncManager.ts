@@ -32,11 +32,14 @@ import {
   MovieMetadataStrategy,
   MovieAssetStrategy,
   MovieContentStrategy,
-  BlurhashStrategy,
+  BlurhashStrategy
+} from './domain'
+
+import {
   TVShowSyncService,
   SeasonSyncService,
   EpisodeSyncService
-} from './domain'
+} from './domain/tv'
 
 export class SyncManager {
   private dbAdapter?: DatabaseAdapter
