@@ -9,7 +9,7 @@ import { BaseRepository } from './BaseRepository'
 
 export class TVShowRepository extends BaseRepository<TVShowEntity> {
   constructor(client: MongoClient) {
-    super(client, 'TVShows')
+    super(client, 'FlatTVShows')
   }
 
   /**
@@ -28,8 +28,8 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
         
         // Asset indexes
         this.createIndexSafely({ posterURL: 1 }),
-        this.createIndexSafely({ backdropURL: 1 }),
-        this.createIndexSafely({ logoURL: 1 }),
+        this.createIndexSafely({ backdrop: 1 }),
+        this.createIndexSafely({ logo: 1 }),
         
         // Metadata indexes
         this.createIndexSafely({ seasonCount: 1 }, { sparse: true }),
@@ -55,8 +55,8 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
     try {
       const fieldMap = {
         poster: 'posterURL',
-        backdrop: 'backdropURL',
-        logo: 'logoURL'
+        backdrop: 'backdrop',
+        logo: 'logo'
       }
 
       const field = fieldMap[assetType]
@@ -87,17 +87,17 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
    */
   async updateAssets(title: string, assets: {
     posterURL?: string
-    backdropURL?: string
-    logoURL?: string
+    backdrop?: string
+    logo?: string
     posterBlurhash?: string
     backdropBlurhash?: string
   }): Promise<void> {
     try {
       const updates: any = {}
-      
+
       if (assets.posterURL !== undefined) updates.posterURL = assets.posterURL
-      if (assets.backdropURL !== undefined) updates.backdropURL = assets.backdropURL
-      if (assets.logoURL !== undefined) updates.logoURL = assets.logoURL
+      if (assets.backdrop !== undefined) updates.backdrop = assets.backdrop
+      if (assets.logo !== undefined) updates.logo = assets.logo
       if (assets.posterBlurhash !== undefined) updates.posterBlurhash = assets.posterBlurhash
       if (assets.backdropBlurhash !== undefined) updates.backdropBlurhash = assets.backdropBlurhash
 
@@ -131,8 +131,8 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
       ] = await Promise.all([
         this.collection.countDocuments(),
         this.collection.countDocuments({ posterURL: { $exists: true, $ne: undefined } }),
-        this.collection.countDocuments({ backdropURL: { $exists: true, $ne: undefined } }),
-        this.collection.countDocuments({ logoURL: { $exists: true, $ne: undefined } }),
+        this.collection.countDocuments({ backdrop: { $exists: true, $ne: undefined } }),
+        this.collection.countDocuments({ logo: { $exists: true, $ne: undefined } }),
         this.collection.aggregate([
           { $match: { seasonCount: { $exists: true, $gt: 0 } } },
           { $group: { _id: null, average: { $avg: '$seasonCount' } } }

@@ -6,18 +6,27 @@ import useSWR from 'swr'
 import { buildURL, fetcher } from '@src/utils'
 import { StatusBadge } from '../BaseComponents'
 
-export default function ServerProcessesModal({ isOpen, setIsOpen }) {
+export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClick }) {
   const cancelButtonRef = useRef(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
-  
+
   const { data, error } = useSWR(
-    isOpen ? buildURL('/api/authenticated/admin/server-processes') : null, 
-    fetcher, 
+    isOpen ? buildURL('/api/authenticated/admin/server-processes') : null,
+    fetcher,
     {
       refreshInterval: isOpen ? 5000 : 0,
     }
   )
+
+  // Poll sync status when modal is open
+  const { data: syncStatus } = useSWR(
+    isOpen ? buildURL('/api/authenticated/admin/sync-status') : null,
+    fetcher,
+    { refreshInterval: isOpen ? 3000 : 0 }
+  )
+
+  const isSyncActive = syncStatus?.active === true
 
   const hasDataError = Boolean(data && !Array.isArray(data) && data.error)
   const serverProcesses = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []
@@ -139,6 +148,36 @@ export default function ServerProcessesModal({ isOpen, setIsOpen }) {
 
                 {/* Content */}
                 <div className="bg-white px-6 py-4">
+                  {/* Active Sync Banner */}
+                  {isSyncActive && (
+                    <div className="mb-4 flex items-center justify-between rounded-lg border border-blue-200 bg-blue-50 px-4 py-3">
+                      <div className="flex items-center space-x-3">
+                        <svg className="w-5 h-5 text-blue-500 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                        </svg>
+                        <div>
+                          <div className="text-sm font-medium text-gray-900">Media Sync In Progress</div>
+                          <div className="text-xs text-gray-500">
+                            Started {syncStatus?.startTime ? new Date(syncStatus.startTime).toLocaleTimeString() : 'recently'}
+                          </div>
+                        </div>
+                      </div>
+                      {onSyncViewClick && (
+                        <button
+                          onClick={() => { setIsOpen(false); onSyncViewClick() }}
+                          className="inline-flex items-center gap-1.5 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 transition-colors"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                          </svg>
+                          View Sync Details
+                        </button>
+                      )}
+                    </div>
+                  )}
+
                   {error || hasDataError ? (
                     <div className="text-center py-12">
                       <div className="text-red-600 text-sm">Failed to load server processes</div>

@@ -182,8 +182,6 @@ export function isCurrentServerHighestPriorityForField(
   
   const serversWithData = fieldAvailability[mediaType][mediaTitle]?.[fieldPath] || []
   if (serversWithData.length === 0) {
-    if (fieldPath !== 'urls.mp4')
-    debugger
     return true
   }
 

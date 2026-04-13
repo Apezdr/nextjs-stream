@@ -22,9 +22,7 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
    */
   async findByTitle(title: string): Promise<T | null> {
     try {
-      console.log(`🔍 Looking for movie in ${this.collectionName} with title: "${title}"`)
       const result = await this.collection.findOne({ title } as any)
-      console.log(`🔍 Found movie: ${result ? 'YES' : 'NO'}`)
       return result as T | null
     } catch (error) {
       throw new DatabaseError(
@@ -39,9 +37,7 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
    */
   async findByOriginalTitle(originalTitle: string): Promise<T | null> {
     try {
-      console.log(`🔍 Looking for movie in ${this.collectionName} with originalTitle: "${originalTitle}"`)
       const result = await this.collection.findOne({ originalTitle } as any)
-      console.log(`🔍 Found movie by originalTitle: ${result ? 'YES' : 'NO'}`)
       return result as T | null
     } catch (error) {
       throw new DatabaseError(
@@ -62,7 +58,6 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
       
       // If not found and originalTitle is different, try by originalTitle
       if (!entity && originalTitle && originalTitle !== title) {
-        console.log(`🔄 Fallback: Trying originalTitle "${originalTitle}" since title "${title}" not found`)
         entity = await this.findByOriginalTitle(originalTitle)
       }
       
@@ -117,8 +112,6 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
    */
   async update(title: string, updates: Partial<T>): Promise<void> {
     try {
-      console.log(`🔄 Updating ${this.collectionName} with title: "${title}"`)
-      
       const updateDoc = {
         ...updates,
         lastSynced: new Date(),
@@ -130,15 +123,7 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
         { $set: updateDoc }
       )
 
-      console.log(`🔄 Update result: matchedCount=${result.matchedCount}, modifiedCount=${result.modifiedCount}`)
-
       if (result.matchedCount === 0) {
-        // Let's see what's actually in the collection
-        const count = await this.collection.countDocuments()
-        const sample = await this.collection.findOne()
-        console.log(`🔍 Database: Media, Collection: ${this.collectionName}, Documents: ${count}`)
-        console.log(`🔍 Sample document:`, sample ? Object.keys(sample) : 'none')
-        
         throw new DatabaseError(
           `${this.collectionName} not found for update`,
           title
@@ -156,42 +141,32 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
    * Update with upsert capability using originalTitle as key
    */
   async upsert(entity: T): Promise<void> {
-    console.log(`🔍 TRACE: BaseRepository.upsert received entity with ${Object.keys(entity).length} fields:`, Object.keys(entity).sort())
-    console.log(`🔍 TRACE: Critical fields - type: ${(entity as any).type}, initialDiscoveryDate: ${(entity as any).initialDiscoveryDate}, videoURL: ${(entity as any).videoURL}`)
-    
     const originalTitle = (entity as any).originalTitle
     const title = (entity as any).title
-    
+
+    if (!originalTitle && !title) {
+      throw new DatabaseError('Entity must have either originalTitle or title for upsert', 'unknown')
+    }
+
+    const queryField = originalTitle || title
+    const queryKey = originalTitle ? 'originalTitle' : 'title'
+
     try {
       const now = new Date()
+      // Strip _id so MongoDB preserves existing _id on matched docs
+      // and auto-generates for new upserted docs
+      const { _id, ...entityWithoutId } = entity as any
       const entityWithTimestamp = {
-        ...entity,
+        ...entityWithoutId,
         lastSynced: now,
         updatedAt: now
       }
-      
-      
-      // For backwards compatibility, fall back to title if originalTitle is missing
-      if (!originalTitle && !title) {
-        throw new DatabaseError('Entity must have either originalTitle or title for upsert', 'unknown')
-      }
-      
-      const queryField = originalTitle || title
-      const queryKey = originalTitle ? 'originalTitle' : 'title'
-      
-      console.log(`🔍 Upserting using ${queryKey}: "${queryField}"`)
 
-      const result = await this.collection.replaceOne(
+      await this.collection.replaceOne(
         { [queryKey]: queryField } as any,
         entityWithTimestamp as any,
         { upsert: true }
       )
-      
-      if (result.modifiedCount > 0) {
-        console.log(`✅ Updated existing ${this.collectionName}: "${queryField}"`)
-      } else if (result.upsertedCount > 0) {
-        console.log(`🆕 Created new ${this.collectionName}: "${queryField}"`)
-      }
     } catch (error) {
       throw new DatabaseError(
         `Failed to upsert ${this.collectionName}: ${error}`,

@@ -2,10 +2,13 @@
  * TV Show sync service — orchestrates show-level upserts and delegates to
  * SeasonSyncService and EpisodeSyncService for bulk season/episode writes.
  *
- * Write pattern summary:
- *  • TV Shows  — one tvShows.upsert() per show (low volume, one entity per show).
- *  • Seasons   — SeasonSyncService.syncShow()   → one bulkUpsertShow()  per show.
- *  • Episodes  — EpisodeSyncService.syncSeason() → one bulkUpsertSeason() per season.
+ * Write pattern: read-merge-replace (atomic replacement based on server priority)
+ *  1. Read existing document from the database.
+ *  2. Merge incoming file-server data on top, checking priority per field.
+ *  3. replaceOne the document atomically — no partial $set operations.
+ *
+ * This ensures multi-server priority is respected: fields from higher-priority
+ * servers are never overwritten by lower-priority servers.
  */
 
 import {
@@ -22,6 +25,8 @@ import {
 import { TVShowRepository } from '../../infrastructure'
 import { SeasonSyncService } from './SeasonSyncService'
 import { EpisodeSyncService } from './EpisodeSyncService'
+import { isCurrentServerHighestPriorityForField, createFullUrl } from '@src/utils/sync/utils'
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
 export class TVShowSyncService {
   constructor(
@@ -44,9 +49,14 @@ export class TVShowSyncService {
     syncEventBus.emitStarted(showTitle, MediaType.TVShow, context.serverConfig.id)
 
     try {
-      // 1. Upsert the show-level document (one write per show — low volume)
+      // 1. Read existing doc for merge
+      const existing = await this.tvShowRepository.findByOriginalTitle(showTitle)
+
+      // 2. Build merged entity with priority checking (async — may fetch metadata)
       const showFileData = context.fileServerData?.tv?.[showTitle]
-      const showEntity = this.buildTVShowEntity(showTitle, showFileData, context)
+      const showEntity = await this.buildTVShowEntity(showTitle, showFileData, context, existing)
+
+      // 3. Atomic replace
       await this.tvShowRepository.upsert(showEntity)
 
       allResults.push(this.makeResult(
@@ -54,10 +64,10 @@ export class TVShowSyncService {
         SyncStatus.Completed, [`Upserted TV show "${showTitle}"`], []
       ))
 
-      // 2. Bulk-upsert all seasons (one bulkWrite per show)
+      // 4. Bulk-upsert all seasons (one bulkWrite per show)
       allResults.push(...await this.seasonSyncService.syncShow(showTitle, context))
 
-      // 3. Bulk-upsert all episodes (one bulkWrite per season)
+      // 5. Bulk-upsert all episodes (one bulkWrite per season)
       allResults.push(...await this.episodeSyncService.syncShow(showTitle, context))
 
       syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
@@ -116,28 +126,166 @@ export class TVShowSyncService {
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  private buildTVShowEntity(
+  /**
+   * Build a TV show entity by merging existing data with incoming file-server
+   * data, respecting per-field server priority.
+   *
+   * - If the document already exists, start from it (preserving all fields).
+   * - For each field group (metadata, poster, backdrop, logo), only overwrite
+   *   if the current server has highest priority for that field.
+   * - Structural fields (type, createdAt) are healed if missing.
+   */
+  private async buildTVShowEntity(
     showTitle: string,
     fileData: any,
-    context: SyncContext
-  ): TVShowEntity {
-    const entity: TVShowEntity = {
-      title: fileData?.title || showTitle,
-      originalTitle: fileData?.originalTitle || showTitle,
-      lastSynced: new Date()
+    context: SyncContext,
+    existing: TVShowEntity | null
+  ): Promise<TVShowEntity> {
+    const now = new Date()
+
+    // Start from existing doc (preserving ALL fields) or create new
+    const entity: TVShowEntity = existing
+      ? { ...existing, lastSynced: now }
+      : {
+          title: showTitle,
+          originalTitle: showTitle,
+          type: 'tvShow',
+          createdAt: now,
+          lastSynced: now,
+          titleSource: context.serverConfig.id,
+          originalTitleSource: context.serverConfig.id,
+        }
+
+    // Heal structural fields that must always be present
+    if (!entity.type) entity.type = 'tvShow'
+    if (!entity.createdAt) entity.createdAt = now
+    if (!entity.originalTitle) entity.originalTitle = showTitle
+
+    if (!fileData) return entity
+
+    // --- Metadata (priority-gated) ---
+    const canUpdateMetadata = isCurrentServerHighestPriorityForField(
+      context.fieldAvailability, 'tv', showTitle, 'metadata', context.serverConfig
+    )
+
+    if (canUpdateMetadata && fileData.metadata) {
+      // fileData.metadata is a URL path to the metadata JSON — fetch actual data
+      let showMetadata: any = null
+
+      if (typeof fileData.metadata === 'string') {
+        // URL path — fetch real metadata from the file server
+        try {
+          showMetadata = await fetchMetadataMultiServer(
+            context.serverConfig.id,
+            fileData.metadata,
+            'file',
+            'tv',
+            showTitle
+          )
+        } catch {
+          // Fetch failed — preserve existing metadata
+        }
+      } else if (typeof fileData.metadata === 'object') {
+        // Already inline (rare, but handle gracefully)
+        showMetadata = fileData.metadata
+      }
+
+      if (showMetadata && typeof showMetadata === 'object' && !showMetadata.error) {
+        entity.metadata = showMetadata
+        entity.metadataSource = context.serverConfig.id
+
+        // Extract queryable fields from metadata (matching legacy document shape)
+        if (showMetadata.name) entity.title = showMetadata.name
+        if (showMetadata.first_air_date) entity.firstAirDate = new Date(showMetadata.first_air_date)
+        if (showMetadata.last_air_date) entity.lastAirDate = new Date(showMetadata.last_air_date)
+        if (showMetadata.status) entity.status = showMetadata.status
+        if (showMetadata.number_of_seasons != null) entity.numberOfSeasons = showMetadata.number_of_seasons
+        if (showMetadata.vote_average != null) entity.rating = showMetadata.vote_average
+        if (showMetadata.overview) entity.overview = showMetadata.overview
+        if (showMetadata.genres) entity.genres = showMetadata.genres
+        if (showMetadata.networks) entity.networks = showMetadata.networks
+      }
     }
 
-    if (fileData?.posterURL || fileData?.poster) entity.posterURL = fileData.posterURL || fileData.poster
-    if (fileData?.backdropURL || fileData?.backdrop) entity.backdropURL = fileData.backdropURL || fileData.backdrop
-    if (fileData?.logoURL || fileData?.logo) entity.logoURL = fileData.logoURL || fileData.logo
-    if (typeof fileData?.seasonCount === 'number') {
+    // --- Poster (priority-gated) ---
+    const canUpdatePoster = isCurrentServerHighestPriorityForField(
+      context.fieldAvailability, 'tv', showTitle, 'poster', context.serverConfig
+    )
+    if (canUpdatePoster && (fileData.posterURL || fileData.poster)) {
+      entity.posterURL = createFullUrl(fileData.posterURL || fileData.poster, context.serverConfig)
+      entity.posterSource = context.serverConfig.id
+    }
+
+    // --- Backdrop (priority-gated) ---
+    const canUpdateBackdrop = isCurrentServerHighestPriorityForField(
+      context.fieldAvailability, 'tv', showTitle, 'backdrop', context.serverConfig
+    )
+    if (canUpdateBackdrop && (fileData.backdropURL || fileData.backdrop)) {
+      entity.backdrop = createFullUrl(fileData.backdropURL || fileData.backdrop, context.serverConfig)
+      entity.backdropSource = context.serverConfig.id
+    }
+
+    // --- Logo (priority-gated) ---
+    const canUpdateLogo = isCurrentServerHighestPriorityForField(
+      context.fieldAvailability, 'tv', showTitle, 'logo', context.serverConfig
+    )
+    if (canUpdateLogo && (fileData.logoURL || fileData.logo)) {
+      entity.logo = createFullUrl(fileData.logoURL || fileData.logo, context.serverConfig)
+      entity.logoSource = context.serverConfig.id
+    }
+
+    // --- Poster Blurhash (priority-gated, fetch actual blurhash string) ---
+    const canUpdatePosterBlurhash = isCurrentServerHighestPriorityForField(
+      context.fieldAvailability, 'tv', showTitle, 'posterBlurhash', context.serverConfig
+    )
+    if (canUpdatePosterBlurhash && fileData.posterBlurhash) {
+      try {
+        const blurhashUrl = createFullUrl(fileData.posterBlurhash, context.serverConfig)
+        const blurhash = await fetchMetadataMultiServer(
+          context.serverConfig.id,
+          blurhashUrl,
+          'blurhash',
+          'tv',
+          showTitle
+        )
+        if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
+          entity.posterBlurhash = blurhash
+          entity.posterBlurhashSource = context.serverConfig.id
+        }
+      } catch {
+        // Blurhash fetch failed — preserve existing value from spread
+      }
+    }
+
+    // --- Backdrop Blurhash (priority-gated, fetch actual blurhash string) ---
+    const canUpdateBackdropBlurhash = isCurrentServerHighestPriorityForField(
+      context.fieldAvailability, 'tv', showTitle, 'backdropBlurhash', context.serverConfig
+    )
+    if (canUpdateBackdropBlurhash && fileData.backdropBlurhash) {
+      try {
+        const blurhashUrl = createFullUrl(fileData.backdropBlurhash, context.serverConfig)
+        const blurhash = await fetchMetadataMultiServer(
+          context.serverConfig.id,
+          blurhashUrl,
+          'blurhash',
+          'tv',
+          showTitle
+        )
+        if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
+          entity.backdropBlurhash = blurhash
+          entity.backdropBlurhashSource = context.serverConfig.id
+        }
+      } catch {
+        // Blurhash fetch failed — preserve existing value from spread
+      }
+    }
+
+    // Season count (computed, no priority gate)
+    if (typeof fileData.seasonCount === 'number') {
       entity.seasonCount = fileData.seasonCount
-    } else if (fileData?.seasons && typeof fileData.seasons === 'object') {
+    } else if (fileData.seasons && typeof fileData.seasons === 'object') {
       entity.seasonCount = Object.keys(fileData.seasons).length
     }
-    if (fileData?.posterBlurhash) entity.posterBlurhash = fileData.posterBlurhash
-    if (fileData?.backdropBlurhash) entity.backdropBlurhash = fileData.backdropBlurhash
-    if (fileData?.metadata && typeof fileData.metadata === 'object') entity.metadata = fileData.metadata
 
     return entity
   }

@@ -1,8 +1,12 @@
 /**
- * Episode sync service — bulk-write pattern only.
+ * Episode sync service — bulk-write pattern with read-merge-replace.
  *
- * All episodes for a season are accumulated into an array then flushed with
- * a single EpisodeRepository.bulkUpsertSeason(episodes[]) call.
+ * Write pattern:
+ *  1. Pre-fetch all existing episodes for the season (one query).
+ *  2. Pre-fetch the parent TV show + season for showId/seasonId foreign keys.
+ *  3. For each episode in file-server data, merge onto existing doc with priority.
+ *  4. Flush all episodes with a single EpisodeRepository.bulkUpsertSeason() call.
+ *
  * repository.upsert() is NEVER called inside an episode loop.
  */
 
@@ -16,20 +20,25 @@ import {
   syncEventBus
 } from '../../core'
 
-import { EpisodeRepository, SeasonRepository } from '../../infrastructure'
+import { EpisodeRepository, SeasonRepository, TVShowRepository } from '../../infrastructure'
+import { isCurrentServerHighestPriorityForField, createFullUrl, processCaptionURLs } from '@src/utils/sync/utils'
+import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 
 export class EpisodeSyncService {
   constructor(
     private readonly episodeRepository: EpisodeRepository,
-    private readonly seasonRepository: SeasonRepository
+    private readonly seasonRepository: SeasonRepository,
+    private readonly tvShowRepository: TVShowRepository
   ) {}
 
   /**
    * Sync all episodes for one season via a single bulkUpsertSeason call.
    *
    * Pattern:
-   *  1. Accumulate EpisodeEntity[] from fileServerData.
-   *  2. episodeRepository.bulkUpsertSeason(entities) once — never per-episode upserts.
+   *  1. Pre-fetch existing episodes + parent show/season for foreign keys.
+   *  2. Build merged EpisodeEntity[] from file-server data + existing docs.
+   *  3. episodeRepository.bulkUpsertSeason(entities) once — never per-episode upserts.
    */
   async syncSeason(
     showTitle: string,
@@ -51,7 +60,25 @@ export class EpisodeSyncService {
         return results
       }
 
-      // ---- Accumulate — do NOT write one by one ----
+      // Pre-fetch parent show first to resolve display title and foreign keys
+      const parentShow = await this.tvShowRepository.findByOriginalTitle(showTitle)
+      const showId = (parentShow as any)?._id || null
+      // Use the display title for showTitle on episodes (matches legacy document shape)
+      const displayTitle = parentShow?.title || showTitle
+
+      // Find existing episodes and parent season using display title
+      const [existingEpisodes, parentSeason] = await Promise.all([
+        this.episodeRepository.findByShowAndSeason(displayTitle, seasonNumber),
+        this.seasonRepository.findSeason(displayTitle, seasonNumber)
+      ])
+
+      const existingByNumber = new Map(
+        existingEpisodes.map(e => [e.episodeNumber, e])
+      )
+
+      const seasonId = (parentSeason as any)?._id || null
+
+      // ---- Accumulate merged entities — do NOT write one by one ----
       const episodeEntities: EpisodeEntity[] = []
 
       for (const [key, fileData] of Object.entries(seasonFileData.episodes || {})) {
@@ -63,8 +90,10 @@ export class EpisodeSyncService {
           ))
           continue
         }
+
+        const existing = existingByNumber.get(epNum) || null
         episodeEntities.push(
-          this.buildEpisodeEntity(showTitle, seasonNumber, epNum, fileData, context)
+          await this.buildEpisodeEntity(showTitle, displayTitle, seasonNumber, epNum, fileData, context, existing, showId, seasonId, parentShow, seasonFileData, key)
         )
       }
 
@@ -138,44 +167,224 @@ export class EpisodeSyncService {
     return null
   }
 
-  private buildEpisodeEntity(
-    showTitle: string,
+  /**
+   * Build an episode entity by merging existing data with incoming file-server
+   * data, respecting per-field server priority.
+   *
+   * Key differences from naive field copy:
+   *  - fileData.metadata is a URL path, not inline data — must be fetched via
+   *    fetchMetadataMultiServer. Fallback: parent show's metadata.seasons[].episodes[].
+   *  - fileData.thumbnailBlurhash is a URL path to a blurhash file, not the actual
+   *    blurhash string. Existing values are preserved from the spread; BlurhashStrategy
+   *    handles fetching actual values.
+   */
+  private async buildEpisodeEntity(
+    showOriginalTitle: string,
+    displayTitle: string,
     seasonNumber: number,
     episodeNumber: number,
     fileData: any,
-    context: SyncContext
-  ): EpisodeEntity {
+    context: SyncContext,
+    existing: EpisodeEntity | null,
+    showId: any,
+    seasonId: any,
+    parentShow: any,
+    seasonFileData?: any,
+    episodeFileName?: string
+  ): Promise<EpisodeEntity> {
     const now = new Date()
-    const entity: EpisodeEntity = {
-      title: fileData?.title || `Episode ${episodeNumber}`,
-      originalTitle: fileData?.originalTitle || `Episode ${episodeNumber}`,
-      lastSynced: now,
-      episodeNumber,
-      seasonNumber,
-      showTitle
+
+    // Start from existing doc (preserving ALL fields) or create new
+    const entity: EpisodeEntity = existing
+      ? { ...existing, lastSynced: now }
+      : {
+          title: fileData?.title || `Episode ${episodeNumber}`,
+          originalTitle: showOriginalTitle,  // Show's filesystem key (matches legacy)
+          type: 'episode',
+          createdAt: now,
+          lastSynced: now,
+          episodeNumber,
+          seasonNumber,
+          showTitle: displayTitle,
+        }
+
+    // Heal structural fields
+    if (!entity.type) entity.type = 'episode'
+    if (!entity.createdAt) entity.createdAt = now
+    if (showId) entity.showId = showId
+    if (seasonId) entity.seasonId = seasonId
+    // Use display title as showTitle (matches legacy document shape)
+    entity.showTitle = displayTitle
+
+    // --- Video URL (priority-gated, use originalTitle for field availability lookup) ---
+    const canUpdateVideo = isCurrentServerHighestPriorityForField(
+      context.fieldAvailability, 'tv', showOriginalTitle, 'videoURL', context.serverConfig
+    )
+    if (canUpdateVideo && fileData?.videoURL) {
+      entity.videoURL = createFullUrl(fileData.videoURL, context.serverConfig)
+      entity.videoSource = context.serverConfig.id
+      entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
     }
 
-    if (fileData?.videoURL) {
-      entity.videoURL = fileData.videoURL
-      entity.videoSource = context.serverConfig.id
-    }
-    if (fileData?.thumbnail || fileData?.thumbnailURL) {
-      entity.thumbnailURL = fileData.thumbnail || fileData.thumbnailURL
-    }
-    if (Array.isArray(fileData?.captions) && fileData.captions.length > 0) {
-      entity.captions = fileData.captions
-    }
-    if (Array.isArray(fileData?.chapters) && fileData.chapters.length > 0) {
-      entity.chapters = fileData.chapters
-    }
-    if (fileData?.videoInfo && typeof fileData.videoInfo === 'object') {
+    // --- Video info (follows video priority) ---
+    if (canUpdateVideo && fileData?.videoInfo && typeof fileData.videoInfo === 'object') {
       entity.videoInfo = fileData.videoInfo
+      entity.videoInfoSource = context.serverConfig.id
     }
+
+    // --- Top-level video info fields (flat, matching legacy document shape) ---
+    // Legacy extracts these from season-level and episode-level file server data
+    // and stores videoInfoSource alongside them
+    if (canUpdateVideo) {
+      let hasVideoInfoFields = false
+
+      // Duration from season-level lengths map (e.g., seasonFileData.lengths["S01E01"])
+      if (seasonFileData?.lengths && episodeFileName && seasonFileData.lengths[episodeFileName] != null) {
+        entity.duration = seasonFileData.lengths[episodeFileName]
+        hasVideoInfoFields = true
+      }
+      // Dimensions from season-level dimensions map
+      if (seasonFileData?.dimensions && episodeFileName && seasonFileData.dimensions[episodeFileName]) {
+        entity.dimensions = seasonFileData.dimensions[episodeFileName]
+        hasVideoInfoFields = true
+      }
+      // HDR, size, mediaQuality, mediaLastModified from episode-level file data
+      if (fileData?.hdr !== undefined && fileData.hdr !== null) {
+        entity.hdr = fileData.hdr
+        hasVideoInfoFields = true
+      }
+      if (fileData?.size != null) {
+        entity.size = fileData.size
+        hasVideoInfoFields = true
+      } else if (fileData?.additionalMetadata?.size?.kb != null) {
+        entity.size = fileData.additionalMetadata.size.kb
+        hasVideoInfoFields = true
+      }
+      if (fileData?.mediaQuality) {
+        entity.mediaQuality = fileData.mediaQuality
+        hasVideoInfoFields = true
+      }
+      if (fileData?.mediaLastModified) {
+        entity.mediaLastModified = new Date(fileData.mediaLastModified)
+        hasVideoInfoFields = true
+      }
+
+      // Set videoInfoSource when any top-level video info field was extracted
+      if (hasVideoInfoFields) {
+        entity.videoInfoSource = context.serverConfig.id
+      }
+    }
+
+    // --- Thumbnail (priority-gated) ---
+    const canUpdateThumbnail = isCurrentServerHighestPriorityForField(
+      context.fieldAvailability, 'tv', showOriginalTitle, 'thumbnail', context.serverConfig
+    )
+    if (canUpdateThumbnail && (fileData?.thumbnail || fileData?.thumbnailURL)) {
+      entity.thumbnail = createFullUrl(
+        fileData.thumbnail || fileData.thumbnailURL,
+        context.serverConfig
+      )
+      entity.thumbnailSource = context.serverConfig.id
+    }
+
+    // --- Captions (priority-gated) ---
+    // Legacy field: captionURLs (object keyed by language), NOT captions (array)
+    // File server data key: "subtitles" (not "captions")
+    if (fileData?.subtitles && typeof fileData.subtitles === 'object') {
+      const processed = processCaptionURLs(fileData.subtitles, context.serverConfig)
+      if (processed && Object.keys(processed).length > 0) {
+        // Merge with existing captionURLs (preserve captions from other servers)
+        const merged = { ...(existing?.captionURLs || {}), ...processed }
+        entity.captionURLs = merged
+        entity.captionSource = context.serverConfig.id
+      }
+    }
+
+    // --- Chapters (priority-gated) ---
+    // Legacy stores chapterURL as a single URL string (not an array)
+    const canUpdateChapters = isCurrentServerHighestPriorityForField(
+      context.fieldAvailability, 'tv', showOriginalTitle, 'chapters', context.serverConfig
+    )
+    if (canUpdateChapters && fileData?.chapters) {
+      entity.chapterURL = createFullUrl(fileData.chapters, context.serverConfig)
+      entity.chapterSource = context.serverConfig.id
+    }
+
+    // --- Metadata (priority-gated) ---
+    const canUpdateMetadata = isCurrentServerHighestPriorityForField(
+      context.fieldAvailability, 'tv', showOriginalTitle, 'metadata', context.serverConfig
+    )
+    if (canUpdateMetadata && fileData?.metadata) {
+      // fileData.metadata is typically a URL path — fetch actual metadata from file server
+      let episodeMetadata: any = null
+
+      if (typeof fileData.metadata === 'string') {
+        try {
+          episodeMetadata = await fetchMetadataMultiServer(
+            context.serverConfig.id,
+            fileData.metadata,
+            'file',
+            'tv',
+            showOriginalTitle
+          )
+        } catch {
+          // Fetch failed — try fallback below
+        }
+      } else if (typeof fileData.metadata === 'object') {
+        episodeMetadata = fileData.metadata
+      }
+
+      // Fallback: parent show's metadata.seasons[].episodes[] array
+      if (!episodeMetadata || episodeMetadata.error) {
+        const seasonMeta = parentShow?.metadata?.seasons?.find(
+          (s: any) => s.season_number === seasonNumber
+        )
+        if (seasonMeta?.episodes) {
+          episodeMetadata = seasonMeta.episodes.find(
+            (e: any) => e.episode_number === episodeNumber
+          )
+        }
+      }
+
+      if (episodeMetadata && typeof episodeMetadata === 'object' && !episodeMetadata.error) {
+        entity.metadata = episodeMetadata
+        entity.metadataSource = context.serverConfig.id
+
+        // Extract title from metadata if available
+        if (episodeMetadata.name) entity.title = episodeMetadata.name
+      }
+    }
+
+    // --- Thumbnail Blurhash (priority-gated, fetch actual string) ---
+    // Legacy pattern: fetchMetadataMultiServer(id, url, 'blurhash', 'tv', originalTitle)
     if (fileData?.thumbnailBlurhash) {
-      entity.thumbnailBlurhash = fileData.thumbnailBlurhash
-    }
-    if (fileData?.metadata && typeof fileData.metadata === 'object') {
-      entity.metadata = fileData.metadata
+      // Build the field path matching legacy: "seasons.Season N.episodes.FILENAME.thumbnailBlurhash"
+      const seasonKey = Object.keys(
+        context.fileServerData?.tv?.[showOriginalTitle]?.seasons || {}
+      ).find(k => this.parseSeasonNumber(k) === seasonNumber) || String(seasonNumber)
+      const blurhashFieldPath = `seasons.${seasonKey}.thumbnailBlurhash`
+
+      const canUpdateBlurhash = isCurrentServerHighestPriorityForField(
+        context.fieldAvailability, 'tv', showOriginalTitle, blurhashFieldPath, context.serverConfig
+      )
+      if (canUpdateBlurhash) {
+        try {
+          const blurhashUrl = createFullUrl(fileData.thumbnailBlurhash, context.serverConfig)
+          const blurhash = await fetchMetadataMultiServer(
+            context.serverConfig.id,
+            blurhashUrl,
+            'blurhash',
+            'tv',
+            showOriginalTitle
+          )
+          if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
+            entity.thumbnailBlurhash = blurhash
+            entity.thumbnailBlurhashSource = context.serverConfig.id
+          }
+        } catch {
+          // Blurhash fetch failed — preserve existing value from spread
+        }
+      }
     }
 
     return entity

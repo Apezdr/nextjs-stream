@@ -1,6 +1,6 @@
 /**
  * TV show asset sync strategy
- * Handles synchronization of TV show assets: posterURL, backdropURL, logoURL
+ * Handles synchronization of TV show assets: posterURL, backdrop, logo
  * Modeled after MovieAssetStrategy with TV-specific field paths and entity structure
  */
 
@@ -74,8 +74,8 @@ export class TVShowAssetStrategy implements SyncStrategy {
         // Source tracking for updated asset fields
         Object.keys(assetUpdates).forEach(field => {
           if (field === 'posterURL') (showToSave as any).posterSource = context.serverConfig.id
-          else if (field === 'backdropURL') (showToSave as any).backdropSource = context.serverConfig.id
-          else if (field === 'logoURL') (showToSave as any).logoSource = context.serverConfig.id
+          else if (field === 'backdrop') (showToSave as any).backdropSource = context.serverConfig.id
+          else if (field === 'logo') (showToSave as any).logoSource = context.serverConfig.id
         })
 
         await this.repository.upsert(showToSave)
@@ -108,13 +108,13 @@ export class TVShowAssetStrategy implements SyncStrategy {
   /**
    * Sync all asset types for a TV show using originalTitle (filesystem key)
    * TV show data is at fileServerData.tv[originalTitle]
-   * TVShowEntity uses posterURL, backdropURL, logoURL (all with URL suffix, unlike movies)
+   * TVShowEntity uses posterURL, backdrop, logo (matching legacy field names)
    */
   private async syncAssets(
     originalTitle: string,
     context: SyncContext,
     currentShow: TVShowEntity
-  ): Promise<{ posterURL?: string; backdropURL?: string; logoURL?: string }> {
+  ): Promise<{ posterURL?: string; backdrop?: string; logo?: string }> {
     const updates: any = {}
 
     // TV show data lives under fileServerData.tv[originalTitle]
@@ -124,12 +124,12 @@ export class TVShowAssetStrategy implements SyncStrategy {
       return updates
     }
 
-    // TV show asset types — all fields end with URL (unlike movies where backdrop/logo omit URL)
+    // TV show asset types — posterURL keeps URL suffix, backdrop/logo match legacy field names
     // Field paths in fieldAvailability for TV shows follow the legacy 'poster', 'backdrop', 'logo' keys
     const assetTypes = [
-      { type: 'poster',   urlField: 'posterURL',   fileServerKey: 'poster',   fieldAvailKey: 'poster' },
-      { type: 'backdrop', urlField: 'backdropURL',  fileServerKey: 'backdrop', fieldAvailKey: 'backdrop' },
-      { type: 'logo',     urlField: 'logoURL',      fileServerKey: 'logo',     fieldAvailKey: 'logo' }
+      { type: 'poster',   urlField: 'posterURL',  fileServerKey: 'poster',   fieldAvailKey: 'poster' },
+      { type: 'backdrop', urlField: 'backdrop',   fileServerKey: 'backdrop', fieldAvailKey: 'backdrop' },
+      { type: 'logo',     urlField: 'logo',       fileServerKey: 'logo',     fieldAvailKey: 'logo' }
     ]
 
     for (const { type, urlField, fileServerKey, fieldAvailKey } of assetTypes) {

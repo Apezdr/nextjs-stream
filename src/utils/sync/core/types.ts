@@ -210,34 +210,85 @@ export interface MovieEntity extends BaseMediaEntity {
 }
 
 export interface EpisodeEntity extends BaseMediaEntity {
+  // Legacy structural fields
+  type?: string           // 'episode'
+  createdAt?: Date
+  showId?: any            // ObjectId reference to parent TV show
+  seasonId?: any          // ObjectId reference to parent season
+
   episodeNumber: number
   seasonNumber: number
   showTitle: string
   videoURL?: string
   videoSource?: string
-  thumbnailURL?: string
-  captions?: CaptionTrack[]
-  chapters?: ChapterMarker[]
+  normalizedVideoId?: string
+  thumbnail?: string   // NOT thumbnailURL - legacy field name
+  thumbnailSource?: string
+  captionURLs?: Record<string, {   // NOT captions - legacy field name (object keyed by language)
+    srcLang: string
+    url: string
+    lastModified?: string
+    sourceServerId?: string
+  }>
+  chapterURL?: string              // NOT chapters - legacy stores URL string
+  chapterSource?: string
   videoInfo?: VideoInfo
   thumbnailBlurhash?: string
+  thumbnailBlurhashSource?: string
+
+  // Top-level video info fields (extracted flat, matching legacy document shape)
+  duration?: number
+  dimensions?: string
+  hdr?: string
+  size?: number
+  mediaQuality?: MediaQuality
+  mediaLastModified?: Date
 }
 
 export interface SeasonEntity extends BaseMediaEntity {
+  // Legacy structural fields
+  type?: string           // 'season'
+  createdAt?: Date
+  showId?: any            // ObjectId reference to parent TV show
+
   seasonNumber: number
   showTitle: string
   posterURL?: string
   episodeCount?: number
   posterBlurhash?: string
+  posterBlurhashSource?: string
+
+  // Extracted metadata fields (for easier querying, matching legacy)
+  airDate?: Date
+  overview?: string
+  posterPath?: string
+  rating?: number
 }
 
 export interface TVShowEntity extends BaseMediaEntity {
+  // Legacy structural fields
+  type?: string           // 'tvShow'
+  createdAt?: Date
+
   posterURL?: string
-  backdropURL?: string
-  logoURL?: string
+  backdrop?: string   // NOT backdropURL - legacy field name
+  logo?: string       // NOT logoURL - legacy field name
   seasonCount?: number
   totalEpisodeCount?: number
   posterBlurhash?: string
+  posterBlurhashSource?: string
   backdropBlurhash?: string
+  backdropBlurhashSource?: string
+
+  // Extracted metadata fields (for easier querying, matching legacy)
+  firstAirDate?: Date
+  lastAirDate?: Date
+  status?: string
+  numberOfSeasons?: number
+  rating?: number
+  overview?: string
+  genres?: any[]
+  networks?: any[]
 }
 
 // ==========================================

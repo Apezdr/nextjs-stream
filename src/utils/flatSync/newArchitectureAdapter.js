@@ -9,10 +9,6 @@ import { createLogger, logError } from '@src/lib/logger'
 import { buildEnhancedFlatDBStructure } from './memoryUtils'
 import clientPromise from '@src/lib/mongodb'
 import { performance } from 'perf_hooks'
-// Import legacy TV sync functions for hybrid architecture
-import { syncTVShows } from './tvShows/index'
-import { syncSeasons } from './seasons/index'
-import { syncEpisodes } from './episodes/index'
 // Import notification system
 import { MediaNotificationOrchestrator } from '../notifications/MediaNotificationOrchestrator'
 // Import post-sync operations
@@ -36,10 +32,12 @@ export async function syncWithNewArchitecture(
 ) {
   const log = createLogger('FlatSync.NewArch');
   
-  log.info({ 
+  log.info({
     serverId: serverConfig.id,
     architecture: 'new',
-    options 
+    forceSync: options.forceSync,
+    skipInitialization: options.skipInitialization,
+    hasPreBuiltFlatDB: !!options.preBuiltFlatDB,
   }, 'Starting NEW architecture sync');
 
   // Validate server configuration before proceeding
@@ -153,7 +151,7 @@ export async function syncWithNewArchitecture(
           // Let SyncManager use ResourceManager defaults unless explicitly overridden
           concurrency: options.concurrency || undefined,
           fileServerData: fileServer, // Pass file server data to sync manager
-          movieCache: flatDB.movies, // 🚀 OPTIMIZATION: Pass pre-fetched movie cache
+          movieCache: flatDB.lookups?.movies?.byOriginalTitle, // 🚀 OPTIMIZATION: Map<originalTitle, movie>
         }
       )
 
@@ -168,10 +166,8 @@ export async function syncWithNewArchitecture(
       }, 'Movie processing completed');
     }
 
-    // HYBRID MODE: Use legacy sync for TV content until new architecture supports it
-    // This ensures TV shows like "What If...?" are not skipped
-    await syncTVContentWithLegacyArchitecture(
-      flatDB,
+    // NEW ARCHITECTURE: Delegate TV content to domain services via SyncManager
+    await syncTVContentWithNewArchitecture(
       fileServer,
       serverConfig,
       fieldAvailability,
@@ -261,101 +257,128 @@ export async function syncWithNewArchitecture(
 }
 
 /**
- * Sync TV content using legacy sync architecture (temporary until new architecture supports it)
- * @param {Object} flatDB - Enhanced flat database structure
+ * Sync TV content using new domain-driven architecture via SyncManager.
+ * Delegates to TVShowSyncService → SeasonSyncService → EpisodeSyncService,
+ * which perform bulk writes with {ordered:false} and emit syncEventBus events.
+ *
+ * @param {Object} flatDB - Enhanced flat database structure (unused here, kept for signature parity)
  * @param {Object} fileServer - File server data
  * @param {Object} serverConfig - Server configuration
  * @param {Object} fieldAvailability - Field availability mapping
  * @param {Object} results - Results object to populate
  * @returns {Promise<void>}
  */
-async function syncTVContentWithLegacyArchitecture(
-  flatDB,
+async function syncTVContentWithNewArchitecture(
   fileServer,
   serverConfig,
   fieldAvailability,
   results
 ) {
-  const log = createLogger('FlatSync.NewArch.TV');
-  
-  log.info({ 
+  const log = createLogger('FlatSync.NewArch.TV')
+
+  if (!fileServer?.tv) {
+    log.info({ serverId: serverConfig.id }, 'No TV content in fileServer, skipping TV sync')
+    return
+  }
+
+  const showTitles = Object.keys(fileServer.tv)
+  if (showTitles.length === 0) {
+    log.info({ serverId: serverConfig.id }, 'No TV show titles found, skipping TV sync')
+    return
+  }
+
+  log.info({
     serverId: serverConfig.id,
-    architecture: 'legacy_hybrid'
-  }, 'Syncing TV content with LEGACY architecture (hybrid mode)');
+    tvShowCount: showTitles.length,
+    architecture: 'new'
+  }, 'Starting TV sync with new domain architecture')
+
   const tvStartTime = performance.now()
 
+  // Build server config in the shape the new architecture expects
+  // (same transformation already used for movies in this adapter)
+  const adaptedServerConfig = {
+    id: serverConfig.id,
+    priority: serverConfig.priority,
+    baseUrl: serverConfig.baseURL,
+    nodeUrl: serverConfig.internalEndpoint || serverConfig.syncEndpoint,
+    prefix: serverConfig.prefixPath,
+    enabled: true,
+    timeout: 30000,
+  }
+
   try {
-    // Log TV shows that will be processed
-    if (fileServer?.tv) {
-      const tvShowTitles = Object.keys(fileServer.tv)
-      const tvStats = {
-        serverId: serverConfig.id,
-        tvShowCount: tvShowTitles.length
-      };
+    const batchResult = await syncManager.syncTVShows(
+      showTitles,
+      adaptedServerConfig,
+      fieldAvailability,
+      { fileServerData: fileServer, concurrency: 3 }
+    )
 
-      // Check for "What If...?" specifically
-      const whatIfShow = tvShowTitles.find((title) => title.toLowerCase().includes('what if'))
-      if (whatIfShow) {
-        tvStats.whatIfShow = whatIfShow;
-        log.info(tvStats, 'Found TV shows to process');
-      } else {
-        log.info(tvStats, 'Found TV shows to process');
-      }
-    }
+    translateTVResults(batchResult, results, serverConfig.id)
 
-    // Sync TV shows
-    log.info({ serverId: serverConfig.id, phase: 'tvShows' }, 'Starting TV show sync');
-    const tvShowResults = await syncTVShows(flatDB, fileServer, serverConfig, fieldAvailability)
-    results.tvShows = {
-      processed: tvShowResults.processed?.length || 0,
-      errors: tvShowResults.errors?.length || 0,
-      details: tvShowResults.processed || [],
-    }
-
-    // Sync seasons – use only current server config to maintain context isolation in hybrid mode
-    // This prevents server context confusion when new architecture (single-server context)
-    // transitions to legacy TV sync (multi-server capable). Each server will optimize its own content.
-    log.info({ serverId: serverConfig.id, phase: 'seasons' }, 'Starting season sync');
-    const seasonResults = await syncSeasons(flatDB, fileServer, serverConfig, fieldAvailability, [serverConfig])
-    results.seasons = {
-      processed: seasonResults.processed?.length || 0,
-      errors: seasonResults.errors?.length || 0,
-      details: seasonResults.processed || [],
-    }
-
-    // Sync episodes
-    log.info({ serverId: serverConfig.id, phase: 'episodes' }, 'Starting episode sync');
-    const episodeResults = await syncEpisodes(flatDB, fileServer, serverConfig, fieldAvailability)
-    results.episodes = {
-      processed: episodeResults.processed?.length || 0,
-      errors: episodeResults.errors?.length || 0,
-      details: episodeResults.processed || [],
-    }
-
-    const tvEndTime = performance.now()
-    const tvDurationSec = ((tvEndTime - tvStartTime) / 1000);
-
+    const tvDurationSec = ((performance.now() - tvStartTime) / 1000)
     log.info({
       serverId: serverConfig.id,
       durationSec: parseFloat(tvDurationSec.toFixed(2)),
       processed: {
         tvShows: results.tvShows.processed,
-        seasons: results.seasons.processed, 
-        episodes: results.episodes.processed
-      }
-    }, 'TV content sync completed with legacy architecture');
+        seasons: results.seasons.processed,
+        episodes: results.episodes.processed,
+      },
+      errors: results.tvShows.errors + results.seasons.errors + results.episodes.errors,
+    }, 'TV content sync completed with new architecture')
   } catch (error) {
     logError(log, error, {
       serverId: serverConfig.id,
       phase: 'tvContentSync',
-      architecture: 'legacy_hybrid'
-    });
+      architecture: 'new'
+    })
     results.errors.push({
       phase: 'tvContentSync',
       error: error.message,
       stack: error.stack,
       serverId: serverConfig.id,
     })
+  }
+}
+
+/**
+ * Translate BatchSyncResult from SyncManager.syncTVShows into the flat sync result format.
+ * Groups individual SyncResult entries by mediaType (tvshow, season, episode).
+ *
+ * @param {Object} batchResult - BatchSyncResult from SyncManager
+ * @param {Object} results - Results object to populate in place
+ * @param {string} serverId - Server ID for error attribution
+ */
+function translateTVResults(batchResult, results, serverId) {
+  const byType = { tvshow: [], season: [], episode: [] }
+
+  for (const r of batchResult.results || []) {
+    const key = r.mediaType?.toLowerCase()
+    if (Object.prototype.hasOwnProperty.call(byType, key)) {
+      byType[key].push(r)
+    }
+  }
+
+  results.tvShows = {
+    processed: byType.tvshow.filter((r) => r.status === 'completed').length,
+    errors: byType.tvshow.filter((r) => r.status === 'failed').length,
+    details: byType.tvshow,
+  }
+  results.seasons = {
+    processed: byType.season.filter((r) => r.status === 'completed').length,
+    errors: byType.season.filter((r) => r.status === 'failed').length,
+    details: byType.season,
+  }
+  results.episodes = {
+    processed: byType.episode.filter((r) => r.status === 'completed').length,
+    errors: byType.episode.filter((r) => r.status === 'failed').length,
+    details: byType.episode,
+  }
+
+  for (const err of batchResult.errors || []) {
+    results.errors.push({ phase: 'tvContentSync', error: err, serverId })
   }
 }
 

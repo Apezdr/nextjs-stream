@@ -194,8 +194,8 @@ export class EpisodeContentStrategy implements SyncStrategy {
     const thumbFieldPath = `seasons.Season ${seasonNumber}.episodes.${epFile}.thumbnail`
     if (this.hasHighestPriority(showTitle, thumbFieldPath, context)) {
       const thumbnailURL = this.extractThumbnailUrl(epData, context)
-      if (thumbnailURL && thumbnailURL !== currentEpisode?.thumbnailURL) {
-        updates.thumbnailURL = thumbnailURL
+      if (thumbnailURL && thumbnailURL !== currentEpisode?.thumbnail) {
+        updates.thumbnail = thumbnailURL
         ;(updates as any).thumbnailSource = context.serverConfig.id
         syncLogger.debug(`[EpisodeContentStrategy] thumbnailURL → ${thumbnailURL}`)
       }

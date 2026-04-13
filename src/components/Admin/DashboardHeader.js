@@ -144,6 +144,13 @@ const DashboardHeader = ({
     { refreshInterval: 5000 }
   )
 
+  // Shares the same SWR cache key as EnhancedServerProcesses
+  const { data: syncStatus } = useSWR(
+    buildURL('/api/authenticated/admin/sync-status'),
+    fetcher,
+    { refreshInterval: 3000 }
+  )
+
   const serverProcesses = Array.isArray(processesData)
     ? processesData
     : Array.isArray(processesData?.data)
@@ -155,10 +162,11 @@ const DashboardHeader = ({
 
   // Derived during render — no useState/useEffect needed
   const isLoading = !processesData
-  const activeProcessCount = serverProcesses.reduce((total, server) => {
+  const isSyncActive = syncStatus?.active === true
+  const activeProcessCount = (serverProcesses.reduce((total, server) => {
     const processes = Array.isArray(server?.processes) ? server.processes : []
     return total + processes.filter(p => p.status !== 'completed').length
-  }, 0) ?? 0
+  }, 0) ?? 0) + (isSyncActive ? 1 : 0)
 
   const systemHealth =
     lastSyncTime === "Sync hasn't been run yet" ? 'warning'

@@ -29,7 +29,7 @@ import {
   syncEventBus,
 } from '../../core'
 
-import { MovieRepository } from '../../infrastructure'
+import { MovieRepository, SeasonRepository, TVShowRepository } from '../../infrastructure'
 import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
@@ -61,13 +61,11 @@ export class BlurhashStrategy implements SyncStrategy {
     MediaType.Season,
   ]
 
-  /**
-   * The repository is typed as MovieRepository because that is the only domain
-   * wired so far. For TVShow/Season the strategy receives the entity directly
-   * and uses the context fileServerData — a typed generic repository can be
-   * introduced later.
-   */
-  constructor(private repository: MovieRepository) {}
+  constructor(
+    private repository: MovieRepository,
+    private seasonRepository?: SeasonRepository,
+    private tvShowRepository?: TVShowRepository
+  ) {}
 
   // ──────────────────────────────────────────────────────────────────────────
   // canHandle
@@ -288,11 +286,12 @@ export class BlurhashStrategy implements SyncStrategy {
       mediaCategory: 'tv',
       originalTitle,
       context,
-      onSuccess: async (_blurhash: string) => {
-        // TVShow repository not yet wired — log intent only.
-        // When TVShowRepository is available, call:
-        //   tvShowRepository.update(show.title, { posterBlurhash: blurhash, posterBlurhashSource: context.serverConfig.id })
-        console.log(`ℹ️ BlurhashStrategy: TVShow posterBlurhash computed but TVShowRepository not yet wired`)
+      onSuccess: async (blurhash: string) => {
+        if (this.tvShowRepository) {
+          await this.tvShowRepository.updateAssets(show.title, {
+            posterBlurhash: blurhash,
+          })
+        }
       },
     })
     if (posterChange) changes.push(posterChange)
@@ -306,8 +305,12 @@ export class BlurhashStrategy implements SyncStrategy {
       mediaCategory: 'tv',
       originalTitle,
       context,
-      onSuccess: async (_blurhash: string) => {
-        console.log(`ℹ️ BlurhashStrategy: TVShow backdropBlurhash computed but TVShowRepository not yet wired`)
+      onSuccess: async (blurhash: string) => {
+        if (this.tvShowRepository) {
+          await this.tvShowRepository.updateAssets(show.title, {
+            backdropBlurhash: blurhash,
+          })
+        }
       },
     })
     if (backdropChange) changes.push(backdropChange)
@@ -353,11 +356,13 @@ export class BlurhashStrategy implements SyncStrategy {
       mediaCategory: 'tv',
       originalTitle: showTitle,
       context,
-      onSuccess: async (_blurhash: string) => {
-        // SeasonRepository not yet wired — log intent only.
-        // When SeasonRepository is available, call:
-        //   seasonRepository.update(season.title, { posterBlurhash: blurhash, posterBlurhashSource: context.serverConfig.id })
-        console.log(`ℹ️ BlurhashStrategy: Season ${seasonNumber} posterBlurhash computed but SeasonRepository not yet wired`)
+      onSuccess: async (blurhash: string) => {
+        if (this.seasonRepository) {
+          await this.seasonRepository.updateBlurhash(showTitle, seasonNumber, {
+            posterBlurhash: blurhash,
+            posterBlurhashSource: context.serverConfig.id,
+          })
+        }
       },
     })
     if (posterChange) changes.push(posterChange)

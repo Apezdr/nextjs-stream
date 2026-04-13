@@ -9,7 +9,7 @@ import { BaseRepository } from './BaseRepository'
 
 export class SeasonRepository extends BaseRepository<SeasonEntity> {
   constructor(client: MongoClient) {
-    super(client, 'Seasons')
+    super(client, 'FlatSeasons')
   }
 
   /**
@@ -74,20 +74,30 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
 
     try {
       const now = new Date()
-      const operations = seasons.map(season => ({
-        replaceOne: {
-          filter: {
-            showTitle: season.showTitle,
-            seasonNumber: season.seasonNumber
-          },
-          replacement: {
-            ...season,
-            lastSynced: now,
-            updatedAt: now
-          },
-          upsert: true
+      const operations = seasons.map(season => {
+        // Strip _id so MongoDB preserves existing _id on matched docs
+        // and auto-generates for new upserted docs
+        const { _id, ...seasonWithoutId } = season as any
+
+        // Use showId + seasonNumber as filter when showId is available.
+        // This matches the legacy show_season_index {showId, seasonNumber}
+        // and avoids E11000 when showTitle changed between syncs.
+        const filter = (season as any).showId
+          ? { showId: (season as any).showId, seasonNumber: season.seasonNumber }
+          : { showTitle: season.showTitle, seasonNumber: season.seasonNumber }
+
+        return {
+          replaceOne: {
+            filter,
+            replacement: {
+              ...seasonWithoutId,
+              lastSynced: now,
+              updatedAt: now
+            },
+            upsert: true
+          }
         }
-      }))
+      })
 
       await this.collection.bulkWrite(operations, { ordered: false })
     } catch (error) {
@@ -126,6 +136,32 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
       return await this.collection.find(filter).toArray()
     } catch (error) {
       throw new DatabaseError(`Failed to find seasons missing posters: ${error}`)
+    }
+  }
+
+  /**
+   * Update season blurhash fields.
+   * Uses the composite key {showTitle, seasonNumber} — the only unique identifier for a season.
+   */
+  async updateBlurhash(
+    showTitle: string,
+    seasonNumber: number,
+    data: { posterBlurhash?: string; posterBlurhashSource?: string }
+  ): Promise<void> {
+    try {
+      const updates: Record<string, unknown> = { lastSynced: new Date(), updatedAt: new Date() }
+      if (data.posterBlurhash !== undefined) updates.posterBlurhash = data.posterBlurhash
+      if (data.posterBlurhashSource !== undefined) updates.posterBlurhashSource = data.posterBlurhashSource
+
+      await this.collection.updateOne(
+        { showTitle, seasonNumber },
+        { $set: updates }
+      )
+    } catch (error) {
+      throw new DatabaseError(
+        `Failed to update blurhash for ${showTitle} S${seasonNumber}: ${error}`,
+        showTitle
+      )
     }
   }
 

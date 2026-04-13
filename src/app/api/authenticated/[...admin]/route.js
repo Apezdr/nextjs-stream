@@ -27,6 +27,9 @@ import clientPromise from '@src/lib/mongodb'
 import { getCpuUsage, getMemoryTotal, getMemoryUsage, getMemoryUsed } from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { syncAllServers } from '@src/utils/sync'
+import { syncEventBus } from '@src/utils/sync/core/events'
+import { SyncEventType } from '@src/utils/sync/core/types'
+import { createDatabaseAdapter } from '@src/utils/sync/infrastructure'
 import { getSyncVerificationReport } from '@src/utils/sync_verification'
 import { handleQueueFetch } from '@src/utils/auth_utils'
 import { NotificationManager } from '@src/utils/notifications/NotificationManager.js'
@@ -386,6 +389,17 @@ export async function GET(request, props) {
           responseData = processes
         }
         break
+      case 'sync-status':
+        responseData = {
+          active: activeSyncOperation !== null,
+          startTime: activeSyncOperation ? startTime : null,
+          streamUrl: activeSyncOperation ? '/api/authenticated/admin/sync-stream' : null,
+          snapshot: syncSnapshot ? {
+            servers: syncSnapshot.servers,
+            totals: syncSnapshot.totals,
+          } : null,
+        }
+        break
       case 'sync-verification':
         {
           // Get query parameter for comparison with file servers
@@ -454,6 +468,75 @@ export async function GET(request, props) {
 let startTime = null
 let activeSyncOperation = null
 let syncSubscribers = []
+
+// Running snapshot of sync state — updated live via event bus subscriptions.
+// Exposed through sync-status so late-joining clients can catch up without
+// relying on event bus history (which may overflow for large syncs).
+let syncSnapshot = null
+let snapshotUnsubs = []
+
+const SNAPSHOT_SENTINELS = new Set(['__sync_complete__', '__server_complete__', '__server_start__', '__sync_warmup__'])
+
+function startSnapshotTracking() {
+  syncSnapshot = { servers: {}, totals: { processed: 0, errors: 0 } }
+
+  const handle = (event) => {
+    if (!syncSnapshot) return
+    const sid = event.serverId
+
+    if (event.entityId === '__sync_warmup__') return
+
+    if (event.entityId === '__server_start__') {
+      syncSnapshot.servers[sid] = { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, errorCount: 0, errors: [] }
+      return
+    }
+
+    if (event.entityId === '__server_complete__') {
+      const s = syncSnapshot.servers[sid] || { id: sid, processed: 0, errorCount: 0, errors: [] }
+      syncSnapshot.servers[sid] = { ...s, status: 'complete', currentEntity: null, currentOperation: null }
+      return
+    }
+
+    if (event.entityId === '__sync_complete__') {
+      syncSnapshot = null  // Sync done — clear snapshot
+      return
+    }
+
+    // Regular entity event
+    if (!syncSnapshot.servers[sid]) {
+      syncSnapshot.servers[sid] = { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, errorCount: 0, errors: [] }
+    }
+    const s = syncSnapshot.servers[sid]
+
+    if (event.type === 'started' || event.type === 'progress') {
+      s.currentEntity = event.entityId || null
+      s.currentOperation = event.operation || null
+    }
+
+    if (event.type === 'complete' && !SNAPSHOT_SENTINELS.has(event.entityId)) {
+      s.processed = (s.processed || 0) + 1
+      s.currentEntity = event.entityId || null
+      s.currentOperation = event.operation || null
+      syncSnapshot.totals.processed++
+    }
+
+    if (event.type === 'error' && event.error) {
+      s.errorCount = (s.errorCount || 0) + 1
+      s.errors = [...(s.errors || []), { entityId: event.entityId, mediaType: event.mediaType, operation: event.operation || null, error: event.error }]
+      syncSnapshot.totals.errors++
+    }
+  }
+
+  for (const type of [SyncEventType.Started, SyncEventType.Progress, SyncEventType.Complete, SyncEventType.Error]) {
+    snapshotUnsubs.push(syncEventBus.subscribe(type, handle))
+  }
+}
+
+function stopSnapshotTracking() {
+  for (const unsub of snapshotUnsubs) unsub()
+  snapshotUnsubs = []
+  syncSnapshot = null
+}
 
 /**
  * Handle system status notification webhook request
@@ -534,67 +617,50 @@ async function handleSystemStatusNotification(request, webhookId, serverId) {
  * @returns {Promise<Response>} - Response to the sync request
  */
 async function handleSyncOperation(request, webhookId) {
-  try {
-    // If there's an active sync operation, add this request to subscribers
-    if (activeSyncOperation) {
-      const result = await new Promise((resolve, reject) => {
-        syncSubscribers.push({ resolve, reject })
-      })
-      return new Response(
-        JSON.stringify({
-          success: true,
-          message: 'Sync operation completed successfully.',
-          startTime,
-          ...result,
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      )
-    }
-
-    startTime = new Date().toISOString()
-    activeSyncOperation = handleSync(webhookId, request)
-
-    try {
-      const result = await activeSyncOperation
-      
-      syncSubscribers.forEach(subscriber => {
-        subscriber.resolve(result)
-      })
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          message: 'Sync operation completed successfully.',
-          startTime,
-          ...result,
-        }),
-        {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }
-      )
-    } catch (error) {
-      syncSubscribers.forEach(subscriber => {
-        subscriber.reject(error)
-      })
-      throw error
-    } finally {
-      activeSyncOperation = null
-      syncSubscribers = []
-    }
-  } catch (error) {
-    console.error('Sync operation failed:', error)
+  // If a sync is already running, return the stream URL so the client can subscribe
+  if (activeSyncOperation) {
     return new Response(
-      JSON.stringify({ error: 'Sync operation failed', details: error.toString() }),
+      JSON.stringify({
+        alreadyRunning: true,
+        streamUrl: '/api/authenticated/admin/sync-stream',
+      }),
       {
-        status: 500,
+        status: 202,
         headers: { 'Content-Type': 'application/json' },
       }
     )
   }
+
+  startTime = new Date().toISOString()
+  startSnapshotTracking()
+
+  // Fire and forget — response is delivered via SSE stream
+  activeSyncOperation = handleSync(webhookId, request)
+  activeSyncOperation
+    .then(() => {
+      syncSubscribers.forEach((s) => s.resolve())
+    })
+    .catch((err) => {
+      console.error('Sync operation failed:', err)
+      syncSubscribers.forEach((s) => s.reject(err))
+    })
+    .finally(() => {
+      activeSyncOperation = null
+      syncSubscribers = []
+      stopSnapshotTracking()
+    })
+
+  return new Response(
+    JSON.stringify({
+      started: true,
+      startTime,
+      streamUrl: '/api/authenticated/admin/sync-stream',
+    }),
+    {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    }
+  )
 }
 
 export async function POST(request, props) {
@@ -692,6 +758,13 @@ async function handleSync(webhookId, request) {
     } else if (forceOldArchitecture) {
       console.log('🔄 Admin API: Forcing OLD sync architecture (query parameter override)');
     }
+
+    // Ensure MongoDB indexes exist before the first bulk write.
+    // createDatabaseAdapter is idempotent — it initialises the singleton adapter
+    // and calls createIndexes() on all four collections (Movies, TVShows, Seasons,
+    // Episodes) if they haven't been created yet in this process lifetime.
+    const client = await clientPromise
+    await createDatabaseAdapter(client)
 
     // Perform the actual sync with architecture options
     const result = await syncAllServers(fileServers, fieldAvailability, {

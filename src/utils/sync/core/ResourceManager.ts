@@ -47,11 +47,11 @@ export interface ResourceConfig {
 
 export function getResourceConfig(): ResourceConfig {
   return {
-    syncConcurrency: envInt('SYNC_CONCURRENCY', 3),
-    httpConcurrency: envInt('SYNC_HTTP_CONCURRENCY', 8),
-    batchDelayMs: envInt('SYNC_BATCH_DELAY_MS', 200),
-    memoryThresholdMb: envInt('SYNC_MEMORY_THRESHOLD_MB', 512),
-    dbBatchSize: envInt('SYNC_DB_BATCH_SIZE', 25),
+    syncConcurrency: envInt('SYNC_CONCURRENCY', 15),
+    httpConcurrency: envInt('SYNC_HTTP_CONCURRENCY', 20),
+    batchDelayMs: envInt('SYNC_BATCH_DELAY_MS', 0),
+    memoryThresholdMb: envInt('SYNC_MEMORY_THRESHOLD_MB', 1024),
+    dbBatchSize: envInt('SYNC_DB_BATCH_SIZE', 50),
   }
 }
 

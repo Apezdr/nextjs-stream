@@ -237,37 +237,24 @@ export class MovieContentStrategy implements SyncStrategy {
   }> {
     const updates: any = {}
 
-    console.log(`🎥 Syncing video content for: "${originalTitle}"`)
-
-    //debugger; // Debug point to investigate video content sync
-
-    // Get file server data from context (now passed through properly)
-    console.log('🔍 Context keys:', Object.keys(context))
+    syncLogger.debug(`Syncing video content for: "${originalTitle}"`)
 
     let fileServerMovieData = null
 
     // Extract the specific movie data from the file server data structure
     if (context.fileServerData?.movies?.[originalTitle]) {
       fileServerMovieData = context.fileServerData.movies[originalTitle]
-      console.log(`✅ Found file server data for "${originalTitle}"`)
+      syncLogger.debug(`Found file server data for "${originalTitle}"`)
     } else {
-      console.log(`❌ No file server data found for "${originalTitle}"`)
-      console.log(
-        '🔍 Available movies in file server:',
-        context.fileServerData?.movies
-          ? Object.keys(context.fileServerData.movies)
-          : 'No movies object'
-      )
+      syncLogger.debug(`No file server data found for "${originalTitle}"`)
     }
-
-    console.log('🔍 File server movie data for', originalTitle, ':', fileServerMovieData)
 
     // Step 1: Get video URL from file server data
     let videoUrl: string | null = null
     if (fileServerMovieData) {
       videoUrl = this.getVideoUrlFromFileServerData(originalTitle, fileServerMovieData, context)
     } else {
-      console.log('⚠️ No file server data available, falling back to file probing')
+      syncLogger.debug(`No file server data available for "${originalTitle}", falling back to file probing`)
       videoUrl = await this.findVideoFileByProbing(originalTitle, context)
     }
 
@@ -315,7 +302,7 @@ export class MovieContentStrategy implements SyncStrategy {
           fileServerMovieData
         )
       } else {
-        console.log('⚠️ No file server data for metadata, trying legacy method')
+        syncLogger.debug(`No file server data for "${originalTitle}" metadata, falling back to legacy method`)
         videoMetadata = await this.extractVideoMetadata(
           videoUrl || currentMovie.videoURL!,
           originalTitle,

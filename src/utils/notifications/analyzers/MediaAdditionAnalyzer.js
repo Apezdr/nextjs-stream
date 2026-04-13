@@ -41,14 +41,16 @@ export class MediaAdditionAnalyzer {
 
     try {
       // Analyze movie additions
-      if (includeMovies && syncResults.movies?.processed) {
-        analysis.newMovies = this.extractNewMovies(syncResults.movies.processed, cutoffTime);
+      const movieDetails = syncResults.movies?.details;
+      if (includeMovies && Array.isArray(movieDetails) && movieDetails.length > 0) {
+        analysis.newMovies = this.extractNewMovies(movieDetails, cutoffTime);
         analysis.summary.totalNewMovies = analysis.newMovies.length;
       }
 
       // Analyze episode additions
-      if (includeEpisodes && syncResults.episodes?.processed) {
-        const episodeAnalysis = this.extractNewEpisodes(syncResults.episodes.processed, cutoffTime);
+      const episodeDetails = syncResults.episodes?.details;
+      if (includeEpisodes && Array.isArray(episodeDetails) && episodeDetails.length > 0) {
+        const episodeAnalysis = this.extractNewEpisodes(episodeDetails, cutoffTime);
         analysis.newEpisodes = episodeAnalysis.episodes;
         analysis.showsWithNewEpisodes = episodeAnalysis.showsMap;
         analysis.summary.totalNewEpisodes = analysis.newEpisodes.length;
@@ -56,8 +58,9 @@ export class MediaAdditionAnalyzer {
       }
 
       // Analyze season additions (for organizational purposes)
-      if (syncResults.seasons?.processed) {
-        analysis.newSeasons = this.extractNewSeasons(syncResults.seasons.processed, cutoffTime);
+      const seasonDetails = syncResults.seasons?.details;
+      if (Array.isArray(seasonDetails) && seasonDetails.length > 0) {
+        analysis.newSeasons = this.extractNewSeasons(seasonDetails, cutoffTime);
         analysis.summary.totalNewSeasons = analysis.newSeasons.length;
       }
 
@@ -125,16 +128,6 @@ export class MediaAdditionAnalyzer {
       .forEach(episode => {
         // Store only essential identifiers and minimal fallback data
         const episodeData = {
-          // DEBUG: Log episode structure to see available fields
-          ...(console.log('DEBUG: MediaAdditionAnalyzer - episode structure:', { 
-            keys: Object.keys(episode), 
-            _id: episode._id, 
-            id: episode.id, 
-            dbId: episode.dbId,
-            showTitle: episode.showTitle,
-            seasonNumber: episode.seasonNumber,
-            episodeNumber: episode.episodeNumber
-          }) || {}),
           id: episode._id,
           showTitle: episode.showTitle, // Keep for grouping and fallback
           seasonNumber: episode.seasonNumber,

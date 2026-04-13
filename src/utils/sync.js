@@ -7,6 +7,8 @@ import {
   buildEnhancedFlatDBStructure,
   checkAvailabilityAcrossAllServers,
 } from './flatSync'
+import { syncEventBus } from './sync/core/events'
+import { MediaType, SyncOperation } from './sync/core'
 
 /**
  * Syncs missing media items that are missing from the database.
@@ -145,6 +147,9 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   // Optionally, to actually remove the unavailable videos from the database:
   //const removalResults = await removeUnavailableVideos(recordsToRemove);
 
+  // Signal to SSE subscribers that sync is starting (warming up)
+  syncEventBus.emitStarted('__sync_warmup__', MediaType.Movie, 'server-all')
+
   // Process each server sequentially to avoid overwhelming the system
   for (const [serverId, fileServer] of Object.entries(fileServers)) {
     console.info(chalk.bold.cyan(`\nProcessing server: ${serverId}`))
@@ -158,6 +163,9 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       // Initialize missing media tracking for this server
       results.missingMedia[serverId] = { movies: [], tv: [] }
       results.missingMp4[serverId] = { movies: [], tv: [] }
+
+      // Signal that this server is beginning sync
+      syncEventBus.emitStarted('__server_start__', MediaType.Movie, serverId)
 
       try {
         // Get client for database access
@@ -248,7 +256,13 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
         // Store the sync results for reference
         results.flatSyncResults = results.flatSyncResults || {}
         results.flatSyncResults[serverId] = syncResult
+
+        // Signal that this server finished successfully
+        syncEventBus.emitComplete('__server_complete__', MediaType.Movie, serverId)
       } catch (error) {
+        // Signal server completion even on failure so the UI updates
+        syncEventBus.emitComplete('__server_complete__', MediaType.Movie, serverId)
+
         console.error(chalk.red(`❌ Error identifying missing media for server ${serverId}:`))
         console.error(chalk.red(`   Error Type: ${error.constructor.name}`))
         console.error(chalk.red(`   Message: ${error.message}`))
@@ -396,5 +410,15 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   )
 
   results.duration = duration
+
+  // Signal SSE subscribers that the sync is fully complete
+  syncEventBus.emitComplete(
+    '__sync_complete__',
+    MediaType.Movie, // value doesn't matter for this sentinel; mediaType is required by the type
+    'server-all',
+    SyncOperation.Metadata,
+    { summary: results }
+  )
+
   return results
 }

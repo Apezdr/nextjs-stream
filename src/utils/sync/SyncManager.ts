@@ -3,6 +3,7 @@
  * Demonstrates how to use the new system and provides migration utilities
  */
 
+import pLimit from 'p-limit'
 import clientPromise from '@src/lib/mongodb'
 import {
   MediaType,
@@ -79,17 +80,22 @@ export class SyncManager {
           // BlurhashStrategy is post-entity: runs after the entity is saved by
           // Metadata/Asset strategies. It skips computation when the blurhash is
           // already stored and gates on isCurrentServerHighestPriorityForField.
-          new BlurhashStrategy(this.dbAdapter.movies)
+          new BlurhashStrategy(this.dbAdapter.movies, this.dbAdapter.seasons, this.dbAdapter.tvShows)
         ]
       )
       syncLogger.info('Movie sync service initialized (with BlurhashStrategy)')
 
       // Initialize TV domain services
+      // Pass TVShowRepository to season/episode services for showId/seasonId foreign keys
       const episodeSyncService = new EpisodeSyncService(
         this.dbAdapter.episodes,
-        this.dbAdapter.seasons
+        this.dbAdapter.seasons,
+        this.dbAdapter.tvShows
       )
-      const seasonSyncService = new SeasonSyncService(this.dbAdapter.seasons)
+      const seasonSyncService = new SeasonSyncService(
+        this.dbAdapter.seasons,
+        this.dbAdapter.tvShows
+      )
       this.tvShowService = new TVShowSyncService(
         this.dbAdapter.tvShows,
         seasonSyncService,
@@ -217,74 +223,41 @@ export class SyncManager {
       // Track progress
       const progressTracker = this.setupProgressTracking(movieTitles.length)
 
-      // Sync all movies with controlled concurrency
-      // Use ResourceManager config as default; explicit option overrides
+      // Sync all movies with a true concurrency pool (p-limit via ResourceManager).
+      // As each movie finishes the next one starts immediately — no artificial batch
+      // boundaries and no inter-batch sleep that compounds under memory pressure.
       const concurrency = options.concurrency || this.resourceManager.config.syncConcurrency
       const allResults: SyncResult[] = []
-      
+
       syncLogger.info(`Processing ${movieTitles.length} movies with concurrency: ${concurrency} (HTTP limit: ${this.resourceManager.config.httpConcurrency})`)
-      
-      // Process movies in concurrent batches
-      for (let i = 0; i < movieTitles.length; i += concurrency) {
-        const batch = movieTitles.slice(i, i + concurrency)
-        syncLogger.batch(`Processing batch ${Math.floor(i / concurrency) + 1}: ${batch.length} movies`)
-        
-        // Process this batch concurrently
-        const batchPromises = batch.map(async (title) => {
-          try {
-            
-            // Note: 'title' here is actually the filesystem key (originalTitle)
-            // Pass it as both title and originalTitle, let the service sort out the distinction
-            const movieResults = await this.movieService!.syncMovie(title, context, operations, title)
-            const hasFailed = movieResults.some(result => result.status === SyncStatus.Failed)
-            progressTracker.update(1, hasFailed)
-            return movieResults
-          } catch (error) {
-            syncLogger.error(`Failed to sync movie "${title}":`, error)
-            progressTracker.update(1, true) // Mark as failed
-            // Return error result
-            return [{
-              status: SyncStatus.Failed,
-              entityId: title,
-              mediaType: MediaType.Movie,
-              operation: SyncOperation.Metadata,
-              serverId: context.serverConfig.id,
-              timestamp: new Date(),
-              changes: [],
-              errors: [error instanceof Error ? error.message : String(error)]
-            }] as SyncResult[]
-          }
-        })
-        
-        // Wait for batch completion
-        const batchResults = await Promise.allSettled(batchPromises)
-        
-        // Collect results from successful operations
-        batchResults.forEach((result, index) => {
-          if (result.status === 'fulfilled') {
-            allResults.push(...result.value)
-          } else {
-            // Handle rejected promises (shouldn't happen due to try-catch above)
-            const title = batch[index]
-            allResults.push({
-              status: SyncStatus.Failed,
-              entityId: title,
-              mediaType: MediaType.Movie,
-              operation: SyncOperation.Metadata,
-              serverId: context.serverConfig.id,
-              timestamp: new Date(),
-              changes: [],
-              errors: [`Batch processing failed: ${result.reason}`]
-            })
-          }
-        })
-        
-        // Adaptive delay between batches — increases under memory pressure
-        if (i + concurrency < movieTitles.length) {
-          this.resourceManager.logStats('Batch complete')
-          await this.resourceManager.waitBetweenBatches()
-        }
-      }
+
+      const limit = pLimit(concurrency)
+
+      await Promise.all(
+        movieTitles.map(title =>
+          limit(async () => {
+            try {
+              const movieResults = await this.movieService!.syncMovie(title, context, operations, title)
+              const hasFailed = movieResults.some(r => r.status === SyncStatus.Failed)
+              progressTracker.update(1, hasFailed)
+              allResults.push(...movieResults)
+            } catch (error) {
+              syncLogger.error(`Failed to sync movie "${title}":`, error)
+              progressTracker.update(1, true)
+              allResults.push({
+                status: SyncStatus.Failed,
+                entityId: title,
+                mediaType: MediaType.Movie,
+                operation: SyncOperation.Metadata,
+                serverId: context.serverConfig.id,
+                timestamp: new Date(),
+                changes: [],
+                errors: [error instanceof Error ? error.message : String(error)]
+              })
+            }
+          })
+        )
+      )
 
       const duration = Date.now() - startTime
 
