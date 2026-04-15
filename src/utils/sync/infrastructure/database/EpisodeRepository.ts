@@ -25,20 +25,28 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         this.createIndexSafely({ showTitle: 1, seasonNumber: 1, episodeNumber: 1 }, { unique: true }),
         this.createIndexSafely({ showTitle: 1, seasonNumber: 1 }),
         this.createIndexSafely({ showTitle: 1 }),
-        
+
+        // showId-based indexes — critical for bulkUpsertSeason which filters on
+        // { showId, seasonNumber, episodeNumber } when showId is present.
+        // Without this, every upsert in the hot sync path does a collection scan,
+        // causing write lock contention and the Slow query log entries in production.
+        this.createIndexSafely({ showId: 1, seasonNumber: 1, episodeNumber: 1 }),
+        this.createIndexSafely({ showId: 1, seasonNumber: 1 }),
+        this.createIndexSafely({ showId: 1 }),
+
         // Server and sync indexes
         this.createIndexSafely({ serverId: 1 }),
         this.createIndexSafely({ showTitle: 1, serverId: 1 }),
         this.createIndexSafely({ lastSynced: 1 }),
-        
+
         // Asset availability indexes
         this.createIndexSafely({ videoURL: 1 }),
         this.createIndexSafely({ thumbnail: 1 }),
-        
+
         // Performance indexes for aggregations
         this.createIndexSafely({ showTitle: 1, lastSynced: 1 }),
         this.createIndexSafely({ seasonNumber: 1, episodeNumber: 1 }),
-        
+
         // Sparse indexes for optional fields
         this.createIndexSafely({ 'videoInfo.duration': 1 }, { sparse: true }),
         this.createIndexSafely({ 'captionURLs': 1 }, { sparse: true })

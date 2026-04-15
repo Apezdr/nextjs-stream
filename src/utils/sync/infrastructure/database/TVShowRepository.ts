@@ -21,7 +21,11 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
         // Primary lookup indexes
         this.createIndexSafely({ title: 1 }, { unique: true }),
         this.createIndexSafely({ title: 1, serverId: 1 }),
-        
+
+        // originalTitle — used by findByOriginalTitle() before every show sync
+        // and as the upsert filter key in BaseRepository.upsert()
+        this.createIndexSafely({ originalTitle: 1 }),
+
         // Performance indexes
         this.createIndexSafely({ serverId: 1 }),
         this.createIndexSafely({ lastSynced: 1 }),

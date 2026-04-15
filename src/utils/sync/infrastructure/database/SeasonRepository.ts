@@ -22,15 +22,21 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
         this.createIndexSafely({ showTitle: 1, seasonNumber: 1 }, { unique: true }),
         this.createIndexSafely({ showTitle: 1 }),
         this.createIndexSafely({ title: 1 }),
-        
+
+        // showId-based indexes — bulkUpsertShow filters on { showId, seasonNumber }
+        // when showId is present. Without this index every season upsert scans the
+        // collection, causing write lock contention (Slow query in production).
+        this.createIndexSafely({ showId: 1, seasonNumber: 1 }),
+        this.createIndexSafely({ showId: 1 }),
+
         // Performance indexes
         this.createIndexSafely({ serverId: 1 }),
         this.createIndexSafely({ lastSynced: 1 }),
         this.createIndexSafely({ showTitle: 1, lastSynced: 1 }),
-        
+
         // Asset indexes
         this.createIndexSafely({ posterURL: 1 }),
-        
+
         // Metadata indexes
         this.createIndexSafely({ episodeCount: 1 }, { sparse: true })
       ])
