@@ -1,4 +1,5 @@
 const os = require('os');
+const { execSync } = require('child_process');
 
 // Initialize previous CPU times
 let previousTotal = 0;
@@ -9,6 +10,17 @@ let cpuUsage = 0;
 let memoryUsage = 0;
 let memoryUsed = 0;
 let memoryTotal = 0;
+let diskStats = [];
+
+// System mount points that should NOT trigger health alerts
+const SYSTEM_MOUNTS = new Set(['/', '/boot', '/boot/efi', '/run', '/tmp', '/var/lib/docker']);
+
+// Optional: comma-separated mount paths to use for health alerts
+// e.g. DISK_HEALTH_PATHS=/var/www/html,/mnt/ssd_media
+// If unset, all non-system /dev/* mounts are used for health
+const DISK_HEALTH_PATHS = process.env.DISK_HEALTH_PATHS
+  ? new Set(process.env.DISK_HEALTH_PATHS.split(',').map(p => p.trim()))
+  : null;
 
 // Function to aggregate CPU times across all cores
 function getCpuTimes() {
@@ -33,6 +45,37 @@ function getCpuTimes() {
 
 // Flag to check if initial sampling is done
 let initialized = false;
+
+function sampleDisk() {
+  try {
+    const output = execSync(
+      'df -BGB --output=source,target,size,used,avail,pcent 2>/dev/null',
+      { timeout: 3000, encoding: 'utf8' }
+    );
+    diskStats = output.trim().split('\n')
+      .slice(1)
+      .filter(Boolean)
+      .map(line => {
+        const parts = line.trim().split(/\s+/);
+        if (parts.length < 6) return null;
+        const [source, mountpoint, sizeRaw, usedRaw, availRaw, pcentRaw] = parts;
+        const percent = parseInt(pcentRaw);
+        const size = parseInt(sizeRaw);
+        const used = parseInt(usedRaw);
+        const avail = parseInt(availRaw);
+        if (isNaN(percent) || isNaN(size) || size === 0) return null;
+        const isHealthDrive = DISK_HEALTH_PATHS
+          ? DISK_HEALTH_PATHS.has(mountpoint)
+          : !SYSTEM_MOUNTS.has(mountpoint) && source.startsWith('/dev/');
+        return { source, mountpoint, size, used, avail, percent, isHealthDrive };
+      })
+      .filter(Boolean)
+      .filter(d => !d.source.startsWith('/dev/loop'))
+      .filter(d => d.source.startsWith('/dev/'));
+  } catch {
+    // df unavailable (Windows dev env) — leave diskStats empty
+  }
+}
 
 // Sampling function to calculate CPU and Memory usage
 function sample() {
@@ -65,13 +108,17 @@ function sample() {
 // Start sampling at regular intervals (every 3 seconds)
 const samplingInterval = 3000; // 3000ms = 3 seconds
 const intervalId = setInterval(sample, samplingInterval);
+// Disk changes slowly — sample every 30 seconds
+const diskIntervalId = setInterval(sampleDisk, 30000);
 
 // Perform an initial sample immediately
 sample();
+sampleDisk();
 
 // Graceful shutdown to clear the interval when the process exits
 function shutdown() {
   clearInterval(intervalId);
+  clearInterval(diskIntervalId);
   process.exit();
 }
 
@@ -103,4 +150,11 @@ module.exports = {
    * @returns {number} Total memory rounded to two decimal places.
    */
   getMemoryTotal: () => parseFloat(memoryTotal),
+
+  /**
+   * Get disk stats for all non-loop /dev/* mounts.
+   * Excludes system mounts from health alerting unless DISK_HEALTH_PATHS is set.
+   * @returns {Array} Array of drive objects
+   */
+  getDiskStats: () => diskStats,
 };

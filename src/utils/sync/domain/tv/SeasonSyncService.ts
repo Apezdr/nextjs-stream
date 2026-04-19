@@ -21,7 +21,7 @@ import {
 } from '../../core'
 
 import { SeasonRepository, TVShowRepository } from '../../infrastructure'
-import { isCurrentServerHighestPriorityForField, createFullUrl } from '@src/utils/sync/utils'
+import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
 export class SeasonSyncService {
@@ -65,8 +65,8 @@ export class SeasonSyncService {
         existingSeasons.map(s => [s.seasonNumber, s])
       )
 
-      // ---- Accumulate merged entities — do NOT write one by one ----
-      const seasonEntities: SeasonEntity[] = []
+      // ---- Accumulate smart upsert ops — do NOT write one by one ----
+      const seasonOps: Array<{ filter: Record<string, any>; existing: SeasonEntity | null; merged: SeasonEntity }> = []
 
       for (const [key, fileData] of Object.entries(showFileData.seasons)) {
         const seasonNumber = this.parseSeasonNumber(key)
@@ -79,17 +79,22 @@ export class SeasonSyncService {
         }
 
         const existing = existingByNumber.get(seasonNumber) || null
-        seasonEntities.push(
-          await this.buildSeasonEntity(showTitle, displayTitle, seasonNumber, fileData, context, existing, showId, parentShow)
-        )
+        const merged = await this.buildSeasonEntity(showTitle, displayTitle, seasonNumber, fileData, context, existing, showId, parentShow)
+
+        // Filter shape mirrors bulkUpsertShow: prefer showId for stability
+        const filter = (merged as any).showId
+          ? { showId: (merged as any).showId, seasonNumber: merged.seasonNumber }
+          : { showTitle: merged.showTitle, seasonNumber: merged.seasonNumber }
+
+        seasonOps.push({ filter, existing, merged })
       }
 
-      // ---- Single bulk write for all seasons of the show ----
-      if (seasonEntities.length > 0) {
-        await this.seasonRepository.bulkUpsertShow(seasonEntities)
+      // ---- Single smart bulk write — skips unchanged, $sets changed, inserts new ----
+      if (seasonOps.length > 0) {
+        await this.seasonRepository.smartBulkUpsert(seasonOps)
       }
 
-      for (const entity of seasonEntities) {
+      for (const { merged: entity } of seasonOps) {
         results.push(this.makeResult(
           `${showTitle} S${entity.seasonNumber}`, context,
           SyncStatus.Completed, [`Upserted season ${entity.seasonNumber}`], []
@@ -97,8 +102,8 @@ export class SeasonSyncService {
       }
 
       syncEventBus.emitComplete(showTitle, MediaType.Season, context.serverConfig.id, undefined, {
-        totalOperations: seasonEntities.length,
-        successful: seasonEntities.length,
+        totalOperations: seasonOps.length,
+        successful: seasonOps.length,
         failed: 0
       })
     } catch (error) {
@@ -221,22 +226,25 @@ export class SeasonSyncService {
       context.fieldAvailability, 'tv', showOriginalTitle, blurhashFieldPath, context.serverConfig
     )
     if (canUpdateBlurhash && (fileData as any)?.seasonPosterBlurhash) {
-      try {
-        const blurhashUrl = createFullUrl((fileData as any).seasonPosterBlurhash, context.serverConfig)
-        const blurhash = await fetchMetadataMultiServer(
-          context.serverConfig.id,
-          blurhashUrl,
-          'blurhash',
-          'tv',
-          showOriginalTitle
-        )
-        if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
-          entity.posterBlurhash = blurhash
-          entity.posterBlurhashSource = context.serverConfig.id
+      // Skip fetch if the season poster image file hasn't changed (?hash= param comparison)
+      const newPosterUrl = (fileData as any)?.season_poster
+        ? createFullUrl((fileData as any).season_poster, context.serverConfig) : null
+      const posterImageChanged = extractUrlHash(newPosterUrl ?? '') !== extractUrlHash(existing?.posterURL ?? '')
+      if (posterImageChanged || !existing?.posterBlurhash) {
+        try {
+          const blurhashUrl = createFullUrl((fileData as any).seasonPosterBlurhash, context.serverConfig)
+          const blurhash = await fetchMetadataMultiServer(
+            context.serverConfig.id, blurhashUrl, 'blurhash', 'tv', showOriginalTitle
+          )
+          if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
+            entity.posterBlurhash = blurhash
+            entity.posterBlurhashSource = context.serverConfig.id
+          }
+        } catch {
+          // Blurhash fetch failed — preserve existing value from spread
         }
-      } catch {
-        // Blurhash fetch failed — preserve existing value from spread
       }
+      // else: season poster image unchanged, existing posterBlurhash preserved by spread
     }
 
     return entity

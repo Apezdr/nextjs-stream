@@ -5,6 +5,11 @@
 
 import { MongoClient, Collection, UpdateResult, DeleteResult } from 'mongodb'
 import { BaseMediaEntity, MediaRepository, DatabaseError } from '../../core/types'
+import isEqual from 'lodash/isEqual'
+
+// Fields that must never appear in a diff — either MongoDB internals or
+// system timestamps that always change and should not trigger a write.
+const DIFF_EXCLUDED_FIELDS = new Set(['_id', 'lastSynced', 'updatedAt', 'createdAt'])
 
 export abstract class BaseRepository<T extends BaseMediaEntity> implements MediaRepository<T> {
   protected client: MongoClient
@@ -170,6 +175,78 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
     } catch (error) {
       throw new DatabaseError(
         `Failed to upsert ${this.collectionName}: ${error}`,
+        originalTitle || title || 'unknown'
+      )
+    }
+  }
+
+  /**
+   * Compute a key-level diff between two entities.
+   *
+   * Returns an object containing only the top-level keys whose values differ
+   * between `existing` and `merged`, excluding system fields that should never
+   * drive a write decision (timestamps, MongoDB _id).
+   *
+   * Uses lodash isEqual for deep comparison so nested objects (metadata,
+   * captionURLs, videoInfo) are compared correctly without path-level diffing.
+   */
+  protected static computeDiff<T extends Record<string, any>>(
+    existing: T,
+    merged: T
+  ): Partial<T> {
+    const diff: Partial<T> = {}
+    for (const key of Object.keys(merged)) {
+      if (DIFF_EXCLUDED_FIELDS.has(key)) continue
+      if (!isEqual(existing[key], (merged as any)[key])) {
+        (diff as any)[key] = (merged as any)[key]
+      }
+    }
+    return diff
+  }
+
+  /**
+   * Write-optimal single-document upsert.
+   *
+   * - New document (existing=null): $setOnInsert so concurrent syncs
+   *   don't overwrite each other (first writer wins, second is a no-op).
+   * - Unchanged document (diff empty): returns immediately — zero writes,
+   *   zero write-ticket acquisition.
+   * - Changed document: updateOne $set with only the changed fields +
+   *   lastSynced/updatedAt. Ticket hold time is proportional to change
+   *   volume, not document size.
+   */
+  async smartUpsert(entity: T, existing: T | null): Promise<void> {
+    const originalTitle = (entity as any).originalTitle
+    const title = (entity as any).title
+    if (!originalTitle && !title) {
+      throw new DatabaseError('Entity must have either originalTitle or title for smartUpsert', 'unknown')
+    }
+    const queryField = originalTitle || title
+    const queryKey = originalTitle ? 'originalTitle' : 'title'
+    const now = new Date()
+    const { _id, ...entityWithoutId } = entity as any
+
+    try {
+      if (!existing) {
+        // New document — $setOnInsert is a no-op if doc already exists (race safety)
+        await this.collection.updateOne(
+          { [queryKey]: queryField } as any,
+          { $setOnInsert: { ...entityWithoutId, lastSynced: now, updatedAt: now } } as any,
+          { upsert: true }
+        )
+        return
+      }
+
+      const diff = BaseRepository.computeDiff(existing, entity)
+      if (Object.keys(diff).length === 0) return  // Nothing changed — skip write
+
+      await this.collection.updateOne(
+        { [queryKey]: queryField } as any,
+        { $set: { ...diff, lastSynced: now, updatedAt: now } } as any
+      )
+    } catch (error) {
+      throw new DatabaseError(
+        `Failed to smartUpsert ${this.collectionName}: ${error}`,
         originalTitle || title || 'unknown'
       )
     }

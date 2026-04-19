@@ -313,3 +313,24 @@ export function processCaptionURLs(subtitlesData, serverConfig) {
 
   return Object.fromEntries(sortSubtitleEntries(Object.entries(subtitleURLs)))
 }
+
+/**
+ * Extracts the ?hash= query parameter from a file server URL.
+ *
+ * File server image URLs carry a content hash for cache-busting and change detection,
+ * e.g. /tv/Show/Season 1/poster.jpg?hash=7536e29eee
+ *
+ * Used to skip blurhash fetches when the underlying image file has not changed:
+ * if extractUrlHash(newImageUrl) === extractUrlHash(existingEntityUrl) → image unchanged.
+ *
+ * @param {string} url - Full URL or relative path including optional query string
+ * @returns {string|null} Value of the ?hash= param, or null if absent/invalid
+ */
+export function extractUrlHash(url) {
+  if (!url) return null
+  try {
+    return new URL(url).searchParams.get('hash')
+  } catch {
+    return null
+  }
+}

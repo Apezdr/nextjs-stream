@@ -78,28 +78,30 @@ export class MovieSyncService {
       // For display title, use the originalTitle as fallback since that's what we have
       const effectiveTitle = originalTitle ? originalTitle : title
       
-      let movie = await this.repository.findByOriginalTitle(effectiveOriginalTitle)
-      
+      const existingMovie = await this.repository.findByOriginalTitle(effectiveOriginalTitle)
+
       // Normalize entity to ensure complete schema (handles new, existing, and partial records)
-      movie = this.normalizeMovieEntity(movie, effectiveTitle, effectiveOriginalTitle, context)
+      let movie = this.normalizeMovieEntity(existingMovie, effectiveTitle, effectiveOriginalTitle, context)
+
+      // Initialise accumulator — strategies append their changes here instead of
+      // writing to the DB directly. A single consolidated write happens after all
+      // strategies complete, writing only what changed (or nothing if unchanged).
+      if (!context.pendingMovieUpdates) context.pendingMovieUpdates = new Map()
+      context.pendingMovieUpdates.set(effectiveOriginalTitle, {})
 
       for (const operation of operations) {
         try {
           const operationResult = await this.syncMovieOperation(movie, operation, context, effectiveTitle)
           results.push(operationResult)
 
-          // Update movie entity if changes were made
-          if (operationResult.status === SyncStatus.Completed && operationResult.changes.length > 0) {
-            // 🚀 OPTIMIZATION: Check cache first, then database (mirrors MovieMetadataStrategy pattern)
-            if (context.movieCache?.has(effectiveOriginalTitle)) {
-              movie = context.movieCache.get(effectiveOriginalTitle)!
-              console.log(`💾 Cache HIT for "${effectiveOriginalTitle}" (post-operation refresh)`)
-            } else {
-              console.log(`🔍 Cache MISS for "${effectiveOriginalTitle}", querying database for refresh...`)
-              movie = await this.repository.findByTitle(title) // Refresh from DB
-            }
-          }
-
+          // Advance `movie` to include changes accumulated by this strategy so that
+          // the next strategy's `{ ...(movie || {}), ...itsChanges }` spread sees the
+          // current accumulated state rather than the stale normalized base.
+          // Without this, each strategy overwrites the previous strategy's fields
+          // (e.g. AssetStrategy would clobber metadata: {} over MetadataStrategy's
+          // populated metadata because both spread from the same stale `movie`).
+          const accumulated = context.pendingMovieUpdates?.get(effectiveOriginalTitle)
+          if (accumulated) movie = { ...movie, ...accumulated } as any
         } catch (error) {
           const errorResult: SyncResult = {
             status: SyncStatus.Failed,
@@ -113,7 +115,7 @@ export class MovieSyncService {
           }
 
           results.push(errorResult)
-          
+
           syncEventBus.emitError(
             title,
             MediaType.Movie,
@@ -121,6 +123,18 @@ export class MovieSyncService {
             errorResult.errors[0],
             operation
           )
+        }
+      }
+
+      // ---- Consolidated write — single smartUpsert after all strategies ----
+      const pending = context.pendingMovieUpdates.get(effectiveOriginalTitle) || {}
+      if (Object.keys(pending).length > 0) {
+        if (!existingMovie) {
+          // New document — full insert from the accumulated pending fields
+          await this.repository.upsert({ ...movie, ...pending } as any)
+        } else {
+          // Existing document — diff against the pre-loop snapshot, write only changes
+          await this.repository.smartUpsert({ ...existingMovie, ...pending } as any, existingMovie as any)
         }
       }
 

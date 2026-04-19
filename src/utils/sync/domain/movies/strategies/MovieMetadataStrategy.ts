@@ -139,8 +139,17 @@ export class MovieMetadataStrategy implements SyncStrategy {
       const metadataHashInfo = context.metadataHashesCache?.titles?.[originalTitle]
       const currentMetadataHash = movie?.metadataHash
       
+      // Guard: only trust the hash skip when metadata is actually populated.
+      // If metadata is empty ({} or absent), force a re-fetch even when hashes match —
+      // this repairs movies that previously had their metadata clobbered by a bug
+      // while the metadataHash was still stored, leaving them permanently stuck in skip.
+      const metadataIsPopulated = movie?.metadata
+        && typeof movie.metadata === 'object'
+        && Object.keys(movie.metadata).length > 0
+        && movie.metadata.hasExternalMetadata !== false
+
       // If we have both hashes and they match, skip metadata fetch (optimization)
-      if (metadataHashInfo?.hash && currentMetadataHash && metadataHashInfo.hash === currentMetadataHash) {
+      if (metadataHashInfo?.hash && currentMetadataHash && metadataHashInfo.hash === currentMetadataHash && metadataIsPopulated) {
         syncLogger.debug(`📝 Metadata hash unchanged for "${originalTitle}" (${metadataHashInfo.hash}), skipping fetch`)
         
         // Still return success but with no changes
@@ -256,8 +265,15 @@ export class MovieMetadataStrategy implements SyncStrategy {
       // Only record a change if we actually made changes
       const hasActualChanges = changes.length > 0;
       
-      // Use upsert operation to either create or update
-      await this.repository.upsert(movieToSave)
+      // Accumulate changes for consolidated write in MovieSyncService.
+      // MovieSyncService performs a single smartUpsert after all strategies complete.
+      if (context.pendingMovieUpdates) {
+        const prev = context.pendingMovieUpdates.get(originalTitle) || {}
+        context.pendingMovieUpdates.set(originalTitle, { ...prev, ...movieToSave })
+      } else {
+        // Fallback: direct write when called outside the consolidated movie sync path
+        await this.repository.upsert(movieToSave)
+      }
       
       if (!movie) {
         changes.push('Created new movie entity')

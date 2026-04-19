@@ -225,10 +225,22 @@ export class BlurhashStrategy implements SyncStrategy {
       originalTitle,
       context,
       onSuccess: async (blurhash: string) => {
-        await this.repository.update(entity!.title, {
-          posterBlurhash: blurhash,
-          posterBlurhashSource: context.serverConfig.id,
-        } as Partial<MovieEntity>)
+        // Accumulate into pendingMovieUpdates when running inside the consolidated
+        // movie sync path (MovieSyncService). This prevents calling repository.update()
+        // before the movie document has been written (e.g. after a DB wipe).
+        if (context.pendingMovieUpdates) {
+          const prev = context.pendingMovieUpdates.get(originalTitle) || {}
+          context.pendingMovieUpdates.set(originalTitle, {
+            ...prev,
+            posterBlurhash: blurhash,
+            posterBlurhashSource: context.serverConfig.id,
+          })
+        } else {
+          await this.repository.update(entity!.title, {
+            posterBlurhash: blurhash,
+            posterBlurhashSource: context.serverConfig.id,
+          } as Partial<MovieEntity>)
+        }
       },
     })
     if (posterChange) changes.push(posterChange)
@@ -243,10 +255,19 @@ export class BlurhashStrategy implements SyncStrategy {
       originalTitle,
       context,
       onSuccess: async (blurhash: string) => {
-        await this.repository.update(entity!.title, {
-          backdropBlurhash: blurhash,
-          backdropBlurhashSource: context.serverConfig.id,
-        } as Partial<MovieEntity>)
+        if (context.pendingMovieUpdates) {
+          const prev = context.pendingMovieUpdates.get(originalTitle) || {}
+          context.pendingMovieUpdates.set(originalTitle, {
+            ...prev,
+            backdropBlurhash: blurhash,
+            backdropBlurhashSource: context.serverConfig.id,
+          })
+        } else {
+          await this.repository.update(entity!.title, {
+            backdropBlurhash: blurhash,
+            backdropBlurhashSource: context.serverConfig.id,
+          } as Partial<MovieEntity>)
+        }
       },
     })
     if (backdropChange) changes.push(backdropChange)

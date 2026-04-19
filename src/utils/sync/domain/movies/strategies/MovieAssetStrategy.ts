@@ -113,7 +113,13 @@ export class MovieAssetStrategy implements SyncStrategy {
             movieToSave.backdropBlurhashSource = context.serverConfig.id
           }
         })
-        await this.repository.upsert(movieToSave)
+        // Accumulate changes for consolidated write in MovieSyncService
+        if (context.pendingMovieUpdates) {
+          const prev = context.pendingMovieUpdates.get(originalTitle) || {}
+          context.pendingMovieUpdates.set(originalTitle, { ...prev, ...movieToSave })
+        } else {
+          await this.repository.upsert(movieToSave)
+        }
         changes.push(...Object.keys(assetUpdates).map(key => `Updated ${key}`))
         
         syncEventBus.emitProgress(

@@ -164,6 +164,45 @@ export class SyncManager {
   }
 
   /**
+   * Fetch show-level hashes for all TV shows from the media processor.
+   * Called once per server at the start of syncTVShows() — mirrors fetchMetadataHashes().
+   * Returns null on failure so callers degrade gracefully (full sync without skipping).
+   */
+  private async fetchTVMetadataHashes(serverConfig: ServerConfig): Promise<{
+    hash: string
+    titles: Record<string, {
+      hash: string
+      lastModified: string
+      generated: string
+    }>
+  } | null> {
+    if (!serverConfig.nodeUrl) return null
+    const hashesUrl = `${serverConfig.nodeUrl}/api/metadata-hashes/tv`
+    syncLogger.info(`Fetching TV show hashes from: ${hashesUrl}`)
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 15000)
+    try {
+      const response = await fetch(hashesUrl, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' }
+      })
+      clearTimeout(timeoutId)
+      if (response.ok) {
+        const hashes = await response.json()
+        const count = hashes.titles ? Object.keys(hashes.titles).length : 0
+        syncLogger.info(`✅ TV show hashes loaded: ${count} shows, overall=${hashes.hash?.substring(0, 8)}...`)
+        return hashes
+      }
+      syncLogger.warn(`⚠️ TV hashes endpoint returned status ${response.status}`)
+      return null
+    } catch (err: any) {
+      clearTimeout(timeoutId)
+      syncLogger.warn(`⚠️ Failed to fetch TV show hashes: ${err.message}`)
+      return null
+    }
+  }
+
+  /**
    * Sync movies using the new architecture
    */
   async syncMovies(
@@ -352,6 +391,12 @@ export class SyncManager {
 
     const startTime = Date.now()
 
+    // Fetch show-level hashes once — enables whole-show skip for unchanged content
+    const tvShowHashes = await this.fetchTVMetadataHashes(serverConfig)
+    if (!tvShowHashes) {
+      syncLogger.warn('TV show hashes unavailable — proceeding without show-level skip optimisation')
+    }
+
     const context: SyncContext = {
       mediaType: MediaType.TVShow,
       operation: SyncOperation.Metadata,
@@ -359,7 +404,9 @@ export class SyncManager {
       fieldAvailability,
       forceSync: options.forceSync || false,
       fileServerData: options.fileServerData,
-      resourceManager: this.resourceManager
+      resourceManager: this.resourceManager,
+      tvShowHashesCache: tvShowHashes || undefined,
+      tvEpisodeHashesCache: new Map(),  // Populated lazily per season in EpisodeSyncService
     }
 
     syncLogger.info(`Starting TV sync for ${showTitles.length} shows`)

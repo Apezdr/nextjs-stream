@@ -21,7 +21,7 @@ import {
 } from '../../core'
 
 import { EpisodeRepository, SeasonRepository, TVShowRepository } from '../../infrastructure'
-import { isCurrentServerHighestPriorityForField, createFullUrl, processCaptionURLs } from '@src/utils/sync/utils'
+import { isCurrentServerHighestPriorityForField, createFullUrl, processCaptionURLs, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 
@@ -78,8 +78,12 @@ export class EpisodeSyncService {
 
       const seasonId = (parentSeason as any)?._id || null
 
-      // ---- Accumulate merged entities — do NOT write one by one ----
-      const episodeEntities: EpisodeEntity[] = []
+      // Fetch episode-level hashes for this season (one HTTP call covers all episodes).
+      // Enables per-episode skip when incoming hash matches stored syncHash on entity.
+      await this.loadEpisodeHashesForSeason(showTitle, seasonNumber, context)
+
+      // ---- Accumulate smart upsert ops — do NOT write one by one ----
+      const episodeOps: Array<{ filter: Record<string, any>; existing: EpisodeEntity | null; merged: EpisodeEntity }> = []
 
       for (const [key, fileData] of Object.entries(seasonFileData.episodes || {})) {
         const epNum = this.parseEpisodeNumber(key, fileData)
@@ -92,17 +96,37 @@ export class EpisodeSyncService {
         }
 
         const existing = existingByNumber.get(epNum) || null
-        episodeEntities.push(
-          await this.buildEpisodeEntity(showTitle, displayTitle, seasonNumber, epNum, fileData, context, existing, showId, seasonId, parentShow, seasonFileData, key)
-        )
+
+        // Episode hash skip: if incoming hash matches stored syncHash, entity builder output
+        // would be identical — skip buildEpisodeEntity entirely (no HTTP fetches, no write).
+        const episodeKey = this.buildEpisodeHashKey(seasonNumber, epNum)
+        const incomingEpHash = context.tvEpisodeHashesCache
+          ?.get(showTitle)?.get(seasonNumber)?.episodes?.[episodeKey]?.hash
+
+        if (!context.forceSync && incomingEpHash && existing?.syncHash && incomingEpHash === existing.syncHash) {
+          results.push(this.makeResult(`${label}E${epNum}`, context, SyncStatus.Skipped, [], []))
+          continue
+        }
+
+        const merged = await this.buildEpisodeEntity(showTitle, displayTitle, seasonNumber, epNum, fileData, context, existing, showId, seasonId, parentShow, seasonFileData, key)
+
+        // Store incoming hash so next sync can compare
+        if (incomingEpHash) (merged as any).syncHash = incomingEpHash
+
+        // Filter shape mirrors bulkUpsertSeason: prefer showId for stability
+        const filter = (merged as any).showId
+          ? { showId: (merged as any).showId, seasonNumber: merged.seasonNumber, episodeNumber: merged.episodeNumber }
+          : { showTitle: merged.showTitle, seasonNumber: merged.seasonNumber, episodeNumber: merged.episodeNumber }
+
+        episodeOps.push({ filter, existing, merged })
       }
 
-      // ---- Single bulk write for the whole season ----
-      if (episodeEntities.length > 0) {
-        await this.episodeRepository.bulkUpsertSeason(episodeEntities)
+      // ---- Single smart bulk write — skips unchanged, $sets changed, inserts new ----
+      if (episodeOps.length > 0) {
+        await this.episodeRepository.smartBulkUpsert(episodeOps)
       }
 
-      for (const entity of episodeEntities) {
+      for (const { merged: entity } of episodeOps) {
         results.push(this.makeResult(
           `${label}E${entity.episodeNumber}`, context,
           SyncStatus.Completed, [`Upserted episode ${entity.episodeNumber}`], []
@@ -110,8 +134,8 @@ export class EpisodeSyncService {
       }
 
       syncEventBus.emitComplete(label, MediaType.Episode, context.serverConfig.id, undefined, {
-        totalOperations: episodeEntities.length,
-        successful: episodeEntities.length,
+        totalOperations: episodeOps.length,
+        successful: episodeOps.length,
         failed: 0
       })
     } catch (error) {
@@ -368,26 +392,72 @@ export class EpisodeSyncService {
         context.fieldAvailability, 'tv', showOriginalTitle, blurhashFieldPath, context.serverConfig
       )
       if (canUpdateBlurhash) {
-        try {
-          const blurhashUrl = createFullUrl(fileData.thumbnailBlurhash, context.serverConfig)
-          const blurhash = await fetchMetadataMultiServer(
-            context.serverConfig.id,
-            blurhashUrl,
-            'blurhash',
-            'tv',
-            showOriginalTitle
-          )
-          if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
-            entity.thumbnailBlurhash = blurhash
-            entity.thumbnailBlurhashSource = context.serverConfig.id
+        // Skip fetch if the thumbnail image file hasn't changed (?hash= param comparison)
+        const newThumbUrl = (fileData?.thumbnail || fileData?.thumbnailURL)
+          ? createFullUrl(fileData.thumbnail || fileData.thumbnailURL, context.serverConfig) : null
+        const thumbImageChanged = extractUrlHash(newThumbUrl ?? '') !== extractUrlHash(existing?.thumbnail ?? '')
+        if (thumbImageChanged || !existing?.thumbnailBlurhash) {
+          try {
+            const blurhashUrl = createFullUrl(fileData.thumbnailBlurhash, context.serverConfig)
+            const blurhash = await fetchMetadataMultiServer(
+              context.serverConfig.id, blurhashUrl, 'blurhash', 'tv', showOriginalTitle
+            )
+            if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
+              entity.thumbnailBlurhash = blurhash
+              entity.thumbnailBlurhashSource = context.serverConfig.id
+            }
+          } catch {
+            // Blurhash fetch failed — preserve existing value from spread
           }
-        } catch {
-          // Blurhash fetch failed — preserve existing value from spread
         }
+        // else: thumbnail image unchanged, existing thumbnailBlurhash preserved by spread
       }
     }
 
     return entity
+  }
+
+  /**
+   * Convert season + episode numbers to S01E01 format — matches episode keys
+   * returned by /api/metadata-hashes/tv/{title}/{seasonNumber}.episodes
+   */
+  private buildEpisodeHashKey(seasonNumber: number, episodeNumber: number): string {
+    return `S${String(seasonNumber).padStart(2, '0')}E${String(episodeNumber).padStart(2, '0')}`
+  }
+
+  /**
+   * Fetch episode-level hashes for one season from the media processor Node server.
+   * Result is cached in context.tvEpisodeHashesCache for per-episode lookup.
+   * Silently degrades if the endpoint is unavailable — sync proceeds without skip.
+   */
+  private async loadEpisodeHashesForSeason(
+    showTitle: string,
+    seasonNumber: number,
+    context: SyncContext
+  ): Promise<void> {
+    if (!context.tvEpisodeHashesCache || !context.serverConfig.nodeUrl) return
+    if (context.tvEpisodeHashesCache.get(showTitle)?.has(seasonNumber)) return  // already loaded
+
+    const url = `${context.serverConfig.nodeUrl}/api/metadata-hashes/tv/${encodeURIComponent(showTitle)}/${seasonNumber}`
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10000)
+    try {
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' }
+      })
+      clearTimeout(timeoutId)
+      if (res.ok) {
+        const data = await res.json()
+        if (!context.tvEpisodeHashesCache.has(showTitle)) {
+          context.tvEpisodeHashesCache.set(showTitle, new Map())
+        }
+        context.tvEpisodeHashesCache.get(showTitle)!.set(seasonNumber, data)
+      }
+    } catch {
+      clearTimeout(timeoutId)
+      // Graceful degradation — proceed without episode-level skip for this season
+    }
   }
 
   private parseEpisodeNumber(key: string, data: any): number | null {

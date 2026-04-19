@@ -4,7 +4,7 @@
  * Optimized for high-volume episode operations
  */
 
-import { MongoClient } from 'mongodb'
+import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { EpisodeEntity, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
 
@@ -121,6 +121,60 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
       await this.collection.bulkWrite(operations, { ordered: false })
     } catch (error) {
       throw new DatabaseError(`Failed to bulk upsert episodes: ${error}`)
+    }
+  }
+
+  /**
+   * Write-optimal bulk upsert for a season's episodes.
+   *
+   * Each op is classified as:
+   *   - New (existing=null)      → $setOnInsert upsert (race-safe)
+   *   - Unchanged (diff empty)   → skipped entirely (zero write-ticket cost)
+   *   - Changed (diff non-empty) → $set of changed fields only
+   *
+   * Replaces bulkUpsertSeason for the sync path. bulkUpsertSeason is kept
+   * for any callers that don't have existing docs available.
+   */
+  async smartBulkUpsert(ops: Array<{
+    filter: Record<string, any>
+    existing: EpisodeEntity | null
+    merged: EpisodeEntity
+  }>): Promise<void> {
+    if (ops.length === 0) return
+    const now = new Date()
+    const operations: AnyBulkWriteOperation<EpisodeEntity>[] = []
+
+    for (const { filter, existing, merged } of ops) {
+      const { _id, ...mergedNoId } = merged as any
+
+      if (!existing) {
+        operations.push({
+          updateOne: {
+            filter,
+            update: { $setOnInsert: { ...mergedNoId, lastSynced: now, updatedAt: now } },
+            upsert: true,
+          },
+        })
+        continue
+      }
+
+      const diff = BaseRepository.computeDiff(existing, merged)
+      if (Object.keys(diff).length === 0) continue  // unchanged — skip write
+
+      operations.push({
+        updateOne: {
+          filter,
+          update: { $set: { ...diff, lastSynced: now, updatedAt: now } },
+          upsert: false,
+        },
+      })
+    }
+
+    if (operations.length === 0) return  // all episodes unchanged
+    try {
+      await this.collection.bulkWrite(operations, { ordered: false })
+    } catch (error) {
+      throw new DatabaseError(`Failed to smart bulk upsert episodes: ${error}`)
     }
   }
 

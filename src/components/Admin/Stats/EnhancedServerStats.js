@@ -34,8 +34,12 @@ const EnhancedServerStats = () => {
         )
     }
 
-    const { cpu, memoryUsed, memoryTotal } = data
+    const { cpu, memoryUsed, memoryTotal, drives = [] } = data
     const memoryUsage = ((memoryUsed / memoryTotal) * 100)
+
+    // Only health drives (non-system mounts) factor into the overall status
+    const healthDrives = drives.filter(d => d.isHealthDrive)
+    const worstDrive = healthDrives.reduce((w, d) => (d.percent > (w?.percent ?? 0) ? d : w), null)
 
     // Helper functions for status and colors
     const getUsageStatus = (percentage) => {
@@ -134,27 +138,65 @@ const EnhancedServerStats = () => {
                 </div>
             </div>
 
-            {/* System Health Summary */}
+            {/* Disk Usage */}
+            {drives.length > 0 && (
+                <div className="space-y-3">
+                    <div className="flex items-center space-x-3">
+                        <div className="p-2 bg-orange-100 rounded-lg">
+                            <svg className="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2" />
+                            </svg>
+                        </div>
+                        <div className="text-sm font-medium text-gray-900">Disk Usage</div>
+                    </div>
+                    <div className="space-y-3">
+                        {drives.map(drive => (
+                            <div key={drive.mountpoint} className="space-y-1">
+                                <div className="flex items-center justify-between text-xs">
+                                    <span className="text-gray-700 font-medium truncate max-w-[60%]">{drive.mountpoint}</span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-gray-500">{drive.avail} GB free</span>
+                                        <StatusBadge status={getUsageStatus(drive.percent)} variant="soft" size="small">
+                                            {drive.percent}%
+                                        </StatusBadge>
+                                        {!drive.isHealthDrive && (
+                                            <span className="text-gray-400 text-[10px]">OS</span>
+                                        )}
+                                    </div>
+                                </div>
+                                <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
+                                    <div
+                                        className={`h-full ${getUsageColor(drive.isHealthDrive ? drive.percent : Math.min(drive.percent, 49))} transition-all duration-300 ease-out`}
+                                        style={{ width: `${drive.percent}%` }}
+                                    />
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* System Health Summary — only considers health (non-OS) drives */}
             <div className={`p-4 rounded-lg border ${
-                Math.max(cpu, memoryUsage) < 50 ? 'bg-emerald-50 border-emerald-200' :
-                Math.max(cpu, memoryUsage) < 80 ? 'bg-amber-50 border-amber-200' :
+                Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 50 ? 'bg-emerald-50 border-emerald-200' :
+                Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 80 ? 'bg-amber-50 border-amber-200' :
                 'bg-red-50 border-red-200'
             }`}>
                 <div className="flex items-center space-x-2">
                     <svg className={`w-4 h-4 ${
-                        Math.max(cpu, memoryUsage) < 50 ? 'text-emerald-600' :
-                        Math.max(cpu, memoryUsage) < 80 ? 'text-amber-600' :
+                        Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 50 ? 'text-emerald-600' :
+                        Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 80 ? 'text-amber-600' :
                         'text-red-600'
                     }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <span className={`text-sm font-medium ${
-                        Math.max(cpu, memoryUsage) < 50 ? 'text-emerald-800' :
-                        Math.max(cpu, memoryUsage) < 80 ? 'text-amber-800' :
+                        Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 50 ? 'text-emerald-800' :
+                        Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 80 ? 'text-amber-800' :
                         'text-red-800'
                     }`}>
-                        {Math.max(cpu, memoryUsage) < 50 ? 'System running optimally' :
-                         Math.max(cpu, memoryUsage) < 80 ? 'System under moderate load' :
+                        {Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 50 ? 'System running optimally' :
+                         Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 80 ? 'System under moderate load' :
                          'System under heavy load'}
                     </span>
                 </div>

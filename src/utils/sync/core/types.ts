@@ -89,6 +89,31 @@ export interface SyncContext {
     }>
   }
   
+  // TV show-level hashes (fetched once per server from /api/metadata-hashes/tv).
+  // Enables whole-show skip: if titles[showTitle].hash === TVShowEntity.syncHash,
+  // syncTVShow() returns Skipped immediately without processing seasons or episodes.
+  tvShowHashesCache?: {
+    hash: string  // Overall hash across all TV shows on this server
+    titles: Record<string, {
+      hash: string
+      lastModified: string
+      generated: string
+    }>
+  }
+
+  // Per-season episode hashes — keyed by showTitle → seasonNumber.
+  // Populated lazily at the start of each EpisodeSyncService.syncSeason() call
+  // via GET /api/metadata-hashes/tv/{title}/{seasonNumber}.
+  // One HTTP call per season replaces N×2 fetchMetadataMultiServer calls for unchanged episodes.
+  tvEpisodeHashesCache?: Map<string, Map<number, {
+    hash: string  // Season-level aggregate hash
+    episodes: Record<string, {  // key = S01E01 format
+      hash: string
+      lastModified: string
+      generated: string
+    }>
+  }>>
+
   // Resource manager for throttling HTTP requests and monitoring memory
   // Strategies should use context.resourceManager?.throttleHttp() for outbound calls
   resourceManager?: {
@@ -96,6 +121,12 @@ export interface SyncContext {
     isMemoryPressure: () => boolean
     getHeapUsedMb: () => number
   }
+
+  // Accumulated movie field changes from strategies — keyed by originalTitle.
+  // Strategies append their computed changes here instead of writing to the DB
+  // directly. MovieSyncService performs a single consolidated write after all
+  // strategies complete, using smartUpsert to write only changed fields.
+  pendingMovieUpdates?: Map<string, Partial<MovieEntity>>
 }
 
 export interface SyncResult {
@@ -243,6 +274,11 @@ export interface EpisodeEntity extends BaseMediaEntity {
   size?: number
   mediaQuality?: MediaQuality
   mediaLastModified?: Date
+
+  // Content hash from media processor — stored after each sync to enable whole-episode skip.
+  // If this matches the incoming episode hash from /api/metadata-hashes/tv/{title}/{season},
+  // buildEpisodeEntity() is bypassed entirely (no HTTP fetches, no entity build, no write).
+  syncHash?: string
 }
 
 export interface SeasonEntity extends BaseMediaEntity {
@@ -263,6 +299,9 @@ export interface SeasonEntity extends BaseMediaEntity {
   overview?: string
   posterPath?: string
   rating?: number
+
+  // Content hash from media processor — reserved for future season-level skip.
+  syncHash?: string
 }
 
 export interface TVShowEntity extends BaseMediaEntity {
@@ -289,6 +328,11 @@ export interface TVShowEntity extends BaseMediaEntity {
   overview?: string
   genres?: any[]
   networks?: any[]
+
+  // Content hash from media processor — stored after each sync to enable whole-show skip.
+  // If this matches the incoming hash from /api/metadata-hashes/tv, syncTVShow() returns
+  // Skipped immediately without processing any seasons or episodes.
+  syncHash?: string
 }
 
 // ==========================================

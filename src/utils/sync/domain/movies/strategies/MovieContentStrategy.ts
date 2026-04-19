@@ -150,7 +150,13 @@ export class MovieContentStrategy implements SyncStrategy {
           }
         })
 
-        await this.repository.upsert(movieToSave)
+        // Accumulate changes for consolidated write in MovieSyncService
+        if (context.pendingMovieUpdates) {
+          const prev = context.pendingMovieUpdates.get(originalTitle) || {}
+          context.pendingMovieUpdates.set(originalTitle, { ...prev, ...movieToSave })
+        } else {
+          await this.repository.upsert(movieToSave)
+        }
 
         // Add specific changes for each updated field
         Object.keys(contentUpdates).forEach((key) => {

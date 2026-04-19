@@ -3,7 +3,7 @@
  * Handles all database operations for season entities
  */
 
-import { MongoClient } from 'mongodb'
+import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { SeasonEntity, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
 
@@ -108,6 +108,57 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
       await this.collection.bulkWrite(operations, { ordered: false })
     } catch (error) {
       throw new DatabaseError(`Failed to bulk upsert seasons: ${error}`)
+    }
+  }
+
+  /**
+   * Write-optimal bulk upsert for a show's seasons.
+   *
+   * Each op is classified as:
+   *   - New (existing=null)      → $setOnInsert upsert (race-safe)
+   *   - Unchanged (diff empty)   → skipped entirely (zero write-ticket cost)
+   *   - Changed (diff non-empty) → $set of changed fields only
+   */
+  async smartBulkUpsert(ops: Array<{
+    filter: Record<string, any>
+    existing: SeasonEntity | null
+    merged: SeasonEntity
+  }>): Promise<void> {
+    if (ops.length === 0) return
+    const now = new Date()
+    const operations: AnyBulkWriteOperation<SeasonEntity>[] = []
+
+    for (const { filter, existing, merged } of ops) {
+      const { _id, ...mergedNoId } = merged as any
+
+      if (!existing) {
+        operations.push({
+          updateOne: {
+            filter,
+            update: { $setOnInsert: { ...mergedNoId, lastSynced: now, updatedAt: now } },
+            upsert: true,
+          },
+        })
+        continue
+      }
+
+      const diff = BaseRepository.computeDiff(existing, merged)
+      if (Object.keys(diff).length === 0) continue  // unchanged — skip write
+
+      operations.push({
+        updateOne: {
+          filter,
+          update: { $set: { ...diff, lastSynced: now, updatedAt: now } },
+          upsert: false,
+        },
+      })
+    }
+
+    if (operations.length === 0) return  // all seasons unchanged
+    try {
+      await this.collection.bulkWrite(operations, { ordered: false })
+    } catch (error) {
+      throw new DatabaseError(`Failed to smart bulk upsert seasons: ${error}`)
     }
   }
 

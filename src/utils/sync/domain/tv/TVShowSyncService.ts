@@ -25,7 +25,7 @@ import {
 import { TVShowRepository } from '../../infrastructure'
 import { SeasonSyncService } from './SeasonSyncService'
 import { EpisodeSyncService } from './EpisodeSyncService'
-import { isCurrentServerHighestPriorityForField, createFullUrl } from '@src/utils/sync/utils'
+import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
 export class TVShowSyncService {
@@ -49,6 +49,22 @@ export class TVShowSyncService {
     syncEventBus.emitStarted(showTitle, MediaType.TVShow, context.serverConfig.id)
 
     try {
+      // Show-level hash skip: if show hash unchanged, skip entire show (seasons + episodes)
+      if (!context.forceSync && context.tvShowHashesCache) {
+        const incomingShowHash = context.tvShowHashesCache.titles?.[showTitle]?.hash
+        if (incomingShowHash) {
+          const cached = await this.tvShowRepository.findByOriginalTitle(showTitle)
+          if (cached?.syncHash && cached.syncHash === incomingShowHash) {
+            syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
+              totalOperations: 0, successful: 0, failed: 0
+            })
+            return [this.makeResult(
+              showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Skipped, [], []
+            )]
+          }
+        }
+      }
+
       // 1. Read existing doc for merge
       const existing = await this.tvShowRepository.findByOriginalTitle(showTitle)
 
@@ -56,8 +72,8 @@ export class TVShowSyncService {
       const showFileData = context.fileServerData?.tv?.[showTitle]
       const showEntity = await this.buildTVShowEntity(showTitle, showFileData, context, existing)
 
-      // 3. Atomic replace
-      await this.tvShowRepository.upsert(showEntity)
+      // 3. Smart write — $set changed fields only, skip if nothing changed
+      await this.tvShowRepository.smartUpsert(showEntity, existing)
 
       allResults.push(this.makeResult(
         showTitle, context, MediaType.TVShow, SyncOperation.Metadata,
@@ -239,22 +255,25 @@ export class TVShowSyncService {
       context.fieldAvailability, 'tv', showTitle, 'posterBlurhash', context.serverConfig
     )
     if (canUpdatePosterBlurhash && fileData.posterBlurhash) {
-      try {
-        const blurhashUrl = createFullUrl(fileData.posterBlurhash, context.serverConfig)
-        const blurhash = await fetchMetadataMultiServer(
-          context.serverConfig.id,
-          blurhashUrl,
-          'blurhash',
-          'tv',
-          showTitle
-        )
-        if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
-          entity.posterBlurhash = blurhash
-          entity.posterBlurhashSource = context.serverConfig.id
+      // Skip fetch if the poster image file hasn't changed (?hash= param comparison)
+      const newPosterUrl = (fileData.posterURL || fileData.poster)
+        ? createFullUrl(fileData.posterURL || fileData.poster, context.serverConfig) : null
+      const posterImageChanged = extractUrlHash(newPosterUrl ?? '') !== extractUrlHash(existing?.posterURL ?? '')
+      if (posterImageChanged || !existing?.posterBlurhash) {
+        try {
+          const blurhashUrl = createFullUrl(fileData.posterBlurhash, context.serverConfig)
+          const blurhash = await fetchMetadataMultiServer(
+            context.serverConfig.id, blurhashUrl, 'blurhash', 'tv', showTitle
+          )
+          if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
+            entity.posterBlurhash = blurhash
+            entity.posterBlurhashSource = context.serverConfig.id
+          }
+        } catch {
+          // Blurhash fetch failed — preserve existing value from spread
         }
-      } catch {
-        // Blurhash fetch failed — preserve existing value from spread
       }
+      // else: poster image unchanged, existing posterBlurhash preserved by spread
     }
 
     // --- Backdrop Blurhash (priority-gated, fetch actual blurhash string) ---
@@ -262,22 +281,25 @@ export class TVShowSyncService {
       context.fieldAvailability, 'tv', showTitle, 'backdropBlurhash', context.serverConfig
     )
     if (canUpdateBackdropBlurhash && fileData.backdropBlurhash) {
-      try {
-        const blurhashUrl = createFullUrl(fileData.backdropBlurhash, context.serverConfig)
-        const blurhash = await fetchMetadataMultiServer(
-          context.serverConfig.id,
-          blurhashUrl,
-          'blurhash',
-          'tv',
-          showTitle
-        )
-        if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
-          entity.backdropBlurhash = blurhash
-          entity.backdropBlurhashSource = context.serverConfig.id
+      // Skip fetch if the backdrop image file hasn't changed (?hash= param comparison)
+      const newBackdropUrl = (fileData.backdropURL || fileData.backdrop)
+        ? createFullUrl(fileData.backdropURL || fileData.backdrop, context.serverConfig) : null
+      const backdropImageChanged = extractUrlHash(newBackdropUrl ?? '') !== extractUrlHash(existing?.backdrop ?? '')
+      if (backdropImageChanged || !existing?.backdropBlurhash) {
+        try {
+          const blurhashUrl = createFullUrl(fileData.backdropBlurhash, context.serverConfig)
+          const blurhash = await fetchMetadataMultiServer(
+            context.serverConfig.id, blurhashUrl, 'blurhash', 'tv', showTitle
+          )
+          if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
+            entity.backdropBlurhash = blurhash
+            entity.backdropBlurhashSource = context.serverConfig.id
+          }
+        } catch {
+          // Blurhash fetch failed — preserve existing value from spread
         }
-      } catch {
-        // Blurhash fetch failed — preserve existing value from spread
       }
+      // else: backdrop image unchanged, existing backdropBlurhash preserved by spread
     }
 
     // Season count (computed, no priority gate)
@@ -286,6 +308,10 @@ export class TVShowSyncService {
     } else if (fileData.seasons && typeof fileData.seasons === 'object') {
       entity.seasonCount = Object.keys(fileData.seasons).length
     }
+
+    // Store incoming show hash so next sync can compare and potentially skip entire show
+    const incomingShowHash = context.tvShowHashesCache?.titles?.[showTitle]?.hash
+    if (incomingShowHash) entity.syncHash = incomingShowHash
 
     return entity
   }
