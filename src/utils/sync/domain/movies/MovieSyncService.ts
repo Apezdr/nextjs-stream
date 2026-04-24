@@ -77,7 +77,44 @@ export class MovieSyncService {
       const effectiveOriginalTitle = originalTitle || title
       // For display title, use the originalTitle as fallback since that's what we have
       const effectiveTitle = originalTitle ? originalTitle : title
-      
+
+      // Whole-movie early-skip: if hash unchanged, bypass entity normalisation and all strategies.
+      // Mirrors TVShowSyncService.syncTVShow() show-level skip pattern.
+      if (!context.forceSync && context.metadataHashesCache) {
+        const incomingHash = context.metadataHashesCache.titles?.[effectiveOriginalTitle]?.hash
+        if (incomingHash) {
+          // Prefer pre-fetched cache — avoids extra DB read when movieCache is populated
+          const cached = context.movieCache?.get(effectiveOriginalTitle)
+                      ?? await this.repository.findByOriginalTitle(effectiveOriginalTitle)
+
+          // Defence-in-depth: only skip when entity has populated metadata. Mirrors the
+          // metadataIsPopulated guard in MovieMetadataStrategy that repairs movies left
+          // with metadata: {} by the earlier strategy-spread bug.
+          const metadataIsPopulated = cached?.metadata
+            && typeof cached.metadata === 'object'
+            && Object.keys(cached.metadata).length > 0
+            && (cached.metadata as any).hasExternalMetadata !== false
+
+          if (cached?.syncHash && cached.syncHash === incomingHash && metadataIsPopulated) {
+            syncEventBus.emitComplete(title, MediaType.Movie, context.serverConfig.id, undefined, {
+              totalOperations: 0,
+              successful: 0,
+              failed: 0
+            })
+            return [{
+              status: SyncStatus.Skipped,
+              entityId: title,
+              mediaType: MediaType.Movie,
+              operation: SyncOperation.Metadata,
+              serverId: context.serverConfig.id,
+              timestamp: new Date(),
+              changes: [],
+              errors: []
+            }]
+          }
+        }
+      }
+
       const existingMovie = await this.repository.findByOriginalTitle(effectiveOriginalTitle)
 
       // Normalize entity to ensure complete schema (handles new, existing, and partial records)
@@ -128,7 +165,17 @@ export class MovieSyncService {
 
       // ---- Consolidated write — single smartUpsert after all strategies ----
       const pending = context.pendingMovieUpdates.get(effectiveOriginalTitle) || {}
+
+      // Stamp syncHash so the next sync can early-skip via the Phase 2 check.
+      // Only stamped when at least one strategy made changes — if the sync was a
+      // no-op, leave any existing syncHash alone (consistent with smart-upsert philosophy).
       if (Object.keys(pending).length > 0) {
+        const incomingHash = context.metadataHashesCache?.titles?.[effectiveOriginalTitle]?.hash
+        if (incomingHash) {
+          pending.syncHash = incomingHash
+          context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
+        }
+
         if (!existingMovie) {
           // New document — full insert from the accumulated pending fields
           await this.repository.upsert({ ...movie, ...pending } as any)

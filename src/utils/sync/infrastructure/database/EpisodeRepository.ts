@@ -7,6 +7,7 @@
 import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { EpisodeEntity, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
+import { ResourceManager } from '../../core/ResourceManager'
 
 export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
   constructor(client: MongoClient) {
@@ -118,7 +119,8 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         }
       })
 
-      await this.collection.bulkWrite(operations, { ordered: false })
+      const limit = ResourceManager.getInstance().dbWriteLimitFor(this.collectionName)
+      await limit(() => this.collection.bulkWrite(operations, { ordered: false }))
     } catch (error) {
       throw new DatabaseError(`Failed to bulk upsert episodes: ${error}`)
     }
@@ -172,7 +174,8 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
 
     if (operations.length === 0) return  // all episodes unchanged
     try {
-      await this.collection.bulkWrite(operations, { ordered: false })
+      const limit = ResourceManager.getInstance().dbWriteLimitFor(this.collectionName)
+      await limit(() => this.collection.bulkWrite(operations, { ordered: false }))
     } catch (error) {
       throw new DatabaseError(`Failed to smart bulk upsert episodes: ${error}`)
     }

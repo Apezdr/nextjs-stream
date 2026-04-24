@@ -99,7 +99,8 @@ export class SyncManager {
       this.tvShowService = new TVShowSyncService(
         this.dbAdapter.tvShows,
         seasonSyncService,
-        episodeSyncService
+        episodeSyncService,
+        this.dbAdapter.episodes
       )
       syncLogger.info('TV sync services initialized')
 

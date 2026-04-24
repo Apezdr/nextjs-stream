@@ -18,13 +18,16 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
   async createIndexes(): Promise<void> {
     try {
       await Promise.all([
-        // Primary lookup indexes
-        this.createIndexSafely({ title: 1 }, { unique: true }),
+        // Primary lookup indexes — name must match flatSync/initializeDatabase.js
+        // to avoid "Index already exists with a different name" conflicts
+        this.createIndexSafely({ title: 1 }, { unique: true, name: 'title_index' }),
         this.createIndexSafely({ title: 1, serverId: 1 }),
 
         // originalTitle — used by findByOriginalTitle() before every show sync
-        // and as the upsert filter key in BaseRepository.upsert()
-        this.createIndexSafely({ originalTitle: 1 }),
+        // and as the upsert filter key in BaseRepository.upsert().
+        // Name + unique must match flatSync/initializeDatabase.js:112 to avoid
+        // IndexOptionsConflict.
+        this.createIndexSafely({ originalTitle: 1 }, { unique: true, name: 'originalTitle_index' }),
 
         // Performance indexes
         this.createIndexSafely({ serverId: 1 }),

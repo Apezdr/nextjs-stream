@@ -6,6 +6,7 @@
 import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { SeasonEntity, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
+import { ResourceManager } from '../../core/ResourceManager'
 
 export class SeasonRepository extends BaseRepository<SeasonEntity> {
   constructor(client: MongoClient) {
@@ -105,7 +106,8 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
         }
       })
 
-      await this.collection.bulkWrite(operations, { ordered: false })
+      const limit = ResourceManager.getInstance().dbWriteLimitFor(this.collectionName)
+      await limit(() => this.collection.bulkWrite(operations, { ordered: false }))
     } catch (error) {
       throw new DatabaseError(`Failed to bulk upsert seasons: ${error}`)
     }
@@ -156,7 +158,8 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
 
     if (operations.length === 0) return  // all seasons unchanged
     try {
-      await this.collection.bulkWrite(operations, { ordered: false })
+      const limit = ResourceManager.getInstance().dbWriteLimitFor(this.collectionName)
+      await limit(() => this.collection.bulkWrite(operations, { ordered: false }))
     } catch (error) {
       throw new DatabaseError(`Failed to smart bulk upsert seasons: ${error}`)
     }

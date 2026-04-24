@@ -90,12 +90,16 @@ export interface SyncContext {
   }
   
   // TV show-level hashes (fetched once per server from /api/metadata-hashes/tv).
-  // Enables whole-show skip: if titles[showTitle].hash === TVShowEntity.syncHash,
-  // syncTVShow() returns Skipped immediately without processing seasons or episodes.
+  // Enables whole-show skip: if titles[showTitle].hash === TVShowEntity.syncHash
+  // AND titles[showTitle].contentHash === TVShowEntity.contentHash, syncTVShow()
+  // returns Skipped immediately without processing seasons or episodes.
+  // contentHash is optional — absent/null means the backend predates that signal
+  // and the frontend falls back to hash-only.
   tvShowHashesCache?: {
     hash: string  // Overall hash across all TV shows on this server
     titles: Record<string, {
       hash: string
+      contentHash?: string  // Aggregate of per-episode hashes — invalidates on video file changes
       lastModified: string
       generated: string
     }>
@@ -235,7 +239,14 @@ export interface MovieEntity extends BaseMediaEntity {
   posterBlurhashSource?: string
   backdropBlurhash?: string
   backdropBlurhashSource?: string
-  
+
+  // Content hash from media processor — stored after each successful sync to enable
+  // whole-movie skip. If this matches the incoming hash from /api/metadata-hashes/movies,
+  // syncMovie() returns Skipped immediately without normalising or running any strategies.
+  // Distinct from `metadataHash` (which only covers TMDB metadata) — `syncHash` is the
+  // authoritative whole-movie change-detection signal.
+  syncHash?: string
+
   // Server identification
   serverId?: string
 }
@@ -333,6 +344,13 @@ export interface TVShowEntity extends BaseMediaEntity {
   // If this matches the incoming hash from /api/metadata-hashes/tv, syncTVShow() returns
   // Skipped immediately without processing any seasons or episodes.
   syncHash?: string
+
+  // Aggregate hash of all per-episode hashes for this show, from the backend's
+  // contentHash field on /api/metadata-hashes/tv. Distinct from syncHash (which
+  // only covers show-level TMDB metadata). A video-file change invalidates this
+  // signal via the per-episode hash's mediaLastModified input, so the show-level
+  // skip only fires when BOTH syncHash AND contentHash match.
+  contentHash?: string
 }
 
 // ==========================================

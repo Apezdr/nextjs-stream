@@ -13,6 +13,7 @@
  *   SYNC_BATCH_DELAY_MS       – minimum ms between movie batches (default: 200)
  *   SYNC_MEMORY_THRESHOLD_MB  – heap MB at which throttling kicks in (default: 512)
  *   SYNC_DB_BATCH_SIZE        – max DB writes batched together (default: 25)
+ *   SYNC_DB_WRITE_CONCURRENCY – max concurrent bulkWrites per collection (default: 1)
  */
 
 import pLimit from 'p-limit'
@@ -43,6 +44,8 @@ export interface ResourceConfig {
   memoryThresholdMb: number
   /** Max DB upserts batched together before flushing */
   dbBatchSize: number
+  /** Max concurrent bulkWrite operations per MongoDB collection */
+  dbWriteConcurrency: number
 }
 
 export function getResourceConfig(): ResourceConfig {
@@ -52,6 +55,7 @@ export function getResourceConfig(): ResourceConfig {
     batchDelayMs: envInt('SYNC_BATCH_DELAY_MS', 0),
     memoryThresholdMb: envInt('SYNC_MEMORY_THRESHOLD_MB', 1024),
     dbBatchSize: envInt('SYNC_DB_BATCH_SIZE', 50),
+    dbWriteConcurrency: envInt('SYNC_DB_WRITE_CONCURRENCY', 1),
   }
 }
 
@@ -69,6 +73,12 @@ export class ResourceManager {
   private _activeHttpRequests = 0
   private _totalHttpRequests = 0
   private _peakMemoryMb = 0
+  /**
+   * Per-collection p-limit gates. Caps concurrent bulkWrite callers on the same
+   * MongoDB collection so parallel sync workers don't pile up on the WiredTiger
+   * collection-level write lock. Created lazily per collection name.
+   */
+  private readonly _dbWriteLimits = new Map<string, ReturnType<typeof pLimit>>()
 
   private constructor(config?: Partial<ResourceConfig>) {
     const defaults = getResourceConfig()
@@ -80,7 +90,8 @@ export class ResourceManager {
       `httpConcurrency=${this.config.httpConcurrency}, ` +
       `batchDelay=${this.config.batchDelayMs}ms, ` +
       `memoryThreshold=${this.config.memoryThresholdMb}MB, ` +
-      `dbBatchSize=${this.config.dbBatchSize}`
+      `dbBatchSize=${this.config.dbBatchSize}, ` +
+      `dbWriteConcurrency=${this.config.dbWriteConcurrency}`
     )
   }
 
@@ -118,6 +129,26 @@ export class ResourceManager {
         this._activeHttpRequests--
       }
     })
+  }
+
+  // -----------------------------------------------------------------------
+  // Database write concurrency gate
+  // -----------------------------------------------------------------------
+
+  /**
+   * Get (or lazily create) a p-limit gate for a specific collection's writes.
+   * Wrap each `collection.bulkWrite()` so concurrent sync workers can't queue
+   * up on the same WiredTiger collection-level write lock. Separate collections
+   * get separate limits, so writes to FlatEpisodes and FlatSeasons still run
+   * in parallel — only writes to the SAME collection serialize.
+   */
+  dbWriteLimitFor(collectionName: string): ReturnType<typeof pLimit> {
+    let limit = this._dbWriteLimits.get(collectionName)
+    if (!limit) {
+      limit = pLimit(this.config.dbWriteConcurrency)
+      this._dbWriteLimits.set(collectionName, limit)
+    }
+    return limit
   }
 
   // -----------------------------------------------------------------------

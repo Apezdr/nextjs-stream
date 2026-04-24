@@ -22,17 +22,19 @@ import {
   syncEventBus
 } from '../../core'
 
-import { TVShowRepository } from '../../infrastructure'
+import { TVShowRepository, EpisodeRepository } from '../../infrastructure'
 import { SeasonSyncService } from './SeasonSyncService'
 import { EpisodeSyncService } from './EpisodeSyncService'
 import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+import { syncLogger } from '../../core/logger'
 
 export class TVShowSyncService {
   constructor(
     private readonly tvShowRepository: TVShowRepository,
     private readonly seasonSyncService: SeasonSyncService,
-    private readonly episodeSyncService: EpisodeSyncService
+    private readonly episodeSyncService: EpisodeSyncService,
+    private readonly episodeRepository: EpisodeRepository
   ) {}
 
   /**
@@ -49,18 +51,41 @@ export class TVShowSyncService {
     syncEventBus.emitStarted(showTitle, MediaType.TVShow, context.serverConfig.id)
 
     try {
-      // Show-level hash skip: if show hash unchanged, skip entire show (seasons + episodes)
+      // Show-level skip: fire only when all three checks agree —
+      //   1. syncHash === incoming hash   (TMDB-metadata match)
+      //   2. contentHash === incoming contentHash   (no video-file changes)
+      //   3. DB episode count >= expected episode count   (no drift from legacy deletes etc.)
+      // contentHash is optional on the incoming side for rollout tolerance: a falsy
+      // value means the backend predates this signal, in which case we fall back to
+      // hash-only behavior (no worse than before).
       if (!context.forceSync && context.tvShowHashesCache) {
-        const incomingShowHash = context.tvShowHashesCache.titles?.[showTitle]?.hash
-        if (incomingShowHash) {
+        const incoming = context.tvShowHashesCache.titles?.[showTitle]
+        if (incoming?.hash) {
           const cached = await this.tvShowRepository.findByOriginalTitle(showTitle)
-          if (cached?.syncHash && cached.syncHash === incomingShowHash) {
-            syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
-              totalOperations: 0, successful: 0, failed: 0
-            })
-            return [this.makeResult(
-              showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Skipped, [], []
-            )]
+
+          const metadataHashMatches = !!cached?.syncHash && cached.syncHash === incoming.hash
+          const contentHashOk = !incoming.contentHash || cached?.contentHash === incoming.contentHash
+
+          if (cached && metadataHashMatches && contentHashOk) {
+            const expectedEpisodes = this.countExpectedEpisodes(showTitle, context)
+            const actualEpisodes = expectedEpisodes > 0
+              ? await this.episodeRepository.getEpisodeCount(cached.title)
+              : 0
+
+            if (actualEpisodes >= expectedEpisodes) {
+              syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
+                totalOperations: 0, successful: 0, failed: 0
+              })
+              return [this.makeResult(
+                showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Skipped, [], []
+              )]
+            }
+
+            syncLogger.info(
+              `Show "${showTitle}": hashes match but DB has ${actualEpisodes}/${expectedEpisodes} ` +
+              `episodes — forcing full sync to repair drift`
+            )
+            // fall through to full sync — missing episodes will be $setOnInsert'd
           }
         }
       }
@@ -313,7 +338,24 @@ export class TVShowSyncService {
     const incomingShowHash = context.tvShowHashesCache?.titles?.[showTitle]?.hash
     if (incomingShowHash) entity.syncHash = incomingShowHash
 
+    // Store incoming contentHash (aggregate of per-episode hashes) so the next sync
+    // can detect video-file changes at the show level. Distinct from syncHash.
+    const incomingContentHash = context.tvShowHashesCache?.titles?.[showTitle]?.contentHash
+    if (incomingContentHash) entity.contentHash = incomingContentHash
+
     return entity
+  }
+
+  /**
+   * Count episodes expected for this show based on the file-server data —
+   * sum of episode keys across every season. Used as the "expected" side of
+   * the show-level integrity check.
+   */
+  private countExpectedEpisodes(showTitle: string, context: SyncContext): number {
+    const seasons = context.fileServerData?.tv?.[showTitle]?.seasons
+    if (!seasons) return 0
+    return Object.values(seasons)
+      .reduce<number>((sum, s: any) => sum + Object.keys(s?.episodes || {}).length, 0)
   }
 
   private makeResult(

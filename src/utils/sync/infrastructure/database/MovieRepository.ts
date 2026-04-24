@@ -18,9 +18,10 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
   async createIndexes(): Promise<void> {
     try {
       await Promise.all([
-        // Primary lookup indexes
-        this.createIndexSafely({ title: 1 }, { unique: true }),
-        this.createIndexSafely({ originalTitle: 1 }, { unique: true }),
+        // Primary lookup indexes — names must match flatSync/initializeDatabase.js
+        // to avoid "Index already exists with a different name" conflicts
+        this.createIndexSafely({ title: 1 }, { unique: true, name: 'title_index' }),
+        this.createIndexSafely({ originalTitle: 1 }, { unique: true, name: 'originalTitle_index' }),
         this.createIndexSafely({ title: 1, serverId: 1 }),
         
         // Performance indexes
