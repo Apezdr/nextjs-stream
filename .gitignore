@@ -12,6 +12,7 @@
 # next.js
 /.next/
 /out/
+.next-docs
 
 # production
 /build
@@ -50,5 +51,3 @@ cline_docs*/
 
 # AI Docs
 docs/
-# next-agents-md
-.next-docs/
