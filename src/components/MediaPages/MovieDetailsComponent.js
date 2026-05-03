@@ -1,11 +1,12 @@
 import { classNames, getFullImageUrl } from '@src/utils'
 import Link from 'next/link'
 import Image from 'next/image'
-import { Suspense } from 'react'
+import { Suspense, ViewTransition } from 'react'
 import ViewCount from './ViewCount'
 import dynamic from 'next/dynamic'
 import RetryImage from '@components/RetryImage'
 import WatchlistButton from '@components/WatchlistButton'
+import { moviePosterName, movieBackdropName, movieLogoName } from '@src/utils/viewTransitionNames'
 
 // Lazy load the cast grid section which can be heavy
 const CastSection = dynamic(() => 
@@ -42,75 +43,81 @@ const MovieDetailsComponent = ({ media }) => {
         <div>
           <div className="flex gap-4 h-64">
             {/* Poster on the left */}
-            <div className="flex-shrink-0">
-              <Suspense fallback={<div className="w-40 h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
-                {posterBlurhash ? (
-                  <RetryImage
-                    src={posterURL ?? `/sorry-image-not-available.jpg`}
-                    alt={`${title} poster`}
-                    quality={100}
-                    width={160}
-                    height={256}
-                    placeholder="blur"
-                    blurDataURL={`data:image/png;base64,${posterBlurhash}`}
-                    className="w-40 h-64 object-cover rounded-lg shadow-md"
-                    priority={false}
-                  />
-                ) : (
-                  <RetryImage
-                    src={posterURL ?? `/sorry-image-not-available.jpg`}
-                    alt={`${title} poster`}
-                    quality={100}
-                    width={160}
-                    height={256}
-                    className="w-40 h-64 object-cover rounded-lg shadow-md"
-                    priority={false}
-                  />
-                )}
-              </Suspense>
-            </div>
-            
-            {/* Backdrop on the right */}
-            <div className="flex-grow relative">
-              <Suspense fallback={<div className="w-full h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
-                {backdropBlurhash ? (
-                  <RetryImage
-                    src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-                    alt={`${title} backdrop`}
-                    quality={100}
-                    width={1200}
-                    height={256}
-                    placeholder="blur"
-                    blurDataURL={`data:image/png;base64,${backdropBlurhash}`}
-                    className="w-full h-64 object-cover rounded-lg shadow-md"
-                    priority={false}
-                  />
-                ) : (
-                  <RetryImage
-                    src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-                    alt={`${title} backdrop`}
-                    quality={100}
-                    width={1200}
-                    height={256}
-                    className="w-full h-64 object-cover rounded-lg shadow-md"
-                    priority={false}
-                  />
-                )}
-                {logo && (
-                  <div className="absolute top-4 left-4">
+            <ViewTransition name={moviePosterName(title)}>
+              <div className="flex-shrink-0">
+                <Suspense fallback={<div className="w-40 h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
+                  {posterBlurhash ? (
                     <RetryImage
-                      src={logo}
-                      alt={`${title} logo`}
+                      src={posterURL ?? `/sorry-image-not-available.jpg`}
+                      alt={`${title} poster`}
                       quality={100}
-                      width={128}
-                      height={40}
-                      className="w-32 h-auto"
+                      width={160}
+                      height={256}
+                      placeholder="blur"
+                      blurDataURL={`data:image/png;base64,${posterBlurhash}`}
+                      className="w-40 h-64 object-cover rounded-lg shadow-md"
                       priority={true}
                     />
-                  </div>
-                )}
-              </Suspense>
-            </div>
+                  ) : (
+                    <RetryImage
+                      src={posterURL ?? `/sorry-image-not-available.jpg`}
+                      alt={`${title} poster`}
+                      quality={100}
+                      width={160}
+                      height={256}
+                      className="w-40 h-64 object-cover rounded-lg shadow-md"
+                      priority={true}
+                    />
+                  )}
+                </Suspense>
+              </div>
+            </ViewTransition>
+            
+            {/* Backdrop on the right */}
+            <ViewTransition name={movieBackdropName(title)}>
+              <div className="flex-grow relative">
+                <Suspense fallback={<div className="w-full h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
+                  {backdropBlurhash ? (
+                    <RetryImage
+                      src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
+                      alt={`${title} backdrop`}
+                      quality={100}
+                      width={1200}
+                      height={256}
+                      placeholder="blur"
+                      blurDataURL={`data:image/png;base64,${backdropBlurhash}`}
+                      className="w-full h-64 object-cover rounded-lg shadow-md"
+                      priority={true}
+                    />
+                  ) : (
+                    <RetryImage
+                      src={backdrop ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
+                      alt={`${title} backdrop`}
+                      quality={100}
+                      width={1200}
+                      height={256}
+                      className="w-full h-64 object-cover rounded-lg shadow-md"
+                      priority={true}
+                    />
+                  )}
+                  {logo && (
+                    <ViewTransition name={movieLogoName(title)}>
+                      <div className="absolute top-4 left-4">
+                        <RetryImage
+                          src={logo}
+                          alt={`${title} logo`}
+                          quality={100}
+                          width={128}
+                          height={40}
+                          className="w-32 h-auto"
+                          priority={true}
+                        />
+                      </div>
+                    </ViewTransition>
+                  )}
+                </Suspense>
+              </div>
+            </ViewTransition>
           </div>
           <div className="mt-4">
             <Link href="/list/movie" className="self-center">

@@ -8,16 +8,21 @@
  */
 
 import { Suspense } from 'react'
+import { cacheLife, cacheTag } from 'next/cache'
 import Link from 'next/link'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import MovieListClient from '@components/MediaPages/MovieListClient'
 import AsyncMediaListHeader from '@components/MediaPages/AsyncMediaListHeader'
 import MediaListGridSkeleton from '@components/MediaPages/MediaListGridSkeleton'
-import { getMovieListData } from '@src/utils/actions/mediaListActions'
+import { getCachedMovieListData } from '@src/utils/cache/mediaListData'
 import { parseSearchParamsToFilters } from '@src/utils/mediaListUtils/shared'
 
 async function MovieListContent({ initialFilters, userId }) {
-  const initialData = await getMovieListData({ ...initialFilters, userId })
+  'use cache'
+  cacheLife('mediaLists')
+  cacheTag('media-library', 'movies', 'movie-list', `user-watch-history-${userId}`)
+
+  const initialData = await getCachedMovieListData({ ...initialFilters, userId })
   return (
     <MovieListClient
       initialFilters={initialFilters}
@@ -27,16 +32,6 @@ async function MovieListContent({ initialFilters, userId }) {
   )
 }
 
-/**
- * MovieListView Component (Server Component)
- *
- * Renders the static page shell immediately and streams the movie list in
- * via Suspense so paint isn't blocked on the data fetch.
- *
- * @param {Object} props
- * @param {Object} props.searchParams - URL search parameters for filtering/pagination
- * @param {Object} props.session - User session object (passed from parent component)
- */
 export default function MovieListView({ searchParams = {}, session }) {
   const initialFilters = parseSearchParamsToFilters(searchParams)
   const userId = session?.user?.id

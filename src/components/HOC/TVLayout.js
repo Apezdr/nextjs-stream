@@ -2,23 +2,28 @@
 
 import FullScreenBackdrop from '@components/Backdrop/FullScreen'
 import { AnimatePresence } from 'framer-motion'
-import { useParams } from 'next/navigation'
+import { useParams, usePathname } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { authClient } from '@src/lib/auth-client'
 
 export default function TVLayout({ posterCollage }) {
   const routeParams = useParams()
+  const pathname = usePathname()
   const [params, setParams] = useState(routeParams)
   const [media, setMedia] = useState(null)
-  
+
   // Get client-side session to check authentication before API calls
   const { data: session, isPending } = authClient.useSession()
 
-  // Destructure parameters and decode if necessary
-  const mediaType = params?.media?.[0] // 'movie' or 'tv'
-  const mediaTitle = decodeURIComponent(params?.media?.[1] || '')
-  const mediaSeason = params?.media?.[2] // Could be 'Season X'
-  const mediaEpisode = params?.media?.[3] // Could be 'Episode Y'
+  // Detect media type from the URL path (the explicit
+  // `/list/tv/[title]/[season]/[episode]` routes don't have a `params.media[]`
+  // array like the old catch-all did). Trailing slash matters: `/list/tv` is
+  // the list view (no specific show), `/list/tv/<title>` and below are detail.
+  const isTVPath = pathname?.startsWith('/list/tv/') ?? false
+  const mediaType = isTVPath ? 'tv' : null
+  const mediaTitle = decodeURIComponent(params?.title || '')
+  const mediaSeason = params?.season || undefined
+  const mediaEpisode = params?.episode || undefined
 
   useEffect(() => {
     setParams(routeParams)

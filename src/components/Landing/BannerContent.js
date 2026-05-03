@@ -1,5 +1,5 @@
 'use client'
-import { memo, Suspense, useMemo } from 'react'
+import { memo, Suspense, useMemo, ViewTransition } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Link from 'next/link'
 import Loading, { LoadingDots } from '@src/app/loading'
@@ -9,6 +9,7 @@ import RetryImage from '@components/RetryImage'
 import { InformationCircleIcon } from '@heroicons/react/20/solid'
 import { HeartIcon } from '@heroicons/react/24/outline'
 import WatchlistButton from '@components/WatchlistButton'
+import { movieBackdropName, movieLogoName } from '@src/utils/viewTransitionNames'
 
 const BannerVideoPlayer = dynamic(() => import('./BannerVideoPlayer'), {
   ssr: false,
@@ -45,28 +46,34 @@ const BannerContent = ({
             transition={{ duration: 1, ease: 'easeInOut' }}
             className="absolute inset-0"
           >
-            {currentMedia?.backdropBlurhash ? (
-              <RetryImage
-                src={currentMedia?.backdrop}
-                className="object-cover select-none pointer-events-none"
-                alt="Banner Image"
-                fill
-                blurDataURL={`data:image/png;base64,${currentMedia.backdropBlurhash}`}
-                placeholder="blur"
-                quality={100}
-                onLoad={onImageLoad}
-                priority
-              />
-            ) : currentMedia?.backdrop ? (
-              <RetryImage
-                src={currentMedia?.backdrop}
-                className="object-cover select-none pointer-events-none"
-                alt="Banner Image"
-                fill
-                quality={100}
-                onLoad={onImageLoad}
-                priority
-              />
+            {currentMedia?.title && (currentMedia?.backdropBlurhash || currentMedia?.backdrop) ? (
+              <ViewTransition name={movieBackdropName(currentMedia.title)}>
+                <div className="absolute inset-0">
+                  {currentMedia?.backdropBlurhash ? (
+                    <RetryImage
+                      src={currentMedia?.backdrop}
+                      className="object-cover select-none pointer-events-none"
+                      alt="Banner Image"
+                      fill
+                      blurDataURL={`data:image/png;base64,${currentMedia.backdropBlurhash}`}
+                      placeholder="blur"
+                      quality={100}
+                      onLoad={onImageLoad}
+                      priority
+                    />
+                  ) : (
+                    <RetryImage
+                      src={currentMedia?.backdrop}
+                      className="object-cover select-none pointer-events-none"
+                      alt="Banner Image"
+                      fill
+                      quality={100}
+                      onLoad={onImageLoad}
+                      priority
+                    />
+                  )}
+                </div>
+              </ViewTransition>
             ) : null}
             <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/50 to-transparent"></div>
           </motion.div>
@@ -107,15 +114,29 @@ const BannerContent = ({
           className="max-h-full absolute left-1/4 top-1/2 transform -translate-y-1/2 text-center w-36 md:w-64"
         >
           {logo ? (
-            <RetryImage
-              src={logo}
-              alt="Logo Image"
-              width={300}
-              height={300}
-              className="object-contain select-none pointer-events-none !h-auto max-h-[4.7rem] md:max-h-40 lg:max-h-44"
-              loading="eager"
-              priority
-            />
+            currentMedia?.title ? (
+              <ViewTransition name={movieLogoName(currentMedia.title)}>
+                <RetryImage
+                  src={logo}
+                  alt="Logo Image"
+                  width={300}
+                  height={300}
+                  className="object-contain select-none pointer-events-none !h-auto max-h-[4.7rem] md:max-h-40 lg:max-h-44"
+                  loading="eager"
+                  priority
+                />
+              </ViewTransition>
+            ) : (
+              <RetryImage
+                src={logo}
+                alt="Logo Image"
+                width={300}
+                height={300}
+                className="object-contain select-none pointer-events-none !h-auto max-h-[4.7rem] md:max-h-40 lg:max-h-44"
+                loading="eager"
+                priority
+              />
+            )
           ) : (
             <div className="font-bold text-lg text-left">{currentMedia.title}</div>
           )}
@@ -195,6 +216,7 @@ const BannerContent = ({
                 <Link
                   href={`/list/movie/${encodeURIComponent(currentMedia.title)}`}
                   className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
+                  prefetch={true}
                 >
                   <InformationCircleIcon className="size-6 mr-0 sm:mr-2" />
                   <span className="hidden sm:inline">View Details</span>

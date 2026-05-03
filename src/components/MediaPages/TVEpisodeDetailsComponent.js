@@ -1,10 +1,11 @@
 import { classNames } from '@src/utils'
 import Link from 'next/link'
-import { Suspense } from 'react'
+import { Suspense, ViewTransition } from 'react'
 import ViewCount from './ViewCount'
 import dynamic from 'next/dynamic'
 import RetryImage from '@components/RetryImage'
 import WatchlistButton from '@components/WatchlistButton'
+import { tvEpisodePosterName } from '@src/utils/viewTransitionNames'
 
 // Lazy load the cast grid section which can be heavy
 const CastSection = dynamic(() => 
@@ -58,48 +59,50 @@ const TVEpisodeDetailsComponent = ({ media }) => {
     <div className="max-w-4xl mx-auto p-4">
       <div className="flex flex-col gap-2">
         <div>
-          <div className="relative">
-            <Suspense fallback={<div className="w-full h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
-              {blurhash ?
-                <RetryImage
-                  src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-                  alt={`${title} backdrop`}
-                  quality={100}
-                  width={1200}
-                  height={256}
-                  placeholder="blur"
-                  blurDataURL={`data:image/png;base64,${blurhash}`}
-                  className="w-full h-64 object-cover rounded-lg shadow-md"
-                  priority={false}
-                />
-                :
-                <RetryImage
-                  src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-                  alt={`${title} backdrop`}
-                  quality={100}
-                  width={1200}
-                  height={256}
-                  placeholder="blur"
-                  blurDataURL={`data:image/png;base64,${blurhash}`}
-                  className="w-full h-64 object-cover rounded-lg shadow-md"
-                  priority={false}
-                />
-              }
-              {logo && (
-                <div className="absolute top-4 left-4">
+          <ViewTransition name={tvEpisodePosterName(showTitle, seasonNumber, episodeNumber)}>
+            <div className="relative">
+              <Suspense fallback={<div className="w-full h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
+                {blurhash ?
                   <RetryImage
-                    src={logo}
-                    alt={`${showTitle} logo`}
+                    src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
+                    alt={`${title} backdrop`}
                     quality={100}
-                    width={128}
-                    height={40}
-                    className="w-32 h-auto"
+                    width={1200}
+                    height={256}
+                    placeholder="blur"
+                    blurDataURL={`data:image/png;base64,${blurhash}`}
+                    className="w-full h-64 object-cover rounded-lg shadow-md"
                     priority={true}
                   />
-                </div>
-              )}
-            </Suspense>
-          </div>
+                  :
+                  <RetryImage
+                    src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
+                    alt={`${title} backdrop`}
+                    quality={100}
+                    width={1200}
+                    height={256}
+                    placeholder="blur"
+                    blurDataURL={`data:image/png;base64,${blurhash}`}
+                    className="w-full h-64 object-cover rounded-lg shadow-md"
+                    priority={true}
+                  />
+                }
+                {logo && (
+                  <div className="absolute top-4 left-4">
+                    <RetryImage
+                      src={logo}
+                      alt={`${showTitle} logo`}
+                      quality={100}
+                      width={128}
+                      height={40}
+                      className="w-32 h-auto"
+                      priority={true}
+                    />
+                  </div>
+                )}
+              </Suspense>
+            </div>
+          </ViewTransition>
           <div className="mt-4">
             <Link href={`/list/tv/${encodeURIComponent(showTitle)}/${seasonNumber}`} className="self-center">
               <button

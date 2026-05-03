@@ -23,6 +23,7 @@ import SkeletonCard from '@components/SkeletonCard'
 import Loading from '@src/app/loading'
 import { ShareIcon } from '@heroicons/react/20/solid'
 import { getMovieListData } from '@src/utils/actions/mediaListActions'
+import { moviePosterName } from '@src/utils/viewTransitionNames'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -44,10 +45,10 @@ const MovieCard = memo(({movie, index }) => {
         duration: 0.4,
       }}
     >
-      <Link href={`movie/${encodeURIComponent(movie.title)}`} className="group" scroll={true}>
+      <Link href={`movie/${encodeURIComponent(movie.title)}`} className="group" scroll={true} prefetch={true}>
         <div className="relative block w-auto mx-auto overflow-hidden rounded-lg focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-100 ">
           <Suspense fallback={<SkeletonCard key={index} heightClass={'h-[582px]'} imageOnly />}>
-            <MediaPoster movie={movie} />
+            <MediaPoster movie={movie} viewTransitionName={moviePosterName(movie.title)} />
           </Suspense>
           <button type="button" className="absolute inset-0 focus:outline-none">
             <span className="sr-only">View details for {movie.title}</span>

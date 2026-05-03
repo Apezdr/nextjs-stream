@@ -8,16 +8,21 @@
  */
 
 import { Suspense } from 'react'
+import { cacheLife, cacheTag } from 'next/cache'
 import Link from 'next/link'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import TVListClient from '@components/MediaPages/TVListClient'
 import AsyncMediaListHeader from '@components/MediaPages/AsyncMediaListHeader'
 import MediaListGridSkeleton from '@components/MediaPages/MediaListGridSkeleton'
-import { getTVListData } from '@src/utils/actions/mediaListActions'
+import { getCachedTVListData } from '@src/utils/cache/mediaListData'
 import { parseSearchParamsToFilters } from '@src/utils/mediaListUtils/shared'
 
 async function TVListContent({ initialFilters, userId }) {
-  const initialData = await getTVListData({ ...initialFilters, userId })
+  'use cache'
+  cacheLife('mediaLists')
+  cacheTag('media-library', 'tv', 'tv-list', `user-watch-history-${userId}`)
+
+  const initialData = await getCachedTVListData({ ...initialFilters, userId })
   return (
     <TVListClient
       initialFilters={initialFilters}
@@ -26,16 +31,6 @@ async function TVListContent({ initialFilters, userId }) {
   )
 }
 
-/**
- * TVListView Component (Server Component)
- *
- * Renders the static page shell immediately and streams the TV list in
- * via Suspense so paint isn't blocked on the data fetch.
- *
- * @param {Object} props
- * @param {Object} props.searchParams - URL search parameters for filtering/pagination
- * @param {Object} props.session - User session object (passed from parent component)
- */
 export default function TVListView({ searchParams = {}, session }) {
   const initialFilters = parseSearchParamsToFilters(searchParams)
   const userId = session?.user?.id

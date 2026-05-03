@@ -11,9 +11,25 @@ const nextConfig = {
   // - making code simpler, easier to maintain, and less error prone.
   // -----Removed but will be needed to upgrade to React 19-----
   reactCompiler: true,
-  // Enable Cache Components for Partial Pre-rendering (PPR)  
+  // Enable Cache Components for Partial Pre-rendering (PPR)
   // This allows instant static shell loads while dynamic content streams in
   cacheComponents: true,
+  experimental: {
+    // View transitions stay disabled for now — re-enabling depends on whether
+    // we want forward-only morph back (works without staleTimes) or accept
+    // the no-morph baseline. <ViewTransition> wrappers throughout the app are
+    // inert when this is false; flipping to true brings them back.
+    viewTransition: true,
+    // staleTimes is left OFF (default dynamic: 0). Setting it to a positive
+    // value caused rapid back/forth navigation to wedge in production — the
+    // client router cache + action queue interaction would silently drop
+    // navigation clicks (URL didn't even update). Trade-off: in-app Link
+    // clicks always do a fresh server fetch on dynamic routes, so navigation
+    // is stable but slower than it could be. Browser back/forward still uses
+    // the browser's own history-state cache so that path stays fast.
+    //
+    // Don't re-add staleTimes without re-testing the rapid-back/forth case.
+  },
   cacheLife: {
     // Media library lists - 1 minute cache for fresh content while reducing DB load
     mediaLists: {

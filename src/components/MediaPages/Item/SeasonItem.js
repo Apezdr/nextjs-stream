@@ -7,6 +7,7 @@ import HD4kBanner from '../../../../public/4kBanner.png';
 import hdr10PlusLogo from '../../../../public/HDR10+_Logo_light.svg';
 import { classNames } from '@src/utils';
 import RetryImage from '@components/RetryImage';
+import { tvSeasonPosterName } from '@src/utils/viewTransitionNames';
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -25,12 +26,13 @@ export default function SeasonItem({ season, showTitle }) {
           duration: 0.45,
         }}
       >
-        <Link href={`/list/tv/${encodeURIComponent(showTitle)}/${seasonNumber}`}>
+        <Link href={`/list/tv/${encodeURIComponent(showTitle)}/${seasonNumber}`} prefetch={true}>
           <div className="block mb-2 w-full lg:w-auto group">
             <MediaPoster
               className="max-w-[200px] !mx-auto rounded-t-sm shadow-2xl"
               contClassName="mx-auto"
               tv={season}
+              viewTransitionName={tvSeasonPosterName(showTitle, seasonNumber)}
             />
             <button
               type="button"

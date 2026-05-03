@@ -1,47 +1,18 @@
 // TVShowSeasonsList.js
+// Auth (and the unauthenticated UI fallback) is handled by the parent
+// page's <AuthGuard> wrapper. This component runs only for authenticated
+// users and lives inside a `'use cache'` subtree, so it must not call any
+// dynamic APIs (cookies, headers, getSession) directly.
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils';
 import Link from 'next/link';
-import UnauthenticatedPage from '@components/system/UnauthenticatedPage';
 import SkeletonCard from '@components/SkeletonCard';
 import Detailed from '@components/Poster/Detailed';
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched';
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils';
 import { getResolutionLabel } from '@src/utils';
-import { classNames } from '@src/utils';
 import SeasonItem from './Item/SeasonItem';
-import { getSession } from '@src/lib/cachedAuth';
-export const dynamic = 'force-dynamic';
-
-const variants = {
-  hidden: { opacity: 0, x: 0, y: -20 },
-  enter: { opacity: 1, x: 0, y: 0 },
-};
+import { tvPosterName } from '@src/utils/viewTransitionNames';
 
 export default async function TVShowSeasonsList({ showTitle }) {
-  const session = await getSession()
-
-  if (!session || !session.user) {
-    // User is not authenticated
-    return (
-      <UnauthenticatedPage callbackUrl={`/list/tv/${encodeURIComponent(showTitle)}`}>
-        <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
-          Please Sign in first
-        </h2>
-        <div className="border border-white border-opacity-30 rounded-lg p-3 overflow-hidden skeleton-container">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 overflow-hidden">
-            <SkeletonCard />
-            <SkeletonCard className="hidden md:block" />
-            <SkeletonCard className="hidden lg:block" />
-          </div>
-        </div>
-      </UnauthenticatedPage>
-    );
-  }
-
-  const {
-    user: { name, email },
-  } = session;
-
   // Fetch the TV show and its seasons from flat database
   const tvShow = await getFlatRequestedMedia({
     type: 'tv',
@@ -137,6 +108,7 @@ export default async function TVShowSeasonsList({ showTitle }) {
             overallHas4k={overallHas4k}
             overallHasHDR={overallHasHDR}
             overallHasHDR10={overallHasHDR10}
+            viewTransitionName={tvPosterName(tvShow.title)}
           />
           <div className="flex flex-row gap-x-4 mt-4 justify-center">
             <Link href="/list/tv" className="self-center">

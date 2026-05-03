@@ -2,21 +2,26 @@
 
 import FullScreenBackdrop from '@components/Backdrop/FullScreen'
 import { AnimatePresence } from 'framer-motion'
-import { useParams } from 'next/navigation'
+import { useParams, usePathname } from 'next/navigation'
 import { useState, useEffect } from 'react'
 import { authClient } from '@src/lib/auth-client'
 
 export default function MovieLayout({ posterCollage }) {
   const routeParams = useParams()
+  const pathname = usePathname()
   const [params, setParams] = useState(routeParams)
   const [media, setMedia] = useState(null)
-  
+
   // Get client-side session to check authentication before API calls
   const { data: session, isPending } = authClient.useSession()
 
-  // Destructure parameters and decode if necessary
-  const mediaType = params?.media?.[0] // 'movie' or 'tv'
-  const mediaTitle = decodeURIComponent(params?.media?.[1] || '')
+  // Detect media type from the URL path (the explicit `/list/movie/[title]`
+  // routes don't have a `params.media[]` array like the old catch-all did).
+  // Trailing slash matters: `/list/movie` is the list view (no specific
+  // movie), `/list/movie/<title>` is a detail page.
+  const isMoviePath = pathname?.startsWith('/list/movie/') ?? false
+  const mediaType = isMoviePath ? 'movie' : null
+  const mediaTitle = decodeURIComponent(params?.title || '')
 
   useEffect(() => {
     setParams(routeParams)

@@ -1,5 +1,5 @@
 'use client'
-import { cache, useSyncExternalStore } from 'react'
+import { cache, useSyncExternalStore, ViewTransition } from 'react'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '../utils'
 import HD4kBanner from '../../public/4kBanner.png'
 import hdr10PlusLogo from '../../public/HDR10+_Logo_light.svg'
@@ -20,6 +20,7 @@ function MediaPoster({
   hideGenres = false,
   imagePriority = false,
   loadingType = undefined,
+  viewTransitionName,
 }) {
   // Use useSyncExternalStore for SSR-safe client detection
   const isClient = useSyncExternalStore(
@@ -90,40 +91,48 @@ function MediaPoster({
           </div>
         </div>
       )}
-      {posterBlurhash ? (
-        <RetryImage
-          src={posterURL}
-          alt={alt ?? _media.title}
-          quality={quality}
-          width={size.w}
-          height={size.h}
-          loading={loadingType}
-          placeholder="blur"
-          blurDataURL={`data:image/png;base64,${posterBlurhash}`}
-          className={classNames(className, 'object-cover group-hover:opacity-75')}
-          priority={imagePriority}
-        />
-      ) : posterURL ? (
-        <RetryImage
-          src={posterURL}
-          alt={alt ?? _media.title}
-          quality={quality}
-          width={size.w}
-          height={size.h}
-          className={classNames(className, 'object-cover group-hover:opacity-75')}
-          priority={imagePriority}
-        />
-      ) : (
-        <RetryImage
-          src={'/sorry-image-not-available.jpg'}
-          alt={alt ?? _media.title}
-          quality={quality}
-          width={size.w}
-          height={size.h}
-          className={classNames(className, 'object-cover group-hover:opacity-75')}
-          priority={imagePriority}
-        />
-      )}
+      {(() => {
+        const image = posterBlurhash ? (
+          <RetryImage
+            src={posterURL}
+            alt={alt ?? _media.title}
+            quality={quality}
+            width={size.w}
+            height={size.h}
+            loading={loadingType}
+            placeholder="blur"
+            blurDataURL={`data:image/png;base64,${posterBlurhash}`}
+            className={classNames(className, 'object-cover group-hover:opacity-75')}
+            priority={imagePriority}
+          />
+        ) : posterURL ? (
+          <RetryImage
+            src={posterURL}
+            alt={alt ?? _media.title}
+            quality={quality}
+            width={size.w}
+            height={size.h}
+            className={classNames(className, 'object-cover group-hover:opacity-75')}
+            priority={imagePriority}
+          />
+        ) : (
+          <RetryImage
+            src={'/sorry-image-not-available.jpg'}
+            alt={alt ?? _media.title}
+            quality={quality}
+            width={size.w}
+            height={size.h}
+            className={classNames(className, 'object-cover group-hover:opacity-75')}
+            priority={imagePriority}
+          />
+        )
+
+        return viewTransitionName ? (
+          <ViewTransition name={viewTransitionName}>{image}</ViewTransition>
+        ) : (
+          image
+        )
+      })()}
       {_media.dimensions && (
         <div className="flex flex-col items-center bg-gray-900 justify-center content-center pb-4 pt-1 text-white transition-opacity duration-700 inset-0 text-xs h-auto opacity-75 group-hover:opacity-100 z-[8] relative">
           <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
