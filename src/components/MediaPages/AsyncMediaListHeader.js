@@ -15,8 +15,10 @@ const TAGS_BY_TYPE = {
 function HeaderCountFallback() {
   return (
     <>
-      <span className="block text-sm text-gray-100 animate-pulse">&nbsp;</span>
-      <span className="animate-pulse opacity-60">(…)</span>
+      <span className="block text-sm text-gray-100">
+        <span className="inline-block h-4 w-48 bg-gray-700 rounded animate-pulse align-middle" />
+      </span>
+      <span className="inline-block h-8 sm:h-9 w-24 bg-gray-700 rounded animate-pulse align-middle" />
     </>
   )
 }

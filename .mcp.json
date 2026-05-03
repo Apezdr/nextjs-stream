@@ -3,6 +3,21 @@
     "next-devtools": {
       "command": "npx",
       "args": ["-y", "next-devtools-mcp@latest"]
+    },
+    "signoz": {
+      "command": "docker",
+      "args": [
+        "run",
+        "--rm",
+        "-i",
+        "-e",
+        "SIGNOZ_URL=http://192.168.1.39:3301",
+        "-e",
+        "SIGNOZ_API_KEY=SPqkJJJgLFTgUEq4sY177dtS2RMbHwdwasvXQXFfQyA=",
+        "-e",
+        "LOG_LEVEL=info",
+        "signoz/signoz-mcp-server:latest"
+      ]
     }
   }
 }
