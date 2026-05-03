@@ -11,6 +11,13 @@ import { getServer, multiServerHandler } from '../config'
 import { httpGet } from '@src/lib/httpHelper'
 
 /**
+ * Module-level in-memory hash cache.
+ * Keys are built as: `${mediaType}//${serverId}//${title}//${seasonNumber}`
+ * Values are the hash strings returned by the server.
+ */
+const hashCache = new Map()
+
+/**
  * Store a hash in the database
  * @param {Object} client - MongoDB client
  * @param {string} mediaType - Media type ('tv' or 'movie')
@@ -220,6 +227,104 @@ export async function getStoredHashesForShow(client, showTitle, serverId) {
     })
     return { show: null, seasons: {}, episodes: {} }
   }
+}
+
+/**
+ * Build a cache key for the in-memory hash cache.
+ * @param {string} mediaType - Media type ('tv' or 'movie')
+ * @param {string} serverId - Server ID
+ * @param {string|null} title - Media title (or null for top-level)
+ * @param {number|null} seasonNumber - Season number (or null for show-level)
+ * @returns {string} Cache key
+ */
+export function buildHashCacheKey(mediaType, serverId, title, seasonNumber) {
+  return `${mediaType}//${serverId}//${title ?? ''}//${seasonNumber ?? ''}`
+}
+
+/**
+ * Look up a hash in the in-memory cache.
+ * @param {string} mediaType - Media type
+ * @param {string} serverId - Server ID
+ * @param {string|null} title - Media title
+ * @param {number|null} seasonNumber - Season number
+ * @returns {string|undefined} Cached hash or undefined if not cached
+ */
+export function getHashFromCache(mediaType, serverId, title, seasonNumber) {
+  return hashCache.get(buildHashCacheKey(mediaType, serverId, title, seasonNumber))
+}
+
+/**
+ * Fetch hash data from ALL provided server configs for a given mediaType and
+ * populate the in-memory hashCache.  Call this once before the season loop to
+ * avoid per-season HTTP round-trips.
+ *
+ * The cache is keyed by:
+ *   `${mediaType}//${serverId}//${showTitle}//${seasonNumber}`
+ *
+ * @param {Object[]} serverConfigs - Array of server configuration objects
+ * @param {string} mediaType - Media type ('tv' or 'movie')
+ * @returns {Promise<void>}
+ */
+export async function getHashFromAllServers(serverConfigs, mediaType) {
+  const log = createLogger('FlatSync.HashStorage.AllServers')
+
+  if (!serverConfigs || serverConfigs.length === 0) {
+    log.warn({ mediaType }, 'No server configs provided to getHashFromAllServers')
+    return
+  }
+
+  log.info({ mediaType, serverCount: serverConfigs.length }, 'Pre-fetching hashes from all servers')
+
+  await Promise.all(
+    serverConfigs.map(async (serverConfig) => {
+      try {
+        const hashResponse = await fetchHashData(serverConfig, mediaType)
+        if (!hashResponse || !hashResponse.titles) {
+          log.debug(
+            { serverId: serverConfig.id, mediaType },
+            'No hash data returned from server – skipping cache population'
+          )
+          return
+        }
+
+        const serverId = serverConfig.id
+
+        // Walk the titles → seasons tree and populate the cache
+        for (const [showTitle, showData] of Object.entries(hashResponse.titles)) {
+          // Show-level hash
+          if (showData.hash) {
+            hashCache.set(buildHashCacheKey(mediaType, serverId, showTitle, null), showData.hash)
+          }
+
+          // Season-level hashes
+          if (showData.seasons) {
+            for (const [seasonNumberStr, seasonData] of Object.entries(showData.seasons)) {
+              const seasonNumber = parseInt(seasonNumberStr, 10)
+              if (seasonData && seasonData.hash) {
+                hashCache.set(
+                  buildHashCacheKey(mediaType, serverId, showTitle, seasonNumber),
+                  seasonData.hash
+                )
+              }
+            }
+          }
+        }
+
+        log.debug(
+          { serverId, mediaType, cachedEntries: hashCache.size },
+          'Populated hash cache from server'
+        )
+      } catch (err) {
+        logError(log, err, {
+          serverId: serverConfig.id,
+          mediaType,
+          context: 'get_hash_from_all_servers'
+        })
+      }
+    })
+  )
+
+  log.info({ mediaType, cachedEntries: hashCache.size }, 'Hash cache populated from all servers')
 }
 
 /**

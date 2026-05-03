@@ -55,6 +55,7 @@ export default function AdminOverviewPage({
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const [isSyncOpen, setIsSyncOpen] = useState(false)
+  const [syncAutoConnect, setSyncAutoConnect] = useState(false)
   const [isAdding, setIsAdding] = useState(null)
   const [record, setRecord] = useState(null)
   const [_processedData, setProcessedData] = useState(processedData)
@@ -166,9 +167,10 @@ export default function AdminOverviewPage({
         {isSyncOpen && (
           <SyncMediaPopup
             isOpen={isSyncOpen}
-            setIsOpen={setIsSyncOpen}
+            setIsOpen={(val) => { setIsSyncOpen(val); if (!val) setSyncAutoConnect(false) }}
             updateProcessedData={updateProcessedData}
             setLastSync={() => mutateLastSync()}
+            autoConnect={syncAutoConnect}
           />
         )}
         {record && action !== 'delete' && record.type === 'movie' && (
@@ -242,7 +244,7 @@ export default function AdminOverviewPage({
                 }
               />
               <MaterialCardContent padding="none">
-                <EnhancedServerProcesses />
+                <EnhancedServerProcesses onSyncViewClick={() => { setSyncAutoConnect(true); setIsSyncOpen(true) }} />
               </MaterialCardContent>
             </MaterialCard>
           </div>

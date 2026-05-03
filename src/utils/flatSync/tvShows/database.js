@@ -21,7 +21,6 @@ export async function updateTVShowInFlatDB(client, title, updates) {
       .updateOne({ originalTitle: title }, updates, { upsert: true });
 
     if (result.upsertedCount == 0 && result.modifiedCount == 0) {
-      debugger;
       log.warn({
         title,
         context: 'tvshow_not_found'

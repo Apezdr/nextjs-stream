@@ -4,13 +4,14 @@
  * Optimized for high-volume episode operations
  */
 
-import { MongoClient } from 'mongodb'
+import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { EpisodeEntity, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
+import { ResourceManager } from '../../core/ResourceManager'
 
 export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
   constructor(client: MongoClient) {
-    super(client, 'Episodes')
+    super(client, 'FlatEpisodes')
   }
 
   /**
@@ -25,23 +26,31 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         this.createIndexSafely({ showTitle: 1, seasonNumber: 1, episodeNumber: 1 }, { unique: true }),
         this.createIndexSafely({ showTitle: 1, seasonNumber: 1 }),
         this.createIndexSafely({ showTitle: 1 }),
-        
+
+        // showId-based indexes — critical for bulkUpsertSeason which filters on
+        // { showId, seasonNumber, episodeNumber } when showId is present.
+        // Without this, every upsert in the hot sync path does a collection scan,
+        // causing write lock contention and the Slow query log entries in production.
+        this.createIndexSafely({ showId: 1, seasonNumber: 1, episodeNumber: 1 }),
+        this.createIndexSafely({ showId: 1, seasonNumber: 1 }),
+        this.createIndexSafely({ showId: 1 }),
+
         // Server and sync indexes
         this.createIndexSafely({ serverId: 1 }),
         this.createIndexSafely({ showTitle: 1, serverId: 1 }),
         this.createIndexSafely({ lastSynced: 1 }),
-        
+
         // Asset availability indexes
         this.createIndexSafely({ videoURL: 1 }),
-        this.createIndexSafely({ thumbnailURL: 1 }),
-        
+        this.createIndexSafely({ thumbnail: 1 }),
+
         // Performance indexes for aggregations
         this.createIndexSafely({ showTitle: 1, lastSynced: 1 }),
         this.createIndexSafely({ seasonNumber: 1, episodeNumber: 1 }),
-        
+
         // Sparse indexes for optional fields
         this.createIndexSafely({ 'videoInfo.duration': 1 }, { sparse: true }),
-        this.createIndexSafely({ 'captions.language': 1 }, { sparse: true })
+        this.createIndexSafely({ 'captionURLs': 1 }, { sparse: true })
       ])
     } catch (error) {
       console.error('Failed to create episode indexes:', error)
@@ -85,25 +94,90 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
 
     try {
       const now = new Date()
-      const operations = episodes.map(episode => ({
-        replaceOne: {
-          filter: {
-            showTitle: episode.showTitle,
-            seasonNumber: episode.seasonNumber,
-            episodeNumber: episode.episodeNumber
-          },
-          replacement: {
-            ...episode,
-            lastSynced: now,
-            updatedAt: now
-          },
-          upsert: true
-        }
-      }))
+      const operations = episodes.map(episode => {
+        // Strip _id so MongoDB preserves existing _id on matched docs
+        // and auto-generates for new upserted docs
+        const { _id, ...episodeWithoutId } = episode as any
 
-      await this.collection.bulkWrite(operations, { ordered: false })
+        // Use showId + seasonNumber + episodeNumber when showId is available.
+        // This avoids E11000 collisions with the legacy show_season_episode_index
+        // {showId, seasonId, episodeNumber} when showTitle has changed between syncs.
+        const filter = (episode as any).showId
+          ? { showId: (episode as any).showId, seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber }
+          : { showTitle: episode.showTitle, seasonNumber: episode.seasonNumber, episodeNumber: episode.episodeNumber }
+
+        return {
+          replaceOne: {
+            filter,
+            replacement: {
+              ...episodeWithoutId,
+              lastSynced: now,
+              updatedAt: now
+            },
+            upsert: true
+          }
+        }
+      })
+
+      const limit = ResourceManager.getInstance().dbWriteLimitFor(this.collectionName)
+      await limit(() => this.collection.bulkWrite(operations, { ordered: false }))
     } catch (error) {
       throw new DatabaseError(`Failed to bulk upsert episodes: ${error}`)
+    }
+  }
+
+  /**
+   * Write-optimal bulk upsert for a season's episodes.
+   *
+   * Each op is classified as:
+   *   - New (existing=null)      → $setOnInsert upsert (race-safe)
+   *   - Unchanged (diff empty)   → skipped entirely (zero write-ticket cost)
+   *   - Changed (diff non-empty) → $set of changed fields only
+   *
+   * Replaces bulkUpsertSeason for the sync path. bulkUpsertSeason is kept
+   * for any callers that don't have existing docs available.
+   */
+  async smartBulkUpsert(ops: Array<{
+    filter: Record<string, any>
+    existing: EpisodeEntity | null
+    merged: EpisodeEntity
+  }>): Promise<void> {
+    if (ops.length === 0) return
+    const now = new Date()
+    const operations: AnyBulkWriteOperation<EpisodeEntity>[] = []
+
+    for (const { filter, existing, merged } of ops) {
+      const { _id, ...mergedNoId } = merged as any
+
+      if (!existing) {
+        operations.push({
+          updateOne: {
+            filter,
+            update: { $setOnInsert: { ...mergedNoId, lastSynced: now, updatedAt: now } },
+            upsert: true,
+          },
+        })
+        continue
+      }
+
+      const diff = BaseRepository.computeDiff(existing, merged)
+      if (Object.keys(diff).length === 0) continue  // unchanged — skip write
+
+      operations.push({
+        updateOne: {
+          filter,
+          update: { $set: { ...diff, lastSynced: now, updatedAt: now } },
+          upsert: false,
+        },
+      })
+    }
+
+    if (operations.length === 0) return  // all episodes unchanged
+    try {
+      const limit = ResourceManager.getInstance().dbWriteLimitFor(this.collectionName)
+      await limit(() => this.collection.bulkWrite(operations, { ordered: false }))
+    } catch (error) {
+      throw new DatabaseError(`Failed to smart bulk upsert episodes: ${error}`)
     }
   }
 
@@ -153,9 +227,9 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
     try {
       const filter: any = {
         $or: [
-          { thumbnailURL: { $exists: false } },
-          { thumbnailURL: null },
-          { thumbnailURL: '' }
+          { thumbnail: { $exists: false } },
+          { thumbnail: null },
+          { thumbnail: '' }
         ]
       }
 
@@ -224,8 +298,8 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
       ] = await Promise.all([
         this.collection.countDocuments(),
         this.collection.countDocuments({ videoURL: { $exists: true, $ne: undefined } }),
-        this.collection.countDocuments({ thumbnailURL: { $exists: true, $ne: undefined } }),
-        this.collection.countDocuments({ captions: { $exists: true, $not: { $size: 0 } } }),
+        this.collection.countDocuments({ thumbnail: { $exists: true, $ne: undefined } }),
+        this.collection.countDocuments({ captionURLs: { $exists: true, $ne: null } } as any),
         this.collection.aggregate([
           { $group: { _id: '$showTitle', count: { $sum: 1 } } },
           { $sort: { count: -1 } },
@@ -293,9 +367,9 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
       if (criteria.missingThumbnails) {
         conditions.push({
           $or: [
-            { thumbnailURL: { $exists: false } },
-            { thumbnailURL: null },
-            { thumbnailURL: '' }
+            { thumbnail: { $exists: false } },
+            { thumbnail: null },
+            { thumbnail: '' }
           ]
         })
       }
@@ -303,8 +377,8 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
       if (criteria.missingCaptions) {
         conditions.push({
           $or: [
-            { captions: { $exists: false } },
-            { captions: { $size: 0 } }
+            { captionURLs: { $exists: false } },
+            { captionURLs: null }
           ]
         })
       }

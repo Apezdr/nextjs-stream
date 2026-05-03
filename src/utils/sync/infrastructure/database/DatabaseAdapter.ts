@@ -166,11 +166,28 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 }
 
+declare global {
+  // Preserve across HMR in development, same pattern as src/lib/mongodb.ts
+  var __syncDatabaseAdapterPromise: Promise<MongoDBAdapter> | undefined
+}
+
 /**
- * Factory function to create database adapter
+ * Factory function to create database adapter.
+ *
+ * Caches the adapter (and its index-creation promise) at module scope so
+ * `initialize()` — which fires ~51 `createIndex` wire calls across four
+ * collections — runs exactly once per process lifetime, not on every caller.
  */
 export async function createDatabaseAdapter(client: MongoClient): Promise<MongoDBAdapter> {
-  const adapter = new MongoDBAdapter(client)
-  await adapter.initialize()
-  return adapter
+  if (!globalThis.__syncDatabaseAdapterPromise) {
+    const adapter = new MongoDBAdapter(client)
+    globalThis.__syncDatabaseAdapterPromise = adapter.initialize()
+      .then(() => adapter)
+      .catch((err) => {
+        // Don't poison the cache on transient failures — let the next caller retry
+        globalThis.__syncDatabaseAdapterPromise = undefined
+        throw err
+      })
+  }
+  return globalThis.__syncDatabaseAdapterPromise
 }

@@ -31,9 +31,9 @@ export function shouldUseNewArchitecture(options = {}) {
     return true
   }
 
-  // Default to old architecture for safety
-  console.log('🔄 Feature flag: Using OLD sync architecture (default/environment disabled)')
-  return false
+  // Default to new architecture
+  console.log('🆕 Feature flag: Using NEW sync architecture (default)')
+  return true
 }
 
 /**

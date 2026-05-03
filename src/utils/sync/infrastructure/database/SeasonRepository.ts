@@ -3,13 +3,14 @@
  * Handles all database operations for season entities
  */
 
-import { MongoClient } from 'mongodb'
+import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { SeasonEntity, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
+import { ResourceManager } from '../../core/ResourceManager'
 
 export class SeasonRepository extends BaseRepository<SeasonEntity> {
   constructor(client: MongoClient) {
-    super(client, 'Seasons')
+    super(client, 'FlatSeasons')
   }
 
   /**
@@ -22,15 +23,21 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
         this.createIndexSafely({ showTitle: 1, seasonNumber: 1 }, { unique: true }),
         this.createIndexSafely({ showTitle: 1 }),
         this.createIndexSafely({ title: 1 }),
-        
+
+        // showId-based indexes — bulkUpsertShow filters on { showId, seasonNumber }
+        // when showId is present. Without this index every season upsert scans the
+        // collection, causing write lock contention (Slow query in production).
+        this.createIndexSafely({ showId: 1, seasonNumber: 1 }),
+        this.createIndexSafely({ showId: 1 }),
+
         // Performance indexes
         this.createIndexSafely({ serverId: 1 }),
         this.createIndexSafely({ lastSynced: 1 }),
         this.createIndexSafely({ showTitle: 1, lastSynced: 1 }),
-        
+
         // Asset indexes
         this.createIndexSafely({ posterURL: 1 }),
-        
+
         // Metadata indexes
         this.createIndexSafely({ episodeCount: 1 }, { sparse: true })
       ])
@@ -74,24 +81,87 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
 
     try {
       const now = new Date()
-      const operations = seasons.map(season => ({
-        replaceOne: {
-          filter: {
-            showTitle: season.showTitle,
-            seasonNumber: season.seasonNumber
-          },
-          replacement: {
-            ...season,
-            lastSynced: now,
-            updatedAt: now
-          },
-          upsert: true
-        }
-      }))
+      const operations = seasons.map(season => {
+        // Strip _id so MongoDB preserves existing _id on matched docs
+        // and auto-generates for new upserted docs
+        const { _id, ...seasonWithoutId } = season as any
 
-      await this.collection.bulkWrite(operations, { ordered: false })
+        // Use showId + seasonNumber as filter when showId is available.
+        // This matches the legacy show_season_index {showId, seasonNumber}
+        // and avoids E11000 when showTitle changed between syncs.
+        const filter = (season as any).showId
+          ? { showId: (season as any).showId, seasonNumber: season.seasonNumber }
+          : { showTitle: season.showTitle, seasonNumber: season.seasonNumber }
+
+        return {
+          replaceOne: {
+            filter,
+            replacement: {
+              ...seasonWithoutId,
+              lastSynced: now,
+              updatedAt: now
+            },
+            upsert: true
+          }
+        }
+      })
+
+      const limit = ResourceManager.getInstance().dbWriteLimitFor(this.collectionName)
+      await limit(() => this.collection.bulkWrite(operations, { ordered: false }))
     } catch (error) {
       throw new DatabaseError(`Failed to bulk upsert seasons: ${error}`)
+    }
+  }
+
+  /**
+   * Write-optimal bulk upsert for a show's seasons.
+   *
+   * Each op is classified as:
+   *   - New (existing=null)      → $setOnInsert upsert (race-safe)
+   *   - Unchanged (diff empty)   → skipped entirely (zero write-ticket cost)
+   *   - Changed (diff non-empty) → $set of changed fields only
+   */
+  async smartBulkUpsert(ops: Array<{
+    filter: Record<string, any>
+    existing: SeasonEntity | null
+    merged: SeasonEntity
+  }>): Promise<void> {
+    if (ops.length === 0) return
+    const now = new Date()
+    const operations: AnyBulkWriteOperation<SeasonEntity>[] = []
+
+    for (const { filter, existing, merged } of ops) {
+      const { _id, ...mergedNoId } = merged as any
+
+      if (!existing) {
+        operations.push({
+          updateOne: {
+            filter,
+            update: { $setOnInsert: { ...mergedNoId, lastSynced: now, updatedAt: now } },
+            upsert: true,
+          },
+        })
+        continue
+      }
+
+      const diff = BaseRepository.computeDiff(existing, merged)
+      if (Object.keys(diff).length === 0) continue  // unchanged — skip write
+
+      operations.push({
+        updateOne: {
+          filter,
+          update: { $set: { ...diff, lastSynced: now, updatedAt: now } },
+          upsert: false,
+        },
+      })
+    }
+
+    if (operations.length === 0) return  // all seasons unchanged
+    try {
+      const limit = ResourceManager.getInstance().dbWriteLimitFor(this.collectionName)
+      await limit(() => this.collection.bulkWrite(operations, { ordered: false }))
+    } catch (error) {
+      throw new DatabaseError(`Failed to smart bulk upsert seasons: ${error}`)
     }
   }
 
@@ -126,6 +196,32 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
       return await this.collection.find(filter).toArray()
     } catch (error) {
       throw new DatabaseError(`Failed to find seasons missing posters: ${error}`)
+    }
+  }
+
+  /**
+   * Update season blurhash fields.
+   * Uses the composite key {showTitle, seasonNumber} — the only unique identifier for a season.
+   */
+  async updateBlurhash(
+    showTitle: string,
+    seasonNumber: number,
+    data: { posterBlurhash?: string; posterBlurhashSource?: string }
+  ): Promise<void> {
+    try {
+      const updates: Record<string, unknown> = { lastSynced: new Date(), updatedAt: new Date() }
+      if (data.posterBlurhash !== undefined) updates.posterBlurhash = data.posterBlurhash
+      if (data.posterBlurhashSource !== undefined) updates.posterBlurhashSource = data.posterBlurhashSource
+
+      await this.collection.updateOne(
+        { showTitle, seasonNumber },
+        { $set: updates }
+      )
+    } catch (error) {
+      throw new DatabaseError(
+        `Failed to update blurhash for ${showTitle} S${seasonNumber}: ${error}`,
+        showTitle
+      )
     }
   }
 

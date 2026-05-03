@@ -7,39 +7,38 @@
  * REFACTORED: Now uses Server Actions for filtering/pagination instead of client-side filtering
  */
 
+import { Suspense } from 'react'
 import Link from 'next/link'
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
 import TVListClient from '@components/MediaPages/TVListClient'
+import AsyncMediaListHeader from '@components/MediaPages/AsyncMediaListHeader'
+import MediaListGridSkeleton from '@components/MediaPages/MediaListGridSkeleton'
 import { getTVListData } from '@src/utils/actions/mediaListActions'
 import { parseSearchParamsToFilters } from '@src/utils/mediaListUtils/shared'
 
+async function TVListContent({ initialFilters, userId }) {
+  const initialData = await getTVListData({ ...initialFilters, userId })
+  return (
+    <TVListClient
+      initialFilters={initialFilters}
+      initialData={initialData}
+    />
+  )
+}
+
 /**
  * TVListView Component (Server Component)
- * 
- * Fetches initial TV list data based on search params and renders the client component.
- * Uses Server Actions with 'use cache' for optimal performance.
- * 
+ *
+ * Renders the static page shell immediately and streams the TV list in
+ * via Suspense so paint isn't blocked on the data fetch.
+ *
  * @param {Object} props
  * @param {Object} props.searchParams - URL search parameters for filtering/pagination
  * @param {Object} props.session - User session object (passed from parent component)
  */
-export default async function TVListView({ searchParams = {}, session }) {
-  // Parse search params into filter options
-  const initialFilters = parseSearchParamsToFilters(searchParams);
-  
-  // Add userId to the filter options for watch history
-  const filtersWithUserId = {
-    ...initialFilters,
-    userId: session?.user?.id
-  };
-  
-  // Fetch initial data using Server Action (cached)
-  const initialData = await getTVListData(filtersWithUserId);
-  
-  // Extract statistics for header display
-  const { statistics } = initialData;
-  const tvShowsCount = statistics?.count || 0;
-  const tvHours = Math.round((statistics?.totalDuration || 0) / (1000 * 60 * 60));
+export default function TVListView({ searchParams = {}, session }) {
+  const initialFilters = parseSearchParamsToFilters(searchParams)
+  const userId = session?.user?.id
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-[#060916e8]">
@@ -47,14 +46,7 @@ export default async function TVListView({ searchParams = {}, session }) {
       <div className="h-auto flex items-center justify-center py-32 lg:py-0 px-4 xl:px-0 sm:mt-20">
         <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-2 xl:grid-cols-4 xl:gap-x-8">
           <li>
-            <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
-              {tvHours > 0 && (
-                <span className="block text-sm text-gray-100">
-                  {tvHours.toLocaleString()} hours total
-                </span>
-              )}
-              ({tvShowsCount}) Available TV Programs
-            </h2>
+            <AsyncMediaListHeader mediaType="tv" label="Available TV Programs" />
             <div className="flex flex-row gap-x-4 mt-4 justify-center">
               <Link href="/list" className="self-center">
                 <button
@@ -80,13 +72,11 @@ export default async function TVListView({ searchParams = {}, session }) {
               </Link>
             </div>
           </li>
-          {/* TV list with client-driven filtering and pagination */}
-          <TVListClient
-            initialFilters={initialFilters}
-            initialData={initialData}
-          />
+          <Suspense fallback={<MediaListGridSkeleton />}>
+            <TVListContent initialFilters={initialFilters} userId={userId} />
+          </Suspense>
         </ul>
       </div>
     </div>
-  );
+  )
 }

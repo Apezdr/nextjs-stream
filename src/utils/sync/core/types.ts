@@ -23,7 +23,8 @@ export enum SyncOperation {
   Metadata = 'metadata',
   Assets = 'assets',      // posters, backdrops, logos
   Content = 'content',    // video URLs, captions, chapters
-  Validation = 'validation'
+  Validation = 'validation',
+  Blurhash = 'blurhash'  // post-entity blurhash computation (poster + backdrop)
 }
 
 export enum SyncStatus {
@@ -88,6 +89,35 @@ export interface SyncContext {
     }>
   }
   
+  // TV show-level hashes (fetched once per server from /api/metadata-hashes/tv).
+  // Enables whole-show skip: if titles[showTitle].hash === TVShowEntity.syncHash
+  // AND titles[showTitle].contentHash === TVShowEntity.contentHash, syncTVShow()
+  // returns Skipped immediately without processing seasons or episodes.
+  // contentHash is optional — absent/null means the backend predates that signal
+  // and the frontend falls back to hash-only.
+  tvShowHashesCache?: {
+    hash: string  // Overall hash across all TV shows on this server
+    titles: Record<string, {
+      hash: string
+      contentHash?: string  // Aggregate of per-episode hashes — invalidates on video file changes
+      lastModified: string
+      generated: string
+    }>
+  }
+
+  // Per-season episode hashes — keyed by showTitle → seasonNumber.
+  // Populated lazily at the start of each EpisodeSyncService.syncSeason() call
+  // via GET /api/metadata-hashes/tv/{title}/{seasonNumber}.
+  // One HTTP call per season replaces N×2 fetchMetadataMultiServer calls for unchanged episodes.
+  tvEpisodeHashesCache?: Map<string, Map<number, {
+    hash: string  // Season-level aggregate hash
+    episodes: Record<string, {  // key = S01E01 format
+      hash: string
+      lastModified: string
+      generated: string
+    }>
+  }>>
+
   // Resource manager for throttling HTTP requests and monitoring memory
   // Strategies should use context.resourceManager?.throttleHttp() for outbound calls
   resourceManager?: {
@@ -95,6 +125,12 @@ export interface SyncContext {
     isMemoryPressure: () => boolean
     getHeapUsedMb: () => number
   }
+
+  // Accumulated movie field changes from strategies — keyed by originalTitle.
+  // Strategies append their computed changes here instead of writing to the DB
+  // directly. MovieSyncService performs a single consolidated write after all
+  // strategies complete, using smartUpsert to write only changed fields.
+  pendingMovieUpdates?: Map<string, Partial<MovieEntity>>
 }
 
 export interface SyncResult {
@@ -203,40 +239,118 @@ export interface MovieEntity extends BaseMediaEntity {
   posterBlurhashSource?: string
   backdropBlurhash?: string
   backdropBlurhashSource?: string
-  
+
+  // Content hash from media processor — stored after each successful sync to enable
+  // whole-movie skip. If this matches the incoming hash from /api/metadata-hashes/movies,
+  // syncMovie() returns Skipped immediately without normalising or running any strategies.
+  // Distinct from `metadataHash` (which only covers TMDB metadata) — `syncHash` is the
+  // authoritative whole-movie change-detection signal.
+  syncHash?: string
+
   // Server identification
   serverId?: string
 }
 
 export interface EpisodeEntity extends BaseMediaEntity {
+  // Legacy structural fields
+  type?: string           // 'episode'
+  createdAt?: Date
+  showId?: any            // ObjectId reference to parent TV show
+  seasonId?: any          // ObjectId reference to parent season
+
   episodeNumber: number
   seasonNumber: number
   showTitle: string
   videoURL?: string
   videoSource?: string
-  thumbnailURL?: string
-  captions?: CaptionTrack[]
-  chapters?: ChapterMarker[]
+  normalizedVideoId?: string
+  thumbnail?: string   // NOT thumbnailURL - legacy field name
+  thumbnailSource?: string
+  captionURLs?: Record<string, {   // NOT captions - legacy field name (object keyed by language)
+    srcLang: string
+    url: string
+    lastModified?: string
+    sourceServerId?: string
+  }>
+  chapterURL?: string              // NOT chapters - legacy stores URL string
+  chapterSource?: string
   videoInfo?: VideoInfo
   thumbnailBlurhash?: string
+  thumbnailBlurhashSource?: string
+
+  // Top-level video info fields (extracted flat, matching legacy document shape)
+  duration?: number
+  dimensions?: string
+  hdr?: string
+  size?: number
+  mediaQuality?: MediaQuality
+  mediaLastModified?: Date
+
+  // Content hash from media processor — stored after each sync to enable whole-episode skip.
+  // If this matches the incoming episode hash from /api/metadata-hashes/tv/{title}/{season},
+  // buildEpisodeEntity() is bypassed entirely (no HTTP fetches, no entity build, no write).
+  syncHash?: string
 }
 
 export interface SeasonEntity extends BaseMediaEntity {
+  // Legacy structural fields
+  type?: string           // 'season'
+  createdAt?: Date
+  showId?: any            // ObjectId reference to parent TV show
+
   seasonNumber: number
   showTitle: string
   posterURL?: string
   episodeCount?: number
   posterBlurhash?: string
+  posterBlurhashSource?: string
+
+  // Extracted metadata fields (for easier querying, matching legacy)
+  airDate?: Date
+  overview?: string
+  posterPath?: string
+  rating?: number
+
+  // Content hash from media processor — reserved for future season-level skip.
+  syncHash?: string
 }
 
 export interface TVShowEntity extends BaseMediaEntity {
+  // Legacy structural fields
+  type?: string           // 'tvShow'
+  createdAt?: Date
+
   posterURL?: string
-  backdropURL?: string
-  logoURL?: string
+  backdrop?: string   // NOT backdropURL - legacy field name
+  logo?: string       // NOT logoURL - legacy field name
   seasonCount?: number
   totalEpisodeCount?: number
   posterBlurhash?: string
+  posterBlurhashSource?: string
   backdropBlurhash?: string
+  backdropBlurhashSource?: string
+
+  // Extracted metadata fields (for easier querying, matching legacy)
+  firstAirDate?: Date
+  lastAirDate?: Date
+  status?: string
+  numberOfSeasons?: number
+  rating?: number
+  overview?: string
+  genres?: any[]
+  networks?: any[]
+
+  // Content hash from media processor — stored after each sync to enable whole-show skip.
+  // If this matches the incoming hash from /api/metadata-hashes/tv, syncTVShow() returns
+  // Skipped immediately without processing any seasons or episodes.
+  syncHash?: string
+
+  // Aggregate hash of all per-episode hashes for this show, from the backend's
+  // contentHash field on /api/metadata-hashes/tv. Distinct from syncHash (which
+  // only covers show-level TMDB metadata). A video-file change invalidates this
+  // signal via the per-episode hash's mediaLastModified input, so the show-level
+  // skip only fires when BOTH syncHash AND contentHash match.
+  contentHash?: string
 }
 
 // ==========================================

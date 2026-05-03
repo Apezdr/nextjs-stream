@@ -235,36 +235,3 @@ export async function getMovieFilterOptions() {
   }
 }
 
-/**
- * Get movie statistics (count and total duration)
- * Used for displaying summary information in the UI
- * 
- * @returns {Promise<Object>} Object with count and totalDuration
- */
-export async function getMovieStatistics() {
-  try {
-    const client = await clientPromise;
-    const db = client.db('Media');
-    
-    const result = await db
-      .collection('FlatMovies')
-      .aggregate([
-        {
-          $group: {
-            _id: null,
-            count: { $sum: 1 },
-            totalDuration: { $sum: { $ifNull: ['$duration', 0] } }
-          }
-        }
-      ])
-      .toArray();
-    
-    return {
-      count: result.length > 0 ? result[0].count : 0,
-      totalDuration: result.length > 0 ? result[0].totalDuration : 0
-    };
-  } catch (error) {
-    console.error(`Error in getMovieStatistics: ${error.message}`);
-    return { count: 0, totalDuration: 0 };
-  }
-}

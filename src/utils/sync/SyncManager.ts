@@ -3,6 +3,7 @@
  * Demonstrates how to use the new system and provides migration utilities
  */
 
+import pLimit from 'p-limit'
 import clientPromise from '@src/lib/mongodb'
 import {
   MediaType,
@@ -31,13 +32,21 @@ import {
   MovieSyncService,
   MovieMetadataStrategy,
   MovieAssetStrategy,
-  MovieContentStrategy
+  MovieContentStrategy,
+  BlurhashStrategy
 } from './domain'
+
+import {
+  TVShowSyncService,
+  SeasonSyncService,
+  EpisodeSyncService
+} from './domain/tv'
 
 export class SyncManager {
   private dbAdapter?: DatabaseAdapter
   private fileAdapter: DefaultFileServerAdapter
   private movieService?: MovieSyncService
+  private tvShowService?: TVShowSyncService
   private initialized = false
   private resourceManager: ResourceManager
 
@@ -67,10 +76,33 @@ export class SyncManager {
         [
           new MovieMetadataStrategy(this.dbAdapter.movies, this.fileAdapter),
           new MovieAssetStrategy(this.dbAdapter.movies, this.fileAdapter),
-          new MovieContentStrategy(this.dbAdapter.movies, this.fileAdapter)
+          new MovieContentStrategy(this.dbAdapter.movies, this.fileAdapter),
+          // BlurhashStrategy is post-entity: runs after the entity is saved by
+          // Metadata/Asset strategies. It skips computation when the blurhash is
+          // already stored and gates on isCurrentServerHighestPriorityForField.
+          new BlurhashStrategy(this.dbAdapter.movies, this.dbAdapter.seasons, this.dbAdapter.tvShows)
         ]
       )
-      syncLogger.info('Movie sync service initialized')
+      syncLogger.info('Movie sync service initialized (with BlurhashStrategy)')
+
+      // Initialize TV domain services
+      // Pass TVShowRepository to season/episode services for showId/seasonId foreign keys
+      const episodeSyncService = new EpisodeSyncService(
+        this.dbAdapter.episodes,
+        this.dbAdapter.seasons,
+        this.dbAdapter.tvShows
+      )
+      const seasonSyncService = new SeasonSyncService(
+        this.dbAdapter.seasons,
+        this.dbAdapter.tvShows
+      )
+      this.tvShowService = new TVShowSyncService(
+        this.dbAdapter.tvShows,
+        seasonSyncService,
+        episodeSyncService,
+        this.dbAdapter.episodes
+      )
+      syncLogger.info('TV sync services initialized')
 
       this.initialized = true
       syncLogger.info('Sync manager ready!')
@@ -133,6 +165,45 @@ export class SyncManager {
   }
 
   /**
+   * Fetch show-level hashes for all TV shows from the media processor.
+   * Called once per server at the start of syncTVShows() — mirrors fetchMetadataHashes().
+   * Returns null on failure so callers degrade gracefully (full sync without skipping).
+   */
+  private async fetchTVMetadataHashes(serverConfig: ServerConfig): Promise<{
+    hash: string
+    titles: Record<string, {
+      hash: string
+      lastModified: string
+      generated: string
+    }>
+  } | null> {
+    if (!serverConfig.nodeUrl) return null
+    const hashesUrl = `${serverConfig.nodeUrl}/api/metadata-hashes/tv`
+    syncLogger.info(`Fetching TV show hashes from: ${hashesUrl}`)
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 15000)
+    try {
+      const response = await fetch(hashesUrl, {
+        signal: controller.signal,
+        headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' }
+      })
+      clearTimeout(timeoutId)
+      if (response.ok) {
+        const hashes = await response.json()
+        const count = hashes.titles ? Object.keys(hashes.titles).length : 0
+        syncLogger.info(`✅ TV show hashes loaded: ${count} shows, overall=${hashes.hash?.substring(0, 8)}...`)
+        return hashes
+      }
+      syncLogger.warn(`⚠️ TV hashes endpoint returned status ${response.status}`)
+      return null
+    } catch (err: any) {
+      clearTimeout(timeoutId)
+      syncLogger.warn(`⚠️ Failed to fetch TV show hashes: ${err.message}`)
+      return null
+    }
+  }
+
+  /**
    * Sync movies using the new architecture
    */
   async syncMovies(
@@ -182,7 +253,8 @@ export class SyncManager {
     const operations = options.operations || [
       SyncOperation.Metadata,
       SyncOperation.Assets,
-      SyncOperation.Content // Now implemented!
+      SyncOperation.Content,    // Now implemented!
+      SyncOperation.Blurhash    // Post-entity blurhash computation
     ]
 
     syncLogger.info(`Starting sync for ${movieTitles.length} movies with operations: ${operations.join(', ')}`)
@@ -191,74 +263,41 @@ export class SyncManager {
       // Track progress
       const progressTracker = this.setupProgressTracking(movieTitles.length)
 
-      // Sync all movies with controlled concurrency
-      // Use ResourceManager config as default; explicit option overrides
+      // Sync all movies with a true concurrency pool (p-limit via ResourceManager).
+      // As each movie finishes the next one starts immediately — no artificial batch
+      // boundaries and no inter-batch sleep that compounds under memory pressure.
       const concurrency = options.concurrency || this.resourceManager.config.syncConcurrency
       const allResults: SyncResult[] = []
-      
+
       syncLogger.info(`Processing ${movieTitles.length} movies with concurrency: ${concurrency} (HTTP limit: ${this.resourceManager.config.httpConcurrency})`)
-      
-      // Process movies in concurrent batches
-      for (let i = 0; i < movieTitles.length; i += concurrency) {
-        const batch = movieTitles.slice(i, i + concurrency)
-        syncLogger.batch(`Processing batch ${Math.floor(i / concurrency) + 1}: ${batch.length} movies`)
-        
-        // Process this batch concurrently
-        const batchPromises = batch.map(async (title) => {
-          try {
-            
-            // Note: 'title' here is actually the filesystem key (originalTitle)
-            // Pass it as both title and originalTitle, let the service sort out the distinction
-            const movieResults = await this.movieService!.syncMovie(title, context, operations, title)
-            const hasFailed = movieResults.some(result => result.status === SyncStatus.Failed)
-            progressTracker.update(1, hasFailed)
-            return movieResults
-          } catch (error) {
-            syncLogger.error(`Failed to sync movie "${title}":`, error)
-            progressTracker.update(1, true) // Mark as failed
-            // Return error result
-            return [{
-              status: SyncStatus.Failed,
-              entityId: title,
-              mediaType: MediaType.Movie,
-              operation: SyncOperation.Metadata,
-              serverId: context.serverConfig.id,
-              timestamp: new Date(),
-              changes: [],
-              errors: [error instanceof Error ? error.message : String(error)]
-            }] as SyncResult[]
-          }
-        })
-        
-        // Wait for batch completion
-        const batchResults = await Promise.allSettled(batchPromises)
-        
-        // Collect results from successful operations
-        batchResults.forEach((result, index) => {
-          if (result.status === 'fulfilled') {
-            allResults.push(...result.value)
-          } else {
-            // Handle rejected promises (shouldn't happen due to try-catch above)
-            const title = batch[index]
-            allResults.push({
-              status: SyncStatus.Failed,
-              entityId: title,
-              mediaType: MediaType.Movie,
-              operation: SyncOperation.Metadata,
-              serverId: context.serverConfig.id,
-              timestamp: new Date(),
-              changes: [],
-              errors: [`Batch processing failed: ${result.reason}`]
-            })
-          }
-        })
-        
-        // Adaptive delay between batches — increases under memory pressure
-        if (i + concurrency < movieTitles.length) {
-          this.resourceManager.logStats('Batch complete')
-          await this.resourceManager.waitBetweenBatches()
-        }
-      }
+
+      const limit = pLimit(concurrency)
+
+      await Promise.all(
+        movieTitles.map(title =>
+          limit(async () => {
+            try {
+              const movieResults = await this.movieService!.syncMovie(title, context, operations, title)
+              const hasFailed = movieResults.some(r => r.status === SyncStatus.Failed)
+              progressTracker.update(1, hasFailed)
+              allResults.push(...movieResults)
+            } catch (error) {
+              syncLogger.error(`Failed to sync movie "${title}":`, error)
+              progressTracker.update(1, true)
+              allResults.push({
+                status: SyncStatus.Failed,
+                entityId: title,
+                mediaType: MediaType.Movie,
+                operation: SyncOperation.Metadata,
+                serverId: context.serverConfig.id,
+                timestamp: new Date(),
+                changes: [],
+                errors: [error instanceof Error ? error.message : String(error)]
+              })
+            }
+          })
+        )
+      )
 
       const duration = Date.now() - startTime
 
@@ -326,6 +365,71 @@ export class SyncManager {
       return {
         orphansRemoved: 0,
         invalidRemoved: 0,
+        errors: [error instanceof Error ? error.message : String(error)]
+      }
+    }
+  }
+
+  /**
+   * Sync one or more TV shows (including all seasons and episodes) using bulk writes.
+   *
+   * Bulk-write guarantee:
+   *  - Seasons  → SeasonRepository.bulkUpsertShow()  called once per show.
+   *  - Episodes → EpisodeRepository.bulkUpsertSeason() called once per season.
+   *  - TV show header → TVShowRepository.upsert() called once per show (low volume).
+   */
+  async syncTVShows(
+    showTitles: string[],
+    serverConfig: ServerConfig,
+    fieldAvailability: FieldAvailability,
+    options: {
+      concurrency?: number
+      forceSync?: boolean
+      fileServerData?: any
+    } = {}
+  ): Promise<BatchSyncResult> {
+    await this.initialize()
+
+    const startTime = Date.now()
+
+    // Fetch show-level hashes once — enables whole-show skip for unchanged content
+    const tvShowHashes = await this.fetchTVMetadataHashes(serverConfig)
+    if (!tvShowHashes) {
+      syncLogger.warn('TV show hashes unavailable — proceeding without show-level skip optimisation')
+    }
+
+    const context: SyncContext = {
+      mediaType: MediaType.TVShow,
+      operation: SyncOperation.Metadata,
+      serverConfig,
+      fieldAvailability,
+      forceSync: options.forceSync || false,
+      fileServerData: options.fileServerData,
+      resourceManager: this.resourceManager,
+      tvShowHashesCache: tvShowHashes || undefined,
+      tvEpisodeHashesCache: new Map(),  // Populated lazily per season in EpisodeSyncService
+    }
+
+    syncLogger.info(`Starting TV sync for ${showTitles.length} shows`)
+
+    try {
+      const result = await this.tvShowService!.syncTVShows(
+        showTitles,
+        context,
+        options.concurrency || 3
+      )
+      syncLogger.info(
+        `TV sync completed in ${result.duration}ms — ` +
+        `${result.summary.completed} completed, ${result.summary.failed} failed`
+      )
+      return result
+    } catch (error) {
+      const duration = Date.now() - startTime
+      syncLogger.error('TV sync failed:', error)
+      return {
+        results: [],
+        summary: { total: showTitles.length, completed: 0, failed: showTitles.length, skipped: 0 },
+        duration,
         errors: [error instanceof Error ? error.message : String(error)]
       }
     }
@@ -557,4 +661,17 @@ export async function cleanupMovies(
   serverConfig: ServerConfig
 ) {
   return syncManager.cleanupMovies(availableTitles, serverConfig)
+}
+
+/**
+ * Sync TV shows using the new bulk-write architecture.
+ * Seasons → bulkUpsertShow(), Episodes → bulkUpsertSeason() per season.
+ */
+export async function syncTVShowsWithNewArchitecture(
+  showTitles: string[],
+  serverConfig: ServerConfig,
+  fieldAvailability: FieldAvailability,
+  options: { concurrency?: number; forceSync?: boolean; fileServerData?: any } = {}
+): Promise<BatchSyncResult> {
+  return syncManager.syncTVShows(showTitles, serverConfig, fieldAvailability, options)
 }

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { buildURL, fetcher } from '@src/utils'
 import { StatusBadge, MaterialButton } from '../BaseComponents'
@@ -76,13 +76,72 @@ function ProcessCard({ serverName, processes }) {
     )
 }
 
+function SyncProcessCard({ startTime, onViewClick }) {
+    const [elapsed, setElapsed] = useState(() =>
+        startTime ? Math.round((Date.now() - new Date(startTime).getTime()) / 1000) : null
+    )
+
+    useEffect(() => {
+        if (!startTime) return
+        const tick = () => setElapsed(Math.round((Date.now() - new Date(startTime).getTime()) / 1000))
+        tick()
+        const id = setInterval(tick, 1000)
+        return () => clearInterval(id)
+    }, [startTime])
+
+    return (
+        <div className="bg-blue-50 rounded-lg p-4 space-y-3 border border-blue-200 mb-3">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                    <div className="p-1.5 bg-blue-100 rounded-md">
+                        <svg className="w-4 h-4 text-blue-600 animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <div className="text-sm font-medium text-gray-900">Media Sync</div>
+                        <div className="text-xs text-gray-500">
+                            {elapsed != null ? `Running for ${elapsed >= 60 ? `${Math.floor(elapsed / 60)}m ${elapsed % 60}s` : `${elapsed}s`}` : 'Running...'}
+                        </div>
+                    </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                    <StatusBadge status="info" variant="soft" size="small">Syncing</StatusBadge>
+                    {onViewClick && (
+                        <MaterialButton
+                            variant="text"
+                            size="small"
+                            color="primary"
+                            onClick={onViewClick}
+                            startIcon={
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                </svg>
+                            }
+                        >
+                            View Info
+                        </MaterialButton>
+                    )}
+                </div>
+            </div>
+        </div>
+    )
+}
+
 /**
  * Material Design server processes component with clean, modern styling
  */
-const EnhancedServerProcesses = () => {
+const EnhancedServerProcesses = ({ onSyncViewClick }) => {
     const [isModalOpen, setIsModalOpen] = useState(false)
     const { data, error } = useSWR(buildURL('/api/authenticated/admin/server-processes'), fetcher, {
         refreshInterval: 5000,
+    })
+
+    // Poll sync status to show active sync in processes list
+    const { data: syncStatus } = useSWR(buildURL('/api/authenticated/admin/sync-status'), fetcher, {
+        refreshInterval: 3000,
     })
 
     const hasDataError = Boolean(data && !Array.isArray(data) && data.error)
@@ -116,16 +175,18 @@ const EnhancedServerProcesses = () => {
         )
     }
 
-    const activeServers = serverProcesses.filter(server => 
-        server.processes && 
+    const isSyncActive = syncStatus?.active === true
+
+    const activeServers = serverProcesses.filter(server =>
+        server.processes &&
         server.processes.some(proc => proc.status !== 'completed')
     )
 
     const totalActiveProcesses = activeServers.reduce((total, server) => {
         return total + server.processes.filter(proc => proc.status !== 'completed').length
-    }, 0)
+    }, 0) + (isSyncActive ? 1 : 0)
 
-    if (activeServers.length === 0) {
+    if (activeServers.length === 0 && !isSyncActive) {
         return (
             <div className="p-6 text-center">
                 <div className="p-4 bg-emerald-50 rounded-lg border border-emerald-200">
@@ -176,6 +237,14 @@ const EnhancedServerProcesses = () => {
                 </div>
             </div>
 
+            {/* Sync Process Card */}
+            {isSyncActive && (
+                <SyncProcessCard
+                    startTime={syncStatus.startTime}
+                    onViewClick={onSyncViewClick}
+                />
+            )}
+
             {/* Server Process Cards */}
             <div className="space-y-3">
                 {activeServers.map(server => (
@@ -202,6 +271,7 @@ const EnhancedServerProcesses = () => {
             <ServerProcessesModal
                 isOpen={isModalOpen}
                 setIsOpen={setIsModalOpen}
+                onSyncViewClick={onSyncViewClick}
             />
         </div>
     )
