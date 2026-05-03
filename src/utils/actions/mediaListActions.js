@@ -17,13 +17,11 @@ import {
   getFilteredMovieList,
   getMovieFilterOptions,
   getFilteredMovieCount,
-  getMovieStatistics
 } from '@src/utils/mediaListUtils/movieListQueries'
 import {
   getFilteredTVList,
   getTVFilterOptions,
   getFilteredTVCount,
-  getTVStatistics
 } from '@src/utils/mediaListUtils/tvListQueries'
 import { parseCommaSeparated, CONSTANTS } from '@src/utils/mediaListUtils/shared'
 import { getCurrentUserWatchHistory } from '@src/utils/watchHistoryServerUtils'
@@ -56,14 +54,13 @@ export async function getMovieListData(options = {}) {
   const userId = options.userId; // Extract userId from options
   
   // Parallel queries for optimal performance
-  const [items, totalCount, filterOptions, statistics, watchMap] = await Promise.all([
+  const [items, totalCount, filterOptions, watchMap] = await Promise.all([
     getFilteredMovieList({ page, limit: CONSTANTS.DEFAULT_LIMIT, sortOrder, genres, hdrTypes, resolutions }),
     getFilteredMovieCount({ genres, hdrTypes, resolutions }),
     getMovieFilterOptions(),
-    getMovieStatistics(),
     getCurrentUserWatchHistory(userId)
   ]);
-  
+
   // Augment items with watch history data
   const itemsWithWatchHistory = items.map(movie => ({
     ...movie,
@@ -73,17 +70,16 @@ export async function getMovieListData(options = {}) {
       isWatched: false
     }
   }));
-  
+
   // Calculate pagination metadata
   const totalPages = Math.ceil(totalCount / CONSTANTS.DEFAULT_LIMIT);
-  
+
   return {
     items: itemsWithWatchHistory,
     totalCount,
     totalPages,
     currentPage: page,
     filterOptions,
-    statistics,
     // Include current filter state for UI
     currentFilters: {
       sortOrder,
@@ -122,14 +118,13 @@ export async function getTVListData(options = {}) {
   const userId = options.userId; // Extract userId from options
   
   // Parallel queries for optimal performance
-  const [items, totalCount, filterOptions, statistics, watchMap] = await Promise.all([
+  const [items, totalCount, filterOptions, watchMap] = await Promise.all([
     getFilteredTVList({ page, limit: CONSTANTS.DEFAULT_LIMIT, sortOrder, genres, hdrTypes, resolutions }),
     getFilteredTVCount({ genres, hdrTypes, resolutions }),
     getTVFilterOptions(),
-    getTVStatistics(),
     getCurrentUserWatchHistory(userId)
   ]);
-  
+
   // Augment items with watch history data
   const itemsWithWatchHistory = items.map(show => ({
     ...show,
@@ -139,17 +134,16 @@ export async function getTVListData(options = {}) {
       isWatched: false
     }
   }));
-  
+
   // Calculate pagination metadata
   const totalPages = Math.ceil(totalCount / CONSTANTS.DEFAULT_LIMIT);
-  
+
   return {
     items: itemsWithWatchHistory,
     totalCount,
     totalPages,
     currentPage: page,
     filterOptions,
-    statistics,
     // Include current filter state for UI
     currentFilters: {
       sortOrder,
