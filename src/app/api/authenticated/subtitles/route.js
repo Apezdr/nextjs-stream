@@ -18,6 +18,7 @@ export const GET = async (req) => {
   const type = searchParams.get('type')
   const season = searchParams.get('season') // Parameter for TV series
   const episode = searchParams.get('episode') // Parameter for TV series
+  const auto = searchParams.get('auto') === 'true'
 
   if (!type || !name || !language) {
     return new Response(JSON.stringify({ error: 'Missing required parameters' }), {
@@ -34,7 +35,7 @@ export const GET = async (req) => {
       season: season,
       episode: episode
     })
-    
+
     if (!media) {
       return new Response(JSON.stringify({ error: 'Media not found' }), {
         status: 404,
@@ -42,30 +43,22 @@ export const GET = async (req) => {
       })
     }
 
-    // Extract subtitleUrl based on media type
-    let subtitleUrl
-    
-    if (type === 'movie') {
-      subtitleUrl = media.captionURLs?.[language]?.url
-    } else if (type === 'tv') {
-      // For TV episodes, subtitle URLs are directly on the returned media object
-      if (episode) {
-        subtitleUrl = media.captionURLs?.[language]?.url
-      } else {
-        // For TV shows without specific episode, we can't determine subtitles
-        return new Response(JSON.stringify({ error: 'Episode number required for TV subtitles' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        })
-      }
-    }
-
-    if (!subtitleUrl) {
+    const captionEntry = media.captionURLs?.[language]
+    if (!captionEntry?.url) {
       return new Response(JSON.stringify({ error: 'Subtitles unavailable for this language' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' },
       })
     }
+
+    if (type === 'tv' && !episode) {
+      return new Response(JSON.stringify({ error: 'Episode number required for TV subtitles' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    const subtitleUrl = captionEntry.url
 
     if (Boolean(process.env.DEBUG) == true) {
       console.log('Fetching subtitles with the following parameters:', {
@@ -74,14 +67,24 @@ export const GET = async (req) => {
         type,
         season,
         episode,
+        auto,
+        pending: captionEntry.pending,
       })
     }
-    
+
+    // Auto-caption branch: forward the user's session cookie to the processor's
+    // track endpoint so it can either return 302→static SRT (file exists) or
+    // 202+jobId (newly enqueued). Always convert response to VTT since the
+    // static URL ends in .auto.srt regardless of what the proxy URL looks like.
+    if (auto) {
+      return await handleAutoCaption(req, subtitleUrl)
+    }
+
     try {
       const { data } = await httpGet(subtitleUrl, {
         responseType: 'text',
       }, true)
-      
+
       // Normalize the response data structure to handle both cached and fresh responses
       const subtitleContent = data?.data || data;
 
@@ -126,6 +129,62 @@ export const GET = async (req) => {
       headers: { 'Content-Type': 'application/json' },
     })
   }
+}
+
+async function handleAutoCaption(req, subtitleUrl) {
+  const cookieHeader = req.headers.get('cookie') ?? ''
+  const headers = {}
+  if (cookieHeader) headers['Cookie'] = cookieHeader
+
+  let res
+  try {
+    res = await fetch(subtitleUrl, {
+      method: 'GET',
+      redirect: 'follow',
+      headers,
+    })
+  } catch (err) {
+    return new Response(
+      JSON.stringify({ error: `Caption proxy failed: ${err.message}` }),
+      { status: 502, headers: { 'Content-Type': 'application/json' } }
+    )
+  }
+
+  // 202 — generation enqueued. Pass through so AutoCaptionTracks can poll the job.
+  if (res.status === 202) {
+    const body = await res.text()
+    return new Response(body, {
+      status: 202,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  if (!res.ok) {
+    const body = await res.text()
+    return new Response(body || JSON.stringify({ error: `Processor returned ${res.status}` }), {
+      status: res.status,
+      headers: { 'Content-Type': res.headers.get('content-type') ?? 'application/json' },
+    })
+  }
+
+  // 200 — body should be SRT bytes (followed redirect to static .auto.srt).
+  // Always SRT→VTT for the auto path; the URL extension isn't a reliable signal.
+  const text = await res.text()
+  const trimmed = text.trim()
+  if (!trimmed) {
+    return new Response(JSON.stringify({ error: 'Empty subtitle response' }), {
+      status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  const vtt = trimmed.startsWith('WEBVTT') ? text : srt2webvtt(text)
+  return new Response(vtt, {
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Content-Type': 'text/vtt',
+    },
+  })
 }
 
 function srt2webvtt(data) {
