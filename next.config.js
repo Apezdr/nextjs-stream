@@ -111,6 +111,7 @@ const nextConfig = {
     '@opentelemetry/instrumentation-http',
     '@opentelemetry/instrumentation-fetch',
     '@opentelemetry/instrumentation-pino',
+    '@opentelemetry/instrumentation-runtime-node',
     '@opentelemetry/api',
     '@vercel/otel',
     'pino',
