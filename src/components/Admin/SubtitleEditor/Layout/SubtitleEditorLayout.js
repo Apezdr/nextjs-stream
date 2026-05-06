@@ -325,7 +325,7 @@ export default function SubtitleEditorLayout({
     ensureZoomInitialized();
 
     const newSubtitle = {
-      id: Date.now() + Math.random(), // Simple unique ID generation
+      id: `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       startTime: startTime,
       endTime: startTime + 3, // Default 3-second duration
       text: 'New subtitle text'
@@ -385,7 +385,7 @@ export default function SubtitleEditorLayout({
       }
       const secondHalf = {
         ...subtitleToSplit,
-        id: Date.now() + Math.random(), // New unique ID
+        id: `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         startTime: midpoint,
         text: subtitleToSplit.text.substring(Math.floor(subtitleToSplit.text.length / 2))
       }

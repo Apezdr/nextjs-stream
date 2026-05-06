@@ -3,6 +3,7 @@ import { updateAutomaticSync, updateSyncAggressiveness } from '@src/utils/action
 import WebhookSettings from '@components/Admin/Settings/WebhookSettings'
 import AutomatedTasksSettings from '@components/Admin/Settings/AutomatedTasksSettings'
 import AutoSyncToggle from '@components/Admin/Settings/AutoSyncToggle'
+import AutoCaptionsSettings from '@components/Admin/Settings/AutoCaptionsSettings'
 import LastSyncTime from '@components/Admin/Settings/LastSyncTime'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/20/solid'
 import ServerList from './ServerList'
@@ -22,6 +23,7 @@ export default function SettingsList({ settings }) {
     lastSyncTime,
     syncAggressiveness,
     automaticSyncEnabled,
+    autoCaptionsConfig,
     webhookVisibility,
     automated,
   } = settings
@@ -70,14 +72,19 @@ export default function SettingsList({ settings }) {
             description="Configure your synchronization settings here."
             settings={syncSettings}
             lastSyncTime={lastSyncTime}
-          />
+          >
+            <AutoCaptionsSettings
+              enabled={autoCaptionsConfig?.enabled}
+              languages={autoCaptionsConfig?.languages}
+            />
+          </SettingsSection>
         </div>
       </div>
     </main>
   )
 }
 
-function SettingsSection({ title, description, settings, lastSyncTime }) {
+function SettingsSection({ title, description, settings, lastSyncTime, children }) {
   return (
     <div className="flex flex-col items-center justify-between gap-x-6 text-center w-auto">
       <div>
@@ -122,6 +129,9 @@ function SettingsSection({ title, description, settings, lastSyncTime }) {
               )}
             </div>
           ))}
+          {children && (
+            <div className="pt-6">{children}</div>
+          )}
         </dl>
       </div>
       {lastSyncTime && <LastSyncTime lastSyncTime={lastSyncTime} />}

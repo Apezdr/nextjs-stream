@@ -275,6 +275,11 @@ export default function SyncMediaPopup({
   // button — we know a sync is already running, so start in connecting state immediately.
   const [isConnecting, setIsConnecting] = useState(autoConnect)
 
+  // Force refresh bypasses the per-item hash-skip optimisation, re-running the
+  // strategies for every entity even when stored hashes match. Default off —
+  // the typical sync should leverage the optimisation.
+  const [forceRefresh, setForceRefresh] = useState(false)
+
   useEffect(() => {
     return () => { esRef.current?.close() }
   }, [])
@@ -467,6 +472,7 @@ export default function SyncMediaPopup({
         const response = await fetch('/api/authenticated/admin/sync', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ forceSync: forceRefresh }),
         })
         const data = await response.json()
         const { streamUrl, startTime: syncStart, alreadyRunning } = data
@@ -554,6 +560,24 @@ export default function SyncMediaPopup({
                       </p>
 
                       <hr className="my-4" />
+
+                      {!isSyncing && !isConnecting && !isComplete && syncError === null ? (
+                        <label className="flex items-start gap-2 mb-4 cursor-pointer text-sm">
+                          <input
+                            type="checkbox"
+                            checked={forceRefresh}
+                            onChange={(e) => setForceRefresh(e.target.checked)}
+                            className="mt-0.5 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          />
+                          <span>
+                            <span className="font-medium text-gray-900">Force refresh</span>
+                            <span className="block text-xs text-gray-500">
+                              Bypass hash-skip and re-run every entity. Slower, but picks up changes
+                              that wouldn&apos;t otherwise invalidate stored hashes (e.g. config-only changes).
+                            </span>
+                          </span>
+                        </label>
+                      ) : null}
 
                       {isConnecting && !isSyncing ? (
                         <div className="mb-4">

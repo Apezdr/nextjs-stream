@@ -632,11 +632,21 @@ async function handleSyncOperation(request, webhookId) {
     )
   }
 
+  // Read sync options from the request body (Force Refresh checkbox in the
+  // SyncMediaPopup posts { forceSync: boolean }). Empty/malformed body → defaults.
+  let forceSync = false
+  try {
+    const body = await request.clone().json()
+    forceSync = Boolean(body?.forceSync)
+  } catch {
+    // No JSON body or invalid — leave forceSync at default (false)
+  }
+
   startTime = new Date().toISOString()
   startSnapshotTracking()
 
   // Fire and forget — response is delivered via SSE stream
-  activeSyncOperation = handleSync(webhookId, request)
+  activeSyncOperation = handleSync(webhookId, request, { forceSync })
   activeSyncOperation
     .then(() => {
       syncSubscribers.forEach((s) => s.resolve())
@@ -702,10 +712,11 @@ export async function POST(request, props) {
  * @param {Request} request - Request object
  * @returns {Promise<Object>} Sync results
  */
-async function handleSync(webhookId, request) {
+async function handleSync(webhookId, request, syncOptions = {}) {
   // Add a flag to track whether this sync operation is still in progress
   let syncInProgress = true;
   const syncStartTime = new Date();
+  const forceSync = Boolean(syncOptions.forceSync);
   
   try {
     const headers = {}
@@ -770,7 +781,8 @@ async function handleSync(webhookId, request) {
     // Perform the actual sync with architecture options
     const result = await syncAllServers(fileServers, fieldAvailability, {
       useNewArchitecture,
-      forceOldArchitecture
+      forceOldArchitecture,
+      forceSync,
     })
     
     // Mark sync as complete to prevent logging errors after completion

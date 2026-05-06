@@ -79,10 +79,12 @@ const createServerConfig = ({
     priority
   }
   
-  // Log loaded configuration for debugging
-  console.debug(
-    `[CONFIG] Loaded server config for ${id}: syncEndpoint=${syncEndpoint} internalEndpoint=${finalInternalEndpoint}`
-  )
+  // Log loaded configuration for debugging (server-only)
+  if (typeof window === 'undefined') {
+    console.debug(
+      `[CONFIG] Loaded server config for ${id}: syncEndpoint=${syncEndpoint} internalEndpoint=${finalInternalEndpoint}`
+    )
+  }
   
   return config
 }
@@ -94,17 +96,20 @@ const createServerConfig = ({
 const loadServerConfigurations = () => {
   const servers = []
   
-  // Validate critical environment variables
-  if (!process.env.FILE_SERVER_URL) {
-    console.warn(
-      '[CONFIG WARNING] FILE_SERVER_URL is not set, using fallback localhost:3000'
-    )
-  }
-  
-  if (!process.env.NODE_SERVER_URL) {
-    console.warn(
-      '[CONFIG WARNING] NODE_SERVER_URL is not set, using fallback localhost:3000'
-    )
+  // Validate critical environment variables (server-only — these env vars are
+  // not exposed to the client bundle, so warning there would be a false alarm)
+  if (typeof window === 'undefined') {
+    if (!process.env.FILE_SERVER_URL) {
+      console.warn(
+        '[CONFIG WARNING] FILE_SERVER_URL is not set, using fallback localhost:3000'
+      )
+    }
+
+    if (!process.env.NODE_SERVER_URL) {
+      console.warn(
+        '[CONFIG WARNING] NODE_SERVER_URL is not set, using fallback localhost:3000'
+      )
+    }
   }
   
   // Always add the default server first
@@ -243,8 +248,7 @@ export const multiServerHandler = createMultiServerURLHandler(serverManager.getA
 
 // Basic configuration exports
 export const organizrURL = process.env.ORGANIZR_URL || null
-export const siteTitle = process.env.NEXT_PUBLIC_SITE_TITLE || 'Cinema Sanctuary'
-export const siteDescription = process.env.NEXT_PUBLIC_SITE_DESCRIPTION || 'Sharing media content with friends and family.'
+export { siteTitle, siteDescription } from './publicConfig'
 export const adminUserEmails = process.env.ADMIN_USER_EMAILS
   ? process.env.ADMIN_USER_EMAILS.split(',').map((email) => email.trim())
   : []

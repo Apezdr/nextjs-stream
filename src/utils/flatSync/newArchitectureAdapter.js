@@ -150,6 +150,7 @@ export async function syncWithNewArchitecture(
           operations: [SyncOperation.Metadata, SyncOperation.Assets, SyncOperation.Content, SyncOperation.Blurhash],
           // Let SyncManager use ResourceManager defaults unless explicitly overridden
           concurrency: options.concurrency || undefined,
+          forceSync: Boolean(options.forceSync),
           fileServerData: fileServer, // Pass file server data to sync manager
           movieCache: flatDB.lookups?.movies?.byOriginalTitle, // 🚀 OPTIMIZATION: Map<originalTitle, movie>
         }
@@ -171,7 +172,8 @@ export async function syncWithNewArchitecture(
       fileServer,
       serverConfig,
       fieldAvailability,
-      results
+      results,
+      { forceSync: Boolean(options.forceSync) }
     )
 
     // Calculate performance metrics
@@ -272,7 +274,8 @@ async function syncTVContentWithNewArchitecture(
   fileServer,
   serverConfig,
   fieldAvailability,
-  results
+  results,
+  tvOptions = {}
 ) {
   const log = createLogger('FlatSync.NewArch.TV')
 
@@ -312,7 +315,11 @@ async function syncTVContentWithNewArchitecture(
       showTitles,
       adaptedServerConfig,
       fieldAvailability,
-      { fileServerData: fileServer, concurrency: 3 }
+      {
+        fileServerData: fileServer,
+        concurrency: 3,
+        forceSync: Boolean(tvOptions.forceSync),
+      }
     )
 
     translateTVResults(batchResult, results, serverConfig.id)

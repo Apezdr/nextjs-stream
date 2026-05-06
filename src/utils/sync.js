@@ -182,7 +182,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
             serverConfig,
             fieldAvailability,
             false,
-            true,
+            Boolean(options.forceSync),
             {
               useNewArchitecture: options.useNewArchitecture,
               forceOldArchitecture: options.forceOldArchitecture,
