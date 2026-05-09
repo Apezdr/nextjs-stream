@@ -1,5 +1,25 @@
 const os = require('os');
+const fs = require('fs');
 const { execSync } = require('child_process');
+
+// On Linux, os.freemem() returns MemFree, which excludes reclaimable page
+// cache and buffers — on a server warming a disk cache this routinely shows
+// 90%+ "used" memory that isn't really under pressure. Parse MemAvailable
+// from /proc/meminfo instead, falling back to os.freemem() if unavailable
+// (Windows, macOS, or read failure).
+function readAvailableMemBytes() {
+  if (process.platform !== 'linux') return os.freemem();
+  try {
+    const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
+    const line = meminfo.split('\n').find(l => l.startsWith('MemAvailable:'));
+    if (!line) return os.freemem();
+    const kb = parseInt(line.split(/\s+/)[1], 10);
+    if (Number.isNaN(kb)) return os.freemem();
+    return kb * 1024;
+  } catch {
+    return os.freemem();
+  }
+}
 
 // Initialize previous CPU times
 let previousTotal = 0;
@@ -95,14 +115,16 @@ function sample() {
   previousTotal = total;
   previousIdle = idle;
 
-  // Calculate Memory usage percentage
+  // Calculate Memory usage percentage using MemAvailable on Linux so cached
+  // pages aren't counted as "used" — see readAvailableMemBytes() above.
   const totalMemBytes = os.totalmem();
-  const freeMemBytes = os.freemem();
-  memoryUsage = ((totalMemBytes - freeMemBytes) / totalMemBytes) * 100;
+  const availableMemBytes = readAvailableMemBytes();
+  const usedMemBytes = totalMemBytes - availableMemBytes;
+  memoryUsage = (usedMemBytes / totalMemBytes) * 100;
 
   // Convert Memory usage from bytes to gigabytes (GB)
   memoryTotal = (totalMemBytes / (1024 ** 3)).toFixed(2); // Total memory in GB
-  memoryUsed = ((totalMemBytes - freeMemBytes) / (1024 ** 3)).toFixed(2); // Used memory in GB
+  memoryUsed = (usedMemBytes / (1024 ** 3)).toFixed(2); // Used memory in GB
 }
 
 // Start sampling at regular intervals (every 3 seconds)

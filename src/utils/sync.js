@@ -1,12 +1,15 @@
+import { ObjectId } from 'mongodb'
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
 import { updateLastSynced } from './sync/database'
 import { processMovie, processTVShow } from './sync_utils'
 import {
   syncToFlatStructure,
-  buildEnhancedFlatDBStructure,
-  checkAvailabilityAcrossAllServers,
 } from './flatSync'
+import { runPostSyncCleanup } from './flatSync/postSyncCleanup'
+import { setCurrentSyncRunId, clearCurrentSyncRunId } from './flatSync/syncContext'
+import { preTagSyncRunId } from './flatSync/preTagSyncRunId'
+import { computeMissingMedia } from './flatSync/computeMissingMedia'
 import { syncEventBus } from './sync/core/events'
 import { MediaType, SyncOperation } from './sync/core'
 
@@ -121,7 +124,14 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     chalk.bold.dim(`⋄⋄ Starting Multi-Server Sync ⋄⋄ [${new Date(startTime).toISOString()}]`)
   )
 
+  // One id per orchestration. Every Flat* write that flows through the sync
+  // helpers stamps records with this id; post-sync cleanup uses it to
+  // identify orphans (records whose syncRunId is not the current one).
+  const syncRunId = new ObjectId().toString()
+  setCurrentSyncRunId(syncRunId)
+
   const results = {
+    syncRunId,
     missingMedia: {},
     missingMp4: {},
     errors: [],
@@ -150,6 +160,23 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   // Signal to SSE subscribers that sync is starting (warming up)
   syncEventBus.emitStarted('__sync_warmup__', MediaType.Movie, 'server-all')
 
+ try {
+  // Pre-tag every record currently present on a file server with the current
+  // syncRunId. The per-write marker injection in the sync helpers only fires
+  // for records that change; this catches the steady-state case where most
+  // records are unchanged. By the time post-sync cleanup runs, anything
+  // without the current marker is provably orphan.
+  try {
+    await preTagSyncRunId(fileServers, syncRunId)
+  } catch (preTagError) {
+    console.error(chalk.red(`❌ Pre-tag step failed: ${preTagError.message}`))
+    results.errors.push({
+      error: preTagError.message,
+      phase: 'pre_tag',
+      stack: preTagError.stack,
+    })
+  }
+
   // Process each server sequentially to avoid overwhelming the system
   for (const [serverId, fileServer] of Object.entries(fileServers)) {
     console.info(chalk.bold.cyan(`\nProcessing server: ${serverId}`))
@@ -168,15 +195,13 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       syncEventBus.emitStarted('__server_start__', MediaType.Movie, serverId)
 
       try {
-        // Get client for database access
-        const client = await clientPromise
-
         // Run missing-media detection and the actual sync in parallel.
-        // Previously the flatDB scan ran serially before syncToFlatStructure started,
-        // causing a visible startup delay (items wouldn't appear until the scan finished).
-        // The flatDB is only needed for the missing-media summary report — not for the sync.
-        const [flatDB, syncResult] = await Promise.all([
-          buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability),
+        // Previously this used `buildEnhancedFlatDBStructure`, which loaded
+        // every Flat* record into 15 in-memory Maps (~414 MB old_space per
+        // cycle per SigNoz). The missing-media report only needs two
+        // projection-only finds + a Set diff — see computeMissingMedia.js.
+        const [missingMedia, syncResult] = await Promise.all([
+          computeMissingMedia(fileServer, fieldAvailability),
           syncToFlatStructure(
             fileServer,
             serverConfig,
@@ -191,13 +216,13 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
         ])
 
         // Process missing movies
-        if (flatDB.missingMovies && flatDB.missingMovies.length > 0) {
-          results.missingMedia[serverId].movies = flatDB.missingMovies
+        if (missingMedia.missingMovies && missingMedia.missingMovies.length > 0) {
+          results.missingMedia[serverId].movies = missingMedia.missingMovies
         }
 
         // Process missing TV shows
-        if (flatDB.missingTVShows && flatDB.missingTVShows.length > 0) {
-          const missingTV = flatDB.missingTVShows.map((show) => ({
+        if (missingMedia.missingTVShows && missingMedia.missingTVShows.length > 0) {
+          const missingTV = missingMedia.missingTVShows.map((show) => ({
             showTitle: show.title,
             seasons: [],
           }))
@@ -288,6 +313,13 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   }
 
   await updateLastSynced(client)
+ } finally {
+  // The "writing phase" of this orchestration ends here. Clear before any
+  // background task starts so a follow-up syncAllServers invocation that
+  // overlaps in wall-clock time doesn't see this one's id. The post-sync
+  // cleanup that fires below receives syncRunId as an explicit argument.
+  clearCurrentSyncRunId()
+ }
 
   const endTime = Date.now()
   const duration = (endTime - startTime) / 1000
@@ -314,15 +346,16 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   // Includes: stale video detection/removal, WatchHistory migration, WatchHistory validation.
   Promise.resolve().then(async () => {
     try {
-      console.log(chalk.bold.yellow('Performing post-sync availability check (background)...'))
-      const finalAvailabilityResults = await checkAvailabilityAcrossAllServers(
+      console.log(chalk.bold.yellow('Performing post-sync cleanup (background)...'))
+      const finalAvailabilityResults = await runPostSyncCleanup(
         fileServers,
-        fieldAvailability
+        fieldAvailability,
+        { syncRunId }
       )
       results.finalAvailabilityResults = finalAvailabilityResults
-      console.log(chalk.bold.yellow('Post-sync availability check complete'))
+      console.log(chalk.bold.yellow('Post-sync cleanup complete'))
     } catch (error) {
-      console.error(chalk.red(`❌ Post-sync availability check failed: ${error.message}`))
+      console.error(chalk.red(`❌ Post-sync cleanup failed: ${error.message}`))
     }
   })
 

@@ -2,7 +2,7 @@
 // Phase 2: Streaming & Suspense - Server components that render independently
 
 import React from 'react'
-import { getCachedCollectionDetails, getCachedOwnedMovies, getCachedEnhancedCollectionDetails } from '@src/app/(styled)/list/collection/[collectionId]/page'
+import { getCachedCollectionDetails, getCachedOwnedMovies, getCachedEnhancedCollectionDetails } from '@src/app/(styled)/list/collection/[collectionId]/cachedFetchers'
 import { mergeCollectionWithOwnership } from '@src/utils/flatDatabaseUtils'
 
 // *** VERCEL BEST PRACTICE: streaming-server-components ***

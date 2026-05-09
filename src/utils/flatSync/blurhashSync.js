@@ -13,6 +13,7 @@ import { fetchMetadataMultiServer } from '../admin_utils'
 import { updateMovieInFlatDB } from './movies/database'
 import { getTVShowFromFlatDB } from './tvShows/database'
 import { getFlatRequestedMedia } from '../flatDatabaseUtils'
+import { withSyncRunIdMarker } from './syncContext'
 
 // Capability detection constants
 const BLURHASH_ENDPOINT_CAPABILITIES = {
@@ -465,7 +466,7 @@ async function updateMovieBlurhashInDB(client, movie, blurhashData, serverConfig
       const result = await client
         .db('Media')
         .collection('FlatMovies')
-        .updateOne({ title: movie.title }, { $set: filteredUpdateData })
+        .updateOne({ title: movie.title }, withSyncRunIdMarker({ $set: filteredUpdateData }))
 
       return result.modifiedCount > 0
     } catch (dbError) {
@@ -589,7 +590,7 @@ async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig
             const result = await client
               .db('Media')
               .collection('FlatTVShows')
-              .updateOne({ title: show.title }, { $set: filteredUpdateData })
+              .updateOne({ title: show.title }, withSyncRunIdMarker({ $set: filteredUpdateData }))
 
             results.show = result.modifiedCount > 0
           }
@@ -650,7 +651,7 @@ async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig
                     showTitle: show.title,
                     seasonNumber: seasonData.seasonNumber,
                   },
-                  { $set: filteredUpdateData }
+                  withSyncRunIdMarker({ $set: filteredUpdateData })
                 )
 
                 if (result.modifiedCount > 0) {
@@ -735,7 +736,7 @@ async function updateTVShowBlurhashInDB(client, show, blurhashData, serverConfig
                     seasonNumber: episodeData.seasonNumber,
                     episodeNumber: episodeData.episodeNumber,
                   },
-                  { $set: filteredUpdateData }
+                  withSyncRunIdMarker({ $set: filteredUpdateData })
                 )
 
                 if (result.modifiedCount > 0) {
@@ -1607,7 +1608,7 @@ async function syncBlurhashTraditional(
                 await client
                   .db('Media')
                   .collection('FlatTVShows')
-                  .updateOne({ title: showTitle }, { $set: filteredUpdateData })
+                  .updateOne({ title: showTitle }, withSyncRunIdMarker({ $set: filteredUpdateData }))
                 results.tvShows.show++
                 log.info({ 
                   showTitle, 
@@ -1662,7 +1663,7 @@ async function syncBlurhashTraditional(
                 await client
                   .db('Media')
                   .collection('FlatTVShows')
-                  .updateOne({ title: showTitle }, { $set: filteredUpdateData })
+                  .updateOne({ title: showTitle }, withSyncRunIdMarker({ $set: filteredUpdateData }))
                 results.tvShows.show++
                 log.info({ 
                   showTitle, 
@@ -1731,7 +1732,7 @@ async function syncBlurhashTraditional(
                       showTitle: showTitle,
                       seasonNumber: seasonNumber,
                     },
-                    { $set: filteredUpdateData }
+                    withSyncRunIdMarker({ $set: filteredUpdateData })
                   )
                   results.tvShows.seasons++
                   log.info({ 

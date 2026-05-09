@@ -29,8 +29,8 @@ import { MediaNotificationOrchestrator } from '../notifications/MediaNotificatio
 // Import feature flag utilities and new architecture adapter
 import { shouldUseNewArchitecture, logFeatureFlagDecision } from '../sync/featureFlags';
 import { syncWithNewArchitecture, validateNewArchitectureCompatibility } from './newArchitectureAdapter';
-// Import WatchHistory migration
-import { migratePlaybackStatusIfNeeded } from '../watchHistory/migrate';
+// Import new MongoDB-native post-sync orchestrator (replaces checkAvailabilityAcrossAllServers).
+import { runPostSyncCleanup } from './postSyncCleanup';
 
 /**
  * Process new content notifications after sync operations
@@ -353,71 +353,71 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
 }
 
 /**
- * Checks and removes unavailable videos across all servers after all servers have been processed
+ * @deprecated Replaced by `runPostSyncCleanup` in postSyncCleanup.js (2026-05-08).
+ *   Original implementation built a 15-Map in-memory snapshot of FlatMovies/
+ *   FlatTVShows/FlatSeasons/FlatEpisodes via `buildEnhancedFlatDBStructure`,
+ *   then handed it to `checkAndRemoveUnavailableVideosFlat` which issued one
+ *   `deleteOne` per orphan — causing the recurring 15s event-loop spike.
+ *
+ *   The new orchestrator runs in-process using bulk MongoDB operations and
+ *   returns the same result shape, so callers don't need to change beyond
+ *   the import + invocation name. See [postSyncCleanup.js](./postSyncCleanup.js).
+ *
+ *   DO NOT call this function. The export is preserved only so historical
+ *   imports surface as a deprecation notice rather than an undefined error.
+ *
  * @param {Object} allFileServers - All file servers data in a map of server ID to file server data
  * @param {Object} fieldAvailability - Field availability map
  * @returns {Promise<Object>} Availability check results
  */
-export async function checkAvailabilityAcrossAllServers(allFileServers, fieldAvailability) {
-  const log = createLogger('FlatSync.Availability');
-  
-  log.info({ serverCount: Object.keys(allFileServers).length }, 'Performing final availability check across all servers');
-  const startTime = performance.now();
-  
-  // Get MongoDB client
-  const client = await clientPromise;
-  
-  // Build the enhanced data structure with optimized lookups
-  log.info({}, 'Using enhanced in-memory data structure for improved performance');
-  const flatDB = await buildEnhancedFlatDBStructure(client, null, fieldAvailability);
-  
-  // Perform the availability check with all servers' data
-  const results = await checkAndRemoveUnavailableVideosFlat(flatDB, allFileServers, fieldAvailability);
-  
-  const endTime = performance.now();
-  const durationSec = (endTime - startTime) / 1000;
-  
-  // Log summary of removed items
-  const removalSummary = {
-    durationSec: parseFloat(durationSec.toFixed(2)),
-    removed: results.removed ? {
-      movies: results.removed.movies?.length || 0,
-      tvShows: results.removed.tvShows?.length || 0,
-      seasons: results.removed.tvSeasons?.length || 0,
-      episodes: results.removed.tvEpisodes?.length || 0
-    } : { movies: 0, tvShows: 0, seasons: 0, episodes: 0 }
-  };
-  
-  log.info(removalSummary, 'Final availability check completed');
-  
-  // Now that availability checks are complete and database is cleaned,
-  // Run PlaybackStatus to WatchHistory migration (if needed)
-  const migrationStartTime = performance.now();
-  try {
-    await migratePlaybackStatusIfNeeded();
-  } catch (error) {
-    log.warn({ error }, 'WatchHistory migration encountered an issue, but sync continues');
-  }
-  const migrationEndTime = performance.now();
-  const migrationDurationSec = (migrationEndTime - migrationStartTime) / 1000;
-  
-  log.info({ 
-    durationSec: parseFloat(migrationDurationSec.toFixed(2))
-  }, 'WatchHistory migration triggered');
-  
-  // Validate WatchHistory records against the current state
-  const validationStartTime = performance.now();
-  const validationResults = await validateWatchHistoryAgainstDatabase();
-  const validationEndTime = performance.now();
-  const validationDurationSec = (validationEndTime - validationStartTime) / 1000;
-  
-  log.info({ 
-    durationSec: parseFloat(validationDurationSec.toFixed(2))
-  }, 'WatchHistory validation completed');
-  
-  results.watchHistoryValidation = validationResults;
-  results.migration = { durationSec: parseFloat(migrationDurationSec.toFixed(2)) };
-  return results;
+export async function checkAvailabilityAcrossAllServers(/* allFileServers, fieldAvailability */) {
+  throw new Error(
+    'checkAvailabilityAcrossAllServers is deprecated. ' +
+    'Replaced by runPostSyncCleanup in postSyncCleanup.js. See JSDoc for migration details.'
+  );
+
+  /* LEGACY BODY (kept for orchestration-shape review):
+   *
+   * const log = createLogger('FlatSync.Availability');
+   * log.info({ serverCount: Object.keys(allFileServers).length }, 'Performing final availability check across all servers');
+   * const startTime = performance.now();
+   *
+   * const client = await clientPromise;
+   * const flatDB = await buildEnhancedFlatDBStructure(client, null, fieldAvailability);
+   * const results = await checkAndRemoveUnavailableVideosFlat(flatDB, allFileServers, fieldAvailability);
+   *
+   * const endTime = performance.now();
+   * const durationSec = (endTime - startTime) / 1000;
+   *
+   * const removalSummary = {
+   *   durationSec: parseFloat(durationSec.toFixed(2)),
+   *   removed: results.removed ? {
+   *     movies: results.removed.movies?.length || 0,
+   *     tvShows: results.removed.tvShows?.length || 0,
+   *     seasons: results.removed.tvSeasons?.length || 0,
+   *     episodes: results.removed.tvEpisodes?.length || 0,
+   *   } : { movies: 0, tvShows: 0, seasons: 0, episodes: 0 },
+   * };
+   * log.info(removalSummary, 'Final availability check completed');
+   *
+   * const migrationStartTime = performance.now();
+   * try {
+   *   await migratePlaybackStatusIfNeeded();
+   * } catch (error) {
+   *   log.warn({ error }, 'WatchHistory migration encountered an issue, but sync continues');
+   * }
+   * const migrationEndTime = performance.now();
+   * const migrationDurationSec = (migrationEndTime - migrationStartTime) / 1000;
+   *
+   * const validationStartTime = performance.now();
+   * const validationResults = await validateWatchHistoryAgainstDatabase();
+   * const validationEndTime = performance.now();
+   * const validationDurationSec = (validationEndTime - validationStartTime) / 1000;
+   *
+   * results.watchHistoryValidation = validationResults;
+   * results.migration = { durationSec: parseFloat(migrationDurationSec.toFixed(2)) };
+   * return results;
+   */
 }
 
 export {
@@ -441,4 +441,7 @@ export {
   
   // Export WatchHistory validation functions
   validateWatchHistoryAgainstDatabase,
+
+  // Post-sync orchestrator — replaces checkAvailabilityAcrossAllServers (2026-05-08)
+  runPostSyncCleanup,
 };

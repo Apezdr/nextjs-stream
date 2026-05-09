@@ -2,7 +2,7 @@
 
 import React, { useMemo } from 'react'
 import { FixedSizeGrid as Grid } from 'react-window'
-import AutoSizer from 'react-virtualized-auto-sizer'
+import { AutoSizer } from 'react-virtualized-auto-sizer'
 import CastGridCell from './CastGridCell'
 
 const VirtualizedCastGrid = ({ cast }) => {
@@ -16,8 +16,8 @@ const VirtualizedCastGrid = ({ cast }) => {
 
   return (
     <div className="w-full h-full">
-      <AutoSizer>
-        {({ height, width }) => {
+      <AutoSizer renderProp={({ height, width }) => {
+          if (!width || !height) return null
           const columnCount = Math.floor(width / (ITEM_WIDTH + GUTTER_SIZE)) || 1
           const rowCount = Math.ceil(castItems.length / columnCount)
 
@@ -41,8 +41,7 @@ const VirtualizedCastGrid = ({ cast }) => {
               )}
             </Grid>
           )
-        }}
-      </AutoSizer>
+        }} />
     </div>
   )
 }

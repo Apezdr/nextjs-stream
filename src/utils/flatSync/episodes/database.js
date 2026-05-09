@@ -4,6 +4,7 @@
 
 import { ObjectId } from 'mongodb'
 import { createLogger, logError } from '@src/lib/logger'
+import { withSyncRunIdMarker, stampDocumentWithSyncRunId } from '../syncContext'
 
 /**
  * Updates a TV episode in the flat database structure
@@ -61,7 +62,7 @@ export async function updateEpisodeInFlatDB(
         seasonId: season._id,
         episodeNumber: episodeNumber,
       },
-      updates,
+      withSyncRunIdMarker(updates),
       { upsert: true }
     )
 
@@ -151,12 +152,12 @@ export async function getEpisodeFromFlatDB(
         .collection('FlatEpisodes')
         .updateOne(
           { _id: episodeByNaturalKey._id },
-          {
+          withSyncRunIdMarker({
             $set: {
               showId: tvShow._id,
               seasonId: season._id,
             },
-          }
+          })
         )
 
       // Return the episode with updated IDs
@@ -244,7 +245,7 @@ export async function createEpisodeInFlatDB(client, episodeData) {
       const result = await client
         .db('Media')
         .collection('FlatEpisodes')
-        .updateOne({ _id: existingEpisode._id }, { $set: updateFields })
+        .updateOne({ _id: existingEpisode._id }, withSyncRunIdMarker({ $set: updateFields }))
 
       return {
         ...result,
@@ -304,6 +305,8 @@ export async function createEpisodeInFlatDB(client, episodeData) {
       episodeData.seasonId = season._id
     }
 
+    stampDocumentWithSyncRunId(episodeData)
+
     const result = await client.db('Media').collection('FlatEpisodes').insertOne(episodeData)
 
     return {
@@ -354,11 +357,11 @@ export async function updateEpisodeShowTitles(
           seasonNumber: seasonNumber,
           episodeNumber: episodeNumber,
         },
-        {
+        withSyncRunIdMarker({
           $set: {
             showTitle: showTitle,
           },
-        }
+        })
       )
 
     if (result.matchedCount === 0) {
@@ -424,12 +427,12 @@ export async function updateEpisodeIds(
           seasonNumber: seasonNumber,
           episodeNumber: episodeNumber,
         },
-        {
+        withSyncRunIdMarker({
           $set: {
             showId: newShowId,
             seasonId: newSeasonId,
           },
-        }
+        })
       )
 
     if (result.matchedCount === 0) {
