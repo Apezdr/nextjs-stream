@@ -428,11 +428,11 @@ export class MovieContentStrategy implements SyncStrategy {
       }
     }
 
-    // Step 3: Generate normalized video ID for deduplication
-    // Note: normalizedVideoId is a computed field from fileServer._id or videoUrl hash, not tracked in fieldAvailability
-    const hasFileServerId =
-      fileServerMovieData && typeof fileServerMovieData === 'object' && '_id' in fileServerMovieData
-    if (videoUrl || hasFileServerId) {
+    // Step 3: Generate normalized video ID for deduplication.
+    // Computed from videoUrl pathname only — must agree with
+    // flatDatabaseUtils.generateNormalizedVideoId so WatchHistory joins work.
+    // Not tracked in fieldAvailability (it's derivable, not authoritative).
+    if (videoUrl) {
       const normalizedId = this.generateNormalizedVideoId(
         videoUrl,
         originalTitle,
@@ -445,7 +445,7 @@ export class MovieContentStrategy implements SyncStrategy {
         )
       } else {
         syncLogger.debug(
-          `📝 NormalizedVideoId unchanged: "${normalizedId}" (computed from ${hasFileServerId ? 'fileServer._id' : 'videoUrl hash'})`
+          `📝 NormalizedVideoId unchanged: "${normalizedId}"`
         )
       }
     }
@@ -975,34 +975,34 @@ export class MovieContentStrategy implements SyncStrategy {
   }
 
   /**
-   * Generate normalized video ID for deduplication
-   * Priority 1: Use _id from fileserver data (legacy format)
-   * Priority 2: Fallback to crypto hash if no _id available
+   * Compute the URL-pathname-derived `normalizedVideoId` for a movie.
+   *
+   * Returns a 16-char SHA-256 hex prefix of the lowercased URL pathname,
+   * matching `flatDatabaseUtils.generateNormalizedVideoId` exactly. Every
+   * cross-domain consumer (WatchHistory writer, validators, lookup maps,
+   * view counts) expects this exact form, so all writes have to agree on it.
+   *
+   * Historical note: an earlier version of this method short-circuited to
+   * `fileServerData._id` when the file server reported one, on the theory
+   * that the fileserver _id was a more stable per-asset identifier. That
+   * broke every `WatchHistory.normalizedVideoId === FlatMovies.normalizedVideoId`
+   * join, because WatchHistory always derives its hash from the playback URL
+   * (16 chars) while the fileserver _id was 64 chars — different identifier
+   * domains that could never align. Removed 2026-05-09. If a fileserver _id
+   * ever needs to be persisted, give it a separate field — don't reuse this
+   * one.
    */
   private generateNormalizedVideoId(
     videoUrl: string | null,
     originalTitle: string,
-    fileServerData?: any
+    _fileServerData?: any
   ): string {
-    // Priority 1: Use _id from fileserver data if available
-    if (fileServerData?._id) {
-      syncLogger.debug(
-        `✅ Using fileserver _id as normalizedVideoId for "${originalTitle}": ${fileServerData._id}`
-      )
-      return fileServerData._id
-    }
-
-    // Priority 2: Fallback to hash generation if no _id
     if (!videoUrl) {
       syncLogger.warn(
-        `⚠️ No videoUrl or _id available for "${originalTitle}", cannot generate normalizedVideoId`
+        `⚠️ No videoUrl available for "${originalTitle}", cannot generate normalizedVideoId`
       )
       return ''
     }
-
-    syncLogger.debug(
-      `⚠️ No _id in fileserver data for "${originalTitle}", falling back to URL hash`
-    )
 
     try {
       const crypto = require('crypto')
@@ -1036,7 +1036,7 @@ export class MovieContentStrategy implements SyncStrategy {
       const hash = crypto.createHash('sha256')
       hash.update(normalizedUrl)
 
-      // Return first 16 characters (matches legacy format)
+      // Return first 16 characters (matches flatDatabaseUtils.generateNormalizedVideoId)
       return hash.digest('hex').substring(0, 16)
     } catch (error) {
       syncLogger.error(`Error generating normalized video ID for URL: ${videoUrl}`, error)

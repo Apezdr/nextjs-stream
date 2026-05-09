@@ -4,6 +4,7 @@
 
 import { ObjectId } from 'mongodb';
 import { createLogger, logError } from '@src/lib/logger';
+import { withSyncRunIdMarker, stampDocumentWithSyncRunId } from '../syncContext';
 
 /**
  * Updates a TV show in the flat database structure
@@ -18,7 +19,7 @@ export async function updateTVShowInFlatDB(client, title, updates) {
     const result = await client
       .db('Media')
       .collection('FlatTVShows')
-      .updateOne({ originalTitle: title }, updates, { upsert: true });
+      .updateOne({ originalTitle: title }, withSyncRunIdMarker(updates), { upsert: true });
 
     if (result.upsertedCount == 0 && result.modifiedCount == 0) {
       log.warn({
@@ -104,7 +105,9 @@ export async function createTVShowInFlatDB(client, tvShowData) {
     if (!tvShowData.originalTitle && tvShowData.title) {
       tvShowData.originalTitle = tvShowData.title;
     }
-    
+
+    stampDocumentWithSyncRunId(tvShowData);
+
     const result = await client
       .db('Media')
       .collection('FlatTVShows')

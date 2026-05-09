@@ -103,14 +103,14 @@ const nextConfig = {
   // CRITICAL: Include OpenTelemetry packages in standalone output
   // Without this, the OTEL packages won't be available at runtime
   outputFileTracingIncludes: {
-  '*': [
-    // Core OpenTelemetry packages
-    './node_modules/@opentelemetry/**/*',
-    './node_modules/@vercel/**/*',
-    // Instrumentation file (should be src/ since you're using src folder)
-    './src/instrumentation.ts',
-  ],
-},
+    '*': [
+      // Core OpenTelemetry packages
+      './node_modules/@opentelemetry/**/*',
+      './node_modules/@vercel/**/*',
+      // Instrumentation file (should be src/ since you're using src folder)
+      './src/instrumentation.ts',
+    ],
+  },
 
   // Packages that should not be bundled (they need to be required at runtime)
   serverExternalPackages: [
@@ -122,6 +122,7 @@ const nextConfig = {
     '@opentelemetry/resources',
     '@opentelemetry/semantic-conventions',
     '@opentelemetry/sdk-trace-base',
+    '@opentelemetry/sdk-trace-node',
     '@opentelemetry/sdk-metrics',
     '@opentelemetry/sdk-logs',
     '@opentelemetry/instrumentation-http',

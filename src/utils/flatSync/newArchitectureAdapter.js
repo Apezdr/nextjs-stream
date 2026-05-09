@@ -6,8 +6,6 @@
 import { syncManager } from '../sync/SyncManager'
 import { SyncOperation, MediaType } from '../sync/core'
 import { createLogger, logError } from '@src/lib/logger'
-import { buildEnhancedFlatDBStructure } from './memoryUtils'
-import clientPromise from '@src/lib/mongodb'
 import { performance } from 'perf_hooks'
 // Import notification system
 import { MediaNotificationOrchestrator } from '../notifications/MediaNotificationOrchestrator'
@@ -37,7 +35,6 @@ export async function syncWithNewArchitecture(
     architecture: 'new',
     forceSync: options.forceSync,
     skipInitialization: options.skipInitialization,
-    hasPreBuiltFlatDB: !!options.preBuiltFlatDB,
   }, 'Starting NEW architecture sync');
 
   // Validate server configuration before proceeding
@@ -45,9 +42,9 @@ export async function syncWithNewArchitecture(
     const error = new Error(
       `Invalid server configuration: missing baseURL for server ${serverConfig?.id || 'unknown'}`
     )
-    logError(log, error, { 
+    logError(log, error, {
       serverId: serverConfig?.id,
-      context: 'server_config_validation' 
+      context: 'server_config_validation'
     });
     throw error
   }
@@ -59,24 +56,14 @@ export async function syncWithNewArchitecture(
 
   const startTime = Date.now()
 
-  // 🚀 PERFORMANCE OPTIMIZATION: Re-use pre-built flatDB if passed in, otherwise build it
-  let flatDB;
-  if (options.preBuiltFlatDB) {
-    flatDB = options.preBuiltFlatDB;
-    log.info({ serverId: serverConfig.id }, 'Re-using pre-built database cache (avoiding double load)');
-  } else {
-    log.info({ serverId: serverConfig.id }, 'Pre-fetching movie database for cache');
-    const client = await clientPromise
-    flatDB = await buildEnhancedFlatDBStructure(client, fileServer, fieldAvailability)
-  }
-
-  const cacheStats = {
-    serverId: serverConfig.id,
-    moviesCached: flatDB.movies?.size || 0,
-    missingMovies: flatDB.missingMovies?.length || 0
-  };
-  
-  log.info(cacheStats, 'Database cache pre-fetched');
+  // The new architecture queries MongoDB on-demand through its domain
+  // services (MovieRepository, EpisodeRepository, etc.). The previous
+  // `buildEnhancedFlatDBStructure` pre-load that lived here was used only
+  // to feed `movieCache: flatDB.lookups?.movies?.byOriginalTitle` to
+  // SyncManager as an optional optimization, plus two log lines. Removed
+  // 2026-05-09 — it accounted for ~414 MB of `old_space` per cycle per
+  // SigNoz. SyncManager falls back to its own indexed lookups; missing-
+  // media reporting now lives in `computeMissingMedia` upstream.
   const results = {
     movies: {
       processed: 0,
@@ -152,7 +139,10 @@ export async function syncWithNewArchitecture(
           concurrency: options.concurrency || undefined,
           forceSync: Boolean(options.forceSync),
           fileServerData: fileServer, // Pass file server data to sync manager
-          movieCache: flatDB.lookups?.movies?.byOriginalTitle, // 🚀 OPTIMIZATION: Map<originalTitle, movie>
+          // movieCache removed 2026-05-09 — used to be `flatDB.lookups?.movies?.byOriginalTitle`,
+          // an in-memory hint to skip per-record finds. The flatDB pre-load it came from cost
+          // ~414 MB of old_space per cycle, which dwarfed the savings. SyncManager's
+          // MovieRepository now hits the indexed `originalTitle_index` directly per record.
         }
       )
 

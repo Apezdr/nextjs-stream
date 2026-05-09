@@ -24,6 +24,9 @@ import { EpisodeRepository, SeasonRepository, TVShowRepository } from '../../inf
 import { isCurrentServerHighestPriorityForField, createFullUrl, processCaptionURLs, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { createLogger } from '@src/lib/logger'
+
+const pinoLog = createLogger('Sync.TV.Episode')
 
 export class EpisodeSyncService {
   constructor(
@@ -140,7 +143,14 @@ export class EpisodeSyncService {
       })
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
+      const stack = error instanceof Error ? error.stack : undefined
       syncEventBus.emitError(label, MediaType.Episode, context.serverConfig.id, msg, SyncOperation.Content)
+      // emitError only fans out to SSE — log explicitly via Pino so the
+      // failure surfaces in SigNoz instead of being silently counted.
+      pinoLog.error(
+        { label, serverId: context.serverConfig.id, err: msg, stack },
+        `Episode sync failed: ${label}`
+      )
       results.push(this.makeResult(label, context, SyncStatus.Failed, [], [msg]))
     }
 

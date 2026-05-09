@@ -6,10 +6,16 @@
 import { MongoClient, Collection, UpdateResult, DeleteResult } from 'mongodb'
 import { BaseMediaEntity, MediaRepository, DatabaseError } from '../../core/types'
 import isEqual from 'lodash/isEqual'
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
+import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
 
 // Fields that must never appear in a diff — either MongoDB internals or
 // system timestamps that always change and should not trigger a write.
-const DIFF_EXCLUDED_FIELDS = new Set(['_id', 'lastSynced', 'updatedAt', 'createdAt'])
+// `syncRunId` is also excluded so a run-id refresh on an otherwise unchanged
+// doc still falls through to the "no diff → no write" fast path; the marker
+// gets re-applied via the explicit add-on at every write site below.
+const DIFF_EXCLUDED_FIELDS = new Set(['_id', 'lastSynced', 'updatedAt', 'createdAt', 'syncRunId'])
 
 export abstract class BaseRepository<T extends BaseMediaEntity> implements MediaRepository<T> {
   protected client: MongoClient
@@ -96,11 +102,13 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
   async save(entity: T): Promise<void> {
     try {
       const now = new Date()
+      const syncRunId = getCurrentSyncRunId()
       const entityWithTimestamp = {
         ...entity,
         lastSynced: now,
         createdAt: entity.metadata?.createdAt || now,
-        updatedAt: now
+        updatedAt: now,
+        ...(syncRunId ? { syncRunId } : {})
       }
 
       await this.collection.insertOne(entityWithTimestamp as any)
@@ -117,10 +125,12 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
    */
   async update(title: string, updates: Partial<T>): Promise<void> {
     try {
+      const syncRunId = getCurrentSyncRunId()
       const updateDoc = {
         ...updates,
         lastSynced: new Date(),
-        updatedAt: new Date()
+        updatedAt: new Date(),
+        ...(syncRunId ? { syncRunId } : {})
       }
 
       const result: UpdateResult = await this.collection.updateOne(
@@ -158,13 +168,15 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
 
     try {
       const now = new Date()
+      const syncRunId = getCurrentSyncRunId()
       // Strip _id so MongoDB preserves existing _id on matched docs
       // and auto-generates for new upserted docs
       const { _id, ...entityWithoutId } = entity as any
       const entityWithTimestamp = {
         ...entityWithoutId,
         lastSynced: now,
-        updatedAt: now
+        updatedAt: now,
+        ...(syncRunId ? { syncRunId } : {})
       }
 
       await this.collection.replaceOne(
@@ -224,6 +236,7 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
     const queryField = originalTitle || title
     const queryKey = originalTitle ? 'originalTitle' : 'title'
     const now = new Date()
+    const syncRunId = getCurrentSyncRunId()
     const { _id, ...entityWithoutId } = entity as any
 
     try {
@@ -231,7 +244,14 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
         // New document — $setOnInsert is a no-op if doc already exists (race safety)
         await this.collection.updateOne(
           { [queryKey]: queryField } as any,
-          { $setOnInsert: { ...entityWithoutId, lastSynced: now, updatedAt: now } } as any,
+          {
+            $setOnInsert: {
+              ...entityWithoutId,
+              lastSynced: now,
+              updatedAt: now,
+              ...(syncRunId ? { syncRunId } : {})
+            }
+          } as any,
           { upsert: true }
         )
         return
@@ -242,7 +262,14 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
 
       await this.collection.updateOne(
         { [queryKey]: queryField } as any,
-        { $set: { ...diff, lastSynced: now, updatedAt: now } } as any
+        {
+          $set: {
+            ...diff,
+            lastSynced: now,
+            updatedAt: now,
+            ...(syncRunId ? { syncRunId } : {})
+          }
+        } as any
       )
     } catch (error) {
       throw new DatabaseError(
@@ -350,15 +377,17 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
    */
   async bulkUpdate(updates: Array<{ title: string; updates: Partial<T> }>): Promise<void> {
     try {
+      const syncRunId = getCurrentSyncRunId()
       const operations = updates.map(({ title, updates }) => ({
         updateOne: {
           filter: { title } as any,
-          update: { 
-            $set: { 
-              ...updates, 
+          update: {
+            $set: {
+              ...updates,
               lastSynced: new Date(),
-              updatedAt: new Date()
-            } 
+              updatedAt: new Date(),
+              ...(syncRunId ? { syncRunId } : {})
+            }
           }
         }
       }))

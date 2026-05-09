@@ -4,55 +4,22 @@
 // Using centralized cacheLife profiles from next.config.js
 // Converted to parallel Promise.all() fetching
 
-import { cache } from 'react'
 import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { Suspense } from 'react'
-import { getFlatMoviesByCollectionId } from '@src/utils/flatDatabaseUtils'
-import { getCollectionDetails } from '@src/utils/tmdb/client'
 import { redirect } from 'next/navigation'
 import { getSession } from '@src/lib/cachedAuth'
 import { AuthGuard } from '@components/MediaPages/DynamicPage'
+import { getCachedCollectionDetails } from './cachedFetchers'
 
 // *** VERCEL BEST PRACTICE: Cache Components Compatibility ***
 // Using centralized cacheLife profiles from next.config.js (cacheComponents: true)
-
-// *** VERCEL BEST PRACTICE: server-cache-react ***
-// Create cached fetcher using React.cache() for per-request deduplication
-// This eliminates duplicate API calls between generateMetadata and page component
-export const getCachedCollectionDetails = cache(async (collectionId) => {
-  console.log(`[CACHE] Fetching collection details for ${collectionId}`)
-  return getCollectionDetails(collectionId)
-})
-
-// *** VERCEL BEST PRACTICE: server-cache-react ***  
-// Create cached fetcher for owned movies to leverage React.cache() deduplication
-export const getCachedOwnedMovies = cache(async (collectionId) => {
-  console.log(`[CACHE] Fetching owned movies for collection ${collectionId}`)
-  return getFlatMoviesByCollectionId(collectionId)
-})
-
-// *** OPTIMIZED: Cached fetcher for enhanced collection data with aggregated crew info ***
-export const getCachedEnhancedCollectionDetails = cache(async (collectionId) => {
-  console.log(`[CACHE] Fetching enhanced collection details for ${collectionId}`)
-  
-  try {
-    // Use the existing enhanced endpoint that already aggregates director data!
-    const enhancedData = await getCollectionDetails(collectionId, { enhanced: true })
-    console.log(`[CACHE] Enhanced collection data retrieved for ${collectionId}`, {
-      hasAggregatedData: !!enhancedData?.aggregatedData,
-      topDirectorsCount: enhancedData?.aggregatedData?.topDirectors?.length || 0,
-      topCastCount: enhancedData?.aggregatedData?.topCast?.length || 0
-    })
-    
-    return enhancedData
-  } catch (error) {
-    console.error(`Error fetching enhanced collection data for ${collectionId}:`, error)
-    // Fallback to regular collection details
-    console.log(`[CACHE] Falling back to regular collection details for ${collectionId}`)
-    return getCollectionDetails(collectionId)
-  }
-})
+//
+// React.cache() fetchers (getCachedCollectionDetails, getCachedOwnedMovies,
+// getCachedEnhancedCollectionDetails) live in ./cachedFetchers because
+// page.js may only export the default component plus a fixed set of
+// metadata/config helpers — arbitrary exports fail Next.js page-type
+// validation under webpack.
 
 // *** VERCEL BEST PRACTICE: server-cache-react ***
 // Use cached fetcher to eliminate duplicate API calls between generateMetadata and page component

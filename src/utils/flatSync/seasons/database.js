@@ -4,6 +4,7 @@
 
 import { ObjectId } from 'mongodb';
 import { createLogger, logError } from '@src/lib/logger';
+import { withSyncRunIdMarker, stampDocumentWithSyncRunId } from '../syncContext';
 
 /**
  * Updates a TV season in the flat database structure
@@ -48,11 +49,11 @@ export async function updateSeasonInFlatDB(client, showTitle, originalTitle, sea
       .db('Media')
       .collection('FlatSeasons')
       .updateOne(
-        { 
+        {
           showId: tvShow._id,
-          seasonNumber: seasonNumber 
-        }, 
-        updates, 
+          seasonNumber: seasonNumber
+        },
+        withSyncRunIdMarker(updates),
         { upsert: true }
       );
     
@@ -122,7 +123,7 @@ export async function getSeasonFromFlatDB(client, showTitle, seasonNumber, force
         .collection('FlatSeasons')
         .updateOne(
           { _id: seasonByNaturalKey._id },
-          { $set: { showId: tvShow._id } }
+          withSyncRunIdMarker({ $set: { showId: tvShow._id } })
         );
       
       // Return the season with updated showId
@@ -225,7 +226,7 @@ export async function createSeasonInFlatDB(client, seasonData) {
           .collection('FlatSeasons')
           .updateOne(
             { _id: existingNullTitleSeason._id },
-            { $set: seasonDataWithoutId }
+            withSyncRunIdMarker({ $set: seasonDataWithoutId })
           );
           
         return {
@@ -252,7 +253,9 @@ export async function createSeasonInFlatDB(client, seasonData) {
     if (!seasonData.type) {
       seasonData.type = 'season';
     }
-    
+
+    stampDocumentWithSyncRunId(seasonData);
+
     const result = await client
       .db('Media')
       .collection('FlatSeasons')
@@ -290,13 +293,13 @@ export async function updateSeasonShowId(client, showTitle, seasonNumber, newSho
       .db('Media')
       .collection('FlatSeasons')
       .updateOne(
-        { 
+        {
           showTitle: showTitle,
-          seasonNumber: seasonNumber 
-        }, 
-        { 
+          seasonNumber: seasonNumber
+        },
+        withSyncRunIdMarker({
           $set: { showId: newShowId }
-        }
+        })
       );
     
     if (result.matchedCount === 0) {

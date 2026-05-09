@@ -73,7 +73,12 @@ export async function createFlatDatabaseIndexes() {
   try {
     // Create indexes for FlatMovies collection
     const flatMoviesIndexes = [
-      { key: { title: 1 }, name: 'title_index', unique: true },
+      // `title` is the TMDB display title — multiple movies can legitimately
+      // share it (e.g. "Wolf Man" 1941 vs 2025 remake). Uniqueness lives on
+      // `originalTitle` (the filesystem key) per CLAUDE.md. The unique flag
+      // here used to throw E11000 every cycle when a sync tried to write a
+      // collision (e.g. "Inside" the heist film vs an older "Inside").
+      { key: { title: 1 }, name: 'title_index' },
       { key: { originalTitle: 1 }, name: 'originalTitle_index', unique: true },
       { key: { 'metadata.genres.name': 1 }, name: 'genres_index' },
       { key: { 'metadata.release_date': -1 }, name: 'release_date_index' },
@@ -96,7 +101,13 @@ export async function createFlatDatabaseIndexes() {
       // CRITICAL: Covered query index for validation scans (fixes COLLSCAN in watchHistoryValidation)
       // Enables index-only lookups without reading documents from disk
       // Used by: validateWatchHistoryAgainstDatabase() - improves performance from COLLSCAN to IXSCAN
-      { key: { videoURL: 1, normalizedVideoId: 1 }, name: 'videoURL_normalizedId_covered_index' }
+      { key: { videoURL: 1, normalizedVideoId: 1 }, name: 'videoURL_normalizedId_covered_index' },
+
+      // Sync-run marker — every Flat* write tags the record with the active
+      // syncRunId (see syncContext.js). Phase 2 of the marker rollout will
+      // turn post-sync cleanup into `deleteMany({ syncRunId: { $ne: <run> } })`,
+      // which depends on this index for an IXSCAN.
+      { key: { syncRunId: 1 }, name: 'sync_run_id_index' }
     ];
     results.FlatMovies = await createCollectionIndexes(
       client.db('Media').collection('FlatMovies'),
@@ -108,7 +119,10 @@ export async function createFlatDatabaseIndexes() {
     
     // Create indexes for FlatTVShows collection
     const flatTVShowsIndexes = [
-      { key: { title: 1 }, name: 'title_index', unique: true },
+      // `title` is the TMDB display title — multiple shows can legitimately
+      // share it (Kingdom 2014 vs Kingdom 2025, etc.). Uniqueness lives on
+      // `originalTitle` (the filesystem key) per CLAUDE.md.
+      { key: { title: 1 }, name: 'title_index' },
       { key: { originalTitle: 1 }, name: 'originalTitle_index', unique: true },
       { key: { 'metadata.genres.name': 1 }, name: 'genres_index' },
       { key: { 'metadata.first_air_date': -1 }, name: 'first_air_date_index' },
@@ -120,7 +134,10 @@ export async function createFlatDatabaseIndexes() {
       // These allow MongoDB to filter by genre AND return sorted results using a single index
       { key: { 'metadata.genres.name': 1, 'metadata.first_air_date': -1 }, name: 'genres_first_air_date_index' },
       { key: { 'metadata.genres.name': 1, 'metadata.vote_average': -1 }, name: 'genres_rating_index' },
-      { key: { 'metadata.genres.name': 1, 'title': 1 }, name: 'genres_title_index' }
+      { key: { 'metadata.genres.name': 1, 'title': 1 }, name: 'genres_title_index' },
+
+      // Sync-run marker — see FlatMovies for context.
+      { key: { syncRunId: 1 }, name: 'sync_run_id_index' }
     ];
     results.FlatTVShows = await createCollectionIndexes(
       client.db('Media').collection('FlatTVShows'),
@@ -133,8 +150,15 @@ export async function createFlatDatabaseIndexes() {
     // Create indexes for FlatSeasons collection
     const flatSeasonsIndexes = [
       { key: { showId: 1, seasonNumber: 1 }, name: 'show_season_index', unique: true },
-      { key: { showTitle: 1, seasonNumber: 1 }, name: 'show_title_season_index', unique: true },
-      { key: { type: 1 }, name: 'type_index' }
+      // `showTitle` is the TMDB display title and shouldn't be unique here —
+      // two shows that share a display title (e.g. Kingdom 2014 vs 2025)
+      // would have season-1 records collide on this index. Uniqueness lives
+      // on `(showId, seasonNumber)` above where it belongs.
+      { key: { showTitle: 1, seasonNumber: 1 }, name: 'show_title_season_index' },
+      { key: { type: 1 }, name: 'type_index' },
+
+      // Sync-run marker — see FlatMovies for context.
+      { key: { syncRunId: 1 }, name: 'sync_run_id_index' }
     ];
     results.FlatSeasons = await createCollectionIndexes(
       client.db('Media').collection('FlatSeasons'),
@@ -147,7 +171,10 @@ export async function createFlatDatabaseIndexes() {
     // Create indexes for FlatEpisodes collection
     const flatEpisodesIndexes = [
       { key: { showId: 1, seasonId: 1, episodeNumber: 1 }, name: 'show_season_episode_index', unique: true },
-      { key: { showTitle: 1, seasonNumber: 1, episodeNumber: 1 }, name: 'show_title_season_episode_index', unique: true },
+      // `showTitle` is the TMDB display title and shouldn't be unique here —
+      // see the `show_title_season_index` comment on FlatSeasons. Uniqueness
+      // lives on `(showId, seasonId, episodeNumber)` above.
+      { key: { showTitle: 1, seasonNumber: 1, episodeNumber: 1 }, name: 'show_title_season_episode_index' },
       
       // CRITICAL: Index for queries filtering by seasonId alone (fixes COLLSCAN slow query)
       // This enables efficient episode lookups within a season and eliminates in-memory sorting
@@ -169,7 +196,10 @@ export async function createFlatDatabaseIndexes() {
       // CRITICAL: Covered query index for validation scans (fixes COLLSCAN in watchHistoryValidation)
       // Enables index-only lookups without reading documents from disk
       // Used by: validateWatchHistoryAgainstDatabase() - improves performance from COLLSCAN to IXSCAN
-      { key: { videoURL: 1, normalizedVideoId: 1 }, name: 'videoURL_normalizedId_covered_index' }
+      { key: { videoURL: 1, normalizedVideoId: 1 }, name: 'videoURL_normalizedId_covered_index' },
+
+      // Sync-run marker — see FlatMovies for context.
+      { key: { syncRunId: 1 }, name: 'sync_run_id_index' }
     ];
     results.FlatEpisodes = await createCollectionIndexes(
       client.db('Media').collection('FlatEpisodes'),

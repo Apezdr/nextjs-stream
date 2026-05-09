@@ -3,6 +3,7 @@
  */
 
 import { createLogger, logError } from '@src/lib/logger';
+import { stampDocumentWithSyncRunId } from '../syncContext';
 
 /**
  * Creates missing movies in the database
@@ -38,13 +39,15 @@ export async function createMissingMovies(client, missingMovieTitles, serverConf
       initialDiscoveryDate: new Date(),
       initialDiscoveryServer: serverConfig.id
     };
-    
+
+    stampDocumentWithSyncRunId(movieData);
+
     createOperations.push({
       insertOne: {
         document: movieData
       }
     });
-    
+
     movieDataArray.push(movieData);
   }
 

@@ -28,6 +28,9 @@ import { EpisodeSyncService } from './EpisodeSyncService'
 import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { syncLogger } from '../../core/logger'
+import { createLogger } from '@src/lib/logger'
+
+const pinoLog = createLogger('Sync.TV.Show')
 
 export class TVShowSyncService {
   constructor(
@@ -118,7 +121,17 @@ export class TVShowSyncService {
       })
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
+      const stack = error instanceof Error ? error.stack : undefined
       syncEventBus.emitError(showTitle, MediaType.TVShow, context.serverConfig.id, msg)
+      // Surface the failure to Pino logs — emitError only fans out to SSE
+      // subscribers, and `syncLogger` is a console-based rate-limited
+      // logger that doesn't reach SigNoz. Without this the failure was
+      // silently counted in BatchSyncResult.errors with no observability
+      // footprint.
+      pinoLog.error(
+        { showTitle, serverId: context.serverConfig.id, err: msg, stack },
+        `TV show sync failed: ${showTitle}`
+      )
       allResults.push(this.makeResult(
         showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Failed, [], [msg]
       ))
