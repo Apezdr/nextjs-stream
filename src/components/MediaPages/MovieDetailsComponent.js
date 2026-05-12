@@ -186,7 +186,7 @@ const MovieDetailsComponent = ({ media }) => {
                     </div> */}
           <div className='flex flex-row justify-evenly'>
           <Link
-            href={`/list/movie/${title}/play`}
+            href={`/list/movie/${encodeURIComponent(title)}/play`}
             className={classNames(
               'relative inline-flex flex-row items-center gap-2',
               'opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'
