@@ -218,6 +218,10 @@ export class TVShowSyncService {
     if (!fileData) return entity
 
     // --- Metadata (priority-gated) ---
+    // Tracks whether we have a CONFIRMED fresh metadata source. Default true so
+    // that "nothing to fetch" / "not metadata-authoritative" never blocks the
+    // syncHash gate; only an attempted-but-failed fetch flips it false.
+    let metadataFetchSucceeded = true
     const canUpdateMetadata = isCurrentServerHighestPriorityForField(
       context.fieldAvailability, 'tv', showTitle, 'metadata', context.serverConfig
     )
@@ -227,7 +231,10 @@ export class TVShowSyncService {
       let showMetadata: any = null
 
       if (typeof fileData.metadata === 'string') {
-        // URL path — fetch real metadata from the file server
+        // URL path — fetch real metadata from the file server. Mark the gate as
+        // not-yet-confirmed: only a usable response flips it back true below, so
+        // a failed/stale fetch leaves syncHash unstamped for retry next sync.
+        metadataFetchSucceeded = false
         try {
           showMetadata = await fetchMetadataMultiServer(
             context.serverConfig.id,
@@ -240,11 +247,12 @@ export class TVShowSyncService {
           // Fetch failed — preserve existing metadata
         }
       } else if (typeof fileData.metadata === 'object') {
-        // Already inline (rare, but handle gracefully)
+        // Already inline (rare, but handle gracefully) — a fresh source
         showMetadata = fileData.metadata
       }
 
       if (showMetadata && typeof showMetadata === 'object' && !showMetadata.error) {
+        metadataFetchSucceeded = true
         entity.metadata = showMetadata
         entity.metadataSource = context.serverConfig.id
 
@@ -347,9 +355,11 @@ export class TVShowSyncService {
       entity.seasonCount = Object.keys(fileData.seasons).length
     }
 
-    // Store incoming show hash so next sync can compare and potentially skip entire show
+    // Store incoming show hash so next sync can compare and potentially skip entire show.
+    // Gate on a confirmed fresh metadata fetch: a failed/stale fetch must NOT advance
+    // syncHash, or the spent gate would lock the show on stale metadata forever.
     const incomingShowHash = context.tvShowHashesCache?.titles?.[showTitle]?.hash
-    if (incomingShowHash) entity.syncHash = incomingShowHash
+    if (incomingShowHash && metadataFetchSucceeded) entity.syncHash = incomingShowHash
 
     // Store incoming contentHash (aggregate of per-episode hashes) so the next sync
     // can detect video-file changes at the show level. Distinct from syncHash.

@@ -1,161 +1,142 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, memo, Suspense } from 'react'
+import { useState, useEffect, useCallback, useReducer, memo, Suspense, useRef } from 'react'
 import { useSwipeable } from 'react-swipeable'
-import { useTimer } from 'react-timer-hook'
 import Dots from './Dots'
 import Loading from '@src/app/loading'
 import BannerContent from './BannerContent'
+import BannerTrailerIndicator from './BannerTrailerIndicator'
 
-// Define steps for clarity
-const STEP = {
-  IMAGE: 0,
-  VIDEO: 1,
-  AFTER_VIDEO: 2,
+const HERO_DWELL = 15000
+const STILL_HANDOFF = 3000
+const MUTE_KEY = 'videoMutedBanner'
+
+const readPersistedMute = () => {
+  if (typeof window === 'undefined') return true
+  const session = sessionStorage.getItem(MUTE_KEY)
+  if (session !== null) return session === 'true'
+  // One-time migration: lift any legacy localStorage value into sessionStorage, then drop it.
+  const legacy = localStorage.getItem(MUTE_KEY)
+  if (legacy !== null) {
+    localStorage.removeItem(MUTE_KEY)
+    sessionStorage.setItem(MUTE_KEY, legacy)
+    return legacy === 'true'
+  }
+  return true
 }
 
-// Duration constants (in seconds)
-const BANNER_DISPLAY_BEFORE_VIDEO = 5
-const VIDEO_DURATION = 30
-const BANNER_DISPLAY_AFTER_VIDEO = 10
-const TOTAL_SLIDE_DURATION =
-  BANNER_DISPLAY_BEFORE_VIDEO + VIDEO_DURATION + BANNER_DISPLAY_AFTER_VIDEO
+// Index, dwell clock, and trailer time always change together (advance, jump, swipe), so they
+// live in one reducer dispatched once per transition to avoid cascading setState calls.
+const initialDwellState = { currentMediaIndex: 0, dwellElapsed: 0, trailerTime: { current: 0, duration: 0 } }
+
+const dwellReducer = (state, action) => {
+  switch (action.type) {
+    case 'tick':
+      return { ...state, dwellElapsed: action.elapsed }
+    case 'advance':
+      return {
+        currentMediaIndex: action.nextIndex(state.currentMediaIndex),
+        dwellElapsed: 0,
+        trailerTime: { current: 0, duration: 0 },
+      }
+    case 'trailerTime':
+      return { ...state, trailerTime: action.trailerTime }
+    default:
+      return state
+  }
+}
 
 const BannerWithVideo = ({ mediaList }) => {
-  // State variables
-  const [currentMediaIndex, setCurrentMediaIndex] = useState(0)
-  const [currentStep, setCurrentStep] = useState(STEP.IMAGE)
-  const [showVideo, setShowVideo] = useState(false)
-  const [isImageReady, setIsImageReady] = useState(false)
-  const [isVideoReady, setIsVideoReady] = useState(false)
+  const [dwellState, dispatchDwell] = useReducer(dwellReducer, initialDwellState)
+  const { currentMediaIndex, dwellElapsed, trailerTime } = dwellState
+  const [isMuted, setIsMuted] = useState(() => readPersistedMute())
+  const [isPaused, setIsPaused] = useState(false)
 
-  // Timer for managing slide transitions
-  const {
-    seconds,
-    restart: restartTimer,
-    pause: pauseTimer,
-    resume: resumeTimer,
-  } = useTimer({
-    expiryTimestamp: new Date(),
-    onExpire: () => handleNextStep(),
-    autoStart: false,
-  })
+  const dwellStartRef = useRef(0)
+  const elapsedRef = useRef(0)
+  const rafRef = useRef(null)
+  const pausedRef = useRef(false)
+  const tickRef = useRef(null)
 
-  // Calculate progress for progress bar
-  const calculatedProgress = useMemo(() => {
-    let progressSeconds = 0
+  const currentMedia = mediaList[currentMediaIndex]
+  const hasTrailer = Boolean(currentMedia?.metadata?.trailer_url)
+  const showTrailer = hasTrailer && dwellElapsed >= STILL_HANDOFF
 
-    switch (currentStep) {
-      case STEP.IMAGE:
-        progressSeconds = isImageReady ? BANNER_DISPLAY_BEFORE_VIDEO - seconds : 0
-        break
-      case STEP.VIDEO:
-        progressSeconds = isVideoReady
-          ? BANNER_DISPLAY_BEFORE_VIDEO + (VIDEO_DURATION - seconds)
-          : BANNER_DISPLAY_BEFORE_VIDEO
-        break
-      case STEP.AFTER_VIDEO:
-        progressSeconds =
-          BANNER_DISPLAY_BEFORE_VIDEO + VIDEO_DURATION + (BANNER_DISPLAY_AFTER_VIDEO - seconds)
-        break
-      default:
-        progressSeconds = 0
+  // Keep tick fresh against mediaList length without re-creating the rAF loop. The tick runs
+  // continuously; on each frame it either advances elapsed or, when HERO_DWELL is reached,
+  // rolls the index and resets the dwell clock in a single batched render.
+  useEffect(() => {
+    tickRef.current = () => {
+      const elapsed = performance.now() - dwellStartRef.current
+      if (elapsed >= HERO_DWELL) {
+        dwellStartRef.current = performance.now()
+        elapsedRef.current = 0
+        dispatchDwell({ type: 'advance', nextIndex: (i) => (i + 1) % mediaList.length })
+      } else {
+        elapsedRef.current = elapsed
+        dispatchDwell({ type: 'tick', elapsed })
+      }
+      rafRef.current = requestAnimationFrame(tickRef.current)
     }
+  }, [mediaList.length])
 
-    progressSeconds = Math.max(progressSeconds, 0)
+  // Kick off the dwell loop on mount; cancel on unmount.
+  useEffect(() => {
+    dwellStartRef.current = performance.now()
+    if (tickRef.current) rafRef.current = requestAnimationFrame(tickRef.current)
+    return () => cancelAnimationFrame(rafRef.current)
+  }, [])
 
-    return TOTAL_SLIDE_DURATION - Math.ceil(Math.min(progressSeconds, TOTAL_SLIDE_DURATION))
-  }, [seconds, currentStep, isImageReady, isVideoReady])
-
-  // Helper function to get duration for the current step
-  const getDurationForStep = useCallback((step) => {
-    switch (step) {
-      case STEP.IMAGE:
-        return BANNER_DISPLAY_BEFORE_VIDEO
-      case STEP.VIDEO:
-        return VIDEO_DURATION
-      case STEP.AFTER_VIDEO:
-        return BANNER_DISPLAY_AFTER_VIDEO
-      default:
-        return 0
+  // Pause/resume on tab visibility + fullscreen. Cancels rAF while paused; rebases clock on resume.
+  useEffect(() => {
+    const applyPaused = (paused) => {
+      if (paused === pausedRef.current) return
+      pausedRef.current = paused
+      setIsPaused(paused)
+      if (paused) {
+        cancelAnimationFrame(rafRef.current)
+      } else {
+        dwellStartRef.current = performance.now() - elapsedRef.current
+        if (tickRef.current) rafRef.current = requestAnimationFrame(tickRef.current)
+      }
+    }
+    const onVis = () => applyPaused(document.visibilityState === 'hidden')
+    const onFs = () => applyPaused(Boolean(document.fullscreenElement))
+    document.addEventListener('visibilitychange', onVis)
+    document.addEventListener('fullscreenchange', onFs)
+    return () => {
+      document.removeEventListener('visibilitychange', onVis)
+      document.removeEventListener('fullscreenchange', onFs)
     }
   }, [])
 
-  // Helper function to restart the timer for the current step
-  const restartTimerForStep = useCallback(
-    (step) => {
-      const duration = getDurationForStep(step)
-      const time = new Date()
-      time.setSeconds(time.getSeconds() + duration)
-      restartTimer(time)
-    },
-    [restartTimer, getDurationForStep]
-  )
-
-  // Restart the timer when currentStep changes
-  useEffect(() => {
-    restartTimerForStep(currentStep)
-  }, [currentStep, restartTimerForStep])
-
-  // Pause or resume the timer based on readiness of image/video
-  useEffect(() => {
-    if (
-      (currentStep === STEP.IMAGE && !isImageReady) ||
-      (currentStep === STEP.VIDEO && !isVideoReady)
-    ) {
-      pauseTimer()
-    } else {
-      resumeTimer()
-    }
-  }, [currentStep, isImageReady, isVideoReady, pauseTimer, resumeTimer])
-
-  // Start the slide cycle from the beginning
-  const startSlideCycle = useCallback(() => {
-    setCurrentStep(STEP.IMAGE)
-    setShowVideo(false)
-    setIsImageReady(false)
-    setIsVideoReady(false)
+  const jumpTo = useCallback((index) => {
+    dwellStartRef.current = performance.now()
+    elapsedRef.current = 0
+    dispatchDwell({ type: 'advance', nextIndex: () => index })
   }, [])
 
-  // Move to the next media item
-  const cycleToNextMedia = useCallback(() => {
-    setCurrentMediaIndex((prevIndex) => (prevIndex + 1) % mediaList.length)
-    startSlideCycle()
-  }, [mediaList.length, startSlideCycle])
-
-  // Handle dot click to select a specific media item
   const handleDotClick = useCallback(
     (index) => {
-      if (index === currentMediaIndex) {
-        setCurrentStep(STEP.IMAGE)
-        setShowVideo(false)
-        setIsVideoReady(false)
-        restartTimerForStep(STEP.IMAGE)
-      } else {
-        setCurrentMediaIndex(index)
-        restartTimerForStep(currentStep)
-        startSlideCycle()
-      }
+      jumpTo(index)
     },
-    [currentMediaIndex, restartTimerForStep, currentStep, startSlideCycle]
+    [jumpTo]
   )
 
-  // Handle swipe gestures to change media items
   const handleSwipe = useCallback(
     (direction) => {
-      setCurrentMediaIndex((prevIndex) =>
-        direction === 'LEFT'
-          ? (prevIndex + 1) % mediaList.length
-          : prevIndex === 0
-            ? mediaList.length - 1
-            : prevIndex - 1
-      )
-      startSlideCycle()
+      const len = mediaList.length
+      dwellStartRef.current = performance.now()
+      elapsedRef.current = 0
+      dispatchDwell({
+        type: 'advance',
+        nextIndex: (prev) =>
+          direction === 'LEFT' ? (prev + 1) % len : prev === 0 ? len - 1 : prev - 1,
+      })
     },
-    [mediaList.length, startSlideCycle]
+    [mediaList.length]
   )
 
-  // Configure swipe handlers
   const swipeHandlers = useSwipeable({
     onSwipedLeft: () => handleSwipe('LEFT'),
     onSwipedRight: () => handleSwipe('RIGHT'),
@@ -165,81 +146,19 @@ const BannerWithVideo = ({ mediaList }) => {
     swipeDuration: 250,
   })
 
-  // Pause or resume timer when entering or exiting fullscreen mode
-  const handleFullscreenChange = useCallback(() => {
-    const isFullscreen = !!document.fullscreenElement
-    isFullscreen ? pauseTimer() : resumeTimer()
-  }, [pauseTimer, resumeTimer])
-
-  useEffect(() => {
-    document.addEventListener('fullscreenchange', handleFullscreenChange)
-    return () => {
-      document.removeEventListener('fullscreenchange', handleFullscreenChange)
-    }
-  }, [handleFullscreenChange])
-
-  // Pause or resume timer based on page visibility
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        pauseTimer()
-      } else {
-        resumeTimer()
-      }
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-    }
-  }, [pauseTimer, resumeTimer])
-
-  // Mute video by default
-  useEffect(() => {
-    localStorage.setItem('videoMutedBanner', true)
+  const toggleMute = useCallback(() => {
+    setIsMuted((m) => {
+      const next = !m
+      sessionStorage.setItem(MUTE_KEY, String(next))
+      return next
+    })
   }, [])
 
-  // Handle when the slide ends and move to the next media item
-  const handleSlideEnd = useCallback(() => {
-    cycleToNextMedia()
-  }, [cycleToNextMedia])
-
-  // Handle when the video is ready to play
-  const handleVideoReady = useCallback(() => {
-    setIsVideoReady(true)
+  const handleTrailerTime = useCallback((current, duration) => {
+    dispatchDwell({ type: 'trailerTime', trailerTime: { current, duration } })
   }, [])
 
-  // Handle when the image has loaded
-  const handleImageLoad = useCallback(() => {
-    setIsImageReady(true)
-  }, [])
-
-  // Handle the transition to the next step
-  const handleNextStep = useCallback(() => {
-    switch (currentStep) {
-      case STEP.IMAGE:
-        if (mediaList[currentMediaIndex]?.metadata?.trailer_url) {
-          setCurrentStep(STEP.VIDEO)
-          setIsVideoReady(false)
-          setShowVideo(true)
-        } else {
-          setCurrentStep(STEP.AFTER_VIDEO)
-          restartTimerForStep(STEP.AFTER_VIDEO)
-        }
-        break
-      case STEP.VIDEO:
-        setCurrentStep(STEP.AFTER_VIDEO)
-        restartTimerForStep(STEP.AFTER_VIDEO) // Restart the timer for AFTER_VIDEO immediately
-        setShowVideo(false)
-        break
-      case STEP.AFTER_VIDEO:
-        handleSlideEnd() // Move to the next slide after AFTER_VIDEO duration
-        break
-      default:
-        handleSlideEnd()
-        break
-    }
-  }, [currentStep, currentMediaIndex, handleSlideEnd, mediaList, restartTimerForStep])
+  const dotProgress = (dwellElapsed / HERO_DWELL) * 100
 
   return (
     <div {...swipeHandlers} className='mt-16 md:mt-0'>
@@ -253,15 +172,21 @@ const BannerWithVideo = ({ mediaList }) => {
         >
           <BannerContent
             mediaList={mediaList}
-            showVideo={showVideo}
-            progressSeconds={calculatedProgress}
-            handleDotClick={handleDotClick}
-            progressCalculation={(calculatedProgress / TOTAL_SLIDE_DURATION) * 100}
             currentMediaIndex={currentMediaIndex}
-            onVideoReady={handleVideoReady}
-            onImageLoad={handleImageLoad}
+            showTrailer={showTrailer}
+            muted={isMuted}
+            paused={isPaused}
+            onTrailerTime={handleTrailerTime}
           />
         </Suspense>
+        {showTrailer ? (
+          <BannerTrailerIndicator
+            currentTime={trailerTime.current}
+            duration={trailerTime.duration}
+            isMuted={isMuted}
+            onToggleMute={toggleMute}
+          />
+        ) : null}
         <Suspense
           fallback={
             <div className="absolute bottom-4 right-4 flex gap-1">
@@ -275,8 +200,8 @@ const BannerWithVideo = ({ mediaList }) => {
             mediaList={mediaList}
             currentMediaIndex={currentMediaIndex}
             handleDotClick={handleDotClick}
-            progress={(calculatedProgress / TOTAL_SLIDE_DURATION) * 100}
-            progressSeconds={calculatedProgress}
+            progress={dotProgress}
+            progressSeconds={Math.ceil((HERO_DWELL - dwellElapsed) / 1000)}
           />
         </Suspense>
       </div>

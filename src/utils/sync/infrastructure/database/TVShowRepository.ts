@@ -4,7 +4,7 @@
  */
 
 import { MongoClient } from 'mongodb'
-import { TVShowEntity, DatabaseError } from '../../core/types'
+import { TVShowEntity, BackdropFocal, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
 
 export class TVShowRepository extends BaseRepository<TVShowEntity> {
@@ -98,6 +98,10 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
     logo?: string
     posterBlurhash?: string
     backdropBlurhash?: string
+    backdropFocal?: BackdropFocal
+    backdropFocalSource?: string
+    backdropFocalSuggested?: BackdropFocal
+    backdropFocalSuggestedSource?: string
   }): Promise<void> {
     try {
       const updates: any = {}
@@ -107,6 +111,10 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
       if (assets.logo !== undefined) updates.logo = assets.logo
       if (assets.posterBlurhash !== undefined) updates.posterBlurhash = assets.posterBlurhash
       if (assets.backdropBlurhash !== undefined) updates.backdropBlurhash = assets.backdropBlurhash
+      if (assets.backdropFocal !== undefined) updates.backdropFocal = assets.backdropFocal
+      if (assets.backdropFocalSource !== undefined) updates.backdropFocalSource = assets.backdropFocalSource
+      if (assets.backdropFocalSuggested !== undefined) updates.backdropFocalSuggested = assets.backdropFocalSuggested
+      if (assets.backdropFocalSuggestedSource !== undefined) updates.backdropFocalSuggestedSource = assets.backdropFocalSuggestedSource
 
       await this.update(title, updates)
     } catch (error) {

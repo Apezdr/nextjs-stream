@@ -1,11 +1,22 @@
 'use client'
 
-import { useState, useCallback, useRef, useEffect, useOptimistic, useTransition } from 'react'
+import { useState, useCallback, useReducer, useRef, useEffect, useOptimistic, useTransition } from 'react'
 import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
 import { formatForWatchlistWithInternalCheck } from '@src/utils/tmdb/client'
 import MoveToPlaylistModal from './MoveToPlaylistModal'
 import Image from 'next/image'
+
+const initialMenus = {
+  showSearchResults: false,
+  showBulkActions: false,
+  showMoveMenu: false,
+  showCopyMenu: false
+}
+
+function menusReducer(state, patch) {
+  return { ...state, ...patch }
+}
 
 export default function PlaylistControls({
   searchQuery,
@@ -41,10 +52,8 @@ export default function PlaylistControls({
   canEditPlaylist,
   onToggleSortLock
 }) {
-  const [showSearchResults, setShowSearchResults] = useState(false)
-  const [showBulkActions, setShowBulkActions] = useState(false)
-  const [showMoveMenu, setShowMoveMenu] = useState(false)
-  const [showCopyMenu, setShowCopyMenu] = useState(false)
+  const [menus, setMenus] = useReducer(menusReducer, initialMenus)
+  const { showSearchResults, showBulkActions, showMoveMenu, showCopyMenu } = menus
   const [bulkLoading, setBulkLoading] = useState(false)
   const searchRef = useRef(null)
   const searchTimeout = useRef(null)
@@ -64,7 +73,7 @@ export default function PlaylistControls({
     
     searchTimeout.current = setTimeout(() => {
       onSearch(value)
-      setShowSearchResults(!!value.trim())
+      setMenus({ showSearchResults: !!value.trim() })
     }, 300)
   }, [onSearchChange, onSearch])
 
@@ -72,7 +81,7 @@ export default function PlaylistControls({
   useEffect(() => {
     const handleClickOutside = (event) => {
       if (searchRef.current && !searchRef.current.contains(event.target)) {
-        setShowSearchResults(false)
+        setMenus({ showSearchResults: false })
         onSearchChange('') // Clear search text when clicking outside
       }
     }
@@ -294,7 +303,7 @@ export default function PlaylistControls({
         }
       } finally {
         setBulkLoading(false)
-        setShowBulkActions(false)
+        setMenus({ showBulkActions: false })
       }
     }
   }, [selectedItems, currentPlaylist?.name, onRefresh, onSelectAll, onItemsRemoved, api])
@@ -330,7 +339,7 @@ export default function PlaylistControls({
       }
     } finally {
       setBulkLoading(false)
-      setShowBulkActions(false)
+      setMenus({ showBulkActions: false })
     }
   }, [selectedItems, playlists, onRefresh, onSelectAll, onItemsMoved, api])
 
@@ -438,8 +447,7 @@ export default function PlaylistControls({
       toast.error('Failed to copy items')
     } finally {
       setBulkLoading(false)
-      setShowBulkActions(false)
-      setShowCopyMenu(false)
+      setMenus({ showBulkActions: false, showCopyMenu: false })
     }
   }, [selectedItems, playlists, onClearSelection, api, currentItems, onRefresh])
 
@@ -635,7 +643,7 @@ export default function PlaylistControls({
           {selectedItems.size > 0 && (
             <div className="relative">
               <button
-                onClick={() => setShowBulkActions(!showBulkActions)}
+                onClick={() => setMenus({ showBulkActions: !showBulkActions })}
                 className="flex items-center space-x-2 px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
                 disabled={bulkLoading}
               >
@@ -651,8 +659,7 @@ export default function PlaylistControls({
                     {/* Copy to playlist - always available */}
                     <button
                       onClick={() => {
-                        setShowCopyMenu(true)
-                        setShowBulkActions(false)
+                        setMenus({ showCopyMenu: true, showBulkActions: false })
                       }}
                       className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
                     >
@@ -663,8 +670,7 @@ export default function PlaylistControls({
                       <>
                         <button
                           onClick={() => {
-                            setShowMoveMenu(true)
-                            setShowBulkActions(false)
+                            setMenus({ showMoveMenu: true, showBulkActions: false })
                           }}
                           className="block w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-gray-600"
                         >
@@ -819,7 +825,7 @@ export default function PlaylistControls({
       {/* Bulk Move Modal */}
       <MoveToPlaylistModal
         isOpen={showMoveMenu}
-        onClose={() => setShowMoveMenu(false)}
+        onClose={() => setMenus({ showMoveMenu: false })}
         onMoveToPlaylist={handleBulkMove}
         playlists={playlists}
         itemTitle={`${selectedItems.size} items`}
@@ -830,7 +836,7 @@ export default function PlaylistControls({
       {/* Bulk Copy Modal */}
       <MoveToPlaylistModal
         isOpen={showCopyMenu}
-        onClose={() => setShowCopyMenu(false)}
+        onClose={() => setMenus({ showCopyMenu: false })}
         onMoveToPlaylist={handleBulkCopy}
         playlists={playlists}
         itemTitle={`Copy ${selectedItems.size} items`}

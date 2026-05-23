@@ -1,10 +1,25 @@
 'use client'
 
-import { useState, useRef, useEffect, memo, startTransition } from 'react'
+import { useState, memo, startTransition } from 'react'
+import useSWR from 'swr'
 import { motion, AnimatePresence } from 'framer-motion'
 import Image from 'next/image'
 import VirtualizedHorizontalList, { useScrollContext } from './VirtualizedHorizontalList'
 import { CarouselErrorBoundary, ContributorCardErrorBoundary, VirtualizedListErrorBoundary } from './CarouselErrorBoundary'
+
+const fetchEnhancedCollection = async ([, collectionId]) => {
+  console.log(`[FeaturedContributorsCarousel] Fetching enhanced data for collection ${collectionId}`)
+  const response = await fetch(`/api/authenticated/tmdb/collection/${collectionId}/enhanced`)
+
+  if (!response.ok) {
+    console.warn(`[FeaturedContributorsCarousel] Enhanced collection data not available (status: ${response.status})`)
+    return null
+  }
+
+  const data = await response.json()
+  console.log(`[FeaturedContributorsCarousel] Received enhanced data:`, data)
+  return data
+}
 
 /**
  * Enhanced FeaturedContributorsCarousel - High-performance carousel with virtualization
@@ -26,45 +41,19 @@ const FeaturedContributorsCarouselEnhanced = ({
   className = ""
 }) => {
   // State for autonomous data fetching (preserved from original)
-  const [enhancedData, setEnhancedData] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
   const [activeTab, setActiveTab] = useState('cast')
 
   // Fetch enhanced data if collectionId provided but no prop data (preserved from original)
-  useEffect(() => {
-    const shouldFetch = collectionId && propTopCast.length === 0 && propTopDirectors.length === 0
-    
-    if (!shouldFetch) return
-
-    const fetchEnhancedData = async () => {
-      setLoading(true)
-      setError(null)
-
-      try {
-        console.log(`[FeaturedContributorsCarousel] Fetching enhanced data for collection ${collectionId}`)
-        const response = await fetch(`/api/authenticated/tmdb/collection/${collectionId}/enhanced`)
-        
-        if (!response.ok) {
-          console.warn(`[FeaturedContributorsCarousel] Enhanced collection data not available (status: ${response.status})`)
-          return
-        }
-        
-        const data = await response.json()
-        console.log(`[FeaturedContributorsCarousel] Received enhanced data:`, data)
-        startTransition(() => {
-          setEnhancedData(data)
-        })
-      } catch (err) {
-        console.error(`[FeaturedContributorsCarousel] Failed to fetch enhanced collection data:`, err)
-        setError(err)
-      } finally {
-        setLoading(false)
-      }
+  const shouldFetch = collectionId && propTopCast.length === 0 && propTopDirectors.length === 0
+  const { data: enhancedData, isLoading: loading } = useSWR(
+    shouldFetch ? ['contributorsEnhanced', collectionId] : null,
+    fetchEnhancedCollection,
+    {
+      revalidateOnFocus: false,
+      onError: (error) =>
+        console.error(`[FeaturedContributorsCarousel] Failed to fetch enhanced collection data:`, error),
     }
-
-    fetchEnhancedData()
-  }, [collectionId, propTopCast.length, propTopDirectors.length])
+  )
 
   // Use either prop data or fetched data (preserved from original)
   const topCast = propTopCast.length > 0 ? propTopCast : (enhancedData?.aggregatedData?.topCast || [])

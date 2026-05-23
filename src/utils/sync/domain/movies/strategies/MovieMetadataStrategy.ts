@@ -170,22 +170,49 @@ export class MovieMetadataStrategy implements SyncStrategy {
         syncLogger.debug(`🔄 Metadata hash changed for "${originalTitle}": ${currentMetadataHash || 'none'} → ${metadataHashInfo.hash}`)
       }
       
-      let metadata = await this.extractMetadata(originalTitle, context)
+      const fetchedMetadata = await this.extractMetadata(originalTitle, context)
+      const metadataFetchFailed = !fetchedMetadata
 
-      // If metadata extraction failed, create basic metadata
-      if (!metadata) {
-        syncLogger.debug(`📝 Metadata extraction failed for "${title}", creating basic metadata`)
-        metadata = {
-          title,
-          source: context.serverConfig.id,
-          dateAdded: new Date().toISOString(),
-          lastScanned: new Date().toISOString(),
-          hasExternalMetadata: false
+      // A failed metadata fetch must NOT advance the sync gate. Preserve any
+      // existing good metadata instead of clobbering it with a stub, and report
+      // Failed so MovieSyncService leaves syncHash/metadataHash unstamped.
+      // Without this, a transient fetch error (e.g. file-server blip) during a
+      // hash change would stamp the gate and lock the movie out of future
+      // metadata refreshes — the "spent gate" failure mode.
+      if (metadataFetchFailed) {
+        const hasExistingMetadata = movie?.metadata
+          && typeof movie.metadata === 'object'
+          && Object.keys(movie.metadata).length > 0
+          && movie.metadata.hasExternalMetadata !== false
+
+        if (hasExistingMetadata) {
+          syncLogger.warn(`⚠️ Metadata fetch failed for "${originalTitle}"; preserving existing metadata, leaving sync gate open for retry`)
+          return this.createResult(
+            title,
+            context,
+            SyncStatus.Failed,
+            [],
+            ['metadata fetch failed; preserved existing metadata'],
+            { processingTime: Date.now() - startTime, reason: 'metadata fetch failed' }
+          )
         }
+        syncLogger.debug(`📝 Metadata fetch failed for new movie "${title}"; writing minimal stub, leaving sync gate open for retry`)
+      }
+
+      // Use the fetched metadata, or a minimal stub for a never-before-seen
+      // movie whose first fetch failed. The stub's hasExternalMetadata:false
+      // keeps the skip guard open so the next sync retries.
+      let metadata = fetchedMetadata || {
+        title,
+        source: context.serverConfig.id,
+        dateAdded: new Date().toISOString(),
+        lastScanned: new Date().toISOString(),
+        hasExternalMetadata: false
       }
       
-      // Attach metadata hash if available
-      if (metadataHashInfo?.hash) {
+      // Attach the metadata hash ONLY when the fetch succeeded — never stamp the
+      // gate off a stub built from a failed fetch.
+      if (!metadataFetchFailed && metadataHashInfo?.hash) {
         metadata._metadataHash = metadataHashInfo.hash
       }
 
@@ -307,9 +334,9 @@ export class MovieMetadataStrategy implements SyncStrategy {
       return this.createResult(
         title,
         context,
-        SyncStatus.Completed,
+        metadataFetchFailed ? SyncStatus.Failed : SyncStatus.Completed,
         changes,
-        [],
+        metadataFetchFailed ? ['metadata fetch failed; wrote minimal stub'] : [],
         { 
           processingTime: Date.now() - startTime,
           metadataFields: Object.keys(metadata)

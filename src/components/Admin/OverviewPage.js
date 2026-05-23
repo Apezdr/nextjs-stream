@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useReducer, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import useSWR from 'swr'
 import MovieModalPopup from './MovieModalPopup'
@@ -46,6 +46,33 @@ function processLastSyncTimeData(lastSyncTimeData) {
   }
 }
 
+const initialPopupState = {
+  record: null,
+  isOpen: false,
+  isAdding: null,
+  isSyncOpen: false,
+  syncAutoConnect: false,
+}
+
+function popupReducer(state, action) {
+  switch (action.type) {
+    case 'setRecord':
+      return { ...state, record: action.value }
+    case 'mergeRecord':
+      return { ...state, record: { ...state.record, ...action.value } }
+    case 'setIsOpen':
+      return { ...state, isOpen: action.value }
+    case 'setIsAdding':
+      return { ...state, isAdding: action.value }
+    case 'setIsSyncOpen':
+      return { ...state, isSyncOpen: action.value }
+    case 'setSyncAutoConnect':
+      return { ...state, syncAutoConnect: action.value }
+    default:
+      return state
+  }
+}
+
 export default function AdminOverviewPage({
   processedData,
   processedUserData,
@@ -53,13 +80,17 @@ export default function AdminOverviewPage({
   organizrURL,
 }) {
   const router = useRouter()
-  const [isOpen, setIsOpen] = useState(false)
-  const [isSyncOpen, setIsSyncOpen] = useState(false)
-  const [syncAutoConnect, setSyncAutoConnect] = useState(false)
-  const [isAdding, setIsAdding] = useState(null)
-  const [record, setRecord] = useState(null)
-  const [_processedData, setProcessedData] = useState(processedData)
-  const [_processedUserData, setProcessedUserData] = useState(processedUserData)
+  const [popupState, dispatch] = useReducer(popupReducer, initialPopupState)
+  const { record, isOpen, isAdding, isSyncOpen, syncAutoConnect } = popupState
+
+  const setIsOpen = (value) => dispatch({ type: 'setIsOpen', value })
+  const setIsAdding = (value) => dispatch({ type: 'setIsAdding', value })
+  const setRecord = (value) => dispatch({ type: 'setRecord', value })
+  const setIsSyncOpen = (value) => dispatch({ type: 'setIsSyncOpen', value })
+  const setSyncAutoConnect = (value) => dispatch({ type: 'setSyncAutoConnect', value })
+
+  const [_processedData, setProcessedData] = useState(() => processedData)
+  const [_processedUserData, setProcessedUserData] = useState(() => processedUserData)
 
   // Single Set tracking which queues returned 501 (not supported)
   const [unsupportedQueues, setUnsupportedQueues] = useState(() => new Set())
@@ -118,7 +149,7 @@ export default function AdminOverviewPage({
   const tdarrQueue = tdarrData?.__unsupported ? null : tdarrData
 
   const updateRecord = (newData) => {
-    setRecord((prevRecord) => ({ ...prevRecord, ...newData }))
+    dispatch({ type: 'mergeRecord', value: newData })
   }
 
   const action = record && record.action

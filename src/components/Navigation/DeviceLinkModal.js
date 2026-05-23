@@ -1,54 +1,65 @@
 'use client'
-import { useState } from 'react'
+import { useState, useReducer } from 'react'
 import { Dialog, DialogPanel, DialogTitle } from '@headlessui/react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
 import { authClient } from '@src/lib/auth-client'
 
+// Request lifecycle (loading) and outcome (success/denied/error) move together, so they share
+// one reducer; userCode stays a standalone controlled-input state.
+const initialState = { loading: false, success: false, denied: false, error: null }
+
+function reducer(state, action) {
+  switch (action.type) {
+    case 'start':
+      return { ...state, loading: true, error: null }
+    case 'approved':
+      return { ...state, loading: false, success: true }
+    case 'denied':
+      return { ...state, loading: false, denied: true }
+    case 'error':
+      return { ...state, loading: false, error: action.error }
+    case 'validationError':
+      return { ...state, error: action.error }
+    case 'reset':
+      return initialState
+    default:
+      return state
+  }
+}
+
 export default function DeviceLinkModal({ isOpen, onClose }) {
   const [userCode, setUserCode] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [success, setSuccess] = useState(false)
-  const [denied, setDenied] = useState(false)
-  const [error, setError] = useState(null)
+  const [{ loading, success, denied, error }, dispatch] = useReducer(reducer, initialState)
 
   const handleApprove = async () => {
     if (!userCode.trim()) {
-      setError('Please enter the code shown on your TV.')
+      dispatch({ type: 'validationError', error: 'Please enter the code shown on your TV.' })
       return
     }
-    setLoading(true)
-    setError(null)
+    dispatch({ type: 'start' })
     try {
       const { error: err } = await authClient.device.approve({ userCode: userCode.trim() })
       if (err) throw new Error(err.error_description ?? 'Failed to approve device')
-      setSuccess(true)
+      dispatch({ type: 'approved' })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
-    } finally {
-      setLoading(false)
+      dispatch({ type: 'error', error: err instanceof Error ? err.message : 'An error occurred' })
     }
   }
 
   const handleDeny = async () => {
-    setLoading(true)
-    setError(null)
+    dispatch({ type: 'start' })
     try {
       await authClient.device.deny({ userCode: userCode.trim() })
-      setDenied(true)
+      dispatch({ type: 'denied' })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred')
-    } finally {
-      setLoading(false)
+      dispatch({ type: 'error', error: err instanceof Error ? err.message : 'An error occurred' })
     }
   }
 
   const handleClose = () => {
     // Reset state when closing
     setUserCode('')
-    setLoading(false)
-    setSuccess(false)
-    setDenied(false)
-    setError(null)
+    dispatch({ type: 'reset' })
     onClose()
   }
 

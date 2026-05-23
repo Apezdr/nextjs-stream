@@ -1,7 +1,7 @@
 'use client'
 // src/app/(styled)/device/device-auth-client.tsx
 // Handles the interactive parts of the RFC 8628 device authorization page.
-import { useState } from 'react'
+import { useState, useReducer } from 'react'
 import { authClient } from '@src/lib/auth-client'
 import { useRouter } from 'next/navigation'
 
@@ -11,17 +11,67 @@ interface DeviceAuthClientProps {
   user: { name: string; email: string; image: string } | null
 }
 
+// The approve/deny request lifecycle (in-flight flags + outcome + error) transitions
+// together, so it lives in one reducer; userCode stays a standalone controlled-input state.
+interface DeviceState {
+  approving: boolean
+  denying: boolean
+  success: boolean
+  denied: boolean
+  error: string | null
+}
+
+type DeviceAction =
+  | { type: 'approveStart' }
+  | { type: 'denyStart' }
+  | { type: 'approved' }
+  | { type: 'denied' }
+  | { type: 'error'; error: string }
+  | { type: 'validationError'; error: string }
+  | { type: 'clearError' }
+  | { type: 'reset' }
+
+const initialDeviceState: DeviceState = {
+  approving: false,
+  denying: false,
+  success: false,
+  denied: false,
+  error: null,
+}
+
+function deviceReducer(state: DeviceState, action: DeviceAction): DeviceState {
+  switch (action.type) {
+    case 'approveStart':
+      return { ...state, approving: true, error: null }
+    case 'denyStart':
+      return { ...state, denying: true, error: null }
+    case 'approved':
+      return { ...state, approving: false, success: true }
+    case 'denied':
+      return { ...state, denying: false, denied: true }
+    case 'error':
+      return { ...state, approving: false, denying: false, error: action.error }
+    case 'validationError':
+      return { ...state, error: action.error }
+    case 'clearError':
+      return { ...state, error: null }
+    case 'reset':
+      return initialDeviceState
+    default:
+      return state
+  }
+}
+
 export default function DeviceAuthClient({
   userCode: initialUserCode,
   isAuthenticated,
   user,
 }: DeviceAuthClientProps) {
   const [userCode, setUserCode] = useState(initialUserCode ?? '')
-  const [approving, setApproving] = useState(false)
-  const [denying, setDenying] = useState(false)
-  const [success, setSuccess] = useState(false)
-  const [denied, setDenied] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [{ approving, denying, success, denied, error }, dispatch] = useReducer(
+    deviceReducer,
+    initialDeviceState
+  )
   const router = useRouter()
 
   // Map technical error messages to user-friendly messages
@@ -48,35 +98,29 @@ export default function DeviceAuthClient({
 
   const handleApprove = async () => {
     if (!userCode.trim()) {
-      setError('Please enter the code shown on your TV.')
+      dispatch({ type: 'validationError', error: 'Please enter the code shown on your TV.' })
       return
     }
-    setApproving(true)
-    setError(null)
+    dispatch({ type: 'approveStart' })
     try {
       const { error: err } = await authClient.device.approve({ userCode: userCode.trim() })
       if (err) throw new Error(err.error_description ?? 'Failed to approve device')
-      setSuccess(true)
+      dispatch({ type: 'approved' })
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred'
-      setError(mapErrorMessage(errorMessage))
-    } finally {
-      setApproving(false)
+      dispatch({ type: 'error', error: mapErrorMessage(errorMessage) })
     }
   }
 
   const handleDeny = async () => {
-    setDenying(true)
-    setError(null)
+    dispatch({ type: 'denyStart' })
     try {
       const { error: err } = await authClient.device.deny({ userCode: userCode.trim() })
       if (err) throw new Error(err.error_description ?? 'Failed to deny device')
-      setDenied(true)
+      dispatch({ type: 'denied' })
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : 'An error occurred'
-      setError(mapErrorMessage(errorMessage))
-    } finally {
-      setDenying(false)
+      dispatch({ type: 'error', error: mapErrorMessage(errorMessage) })
     }
   }
 
@@ -109,9 +153,8 @@ export default function DeviceAuthClient({
         </p>
         <button
           onClick={() => {
-            setDenied(false)
+            dispatch({ type: 'reset' })
             setUserCode('')
-            setError(null)
             router.push('/device')
           }}
           style={{ ...styles.button, ...styles.approveButton, marginTop: '16px' }}
@@ -181,7 +224,7 @@ export default function DeviceAuthClient({
         {error === 'Device code has expired' ? (
             <button
               onClick={() => {
-                setError(null)
+                dispatch({ type: 'clearError' })
                 setUserCode('')
                 router.push('/device')
               }}

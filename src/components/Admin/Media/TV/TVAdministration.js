@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useReducer, useState } from 'react'
+import useSWR from 'swr'
 import ListRecords from '../../ListRecords'
 import TVModalPopup from '../../TVModalPopup'
 import ConfirmDeletePopup from '../../ConfirmDeletePopup'
@@ -8,7 +9,24 @@ import { getRecord } from '../../../../utils/admin_frontend_database'
 import SyncMediaPopup from '../../SyncMediaPopup'
 import axios from 'axios'
 import Link from 'next/link'
-import { buildURL } from '@src/utils'
+import { buildURL, fetcher } from '@src/utils'
+
+const initialModalState = { record: null, isOpen: false, isAdding: null }
+
+function modalReducer(state, action) {
+  switch (action.type) {
+    case 'setRecord':
+      return { ...state, record: action.value }
+    case 'mergeRecord':
+      return { ...state, record: { ...state.record, ...action.value } }
+    case 'setIsOpen':
+      return { ...state, isOpen: action.value }
+    case 'setIsAdding':
+      return { ...state, isAdding: action.value }
+    default:
+      return state
+  }
+}
 
 const processLastSyncTimeData = (lastSyncTimeData) => {
   const lastSyncTime =
@@ -38,46 +56,29 @@ const processLastSyncTimeData = (lastSyncTimeData) => {
 }
 
 export default function TVAdministration({ processedData, _lastSyncTime, organizrURL }) {
-  const [isOpen, setIsOpen] = useState(false)
   const [isSyncOpen, setIsSyncOpen] = useState(false)
-  const [isAdding, setIsAdding] = useState(null)
-  const [record, setRecord] = useState(null)
-  const [_processedData, setProcessedData] = useState(processedData)
-  const [lastSyncTime, setLastSyncTime] = useState(() => processLastSyncTimeData(_lastSyncTime))
+  const [_processedData, setProcessedData] = useState(() => processedData)
+  const [modalState, dispatch] = useReducer(modalReducer, initialModalState)
+  const { record, isOpen, isAdding } = modalState
+
+  const setIsOpen = (value) => dispatch({ type: 'setIsOpen', value })
+  const setIsAdding = (value) => dispatch({ type: 'setIsAdding', value })
+  const setRecord = (value) => dispatch({ type: 'setRecord', value })
+
+  const { data: lastSyncData } = useSWR(
+    buildURL('/api/authenticated/admin/lastSynced'),
+    fetcher,
+    { refreshInterval: 15000 }
+  )
+  const lastSyncTime = processLastSyncTimeData(lastSyncData ?? _lastSyncTime)
 
   const updateRecord = (newData) => {
-    setRecord((prevRecord) => ({ ...prevRecord, ...newData }))
+    dispatch({ type: 'mergeRecord', value: newData })
   }
 
   const setLastSync = (lastSync) => processLastSyncTimeData(lastSync)
 
   const action = record && record.action
-
-  const fetchLastSyncTime = async () => {
-    const response = await fetch(buildURL(`/api/authenticated/admin/lastSynced`))
-    const data = await response.json()
-    return data
-  }
-
-  useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const lastSyncTimeData = await fetchLastSyncTime()
-        const formattedTime = processLastSyncTimeData(lastSyncTimeData)
-        setLastSyncTime(formattedTime)
-      } catch (error) {
-        console.error('Error fetching data:', error)
-      }
-    }
-
-    fetchData()
-
-    const intervalId = setInterval(fetchData, 15000)
-
-    return () => {
-      clearInterval(intervalId)
-    }
-  }, [])
 
   async function updateProcessedData() {
     const res = await axios.get(buildURL('/api/authenticated/admin/media'))

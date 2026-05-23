@@ -5,7 +5,7 @@ import { EyeIcon, EyeSlashIcon } from '@heroicons/react/20/solid'
 import { obfuscateString } from '@src/utils'
 
 export default function WebhookSettings({ webhookKeys, initialVisibility }) {
-  const [visibility, setVisibility] = useState(initialVisibility)
+  const [visibility, setVisibility] = useState(() => initialVisibility)
 
   const handleToggle = (index) => {
     setVisibility((prev) => {

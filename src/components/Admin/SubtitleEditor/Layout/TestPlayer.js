@@ -1,42 +1,59 @@
 'use client'
 
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useEffectEvent, useState } from 'react'
 import { secondsToTimeCached } from '../utils/timeFormat'
 
 export default function TestPlayer({ videoURL }) {
   const videoRef = useRef(null)
   const rafRef = useRef(null)
   const lastRef = useRef(0)
-  const [time, setTime] = useState(0)
-  const [playing, setPlaying] = useState(false)
+  const [playback, setPlayback] = useState({ time: 0, playing: false })
+  const { time, playing } = playback
+
+  // RAF loop that keeps the displayed time fresh while playing. Declared before
+  // the effect events that reference it.
+  function tick() {
+    const v = videoRef.current
+    if (!v) return
+    // simple throttling: update if changed by > ~8ms to avoid micro-churn
+    const newTime = v.currentTime
+    if (Math.abs(newTime - lastRef.current) > 0.008) {
+      lastRef.current = newTime
+      setPlayback(prev => ({ ...prev, time: newTime }))
+    }
+    rafRef.current = requestAnimationFrame(tick)
+  }
+
+  // Effect Events: keep the state writes out of the effect body so it doesn't
+  // cascade. They always see the latest state and have stable identity.
+  const onPlay = useEffectEvent(() => {
+    setPlayback(prev => ({ ...prev, playing: true }))
+    if (!rafRef.current) {
+      rafRef.current = requestAnimationFrame(tick)
+    }
+  })
+  const onPause = useEffectEvent(() => {
+    setPlayback(prev => ({ ...prev, playing: false }))
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+  })
+  const onSeeked = useEffectEvent(() => {
+    const v = videoRef.current
+    setPlayback(prev => ({ ...prev, time: v ? v.currentTime : prev.time }))
+  })
 
   useEffect(() => {
     const v = videoRef.current
     if (!v) return
-
-    const onPlay = () => {
-      setPlaying(true)
-      if (!rafRef.current) {
-        rafRef.current = requestAnimationFrame(tick)
-      }
-    }
-    const onPause = () => {
-      setPlaying(false)
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
-    }
-    const onSeeked = () => {
-      setTime(v.currentTime)
-    }
 
     v.addEventListener('play', onPlay)
     v.addEventListener('pause', onPause)
     v.addEventListener('seeked', onSeeked)
 
     // keep displayed time in sync when paused or after seeks
-    setTime(v.currentTime)
+    setPlayback(prev => ({ ...prev, time: v.currentTime }))
 
     return () => {
       v.removeEventListener('play', onPlay)
@@ -47,20 +64,7 @@ export default function TestPlayer({ videoURL }) {
         rafRef.current = null
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoURL])
-
-  function tick(now) {
-    const v = videoRef.current
-    if (!v) return
-    // simple throttling: update if changed by > ~8ms to avoid micro-churn
-    const newTime = v.currentTime
-    if (Math.abs(newTime - lastRef.current) > 0.008) {
-      lastRef.current = newTime
-      setTime(newTime)
-    }
-    rafRef.current = requestAnimationFrame(tick)
-  }
 
   return (
     <div className="w-full">

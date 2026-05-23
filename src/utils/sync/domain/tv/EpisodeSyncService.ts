@@ -111,10 +111,14 @@ export class EpisodeSyncService {
           continue
         }
 
-        const merged = await this.buildEpisodeEntity(showTitle, displayTitle, seasonNumber, epNum, fileData, context, existing, showId, seasonId, parentShow, seasonFileData, key)
+        const { entity: merged, metadataFromFreshFetch } = await this.buildEpisodeEntity(showTitle, displayTitle, seasonNumber, epNum, fileData, context, existing, showId, seasonId, parentShow, seasonFileData, key)
 
-        // Store incoming hash so next sync can compare
-        if (incomingEpHash) (merged as any).syncHash = incomingEpHash
+        // Store incoming hash so next sync can compare. Gate on a confirmed fresh
+        // metadata source: the inline parent fallback (display-only) and failed
+        // fetches must NOT advance syncHash, or the spent gate locks the episode
+        // on stale metadata. Once 2A makes the episode URL fetchable + cache-busted,
+        // the fresh fetch succeeds and the gate stamps normally.
+        if (incomingEpHash && metadataFromFreshFetch) (merged as any).syncHash = incomingEpHash
 
         // Filter shape mirrors bulkUpsertSeason: prefer showId for stability
         const filter = (merged as any).showId
@@ -225,7 +229,7 @@ export class EpisodeSyncService {
     parentShow: any,
     seasonFileData?: any,
     episodeFileName?: string
-  ): Promise<EpisodeEntity> {
+  ): Promise<{ entity: EpisodeEntity; metadataFromFreshFetch: boolean }> {
     const now = new Date()
 
     // Start from existing doc (preserving ALL fields) or create new
@@ -345,6 +349,12 @@ export class EpisodeSyncService {
     }
 
     // --- Metadata (priority-gated) ---
+    // Tracks whether episode metadata came from a CONFIRMED fresh source (URL
+    // fetch ok, or backend-inlined object) vs. the parent inline fallback or a
+    // failure. Only a fresh source may advance the syncHash gate — the inline
+    // fallback is fine for display but must not lock the episode on a stale
+    // parent. Default true so "no episode metadata URL" never blocks the gate.
+    let metadataFromFreshFetch = true
     const canUpdateMetadata = isCurrentServerHighestPriorityForField(
       context.fieldAvailability, 'tv', showOriginalTitle, 'metadata', context.serverConfig
     )
@@ -364,11 +374,15 @@ export class EpisodeSyncService {
         } catch {
           // Fetch failed — try fallback below
         }
+        // Capture the URL-fetch outcome BEFORE the inline fallback overwrites it.
+        metadataFromFreshFetch = !!(episodeMetadata && typeof episodeMetadata === 'object' && !episodeMetadata.error)
       } else if (typeof fileData.metadata === 'object') {
         episodeMetadata = fileData.metadata
+        metadataFromFreshFetch = true
       }
 
-      // Fallback: parent show's metadata.seasons[].episodes[] array
+      // Fallback: parent show's metadata.seasons[].episodes[] array (DISPLAY ONLY —
+      // does NOT flip metadataFromFreshFetch, so it never advances the gate).
       if (!episodeMetadata || episodeMetadata.error) {
         const seasonMeta = parentShow?.metadata?.seasons?.find(
           (s: any) => s.season_number === seasonNumber
@@ -424,7 +438,7 @@ export class EpisodeSyncService {
       }
     }
 
-    return entity
+    return { entity, metadataFromFreshFetch }
   }
 
   /**

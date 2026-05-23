@@ -168,16 +168,16 @@ export default function MovieListClient({ initialFilters, initialData, userId })
   const isFirstRenderRef = useRef(true);
   
   // Client-owned filter state (single source of truth)
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState(() => ({
     sortOrder: initialFilters.sortOrder,
     genres: initialFilters.genres,
     hdrTypes: initialFilters.hdrTypes,
     resolutions: initialFilters.resolutions
-  });
-  const [page, setPage] = useState(initialFilters.page);
-  
+  }));
+  const [page, setPage] = useState(() => initialFilters.page);
+
   // Data state (fetched based on filters + page)
-  const [data, setData] = useState(initialData);
+  const [data, setData] = useState(() => initialData);
   
   /**
    * Fetch data whenever filters or page change (after initial load)

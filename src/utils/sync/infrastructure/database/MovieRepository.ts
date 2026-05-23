@@ -4,7 +4,7 @@
  */
 
 import { MongoClient } from 'mongodb'
-import { MovieEntity, DatabaseError } from '../../core/types'
+import { MovieEntity, BackdropFocal, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
 
 export class MovieRepository extends BaseRepository<MovieEntity> {
@@ -192,10 +192,14 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
     backdropBlurhash?: string
     posterBlurhashSource?: string
     backdropBlurhashSource?: string
+    backdropFocal?: BackdropFocal
+    backdropFocalSource?: string
+    backdropFocalSuggested?: BackdropFocal
+    backdropFocalSuggestedSource?: string
   }): Promise<void> {
     try {
       const updates: any = {}
-      
+
       if (assets.posterURL !== undefined) updates.posterURL = assets.posterURL
       if (assets.backdrop !== undefined) updates.backdrop = assets.backdrop
       if (assets.logo !== undefined) updates.logo = assets.logo
@@ -203,6 +207,10 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
       if (assets.backdropBlurhash !== undefined) updates.backdropBlurhash = assets.backdropBlurhash
       if (assets.posterBlurhashSource !== undefined) updates.posterBlurhashSource = assets.posterBlurhashSource
       if (assets.backdropBlurhashSource !== undefined) updates.backdropBlurhashSource = assets.backdropBlurhashSource
+      if (assets.backdropFocal !== undefined) updates.backdropFocal = assets.backdropFocal
+      if (assets.backdropFocalSource !== undefined) updates.backdropFocalSource = assets.backdropFocalSource
+      if (assets.backdropFocalSuggested !== undefined) updates.backdropFocalSuggested = assets.backdropFocalSuggested
+      if (assets.backdropFocalSuggestedSource !== undefined) updates.backdropFocalSuggestedSource = assets.backdropFocalSuggestedSource
 
       await this.update(title, updates)
     } catch (error) {

@@ -1,6 +1,6 @@
 'use client'
 
-import { createContext, useContext, useEffect, useMemo, useState, useTransition } from 'react'
+import { createContext, useContext, useMemo, useState, useTransition } from 'react'
 import { usePathname, useRouter } from 'next/navigation'
 
 type NavigationContextValue = {
@@ -18,14 +18,17 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
   const [isPending, startTransition] = useTransition()
   const [manualPending, setManualPending] = useState(false)
   const [targetUrl, setTargetUrl] = useState<string | null>(null)
-  
-  // Clear navigation state when pathname actually changes
-  // This handles both completion and back button navigation
-  useEffect(() => {
+  const [prevPathname, setPrevPathname] = useState(pathname)
+
+  // Clear navigation state when the pathname actually changes (handles both
+  // completion and back-button navigation). Adjusted during render by tracking
+  // the previous pathname — the React-recommended alternative to a reset effect.
+  if (pathname !== prevPathname) {
+    setPrevPathname(pathname)
     setManualPending(false)
     setTargetUrl(null)
-  }, [pathname])
-  
+  }
+
   const value = useMemo<NavigationContextValue>(() => ({
     isNavigating: isPending || manualPending,
     targetUrl,

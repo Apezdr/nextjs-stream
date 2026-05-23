@@ -8,6 +8,9 @@ import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { EpisodeEntity, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
 import { ResourceManager } from '../../core/ResourceManager'
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
+import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
 
 export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
   constructor(client: MongoClient) {
@@ -94,6 +97,10 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
 
     try {
       const now = new Date()
+      // Stamp every write with the active syncRunId so post-sync cleanup
+      // (deleteMany({ syncRunId: { $ne: currentRunId } })) doesn't treat
+      // freshly-inserted or just-replaced docs as orphans.
+      const syncRunId = getCurrentSyncRunId()
       const operations = episodes.map(episode => {
         // Strip _id so MongoDB preserves existing _id on matched docs
         // and auto-generates for new upserted docs
@@ -112,7 +119,8 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
             replacement: {
               ...episodeWithoutId,
               lastSynced: now,
-              updatedAt: now
+              updatedAt: now,
+              ...(syncRunId ? { syncRunId } : {})
             },
             upsert: true
           }
@@ -144,6 +152,11 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
   }>): Promise<void> {
     if (ops.length === 0) return
     const now = new Date()
+    // Required for post-sync cleanup: every write must carry the active marker
+    // or `deleteMany({ syncRunId: { $ne: currentRunId } })` will delete the doc.
+    // New-doc $setOnInsert is the critical case — pre-tag couldn't stamp a doc
+    // that didn't exist yet, so the marker has to come in on the insert itself.
+    const syncRunId = getCurrentSyncRunId()
     const operations: AnyBulkWriteOperation<EpisodeEntity>[] = []
 
     for (const { filter, existing, merged } of ops) {
@@ -153,7 +166,14 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         operations.push({
           updateOne: {
             filter,
-            update: { $setOnInsert: { ...mergedNoId, lastSynced: now, updatedAt: now } },
+            update: {
+              $setOnInsert: {
+                ...mergedNoId,
+                lastSynced: now,
+                updatedAt: now,
+                ...(syncRunId ? { syncRunId } : {})
+              }
+            },
             upsert: true,
           },
         })
@@ -166,7 +186,14 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
       operations.push({
         updateOne: {
           filter,
-          update: { $set: { ...diff, lastSynced: now, updatedAt: now } },
+          update: {
+            $set: {
+              ...diff,
+              lastSynced: now,
+              updatedAt: now,
+              ...(syncRunId ? { syncRunId } : {})
+            }
+          },
           upsert: false,
         },
       })

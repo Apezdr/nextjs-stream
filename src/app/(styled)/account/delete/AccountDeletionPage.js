@@ -1,18 +1,44 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useReducer, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import DeletionRequestForm from '@components/DeletionRequest/DeletionRequestForm'
 import DeletionStatusCard from '@components/DeletionRequest/DeletionStatusCard'
 
+// The whole deletion-request lifecycle (existing request, initial load, submit/error/success)
+// transitions together, so it lives in one reducer instead of five separate setState hooks.
+const initialState = {
+  existingRequest: null,
+  loading: true,
+  submitting: false,
+  error: null,
+  success: false,
+}
+
+function reducer(state, action) {
+  switch (action.type) {
+    case 'loaded':
+      return { ...state, existingRequest: action.request ?? state.existingRequest, loading: false }
+    case 'submitStart':
+      return { ...state, submitting: true, error: null }
+    case 'submitSuccess':
+      return { ...state, submitting: false, existingRequest: action.request, success: true }
+    case 'submitError':
+      return { ...state, submitting: false, error: action.error }
+    case 'error':
+      return { ...state, error: action.error }
+    default:
+      return state
+  }
+}
+
 export default function AccountDeletionPage({ user }) {
-  const [existingRequest, setExistingRequest] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState(null)
-  const [success, setSuccess] = useState(false)
+  const [{ existingRequest, loading, submitting, error, success }, dispatch] = useReducer(
+    reducer,
+    initialState
+  )
   const router = useRouter()
 
   useEffect(() => {
@@ -24,20 +50,17 @@ export default function AccountDeletionPage({ user }) {
       const response = await fetch('/api/authenticated/account/delete-request')
       if (response.ok) {
         const data = await response.json()
-        if (data.request) {
-          setExistingRequest(data.request)
-        }
+        dispatch({ type: 'loaded', request: data.request })
+        return
       }
     } catch (err) {
       console.error('Failed to check existing request:', err)
-    } finally {
-      setLoading(false)
     }
+    dispatch({ type: 'loaded' })
   }
 
   const handleSubmitRequest = async (formData) => {
-    setSubmitting(true)
-    setError(null)
+    dispatch({ type: 'submitStart' })
 
     try {
       const response = await fetch('/api/authenticated/account/delete-request', {
@@ -56,13 +79,10 @@ export default function AccountDeletionPage({ user }) {
       }
 
       const data = await response.json()
-      setExistingRequest(data.request)
-      setSuccess(true)
+      dispatch({ type: 'submitSuccess', request: data.request })
     } catch (err) {
-      setError(err.message)
+      dispatch({ type: 'submitError', error: err.message })
       throw err
-    } finally {
-      setSubmitting(false)
     }
   }
 
@@ -87,7 +107,7 @@ export default function AccountDeletionPage({ user }) {
       // Refresh the request status
       await checkExistingRequest()
     } catch (err) {
-      setError(err.message)
+      dispatch({ type: 'error', error: err.message })
       throw err
     }
   }

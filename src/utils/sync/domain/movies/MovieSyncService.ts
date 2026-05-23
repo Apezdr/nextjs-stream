@@ -166,12 +166,24 @@ export class MovieSyncService {
       // ---- Consolidated write — single smartUpsert after all strategies ----
       const pending = context.pendingMovieUpdates.get(effectiveOriginalTitle) || {}
 
+      // A failed metadata fetch must not advance the metadata gate. If the
+      // metadata strategy reported Failed (fetch error, or it preserved existing
+      // metadata because the fetch came back empty), still persist whatever other
+      // strategies changed (e.g. asset URLs) but leave syncHash unstamped so the
+      // next sync retries the fetch. Without this, an asset-only change during a
+      // metadata-fetch failure would stamp syncHash to the current hash and lock
+      // the movie out of future metadata refreshes (the "spent gate" failure mode).
+      const metadataFetchFailed = results.some(
+        r => r.operation === SyncOperation.Metadata && r.status === SyncStatus.Failed
+      )
+
       // Stamp syncHash so the next sync can early-skip via the Phase 2 check.
-      // Only stamped when at least one strategy made changes — if the sync was a
-      // no-op, leave any existing syncHash alone (consistent with smart-upsert philosophy).
+      // Only stamped when at least one strategy made changes AND the metadata
+      // fetch did not fail — if the sync was a no-op, leave any existing syncHash
+      // alone (consistent with smart-upsert philosophy).
       if (Object.keys(pending).length > 0) {
         const incomingHash = context.metadataHashesCache?.titles?.[effectiveOriginalTitle]?.hash
-        if (incomingHash) {
+        if (incomingHash && !metadataFetchFailed) {
           pending.syncHash = incomingHash
           context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
         }

@@ -3,7 +3,7 @@ import { useState } from 'react'
 import { toast } from 'react-toastify'
 
 export default function AutoSyncToggle({ checked }) {
-  const [isChecked, setIsChecked] = useState(checked)
+  const [isChecked, setIsChecked] = useState(() => checked)
 
   const handleToggle = () => {
     setIsChecked(!isChecked)

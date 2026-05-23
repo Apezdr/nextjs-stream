@@ -1,8 +1,23 @@
 'use client'
 
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState } from 'react'
+import useSWR from 'swr'
 import { formatRuntime } from '@src/utils/tmdb/collectionClientUtils'
 import Image from 'next/image'
+
+const fetchEnhancedCollection = async ([, collectionId]) => {
+  console.log(`[CollectionSummaryStrip] Fetching enhanced data for collection ${collectionId}`)
+  const response = await fetch(`/api/authenticated/tmdb/collection/${collectionId}/enhanced`)
+
+  if (!response.ok) {
+    console.warn(`[CollectionSummaryStrip] Enhanced collection data not available (status: ${response.status})`)
+    return null
+  }
+
+  const data = await response.json()
+  console.log(`[CollectionSummaryStrip] Received enhanced data:`, data)
+  return data
+}
 
 /**
  * CollectionSummaryStrip - Displays compact collection metadata in a horizontal strip
@@ -18,46 +33,20 @@ const CollectionSummaryStrip = ({
   topDirectors: propTopDirectors = [],
   ownershipStats: propOwnershipStats = {}
 }) => {
-  // State for autonomous data fetching
-  const [enhancedData, setEnhancedData] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  
   // State for expandable genres
   const [genresExpanded, setGenresExpanded] = useState(false)
 
   // Fetch enhanced data if collectionId provided but no prop data
-  useEffect(() => {
-    const shouldFetch = collectionId && !propStatistics && !propTopDirectors.length && !propOwnershipStats.total
-    
-    if (!shouldFetch) return
-
-    const fetchEnhancedData = async () => {
-      setLoading(true)
-      setError(null)
-
-      try {
-        console.log(`[CollectionSummaryStrip] Fetching enhanced data for collection ${collectionId}`)
-        const response = await fetch(`/api/authenticated/tmdb/collection/${collectionId}/enhanced`)
-        
-        if (!response.ok) {
-          console.warn(`[CollectionSummaryStrip] Enhanced collection data not available (status: ${response.status})`)
-          return
-        }
-        
-        const data = await response.json()
-        console.log(`[CollectionSummaryStrip] Received enhanced data:`, data)
-        setEnhancedData(data)
-      } catch (err) {
-        console.error(`[CollectionSummaryStrip] Failed to fetch enhanced collection data:`, err)
-        setError(err)
-      } finally {
-        setLoading(false)
-      }
+  const shouldFetch = collectionId && !propStatistics && !propTopDirectors.length && !propOwnershipStats.total
+  const { data: enhancedData, isLoading: loading } = useSWR(
+    shouldFetch ? ['collectionSummaryEnhanced', collectionId] : null,
+    fetchEnhancedCollection,
+    {
+      revalidateOnFocus: false,
+      onError: (error) =>
+        console.error(`[CollectionSummaryStrip] Failed to fetch enhanced collection data:`, error),
     }
-
-    fetchEnhancedData()
-  }, [collectionId, propStatistics, propTopDirectors.length, propOwnershipStats.total])
+  )
 
   // Use either prop data or fetched data (fix data structure access)
   const statistics = propStatistics || enhancedData?.aggregatedData?.statistics

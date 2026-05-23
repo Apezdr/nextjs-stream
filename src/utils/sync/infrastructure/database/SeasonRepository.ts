@@ -7,6 +7,9 @@ import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { SeasonEntity, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
 import { ResourceManager } from '../../core/ResourceManager'
+// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
+import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
 
 export class SeasonRepository extends BaseRepository<SeasonEntity> {
   constructor(client: MongoClient) {
@@ -81,6 +84,11 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
 
     try {
       const now = new Date()
+      // Stamp every write with the active syncRunId so post-sync cleanup
+      // (deleteMany({ syncRunId: { $ne: currentRunId } })) doesn't treat
+      // freshly-replaced docs as orphans. replaceOne nukes the whole doc,
+      // so a pre-tagged marker is lost unless we re-apply it here.
+      const syncRunId = getCurrentSyncRunId()
       const operations = seasons.map(season => {
         // Strip _id so MongoDB preserves existing _id on matched docs
         // and auto-generates for new upserted docs
@@ -99,7 +107,8 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
             replacement: {
               ...seasonWithoutId,
               lastSynced: now,
-              updatedAt: now
+              updatedAt: now,
+              ...(syncRunId ? { syncRunId } : {})
             },
             upsert: true
           }
@@ -128,6 +137,11 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
   }>): Promise<void> {
     if (ops.length === 0) return
     const now = new Date()
+    // Required for post-sync cleanup: every write must carry the active marker
+    // or `deleteMany({ syncRunId: { $ne: currentRunId } })` will delete the doc.
+    // New-doc $setOnInsert is the critical case — pre-tag couldn't stamp a doc
+    // that didn't exist yet, so the marker has to come in on the insert itself.
+    const syncRunId = getCurrentSyncRunId()
     const operations: AnyBulkWriteOperation<SeasonEntity>[] = []
 
     for (const { filter, existing, merged } of ops) {
@@ -137,7 +151,14 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
         operations.push({
           updateOne: {
             filter,
-            update: { $setOnInsert: { ...mergedNoId, lastSynced: now, updatedAt: now } },
+            update: {
+              $setOnInsert: {
+                ...mergedNoId,
+                lastSynced: now,
+                updatedAt: now,
+                ...(syncRunId ? { syncRunId } : {})
+              }
+            },
             upsert: true,
           },
         })
@@ -150,7 +171,14 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
       operations.push({
         updateOne: {
           filter,
-          update: { $set: { ...diff, lastSynced: now, updatedAt: now } },
+          update: {
+            $set: {
+              ...diff,
+              lastSynced: now,
+              updatedAt: now,
+              ...(syncRunId ? { syncRunId } : {})
+            }
+          },
           upsert: false,
         },
       })
@@ -209,9 +237,11 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
     data: { posterBlurhash?: string; posterBlurhashSource?: string }
   ): Promise<void> {
     try {
+      const syncRunId = getCurrentSyncRunId()
       const updates: Record<string, unknown> = { lastSynced: new Date(), updatedAt: new Date() }
       if (data.posterBlurhash !== undefined) updates.posterBlurhash = data.posterBlurhash
       if (data.posterBlurhashSource !== undefined) updates.posterBlurhashSource = data.posterBlurhashSource
+      if (syncRunId) updates.syncRunId = syncRunId
 
       await this.collection.updateOne(
         { showTitle, seasonNumber },

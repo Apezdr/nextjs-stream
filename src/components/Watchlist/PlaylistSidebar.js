@@ -1,9 +1,18 @@
 'use client'
 
-import { useState, useCallback, useMemo, useEffect } from 'react'
+import { useState, useCallback, useMemo, useEffect, useReducer } from 'react'
 import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
 import { SummaryStatsSkeleton, PlaylistListSkeleton } from './WatchlistSkeletons'
+
+const initialOwnerUsers = {
+  options: [],
+  loading: false
+}
+
+function ownerUsersReducer(state, patch) {
+  return { ...state, ...patch }
+}
 
 // PlaylistItem component for rendering individual playlist items
 function PlaylistItem({
@@ -159,8 +168,8 @@ export default function PlaylistSidebar({
     ownerId: '',
     isDefault: false
   })
-  const [ownerUserOptions, setOwnerUserOptions] = useState([])
-  const [loadingOwnerUsers, setLoadingOwnerUsers] = useState(false)
+  const [ownerUsers, setOwnerUsers] = useReducer(ownerUsersReducer, initialOwnerUsers)
+  const { options: ownerUserOptions, loading: loadingOwnerUsers } = ownerUsers
 
   const handleCreateSubmit = useCallback(async (e) => {
     e.preventDefault()
@@ -226,21 +235,16 @@ export default function PlaylistSidebar({
     let cancelled = false
 
     const loadOwnerUsers = async () => {
-      setLoadingOwnerUsers(true)
+      setOwnerUsers({ loading: true })
+      let options = []
       try {
         const result = await onListUsers({ page: 0, limit: 500 })
-        if (!cancelled) {
-          setOwnerUserOptions(Array.isArray(result?.users) ? result.users : [])
-        }
+        options = Array.isArray(result?.users) ? result.users : []
       } catch (_error) {
-        if (!cancelled) {
-          setOwnerUserOptions([])
-          toast.error('Failed to load users for owner transfer')
-        }
-      } finally {
-        if (!cancelled) {
-          setLoadingOwnerUsers(false)
-        }
+        toast.error('Failed to load users for owner transfer')
+      }
+      if (!cancelled) {
+        setOwnerUsers({ options, loading: false })
       }
     }
 

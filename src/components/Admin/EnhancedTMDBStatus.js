@@ -52,43 +52,17 @@ export function EnhancedTMDBStatus() {
   }
 
   useEffect(() => {
-    // Async function inside effect to satisfy ESLint rule
-    const fetchStatus = async () => {
-      try {
-        const [connectionTest, validation] = await Promise.all([
-          testTMDBConnection(),
-          validateTMDBConfiguration()
-        ])
-
-        setStatus({
-          loading: false,
-          connection: connectionTest,
-          validation,
-          lastChecked: new Date().toISOString()
-        })
-      } catch (error) {
-        console.error('Error checking TMDB status:', error)
-        setStatus({
-          loading: false,
-          connection: {
-            success: false,
-            error: error.message,
-            timestamp: new Date().toISOString()
-          },
-          validation: null,
-          lastChecked: new Date().toISOString()
-        })
-      }
+    // Initial fetch (async wrapper defers state updates outside the effect body)
+    const runInitialCheck = async () => {
+      await checkTMDBStatus()
     }
+    runInitialCheck()
 
-    // Initial fetch
-    fetchStatus()
-    
     // Set up polling interval using the callback
     const interval = setInterval(() => {
       checkTMDBStatus()
     }, 30000)
-    
+
     return () => clearInterval(interval)
   }, [checkTMDBStatus])
 

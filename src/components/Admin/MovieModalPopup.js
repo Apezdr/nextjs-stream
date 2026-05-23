@@ -1,9 +1,84 @@
 'use client'
-import { Fragment, memo, useEffect, useRef, useState } from 'react'
+import { Fragment, memo, useEffect, useReducer, useRef } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { PencilSquareIcon, LockClosedIcon, LockOpenIcon } from '@heroicons/react/24/outline'
 import { saveMovieModalChanges } from '../../utils/admin_frontend_database'
 import { classNames, getFullImageUrl } from '../../utils'
+
+const buildFormState = (record) => ({
+  tmdb_id: record?.metadata?.id || '',
+  title: record?.title || '',
+  videoURL: record?.videoURL || '',
+  posterURL: record?.posterURL || '',
+  posterBlurhash: record?.posterBlurhash || '',
+  chapterURL: record?.chapterURL || '',
+  logo: record?.logo || '',
+  length: record?.length || '',
+  dimensions: record?.dimensions || '',
+  backdrop: record?.backdrop || '',
+  backdropBlurhash: record?.backdropBlurhash || '',
+})
+
+const buildCaptionStore = (record) => {
+  if (record?.captionURLs && typeof record.captionURLs === 'object') {
+    return Object.entries(record.captionURLs).map(([label, { srcLang, url }]) => ({
+      [label]: { srcLang, url },
+    }))
+  }
+  return []
+}
+
+const initFormReducerState = (record) => ({
+  formState: buildFormState(record),
+  lockedFields: record.lockedFields || {},
+  userLockedFields: {},
+  captionStore: buildCaptionStore(record),
+  newCaption: { label: '', srcLang: '', url: '' },
+})
+
+function formReducer(state, action) {
+  switch (action.type) {
+    case 'RESET':
+      return initFormReducerState(action.record)
+    case 'SET_FIELD':
+      return {
+        ...state,
+        formState: { ...state.formState, [action.name]: action.value },
+      }
+    case 'TOGGLE_FIELD_LOCK': {
+      const newLockedState = !state.lockedFields[action.fieldKey]
+      const userLockedFields = { ...state.userLockedFields }
+      if (newLockedState) {
+        userLockedFields[action.fieldKey] = true
+      } else {
+        delete userLockedFields[action.fieldKey]
+      }
+      return {
+        ...state,
+        lockedFields: { ...state.lockedFields, [action.fieldKey]: newLockedState },
+        userLockedFields,
+      }
+    }
+    case 'REMOVE_CAPTION':
+      return {
+        ...state,
+        captionStore: state.captionStore.filter((_, index) => index !== action.index),
+      }
+    case 'SET_NEW_CAPTION_FIELD':
+      return {
+        ...state,
+        newCaption: { ...state.newCaption, [action.name]: action.value },
+      }
+    case 'ADD_CAPTION':
+      return {
+        ...state,
+        captionStore: [...state.captionStore, action.caption],
+        newCaption: { label: '', srcLang: '', url: '' },
+      }
+    default:
+      return state
+  }
+}
 
 function MovieModalPopup({
   record,
@@ -14,36 +89,8 @@ function MovieModalPopup({
   updateProcessedData,
 }) {
   // Local state for managing form fields - initialize from record
-  const [formState, setFormState] = useState(() => ({
-    tmdb_id: record?.metadata?.id || '',
-    title: record?.title || '',
-    videoURL: record?.videoURL || '',
-    posterURL: record?.posterURL || '',
-    posterBlurhash: record?.posterBlurhash || '',
-    chapterURL: record?.chapterURL || '',
-    logo: record?.logo || '',
-    length: record?.length || '',
-    dimensions: record?.dimensions || '',
-    backdrop: record?.backdrop || '',
-    backdropBlurhash: record?.backdropBlurhash || '',
-    // Add other fields as necessary
-  }))
-
-  const [lockedFields, setLockedFields] = useState(() => record.lockedFields || {})
-  const [userLockedFields, setUserLockedFields] = useState({}) // New state to track user-locked fields
-  const [captionStore, setCaptionStore] = useState(() => {
-    if (record.captionURLs && typeof record.captionURLs === 'object') {
-      return Object.entries(record.captionURLs).map(([label, { srcLang, url }]) => ({
-        [label]: { srcLang, url },
-      }))
-    }
-    return []
-  })
-  const [newCaption, setNewCaption] = useState({
-    label: '',
-    srcLang: '',
-    url: '',
-  })
+  const [{ formState, lockedFields, userLockedFields, captionStore, newCaption }, dispatch] =
+    useReducer(formReducer, record, initFormReducerState)
 
   const cancelButtonRef = useRef(null)
   
@@ -53,40 +100,13 @@ function MovieModalPopup({
   // Reset state when modal opens with a different record
   useEffect(() => {
     const currentRecordId = record?.metadata?.id || record?.title
-    
+
     // Only update if the record has actually changed
     if (isOpen && lastRecordIdRef.current !== currentRecordId) {
       lastRecordIdRef.current = currentRecordId
-      
-      // Batch all state updates together
-      Promise.resolve().then(() => {
-        setFormState({
-          tmdb_id: record?.metadata?.id || '',
-          title: record?.title || '',
-          videoURL: record?.videoURL || '',
-          posterURL: record?.posterURL || '',
-          posterBlurhash: record?.posterBlurhash || '',
-          chapterURL: record?.chapterURL || '',
-          logo: record?.logo || '',
-          length: record?.length || '',
-          dimensions: record?.dimensions || '',
-          backdrop: record?.backdrop || '',
-          backdropBlurhash: record?.backdropBlurhash || '',
-        })
 
-        setLockedFields(record.lockedFields || {})
-
-        if (record.captionURLs && typeof record.captionURLs === 'object') {
-          const captionsArray = Object.entries(record.captionURLs).map(([label, { srcLang, url }]) => ({
-            [label]: { srcLang, url },
-          }))
-          setCaptionStore(captionsArray)
-        } else {
-          setCaptionStore([])
-        }
-
-        setUserLockedFields({})
-      })
+      // Reset all form state in a single dispatch
+      dispatch({ type: 'RESET', record })
     }
   }, [isOpen, record])
 
@@ -117,40 +137,21 @@ function MovieModalPopup({
 
   const handleInputChange = (event) => {
     const { name, value } = event.target
-    setFormState((prevState) => ({
-      ...prevState,
-      [name]: value,
-    }))
+    dispatch({ type: 'SET_FIELD', name, value })
   }
 
   // Function to toggle the lock state of a field
   const toggleFieldLock = (fieldKey) => {
-    setLockedFields((prevLockedFields) => {
-      const newLockedState = !prevLockedFields[fieldKey]
-      // Update userLockedFields based on newLockedState
-      setUserLockedFields((prevUserLockedFields) => {
-        const updatedUserLockedFields = { ...prevUserLockedFields }
-        if (newLockedState) {
-          updatedUserLockedFields[fieldKey] = true
-        } else {
-          delete updatedUserLockedFields[fieldKey]
-        }
-        return updatedUserLockedFields
-      })
-      return {
-        ...prevLockedFields,
-        [fieldKey]: newLockedState,
-      }
-    })
+    dispatch({ type: 'TOGGLE_FIELD_LOCK', fieldKey })
   }
 
   const removeCaption = (indexToRemove) => {
-    setCaptionStore((prevCaptions) => prevCaptions.filter((_, index) => index !== indexToRemove))
+    dispatch({ type: 'REMOVE_CAPTION', index: indexToRemove })
   }
 
   const handleNewCaptionChange = (event) => {
     const { name, value } = event.target
-    setNewCaption((prevCaption) => ({ ...prevCaption, [name]: value }))
+    dispatch({ type: 'SET_NEW_CAPTION_FIELD', name, value })
   }
 
   const addNewCaption = () => {
@@ -162,8 +163,7 @@ function MovieModalPopup({
       },
     }
     if (label && srcLang && url) {
-      setCaptionStore((prevCaptions) => [...prevCaptions, updatedCaption])
-      setNewCaption({ label: '', srcLang: '', url: '' })
+      dispatch({ type: 'ADD_CAPTION', caption: updatedCaption })
     }
   }
 

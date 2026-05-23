@@ -1,20 +1,40 @@
 'use client'
 
-import { useEffect, useRef, useState, useTransition, useCallback } from 'react'
+import { useEffect, useReducer, useRef, useState, useTransition, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Image from 'next/image'
 
+// UI state machine for the notification: open -> bgExiting -> modalExiting -> closed
+const initialUIState = { phase: 'open', copied: false, step: 0 }
+
+function uiReducer(state, action) {
+  switch (action.type) {
+    case 'advanceStep':
+      return state.step >= 3 ? state : { ...state, step: state.step + 1 }
+    case 'setCopied':
+      return { ...state, copied: action.value }
+    case 'dismiss':
+      return { ...state, phase: 'bgExiting' }
+    case 'modalExit':
+      return { ...state, phase: 'modalExiting' }
+    case 'close':
+      return { ...state, phase: 'closed' }
+    default:
+      return state
+  }
+}
+
 export default function TVAppsNotificationClient() {
-  const [isVisible, setIsVisible] = useState(true)
-  const [isBackgroundExiting, setIsBackgroundExiting] = useState(false)
-  const [isModalExiting, setIsModalExiting] = useState(false)
+  const [uiState, dispatch] = useReducer(uiReducer, initialUIState)
+  const { phase, copied, step } = uiState
+  const isVisible = phase !== 'closed'
+  const isBackgroundExiting = phase === 'bgExiting' || phase === 'modalExiting'
+  const isModalExiting = phase === 'modalExiting'
   const [isPending, startTransition] = useTransition()
   // Initialize origin using useState initializer to avoid setState in effect
   const [origin] = useState(() =>
     typeof window !== 'undefined' ? window.location.origin.replace(/^https?:\/\//, '') : ''
   )
-  const [copied, setCopied] = useState(false)
-  const [step, setStep] = useState(0) // animates step checkmarks
   const confettiRef = useRef(null)
 
   // Generate stable random values for stars using useState initializer (only runs once)
@@ -28,10 +48,10 @@ export default function TVAppsNotificationClient() {
   )
 
   useEffect(() => {
-    // Auto-progress the checklist for delight
-    setTimeout(() => setStep(1), 400)
-    setTimeout(() => setStep(2), 900)
-    setTimeout(() => setStep(3), 1400)
+    // Auto-progress the checklist for delight (single update site so the
+    // effect doesn't cascade multiple state writes).
+    const id = setInterval(() => dispatch({ type: 'advanceStep' }), 500)
+    return () => clearInterval(id)
   }, [])
 
   // Disable background scrolling and dim content when notification is visible
@@ -80,20 +100,20 @@ export default function TVAppsNotificationClient() {
 
   const handleDismiss = useCallback(() => {
     // Start background fade immediately
-    setIsBackgroundExiting(true)
-    
+    dispatch({ type: 'dismiss' })
+
     // Remove dimming styles to let background content fade back in
     const style = document.getElementById('tv-notification-backdrop')
     if (style) style.remove()
-    
+
     // Start modal fade 0.8 seconds later
     setTimeout(() => {
-      setIsModalExiting(true)
+      dispatch({ type: 'modalExit' })
     }, 800)
-    
+
     // Hide component after both animations complete
     setTimeout(() => {
-      setIsVisible(false)
+      dispatch({ type: 'close' })
     }, 1600) // 800ms + 800ms modal animation
     
     // Background API call to persist dismissal
@@ -144,9 +164,9 @@ export default function TVAppsNotificationClient() {
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(origin)
-      setCopied(true)
+      dispatch({ type: 'setCopied', value: true })
       launchConfetti()
-      setTimeout(() => setCopied(false), 1200)
+      setTimeout(() => dispatch({ type: 'setCopied', value: false }), 1200)
     } catch { /* empty */ }
   }
 

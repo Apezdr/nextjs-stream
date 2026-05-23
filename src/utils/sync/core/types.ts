@@ -158,6 +158,21 @@ export interface BatchSyncResult {
 }
 
 // ==========================================
+// Backdrop focal-point hint
+// ==========================================
+
+/**
+ * Canonical focal-point values emitted by the media-processor for a backdrop image.
+ * Drives the banner layout variant on the frontend.
+ *
+ * - `null` (or missing) = no hint available; UI renders the legacy focal-right design
+ * - `'left'` / `'right'` = subject sits in that third; UI mirrors gradient and anchors text on the opposite side
+ * - `'left-center'` / `'right-center'` = subject between center and edge; UI nudges text inward
+ * - `'center'` = subject dead-center; UI switches to a vertical-only letterbox gradient
+ */
+export type BackdropFocal = 'left' | 'left-center' | 'center' | 'right-center' | 'right' | null
+
+// ==========================================
 // Media Entities
 // ==========================================
 
@@ -239,6 +254,13 @@ export interface MovieEntity extends BaseMediaEntity {
   posterBlurhashSource?: string
   backdropBlurhash?: string
   backdropBlurhashSource?: string
+
+  // Backdrop focal-point hint (admin override + auto-detected). Frontend resolves
+  // the effective value with `backdropFocal ?? backdropFocalSuggested`.
+  backdropFocal?: BackdropFocal
+  backdropFocalSource?: string
+  backdropFocalSuggested?: BackdropFocal
+  backdropFocalSuggestedSource?: string
 
   // Content hash from media processor — stored after each successful sync to enable
   // whole-movie skip. If this matches the incoming hash from /api/metadata-hashes/movies,
@@ -329,6 +351,12 @@ export interface TVShowEntity extends BaseMediaEntity {
   posterBlurhashSource?: string
   backdropBlurhash?: string
   backdropBlurhashSource?: string
+
+  // Backdrop focal-point hint (admin override + auto-detected).
+  backdropFocal?: BackdropFocal
+  backdropFocalSource?: string
+  backdropFocalSuggested?: BackdropFocal
+  backdropFocalSuggestedSource?: string
 
   // Extracted metadata fields (for easier querying, matching legacy)
   firstAirDate?: Date

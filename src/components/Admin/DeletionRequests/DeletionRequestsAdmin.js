@@ -1,7 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { 
+import { useState, useEffect, useReducer } from 'react'
+import {
   CheckCircleIcon, 
   ClockIcon, 
   ExclamationTriangleIcon,
@@ -57,12 +57,38 @@ const statusConfig = {
   }
 }
 
+const initialRequestsState = {
+  requests: [],
+  loading: true,
+  error: null,
+  actionLoading: false,
+}
+
+function requestsReducer(state, action) {
+  switch (action.type) {
+    case 'setRequests':
+      return { ...state, requests: action.value }
+    case 'setLoading':
+      return { ...state, loading: action.value }
+    case 'setError':
+      return { ...state, error: action.value }
+    case 'setActionLoading':
+      return { ...state, actionLoading: action.value }
+    default:
+      return state
+  }
+}
+
 export default function DeletionRequestsAdmin() {
-  const [requests, setRequests] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [requestsState, dispatch] = useReducer(requestsReducer, initialRequestsState)
+  const { requests, loading, error, actionLoading } = requestsState
+
+  const setRequests = (value) => dispatch({ type: 'setRequests', value })
+  const setLoading = (value) => dispatch({ type: 'setLoading', value })
+  const setError = (value) => dispatch({ type: 'setError', value })
+  const setActionLoading = (value) => dispatch({ type: 'setActionLoading', value })
+
   const [selectedRequests, setSelectedRequests] = useState(new Set())
-  const [actionLoading, setActionLoading] = useState(false)
   const [filter, setFilter] = useState('all')
   const [expandedRequest, setExpandedRequest] = useState(null)
 

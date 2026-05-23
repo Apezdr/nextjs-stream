@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback, Suspense, Fragment, useSyncExternalStore, useMemo, useEffectEvent } from 'react'
+import { useState, useReducer, useRef, useEffect, useCallback, Suspense, Fragment, useSyncExternalStore, useMemo, useEffectEvent } from 'react'
 import { debounce } from 'lodash'
 import Image from 'next/image'
 import { buildURL, classNames, fetcher, buildNextOptimizedImageUrl } from '@src/utils'
@@ -9,6 +9,38 @@ import dynamic from 'next/dynamic'
 import { preload } from 'swr'
 import RetryImage from '@components/RetryImage'
 import PopupCard from './PopupCard'
+
+// Consolidated interaction/popup state machine (replaces several related useState hooks)
+const initialInteractionState = {
+  showPortal: false,
+  isAnimating: false,
+  isMouseOverCard: false,
+  isMouseOverPortal: false,
+  imagePosition: {
+    top: 0,
+    left: 0,
+    width: 0,
+    height: 0,
+  },
+}
+
+function interactionReducer(state, action) {
+  switch (action.type) {
+    case 'SET_PORTAL':
+      return { ...state, showPortal: action.value }
+    case 'SET_ANIMATING':
+      return { ...state, isAnimating: action.value }
+    case 'SET_MOUSE_OVER_CARD':
+      return { ...state, isMouseOverCard: action.value }
+    case 'SET_MOUSE_OVER_PORTAL':
+      return { ...state, isMouseOverPortal: action.value }
+    case 'SET_IMAGE_POSITION':
+      // Replace position object entirely to match prior setImagePosition semantics
+      return { ...state, imagePosition: action.value }
+    default:
+      return state
+  }
+}
 
 const Card = ({
   title,
@@ -54,18 +86,12 @@ const Card = ({
     width: 0,
     height: 0,
   })
-  const [showPortal, setShowPortal] = useState(false)
-  const [imagePosition, setImagePosition] = useState({
-    top: 0,
-    left: 0,
-    width: 0,
-    height: 0,
-  })
   const [imageError, setImageError] = useState(false)
-  const [isAnimating, setIsAnimating] = useState(false)
-  const [isMouseOverCard, setIsMouseOverCard] = useState(false)
-  const [isMouseOverPortal, setIsMouseOverPortal] = useState(false)
   const [MAX_EXPANDED_WIDTH, setMaxExpandedWidth] = useState(600)
+
+  // Grouped interaction/popup state machine
+  const [interaction, dispatchInteraction] = useReducer(interactionReducer, initialInteractionState)
+  const { showPortal, isAnimating, isMouseOverCard, isMouseOverPortal, imagePosition } = interaction
   
   // Helper function defined before usage
   const getCollapsedWidth = () => {
@@ -210,7 +236,7 @@ const Card = ({
     // Store natural dimensions for popup (high quality - these are now the original dimensions)
     setImageDimensions({ width: naturalWidth, height: naturalHeight })
     // Store rendered dimensions for position calculations
-    setImagePosition({ width: naturalWidth, height: naturalHeight })
+    dispatchInteraction({ type: 'SET_IMAGE_POSITION', value: { width: naturalWidth, height: naturalHeight } })
   }, [])
 
   const handleImageError = useCallback(() => {
@@ -264,12 +290,15 @@ const Card = ({
         }
       }
 
-      setImagePosition({
-        top,
-        left: adjustedLeft,
-        width,
-        height: popupHeight, // Use calculated 16:9 height
-        expandedWidth: popupWidth, // Use calculated 16:9 width
+      dispatchInteraction({
+        type: 'SET_IMAGE_POSITION',
+        value: {
+          top,
+          left: adjustedLeft,
+          width,
+          height: popupHeight, // Use calculated 16:9 height
+          expandedWidth: popupWidth, // Use calculated 16:9 width
+        },
       })
     }
   }, [MAX_EXPANDED_WIDTH])
@@ -277,15 +306,15 @@ const Card = ({
   const handleExpand = useCallback(() => {
     if (isAnimating) return
     if (isPeek) return
-    setIsAnimating(true)
+    dispatchInteraction({ type: 'SET_ANIMATING', value: true })
     onExpand(itemId)
     calculateImagePosition()
-    setShowPortal(true)
+    dispatchInteraction({ type: 'SET_PORTAL', value: true })
   }, [isAnimating, isPeek, onExpand, itemId, calculateImagePosition])
 
   const handleCollapse = useCallback(() => {
     if (isAnimating) return
-    setShowPortal(false)
+    dispatchInteraction({ type: 'SET_PORTAL', value: false })
     if (onCollapse) {
       onCollapse()
     }
@@ -363,21 +392,21 @@ const Card = ({
   }, [handleCollapse, isHovered, showPortal, isTouchDevice])
 
   const handleCardMouseEnter = useCallback(() => {
-    setIsMouseOverCard(true)
+    dispatchInteraction({ type: 'SET_MOUSE_OVER_CARD', value: true })
     handleMouseEnter()
   }, [handleMouseEnter])
 
   const handleCardMouseLeave = useCallback(() => {
-    setIsMouseOverCard(false)
+    dispatchInteraction({ type: 'SET_MOUSE_OVER_CARD', value: false })
     handleMouseLeave()
   }, [handleMouseLeave])
 
   const handlePortalMouseEnter = useCallback(() => {
-    setIsMouseOverPortal(true)
+    dispatchInteraction({ type: 'SET_MOUSE_OVER_PORTAL', value: true })
   }, [])
 
   const handlePortalMouseLeave = useCallback(() => {
-    setIsMouseOverPortal(false)
+    dispatchInteraction({ type: 'SET_MOUSE_OVER_PORTAL', value: false })
     handleMouseLeave()
   }, [handleMouseLeave])
 
@@ -436,7 +465,7 @@ const Card = ({
   useEffect(() => {
     if (isAnimating) {
       const timeout = setTimeout(() => {
-        setIsAnimating(false)
+        dispatchInteraction({ type: 'SET_ANIMATING', value: false })
       }, 300)
       return () => clearTimeout(timeout)
     }
@@ -449,7 +478,6 @@ const Card = ({
     // Only call handleCollapse when transitioning from hovered to not hovered
     // This is intentional - we're synchronizing with user interaction state
     if (!isTouchDevice && showPortal && prevIsHoveredRef.current && !isHovered) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       handleCollapse()
     }
     prevIsHoveredRef.current = isHovered

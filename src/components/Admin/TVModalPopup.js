@@ -1,5 +1,5 @@
 'use client'
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useRef, useState } from 'react'
 import { Dialog, Transition } from '@headlessui/react'
 import { PencilSquareIcon } from '@heroicons/react/24/outline'
 import { saveTVSeriesModalChanges } from '../../utils/admin_frontend_database'
@@ -18,23 +18,17 @@ export default function TVModalPopup({
   const [seasons, setSeasons] = useState(record.seasons || [])
   const cancelButtonRef = useRef(null)
 
-  useEffect(() => {
-    if (record && record.seasons) {
-      // Initialize with existing data for editing
-      setTitle(record.title || '')
-      setSeasons(record.seasons)
-    } else {
-      // Initialize with empty data for adding
-      setTitle('')
-      setSeasons([])
-    }
-  }, [record])
-
-  useEffect(() => {
-    if (record && record.seasons) {
-      setSeasons(record.seasons)
-    }
-  }, [record])
+  // Reset local edit state when the record prop changes (adjust state during render
+  // instead of in an effect to avoid cascading renders). Initialized to a sentinel so
+  // the initial values are also derived from the record on first render.
+  const [prevRecord, setPrevRecord] = useState(undefined)
+  if (prevRecord !== record) {
+    setPrevRecord(record)
+    // Initialize with existing data for editing, or empty data for adding
+    const hasSeasons = record && record.seasons
+    setTitle(hasSeasons ? record.title || '' : '')
+    setSeasons(hasSeasons ? record.seasons : [])
+  }
 
   const addSeason = () => {
     setSeasons([...seasons, { seasonNumber: seasons.length + 1, episodes: [] }])

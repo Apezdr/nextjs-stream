@@ -1,7 +1,18 @@
 'use client'
 
-import { useRef, useState, useEffect } from 'react'
+import { useRef, useState, useEffect, useReducer } from 'react'
 import { secondsToTime } from '../utils/subtitleParser'
+
+const initialDragState = {
+  isDragging: false,
+  dragStartPosition: null,
+  dragType: null, // 'move', 'start', 'end'
+  dragSubtitle: null
+}
+
+function dragReducer(state, patch) {
+  return { ...state, ...patch }
+}
 
 export default function SubtitleTimelineArea({
   subtitles = [],
@@ -18,10 +29,8 @@ export default function SubtitleTimelineArea({
   editMode = 'select' // 'select', 'move', 'resize-start', 'resize-end'
 }) {
   const timelineRef = useRef(null)
-  const [isDragging, setIsDragging] = useState(false)
-  const [dragStartPosition, setDragStartPosition] = useState(null)
-  const [dragType, setDragType] = useState(null) // 'move', 'start', 'end'
-  const [dragSubtitle, setDragSubtitle] = useState(null)
+  const [drag, setDrag] = useReducer(dragReducer, initialDragState)
+  const { isDragging, dragStartPosition, dragType, dragSubtitle } = drag
   const [selectionBox, setSelectionBox] = useState(null)
   const [timelineWidth, setTimelineWidth] = useState(0)
   
@@ -222,10 +231,10 @@ export default function SubtitleTimelineArea({
       }
       
       // Update drag start position for continuous dragging
-      setDragStartPosition({ x, subtitle: dragSubtitle })
+      setDrag({ dragStartPosition: { x, subtitle: dragSubtitle } })
     }
   }
-  
+
   // End box selection and select all subtitles inside the box
   const handleMouseUp = (e) => {
     if (selectionBox) {
@@ -284,13 +293,10 @@ export default function SubtitleTimelineArea({
     
     // End subtitle block dragging
     if (isDragging) {
-      setIsDragging(false)
-      setDragType(null)
-      setDragSubtitle(null)
-      setDragStartPosition(null)
+      setDrag(initialDragState)
     }
   }
-  
+
   // Start dragging a subtitle block
   const startDrag = (e, subtitle, type) => {
     e.stopPropagation()
@@ -310,14 +316,15 @@ export default function SubtitleTimelineArea({
       return;
     }
     
-    setIsDragging(true)
-    setDragType(type)
-    setDragSubtitle(subtitle)
-    
     const rect = timelineRef.current.getBoundingClientRect()
-    setDragStartPosition({
-      x: e.clientX - rect.left,
-      subtitle
+    setDrag({
+      isDragging: true,
+      dragType: type,
+      dragSubtitle: subtitle,
+      dragStartPosition: {
+        x: e.clientX - rect.left,
+        subtitle
+      }
     })
     
     // Also select this subtitle if it's not already selected

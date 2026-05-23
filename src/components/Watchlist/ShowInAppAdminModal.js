@@ -1,59 +1,75 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useReducer, useRef } from 'react'
 import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
 import { debounce } from 'lodash'
 
-export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
-  const [playlists, setPlaylists] = useState([])
-  const [playlistsLoading, setPlaylistsLoading] = useState(false)
-  const [selectedPlaylistId, setSelectedPlaylistId] = useState('')
+function mergeReducer(state, patch) {
+  return { ...state, ...patch }
+}
 
-  const [users, setUsers] = useState([])
-  const [usersLoading, setUsersLoading] = useState(false)
-  const [searchTerm, setSearchTerm] = useState('')
-  const [page, setPage] = useState(0)
-  const [limit, setLimit] = useState(20)
-  const [total, setTotal] = useState(0)
+export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
+  const [playlistState, setPlaylistState] = useReducer(mergeReducer, {
+    playlists: [],
+    playlistsLoading: false,
+    selectedPlaylistId: ''
+  })
+  const { playlists, playlistsLoading, selectedPlaylistId } = playlistState
+
+  const [usersState, setUsersState] = useReducer(mergeReducer, {
+    users: [],
+    usersLoading: false,
+    searchTerm: '',
+    page: 0,
+    limit: 20,
+    total: 0
+  })
+  const { users, usersLoading, searchTerm, page, limit, total } = usersState
 
   // Debounced loader ref to prevent multiple requests per key press (collapses calls)
   const debouncedLoadRef = useRef(null)
 
   const [selectedUserIds, setSelectedUserIds] = useState(new Set())
 
-  const [bulkShowInApp, setBulkShowInApp] = useState(true)
-  const [bulkAppOrder, setBulkAppOrder] = useState(0)
-  const [bulkAppTitle, setBulkAppTitle] = useState('')
+  const [bulkSettings, setBulkSettings] = useReducer(mergeReducer, {
+    bulkShowInApp: true,
+    bulkAppOrder: 0,
+    bulkAppTitle: ''
+  })
+  const { bulkShowInApp, bulkAppOrder, bulkAppTitle } = bulkSettings
 
-  const [applying, setApplying] = useState(false)
-  const [resetting, setResetting] = useState(false)
+  const [actionStatus, setActionStatus] = useReducer(mergeReducer, {
+    applying: false,
+    resetting: false
+  })
+  const { applying, resetting } = actionStatus
 
   const totalPages = useMemo(() => {
     return Math.max(1, Math.ceil(total / limit))
   }, [total, limit])
 
   const loadPlaylists = useCallback(async () => {
-    setPlaylistsLoading(true)
+    setPlaylistState({ playlistsLoading: true })
     try {
       const res = await api.getPlaylists(true)
       const list = Array.isArray(res?.playlists) ? res.playlists : []
-      setPlaylists(list)
       if (!selectedPlaylistId && list.length > 0) {
-        setSelectedPlaylistId(list[0].id)
+        setPlaylistState({ playlists: list, selectedPlaylistId: list[0].id, playlistsLoading: false })
+      } else {
+        setPlaylistState({ playlists: list, playlistsLoading: false })
       }
     } catch (e) {
       console.error('[ShowInAppAdminModal] loadPlaylists failed:', e)
       toast.error('Failed to load playlists')
-    } finally {
-      setPlaylistsLoading(false)
+      setPlaylistState({ playlistsLoading: false })
     }
   }, [api, selectedPlaylistId])
 
   // Raw loader: does the actual fetch, independent of current input state
   const loadUsersRaw = useCallback(async ({ search, pageOverride, limitOverride }) => {
     if (!isOpen) return
-    setUsersLoading(true)
+    setUsersState({ usersLoading: true })
     try {
       const res = await api.listUsers({
         search: (search || '').trim() || undefined,
@@ -61,13 +77,15 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
         limit: limitOverride
       })
       const items = Array.isArray(res?.users) ? res.users : []
-      setUsers(items)
-      setTotal(typeof res?.pagination?.total === 'number' ? res.pagination.total : items.length)
+      setUsersState({
+        users: items,
+        total: typeof res?.pagination?.total === 'number' ? res.pagination.total : items.length,
+        usersLoading: false
+      })
     } catch (e) {
       console.error('[ShowInAppAdminModal] loadUsers failed:', e)
       toast.error('Failed to load users')
-    } finally {
-      setUsersLoading(false)
+      setUsersState({ usersLoading: false })
     }
   }, [api, isOpen])
 
@@ -127,7 +145,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
       toast.error('Select at least one user')
       return
     }
-    setApplying(true)
+    setActionStatus({ applying: true })
     try {
       await api.setVisibilityBulk({
         playlistId: selectedPlaylistId,
@@ -141,7 +159,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
       console.error('[ShowInAppAdminModal] apply failed:', e)
       toast.error('Failed to apply visibility')
     } finally {
-      setApplying(false)
+      setActionStatus({ applying: false })
     }
   }, [api, selectedPlaylistId, selectedUserIds, bulkShowInApp, bulkAppOrder, bulkAppTitle])
 
@@ -153,7 +171,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
     if (!window.confirm('Disable this playlist for all users? This removes all visibility preferences for this playlist.')) {
       return
     }
-    setResetting(true)
+    setActionStatus({ resetting: true })
     try {
       await api.resetVisibilityAll(selectedPlaylistId)
       toast.success('Visibility reset for all users')
@@ -161,7 +179,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
       console.error('[ShowInAppAdminModal] reset all failed:', e)
       toast.error('Failed to reset visibility')
     } finally {
-      setResetting(false)
+      setActionStatus({ resetting: false })
     }
   }, [api, selectedPlaylistId])
 
@@ -185,7 +203,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
               <label className="block text-sm font-medium text-gray-300 mb-1">Playlist</label>
               <select
                 value={selectedPlaylistId}
-                onChange={(e) => setSelectedPlaylistId(e.target.value)}
+                onChange={(e) => setPlaylistState({ selectedPlaylistId: e.target.value })}
                 className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 disabled={playlistsLoading}
               >
@@ -203,7 +221,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
                     type="checkbox"
                     className="form-checkbox h-4 w-4 text-indigo-600"
                     checked={bulkShowInApp}
-                    onChange={(e) => setBulkShowInApp(e.target.checked)}
+                    onChange={(e) => setBulkSettings({ bulkShowInApp: e.target.checked })}
                   />
                   <span>Show in App</span>
                 </label>
@@ -213,7 +231,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
                     type="number"
                     min="0"
                     value={bulkAppOrder}
-                    onChange={(e) => setBulkAppOrder(parseInt(e.target.value, 10) || 0)}
+                    onChange={(e) => setBulkSettings({ bulkAppOrder: parseInt(e.target.value, 10) || 0 })}
                     className="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white focus:outline-none"
                   />
                 </div>
@@ -222,7 +240,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
                   <input
                     type="text"
                     value={bulkAppTitle}
-                    onChange={(e) => setBulkAppTitle(e.target.value)}
+                    onChange={(e) => setBulkSettings({ bulkAppTitle: e.target.value })}
                     placeholder="e.g. Staff Picks"
                     maxLength={100}
                     className="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white focus:outline-none"
@@ -253,12 +271,12 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
                 <input
                   type="text"
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
+                  onChange={(e) => setUsersState({ searchTerm: e.target.value })}
                   placeholder="Search users by name or email"
                   className="flex-1 px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white focus:outline-none"
                 />
                 <button
-                  onClick={() => { setPage(0) }}
+                  onClick={() => { setUsersState({ page: 0 }) }}
                   className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700"
                 >
                   Search
@@ -316,7 +334,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
                 </div>
                 <div className="space-x-2">
                   <button
-                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                    onClick={() => setUsersState({ page: Math.max(0, page - 1) })}
                     disabled={page <= 0}
                     className={classNames(
                       'px-3 py-1 rounded-md',
@@ -326,7 +344,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
                     Prev
                   </button>
                   <button
-                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                    onClick={() => setUsersState({ page: Math.min(totalPages - 1, page + 1) })}
                     disabled={page >= totalPages - 1}
                     className={classNames(
                       'px-3 py-1 rounded-md',
@@ -337,7 +355,7 @@ export default function ShowInAppAdminModal({ isOpen, onClose, api }) {
                   </button>
                   <select
                     value={limit}
-                    onChange={(e) => { setLimit(parseInt(e.target.value, 10)); setPage(0) }}
+                    onChange={(e) => setUsersState({ limit: parseInt(e.target.value, 10), page: 0 })}
                     className="ml-2 px-2 py-1 bg-gray-600 text-white rounded-md"
                   >
                     {[10,20,50,100].map(n => <option key={n} value={n}>{n}/page</option>)}

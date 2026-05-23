@@ -1,17 +1,46 @@
 'use client'
-import { lazy, Suspense, useEffect, useState, useEffectEvent, useRef } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useState, useEffectEvent, useRef } from 'react'
+import useSWR from 'swr'
 import { MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 import debounce from 'lodash.debounce'
 import Count from './Count'
 const SearchModal = lazy(() => import('./SearchModal'))
 
+// Stable empty reference so effects depending on the SWR result don't loop
+// while data is still undefined (a fresh `[]` literal would change identity
+// every render).
+const EMPTY_RESULTS = []
+
+// Fetch the "recently added" list shown when the search box is empty.
+const fetchRecentlyAdded = async () => {
+  const response = await fetch('/api/authenticated/search', {
+    method: 'POST',
+    body: JSON.stringify({ query: '' }),
+    headers: { 'Content-Type': 'application/json' },
+  })
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`)
+  }
+  const data = await response.json()
+  return data.results || []
+}
+
 export default function SearchInput() {
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState([])
-  const [isLoading, setIsLoading] = useState(false)
-  const [recentlyAddedMedia, setRecentlyAddedMedia] = useState([])
+  const [searchLoading, setSearchLoading] = useState(false)
   const [open, setOpen] = useState(false)
+
+  // Recently added media (shown when the query is empty) via SWR — handles
+  // caching and error retry/backoff, so no manual retry effect is needed.
+  const { data: recentlyAddedMedia = EMPTY_RESULTS, isLoading: recentLoading } = useSWR(
+    'search-recently-added',
+    fetchRecentlyAdded,
+    { revalidateOnFocus: false, errorRetryCount: 3 }
+  )
+
+  const isLoading = searchLoading || (!query && recentLoading)
 
   // Ref to hold abort controller for cleanup
   const abortControllerRef = useRef(null)
@@ -28,8 +57,8 @@ export default function SearchInput() {
 
     // Create new abort controller for this request
     abortControllerRef.current = new AbortController()
-    
-    setIsLoading(true)
+
+    setSearchLoading(true)
     try {
       const response = await fetch('/api/authenticated/search', {
         method: 'POST',
@@ -37,11 +66,11 @@ export default function SearchInput() {
         headers: { 'Content-Type': 'application/json' },
         signal: abortControllerRef.current.signal
       })
-      
+
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`)
       }
-      
+
       const data = await response.json()
       setSearchResults(data.results || [])
     } catch (error) {
@@ -50,45 +79,9 @@ export default function SearchInput() {
         console.error('Error fetching search data:', error)
       }
     } finally {
-      setIsLoading(false)
+      setSearchLoading(false)
     }
   })
-
-  // Fetch recently added media on mount
-  useEffect(() => {
-    const maxAttempts = 3
-    let attempts = 0
-    
-    const fetchRecentlyAddedMedia = async () => {
-      setIsLoading(true)
-      try {
-        const response = await fetch('/api/authenticated/search', {
-          method: 'POST',
-          body: JSON.stringify({ query: '' }),
-          headers: { 'Content-Type': 'application/json' },
-        })
-        
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`)
-        }
-        
-        const data = await response.json()
-        setRecentlyAddedMedia(data.results || [])
-        attempts = 0
-      } catch (error) {
-        console.error('Error fetching recently added media:', error)
-        attempts++
-        if (attempts < maxAttempts) {
-          // Retry with exponential backoff
-          setTimeout(() => fetchRecentlyAddedMedia(), Math.min(1000 * Math.pow(2, attempts), 5000))
-        }
-      } finally {
-        setIsLoading(false)
-      }
-    }
-    
-    fetchRecentlyAddedMedia()
-  }, [])
 
   // Initialize debounced function once - it calls the Effect Event
   useEffect(() => {
@@ -115,12 +108,14 @@ export default function SearchInput() {
     }
   }, [query, recentlyAddedMedia]) // ✅ Only reactive values, not functions
 
-  // Reset query when modal closes
-  useEffect(() => {
-    if (!open) {
+  // Open/close the search, resetting the query on close. Done in this action
+  // handler (not an effect) so the search-trigger effect doesn't chain off it.
+  const handleSetOpen = useCallback((nextOpen) => {
+    setOpen(nextOpen)
+    if (!nextOpen) {
       setQuery('')
     }
-  }, [open])
+  }, [])
 
   return (
     <>
@@ -152,10 +147,10 @@ export default function SearchInput() {
             className="h-12 w-full border-0 bg-transparent pl-11 pr-4 text-gray-900 placeholder:text-gray-400 focus:ring-0 sm:text-sm"
             placeholder="Search..."
             value={query}
-            onClick={() => setOpen(true)}
+            onClick={() => handleSetOpen(true)}
             onChange={(event) => {
               if (query.length < event.target.value.length) {
-                setOpen(true)
+                handleSetOpen(true)
               }
               setQuery(event.target.value)
             }}
@@ -166,7 +161,7 @@ export default function SearchInput() {
       <Suspense>
         <SearchModal
           open={open}
-          setOpen={setOpen}
+          setOpen={handleSetOpen}
           query={query}
           setQuery={setQuery}
           isLoading={isLoading}

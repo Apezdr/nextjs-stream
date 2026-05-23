@@ -1,7 +1,24 @@
 'use client'
 
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useMemo, useCallback } from 'react'
+import useSWR from 'swr'
 import { secondsToTimeCached } from '../utils/timeFormat'
+
+const fetchEpisodes = async ([, mediaTitle, seasonNumber]) => {
+  const encodedTitle = encodeURIComponent(mediaTitle)
+  const response = await fetch(
+    `/api/authenticated/episode-picker?title=${encodedTitle}&season=${seasonNumber}`
+  )
+  if (!response.ok) {
+    throw new Error('Failed to fetch episode data')
+  }
+  const data = await response.json()
+  if (data && Array.isArray(data.episodes)) {
+    // Sort episodes by episode number
+    return [...data.episodes].sort((a, b) => a.episodeNumber - b.episodeNumber)
+  }
+  return []
+}
 
 export default function SubtitleSidebar({
   subtitles,
@@ -17,51 +34,16 @@ export default function SubtitleSidebar({
   seasonNumber = null,
   episodeNumber = null
 }) {
-  const [episodes, setEpisodes] = useState([])
-  const [loadingEpisodes, setLoadingEpisodes] = useState(false)
-  const [selectedEpisode, setSelectedEpisode] = useState(episodeNumber)
+  // Fetch episodes for TV shows via SWR (handles loading/error/caching). The
+  // key is null until we have a TV show + season, so no request fires otherwise.
+  const episodesKey =
+    mediaType === 'tv' && mediaTitle && seasonNumber
+      ? ['subtitle-episodes', mediaTitle, seasonNumber]
+      : null
+  const { data: episodes = [], isLoading: loadingEpisodes } = useSWR(episodesKey, fetchEpisodes)
 
-  // Fetch episodes for TV shows
-  useEffect(() => {
-    const fetchEpisodes = async () => {
-      if (mediaType !== 'tv' || !mediaTitle || !seasonNumber) {
-        setEpisodes([])
-        return
-      }
-
-      setLoadingEpisodes(true)
-      try {
-        const encodedTitle = encodeURIComponent(mediaTitle)
-        const response = await fetch(`/api/authenticated/episode-picker?title=${encodedTitle}&season=${seasonNumber}`)
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch episode data')
-        }
-
-        const data = await response.json()
-
-        if (data && data.episodes && Array.isArray(data.episodes)) {
-          // Sort episodes by episode number
-          const sortedEpisodes = [...data.episodes].sort((a, b) => a.episodeNumber - b.episodeNumber)
-          setEpisodes(sortedEpisodes)
-        } else {
-          setEpisodes([])
-        }
-      } catch (error) {
-        console.error('Error fetching episodes:', error)
-        setEpisodes([])
-      } finally {
-        setLoadingEpisodes(false)
-      }
-    }
-
-    fetchEpisodes()
-  }, [mediaType, mediaTitle, seasonNumber])
-
-  // Update selected episode when episodeNumber prop changes
-  useEffect(() => {
-    setSelectedEpisode(episodeNumber)
-  }, [episodeNumber])
+  // `selectedEpisode` is just the current episode prop — read it directly.
+  const selectedEpisode = episodeNumber
 
   // Handle episode selection
   const handleEpisodeChange = (newEpisodeNumber) => {
