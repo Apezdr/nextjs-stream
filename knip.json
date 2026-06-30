@@ -9,16 +9,21 @@
     "src/app/**/not-found.{js,jsx,ts,tsx}",
     "src/app/**/route.{js,ts}",
     "src/pages/**/*.{js,jsx,ts,tsx}",
+    "src/utils/config.js",
+    "src/utils/monitor_server_load.js",
     "scripts/**/*.{js,ts}"
   ],
   "project": ["src/**/*.{js,jsx,ts,tsx}", "scripts/**/*.{js,ts}"],
+  "paths": {
+    "@src/*": ["src/*"],
+    "@components/*": ["src/components/*"]
+  },
   "ignore": [
-    "**/__tests__/**",
-    "**/__mocks__/**",
-    "**/*.test.{js,jsx,ts,tsx}"
+    "**/__mocks__/**"
   ],
   "ignoreDependencies": [
-    "sharp"
+    "sharp",
+    "@eslint/js"
   ],
   "ignoreExportsUsedInFile": true
 }
