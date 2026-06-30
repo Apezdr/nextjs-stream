@@ -11,19 +11,27 @@
     "src/pages/**/*.{js,jsx,ts,tsx}",
     "src/utils/config.js",
     "src/utils/monitor_server_load.js",
-    "scripts/**/*.{js,ts}"
+    "scripts/**/*.{js,ts}",
+    "src/components/Search/**/*.{js,jsx,ts,tsx}",
+    "src/components/Calendar/**/*.{js,jsx,ts,tsx}",
+    "src/components/Landing/**/*.{js,jsx,ts,tsx}",
+    "src/components/Navigation/DeviceLinkModal.{js,jsx,ts,tsx}",
+    "src/components/notifications/NotificationBell.{js,jsx,ts,tsx}",
+    "src/components/HOC/ShouldRenderContent.{js,jsx,ts,tsx}",
+    "src/components/MediaScroll/CardVideoPlayer.{js,jsx,ts,tsx}"
   ],
   "project": ["src/**/*.{js,jsx,ts,tsx}", "scripts/**/*.{js,ts}"],
   "paths": {
-    "@src/*": ["src/*"],
-    "@components/*": ["src/components/*"]
+    "@src/*": ["./src/*"],
+    "@components/*": ["./src/components/*"]
   },
   "ignore": [
     "**/__mocks__/**"
   ],
   "ignoreDependencies": [
     "sharp",
-    "@eslint/js"
+    "@eslint/js",
+    "media-icons"
   ],
   "ignoreExportsUsedInFile": true
 }
