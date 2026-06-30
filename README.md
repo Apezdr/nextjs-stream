@@ -35,8 +35,8 @@ To implement the NextJS-Stream app, follow these steps:
    ```env
    # Database Configuration
    MONGODB_URI=mongodb://dbUser:your_password@your_ip:your_port/?authMechanism=DEFAULT
-   MONGODB_DB=Media
-   MONGODB_DB_USERS=Users
+   # Optional: override the users/auth database name (defaults to "Users")
+   MONGODB_AUTH_DB=Users
 
    # Better Auth Configuration
    BETTER_AUTH_URL=https://your-domain.com
@@ -320,24 +320,23 @@ The application supports a dedicated TMDB server configuration for enhanced exte
 
 #### Environment Variables
 
-- `TMDB_API_KEY`: Your TMDB API key (required for external media features)
 - `TMDB_NODE_SERVER_URL`: Optional dedicated TMDB server URL
   - Falls back to `NODE_SERVER_URL` if not specified
   - Useful for load balancing or dedicated TMDB processing
+
+> **Note:** External media metadata is fetched through your Node server's TMDB proxy, not directly from the Next.js app. The TMDB API key is configured on the Node server — there is **no** `TMDB_API_KEY` variable in the Next.js app's environment.
 
 #### Configuration Examples
 
 **Basic Setup (using main server):**
 
 ```env
-TMDB_API_KEY=your_tmdb_api_key
 NODE_SERVER_URL=https://your-server.com/node
 ```
 
 **Dedicated TMDB Server:**
 
 ```env
-TMDB_API_KEY=your_tmdb_api_key
 NODE_SERVER_URL=https://your-server.com/node
 TMDB_NODE_SERVER_URL=https://tmdb-server.your-domain.com/node
 ```
@@ -383,8 +382,8 @@ Administrators can monitor TMDB server status through the admin dashboard:
 
 **TMDB Server Not Configured:**
 
-- Ensure `TMDB_API_KEY` is set in your environment
 - Verify `TMDB_NODE_SERVER_URL` or `NODE_SERVER_URL` is configured
+- Ensure the Node server has a valid TMDB API key configured
 - Check the admin dashboard for configuration status
 
 **Connection Failures:**
@@ -395,9 +394,9 @@ Administrators can monitor TMDB server status through the admin dashboard:
 
 **API Key Issues:**
 
-- Ensure your TMDB API key is valid and active
+- Ensure your Node server's TMDB API key is valid and active
 - Check API key permissions and rate limits
-- Verify the key is correctly set in environment variables
+- Verify the key is correctly set in the Node server's environment
 
 #### Testing Configuration
 

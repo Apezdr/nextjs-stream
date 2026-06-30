@@ -1,0 +1,24 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "src/app/**/page.{js,jsx,ts,tsx}",
+    "src/app/**/layout.{js,jsx,ts,tsx}",
+    "src/app/**/loading.{js,jsx,ts,tsx}",
+    "src/app/**/template.{js,jsx,ts,tsx}",
+    "src/app/**/error.{js,jsx,ts,tsx}",
+    "src/app/**/not-found.{js,jsx,ts,tsx}",
+    "src/app/**/route.{js,ts}",
+    "src/pages/**/*.{js,jsx,ts,tsx}",
+    "scripts/**/*.{js,ts}"
+  ],
+  "project": ["src/**/*.{js,jsx,ts,tsx}", "scripts/**/*.{js,ts}"],
+  "ignore": [
+    "**/__tests__/**",
+    "**/__mocks__/**",
+    "**/*.test.{js,jsx,ts,tsx}"
+  ],
+  "ignoreDependencies": [
+    "sharp"
+  ],
+  "ignoreExportsUsedInFile": true
+}
