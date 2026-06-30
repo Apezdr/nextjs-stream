@@ -80,6 +80,20 @@ async function fetchOneStatus(server) {
 export async function getProcessedSystemStatus() {
   const servers = getAllServers()
 
+  const normalizeServerStatusList = (serversValue) => {
+    if (Array.isArray(serversValue)) return serversValue
+    if (serversValue && typeof serversValue === 'object') {
+      return Object.entries(serversValue).map(([serverId, status]) => ({
+        ...status,
+        serverId: status?.serverId ?? serverId,
+      }))
+    }
+    return []
+  }
+
+  const normalizeIncidents = (incidentsValue) =>
+    Array.isArray(incidentsValue) ? incidentsValue : []
+
   try {
     // Fetch all server statuses in parallel
     const statuses = await withTimeout(
@@ -117,8 +131,10 @@ export async function getProcessedSystemStatus() {
     })
 
     // Also check database for any additional incidents (backward compatibility)
-    const { activeIncidents = [] } = await getLatestSystemStatus()
-    const dbIncidents = activeIncidents.filter((i) => !i.resolvedAt)
+    const latestStatus = await getLatestSystemStatus()
+    const dbIncidents = normalizeIncidents(
+      latestStatus.normalizedActiveIncidents ?? latestStatus.activeIncidents
+    ).filter((i) => !i.resolvedAt)
     
     // Merge any database incidents that aren't already handled by embedded incidents
     const merged = processed.map((serverStatus) => {
@@ -171,8 +187,11 @@ export async function getProcessedSystemStatus() {
     console.error('Error getting processed system status:', err)
     
     // Fallback response
-    const { servers: latest = [], activeIncidents = [] } = await getLatestSystemStatus()
-    const incidents = activeIncidents.filter((i) => !i.resolvedAt)
+    const latestStatus = await getLatestSystemStatus()
+    const latest = normalizeServerStatusList(latestStatus.normalizedServers ?? latestStatus.servers)
+    const incidents = normalizeIncidents(
+      latestStatus.normalizedActiveIncidents ?? latestStatus.activeIncidents
+    ).filter((i) => !i.resolvedAt)
 
     const fallback = servers.map((s) => {
       const cached = latest.find((l) => l.serverId === s.id)

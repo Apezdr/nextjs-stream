@@ -1,105 +1,78 @@
 'use client'
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import useSWR from 'swr';
 import { LazyLog, ScrollFollow } from '@melloware/react-logviewer';
 import DockerHubLastUpdated from '../DockerHubLastUpdated';
 import { buildURL } from '@src/utils';
 import SyncVerificationPanel from './SyncVerification';
 import { formatServerLabel } from '@src/utils/serverLabel';
 
+const fetchServers = async () => {
+  const response = await fetch(buildURL('/api/authenticated/admin/servers')); // Replace with your endpoint for servers
+  if (!response.ok) {
+    throw new Error('Failed to fetch servers');
+  }
+  return response.json();
+};
+
+const fetchCategories = async ([serverEndpoint]) => {
+  // Assuming you fetch categories from the first selected server
+  const response = await fetch(`${serverEndpoint}/api/logs/categories`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch categories');
+  }
+  return response.json();
+};
+
 export default function LogsAdministration() {
   const [activeTab, setActiveTab] = useState('logs'); // 'logs' or 'syncVerification'
-  const [servers, setServers] = useState([]);
   const [selectedServers, setSelectedServers] = useState([]);
-  const [logUrl, setLogUrl] = useState('');
-  const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('');
-  const [loading, setLoading] = useState(true);
-  const [loadingCategories, setLoadingCategories] = useState(false);
-  const [error, setError] = useState('');
-  const [categoryError, setCategoryError] = useState('');
   const [refreshKey, setRefreshKey] = useState(0); // State to trigger re-render of LazyLog
 
   // Fetch server configurations on component mount
-  useEffect(() => {
-    const fetchServers = async () => {
-      try {
-        const response = await fetch(buildURL('/api/authenticated/admin/servers')); // Replace with your endpoint for servers
-        if (!response.ok) {
-          throw new Error('Failed to fetch servers');
-        }
-        const data = await response.json();
-        setServers(data);
-      } catch (err) {
-        console.error(err);
-        setError('Error fetching servers');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    fetchServers();
-  }, []);
+  const {
+    data: servers = [],
+    error: serversError,
+    isLoading: loading,
+  } = useSWR('/api/authenticated/admin/servers', fetchServers, {
+    revalidateOnFocus: false,
+    onError: (err) => console.error(err),
+  });
+  const error = serversError ? 'Error fetching servers' : '';
 
   // Fetch categories whenever the selected server changes
-  useEffect(() => {
-    const fetchCategories = async () => {
-      if (selectedServers.length === 0) {
-        setCategories([]);
-        return;
-      }
+  const {
+    data: categories = [],
+    error: categoriesError,
+    isLoading: loadingCategories,
+  } = useSWR(
+    selectedServers.length > 0 ? [selectedServers[0], '/api/logs/categories'] : null,
+    fetchCategories,
+    { revalidateOnFocus: false, onError: (err) => console.error(err) }
+  );
+  const categoryError = categoriesError ? 'Error fetching categories' : '';
 
-      setLoadingCategories(true);
-      setCategoryError('');
-      setSelectedCategory(''); // Reset selected category when servers change
-
-      try {
-        // Assuming you fetch categories from the first selected server
-        const serverEndpoint = selectedServers[0];
-        const response = await fetch(`${serverEndpoint}/api/logs/categories`);
-        if (!response.ok) {
-          throw new Error('Failed to fetch categories');
-        }
-        const data = await response.json();
-        setCategories(data);
-      } catch (err) {
-        console.error(err);
-        setCategoryError('Error fetching categories');
-      } finally {
-        setLoadingCategories(false);
-      }
-    };
-
-    fetchCategories();
-  }, [selectedServers]);
-
-  // Update log URL whenever selected servers or category changes
-  useEffect(() => {
-    if (selectedServers.length === 0) {
-      setLogUrl('');
-    } else if (selectedServers.length === 1) {
-      const serverEndpoint = selectedServers[0];
-      let url = `${serverEndpoint}/api/logs?format=logViewer`;
-
-      if (selectedCategory) {
-        url += `&category=${encodeURIComponent(selectedCategory)}`;
-      }
-
-      setLogUrl(url);
-    } else {
-      setLogUrl('');
+  // Derive log URL from the selected servers and category
+  let logUrl = '';
+  if (selectedServers.length === 1) {
+    const serverEndpoint = selectedServers[0];
+    logUrl = `${serverEndpoint}/api/logs?format=logViewer`;
+    if (selectedCategory) {
+      logUrl += `&category=${encodeURIComponent(selectedCategory)}`;
     }
-  }, [selectedServers, selectedCategory]);
+  }
 
   // Handle server selection
   const handleServerSelection = (e) => {
     const { value } = e.target;
 
+    // Reset selected category whenever the selected server changes
+    setSelectedCategory('');
+
     if (value === '') {
       // Reset states if "Select Server(s)" is chosen
       setSelectedServers([]);
-      setSelectedCategory('');
-      setCategories([]);
-      setLogUrl('');
     } else {
       setSelectedServers([value]);
     }

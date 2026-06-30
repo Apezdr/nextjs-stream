@@ -19,10 +19,12 @@ import {
   MediaType,
   SyncOperation,
   BatchSyncResult,
-  syncEventBus
+  syncEventBus,
+  planFieldCleanup,
+  type CleanableField
 } from '../../core'
 
-import { TVShowRepository, EpisodeRepository } from '../../infrastructure'
+import { TVShowRepository, EpisodeRepository, SeasonRepository } from '../../infrastructure'
 import { SeasonSyncService } from './SeasonSyncService'
 import { EpisodeSyncService } from './EpisodeSyncService'
 import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
@@ -32,12 +34,22 @@ import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Show')
 
+// Show-level asset fields eligible for field-absence cleanup. TV uses BARE field
+// paths (no `urls.` prefix) — show fileAvailability is built from the show object
+// directly. See src/utils/flatSync/tvShows/{poster,backdrop,logos}.js.
+const TVSHOW_CLEANABLE_FIELDS: CleanableField[] = [
+  { entityField: 'posterURL', fieldPath: 'poster', companions: ['posterSource', 'posterBlurhash', 'posterBlurhashSource'] },
+  { entityField: 'backdrop', fieldPath: 'backdrop', companions: ['backdropSource', 'backdropBlurhash', 'backdropBlurhashSource'] },
+  { entityField: 'logo', fieldPath: 'logo', companions: ['logoSource', 'logoBlurhash'] },
+]
+
 export class TVShowSyncService {
   constructor(
     private readonly tvShowRepository: TVShowRepository,
     private readonly seasonSyncService: SeasonSyncService,
     private readonly episodeSyncService: EpisodeSyncService,
-    private readonly episodeRepository: EpisodeRepository
+    private readonly episodeRepository: EpisodeRepository,
+    private readonly seasonRepository: SeasonRepository
   ) {}
 
   /**
@@ -74,8 +86,16 @@ export class TVShowSyncService {
             const actualEpisodes = expectedEpisodes > 0
               ? await this.episodeRepository.getEpisodeCount(cached.title)
               : 0
+            // Season-count drift: a past cleanup can delete a show's seasons while
+            // leaving its episodes intact and its hash unchanged. Without this
+            // check the show would be skipped forever and the seasons never
+            // re-created (episodes render under seasons, so the UI shows nothing).
+            const expectedSeasons = this.countExpectedSeasons(showTitle, context)
+            const actualSeasons = expectedSeasons > 0
+              ? await this.seasonRepository.getSeasonCount(cached.title)
+              : 0
 
-            if (actualEpisodes >= expectedEpisodes) {
+            if (actualEpisodes >= expectedEpisodes && actualSeasons >= expectedSeasons) {
               syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
                 totalOperations: 0, successful: 0, failed: 0
               })
@@ -86,9 +106,9 @@ export class TVShowSyncService {
 
             syncLogger.info(
               `Show "${showTitle}": hashes match but DB has ${actualEpisodes}/${expectedEpisodes} ` +
-              `episodes — forcing full sync to repair drift`
+              `episodes, ${actualSeasons}/${expectedSeasons} seasons — forcing full sync to repair drift`
             )
-            // fall through to full sync — missing episodes will be $setOnInsert'd
+            // fall through to full sync — missing seasons/episodes will be $setOnInsert'd
           }
         }
       }
@@ -100,12 +120,28 @@ export class TVShowSyncService {
       const showFileData = context.fileServerData?.tv?.[showTitle]
       const showEntity = await this.buildTVShowEntity(showTitle, showFileData, context, existing)
 
-      // 3. Smart write — $set changed fields only, skip if nothing changed
-      await this.tvShowRepository.smartUpsert(showEntity, existing)
+      // Field-absence cleanup: drop show-level assets no enabled server reports
+      // anymore. planFieldCleanup logs (both modes) and returns `unset` only in
+      // enforce. showTitle is the originalTitle (fieldAvailability key).
+      const cleanupPlan = planFieldCleanup({
+        cleanup: context.cleanup,
+        mediaType: 'tv',
+        availabilityKey: showTitle,
+        entity: existing,
+        fieldAvailability: context.fieldAvailability,
+        fields: TVSHOW_CLEANABLE_FIELDS,
+        log: (obj, msg) => pinoLog.info(obj, msg),
+        logContext: { show: showEntity.title, originalTitle: showTitle },
+      })
+
+      // 3. Smart write — $set changed fields only, skip if nothing changed,
+      //    plus $unset any cleared assets (enforce mode).
+      await this.tvShowRepository.smartUpsert(showEntity, existing, { unset: cleanupPlan.unset })
 
       allResults.push(this.makeResult(
         showTitle, context, MediaType.TVShow, SyncOperation.Metadata,
-        SyncStatus.Completed, [`Upserted TV show "${showTitle}"`], []
+        SyncStatus.Completed, [`Upserted TV show "${showTitle}"`, ...cleanupPlan.changes], [],
+        { displayTitle: showEntity.title }
       ))
 
       // 4. Bulk-upsert all seasons (one bulkWrite per show)
@@ -218,6 +254,10 @@ export class TVShowSyncService {
     if (!fileData) return entity
 
     // --- Metadata (priority-gated) ---
+    // Tracks whether we have a CONFIRMED fresh metadata source. Default true so
+    // that "nothing to fetch" / "not metadata-authoritative" never blocks the
+    // syncHash gate; only an attempted-but-failed fetch flips it false.
+    let metadataFetchSucceeded = true
     const canUpdateMetadata = isCurrentServerHighestPriorityForField(
       context.fieldAvailability, 'tv', showTitle, 'metadata', context.serverConfig
     )
@@ -227,7 +267,10 @@ export class TVShowSyncService {
       let showMetadata: any = null
 
       if (typeof fileData.metadata === 'string') {
-        // URL path — fetch real metadata from the file server
+        // URL path — fetch real metadata from the file server. Mark the gate as
+        // not-yet-confirmed: only a usable response flips it back true below, so
+        // a failed/stale fetch leaves syncHash unstamped for retry next sync.
+        metadataFetchSucceeded = false
         try {
           showMetadata = await fetchMetadataMultiServer(
             context.serverConfig.id,
@@ -240,11 +283,12 @@ export class TVShowSyncService {
           // Fetch failed — preserve existing metadata
         }
       } else if (typeof fileData.metadata === 'object') {
-        // Already inline (rare, but handle gracefully)
+        // Already inline (rare, but handle gracefully) — a fresh source
         showMetadata = fileData.metadata
       }
 
       if (showMetadata && typeof showMetadata === 'object' && !showMetadata.error) {
+        metadataFetchSucceeded = true
         entity.metadata = showMetadata
         entity.metadataSource = context.serverConfig.id
 
@@ -347,9 +391,11 @@ export class TVShowSyncService {
       entity.seasonCount = Object.keys(fileData.seasons).length
     }
 
-    // Store incoming show hash so next sync can compare and potentially skip entire show
+    // Store incoming show hash so next sync can compare and potentially skip entire show.
+    // Gate on a confirmed fresh metadata fetch: a failed/stale fetch must NOT advance
+    // syncHash, or the spent gate would lock the show on stale metadata forever.
     const incomingShowHash = context.tvShowHashesCache?.titles?.[showTitle]?.hash
-    if (incomingShowHash) entity.syncHash = incomingShowHash
+    if (incomingShowHash && metadataFetchSucceeded) entity.syncHash = incomingShowHash
 
     // Store incoming contentHash (aggregate of per-episode hashes) so the next sync
     // can detect video-file changes at the show level. Distinct from syncHash.
@@ -371,6 +417,19 @@ export class TVShowSyncService {
       .reduce<number>((sum, s: any) => sum + Object.keys(s?.episodes || {}).length, 0)
   }
 
+  /**
+   * Count seasons expected for this show from the file-server data. Counts only
+   * keys that parse to a valid season number (matching what
+   * SeasonSyncService.parseSeasonNumber persists), so a non-numeric season key
+   * cannot perpetually force a full sync. Used as the "expected" side of the
+   * show-level season-drift check.
+   */
+  private countExpectedSeasons(showTitle: string, context: SyncContext): number {
+    const seasons = context.fileServerData?.tv?.[showTitle]?.seasons
+    if (!seasons) return 0
+    return Object.keys(seasons).filter(k => /(?:season_?|s)?(\d+)/i.test(k)).length
+  }
+
   private makeResult(
     entityId: string,
     context: SyncContext,
@@ -378,13 +437,18 @@ export class TVShowSyncService {
     operation: SyncOperation,
     status: SyncStatus,
     changes: string[],
-    errors: string[]
+    errors: string[],
+    metadata?: Record<string, any>
   ): SyncResult {
     return {
       status, entityId, mediaType, operation,
       serverId: context.serverConfig.id,
       timestamp: new Date(),
-      changes, errors
+      changes, errors,
+      // Carry the display title up to the adapter so post-sync cache
+      // invalidation can build the correct page tags (tags key on display
+      // title, not the originalTitle/showTitle filesystem key).
+      ...(metadata ? { metadata } : {})
     }
   }
 }

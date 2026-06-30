@@ -14,7 +14,10 @@ import {
   ValidationError,
   DatabaseError,
   syncEventBus,
-  validateEntityOrThrow
+  validateEntityOrThrow,
+  planFieldCleanup,
+  type CleanableField,
+  type CleanupPlan
 } from '../../core'
 
 import {
@@ -24,6 +27,20 @@ import {
 import {
   FileServerAdapter
 } from '../../core'
+
+import { createLogger } from '@src/lib/logger'
+
+const pinoLog = createLogger('Sync.Movie')
+
+// Movie asset fields eligible for field-absence cleanup. Paths carry the `urls.`
+// prefix (movie fileAvailability is built from movieData.urls.*). videoURL
+// (urls.mp4) and captions are deliberately excluded — higher-stakes / per-language.
+const MOVIE_CLEANABLE_FIELDS: CleanableField[] = [
+  { entityField: 'posterURL', fieldPath: 'urls.poster', companions: ['posterSource', 'posterBlurhash', 'posterBlurhashSource'] },
+  { entityField: 'backdrop', fieldPath: 'urls.backdrop', companions: ['backdropSource', 'backdropBlurhash', 'backdropBlurhashSource'] },
+  { entityField: 'logo', fieldPath: 'urls.logo', companions: ['logoSource', 'logoBlurhash'] },
+  { entityField: 'chapterURL', fieldPath: 'urls.chapters', companions: ['chapterSource'] },
+]
 
 export class MovieSyncService {
   private repository: MovieRepository
@@ -166,23 +183,76 @@ export class MovieSyncService {
       // ---- Consolidated write — single smartUpsert after all strategies ----
       const pending = context.pendingMovieUpdates.get(effectiveOriginalTitle) || {}
 
+      // A failed metadata fetch must not advance the metadata gate. If the
+      // metadata strategy reported Failed (fetch error, or it preserved existing
+      // metadata because the fetch came back empty), still persist whatever other
+      // strategies changed (e.g. asset URLs) but leave syncHash unstamped so the
+      // next sync retries the fetch. Without this, an asset-only change during a
+      // metadata-fetch failure would stamp syncHash to the current hash and lock
+      // the movie out of future metadata refreshes (the "spent gate" failure mode).
+      const metadataFetchFailed = results.some(
+        r => r.operation === SyncOperation.Metadata && r.status === SyncStatus.Failed
+      )
+
+      // Field-absence cleanup: drop asset fields no enabled server reports anymore
+      // (only meaningful for an existing doc). planFieldCleanup logs (both modes)
+      // and returns `unset` only in enforce. effectiveOriginalTitle is the
+      // fieldAvailability key.
+      const cleanupPlan: CleanupPlan = planFieldCleanup({
+        cleanup: context.cleanup,
+        mediaType: 'movies',
+        availabilityKey: effectiveOriginalTitle,
+        entity: existingMovie,
+        fieldAvailability: context.fieldAvailability,
+        fields: MOVIE_CLEANABLE_FIELDS,
+        log: (obj, msg) => pinoLog.info(obj, msg),
+        logContext: { title: (movie as any)?.title || effectiveTitle, originalTitle: effectiveOriginalTitle },
+      })
+      const hasUnset = !!cleanupPlan.unset?.length
+
       // Stamp syncHash so the next sync can early-skip via the Phase 2 check.
-      // Only stamped when at least one strategy made changes — if the sync was a
-      // no-op, leave any existing syncHash alone (consistent with smart-upsert philosophy).
+      // Only stamped when at least one strategy made changes AND the metadata
+      // fetch did not fail — if the sync was a no-op, leave any existing syncHash
+      // alone (consistent with smart-upsert philosophy).
       if (Object.keys(pending).length > 0) {
         const incomingHash = context.metadataHashesCache?.titles?.[effectiveOriginalTitle]?.hash
-        if (incomingHash) {
+        if (incomingHash && !metadataFetchFailed) {
           pending.syncHash = incomingHash
           context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
         }
+      }
 
+      // Write when strategies changed something OR there are fields to clear. A
+      // pure field-absence pass (empty pending + unset) must still write.
+      if (Object.keys(pending).length > 0 || hasUnset) {
         if (!existingMovie) {
-          // New document — full insert from the accumulated pending fields
+          // New document — full insert from the accumulated pending fields (no unset)
           await this.repository.upsert({ ...movie, ...pending } as any)
         } else {
-          // Existing document — diff against the pre-loop snapshot, write only changes
-          await this.repository.smartUpsert({ ...existingMovie, ...pending } as any, existingMovie as any)
+          // Existing document — diff against the pre-loop snapshot, write only changes,
+          // and $unset any fields that vanished from every server.
+          await this.repository.smartUpsert(
+            { ...existingMovie, ...pending } as any,
+            existingMovie as any,
+            { unset: cleanupPlan.unset }
+          )
         }
+      }
+
+      // Stamp the resolved display title onto completed results so the post-sync
+      // cache invalidation can build the correct `movie-details-<displayTitle>`
+      // tag. `movie.title` reflects metadata-strategy updates (line ~141 spread);
+      // fall back to the filesystem key only when no display title is available.
+      const movieDisplayTitle = (movie as any)?.title || effectiveTitle
+      for (const r of results) {
+        if (r.status === SyncStatus.Completed) {
+          r.metadata = { ...r.metadata, displayTitle: movieDisplayTitle }
+        }
+      }
+      // Surface field-absence diagnostics on the first completed result (once).
+      if (cleanupPlan.changes.length > 0) {
+        const firstCompleted = results.find(r => r.status === SyncStatus.Completed)
+        if (firstCompleted) firstCompleted.changes = [...firstCompleted.changes, ...cleanupPlan.changes]
       }
 
       syncEventBus.emitComplete(title, MediaType.Movie, context.serverConfig.id, undefined, {

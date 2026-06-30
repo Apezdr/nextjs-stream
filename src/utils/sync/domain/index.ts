@@ -15,9 +15,6 @@ export * from './tv'
 // TV show domain
 export * from './tvShows'
 
-// Episode domain
-export * from './episodes'
-
 // Season domain
 export * from './seasons'
 
@@ -42,10 +39,13 @@ export {
   TVShowAssetStrategy
 } from './tvShows'
 
+// EpisodeSyncService is the production read-merge-replace service from './tv'
+// (re-exported via `export * from './tv'` above, and aliased as
+// EpisodeSyncServiceCore). The former strategy-based './episodes' variant was
+// an unwired early experiment and has been removed.
 export {
-  EpisodeSyncService,
-  EpisodeContentStrategy
-} from './episodes'
+  EpisodeSyncService
+} from './tv'
 
 export {
   SeasonSyncService,

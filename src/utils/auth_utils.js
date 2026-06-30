@@ -429,6 +429,7 @@ export async function sanitizeRecord(record, type, context = {}) {
     if (context.dateContext === 'watchHistory' || context.dateTypes?.includes('lastWatched')) {
       if (context.lastWatchedVideo?.lastUpdated && context.lastWatchedVideo?.playbackTime) {
         dateValues.lastWatchedDate = formatDateToEST(context.lastWatchedVideo.lastUpdated);
+        dateValues.lastWatchedTimestamp = context.lastWatchedVideo.lastUpdated;
         dateValues.playbackTime = context.lastWatchedVideo.playbackTime;
       }
     }
@@ -466,6 +467,7 @@ export async function sanitizeRecord(record, type, context = {}) {
       // For watched history
       if (context.lastWatchedVideo?.lastUpdated) {
         dateValues.lastWatchedDate = formatDateToEST(context.lastWatchedVideo.lastUpdated);
+        dateValues.lastWatchedTimestamp = context.lastWatchedVideo.lastUpdated;
       }
       // For recently added
       else if (record.mediaLastModified || record?.episode?.mediaLastModified) {

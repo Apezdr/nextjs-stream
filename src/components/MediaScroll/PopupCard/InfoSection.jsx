@@ -217,6 +217,7 @@ const InfoSection = ({
               href={`/list/${type}/${link}`}
               className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
               onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${link}`)}
+              prefetch={true}
             >
               <InformationCircleIcon className="size-6 mr-0 sm:mr-2" />
               <span className="hidden sm:inline">

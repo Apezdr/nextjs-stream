@@ -1,14 +1,17 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useEffect, useEffectEvent } from 'react'
 import { createPortal } from 'react-dom'
 
 export default function Modal({ isOpen, onClose, children, className = '' }) {
+  // Effect Event: always sees the latest onClose without re-subscribing the listener
+  const onEscape = useEffectEvent(() => onClose())
+
   // Handle escape key
   useEffect(() => {
     const handleEscape = (e) => {
       if (e.key === 'Escape') {
-        onClose()
+        onEscape()
       }
     }
 
@@ -22,7 +25,7 @@ export default function Modal({ isOpen, onClose, children, className = '' }) {
       document.removeEventListener('keydown', handleEscape)
       document.body.style.overflow = 'unset'
     }
-  }, [isOpen, onClose])
+  }, [isOpen])
 
   if (!isOpen) return null
 

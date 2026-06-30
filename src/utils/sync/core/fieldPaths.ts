@@ -35,6 +35,10 @@ export type MovieFieldPath =
   | 'urls.posterBlurhash'
   | 'urls.backdropBlurhash'
   | 'urls.logoBlurhash'
+
+  // Backdrop focal-point hints (top-level scalars in fileServerData, NOT under urls.*)
+  | 'backdropFocal'
+  | 'backdropFocalSuggested'
   
   // Video content (stored as "urls.X" in fieldAvailability)
   | 'urls.mp4'
@@ -86,6 +90,10 @@ export const MovieFieldPathMap = {
   posterBlurhash: 'urls.posterBlurhash',
   backdropBlurhash: 'urls.backdropBlurhash',
   logoBlurhash: 'urls.logoBlurhash',
+
+  // Focal-point hints — top-level scalars in fileServerData, so no "urls." prefix
+  backdropFocal: 'backdropFocal',
+  backdropFocalSuggested: 'backdropFocalSuggested',
   
   // Video content - Note the "urls." prefix!
   videoURL: 'urls.mp4',

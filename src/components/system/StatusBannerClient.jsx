@@ -1,7 +1,34 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useReducer, useSyncExternalStore } from 'react';
 import { useSystemStatus } from '@src/contexts/SystemStatusContext';
+
+// Banner presentation state (dismissal, tracked level, dock/expand) transitions together,
+// so it lives in one reducer. timeAgoRefresh stays a standalone re-render tick.
+const initialBannerState = {
+  dismissed: false,
+  trackedLevel: null,
+  docked: false,
+  expanded: false,
+};
+
+function bannerReducer(state, action) {
+  switch (action.type) {
+    case 'levelChanged':
+      // Reset dismissal when the status level changes (deriving state from props).
+      return { ...state, trackedLevel: action.level, dismissed: false };
+    case 'dismiss':
+      return { ...state, dismissed: true };
+    case 'dock':
+      return { ...state, docked: true };
+    case 'expand':
+      return { ...state, expanded: true };
+    case 'collapse':
+      return { ...state, expanded: false };
+    default:
+      return state;
+  }
+}
 
 /**
  * Format a date string as "time ago"
@@ -30,10 +57,25 @@ function formatTimeAgo(dateStr) {
  * Uses SystemStatusContext for data fetching with automatic refreshing
  */
 export default function StatusBannerClient({ status: initialStatus }) {
-  const [timeAgoRefresh, setTimeAgoRefresh] = useState(0); // Trigger time ago refreshes
-  
+  const [, setTimeAgoRefresh] = useState(0); // Trigger time ago refreshes
+
+  // useSyncExternalStore with a server snapshot of `false` is the official React
+  // API for client-only values. The server/SSR render always receives the server
+  // snapshot (`false`), while the browser receives the client snapshot (`true`).
+  // This prevents the hydration mismatch caused by SWR's `isLoading` being `true`
+  // on the first client render while the server rendered with `false`.
+  const isMounted = useSyncExternalStore(
+    // subscribe: no external store to subscribe to — value never changes after mount
+    (cb) => { cb(); return () => {}; },
+    () => true,   // client snapshot: always mounted in the browser
+    () => false,  // server snapshot: never mounted during SSR
+  );
+
   // Use SystemStatusContext for consistent data fetching
-  const { status: contextStatus, loading: isLoading, refetch } = useSystemStatus();
+  const { status: contextStatus, loading: isLoadingRaw, refetch } = useSystemStatus();
+
+  // Only expose loading state after hydration to prevent server/client mismatch
+  const isLoading = isMounted && isLoadingRaw;
   
   // Process the context data to determine the current status to display
   const status = useMemo(() => {
@@ -87,16 +129,17 @@ export default function StatusBannerClient({ status: initialStatus }) {
     return initialStatus;
   }, [contextStatus, initialStatus]);
   
-  // Track dismissal and status level changes
-  const [dismissed, setDismissed] = useState(false);
-  const [trackedLevel, setTrackedLevel] = useState(status.level);
-  
+  // Track dismissal, status level changes, and dock/expand presentation in one reducer.
+  const [{ dismissed, trackedLevel, docked, expanded }, dispatchBanner] = useReducer(
+    bannerReducer,
+    initialBannerState
+  );
+
   // Reset dismissal when status level changes (React-approved pattern for deriving state from props)
   if (trackedLevel !== status.level) {
-    setTrackedLevel(status.level);
-    setDismissed(false);
+    dispatchBanner({ type: 'levelChanged', level: status.level });
   }
-  
+
   // Derive visibility: not dismissed (critical status forces visibility through reset above)
   const visible = !dismissed;
   
@@ -114,15 +157,11 @@ export default function StatusBannerClient({ status: initialStatus }) {
     await refetch(); // This will trigger a fresh fetch through the context
   };
   
-  // State for auto-dock behavior
-  const [docked, setDocked] = useState(false);
-  const [expanded, setExpanded] = useState(false);
-
   // Auto-dock timer for elevated/heavy status (not critical)
   useEffect(() => {
     if (status.level === 'elevated' || status.level === 'heavy') {
       const timer = setTimeout(() => {
-        setDocked(true);
+        dispatchBanner({ type: 'dock' });
       }, 4000); // 4 seconds
 
       return () => clearTimeout(timer);
@@ -207,7 +246,7 @@ export default function StatusBannerClient({ status: initialStatus }) {
                 </svg>
               </button>
               <button
-                onClick={() => setDismissed(true)}
+                onClick={() => dispatchBanner({ type: 'dismiss' })}
                 className="p-2 rounded hover:bg-red-700 transition-colors"
                 aria-label="Dismiss"
               >
@@ -226,7 +265,7 @@ export default function StatusBannerClient({ status: initialStatus }) {
     return (
       <div 
         className="fixed bottom-4 left-3 sm:left-3 z-50 group cursor-pointer"
-        onClick={() => setExpanded(true)}
+        onClick={() => dispatchBanner({ type: 'expand' })}
       >
         <div className="rounded-full bg-[rgba(18,18,24,0.55)] backdrop-blur-md border border-white/10 shadow-lg px-3 py-2 flex items-center gap-2 transition-all duration-300 hover:bg-[rgba(18,18,24,0.75)]">
           <span className="text-sm" aria-hidden="true">{statusInfo.icon}</span>
@@ -246,7 +285,7 @@ export default function StatusBannerClient({ status: initialStatus }) {
       {expanded && (
         <div 
           className="fixed inset-0 z-40 bg-black/20"
-          onClick={() => setExpanded(false)}
+          onClick={() => dispatchBanner({ type: 'collapse' })}
         />
       )}
       
@@ -260,7 +299,7 @@ export default function StatusBannerClient({ status: initialStatus }) {
         `}>
           {/* Close button - top right corner */}
           <button
-            onClick={() => setDismissed(true)}
+            onClick={() => dispatchBanner({ type: 'dismiss' })}
             className="absolute top-3 right-3 p-1.5 rounded-lg hover:bg-white/10 transition-all duration-200 text-white/50 hover:text-white text-lg leading-none"
             aria-label="Dismiss"
             title="Dismiss notification"

@@ -201,9 +201,11 @@ export function exportToVTT(subtitles) {
   let content = 'WEBVTT\n\n'
 
   subtitles.forEach((subtitle, index) => {
-    // Extract cue number from id if possible, otherwise use index+1
+    // Extract cue number from id if possible, otherwise use index+1.
+    // The id may be a number (newly-added/split subtitles use Date.now()-based ids)
+    // or a non-"sub-" string — fall through to index+1 in those cases.
     let cueNumber = index + 1
-    if (subtitle.id && subtitle.id.startsWith('sub-')) {
+    if (typeof subtitle.id === 'string' && subtitle.id.startsWith('sub-')) {
       const extractedNumber = subtitle.id.replace('sub-', '')
       if (!isNaN(parseInt(extractedNumber))) {
         cueNumber = extractedNumber

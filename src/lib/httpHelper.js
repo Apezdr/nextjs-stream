@@ -220,12 +220,20 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
               }
             }
             
-            // For other types, return the cached data directly
-            cacheLog.hit(url, responseType, 
+            // For other types, return the cached data directly.
+            cacheLog.hit(url, responseType,
               typeof cachedEntry.data === 'string' ? cachedEntry.data.length : undefined);
-            
-            return { 
-              data: cachedEntry.data, 
+
+            // Stored entries are wrapped as { _dataType, _isBuffer, data }. Return the
+            // inner payload so a cache hit matches the shape of a fresh response
+            // (which returns the bare body) — otherwise callers receive the envelope.
+            let hitData = cachedEntry.data;
+            if (hitData && typeof hitData === 'object' && '_dataType' in hitData && 'data' in hitData) {
+              hitData = hitData.data;
+            }
+
+            return {
+              data: hitData,
               headers: responseHeaders,
               meta: { source: 'cache', originalType: responseType }
             };

@@ -21,6 +21,7 @@ import Link from 'next/link'
 import SkeletonCard from '@components/SkeletonCard'
 import Loading from '@src/app/loading'
 import { getTVListData } from '@src/utils/actions/mediaListActions'
+import { tvPosterName } from '@src/utils/viewTransitionNames'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -38,9 +39,9 @@ const TVCard = memo(({ tv, index }) => {
         duration: 0.4,
       }}
     >
-      <Link href={`/list/tv/${encodeURIComponent(tv.title)}`} className="group" scroll={true}>
+      <Link href={`/list/tv/${encodeURIComponent(tv.title)}`} className="group" scroll={true} prefetch={true}>
         <Suspense fallback={<SkeletonCard key={index} heightClass={'h-[582px]'} imageOnly />}>
-          <Detailed tvShow={tv} check4kandHDR={true} />
+          <Detailed tvShow={tv} check4kandHDR={true} viewTransitionName={tvPosterName(tv.title)} />
         </Suspense>
       </Link>
     </PageContentAnimatePresence>
@@ -116,15 +117,15 @@ export default function TVListClient({ initialFilters, initialData }) {
   const isFirstRenderRef = useRef(true);
   
   // Client-owned filter state (single source of truth)
-  const [filters, setFilters] = useState({
+  const [filters, setFilters] = useState(() => ({
     sortOrder: initialFilters.sortOrder,
     genres: initialFilters.genres,
     hdrTypes: initialFilters.hdrTypes
-  });
-  const [page, setPage] = useState(initialFilters.page);
-  
+  }));
+  const [page, setPage] = useState(() => initialFilters.page);
+
   // Data state (fetched based on filters + page)
-  const [data, setData] = useState(initialData);
+  const [data, setData] = useState(() => initialData);
   
   /**
    * Fetch data whenever filters or page change (after initial load)

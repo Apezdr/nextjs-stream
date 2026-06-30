@@ -34,7 +34,7 @@ function StatCard({ label, value, icon: Icon, accent = 'blue' }) {
 }
 
 export default function UserAdmin({ processedUserData }) {
-  const [_processedUserData, setProcessedUserData] = useState(processedUserData)
+  const [_processedUserData, setProcessedUserData] = useState(() => processedUserData)
 
   async function updateProcessedData() {
     const url = '/api/authenticated/admin/users'

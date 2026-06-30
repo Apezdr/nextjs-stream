@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, use, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, use, useRef, useMemo, useReducer } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { toast } from 'react-toastify'
@@ -193,14 +193,163 @@ function useWatchlistAPI() {
   }
 }
 
+// Resolve a useState-style updater (value or `prev => next`) against the
+// current slice value so reducer-backed setters preserve identical semantics.
+function resolveValue(updaterOrValue, current) {
+  return typeof updaterOrValue === 'function' ? updaterOrValue(current) : updaterOrValue
+}
+
+// Domain data lifecycle: playlists, the active playlist, its items, and the
+// aggregate summary. Actions accept either a direct value or a functional
+// updater to match the previous useState setter behavior exactly.
+const initialDataState = {
+  playlists: [],
+  currentPlaylist: null,
+  currentItems: [],
+  summary: null,
+}
+
+function dataReducer(state, action) {
+  switch (action.type) {
+    case 'SET_PLAYLISTS':
+      return { ...state, playlists: resolveValue(action.value, state.playlists) }
+    case 'SET_CURRENT_PLAYLIST':
+      return { ...state, currentPlaylist: resolveValue(action.value, state.currentPlaylist) }
+    case 'SET_CURRENT_ITEMS':
+      return { ...state, currentItems: resolveValue(action.value, state.currentItems) }
+    case 'SET_SUMMARY':
+      return { ...state, summary: resolveValue(action.value, state.summary) }
+    default:
+      return state
+  }
+}
+
+// Granular loading lifecycle flags.
+const initialLoadingState = {
+  playlistsLoading: true,
+  itemsLoading: false,
+  summaryLoading: true,
+  initializing: true,
+}
+
+function loadingReducer(state, action) {
+  switch (action.type) {
+    // Combined action used by the one-time initialization effect to mark the
+    // start of the load in a single dispatch.
+    case 'INIT_START':
+      return { ...state, initializing: true, playlistsLoading: true, summaryLoading: true }
+    case 'SET_PLAYLISTS_LOADING':
+      return { ...state, playlistsLoading: action.value }
+    case 'SET_ITEMS_LOADING':
+      return { ...state, itemsLoading: action.value }
+    case 'SET_SUMMARY_LOADING':
+      return { ...state, summaryLoading: action.value }
+    case 'SET_INITIALIZING':
+      return { ...state, initializing: action.value }
+    default:
+      return state
+  }
+}
+
+// Search/filter state cluster.
+const initialSearchState = {
+  searchResults: { watchlist: [], tmdbInternal: [], tmdbExternal: [] },
+  isSearching: false,
+  // Infinite scroll for the "Add from TMDB" results: `loadingMore` shows the
+  // bottom spinner while the next TMDB page is fetched; `hasMore` gates whether
+  // scrolling should request more (true while either movie/tv search has pages left).
+  loadingMore: false,
+  hasMore: false,
+}
+
+function searchReducer(state, action) {
+  switch (action.type) {
+    case 'SET_SEARCH_RESULTS':
+      return { ...state, searchResults: resolveValue(action.value, state.searchResults) }
+    case 'SET_IS_SEARCHING':
+      return { ...state, isSearching: action.value }
+    case 'SET_LOADING_MORE':
+      return { ...state, loadingMore: action.value }
+    case 'SET_HAS_MORE':
+      return { ...state, hasMore: action.value }
+    default:
+      return state
+  }
+}
+
+// Modal/dialog visibility and their associated targets.
+const initialModalState = {
+  showShareModal: false,
+  sharePlaylistId: null,
+  showMoveModal: false,
+  showCopyModal: false,
+  moveItemData: null,
+  showManageRows: false,
+  showAdminRows: false,
+}
+
+function modalReducer(state, action) {
+  switch (action.type) {
+    case 'SET_SHOW_MANAGE_ROWS':
+      return { ...state, showManageRows: action.value }
+    case 'SET_SHOW_ADMIN_ROWS':
+      return { ...state, showAdminRows: action.value }
+    // Composite actions consolidate the paired open/close transitions.
+    case 'OPEN_SHARE':
+      return { ...state, sharePlaylistId: action.value, showShareModal: true }
+    case 'CLOSE_SHARE':
+      return { ...state, showShareModal: false, sharePlaylistId: null }
+    case 'OPEN_MOVE':
+      return { ...state, moveItemData: action.value, showMoveModal: true }
+    case 'CLOSE_MOVE':
+      return { ...state, showMoveModal: false, moveItemData: null }
+    case 'OPEN_COPY':
+      return { ...state, moveItemData: action.value, showCopyModal: true }
+    case 'CLOSE_COPY':
+      return { ...state, showCopyModal: false, moveItemData: null }
+    default:
+      return state
+  }
+}
+
+// Sort/order/reorder control cluster.
+const initialSortState = {
+  sortBy: 'dateAdded', // 'dateAdded', 'title', 'releaseDate'
+  sortOrder: 'desc', // 'asc' or 'desc'
+  sortError: null,
+  sortLocked: true, // Default to locked
+  isReordering: false,
+}
+
+function sortReducer(state, action) {
+  switch (action.type) {
+    case 'SET_SORT_BY':
+      return { ...state, sortBy: resolveValue(action.value, state.sortBy) }
+    case 'SET_SORT_ORDER':
+      return { ...state, sortOrder: resolveValue(action.value, state.sortOrder) }
+    case 'SET_SORT_ERROR':
+      return { ...state, sortError: resolveValue(action.value, state.sortError) }
+    case 'SET_SORT_LOCKED':
+      return { ...state, sortLocked: resolveValue(action.value, state.sortLocked) }
+    case 'SET_IS_REORDERING':
+      return { ...state, isReordering: action.value }
+    default:
+      return state
+  }
+}
+
 export default function WatchlistPage({ user }) {
   const searchParams = useSearchParams()
   const router = useRouter()
   const api = useWatchlistAPI()
-  
-  const [playlists, setPlaylists] = useState([])
-  const [currentPlaylist, setCurrentPlaylist] = useState(null)
-  const [currentItems, setCurrentItems] = useState([])
+
+  // --- Domain data lifecycle (reducer-backed) ---
+  const [dataState, dispatchData] = useReducer(dataReducer, initialDataState)
+  const { playlists, currentPlaylist, currentItems, summary } = dataState
+  const setPlaylists = useCallback((value) => dispatchData({ type: 'SET_PLAYLISTS', value }), [])
+  const setCurrentPlaylist = useCallback((value) => dispatchData({ type: 'SET_CURRENT_PLAYLIST', value }), [])
+  const setCurrentItems = useCallback((value) => dispatchData({ type: 'SET_CURRENT_ITEMS', value }), [])
+  const setSummary = useCallback((value) => dispatchData({ type: 'SET_SUMMARY', value }), [])
 
   const ownerDefaultPlaylist = useMemo(() => {
     return (
@@ -240,26 +389,50 @@ export default function WatchlistPage({ user }) {
     return playlistId === 'default' && playlist.isOwner && playlist.isDefault
   }, [])
   
-  // Granular loading states
-  const [playlistsLoading, setPlaylistsLoading] = useState(true)
-  const [itemsLoading, setItemsLoading] = useState(false)
-  const [summaryLoading, setSummaryLoading] = useState(true)
-  const [initializing, setInitializing] = useState(true)
-  
-  
+  // --- Granular loading lifecycle (reducer-backed) ---
+  const [loadingState, dispatchLoading] = useReducer(loadingReducer, initialLoadingState)
+  const { playlistsLoading, itemsLoading, summaryLoading, initializing } = loadingState
+  const setPlaylistsLoading = useCallback((value) => dispatchLoading({ type: 'SET_PLAYLISTS_LOADING', value }), [])
+  const setItemsLoading = useCallback((value) => dispatchLoading({ type: 'SET_ITEMS_LOADING', value }), [])
+  const setSummaryLoading = useCallback((value) => dispatchLoading({ type: 'SET_SUMMARY_LOADING', value }), [])
+
+  // --- Search/filter cluster (reducer-backed) ---
+  const [searchState, dispatchSearch] = useReducer(searchReducer, initialSearchState)
+  const { searchResults, isSearching, loadingMore, hasMore } = searchState
+  const setSearchResults = useCallback((value) => dispatchSearch({ type: 'SET_SEARCH_RESULTS', value }), [])
+  const setIsSearching = useCallback((value) => dispatchSearch({ type: 'SET_IS_SEARCHING', value }), [])
+  const setLoadingMore = useCallback((value) => dispatchSearch({ type: 'SET_LOADING_MORE', value }), [])
+  const setHasMore = useCallback((value) => dispatchSearch({ type: 'SET_HAS_MORE', value }), [])
+
+  // searchQuery is an independent controlled input value
   const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState({ watchlist: [], tmdbInternal: [], tmdbExternal: [] })
-  const [isSearching, setIsSearching] = useState(false)
-  
+
   // Request ID counter to prevent race conditions in search
   const searchRequestIdRef = useRef(0)
+
+  // Cursor for paging the "Add from TMDB" results as the dropdown is scrolled.
+  // Holds the active query, the request id that produced it (so a stale load-more
+  // is dropped), per-type page/total-page counters, the database TMDB-id set used
+  // to keep already-owned titles out, and the keys already shown (cross-page dedup).
+  const searchPagingRef = useRef(null)
+  // Synchronous guard so overlapping scroll events can't fire concurrent fetches.
+  const loadingMoreRef = useRef(false)
+
+  // selectedItems is independent selection state
   const [selectedItems, setSelectedItems] = useState(new Set())
-  const [showShareModal, setShowShareModal] = useState(false)
-  const [sharePlaylistId, setSharePlaylistId] = useState(null)
-  const [showMoveModal, setShowMoveModal] = useState(false)
-  const [showCopyModal, setShowCopyModal] = useState(false)
-  const [moveItemData, setMoveItemData] = useState(null)
-  const [showManageRows, setShowManageRows] = useState(false)
+
+  // --- Modal/dialog cluster (reducer-backed) ---
+  const [modalState, dispatchModal] = useReducer(modalReducer, initialModalState)
+  const {
+    showShareModal,
+    sharePlaylistId,
+    showMoveModal,
+    showCopyModal,
+    moveItemData,
+    showManageRows,
+    showAdminRows,
+  } = modalState
+
   const [viewMode, setViewMode] = useState(() => {
     // Initialize from localStorage if available, fallback to 'grid'
     if (typeof window !== 'undefined') {
@@ -267,18 +440,19 @@ export default function WatchlistPage({ user }) {
     }
     return 'grid'
   }) // 'grid' or 'list'
-  const [sortBy, setSortBy] = useState('dateAdded') // 'dateAdded', 'title', 'releaseDate'
-  const [sortOrder, setSortOrder] = useState('desc') // 'asc' or 'desc'
+
+  // filterType is independent client-side filter state
   const [filterType, setFilterType] = useState('all') // 'all', 'movie', 'tv'
-  const [summary, setSummary] = useState(null)
-  
-  // State for sort errors
-  const [sortError, setSortError] = useState(null)
-  
-  // State for sort/order lock functionality
-  const [sortLocked, setSortLocked] = useState(true) // Default to locked
-  const [showAdminRows, setShowAdminRows] = useState(false)
-  
+
+  // --- Sort/order/reorder control cluster (reducer-backed) ---
+  const [sortState, dispatchSort] = useReducer(sortReducer, initialSortState)
+  const { sortBy, sortOrder, sortError, sortLocked, isReordering } = sortState
+  const setSortBy = useCallback((value) => dispatchSort({ type: 'SET_SORT_BY', value }), [])
+  const setSortOrder = useCallback((value) => dispatchSort({ type: 'SET_SORT_ORDER', value }), [])
+  const setSortError = useCallback((value) => dispatchSort({ type: 'SET_SORT_ERROR', value }), [])
+  const setSortLocked = useCallback((value) => dispatchSort({ type: 'SET_SORT_LOCKED', value }), [])
+  const setIsReordering = useCallback((value) => dispatchSort({ type: 'SET_IS_REORDERING', value }), [])
+
   // Helper function to check if user has edit permissions
   // Use the canEdit field from the playlist data (computed server-side)
   const canEditPlaylist = useMemo(() => {
@@ -445,9 +619,6 @@ export default function WatchlistPage({ user }) {
     return sortedItems
   }, [])
   
-  // State for tracking if we're currently reordering
-  const [isReordering, setIsReordering] = useState(false)
-  
   // Debouncing for sort changes
   const sortChangeTimeout = useRef(null)
   
@@ -480,40 +651,40 @@ export default function WatchlistPage({ user }) {
   // Unified initial data loading - runs only once on mount
   useEffect(() => {
     const initializeWatchlist = async () => {
-      setInitializing(true)
-      setPlaylistsLoading(true)
-      setSummaryLoading(true)
-      
+      // Single combined dispatch marks the start of the initialization load
+      // (initializing + playlists + summary loading) in one call site.
+      dispatchLoading({ type: 'INIT_START' })
+
       try {
         // Capture initial playlist param from URL
         const initialPlaylistParam = searchParams.get('playlist')
-        
+
         // Fetch playlists and summary in parallel
         const [playlistsResult, summaryResult] = await Promise.allSettled([
           loadPlaylistsData(),
           loadSummaryData() // Load default summary initially
         ])
-        
+
         let loadedPlaylists = []
         if (playlistsResult.status === 'fulfilled') {
           loadedPlaylists = playlistsResult.value || []
-          setPlaylists(loadedPlaylists)
+          dispatchData({ type: 'SET_PLAYLISTS', value: loadedPlaylists })
         }
-        setPlaylistsLoading(false)
-        
+        dispatchLoading({ type: 'SET_PLAYLISTS_LOADING', value: false })
+
         if (summaryResult.status === 'fulfilled' && summaryResult.value) {
-          setSummary(summaryResult.value)
+          dispatchData({ type: 'SET_SUMMARY', value: summaryResult.value })
         }
-        setSummaryLoading(false)
-        
+        dispatchLoading({ type: 'SET_SUMMARY_LOADING', value: false })
+
         // Determine initial playlist from URL
         let targetPlaylistId = 'default'
-        
+
         if (initialPlaylistParam) {
           // Allow explicit playlist URL param; backend validates access.
           targetPlaylistId = initialPlaylistParam
         }
-        
+
         // If no valid playlist ID from URL, use default
         if (targetPlaylistId === 'default' && loadedPlaylists.length > 0) {
           const defaultPlaylist =
@@ -524,27 +695,27 @@ export default function WatchlistPage({ user }) {
             targetPlaylistId = defaultPlaylist.id
           }
         }
-        
+
         // Load playlist items for the initial playlist
         if (targetPlaylistId && loadedPlaylists.length > 0) {
           const loadedPlaylistData = await loadPlaylistItems(targetPlaylistId)
           lastLoadedPlaylistRef.current = targetPlaylistId
-          
+
           // Load specific summary for this playlist if it's not the default
           if (loadedPlaylistData && targetPlaylistId !== 'default') {
             const playlistSummary = await loadSummaryData(targetPlaylistId)
             if (playlistSummary) {
-              setSummary(playlistSummary)
+              dispatchData({ type: 'SET_SUMMARY', value: playlistSummary })
             }
           }
         }
-        
+
         // Ensure URL reflects the correct playlist (handle default playlist case)
         const defaultPlaylist =
           loadedPlaylists.find((p) => p.isOwner && p.isDefault) ||
           loadedPlaylists.find((p) => p.isOwner && p.id === 'default')
         const isDefaultPlaylist = defaultPlaylist && targetPlaylistId === defaultPlaylist.id
-        
+
         if (isDefaultPlaylist && initialPlaylistParam) {
           // Remove playlist param for default playlist.
           router.replace('/watchlist', { scroll: false, shallow: true })
@@ -552,12 +723,12 @@ export default function WatchlistPage({ user }) {
           // Add playlist param for non-default playlist
           router.replace(`/watchlist?playlist=${targetPlaylistId}`, { scroll: false, shallow: true })
         }
-        
+
       } catch (error) {
         console.error('Error initializing watchlist:', error)
         toast.error('Failed to initialize watchlist')
       } finally {
-        setInitializing(false)
+        dispatchLoading({ type: 'SET_INITIALIZING', value: false })
       }
     }
 
@@ -600,7 +771,7 @@ export default function WatchlistPage({ user }) {
     } finally {
       setPlaylistsLoading(false)
     }
-  }, [api])
+  }, [api, setPlaylists, setPlaylistsLoading])
 
   const loadPlaylistItems = useCallback(async (playlistId) => {
     setItemsLoading(true)
@@ -680,7 +851,7 @@ export default function WatchlistPage({ user }) {
     } finally {
       setItemsLoading(false)
     }
-  }, [api, playlists, router])
+  }, [api, playlists, router, setCurrentItems, setCurrentPlaylist, setItemsLoading, setSortBy, setSortOrder])
 
 
   const loadSummary = useCallback(async (playlistId = selectedPlaylistId) => {
@@ -693,7 +864,7 @@ export default function WatchlistPage({ user }) {
     } finally {
       setSummaryLoading(false)
     }
-  }, [api, selectedPlaylistId])
+  }, [api, selectedPlaylistId, setSummary, setSummaryLoading])
 
   // Debounced playlist loading function for rapid navigation - using ref pattern
   const debouncedLoadPlaylistRef = useRef(null)
@@ -748,7 +919,7 @@ export default function WatchlistPage({ user }) {
       toast.error(error?.message || 'Failed to update playlist')
       throw error
     }
-  }, [api, currentPlaylist, loadPlaylists])
+  }, [api, currentPlaylist, loadPlaylists, setCurrentPlaylist])
 
   const handleDeletePlaylist = useCallback(async (playlistId) => {
     try {
@@ -777,12 +948,14 @@ export default function WatchlistPage({ user }) {
       toast.error('Failed to delete playlist')
       throw error
     }
-  }, [api, selectedPlaylistId, playlists, router])
+  }, [api, selectedPlaylistId, playlists, router, setPlaylists])
 
   const handleSearch = useCallback(async (query) => {
     if (!query.trim()) {
       setSearchResults({ watchlist: [], tmdbInternal: [], tmdbExternal: [] })
       setIsSearching(false)
+      setHasMore(false)
+      searchPagingRef.current = null
       return
     }
 
@@ -870,10 +1043,12 @@ export default function WatchlistPage({ user }) {
                !existingTitleTypes.has(titleType)
       })
 
-      // Process TMDB results and check which ones are NOT in our database
+      // Process TMDB results and check which ones are NOT in our database.
+      // No per-type cap here — the full first page is shown and subsequent pages
+      // are appended on scroll (see loadMoreSearch).
       const allTmdbResults = [
-        ...(tmdbMovies.results || []).slice(0, 5).map(item => ({ ...item, media_type: 'movie' })),
-        ...(tmdbTVShows.results || []).slice(0, 5).map(item => ({ ...item, media_type: 'tv' }))
+        ...(tmdbMovies.results || []).map(item => ({ ...item, media_type: 'movie' })),
+        ...(tmdbTVShows.results || []).map(item => ({ ...item, media_type: 'tv' }))
       ]
       
       console.log(`[Search] TMDB returned ${tmdbMovies.results?.length || 0} movies, ${tmdbTVShows.results?.length || 0} TV shows`)
@@ -919,6 +1094,22 @@ export default function WatchlistPage({ user }) {
 
       // Final check before setting state
       if (currentRequestId === searchRequestIdRef.current) {
+        // Seed the paging cursor for "Add from TMDB" infinite scroll. TMDB pages
+        // are 20 items each; `total_pages` tells us when to stop.
+        searchPagingRef.current = {
+          query,
+          requestId: currentRequestId,
+          moviePage: tmdbMovies.page || 1,
+          movieTotalPages: tmdbMovies.total_pages || 1,
+          tvPage: tmdbTVShows.page || 1,
+          tvTotalPages: tmdbTVShows.total_pages || 1,
+          dbTmdbIds: allDatabaseTmdbIds,
+          shownKeys: new Set(externalTmdbResults.map(r => `${r.media_type}-${r.id}`)),
+        }
+        setHasMore(
+          searchPagingRef.current.moviePage < searchPagingRef.current.movieTotalPages ||
+            searchPagingRef.current.tvPage < searchPagingRef.current.tvTotalPages
+        )
         setSearchResults({
           watchlist: watchlistResults,
           tmdbInternal: internalResults,
@@ -939,7 +1130,93 @@ export default function WatchlistPage({ user }) {
         setIsSearching(false)
       }
     }
-  }, [currentItems])
+  }, [currentItems, setIsSearching, setSearchResults, setHasMore])
+
+  // Append the next page of "Add from TMDB" results when the dropdown is scrolled
+  // near its end. Pages the same query that produced the current list (via the
+  // paging cursor) and reuses the original database/playlist dedup so already-owned
+  // titles stay out. Because that dedup can empty a whole TMDB page, it keeps paging
+  // (bounded) until it gathers at least one new item or exhausts the result set.
+  const loadMoreSearch = useCallback(async () => {
+    const paging = searchPagingRef.current
+    if (!paging || !paging.query || loadingMoreRef.current) return
+
+    const stillHasMore = () =>
+      paging.moviePage < paging.movieTotalPages || paging.tvPage < paging.tvTotalPages
+    if (!stillHasMore()) return
+
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    const requestId = paging.requestId
+
+    try {
+      // Recompute the current-playlist dedup sets so items added since the initial
+      // search are still excluded.
+      const existingTmdbIds = new Set(currentItems.map(item => item.tmdbId).filter(Boolean))
+      const existingTitleTypes = new Set(
+        currentItems.map(item => `${item.title?.toLowerCase()}-${item.mediaType}`)
+      )
+
+      const collected = []
+      for (let i = 0; i < 5 && collected.length === 0 && stillHasMore(); i++) {
+        const movieHasMore = paging.moviePage < paging.movieTotalPages
+        const tvHasMore = paging.tvPage < paging.tvTotalPages
+        const nextMoviePage = movieHasMore ? paging.moviePage + 1 : paging.moviePage
+        const nextTvPage = tvHasMore ? paging.tvPage + 1 : paging.tvPage
+
+        const [movieRaw, tvRaw] = await Promise.all([
+          movieHasMore
+            ? searchMedia(paging.query, 'movie', { page: nextMoviePage }).catch(() => null)
+            : null,
+          tvHasMore ? searchMedia(paging.query, 'tv', { page: nextTvPage }).catch(() => null) : null,
+        ])
+
+        // Drop the result if a newer search (or cleared query) superseded this one.
+        if (requestId !== searchRequestIdRef.current || paging !== searchPagingRef.current) return
+
+        const movieData = movieRaw?.data || movieRaw || {}
+        const tvData = tvRaw?.data || tvRaw || {}
+
+        if (movieHasMore) {
+          paging.moviePage = nextMoviePage
+          paging.movieTotalPages = movieData.total_pages || paging.movieTotalPages
+        }
+        if (tvHasMore) {
+          paging.tvPage = nextTvPage
+          paging.tvTotalPages = tvData.total_pages || paging.tvTotalPages
+        }
+
+        const rawResults = [
+          ...((movieData.results) || []).map(item => ({ ...item, media_type: 'movie' })),
+          ...((tvData.results) || []).map(item => ({ ...item, media_type: 'tv' })),
+        ]
+
+        for (const item of rawResults) {
+          const key = `${item.media_type}-${item.id}`
+          if (paging.shownKeys.has(key)) continue
+          if (paging.dbTmdbIds.has(item.id)) continue
+          if (existingTmdbIds.has(item.id)) continue
+          const titleType = `${(item.title || item.name)?.toLowerCase()}-${item.media_type}`
+          if (existingTitleTypes.has(titleType)) continue
+          paging.shownKeys.add(key)
+          collected.push(item)
+        }
+      }
+
+      if (collected.length > 0) {
+        setSearchResults(prev => ({
+          ...prev,
+          tmdbExternal: [...(prev.tmdbExternal || []), ...collected],
+        }))
+      }
+      setHasMore(stillHasMore())
+    } catch (error) {
+      console.error('[Search] Load more error:', error)
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+    }
+  }, [currentItems, setSearchResults, setLoadingMore, setHasMore])
 
   const handleItemSelect = useCallback((itemId, selected) => {
     setSelectedItems(prev => {
@@ -966,8 +1243,7 @@ export default function WatchlistPage({ user }) {
   }, [])
 
   const handleSharePlaylist = useCallback((playlistId) => {
-    setSharePlaylistId(playlistId)
-    setShowShareModal(true)
+    dispatchModal({ type: 'OPEN_SHARE', value: playlistId })
   }, [])
 
   const handleRefresh = useCallback(async () => {
@@ -1037,7 +1313,7 @@ export default function WatchlistPage({ user }) {
         tvCount: newItem.mediaType === 'tv' ? prevSummary.tvCount + 1 : prevSummary.tvCount
       }
     })
-  }, [sortBy, sortOrder, sortItemsLocally, selectedPlaylistId, matchesPlaylistId])
+  }, [sortBy, sortOrder, sortItemsLocally, selectedPlaylistId, matchesPlaylistId, setCurrentItems, setPlaylists, setSummary])
 
   // Optimistic item removal handler
   const handleItemRemoved = useCallback((removedItemId) => {
@@ -1071,7 +1347,7 @@ export default function WatchlistPage({ user }) {
         tvCount: removedItem.mediaType === 'tv' ? Math.max(0, prevSummary.tvCount - 1) : prevSummary.tvCount
       }
     })
-  }, [currentItems, selectedPlaylistId, matchesPlaylistId])
+  }, [currentItems, selectedPlaylistId, matchesPlaylistId, setCurrentItems, setPlaylists, setSummary])
 
   // Optimistic bulk removal handler
   const handleItemsRemoved = useCallback((removedItemIds) => {
@@ -1109,7 +1385,7 @@ export default function WatchlistPage({ user }) {
     
     // Clear selection
     setSelectedItems(new Set())
-  }, [currentItems, selectedPlaylistId, matchesPlaylistId])
+  }, [currentItems, selectedPlaylistId, matchesPlaylistId, setCurrentItems, setPlaylists, setSummary])
 
   // Optimistic item move handler (removes from current playlist)
   const handleItemMoved = useCallback((movedItemId, targetPlaylistId = null) => {
@@ -1150,7 +1426,7 @@ export default function WatchlistPage({ user }) {
         tvCount: movedItem.mediaType === 'tv' ? Math.max(0, prevSummary.tvCount - 1) : prevSummary.tvCount
       }
     })
-  }, [currentItems, selectedPlaylistId, matchesPlaylistId])
+  }, [currentItems, selectedPlaylistId, matchesPlaylistId, setCurrentItems, setPlaylists, setSummary])
 
   // Optimistic bulk move handler (removes from current playlist)
   const handleItemsMoved = useCallback((movedItemIds, targetPlaylistId = null) => {
@@ -1195,30 +1471,26 @@ export default function WatchlistPage({ user }) {
     
     // Clear selection
     setSelectedItems(new Set())
-  }, [currentItems, selectedPlaylistId, matchesPlaylistId])
+  }, [currentItems, selectedPlaylistId, matchesPlaylistId, setCurrentItems, setPlaylists, setSummary])
 
   // Handler to show move modal for a specific item
   const handleShowMoveModal = useCallback((item) => {
-    setMoveItemData(item)
-    setShowMoveModal(true)
+    dispatchModal({ type: 'OPEN_MOVE', value: item })
   }, [])
 
   // Handler to show copy modal for a specific item
   const handleShowCopyModal = useCallback((item) => {
-    setMoveItemData(item)
-    setShowCopyModal(true)
+    dispatchModal({ type: 'OPEN_COPY', value: item })
   }, [])
 
   // Handler to close move modal
   const handleCloseMoveModal = useCallback(() => {
-    setShowMoveModal(false)
-    setMoveItemData(null)
+    dispatchModal({ type: 'CLOSE_MOVE' })
   }, [])
 
   // Handler to close copy modal
   const handleCloseCopyModal = useCallback(() => {
-    setShowCopyModal(false)
-    setMoveItemData(null)
+    dispatchModal({ type: 'CLOSE_COPY' })
   }, [])
 
   // Handler for moving item from modal
@@ -1356,7 +1628,7 @@ export default function WatchlistPage({ user }) {
       return
     }
     setSortLocked(prev => !prev)
-  }, [canEditPlaylist])
+  }, [canEditPlaylist, setSortLocked])
 
   const handleSortChange = useCallback(async (newSortBy, newSortOrder) => {
     // Check if sort is locked - even admins/editors need to unlock first
@@ -1412,7 +1684,7 @@ export default function WatchlistPage({ user }) {
         await loadPlaylistItems(selectedPlaylistId)
       }
     }, 500) // 500ms debounce
-  }, [currentPlaylist, canEditPlaylist, api, loadPlaylistItems, selectedPlaylistId, sortBy, currentItems, sortItemsLocally, sortLocked])
+  }, [currentPlaylist, canEditPlaylist, api, loadPlaylistItems, selectedPlaylistId, sortBy, currentItems, sortItemsLocally, sortLocked, setCurrentItems, setCurrentPlaylist, setSortBy, setSortError, setSortOrder])
 
   const handleCustomReorder = useCallback(async (draggedIndex, targetIndex) => {
     // Check if sort is locked - even admins/editors need to unlock first
@@ -1455,7 +1727,7 @@ export default function WatchlistPage({ user }) {
     } finally {
       setIsReordering(false)
     }
-  }, [currentPlaylist, canEditPlaylist, api, currentItems, loadPlaylistItems, selectedPlaylistId, isReordering, sortLocked])
+  }, [currentPlaylist, canEditPlaylist, api, currentItems, loadPlaylistItems, selectedPlaylistId, isReordering, sortLocked, setCurrentItems, setCurrentPlaylist, setIsReordering, setSortBy, setSortOrder])
 
   // Apply client-side filtering
   const filteredItems = currentItems.filter(item => {
@@ -1537,7 +1809,7 @@ export default function WatchlistPage({ user }) {
                     </svg>
                   </button>
                   <button
-                    onClick={() => setShowManageRows(true)}
+                    onClick={() => dispatchModal({ type: 'SET_SHOW_MANAGE_ROWS', value: true })}
                     className="ml-2 px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
                     title="Manage Your App Rows"
                   >
@@ -1545,7 +1817,7 @@ export default function WatchlistPage({ user }) {
                   </button>
                   {isAdmin && (
                     <button
-                      onClick={() => setShowAdminRows(true)}
+                      onClick={() => dispatchModal({ type: 'SET_SHOW_ADMIN_ROWS', value: true })}
                       className="ml-2 px-3 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors"
                       title="Admin: Manage App Rows for Users"
                     >
@@ -1566,6 +1838,9 @@ export default function WatchlistPage({ user }) {
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             onSearch={handleSearch}
+            onLoadMore={loadMoreSearch}
+            isLoadingMore={loadingMore}
+            hasMore={hasMore}
             searchResults={searchResults}
             setSearchResults={setSearchResults}
             isSearching={isSearching}
@@ -1662,12 +1937,10 @@ export default function WatchlistPage({ user }) {
           playlistId={sharePlaylistId}
           playlist={playlists.find(p => p.id === sharePlaylistId)}
           onClose={() => {
-            setShowShareModal(false)
-            setSharePlaylistId(null)
+            dispatchModal({ type: 'CLOSE_SHARE' })
           }}
           onSuccess={() => {
-            setShowShareModal(false)
-            setSharePlaylistId(null)
+            dispatchModal({ type: 'CLOSE_SHARE' })
             handleRefresh()
           }}
           api={api}
@@ -1700,7 +1973,7 @@ export default function WatchlistPage({ user }) {
       {/* Manage Your App Rows (per-user visibility) */}
       <ShowInAppUserModal
         isOpen={showManageRows}
-        onClose={() => setShowManageRows(false)}
+        onClose={() => dispatchModal({ type: 'SET_SHOW_MANAGE_ROWS', value: false })}
         api={{
           // Thin wrapper to conform to modal's expectations
           getPlaylists: async (includeShared = true) => api.getPlaylists(includeShared),
@@ -1712,7 +1985,7 @@ export default function WatchlistPage({ user }) {
       {/* Admin: Manage App Rows for users */}
       <ShowInAppAdminModal
         isOpen={showAdminRows}
-        onClose={() => setShowAdminRows(false)}
+        onClose={() => dispatchModal({ type: 'SET_SHOW_ADMIN_ROWS', value: false })}
         api={{
           getPlaylists: async (includeShared = true) => api.getPlaylists(includeShared),
           listUsers: async (options = {}) => api.listUsersForVisibility(options),

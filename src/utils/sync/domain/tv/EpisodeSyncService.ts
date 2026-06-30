@@ -17,11 +17,14 @@ import {
   SyncStatus,
   MediaType,
   SyncOperation,
-  syncEventBus
+  syncEventBus,
+  planFieldCleanup,
+  type CleanableField,
+  type CleanupPlan
 } from '../../core'
 
-import { EpisodeRepository, SeasonRepository, TVShowRepository } from '../../infrastructure'
-import { isCurrentServerHighestPriorityForField, createFullUrl, processCaptionURLs, extractUrlHash } from '@src/utils/sync/utils'
+import { EpisodeRepository, SeasonRepository, TVShowRepository, UrlBuilder } from '../../infrastructure'
+import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { createLogger } from '@src/lib/logger'
@@ -86,7 +89,15 @@ export class EpisodeSyncService {
       await this.loadEpisodeHashesForSeason(showTitle, seasonNumber, context)
 
       // ---- Accumulate smart upsert ops — do NOT write one by one ----
-      const episodeOps: Array<{ filter: Record<string, any>; existing: EpisodeEntity | null; merged: EpisodeEntity }> = []
+      // `unset` carries field-absence cleanup (enforce mode only); `cleanupChanges`
+      // is the diagnostic text surfaced on the SyncResult in both modes.
+      const episodeOps: Array<{
+        filter: Record<string, any>
+        existing: EpisodeEntity | null
+        merged: EpisodeEntity
+        unset?: string[]
+        cleanupChanges?: string[]
+      }> = []
 
       for (const [key, fileData] of Object.entries(seasonFileData.episodes || {})) {
         const epNum = this.parseEpisodeNumber(key, fileData)
@@ -111,17 +122,26 @@ export class EpisodeSyncService {
           continue
         }
 
-        const merged = await this.buildEpisodeEntity(showTitle, displayTitle, seasonNumber, epNum, fileData, context, existing, showId, seasonId, parentShow, seasonFileData, key)
+        const { entity: merged, metadataFromFreshFetch } = await this.buildEpisodeEntity(showTitle, displayTitle, seasonNumber, epNum, fileData, context, existing, showId, seasonId, parentShow, seasonFileData, key)
 
-        // Store incoming hash so next sync can compare
-        if (incomingEpHash) (merged as any).syncHash = incomingEpHash
+        // Store incoming hash so next sync can compare. Gate on a confirmed fresh
+        // metadata source: the inline parent fallback (display-only) and failed
+        // fetches must NOT advance syncHash, or the spent gate locks the episode
+        // on stale metadata. Once 2A makes the episode URL fetchable + cache-busted,
+        // the fresh fetch succeeds and the gate stamps normally.
+        if (incomingEpHash && metadataFromFreshFetch) (merged as any).syncHash = incomingEpHash
 
         // Filter shape mirrors bulkUpsertSeason: prefer showId for stability
         const filter = (merged as any).showId
           ? { showId: (merged as any).showId, seasonNumber: merged.seasonNumber, episodeNumber: merged.episodeNumber }
           : { showTitle: merged.showTitle, seasonNumber: merged.seasonNumber, episodeNumber: merged.episodeNumber }
 
-        episodeOps.push({ filter, existing, merged })
+        // Field-absence cleanup. `showTitle` here is the originalTitle (filesystem
+        // key) — the fieldAvailability key. planFieldCleanup logs (both modes) and
+        // returns `unset` only in enforce mode.
+        const plan = this.planEpisodeCleanup(showTitle, seasonNumber, key, existing, displayTitle, epNum, context)
+
+        episodeOps.push({ filter, existing, merged, unset: plan.unset, cleanupChanges: plan.changes })
       }
 
       // ---- Single smart bulk write — skips unchanged, $sets changed, inserts new ----
@@ -129,10 +149,16 @@ export class EpisodeSyncService {
         await this.episodeRepository.smartBulkUpsert(episodeOps)
       }
 
-      for (const { merged: entity } of episodeOps) {
+      for (const { merged: entity, cleanupChanges } of episodeOps) {
         results.push(this.makeResult(
           `${label}E${entity.episodeNumber}`, context,
-          SyncStatus.Completed, [`Upserted episode ${entity.episodeNumber}`], []
+          SyncStatus.Completed,
+          [`Upserted episode ${entity.episodeNumber}`, ...(cleanupChanges || [])], [],
+          {
+            displayTitle: entity.showTitle,
+            seasonNumber: entity.seasonNumber,
+            episodeNumber: entity.episodeNumber
+          }
         ))
       }
 
@@ -202,6 +228,80 @@ export class EpisodeSyncService {
   }
 
   /**
+   * Resolve the LITERAL season key used in the file-server data (e.g. "Season 2",
+   * "2", "S02") for this season number. Field-absence cleanup builds compound
+   * fieldAvailability paths (`seasons.<seasonKey>.episodes.<epKey>.<field>`), and
+   * those paths must use the exact keys collectFieldAvailability walked — guessing
+   * the format would make every lookup miss and report false absences. Mirrors the
+   * candidate order of extractSeasonFileData but returns the key, not the data.
+   */
+  private resolveSeasonKey(showTitle: string, seasonNumber: number, context: SyncContext): string | null {
+    const showData = context.fileServerData?.tv?.[showTitle]
+    if (!showData?.seasons) return null
+
+    for (const candidate of [
+      String(seasonNumber),
+      `Season ${seasonNumber}`,
+      `season_${seasonNumber}`,
+      `S${String(seasonNumber).padStart(2, '0')}`
+    ]) {
+      if (showData.seasons[candidate]) return candidate
+    }
+
+    for (const key of Object.keys(showData.seasons)) {
+      if (this.parseSeasonNumber(key) === seasonNumber) return key
+    }
+    return null
+  }
+
+  /**
+   * Build the field-absence cleanup candidates for one episode. Returns the
+   * fields to $unset (enforce) and human-readable diagnostics (both modes), or
+   * null when cleanup is disabled / not applicable. Conservative scope for the
+   * initial rollout: thumbnail + chapters (asset URLs). videoURL is deliberately
+   * EXCLUDED — clearing a video is higher-stakes and warrants its own rollout.
+   */
+  private planEpisodeCleanup(
+    showOriginalTitle: string,
+    seasonNumber: number,
+    episodeKey: string,
+    existing: EpisodeEntity | null,
+    displayTitle: string,
+    episodeNumber: number,
+    context: SyncContext
+  ): CleanupPlan {
+    if (!context.cleanup?.enabled || !existing) return { changes: [] }
+
+    const seasonKey = this.resolveSeasonKey(showOriginalTitle, seasonNumber, context)
+    if (!seasonKey) return { changes: [] }  // can't build a trustworthy path → skip (no guessing)
+
+    const prefix = `seasons.${seasonKey}.episodes.${episodeKey}`
+    const fields: CleanableField[] = [
+      {
+        entityField: 'thumbnail',
+        fieldPath: `${prefix}.thumbnail`,
+        companions: ['thumbnailSource', 'thumbnailBlurhash', 'thumbnailBlurhashSource'],
+      },
+      {
+        entityField: 'chapterURL',
+        fieldPath: `${prefix}.chapters`,
+        companions: ['chapterSource'],
+      },
+    ]
+
+    return planFieldCleanup({
+      cleanup: context.cleanup,
+      mediaType: 'tv',
+      availabilityKey: showOriginalTitle,
+      entity: existing,
+      fieldAvailability: context.fieldAvailability,
+      fields,
+      log: (obj, msg) => pinoLog.info(obj, msg),
+      logContext: { show: displayTitle, originalTitle: showOriginalTitle, season: seasonNumber, episode: episodeNumber },
+    })
+  }
+
+  /**
    * Build an episode entity by merging existing data with incoming file-server
    * data, respecting per-field server priority.
    *
@@ -225,7 +325,7 @@ export class EpisodeSyncService {
     parentShow: any,
     seasonFileData?: any,
     episodeFileName?: string
-  ): Promise<EpisodeEntity> {
+  ): Promise<{ entity: EpisodeEntity; metadataFromFreshFetch: boolean }> {
     const now = new Date()
 
     // Start from existing doc (preserving ALL fields) or create new
@@ -325,7 +425,7 @@ export class EpisodeSyncService {
     // Legacy field: captionURLs (object keyed by language), NOT captions (array)
     // File server data key: "subtitles" (not "captions")
     if (fileData?.subtitles && typeof fileData.subtitles === 'object') {
-      const processed = processCaptionURLs(fileData.subtitles, context.serverConfig)
+      const processed = UrlBuilder.processCaptionURLs(fileData.subtitles, context.serverConfig)
       if (processed && Object.keys(processed).length > 0) {
         // Merge with existing captionURLs (preserve captions from other servers)
         const merged = { ...(existing?.captionURLs || {}), ...processed }
@@ -345,6 +445,12 @@ export class EpisodeSyncService {
     }
 
     // --- Metadata (priority-gated) ---
+    // Tracks whether episode metadata came from a CONFIRMED fresh source (URL
+    // fetch ok, or backend-inlined object) vs. the parent inline fallback or a
+    // failure. Only a fresh source may advance the syncHash gate — the inline
+    // fallback is fine for display but must not lock the episode on a stale
+    // parent. Default true so "no episode metadata URL" never blocks the gate.
+    let metadataFromFreshFetch = true
     const canUpdateMetadata = isCurrentServerHighestPriorityForField(
       context.fieldAvailability, 'tv', showOriginalTitle, 'metadata', context.serverConfig
     )
@@ -364,11 +470,15 @@ export class EpisodeSyncService {
         } catch {
           // Fetch failed — try fallback below
         }
+        // Capture the URL-fetch outcome BEFORE the inline fallback overwrites it.
+        metadataFromFreshFetch = !!(episodeMetadata && typeof episodeMetadata === 'object' && !episodeMetadata.error)
       } else if (typeof fileData.metadata === 'object') {
         episodeMetadata = fileData.metadata
+        metadataFromFreshFetch = true
       }
 
-      // Fallback: parent show's metadata.seasons[].episodes[] array
+      // Fallback: parent show's metadata.seasons[].episodes[] array (DISPLAY ONLY —
+      // does NOT flip metadataFromFreshFetch, so it never advances the gate).
       if (!episodeMetadata || episodeMetadata.error) {
         const seasonMeta = parentShow?.metadata?.seasons?.find(
           (s: any) => s.season_number === seasonNumber
@@ -424,7 +534,7 @@ export class EpisodeSyncService {
       }
     }
 
-    return entity
+    return { entity, metadataFromFreshFetch }
   }
 
   /**
@@ -488,7 +598,8 @@ export class EpisodeSyncService {
     context: SyncContext,
     status: SyncStatus,
     changes: string[],
-    errors: string[]
+    errors: string[],
+    metadata?: Record<string, any>
   ): SyncResult {
     return {
       status,
@@ -498,7 +609,10 @@ export class EpisodeSyncService {
       serverId: context.serverConfig.id,
       timestamp: new Date(),
       changes,
-      errors
+      errors,
+      // Display title + season/episode numbers for post-sync cache invalidation
+      // (episode page tags key on display title, not the filesystem showTitle).
+      ...(metadata ? { metadata } : {})
     }
   }
 }

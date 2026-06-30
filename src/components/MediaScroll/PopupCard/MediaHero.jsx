@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, ViewTransition } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import dynamic from 'next/dynamic'
 import { classNames } from '@src/utils'
@@ -45,6 +45,7 @@ const MediaHero = ({
   dispatch,
   handleImageLoad,
   isLoading,
+  viewTransitionName,
 }) => {
   const [logoLoaded, setLogoLoaded] = useState(false)
 
@@ -68,7 +69,7 @@ const MediaHero = ({
     setLogoLoaded(true)
   }, [])
 
-  return (
+  const hero = (
     <div
       className="relative overflow-hidden"
       style={{
@@ -203,6 +204,12 @@ const MediaHero = ({
         )}
       </AnimatePresence>
     </div>
+  )
+
+  return viewTransitionName ? (
+    <ViewTransition name={viewTransitionName}>{hero}</ViewTransition>
+  ) : (
+    hero
   )
 }
 

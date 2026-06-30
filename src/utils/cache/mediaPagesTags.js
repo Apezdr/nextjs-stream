@@ -93,6 +93,23 @@ export function getAllTVShowCacheTags(showTitle) {
 }
 
 /**
+ * Get all cache tags for a season (for comprehensive invalidation)
+ * @param {string} showTitle - Show title
+ * @param {string|number} seasonNum - Season number
+ * @returns {string[]} Array of cache tags to invalidate
+ */
+export function getAllSeasonCacheTags(showTitle, seasonNum) {
+  return [
+    seasonDetailsTag(showTitle, seasonNum),
+    tvShowDetailsTag(showTitle),
+    MEDIA_CACHE_TAGS.SEASON_DETAILS,
+    MEDIA_CACHE_TAGS.TV_DETAILS,
+    'tv',
+    'media-library',
+  ]
+}
+
+/**
  * Get all cache tags for an episode (for comprehensive invalidation)
  * @param {string} showTitle - Show title
  * @param {string|number} seasonNum - Season number

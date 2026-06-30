@@ -22,13 +22,91 @@ import clientPromise from '@src/lib/mongodb'
 import { createLogger, logError } from '@src/lib/logger'
 import { migratePlaybackStatusIfNeeded } from '../watchHistory/migrate'
 import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation'
-import { getCurrentSyncRunId } from './syncContext'
+import { getCurrentSyncRunId, getSyncLockHolder } from './syncContext'
+import { isCollectionFullyCovered } from './preTagSyncRunId'
 
 // Module-scoped lock — fail-fast on concurrent invocations within one process.
 // Multi-process deployments later: swap for a Redis lock.
 let inFlight = false
 
 const tracer = trace.getTracer('flatsync.post-sync-cleanup')
+
+// Circuit breaker: refuse to delete a collection whose orphan set is an
+// implausibly large fraction of the collection (defense-in-depth behind the
+// per-collection pre-tag coverage gate). Default 0.5 = "something is very wrong"
+// — catastrophic deletes are blocked while normal prunes pass untouched. Lower
+// it (e.g. 0.2) for stricter protection, or raise it to deliberately allow a
+// one-time bulk removal. Env-tunable via SYNC_MAX_ORPHAN_FRACTION.
+const MAX_ORPHAN_FRACTION = (() => {
+  const p = Number(process.env.SYNC_MAX_ORPHAN_FRACTION)
+  return Number.isFinite(p) && p >= 0 ? p : 0.5
+})()
+
+// FK-orphan detection (D1): the marker-based orphan tally below counts by syncRunId
+// staleness only and is blind to referential breaks — episodes/seasons whose `showId`
+// no longer points at any `FlatTVShows._id` (e.g. a show re-inserted with a new _id,
+// leaving its children dangling). This $lookup check surfaces those counts in the
+// tally so SigNoz can alarm on them. Two index-backed checks per run (DISTINCT_SCAN
+// + point lookups, ~tens of ms); disable with SYNC_FK_ORPHAN_CHECK=false if ever needed.
+const FK_ORPHAN_CHECK_ENABLED = process.env.SYNC_FK_ORPHAN_CHECK !== 'false'
+
+/**
+ * Count docs in `collectionName` whose `showId` resolves to no `FlatTVShows._id`
+ * (referential orphans — children dangling off a missing show).
+ *
+ * Fully index-backed, no collection scan:
+ *   1. `distinct('showId')` → DISTINCT_SCAN on the `showId_1` index (index-only,
+ *      ~hundreds of values, zero docs examined).
+ *   2. resolve which of those shows still exist (foreign `_id` index).
+ *   3. `countDocuments({ showId: { $in: <missing> } })` → IXSCAN on `showId_1`.
+ * Short-circuits before step 3 when there are no children or no orphans, so the
+ * healthy path is two indexed reads.
+ *
+ * Replaces a single `$lookup` aggregation that COLLSCANned the whole collection
+ * and ran one foreign lookup PER document (~1s on FlatEpisodes in production).
+ * Semantics are unchanged: the count includes child docs with a null/absent
+ * `showId` (distinct returns null for them; null matches no show, so they remain
+ * in the orphan set and `{ $in: [null, …] }` counts them).
+ */
+async function countFkOrphans(db, collectionName) {
+  const showIds = await db.collection(collectionName).distinct('showId')
+  if (showIds.length === 0) return 0
+
+  const existing = await db
+    .collection('FlatTVShows')
+    .find({ _id: { $in: showIds } }, { projection: { _id: 1 } })
+    .toArray()
+  const existingIds = new Set(existing.map((s) => String(s._id)))
+
+  const orphanShowIds = showIds.filter((id) => !existingIds.has(String(id)))
+  if (orphanShowIds.length === 0) return 0
+
+  return db.collection(collectionName).countDocuments({ showId: { $in: orphanShowIds } })
+}
+
+/**
+ * Cascade-delete the seasons/episodes of shows that were just deleted, keyed on the
+ * precise deleted show `_id`s (NOT the marker). This runs even when the children's own
+ * marker coverage was incomplete this run, so a show delete can never leave orphaned
+ * children behind — and it can never touch a live show's children. Bounded by the same
+ * lock re-assert and the show-collection MAX_ORPHAN_FRACTION breaker that already gated
+ * the show delete; no separate fraction knob (a refused cascade would re-create orphans).
+ */
+async function cascadeDeleteChildrenOfShows(db, showIds) {
+  const CHUNK = 500
+  let seasons = 0
+  let episodes = 0
+  for (let i = 0; i < showIds.length; i += CHUNK) {
+    const chunk = showIds.slice(i, i + CHUNK)
+    const [se, ep] = await Promise.all([
+      db.collection('FlatSeasons').deleteMany({ showId: { $in: chunk } }),
+      db.collection('FlatEpisodes').deleteMany({ showId: { $in: chunk } }),
+    ])
+    seasons += se.deletedCount ?? 0
+    episodes += ep.deletedCount ?? 0
+  }
+  return { seasons, episodes }
+}
 
 const EMPTY_RESULT = Object.freeze({
   removed: { movies: [], tvShows: [], tvSeasons: [], tvEpisodes: [] },
@@ -60,7 +138,7 @@ const EMPTY_RESULT = Object.freeze({
 // eslint-disable-next-line no-unused-vars
 export async function runPostSyncCleanup(allFileServers, _fieldAvailability, options = {}) {
   const log = createLogger('FlatSync.PostSyncCleanup')
-  const { syncRunId } = options
+  const { syncRunId, preTagCoverage, runStartedAt } = options
 
   if (inFlight) {
     log.warn('runPostSyncCleanup already in progress; skipping concurrent invocation')
@@ -128,57 +206,142 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
         return { ...EMPTY_RESULT, removed: { ...EMPTY_RESULT.removed } }
       }
 
+      // ─── Coverage gate (fail-closed) ────────────────────────────────────────
+      // A collection may be cleaned ONLY when pre-tag PROVED it stamped every
+      // server-present record this run (complete && needsSeen===opsBuilt===
+      // opsCommitted). Without that proof we skip — never guess. This is the
+      // heart of the episode add/delete fix: when pre-tag's episode bulkWrite
+      // throws partway (transient Mongo connection drop), episode coverage is
+      // incomplete ⇒ episode deletes are skipped ⇒ the un-stamped records
+      // survive instead of being reaped and re-created on the next run.
+      if (!preTagCoverage) {
+        log.error({ syncRunId }, 'No pre-tag coverage supplied to cleanup — refusing all deletes (fail-closed)')
+        span.setAttribute('cleanup.skipped', 'no_coverage_contract')
+        return { ...EMPTY_RESULT, removed: { ...EMPTY_RESULT.removed } }
+      }
+      if (preTagCoverage.skipped) {
+        log.info({ syncRunId }, 'Pre-tag reported no server data — nothing to clean')
+        return { ...EMPTY_RESULT, removed: { ...EMPTY_RESULT.removed } }
+      }
+      const cov = preTagCoverage.coverage || {}
+      const deleteEligible = {
+        movies: isCollectionFullyCovered(cov.movies),
+        tvShows: isCollectionFullyCovered(cov.shows),
+        tvSeasons: isCollectionFullyCovered(cov.seasons),
+        tvEpisodes: isCollectionFullyCovered(cov.episodes),
+      }
+      if (!deleteEligible.movies || !deleteEligible.tvShows || !deleteEligible.tvSeasons || !deleteEligible.tvEpisodes) {
+        log.error(
+          { syncRunId, deleteEligible },
+          'Pre-tag coverage incomplete for one or more collections — skipping their deletes this run'
+        )
+        span.setAttribute('cleanup.coverage_incomplete', true)
+      }
+
       // ─── Phase A: Find orphan docs (indexed scan, projection-only) ──────────
       // The query plans as IXSCAN on `sync_run_id_index` and returns only
       // records that need deleting (typically 0–N orphans, not 16k records).
-      const orphanFilter = { syncRunId: { $ne: syncRunId } }
+      //
+      // `manualEntry: { $ne: true }` spares admin-created entries from deletion.
+      // Manually-built records (added via the /admin/media UI) are not present
+      // on any file server, so pre-tag never stamps them with the current
+      // syncRunId — without this exclusion every sync would treat them as
+      // orphans and delete them. `$ne: true` (rather than $exists) protects only
+      // docs explicitly flagged `manualEntry === true`, leaving normal records
+      // (flag absent/false) subject to the standard marker-based predicate.
+      //
+      // This filter feeds BOTH the find() enumeration below and the deleteMany()
+      // calls in Phase E, so the predicate stays identical for find and delete.
+      // The Phase B `orphanCount === total` guard remains conservative: excluding
+      // manual entries can only shrink orphanCount relative to the
+      // estimatedDocumentCount total, so it never deletes more than before.
+      // R2 backstop: never delete a doc that was WRITTEN during this run. A
+      // genuine orphan was not touched this run, so its updatedAt predates the
+      // orchestration start; anything written this run (even if its marker was
+      // somehow missed) has updatedAt >= runStart and is excluded here. Docs
+      // missing an updatedAt field (legacy) are conservatively left alone.
+      const runStart = runStartedAt ? new Date(runStartedAt) : null
+      const orphanFilter = {
+        syncRunId: { $ne: syncRunId },
+        manualEntry: { $ne: true },
+        ...(runStart ? { updatedAt: { $lt: runStart } } : {}),
+      }
       const [movieOrphans, showOrphans, seasonOrphans, episodeOrphans] = await Promise.all([
-        db.collection('FlatMovies')
-          .find(orphanFilter, { projection: { _id: 1, title: 1, originalTitle: 1, syncRunId: 1 } })
-          .toArray(),
-        db.collection('FlatTVShows')
-          .find(orphanFilter, { projection: { _id: 1, title: 1, originalTitle: 1, syncRunId: 1 } })
-          .toArray(),
-        db.collection('FlatSeasons')
-          .find(orphanFilter, { projection: { _id: 1, showTitle: 1, seasonNumber: 1, syncRunId: 1 } })
-          .toArray(),
-        db.collection('FlatEpisodes')
-          .find(orphanFilter, {
-            projection: { _id: 1, showTitle: 1, seasonNumber: 1, episodeNumber: 1, syncRunId: 1 },
-          }).toArray(),
+        deleteEligible.movies
+          ? db.collection('FlatMovies')
+              .find(orphanFilter, { projection: { _id: 1, title: 1, originalTitle: 1, syncRunId: 1 } })
+              .toArray()
+          : Promise.resolve([]),
+        deleteEligible.tvShows
+          ? db.collection('FlatTVShows')
+              .find(orphanFilter, { projection: { _id: 1, title: 1, originalTitle: 1, syncRunId: 1 } })
+              .toArray()
+          : Promise.resolve([]),
+        deleteEligible.tvSeasons
+          ? db.collection('FlatSeasons')
+              .find(orphanFilter, { projection: { _id: 1, showTitle: 1, seasonNumber: 1, syncRunId: 1 } })
+              .toArray()
+          : Promise.resolve([]),
+        deleteEligible.tvEpisodes
+          ? db.collection('FlatEpisodes')
+              .find(orphanFilter, {
+                projection: { _id: 1, showTitle: 1, seasonNumber: 1, episodeNumber: 1, syncRunId: 1 },
+              }).toArray()
+          : Promise.resolve([]),
       ])
 
-      // ─── Phase B: Pre-tag-failure safety check ──────────────────────────────
-      // If an entire collection's records are "orphan", the pre-tag for that
-      // collection must have failed (since every record present on a server
-      // gets tagged). Refuse to delete in that case — the next cycle will
-      // catch real orphans once pre-tag succeeds.
+      // ─── Phase B: Orphan-fraction circuit breaker (per-collection demote) ───
+      // Defense-in-depth behind the coverage gate: if a collection's orphan set
+      // is an implausibly large fraction of the collection, refuse to delete THAT
+      // collection this run (demote it) and log loudly — rather than aborting all
+      // four. A genuine bulk prune can exceed the threshold; raise
+      // SYNC_MAX_ORPHAN_FRACTION to allow it deliberately. estimatedDocumentCount
+      // lags slightly but is fine for a ratio test. Already-ineligible collections
+      // were not enumerated (orphanCount 0), so they never trip here.
       const totals = await Promise.all([
         db.collection('FlatMovies').estimatedDocumentCount(),
         db.collection('FlatTVShows').estimatedDocumentCount(),
         db.collection('FlatSeasons').estimatedDocumentCount(),
         db.collection('FlatEpisodes').estimatedDocumentCount(),
       ])
-      const collectionsForGuard = [
-        { name: 'FlatMovies',   orphanCount: movieOrphans.length,   total: totals[0] },
-        { name: 'FlatTVShows',  orphanCount: showOrphans.length,    total: totals[1] },
-        { name: 'FlatSeasons',  orphanCount: seasonOrphans.length,  total: totals[2] },
-        { name: 'FlatEpisodes', orphanCount: episodeOrphans.length, total: totals[3] },
+      const fractionGuard = [
+        { key: 'movies',     name: 'FlatMovies',   orphanCount: movieOrphans.length,   total: totals[0] },
+        { key: 'tvShows',    name: 'FlatTVShows',  orphanCount: showOrphans.length,    total: totals[1] },
+        { key: 'tvSeasons',  name: 'FlatSeasons',  orphanCount: seasonOrphans.length,  total: totals[2] },
+        { key: 'tvEpisodes', name: 'FlatEpisodes', orphanCount: episodeOrphans.length, total: totals[3] },
       ]
-      for (const c of collectionsForGuard) {
-        if (c.total > 0 && c.orphanCount === c.total) {
+      for (const c of fractionGuard) {
+        if (!deleteEligible[c.key]) continue
+        if (c.total > 0 && c.orphanCount / c.total > MAX_ORPHAN_FRACTION) {
+          const fraction = c.orphanCount / c.total
           log.error(
-            { collection: c.name, total: c.total, orphans: c.orphanCount, syncRunId },
-            'All records in collection lack the current syncRunId — pre-tag must have failed; refusing cleanup'
+            { collection: c.name, total: c.total, orphans: c.orphanCount, fraction, threshold: MAX_ORPHAN_FRACTION, syncRunId },
+            'Orphan fraction exceeds circuit-breaker threshold — refusing deletes for this collection (raise SYNC_MAX_ORPHAN_FRACTION to override)'
           )
-          span.setAttribute('cleanup.skipped', 'pre_tag_failure_suspected')
-          return { ...EMPTY_RESULT, removed: { ...EMPTY_RESULT.removed } }
+          span.setAttribute(`cleanup.breaker_tripped.${c.key}`, fraction)
+          deleteEligible[c.key] = false
         }
       }
 
       // ─── Phase C: Marker-coverage observability ─────────────────────────────
       // Phase 1 diagnostic, kept here so SigNoz dashboards remain useful and
       // we can spot Phase 2 regressions (e.g., orphans growing unexpectedly).
+      // fkOrphans counts referential breaks the marker tally is blind to — a
+      // non-zero value means children point at a missing FlatTVShows._id.
+      let fkOrphans = null
+      if (FK_ORPHAN_CHECK_ENABLED) {
+        try {
+          const [fkEpisodes, fkSeasons] = await Promise.all([
+            countFkOrphans(db, 'FlatEpisodes'),
+            countFkOrphans(db, 'FlatSeasons'),
+          ])
+          fkOrphans = { episodes: fkEpisodes, seasons: fkSeasons }
+          span.setAttribute('cleanup.fk_orphans.episodes', fkEpisodes)
+          span.setAttribute('cleanup.fk_orphans.seasons', fkSeasons)
+        } catch (error) {
+          log.warn({ error: error.message }, 'FK-orphan check failed (non-fatal)')
+        }
+      }
       log.info(
         {
           syncRunId,
@@ -186,6 +349,7 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
           shows:    { orphans: showOrphans.length,    total: totals[1] },
           seasons:  { orphans: seasonOrphans.length,  total: totals[2] },
           episodes: { orphans: episodeOrphans.length, total: totals[3] },
+          ...(fkOrphans ? { fkOrphans } : {}),
         },
         'Marker-based cleanup: orphan tally'
       )
@@ -193,32 +357,77 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
       // ─── Phase D: Build legacy-shape `removed` arrays from orphan docs ──────
       // Same return shape as before so the cache invalidator and any SSE
       // subscribers don't need to change.
+      // Gated on the final deleteEligible (post-coverage-gate AND post-breaker):
+      // a collection we won't delete from must not appear in `removed`, or the
+      // cache invalidator would evict entries for records still in the DB.
       const removed = {
-        movies:    movieOrphans.map((m) => m.title),
-        tvShows:   showOrphans.map((s) => s.title),
-        tvSeasons: seasonOrphans.map((sn) => `${sn.showTitle} Season ${sn.seasonNumber}`),
-        tvEpisodes: episodeOrphans.map((e) => `${e.showTitle} S${e.seasonNumber}E${e.episodeNumber}`),
+        movies:    deleteEligible.movies    ? movieOrphans.map((m) => m.title) : [],
+        tvShows:   deleteEligible.tvShows   ? showOrphans.map((s) => s.title) : [],
+        tvSeasons: deleteEligible.tvSeasons ? seasonOrphans.map((sn) => `${sn.showTitle} Season ${sn.seasonNumber}`) : [],
+        tvEpisodes: deleteEligible.tvEpisodes ? episodeOrphans.map((e) => `${e.showTitle} S${e.seasonNumber}E${e.episodeNumber}`) : [],
       }
 
       // ─── Phase E: Issue four parallel marker-based deleteMany calls ─────────
       // Each plans as a single IXSCAN on `sync_run_id_index`. No more in-memory
-      // predicate iteration over 16k records, no $in arrays, no cascades —
-      // every collection is filtered independently by its own marker.
+      // predicate iteration over 16k records, no $in arrays — every collection is
+      // filtered independently by its own marker. (The marker-based deletes carry
+      // no parent→child cascade; Phase E.2 below adds an explicit showId-keyed
+      // cascade so a show delete can't leave orphaned children.)
+      // Per-collection gated: only collections with proven-complete pre-tag
+      // coverage are eligible for deletion (see the coverage gate above).
+      //
+      // Re-assert ownership before any destructive delete. If the orchestration
+      // lock was force-released by the watchdog (this run's cleanup ran long) and
+      // a newer run has since taken over — or no run holds it — this stale cleanup
+      // must NOT delete: its syncRunId no longer reflects the live marker state,
+      // so its orphanFilter ({ syncRunId: { $ne } }) would reap the newer run's
+      // freshly re-tagged records (pre-tag doesn't bump updatedAt, so the R2
+      // backstop can't catch them). Defer to the run that now holds the lock.
+      const lockHolder = getSyncLockHolder()
+      if (!lockHolder || lockHolder.syncRunId !== syncRunId) {
+        log.error(
+          { syncRunId, currentHolder: lockHolder?.syncRunId ?? null },
+          'Orchestration lock no longer held by this run (watchdog force-release?) — skipping deletes to avoid racing a newer run'
+        )
+        span.setAttribute('cleanup.skipped', 'lock_lost')
+        return { ...EMPTY_RESULT, removed: { ...EMPTY_RESULT.removed } }
+      }
       await Promise.all([
-        db.collection('FlatMovies').deleteMany(orphanFilter),
-        db.collection('FlatTVShows').deleteMany(orphanFilter),
-        db.collection('FlatSeasons').deleteMany(orphanFilter),
-        db.collection('FlatEpisodes').deleteMany(orphanFilter),
+        deleteEligible.movies ? db.collection('FlatMovies').deleteMany(orphanFilter) : Promise.resolve(),
+        deleteEligible.tvShows ? db.collection('FlatTVShows').deleteMany(orphanFilter) : Promise.resolve(),
+        deleteEligible.tvSeasons ? db.collection('FlatSeasons').deleteMany(orphanFilter) : Promise.resolve(),
+        deleteEligible.tvEpisodes ? db.collection('FlatEpisodes').deleteMany(orphanFilter) : Promise.resolve(),
       ])
+
+      // ─── Phase E.2: Cascade child deletes for removed shows ─────────────────
+      // The FK-orphan bug came from deleting a show while its seasons/episodes
+      // survived (their showId then dangled). Key the cascade on the precise show
+      // _ids we just removed so it runs regardless of the children's own marker
+      // coverage and cannot touch a live show's children. deletedShowIds is empty
+      // unless tvShows is still delete-eligible (post coverage-gate AND breaker).
+      const deletedShowIds = deleteEligible.tvShows ? showOrphans.map((s) => s._id) : []
+      let cascadeRemoved = { seasons: 0, episodes: 0 }
+      if (deletedShowIds.length > 0) {
+        cascadeRemoved = await cascadeDeleteChildrenOfShows(db, deletedShowIds)
+        if (cascadeRemoved.seasons || cascadeRemoved.episodes) {
+          log.info(
+            { syncRunId, deletedShows: deletedShowIds.length, ...cascadeRemoved },
+            'Cascade-deleted children of removed shows'
+          )
+        }
+      }
 
       const elapsedMs = Date.now() - startedAt
       log.info(
         {
+          syncRunId,
           durationMs: elapsedMs,
+          deleteEligible,
           movies: removed.movies.length,
           tvShows: removed.tvShows.length,
           tvSeasons: removed.tvSeasons.length,
           tvEpisodes: removed.tvEpisodes.length,
+          cascade: cascadeRemoved,
         },
         'Marker-based cleanup complete'
       )

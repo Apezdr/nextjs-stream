@@ -1,65 +1,56 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import useSWR from 'swr';
 import Link, { useLinkStatus } from 'next/link';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Loading from '@src/app/loading';
 import EpisodeThumbnail from './EpisodeThumbnail';
 
+// Fetch season data with episodes from the episode-picker endpoint
+const fetchEpisodes = async ([, mediaTitle, seasonNum]) => {
+  const encodedTitle = encodeURIComponent(mediaTitle);
+  const response = await fetch(`/api/authenticated/episode-picker?title=${encodedTitle}&season=${seasonNum}`);
+
+  if (!response.ok) {
+    throw new Error('Failed to fetch episode data');
+  }
+
+  const data = await response.json();
+
+  if (data && data.episodes && Array.isArray(data.episodes)) {
+    // Sort episodes by episode number
+    return [...data.episodes].sort((a, b) => a.episodeNumber - b.episodeNumber);
+  }
+  return [];
+};
+
 /**
  * EpisodeListComponent - Shows a list of episodes for the current season
  * To be displayed below the MediaPlayerComponent
  */
 export default function EpisodeListComponent({ mediaTitle, mediaSeason, mediaEpisode }) {
-  const [episodes, setEpisodes] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const router = useRouter();
   const { pending } = useLinkStatus();
-  
+
   // Extract numeric values from the season and episode strings
   const seasonNum = parseInt(mediaSeason?.replace('Season ', '') || '0');
   const currentEpisodeNum = parseInt(mediaEpisode?.replace('Episode ', '') || '0');
-  
-  // Fetch episodes data
-  useEffect(() => {
-    const fetchEpisodes = async () => {
-      if (!mediaTitle || !mediaSeason) {
-        setLoading(false);
-        return;
-      }
-      
-      try {
-        setLoading(true);
-        const encodedTitle = encodeURIComponent(mediaTitle);
-        // Fetch season data with episodes from the episode-picker endpoint
-        const response = await fetch(`/api/authenticated/episode-picker?title=${encodedTitle}&season=${seasonNum}`);
-        
-        if (!response.ok) {
-          throw new Error('Failed to fetch episode data');
-        }
-        
-        const data = await response.json();
-        
-        if (data && data.episodes && Array.isArray(data.episodes)) {
-          // Sort episodes by episode number
-          const sortedEpisodes = [...data.episodes].sort((a, b) => a.episodeNumber - b.episodeNumber);
-          setEpisodes(sortedEpisodes);
-        } else {
-          setEpisodes([]);
-        }
-      } catch (err) {
-        console.error('Error fetching episode data:', err);
-        setError('Failed to load episodes');
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchEpisodes();
-  }, [mediaTitle, mediaSeason, seasonNum]);
-  
+
+  // Fetch episodes data (disabled until title and season are available)
+  const { data, error: fetchError, isLoading } = useSWR(
+    mediaTitle && mediaSeason ? ['episode-picker', mediaTitle, seasonNum] : null,
+    fetchEpisodes,
+    {
+      revalidateOnFocus: false,
+      onError: (err) => console.error('Error fetching episode data:', err),
+    }
+  );
+
+  const episodes = data ?? [];
+  const loading = isLoading;
+  const error = fetchError ? 'Failed to load episodes' : null;
+
   // Navigate to an episode
   const navigateToEpisode = (episodeNumber) => {
     router.push(`/list/tv/${encodeURIComponent(mediaTitle)}/${mediaSeason}/${episodeNumber}/play`);

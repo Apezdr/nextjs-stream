@@ -2,22 +2,24 @@
 
 import GeneralFullScreenBackdrop from '@components/Backdrop/GeneralFullscreen'
 import { AnimatePresence } from 'framer-motion'
-import { useParams } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import { authClient } from '@src/lib/auth-client'
 
 export default function GeneralLayout({ posterCollage }) {
   const { data: session, isPending } = authClient.useSession()
-  const params = useParams()
+  const pathname = usePathname()
 
-  // Destructure parameters and decode if necessary
-  const mediaType = params?.media?.[0] // 'movie' or 'tv'
-  const mediaTitle = decodeURIComponent(params?.media?.[1] || '')
+  // Detect whether we're on a media-detail route (where the per-media
+  // FullScreenBackdrop should take over). Anything that is NOT a movie or
+  // TV detail page falls through to the generic poster-collage backdrop.
+  // Trailing slash check: `/list/movie` (the list) is not a detail page;
+  // `/list/movie/<title>` and below are.
+  const isMovieDetail = pathname?.startsWith('/list/movie/') ?? false
+  const isTVDetail = pathname?.startsWith('/list/tv/') ?? false
+  const isMediaDetail = isMovieDetail || isTVDetail
 
   const shouldShowGeneralLayout =
-    (mediaType === 'tv' && !mediaTitle) ||
-    (mediaType === 'movie' && !mediaTitle) ||
-    (mediaType !== 'tv' && mediaType !== 'movie') ||
-    ((isPending || !session) && mediaTitle) // Show for unauthenticated users on specific media pages
+    !isMediaDetail || ((isPending || !session) && isMediaDetail)
 
   return (
     <AnimatePresence mode="wait">

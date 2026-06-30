@@ -34,32 +34,47 @@ function extractShowTitleAndDetails(eventTitle) {
 
 // Helper function to parse calendar data from Sonarr and Radarr
 function parseCalendarData(data, sourceType) {
-  if (!data) {
-    console.warn(`No data provided for ${sourceType}`)
+  // The calendar route returns a JSON error body (e.g. {"error":"Failed to sync data"})
+  // when the upstream Sonarr/Radarr fetch fails. Feeding that to ical.parse throws deep
+  // inside _handleContentLine because there is no VCALENDAR component to attach the line
+  // to. Guard on the iCal sentinel so non-calendar payloads never reach the parser.
+  if (typeof data !== 'string' || !data.includes('BEGIN:VCALENDAR')) {
+    if (data) {
+      console.warn(`Skipping ${sourceType} calendar: response was not iCal data`)
+    }
     return []
   }
 
+  let calendarData
   try {
-    const vcalendar = ical.parse(data)
-    const calendarData = new ical.Component(vcalendar)
-    return calendarData.getAllSubcomponents('vevent').map((vevent) => {
+    calendarData = new ical.Component(ical.parse(data))
+  } catch (error) {
+    console.warn(`Could not parse ${sourceType} calendar feed:`, error?.message ?? error)
+    return []
+  }
+
+  // Map each VEVENT independently so a single malformed event can't discard the whole feed.
+  return calendarData
+    .getAllSubcomponents('vevent')
+    .map((vevent) => {
       const title = vevent.getFirstPropertyValue('summary')
-      const showTitle = title.split(' - ')[0] // Extract the show title from the event title for Sonarr, adjust for Radarr if needed
+      const dtstart = vevent.getFirstPropertyValue('dtstart')
+      // A summary and a start date are the minimum needed to render an event.
+      if (!title || !dtstart) return null
+
+      const dtend = vevent.getFirstPropertyValue('dtend')
+      const showTitle = title.split(' - ')[0] // Show/movie title, used to derive a stable color
       const colors = generateColors(showTitle) // Generate unique colors based on the show or movie title
       return {
-        title: `${/*sourceType + ": "*/ ''}${title}`, // Prefix the title with the source type (Sonarr or Radarr)
-        start: vevent.getFirstPropertyValue('dtstart').toJSDate(),
-        end: vevent.getFirstPropertyValue('dtend').toJSDate(),
+        title,
+        start: dtstart.toJSDate(),
+        end: dtend ? dtend.toJSDate() : dtstart.toJSDate(), // Sonarr feeds may omit DTEND
         backgroundColor: colors.backgroundColor,
         fontColor: colors.fontColor,
         sourceType: sourceType,
-        // Add any other necessary event properties here
       }
     })
-  } catch (error) {
-    console.error(`Error parsing ${sourceType} data:`, error)
-    return []
-  }
+    .filter(Boolean)
 }
 
 export default function ReleaseCalendar({
@@ -127,40 +142,42 @@ export default function ReleaseCalendar({
 
   const fetchEvents = async () => {
     try {
-      const sonarr_response = await fetch('/api/authenticated/calendar/sonarr')
-      const radarr_response = await fetch('/api/authenticated/calendar/radarr')
-      const sonarr_data = await sonarr_response.text()
-      const radarr_data = await radarr_response.text()
+      const [sonarr_response, radarr_response] = await Promise.all([
+        fetch('/api/authenticated/calendar/sonarr'),
+        fetch('/api/authenticated/calendar/radarr'),
+      ])
 
-      if (sonarr_data || radarr_data) {
-        // Parse Sonarr and Radarr data
-        const sonarr_events = parseCalendarData(sonarr_data, 'Sonarr') || []
-        const radarr_events = parseCalendarData(radarr_data, 'Radarr') || []
+      // Only read a feed's body when it responded OK. On failure the route returns a JSON
+      // error body, which is not valid iCal and must never reach the parser.
+      const sonarr_data = sonarr_response.ok ? await sonarr_response.text() : ''
+      const radarr_data = radarr_response.ok ? await radarr_response.text() : ''
 
-        // Group Sonarr events by start time and show title
-        const groupedSonarrEvents = sonarr_events.reduce((acc, event) => {
-          const startTime = event.start.getTime()
-          const showTitle = event.title.split(' - ')[0]
-          const key = `${startTime}-${showTitle}`
+      // Parse Sonarr and Radarr data
+      const sonarr_events = parseCalendarData(sonarr_data, 'Sonarr')
+      const radarr_events = parseCalendarData(radarr_data, 'Radarr')
 
-          if (!acc[key]) {
-            acc[key] = {
-              ...event,
-              showDetails: [event.title.split(' - ').slice(1).join(' - ')],
-            }
-          } else {
-            acc[key].showDetails.push(event.title.split(' - ').slice(1).join(' - '))
+      // Group Sonarr events by start time and show title
+      const groupedSonarrEvents = sonarr_events.reduce((acc, event) => {
+        const startTime = event.start.getTime()
+        const showTitle = event.title.split(' - ')[0]
+        const key = `${startTime}-${showTitle}`
+
+        if (!acc[key]) {
+          acc[key] = {
+            ...event,
+            showDetails: [event.title.split(' - ').slice(1).join(' - ')],
           }
+        } else {
+          acc[key].showDetails.push(event.title.split(' - ').slice(1).join(' - '))
+        }
 
-          return acc
-        }, {})
+        return acc
+      }, {})
 
-        // Combine grouped Sonarr events and Radarr events
-        const combinedEvents = [...Object.values(groupedSonarrEvents), ...radarr_events]
+      // Combine grouped Sonarr events and Radarr events
+      const combinedEvents = [...Object.values(groupedSonarrEvents), ...radarr_events]
 
-        setEvents(combinedEvents)
-      }
-
+      setEvents(combinedEvents)
       setIsLoading(false)
     } catch (error) {
       console.error('Error fetching events:', error)

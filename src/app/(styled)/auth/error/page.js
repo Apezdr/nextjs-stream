@@ -1,10 +1,41 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useReducer } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import PendingApprovalPoller from '@src/components/Auth/PendingApprovalPoller'
 import { authClient } from '@src/lib/auth-client'
+
+// Mount reveal (fadeIn -> showContent) is one staged animation; the status check
+// (isChecking + checkResult) is one request flow. Each gets a single reducer so related
+// transitions dispatch together instead of cascading separate setState calls.
+const initialReveal = { fadeIn: false, showContent: false }
+
+function revealReducer(state, action) {
+  switch (action.type) {
+    case 'fadeIn':
+      return { ...state, fadeIn: true }
+    case 'showContent':
+      return { ...state, showContent: true }
+    default:
+      return state
+  }
+}
+
+const initialCheck = { isChecking: false, result: null } // result: 'approved' | 'pending' | 'error'
+
+function checkReducer(state, action) {
+  switch (action.type) {
+    case 'start':
+      return { isChecking: true, result: null }
+    case 'result':
+      return { isChecking: false, result: action.result }
+    case 'clear':
+      return { ...state, result: null }
+    default:
+      return state
+  }
+}
 
 const PulseRing = ({ delay = 0, size = 120 }) => (
   <div
@@ -84,56 +115,51 @@ const ClockIcon = () => {
 const AuthError = () => {
   const searchParams = useSearchParams()
   const router = useRouter()
-  const [fadeIn, setFadeIn] = useState(false)
-  const [showContent, setShowContent] = useState(false)
+  const [{ fadeIn, showContent }, dispatchReveal] = useReducer(revealReducer, initialReveal)
   const [hoveredButton, setHoveredButton] = useState(null)
-  const [isChecking, setIsChecking] = useState(false)
-  const [checkResult, setCheckResult] = useState(null) // 'approved', 'pending', 'error'
+  const [{ isChecking, result: checkResult }, dispatchCheck] = useReducer(checkReducer, initialCheck)
 
   const paramError = searchParams.get('error')
   const error = paramError !== 'APPROVAL_PENDING' ? paramError : ''
   const pendingApproval = paramError === 'APPROVAL_PENDING'
 
   useEffect(() => {
-    requestAnimationFrame(() => setFadeIn(true))
-    const contentTimer = setTimeout(() => setShowContent(true), 400)
+    requestAnimationFrame(() => dispatchReveal({ type: 'fadeIn' }))
+    const contentTimer = setTimeout(() => dispatchReveal({ type: 'showContent' }), 400)
     return () => {
       clearTimeout(contentTimer)
     }
   }, [])
 
   const handleCheckStatus = async () => {
-    setIsChecking(true)
-    setCheckResult(null)
-    
+    dispatchCheck({ type: 'start' })
+
     // Ensure minimum 800ms for "Checking..." to prevent jarring state changes
     const minDelay = new Promise(resolve => setTimeout(resolve, 300))
-    
+
     try {
       const [response] = await Promise.all([
         fetch('/api/auth/approval-status'),
         minDelay
       ])
       const data = await response.json()
-      
+
       if (data.approved) {
-        setCheckResult('approved')
+        dispatchCheck({ type: 'result', result: 'approved' })
         // Redirect after a brief moment to show the success message
         setTimeout(() => {
           router.push('/list')
         }, 1500)
       } else {
-        setCheckResult('pending')
+        dispatchCheck({ type: 'result', result: 'pending' })
         // Clear the message after 3 seconds
-        setTimeout(() => setCheckResult(null), 3000)
+        setTimeout(() => dispatchCheck({ type: 'clear' }), 3000)
       }
     } catch (err) {
       await minDelay // Ensure minimum delay even on error
-      setCheckResult('error')
+      dispatchCheck({ type: 'result', result: 'error' })
       // Clear the error message after 3 seconds
-      setTimeout(() => setCheckResult(null), 3000)
-    } finally {
-      setIsChecking(false)
+      setTimeout(() => dispatchCheck({ type: 'clear' }), 3000)
     }
   }
 

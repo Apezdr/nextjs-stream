@@ -2,35 +2,29 @@
 
 import { buildURL } from '@src/utils'
 import Script from 'next/script'
-import { useEffect, useState } from 'react'
+import useSWR from 'swr'
 
 /* global dashjs, cast */
 
-export default function ReceiverComponent() {
-  const [config, setConfig] = useState(null)
-
-  useEffect(() => {
-    async function fetchConfig() {
-      try {
-        const response = await fetch('/api/getserverconfig', {
-          headers: {
-            'Content-Type': 'application/json',
-          }
-        })
-
-        if (!response.ok) {
-          throw new Error('Failed to fetch server configuration')
-        }
-
-        const configData = await response.json()
-        setConfig(configData)
-      } catch (error) {
-        console.error(error)
-      }
+const fetchConfig = async (url) => {
+  const response = await fetch(url, {
+    headers: {
+      'Content-Type': 'application/json',
     }
+  })
 
-    fetchConfig()
-  }, [])
+  if (!response.ok) {
+    throw new Error('Failed to fetch server configuration')
+  }
+
+  return response.json()
+}
+
+export default function ReceiverComponent() {
+  const { data: config } = useSWR('/api/getserverconfig', fetchConfig, {
+    revalidateOnFocus: false,
+    onError: (error) => console.error(error),
+  })
 
   if (!config) {
     return <></>

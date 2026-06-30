@@ -891,6 +891,11 @@ export async function getFlatRecentlyWatchedForUser({
       const seasonMap = new Map(seasons.map((season) => [season._id.toString(), season]))
       const showMap = new Map(shows.map((show) => [show._id.toString(), show]))
 
+      // FK-orphan visibility: count episodes whose parent show/season _id no longer
+      // resolves (dropped from the join below), so a shortened page is observable.
+      let droppedFkCount = 0
+      const droppedFkSample = []
+
       // Build episode map with joined data, supporting both direct URL and normalized ID lookups
       uniqueEpisodes.forEach((episode) => {
         const seasonId = episode.seasonId ? episode.seasonId.toString() : null
@@ -923,8 +928,29 @@ export async function getFlatRecentlyWatchedForUser({
           if (episode.normalizedVideoId) {
             episodeMap.set(episode.normalizedVideoId, fullEpisodeObj)
           }
+        } else {
+          // FK-orphan guard: the episode resolved by videoId/normalizedVideoId but
+          // its parent show/season _id no longer exists (e.g. the show was re-inserted
+          // with a new _id, leaving episode.showId dangling). Without this branch the
+          // episode is silently omitted from episodeMap, shortening the recentlyWatched
+          // page. Record the drop so it is observable in SigNoz.
+          droppedFkCount++
+          if (droppedFkSample.length < 5) {
+            droppedFkSample.push({
+              episodeId: episode._id ? episode._id.toString() : null,
+              showId,
+              seasonId,
+              showTitle: episode.showTitle || null,
+            })
+          }
         }
       })
+      if (droppedFkCount > 0) {
+        console.warn(
+          `[recently-watched] dropped ${droppedFkCount} watched episode(s) with unresolved show/season FK (showId not found in FlatTVShows) — these silently shorten the page`,
+          { count: droppedFkCount, sample: droppedFkSample }
+        )
+      }
     }
 
     // Build trailer-to-TV-show map using metadata.trailer_url for YouTube trailer matching
@@ -1550,6 +1576,39 @@ export async function getFlatRecentlyAddedMedia({
     const client = await clientPromise
     const db = client.db('Media')
 
+    // Count-only short-circuit. The "Recently Added" row only needs a count, so
+    // skip the entire display pipeline below (movie pool fetch + recent-episode
+    // grouping aggregate + TV-show $in lookup) — none of that affects the count.
+    if (countOnly) {
+      // Cap total items so we don't render an unbounded number of pagination buttons.
+      const MAX_RECENTLY_ADDED_ITEMS = 100
+
+      const [moviesCount, episodeGroupsCount] = await Promise.all([
+        // Movies, capped at half the maximum.
+        db.collection('FlatMovies').countDocuments({}, { limit: MAX_RECENTLY_ADDED_ITEMS / 2 }),
+
+        // Unique TV shows among the most recently-modified episodes, capped at half
+        // the maximum. Uses the { mediaLastModified: -1, showId: 1 } index.
+        db
+          .collection('FlatEpisodes')
+          .aggregate([
+            { $sort: { mediaLastModified: -1 } },
+            { $limit: 1000 }, // Look at the 1000 most recent episodes
+            { $group: { _id: '$showId' } },
+            { $count: 'total' },
+          ])
+          .toArray()
+          .then((res) => Math.min(res[0]?.total || 0, MAX_RECENTLY_ADDED_ITEMS / 2)),
+      ])
+
+      if (Boolean(process.env.DEBUG) == true) {
+        console.timeEnd('getFlatRecentlyAddedMedia:total')
+      }
+
+      // Return the sum, but never more than our maximum.
+      return Math.min(moviesCount + episodeGroupsCount, MAX_RECENTLY_ADDED_ITEMS)
+    }
+
     // Select appropriate projection profile based on parameters and context
     const selectedProfile = selectProjectionProfile(
       projection,
@@ -1667,33 +1726,6 @@ export async function getFlatRecentlyAddedMedia({
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getFlatRecentlyAddedMedia:fetchTVShows')
       console.log(`[PERF] Found ${tvShows.length} recently added TV shows`)
-    }
-
-    if (countOnly) {
-      // For "recently added", we cap the total items at a reasonable limit
-      // This prevents too many pagination buttons from being shown
-      const MAX_RECENTLY_ADDED_ITEMS = 100 // Cap at 100 items total
-
-      // Get counts but with reasonable limits
-      const [moviesCount, episodeGroupsCount] = await Promise.all([
-        // Get count of movies, but no more than half our maximum
-        db.collection('FlatMovies').countDocuments({}, { limit: MAX_RECENTLY_ADDED_ITEMS / 2 }),
-
-        // Get count of unique TV shows with recent episodes, but no more than half our maximum
-        db
-          .collection('FlatEpisodes')
-          .aggregate([
-            { $sort: { mediaLastModified: -1 } },
-            { $limit: 1000 }, // Look at the 1000 most recent episodes
-            { $group: { _id: '$showId' } },
-            { $count: 'total' },
-          ])
-          .toArray()
-          .then((res) => Math.min(res[0]?.total || 0, MAX_RECENTLY_ADDED_ITEMS / 2)),
-      ])
-
-      // Return the sum, but never more than our maximum
-      return Math.min(moviesCount + episodeGroupsCount, MAX_RECENTLY_ADDED_ITEMS)
     }
 
     // Add URLs to media

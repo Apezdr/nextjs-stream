@@ -11,6 +11,11 @@ import { getApiEndpoint } from './utils/popupHelpers'
 import MediaHero from './MediaHero'
 import InfoSection from './InfoSection'
 import CastSection from './CastSection'
+import {
+  movieBackdropName,
+  tvShowBackdropName,
+  tvEpisodePosterName,
+} from '@src/utils/viewTransitionNames'
 
 // Extract static function outside component to save memory
 const stopPropagation = (e) => e.stopPropagation()
@@ -127,6 +132,23 @@ const PopupCard = (props) => {
     return imagePosition.expandedWidth ? `!w-[${imagePosition.expandedWidth}px]` : `w-[300px]`
   }, [imagePosition.expandedWidth])
 
+  // 7. View transition name — pairs the popup hero with its destination on
+  //    the detail page so the backdrop/thumbnail morphs into place during
+  //    navigation. Episodes pair with the episode-detail backdrop (same name
+  //    as the episode list item uses); movies and TV shows pair with their
+  //    detail-page backdrops.
+  const heroViewTransitionName = useMemo(() => {
+    if (!title) return undefined
+    const showTitle = showTitleFormatted || title
+    if (seasonNumber != null && episodeNumber != null) {
+      return tvEpisodePosterName(showTitle, seasonNumber, episodeNumber)
+    }
+    if (type === 'tv' || showTmdbId || showId) {
+      return tvShowBackdropName(title)
+    }
+    return movieBackdropName(title)
+  }, [title, showTitleFormatted, seasonNumber, episodeNumber, type, showTmdbId, showId])
+
   return (
     <div
       className={classNames(
@@ -203,6 +225,7 @@ const PopupCard = (props) => {
           dispatch={dispatch}
           handleImageLoad={handleImageLoad}
           isLoading={isLoading}
+          viewTransitionName={heroViewTransitionName}
         />
 
         {/* SECTION 2: Info (Title, Desc, Buttons) */}

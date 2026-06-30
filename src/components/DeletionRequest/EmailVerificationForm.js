@@ -11,7 +11,7 @@ export default function EmailVerificationForm({
   success = false 
 }) {
   const [isVerifying, setIsVerifying] = useState(false)
-  const [verificationError, setVerificationError] = useState(error)
+  const [verificationError, setVerificationError] = useState(() => error)
 
   const handleVerify = async () => {
     if (!token) {

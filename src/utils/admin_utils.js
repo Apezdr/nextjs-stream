@@ -1,5 +1,4 @@
 import axios from 'axios'
-import { getFullImageUrl } from '@src/utils'
 import {
   radarrAPIKey,
   radarrURL,
@@ -27,79 +26,6 @@ const CACHE_TTL = {
   default: 3600        // Default 1 hour
 };
 
-export function processMediaData(jsonResponseString) {
-  const { movies, tv } = jsonResponseString
-
-  // Prepare headers for the tables
-  const movieHeaders = ['Poster', 'Title', 'Genre', 'Year']
-  const tvHeaders = ['Poster', 'Title', 'Seasons', 'Year']
-
-  let result = {}
-
-  // Process movies if present
-  if (movies && movies.length > 0) {
-    const movieData = movies.map((movie) => {
-      let poster =
-        movie.posterURL ||
-        getFullImageUrl(movie.metadata?.poster_path) ||
-        `/sorry-image-not-available.jpg`
-
-      return {
-        id: movie._id.toString(),
-        posterURL: poster,
-        title:
-          movie.title === movie.metadata?.title
-            ? movie.metadata?.title
-            : movie.title + ` (${movie.metadata?.title})` || movie.title,
-        genre: movie.metadata?.genres.map((genre) => genre.name).join(', '),
-        year: typeof movie.metadata?.release_date?.getFullYear === 'function' ? movie.metadata.release_date.getFullYear() : 'N/A',
-      }
-    })
-
-    result.movies = {
-      headers: movieHeaders,
-      data: movieData,
-    }
-  }
-
-  // Process TV shows if present
-  if (tv && tv.length > 0) {
-    const tvData = tv.map((show) => {
-      let poster = show.posterURL || getFullImageUrl(show.metadata?.poster_path, 'w185')
-      if (!poster) {
-        poster = null
-      }
-      const startYear = getYearFromDate(show.metadata?.first_air_date)
-      const endYear = getYearFromDate(show.metadata?.last_air_date)
-
-      let released
-      if (startYear && endYear && startYear !== endYear) {
-        released = `${startYear}–${endYear}`
-      } else {
-        released = startYear ? startYear.toString() : ''
-      }
-
-      if (!released) {
-        released = show.metadata?.release_date.getFullYear()
-      }
-      return {
-        id: show._id.toString(),
-        posterURL: poster,
-        title: show.title,
-        seasons: show.seasons.length,
-        year: released,
-      }
-    })
-
-    result.tvShows = {
-      headers: tvHeaders,
-      data: tvData,
-    }
-  }
-
-  return result
-}
-
 export function processUserData(jsonResponse) {
   // Assuming jsonResponse is an array of user records
   const users = jsonResponse
@@ -121,10 +47,6 @@ export function processUserData(jsonResponse) {
     headers: userHeaders,
     data: userData,
   }
-}
-
-function getYearFromDate(dateString) {
-  return dateString ? new Date(dateString).getFullYear() : null
 }
 
 /**
@@ -483,16 +405,41 @@ export async function storeSystemStatus(statusData, serverId, isWebhook = false)
  * @returns {Promise<Object>} Latest system status
  */
 export async function getLatestSystemStatus() {
+  const toServerArray = (serversValue) => {
+    if (Array.isArray(serversValue)) return serversValue;
+    if (serversValue && typeof serversValue === 'object') {
+      return Object.entries(serversValue).map(([serverId, status]) => ({
+        ...status,
+        serverId: status?.serverId ?? serverId,
+      }));
+    }
+    return [];
+  };
+
+  const toIncidentsArray = (incidentsValue) =>
+    Array.isArray(incidentsValue) ? incidentsValue : [];
+
+  const normalizeLatestStatus = (doc) => {
+    const raw = doc || { servers: {}, activeIncidents: [] };
+    return {
+      ...raw,
+      servers: raw.servers ?? {},
+      activeIncidents: toIncidentsArray(raw.activeIncidents),
+      normalizedServers: toServerArray(raw.servers),
+      normalizedActiveIncidents: toIncidentsArray(raw.activeIncidents),
+    };
+  };
+
   try {
     const client = await import('@src/lib/mongodb').then(module => module.default);
     const db = client.db('Media');
     const statusCollection = db.collection('SystemStatus');
     
     const doc = await statusCollection.findOne({ _id: 'latest_status' });
-    return doc || { servers: {}, activeIncidents: [] };
+    return normalizeLatestStatus(doc);
   } catch (error) {
     console.error('Error fetching latest system status:', error);
-    return { servers: {}, activeIncidents: [] };
+    return normalizeLatestStatus(null);
   }
 }
 

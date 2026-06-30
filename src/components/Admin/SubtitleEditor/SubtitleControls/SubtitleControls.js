@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useReducer } from 'react'
 
 // Helper function to format time range for display
 function formatTimeRange(seconds) {
@@ -25,11 +25,17 @@ export default function SubtitleControls({
   duration,
   onSetZoomForTimeRange
 }) {
-  const [globalOffset, setGlobalOffset] = useState('')
-  const [selectedOffset, setSelectedOffset] = useState('')
-  const [relativeOffset, setRelativeOffset] = useState('')
-  const [direction, setDirection] = useState('after')
-  const [inclusion, setInclusion] = useState('including')
+  const [shiftForm, setShiftForm] = useReducer(
+    (state, patch) => ({ ...state, ...patch }),
+    {
+      globalOffset: '',
+      selectedOffset: '',
+      relativeOffset: '',
+      direction: 'after',
+      inclusion: 'including'
+    }
+  )
+  const { globalOffset, selectedOffset, relativeOffset, direction, inclusion } = shiftForm
 
   // In our new system, zoomLevel is seconds to display (not a multiplier)
   const handleZoomIn = () => {
@@ -91,21 +97,21 @@ export default function SubtitleControls({
   const handleGlobalShift = () => {
     if (globalOffset && onShiftAll) {
       onShiftAll(parseFloat(globalOffset))
-      setGlobalOffset('')
+      setShiftForm({ globalOffset: '' })
     }
   }
 
   const handleSelectedShift = () => {
     if (selectedOffset && onShiftSelected) {
       onShiftSelected(parseFloat(selectedOffset))
-      setSelectedOffset('')
+      setShiftForm({ selectedOffset: '' })
     }
   }
-  
+
   const handleRelativeShift = () => {
     if (relativeOffset && onShiftRelative) {
       onShiftRelative(parseFloat(relativeOffset), direction, inclusion)
-      setRelativeOffset('')
+      setShiftForm({ relativeOffset: '' })
     }
   }
 
@@ -237,7 +243,7 @@ export default function SubtitleControls({
             className="bg-gray-700 border border-gray-600 rounded px-2 py-1 w-20 text-sm"
             placeholder="seconds"
             value={globalOffset}
-            onChange={(e) => setGlobalOffset(e.target.value)}
+            onChange={(e) => setShiftForm({ globalOffset: e.target.value })}
             step="0.1"
           />
           <button
@@ -272,7 +278,7 @@ export default function SubtitleControls({
             className="bg-gray-700 border border-gray-600 rounded px-2 py-1 w-20 text-sm"
             placeholder="seconds"
             value={selectedOffset}
-            onChange={(e) => setSelectedOffset(e.target.value)}
+            onChange={(e) => setShiftForm({ selectedOffset: e.target.value })}
             step="0.1"
           />
           <button
@@ -294,7 +300,7 @@ export default function SubtitleControls({
             <select 
               className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm"
               value={direction}
-              onChange={(e) => setDirection(e.target.value)}
+              onChange={(e) => setShiftForm({ direction: e.target.value })}
             >
               <option value="before">Before</option>
               <option value="after">After</option>
@@ -303,7 +309,7 @@ export default function SubtitleControls({
             <select 
               className="bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm"
               value={inclusion}
-              onChange={(e) => setInclusion(e.target.value)}
+              onChange={(e) => setShiftForm({ inclusion: e.target.value })}
             >
               <option value="including">Including</option>
               <option value="excluding">Excluding</option>
@@ -330,7 +336,7 @@ export default function SubtitleControls({
             className="bg-gray-700 border border-gray-600 rounded px-2 py-1 w-20 text-sm"
             placeholder="seconds"
             value={relativeOffset}
-            onChange={(e) => setRelativeOffset(e.target.value)}
+            onChange={(e) => setShiftForm({ relativeOffset: e.target.value })}
             step="0.1"
           />
           <button

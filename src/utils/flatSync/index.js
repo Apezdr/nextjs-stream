@@ -113,7 +113,8 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
         return await syncWithNewArchitecture(fileServer, serverConfig, fieldAvailability, {
           forceSync,
           skipInitialization,
-          preBuiltFlatDB: options.preBuiltFlatDB
+          preBuiltFlatDB: options.preBuiltFlatDB,
+          allEnabledServersProbed: options.allEnabledServersProbed
         });
       }
     } catch (error) {

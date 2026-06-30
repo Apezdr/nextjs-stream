@@ -1,10 +1,11 @@
 'use client'
 
-import React, { 
-  useState, 
-  useRef, 
-  useEffect, 
-  useCallback, 
+import React, {
+  useState,
+  useRef,
+  useEffect,
+  useEffectEvent,
+  useCallback,
   useMemo,
   startTransition,
   memo,
@@ -378,15 +379,21 @@ const VirtualizedHorizontalList = ({
     swipeDuration: 250,
   })
 
+  // Effect Event: reads the latest isDragging/handleScrollRight without
+  // restarting the auto-scroll timer when those values change.
+  const onAutoScrollTick = useEffectEvent(() => {
+    if (!isDragging) {
+      handleScrollRight()
+    }
+  })
+
   // Simple auto scroll
   useEffect(() => {
     if (!autoScroll) return
 
     const startAutoScroll = () => {
       autoScrollTimeoutRef.current = setTimeout(() => {
-        if (!isDragging) {
-          handleScrollRight()
-        }
+        onAutoScrollTick()
         startAutoScroll()
       }, autoScrollInterval)
     }
@@ -398,7 +405,7 @@ const VirtualizedHorizontalList = ({
         clearTimeout(autoScrollTimeoutRef.current)
       }
     }
-  }, [autoScroll, autoScrollInterval, isDragging, handleScrollRight])
+  }, [autoScroll, autoScrollInterval])
 
   // Item ref callback
   const handleItemRef = useCallback((index, ref) => {

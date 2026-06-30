@@ -4,7 +4,7 @@
  */
 
 import { MongoClient } from 'mongodb'
-import { TVShowEntity, DatabaseError } from '../../core/types'
+import { TVShowEntity, BackdropFocal, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
 
 export class TVShowRepository extends BaseRepository<TVShowEntity> {
@@ -15,7 +15,7 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
   /**
    * Create optimal indexes for TV show queries
    */
-  async createIndexes(): Promise<void> {
+  async createIndexes(): Promise<boolean> {
     try {
       await Promise.all([
         // Primary lookup indexes — name must match flatSync/initializeDatabase.js
@@ -43,15 +43,27 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
         this.createIndexSafely({ totalEpisodeCount: 1 }, { sparse: true }),
         this.createIndexSafely({ 'metadata.genre': 1 }),
         this.createIndexSafely({ 'metadata.year': 1 }),
+
+        // Trailer-URL lookup — getFlatRecentlyWatchedForUser resolves trailer watch
+        // entries to shows via find({ 'metadata.trailer_url': ... }), which COLLSCANned
+        // FlatTVShows (SigNoz slow-query log, 7d). Name matches trailer_url_index in
+        // flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        this.createIndexSafely({ 'metadata.trailer_url': 1 }, { name: 'trailer_url_index' }),
         
         // Text search
-        this.createIndexSafely({ 
-          title: 'text', 
-          'metadata.description': 'text' 
-        })
+        this.createIndexSafely({
+          title: 'text',
+          'metadata.description': 'text'
+        }),
+
+        // Sync-run marker — post-sync cleanup deletes by { syncRunId: { $ne } }.
+        // Name must match flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        this.createIndexSafely({ syncRunId: 1 }, { name: 'sync_run_id_index' })
       ])
+      return true
     } catch (error) {
       console.error('Failed to create TV show indexes:', error)
+      return false
     }
   }
 
@@ -98,6 +110,10 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
     logo?: string
     posterBlurhash?: string
     backdropBlurhash?: string
+    backdropFocal?: BackdropFocal
+    backdropFocalSource?: string
+    backdropFocalSuggested?: BackdropFocal
+    backdropFocalSuggestedSource?: string
   }): Promise<void> {
     try {
       const updates: any = {}
@@ -107,6 +123,10 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
       if (assets.logo !== undefined) updates.logo = assets.logo
       if (assets.posterBlurhash !== undefined) updates.posterBlurhash = assets.posterBlurhash
       if (assets.backdropBlurhash !== undefined) updates.backdropBlurhash = assets.backdropBlurhash
+      if (assets.backdropFocal !== undefined) updates.backdropFocal = assets.backdropFocal
+      if (assets.backdropFocalSource !== undefined) updates.backdropFocalSource = assets.backdropFocalSource
+      if (assets.backdropFocalSuggested !== undefined) updates.backdropFocalSuggested = assets.backdropFocalSuggested
+      if (assets.backdropFocalSuggestedSource !== undefined) updates.backdropFocalSuggestedSource = assets.backdropFocalSuggestedSource
 
       await this.update(title, updates)
     } catch (error) {

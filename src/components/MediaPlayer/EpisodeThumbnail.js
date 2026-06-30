@@ -20,38 +20,37 @@ export default function EpisodeThumbnail({
   pending
 }) {
   const [isHovering, setIsHovering] = useState(false);
-  const [videoReady, setVideoReady] = useState(false);
-  const [playingVideo, setPlayingVideo] = useState(false);
-  const [afterVideo, setAfterVideo] = useState(false);
-  
+  // Group the related video playback flags into a single state object
+  const INITIAL_VIDEO_STATE = { videoReady: false, playingVideo: false, afterVideo: false };
+  const [videoState, setVideoState] = useState(INITIAL_VIDEO_STATE);
+  const { videoReady, playingVideo, afterVideo } = videoState;
+
   // Get access to our playback coordinator context
   const { requestPlayback } = usePlaybackCoordinator();
-  
+
   // Use the clipVideoURL that's included in the episode data
   const videoURL = episode.clipVideoURL;
   const hasVideo = !!videoURL;
-  
+
   // Reset video state when episode changes
   useEffect(() => {
-    setVideoReady(false);
-    setPlayingVideo(false);
-    setAfterVideo(false);
+    setVideoState(INITIAL_VIDEO_STATE);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [episode._id]);
-  
+
   // Handlers for video player events
   const handleVideoReady = useCallback((player) => {
-    setVideoReady(true);
+    setVideoState((prev) => ({ ...prev, videoReady: true }));
   }, []);
-  
+
   const handleVideoEnd = useCallback((player) => {
-    setPlayingVideo(false);
-    setAfterVideo(true);
+    setVideoState((prev) => ({ ...prev, playingVideo: false, afterVideo: true }));
     // Tell the coordinator we're done playing
     requestPlayback('thumbnail', false);
   }, [requestPlayback]);
-  
+
   const handlePlaying = useCallback(() => {
-    setPlayingVideo(true);
+    setVideoState((prev) => ({ ...prev, playingVideo: true }));
     // Tell the coordinator we're starting to play
     requestPlayback('thumbnail', true);
   }, [requestPlayback]);
@@ -69,9 +68,7 @@ export default function EpisodeThumbnail({
       onMouseEnter={() => setIsHovering(true)}
       onMouseLeave={() => {
         setIsHovering(false);
-        setPlayingVideo(false);
-        setAfterVideo(false);
-        setVideoReady(false);
+        setVideoState(INITIAL_VIDEO_STATE);
         // Tell the coordinator we're no longer playing
         requestPlayback('thumbnail', false);
       }}

@@ -175,6 +175,11 @@ export async function createFlatDatabaseIndexes() {
       // see the `show_title_season_index` comment on FlatSeasons. Uniqueness
       // lives on `(showId, seasonId, episodeNumber)` above.
       { key: { showTitle: 1, seasonNumber: 1, episodeNumber: 1 }, name: 'show_title_season_episode_index' },
+
+      // Used by preTagSyncRunId's per-episode bulkWrite filter `{ showId, seasonNumber, episodeNumber }`.
+      // Without this, ops fall back to the `showId` prefix of the unique index above and scan every
+      // episode under the show in-memory to match seasonNumber/episodeNumber.
+      { key: { showId: 1, seasonNumber: 1, episodeNumber: 1 }, name: 'show_season_number_episode_index' },
       
       // CRITICAL: Index for queries filtering by seasonId alone (fixes COLLSCAN slow query)
       // This enables efficient episode lookups within a season and eliminates in-memory sorting

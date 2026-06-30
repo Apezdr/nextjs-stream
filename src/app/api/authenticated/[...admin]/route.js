@@ -1,10 +1,8 @@
 import { buildURL } from '@src/utils'
 import { isAdmin, isAdminOrWebhook } from '../../../../utils/routeAuth'
 import {
-  getAllMedia,
   getAllUsers,
   getLastSynced,
-  getRecentlyWatched,
 } from '@src/utils/admin_database'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { ObjectId } from 'mongodb'
@@ -14,7 +12,6 @@ import {
   fetchSABNZBDQueue,
   fetchSonarrQueue,
   fetchTdarrQueue,
-  processMediaData,
   processUserData,
   storeSystemStatus,
 } from '@src/utils/admin_utils'
@@ -34,6 +31,14 @@ import { getSyncVerificationReport } from '@src/utils/sync_verification'
 import { handleQueueFetch } from '@src/utils/auth_utils'
 import { NotificationManager } from '@src/utils/notifications/NotificationManager.js'
 import { getFileServerData } from '@src/utils/fileServerDataService'
+import { revalidateTag } from 'next/cache'
+import {
+  getAllMovieCacheTags,
+  getAllTVShowCacheTags,
+  getAllSeasonCacheTags,
+  getAllEpisodeCacheTags,
+} from '@src/utils/cache/mediaPagesTags'
+import { createLogger } from '@src/lib/logger'
 
 /**
  * Extracts all server endpoints from the configuration.
@@ -129,13 +134,6 @@ export async function GET(request, props) {
 
   try {
     switch (dataType.toLowerCase()) {
-      case 'media':
-        {
-          const allRecords = await getAllMedia()
-          responseData = { processedData: processMediaData(allRecords) }
-        }
-        break
-
       case 'users':
         {
           const allUsers = await getAllUsers()
@@ -247,7 +245,7 @@ export async function GET(request, props) {
                 // Find the most recent watch time
                 let mostRecentWatch = null
                 watchedMedia.forEach(media => {
-                  const lastUpdated = media.lastWatchedVideo?.lastUpdated
+                  const lastUpdated = media.lastWatchedTimestamp
                   if (lastUpdated && (!mostRecentWatch || lastUpdated > mostRecentWatch)) {
                     mostRecentWatch = lastUpdated
                   }
@@ -274,7 +272,12 @@ export async function GET(request, props) {
             // Filter out nulls and sort by most recent watch
             responseData = recentlyWatched
               .filter(entry => entry)
-              .sort((a, b) => b.mostRecentWatch - a.mostRecentWatch)
+              .sort((a, b) => {
+                if (!a.mostRecentWatch && !b.mostRecentWatch) return 0
+                if (!a.mostRecentWatch) return 1
+                if (!b.mostRecentWatch) return -1
+                return new Date(b.mostRecentWatch) - new Date(a.mostRecentWatch)
+              })
           } catch (error) {
             console.error(`Error in recently-watched endpoint: ${error.message}`)
           }
@@ -612,6 +615,104 @@ async function handleSystemStatusNotification(request, webhookId, serverId) {
 }
 
 /**
+ * Handle the post-sync media cache revalidation request.
+ *
+ * Why this exists as a separate route: the admin sync is fire-and-forget
+ * (handleSyncOperation returns a 202 before handleSync completes), so calling
+ * revalidateTag from inside the sync is a silent no-op — Next flushes a request's
+ * pending tags (withExecuteRevalidates) the moment the route handler resolves,
+ * which for the sync is the 202, long before any entity is written. This handler
+ * runs in its own fresh, short-lived request scope where revalidateTag actually
+ * commits. The sync POSTs the set of changed entities here when it finishes.
+ *
+ * Body: { movies: string[], shows: string[],
+ *         seasons: {title,season}[], episodes: {title,season,episode}[] }
+ * All titles are DISPLAY titles (media page tags key on the display title).
+ *
+ * @param {Request} request - The request object
+ * @returns {Promise<Response>}
+ */
+async function handleRevalidateMedia(request) {
+  const log = createLogger('Cache.RevalidateMedia')
+
+  let payload
+  try {
+    payload = await request.json()
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+
+  const movies = Array.isArray(payload?.movies) ? payload.movies : []
+  const shows = Array.isArray(payload?.shows) ? payload.shows : []
+  const seasons = Array.isArray(payload?.seasons) ? payload.seasons : []
+  const episodes = Array.isArray(payload?.episodes) ? payload.episodes : []
+
+  // Build a deduped set of tags before revalidating. Dedup matters: the global
+  // bucket tags ('tv', 'media-library', '*-details') and a show's tag repeat
+  // across every season/episode of that show — marking each stale once is enough,
+  // and it keeps the unique-tag count an honest over-invalidation signal.
+  const tags = new Set()
+  for (const title of movies) {
+    if (title) for (const t of getAllMovieCacheTags(title)) tags.add(t)
+  }
+  for (const title of shows) {
+    if (title) for (const t of getAllTVShowCacheTags(title)) tags.add(t)
+  }
+  for (const s of seasons) {
+    if (s?.title && s.season != null) {
+      for (const t of getAllSeasonCacheTags(s.title, s.season)) tags.add(t)
+    }
+  }
+  for (const e of episodes) {
+    if (e?.title && e.season != null && e.episode != null) {
+      for (const t of getAllEpisodeCacheTags(e.title, e.season, e.episode)) tags.add(t)
+    }
+  }
+
+  for (const tag of tags) {
+    revalidateTag(tag, 'max')
+  }
+
+  // Over-invalidation observability: structured so SigNoz can alert when the
+  // unique-tag count (or any entity bucket) spikes far beyond what a normal sync
+  // touches. "completed" entities are not a guaranteed field-level diff (the
+  // services emit completed whenever the smart-upsert ran), so this is the place
+  // to watch if invalidation starts firing too broadly.
+  log.info(
+    {
+      entities: {
+        movies: movies.length,
+        shows: shows.length,
+        seasons: seasons.length,
+        episodes: episodes.length,
+      },
+      uniqueTags: tags.size,
+    },
+    'Post-sync media cache revalidation completed'
+  )
+
+  return new Response(
+    JSON.stringify({
+      revalidated: true,
+      entities: {
+        movies: movies.length,
+        shows: shows.length,
+        seasons: seasons.length,
+        episodes: episodes.length,
+      },
+      uniqueTags: tags.size,
+    }),
+    {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }
+  )
+}
+
+/**
  * Handle sync operation request
  * @param {Request} request - The request object
  * @param {string} webhookId - The webhook ID from the request
@@ -632,11 +733,21 @@ async function handleSyncOperation(request, webhookId) {
     )
   }
 
+  // Read sync options from the request body (Force Refresh checkbox in the
+  // SyncMediaPopup posts { forceSync: boolean }). Empty/malformed body → defaults.
+  let forceSync = false
+  try {
+    const body = await request.clone().json()
+    forceSync = Boolean(body?.forceSync)
+  } catch {
+    // No JSON body or invalid — leave forceSync at default (false)
+  }
+
   startTime = new Date().toISOString()
   startSnapshotTracking()
 
   // Fire and forget — response is delivered via SSE stream
-  activeSyncOperation = handleSync(webhookId, request)
+  activeSyncOperation = handleSync(webhookId, request, { forceSync })
   activeSyncOperation
     .then(() => {
       syncSubscribers.forEach((s) => s.resolve())
@@ -682,7 +793,12 @@ export async function POST(request, props) {
     if (slugs[1] === 'system-status-notification') {
       return handleSystemStatusNotification(request, webhookId, serverId);
     }
-    
+
+    // Handle post-sync media cache revalidation (fired internally by the sync)
+    if (slugs[1] === 'revalidate-media') {
+      return handleRevalidateMedia(request);
+    }
+
     // Handle sync operation
     if (slugs.includes('sync')) {
       return handleSyncOperation(request, webhookId);
@@ -697,15 +813,87 @@ export async function POST(request, props) {
 }
 
 /**
+ * Fire the post-sync cache revalidation by POSTing the changed entities to the
+ * /admin/revalidate-media route. That route runs in its own request scope — the
+ * only place revalidateTag actually commits for this fire-and-forget sync.
+ *
+ * Self-authenticates: forwards the incoming webhook id when present (webhook-
+ * triggered sync), otherwise falls back to WEBHOOK_ID from env (admin-UI-
+ * triggered sync, which carries a session, not a webhook id). Never throws — the
+ * caller wraps it, and a revalidation miss must never fail a sync.
+ *
+ * @param {Request} request - the original sync request (used for the self origin)
+ * @param {string|null} webhookId - incoming webhook id, if any
+ * @param {Object|undefined} changedMedia - { movies, shows, seasons, episodes }
+ */
+async function triggerPostSyncRevalidation(request, webhookId, changedMedia) {
+  if (!changedMedia) {
+    console.log('[Cache SWR] No changedMedia on sync result — skipping post-sync revalidation')
+    return
+  }
+
+  const totalChanged =
+    (changedMedia.movies?.length || 0) +
+    (changedMedia.shows?.length || 0) +
+    (changedMedia.seasons?.length || 0) +
+    (changedMedia.episodes?.length || 0)
+
+  if (totalChanged === 0) {
+    console.log('[Cache SWR] Nothing changed this sync — skipping post-sync revalidation')
+    return
+  }
+
+  const internalWebhookId = webhookId || process.env.WEBHOOK_ID
+  if (!internalWebhookId) {
+    console.error('[Cache SWR] No webhook id available for internal revalidation call — skipping')
+    return
+  }
+
+  // Target loopback, NOT request.url's origin. The sync is usually webhook-
+  // triggered, so request.url carries the EXTERNAL host, which the container
+  // cannot reach from inside (hairpin NAT, and TLS terminates at the proxy) —
+  // that produced a "fetch failed" and the revalidation silently never ran.
+  // The standalone server always listens on 127.0.0.1:PORT. Prefer PORT (set in
+  // the Docker image), fall back to the incoming request's port (covers
+  // `next dev -p 3232`), then the Next default.
+  const port = process.env.PORT || new URL(request.url).port || '3000'
+  const revalidateUrl = `http://127.0.0.1:${port}/api/authenticated/admin/revalidate-media`
+
+  const controller = new AbortController()
+  const timeoutId = setTimeout(() => controller.abort(), 15000)
+  try {
+    const response = await fetch(revalidateUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Webhook-ID': internalWebhookId,
+      },
+      body: JSON.stringify(changedMedia),
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+    if (!response.ok) {
+      console.error(`[Cache SWR] revalidate-media responded ${response.status}`)
+    } else {
+      console.log(`[Cache SWR] Post-sync revalidation triggered for ${totalChanged} changed entities`)
+    }
+  } catch (fetchError) {
+    clearTimeout(timeoutId)
+    console.error(`[Cache SWR] revalidate-media request failed: ${fetchError.message}`)
+  }
+}
+
+/**
  * Handles sync operation with improved error handling.
  * @param {string|null} webhookId - Webhook ID
  * @param {Request} request - Request object
  * @returns {Promise<Object>} Sync results
  */
-async function handleSync(webhookId, request) {
+async function handleSync(webhookId, request, syncOptions = {}) {
   // Add a flag to track whether this sync operation is still in progress
   let syncInProgress = true;
   const syncStartTime = new Date();
+  const forceSync = Boolean(syncOptions.forceSync);
   
   try {
     const headers = {}
@@ -767,10 +955,19 @@ async function handleSync(webhookId, request) {
     const client = await clientPromise
     await createDatabaseAdapter(client)
 
+    // Authoritative-pass gate for field-absence cleanup. getFileServerData sets
+    // `errors` (an array) only when a server failed to respond; undefined means
+    // every configured server was fetched cleanly. Field-absence cleanup must
+    // never run on a partial pass, or a transient outage would be read as a
+    // deletion and wipe good data.
+    const allEnabledServersProbed = !errors && Object.keys(fileServers || {}).length > 0
+
     // Perform the actual sync with architecture options
     const result = await syncAllServers(fileServers, fieldAvailability, {
       useNewArchitecture,
-      forceOldArchitecture
+      forceOldArchitecture,
+      forceSync,
+      allEnabledServersProbed,
     })
     
     // Mark sync as complete to prevent logging errors after completion
@@ -803,7 +1000,19 @@ async function handleSync(webhookId, request) {
       console.error('Failed to create sync completion notification:', notificationError);
       // Don't fail the sync operation if notification creation fails
     }
-    
+
+    // Bust the media-page caches for everything that changed this run. This MUST
+    // happen via a fresh request (not inline): the sync is fire-and-forget, so an
+    // inline revalidateTag here would no-op (the 202 already flushed this request's
+    // revalidation window). We POST the changed entities to /admin/revalidate-media,
+    // which runs in its own request scope where revalidateTag commits. Wrapped so a
+    // revalidation failure never fails the sync.
+    try {
+      await triggerPostSyncRevalidation(request, webhookId, result?.changedMedia)
+    } catch (revalidationError) {
+      console.error('Post-sync cache revalidation failed:', revalidationError.message)
+    }
+
     return result;
   } catch (error) {
     console.error('Sync operation failed:', error)

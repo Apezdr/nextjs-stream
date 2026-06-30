@@ -1,8 +1,12 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useReducer } from 'react'
 import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
+
+function mergeReducer(state, patch) {
+  return { ...state, ...patch }
+}
 
 export default function SharePlaylistModal({
   playlistId,
@@ -11,16 +15,24 @@ export default function SharePlaylistModal({
   onSuccess,
   api
 }) {
-  const [collaborators, setCollaborators] = useState([])
   const [newCollaborator, setNewCollaborator] = useState({
     email: '',
     permission: 'view'
   })
   const [loading, setLoading] = useState(false)
-  const [shareLink, setShareLink] = useState('')
-  const [linkCopied, setLinkCopied] = useState(false)
-  const [globalPermission, setGlobalPermission] = useState(playlist?.globalPermission || 'none')
-  const [removeCollaboratorEmails, setRemoveCollaboratorEmails] = useState([])
+
+  const [sharing, setSharing] = useReducer(mergeReducer, {
+    collaborators: [],
+    globalPermission: playlist?.globalPermission || 'none',
+    removeCollaboratorEmails: []
+  })
+  const { collaborators, globalPermission, removeCollaboratorEmails } = sharing
+
+  const [link, setLink] = useReducer(mergeReducer, {
+    shareLink: '',
+    linkCopied: false
+  })
+  const { shareLink, linkCopied } = link
 
   const normalizedCurrentCollaboratorEmails = (playlist?.collaborators || [])
     .map((collaborator) => collaborator?.email?.trim().toLowerCase())
@@ -49,28 +61,31 @@ export default function SharePlaylistModal({
       return
     }
 
-    if (removeCollaboratorEmails.includes(normalizedEmail)) {
-      setRemoveCollaboratorEmails((prev) => prev.filter((email) => email !== normalizedEmail))
-    }
+    const nextRemoveEmails = removeCollaboratorEmails.includes(normalizedEmail)
+      ? removeCollaboratorEmails.filter((email) => email !== normalizedEmail)
+      : removeCollaboratorEmails
 
-    setCollaborators(prev => [...prev, { ...newCollaborator, email: normalizedEmail }])
+    setSharing({
+      collaborators: [...collaborators, { ...newCollaborator, email: normalizedEmail }],
+      removeCollaboratorEmails: nextRemoveEmails
+    })
     setNewCollaborator({ email: '', permission: 'view' })
   }, [newCollaborator, collaborators, normalizedCurrentCollaboratorEmails, removeCollaboratorEmails])
 
   const handleRemoveCollaborator = useCallback((index) => {
-    setCollaborators(prev => prev.filter((_, i) => i !== index))
-  }, [])
+    setSharing({ collaborators: collaborators.filter((_, i) => i !== index) })
+  }, [collaborators])
 
   const toggleRemoveExistingCollaborator = useCallback((email) => {
     const normalizedEmail = email?.trim().toLowerCase()
     if (!normalizedEmail) return
 
-    setRemoveCollaboratorEmails((prev) => (
-      prev.includes(normalizedEmail)
-        ? prev.filter((value) => value !== normalizedEmail)
-        : [...prev, normalizedEmail]
-    ))
-  }, [])
+    setSharing({
+      removeCollaboratorEmails: removeCollaboratorEmails.includes(normalizedEmail)
+        ? removeCollaboratorEmails.filter((value) => value !== normalizedEmail)
+        : [...removeCollaboratorEmails, normalizedEmail]
+    })
+  }, [removeCollaboratorEmails])
 
   const hasChanges =
     collaborators.length > 0 ||
@@ -98,8 +113,8 @@ export default function SharePlaylistModal({
 
   const generateShareLink = useCallback(() => {
     const baseUrl = window.location.origin
-    const link = `${baseUrl}/watchlist?playlist=${playlistId}`
-    setShareLink(link)
+    const generatedLink = `${baseUrl}/watchlist?playlist=${playlistId}`
+    setLink({ shareLink: generatedLink })
   }, [playlistId])
 
   const copyShareLink = useCallback(async () => {
@@ -110,9 +125,9 @@ export default function SharePlaylistModal({
 
     try {
       await navigator.clipboard.writeText(shareLink)
-      setLinkCopied(true)
+      setLink({ linkCopied: true })
       toast.success('Share link copied to clipboard')
-      setTimeout(() => setLinkCopied(false), 2000)
+      setTimeout(() => setLink({ linkCopied: false }), 2000)
     } catch (error) {
       console.error('Error copying link:', error)
       toast.error('Failed to copy link')
@@ -195,7 +210,7 @@ export default function SharePlaylistModal({
             </label>
             <select
               value={globalPermission}
-              onChange={(e) => setGlobalPermission(e.target.value)}
+              onChange={(e) => setSharing({ globalPermission: e.target.value })}
               className="w-full px-3 py-2 bg-gray-600 border border-gray-500 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
             >
               <option value="none">No global access</option>

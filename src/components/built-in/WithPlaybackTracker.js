@@ -28,6 +28,8 @@ export default function WithPlayBackTracker({
   useEffect(() => {
     if (!canPlay || !remote) return;
 
+    let urlCleanupTimeout = null;
+
     const restorePlaybackPosition = async () => {
       // Try localStorage first (fastest)
       const savedData = localStorage.getItem(videoURL);
@@ -37,9 +39,9 @@ export default function WithPlayBackTracker({
         // Priority 1: URL parameter (deep links) - highest priority
         if (start !== null && start !== undefined) {
           remote.seek(start);
-          
+
           // Clean up the URL by removing query parameters
-          setTimeout(() => {
+          urlCleanupTimeout = setTimeout(() => {
             try {
               window.history.replaceState({}, '', pathname);
             } catch (err) {
@@ -65,6 +67,10 @@ export default function WithPlayBackTracker({
     };
 
     restorePlaybackPosition();
+
+    return () => {
+      if (urlCleanupTimeout) clearTimeout(urlCleanupTimeout);
+    };
   }, [remote, canPlay, videoURL, start, pathname, savedPlaybackTime]);
 
   // Initialize the web worker with error handling and fallback logic.
@@ -100,7 +106,7 @@ export default function WithPlayBackTracker({
     updatePlaybackWorkerRef.current = worker;
 
     // Listen for messages from the worker.
-    worker.addEventListener('message', (event) => {
+    const handleWorkerMessage = (event) => {
       const { success, currentTime, error } = event.data;
       if (success) {
         setLastTimeSent(currentTime);
@@ -108,9 +114,11 @@ export default function WithPlayBackTracker({
         console.error('Worker error:', error);
       }
       isFetchingRef.current = false;
-    });
+    };
+    worker.addEventListener('message', handleWorkerMessage);
 
     return () => {
+      worker.removeEventListener('message', handleWorkerMessage);
       worker.terminate();
     };
   }, []);

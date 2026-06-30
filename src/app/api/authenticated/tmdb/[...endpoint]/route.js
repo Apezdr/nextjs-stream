@@ -4,6 +4,26 @@ import { httpGet } from '@src/lib/httpHelper'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 
 /**
+ * httpHelper (here and on the backend) caches JSON/text responses wrapped as
+ * `{ _dataType, _isBuffer, data }`. On a cache hit that envelope can reach us
+ * instead of the bare body, which breaks clients expecting the payload at the
+ * top level (e.g. `results`/`posters`). Unwrap it before responding; a no-op for
+ * already-unwrapped fresh bodies.
+ */
+function unwrapCachedEnvelope(payload) {
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    (payload._dataType === 'json' || payload._dataType === 'text') &&
+    'data' in payload
+  ) {
+    return payload.data
+  }
+  return payload
+}
+
+/**
  * Dynamic TMDB proxy route
  * GET /api/authenticated/tmdb/[...endpoint]
  * Proxies all other TMDB requests to backend server with enhanced retry and caching
@@ -86,7 +106,7 @@ export async function GET(request, { params }) {
       shouldCache
     ) // Cache based on endpoint type
 
-    return Response.json(response.data)
+    return Response.json(unwrapCachedEnvelope(response.data))
   } catch (error) {
     console.error('TMDB proxy error:', error)
 
@@ -169,7 +189,7 @@ export async function POST(request, { params }) {
         }
 
         const data = await response.json()
-        return Response.json(data)
+        return Response.json(unwrapCachedEnvelope(data))
       } catch (error) {
         lastError = error
         if (attempt < maxRetries && (!error.response || error.response.status >= 500)) {

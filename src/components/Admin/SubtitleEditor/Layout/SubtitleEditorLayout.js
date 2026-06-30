@@ -1,12 +1,94 @@
 'use client'
 
-import { useState, useEffect, useRef, useCallback, startTransition } from 'react'
+import { useState, useReducer, useEffect, useMemo, useRef, useCallback, startTransition } from 'react'
+import useSWR from 'swr'
 import { parseVTT, exportToVTT } from '../utils/subtitleParser'
 import SubtitleMainArea from './SubtitleMainArea'
 import SubtitleInspector from './SubtitleInspector'
 import SubtitleSidebar from './SubtitleSidebar'
 import SubtitleToolbar from './SubtitleToolbar'
 import EditorVideoPlayer from './EditorVideoPlayer'
+
+// Fetch + parse a VTT subtitle file for the given URL.
+const fetchAndParseSubtitles = async (url) => {
+  const response = await fetch(url)
+  const subtitleContent = await response.text()
+  return parseVTT(subtitleContent)
+}
+
+// Related editor state is grouped into reducers (keeps the component under the
+// useState-count threshold). Each action mirrors a useState setter and supports
+// the value-or-updater form, so call sites read/behave exactly like before.
+const resolve = (value, prev) => (typeof value === 'function' ? value(prev) : value)
+
+// Editable subtitle document + dirty flag + immutable reset snapshot.
+function docReducer(state, action) {
+  switch (action.type) {
+    case 'setSubtitles':
+      return { ...state, subtitles: resolve(action.value, state.subtitles) }
+    case 'setOriginalSubtitles':
+      return { ...state, originalSubtitles: resolve(action.value, state.originalSubtitles) }
+    case 'setHasChanges':
+      return { ...state, hasChanges: resolve(action.value, state.hasChanges) }
+    default:
+      return state
+  }
+}
+
+// Timeline zoom level + initialization tracking.
+function zoomReducer(state, action) {
+  switch (action.type) {
+    case 'setZoomLevel':
+      return { ...state, zoomLevel: resolve(action.value, state.zoomLevel) }
+    case 'setIsZoomInitialized':
+      return { ...state, isZoomInitialized: resolve(action.value, state.isZoomInitialized) }
+    case 'setUserSetZoom':
+      return { ...state, userSetZoom: resolve(action.value, state.userSetZoom) }
+    default:
+      return state
+  }
+}
+
+// Video playback position/state + resolved source.
+function playbackReducer(state, action) {
+  switch (action.type) {
+    case 'setIsPlaying':
+      return { ...state, isPlaying: resolve(action.value, state.isPlaying) }
+    case 'setLocalCurrentTime':
+      return { ...state, localCurrentTime: resolve(action.value, state.localCurrentTime) }
+    case 'setVideoSource':
+      return { ...state, videoSource: resolve(action.value, state.videoSource) }
+    default:
+      return state
+  }
+}
+
+// Search query + result cursor.
+function searchReducer(state, action) {
+  switch (action.type) {
+    case 'setSearchQuery':
+      return { ...state, searchQuery: resolve(action.value, state.searchQuery) }
+    case 'setCurrentSearchIndex':
+      return { ...state, currentSearchIndex: resolve(action.value, state.currentSearchIndex) }
+    default:
+      return state
+  }
+}
+
+// Active subtitle source (language + URL) and the previous selected-language
+// prop, used by the render-phase prop-sync.
+function sourceReducer(state, action) {
+  switch (action.type) {
+    case 'setCurrentSubtitleLanguage':
+      return { ...state, currentSubtitleLanguage: resolve(action.value, state.currentSubtitleLanguage) }
+    case 'setCurrentSubtitleUrl':
+      return { ...state, currentSubtitleUrl: resolve(action.value, state.currentSubtitleUrl) }
+    case 'setPrevSelectedLanguage':
+      return { ...state, prevSelectedLanguage: resolve(action.value, state.prevSelectedLanguage) }
+    default:
+      return state
+  }
+}
 
 export default function SubtitleEditorLayout({
   isOpen,
@@ -25,27 +107,103 @@ export default function SubtitleEditorLayout({
   seasonNumber = null,
   episodeNumber = null
 }) {
-  const [subtitles, setSubtitles] = useState([])
+  // Editable document state (subtitles / reset snapshot / dirty flag)
+  const [docState, dispatchDoc] = useReducer(docReducer, {
+    subtitles: [],
+    originalSubtitles: [], // For undo/reset
+    hasChanges: false,
+  })
+  const { subtitles, originalSubtitles, hasChanges } = docState
+  const setSubtitles = useCallback((value) => dispatchDoc({ type: 'setSubtitles', value }), [])
+  const setOriginalSubtitles = useCallback((value) => dispatchDoc({ type: 'setOriginalSubtitles', value }), [])
+  const setHasChanges = useCallback((value) => dispatchDoc({ type: 'setHasChanges', value }), [])
+
+  // Timeline zoom state
+  const [zoomState, dispatchZoom] = useReducer(zoomReducer, {
+    zoomLevel: 5 * 60,
+    isZoomInitialized: false,
+    userSetZoom: false,
+  })
+  const { zoomLevel, isZoomInitialized, userSetZoom } = zoomState
+  const setZoomLevel = useCallback((value) => dispatchZoom({ type: 'setZoomLevel', value }), [])
+  const setIsZoomInitialized = useCallback((value) => dispatchZoom({ type: 'setIsZoomInitialized', value }), [])
+  const setUserSetZoom = useCallback((value) => dispatchZoom({ type: 'setUserSetZoom', value }), [])
+
+  // Video playback state (incl. resolved source)
+  const [playbackState, dispatchPlayback] = useReducer(playbackReducer, {
+    isPlaying: false,
+    localCurrentTime: currentTime || 0,
+    videoSource: null, // Resolved from props or video ref
+  })
+  const { isPlaying, localCurrentTime, videoSource } = playbackState
+  const setIsPlaying = useCallback((value) => dispatchPlayback({ type: 'setIsPlaying', value }), [])
+  const setLocalCurrentTime = useCallback((value) => dispatchPlayback({ type: 'setLocalCurrentTime', value }), [])
+  const setVideoSource = useCallback((value) => dispatchPlayback({ type: 'setVideoSource', value }), [])
+
+  // Search state
+  const [searchState, dispatchSearch] = useReducer(searchReducer, {
+    searchQuery: '',
+    currentSearchIndex: 0,
+  })
+  const { searchQuery, currentSearchIndex } = searchState
+  const setSearchQuery = useCallback((value) => dispatchSearch({ type: 'setSearchQuery', value }), [])
+  const setCurrentSearchIndex = useCallback((value) => dispatchSearch({ type: 'setCurrentSearchIndex', value }), [])
+
+  // Subtitle source: active language/URL + previous selected-language prop
+  const [sourceState, dispatchSource] = useReducer(sourceReducer, undefined, () => ({
+    currentSubtitleLanguage: selectedSubtitleLanguage,
+    currentSubtitleUrl: subtitleUrl,
+    prevSelectedLanguage: selectedSubtitleLanguage,
+  }))
+  const { currentSubtitleLanguage, currentSubtitleUrl, prevSelectedLanguage } = sourceState
+  const setCurrentSubtitleLanguage = useCallback((value) => dispatchSource({ type: 'setCurrentSubtitleLanguage', value }), [])
+  const setCurrentSubtitleUrl = useCallback((value) => dispatchSource({ type: 'setCurrentSubtitleUrl', value }), [])
+  const setPrevSelectedLanguage = useCallback((value) => dispatchSource({ type: 'setPrevSelectedLanguage', value }), [])
+
   const [selectedSubtitles, setSelectedSubtitles] = useState([])
-  const [originalSubtitles, setOriginalSubtitles] = useState([]) // For undo/reset
-  const [isLoading, setIsLoading] = useState(true)
-  const [zoomLevel, setZoomLevel] = useState(5 * 60)
-  const [hasChanges, setHasChanges] = useState(false)
-  const [isZoomInitialized, setIsZoomInitialized] = useState(false)
-  const [userSetZoom, setUserSetZoom] = useState(false)
   const editorRef = useRef(null)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [localCurrentTime, setLocalCurrentTime] = useState(currentTime || 0)
-  const [currentSubtitle, setCurrentSubtitle] = useState(null)
   const [editMode, setEditMode] = useState('select') // 'select', 'move', 'resize-start', 'resize-end'
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchResults, setSearchResults] = useState([])
-  const [currentSearchIndex, setCurrentSearchIndex] = useState(0)
-  // Get the video source from props or reference
-  const [videoSource, setVideoSource] = useState(null)
-  // Track the current subtitle language
-  const [currentSubtitleLanguage, setCurrentSubtitleLanguage] = useState(selectedSubtitleLanguage)
-  const [currentSubtitleUrl, setCurrentSubtitleUrl] = useState(subtitleUrl)
+
+  // Load + parse subtitles for the current URL via SWR. onSuccess seeds the
+  // editable copy (and an immutable snapshot for reset). Revalidation is
+  // disabled so user edits are never clobbered by a background refetch.
+  const { isLoading } = useSWR(
+    currentSubtitleUrl || null,
+    fetchAndParseSubtitles,
+    {
+      revalidateOnFocus: false,
+      revalidateIfStale: false,
+      revalidateOnReconnect: false,
+      onSuccess: (parsedSubtitles) => {
+        setSubtitles(parsedSubtitles)
+        setOriginalSubtitles(JSON.parse(JSON.stringify(parsedSubtitles))) // Deep copy
+        setHasChanges(false)
+        // New content loaded — let the timeline re-fit to it.
+        setIsZoomInitialized(false)
+        setUserSetZoom(false)
+      },
+      onError: (error) => {
+        console.error('Error loading subtitles:', error)
+      },
+    }
+  )
+
+  // Find the subtitle under the playhead — derived during render (no effect).
+  const currentSubtitle = useMemo(() => {
+    if (subtitles.length === 0) return null
+    return (
+      subtitles.find(
+        (sub) => localCurrentTime >= sub.startTime && localCurrentTime <= sub.endTime
+      ) || null
+    )
+  }, [subtitles, localCurrentTime])
+
+  // Search matches — derived during render (no effect, no stored state).
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return []
+    const query = searchQuery.toLowerCase()
+    return subtitles.filter((sub) => sub.text.toLowerCase().includes(query)).map((sub) => sub.id)
+  }, [searchQuery, subtitles])
 
   // Handle subtitle language change
   const handleSubtitleLanguageChange = (language) => {
@@ -82,54 +240,40 @@ export default function SubtitleEditorLayout({
     setIsZoomInitialized(true);
   };
 
-  // Initialize subtitle language when editor opens
-  useEffect(() => {
+  // Sync the active subtitle source to props when the editor opens with a new
+  // selected language. Done during render (tracking the previous prop value via
+  // the source reducer) rather than in an effect, so it doesn't chain into the
+  // zoom-init effect.
+  if (selectedSubtitleLanguage !== prevSelectedLanguage) {
+    setPrevSelectedLanguage(selectedSubtitleLanguage)
     if (isOpen && selectedSubtitleLanguage && selectedSubtitleLanguage !== currentSubtitleLanguage) {
       setCurrentSubtitleLanguage(selectedSubtitleLanguage)
       if (availableSubtitles[selectedSubtitleLanguage]) {
         setCurrentSubtitleUrl(availableSubtitles[selectedSubtitleLanguage].url)
       }
     }
-  }, [isOpen, selectedSubtitleLanguage, availableSubtitles])
+  }
 
-  // Load subtitles when component mounts or URL changes
-  useEffect(() => {
-    if (!currentSubtitleUrl) return
-
-    const fetchSubtitles = async () => {
-      setIsLoading(true)
-      try {
-        const response = await fetch(currentSubtitleUrl)
-        const subtitleContent = await response.text()
-        const parsedSubtitles = parseVTT(subtitleContent)
-        setSubtitles(parsedSubtitles)
-        setOriginalSubtitles(JSON.parse(JSON.stringify(parsedSubtitles))) // Deep copy
-        setHasChanges(false)
-      } catch (error) {
-        console.error('Error loading subtitles:', error)
-      } finally {
-        setIsLoading(false)
-      }
+  // Reset the zoom-initialization flags when the editor (re)opens so the
+  // timeline re-fits to the content. Tracking the previous open state during
+  // render keeps this out of an effect (avoiding an effect chain into the
+  // default-zoom effect). Resets on content change happen in SWR onSuccess.
+  const [prevIsOpen, setPrevIsOpen] = useState(() => isOpen)
+  if (isOpen !== prevIsOpen) {
+    setPrevIsOpen(isOpen)
+    if (isOpen) {
+      setIsZoomInitialized(false)
+      setUserSetZoom(false)
     }
+  }
 
-    fetchSubtitles()
-  }, [currentSubtitleUrl])
-  
-  // Set default zoom level when component is mounted (only once)
+  // Set default zoom level once content has loaded (only once per content)
   useEffect(() => {
     if (!isLoading && subtitles.length > 0 && !isZoomInitialized) {
       // Default to "fit all" view to show all subtitles (only on initial load)
       setZoomForTimeRange('fit', false); // false = not a user action
     }
-  }, [isLoading, isZoomInitialized]); // Removed 'subtitles' dependency to prevent resets
-
-  // Reset zoom initialization flags when editor opens with new content
-  useEffect(() => {
-    if (isOpen) {
-      setIsZoomInitialized(false);
-      setUserSetZoom(false);
-    }
-  }, [isOpen, currentSubtitleUrl]); // Reset when opening editor or changing subtitle language
+  }, [isLoading, isZoomInitialized, subtitles.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // React 19 optimized helper with startTransition
   const ensureZoomInitialized = useCallback(() => {
@@ -138,7 +282,7 @@ export default function SubtitleEditorLayout({
         setIsZoomInitialized(true);
       });
     }
-  }, [isZoomInitialized]);
+  }, [isZoomInitialized, setIsZoomInitialized]);
 
   // Handle subtitle selection
   const handleSelectSubtitle = (id, isMultiSelect = false) => {
@@ -314,7 +458,7 @@ export default function SubtitleEditorLayout({
       );
       setHasChanges(true);
     });
-  }, []);
+  }, [setSubtitles, setHasChanges]);
 
   // Add a new subtitle at a specific time
   const addSubtitle = (startTime) => {
@@ -325,7 +469,7 @@ export default function SubtitleEditorLayout({
     ensureZoomInitialized();
 
     const newSubtitle = {
-      id: Date.now() + Math.random(), // Simple unique ID generation
+      id: `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       startTime: startTime,
       endTime: startTime + 3, // Default 3-second duration
       text: 'New subtitle text'
@@ -385,7 +529,7 @@ export default function SubtitleEditorLayout({
       }
       const secondHalf = {
         ...subtitleToSplit,
-        id: Date.now() + Math.random(), // New unique ID
+        id: `new-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         startTime: midpoint,
         text: subtitleToSplit.text.substring(Math.floor(subtitleToSplit.text.length / 2))
       }
@@ -418,7 +562,7 @@ export default function SubtitleEditorLayout({
   const handlePlayingChange = useCallback((playing) => {
     console.log('Playing state changed:', playing);
     setIsPlaying(playing);
-  }, []);
+  }, [setIsPlaying]);
 
   // React 19 optimized seek handler using EditorVideoPlayer
   const handleSeek = useCallback((time) => {
@@ -431,11 +575,11 @@ export default function SubtitleEditorLayout({
       editorVideoRef.current.seek(time);
     }
 
-    // Update UI state with startTransition (non-urgent)  
+    // Update UI state with startTransition (non-urgent)
     startTransition(() => {
       setLocalCurrentTime(time);
     });
-  }, [videoRef]);
+  }, [videoRef, setLocalCurrentTime]);
   
   // React 19 optimized play/pause handler using EditorVideoPlayer
   const handlePlayPause = useCallback(async () => {
@@ -451,38 +595,16 @@ export default function SubtitleEditorLayout({
       const timeToUse = currentTime || initialTime || 0;
       setLocalCurrentTime(timeToUse);
     }
-  }, [isOpen]) // Only run once when opening the editor
+    // Intentionally only re-runs when the editor opens/closes.
+  }, [isOpen]) // eslint-disable-line react-hooks/exhaustive-deps
   
-  // Find the current subtitle based on the localCurrentTime
-  useEffect(() => {
-    if (subtitles.length > 0) {
-      const current = subtitles.find(sub => 
-        localCurrentTime >= sub.startTime && localCurrentTime <= sub.endTime
-      );
-      setCurrentSubtitle(current || null);
-    }
-  }, [localCurrentTime, subtitles]) // Only depend on localCurrentTime and subtitles
-  
-  // Search functionality
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setSearchResults([])
-      return
-    }
-    
-    const query = searchQuery.toLowerCase()
-    const results = subtitles
-      .filter(sub => sub.text.toLowerCase().includes(query))
-      .map(sub => sub.id)
-    
-    setSearchResults(results)
-    
-    // Reset current index if results change
-    if (results.length > 0) {
-      setCurrentSearchIndex(0)
-    }
-  }, [searchQuery, subtitles])
-  
+  // Update the search query and reset the result cursor to the first match.
+  // (currentSubtitle and searchResults are derived during render via useMemo.)
+  const handleSearchQueryChange = (value) => {
+    setSearchQuery(value)
+    setCurrentSearchIndex(0)
+  }
+
   // Go to next search result
   const goToNextSearchResult = () => {
     if (searchResults.length === 0) return
@@ -533,7 +655,7 @@ export default function SubtitleEditorLayout({
     else if (videoRef?.current?.src) {
       setVideoSource(videoRef.current.src);
     }
-  }, [videoURL, videoRef]);
+  }, [videoURL, videoRef, setVideoSource]);
 
   // Create EditorVideoPlayer element
   const videoElement = videoSource ? (
@@ -577,7 +699,7 @@ export default function SubtitleEditorLayout({
       {/* Toolbar */}
       <SubtitleToolbar
         searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
+        setSearchQuery={handleSearchQueryChange}
         searchResults={searchResults}
         currentSearchIndex={currentSearchIndex}
         goToNextSearchResult={goToNextSearchResult}

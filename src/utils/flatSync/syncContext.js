@@ -77,3 +77,47 @@ export function stampDocumentWithSyncRunId(doc) {
   doc.syncRunId = id
   return doc
 }
+
+// ─── Orchestration single-flight lock ────────────────────────────────────────
+// A whole-orchestration mutex covering pre-tag → per-server writes → post-sync
+// cleanup. Unlike `_currentSyncRunId` (cleared at the end of the WRITE phase,
+// before the background cleanup runs), this lock is held until the cleanup that
+// consumes the markers has fully settled — so a new orchestration cannot begin
+// its pre-tag/writes while a previous run's cleanup is still doing its
+// find→delete. The race guard in postSyncCleanup is a coarse single read; this
+// lock closes that window.
+//
+// Single-process only (the app runs one Node process — see Dockerfile). For a
+// horizontally-scaled deployment, swap this for a distributed lock (e.g. Redis
+// `SET NX PX` + token); the acquire/release shape is intentionally compatible.
+let _orchestrationLock = null // { syncRunId, acquiredAt } | null
+
+/**
+ * Try to acquire the orchestration lock. Returns true on success (the caller now
+ * owns it and MUST call `releaseSyncLock` with the same id once its cleanup has
+ * settled), or false if another orchestration already holds it.
+ */
+export function tryAcquireSyncLock(syncRunId) {
+  if (_orchestrationLock) return false
+  _orchestrationLock = { syncRunId, acquiredAt: Date.now() }
+  return true
+}
+
+/**
+ * Release the orchestration lock. Ownership-checked and idempotent: a release
+ * with a non-owning id (e.g. a watchdog firing after the lock was already
+ * released and re-acquired by a newer run) is a no-op, so it can never free
+ * another orchestration's lock. Returns true iff this call released it.
+ */
+export function releaseSyncLock(syncRunId) {
+  if (_orchestrationLock && _orchestrationLock.syncRunId === syncRunId) {
+    _orchestrationLock = null
+    return true
+  }
+  return false
+}
+
+/** The current orchestration lock holder ({ syncRunId, acquiredAt }) or null. */
+export function getSyncLockHolder() {
+  return _orchestrationLock
+}

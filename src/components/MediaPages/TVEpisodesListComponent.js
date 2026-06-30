@@ -1,9 +1,11 @@
+// Auth (and the unauthenticated UI fallback) is handled by the parent
+// page's <AuthGuard> wrapper. This component runs only for authenticated
+// users and lives inside a `'use cache'` subtree, so it must not call any
+// dynamic APIs (cookies, headers, getSession) directly — userId is passed
+// in as a prop instead.
 import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils'
 import { refreshEpisodes } from '@src/utils/actions/refreshEpisodes'
 import Link from 'next/link'
-import { auth } from '../../lib/auth'
-import UnauthenticatedPage from '@components/system/UnauthenticatedPage'
-import SkeletonCard from '@components/SkeletonCard'
 import MediaPoster from '@components/MediaPoster'
 import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence'
 import TVShowThumbnail from '@components/TVShowThumbnail'
@@ -11,48 +13,21 @@ import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched
 import { Suspense } from 'react'
 import Loading from '@src/app/loading'
 import NoEpisodesFound from './NoEpisodesFound'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { CaptionSVG } from '@components/SVGIcons'
 import HD4kBanner from '../../../public/4kBanner.png'
 import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
 import { generateClipVideoURL } from '@src/utils/auth_utils'
 import RetryImage from '@components/RetryImage'
-import Image from 'next/image'
-import { getCurrentUserWatchHistory } from '@src/utils/watchHistoryServerUtils'
+import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { createWatchHistoryLookupMap } from '@src/utils/watchHistoryUtils'
-import { getSession } from '@src/lib/cachedAuth'
-export const dynamic = 'force-dynamic'
+import { tvSeasonPosterName, tvEpisodePosterName } from '@src/utils/viewTransitionNames'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
   enter: { opacity: 1, x: 0, y: 0 },
 }
 
-export default async function TVEpisodesListComponent({ showTitle, originalTitle, seasonNumber }) {
-  const session = await getSession()
-  if (!session || !session.user) {
-    // Handle the case where the user is not authenticated
-    // For example, redirect to login or show an error message
-    return (
-      <UnauthenticatedPage callbackUrl={`/list/movie/${showTitle}/${seasonNumber}`}>
-        <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0">
-          Please Sign in first
-        </h2>
-        <div className="border border-white border-opacity-30 rounded-lg p-3 overflow-hidden skeleton-container">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 overflow-hidden">
-            <SkeletonCard />
-            <SkeletonCard className="hidden md:block" />
-            <SkeletonCard className="hidden lg:block" />
-          </div>
-        </div>
-      </UnauthenticatedPage>
-    )
-  }
-  
-  const {
-    user: { name, email },
-  } = session
-  
+export default async function TVEpisodesListComponent({ showTitle, originalTitle, seasonNumber, userId }) {
   // Fetch the TV show season with its episodes using the flat database structure
   const season = await getFlatTVSeasonWithEpisodes({
     showTitle: decodeURIComponent(showTitle),
@@ -86,8 +61,9 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
   }
   
   // Fetch watch history once for all episodes (server-side with React.cache)
-  // Use createWatchHistoryLookupMap directly with session.user.id since we already have it
-  const watchHistoryMap = await createWatchHistoryLookupMap(session.user.id)
+  // userId is passed in as a prop from the page handler since this component
+  // lives inside a `'use cache'` subtree and can't call getSession itself.
+  const watchHistoryMap = userId ? await createWatchHistoryLookupMap(userId) : new Map()
   
   // Augment episodes with watch history data
   const episodesWithHistory = season.episodes.map(episode => ({
@@ -112,6 +88,7 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
                 tv={season}
                 className="max-w-full rounded-lg !mx-auto"
                 contClassName="mx-auto"
+                viewTransitionName={tvSeasonPosterName(season.showTitle || showTitle, season.seasonNumber)}
               />
               <h2 className="mx-auto max-w-2xl text-2xl font-bold tracking-tight text-white sm:text-3xl pb-8 xl:pb-0 px-4 xl:px-0">
                 Viewing Season {season.seasonNumber}
@@ -183,6 +160,9 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
                     Go Back
                   </button>
                 </Link>
+                <AdminEditButton
+                  href={season?.showId ? `/admin/media/tv/${season.showId}?season=${season.seasonNumber}` : null}
+                />
               </div>
             </li>
             {/* Episodes List */}
@@ -230,11 +210,16 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
                     >
                       <Link
                         href={`/list/tv/${encodeURIComponent(showTitle)}/${season.seasonNumber}/${episode.episodeNumber}`}
+                        prefetch={true}
                       >
                         <div className="group block mb-2 w-full">
                           <div className="flex flex-col">
                             <div className="relative block mx-auto overflow-hidden rounded-lg bg-gray-800 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-100">
-                              <TVShowThumbnail episode={episode} metadata={episodeMetadata} />
+                              <TVShowThumbnail
+                                episode={episode}
+                                metadata={episodeMetadata}
+                                viewTransitionName={tvEpisodePosterName(showTitle, season.seasonNumber, episode.episodeNumber)}
+                              />
                               {episode.dimensions && (
                                 <div className="flex gap-3 bg-gray-900 justify-center content-center flex-wrap pb-[18px] pt-3 text-white transition-opacity duration-700 inset-0 text-xs h-3.5 opacity-75 group-hover:opacity-100 relative z-10">
                                   <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">

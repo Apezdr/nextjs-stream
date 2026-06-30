@@ -12,6 +12,7 @@ import {
   MediaType,
   BaseMediaEntity,
   MovieEntity,
+  BackdropFocal,
   syncEventBus,
   getFieldPath,
   MovieFieldPathMap
@@ -111,6 +112,10 @@ export class MovieAssetStrategy implements SyncStrategy {
             movieToSave.posterBlurhashSource = context.serverConfig.id
           } else if (field === 'backdropBlurhash') {
             movieToSave.backdropBlurhashSource = context.serverConfig.id
+          } else if (field === 'backdropFocal') {
+            movieToSave.backdropFocalSource = context.serverConfig.id
+          } else if (field === 'backdropFocalSuggested') {
+            movieToSave.backdropFocalSuggestedSource = context.serverConfig.id
           }
         })
         // Accumulate changes for consolidated write in MovieSyncService
@@ -191,6 +196,8 @@ export class MovieAssetStrategy implements SyncStrategy {
     backdropBlurhash?: string
     posterBlurhashSource?: string
     backdropBlurhashSource?: string
+    backdropFocal?: BackdropFocal
+    backdropFocalSuggested?: BackdropFocal
   }> {
     const updates: any = {}
     
@@ -286,6 +293,30 @@ export class MovieAssetStrategy implements SyncStrategy {
         } else {
           syncLogger.debug(`⏭️ Skipping ${blurhashField} - image hash unchanged and blurhash exists`)
         }
+      }
+    }
+
+    // Backdrop focal-point hints — top-level scalars in fileServerData, plain string enum (not URL/hash).
+    // `undefined` means the server doesn't supply this field — skip entirely. An explicit `null` is a
+    // legitimate "no hint" value and is written through to clear stale values.
+    for (const focalField of ['backdropFocal', 'backdropFocalSuggested'] as const) {
+      const incoming = fileServerData[focalField]
+      if (incoming === undefined) {
+        syncLogger.debug(`⏭️ No ${focalField} in fileServerData for "${originalTitle}"`)
+        continue
+      }
+
+      const fieldPath = getFieldPath(focalField)
+      if (!this.shouldUpdateField(fieldPath, originalTitle, context)) {
+        syncLogger.debug(`⏭️ Skipping ${focalField} - server ${context.serverConfig.id} does not have highest priority for ${fieldPath}`)
+        continue
+      }
+
+      const current = currentMovie[focalField] ?? null
+      const normalized: BackdropFocal = (incoming === null ? null : incoming) as BackdropFocal
+      if (normalized !== current) {
+        updates[focalField] = normalized
+        syncLogger.debug(`✅ Updating ${focalField} from server ${context.serverConfig.id} ("${current}" → "${normalized}")`)
       }
     }
 

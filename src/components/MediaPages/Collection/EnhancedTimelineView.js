@@ -1,12 +1,27 @@
 'use client'
 
-import { memo, useState, useEffect } from 'react'
+import { memo } from 'react'
+import useSWR from 'swr'
 import Link from 'next/link'
 import { motion, AnimatePresence } from 'framer-motion'
 import dynamic from 'next/dynamic'
 import { getFormattedDuration } from '@src/utils/tmdb/client'
 
 const WatchlistButton = dynamic(() => import('@components/WatchlistButton'), { ssr: false })
+
+const fetchEnhancedCollection = async ([, collectionId]) => {
+  console.log(`[EnhancedTimelineView] Fetching enhanced data for collection ${collectionId}`)
+  const response = await fetch(`/api/authenticated/tmdb/collection/${collectionId}/enhanced`)
+
+  if (!response.ok) {
+    console.warn(`[EnhancedTimelineView] Enhanced collection data not available (status: ${response.status})`)
+    return null
+  }
+
+  const data = await response.json()
+  console.log(`[EnhancedTimelineView] Received enhanced data:`, data)
+  return data
+}
 
 /**
  * EnhancedTimelineView - Timeline view with contributor callouts and enhanced movie information
@@ -22,43 +37,17 @@ const EnhancedTimelineView = ({
   enhanced: propEnhanced = false,
   aggregatedData: propAggregatedData = null
 }) => {
-  // State for autonomous data fetching
-  const [enhancedData, setEnhancedData] = useState(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-
   // Fetch enhanced data if collectionId provided but no prop data
-  useEffect(() => {
-    const shouldFetch = collectionId && !propEnhanced && !propAggregatedData
-    
-    if (!shouldFetch) return
-
-    const fetchEnhancedData = async () => {
-      setLoading(true)
-      setError(null)
-
-      try {
-        console.log(`[EnhancedTimelineView] Fetching enhanced data for collection ${collectionId}`)
-        const response = await fetch(`/api/authenticated/tmdb/collection/${collectionId}/enhanced`)
-        
-        if (!response.ok) {
-          console.warn(`[EnhancedTimelineView] Enhanced collection data not available (status: ${response.status})`)
-          return
-        }
-        
-        const data = await response.json()
-        console.log(`[EnhancedTimelineView] Received enhanced data:`, data)
-        setEnhancedData(data)
-      } catch (err) {
-        console.error(`[EnhancedTimelineView] Failed to fetch enhanced collection data:`, err)
-        setError(err)
-      } finally {
-        setLoading(false)
-      }
+  const shouldFetch = collectionId && !propEnhanced && !propAggregatedData
+  const { data: enhancedData, isLoading: loading } = useSWR(
+    shouldFetch ? ['timelineEnhanced', collectionId] : null,
+    fetchEnhancedCollection,
+    {
+      revalidateOnFocus: false,
+      onError: (error) =>
+        console.error(`[EnhancedTimelineView] Failed to fetch enhanced collection data:`, error),
     }
-
-    fetchEnhancedData()
-  }, [collectionId, propEnhanced, propAggregatedData])
+  )
 
   // Use either prop data or fetched data (fix data structure access)
   const enhanced = propEnhanced || !!enhancedData

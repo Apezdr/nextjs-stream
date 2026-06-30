@@ -21,6 +21,7 @@ function Detailed({
   check4kandHDR = false,
   imagePriority = false,
   loadingType = undefined,
+  viewTransitionName,
 }) {
   const seasons = tvShow?.seasons || []
   let networkName = tvShow.metadata?.networks?.[0]?.name
@@ -105,6 +106,7 @@ function Detailed({
           imagePriority={imagePriority}
           loadingType={loadingType}
           contClassName={contClassNamePoster}
+          viewTransitionName={viewTransitionName}
         />
         <div
           className={classNames(

@@ -1,12 +1,12 @@
 'use client'
-import { useSyncExternalStore } from 'react'
+import { useSyncExternalStore, ViewTransition } from 'react'
 import useWatchedWidth from './useWatchedWidth'
 import Image from 'next/image'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/20/solid'
 import RetryImage from './RetryImage'
 
-export default function TVShowThumbnail({ episode, metadata }) {
+export default function TVShowThumbnail({ episode, metadata, viewTransitionName }) {
   // Use useSyncExternalStore for SSR-safe client detection
   const isClient = useSyncExternalStore(
     () => () => {},
@@ -48,26 +48,40 @@ export default function TVShowThumbnail({ episode, metadata }) {
           classNames="absolute bottom-0 w-full text-center z-[10] text-[0.55rem]"
         />
       )}
-      {blurDataURL ? (
-        <RetryImage
-          src={stillURL}
-          width={390}
-          height={217}
-          alt={metadata ? metadata.name : 'Episode Image'}
-          className="mx-auto object-cover group-hover:opacity-75 max-w-md rounded-t-lg max-h-[13.3rem]"
-          loading="lazy"
-          placeholder="blur"
-          blurDataURL={`data:image/png;base64,${blurDataURL}`}
-        />
-      ) : (
-        <RetryImage
-          src={stillURL}
-          width={390}
-          height={217}
-          alt={metadata ? metadata.name : 'Episode Image'}
-          className="mx-auto object-cover group-hover:opacity-75 max-w-md rounded-t-lg max-h-[13.3rem]"
-        />
-      )}
+      {(() => {
+        const image = blurDataURL ? (
+          <RetryImage
+            src={stillURL}
+            width={390}
+            height={217}
+            alt={metadata ? metadata.name : 'Episode Image'}
+            className="mx-auto object-cover group-hover:opacity-75 max-w-md rounded-t-lg max-h-[13.3rem]"
+            loading="lazy"
+            placeholder="blur"
+            blurDataURL={`data:image/png;base64,${blurDataURL}`}
+            // A populated-but-broken thumbnail URL (e.g. the file 404s because the
+            // media-processor hasn't generated it yet) slips past the stillURL
+            // fallback above, since that only triggers when the field is absent.
+            // Show the placeholder on load failure too, instead of "Image failed to load".
+            fallbackSrc="/sorry-image-not-available.jpg"
+          />
+        ) : (
+          <RetryImage
+            src={stillURL}
+            width={390}
+            height={217}
+            alt={metadata ? metadata.name : 'Episode Image'}
+            className="mx-auto object-cover group-hover:opacity-75 max-w-md rounded-t-lg max-h-[13.3rem]"
+            fallbackSrc="/sorry-image-not-available.jpg"
+          />
+        )
+
+        return viewTransitionName ? (
+          <ViewTransition name={viewTransitionName}>{image}</ViewTransition>
+        ) : (
+          image
+        )
+      })()}
     </div>
   )
 }

@@ -28,6 +28,7 @@ import { classNames } from '@src/utils'
 import styles from './Layouts/video-layout.module.css'
 import Image from 'next/image'
 import Loading from '@src/app/loading'
+import { useAutoCaptionsProgress } from './AutoCaptionsProgressContext'
 import ChaptersMenu from './chapter/chapters'
 
 export const menuClass =
@@ -197,10 +198,41 @@ function AudioSubmenu() {
   )
 }
 
+// Auto-generated caption rows carry the " - Auto Generated" suffix from the
+// processor's caption-stubs convention. Match against the label rather than
+// any track-level metadata since Vidstack's option doesn't expose our flag.
+const AUTO_LABEL_RE = / - Auto Generated$/i
+
 function CaptionSubmenu() {
   const options = useCaptionOptions()
+  const { progress } = useAutoCaptionsProgress()
 
-  const hint = options.selectedTrack?.label ?? 'Off'
+  const selectedLabel = options.selectedTrack?.label
+  const selectedProgress = selectedLabel ? progress[selectedLabel] : null
+  const isSelectedGenerating = selectedProgress?.status === 'running'
+
+  // Pin auto-generated rows to the top regardless of textTracks list order.
+  // Vidstack's <Track> recreates the underlying TextTrack on src change
+  // (useMemo deps include all init values per @vidstack/react/dev/vidstack.js:295),
+  // and the recreated track gets appended to the end of textTracks via add().
+  // useCaptionOptions reflects that order verbatim, so without this client-
+  // side sort the auto row visibly jumps to the bottom on every nonce bump.
+  // Off → autos → human captions, stable within each group.
+  const sortedOptions = options.length
+    ? [
+        ...options.filter((o) => o.value === 'off'),
+        ...options.filter((o) => o.value !== 'off' && AUTO_LABEL_RE.test(o.label)),
+        ...options.filter((o) => o.value !== 'off' && !AUTO_LABEL_RE.test(o.label)),
+      ]
+    : options
+
+  const hint = isSelectedGenerating ? (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="truncate">{selectedLabel}</span>
+      <CaptionsSpinner />
+    </span>
+  ) : (selectedLabel ?? 'Off')
+
   return (
     <Menu.Root>
       <SubmenuButton
@@ -215,14 +247,38 @@ function CaptionSubmenu() {
           className="w-full flex flex-col bg-gray-600 rounded-xl"
           value={options.selectedValue}
         >
-          {options.map(({ label, value, select }) => (
-            <Radio value={value} onSelect={select} key={value}>
-              {label}
-            </Radio>
-          )) || <Radio value={''} key={'empty'}></Radio>}
+          {sortedOptions.map(({ label, value, select }) => {
+            const p = progress[label]
+            const displayLabel =
+              p?.status === 'running'
+                ? typeof p.progressPct === 'number'
+                  ? `${label} — Generating… ${Math.round(p.progressPct * 100)}%`
+                  : `${label} — Generating…`
+                : label
+            return (
+              <Radio value={value} onSelect={select} key={value}>
+                {displayLabel}
+              </Radio>
+            )
+          }) || <Radio value={''} key={'empty'}></Radio>}
         </Menu.RadioGroup>
       </Menu.Content>
     </Menu.Root>
+  )
+}
+
+function CaptionsSpinner() {
+  return (
+    <svg
+      className="h-3 w-3 animate-spin shrink-0 text-white/70"
+      fill="none"
+      viewBox="0 0 24 24"
+      aria-label="Generating captions"
+      role="status"
+    >
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
+    </svg>
   )
 }
 

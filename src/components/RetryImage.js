@@ -12,10 +12,10 @@ const RetryImage = ({
   ...props
 }) => {
   // Use a key in the parent component to reset state, or derive state from props
-  const [currentSrc, setCurrentSrc] = useState(src)
+  const [currentSrc, setCurrentSrc] = useState(() => src)
   const [attempt, setAttempt] = useState(0)
   const [hasError, setHasError] = useState(false)
-  const [lastSrc, setLastSrc] = useState(src)
+  const [lastSrc, setLastSrc] = useState(() => src)
 
   // Derive state reset from prop changes
   if (src !== lastSrc) {

@@ -3,6 +3,7 @@
 import React, {
   useRef,
   useEffect,
+  useEffectEvent,
   useState,
   useImperativeHandle,
   forwardRef,
@@ -74,6 +75,8 @@ const EditorVideoPlayer = forwardRef(({
   // Core refs
   const videoRef = useRef(null)
   const rafRef = useRef(null)
+  const rafLoopRef = useRef(null)
+  const tickRef = useRef(null)
   const lastTimeRef = useRef(0)
   const callbacksRef = useRef({})
   const isMountedRef = useRef(true)
@@ -113,6 +116,43 @@ const EditorVideoPlayer = forwardRef(({
       onCanPlayThrough,
       onWaiting,
       onStalled
+    }
+
+    // Keep the RAF tick logic fresh so it always reads the latest throttleMs
+    // and callbacks. Driven from refs so it can self-reschedule without being
+    // an Effect Event (those cannot be passed to requestAnimationFrame).
+    tickRef.current = () => {
+      const v = videoRef.current
+      if (!v) return
+
+      const newTime = v.currentTime
+
+      // Apply throttling if needed
+      const threshold = throttleMs > 0 ? throttleMs / 1000 : 0.008 // Default 8ms like TestPlayer
+
+      if (Math.abs(newTime - lastTimeRef.current) > threshold) {
+        lastTimeRef.current = newTime
+
+        // Update state
+        setState(prev => ({ ...prev, currentTime: newTime }))
+
+        // Fire callback
+        if (callbacksRef.current.onTimeUpdate) {
+          try {
+            callbacksRef.current.onTimeUpdate(newTime)
+          } catch (error) {
+            console.error('Error in onTimeUpdate callback:', error)
+          }
+        }
+      }
+
+      // Schedule next frame via the stable loop wrapper
+      rafRef.current = requestAnimationFrame(rafLoopRef.current)
+    }
+
+    // Stable wrapper that drives the RAF loop by invoking the latest tick logic.
+    if (rafLoopRef.current === null) {
+      rafLoopRef.current = () => tickRef.current()
     }
   }) // No dependency array - run on every render to keep fresh
   
@@ -404,17 +444,242 @@ const EditorVideoPlayer = forwardRef(({
     }
   }), [state])
   
-  // Initialize player and bind all event listeners
-  useEffect(() => {
+  // Event handlers (Effect Events keep these out of the init effect while
+  // preserving access to the latest props/callbacks)
+  const handlePlay = useEffectEvent(() => {
     const video = videoRef.current
-    if (!video) {
-      console.warn('EditorVideoPlayer: video ref is null')
-      return
+    console.log('EditorVideoPlayer: Play event')
+    setState(prev => ({ ...prev, isPlaying: true, isEnded: false }))
+
+    // Fire callback
+    if (callbacksRef.current.onPlayingChange) {
+      callbacksRef.current.onPlayingChange(true)
     }
-    
-    console.log('EditorVideoPlayer: Initializing with src:', src)
-    
-    // Apply initial settings
+
+    // Start RAF loop
+    if (!rafRef.current) {
+      lastTimeRef.current = video.currentTime
+      rafRef.current = requestAnimationFrame(rafLoopRef.current)
+    }
+  })
+
+  const handlePause = useEffectEvent(() => {
+    console.log('EditorVideoPlayer: Pause event')
+    setState(prev => ({ ...prev, isPlaying: false }))
+
+    // Fire callback
+    if (callbacksRef.current.onPlayingChange) {
+      callbacksRef.current.onPlayingChange(false)
+    }
+
+    // Stop RAF loop
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+  })
+
+  const handleEnded = useEffectEvent(() => {
+    console.log('EditorVideoPlayer: Ended event')
+    setState(prev => ({ ...prev, isPlaying: false, isEnded: true }))
+
+    // Fire callbacks
+    if (callbacksRef.current.onPlayingChange) {
+      callbacksRef.current.onPlayingChange(false)
+    }
+    if (callbacksRef.current.onEnded) {
+      callbacksRef.current.onEnded()
+    }
+
+    // Stop RAF loop
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current)
+      rafRef.current = null
+    }
+  })
+
+  const handleTimeUpdate = useEffectEvent(() => {
+    const video = videoRef.current
+    // Fallback time update for when RAF isn't running
+    if (!rafRef.current) {
+      const currentTime = video.currentTime
+      setState(prev => ({ ...prev, currentTime }))
+
+      if (callbacksRef.current.onTimeUpdate) {
+        callbacksRef.current.onTimeUpdate(currentTime)
+      }
+    }
+  })
+
+  const handleDurationChange = useEffectEvent(() => {
+    const video = videoRef.current
+    const duration = video.duration
+    console.log('EditorVideoPlayer: Duration changed to', duration)
+    setState(prev => ({ ...prev, duration }))
+
+    if (callbacksRef.current.onDurationChange) {
+      callbacksRef.current.onDurationChange(duration)
+    }
+  })
+
+  const handleProgress = useEffectEvent(() => {
+    const video = videoRef.current
+    if (video.buffered.length > 0 && video.duration) {
+      const buffered = video.buffered.end(video.buffered.length - 1)
+      const bufferedPercent = (buffered / video.duration) * 100
+      setState(prev => ({ ...prev, buffered: bufferedPercent }))
+
+      if (callbacksRef.current.onProgress) {
+        callbacksRef.current.onProgress({ buffered, bufferedPercent })
+      }
+    }
+  })
+
+  const handleError = useEffectEvent((e) => {
+    const video = videoRef.current
+    const error = video.error
+    console.error('EditorVideoPlayer: Video error', error)
+    setState(prev => ({ ...prev, error }))
+
+    if (callbacksRef.current.onError) {
+      callbacksRef.current.onError(error)
+    }
+  })
+
+  const handleSeeking = useEffectEvent(() => {
+    const video = videoRef.current
+    setState(prev => ({ ...prev, isSeeking: true }))
+
+    if (callbacksRef.current.onSeeking) {
+      callbacksRef.current.onSeeking(video.currentTime)
+    }
+  })
+
+  const handleSeeked = useEffectEvent(() => {
+    const video = videoRef.current
+    const currentTime = video.currentTime
+    setState(prev => ({
+      ...prev,
+      isSeeking: false,
+      currentTime
+    }))
+
+    if (callbacksRef.current.onSeeked) {
+      callbacksRef.current.onSeeked(currentTime)
+    }
+    if (callbacksRef.current.onTimeUpdate) {
+      callbacksRef.current.onTimeUpdate(currentTime)
+    }
+  })
+
+  const handleVolumeChange = useEffectEvent(() => {
+    const video = videoRef.current
+    setState(prev => ({
+      ...prev,
+      volume: video.volume
+    }))
+
+    if (callbacksRef.current.onVolumeChange) {
+      callbacksRef.current.onVolumeChange(video.volume, video.muted)
+    }
+  })
+
+  const handleRateChange = useEffectEvent(() => {
+    const video = videoRef.current
+    setState(prev => ({
+      ...prev,
+      playbackRate: video.playbackRate
+    }))
+
+    if (callbacksRef.current.onPlaybackRateChange) {
+      callbacksRef.current.onPlaybackRateChange(video.playbackRate)
+    }
+  })
+
+  const handleWaiting = useEffectEvent(() => {
+    setState(prev => ({ ...prev, isWaiting: true }))
+
+    if (callbacksRef.current.onWaiting) {
+      callbacksRef.current.onWaiting()
+    }
+  })
+
+  const handleCanPlay = useEffectEvent(() => {
+    setState(prev => ({ ...prev, isWaiting: false }))
+
+    if (callbacksRef.current.onCanPlay) {
+      callbacksRef.current.onCanPlay()
+    }
+  })
+
+  const handleLoadStart = useEffectEvent(() => {
+    console.log('EditorVideoPlayer: Load start')
+
+    if (callbacksRef.current.onLoadStart) {
+      callbacksRef.current.onLoadStart()
+    }
+  })
+
+  const handleLoadedMetadata = useEffectEvent(() => {
+    const video = videoRef.current
+    console.log('EditorVideoPlayer: Loaded metadata, duration:', video.duration)
+
+    // Set initial time if specified and not already set
+    if (startTime && !hasStartedRef.current) {
+      console.log('EditorVideoPlayer: Setting start time to', startTime)
+      video.currentTime = startTime
+      hasStartedRef.current = true
+    }
+
+    // Initialize state
+    setState(prev => ({
+      ...prev,
+      currentTime: video.currentTime,
+      duration: video.duration || 0
+    }))
+
+    // Fire initial time update
+    if (callbacksRef.current.onTimeUpdate) {
+      callbacksRef.current.onTimeUpdate(video.currentTime)
+    }
+
+    if (callbacksRef.current.onLoadedMetadata) {
+      callbacksRef.current.onLoadedMetadata({
+        duration: video.duration,
+        videoWidth: video.videoWidth,
+        videoHeight: video.videoHeight
+      })
+    }
+
+    // Notify ready with control API
+    if (callbacksRef.current.onReady) {
+      console.log('EditorVideoPlayer: Firing onReady callback')
+      callbacksRef.current.onReady({
+        play: () => video.play(),
+        pause: () => video.pause(),
+        seek: (time) => { video.currentTime = time },
+        getCurrentTime: () => video.currentTime,
+        getDuration: () => video.duration,
+        getIsPlaying: () => !video.paused
+      })
+    }
+  })
+
+  const handleCanPlayThrough = useEffectEvent(() => {
+    if (callbacksRef.current.onCanPlayThrough) {
+      callbacksRef.current.onCanPlayThrough()
+    }
+  })
+
+  const handleStalled = useEffectEvent(() => {
+    if (callbacksRef.current.onStalled) {
+      callbacksRef.current.onStalled()
+    }
+  })
+
+  // Apply initial element settings (Effect Event: reads latest props without
+  // making them effect dependencies, preserving the "only re-run on src" behavior)
+  const applyInitialSettings = useEffectEvent((video) => {
     video.volume = volume
     video.playbackRate = playbackRate
     video.muted = muted
@@ -428,259 +693,33 @@ const EditorVideoPlayer = forwardRef(({
     if (disableRemotePlayback && 'disableRemotePlayback' in video) {
       video.disableRemotePlayback = true
     }
+  })
 
-    // Define tick function INSIDE useEffect (like TestPlayer does)
-    // This gives it direct access to video element and callbacks
-    function tick() {
-      const v = video
-      if (!v) return
-      
-      const newTime = v.currentTime
-      
-      // Apply throttling if needed
-      const threshold = throttleMs > 0 ? throttleMs / 1000 : 0.008 // Default 8ms like TestPlayer
-      
-      if (Math.abs(newTime - lastTimeRef.current) > threshold) {
-        lastTimeRef.current = newTime
-        
-        // Update state
-        setState(prev => ({ ...prev, currentTime: newTime }))
-        
-        // Fire callback
-        if (callbacksRef.current.onTimeUpdate) {
-          try {
-            callbacksRef.current.onTimeUpdate(newTime)
-          } catch (error) {
-            console.error('Error in onTimeUpdate callback:', error)
-          }
-        }
-      }
-      
-      rafRef.current = requestAnimationFrame(tick)
+  // Seed state from the current video element
+  const initStateFromVideo = useEffectEvent((video) => {
+    setState(prev => ({
+      ...prev,
+      isPlaying: !video.paused,
+      currentTime: video.currentTime || 0,
+      duration: video.duration || 0,
+      volume: video.volume,
+      playbackRate: video.playbackRate
+    }))
+  })
+
+  // Initialize player and bind all event listeners
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) {
+      console.warn('EditorVideoPlayer: video ref is null')
+      return
     }
-    
-    // Event handlers
-    const handlePlay = () => {
-      console.log('EditorVideoPlayer: Play event')
-      setState(prev => ({ ...prev, isPlaying: true, isEnded: false }))
-      
-      // Fire callback
-      if (callbacksRef.current.onPlayingChange) {
-        callbacksRef.current.onPlayingChange(true)
-      }
-      
-      // Start RAF loop
-      if (!rafRef.current) {
-        lastTimeRef.current = video.currentTime
-        rafRef.current = requestAnimationFrame(tick)
-      }
-    }
-    
-    const handlePause = () => {
-      console.log('EditorVideoPlayer: Pause event')
-      setState(prev => ({ ...prev, isPlaying: false }))
-      
-      // Fire callback
-      if (callbacksRef.current.onPlayingChange) {
-        callbacksRef.current.onPlayingChange(false)
-      }
-      
-      // Stop RAF loop
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
-    }
-    
-    const handleEnded = () => {
-      console.log('EditorVideoPlayer: Ended event')
-      setState(prev => ({ ...prev, isPlaying: false, isEnded: true }))
-      
-      // Fire callbacks
-      if (callbacksRef.current.onPlayingChange) {
-        callbacksRef.current.onPlayingChange(false)
-      }
-      if (callbacksRef.current.onEnded) {
-        callbacksRef.current.onEnded()
-      }
-      
-      // Stop RAF loop
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
-    }
-    
-    const handleTimeUpdate = () => {
-      // Fallback time update for when RAF isn't running
-      if (!rafRef.current) {
-        const currentTime = video.currentTime
-        setState(prev => ({ ...prev, currentTime }))
-        
-        if (callbacksRef.current.onTimeUpdate) {
-          callbacksRef.current.onTimeUpdate(currentTime)
-        }
-      }
-    }
-    
-    const handleDurationChange = () => {
-      const duration = video.duration
-      console.log('EditorVideoPlayer: Duration changed to', duration)
-      setState(prev => ({ ...prev, duration }))
-      
-      if (callbacksRef.current.onDurationChange) {
-        callbacksRef.current.onDurationChange(duration)
-      }
-    }
-    
-    const handleProgress = () => {
-      if (video.buffered.length > 0 && video.duration) {
-        const buffered = video.buffered.end(video.buffered.length - 1)
-        const bufferedPercent = (buffered / video.duration) * 100
-        setState(prev => ({ ...prev, buffered: bufferedPercent }))
-        
-        if (callbacksRef.current.onProgress) {
-          callbacksRef.current.onProgress({ buffered, bufferedPercent })
-        }
-      }
-    }
-    
-    const handleError = (e) => {
-      const error = video.error
-      console.error('EditorVideoPlayer: Video error', error)
-      setState(prev => ({ ...prev, error }))
-      
-      if (callbacksRef.current.onError) {
-        callbacksRef.current.onError(error)
-      }
-    }
-    
-    const handleSeeking = () => {
-      setState(prev => ({ ...prev, isSeeking: true }))
-      
-      if (callbacksRef.current.onSeeking) {
-        callbacksRef.current.onSeeking(video.currentTime)
-      }
-    }
-    
-    const handleSeeked = () => {
-      const currentTime = video.currentTime
-      setState(prev => ({ 
-        ...prev, 
-        isSeeking: false,
-        currentTime 
-      }))
-      
-      if (callbacksRef.current.onSeeked) {
-        callbacksRef.current.onSeeked(currentTime)
-      }
-      if (callbacksRef.current.onTimeUpdate) {
-        callbacksRef.current.onTimeUpdate(currentTime)
-      }
-    }
-    
-    const handleVolumeChange = () => {
-      setState(prev => ({ 
-        ...prev, 
-        volume: video.volume 
-      }))
-      
-      if (callbacksRef.current.onVolumeChange) {
-        callbacksRef.current.onVolumeChange(video.volume, video.muted)
-      }
-    }
-    
-    const handleRateChange = () => {
-      setState(prev => ({ 
-        ...prev, 
-        playbackRate: video.playbackRate 
-      }))
-      
-      if (callbacksRef.current.onPlaybackRateChange) {
-        callbacksRef.current.onPlaybackRateChange(video.playbackRate)
-      }
-    }
-    
-    const handleWaiting = () => {
-      setState(prev => ({ ...prev, isWaiting: true }))
-      
-      if (callbacksRef.current.onWaiting) {
-        callbacksRef.current.onWaiting()
-      }
-    }
-    
-    const handleCanPlay = () => {
-      setState(prev => ({ ...prev, isWaiting: false }))
-      
-      if (callbacksRef.current.onCanPlay) {
-        callbacksRef.current.onCanPlay()
-      }
-    }
-    
-    const handleLoadStart = () => {
-      console.log('EditorVideoPlayer: Load start')
-      
-      if (callbacksRef.current.onLoadStart) {
-        callbacksRef.current.onLoadStart()
-      }
-    }
-    
-    const handleLoadedMetadata = () => {
-      console.log('EditorVideoPlayer: Loaded metadata, duration:', video.duration)
-      
-      // Set initial time if specified and not already set
-      if (startTime && !hasStartedRef.current) {
-        console.log('EditorVideoPlayer: Setting start time to', startTime)
-        video.currentTime = startTime
-        hasStartedRef.current = true
-      }
-      
-      // Initialize state
-      setState(prev => ({
-        ...prev,
-        currentTime: video.currentTime,
-        duration: video.duration || 0
-      }))
-      
-      // Fire initial time update
-      if (callbacksRef.current.onTimeUpdate) {
-        callbacksRef.current.onTimeUpdate(video.currentTime)
-      }
-      
-      if (callbacksRef.current.onLoadedMetadata) {
-        callbacksRef.current.onLoadedMetadata({
-          duration: video.duration,
-          videoWidth: video.videoWidth,
-          videoHeight: video.videoHeight
-        })
-      }
-      
-      // Notify ready with control API
-      if (callbacksRef.current.onReady) {
-        console.log('EditorVideoPlayer: Firing onReady callback')
-        callbacksRef.current.onReady({
-          play: () => video.play(),
-          pause: () => video.pause(),
-          seek: (time) => { video.currentTime = time },
-          getCurrentTime: () => video.currentTime,
-          getDuration: () => video.duration,
-          getIsPlaying: () => !video.paused
-        })
-      }
-    }
-    
-    const handleCanPlayThrough = () => {
-      if (callbacksRef.current.onCanPlayThrough) {
-        callbacksRef.current.onCanPlayThrough()
-      }
-    }
-    
-    const handleStalled = () => {
-      if (callbacksRef.current.onStalled) {
-        callbacksRef.current.onStalled()
-      }
-    }
-    
+
+    console.log('EditorVideoPlayer: Initializing with src:', src)
+
+    // Apply initial settings
+    applyInitialSettings(video)
+
     // Bind all event listeners
     const events = {
       play: handlePlay,
@@ -701,30 +740,23 @@ const EditorVideoPlayer = forwardRef(({
       canplaythrough: handleCanPlayThrough,
       stalled: handleStalled
     }
-    
+
     Object.entries(events).forEach(([event, handler]) => {
       video.addEventListener(event, handler)
     })
-    
+
     // Initialize state from video element
-    setState(prev => ({
-      ...prev,
-      isPlaying: !video.paused,
-      currentTime: video.currentTime || 0,
-      duration: video.duration || 0,
-      volume: video.volume,
-      playbackRate: video.playbackRate
-    }))
-    
+    initStateFromVideo(video)
+
     // Cleanup
     return () => {
       console.log('EditorVideoPlayer: Cleaning up')
       isMountedRef.current = false
-      
+
       Object.entries(events).forEach(([event, handler]) => {
         video.removeEventListener(event, handler)
       })
-      
+
       if (rafRef.current) {
         cancelAnimationFrame(rafRef.current)
         rafRef.current = null

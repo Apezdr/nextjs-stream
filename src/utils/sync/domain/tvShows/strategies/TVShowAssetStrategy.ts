@@ -6,7 +6,7 @@
 
 import {
   SyncStrategy, SyncContext, SyncResult, SyncStatus, SyncOperation,
-  MediaType, BaseMediaEntity, TVShowEntity, syncEventBus
+  MediaType, BaseMediaEntity, TVShowEntity, BackdropFocal, syncEventBus
 } from '../../../core'
 
 import { TVShowRepository, UrlBuilder } from '../../../infrastructure'
@@ -76,6 +76,8 @@ export class TVShowAssetStrategy implements SyncStrategy {
           if (field === 'posterURL') (showToSave as any).posterSource = context.serverConfig.id
           else if (field === 'backdrop') (showToSave as any).backdropSource = context.serverConfig.id
           else if (field === 'logo') (showToSave as any).logoSource = context.serverConfig.id
+          else if (field === 'backdropFocal') (showToSave as any).backdropFocalSource = context.serverConfig.id
+          else if (field === 'backdropFocalSuggested') (showToSave as any).backdropFocalSuggestedSource = context.serverConfig.id
         })
 
         await this.repository.upsert(showToSave)
@@ -114,13 +116,44 @@ export class TVShowAssetStrategy implements SyncStrategy {
     originalTitle: string,
     context: SyncContext,
     currentShow: TVShowEntity
-  ): Promise<{ posterURL?: string; backdrop?: string; logo?: string }> {
+  ): Promise<{
+    posterURL?: string
+    backdrop?: string
+    logo?: string
+    backdropFocal?: BackdropFocal
+    backdropFocalSuggested?: BackdropFocal
+  }> {
     const updates: any = {}
 
     // TV show data lives under fileServerData.tv[originalTitle]
     const fileServerData = context.fileServerData?.tv?.[originalTitle]
-    if (!fileServerData?.urls) {
-      syncLogger.debug(`No fileServerData.urls found for "${originalTitle}"`)
+    if (!fileServerData) {
+      syncLogger.debug(`No fileServerData found for "${originalTitle}"`)
+      return updates
+    }
+
+    // Backdrop focal-point hints — top-level scalars on the show object, evaluated independently
+    // of the .urls asset block (a show with focal data but no urls payload should still update).
+    // `undefined` means the server doesn't supply the field; explicit `null` is a legitimate "no hint".
+    for (const focalField of ['backdropFocal', 'backdropFocalSuggested'] as const) {
+      const incoming = (fileServerData as any)[focalField]
+      if (incoming === undefined) continue
+
+      if (!this.shouldUpdateField(focalField, originalTitle, context)) {
+        syncLogger.debug(`Skipping ${focalField} — server ${context.serverConfig.id} does not have highest priority`)
+        continue
+      }
+
+      const current = (currentShow as any)[focalField] ?? null
+      const normalized: BackdropFocal = (incoming === null ? null : incoming) as BackdropFocal
+      if (normalized !== current) {
+        updates[focalField] = normalized
+        syncLogger.debug(`Updating ${focalField} from server ${context.serverConfig.id} ("${current}" -> "${normalized}")`)
+      }
+    }
+
+    if (!fileServerData.urls) {
+      syncLogger.debug(`No fileServerData.urls found for "${originalTitle}" — returning with focal updates only`)
       return updates
     }
 

@@ -1,8 +1,18 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useReducer, useState } from 'react'
 import Modal from './Modal'
 import { classNames } from '@src/utils'
+
+const initialData = {
+  loading: false,
+  playlists: [],
+  visibilityList: [] // [{ playlistId, showInApp, appOrder, appTitle }]
+}
+
+function dataReducer(state, patch) {
+  return { ...state, ...patch }
+}
 
 /**
  * ShowInAppUserModal
@@ -18,10 +28,9 @@ import { classNames } from '@src/utils'
  * - api: API object from WatchlistPage's useWatchlistAPI (must provide getPlaylists, getPlaylistVisibility, setPlaylistVisibility)
  */
 export default function ShowInAppUserModal({ isOpen, onClose, api }) {
-  const [loading, setLoading] = useState(false)
+  const [data, setData] = useReducer(dataReducer, initialData)
+  const { loading, playlists, visibilityList } = data
   const [saving, setSaving] = useState(false)
-  const [playlists, setPlaylists] = useState([])
-  const [visibilityList, setVisibilityList] = useState([]) // [{ playlistId, showInApp, appOrder, appTitle }]
   const [edited, setEdited] = useState(new Map()) // playlistId -> { showInApp, appOrder, appTitle }
 
   const visibilityMap = useMemo(() => {
@@ -33,7 +42,7 @@ export default function ShowInAppUserModal({ isOpen, onClose, api }) {
   }, [visibilityList])
 
   const loadData = useCallback(async () => {
-    setLoading(true)
+    setData({ loading: true })
     try {
       // Load all accessible playlists for this user
       const pl = await api.getPlaylists(true) // includeShared default
@@ -43,13 +52,12 @@ export default function ShowInAppUserModal({ isOpen, onClose, api }) {
       const vis = await api.getPlaylistVisibility()
       const vList = Array.isArray(vis?.visibility) ? vis.visibility : []
 
-      setPlaylists(list)
-      setVisibilityList(vList)
+      setData({ playlists: list, visibilityList: vList })
       setEdited(new Map()) // reset edits on load
     } catch (e) {
       console.error('[ShowInAppUserModal] loadData failed:', e)
     } finally {
-      setLoading(false)
+      setData({ loading: false })
     }
   }, [api])
 

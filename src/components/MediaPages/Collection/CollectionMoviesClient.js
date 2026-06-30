@@ -162,8 +162,8 @@ export default function CollectionMoviesClient({
   defaultFilter = 'all', 
   defaultSort = 'release_date' 
 }) {
-  const [filter, setFilter] = useState(defaultFilter)
-  const [sortBy, setSortBy] = useState(defaultSort)
+  const [filter, setFilter] = useState(() => defaultFilter)
+  const [sortBy, setSortBy] = useState(() => defaultSort)
   const [viewMode, setViewMode] = useState('grid') // 'grid' or 'timeline'
 
   const parts = collection.parts || []

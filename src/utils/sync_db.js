@@ -11,7 +11,7 @@ import {
   syncMoviesURL,
   syncTVURL,
 } from '@src/utils/config'
-import { AutoSyncManager, getLastSynced } from './admin_database'
+import { AutoSyncManager, AutoCaptionsManager, getLastSynced } from './admin_database'
 import { formatServerLabel } from '@src/utils/serverLabel'
 
 async function getFileServerImportSettings() {
@@ -42,11 +42,13 @@ async function setFileServerImportSettings(settings) {
 }
 
 const autoSync = new AutoSyncManager()
+const autoCaptions = new AutoCaptionsManager()
 
 async function getServerSettings() {
   const lastSyncTime = await getLastSynced()
   const fileImportSettings = await getFileServerImportSettings()
   const automaticSyncEnabled = await autoSync.getAutoSync()
+  const autoCaptionsConfig = await autoCaptions.getAutoCaptions()
   const servers = getAllServers()
   const webhookConfigs = await getAllWebhookConfigs()
   const webhookKeys = webhookConfigs.map((config) => ({
@@ -75,6 +77,7 @@ async function getServerSettings() {
     // Settings
     syncAggressiveness: 'Full',
     automaticSyncEnabled: automaticSyncEnabled,
+    autoCaptionsConfig: autoCaptionsConfig,
     lastSyncTime: lastSyncTime,
     automated: {
       runDownloadTmdbImages: {
