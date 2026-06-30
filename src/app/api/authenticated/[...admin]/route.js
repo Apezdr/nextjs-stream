@@ -491,7 +491,7 @@ function startSnapshotTracking() {
     if (event.entityId === '__sync_warmup__') return
 
     if (event.entityId === '__server_start__') {
-      syncSnapshot.servers[sid] = { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, errorCount: 0, errors: [] }
+      syncSnapshot.servers[sid] = { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, total: event.data?.total ?? 0, errorCount: 0, errors: [] }
       return
     }
 

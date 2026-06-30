@@ -33,6 +33,7 @@ export function hasHighestPriorityForAnyVideoInfoField(
     `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.hdr`,
     `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.additionalMetadata.size.kb`, // Size in KB
     `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.format`,
+    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.codec`,
     `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.bitDepth`,
     `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.colorSpace`,
     `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.transferCharacteristics`,
@@ -107,12 +108,13 @@ export function needsVideoInfoUpdate(flatEpisode, videoInfo, serverId) {
   const durationChanged = checkField('duration', flatEpisode.duration, videoInfo.duration);
   const hdrChanged = checkField('hdr', flatEpisode.hdr, videoInfo.hdr);
   const sizeChanged = checkField('size', flatEpisode.size, videoInfo.size);
+  const videoCodecChanged = checkField('videoCodec', flatEpisode.videoCodec, videoInfo.videoCodec);
   const mediaQualityChanged = checkField('mediaQuality', flatEpisode.mediaQuality, videoInfo.mediaQuality, true);
   const mediaLastModifiedChanged = checkField('mediaLastModified', flatEpisode.mediaLastModified, videoInfo.mediaLastModified);
   
   // If any field has changed or is newly provided, we need to update
   const needsUpdate = dimensionsChanged || durationChanged || hdrChanged || 
-                      sizeChanged || mediaQualityChanged || mediaLastModifiedChanged;
+                      sizeChanged || videoCodecChanged || mediaQualityChanged || mediaLastModifiedChanged;
   
   // Log which fields triggered the update (uncomment for debugging)
   if (needsUpdate && changes.length > 0) {
@@ -214,6 +216,12 @@ export async function syncEpisodeVideoInfo(
   
   if (fileServerEpisodeData.size) {
     videoInfo.size = fileServerEpisodeData.size;
+  }
+
+  // Codec is optional and only present once the file server scanner reports it.
+  const episodeCodec = fileServerEpisodeData.mediaQuality?.codec || fileServerEpisodeData.videoCodec;
+  if (episodeCodec) {
+    videoInfo.videoCodec = episodeCodec;
   }
 
   if (fileServerEpisodeData.mediaLastModified) {

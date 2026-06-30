@@ -29,7 +29,8 @@ export async function upsertPlayback({
   videoId,
   playbackTime,
   metadata = {},
-  deviceInfo = null
+  deviceInfo = null,
+  isPaused = false
 }) {
   try {
     const client = await clientPromise
@@ -45,6 +46,7 @@ export async function upsertPlayback({
         $set: {
           videoId,
           playbackTime,
+          isPaused: isPaused === true,
           lastUpdated: new Date(),
           ...metadata,
           ...(deviceInfo && { deviceInfo })

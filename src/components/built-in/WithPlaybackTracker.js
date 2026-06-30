@@ -13,10 +13,12 @@ export default function WithPlayBackTracker({
 }) {
   const player = useMediaPlayer();
   const canPlay = useMediaState('canPlay');
+  const paused = useMediaState('paused');
   const remote = useMediaRemote();
   const [lastTimeSent, setLastTimeSent] = useState(0);
   const isFetchingRef = useRef(false);
   const nextUpdateTimeRef = useRef(null);
+  const pausedRef = useRef(false);
   const updatePlaybackWorkerRef = useRef(null);
   const hasAppliedStartRef = useRef(false);
   
@@ -144,6 +146,7 @@ export default function WithPlayBackTracker({
           videoURL: videoURL,
           currentTime: currentTime,
           mediaMetadata: mediaMetadata,
+          isPaused: pausedRef.current,
         });
       } else {
         nextUpdateTimeRef.current = currentTime;
@@ -160,6 +163,21 @@ export default function WithPlayBackTracker({
       throttledUpdateServer.cancel();
     };
   }, [player, videoURL, canPlay, mediaMetadata]);
+
+  // Send a heartbeat whenever the paused state changes so the live activity
+  // view keeps showing the session (as paused) instead of dropping it.
+  useEffect(() => {
+    pausedRef.current = paused === true;
+    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
+    const currentTime = player.state?.currentTime || 0;
+    if (currentTime <= 0) return;
+    updatePlaybackWorkerRef.current.postMessage({
+      videoURL,
+      currentTime,
+      mediaMetadata,
+      isPaused: paused === true,
+    });
+  }, [paused, canPlay, player, videoURL, mediaMetadata]);
 
   return null;
 }

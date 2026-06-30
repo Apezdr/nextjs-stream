@@ -17,7 +17,7 @@ export const POST = async (req) => {
 
   try {
     const body = await req.json()
-    const { videoId, playbackTime, mediaMetadata } = body
+    const { videoId, playbackTime, mediaMetadata, isPaused } = body
 
     // Validate required fields
     if (!videoId || typeof playbackTime !== 'number') {
@@ -51,6 +51,7 @@ export const POST = async (req) => {
       playbackTime,
       metadata,
       deviceInfo,
+      isPaused: isPaused === true,
     })
 
     log.info(

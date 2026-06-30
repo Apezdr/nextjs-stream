@@ -29,6 +29,7 @@ export function hasHighestPriorityForAnyVideoInfoField(
     'hdr',
     'additional_metadata.size.kb', // Size in KB
     'mediaQuality.format',
+    'mediaQuality.codec',
     'mediaQuality.bitDepth',
     'mediaQuality.colorSpace',
     'mediaQuality.transferCharacteristics',
@@ -119,6 +120,7 @@ export function needsVideoInfoUpdate(movie, videoInfo, serverId) {
     
   const hdrChanged = checkField('hdr', movie.hdr, videoInfo.hdr);
   const sizeChanged = checkField('size', movie.size, videoInfo.size);
+  const videoCodecChanged = checkField('videoCodec', movie.videoCodec, videoInfo.videoCodec);
   const mediaQualityChanged = checkField('mediaQuality', movie.mediaQuality, videoInfo.mediaQuality, true);
   
   // Media last modified check - handle both date objects and timestamps
@@ -137,7 +139,7 @@ export function needsVideoInfoUpdate(movie, videoInfo, serverId) {
   
   // If any field has changed or is newly provided, we need to update
   const needsUpdate = dimensionsChanged || durationChanged || hdrChanged || 
-                      sizeChanged || mediaQualityChanged || mediaLastModifiedChanged;
+                      sizeChanged || videoCodecChanged || mediaQualityChanged || mediaLastModifiedChanged;
   
   // Log which fields triggered the update (uncomment for debugging)
   if (needsUpdate && changes.length > 0) {
@@ -225,6 +227,12 @@ export async function syncMovieVideoInfo(
   // Copy size if available
   if (fileServerData.additionalMetadata?.size) {
     videoInfo.size = fileServerData.additionalMetadata.size;
+  }
+
+  // Codec is optional and only present once the file server scanner reports it.
+  const movieCodec = fileServerData.mediaQuality?.codec || fileServerData.videoCodec;
+  if (movieCodec) {
+    videoInfo.videoCodec = movieCodec;
   }
 
   // Copy mediaLastModified if available
