@@ -17,7 +17,8 @@ import {
   SyncStatus,
   MediaType,
   SyncOperation,
-  syncEventBus
+  syncEventBus,
+  planFieldCleanup
 } from '../../core'
 
 import { SeasonRepository, TVShowRepository } from '../../infrastructure'
@@ -69,7 +70,15 @@ export class SeasonSyncService {
       )
 
       // ---- Accumulate smart upsert ops — do NOT write one by one ----
-      const seasonOps: Array<{ filter: Record<string, any>; existing: SeasonEntity | null; merged: SeasonEntity }> = []
+      // `unset` carries field-absence cleanup (enforce mode); `cleanupChanges` is
+      // the diagnostic text surfaced on the SyncResult in both modes.
+      const seasonOps: Array<{
+        filter: Record<string, any>
+        existing: SeasonEntity | null
+        merged: SeasonEntity
+        unset?: string[]
+        cleanupChanges?: string[]
+      }> = []
 
       for (const [key, fileData] of Object.entries(showFileData.seasons)) {
         const seasonNumber = this.parseSeasonNumber(key)
@@ -89,7 +98,27 @@ export class SeasonSyncService {
           ? { showId: (merged as any).showId, seasonNumber: merged.seasonNumber }
           : { showTitle: merged.showTitle, seasonNumber: merged.seasonNumber }
 
-        seasonOps.push({ filter, existing, merged })
+        // Field-absence cleanup for the season poster. `key` is the literal season
+        // key from the file-server data, matching collectFieldAvailability's path.
+        // showTitle is the originalTitle (fieldAvailability key).
+        const plan = planFieldCleanup({
+          cleanup: context.cleanup,
+          mediaType: 'tv',
+          availabilityKey: showTitle,
+          entity: existing,
+          fieldAvailability: context.fieldAvailability,
+          fields: [
+            {
+              entityField: 'posterURL',
+              fieldPath: `seasons.${key}.season_poster`,
+              companions: ['posterSource', 'posterBlurhash', 'posterBlurhashSource'],
+            },
+          ],
+          log: (obj, msg) => pinoLog.info(obj, msg),
+          logContext: { show: displayTitle, originalTitle: showTitle, season: seasonNumber },
+        })
+
+        seasonOps.push({ filter, existing, merged, unset: plan.unset, cleanupChanges: plan.changes })
       }
 
       // ---- Single smart bulk write — skips unchanged, $sets changed, inserts new ----
@@ -97,10 +126,12 @@ export class SeasonSyncService {
         await this.seasonRepository.smartBulkUpsert(seasonOps)
       }
 
-      for (const { merged: entity } of seasonOps) {
+      for (const { merged: entity, cleanupChanges } of seasonOps) {
         results.push(this.makeResult(
           `${showTitle} S${entity.seasonNumber}`, context,
-          SyncStatus.Completed, [`Upserted season ${entity.seasonNumber}`], []
+          SyncStatus.Completed,
+          [`Upserted season ${entity.seasonNumber}`, ...(cleanupChanges || [])], [],
+          { displayTitle: entity.showTitle, seasonNumber: entity.seasonNumber }
         ))
       }
 
@@ -271,7 +302,8 @@ export class SeasonSyncService {
     context: SyncContext,
     status: SyncStatus,
     changes: string[],
-    errors: string[]
+    errors: string[],
+    metadata?: Record<string, any>
   ): SyncResult {
     return {
       status,
@@ -281,7 +313,10 @@ export class SeasonSyncService {
       serverId: context.serverConfig.id,
       timestamp: new Date(),
       changes,
-      errors
+      errors,
+      // Display title + season number for post-sync cache invalidation
+      // (season page tags key on display title, not the filesystem showTitle).
+      ...(metadata ? { metadata } : {})
     }
   }
 }

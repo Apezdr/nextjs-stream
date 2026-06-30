@@ -38,6 +38,7 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
   private client: MongoClient
   private indexesCreated: boolean = false
+  private indexInitInFlight: Promise<void> | null = null
 
   constructor(client: MongoClient) {
     this.client = client
@@ -48,25 +49,47 @@ export class MongoDBAdapter implements DatabaseAdapter {
   }
 
   /**
-   * Initialize the database adapter and create indexes
+   * Initialize the database adapter and create indexes.
+   *
+   * Idempotent and SELF-HEALING: a no-op once every index is confirmed created,
+   * but if a prior attempt was left INCOMPLETE — a repo's index build dropped on a
+   * transient Mongo connection close and didn't recover even after
+   * createIndexSafely's retries — `indexesCreated` stays false so the next
+   * createDatabaseAdapter()/sync re-attempts, instead of caching a half-indexed
+   * state until the process restarts (which is how all four collections were left
+   * with only `_id_` on 2026-06-20). Concurrent callers share one in-flight attempt.
    */
   async initialize(): Promise<void> {
-    try {
-      if (!this.indexesCreated) {
-        console.log('Creating database indexes...')
-        
-        await Promise.all([
-          this.movies.createIndexes(),
-          this.episodes.createIndexes(),
-          this.seasons.createIndexes(),
-          this.tvShows.createIndexes()
-        ])
+    if (this.indexesCreated) return
+    if (this.indexInitInFlight) return this.indexInitInFlight
 
+    this.indexInitInFlight = (async () => {
+      console.log('Creating database indexes...')
+      // Repos catch their own errors and report success/failure, so Promise.all
+      // never rejects on a per-collection index failure — we inspect the booleans.
+      const results = await Promise.all([
+        this.movies.createIndexes(),
+        this.episodes.createIndexes(),
+        this.seasons.createIndexes(),
+        this.tvShows.createIndexes()
+      ])
+      if (results.every(Boolean)) {
         this.indexesCreated = true
         console.log('Database indexes created successfully')
+      } else {
+        const failed = ['movies', 'episodes', 'seasons', 'tvShows'].filter((_, i) => !results[i])
+        console.error(
+          `Database index creation INCOMPLETE for: ${failed.join(', ')} — leaving uncached so the next sync retries`
+        )
       }
-    } catch (error) {
-      throw new DatabaseError(`Failed to initialize database adapter: ${error}`)
+    })()
+
+    try {
+      await this.indexInitInFlight
+    } finally {
+      // Clear so a failed attempt (indexesCreated still false) can be retried by
+      // the next caller; a successful attempt is gated out by the early return above.
+      this.indexInitInFlight = null
     }
   }
 
@@ -168,26 +191,25 @@ export class MongoDBAdapter implements DatabaseAdapter {
 
 declare global {
   // Preserve across HMR in development, same pattern as src/lib/mongodb.ts
-  var __syncDatabaseAdapterPromise: Promise<MongoDBAdapter> | undefined
+  var __syncDatabaseAdapter: MongoDBAdapter | undefined
 }
 
 /**
- * Factory function to create database adapter.
+ * Factory function to create the database adapter.
  *
- * Caches the adapter (and its index-creation promise) at module scope so
- * `initialize()` — which fires ~51 `createIndex` wire calls across four
- * collections — runs exactly once per process lifetime, not on every caller.
+ * Caches the adapter INSTANCE at module scope (not its init promise) and calls
+ * `initialize()` on every invocation. initialize() is a no-op once all indexes are
+ * confirmed created, and dedupes concurrent callers internally so the ~51
+ * `createIndex` calls don't re-fire — but a prior INCOMPLETE attempt (a build
+ * dropped on a transient connection close) re-runs here on the next sync. Caching
+ * the init PROMISE instead, as before, pinned a half-indexed adapter for the whole
+ * process lifetime and required a restart to recover.
  */
 export async function createDatabaseAdapter(client: MongoClient): Promise<MongoDBAdapter> {
-  if (!globalThis.__syncDatabaseAdapterPromise) {
-    const adapter = new MongoDBAdapter(client)
-    globalThis.__syncDatabaseAdapterPromise = adapter.initialize()
-      .then(() => adapter)
-      .catch((err) => {
-        // Don't poison the cache on transient failures — let the next caller retry
-        globalThis.__syncDatabaseAdapterPromise = undefined
-        throw err
-      })
+  if (!globalThis.__syncDatabaseAdapter) {
+    globalThis.__syncDatabaseAdapter = new MongoDBAdapter(client)
   }
-  return globalThis.__syncDatabaseAdapterPromise
+  const adapter = globalThis.__syncDatabaseAdapter
+  await adapter.initialize()
+  return adapter
 }

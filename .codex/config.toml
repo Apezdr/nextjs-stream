@@ -1,0 +1,15 @@
+[shell_environment_policy]
+inherit = "core"
+
+[shell_environment_policy.set]
+CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = "1"
+
+[mcp_servers.next-devtools]
+command = "npx"
+args = [
+    "-y",
+    "next-devtools-mcp@latest",
+]
+
+[mcp_servers.signoz]
+url = "http://192.168.1.39:8000/mcp"

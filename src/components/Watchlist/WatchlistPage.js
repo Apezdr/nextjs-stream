@@ -255,6 +255,11 @@ function loadingReducer(state, action) {
 const initialSearchState = {
   searchResults: { watchlist: [], tmdbInternal: [], tmdbExternal: [] },
   isSearching: false,
+  // Infinite scroll for the "Add from TMDB" results: `loadingMore` shows the
+  // bottom spinner while the next TMDB page is fetched; `hasMore` gates whether
+  // scrolling should request more (true while either movie/tv search has pages left).
+  loadingMore: false,
+  hasMore: false,
 }
 
 function searchReducer(state, action) {
@@ -263,6 +268,10 @@ function searchReducer(state, action) {
       return { ...state, searchResults: resolveValue(action.value, state.searchResults) }
     case 'SET_IS_SEARCHING':
       return { ...state, isSearching: action.value }
+    case 'SET_LOADING_MORE':
+      return { ...state, loadingMore: action.value }
+    case 'SET_HAS_MORE':
+      return { ...state, hasMore: action.value }
     default:
       return state
   }
@@ -389,15 +398,25 @@ export default function WatchlistPage({ user }) {
 
   // --- Search/filter cluster (reducer-backed) ---
   const [searchState, dispatchSearch] = useReducer(searchReducer, initialSearchState)
-  const { searchResults, isSearching } = searchState
+  const { searchResults, isSearching, loadingMore, hasMore } = searchState
   const setSearchResults = useCallback((value) => dispatchSearch({ type: 'SET_SEARCH_RESULTS', value }), [])
   const setIsSearching = useCallback((value) => dispatchSearch({ type: 'SET_IS_SEARCHING', value }), [])
+  const setLoadingMore = useCallback((value) => dispatchSearch({ type: 'SET_LOADING_MORE', value }), [])
+  const setHasMore = useCallback((value) => dispatchSearch({ type: 'SET_HAS_MORE', value }), [])
 
   // searchQuery is an independent controlled input value
   const [searchQuery, setSearchQuery] = useState('')
 
   // Request ID counter to prevent race conditions in search
   const searchRequestIdRef = useRef(0)
+
+  // Cursor for paging the "Add from TMDB" results as the dropdown is scrolled.
+  // Holds the active query, the request id that produced it (so a stale load-more
+  // is dropped), per-type page/total-page counters, the database TMDB-id set used
+  // to keep already-owned titles out, and the keys already shown (cross-page dedup).
+  const searchPagingRef = useRef(null)
+  // Synchronous guard so overlapping scroll events can't fire concurrent fetches.
+  const loadingMoreRef = useRef(false)
 
   // selectedItems is independent selection state
   const [selectedItems, setSelectedItems] = useState(new Set())
@@ -935,6 +954,8 @@ export default function WatchlistPage({ user }) {
     if (!query.trim()) {
       setSearchResults({ watchlist: [], tmdbInternal: [], tmdbExternal: [] })
       setIsSearching(false)
+      setHasMore(false)
+      searchPagingRef.current = null
       return
     }
 
@@ -1022,10 +1043,12 @@ export default function WatchlistPage({ user }) {
                !existingTitleTypes.has(titleType)
       })
 
-      // Process TMDB results and check which ones are NOT in our database
+      // Process TMDB results and check which ones are NOT in our database.
+      // No per-type cap here — the full first page is shown and subsequent pages
+      // are appended on scroll (see loadMoreSearch).
       const allTmdbResults = [
-        ...(tmdbMovies.results || []).slice(0, 5).map(item => ({ ...item, media_type: 'movie' })),
-        ...(tmdbTVShows.results || []).slice(0, 5).map(item => ({ ...item, media_type: 'tv' }))
+        ...(tmdbMovies.results || []).map(item => ({ ...item, media_type: 'movie' })),
+        ...(tmdbTVShows.results || []).map(item => ({ ...item, media_type: 'tv' }))
       ]
       
       console.log(`[Search] TMDB returned ${tmdbMovies.results?.length || 0} movies, ${tmdbTVShows.results?.length || 0} TV shows`)
@@ -1071,6 +1094,22 @@ export default function WatchlistPage({ user }) {
 
       // Final check before setting state
       if (currentRequestId === searchRequestIdRef.current) {
+        // Seed the paging cursor for "Add from TMDB" infinite scroll. TMDB pages
+        // are 20 items each; `total_pages` tells us when to stop.
+        searchPagingRef.current = {
+          query,
+          requestId: currentRequestId,
+          moviePage: tmdbMovies.page || 1,
+          movieTotalPages: tmdbMovies.total_pages || 1,
+          tvPage: tmdbTVShows.page || 1,
+          tvTotalPages: tmdbTVShows.total_pages || 1,
+          dbTmdbIds: allDatabaseTmdbIds,
+          shownKeys: new Set(externalTmdbResults.map(r => `${r.media_type}-${r.id}`)),
+        }
+        setHasMore(
+          searchPagingRef.current.moviePage < searchPagingRef.current.movieTotalPages ||
+            searchPagingRef.current.tvPage < searchPagingRef.current.tvTotalPages
+        )
         setSearchResults({
           watchlist: watchlistResults,
           tmdbInternal: internalResults,
@@ -1091,7 +1130,93 @@ export default function WatchlistPage({ user }) {
         setIsSearching(false)
       }
     }
-  }, [currentItems, setIsSearching, setSearchResults])
+  }, [currentItems, setIsSearching, setSearchResults, setHasMore])
+
+  // Append the next page of "Add from TMDB" results when the dropdown is scrolled
+  // near its end. Pages the same query that produced the current list (via the
+  // paging cursor) and reuses the original database/playlist dedup so already-owned
+  // titles stay out. Because that dedup can empty a whole TMDB page, it keeps paging
+  // (bounded) until it gathers at least one new item or exhausts the result set.
+  const loadMoreSearch = useCallback(async () => {
+    const paging = searchPagingRef.current
+    if (!paging || !paging.query || loadingMoreRef.current) return
+
+    const stillHasMore = () =>
+      paging.moviePage < paging.movieTotalPages || paging.tvPage < paging.tvTotalPages
+    if (!stillHasMore()) return
+
+    loadingMoreRef.current = true
+    setLoadingMore(true)
+    const requestId = paging.requestId
+
+    try {
+      // Recompute the current-playlist dedup sets so items added since the initial
+      // search are still excluded.
+      const existingTmdbIds = new Set(currentItems.map(item => item.tmdbId).filter(Boolean))
+      const existingTitleTypes = new Set(
+        currentItems.map(item => `${item.title?.toLowerCase()}-${item.mediaType}`)
+      )
+
+      const collected = []
+      for (let i = 0; i < 5 && collected.length === 0 && stillHasMore(); i++) {
+        const movieHasMore = paging.moviePage < paging.movieTotalPages
+        const tvHasMore = paging.tvPage < paging.tvTotalPages
+        const nextMoviePage = movieHasMore ? paging.moviePage + 1 : paging.moviePage
+        const nextTvPage = tvHasMore ? paging.tvPage + 1 : paging.tvPage
+
+        const [movieRaw, tvRaw] = await Promise.all([
+          movieHasMore
+            ? searchMedia(paging.query, 'movie', { page: nextMoviePage }).catch(() => null)
+            : null,
+          tvHasMore ? searchMedia(paging.query, 'tv', { page: nextTvPage }).catch(() => null) : null,
+        ])
+
+        // Drop the result if a newer search (or cleared query) superseded this one.
+        if (requestId !== searchRequestIdRef.current || paging !== searchPagingRef.current) return
+
+        const movieData = movieRaw?.data || movieRaw || {}
+        const tvData = tvRaw?.data || tvRaw || {}
+
+        if (movieHasMore) {
+          paging.moviePage = nextMoviePage
+          paging.movieTotalPages = movieData.total_pages || paging.movieTotalPages
+        }
+        if (tvHasMore) {
+          paging.tvPage = nextTvPage
+          paging.tvTotalPages = tvData.total_pages || paging.tvTotalPages
+        }
+
+        const rawResults = [
+          ...((movieData.results) || []).map(item => ({ ...item, media_type: 'movie' })),
+          ...((tvData.results) || []).map(item => ({ ...item, media_type: 'tv' })),
+        ]
+
+        for (const item of rawResults) {
+          const key = `${item.media_type}-${item.id}`
+          if (paging.shownKeys.has(key)) continue
+          if (paging.dbTmdbIds.has(item.id)) continue
+          if (existingTmdbIds.has(item.id)) continue
+          const titleType = `${(item.title || item.name)?.toLowerCase()}-${item.media_type}`
+          if (existingTitleTypes.has(titleType)) continue
+          paging.shownKeys.add(key)
+          collected.push(item)
+        }
+      }
+
+      if (collected.length > 0) {
+        setSearchResults(prev => ({
+          ...prev,
+          tmdbExternal: [...(prev.tmdbExternal || []), ...collected],
+        }))
+      }
+      setHasMore(stillHasMore())
+    } catch (error) {
+      console.error('[Search] Load more error:', error)
+    } finally {
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+    }
+  }, [currentItems, setSearchResults, setLoadingMore, setHasMore])
 
   const handleItemSelect = useCallback((itemId, selected) => {
     setSelectedItems(prev => {
@@ -1713,6 +1838,9 @@ export default function WatchlistPage({ user }) {
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
             onSearch={handleSearch}
+            onLoadMore={loadMoreSearch}
+            isLoadingMore={loadingMore}
+            hasMore={hasMore}
             searchResults={searchResults}
             setSearchResults={setSearchResults}
             isSearching={isSearching}

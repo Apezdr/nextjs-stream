@@ -1,70 +1,5 @@
-import getMetadata from '@components/movieMetadata'
 import clientPromise from '../lib/mongodb'
-import { ObjectId } from 'mongodb'
-import { extractTVShowDetails } from './admin_frontend_database'
-import { fileServerURLWithPrefixPath } from './config'
 import { userQueries } from '@src/lib/userQueries'
-import { findPlaybackForUser } from '@src/utils/watchHistory/database'
-
-export async function getAllMedia({ type = 'all' } = {}) {
-  const client = await clientPromise
-  const result = {}
-
-  if (type === 'all' || type === 'movie') {
-    result.movies = await client.db('Media').collection('Movies').find({}).toArray()
-  }
-
-  if (type === 'all' || type === 'tv') {
-    result.tv = await client.db('Media').collection('TV').find({}).toArray()
-  }
-
-  return result
-}
-
-export async function updateMetadata({ type, media_title, tvSeriesData = null, tmdb_id = null }) {
-  const client = await clientPromise
-  const collection = type === 'movie' ? 'Movies' : 'TV'
-
-  if (type === 'tv' && tvSeriesData) {
-    // Handling metadata updates for a TV series with its seasons
-    for (let i = 0; i < tvSeriesData.seasons.length; i++) {
-      if (!tvSeriesData.seasons[i].metadata) {
-        const seasonMetadata = await getMetadata({
-          title: media_title,
-          season: tvSeriesData.seasons[i].seasonNumber,
-          type: type,
-        })
-        tvSeriesData.seasons[i].metadata = seasonMetadata
-
-        // Update the season metadata in the database
-        await client
-          .db('Media')
-          .collection(collection)
-          .updateOne(
-            {
-              _id: new ObjectId(tvSeriesData._id),
-              'seasons.seasonNumber': tvSeriesData.seasons[i].seasonNumber,
-            },
-            { $set: { 'seasons.$.metadata': seasonMetadata } }
-          )
-      }
-    }
-  }
-  // Fetch metadata for a movie or the entire TV show
-  const metadata = await getMetadata({
-    tmdb_id: tmdb_id,
-    title: media_title,
-    type: type,
-  })
-
-  if (metadata) {
-    // Update the record in MongoDB
-    await client
-      .db('Media')
-      .collection(collection)
-      .updateOne({ title: media_title }, { $set: { metadata: metadata } })
-  }
-}
 
 export async function getAllUsers() {
   const users = await userQueries.findAll()
@@ -106,6 +41,7 @@ export class AutoSyncManager {
     return autoSync
   }
 }
+
 const AUTO_CAPTIONS_DEFAULTS = Object.freeze({
   enabled: false,
   languages: ['en'],
@@ -162,91 +98,5 @@ export class SyncAggressivenessManager {
         { upsert: true }
       )
     return syncAggressiveness
-  }
-}
-
-export async function getRecentlyWatched() {
-  try {
-    const client = await clientPromise
-    const users = await userQueries.findAll()
-
-    const lastWatchedPromises = users.map(async (user) => {
-      try {
-        // Query WatchHistory using centralized function for this user's recent watches
-        const lastWatchedVideos = await findPlaybackForUser(user._id, {
-          filter: { isValid: { $ne: false } },
-          sort: { lastUpdated: -1 },
-          limit: 4
-        })
-
-        if (lastWatchedVideos.length === 0) {
-          return null
-        }
-
-        let mostRecentWatch = null
-        const watchedDetails = await Promise.all(
-          lastWatchedVideos.map(async (video) => {
-            // Update mostRecentWatch with the latest timestamp
-            if (!mostRecentWatch || video.lastUpdated > mostRecentWatch) {
-              mostRecentWatch = video.lastUpdated
-            }
-            try {
-              if (
-                video.videoId.startsWith(fileServerURLWithPrefixPath(`/movies`)) ||
-                video.videoId.startsWith(fileServerURLWithPrefixPath(`/limited`))
-              ) {
-                const movie = await client
-                  .db('Media')
-                  .collection('Movies')
-                  .findOne({ videoURL: video.videoId })
-                return movie
-                  ? {
-                      ...movie,
-                      type: 'movie',
-                      playbackTime: video.playbackTime,
-                      lastUpdated: video.lastUpdated,
-                    }
-                  : null
-              } else if (video.videoId.startsWith(fileServerURLWithPrefixPath(`/tv`))) {
-                const tvDetails = await extractTVShowDetails(client, video.videoId)
-                return tvDetails
-                  ? {
-                      ...tvDetails,
-                      type: 'tv',
-                      playbackTime: video.playbackTime,
-                      lastUpdated: video.lastUpdated,
-                    }
-                  : null
-              } /* else {
-                throw new Error(`Invalid videoId: ${video.videoId} or ${fileServerURLWithPrefixPath}`)
-              } */
-            } catch (innerError) {
-              console.error(`Error processing video details: ${innerError.message}`)
-              return null
-            }
-          })
-        )
-
-        return {
-          user: {
-            name: user.name,
-            image: user.image,
-          },
-          videos: watchedDetails.filter((detail) => detail !== null),
-          mostRecentWatch: mostRecentWatch,
-        }
-      } catch (userError) {
-        console.error(`Error processing user ${user.name}: ${userError.message}`)
-        return null
-      }
-    })
-
-    const lastWatched = await Promise.all(lastWatchedPromises)
-    return lastWatched
-      .filter((entry) => entry)
-      .sort((a, b) => b.mostRecentWatch - a.mostRecentWatch)
-  } catch (error) {
-    console.error(`Error in getRecentlyWatched: ${error.message}`)
-    throw error
   }
 }

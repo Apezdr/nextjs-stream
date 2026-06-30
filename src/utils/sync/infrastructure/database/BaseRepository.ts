@@ -17,6 +17,24 @@ import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
 // gets re-applied via the explicit add-on at every write site below.
 const DIFF_EXCLUDED_FIELDS = new Set(['_id', 'lastSynced', 'updatedAt', 'createdAt', 'syncRunId'])
 
+/**
+ * Whether a top-level field is locked according to a doc's nested `lockedFields`
+ * map (e.g. { posterURL: true, metadata: { overview: true } }).
+ *
+ * A nested-object lock (metadata.overview) is treated as locking the WHOLE
+ * top-level key here. computeDiff emits whole-object `$set` for changed nested
+ * objects, so honoring a sub-path lock by partially rebuilding the object would
+ * drop the locked sub-value on write — locking the whole key is the safe,
+ * never-lose-data behavior. The default flatSync path (filterLockedFields) does
+ * sub-path-precise dot-path writes; the new architecture is coarser but never
+ * overwrites an admin's locked value.
+ */
+function isTopLevelFieldLocked(lockedFields: any, key: string): boolean {
+  if (!lockedFields || typeof lockedFields !== 'object') return false
+  const lock = lockedFields[key]
+  return lock === true || (lock !== null && typeof lock === 'object')
+}
+
 export abstract class BaseRepository<T extends BaseMediaEntity> implements MediaRepository<T> {
   protected client: MongoClient
   protected collection: Collection<T>
@@ -207,8 +225,15 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
     merged: T
   ): Partial<T> {
     const diff: Partial<T> = {}
+    // Honor admin field locks: a changed-but-locked field is omitted from the
+    // diff, so the existing (manually-set) value is preserved on write. This is
+    // the new architecture's lock enforcement point — both smartUpsert (movies,
+    // TV shows) and smartBulkUpsert (episodes) flow through here, mirroring the
+    // protection filterLockedFields provides on the default flatSync path.
+    const lockedFields = (existing as any)?.lockedFields
     for (const key of Object.keys(merged)) {
       if (DIFF_EXCLUDED_FIELDS.has(key)) continue
+      if (isTopLevelFieldLocked(lockedFields, key)) continue
       if (!isEqual(existing[key], (merged as any)[key])) {
         (diff as any)[key] = (merged as any)[key]
       }
@@ -227,7 +252,20 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
    *   lastSynced/updatedAt. Ticket hold time is proportional to change
    *   volume, not document size.
    */
-  async smartUpsert(entity: T, existing: T | null): Promise<void> {
+  async smartUpsert(
+    entity: T,
+    existing: T | null,
+    options?: {
+      /**
+       * Field names to $unset on an existing doc (field-absence cleanup). The
+       * caller has already gated these on the authoritative pass + lock checks.
+       * Ignored for new docs (nothing to clear). When present the write fires
+       * even if the $set diff is empty — and still carries the syncRunId marker
+       * so post-sync cleanup doesn't reap the doc.
+       */
+      unset?: string[]
+    }
+  ): Promise<void> {
     const originalTitle = (entity as any).originalTitle
     const title = (entity as any).title
     if (!originalTitle && !title) {
@@ -258,18 +296,25 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
       }
 
       const diff = BaseRepository.computeDiff(existing, entity)
-      if (Object.keys(diff).length === 0) return  // Nothing changed — skip write
+      // Only $unset fields that actually have a value on the existing doc.
+      const unsetFields = (options?.unset || []).filter(f => (existing as any)[f] !== undefined)
+      if (Object.keys(diff).length === 0 && unsetFields.length === 0) return  // Nothing changed — skip write
+
+      const update: Record<string, any> = {
+        $set: {
+          ...diff,
+          lastSynced: now,
+          updatedAt: now,
+          ...(syncRunId ? { syncRunId } : {})
+        }
+      }
+      if (unsetFields.length > 0) {
+        update.$unset = Object.fromEntries(unsetFields.map(f => [f, '']))
+      }
 
       await this.collection.updateOne(
         { [queryKey]: queryField } as any,
-        {
-          $set: {
-            ...diff,
-            lastSynced: now,
-            updatedAt: now,
-            ...(syncRunId ? { syncRunId } : {})
-          }
-        } as any
+        update as any
       )
     } catch (error) {
       throw new DatabaseError(
@@ -464,22 +509,59 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
   /**
    * Create database indexes for optimal performance
    */
-  abstract createIndexes(): Promise<void>
+  // Returns true only if every index was created (or already existed). A repo that
+  // returns false had a build dropped by a transient connection close that didn't
+  // recover; the adapter leaves indexesCreated=false so the next sync re-attempts.
+  abstract createIndexes(): Promise<boolean>
 
   /**
-   * Safely create an index, ignoring errors if it already exists
+   * Safely create an index: ignore "already exists" conflicts, and RETRY
+   * transient transport errors.
+   *
+   * The pooled connection tearing down mid-build (`connection N to host:27017
+   * closed`, `ECONNRESET`, `pool was cleared`) is endemic in this deployment.
+   * Without a retry a single drop rejects the repo's `createIndexes()` Promise.all
+   * and leaves the WHOLE collection un-indexed — after which every query/upsert
+   * COLLSCANs, which piles more pressure on the pool and causes MORE drops
+   * (observed 2026-06-20: all four repos failed index creation on one drop, then
+   * the un-indexed cleanup `{syncRunId:{$ne}}` COLLSCAN kept the contention alive).
+   * `createIndex` is idempotent, so re-issuing a dropped build is safe. Mirrors
+   * `withTransientRetry` in preTagSyncRunId.js.
    */
   protected async createIndexSafely(indexSpec: Record<string, any>, options?: Record<string, any>): Promise<void> {
-    try {
-      await this.collection.createIndex(indexSpec, options)
-    } catch (error: any) {
-      // MongoDB error codes for index already exists
-      if (error?.code === 85 || error?.code === 86 || error?.codeName === 'IndexOptionsConflict' || error?.codeName === 'IndexKeySpecsConflict') {
-        // Index already exists, this is fine
-        return
+    const isAlreadyExists = (error: any): boolean =>
+      error?.code === 85 || error?.code === 86 ||
+      error?.codeName === 'IndexOptionsConflict' || error?.codeName === 'IndexKeySpecsConflict'
+
+    const isTransient = (error: any): boolean => {
+      if (!error) return false
+      if (
+        typeof error.hasErrorLabel === 'function' &&
+        (error.hasErrorLabel('TransientTransactionError') || error.hasErrorLabel('RetryableWriteError'))
+      ) {
+        return true
       }
-      // Re-throw other errors
-      throw error
+      return /connection .* closed|ECONNRESET|socket hang up|socket|network|pool (was )?(cleared|closed)|server is closed|MongoNetworkError/i.test(
+        error?.message || ''
+      )
+    }
+
+    const MAX_TRIES = 4
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.collection.createIndex(indexSpec, options)
+        return
+      } catch (error: any) {
+        // Already exists (possibly with different options/name) — not an error.
+        if (isAlreadyExists(error)) return
+        // Transient transport drop — back off (which also de-bursts the retry
+        // wave) and try again before giving up.
+        if (attempt < MAX_TRIES && isTransient(error)) {
+          await new Promise((resolve) => setTimeout(resolve, 250 * attempt))
+          continue
+        }
+        throw error
+      }
     }
   }
 

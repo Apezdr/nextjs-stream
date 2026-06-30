@@ -131,6 +131,20 @@ export interface SyncContext {
   // directly. MovieSyncService performs a single consolidated write after all
   // strategies complete, using smartUpsert to write only changed fields.
   pendingMovieUpdates?: Map<string, Partial<MovieEntity>>
+
+  // Field-absence cleanup (drops stale optional fields that NO enabled server
+  // reports anymore — see core/FieldAbsenceCleaner + FIELD_ABSENCE_CLEANUP_DESIGN.md).
+  // Defaults to `enforce`; SYNC_FIELD_CLEANUP=dry-run downgrades to detect+log,
+  // and off/false/disabled fully disables (cleanup left undefined). When undefined
+  // the cleaner is never invoked. `allEnabledServersProbed` is the mandatory
+  // authoritative-pass gate: false (e.g. a server failed this run) makes cleanup a
+  // no-op so a transient outage is never mistaken for a deletion.
+  cleanup?: {
+    enabled: boolean
+    mode: 'enforce' | 'dry-run'
+    maxFieldsPerEntity: number
+    allEnabledServersProbed: boolean
+  }
 }
 
 export interface SyncResult {

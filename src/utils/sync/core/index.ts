@@ -21,6 +21,18 @@ export * from './logSanitizer'
 // Field path mappings (type-safe fieldAvailability lookups)
 export * from './fieldPaths'
 
+// Field absence detection (drops stale optional fields no server reports anymore)
+export {
+  detectAbsentFields,
+  planFieldCleanup,
+  resolveCleanupConfig,
+  type CleanableField,
+  type CleanupConfig,
+  type CleanupPlan,
+  type AbsenceCleanupInput,
+  type AbsenceCleanupResult
+} from './FieldAbsenceCleaner'
+
 // Resource management (throttling, memory monitoring)
 export { ResourceManager, getResourceConfig } from './ResourceManager'
 export type { ResourceConfig } from './ResourceManager'

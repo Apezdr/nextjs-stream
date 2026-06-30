@@ -72,7 +72,10 @@ export default memo(function EnhancedRecentlyWatched({ recentlyWatched }) {
       // Get the most recent video for each user
       const getLatestTimestamp = (videos) => {
         if (!videos || videos.length === 0) return 0
-        return Math.max(...videos.map(v => new Date(v.lastWatchedDate).getTime() || 0))
+        return Math.max(...videos.map(v => {
+          const ts = v.lastWatchedTimestamp || v.lastWatchedDate
+          return ts ? new Date(ts).getTime() || 0 : 0
+        }))
       }
       
       const timestampA = getLatestTimestamp(a.videos)

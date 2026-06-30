@@ -183,6 +183,27 @@ export async function invalidateEpisodeDetailsCache(showTitle, seasonNum, episod
   }
 }
 
+// Invalidate season details cache when a season is updated
+export async function invalidateSeasonDetailsCache(showTitle, seasonNum) {
+  if (!showTitle || seasonNum === undefined || seasonNum === null) return false
+
+  try {
+    const { getAllSeasonCacheTags } = await import('./mediaPagesTags')
+    const tags = getAllSeasonCacheTags(showTitle, seasonNum)
+
+    // Revalidate all related tags with max profile for SWR
+    for (const tag of tags) {
+      revalidateTag(tag, 'max')
+    }
+
+    console.log(`[Cache SWR] Invalidated season details cache for: ${showTitle} S${seasonNum}`)
+    return true
+  } catch (error) {
+    console.error('[Cache SWR] Failed to invalidate season details cache:', error)
+    return false
+  }
+}
+
 // Invalidate all media detail caches (for use during sync operations)
 export async function invalidateAllMediaDetailsCache() {
   try {

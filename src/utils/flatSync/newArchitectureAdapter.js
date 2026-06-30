@@ -94,6 +94,10 @@ export async function syncWithNewArchitecture(
     errors: [],
     migration: null,
     watchHistoryValidation: null,
+    // Entities re-synced this run (status 'completed'), keyed by DISPLAY title,
+    // used downstream to drive precise post-sync cache invalidation. Populated
+    // by collectChangedMedia() after each movie/TV batch.
+    changedMedia: { movies: [], shows: [], seasons: [], episodes: [] },
   }
 
   try {
@@ -139,6 +143,7 @@ export async function syncWithNewArchitecture(
           concurrency: options.concurrency || undefined,
           forceSync: Boolean(options.forceSync),
           fileServerData: fileServer, // Pass file server data to sync manager
+          allEnabledServersProbed: options.allEnabledServersProbed, // gate for field-absence cleanup
           // movieCache removed 2026-05-09 — used to be `flatDB.lookups?.movies?.byOriginalTitle`,
           // an in-memory hint to skip per-record finds. The flatDB pre-load it came from cost
           // ~414 MB of old_space per cycle, which dwarfed the savings. SyncManager's
@@ -148,6 +153,9 @@ export async function syncWithNewArchitecture(
 
       // Translate movie results to flat sync format
       results.movies = translateMovieResults(movieResults)
+
+      // Collect changed movies (display title) for post-sync cache invalidation
+      collectChangedMedia(movieResults, results.changedMedia)
 
       log.info({
         serverId: serverConfig.id,
@@ -163,13 +171,33 @@ export async function syncWithNewArchitecture(
       serverConfig,
       fieldAvailability,
       results,
-      { forceSync: Boolean(options.forceSync) }
+      { forceSync: Boolean(options.forceSync), allEnabledServersProbed: options.allEnabledServersProbed }
     )
 
     // Calculate performance metrics
     const endTime = Date.now()
     results.performance.endTime = new Date()
     results.performance.duration = endTime - startTime
+
+    // Observability for post-sync cache invalidation. changedMedia counts should
+    // track the processed (completed) counts closely; if changedMedia dwarfs the
+    // number of entities that actually changed on disk, that's the over-
+    // invalidation signal to alert on in SigNoz.
+    log.info({
+      serverId: serverConfig.id,
+      changedMedia: {
+        movies: results.changedMedia.movies.length,
+        shows: results.changedMedia.shows.length,
+        seasons: results.changedMedia.seasons.length,
+        episodes: results.changedMedia.episodes.length,
+      },
+      processed: {
+        movies: results.movies.processed,
+        tvShows: results.tvShows.processed,
+        seasons: results.seasons.processed,
+        episodes: results.episodes.processed,
+      },
+    }, 'Collected changed media for post-sync cache invalidation');
 
     log.info({
       serverId: serverConfig.id,
@@ -309,10 +337,14 @@ async function syncTVContentWithNewArchitecture(
         fileServerData: fileServer,
         concurrency: 3,
         forceSync: Boolean(tvOptions.forceSync),
+        allEnabledServersProbed: tvOptions.allEnabledServersProbed === true,
       }
     )
 
     translateTVResults(batchResult, results, serverConfig.id)
+
+    // Collect changed shows/seasons/episodes (display title) for cache invalidation
+    collectChangedMedia(batchResult, results.changedMedia)
 
     const tvDurationSec = ((performance.now() - tvStartTime) / 1000)
     log.info({
@@ -337,6 +369,63 @@ async function syncTVContentWithNewArchitecture(
       stack: error.stack,
       serverId: serverConfig.id,
     })
+  }
+}
+
+/**
+ * Append entities that were actually re-synced (status 'completed') from a
+ * BatchSyncResult onto the changedMedia accumulator. Drives precise post-sync
+ * cache invalidation.
+ *
+ * Keys on the DISPLAY title (`result.metadata.displayTitle`) because media page
+ * cache tags use the display title, not the originalTitle/showTitle filesystem
+ * key. Falls back to `entityId` only for movies/shows when no display title was
+ * stamped (defensive — older results); season/episode entries are skipped if
+ * the numbers are missing, since a partial tag would be wrong.
+ *
+ * Note: "completed" means "not hash-skipped", not a guaranteed field-level diff
+ * (the services emit completed whenever the smart-upsert ran). The downstream
+ * logging compares these counts against processed counts so over-invalidation
+ * is observable in SigNoz.
+ *
+ * @param {Object} batchResult - BatchSyncResult from SyncManager
+ * @param {{movies:string[],shows:string[],seasons:Array,episodes:Array}} changedMedia - accumulator (mutated)
+ */
+function collectChangedMedia(batchResult, changedMedia) {
+  if (!batchResult || !changedMedia) return
+  for (const r of batchResult.results || []) {
+    if (r.status !== 'completed') continue
+    const md = r.metadata || {}
+    switch (r.mediaType) {
+      case MediaType.Movie: {
+        const title = md.displayTitle || r.entityId
+        if (title) changedMedia.movies.push(title)
+        break
+      }
+      case MediaType.TVShow: {
+        const title = md.displayTitle || r.entityId
+        if (title) changedMedia.shows.push(title)
+        break
+      }
+      case MediaType.Season: {
+        if (md.displayTitle && md.seasonNumber != null) {
+          changedMedia.seasons.push({ title: md.displayTitle, season: md.seasonNumber })
+        }
+        break
+      }
+      case MediaType.Episode: {
+        if (md.displayTitle && md.seasonNumber != null && md.episodeNumber != null) {
+          changedMedia.episodes.push({
+            title: md.displayTitle,
+            season: md.seasonNumber,
+            episode: md.episodeNumber,
+          })
+        }
+        break
+      }
+      default:
+        break
+    }
   }
 }
 

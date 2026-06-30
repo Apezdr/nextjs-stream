@@ -144,6 +144,7 @@ async function handleAutoCaption(req, subtitleUrl) {
       headers,
     })
   } catch (err) {
+    console.error(`Auto-caption proxy fetch failed for "${subtitleUrl}": ${err.message}`)
     return new Response(
       JSON.stringify({ error: `Caption proxy failed: ${err.message}` }),
       { status: 502, headers: { 'Content-Type': 'application/json' } }

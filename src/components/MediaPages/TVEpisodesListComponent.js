@@ -18,6 +18,7 @@ import HD4kBanner from '../../../public/4kBanner.png'
 import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
 import { generateClipVideoURL } from '@src/utils/auth_utils'
 import RetryImage from '@components/RetryImage'
+import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { createWatchHistoryLookupMap } from '@src/utils/watchHistoryUtils'
 import { tvSeasonPosterName, tvEpisodePosterName } from '@src/utils/viewTransitionNames'
 
@@ -159,6 +160,9 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
                     Go Back
                   </button>
                 </Link>
+                <AdminEditButton
+                  href={season?.showId ? `/admin/media/tv/${season.showId}?season=${season.seasonNumber}` : null}
+                />
               </div>
             </li>
             {/* Episodes List */}

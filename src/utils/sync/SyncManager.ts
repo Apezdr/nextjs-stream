@@ -15,7 +15,8 @@ import {
   SyncResult,
   SyncStatus,
   syncEventBus,
-  SyncEvents
+  SyncEvents,
+  resolveCleanupConfig
 } from './core'
 
 import { syncLogger } from './core/logger'
@@ -100,7 +101,8 @@ export class SyncManager {
         this.dbAdapter.tvShows,
         seasonSyncService,
         episodeSyncService,
-        this.dbAdapter.episodes
+        this.dbAdapter.episodes,
+        this.dbAdapter.seasons
       )
       syncLogger.info('TV sync services initialized')
 
@@ -216,6 +218,7 @@ export class SyncManager {
       forceSync?: boolean
       fileServerData?: any // Add file server data parameter
       movieCache?: Map<string, any> // 🚀 OPTIMIZATION: Pre-fetched movie cache
+      allEnabledServersProbed?: boolean // Authoritative-pass gate for field-absence cleanup
     } = {}
   ): Promise<BatchSyncResult> {
     await this.initialize()
@@ -240,6 +243,9 @@ export class SyncManager {
       movieCache: options.movieCache, // 🚀 OPTIMIZATION: Pass pre-fetched movie cache through context
       metadataHashesCache: metadataHashes || undefined, // 🚀 OPTIMIZATION: Pass metadata hashes for change detection
       resourceManager: this.resourceManager, // 🚀 RESOURCE CONTROL: Throttle HTTP & monitor memory
+      // Field-absence cleanup (was previously TV-only — movies were silently
+      // skipped because this context never carried the config). Same builder as TV.
+      cleanup: resolveCleanupConfig(options.allEnabledServersProbed === true),
     }
     
     // Log optimization statistics
@@ -386,6 +392,7 @@ export class SyncManager {
       concurrency?: number
       forceSync?: boolean
       fileServerData?: any
+      allEnabledServersProbed?: boolean
     } = {}
   ): Promise<BatchSyncResult> {
     await this.initialize()
@@ -398,6 +405,11 @@ export class SyncManager {
       syncLogger.warn('TV show hashes unavailable — proceeding without show-level skip optimisation')
     }
 
+    // Field-absence cleanup config (env-driven; defaults to enforce). Shared
+    // builder so movies and TV behave identically. allEnabledServersProbed is
+    // threaded from the route handler and gates the whole thing.
+    const cleanup = resolveCleanupConfig(options.allEnabledServersProbed === true)
+
     const context: SyncContext = {
       mediaType: MediaType.TVShow,
       operation: SyncOperation.Metadata,
@@ -408,6 +420,7 @@ export class SyncManager {
       resourceManager: this.resourceManager,
       tvShowHashesCache: tvShowHashes || undefined,
       tvEpisodeHashesCache: new Map(),  // Populated lazily per season in EpisodeSyncService
+      cleanup,
     }
 
     syncLogger.info(`Starting TV sync for ${showTitles.length} shows`)

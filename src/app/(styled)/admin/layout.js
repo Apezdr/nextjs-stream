@@ -1,6 +1,6 @@
 'use client'
 
-import { memo, useCallback, useEffect, useState, useMemo } from 'react'
+import { memo, useCallback, useEffect, useState, useMemo, useSyncExternalStore } from 'react'
 import { usePathname } from 'next/navigation'
 import { authClient } from '@src/lib/auth-client'
 import {
@@ -64,6 +64,19 @@ function classNames(...classes) {
   return classes.filter(Boolean).join(' ')
 }
 
+// Hydration-safe flag: false during SSR and the first client render, true after.
+// Lets us gate the auth-dependent UI so the initial client render always matches
+// the server (which has no session yet) — avoiding a hydration mismatch — without
+// calling setState in an effect.
+const subscribeNoop = () => () => {}
+function useHydrated() {
+  return useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false
+  )
+}
+
 // Extracted outside AdminLayout so it's not recreated on every render.
 // memo() ensures it only re-renders when its own props change.
 const NavItem = memo(function NavItem({ item, pathname, effectiveExpandedItems, toggleExpand }) {
@@ -122,6 +135,7 @@ export default function AdminLayout({ children }) {
   const pathname = usePathname()
   const router = useRouter()
 
+  const hydrated = useHydrated()
   const { data: session, isPending } = authClient.useSession()
   const isAdmin = !isPending && session?.user?.role === 'admin'
   const user = session?.user ?? false
@@ -159,7 +173,7 @@ export default function AdminLayout({ children }) {
     return { ...expandedItems, ...manuallyExpanded }
   }, [expandedItems, manuallyExpanded])
 
-  if (isPending || !isAdmin) {
+  if (!hydrated || isPending || !isAdmin) {
     return (
       <div className="min-h-screen bg-gray-900 flex items-center justify-center">
         <div className="flex flex-col items-center space-y-4 text-gray-400">

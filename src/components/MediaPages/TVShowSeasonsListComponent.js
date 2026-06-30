@@ -10,6 +10,7 @@ import Detailed from '@components/Poster/Detailed';
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched';
 import { getResolutionLabel } from '@src/utils';
 import SeasonItem from './Item/SeasonItem';
+import AdminEditButton from '@components/MediaPages/AdminEditButton';
 import { tvPosterName } from '@src/utils/viewTransitionNames';
 
 export default async function TVShowSeasonsList({ showTitle }) {
@@ -133,6 +134,7 @@ export default async function TVShowSeasonsList({ showTitle }) {
                 Go Back
               </button>
             </Link>
+            <AdminEditButton href={tvShow?._id ? `/admin/media/tv/${tvShow._id}` : null} />
           </div>
         </li>
         {/* Seasons List */}

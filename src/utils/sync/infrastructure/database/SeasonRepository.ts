@@ -19,7 +19,7 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
   /**
    * Create optimal indexes for season queries
    */
-  async createIndexes(): Promise<void> {
+  async createIndexes(): Promise<boolean> {
     try {
       await Promise.all([
         // Primary lookup indexes
@@ -30,7 +30,14 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
         // showId-based indexes — bulkUpsertShow filters on { showId, seasonNumber }
         // when showId is present. Without this index every season upsert scans the
         // collection, causing write lock contention (Slow query in production).
-        this.createIndexSafely({ showId: 1, seasonNumber: 1 }),
+        //
+        // UNIQUE on the showId write-filter tuple (one season doc per show+number)
+        // so a collision throws instead of silently duplicating. partialFilterExpression
+        // on showId existence — see EpisodeRepository for the null-showId rationale.
+        this.createIndexSafely(
+          { showId: 1, seasonNumber: 1 },
+          { unique: true, partialFilterExpression: { showId: { $exists: true } } }
+        ),
         this.createIndexSafely({ showId: 1 }),
 
         // Performance indexes
@@ -42,10 +49,16 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
         this.createIndexSafely({ posterURL: 1 }),
 
         // Metadata indexes
-        this.createIndexSafely({ episodeCount: 1 }, { sparse: true })
+        this.createIndexSafely({ episodeCount: 1 }, { sparse: true }),
+
+        // Sync-run marker — post-sync cleanup deletes by { syncRunId: { $ne } }.
+        // Name must match flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        this.createIndexSafely({ syncRunId: 1 }, { name: 'sync_run_id_index' })
       ])
+      return true
     } catch (error) {
       console.error('Failed to create season indexes:', error)
+      return false
     }
   }
 
@@ -134,6 +147,10 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
     filter: Record<string, any>
     existing: SeasonEntity | null
     merged: SeasonEntity
+    /** Field names to $unset on an existing doc (field-absence cleanup, enforce
+     *  mode). Ignored for new docs. Fires the write even when the $set diff is
+     *  empty, and still stamps syncRunId so post-sync cleanup keeps the doc. */
+    unset?: string[]
   }>): Promise<void> {
     if (ops.length === 0) return
     const now = new Date()
@@ -144,7 +161,7 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
     const syncRunId = getCurrentSyncRunId()
     const operations: AnyBulkWriteOperation<SeasonEntity>[] = []
 
-    for (const { filter, existing, merged } of ops) {
+    for (const { filter, existing, merged, unset } of ops) {
       const { _id, ...mergedNoId } = merged as any
 
       if (!existing) {
@@ -166,21 +183,23 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
       }
 
       const diff = BaseRepository.computeDiff(existing, merged)
-      if (Object.keys(diff).length === 0) continue  // unchanged — skip write
+      const unsetFields = (unset || []).filter(f => (existing as any)[f] !== undefined)
+      if (Object.keys(diff).length === 0 && unsetFields.length === 0) continue  // unchanged — skip write
+
+      const update: Record<string, any> = {
+        $set: {
+          ...diff,
+          lastSynced: now,
+          updatedAt: now,
+          ...(syncRunId ? { syncRunId } : {})
+        }
+      }
+      if (unsetFields.length > 0) {
+        update.$unset = Object.fromEntries(unsetFields.map(f => [f, '']))
+      }
 
       operations.push({
-        updateOne: {
-          filter,
-          update: {
-            $set: {
-              ...diff,
-              lastSynced: now,
-              updatedAt: now,
-              ...(syncRunId ? { syncRunId } : {})
-            }
-          },
-          upsert: false,
-        },
+        updateOne: { filter, update, upsert: false },
       })
     }
 

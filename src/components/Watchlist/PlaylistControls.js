@@ -22,6 +22,9 @@ export default function PlaylistControls({
   searchQuery,
   onSearchChange,
   onSearch,
+  onLoadMore,
+  isLoadingMore,
+  hasMore,
   searchResults,
   setSearchResults,
   isSearching,
@@ -76,6 +79,18 @@ export default function PlaylistControls({
       setMenus({ showSearchResults: !!value.trim() })
     }, 300)
   }, [onSearchChange, onSearch])
+
+  // Page in more "Add from TMDB" results once the dropdown is scrolled near its
+  // end. Guards keep it from firing while a page is already loading or when the
+  // TMDB search is exhausted; the threshold starts the fetch just before the very
+  // bottom so the loading row is visible without a hard stop.
+  const handleResultsScroll = useCallback((event) => {
+    if (!onLoadMore || !hasMore || isLoadingMore) return
+    const el = event.currentTarget
+    if (el.scrollHeight - el.scrollTop - el.clientHeight <= 64) {
+      onLoadMore()
+    }
+  }, [onLoadMore, hasMore, isLoadingMore])
 
   // Close search results when clicking outside
   useEffect(() => {
@@ -504,7 +519,10 @@ export default function PlaylistControls({
 
           {/* Search Results - only show add options if user can edit */}
           {showSearchResults && canAddPlaylist && (searchResults?.watchlist?.length > 0 || searchResults?.tmdbInternal?.length > 0 || searchResults?.tmdbExternal?.length > 0) && (
-            <div className="absolute top-full left-0 right-0 mt-1 bg-gray-700 border border-gray-600 rounded-md shadow-lg z-20 max-h-96 overflow-y-auto">
+            <div
+              onScroll={handleResultsScroll}
+              className="absolute top-full left-0 right-0 mt-1 bg-gray-700 border border-gray-600 rounded-md shadow-lg z-20 max-h-96 overflow-y-auto"
+            >
               {/* Watchlist Results */}
               {searchResults.watchlist?.length > 0 && (
                 <div className="p-2">
@@ -631,6 +649,14 @@ export default function PlaylistControls({
                       </button>
                     )
                   })}
+                </div>
+              )}
+
+              {/* Infinite-scroll loading row for "Add from TMDB" results */}
+              {isLoadingMore && (
+                <div className="flex items-center justify-center gap-2 px-2 py-3 text-xs text-gray-400 border-t border-gray-600" aria-live="polite">
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-indigo-500"></div>
+                  Loading more…
                 </div>
               )}
             </div>

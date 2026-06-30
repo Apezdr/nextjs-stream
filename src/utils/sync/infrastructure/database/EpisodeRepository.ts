@@ -21,7 +21,7 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
    * Create optimal indexes for episode queries
    * Episodes have the highest volume, so indexing is critical
    */
-  async createIndexes(): Promise<void> {
+  async createIndexes(): Promise<boolean> {
     try {
       await Promise.all([
         // Primary lookup indexes - most critical for performance
@@ -34,9 +34,32 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         // { showId, seasonNumber, episodeNumber } when showId is present.
         // Without this, every upsert in the hot sync path does a collection scan,
         // causing write lock contention and the Slow query log entries in production.
-        this.createIndexSafely({ showId: 1, seasonNumber: 1, episodeNumber: 1 }),
+        //
+        // UNIQUE on the showId write-filter tuple so an accidental collision throws
+        // E11000 instead of silently duplicating. partialFilterExpression on showId
+        // existence: episodes written before their parent show resolves carry no
+        // showId, and a plain unique index would collapse every such doc onto one
+        // {null, season, ep} key. Built clean on the wiped (dropped) collections;
+        // createIndexSafely swallows IndexOptionsConflict if a non-unique same-key
+        // index still exists (i.e. a non-drop wipe leaves the upgrade a no-op).
+        this.createIndexSafely(
+          { showId: 1, seasonNumber: 1, episodeNumber: 1 },
+          { unique: true, partialFilterExpression: { showId: { $exists: true } } }
+        ),
         this.createIndexSafely({ showId: 1, seasonNumber: 1 }),
         this.createIndexSafely({ showId: 1 }),
+
+        // seasonId lookup — the read paths (season episode listings, next-episode
+        // navigation, recommendations, episode counts) filter episodes by
+        // { seasonId } alone, e.g. find({ seasonId: season._id }) and
+        // findOne({ seasonId }, { sort: { episodeNumber: 1 } }). None of the
+        // indexes above are prefixed by seasonId, so every such query COLLSCANs
+        // the whole collection (confirmed in production: ~7.2k docs scanned per
+        // query, 1s+ durations). The compound key covers both the seasonId match
+        // and the episodeNumber sort. Mirrors season_episode_index in
+        // flatSync/initializeDatabase.js, which the new-arch sync path never runs;
+        // name must match it to avoid IndexOptionsConflict.
+        this.createIndexSafely({ seasonId: 1, episodeNumber: 1 }, { name: 'season_episode_index' }),
 
         // Server and sync indexes
         this.createIndexSafely({ serverId: 1 }),
@@ -47,16 +70,51 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         this.createIndexSafely({ videoURL: 1 }),
         this.createIndexSafely({ thumbnail: 1 }),
 
+        // Video-lookup indexes — the watch-history hydration path queries
+        // find({ $or: [{ normalizedVideoId: {$in} }, { videoURL: {$in} }] }).
+        // An $or only avoids a COLLSCAN when EVERY branch is indexed: videoURL
+        // is covered above, but normalizedVideoId was not, so the whole $or fell
+        // back to a full scan — the single worst offender in the SigNoz slow-query
+        // log (175 of 200 entries over 7d, ~7.2k docs scanned, 0 keys, up to
+        // 541ms each). Adding normalizedVideoId lets MongoDB build an index-OR
+        // plan across both branches. Name matches normalized_id_index in
+        // flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        this.createIndexSafely({ normalizedVideoId: 1 }, { name: 'normalized_id_index' }),
+
+        // Covered-query index for validateWatchHistoryAgainstDatabase(), which
+        // projects only { videoURL, normalizedVideoId } — an index-only scan with
+        // no document fetch. Mirrors videoURL_normalizedId_covered_index in
+        // flatSync/initializeDatabase.js (never run by the new-arch sync path).
+        this.createIndexSafely(
+          { videoURL: 1, normalizedVideoId: 1 },
+          { name: 'videoURL_normalizedId_covered_index' }
+        ),
+
         // Performance indexes for aggregations
         this.createIndexSafely({ showTitle: 1, lastSynced: 1 }),
         this.createIndexSafely({ seasonNumber: 1, episodeNumber: 1 }),
 
+        // "Recently Added" landing row sorts episodes by mediaLastModified and
+        // groups by showId. Without this the aggregation COLLSCANs every episode
+        // and does a blocking in-memory sort (confirmed via explain: all docs
+        // scanned, totalKeysExamined: 0). The compound key is covered —
+        // mediaLastModified satisfies the sort, showId satisfies the group — so it
+        // walks only the most recent entries. Mirrors mediaLastModified_index in
+        // flatSync/initializeDatabase.js, which the new-arch sync path never runs.
+        this.createIndexSafely({ mediaLastModified: -1, showId: 1 }),
+
         // Sparse indexes for optional fields
         this.createIndexSafely({ 'videoInfo.duration': 1 }, { sparse: true }),
-        this.createIndexSafely({ 'captionURLs': 1 }, { sparse: true })
+        this.createIndexSafely({ 'captionURLs': 1 }, { sparse: true }),
+
+        // Sync-run marker — post-sync cleanup deletes by { syncRunId: { $ne } }.
+        // Name must match flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        this.createIndexSafely({ syncRunId: 1 }, { name: 'sync_run_id_index' })
       ])
+      return true
     } catch (error) {
       console.error('Failed to create episode indexes:', error)
+      return false
     }
   }
 
@@ -149,6 +207,14 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
     filter: Record<string, any>
     existing: EpisodeEntity | null
     merged: EpisodeEntity
+    /**
+     * Field names to $unset on an existing doc (field-absence cleanup). The
+     * caller (EpisodeSyncService) has already gated these on the authoritative
+     * pass + lock checks. Ignored for new docs (nothing to clear). When present
+     * the write fires even if the $set diff is empty — and still carries the
+     * syncRunId marker so post-sync cleanup doesn't reap the doc.
+     */
+    unset?: string[]
   }>): Promise<void> {
     if (ops.length === 0) return
     const now = new Date()
@@ -159,7 +225,7 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
     const syncRunId = getCurrentSyncRunId()
     const operations: AnyBulkWriteOperation<EpisodeEntity>[] = []
 
-    for (const { filter, existing, merged } of ops) {
+    for (const { filter, existing, merged, unset } of ops) {
       const { _id, ...mergedNoId } = merged as any
 
       if (!existing) {
@@ -181,21 +247,25 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
       }
 
       const diff = BaseRepository.computeDiff(existing, merged)
-      if (Object.keys(diff).length === 0) continue  // unchanged — skip write
+      // Only $unset fields that actually have a value on the existing doc — avoids
+      // a pointless write when the caller's candidate list is already cleared.
+      const unsetFields = (unset || []).filter(f => (existing as any)[f] !== undefined)
+      if (Object.keys(diff).length === 0 && unsetFields.length === 0) continue  // unchanged — skip write
+
+      const update: Record<string, any> = {
+        $set: {
+          ...diff,
+          lastSynced: now,
+          updatedAt: now,
+          ...(syncRunId ? { syncRunId } : {})
+        }
+      }
+      if (unsetFields.length > 0) {
+        update.$unset = Object.fromEntries(unsetFields.map(f => [f, '']))
+      }
 
       operations.push({
-        updateOne: {
-          filter,
-          update: {
-            $set: {
-              ...diff,
-              lastSynced: now,
-              updatedAt: now,
-              ...(syncRunId ? { syncRunId } : {})
-            }
-          },
-          upsert: false,
-        },
+        updateOne: { filter, update, upsert: false },
       })
     }
 

@@ -15,7 +15,7 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
   /**
    * Create optimal indexes for TV show queries
    */
-  async createIndexes(): Promise<void> {
+  async createIndexes(): Promise<boolean> {
     try {
       await Promise.all([
         // Primary lookup indexes — name must match flatSync/initializeDatabase.js
@@ -43,15 +43,27 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
         this.createIndexSafely({ totalEpisodeCount: 1 }, { sparse: true }),
         this.createIndexSafely({ 'metadata.genre': 1 }),
         this.createIndexSafely({ 'metadata.year': 1 }),
+
+        // Trailer-URL lookup — getFlatRecentlyWatchedForUser resolves trailer watch
+        // entries to shows via find({ 'metadata.trailer_url': ... }), which COLLSCANned
+        // FlatTVShows (SigNoz slow-query log, 7d). Name matches trailer_url_index in
+        // flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        this.createIndexSafely({ 'metadata.trailer_url': 1 }, { name: 'trailer_url_index' }),
         
         // Text search
-        this.createIndexSafely({ 
-          title: 'text', 
-          'metadata.description': 'text' 
-        })
+        this.createIndexSafely({
+          title: 'text',
+          'metadata.description': 'text'
+        }),
+
+        // Sync-run marker — post-sync cleanup deletes by { syncRunId: { $ne } }.
+        // Name must match flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        this.createIndexSafely({ syncRunId: 1 }, { name: 'sync_run_id_index' })
       ])
+      return true
     } catch (error) {
       console.error('Failed to create TV show indexes:', error)
+      return false
     }
   }
 

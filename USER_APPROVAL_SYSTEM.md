@@ -55,7 +55,7 @@ Admins can manage user approvals through the admin panel:
 ### Key Components
 
 - **`src/components/HOC/ApprovedUser.js`**: Higher-order component that redirects unapproved users
-- **`src/components/Admin/ListRecords.js`**: Admin interface for managing user approvals
+- **`src/components/Admin/Users/UserListRecords.js`**: Admin interface for managing user approvals
 - **`src/lib/auth.ts`**: Authentication configuration and session management
 
 ## Security Considerations

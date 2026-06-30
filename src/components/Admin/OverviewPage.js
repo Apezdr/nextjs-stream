@@ -3,9 +3,6 @@
 import { useReducer, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import useSWR from 'swr'
-import MovieModalPopup from './MovieModalPopup'
-import TVModalPopup from './TVModalPopup'
-import ConfirmDeletePopup from './ConfirmDeletePopup'
 import SyncMediaPopup from './SyncMediaPopup'
 import axios from 'axios'
 import Link from 'next/link'
@@ -47,23 +44,12 @@ function processLastSyncTimeData(lastSyncTimeData) {
 }
 
 const initialPopupState = {
-  record: null,
-  isOpen: false,
-  isAdding: null,
   isSyncOpen: false,
   syncAutoConnect: false,
 }
 
 function popupReducer(state, action) {
   switch (action.type) {
-    case 'setRecord':
-      return { ...state, record: action.value }
-    case 'mergeRecord':
-      return { ...state, record: { ...state.record, ...action.value } }
-    case 'setIsOpen':
-      return { ...state, isOpen: action.value }
-    case 'setIsAdding':
-      return { ...state, isAdding: action.value }
     case 'setIsSyncOpen':
       return { ...state, isSyncOpen: action.value }
     case 'setSyncAutoConnect':
@@ -74,22 +60,17 @@ function popupReducer(state, action) {
 }
 
 export default function AdminOverviewPage({
-  processedData,
   processedUserData,
   _lastSyncTime,
   organizrURL,
 }) {
   const router = useRouter()
   const [popupState, dispatch] = useReducer(popupReducer, initialPopupState)
-  const { record, isOpen, isAdding, isSyncOpen, syncAutoConnect } = popupState
+  const { isSyncOpen, syncAutoConnect } = popupState
 
-  const setIsOpen = (value) => dispatch({ type: 'setIsOpen', value })
-  const setIsAdding = (value) => dispatch({ type: 'setIsAdding', value })
-  const setRecord = (value) => dispatch({ type: 'setRecord', value })
   const setIsSyncOpen = (value) => dispatch({ type: 'setIsSyncOpen', value })
   const setSyncAutoConnect = (value) => dispatch({ type: 'setSyncAutoConnect', value })
 
-  const [_processedData, setProcessedData] = useState(() => processedData)
   const [_processedUserData, setProcessedUserData] = useState(() => processedUserData)
 
   // Single Set tracking which queues returned 501 (not supported)
@@ -148,42 +129,24 @@ export default function AdminOverviewPage({
   const sonarrQueue = sonarrData?.__unsupported ? null : sonarrData
   const tdarrQueue = tdarrData?.__unsupported ? null : tdarrData
 
-  const updateRecord = (newData) => {
-    dispatch({ type: 'mergeRecord', value: newData })
-  }
-
-  const action = record && record.action
-
+  // Refreshes the user-management table after approve/limit actions.
+  // (Media data is now managed under /admin/media, not on the dashboard.)
   async function updateProcessedData(type) {
-    let url = `/api/authenticated/admin`
-    if (type === 'media') {
-      url += '/media'
-    } else if (type === 'users') {
-      url += '/users'
-    }
+    if (type && type !== 'users') return
 
     const maxRetries = 3
     let retries = 0
 
     while (retries < maxRetries) {
       try {
-        const res = await axios.get(buildURL(url))
-        const { processedData, processedUserData } = res.data
-
-        if (type === 'media') {
-          setProcessedData(processedData)
-        } else if (type === 'users') {
-          setProcessedUserData(processedUserData)
-        } else {
-          setProcessedData(processedData)
-          setProcessedUserData(processedUserData)
-        }
-
+        const res = await axios.get(buildURL('/api/authenticated/admin/users'))
+        const { processedUserData } = res.data
+        setProcessedUserData(processedUserData)
         return
       } catch (error) {
         retries++
         if (retries === maxRetries) {
-          console.error(`Failed to fetch data after ${maxRetries} attempts:`, error)
+          console.error(`Failed to fetch user data after ${maxRetries} attempts:`, error)
           throw error
         }
         await new Promise((resolve) => setTimeout(resolve, 1000 * retries))
@@ -204,37 +167,6 @@ export default function AdminOverviewPage({
             autoConnect={syncAutoConnect}
           />
         )}
-        {record && action !== 'delete' && record.type === 'movie' && (
-          <MovieModalPopup
-            record={record}
-            updateRecord={updateRecord}
-            isAdding={isAdding}
-            isOpen={isOpen}
-            setIsOpen={setIsOpen}
-            updateProcessedData={updateProcessedData}
-          />
-        )}
-        {record && action !== 'delete' && record.type === 'tv' && (
-          <TVModalPopup
-            record={record}
-            updateRecord={updateRecord}
-            isAdding={isAdding}
-            isOpen={isOpen}
-            setIsOpen={setIsOpen}
-            updateProcessedData={updateProcessedData}
-          />
-        )}
-        {record && action === 'delete' && (
-          <ConfirmDeletePopup
-            record={record}
-            updateRecord={updateRecord}
-            isAdding={isAdding}
-            isOpen={isOpen}
-            setIsOpen={setIsOpen}
-            updateProcessedData={updateProcessedData}
-          />
-        )}
-
         {/* Dashboard Header */}
         <DashboardHeader
           onSyncClick={() => setIsSyncOpen(true)}

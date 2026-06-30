@@ -125,7 +125,9 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     refreshInterval: 10000, // OPTIMIZATION: Reduced from 10s to 30s to prevent excessive requests
     errorRetryCount: 3,     // OPTIMIZATION: Reduced from 4 to 3 retries
     errorRetryInterval: 3000, // OPTIMIZATION: Increased retry interval
-    revalidateOnFocus: false,
+    revalidateOnFocus: true, // Refetch when the tab regains focus so a returning user
+                             // promptly picks up sync/admin cache busts (ETag → 304 when
+                             // unchanged, so this is cheap; deduped within dedupingInterval).
     revalidateOnReconnect: false,
     dedupingInterval: 10000, // OPTIMIZATION: Increased from 5s to 10s for better deduplication
     revalidateIfStale: false, // OPTIMIZATION: Don't revalidate if data exists and is fresh

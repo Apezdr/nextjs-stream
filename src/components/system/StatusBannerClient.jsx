@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useReducer } from 'react';
+import { useState, useEffect, useMemo, useReducer, useSyncExternalStore } from 'react';
 import { useSystemStatus } from '@src/contexts/SystemStatusContext';
 
 // Banner presentation state (dismissal, tracked level, dock/expand) transitions together,
@@ -58,9 +58,24 @@ function formatTimeAgo(dateStr) {
  */
 export default function StatusBannerClient({ status: initialStatus }) {
   const [, setTimeAgoRefresh] = useState(0); // Trigger time ago refreshes
-  
+
+  // useSyncExternalStore with a server snapshot of `false` is the official React
+  // API for client-only values. The server/SSR render always receives the server
+  // snapshot (`false`), while the browser receives the client snapshot (`true`).
+  // This prevents the hydration mismatch caused by SWR's `isLoading` being `true`
+  // on the first client render while the server rendered with `false`.
+  const isMounted = useSyncExternalStore(
+    // subscribe: no external store to subscribe to — value never changes after mount
+    (cb) => { cb(); return () => {}; },
+    () => true,   // client snapshot: always mounted in the browser
+    () => false,  // server snapshot: never mounted during SSR
+  );
+
   // Use SystemStatusContext for consistent data fetching
-  const { status: contextStatus, loading: isLoading, refetch } = useSystemStatus();
+  const { status: contextStatus, loading: isLoadingRaw, refetch } = useSystemStatus();
+
+  // Only expose loading state after hydration to prevent server/client mismatch
+  const isLoading = isMounted && isLoadingRaw;
   
   // Process the context data to determine the current status to display
   const status = useMemo(() => {

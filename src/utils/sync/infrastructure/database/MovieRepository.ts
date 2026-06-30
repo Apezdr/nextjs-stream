@@ -15,7 +15,7 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
   /**
    * Create optimal indexes for movie queries
    */
-  async createIndexes(): Promise<void> {
+  async createIndexes(): Promise<boolean> {
     try {
       await Promise.all([
         // Primary lookup indexes — names must match flatSync/initializeDatabase.js
@@ -27,12 +27,35 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
         // Performance indexes
         this.createIndexSafely({ serverId: 1 }),
         this.createIndexSafely({ lastSynced: 1 }),
+
+        // "Recently Added" landing row sorts movies by mediaLastModified desc.
+        // Without this the sort COLLSCANs FlatMovies (same gap as FlatEpisodes);
+        // the index lets it walk the most recent entries directly.
+        this.createIndexSafely({ mediaLastModified: -1 }),
         
         // Asset availability indexes
         this.createIndexSafely({ videoURL: 1 }),
         this.createIndexSafely({ posterURL: 1 }),
         this.createIndexSafely({ backdrop: 1 }),
         this.createIndexSafely({ logo: 1 }),
+
+        // Video-lookup indexes — the watch-history hydration path queries
+        // find({ $or: [{ metadata.trailer_url }, { normalizedVideoId: {$in} }, { videoURL: {$in} }] }).
+        // An $or only avoids a COLLSCAN when EVERY branch is indexed: videoURL is
+        // covered above, but normalizedVideoId and metadata.trailer_url were not,
+        // so the whole $or COLLSCANned FlatMovies (SigNoz slow-query log, 7d).
+        // Names match normalized_id_index / trailer_url_index in
+        // flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        this.createIndexSafely({ normalizedVideoId: 1 }, { name: 'normalized_id_index' }),
+        this.createIndexSafely({ 'metadata.trailer_url': 1 }, { name: 'trailer_url_index' }),
+
+        // Covered-query index for validateWatchHistoryAgainstDatabase() — projects
+        // only { videoURL, normalizedVideoId } for an index-only scan. Mirrors
+        // videoURL_normalizedId_covered_index in flatSync/initializeDatabase.js.
+        this.createIndexSafely(
+          { videoURL: 1, normalizedVideoId: 1 },
+          { name: 'videoURL_normalizedId_covered_index' }
+        ),
         
         // Metadata indexes for search
         this.createIndexSafely({ 'metadata.genre': 1 }),
@@ -40,14 +63,21 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
         this.createIndexSafely({ 'metadata.rating': 1 }),
         
         // Text search index
-        this.createIndexSafely({ 
-          title: 'text', 
-          'metadata.description': 'text' 
-        })
+        this.createIndexSafely({
+          title: 'text',
+          'metadata.description': 'text'
+        }),
+
+        // Sync-run marker — post-sync cleanup deletes by { syncRunId: { $ne } }.
+        // Name must match flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        this.createIndexSafely({ syncRunId: 1 }, { name: 'sync_run_id_index' })
       ])
+      return true
     } catch (error) {
       console.error('Failed to create movie indexes:', error)
-      // Don't throw here - missing indexes won't break functionality
+      // Don't throw here - missing indexes won't break functionality; returning
+      // false lets the adapter re-attempt on the next sync.
+      return false
     }
   }
 
@@ -267,27 +297,6 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
       }).toArray()
     } catch (error) {
       throw new DatabaseError(`Failed to find upgrade candidates: ${error}`)
-    }
-  }
-
-  /**
-   * Bulk save multiple movies efficiently
-   */
-  async bulkSave(movies: MovieEntity[]): Promise<void> {
-    if (movies.length === 0) return
-
-    try {
-      const operations = movies.map(movie => ({
-        replaceOne: {
-          filter: { title: movie.title },
-          replacement: movie,
-          upsert: true
-        }
-      }))
-
-      await this.collection.bulkWrite(operations, { ordered: false })
-    } catch (error) {
-      throw new DatabaseError(`Failed to bulk save movies: ${error}`)
     }
   }
 

@@ -6,6 +6,7 @@ import ViewCount from './ViewCount'
 import dynamic from 'next/dynamic'
 import RetryImage from '@components/RetryImage'
 import WatchlistButton from '@components/WatchlistButton'
+import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { moviePosterName, movieBackdropName, movieLogoName } from '@src/utils/viewTransitionNames'
 
 // Lazy load the cast grid section which can be heavy
@@ -120,28 +121,31 @@ const MovieDetailsComponent = ({ media }) => {
             </ViewTransition>
           </div>
           <div className="mt-4">
-            <Link href="/list/movie" className="self-center">
-              <button
-                type="button"
-                className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 mx-auto"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={1.5}
-                  stroke="currentColor"
-                  className="w-6 h-6"
+            <div className="flex flex-row gap-x-4 justify-center">
+              <Link href="/list/movie" className="self-center">
+                <button
+                  type="button"
+                  className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
-                  />
-                </svg>
-                Go Back
-              </button>
-            </Link>
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    strokeWidth={1.5}
+                    stroke="currentColor"
+                    className="w-6 h-6"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
+                    />
+                  </svg>
+                  Go Back
+                </button>
+              </Link>
+              <AdminEditButton href={media?._id ? `/admin/media/movies/${media._id}` : null} />
+            </div>
             <div className="flex flex-row w-full gap-2">
               {title ? <h1 className="text-3xl font-bold">{title}</h1> : null}
               <Suspense fallback={null}>
