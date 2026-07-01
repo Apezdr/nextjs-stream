@@ -4,7 +4,10 @@ import { validateWebhookId } from '@src/utils/webhookServer'
 
 const DEFAULT_ACTIVE_WINDOW_SECONDS = 15
 const MAX_ACTIVE_WINDOW_SECONDS = 300
-const PAUSED_WINDOW_SECONDS = 3600
+// Paused sessions ping every ~3 minutes while foregrounded (see
+// WithPlaybackTracker.js); 360s tolerates one missed ping rather than the
+// unconfigurable 3600s a plain pause-transition heartbeat used to require.
+const PAUSED_WINDOW_SECONDS = 360
 const DEFAULT_LIMIT = 10
 const LOOKUP_TIMEOUT_MS = 3000
 
@@ -50,9 +53,20 @@ export async function validateMediaActivityRequest(request) {
   return { isValid: false }
 }
 
-async function getMediaMaps(videoIds) {
-  if (videoIds.length === 0) {
+async function getMediaMaps(videoIds, normalizedVideoIds) {
+  if (videoIds.length === 0 && normalizedVideoIds.length === 0) {
     return { movieMap: new Map(), tvMap: new Map() }
+  }
+
+  // Join on normalizedVideoId first (the established pattern used by
+  // MovieRepository/EpisodeRepository) with a raw videoURL fallback, so a
+  // presence entry still resolves to real media even if normalizedVideoId
+  // generation ever drifts between writers.
+  const joinFilter = {
+    $or: [
+      ...(normalizedVideoIds.length > 0 ? [{ normalizedVideoId: { $in: normalizedVideoIds } }] : []),
+      ...(videoIds.length > 0 ? [{ videoURL: { $in: videoIds } }] : []),
+    ],
   }
 
   const client = await clientPromise
@@ -62,14 +76,14 @@ async function getMediaMaps(videoIds) {
     mediaDb
       .collection('FlatMovies')
       .find(
-        { videoURL: { $in: videoIds } },
-        { projection: { title: 1, originalTitle: 1, videoURL: 1, duration: 1, dimensions: 1, size: 1, videoCodec: 1, metadata: 1 } }
+        joinFilter,
+        { projection: { title: 1, originalTitle: 1, videoURL: 1, normalizedVideoId: 1, duration: 1, dimensions: 1, size: 1, videoCodec: 1, metadata: 1 } }
       )
       .toArray(),
     mediaDb
       .collection('FlatEpisodes')
       .find(
-        { videoURL: { $in: videoIds } },
+        joinFilter,
         {
           projection: {
             showTitle: 1,
@@ -78,6 +92,7 @@ async function getMediaMaps(videoIds) {
             episodeNumber: 1,
             title: 1,
             videoURL: 1,
+            normalizedVideoId: 1,
             duration: 1,
             dimensions: 1,
             size: 1,
@@ -90,11 +105,16 @@ async function getMediaMaps(videoIds) {
       .toArray(),
   ])
 
-  const movieMap = new Map(movies.map((movie) => [movie.videoURL, movie]))
-  const tvMap = new Map()
+  const movieMap = new Map()
+  for (const movie of movies) {
+    if (movie.normalizedVideoId) movieMap.set(movie.normalizedVideoId, movie)
+    if (movie.videoURL) movieMap.set(movie.videoURL, movie)
+  }
 
+  const tvMap = new Map()
   for (const episode of episodes) {
-    tvMap.set(episode.videoURL, { episode })
+    if (episode.normalizedVideoId) tvMap.set(episode.normalizedVideoId, { episode })
+    if (episode.videoURL) tvMap.set(episode.videoURL, { episode })
   }
 
   return { movieMap, tvMap }
@@ -133,8 +153,8 @@ function getBitrateKbps(sizeBytes, durationMs) {
 }
 
 function normalizeSession(entry, index, userMap, mediaMaps) {
-  const movie = mediaMaps.movieMap.get(entry.videoId)
-  const tv = mediaMaps.tvMap.get(entry.videoId)
+  const movie = mediaMaps.movieMap.get(entry.normalizedVideoId) || mediaMaps.movieMap.get(entry.videoId)
+  const tv = mediaMaps.tvMap.get(entry.normalizedVideoId) || mediaMaps.tvMap.get(entry.videoId)
   const user = userMap.get(String(entry.userId))
   const deviceType = entry.deviceInfo?.type || 'unknown'
   const playbackMs = Math.max(0, Math.round((entry.playbackTime || 0) * 1000))
@@ -164,7 +184,7 @@ function normalizeSession(entry, index, userMap, mediaMaps) {
       playerTitle: deviceType,
       product: 'NextJS Stream',
       platform: deviceType,
-      lastUpdated: entry.lastUpdated,
+      lastUpdated: entry.lastHeartbeat,
       order: index + 1,
     }
   }
@@ -196,7 +216,7 @@ function normalizeSession(entry, index, userMap, mediaMaps) {
       playerTitle: deviceType,
       product: 'NextJS Stream',
       platform: deviceType,
-      lastUpdated: entry.lastUpdated,
+      lastUpdated: entry.lastHeartbeat,
       order: index + 1,
     }
   }
@@ -224,7 +244,7 @@ function normalizeSession(entry, index, userMap, mediaMaps) {
     playerTitle: deviceType,
     product: 'NextJS Stream',
     platform: deviceType,
-    lastUpdated: entry.lastUpdated,
+    lastUpdated: entry.lastHeartbeat,
     order: index + 1,
   }
 }
@@ -245,14 +265,14 @@ export async function getActiveMediaSessions(request) {
   const client = await clientPromise
   const entries = await client
     .db('Media')
-    .collection('WatchHistory')
+    .collection('PlaybackPresence')
     .find({
       $or: [
-        { lastUpdated: { $gte: activeSince } },
-        { isPaused: true, lastUpdated: { $gte: pausedSince } },
+        { isPaused: { $ne: true }, lastHeartbeat: { $gte: activeSince } },
+        { isPaused: true, lastHeartbeat: { $gte: pausedSince } },
       ],
     })
-    .sort({ lastUpdated: -1 })
+    .sort({ lastHeartbeat: -1 })
     .limit(limit)
     .toArray()
 
@@ -262,12 +282,13 @@ export async function getActiveMediaSessions(request) {
 
   const userIds = [...new Set(entries.map((entry) => entry.userId).filter(Boolean))]
   const videoIds = [...new Set(entries.map((entry) => entry.videoId).filter(Boolean))]
+  const normalizedVideoIds = [...new Set(entries.map((entry) => entry.normalizedVideoId).filter(Boolean))]
 
   const [users, mediaMaps] = await Promise.all([
     userIds.length > 0
       ? userQueries.find({ _id: { $in: userIds } }, { name: 1, email: 1 })
       : Promise.resolve([]),
-    getMediaMaps(videoIds),
+    getMediaMaps(videoIds, normalizedVideoIds),
   ])
 
   const userMap = new Map(users.map((user) => [String(user._id), user]))

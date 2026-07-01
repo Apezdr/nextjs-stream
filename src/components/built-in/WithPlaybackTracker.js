@@ -5,6 +5,22 @@ import { useMediaPlayer, useMediaRemote, useMediaState } from '@vidstack/react';
 import throttle from 'lodash/throttle';
 import { useRouter, usePathname } from 'next/navigation';
 
+// Presence ping cadence while paused and foregrounded. Coarser than the 1s
+// playing heartbeat on purpose — see plans/media-activity-presence.md for
+// the overhead/freshness tradeoff behind this specific interval.
+const PAUSED_HEARTBEAT_INTERVAL_MS = 3 * 60 * 1000;
+
+const PRESENCE_END_URL = '/api/authenticated/sync/presence/end';
+
+function generateSessionId() {
+  // crypto.randomUUID requires a secure context; this app can run over
+  // plain HTTP on a LAN, so fall back rather than ever leaving this null.
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export default function WithPlayBackTracker({
   videoURL,
   start = null,
@@ -21,7 +37,11 @@ export default function WithPlayBackTracker({
   const pausedRef = useRef(false);
   const updatePlaybackWorkerRef = useRef(null);
   const hasAppliedStartRef = useRef(false);
-  
+  const sessionIdRef = useRef(null);
+  if (sessionIdRef.current === null) {
+    sessionIdRef.current = generateSessionId();
+  }
+
   // Next.js routing hooks for URL manipulation
   const router = useRouter();
   const pathname = usePathname();
@@ -147,6 +167,7 @@ export default function WithPlayBackTracker({
           currentTime: currentTime,
           mediaMetadata: mediaMetadata,
           isPaused: pausedRef.current,
+          sessionId: sessionIdRef.current,
         });
       } else {
         nextUpdateTimeRef.current = currentTime;
@@ -176,8 +197,73 @@ export default function WithPlayBackTracker({
       currentTime,
       mediaMetadata,
       isPaused: paused === true,
+      sessionId: sessionIdRef.current,
     });
   }, [paused, canPlay, player, videoURL, mediaMetadata]);
+
+  // Keep presence alive at a low frequency while paused and foregrounded.
+  // The 1s currentTime-driven heartbeat above stops firing the moment
+  // playback pauses, so without this a paused-but-still-open session would
+  // only ever get the single transition heartbeat above.
+  useEffect(() => {
+    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
+
+    const interval = setInterval(() => {
+      if (!pausedRef.current) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      const currentTime = player.state?.currentTime || 0;
+      if (currentTime <= 0) return;
+      updatePlaybackWorkerRef.current.postMessage({
+        videoURL,
+        currentTime,
+        mediaMetadata,
+        isPaused: true,
+        sessionId: sessionIdRef.current,
+      });
+    }, PAUSED_HEARTBEAT_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [canPlay, player, videoURL, mediaMetadata]);
+
+  // Best-effort explicit "stopped watching" signal so the live activity view
+  // updates within seconds instead of waiting on the server-side presence
+  // window to expire. keepalive lets the request survive page unload.
+  useEffect(() => {
+    const endPresence = () => {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) return;
+      try {
+        fetch(PRESENCE_END_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch {
+        // Best-effort — the server-side presence window is the backstop.
+      }
+    };
+
+    const handlePageHide = () => endPresence();
+    const handleVisibilityChange = () => {
+      // No legitimate "still consuming media in the background" case exists
+      // while paused (unlike playing, where PiP/background-audio can be
+      // legitimate), so treat backgrounding-while-paused as an end signal.
+      if (document.visibilityState === 'hidden' && pausedRef.current) {
+        endPresence();
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      // In-app navigation away from the player without a full page reload.
+      endPresence();
+    };
+  }, []);
 
   return null;
 }
