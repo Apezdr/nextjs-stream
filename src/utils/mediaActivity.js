@@ -1,13 +1,9 @@
 import clientPromise from '@src/lib/mongodb'
 import { userQueries } from '@src/lib/userQueries'
 import { validateWebhookId } from '@src/utils/webhookServer'
+import { DEFAULT_ACTIVE_WINDOW_SECONDS, PAUSED_WINDOW_SECONDS } from '@src/utils/playbackPresence/database'
 
-const DEFAULT_ACTIVE_WINDOW_SECONDS = 15
 const MAX_ACTIVE_WINDOW_SECONDS = 300
-// Paused sessions ping every ~3 minutes while foregrounded (see
-// WithPlaybackTracker.js); 360s tolerates one missed ping rather than the
-// unconfigurable 3600s a plain pause-transition heartbeat used to require.
-const PAUSED_WINDOW_SECONDS = 360
 const DEFAULT_LIMIT = 10
 const LOOKUP_TIMEOUT_MS = 3000
 

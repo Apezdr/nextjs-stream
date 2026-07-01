@@ -18,13 +18,16 @@ One document per player session (not per user or per video — a user watching o
   videoId: string,            // raw videoURL, same value WatchHistory.videoId stores
   normalizedVideoId: string,  // generateNormalizedVideoId(videoId), computed at write time
   mediaType: 'movie' | 'tv',
+  mediaId, showId,            // nullable, from extractPlaybackMetadata — spread in alongside mediaType/season/episode
   seasonNumber, episodeNumber,
   playbackTime: number,
   isPaused: boolean,
-  deviceInfo: { type, userAgent },  // reuses src/utils/deviceDetection.js, same shape as WatchHistory
+  deviceInfo: { type, lastUsed, userAgent },  // reuses src/utils/deviceDetection.js, same shape as WatchHistory
   lastHeartbeat: Date,
 }
 ```
+
+Both endpoints require a valid, approved session — `isAuthenticatedAndApproved()` (see `src/utils/routeAuth.js`) gates them exactly like any other authenticated route. An unapproved account gets `403 APPROVAL_PENDING`; a valid `Authorization: Bearer <token>` from this app's better-auth `bearer()` plugin authenticates identically to a cookie session, with no route-level changes needed for non-browser clients.
 
 Indexes:
 - `{ userId: 1, sessionId: 1 }` unique — upsert/delete key.
@@ -45,6 +48,8 @@ Three distinct triggers, reusing the existing `updatePlayback` heartbeat whereve
    - Deletes the presence document outright — doesn't wait for any window to expire.
 
 This is a best-effort signal, not a guarantee — a hard crash or lost network mid-pause never fires it. The read-side window below is the backstop for that case.
+
+**Implementer footgun:** `upsertPresenceHeartbeat` is an unconditional upsert keyed on `{userId, sessionId}` with no awareness of a prior `presence/end` call for that id — the two operations don't coordinate, so whichever request lands last wins. A client that sends a "final position" `updatePlayback` heartbeat still carrying a `sessionId` it just ended (e.g. on episode/video switch, saving the outgoing item's last position) will silently resurrect the presence document it just deleted. The fix belongs entirely on the client: omit `sessionId` from any `updatePlayback` call meant to represent a session that's simultaneously ending, rather than trying to get the call ordering right (two independent HTTP requests have no ordering guarantee). See [media-activity-presence-rn-integration.md](./media-activity-presence-rn-integration.md) for the concrete case this was caught in.
 
 ## Read side: `getActiveMediaSessions()`
 

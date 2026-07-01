@@ -14,6 +14,13 @@ const log = createLogger('PlaybackPresence.Database')
 
 const PRESENCE_TTL_SECONDS = 600
 
+// Shared with src/utils/mediaActivity.js so both the desktop-widget API and
+// any other consumer (e.g. the admin dashboard) agree on what "active" means.
+export const DEFAULT_ACTIVE_WINDOW_SECONDS = 15
+// Paused sessions ping every ~3 minutes while foregrounded (see
+// WithPlaybackTracker.js); 360s tolerates one missed ping.
+export const PAUSED_WINDOW_SECONDS = 360
+
 async function ensurePresenceIndexes(db) {
   if (globalThis.__playbackPresenceIndexesEnsured) return
   globalThis.__playbackPresenceIndexesEnsured = true
@@ -111,4 +118,46 @@ export async function endPresenceSession({ userId, sessionId }) {
     log.error({ error, userId, sessionId }, 'Failed to end presence session')
     throw error
   }
+}
+
+/**
+ * Look up currently-active presence sessions for a set of users, using the
+ * same two-tier active/paused window as getActiveMediaSessions() in
+ * mediaActivity.js. Intended for read-only "is this user watching something
+ * right now" consumers (e.g. the admin dashboard) that don't need the full
+ * XML/JSON widget-API shape.
+ *
+ * @param {Array<string|ObjectId>} userIds
+ * @returns {Promise<Map<string, Array<Object>>>} userId (string) -> active PlaybackPresence docs
+ */
+export async function getActivePresenceForUsers(userIds) {
+  if (!userIds || userIds.length === 0) {
+    return new Map()
+  }
+
+  const client = await clientPromise
+  const db = client.db('Media')
+  const collection = db.collection('PlaybackPresence')
+
+  const userIdObjs = userIds.map((id) => (typeof id === 'string' ? new ObjectId(id) : id))
+  const activeSince = new Date(Date.now() - DEFAULT_ACTIVE_WINDOW_SECONDS * 1000)
+  const pausedSince = new Date(Date.now() - PAUSED_WINDOW_SECONDS * 1000)
+
+  const entries = await collection
+    .find({
+      userId: { $in: userIdObjs },
+      $or: [
+        { isPaused: { $ne: true }, lastHeartbeat: { $gte: activeSince } },
+        { isPaused: true, lastHeartbeat: { $gte: pausedSince } },
+      ],
+    })
+    .toArray()
+
+  const byUser = new Map()
+  for (const entry of entries) {
+    const key = String(entry.userId)
+    if (!byUser.has(key)) byUser.set(key, [])
+    byUser.get(key).push(entry)
+  }
+  return byUser
 }
