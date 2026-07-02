@@ -157,16 +157,16 @@ export default function AdminOverviewPage({
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        {/* Modals */}
-        {isSyncOpen && (
-          <SyncMediaPopup
-            isOpen={isSyncOpen}
-            setIsOpen={(val) => { setIsSyncOpen(val); if (!val) setSyncAutoConnect(false) }}
-            updateProcessedData={updateProcessedData}
-            setLastSync={() => mutateLastSync()}
-            autoConnect={syncAutoConnect}
-          />
-        )}
+        {/* Modals — always mounted so Headless UI can run its close teardown; visibility
+            is driven by isOpen. Conditionally unmounting a Dialog while it's open strands
+            the page-wide pointer-events lock and makes the app unclickable until reload. */}
+        <SyncMediaPopup
+          isOpen={isSyncOpen}
+          setIsOpen={(val) => { setIsSyncOpen(val); if (!val) setSyncAutoConnect(false) }}
+          updateProcessedData={updateProcessedData}
+          setLastSync={() => mutateLastSync()}
+          autoConnect={syncAutoConnect}
+        />
         {/* Dashboard Header */}
         <DashboardHeader
           onSyncClick={() => setIsSyncOpen(true)}
