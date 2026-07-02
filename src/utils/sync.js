@@ -259,8 +259,32 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       results.missingMedia[serverId] = { movies: [], tv: [] }
       results.missingMp4[serverId] = { movies: [], tv: [] }
 
+      // Compute how many entities this server will process so the UI can render
+      // a real progress bar (movies + shows + seasons + episodes).
+      let serverEntityTotal = 0
+      try {
+        if (fileServer.movies) {
+          serverEntityTotal += Object.keys(fileServer.movies).length
+        }
+        if (fileServer.tv) {
+          for (const showKey of Object.keys(fileServer.tv)) {
+            serverEntityTotal += 1 // the show itself
+            const seasons = fileServer.tv[showKey]?.seasons || {}
+            for (const seasonKey of Object.keys(seasons)) {
+              serverEntityTotal += 1 // the season itself
+              const episodes = seasons[seasonKey]?.episodes || {}
+              serverEntityTotal += Object.keys(episodes).length
+            }
+          }
+        }
+      } catch {
+        serverEntityTotal = 0
+      }
+
       // Signal that this server is beginning sync
-      syncEventBus.emitStarted('__server_start__', MediaType.Movie, serverId)
+      syncEventBus.emitStarted('__server_start__', MediaType.Movie, serverId, undefined, {
+        total: serverEntityTotal,
+      })
 
       try {
         // Run missing-media detection and the actual sync in parallel.

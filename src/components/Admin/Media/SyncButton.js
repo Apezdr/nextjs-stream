@@ -22,14 +22,14 @@ export default function SyncButton() {
       >
         <ArrowPathIcon className="h-5 w-5" /> Sync with Fileserver
       </button>
-      {open && (
-        <SyncMediaPopup
-          isOpen={open}
-          setIsOpen={setOpen}
-          updateProcessedData={() => router.refresh()}
-          setLastSync={() => router.refresh()}
-        />
-      )}
+      {/* Always mounted so Headless UI runs its close teardown (conditionally unmounting
+          a Dialog while open strands the page-wide pointer-events lock — app unclickable). */}
+      <SyncMediaPopup
+        isOpen={open}
+        setIsOpen={setOpen}
+        updateProcessedData={() => router.refresh()}
+        setLastSync={() => router.refresh()}
+      />
     </>
   )
 }

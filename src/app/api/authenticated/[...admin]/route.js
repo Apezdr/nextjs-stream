@@ -396,6 +396,7 @@ export async function GET(request, props) {
       case 'sync-status':
         responseData = {
           active: activeSyncOperation !== null,
+          forced: activeSyncOperation ? activeSyncForced : false,
           startTime: activeSyncOperation ? startTime : null,
           streamUrl: activeSyncOperation ? '/api/authenticated/admin/sync-stream' : null,
           snapshot: syncSnapshot ? {
@@ -471,6 +472,9 @@ export async function GET(request, props) {
 // Track ongoing sync operations
 let startTime = null
 let activeSyncOperation = null
+// Whether the in-flight sync was started with Force Refresh (hash-skip bypass).
+// Surfaced through sync-status so a late-joining popup can label the run as forced.
+let activeSyncForced = false
 let syncSubscribers = []
 
 // Running snapshot of sync state — updated live via event bus subscriptions.
@@ -491,7 +495,7 @@ function startSnapshotTracking() {
     if (event.entityId === '__sync_warmup__') return
 
     if (event.entityId === '__server_start__') {
-      syncSnapshot.servers[sid] = { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, errorCount: 0, errors: [] }
+      syncSnapshot.servers[sid] = { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, total: event.data?.total ?? 0, errorCount: 0, errors: [] }
       return
     }
 
@@ -744,6 +748,7 @@ async function handleSyncOperation(request, webhookId) {
   }
 
   startTime = new Date().toISOString()
+  activeSyncForced = forceSync
   startSnapshotTracking()
 
   // Fire and forget — response is delivered via SSE stream
@@ -758,6 +763,7 @@ async function handleSyncOperation(request, webhookId) {
     })
     .finally(() => {
       activeSyncOperation = null
+      activeSyncForced = false
       syncSubscribers = []
       stopSnapshotTracking()
     })

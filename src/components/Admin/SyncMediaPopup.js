@@ -1,9 +1,8 @@
 'use client'
 
 import { Dialog, Transition } from '@headlessui/react'
-import { Fragment, useEffect, useReducer, useRef, useState, useDeferredValue, useTransition } from 'react'
+import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useDeferredValue, useTransition } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import useSWR from 'swr'
 import { classNames } from '@src/utils'
 
 // Rule 6.3: Hoist static JSX outside the component — avoids re-creation on every render
@@ -272,9 +271,12 @@ function summaryReducer(state, action) {
 }
 
 // SWR fetcher for the in-progress sync snapshot. Preserves the exact GET request
-// the autoConnect effect used to issue inline.
+// the autoConnect effect used to issue inline. Bounded by a timeout so a stalled
+// status response can't leave the dialog stuck on "Connecting to active sync…" —
+// on timeout the fetch rejects, SWR's onError fires, and connecting state clears.
 const fetchSyncStatus = async (url) => {
-  const res = await fetch(url)
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) })
+  if (!res.ok) throw new Error(`Sync status request failed (${res.status})`)
   return res.json()
 }
 
@@ -297,9 +299,21 @@ export default function SyncMediaPopup({
   const deferredCounts = useDeferredValue(progressCounts)
 
   const [serverStates, setServerStates] = useState({})
-  // When autoConnect=true the popup was opened from the Active Processes "View Info"
-  // button — we know a sync is already running, so start in connecting state immediately.
-  const [isConnecting, setIsConnecting] = useState(() => autoConnect)
+  // Total entities to process across all servers — drives the determinate
+  // progress bar and the "processed / total" label.
+  const syncTotal = useMemo(
+    () => Object.values(serverStates).reduce((sum, s) => sum + (s.total || 0), 0),
+    [serverStates]
+  )
+  // Connecting indicator for the "View Info" (autoConnect) path. Driven per-open by the
+  // open/close effect below — the dialog is now always mounted (so Headless UI can run
+  // its close teardown), so this can't rely on a fresh mount to initialise it.
+  const [isConnecting, setIsConnecting] = useState(false)
+
+  // Whether the active run used Force Refresh — surfaced as a badge so it's clear the
+  // hash-skip optimisation was bypassed. Set from the local checkbox when the sync
+  // starts here, or from sync-status when joining a run started elsewhere.
+  const [forced, setForced] = useState(false)
 
   // Force refresh bypasses the per-item hash-skip optimisation, re-running the
   // strategies for every entity even when stored hashes match. Default off —
@@ -352,9 +366,10 @@ export default function SyncMediaPopup({
 
         if (payload.entityId === '__server_start__') {
           const sid = payload.serverId
+          const serverTotal = payload.data?.total ?? 0
           setServerStates(prev => ({
             ...prev,
-            [sid]: { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, errorCount: 0, errors: [] },
+            [sid]: { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, total: serverTotal, errorCount: 0, errors: [] },
           }))
           return
         }
@@ -443,68 +458,101 @@ export default function SyncMediaPopup({
   // disabled so the one-shot snapshot can't refetch and clobber live progress;
   // the connect-and-subscribe work runs in onSuccess (a callback, not an effect).
   const autoConnectedRef = useRef(false)
+  const prevOpenRef = useRef(false)
+  // The dialog is always mounted so Headless UI runs its close teardown instead of being
+  // abruptly unmounted — abrupt unmount while open strands the page-wide pointer-events
+  // lock and leaves the whole app unclickable until reload. Since it no longer resets via
+  // unmount, reset per-open state here: on close drop the connect guard and tear down any
+  // live SSE stream; on a fresh open clear the previous run's results and prime the
+  // connecting indicator.
   useEffect(() => {
-    // Allow a fresh connect each time the popup is reopened.
-    if (!isOpen) autoConnectedRef.current = false
-  }, [isOpen])
+    const justOpened = isOpen && !prevOpenRef.current
+    prevOpenRef.current = isOpen
 
-  useSWR(
-    isOpen && autoConnect && !isSyncing && syncData === null
-      ? '/api/authenticated/admin/sync-status'
-      : null,
-    fetchSyncStatus,
-    {
-      revalidateOnFocus: false,
-      revalidateIfStale: false,
-      revalidateOnReconnect: false,
-      shouldRetryOnError: false,
-      onSuccess: (status) => {
-        if (autoConnectedRef.current) return
-        autoConnectedRef.current = true
-
-        if (!status.active) {
-          // Sync finished between click and popup opening
-          setIsConnecting(false)
-          return
-        }
-
-        dispatchSummary({ type: 'startTime', startTime: status.startTime })
-
-        // Pre-populate state from the server-side snapshot so the user immediately
-        // sees all servers (including completed ones) and accurate processed counts,
-        // rather than waiting for SSE replay which may be incomplete.
-        if (status.snapshot) {
-          setServerStates(status.snapshot.servers || {})
-          setProgressCounts({
-            processed: status.snapshot.totals?.processed ?? 0,
-            errors: status.snapshot.totals?.errors ?? 0,
-          })
-        }
-
-        startSyncTransition(async () => {
-          setIsConnecting(false)
-          try {
-            // skipReplayed=true because snapshot already represents state at
-            // connect-time — replayed events would re-animate old entities and
-            // hold the counter frozen until replay catches up to snapshot value.
-            await subscribeToStream(status.streamUrl, { skipReplayed: !!status.snapshot })
-          } catch (err) {
-            dispatchSummary({ type: 'error', error: err.message })
-          }
-        })
-      },
-      onError: () => {
-        if (autoConnectedRef.current) return
-        autoConnectedRef.current = true
-        setIsConnecting(false)
-      },
+    if (!isOpen) {
+      autoConnectedRef.current = false
+      esRef.current?.close()
+      esRef.current = null
+      return
     }
-  )
+
+    if (justOpened) {
+      dispatchSummary({ type: 'reset' })
+      setProgressCounts({ processed: 0, errors: 0 })
+      setServerStates({})
+      setForced(false)
+      // "View Info" (autoConnect) opens knowing a sync is running — show the connecting
+      // indicator immediately; the auto-connect effect below fetches status and subscribes.
+      setIsConnecting(autoConnect)
+    }
+  }, [isOpen, autoConnect])
+
+  // Auto-connect to an in-progress sync each time the popup is opened via "View Info".
+  // This is a one-shot side effect (fetch status → subscribe to the live stream), so it
+  // uses a direct fetch rather than SWR. SWR caches by key with revalidateIfStale
+  // disabled, so a REOPENED popup received the stale cached status without refetching
+  // and never re-ran the connect logic (which used to live in onSuccess) — leaving the
+  // dialog stuck on "Connecting to active sync…". A fresh fetch on every open avoids that.
+  useEffect(() => {
+    if (!isOpen || !autoConnect) return
+    if (autoConnectedRef.current) return
+    autoConnectedRef.current = true
+
+    let cancelled = false
+    ;(async () => {
+      let status
+      try {
+        status = await fetchSyncStatus('/api/authenticated/admin/sync-status')
+      } catch {
+        // Status request failed or timed out — stop the connecting indicator so the
+        // dialog falls back to the normal "Ready to sync" state instead of spinning.
+        if (!cancelled) setIsConnecting(false)
+        return
+      }
+      if (cancelled) return
+
+      if (!status.active) {
+        // Sync finished between the click and the popup opening.
+        setIsConnecting(false)
+        return
+      }
+
+      setForced(!!status.forced)
+      dispatchSummary({ type: 'startTime', startTime: status.startTime })
+
+      // Pre-populate state from the server-side snapshot so the user immediately
+      // sees all servers (including completed ones) and accurate processed counts,
+      // rather than waiting for SSE replay which may be incomplete.
+      if (status.snapshot) {
+        setServerStates(status.snapshot.servers || {})
+        setProgressCounts({
+          processed: status.snapshot.totals?.processed ?? 0,
+          errors: status.snapshot.totals?.errors ?? 0,
+        })
+      }
+
+      startSyncTransition(async () => {
+        setIsConnecting(false)
+        try {
+          // skipReplayed=true because snapshot already represents state at
+          // connect-time — replayed events would re-animate old entities and
+          // hold the counter frozen until replay catches up to snapshot value.
+          await subscribeToStream(status.streamUrl, { skipReplayed: !!status.snapshot })
+        } catch (err) {
+          dispatchSummary({ type: 'error', error: err.message })
+        }
+      })
+    })()
+
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, autoConnect])
 
   const handleSyncClick = () => {
     dispatchSummary({ type: 'reset' })
     setProgressCounts({ processed: 0, errors: 0 })
     setServerStates({})
+    setForced(forceRefresh)
 
     startSyncTransition(async () => {
       try {
@@ -524,6 +572,7 @@ export default function SyncMediaPopup({
           try {
             const statusRes = await fetch('/api/authenticated/admin/sync-status')
             const status = await statusRes.json()
+            if (typeof status.forced === 'boolean') setForced(status.forced)
             if (status.startTime) dispatchSummary({ type: 'startTime', startTime: status.startTime })
             if (status.snapshot) {
               setServerStates(status.snapshot.servers || {})
@@ -600,6 +649,18 @@ export default function SyncMediaPopup({
 
                       <hr className="my-4" />
 
+                      {forced && (isConnecting || isSyncing || isComplete) ? (
+                        <div className="mb-3 flex items-center gap-2">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 text-amber-800 text-xs font-medium px-2 py-0.5 border border-amber-200">
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
+                              <path d="M11.983 1.907a.75.75 0 00-1.292-.657l-8.5 9.5A.75.75 0 002.75 12h4.5v6.25a.75.75 0 001.292.657l8.5-9.5A.75.75 0 0016.25 8h-4.5V1.907z" />
+                            </svg>
+                            Forced refresh
+                          </span>
+                          <span className="text-xs text-gray-400">hash-skip bypassed</span>
+                        </div>
+                      ) : null}
+
                       {!isSyncing && !isConnecting && !isComplete && syncError === null ? (
                         <label className="flex items-start gap-2 mb-4 cursor-pointer text-sm">
                           <input
@@ -645,14 +706,21 @@ export default function SyncMediaPopup({
                               <div className="flex justify-between text-xs text-gray-500 mb-1">
                                 <span>Syncing…</span>
                                 <span>
-                                  {deferredCounts.processed} processed
+                                  {deferredCounts.processed}{syncTotal > 0 ? `/${syncTotal}` : ''} processed
                                   {deferredCounts.errors > 0 ? (
                                     <span className="text-red-500 ml-2">{deferredCounts.errors} errors</span>
                                   ) : null}
                                 </span>
                               </div>
                               <div className="w-full bg-gray-200 rounded-full h-1 overflow-hidden mb-3">
-                                <div className="h-1 bg-blue-500 rounded-full animate-pulse w-full" />
+                                {syncTotal > 0 ? (
+                                  <div
+                                    className="h-1 bg-blue-500 rounded-full transition-all duration-300"
+                                    style={{ width: `${Math.min(100, Math.round((deferredCounts.processed / syncTotal) * 100))}%` }}
+                                  />
+                                ) : (
+                                  <div className="h-1 bg-blue-500 rounded-full animate-pulse w-full" />
+                                )}
                               </div>
 
                               <div className="space-y-2">
@@ -865,22 +933,26 @@ export default function SyncMediaPopup({
                     className={classNames(
                       isSyncing
                         ? 'bg-gray-400 hover:bg-gray-700 focus:ring-gray-500 cursor-not-allowed'
-                        : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
+                        : isComplete
+                          ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                          : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
                       'w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2  text-base font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm'
                     )}
-                    onClick={handleSyncClick}
+                    onClick={isComplete ? () => setIsOpen(false) : handleSyncClick}
                     disabled={isSyncing}
                   >
-                    {isComplete ? 'Sync Complete' : isSyncing ? 'Syncing...' : 'Sync'}
+                    {isComplete ? 'Done' : isSyncing ? 'Syncing...' : 'Sync'}
                   </button>
-                  <button
-                    type="button"
-                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:w-auto sm:text-sm"
-                    onClick={() => setIsOpen(false)}
-                    ref={cancelButtonRef}
-                  >
-                    Cancel
-                  </button>
+                  {!isComplete ? (
+                    <button
+                      type="button"
+                      className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:w-auto sm:text-sm"
+                      onClick={() => setIsOpen(false)}
+                      ref={cancelButtonRef}
+                    >
+                      {isConnecting || isSyncing ? 'Close' : 'Cancel'}
+                    </button>
+                  ) : null}
                 </div>
               </Dialog.Panel>
             </Transition.Child>
