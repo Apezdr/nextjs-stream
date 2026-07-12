@@ -184,7 +184,8 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
 
       const diff = BaseRepository.computeDiff(existing, merged)
       const unsetFields = (unset || []).filter(f => (existing as any)[f] !== undefined)
-      if (Object.keys(diff).length === 0 && unsetFields.length === 0) continue  // unchanged — skip write
+      const allUnsetFields = [...unsetFields, ...BaseRepository.manualFieldsToClear(existing, diff)]
+      if (Object.keys(diff).length === 0 && allUnsetFields.length === 0) continue  // unchanged — skip write
 
       const update: Record<string, any> = {
         $set: {
@@ -194,8 +195,8 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
           ...(syncRunId ? { syncRunId } : {})
         }
       }
-      if (unsetFields.length > 0) {
-        update.$unset = Object.fromEntries(unsetFields.map(f => [f, '']))
+      if (allUnsetFields.length > 0) {
+        update.$unset = Object.fromEntries(allUnsetFields.map(f => [f, '']))
       }
 
       operations.push({

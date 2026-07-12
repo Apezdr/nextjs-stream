@@ -22,7 +22,7 @@ import { getFileServerImportSettings } from '@src/utils/sync_db'
 import { getAllServers } from '@src/utils/config'
 import { exec } from 'child_process'
 import clientPromise from '@src/lib/mongodb'
-import { getCpuUsage, getMemoryTotal, getMemoryUsage, getMemoryUsed, getDiskStats } from '@src/utils/monitor_server_load'
+import { getCpuUsage, getMemoryTotal, getMemoryUsage, getMemoryUsed, getDiskStats, monitorConfig } from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { syncAllServers } from '@src/utils/sync'
 import { syncEventBus } from '@src/utils/sync/core/events'
@@ -396,16 +396,12 @@ export async function GET(request, props) {
 
       case 'server-load':
         {
-          const cpu = getCpuUsage()
-          const memoryUsage = getMemoryUsage()
-          const memoryUsed = getMemoryUsed()
-          const memoryTotal = getMemoryTotal()
+          const { cpuEnabled, memoryEnabled, diskEnabled } = monitorConfig
           responseData = {
-            cpu,
-            memoryUsed,
-            memoryTotal,
-            memoryUsage,
-            drives: getDiskStats(),
+            ...(cpuEnabled    ? { cpu: getCpuUsage() }                                                              : {}),
+            ...(memoryEnabled ? { memoryUsed: getMemoryUsed(), memoryTotal: getMemoryTotal(), memoryUsage: getMemoryUsage() } : {}),
+            ...(diskEnabled   ? { drives: getDiskStats() }                                                          : { drives: [] }),
+            config: monitorConfig,
           }
         }
         break

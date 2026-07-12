@@ -10,9 +10,16 @@
  *  - Never stamp `syncRunId` — these run outside a sync orchestration. Manual
  *    survival is guaranteed by `manualEntry: true` (set only on standalone
  *    create) + the postSyncCleanup exclusion, NOT by the run-id marker.
- *  - Any admin-edited asset/metadata field records its provenance as
- *    `<field>Source: 'manual'` so the priority system and future syncs can see
- *    it was set by a human.
+ *  - Any admin-edited asset/metadata field is flagged in `manualFields`
+ *    ({ posterURL: true, metadata: true }, same nested shape as `lockedFields`)
+ *    so the admin UI can show it was set by a human. This is informational
+ *    only — it does NOT gate sync writes (`lockedFields` does that); a sync
+ *    that legitimately overwrites a flagged field also clears its
+ *    `manualFields` entry (see BaseRepository.manualFieldsToClear) so the flag
+ *    doesn't go stale. `<field>Source` (e.g. `videoSource`) is left untouched
+ *    by manual edits so it keeps tracking the real server that last owned the
+ *    field — overwriting it with a non-server sentinel previously crashed
+ *    `getServer('manual')` in generateClipVideoURL/MediaPlayer.
  *  - `lockedFields` is persisted in the nested shape `filterLockedFields`
  *    expects ({ posterURL: true, metadata: { overview: true } }).
  *  - Validation / duplicate / not-found problems are returned as
@@ -72,11 +79,12 @@ function revalidateMedia() {
 
 /**
  * Build $set / $unset from a whitelist of scalar fields.
- * - non-empty value  → $set field (+ `<field>Source: 'manual'` if mapped)
- * - empty string/null → $unset field (update only; skipped on create)
+ * - non-empty value  → $set field (+ `manualFields.<field>: true` if mapped)
+ * - empty string/null → $unset field (update only; skipped on create), also
+ *   clearing `manualFields.<field>` since there's no longer a manual value
  * @returns {{ set: Object, unset: Object }}
  */
-function applyScalarFields(payload, fields, sourceMap, { isCreate }) {
+function applyScalarFields(payload, fields, manualTrackedFields, { isCreate }) {
   const set = {}
   const unset = {}
   for (const field of fields) {
@@ -89,12 +97,15 @@ function applyScalarFields(payload, fields, sourceMap, { isCreate }) {
 
     const isEmpty = value === '' || value === null || value === undefined || Number.isNaN(value)
     if (isEmpty) {
-      if (!isCreate) unset[field] = ''
+      if (!isCreate) {
+        unset[field] = ''
+        if (manualTrackedFields.includes(field)) unset[`manualFields.${field}`] = ''
+      }
       continue
     }
 
     set[field] = value
-    if (sourceMap[field]) set[sourceMap[field]] = 'manual'
+    if (manualTrackedFields.includes(field)) set[`manualFields.${field}`] = true
     if (field === 'videoURL') set.normalizedVideoId = generateNormalizedVideoId(value)
   }
   return { set, unset }
@@ -109,7 +120,7 @@ function applyMetadata(payload, set) {
     set[`metadata.${key}`] = value
     touched = true
   }
-  if (touched) set.metadataSource = 'manual'
+  if (touched) set['manualFields.metadata'] = true
 }
 
 /** Decide captionURLs $set vs $unset from the provided object. */
@@ -128,46 +139,34 @@ function applyLockedFields(payload, set, unset) {
   else unset.lockedFields = ''
 }
 
-// ─── Field whitelists + source maps ──────────────────────────────────────────
+// ─── Field whitelists + manual-tracked fields ────────────────────────────────
+// The "manual-tracked" lists below are fields that also get a
+// `manualFields.<field>: true` flag on edit (see applyScalarFields) — a
+// subset of each whitelist, matching whichever fields have a corresponding
+// `<field>Source` used elsewhere for real-server provenance.
 const MOVIE_FIELDS = [
   'title', 'originalTitle', 'videoURL', 'posterURL', 'posterBlurhash',
   'backdrop', 'backdropBlurhash', 'logo', 'chapterURL', 'hdr', 'duration',
 ]
-const MOVIE_SOURCE_MAP = {
-  posterURL: 'posterSource',
-  posterBlurhash: 'posterBlurhashSource',
-  backdrop: 'backdropSource',
-  backdropBlurhash: 'backdropBlurhashSource',
-  logo: 'logoSource',
-  videoURL: 'videoSource',
-}
+const MOVIE_MANUAL_TRACKED_FIELDS = [
+  'posterURL', 'posterBlurhash', 'backdrop', 'backdropBlurhash', 'logo', 'videoURL',
+]
 
 const SHOW_FIELDS = [
   'title', 'originalTitle', 'posterURL', 'posterBlurhash',
   'backdrop', 'backdropBlurhash', 'logo',
 ]
-const SHOW_SOURCE_MAP = {
-  posterURL: 'posterSource',
-  posterBlurhash: 'posterBlurhashSource',
-  backdrop: 'backdropSource',
-  backdropBlurhash: 'backdropBlurhashSource',
-  logo: 'logoSource',
-}
+const SHOW_MANUAL_TRACKED_FIELDS = [
+  'posterURL', 'posterBlurhash', 'backdrop', 'backdropBlurhash', 'logo',
+]
 
 const SEASON_FIELDS = ['posterURL', 'posterBlurhash']
-const SEASON_SOURCE_MAP = {
-  posterURL: 'posterSource',
-  posterBlurhash: 'posterBlurhashSource',
-}
+const SEASON_MANUAL_TRACKED_FIELDS = ['posterURL', 'posterBlurhash']
 
 const EPISODE_FIELDS = [
   'title', 'videoURL', 'thumbnail', 'thumbnailBlurhash', 'chapterURL', 'hdr', 'duration',
 ]
-const EPISODE_SOURCE_MAP = {
-  videoURL: 'videoSource',
-  thumbnail: 'thumbnailSource',
-  thumbnailBlurhash: 'thumbnailBlurhashSource',
-}
+const EPISODE_MANUAL_TRACKED_FIELDS = ['videoURL', 'thumbnail', 'thumbnailBlurhash']
 
 // ─── Movies ──────────────────────────────────────────────────────────────────
 
@@ -188,7 +187,7 @@ export async function createMovieAction(_prevState, payload = {}) {
   if (clash) return fail(`A movie with title "${title}" or originalTitle "${originalTitle}" already exists.`)
 
   const now = new Date()
-  const { set } = applyScalarFields({ ...payload, title, originalTitle, videoURL }, MOVIE_FIELDS, MOVIE_SOURCE_MAP, { isCreate: true })
+  const { set } = applyScalarFields({ ...payload, title, originalTitle, videoURL }, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: true })
   applyMetadata(payload, set)
   applyCaptionURLs(payload, set, {})
   applyLockedFields(payload, set, {})
@@ -229,7 +228,7 @@ export async function saveMovieAction(_prevState, payload = {}) {
   const existing = await col.findOne({ _id })
   if (!existing) return fail('Movie not found.')
 
-  const { set, unset } = applyScalarFields(payload, MOVIE_FIELDS, MOVIE_SOURCE_MAP, { isCreate: false })
+  const { set, unset } = applyScalarFields(payload, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: false })
   applyMetadata(payload, set)
   applyCaptionURLs(payload, set, unset)
   applyLockedFields(payload, set, unset)
@@ -293,7 +292,7 @@ export async function createTVShowAction(_prevState, payload = {}) {
   if (clash) return fail(`A show with title "${title}" or originalTitle "${originalTitle}" already exists.`)
 
   const now = new Date()
-  const { set } = applyScalarFields({ ...payload, title, originalTitle }, SHOW_FIELDS, SHOW_SOURCE_MAP, { isCreate: true })
+  const { set } = applyScalarFields({ ...payload, title, originalTitle }, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: true })
   applyMetadata(payload, set)
   applyLockedFields(payload, set, {})
 
@@ -330,7 +329,7 @@ export async function saveTVShowAction(_prevState, payload = {}) {
   const existing = await col.findOne({ _id })
   if (!existing) return fail('TV show not found.')
 
-  const { set, unset } = applyScalarFields(payload, SHOW_FIELDS, SHOW_SOURCE_MAP, { isCreate: false })
+  const { set, unset } = applyScalarFields(payload, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: false })
   applyMetadata(payload, set)
   applyLockedFields(payload, set, unset)
   set.updatedAt = new Date()
@@ -406,7 +405,7 @@ export async function saveSeasonAction(_prevState, payload = {}) {
     ? await seasonsCol.findOne({ _id: seasonObjId })
     : await seasonsCol.findOne({ showId, seasonNumber })
 
-  const { set, unset } = applyScalarFields(payload, SEASON_FIELDS, SEASON_SOURCE_MAP, { isCreate: !existing })
+  const { set, unset } = applyScalarFields(payload, SEASON_FIELDS, SEASON_MANUAL_TRACKED_FIELDS, { isCreate: !existing })
   applyMetadata(payload, set)
   applyLockedFields(payload, set, unset)
   set.showTitle = show.title
@@ -491,7 +490,7 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
     ? await episodesCol.findOne({ _id: episodeObjId })
     : await episodesCol.findOne({ showId, seasonId: season._id, episodeNumber })
 
-  const { set, unset } = applyScalarFields(payload, EPISODE_FIELDS, EPISODE_SOURCE_MAP, { isCreate: !existing })
+  const { set, unset } = applyScalarFields(payload, EPISODE_FIELDS, EPISODE_MANUAL_TRACKED_FIELDS, { isCreate: !existing })
   applyMetadata(payload, set)
   applyLockedFields(payload, set, unset)
   set.showId = showId
