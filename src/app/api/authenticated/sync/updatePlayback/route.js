@@ -6,6 +6,7 @@ import { validatePlaybackEntry } from '@src/utils/watchHistory/validation'
 import { createPlaybackDeviceInfo } from '@src/utils/deviceDetection'
 import { getClientIP } from '@src/utils/rateLimiter'
 import { invalidateUserWatchHistoryCache } from '@src/utils/cache/invalidation'
+import { upsertPresenceHeartbeat } from '@src/utils/playbackPresence/database'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('API.UpdatePlayback')
@@ -31,7 +32,7 @@ export const POST = async (req) => {
 
   try {
     const body = await req.json()
-    const { videoId, playbackTime, mediaMetadata, isPaused, localIp } = body
+    const { videoId, playbackTime, mediaMetadata, isPaused, localIp, sessionId } = body
 
     // Validate required fields
     if (!videoId || typeof playbackTime !== 'number') {
@@ -82,6 +83,27 @@ export const POST = async (req) => {
       { userId: userId.toString(), videoId, result },
       'Playback status updated'
     )
+
+    // Presence is a best-effort, ephemeral "is this session active" signal —
+    // a failure here must never fail the durable WatchHistory write above.
+    // sessionId is optional for backward compatibility with older clients.
+    if (sessionId) {
+      try {
+        await upsertPresenceHeartbeat({
+          userId,
+          sessionId,
+          videoId,
+          playbackTime,
+          isPaused: isPaused === true,
+          metadata,
+          deviceInfo,
+          ipAddress,
+          localIp: reportedLocalIp,
+        })
+      } catch (error) {
+        log.error({ error, userId: userId.toString(), sessionId }, 'Presence heartbeat failed')
+      }
+    }
 
     // Invalidate user's watch history cache to ensure fresh data on next page load
     await invalidateUserWatchHistoryCache(authResult.id)

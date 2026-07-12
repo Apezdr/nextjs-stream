@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { buildImgproxyTarget } from '@src/lib/imgproxy'
 
 // All known cookie prefixes — includes legacy 'better-auth' default and
 // the current 'nextjs-stream' prefix so users migrating from either are covered.
@@ -17,6 +18,26 @@ const AUTH_COOKIE_NAMES = COOKIE_PREFIXES.flatMap((prefix) => [
 const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN?.replace(/^\./, '')
 
 export function proxy(request: NextRequest) {
+  // Optional imgproxy offload: when IMGPROXY_URL is set, hand image
+  // optimization to an external imgproxy container instead of the built-in
+  // sharp optimizer. A null target (not configured, local /public source,
+  // or malformed params) falls through to the built-in optimizer.
+  if (request.nextUrl.pathname === '/_next/image') {
+    const target = buildImgproxyTarget(request.nextUrl.searchParams)
+    if (!target) return NextResponse.next()
+
+    if (target.mode === 'redirect') {
+      return NextResponse.redirect(target.url, 307)
+    }
+
+    // Rewrite proxies the imgproxy response while the browser keeps the
+    // /_next/image URL, so imgproxy can stay internal to the docker network.
+    // Session cookies are stripped — imgproxy has no use for them.
+    const headers = new Headers(request.headers)
+    headers.delete('cookie')
+    return NextResponse.rewrite(target.url, { request: { headers } })
+  }
+
   const response = NextResponse.next()
 
   if (COOKIE_DOMAIN) {
@@ -49,5 +70,9 @@ export const config = {
   matcher: [
     // Run on all routes except Next.js internals and static assets
     '/((?!_next/static|_next/image|favicon.ico).*)',
+    // Image optimizer requests are matched separately so they can be
+    // offloaded to imgproxy when IMGPROXY_URL is configured (see above);
+    // they return before the cookie-migration logic runs.
+    '/_next/image',
   ],
 }

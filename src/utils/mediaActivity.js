@@ -2,11 +2,10 @@ import clientPromise from '@src/lib/mongodb'
 import { userQueries } from '@src/lib/userQueries'
 import { validateWebhookId } from '@src/utils/webhookServer'
 import { detectBrowserType, getDeviceTypeLabel } from '@src/utils/deviceDetection'
+import { DEFAULT_ACTIVE_WINDOW_SECONDS, PAUSED_WINDOW_SECONDS } from '@src/utils/playbackPresence/database'
 import { UAParser } from 'ua-parser-js'
 
-const DEFAULT_ACTIVE_WINDOW_SECONDS = 15
 const MAX_ACTIVE_WINDOW_SECONDS = 300
-const PAUSED_WINDOW_SECONDS = 3600
 const DEFAULT_LIMIT = 10
 const LOOKUP_TIMEOUT_MS = 3000
 
@@ -52,9 +51,18 @@ export async function validateMediaActivityRequest(request) {
   return { isValid: false }
 }
 
-async function getMediaMaps(videoIds) {
-  if (videoIds.length === 0) {
+async function getMediaMaps(videoIds, normalizedVideoIds) {
+  if (videoIds.length === 0 && normalizedVideoIds.length === 0) {
     return { movieMap: new Map(), tvMap: new Map(), showPosterMap: new Map() }
+  }
+
+  // Prefer the normalized key used by the flat repositories while retaining
+  // raw videoURL as a compatibility fallback for older media documents.
+  const joinFilter = {
+    $or: [
+      ...(normalizedVideoIds.length > 0 ? [{ normalizedVideoId: { $in: normalizedVideoIds } }] : []),
+      ...(videoIds.length > 0 ? [{ videoURL: { $in: videoIds } }] : []),
+    ],
   }
 
   const client = await clientPromise
@@ -64,14 +72,14 @@ async function getMediaMaps(videoIds) {
     mediaDb
       .collection('FlatMovies')
       .find(
-        { videoURL: { $in: videoIds } },
-        { projection: { title: 1, originalTitle: 1, videoURL: 1, duration: 1, dimensions: 1, size: 1, videoCodec: 1, posterURL: 1, metadata: 1 } }
+        joinFilter,
+        { projection: { title: 1, originalTitle: 1, videoURL: 1, normalizedVideoId: 1, duration: 1, dimensions: 1, size: 1, videoCodec: 1, posterURL: 1, metadata: 1 } }
       )
       .toArray(),
     mediaDb
       .collection('FlatEpisodes')
       .find(
-        { videoURL: { $in: videoIds } },
+        joinFilter,
         {
           projection: {
             showTitle: 1,
@@ -80,6 +88,7 @@ async function getMediaMaps(videoIds) {
             episodeNumber: 1,
             title: 1,
             videoURL: 1,
+            normalizedVideoId: 1,
             duration: 1,
             dimensions: 1,
             size: 1,
@@ -94,11 +103,17 @@ async function getMediaMaps(videoIds) {
       .toArray(),
   ])
 
-  const movieMap = new Map(movies.map((movie) => [movie.videoURL, movie]))
+  const movieMap = new Map()
+  for (const movie of movies) {
+    if (movie.normalizedVideoId) movieMap.set(movie.normalizedVideoId, movie)
+    if (movie.videoURL) movieMap.set(movie.videoURL, movie)
+  }
+
   const tvMap = new Map()
 
   for (const episode of episodes) {
-    tvMap.set(episode.videoURL, { episode })
+    if (episode.normalizedVideoId) tvMap.set(episode.normalizedVideoId, { episode })
+    if (episode.videoURL) tvMap.set(episode.videoURL, { episode })
   }
 
   // Resolve show-level posters for any episodes so the widget can show a proper
@@ -200,8 +215,8 @@ function getDeviceDescriptor(deviceInfo) {
 }
 
 function normalizeSession(entry, index, userMap, mediaMaps, appOrigin) {
-  const movie = mediaMaps.movieMap.get(entry.videoId)
-  const tv = mediaMaps.tvMap.get(entry.videoId)
+  const movie = mediaMaps.movieMap.get(entry.normalizedVideoId) || mediaMaps.movieMap.get(entry.videoId)
+  const tv = mediaMaps.tvMap.get(entry.normalizedVideoId) || mediaMaps.tvMap.get(entry.videoId)
   const user = userMap.get(String(entry.userId))
   const device = getDeviceDescriptor(entry.deviceInfo)
   // Player/network fields shared by every session shape below.
@@ -238,7 +253,7 @@ function normalizeSession(entry, index, userMap, mediaMaps, appOrigin) {
       userName: user?.name || user?.email || 'Unknown User',
       userId: String(entry.userId),
       ...player,
-      lastUpdated: entry.lastUpdated,
+      lastUpdated: entry.lastHeartbeat,
       order: index + 1,
     }
   }
@@ -277,7 +292,7 @@ function normalizeSession(entry, index, userMap, mediaMaps, appOrigin) {
       userName: user?.name || user?.email || 'Unknown User',
       userId: String(entry.userId),
       ...player,
-      lastUpdated: entry.lastUpdated,
+      lastUpdated: entry.lastHeartbeat,
       order: index + 1,
     }
   }
@@ -304,7 +319,7 @@ function normalizeSession(entry, index, userMap, mediaMaps, appOrigin) {
     userName: user?.name || user?.email || 'Unknown User',
     userId: String(entry.userId),
     ...player,
-    lastUpdated: entry.lastUpdated,
+    lastUpdated: entry.lastHeartbeat,
     order: index + 1,
   }
 }
@@ -326,16 +341,16 @@ export async function getActiveMediaSessions(request) {
   const client = await clientPromise
   const entries = await client
     .db('Media')
-    .collection('WatchHistory')
+    .collection('PlaybackPresence')
     .find({
       $or: [
-        { lastUpdated: { $gte: activeSince } },
-        { isPaused: true, lastUpdated: { $gte: pausedSince } },
+        { isPaused: { $ne: true }, lastHeartbeat: { $gte: activeSince } },
+        { isPaused: true, lastHeartbeat: { $gte: pausedSince } },
       ],
     })
-    // Keep each stream in its original row while playback heartbeats update
-    // `lastUpdated`. MongoDB `_id` is immutable, so pause/resume cannot reorder
-    // existing streams; newly-created entries are appended chronologically.
+    // Keep each session in its original row while heartbeats update
+    // `lastHeartbeat`. MongoDB `_id` is immutable, so pause/resume cannot
+    // reorder existing sessions; newly-created sessions append chronologically.
     .sort({ _id: 1 })
     .limit(limit)
     .toArray()
@@ -346,12 +361,13 @@ export async function getActiveMediaSessions(request) {
 
   const userIds = [...new Set(entries.map((entry) => entry.userId).filter(Boolean))]
   const videoIds = [...new Set(entries.map((entry) => entry.videoId).filter(Boolean))]
+  const normalizedVideoIds = [...new Set(entries.map((entry) => entry.normalizedVideoId).filter(Boolean))]
 
   const [users, mediaMaps] = await Promise.all([
     userIds.length > 0
       ? userQueries.find({ _id: { $in: userIds } }, { name: 1, email: 1 })
       : Promise.resolve([]),
-    getMediaMaps(videoIds),
+    getMediaMaps(videoIds, normalizedVideoIds),
   ])
 
   const userMap = new Map(users.map((user) => [String(user._id), user]))

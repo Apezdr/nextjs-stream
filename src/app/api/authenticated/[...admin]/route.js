@@ -5,6 +5,7 @@ import {
   getLastSynced,
 } from '@src/utils/admin_database'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
+import { getActivePresenceForUsers } from '@src/utils/playbackPresence/database'
 import { ObjectId } from 'mongodb'
 import { userQueries } from '@src/lib/userQueries'
 import {
@@ -213,7 +214,16 @@ export async function GET(request, props) {
             // Get all users
             const client = await clientPromise
             const users = await userQueries.findAll()
-            
+
+            // One shared query for every user's currently-active presence,
+            // instead of an N+1 lookup inside the per-user map below. A
+            // failure here should only cost the live badge, not blank the
+            // whole recently-watched response.
+            const activePresenceByUser = await getActivePresenceForUsers(users.map((user) => user._id)).catch((error) => {
+              console.error(`Error fetching active presence for recently-watched: ${error.message}`)
+              return new Map()
+            })
+
             // For each user, get their recently watched media using the flat database approach
             const lastWatchedPromises = users.map(async (user) => {
               try {
@@ -227,7 +237,7 @@ export async function GET(request, props) {
                   projection: 'admin-overview',
                   contextHints: { isAdmin: true }
                 })
-                
+
                 // Get total count for accurate "+X more" calculation
                 const totalCount = await getFlatRecentlyWatchedForUser({
                   client,
@@ -236,12 +246,12 @@ export async function GET(request, props) {
                   projection: 'admin-overview',
                   contextHints: { isAdmin: true }
                 })
-                
+
                 // Skip if no watched media found
                 if (!watchedMedia || watchedMedia.length === 0) {
                   return null
                 }
-                
+
                 // Find the most recent watch time
                 let mostRecentWatch = null
                 watchedMedia.forEach(media => {
@@ -250,7 +260,20 @@ export async function GET(request, props) {
                     mostRecentWatch = lastUpdated
                   }
                 })
-                
+
+                // Flag whichever of this user's recently-watched videos matches
+                // a currently-active presence session, so the dashboard can
+                // show a live "Watching Now"/"Paused" badge on it.
+                const activeSessions = activePresenceByUser.get(user._id.toString()) || []
+                const videosWithPresence = watchedMedia.map((video) => {
+                  const activeSession = activeSessions.find(
+                    (session) => session.normalizedVideoId && session.normalizedVideoId === video.normalizedVideoId
+                  )
+                  return activeSession
+                    ? { ...video, watchingNow: true, isPaused: activeSession.isPaused === true }
+                    : video
+                })
+
                 // Format the data to match the structure expected by the component
                 return {
                   user: {
@@ -258,7 +281,7 @@ export async function GET(request, props) {
                     name: user.name,
                     image: user.image,
                   },
-                  videos: watchedMedia,
+                  videos: videosWithPresence,
                   totalCount: totalCount || 0, // Add total count for accurate display
                   mostRecentWatch
                 }
@@ -491,7 +514,7 @@ function startSnapshotTracking() {
     if (event.entityId === '__sync_warmup__') return
 
     if (event.entityId === '__server_start__') {
-      syncSnapshot.servers[sid] = { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, errorCount: 0, errors: [] }
+      syncSnapshot.servers[sid] = { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, total: event.data?.total ?? 0, errorCount: 0, errors: [] }
       return
     }
 
@@ -1034,7 +1057,7 @@ async function handleSync(webhookId, request, syncOptions = {}) {
  */
 function collectFieldAvailability(mediaData, currentPath, serverId, availabilityMap) {
   for (const key in mediaData) {
-    if (!mediaData.hasOwnProperty(key)) continue
+    if (!Object.prototype.hasOwnProperty.call(mediaData, key)) continue
 
     const value = mediaData[key]
     let newPath = currentPath ? `${currentPath}.${key}` : key

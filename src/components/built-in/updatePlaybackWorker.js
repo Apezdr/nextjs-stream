@@ -1,5 +1,5 @@
 self.addEventListener('message', (e) => {
-  const { videoURL, currentTime, mediaMetadata, isPaused, localIp } = e.data
+  const { videoURL, currentTime, mediaMetadata, isPaused, localIp, sessionId } = e.data
 
   // Workers need absolute URLs - construct from self.location.origin
   const apiUrl = `${self.location.origin}/api/authenticated/sync/updatePlayback`
@@ -13,6 +13,7 @@ self.addEventListener('message', (e) => {
       mediaMetadata: mediaMetadata,
       isPaused: isPaused === true,
       ...(localIp ? { localIp } : {}),
+      sessionId: sessionId || null,
     }),
   })
     .then((response) => {

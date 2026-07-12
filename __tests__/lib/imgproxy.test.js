@@ -1,0 +1,112 @@
+import { buildImgproxyTarget, signImgproxyPath } from '@src/lib/imgproxy'
+
+const IMGPROXY_ENV_VARS = ['IMGPROXY_URL', 'IMGPROXY_KEY', 'IMGPROXY_SALT', 'IMGPROXY_REQUEST_MODE']
+
+// key "secret" / salt "hello", hex-encoded — matches the worked example in
+// https://docs.imgproxy.net/usage/signing_url
+const DOC_KEY_HEX = '736563726574'
+const DOC_SALT_HEX = '68656c6c6f'
+
+function params(overrides = {}) {
+  const defaults = { url: 'https://image.tmdb.org/t/p/original/poster.jpg', w: '640', q: '75' }
+  const searchParams = new URLSearchParams()
+  for (const [name, value] of Object.entries({ ...defaults, ...overrides })) {
+    if (value !== undefined) searchParams.set(name, value)
+  }
+  return searchParams
+}
+
+describe('signImgproxyPath', () => {
+  it('matches the documented imgproxy signing example', () => {
+    const path =
+      '/rs:fill:300:400:0/g:sm/aHR0cDovL2V4YW1w/bGUuY29tL2ltYWdl/cy9jdXJpb3NpdHku/anBn.png'
+    expect(signImgproxyPath(path, DOC_KEY_HEX, DOC_SALT_HEX)).toBe(
+      'oKfUtW34Dvo2BGQehJFR4Nr0_rIjOtdtzJ3QFsUcXH8'
+    )
+  })
+})
+
+describe('buildImgproxyTarget', () => {
+  const savedEnv = {}
+
+  beforeEach(() => {
+    for (const name of IMGPROXY_ENV_VARS) {
+      savedEnv[name] = process.env[name]
+      delete process.env[name]
+    }
+  })
+
+  afterEach(() => {
+    for (const name of IMGPROXY_ENV_VARS) {
+      if (savedEnv[name] === undefined) delete process.env[name]
+      else process.env[name] = savedEnv[name]
+    }
+  })
+
+  it('returns null when IMGPROXY_URL is not set', () => {
+    expect(buildImgproxyTarget(params())).toBeNull()
+  })
+
+  it('builds an unsigned proxy-mode URL by default', () => {
+    process.env.IMGPROXY_URL = 'http://imgproxy:8080/'
+
+    const src = 'https://image.tmdb.org/t/p/original/poster.jpg'
+    const target = buildImgproxyTarget(params({ url: src }))
+
+    expect(target).toEqual({
+      // trailing slash on IMGPROXY_URL is normalized away
+      url: `http://imgproxy:8080/insecure/rs:fit:640:0/q:75/${Buffer.from(src).toString('base64url')}`,
+      mode: 'proxy',
+    })
+  })
+
+  it('signs the path when key and salt are configured', () => {
+    process.env.IMGPROXY_URL = 'http://imgproxy:8080'
+    process.env.IMGPROXY_KEY = DOC_KEY_HEX
+    process.env.IMGPROXY_SALT = DOC_SALT_HEX
+
+    const src = 'https://image.tmdb.org/t/p/original/poster.jpg'
+    const path = `/rs:fit:640:0/q:75/${Buffer.from(src).toString('base64url')}`
+    const target = buildImgproxyTarget(params({ url: src }))
+
+    expect(target.url).toBe(
+      `http://imgproxy:8080/${signImgproxyPath(path, DOC_KEY_HEX, DOC_SALT_HEX)}${path}`
+    )
+  })
+
+  it('uses redirect mode when IMGPROXY_REQUEST_MODE=redirect', () => {
+    process.env.IMGPROXY_URL = 'https://img.example.com'
+    process.env.IMGPROXY_REQUEST_MODE = 'redirect'
+
+    expect(buildImgproxyTarget(params()).mode).toBe('redirect')
+  })
+
+  it('falls back to the built-in optimizer for a half-configured signing pair', () => {
+    process.env.IMGPROXY_URL = 'http://imgproxy:8080'
+    process.env.IMGPROXY_KEY = DOC_KEY_HEX
+
+    expect(buildImgproxyTarget(params())).toBeNull()
+  })
+
+  it('falls back to the built-in optimizer for non-hex key/salt', () => {
+    process.env.IMGPROXY_URL = 'http://imgproxy:8080'
+    process.env.IMGPROXY_KEY = 'not-hex!'
+    process.env.IMGPROXY_SALT = DOC_SALT_HEX
+
+    expect(buildImgproxyTarget(params())).toBeNull()
+  })
+
+  it('leaves relative (local /public) sources to the built-in optimizer', () => {
+    process.env.IMGPROXY_URL = 'http://imgproxy:8080'
+
+    expect(buildImgproxyTarget(params({ url: '/logo.png' }))).toBeNull()
+  })
+
+  it('leaves malformed width/quality params to the built-in optimizer', () => {
+    process.env.IMGPROXY_URL = 'http://imgproxy:8080'
+
+    expect(buildImgproxyTarget(params({ w: undefined }))).toBeNull()
+    expect(buildImgproxyTarget(params({ w: '-1' }))).toBeNull()
+    expect(buildImgproxyTarget(params({ q: '101' }))).toBeNull()
+  })
+})

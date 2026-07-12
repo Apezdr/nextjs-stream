@@ -280,7 +280,16 @@ function MediaChip({ video }) {
             />
           </div>
         )}
-        
+
+        {/* Watching Now Badge */}
+        {video.watchingNow && (
+          <div className="absolute top-1 left-1">
+            <StatusBadge status={video.isPaused ? 'warning' : 'success'} size="small" pulse={!video.isPaused}>
+              {video.isPaused ? 'Paused' : 'Watching'}
+            </StatusBadge>
+          </div>
+        )}
+
         {/* Progress Bar */}
         <div className="absolute bottom-0 left-0 right-0 h-1 bg-black bg-opacity-20">
           <div className="h-1 bg-blue-500" style={{ width: `${pct}%` }} />

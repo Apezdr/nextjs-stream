@@ -5,6 +5,21 @@ import { useMediaPlayer, useMediaRemote, useMediaState } from '@vidstack/react';
 import throttle from 'lodash/throttle';
 import { useRouter, usePathname } from 'next/navigation';
 
+// Presence ping cadence while paused and foregrounded. Coarser than the 1s
+// playing heartbeat on purpose — see plans/media-activity-presence.md.
+const PAUSED_HEARTBEAT_INTERVAL_MS = 3 * 60 * 1000;
+
+const PRESENCE_END_URL = '/api/authenticated/sync/presence/end';
+
+function generateSessionId() {
+  // crypto.randomUUID requires a secure context; this app can run over
+  // plain HTTP on a LAN, so fall back rather than ever leaving this null.
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 export default function WithPlayBackTracker({
   videoURL,
   start = null,
@@ -22,6 +37,10 @@ export default function WithPlayBackTracker({
   const updatePlaybackWorkerRef = useRef(null);
   const hasAppliedStartRef = useRef(false);
   const localIpRef = useRef(null);
+  const sessionIdRef = useRef(null);
+  if (sessionIdRef.current === null) {
+    sessionIdRef.current = generateSessionId();
+  }
   
   // Next.js routing hooks for URL manipulation
   const router = useRouter();
@@ -186,6 +205,7 @@ export default function WithPlayBackTracker({
           mediaMetadata: mediaMetadata,
           isPaused: pausedRef.current,
           localIp: localIpRef.current,
+          sessionId: sessionIdRef.current,
         });
       } else {
         nextUpdateTimeRef.current = currentTime;
@@ -216,8 +236,67 @@ export default function WithPlayBackTracker({
       mediaMetadata,
       isPaused: paused === true,
       localIp: localIpRef.current,
+      sessionId: sessionIdRef.current,
     });
   }, [paused, canPlay, player, videoURL, mediaMetadata]);
+
+  // Keep presence alive at a low frequency while paused and foregrounded.
+  // The currentTime-driven heartbeat stops when playback pauses.
+  useEffect(() => {
+    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
+
+    const interval = setInterval(() => {
+      if (!pausedRef.current) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      const currentTime = player.state?.currentTime || 0;
+      if (currentTime <= 0) return;
+      updatePlaybackWorkerRef.current.postMessage({
+        videoURL,
+        currentTime,
+        mediaMetadata,
+        isPaused: true,
+        localIp: localIpRef.current,
+        sessionId: sessionIdRef.current,
+      });
+    }, PAUSED_HEARTBEAT_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [canPlay, player, videoURL, mediaMetadata]);
+
+  // Best-effort explicit "stopped watching" signal. keepalive lets the
+  // request survive page unload; the server-side presence window is fallback.
+  useEffect(() => {
+    const endPresence = () => {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) return;
+      try {
+        fetch(PRESENCE_END_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch {
+        // Best-effort — the server-side presence window is the backstop.
+      }
+    };
+
+    const handlePageHide = () => endPresence();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && pausedRef.current) {
+        endPresence();
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      endPresence();
+    };
+  }, []);
 
   return null;
 }
