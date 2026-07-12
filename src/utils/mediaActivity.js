@@ -1,6 +1,8 @@
 import clientPromise from '@src/lib/mongodb'
 import { userQueries } from '@src/lib/userQueries'
 import { validateWebhookId } from '@src/utils/webhookServer'
+import { detectBrowserType, getDeviceTypeLabel } from '@src/utils/deviceDetection'
+import { UAParser } from 'ua-parser-js'
 
 const DEFAULT_ACTIVE_WINDOW_SECONDS = 15
 const MAX_ACTIVE_WINDOW_SECONDS = 300
@@ -52,7 +54,7 @@ export async function validateMediaActivityRequest(request) {
 
 async function getMediaMaps(videoIds) {
   if (videoIds.length === 0) {
-    return { movieMap: new Map(), tvMap: new Map() }
+    return { movieMap: new Map(), tvMap: new Map(), showPosterMap: new Map() }
   }
 
   const client = await clientPromise
@@ -63,7 +65,7 @@ async function getMediaMaps(videoIds) {
       .collection('FlatMovies')
       .find(
         { videoURL: { $in: videoIds } },
-        { projection: { title: 1, originalTitle: 1, videoURL: 1, duration: 1, dimensions: 1, size: 1, videoCodec: 1, metadata: 1 } }
+        { projection: { title: 1, originalTitle: 1, videoURL: 1, duration: 1, dimensions: 1, size: 1, videoCodec: 1, posterURL: 1, metadata: 1 } }
       )
       .toArray(),
     mediaDb
@@ -83,6 +85,8 @@ async function getMediaMaps(videoIds) {
             size: 1,
             videoCodec: 1,
             airDate: 1,
+            thumbnail: 1,
+            posterURL: 1,
             metadata: 1,
           },
         }
@@ -97,7 +101,22 @@ async function getMediaMaps(videoIds) {
     tvMap.set(episode.videoURL, { episode })
   }
 
-  return { movieMap, tvMap }
+  // Resolve show-level posters for any episodes so the widget can show a proper
+  // vertical poster (episodes only carry a horizontal `thumbnail`).
+  const showTitles = [...new Set(episodes.map((episode) => episode.showTitle).filter(Boolean))]
+  let showPosterMap = new Map()
+  if (showTitles.length > 0) {
+    const shows = await mediaDb
+      .collection('FlatTVShows')
+      .find(
+        { title: { $in: showTitles } },
+        { projection: { title: 1, posterURL: 1, metadata: 1 } }
+      )
+      .toArray()
+    showPosterMap = new Map(shows.map((show) => [show.title, show]))
+  }
+
+  return { movieMap, tvMap, showPosterMap }
 }
 
 function getTitleFromVideoId(videoId) {
@@ -132,11 +151,67 @@ function getBitrateKbps(sizeBytes, durationMs) {
   return Math.round((bytes * 8) / seconds / 1000)
 }
 
-function normalizeSession(entry, index, userMap, mediaMaps) {
+// Resolves a downloadable poster URL. Rainmeter's WebParser needs an absolute
+// URL, while older records and the application fallback can be root-relative.
+function resolvePosterUrl(appOrigin, posterURL, posterPath, fallback = '') {
+  const value = posterURL || (posterPath ? `https://image.tmdb.org/t/p/w500${posterPath}` : fallback)
+
+  try {
+    return new URL(value || '/sorry-image-not-available.jpg', appOrigin).toString()
+  } catch {
+    return new URL('/sorry-image-not-available.jpg', appOrigin).toString()
+  }
+}
+
+/**
+ * Builds a human-friendly device descriptor for the <Player> element from the
+ * stored deviceInfo — using the same user-agent the admin activity panel uses for
+ * its device/browser icons — so the widget shows e.g. "Chrome · Desktop" with
+ * platform "Windows" instead of just "desktop".
+ */
+function getDeviceDescriptor(deviceInfo) {
+  const typeLabel = getDeviceTypeLabel(deviceInfo?.type)
+  const userAgent = deviceInfo?.userAgent || ''
+
+  let browser = ''
+  let os = ''
+  if (userAgent) {
+    const detected = detectBrowserType(userAgent)
+    if (detected && detected !== 'unknown') {
+      browser = detected.charAt(0).toUpperCase() + detected.slice(1)
+    }
+    try {
+      os = new UAParser(userAgent).getOS()?.name || ''
+    } catch {
+      os = ''
+    }
+  }
+
+  const hasType = typeLabel && typeLabel !== 'Unknown'
+  const title = browser
+    ? (hasType ? `${browser} · ${typeLabel}` : browser)
+    : (hasType ? typeLabel : (deviceInfo?.type || 'Unknown'))
+
+  return {
+    title,
+    platform: os || (hasType ? typeLabel : (deviceInfo?.type || '')),
+    product: 'NextJS Stream',
+  }
+}
+
+function normalizeSession(entry, index, userMap, mediaMaps, appOrigin) {
   const movie = mediaMaps.movieMap.get(entry.videoId)
   const tv = mediaMaps.tvMap.get(entry.videoId)
   const user = userMap.get(String(entry.userId))
-  const deviceType = entry.deviceInfo?.type || 'unknown'
+  const device = getDeviceDescriptor(entry.deviceInfo)
+  // Player/network fields shared by every session shape below.
+  const player = {
+    playerTitle: device.title,
+    product: device.product,
+    platform: device.platform,
+    address: entry.ipAddress || '',
+    localAddress: entry.localIp || '',
+  }
   const playbackMs = Math.max(0, Math.round((entry.playbackTime || 0) * 1000))
   const state = entry.isPaused ? 'paused' : 'playing'
 
@@ -158,12 +233,11 @@ function normalizeSession(entry, index, userMap, mediaMaps) {
       sizeBytes: Number(movie.size) || 0,
       bitrateKbps: getBitrateKbps(movie.size, movie.duration),
       videoCodec: movie.videoCodec || '',
+      posterUrl: resolvePosterUrl(appOrigin, movie.posterURL, movie.metadata?.poster_path),
       state,
       userName: user?.name || user?.email || 'Unknown User',
       userId: String(entry.userId),
-      playerTitle: deviceType,
-      product: 'NextJS Stream',
-      platform: deviceType,
+      ...player,
       lastUpdated: entry.lastUpdated,
       order: index + 1,
     }
@@ -173,6 +247,7 @@ function normalizeSession(entry, index, userMap, mediaMaps) {
     const episode = tv.episode
     const seasonNumber = entry.seasonNumber || episode.seasonNumber || ''
     const episodeNumber = entry.episodeNumber || episode.episodeNumber || ''
+    const show = mediaMaps.showPosterMap?.get(episode.showTitle)
     return {
       id: `${String(entry._id)}`,
       key: `/metadata/${String(entry._id)}`,
@@ -190,12 +265,18 @@ function normalizeSession(entry, index, userMap, mediaMaps) {
       sizeBytes: Number(episode.size) || 0,
       bitrateKbps: getBitrateKbps(episode.size, episode.duration),
       videoCodec: episode.videoCodec || '',
+      posterUrl: resolvePosterUrl(
+        appOrigin,
+        show?.posterURL,
+        show?.metadata?.poster_path,
+        episode.thumbnail || (episode.metadata?.still_path
+          ? `https://image.tmdb.org/t/p/w500${episode.metadata.still_path}`
+          : '')
+      ),
       state,
       userName: user?.name || user?.email || 'Unknown User',
       userId: String(entry.userId),
-      playerTitle: deviceType,
-      product: 'NextJS Stream',
-      platform: deviceType,
+      ...player,
       lastUpdated: entry.lastUpdated,
       order: index + 1,
     }
@@ -218,12 +299,11 @@ function normalizeSession(entry, index, userMap, mediaMaps) {
     sizeBytes: 0,
     bitrateKbps: 0,
     videoCodec: '',
+    posterUrl: resolvePosterUrl(appOrigin),
     state,
     userName: user?.name || user?.email || 'Unknown User',
     userId: String(entry.userId),
-    playerTitle: deviceType,
-    product: 'NextJS Stream',
-    platform: deviceType,
+    ...player,
     lastUpdated: entry.lastUpdated,
     order: index + 1,
   }
@@ -232,6 +312,7 @@ function normalizeSession(entry, index, userMap, mediaMaps) {
 export async function getActiveMediaSessions(request) {
   const emptyPayload = buildEmptyMediaActivityPayload(request)
   const url = new URL(request.url)
+  const appOrigin = url.origin
   const activeWindowSeconds = clampNumber(
     url.searchParams.get('activeWindowSeconds'),
     DEFAULT_ACTIVE_WINDOW_SECONDS,
@@ -252,7 +333,10 @@ export async function getActiveMediaSessions(request) {
         { isPaused: true, lastUpdated: { $gte: pausedSince } },
       ],
     })
-    .sort({ lastUpdated: -1 })
+    // Keep each stream in its original row while playback heartbeats update
+    // `lastUpdated`. MongoDB `_id` is immutable, so pause/resume cannot reorder
+    // existing streams; newly-created entries are appended chronologically.
+    .sort({ _id: 1 })
     .limit(limit)
     .toArray()
 
@@ -271,7 +355,9 @@ export async function getActiveMediaSessions(request) {
   ])
 
   const userMap = new Map(users.map((user) => [String(user._id), user]))
-  const sessions = entries.map((entry, index) => normalizeSession(entry, index, userMap, mediaMaps))
+  const sessions = entries.map((entry, index) =>
+    normalizeSession(entry, index, userMap, mediaMaps, appOrigin)
+  )
 
   return {
     available: true,
@@ -371,11 +457,22 @@ function buildSessionXml(session) {
     ['year', session.year],
     ['duration', durationMs],
     ['viewOffset', session.playbackMs],
+    ['thumb', session.posterUrl],
+    ['art', session.posterUrl],
   ]
     .map(([key, value]) => `${key}="${xmlEscape(value)}"`)
     .join(' ')
 
-  return `<Video ${attrs}><Media duration="${xmlEscape(durationMs)}" bitrate="${xmlEscape(session.bitrateKbps || 0)}" videoCodec="${xmlEscape(session.videoCodec || '')}" videoResolution="${xmlEscape(session.resolution || 'HD')}" container="mp4" videoDecision="copy" audioDecision="copy"><Part file="${xmlEscape(session.videoId)}" size="${xmlEscape(session.sizeBytes || 0)}" /></Media><User id="${xmlEscape(session.userId)}" title="${xmlEscape(session.userName)}" /><Player title="${xmlEscape(session.playerTitle)}" product="${xmlEscape(session.product)}" platform="${xmlEscape(session.platform)}" address="" state="${xmlEscape(session.state || 'playing')}" /><Session id="${xmlEscape(session.id)}" location="lan" /></Video>`
+  const bitrate = session.bitrateKbps || 0
+  // Direct-play only (mp4, no server-side transcode). The skin maps this via
+  // #VideoDecisions# ("directplay":"Direct Play"). A <Stream> child carries the
+  // bitrate + decision the skin's Stream Bitrate / Media Decision measures expect.
+  const decision = 'directplay'
+
+  // NOTE: attribute ORDER matters — the desktop skin's regexes assume the Plex/Tautulli
+  // layout. <Player address="…"> must lead (its IP measure matches `<Player address="`),
+  // and title must have an attribute before it (its device measure matches `<Player .* title="`).
+  return `<Video ${attrs}><Media duration="${xmlEscape(durationMs)}" bitrate="${xmlEscape(bitrate)}" videoCodec="${xmlEscape(session.videoCodec || '')}" videoResolution="${xmlEscape(session.resolution || 'HD')}" container="mp4" decision="${decision}" videoDecision="${decision}" audioDecision="${decision}"><Part file="${xmlEscape(session.videoId)}" size="${xmlEscape(session.sizeBytes || 0)}" decision="${decision}"><Stream streamType="1" decision="${decision}" codec="${xmlEscape(session.videoCodec || '')}" bitrate="${xmlEscape(bitrate)}" /></Part></Media><User id="${xmlEscape(session.userId)}" title="${xmlEscape(session.userName)}" /><Player address="${xmlEscape(session.address || session.localAddress || '')}" title="${xmlEscape(session.playerTitle)}" product="${xmlEscape(session.product)}" platform="${xmlEscape(session.platform)}" state="${xmlEscape(session.state || 'playing')}" local="1" localAddress="${xmlEscape(session.localAddress || '')}" /><Session id="${xmlEscape(session.id)}" location="lan" /></Video>`
 }
 
 export function xmlResponse(xml, status = 200) {

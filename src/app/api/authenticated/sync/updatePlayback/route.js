@@ -4,10 +4,24 @@ import { upsertPlayback } from '@src/utils/watchHistory/database'
 import { extractPlaybackMetadata } from '@src/utils/watchHistory/metadata'
 import { validatePlaybackEntry } from '@src/utils/watchHistory/validation'
 import { createPlaybackDeviceInfo } from '@src/utils/deviceDetection'
+import { getClientIP } from '@src/utils/rateLimiter'
 import { invalidateUserWatchHistoryCache } from '@src/utils/cache/invalidation'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('API.UpdatePlayback')
+
+// Validate a client-reported IP (IPv4 or IPv6). This value is self-reported by the
+// player (a native app or the browser WebRTC probe), so it's informational only —
+// reject mDNS ".local" hostnames and any non-IP junk before storing.
+function isValidClientIp(value) {
+  if (typeof value !== 'string') return false
+  const ip = value.trim()
+  if (!ip || ip.length > 45) return false
+  if (/[^0-9a-fA-F:.%]/.test(ip)) return false
+  if (/^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(\.(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3}$/.test(ip)) return true
+  if (ip.includes(':') && (ip.match(/:/g) || []).length >= 2) return true
+  return false
+}
 
 export const POST = async (req) => {
   const authResult = await isAuthenticatedAndApproved(req)
@@ -17,7 +31,7 @@ export const POST = async (req) => {
 
   try {
     const body = await req.json()
-    const { videoId, playbackTime, mediaMetadata, isPaused } = body
+    const { videoId, playbackTime, mediaMetadata, isPaused, localIp } = body
 
     // Validate required fields
     if (!videoId || typeof playbackTime !== 'number') {
@@ -33,6 +47,14 @@ export const POST = async (req) => {
     // Capture device information from User-Agent
     const userAgent = req.headers.get('user-agent')
     const deviceInfo = createPlaybackDeviceInfo(userAgent)
+
+    // Capture client IP (proxy-aware). getClientIP returns 'unknown' when no
+    // forwarded-IP header is present — store null in that case rather than a literal.
+    const clientIp = getClientIP(req)
+    const ipAddress = clientIp && clientIp !== 'unknown' ? clientIp : null
+
+    // Optional device-reported local/LAN IP (validated; spoofable, so informational).
+    const reportedLocalIp = isValidClientIp(localIp) ? localIp.trim() : null
 
     // Convert userId string to ObjectId
     const userId = new ObjectId(authResult.id)
@@ -51,6 +73,8 @@ export const POST = async (req) => {
       playbackTime,
       metadata,
       deviceInfo,
+      ipAddress,
+      localIp: reportedLocalIp,
       isPaused: isPaused === true,
     })
 

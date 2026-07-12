@@ -21,6 +21,7 @@ export default function WithPlayBackTracker({
   const pausedRef = useRef(false);
   const updatePlaybackWorkerRef = useRef(null);
   const hasAppliedStartRef = useRef(false);
+  const localIpRef = useRef(null);
   
   // Next.js routing hooks for URL manipulation
   const router = useRouter();
@@ -125,6 +126,43 @@ export default function WithPlayBackTracker({
     };
   }, []);
 
+  // Best-effort local (LAN) IP discovery via WebRTC host ICE candidates. Modern
+  // browsers usually return an mDNS "xxxx.local" hostname instead of a real IP
+  // (privacy), in which case we report nothing; where the real IP is exposed we
+  // capture it and send it with playback updates as a device-reported localIp.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof RTCPeerConnection === 'undefined') return;
+
+    let pc;
+    let cancelled = false;
+    const ipv4 = /((?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3})/;
+    const ipv6 = /((?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F]{1,4})/;
+
+    try {
+      pc = new RTCPeerConnection({ iceServers: [] });
+      pc.createDataChannel('');
+      pc.onicecandidate = (event) => {
+        if (cancelled || !event?.candidate?.candidate) return;
+        const candidate = event.candidate.candidate;
+        if (candidate.includes('.local')) return; // mDNS-obfuscated — unusable
+        const match = candidate.match(ipv4) || candidate.match(ipv6);
+        const ip = match?.[1];
+        if (!ip || ip === '127.0.0.1' || ip === '0.0.0.0') return;
+        localIpRef.current = ip;
+        cancelled = true;
+        try { pc.close(); } catch { /* noop */ }
+      };
+      pc.createOffer().then((offer) => pc.setLocalDescription(offer)).catch(() => {});
+    } catch {
+      // WebRTC unavailable — leave localIp null.
+    }
+
+    return () => {
+      cancelled = true;
+      try { pc?.close(); } catch { /* noop */ }
+    };
+  }, []);
+
   // Subscribe to the media player's current time and throttle updates to the worker.
   useEffect(() => {
     if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
@@ -147,6 +185,7 @@ export default function WithPlayBackTracker({
           currentTime: currentTime,
           mediaMetadata: mediaMetadata,
           isPaused: pausedRef.current,
+          localIp: localIpRef.current,
         });
       } else {
         nextUpdateTimeRef.current = currentTime;
@@ -176,6 +215,7 @@ export default function WithPlayBackTracker({
       currentTime,
       mediaMetadata,
       isPaused: paused === true,
+      localIp: localIpRef.current,
     });
   }, [paused, canPlay, player, videoURL, mediaMetadata]);
 
