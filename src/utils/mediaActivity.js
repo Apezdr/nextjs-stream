@@ -9,6 +9,29 @@ const MAX_ACTIVE_WINDOW_SECONDS = 300
 const DEFAULT_LIMIT = 10
 const LOOKUP_TIMEOUT_MS = 3000
 
+function getShowIdLookupKey(value) {
+  return value ? `id:${String(value)}` : ''
+}
+
+function getShowTitleLookupKey(value) {
+  const normalized = String(value || '').trim().toLowerCase()
+  return normalized ? `title:${normalized}` : ''
+}
+
+function findShowForEpisode(showPosterMap, episode) {
+  const lookupKeys = [
+    getShowIdLookupKey(episode.showId),
+    getShowTitleLookupKey(episode.showTitle),
+    getShowTitleLookupKey(episode.originalTitle),
+  ]
+
+  for (const key of lookupKeys) {
+    if (key && showPosterMap.has(key)) return showPosterMap.get(key)
+  }
+
+  return undefined
+}
+
 function clampNumber(value, fallback, min, max) {
   const parsed = Number.parseInt(value, 10)
   if (Number.isNaN(parsed)) return fallback
@@ -83,6 +106,7 @@ async function getMediaMaps(videoIds, normalizedVideoIds) {
         {
           projection: {
             showTitle: 1,
+            showId: 1,
             originalTitle: 1,
             seasonNumber: 1,
             episodeNumber: 1,
@@ -118,17 +142,49 @@ async function getMediaMaps(videoIds, normalizedVideoIds) {
 
   // Resolve show-level posters for any episodes so the widget can show a proper
   // vertical poster (episodes only carry a horizontal `thumbnail`).
-  const showTitles = [...new Set(episodes.map((episode) => episode.showTitle).filter(Boolean))]
+  const showIds = [...new Map(
+    episodes
+      .filter((episode) => episode.showId)
+      .map((episode) => [String(episode.showId), episode.showId])
+  ).values()]
+  const showTitles = [...new Set(
+    episodes
+      .flatMap((episode) => [episode.showTitle, episode.originalTitle])
+      .filter(Boolean)
+  )]
+  const showFilters = [
+    ...(showIds.length > 0 ? [{ _id: { $in: showIds } }] : []),
+    ...(showTitles.length > 0
+      ? [
+          { title: { $in: showTitles } },
+          { originalTitle: { $in: showTitles } },
+        ]
+      : []),
+  ]
   let showPosterMap = new Map()
-  if (showTitles.length > 0) {
+  if (showFilters.length > 0) {
     const shows = await mediaDb
       .collection('FlatTVShows')
       .find(
-        { title: { $in: showTitles } },
-        { projection: { title: 1, posterURL: 1, metadata: 1 } }
+        { $or: showFilters },
+        {
+          projection: { title: 1, originalTitle: 1, posterURL: 1, metadata: 1 },
+          collation: { locale: 'en', strength: 2 },
+        }
       )
       .toArray()
-    showPosterMap = new Map(shows.map((show) => [show.title, show]))
+    showPosterMap = new Map()
+    for (const show of shows) {
+      const lookupKeys = [
+        getShowIdLookupKey(show._id),
+        getShowTitleLookupKey(show.title),
+        getShowTitleLookupKey(show.originalTitle),
+      ]
+
+      for (const key of lookupKeys) {
+        if (key) showPosterMap.set(key, show)
+      }
+    }
   }
 
   return { movieMap, tvMap, showPosterMap }
@@ -262,13 +318,13 @@ function normalizeSession(entry, index, userMap, mediaMaps, appOrigin) {
     const episode = tv.episode
     const seasonNumber = entry.seasonNumber || episode.seasonNumber || ''
     const episodeNumber = entry.episodeNumber || episode.episodeNumber || ''
-    const show = mediaMaps.showPosterMap?.get(episode.showTitle)
+    const show = findShowForEpisode(mediaMaps.showPosterMap, episode)
     return {
       id: `${String(entry._id)}`,
       key: `/metadata/${String(entry._id)}`,
       type: 'episode',
       title: episode.title || getTitleFromVideoId(entry.videoId),
-      grandparentTitle: episode.showTitle || episode.originalTitle || 'Unknown Show',
+      grandparentTitle: show?.title || episode.showTitle || episode.originalTitle || 'Unknown Show',
       parentTitle: `Season ${seasonNumber}`.trim(),
       seasonNumber,
       episodeNumber,
