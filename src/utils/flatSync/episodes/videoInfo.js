@@ -216,6 +216,21 @@ export async function syncEpisodeVideoInfo(
   
   if (fileServerEpisodeData.size) {
     videoInfo.size = fileServerEpisodeData.size;
+  } else if (fileServerEpisodeData.additionalMetadata?.size != null) {
+    // Size arrives as a {kb, mb, gb} object; convert to bytes to match
+    // the movie path so consumers can treat `size` as bytes everywhere
+    const sz = fileServerEpisodeData.additionalMetadata.size;
+    if (typeof sz === 'number') {
+      videoInfo.size = sz;
+    } else if (typeof sz === 'object') {
+      if (typeof sz.gb === 'number') {
+        videoInfo.size = Math.round(sz.gb * 1024 * 1024 * 1024);
+      } else if (typeof sz.mb === 'number') {
+        videoInfo.size = Math.round(sz.mb * 1024 * 1024);
+      } else if (typeof sz.kb === 'number') {
+        videoInfo.size = Math.round(sz.kb * 1024);
+      }
+    }
   }
 
   // Codec is optional and only present once the file server scanner reports it.

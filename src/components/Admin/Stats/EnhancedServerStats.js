@@ -34,29 +34,64 @@ const EnhancedServerStats = () => {
         )
     }
 
-    const { cpu, memoryUsed, memoryTotal, drives = [] } = data
+    const {
+        cpu,
+        memoryUsed,
+        memoryTotal,
+        drives = [],
+        config: {
+            cpuEnabled    = true,
+            memoryEnabled = true,
+            diskEnabled   = true,
+            // Global fallback thresholds
+            warnThreshold     = 50,
+            criticalThreshold = 80,
+            // Per-metric thresholds (fall back to global when not individually set)
+            cpu:    cpuConfig    = {},
+            memory: memoryConfig = {},
+            disk:   diskConfig   = {},
+        } = {},
+    } = data
     const memoryUsage = ((memoryUsed / memoryTotal) * 100)
+
+    // Resolved per-metric thresholds
+    const cpuWarn        = cpuConfig.warnThreshold     ?? warnThreshold
+    const cpuCrit        = cpuConfig.criticalThreshold ?? criticalThreshold
+    const memoryWarn     = memoryConfig.warnThreshold     ?? warnThreshold
+    const memoryCrit     = memoryConfig.criticalThreshold ?? criticalThreshold
+    const diskWarn       = diskConfig.warnThreshold     ?? warnThreshold
+    const diskCrit       = diskConfig.criticalThreshold ?? criticalThreshold
 
     // Only health drives (non-system mounts) factor into the overall status
     const healthDrives = drives.filter(d => d.isHealthDrive)
     const worstDrive = healthDrives.reduce((w, d) => (d.percent > (w?.percent ?? 0) ? d : w), null)
 
-    // Helper functions for status and colors
-    const getUsageStatus = (percentage) => {
-        if (percentage < 50) return 'success'
-        if (percentage < 80) return 'warning'
-        return 'error'
-    }
+    // Per-metric helpers
+    const getCpuStatus    = (v) => v < cpuWarn    ? 'success' : v < cpuCrit    ? 'warning' : 'error'
+    const getMemoryStatus = (v) => v < memoryWarn ? 'success' : v < memoryCrit ? 'warning' : 'error'
+    const getDiskStatus   = (v) => v < diskWarn   ? 'success' : v < diskCrit   ? 'warning' : 'error'
+    const getCpuColor     = (v) => v < cpuWarn    ? 'bg-emerald-500' : v < cpuCrit    ? 'bg-amber-500' : 'bg-red-500'
+    const getMemoryColor  = (v) => v < memoryWarn ? 'bg-emerald-500' : v < memoryCrit ? 'bg-amber-500' : 'bg-red-500'
+    const getDiskColor    = (v) => v < diskWarn   ? 'bg-emerald-500' : v < diskCrit   ? 'bg-amber-500' : 'bg-red-500'
+    const getCpuLabel     = (v) => v < cpuWarn    ? 'Normal' : v < cpuCrit    ? 'High' : 'Critical'
+    const getMemoryLabel  = (v) => v < memoryWarn ? 'Normal' : v < memoryCrit ? 'High' : 'Critical'
+    const getDiskLabel    = (v) => v < diskWarn   ? 'Normal' : v < diskCrit   ? 'High' : 'Critical'
 
-    const getUsageColor = (percentage) => {
-        if (percentage < 50) return 'bg-emerald-500'
-        if (percentage < 80) return 'bg-amber-500'
-        return 'bg-red-500'
-    }
+    // Collect only the enabled metrics for the overall health summary.
+    // Compare each metric against its own thresholds so the summary reflects
+    // what a human would actually consider "healthy" per metric.
+    const enabledNormalized = [
+        ...(cpuEnabled    ? [cpu        >= cpuCrit    ? 100 : cpu        >= cpuWarn    ? 60 : 0] : []),
+        ...(memoryEnabled ? [memoryUsage >= memoryCrit ? 100 : memoryUsage >= memoryWarn ? 60 : 0] : []),
+        ...(diskEnabled   ? [(worstDrive?.percent ?? 0) >= diskCrit ? 100 : (worstDrive?.percent ?? 0) >= diskWarn ? 60 : 0] : []),
+    ]
+    const worstMetric = enabledNormalized.length > 0 ? Math.max(...enabledNormalized) : 0
+    // worstMetric: 0 = optimal, 60 = moderate, 100 = heavy
 
     return (
         <div className="p-6 space-y-6">
-            {/* CPU Usage */}
+            {/* CPU Usage — hidden when SERVER_LOAD_CPU_ENABLED=false */}
+            {cpuEnabled && (
             <div className="space-y-3">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
@@ -72,29 +107,29 @@ const EnhancedServerStats = () => {
                     </div>
                     <div className="text-right">
                         <div className="text-lg font-bold text-gray-900">{cpu}%</div>
-                        <StatusBadge status={getUsageStatus(cpu)} variant="soft" size="small">
-                            {cpu < 50 ? 'Normal' : cpu < 80 ? 'High' : 'Critical'}
+                        <StatusBadge status={getCpuStatus(cpu)} variant="soft" size="small">
+                            {getCpuLabel(cpu)}
                         </StatusBadge>
                     </div>
                 </div>
-
-                {/* CPU Progress Bar */}
                 <div className="space-y-2">
                     <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                         <div
-                            className={`h-full ${getUsageColor(cpu)} transition-all duration-300 ease-out`}
+                            className={`h-full ${getCpuColor(cpu)} transition-all duration-300 ease-out`}
                             style={{ width: `${cpu}%` }}
                         />
                     </div>
                     <div className="flex justify-between text-xs text-gray-500">
                         <span>0%</span>
-                        <span>50%</span>
+                        <span>{cpuWarn}%</span>
                         <span>100%</span>
                     </div>
                 </div>
             </div>
+            )}
 
-            {/* Memory Usage */}
+            {/* Memory Usage — hidden when SERVER_LOAD_MEMORY_ENABLED=false */}
+            {memoryEnabled && (
             <div className="space-y-3">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-3">
@@ -110,17 +145,15 @@ const EnhancedServerStats = () => {
                     </div>
                     <div className="text-right">
                         <div className="text-lg font-bold text-gray-900">{memoryUsage.toFixed(1)}%</div>
-                        <StatusBadge status={getUsageStatus(memoryUsage)} variant="soft" size="small">
-                            {memoryUsage < 50 ? 'Normal' : memoryUsage < 80 ? 'High' : 'Critical'}
+                        <StatusBadge status={getMemoryStatus(memoryUsage)} variant="soft" size="small">
+                            {getMemoryLabel(memoryUsage)}
                         </StatusBadge>
                     </div>
                 </div>
-
-                {/* Memory Progress Bar */}
                 <div className="space-y-2">
                     <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
                         <div
-                            className={`h-full ${getUsageColor(memoryUsage)} transition-all duration-300 ease-out`}
+                            className={`h-full ${getMemoryColor(memoryUsage)} transition-all duration-300 ease-out`}
                             style={{ width: `${memoryUsage}%` }}
                         />
                     </div>
@@ -130,16 +163,15 @@ const EnhancedServerStats = () => {
                         <span>{memoryTotal} GB</span>
                     </div>
                 </div>
-
-                {/* Memory Details */}
                 <div className="flex justify-between text-xs text-gray-600">
                     <span>Used: {memoryUsed} GB</span>
                     <span>Available: {(memoryTotal - memoryUsed).toFixed(1)} GB</span>
                 </div>
             </div>
+            )}
 
-            {/* Disk Usage */}
-            {drives.length > 0 && (
+            {/* Disk Usage — hidden when SERVER_LOAD_DISK_ENABLED=false */}
+            {diskEnabled && drives.length > 0 && (
                 <div className="space-y-3">
                     <div className="flex items-center space-x-3">
                         <div className="p-2 bg-orange-100 rounded-lg">
@@ -156,7 +188,11 @@ const EnhancedServerStats = () => {
                                     <span className="text-gray-700 font-medium truncate max-w-[60%]">{drive.mountpoint}</span>
                                     <div className="flex items-center gap-2">
                                         <span className="text-gray-500">{drive.avail} GB free</span>
-                                        <StatusBadge status={getUsageStatus(drive.percent)} variant="soft" size="small">
+                                        <StatusBadge
+                                            status={drive.isHealthDrive ? getDiskStatus(drive.percent) : 'success'}
+                                            variant="soft"
+                                            size="small"
+                                        >
                                             {drive.percent}%
                                         </StatusBadge>
                                         {!drive.isHealthDrive && (
@@ -166,7 +202,7 @@ const EnhancedServerStats = () => {
                                 </div>
                                 <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
                                     <div
-                                        className={`h-full ${getUsageColor(drive.isHealthDrive ? drive.percent : Math.min(drive.percent, 49))} transition-all duration-300 ease-out`}
+                                        className={`h-full ${drive.isHealthDrive ? getDiskColor(drive.percent) : 'bg-emerald-500'} transition-all duration-300 ease-out`}
                                         style={{ width: `${drive.percent}%` }}
                                     />
                                 </div>
@@ -176,31 +212,33 @@ const EnhancedServerStats = () => {
                 </div>
             )}
 
-            {/* System Health Summary — only considers health (non-OS) drives */}
+            {/* System Health Summary — only considers enabled metrics */}
+            {enabledNormalized.length > 0 && (
             <div className={`p-4 rounded-lg border ${
-                Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 50 ? 'bg-emerald-50 border-emerald-200' :
-                Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 80 ? 'bg-amber-50 border-amber-200' :
+                worstMetric === 0   ? 'bg-emerald-50 border-emerald-200' :
+                worstMetric < 100   ? 'bg-amber-50 border-amber-200' :
                 'bg-red-50 border-red-200'
             }`}>
                 <div className="flex items-center space-x-2">
                     <svg className={`w-4 h-4 ${
-                        Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 50 ? 'text-emerald-600' :
-                        Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 80 ? 'text-amber-600' :
+                        worstMetric === 0 ? 'text-emerald-600' :
+                        worstMetric < 100 ? 'text-amber-600'  :
                         'text-red-600'
                     }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     <span className={`text-sm font-medium ${
-                        Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 50 ? 'text-emerald-800' :
-                        Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 80 ? 'text-amber-800' :
+                        worstMetric === 0 ? 'text-emerald-800' :
+                        worstMetric < 100 ? 'text-amber-800'  :
                         'text-red-800'
                     }`}>
-                        {Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 50 ? 'System running optimally' :
-                         Math.max(cpu, memoryUsage, worstDrive?.percent ?? 0) < 80 ? 'System under moderate load' :
+                        {worstMetric === 0   ? 'System running optimally' :
+                         worstMetric < 100   ? 'System under moderate load' :
                          'System under heavy load'}
                     </span>
                 </div>
             </div>
+            )}
         </div>
     )
 }

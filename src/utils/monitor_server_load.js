@@ -42,6 +42,43 @@ const DISK_HEALTH_PATHS = process.env.DISK_HEALTH_PATHS
   ? new Set(process.env.DISK_HEALTH_PATHS.split(',').map(p => p.trim()))
   : null;
 
+// ── Per-metric enable/disable flags ─────────────────────────────────────────
+// Set SERVER_LOAD_CPU_ENABLED=false, SERVER_LOAD_MEMORY_ENABLED=false, or
+// SERVER_LOAD_DISK_ENABLED=false to suppress that metric from the API response.
+const CPU_ENABLED    = process.env.SERVER_LOAD_CPU_ENABLED    !== 'false';
+const MEMORY_ENABLED = process.env.SERVER_LOAD_MEMORY_ENABLED !== 'false';
+const DISK_ENABLED   = process.env.SERVER_LOAD_DISK_ENABLED   !== 'false';
+
+// ── Alert thresholds ─────────────────────────────────────────────────────────
+// Percentages at which the admin panel transitions from "normal" → "warning"
+// and "warning" → "critical" colour / badge.
+//
+// Two levels of granularity:
+//   Global (applies to all metrics unless overridden):
+//     SERVER_LOAD_WARN_THRESHOLD     (default 50)
+//     SERVER_LOAD_CRITICAL_THRESHOLD (default 80)
+//
+//   Per-metric overrides (fall back to the global value when not set):
+//     SERVER_LOAD_CPU_WARN_THRESHOLD / SERVER_LOAD_CPU_CRITICAL_THRESHOLD
+//     SERVER_LOAD_MEMORY_WARN_THRESHOLD / SERVER_LOAD_MEMORY_CRITICAL_THRESHOLD
+//     SERVER_LOAD_DISK_WARN_THRESHOLD / SERVER_LOAD_DISK_CRITICAL_THRESHOLD
+function parseThreshold(envVar, defaultValue) {
+  const parsed = parseInt(process.env[envVar], 10);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : defaultValue;
+}
+
+// Global defaults
+const WARN_THRESHOLD     = parseThreshold('SERVER_LOAD_WARN_THRESHOLD',     50);
+const CRITICAL_THRESHOLD = parseThreshold('SERVER_LOAD_CRITICAL_THRESHOLD', 80);
+
+// Per-metric thresholds (fall back to global)
+const CPU_WARN_THRESHOLD        = parseThreshold('SERVER_LOAD_CPU_WARN_THRESHOLD',        WARN_THRESHOLD);
+const CPU_CRITICAL_THRESHOLD    = parseThreshold('SERVER_LOAD_CPU_CRITICAL_THRESHOLD',    CRITICAL_THRESHOLD);
+const MEMORY_WARN_THRESHOLD     = parseThreshold('SERVER_LOAD_MEMORY_WARN_THRESHOLD',     WARN_THRESHOLD);
+const MEMORY_CRITICAL_THRESHOLD = parseThreshold('SERVER_LOAD_MEMORY_CRITICAL_THRESHOLD', CRITICAL_THRESHOLD);
+const DISK_WARN_THRESHOLD       = parseThreshold('SERVER_LOAD_DISK_WARN_THRESHOLD',       WARN_THRESHOLD);
+const DISK_CRITICAL_THRESHOLD   = parseThreshold('SERVER_LOAD_DISK_CRITICAL_THRESHOLD',   CRITICAL_THRESHOLD);
+
 // Function to aggregate CPU times across all cores
 function getCpuTimes() {
   const cpus = os.cpus();
@@ -179,4 +216,31 @@ module.exports = {
    * @returns {Array} Array of drive objects
    */
   getDiskStats: () => diskStats,
+
+  /**
+   * Monitor configuration derived from environment variables.
+   * Passed through the API so the client can apply the same thresholds.
+   * Per-metric thresholds fall back to the global warn/critical values.
+   */
+  monitorConfig: {
+    cpuEnabled:    CPU_ENABLED,
+    memoryEnabled: MEMORY_ENABLED,
+    diskEnabled:   DISK_ENABLED,
+    // Global fallback thresholds
+    warnThreshold:     WARN_THRESHOLD,
+    criticalThreshold: CRITICAL_THRESHOLD,
+    // Per-metric thresholds (equal to global when not individually overridden)
+    cpu: {
+      warnThreshold:     CPU_WARN_THRESHOLD,
+      criticalThreshold: CPU_CRITICAL_THRESHOLD,
+    },
+    memory: {
+      warnThreshold:     MEMORY_WARN_THRESHOLD,
+      criticalThreshold: MEMORY_CRITICAL_THRESHOLD,
+    },
+    disk: {
+      warnThreshold:     DISK_WARN_THRESHOLD,
+      criticalThreshold: DISK_CRITICAL_THRESHOLD,
+    },
+  },
 };
