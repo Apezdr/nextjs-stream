@@ -250,7 +250,8 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
       // Only $unset fields that actually have a value on the existing doc — avoids
       // a pointless write when the caller's candidate list is already cleared.
       const unsetFields = (unset || []).filter(f => (existing as any)[f] !== undefined)
-      if (Object.keys(diff).length === 0 && unsetFields.length === 0) continue  // unchanged — skip write
+      const allUnsetFields = [...unsetFields, ...BaseRepository.manualFieldsToClear(existing, diff)]
+      if (Object.keys(diff).length === 0 && allUnsetFields.length === 0) continue  // unchanged — skip write
 
       const update: Record<string, any> = {
         $set: {
@@ -260,8 +261,8 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
           ...(syncRunId ? { syncRunId } : {})
         }
       }
-      if (unsetFields.length > 0) {
-        update.$unset = Object.fromEntries(unsetFields.map(f => [f, '']))
+      if (allUnsetFields.length > 0) {
+        update.$unset = Object.fromEntries(allUnsetFields.map(f => [f, '']))
       }
 
       operations.push({

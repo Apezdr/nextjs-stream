@@ -147,17 +147,26 @@ Create `.env.local` with required variables:
 
 #### Two Sync Architectures (Current State)
 
-**1. Traditional Flat Sync** (`src/utils/flatSync/`)
-- Production system currently in use
+**1. New Domain-Driven Sync** (`src/utils/sync/domain/`)
+- The live default: `shouldUseNewArchitecture()` (`src/utils/sync/featureFlags.js`)
+  returns `true` unless explicitly forced off, and `USE_NEW_SYNC_ARCHITECTURE=true`
+  on all deployments
+- Modern architecture with TypeScript support
+- Strategy pattern with pluggable sync operations
+- Domain-specific services (MovieSyncService, EpisodeSyncService, etc.)
+- Single write chokepoint per entity (`BaseRepository.smartUpsert` /
+  `EpisodeRepository.smartBulkUpsert` / `SeasonRepository.smartBulkUpsert`),
+  which is where `lockedFields` enforcement (`computeDiff`) and `manualFields`
+  cleanup (`manualFieldsToClear`) live
+
+**2. Traditional Flat Sync** (`src/utils/flatSync/`)
+- Legacy per-field write path; still used as an automatic fallback if the new
+  architecture throws or fails a compatibility check (`flatSync/index.js`)
 - Field-level priority system with `fieldAvailability`
 - Uses `originalTitle` as database keys
 - Granular source tracking per field
-
-**2. New Domain-Driven Sync** (`src/utils/sync/`)
-- Modern architecture with TypeScript support
-- Strategy pattern with pluggable sync operations
-- Built on proven priority system from flat sync
-- Domain-specific services (MovieSyncService, etc.)
+- No single write chokepoint — each field (poster, backdrop, metadata, etc.)
+  issues its own independent `updateOne` per media type
 
 #### Critical Sync Architecture Rules
 

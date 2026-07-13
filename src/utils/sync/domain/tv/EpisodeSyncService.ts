@@ -390,9 +390,26 @@ export class EpisodeSyncService {
       if (fileData?.size != null) {
         entity.size = fileData.size
         hasVideoInfoFields = true
-      } else if (fileData?.additionalMetadata?.size?.kb != null) {
-        entity.size = fileData.additionalMetadata.size.kb
-        hasVideoInfoFields = true
+      } else if (fileData?.additionalMetadata?.size != null) {
+        // Size arrives as a {kb, mb, gb} object; convert to bytes to match
+        // the movie path (MovieContentStrategy) so consumers can treat
+        // `size` as bytes for both media types
+        const sz = fileData.additionalMetadata.size
+        if (typeof sz === 'number') {
+          entity.size = sz
+          hasVideoInfoFields = true
+        } else if (typeof sz === 'object') {
+          if (typeof sz.gb === 'number') {
+            entity.size = Math.round(sz.gb * 1024 * 1024 * 1024)
+            hasVideoInfoFields = true
+          } else if (typeof sz.mb === 'number') {
+            entity.size = Math.round(sz.mb * 1024 * 1024)
+            hasVideoInfoFields = true
+          } else if (typeof sz.kb === 'number') {
+            entity.size = Math.round(sz.kb * 1024)
+            hasVideoInfoFields = true
+          }
+        }
       }
       if (fileData?.mediaQuality) {
         entity.mediaQuality = fileData.mediaQuality

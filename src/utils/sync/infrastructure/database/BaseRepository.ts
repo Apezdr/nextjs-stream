@@ -242,6 +242,24 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
   }
 
   /**
+   * `manualFields` (set by the admin editor, see flatMediaActions.js) is purely
+   * informational — it does not gate sync writes, `lockedFields` does. But once
+   * a field in `diff` is actually about to be overwritten, the field is no
+   * longer human-owned, so its manual flag would be stale if left in place.
+   * Returns the `manualFields.<key>` dot-paths to $unset alongside the diff.
+   */
+  protected static manualFieldsToClear<T extends Record<string, any>>(
+    existing: T,
+    diff: Partial<T>
+  ): string[] {
+    const manualFields = (existing as any)?.manualFields
+    if (!manualFields || typeof manualFields !== 'object') return []
+    return Object.keys(diff)
+      .filter((key) => manualFields[key] === true)
+      .map((key) => `manualFields.${key}`)
+  }
+
+  /**
    * Write-optimal single-document upsert.
    *
    * - New document (existing=null): $setOnInsert so concurrent syncs
@@ -298,7 +316,8 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
       const diff = BaseRepository.computeDiff(existing, entity)
       // Only $unset fields that actually have a value on the existing doc.
       const unsetFields = (options?.unset || []).filter(f => (existing as any)[f] !== undefined)
-      if (Object.keys(diff).length === 0 && unsetFields.length === 0) return  // Nothing changed — skip write
+      const allUnsetFields = [...unsetFields, ...BaseRepository.manualFieldsToClear(existing, diff)]
+      if (Object.keys(diff).length === 0 && allUnsetFields.length === 0) return  // Nothing changed — skip write
 
       const update: Record<string, any> = {
         $set: {
@@ -308,8 +327,8 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
           ...(syncRunId ? { syncRunId } : {})
         }
       }
-      if (unsetFields.length > 0) {
-        update.$unset = Object.fromEntries(unsetFields.map(f => [f, '']))
+      if (allUnsetFields.length > 0) {
+        update.$unset = Object.fromEntries(allUnsetFields.map(f => [f, '']))
       }
 
       await this.collection.updateOne(

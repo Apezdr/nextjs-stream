@@ -51,3 +51,7 @@ cline_docs*/
 
 # AI Docs
 docs/
+
+# Local Rainmeter widget configs — contain a media-activity token; never commit
+Media Activity Monitoring - Squared.ini
+Media Activity Monitoring - Squared.LOCAL.ini

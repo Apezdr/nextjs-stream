@@ -38,11 +38,27 @@ export function detectDeviceType(userAgent) {
   const ua = userAgent.toLowerCase()
 
   // TV/Smart TV Detection (highest priority)
-  // Custom NextJS Stream TV App detection (most reliable)
+  // Custom NextJS Stream App detection (most reliable) — the app ships on both
+  // TV and mobile under the same "NextJSStreamTVApp" UA prefix, embedding its
+  // own real form factor as "NextJSStreamTVApp/<version> (<platform>; <formFactor>; <model>)",
+  // e.g. "(android; mobile; samsung SM-S918U)" for phones vs "(android; tv; ...)" for TVs.
+  // Trust that embedded form factor instead of assuming every NextJSStreamTVApp
+  // UA is a TV — a phone/tablet build otherwise gets misclassified as 'tv'.
   if (ua.includes('nextjsstreamtvapp')) {
-    return 'tv'
+    const formFactorMatch = ua.match(/nextjsstreamtvapp\/[^\s(]*\s*\(([^)]*)\)/)
+    const formFactor = formFactorMatch ? formFactorMatch[1].split(';')[1]?.trim() : null
+    if (formFactor === 'tv') return 'tv'
+    if (formFactor === 'tablet') return 'tablet'
+    if (formFactor === 'mobile') return 'mobile'
+    if (formFactor === 'desktop') return 'desktop'
+    // Unrecognized/missing form-factor segment — deliberately don't fall
+    // through to the generic heuristics below: "nextjsstreamtvapp" itself
+    // contains the substring "tv" (from "tvapp"), and the model segment can
+    // contain a manufacturer name (e.g. "samsung"), so those heuristics
+    // (written for third-party UAs) could spuriously re-match 'tv' here.
+    return null
   }
-  
+
   // Common TV User-Agent patterns
   if (
     ua.includes('smart-tv') ||
@@ -68,9 +84,12 @@ export function detectDeviceType(userAgent) {
   }
 
   // Mobile Detection (second priority)
-  // Mobile patterns - be careful not to catch tablets
+  // Mobile patterns - be careful not to catch tablets. iPad Safari UAs
+  // include "Mobile/15E148" without the word "tablet", so exclude 'ipad'
+  // explicitly too or they'd be caught here before the tablet check below
+  // ever gets a chance to look for it.
   if (
-    (ua.includes('mobile') && !ua.includes('tablet')) ||
+    (ua.includes('mobile') && !ua.includes('tablet') && !ua.includes('ipad')) ||
     (ua.includes('android') && ua.includes('mobile')) ||
     ua.includes('iphone') ||
     ua.includes('ipod') ||
@@ -326,7 +345,7 @@ export function testDeviceDetection(testCases) {
  */
 export function getDefaultTestCases() {
   return [
-    // NextJS Stream TV App (custom)
+    // NextJS Stream TV App (custom) — the same app UA prefix ships on TV and mobile
     {
       userAgent: 'NextJSStreamTVApp/1.0.0 (android; tv; Samsung UN65RU7100)',
       expected: 'tv'
@@ -334,6 +353,16 @@ export function getDefaultTestCases() {
     {
       userAgent: 'NextJSStreamTVApp/1.0.0 (android; tv; LG OLED55C1PUB)',
       expected: 'tv'
+    },
+    {
+      // Regression case: a phone build must not be classified as 'tv' just
+      // because it shares the NextJSStreamTVApp UA prefix.
+      userAgent: 'NextJSStreamTVApp/1.0.0 (android; mobile; samsung SM-S918U)',
+      expected: 'mobile'
+    },
+    {
+      userAgent: 'NextJSStreamTVApp/1.0.0 (android; tablet; samsung SM-X910)',
+      expected: 'tablet'
     },
     // Legacy TV User-Agent
     {

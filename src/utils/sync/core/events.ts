@@ -142,7 +142,8 @@ export class SyncEventBus {
     entityId: string,
     mediaType: MediaType,
     serverId: string,
-    operation?: SyncOperation
+    operation?: SyncOperation,
+    data?: any
   ): void {
     this.emit({
       type: SyncEventType.Started,
@@ -150,7 +151,8 @@ export class SyncEventBus {
       mediaType,
       operation,
       serverId,
-      timestamp: new Date()
+      timestamp: new Date(),
+      data
     })
   }
 

@@ -22,6 +22,8 @@ const log = createLogger('WatchHistory.Database')
  * @param {number} options.playbackTime - Current playback position
  * @param {Object} options.metadata - Media metadata (type, id, season, episode, etc)
  * @param {Object} options.deviceInfo - Device information from User-Agent
+ * @param {string} [options.ipAddress] - Server-observed client IP (proxy-aware)
+ * @param {string} [options.localIp] - Optional device-reported local/LAN IP
  * @returns {Promise<Object>} Updated document
  */
 export async function upsertPlayback({
@@ -29,7 +31,10 @@ export async function upsertPlayback({
   videoId,
   playbackTime,
   metadata = {},
-  deviceInfo = null
+  deviceInfo = null,
+  ipAddress = null,
+  localIp = null,
+  isPaused = false
 }) {
   try {
     const client = await clientPromise
@@ -45,9 +50,12 @@ export async function upsertPlayback({
         $set: {
           videoId,
           playbackTime,
+          isPaused: isPaused === true,
           lastUpdated: new Date(),
           ...metadata,
-          ...(deviceInfo && { deviceInfo })
+          ...(deviceInfo && { deviceInfo }),
+          ...(ipAddress && { ipAddress }),
+          ...(localIp && { localIp })
         }
       },
       { upsert: true }

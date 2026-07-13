@@ -5,6 +5,31 @@ import { useMediaPlayer, useMediaRemote, useMediaState } from '@vidstack/react';
 import throttle from 'lodash/throttle';
 import { useRouter, usePathname } from 'next/navigation';
 
+// Presence ping cadence while paused and foregrounded. Coarser than the 1s
+// playing heartbeat on purpose — see plans/media-activity-presence.md.
+const PAUSED_HEARTBEAT_INTERVAL_MS = 3 * 60 * 1000;
+
+const PRESENCE_END_URL = '/api/authenticated/sync/presence/end';
+
+function generateSessionId() {
+  // crypto.randomUUID requires a secure context; this app can run over
+  // plain HTTP on a LAN, so fall back rather than ever leaving this null.
+  // getRandomValues works in insecure contexts too, so every browser path
+  // gets a cryptographically random id.
+  if (typeof crypto !== 'undefined') {
+    if (typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+    if (typeof crypto.getRandomValues === 'function') {
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+  }
+  // Only reachable outside a browser (SSR prerender); the ref re-initializes
+  // on the client, so this value is never sent anywhere.
+  return `ssr-${Date.now()}`;
+}
+
 export default function WithPlayBackTracker({
   videoURL,
   start = null,
@@ -13,12 +38,19 @@ export default function WithPlayBackTracker({
 }) {
   const player = useMediaPlayer();
   const canPlay = useMediaState('canPlay');
+  const paused = useMediaState('paused');
   const remote = useMediaRemote();
   const [lastTimeSent, setLastTimeSent] = useState(0);
   const isFetchingRef = useRef(false);
   const nextUpdateTimeRef = useRef(null);
+  const pausedRef = useRef(false);
   const updatePlaybackWorkerRef = useRef(null);
   const hasAppliedStartRef = useRef(false);
+  const localIpRef = useRef(null);
+  const sessionIdRef = useRef(null);
+  if (sessionIdRef.current === null) {
+    sessionIdRef.current = generateSessionId();
+  }
   
   // Next.js routing hooks for URL manipulation
   const router = useRouter();
@@ -123,6 +155,43 @@ export default function WithPlayBackTracker({
     };
   }, []);
 
+  // Best-effort local (LAN) IP discovery via WebRTC host ICE candidates. Modern
+  // browsers usually return an mDNS "xxxx.local" hostname instead of a real IP
+  // (privacy), in which case we report nothing; where the real IP is exposed we
+  // capture it and send it with playback updates as a device-reported localIp.
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof RTCPeerConnection === 'undefined') return;
+
+    let pc;
+    let cancelled = false;
+    const ipv4 = /((?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)(?:\.(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)){3})/;
+    const ipv6 = /((?:[0-9a-fA-F]{1,4}:){2,}[0-9a-fA-F]{1,4})/;
+
+    try {
+      pc = new RTCPeerConnection({ iceServers: [] });
+      pc.createDataChannel('');
+      pc.onicecandidate = (event) => {
+        if (cancelled || !event?.candidate?.candidate) return;
+        const candidate = event.candidate.candidate;
+        if (candidate.includes('.local')) return; // mDNS-obfuscated — unusable
+        const match = candidate.match(ipv4) || candidate.match(ipv6);
+        const ip = match?.[1];
+        if (!ip || ip === '127.0.0.1' || ip === '0.0.0.0') return;
+        localIpRef.current = ip;
+        cancelled = true;
+        try { pc.close(); } catch { /* noop */ }
+      };
+      pc.createOffer().then((offer) => pc.setLocalDescription(offer)).catch(() => {});
+    } catch {
+      // WebRTC unavailable — leave localIp null.
+    }
+
+    return () => {
+      cancelled = true;
+      try { pc?.close(); } catch { /* noop */ }
+    };
+  }, []);
+
   // Subscribe to the media player's current time and throttle updates to the worker.
   useEffect(() => {
     if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
@@ -144,6 +213,9 @@ export default function WithPlayBackTracker({
           videoURL: videoURL,
           currentTime: currentTime,
           mediaMetadata: mediaMetadata,
+          isPaused: pausedRef.current,
+          localIp: localIpRef.current,
+          sessionId: sessionIdRef.current,
         });
       } else {
         nextUpdateTimeRef.current = currentTime;
@@ -160,6 +232,81 @@ export default function WithPlayBackTracker({
       throttledUpdateServer.cancel();
     };
   }, [player, videoURL, canPlay, mediaMetadata]);
+
+  // Send a heartbeat whenever the paused state changes so the live activity
+  // view keeps showing the session (as paused) instead of dropping it.
+  useEffect(() => {
+    pausedRef.current = paused === true;
+    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
+    const currentTime = player.state?.currentTime || 0;
+    if (currentTime <= 0) return;
+    updatePlaybackWorkerRef.current.postMessage({
+      videoURL,
+      currentTime,
+      mediaMetadata,
+      isPaused: paused === true,
+      localIp: localIpRef.current,
+      sessionId: sessionIdRef.current,
+    });
+  }, [paused, canPlay, player, videoURL, mediaMetadata]);
+
+  // Keep presence alive at a low frequency while paused and foregrounded.
+  // The currentTime-driven heartbeat stops when playback pauses.
+  useEffect(() => {
+    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
+
+    const interval = setInterval(() => {
+      if (!pausedRef.current) return;
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      const currentTime = player.state?.currentTime || 0;
+      if (currentTime <= 0) return;
+      updatePlaybackWorkerRef.current.postMessage({
+        videoURL,
+        currentTime,
+        mediaMetadata,
+        isPaused: true,
+        localIp: localIpRef.current,
+        sessionId: sessionIdRef.current,
+      });
+    }, PAUSED_HEARTBEAT_INTERVAL_MS);
+
+    return () => clearInterval(interval);
+  }, [canPlay, player, videoURL, mediaMetadata]);
+
+  // Best-effort explicit "stopped watching" signal. keepalive lets the
+  // request survive page unload; the server-side presence window is fallback.
+  useEffect(() => {
+    const endPresence = () => {
+      const sessionId = sessionIdRef.current;
+      if (!sessionId) return;
+      try {
+        fetch(PRESENCE_END_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch {
+        // Best-effort — the server-side presence window is the backstop.
+      }
+    };
+
+    const handlePageHide = () => endPresence();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && pausedRef.current) {
+        endPresence();
+      }
+    };
+
+    window.addEventListener('pagehide', handlePageHide);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      window.removeEventListener('pagehide', handlePageHide);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      endPresence();
+    };
+  }, []);
 
   return null;
 }

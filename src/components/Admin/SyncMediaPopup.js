@@ -1,7 +1,7 @@
 'use client'
 
 import { Dialog, Transition } from '@headlessui/react'
-import { Fragment, useEffect, useReducer, useRef, useState, useDeferredValue, useTransition } from 'react'
+import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useDeferredValue, useTransition } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import useSWR from 'swr'
 import { classNames } from '@src/utils'
@@ -297,6 +297,12 @@ export default function SyncMediaPopup({
   const deferredCounts = useDeferredValue(progressCounts)
 
   const [serverStates, setServerStates] = useState({})
+  // Total entities to process across all servers — drives the determinate
+  // progress bar and the "processed / total" label.
+  const syncTotal = useMemo(
+    () => Object.values(serverStates).reduce((sum, s) => sum + (s.total || 0), 0),
+    [serverStates]
+  )
   // When autoConnect=true the popup was opened from the Active Processes "View Info"
   // button — we know a sync is already running, so start in connecting state immediately.
   const [isConnecting, setIsConnecting] = useState(() => autoConnect)
@@ -352,9 +358,10 @@ export default function SyncMediaPopup({
 
         if (payload.entityId === '__server_start__') {
           const sid = payload.serverId
+          const serverTotal = payload.data?.total ?? 0
           setServerStates(prev => ({
             ...prev,
-            [sid]: { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, errorCount: 0, errors: [] },
+            [sid]: { id: sid, status: 'syncing', currentEntity: null, currentOperation: null, processed: 0, total: serverTotal, errorCount: 0, errors: [] },
           }))
           return
         }
@@ -645,14 +652,21 @@ export default function SyncMediaPopup({
                               <div className="flex justify-between text-xs text-gray-500 mb-1">
                                 <span>Syncing…</span>
                                 <span>
-                                  {deferredCounts.processed} processed
+                                  {deferredCounts.processed}{syncTotal > 0 ? `/${syncTotal}` : ''} processed
                                   {deferredCounts.errors > 0 ? (
                                     <span className="text-red-500 ml-2">{deferredCounts.errors} errors</span>
                                   ) : null}
                                 </span>
                               </div>
                               <div className="w-full bg-gray-200 rounded-full h-1 overflow-hidden mb-3">
-                                <div className="h-1 bg-blue-500 rounded-full animate-pulse w-full" />
+                                {syncTotal > 0 ? (
+                                  <div
+                                    className="h-1 bg-blue-500 rounded-full transition-all duration-300"
+                                    style={{ width: `${Math.min(100, Math.round((deferredCounts.processed / syncTotal) * 100))}%` }}
+                                  />
+                                ) : (
+                                  <div className="h-1 bg-blue-500 rounded-full animate-pulse w-full" />
+                                )}
                               </div>
 
                               <div className="space-y-2">
@@ -865,22 +879,26 @@ export default function SyncMediaPopup({
                     className={classNames(
                       isSyncing
                         ? 'bg-gray-400 hover:bg-gray-700 focus:ring-gray-500 cursor-not-allowed'
-                        : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
+                        : isComplete
+                          ? 'bg-green-600 hover:bg-green-700 focus:ring-green-500'
+                          : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
                       'w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2  text-base font-medium text-white focus:outline-none focus:ring-2 focus:ring-offset-2 sm:ml-3 sm:w-auto sm:text-sm'
                     )}
-                    onClick={handleSyncClick}
+                    onClick={isComplete ? () => setIsOpen(false) : handleSyncClick}
                     disabled={isSyncing}
                   >
-                    {isComplete ? 'Sync Complete' : isSyncing ? 'Syncing...' : 'Sync'}
+                    {isComplete ? 'Done' : isSyncing ? 'Syncing...' : 'Sync'}
                   </button>
-                  <button
-                    type="button"
-                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:w-auto sm:text-sm"
-                    onClick={() => setIsOpen(false)}
-                    ref={cancelButtonRef}
-                  >
-                    Cancel
-                  </button>
+                  {!isComplete ? (
+                    <button
+                      type="button"
+                      className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 sm:mt-0 sm:w-auto sm:text-sm"
+                      onClick={() => setIsOpen(false)}
+                      ref={cancelButtonRef}
+                    >
+                      Cancel
+                    </button>
+                  ) : null}
                 </div>
               </Dialog.Panel>
             </Transition.Child>
