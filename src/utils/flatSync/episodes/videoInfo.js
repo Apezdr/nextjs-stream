@@ -2,9 +2,60 @@
  * TV episode video info sync utilities for flat structure
  */
 
-import { createLogger, logError } from '@src/lib/logger'
-import { filterLockedFields, isCurrentServerHighestPriorityForField, findEpisodeFileName } from '../../sync/utils';
+import { createLogger } from '@src/lib/logger'
+import {
+  filterLockedFields,
+  isCurrentServerHighestPriorityForReportedField,
+  isCurrentServerHighestPriorityForReportedFieldGroup,
+  findEpisodeFileName,
+} from '../../sync/utils';
+import { EPISODE_SIZE_FIELD_SUFFIXES, resolveEpisodeSize } from '../../sync/episodeSize';
 import { isEqual } from 'lodash';
+
+const log = createLogger('FlatSync.Episodes.VideoInfo');
+
+function collectLeafPaths(value, path) {
+  if (Array.isArray(value)) {
+    return value.flatMap((item, index) => {
+      if (!item || typeof item !== 'object') return [];
+      const identifier = item.codec || item.name || item.id || index;
+      return collectLeafPaths(item, `${path}.${identifier}`);
+    });
+  }
+
+  if (value && typeof value === 'object') {
+    return Object.entries(value).flatMap(([key, child]) =>
+      collectLeafPaths(child, `${path}.${key}`)
+    );
+  }
+
+  return value === undefined || value === null ? [] : [path];
+}
+
+function canUpdateReportedField(fieldAvailability, originalTitle, fieldPath, serverConfig) {
+  return isCurrentServerHighestPriorityForReportedField(
+    fieldAvailability,
+    'tv',
+    originalTitle,
+    fieldPath,
+    serverConfig
+  );
+}
+
+function canUpdateReportedFieldGroup(
+  fieldAvailability,
+  originalTitle,
+  fieldPaths,
+  serverConfig
+) {
+  return isCurrentServerHighestPriorityForReportedFieldGroup(
+    fieldAvailability,
+    'tv',
+    originalTitle,
+    fieldPaths,
+    serverConfig
+  );
+}
 
 /**
  * Checks if the video info fields in the file server data have the highest priority
@@ -26,34 +77,56 @@ export function hasHighestPriorityForAnyVideoInfoField(
   seasonNumber,
   serverConfig
 ) {
-  // Define all the video info fields to check
-  const videoInfoFields = [
-    `seasons.Season ${seasonNumber}.dimensions.${episodeFileName}`,
-    `seasons.Season ${seasonNumber}.lengths.${episodeFileName}`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.hdr`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.additionalMetadata.size.kb`, // Size in KB
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.format`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.codec`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.bitDepth`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.colorSpace`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.transferCharacteristics`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.isHDR`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.enhancedColor`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.highDynamicRange`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.dolbyVision`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.hdr10Plus`,
-    `seasons.Season ${seasonNumber}.episodes.${episodeFileName}.mediaQuality.viewingExperience.standardHDR`
-  ];
-  
-  // Check if any field has the highest priority
-  return videoInfoFields.some(field => 
-    isCurrentServerHighestPriorityForField(
+  const seasonPrefix = `seasons.Season ${seasonNumber}`;
+  const episodePrefix = `${seasonPrefix}.episodes.${episodeFileName}`;
+  const videoInfoFields = [];
+
+  if (fileServerSeasonData.dimensions?.[episodeFileName] != null) {
+    videoInfoFields.push(`${seasonPrefix}.dimensions.${episodeFileName}`);
+  }
+  if (fileServerSeasonData.lengths?.[episodeFileName] != null) {
+    videoInfoFields.push(`${seasonPrefix}.lengths.${episodeFileName}`);
+  }
+  if (fileServerEpisodeData.hdr !== undefined && fileServerEpisodeData.hdr !== null) {
+    videoInfoFields.push(`${episodePrefix}.hdr`);
+  }
+
+  const size = resolveEpisodeSize(fileServerEpisodeData);
+  if (size) {
+    const reportedSizePath = `${episodePrefix}.${size.fieldSuffix}`;
+    const sizePaths = EPISODE_SIZE_FIELD_SUFFIXES.map(
+      suffix => `${episodePrefix}.${suffix}`
+    );
+    if (
+      canUpdateReportedField(
+        fieldAvailability,
+        originalTitle,
+        reportedSizePath,
+        serverConfig
+      ) && canUpdateReportedFieldGroup(
       fieldAvailability,
-      'tv',
       originalTitle,
-      field,
+      sizePaths,
       serverConfig
-    )
+      )
+    ) return true;
+  }
+
+  if (fileServerEpisodeData.mediaQuality) {
+    videoInfoFields.push(...collectLeafPaths(
+      fileServerEpisodeData.mediaQuality,
+      `${episodePrefix}.mediaQuality`
+    ));
+  }
+  if (fileServerEpisodeData.videoCodec && !fileServerEpisodeData.mediaQuality?.codec) {
+    videoInfoFields.push(`${episodePrefix}.videoCodec`);
+  }
+  if (fileServerEpisodeData.mediaLastModified) {
+    videoInfoFields.push(`${episodePrefix}.mediaLastModified`);
+  }
+
+  return videoInfoFields.some(field =>
+    canUpdateReportedField(fieldAvailability, originalTitle, field, serverConfig)
   );
 }
 
@@ -65,11 +138,6 @@ export function hasHighestPriorityForAnyVideoInfoField(
  * @returns {boolean} Whether an update is needed
  */
 export function needsVideoInfoUpdate(flatEpisode, videoInfo, serverId) {
-  // If the source server has changed, we need to update
-  if (flatEpisode.videoInfoSource !== serverId) {
-    return true;
-  }
-
   // Track any detected changes for logging
   const changes = [];
   
@@ -119,9 +187,7 @@ export function needsVideoInfoUpdate(flatEpisode, videoInfo, serverId) {
   // Log which fields triggered the update (uncomment for debugging)
   if (needsUpdate && changes.length > 0) {
     log.debug({
-      showTitle: episode.showTitle,
-      seasonNumber: episode.seasonNumber,
-      episodeNumber: episode.episodeNumber,
+      serverId,
       changes
     }, 'Episode video info requires update due to changed fields');
   }
@@ -155,7 +221,6 @@ export async function syncEpisodeVideoInfo(
   serverConfig,
   fieldAvailability
 ) {
-  const log = createLogger('FlatSync.Episodes.VideoInfo');
   // ex. `S01E01`
   const episodeFileName = findEpisodeFileName(
     Object.keys(fileServerSeasonData.episodes || {}),
@@ -174,7 +239,17 @@ export async function syncEpisodeVideoInfo(
   }
   
   const fileServerEpisodeData = fileServerSeasonData.episodes[episodeFileName];
-  if (!fileServerEpisodeData || (!fileServerEpisodeData.mediaQuality && !fileServerEpisodeData.mediaLastModified && !fileServerEpisodeData.additionalMetadata)) return null;
+  const hasEpisodeVideoInfo = Boolean(
+    fileServerEpisodeData?.mediaQuality ||
+    fileServerEpisodeData?.mediaLastModified ||
+    fileServerEpisodeData?.additionalMetadata ||
+    fileServerEpisodeData?.size != null ||
+    fileServerEpisodeData?.hdr != null ||
+    fileServerEpisodeData?.videoCodec ||
+    fileServerSeasonData.dimensions?.[episodeFileName] != null ||
+    fileServerSeasonData.lengths?.[episodeFileName] != null
+  );
+  if (!fileServerEpisodeData || !hasEpisodeVideoInfo) return null;
   
   const showTitle = show.title;
   const originalTitle = show.originalTitle;
@@ -193,55 +268,83 @@ export async function syncEpisodeVideoInfo(
   if (!hasHighestPriority) return null;
   
   // Extract video info
-  const videoInfo = {
-    videoInfoSource: serverConfig.id
-  };
+  const videoInfo = {};
+  const seasonPrefix = `seasons.Season ${season.seasonNumber}`;
+  const episodePrefix = `${seasonPrefix}.episodes.${episodeFileName}`;
+  const canUpdate = (fieldPath) =>
+    canUpdateReportedField(fieldAvailability, originalTitle, fieldPath, serverConfig);
   
-  // Only copy specific video quality fields
+  // `mediaQuality` is stored as one object. Only replace it when this server
+  // owns every leaf it reported, preventing a lower-priority leaf from being
+  // smuggled in by an otherwise-authoritative sibling field.
   if (fileServerEpisodeData.mediaQuality) {
-    videoInfo.mediaQuality = fileServerEpisodeData.mediaQuality;
+    const mediaQualityPaths = collectLeafPaths(
+      fileServerEpisodeData.mediaQuality,
+      `${episodePrefix}.mediaQuality`
+    );
+    if (mediaQualityPaths.length > 0 && mediaQualityPaths.every(canUpdate)) {
+      videoInfo.mediaQuality = fileServerEpisodeData.mediaQuality;
+    }
   }
   
-  if (fileServerEpisodeData.hdr !== undefined && fileServerEpisodeData.hdr !== null) {
+  if (
+    fileServerEpisodeData.hdr !== undefined &&
+    fileServerEpisodeData.hdr !== null &&
+    canUpdate(`${episodePrefix}.hdr`)
+  ) {
     videoInfo.hdr = fileServerEpisodeData.hdr;
   }
   
-  if (fileServerSeasonData.dimensions?.[episodeFileName]) {
+  if (
+    fileServerSeasonData.dimensions?.[episodeFileName] &&
+    canUpdate(`${seasonPrefix}.dimensions.${episodeFileName}`)
+  ) {
     videoInfo.dimensions = fileServerSeasonData.dimensions[episodeFileName];
   }
 
-  if (fileServerSeasonData.lengths?.[episodeFileName]) {
+  if (
+    fileServerSeasonData.lengths?.[episodeFileName] != null &&
+    canUpdate(`${seasonPrefix}.lengths.${episodeFileName}`)
+  ) {
     videoInfo.duration = fileServerSeasonData.lengths[episodeFileName];
   }
   
-  if (fileServerEpisodeData.size) {
-    videoInfo.size = fileServerEpisodeData.size;
-  } else if (fileServerEpisodeData.additionalMetadata?.size != null) {
-    // Size arrives as a {kb, mb, gb} object; convert to bytes to match
-    // the movie path so consumers can treat `size` as bytes everywhere
-    const sz = fileServerEpisodeData.additionalMetadata.size;
-    if (typeof sz === 'number') {
-      videoInfo.size = sz;
-    } else if (typeof sz === 'object') {
-      if (typeof sz.gb === 'number') {
-        videoInfo.size = Math.round(sz.gb * 1024 * 1024 * 1024);
-      } else if (typeof sz.mb === 'number') {
-        videoInfo.size = Math.round(sz.mb * 1024 * 1024);
-      } else if (typeof sz.kb === 'number') {
-        videoInfo.size = Math.round(sz.kb * 1024);
-      }
-    }
+  const size = resolveEpisodeSize(fileServerEpisodeData);
+  const sizePaths = EPISODE_SIZE_FIELD_SUFFIXES.map(
+    suffix => `${episodePrefix}.${suffix}`
+  );
+  if (
+    size &&
+    canUpdate(`${episodePrefix}.${size.fieldSuffix}`) &&
+    canUpdateReportedFieldGroup(
+      fieldAvailability,
+      originalTitle,
+      sizePaths,
+      serverConfig
+    )
+  ) {
+    videoInfo.size = size.bytes;
   }
 
   // Codec is optional and only present once the file server scanner reports it.
   const episodeCodec = fileServerEpisodeData.mediaQuality?.codec || fileServerEpisodeData.videoCodec;
-  if (episodeCodec) {
+  const codecPath = fileServerEpisodeData.mediaQuality?.codec
+    ? `${episodePrefix}.mediaQuality.codec`
+    : `${episodePrefix}.videoCodec`;
+  if (episodeCodec && canUpdate(codecPath)) {
     videoInfo.videoCodec = episodeCodec;
   }
 
-  if (fileServerEpisodeData.mediaLastModified) {
+  if (
+    fileServerEpisodeData.mediaLastModified &&
+    canUpdate(`${episodePrefix}.mediaLastModified`)
+  ) {
     videoInfo.mediaLastModified = new Date(fileServerEpisodeData.mediaLastModified);
   }
+
+  if (Object.keys(videoInfo).length === 0) return null;
+  const containsVideoInfo = Object.keys(videoInfo).some((field) => field !== 'size');
+  if (containsVideoInfo) videoInfo.videoInfoSource = serverConfig.id;
   
   // Check if we need to update
   if (!needsVideoInfoUpdate(flatEpisode, videoInfo, serverConfig.id)) {

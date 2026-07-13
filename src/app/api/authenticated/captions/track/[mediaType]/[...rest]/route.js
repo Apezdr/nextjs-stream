@@ -1,6 +1,6 @@
 import clientPromise from '@src/lib/mongodb'
 import { httpGet } from '@src/lib/httpHelper'
-import { getServer, getWebhookIdForServer } from '@src/utils/config'
+import { getServerIfConfigured, getWebhookIdForServer } from '@src/utils/config'
 import { getSession } from '@src/lib/cachedAuth'
 import { srtToVtt } from '@src/lib/captions/srtToVtt'
 import { checkAndRecordTrigger } from '@src/lib/captions/rateLimit'
@@ -30,7 +30,7 @@ export const GET = async (req, props) => {
   if (!lookup) return jsonError(404, 'Media not found')
 
   const { entry, serverId } = lookup
-  const serverConfig = serverId ? getServer(serverId) : null
+  const serverConfig = serverId ? getServerIfConfigured(serverId) : null
   if (!serverConfig?.syncEndpoint) return jsonError(503, 'No processor server resolved for this media')
 
   if (entry && entry.url && !entry.pending) {
@@ -140,7 +140,7 @@ async function resolveAutoCaptionContext({ mediaType, originalTitle, lang, seaso
   if (!ep) return null
 
   const entry = findAutoCaptionEntry(ep.captionURLs, lang)
-  const serverId = entry?.sourceServerId || ep.videoSource || show.videoSource || null
+  const serverId = entry?.sourceServerId || ep.videoSource || null
   return { entry, serverId }
 }
 

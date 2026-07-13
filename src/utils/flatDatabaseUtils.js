@@ -470,6 +470,8 @@ export async function addCustomUrlToFlatMedia(mediaArray, type, preserveAddition
         ...(preserveAdditionalFields &&
           type === 'movie' && {
             videoURL: media.videoURL,
+            videoSource: media.videoSource,
+            originalTitle: media.originalTitle,
             duration: media.duration,
           }),
         // Preserve episode data for TV shows when TV device mode is enabled

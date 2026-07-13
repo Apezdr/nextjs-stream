@@ -167,6 +167,17 @@ class ServerManager {
     }
     return server
   }
+
+  /**
+   * Resolve a configured server without throwing for stale persisted source
+   * values. Missing IDs still select the configured default server.
+   *
+   * @param {string} [serverId]
+   * @returns {FileServerConfig|null}
+   */
+  getServerIfConfigured(serverId) {
+    return this.servers.get(serverId || this.defaultServerId) || null
+  }
   
   /**
    * Get the priority of a server by ID
@@ -261,6 +272,7 @@ export const tmdbNodeServerURL = process.env.TMDB_NODE_SERVER_URL || process.env
 
 // Export server management functions
 export const getServer = serverManager.getServer.bind(serverManager)
+export const getServerIfConfigured = serverManager.getServerIfConfigured.bind(serverManager)
 export const getSyncUrls = serverManager.getSyncUrls.bind(serverManager)
 export const getAllServers = serverManager.getAllServers.bind(serverManager)
 export const getServerCount = serverManager.getServerCount.bind(serverManager)

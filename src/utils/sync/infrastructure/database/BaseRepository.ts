@@ -6,7 +6,6 @@
 import { MongoClient, Collection, UpdateResult, DeleteResult } from 'mongodb'
 import { BaseMediaEntity, MediaRepository, DatabaseError } from '../../core/types'
 import isEqual from 'lodash/isEqual'
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
 import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
 
@@ -16,6 +15,79 @@ import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
 // doc still falls through to the "no diff → no write" fast path; the marker
 // gets re-applied via the explicit add-on at every write site below.
 const DIFF_EXCLUDED_FIELDS = new Set(['_id', 'lastSynced', 'updatedAt', 'createdAt', 'syncRunId'])
+
+const MANUAL_FIELD_SOURCE_FIELDS: Record<string, string[]> = {
+  metadata: ['metadataSource'],
+  videoURL: ['videoSource'],
+  videoInfo: ['videoInfoSource'],
+  duration: ['videoInfoSource'],
+  dimensions: ['videoInfoSource'],
+  hdr: ['videoInfoSource'],
+  mediaQuality: ['videoInfoSource'],
+  mediaLastModified: ['videoInfoSource'],
+  videoCodec: ['videoInfoSource'],
+  captionURLs: ['captionSource'],
+  title: ['titleSource'],
+  originalTitle: ['originalTitleSource'],
+  posterURL: ['posterSource'],
+  posterBlurhash: ['posterBlurhashSource'],
+  backdrop: ['backdropSource'],
+  backdropBlurhash: ['backdropBlurhashSource'],
+  logo: ['logoSource'],
+  chapterURL: ['chapterSource'],
+  thumbnail: ['thumbnailSource'],
+  thumbnailBlurhash: ['thumbnailBlurhashSource'],
+}
+
+const PRIMARY_FIELDS_BY_SOURCE_FIELD = Object.entries(MANUAL_FIELD_SOURCE_FIELDS).reduce(
+  (result, [primaryField, sourceFields]) => {
+    for (const sourceField of sourceFields) {
+      if (!result[sourceField]) result[sourceField] = []
+      result[sourceField].push(primaryField)
+    }
+    return result
+  },
+  {} as Record<string, string[]>
+)
+
+/**
+ * Return manual-field marker paths made stale by a sync write.
+ *
+ * A field stops being manual when sync changes/removes the value itself or
+ * when sync reclaims its provenance through the corresponding source field.
+ */
+export function getManualFieldUnsetPaths(
+  existing: Record<string, any>,
+  changedFields: Iterable<string>
+): string[] {
+  const manualFields = existing?.manualFields
+  if (!manualFields || typeof manualFields !== 'object') return []
+
+  const changed = new Set(changedFields)
+  return Object.keys(manualFields)
+    .filter((field) => {
+      if (manualFields[field] !== true) return false
+      if (changed.has(field)) return true
+      return (MANUAL_FIELD_SOURCE_FIELDS[field] || []).some((sourceField) =>
+        changed.has(sourceField)
+      )
+    })
+    .map((field) => `manualFields.${field}`)
+}
+
+export function removeConflictingUnsetPaths(
+  setFields: Iterable<string>,
+  unsetFields: Iterable<string>
+): string[] {
+  const setPaths = [...setFields]
+  return [...new Set(unsetFields)].filter((unsetPath) =>
+    !setPaths.some((setPath) =>
+      setPath === unsetPath ||
+      setPath.startsWith(`${unsetPath}.`) ||
+      unsetPath.startsWith(`${setPath}.`)
+    )
+  )
+}
 
 /**
  * Whether a top-level field is locked according to a doc's nested `lockedFields`
@@ -234,6 +306,8 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
     for (const key of Object.keys(merged)) {
       if (DIFF_EXCLUDED_FIELDS.has(key)) continue
       if (isTopLevelFieldLocked(lockedFields, key)) continue
+      const sourcePrimaryFields = PRIMARY_FIELDS_BY_SOURCE_FIELD[key] || []
+      if (sourcePrimaryFields.some((field) => isTopLevelFieldLocked(lockedFields, field))) continue
       if (!isEqual(existing[key], (merged as any)[key])) {
         (diff as any)[key] = (merged as any)[key]
       }
@@ -244,19 +318,20 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
   /**
    * `manualFields` (set by the admin editor, see flatMediaActions.js) is purely
    * informational — it does not gate sync writes, `lockedFields` does. But once
-   * a field in `diff` is actually about to be overwritten, the field is no
-   * longer human-owned, so its manual flag would be stale if left in place.
-   * Returns the `manualFields.<key>` dot-paths to $unset alongside the diff.
+  * a field is overwritten, removed, or reclaimed through its source marker,
+  * it is no longer human-owned, so its manual flag would be stale if left in
+  * place. Returns the `manualFields.<key>` dot-paths to $unset alongside the
+  * write.
    */
   protected static manualFieldsToClear<T extends Record<string, any>>(
     existing: T,
-    diff: Partial<T>
+    diff: Partial<T>,
+    unsetFields: string[] = []
   ): string[] {
-    const manualFields = (existing as any)?.manualFields
-    if (!manualFields || typeof manualFields !== 'object') return []
-    return Object.keys(diff)
-      .filter((key) => manualFields[key] === true)
-      .map((key) => `manualFields.${key}`)
+    return getManualFieldUnsetPaths(existing, [
+      ...Object.keys(diff),
+      ...unsetFields,
+    ])
   }
 
   /**
@@ -316,7 +391,10 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
       const diff = BaseRepository.computeDiff(existing, entity)
       // Only $unset fields that actually have a value on the existing doc.
       const unsetFields = (options?.unset || []).filter(f => (existing as any)[f] !== undefined)
-      const allUnsetFields = [...unsetFields, ...BaseRepository.manualFieldsToClear(existing, diff)]
+      const allUnsetFields = removeConflictingUnsetPaths(Object.keys(diff), [
+        ...unsetFields,
+        ...BaseRepository.manualFieldsToClear(existing, diff, unsetFields),
+      ])
       if (Object.keys(diff).length === 0 && allUnsetFields.length === 0) return  // Nothing changed — skip write
 
       const update: Record<string, any> = {

@@ -67,12 +67,16 @@ export const GET = async (req) => {
       switch (type) {
         case 'movie': {
           // Use cached function for movie lists (1-minute cache)
-          const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
+          const movieProjection = shouldExposeAdditionalData
+            ? { videoURL: 1, videoSource: 1, originalTitle: 1, duration: 1 }
+            : {}
           return await getCachedMovieList(pageNumber, limit, movieProjection)
         }
         case 'tv': {
           // Use cached function for TV lists (1-minute cache)
-          const tvProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
+          const tvProjection = shouldExposeAdditionalData
+            ? { videoURL: 1, videoSource: 1, originalTitle: 1, duration: 1 }
+            : {}
           return await getCachedTVList(pageNumber, limit, tvProjection)
         }
         case 'recentlyWatched':
@@ -142,8 +146,12 @@ export const GET = async (req) => {
         case 'all':
         default: {
           // Use cached function for combined movie/TV lists (1-minute cache)
-          const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
-          const tvProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
+          const movieProjection = shouldExposeAdditionalData
+            ? { videoURL: 1, videoSource: 1, originalTitle: 1, duration: 1 }
+            : {}
+          const tvProjection = shouldExposeAdditionalData
+            ? { videoURL: 1, videoSource: 1, originalTitle: 1, duration: 1 }
+            : {}
           return await getCachedAllMedia(pageNumber, limit, movieProjection, tvProjection)
         }
       }

@@ -24,7 +24,17 @@ import {
 } from '../../core'
 
 import { EpisodeRepository, SeasonRepository, TVShowRepository, UrlBuilder } from '../../infrastructure'
-import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
+import {
+  isCurrentServerHighestPriorityForReportedField,
+  isCurrentServerHighestPriorityForReportedFieldGroup,
+  createFullUrl,
+  extractUrlHash
+} from '@src/utils/sync/utils'
+import {
+  EPISODE_SIZE_FIELD_SUFFIXES,
+  parseEpisodeNumberFromKey,
+  resolveEpisodeSize
+} from '@src/utils/sync/episodeSize'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { createLogger } from '@src/lib/logger'
@@ -117,12 +127,52 @@ export class EpisodeSyncService {
         const incomingEpHash = context.tvEpisodeHashesCache
           ?.get(showTitle)?.get(seasonNumber)?.episodes?.[episodeKey]?.hash
 
-        if (!context.forceSync && incomingEpHash && existing?.syncHash && incomingEpHash === existing.syncHash) {
+        const identityNeedsHealing = Boolean(existing && (
+          existing.originalTitle !== showTitle ||
+          existing.showTitle !== displayTitle ||
+          (showId && (existing as any).showId?.toString() !== showId.toString()) ||
+          (seasonId && (existing as any).seasonId?.toString() !== seasonId.toString())
+        ))
+        const cleanupEnabled = Boolean(context.cleanup?.enabled && existing)
+        const hashMatches = Boolean(
+          !context.forceSync &&
+          incomingEpHash &&
+          existing?.syncHash &&
+          incomingEpHash === existing.syncHash
+        )
+        if (hashMatches && !identityNeedsHealing && !cleanupEnabled) {
           results.push(this.makeResult(`${label}E${epNum}`, context, SyncStatus.Skipped, [], []))
           continue
         }
 
-        const { entity: merged, metadataFromFreshFetch } = await this.buildEpisodeEntity(showTitle, displayTitle, seasonNumber, epNum, fileData, context, existing, showId, seasonId, parentShow, seasonFileData, key)
+        let merged: EpisodeEntity
+        let metadataFromFreshFetch = false
+        if (hashMatches && existing) {
+          // Preserve the hash fast path: cleanup and identity repair do not need
+          // network metadata fetches or full entity reconstruction.
+          merged = { ...existing, lastSynced: new Date() }
+          merged.originalTitle = showTitle
+          merged.showTitle = displayTitle
+          if (showId) (merged as any).showId = showId
+          if (seasonId) (merged as any).seasonId = seasonId
+        } else {
+          const built = await this.buildEpisodeEntity(
+            showTitle,
+            displayTitle,
+            seasonNumber,
+            epNum,
+            fileData,
+            context,
+            existing,
+            showId,
+            seasonId,
+            parentShow,
+            seasonFileData,
+            key
+          )
+          merged = built.entity
+          metadataFromFreshFetch = built.metadataFromFreshFetch
+        }
 
         // Store incoming hash so next sync can compare. Gate on a confirmed fresh
         // metadata source: the inline parent fallback (display-only) and failed
@@ -254,6 +304,44 @@ export class EpisodeSyncService {
     return null
   }
 
+  private collectLeafFieldPaths(value: any, path: string): string[] {
+    if (Array.isArray(value)) {
+      return value.flatMap((item, index) => {
+        if (!item || typeof item !== 'object') return []
+        const parentKey = path.split('.').at(-1)
+        const identifier = parentKey === 'audio' || parentKey === 'video'
+          ? item.codec || index
+          : item.name || item.id || index
+        return this.collectLeafFieldPaths(item, `${path}.${identifier}`)
+      })
+    }
+    if (value && typeof value === 'object') {
+      return Object.entries(value).flatMap(([key, child]) =>
+        this.collectLeafFieldPaths(child, `${path}.${key}`)
+      )
+    }
+    return value === undefined || value === null ? [] : [path]
+  }
+
+  private canUpdateReportedObject(
+    showOriginalTitle: string,
+    fieldPrefix: string,
+    value: any,
+    context: SyncContext
+  ): boolean {
+    if (!fieldPrefix || fieldPrefix.startsWith('null.')) return false
+    const paths = this.collectLeafFieldPaths(value, fieldPrefix)
+    return paths.length > 0 && paths.every((path) =>
+      isCurrentServerHighestPriorityForReportedField(
+        context.fieldAvailability,
+        'tv',
+        showOriginalTitle,
+        path,
+        context.serverConfig
+      )
+    )
+  }
+
   /**
    * Build the field-absence cleanup candidates for one episode. Returns the
    * fields to $unset (enforce) and human-readable diagnostics (both modes), or
@@ -273,13 +361,23 @@ export class EpisodeSyncService {
     if (!context.cleanup?.enabled || !existing) return { changes: [] }
 
     const seasonKey = this.resolveSeasonKey(showOriginalTitle, seasonNumber, context)
-    if (!seasonKey) return { changes: [] }  // can't build a trustworthy path → skip (no guessing)
+    if (!seasonKey) {
+      pinoLog.warn({
+        show: displayTitle,
+        originalTitle: showOriginalTitle,
+        seasonNumber,
+        episodeNumber,
+        context: 'season_key_resolution_failed'
+      }, 'Cannot resolve file-server season key; skipping field-absence cleanup')
+      return { changes: [] }
+    }
 
     const prefix = `seasons.${seasonKey}.episodes.${episodeKey}`
     const fields: CleanableField[] = [
       {
         entityField: 'thumbnail',
         fieldPath: `${prefix}.thumbnail`,
+        alternativeFieldPaths: [`${prefix}.thumbnailURL`],
         companions: ['thumbnailSource', 'thumbnailBlurhash', 'thumbnailBlurhashSource'],
       },
       {
@@ -327,6 +425,20 @@ export class EpisodeSyncService {
     episodeFileName?: string
   ): Promise<{ entity: EpisodeEntity; metadataFromFreshFetch: boolean }> {
     const now = new Date()
+    const seasonKey = this.resolveSeasonKey(showOriginalTitle, seasonNumber, context)
+    const episodePrefix = seasonKey && episodeFileName
+      ? `seasons.${seasonKey}.episodes.${episodeFileName}`
+      : null
+    const canUpdateEpisodeField = (fieldSuffix: string) => {
+      if (!episodePrefix) return false
+      return isCurrentServerHighestPriorityForReportedField(
+        context.fieldAvailability,
+        'tv',
+        showOriginalTitle,
+        `${episodePrefix}.${fieldSuffix}`,
+        context.serverConfig
+      )
+    }
 
     // Start from existing doc (preserving ALL fields) or create new
     const entity: EpisodeEntity = existing
@@ -349,87 +461,139 @@ export class EpisodeSyncService {
     if (seasonId) entity.seasonId = seasonId
     // Use display title as showTitle (matches legacy document shape)
     entity.showTitle = displayTitle
+    // Heal the filesystem key on existing/manual episode records.
+    entity.originalTitle = showOriginalTitle
 
     // --- Video URL (priority-gated, use originalTitle for field availability lookup) ---
-    const canUpdateVideo = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability, 'tv', showOriginalTitle, 'videoURL', context.serverConfig
-    )
+    const canUpdateVideo = canUpdateEpisodeField('videoURL')
     if (canUpdateVideo && fileData?.videoURL) {
       entity.videoURL = createFullUrl(fileData.videoURL, context.serverConfig)
       entity.videoSource = context.serverConfig.id
       entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
     }
 
-    // --- Video info (follows video priority) ---
-    if (canUpdateVideo && fileData?.videoInfo && typeof fileData.videoInfo === 'object') {
+    // --- Nested video info ---
+    if (
+      fileData?.videoInfo &&
+      typeof fileData.videoInfo === 'object' &&
+      this.canUpdateReportedObject(
+        showOriginalTitle,
+        `${episodePrefix}.videoInfo`,
+        fileData.videoInfo,
+        context
+      )
+    ) {
       entity.videoInfo = fileData.videoInfo
       entity.videoInfoSource = context.serverConfig.id
     }
 
     // --- Top-level video info fields (flat, matching legacy document shape) ---
-    // Legacy extracts these from season-level and episode-level file server data
-    // and stores videoInfoSource alongside them
-    if (canUpdateVideo) {
-      let hasVideoInfoFields = false
+    let hasVideoInfoFields = false
+    const seasonPrefix = seasonKey ? `seasons.${seasonKey}` : null
+    if (
+      seasonPrefix && episodeFileName &&
+      seasonFileData?.lengths?.[episodeFileName] != null &&
+      isCurrentServerHighestPriorityForReportedField(
+        context.fieldAvailability, 'tv', showOriginalTitle,
+        `${seasonPrefix}.lengths.${episodeFileName}`, context.serverConfig
+      )
+    ) {
+      entity.duration = seasonFileData.lengths[episodeFileName]
+      hasVideoInfoFields = true
+    }
+    if (
+      seasonPrefix && episodeFileName &&
+      seasonFileData?.dimensions?.[episodeFileName] &&
+      isCurrentServerHighestPriorityForReportedField(
+        context.fieldAvailability, 'tv', showOriginalTitle,
+        `${seasonPrefix}.dimensions.${episodeFileName}`, context.serverConfig
+      )
+    ) {
+      entity.dimensions = seasonFileData.dimensions[episodeFileName]
+      hasVideoInfoFields = true
+    }
+    if (fileData?.hdr != null && canUpdateEpisodeField('hdr')) {
+      entity.hdr = fileData.hdr
+      hasVideoInfoFields = true
+    }
+    if (fileData?.mediaQuality && this.canUpdateReportedObject(
+      showOriginalTitle,
+      `${episodePrefix}.mediaQuality`,
+      fileData.mediaQuality,
+      context
+    )) {
+      entity.mediaQuality = fileData.mediaQuality
+      hasVideoInfoFields = true
+    }
+    if (fileData?.mediaLastModified && canUpdateEpisodeField('mediaLastModified')) {
+      entity.mediaLastModified = new Date(fileData.mediaLastModified)
+      hasVideoInfoFields = true
+    }
+    if (fileData?.videoCodec && canUpdateEpisodeField('videoCodec')) {
+      ;(entity as any).videoCodec = fileData.videoCodec
+      hasVideoInfoFields = true
+    }
+    if (hasVideoInfoFields) entity.videoInfoSource = context.serverConfig.id
 
-      // Duration from season-level lengths map (e.g., seasonFileData.lengths["S01E01"])
-      if (seasonFileData?.lengths && episodeFileName && seasonFileData.lengths[episodeFileName] != null) {
-        entity.duration = seasonFileData.lengths[episodeFileName]
-        hasVideoInfoFields = true
-      }
-      // Dimensions from season-level dimensions map
-      if (seasonFileData?.dimensions && episodeFileName && seasonFileData.dimensions[episodeFileName]) {
-        entity.dimensions = seasonFileData.dimensions[episodeFileName]
-        hasVideoInfoFields = true
-      }
-      // HDR, size, mediaQuality, mediaLastModified from episode-level file data
-      if (fileData?.hdr !== undefined && fileData.hdr !== null) {
-        entity.hdr = fileData.hdr
-        hasVideoInfoFields = true
-      }
-      if (fileData?.size != null) {
-        entity.size = fileData.size
-        hasVideoInfoFields = true
-      } else if (fileData?.additionalMetadata?.size != null) {
-        // Size arrives as a {kb, mb, gb} object; convert to bytes to match
-        // the movie path (MovieContentStrategy) so consumers can treat
-        // `size` as bytes for both media types
-        const sz = fileData.additionalMetadata.size
-        if (typeof sz === 'number') {
-          entity.size = sz
-          hasVideoInfoFields = true
-        } else if (typeof sz === 'object') {
-          if (typeof sz.gb === 'number') {
-            entity.size = Math.round(sz.gb * 1024 * 1024 * 1024)
-            hasVideoInfoFields = true
-          } else if (typeof sz.mb === 'number') {
-            entity.size = Math.round(sz.mb * 1024 * 1024)
-            hasVideoInfoFields = true
-          } else if (typeof sz.kb === 'number') {
-            entity.size = Math.round(sz.kb * 1024)
-            hasVideoInfoFields = true
-          }
+    // Size has its own field-level owner. Do not inherit videoURL ownership:
+    // different servers may report the playable URL and file size, and the
+    // availability path contains literal season/episode keys.
+    const reportedSize = resolveEpisodeSize(fileData)
+    if (reportedSize) {
+      if (!seasonKey || !episodeFileName) {
+        pinoLog.warn({
+          originalTitle: showOriginalTitle,
+          seasonNumber,
+          episodeNumber,
+          serverId: context.serverConfig.id,
+          field: 'size'
+        }, 'Skipping episode size because its literal availability path could not be resolved')
+      } else {
+        const sizePath = `seasons.${seasonKey}.episodes.${episodeFileName}.${reportedSize.fieldSuffix}`
+        const sizePaths = EPISODE_SIZE_FIELD_SUFFIXES.map(
+          suffix => `seasons.${seasonKey}.episodes.${episodeFileName}.${suffix}`
+        )
+        const reporters = context.fieldAvailability?.tv?.[showOriginalTitle]?.[sizePath]
+        const currentServerReportedSize = Array.isArray(reporters)
+          && reporters.includes(context.serverConfig.id)
+
+        if (!currentServerReportedSize) {
+          pinoLog.warn({
+            originalTitle: showOriginalTitle,
+            seasonNumber,
+            episodeNumber,
+            serverId: context.serverConfig.id,
+            fieldPath: sizePath
+          }, 'Skipping episode size because field availability does not confirm this server')
+        } else if (isCurrentServerHighestPriorityForReportedFieldGroup(
+          context.fieldAvailability,
+          'tv',
+          showOriginalTitle,
+          sizePaths,
+          context.serverConfig
+        )) {
+          entity.size = reportedSize.bytes
         }
-      }
-      if (fileData?.mediaQuality) {
-        entity.mediaQuality = fileData.mediaQuality
-        hasVideoInfoFields = true
-      }
-      if (fileData?.mediaLastModified) {
-        entity.mediaLastModified = new Date(fileData.mediaLastModified)
-        hasVideoInfoFields = true
-      }
-
-      // Set videoInfoSource when any top-level video info field was extracted
-      if (hasVideoInfoFields) {
-        entity.videoInfoSource = context.serverConfig.id
       }
     }
 
     // --- Thumbnail (priority-gated) ---
-    const canUpdateThumbnail = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability, 'tv', showOriginalTitle, 'thumbnail', context.serverConfig
-    )
+    const thumbnailSuffix = fileData?.thumbnail ? 'thumbnail' : 'thumbnailURL'
+    const thumbnailPaths = episodePrefix
+      ? [`${episodePrefix}.thumbnail`, `${episodePrefix}.thumbnailURL`]
+      : []
+    const thumbnailReporters = episodePrefix
+      ? context.fieldAvailability?.tv?.[showOriginalTitle]?.[`${episodePrefix}.${thumbnailSuffix}`]
+      : undefined
+    const canUpdateThumbnail = Array.isArray(thumbnailReporters)
+      && thumbnailReporters.includes(context.serverConfig.id)
+      && isCurrentServerHighestPriorityForReportedFieldGroup(
+        context.fieldAvailability,
+        'tv',
+        showOriginalTitle,
+        thumbnailPaths,
+        context.serverConfig
+      )
     if (canUpdateThumbnail && (fileData?.thumbnail || fileData?.thumbnailURL)) {
       entity.thumbnail = createFullUrl(
         fileData.thumbnail || fileData.thumbnailURL,
@@ -442,7 +606,12 @@ export class EpisodeSyncService {
     // Legacy field: captionURLs (object keyed by language), NOT captions (array)
     // File server data key: "subtitles" (not "captions")
     if (fileData?.subtitles && typeof fileData.subtitles === 'object') {
-      const processed = UrlBuilder.processCaptionURLs(fileData.subtitles, context.serverConfig)
+      const authoritativeSubtitles = Object.fromEntries(
+        Object.entries(fileData.subtitles).filter(([language, subtitle]: [string, any]) =>
+          subtitle?.url && canUpdateEpisodeField(`subtitles.${language}.url`)
+        )
+      )
+      const processed = UrlBuilder.processCaptionURLs(authoritativeSubtitles, context.serverConfig)
       if (processed && Object.keys(processed).length > 0) {
         // Merge with existing captionURLs (preserve captions from other servers)
         const merged = { ...(existing?.captionURLs || {}), ...processed }
@@ -453,9 +622,7 @@ export class EpisodeSyncService {
 
     // --- Chapters (priority-gated) ---
     // Legacy stores chapterURL as a single URL string (not an array)
-    const canUpdateChapters = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability, 'tv', showOriginalTitle, 'chapters', context.serverConfig
-    )
+    const canUpdateChapters = canUpdateEpisodeField('chapters')
     if (canUpdateChapters && fileData?.chapters) {
       entity.chapterURL = createFullUrl(fileData.chapters, context.serverConfig)
       entity.chapterSource = context.serverConfig.id
@@ -468,9 +635,7 @@ export class EpisodeSyncService {
     // fallback is fine for display but must not lock the episode on a stale
     // parent. Default true so "no episode metadata URL" never blocks the gate.
     let metadataFromFreshFetch = true
-    const canUpdateMetadata = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability, 'tv', showOriginalTitle, 'metadata', context.serverConfig
-    )
+    const canUpdateMetadata = canUpdateEpisodeField('metadata')
     if (canUpdateMetadata && fileData?.metadata) {
       // fileData.metadata is typically a URL path — fetch actual metadata from file server
       let episodeMetadata: any = null
@@ -509,7 +674,9 @@ export class EpisodeSyncService {
 
       if (episodeMetadata && typeof episodeMetadata === 'object' && !episodeMetadata.error) {
         entity.metadata = episodeMetadata
-        entity.metadataSource = context.serverConfig.id
+        if (metadataFromFreshFetch) {
+          entity.metadataSource = context.serverConfig.id
+        }
 
         // Extract title from metadata if available
         if (episodeMetadata.name) entity.title = episodeMetadata.name
@@ -520,14 +687,7 @@ export class EpisodeSyncService {
     // Legacy pattern: fetchMetadataMultiServer(id, url, 'blurhash', 'tv', originalTitle)
     if (fileData?.thumbnailBlurhash) {
       // Build the field path matching legacy: "seasons.Season N.episodes.FILENAME.thumbnailBlurhash"
-      const seasonKey = Object.keys(
-        context.fileServerData?.tv?.[showOriginalTitle]?.seasons || {}
-      ).find(k => this.parseSeasonNumber(k) === seasonNumber) || String(seasonNumber)
-      const blurhashFieldPath = `seasons.${seasonKey}.thumbnailBlurhash`
-
-      const canUpdateBlurhash = isCurrentServerHighestPriorityForField(
-        context.fieldAvailability, 'tv', showOriginalTitle, blurhashFieldPath, context.serverConfig
-      )
+      const canUpdateBlurhash = canUpdateEpisodeField('thumbnailBlurhash')
       if (canUpdateBlurhash) {
         // Skip fetch if the thumbnail image file hasn't changed (?hash= param comparison)
         const newThumbUrl = (fileData?.thumbnail || fileData?.thumbnailURL)
@@ -598,10 +758,7 @@ export class EpisodeSyncService {
   }
 
   private parseEpisodeNumber(key: string, data: any): number | null {
-    if (typeof data?.episodeNumber === 'number' && data.episodeNumber > 0) return data.episodeNumber
-    const match = key.match(/(?:episode_?|ep_?|e)?(\d+)/i)
-    const n = match ? parseInt(match[1], 10) : NaN
-    return n > 0 ? n : null
+    return parseEpisodeNumberFromKey(key, data)
   }
 
   private parseSeasonNumber(key: string): number | null {

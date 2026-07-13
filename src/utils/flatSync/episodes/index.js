@@ -108,7 +108,10 @@ async function syncSingleEpisode(
             season.seasonNumber, 
             episode.episodeNumber
           );
-          if (flatEpisode?.showTitle !== show.title) {
+          if (
+            flatEpisode?.showTitle !== show.title ||
+            flatEpisode?.originalTitle !== show.originalTitle
+          ) {
             // If the original title doesn't match, we need to force an update
             forceTitlesUpdate = true;
           }
@@ -180,7 +183,10 @@ async function syncSingleEpisode(
       );
     }
 
-    if (flatEpisode && flatEpisode.showTitle !== show.title) {
+    if (
+      flatEpisode &&
+      (flatEpisode.showTitle !== show.title || flatEpisode.originalTitle !== show.originalTitle)
+    ) {
       // If the original title doesn't match, we need to force an update
       forceTitlesUpdate = true;
     }
@@ -360,8 +366,17 @@ async function syncSingleEpisode(
       )
     }
     
-    // Video info sync - only run if mediaQuality exists
-    if (!!fileServerEpisodeData.mediaQuality || !!fileServerEpisodeData.mediaLastModified || !!fileServerEpisodeData.additionalMetadata) {
+    // Video info sync — include top-level and season-level scanner fields too.
+    if (
+      fileServerEpisodeData.mediaQuality ||
+      fileServerEpisodeData.mediaLastModified ||
+      fileServerEpisodeData.additionalMetadata ||
+      fileServerEpisodeData.size != null ||
+      fileServerEpisodeData.hdr != null ||
+      fileServerEpisodeData.videoCodec ||
+      fileServerSeasonData.dimensions?.[episodeFileName] != null ||
+      fileServerSeasonData.lengths?.[episodeFileName] != null
+    ) {
       syncFunctions.push(
         syncEpisodeVideoInfo(
           client,

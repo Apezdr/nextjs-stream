@@ -16,10 +16,9 @@
  *    only — it does NOT gate sync writes (`lockedFields` does that); a sync
  *    that legitimately overwrites a flagged field also clears its
  *    `manualFields` entry (see BaseRepository.manualFieldsToClear) so the flag
- *    doesn't go stale. `<field>Source` (e.g. `videoSource`) is left untouched
- *    by manual edits so it keeps tracking the real server that last owned the
- *    field — overwriting it with a non-server sentinel previously crashed
- *    `getServer('manual')` in generateClipVideoURL/MediaPlayer.
+ *    doesn't go stale. A manual edit clears the corresponding `<field>Source`
+ *    because the configured server no longer supplied the current value.
+ *    Legacy `'manual'` source sentinels are migrated on the next admin save.
  *  - `lockedFields` is persisted in the nested shape `filterLockedFields`
  *    expects ({ posterURL: true, metadata: { overview: true } }).
  *  - Validation / duplicate / not-found problems are returned as
@@ -33,6 +32,7 @@
  */
 
 import { ObjectId } from 'mongodb'
+import isEqual from 'lodash/isEqual'
 import { revalidatePath } from 'next/cache'
 import clientPromise from '@src/lib/mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
@@ -44,6 +44,22 @@ import {
 } from '@src/utils/cache/invalidation'
 
 const DB_NAME = 'Media'
+
+const SOURCE_FIELD_BY_MANUAL_FIELD = {
+  metadata: 'metadataSource',
+  title: 'titleSource',
+  originalTitle: 'originalTitleSource',
+  videoURL: 'videoSource',
+  captionURLs: 'captionSource',
+  posterURL: 'posterSource',
+  posterBlurhash: 'posterBlurhashSource',
+  backdrop: 'backdropSource',
+  backdropBlurhash: 'backdropBlurhashSource',
+  logo: 'logoSource',
+  chapterURL: 'chapterSource',
+  thumbnail: 'thumbnailSource',
+  thumbnailBlurhash: 'thumbnailBlurhashSource',
+}
 
 // ─── Result helpers ──────────────────────────────────────────────────────────
 const ok = (extra = {}) => ({ status: 'success', message: 'Saved.', ...extra })
@@ -84,7 +100,7 @@ function revalidateMedia() {
  *   clearing `manualFields.<field>` since there's no longer a manual value
  * @returns {{ set: Object, unset: Object }}
  */
-function applyScalarFields(payload, fields, manualTrackedFields, { isCreate }) {
+function applyScalarFields(payload, fields, manualTrackedFields, { isCreate, existing = null }) {
   const set = {}
   const unset = {}
   for (const field of fields) {
@@ -99,36 +115,91 @@ function applyScalarFields(payload, fields, manualTrackedFields, { isCreate }) {
     if (isEmpty) {
       if (!isCreate) {
         unset[field] = ''
-        if (manualTrackedFields.includes(field)) unset[`manualFields.${field}`] = ''
+        if (manualTrackedFields.includes(field)) {
+          unset[`manualFields.${field}`] = ''
+          const sourceField = SOURCE_FIELD_BY_MANUAL_FIELD[field]
+          if (sourceField) unset[sourceField] = ''
+        }
+        if (field === 'videoURL') unset.normalizedVideoId = ''
       }
       continue
     }
 
+    const changed = isCreate || !isEqual(existing?.[field], value)
     set[field] = value
-    if (manualTrackedFields.includes(field)) set[`manualFields.${field}`] = true
-    if (field === 'videoURL') set.normalizedVideoId = generateNormalizedVideoId(value)
+    if (changed && manualTrackedFields.includes(field)) {
+      set[`manualFields.${field}`] = true
+      const sourceField = SOURCE_FIELD_BY_MANUAL_FIELD[field]
+      if (!isCreate && sourceField) unset[sourceField] = ''
+    }
+    if (field === 'videoURL' && changed) {
+      set.normalizedVideoId = generateNormalizedVideoId(value)
+    }
   }
   return { set, unset }
 }
 
 /** Merge metadata partial as dot-paths so existing metadata keys survive. */
-function applyMetadata(payload, set) {
+function applyMetadata(payload, set, unset, { isCreate, existing = null }) {
   if (!payload.metadata || typeof payload.metadata !== 'object') return
   let touched = false
   for (const [key, value] of Object.entries(payload.metadata)) {
     if (value === undefined) continue
     set[`metadata.${key}`] = value
-    touched = true
+    if (isCreate || !isEqual(existing?.metadata?.[key], value)) touched = true
   }
-  if (touched) set['manualFields.metadata'] = true
+  if (touched) {
+    set['manualFields.metadata'] = true
+    if (!isCreate) unset.metadataSource = ''
+  }
+}
+
+/** Migrate source sentinels written by older admin-editor versions. */
+function migrateLegacyManualSources(existing, set, unset) {
+  if (!existing) return
+
+  for (const [manualField, sourceField] of Object.entries(SOURCE_FIELD_BY_MANUAL_FIELD)) {
+    if (existing[sourceField] !== 'manual') continue
+    unset[sourceField] = ''
+
+    const value = existing[manualField]
+    const hasValue = value !== undefined && value !== null && value !== ''
+    if (hasValue && !(manualField in unset)) {
+      set[`manualFields.${manualField}`] = true
+    }
+  }
+}
+
+/** Convert MongoDB update-style dotted paths into a normal document shape. */
+function materializeDottedFields(fields) {
+  const result = {}
+  for (const [path, value] of Object.entries(fields)) {
+    const parts = path.split('.')
+    let current = result
+    for (const part of parts.slice(0, -1)) {
+      if (!current[part] || typeof current[part] !== 'object') current[part] = {}
+      current = current[part]
+    }
+    current[parts.at(-1)] = value
+  }
+  return result
 }
 
 /** Decide captionURLs $set vs $unset from the provided object. */
-function applyCaptionURLs(payload, set, unset) {
+function applyCaptionURLs(payload, set, unset, { isCreate, existing = null }) {
   if (!('captionURLs' in payload)) return
   const caps = payload.captionURLs
-  if (caps && typeof caps === 'object' && Object.keys(caps).length > 0) set.captionURLs = caps
-  else unset.captionURLs = ''
+  if (caps && typeof caps === 'object' && Object.keys(caps).length > 0) {
+    set.captionURLs = caps
+    if (isCreate || !isEqual(existing?.captionURLs, caps)) {
+      set['manualFields.captionURLs'] = true
+      if (!isCreate) unset.captionSource = ''
+    }
+  } else if (!isCreate) {
+    unset.captionURLs = ''
+    unset.captionSource = ''
+    unset['manualFields.captionURLs'] = ''
+  }
 }
 
 /** Decide lockedFields $set vs $unset from the provided nested object. */
@@ -149,7 +220,8 @@ const MOVIE_FIELDS = [
   'backdrop', 'backdropBlurhash', 'logo', 'chapterURL', 'hdr', 'duration',
 ]
 const MOVIE_MANUAL_TRACKED_FIELDS = [
-  'posterURL', 'posterBlurhash', 'backdrop', 'backdropBlurhash', 'logo', 'videoURL',
+  'title', 'originalTitle', 'posterURL', 'posterBlurhash', 'backdrop',
+  'backdropBlurhash', 'logo', 'videoURL', 'chapterURL', 'hdr', 'duration',
 ]
 
 const SHOW_FIELDS = [
@@ -157,7 +229,8 @@ const SHOW_FIELDS = [
   'backdrop', 'backdropBlurhash', 'logo',
 ]
 const SHOW_MANUAL_TRACKED_FIELDS = [
-  'posterURL', 'posterBlurhash', 'backdrop', 'backdropBlurhash', 'logo',
+  'title', 'originalTitle', 'posterURL', 'posterBlurhash', 'backdrop',
+  'backdropBlurhash', 'logo',
 ]
 
 const SEASON_FIELDS = ['posterURL', 'posterBlurhash']
@@ -166,7 +239,9 @@ const SEASON_MANUAL_TRACKED_FIELDS = ['posterURL', 'posterBlurhash']
 const EPISODE_FIELDS = [
   'title', 'videoURL', 'thumbnail', 'thumbnailBlurhash', 'chapterURL', 'hdr', 'duration',
 ]
-const EPISODE_MANUAL_TRACKED_FIELDS = ['videoURL', 'thumbnail', 'thumbnailBlurhash']
+const EPISODE_MANUAL_TRACKED_FIELDS = [
+  'title', 'videoURL', 'thumbnail', 'thumbnailBlurhash', 'chapterURL', 'hdr', 'duration',
+]
 
 // ─── Movies ──────────────────────────────────────────────────────────────────
 
@@ -188,15 +263,15 @@ export async function createMovieAction(_prevState, payload = {}) {
 
   const now = new Date()
   const { set } = applyScalarFields({ ...payload, title, originalTitle, videoURL }, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: true })
-  applyMetadata(payload, set)
-  applyCaptionURLs(payload, set, {})
+  applyMetadata(payload, set, {}, { isCreate: true })
+  applyCaptionURLs(payload, set, {}, { isCreate: true })
   applyLockedFields(payload, set, {})
 
   const doc = {
     _id: new ObjectId(),
     type: 'movie',
     manualEntry: true,
-    ...set,
+    ...materializeDottedFields(set),
     title,
     originalTitle,
     videoURL,
@@ -228,10 +303,16 @@ export async function saveMovieAction(_prevState, payload = {}) {
   const existing = await col.findOne({ _id })
   if (!existing) return fail('Movie not found.')
 
-  const { set, unset } = applyScalarFields(payload, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: false })
-  applyMetadata(payload, set)
-  applyCaptionURLs(payload, set, unset)
+  if ('title' in payload && !trimOrNull(payload.title)) return fail('Title is required.')
+  if ('originalTitle' in payload && !trimOrNull(payload.originalTitle)) {
+    return fail('Original title is required.')
+  }
+
+  const { set, unset } = applyScalarFields(payload, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: false, existing })
+  applyMetadata(payload, set, unset, { isCreate: false, existing })
+  applyCaptionURLs(payload, set, unset, { isCreate: false, existing })
   applyLockedFields(payload, set, unset)
+  migrateLegacyManualSources(existing, set, unset)
 
   if ('videoURL' in set && set.videoURL !== existing.videoURL) set.mediaLastModified = new Date()
   set.updatedAt = new Date()
@@ -293,14 +374,14 @@ export async function createTVShowAction(_prevState, payload = {}) {
 
   const now = new Date()
   const { set } = applyScalarFields({ ...payload, title, originalTitle }, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: true })
-  applyMetadata(payload, set)
+  applyMetadata(payload, set, {}, { isCreate: true })
   applyLockedFields(payload, set, {})
 
   const doc = {
     _id: new ObjectId(),
     type: 'tvShow',
     manualEntry: true,
-    ...set,
+    ...materializeDottedFields(set),
     title,
     originalTitle,
     createdAt: now,
@@ -329,9 +410,15 @@ export async function saveTVShowAction(_prevState, payload = {}) {
   const existing = await col.findOne({ _id })
   if (!existing) return fail('TV show not found.')
 
-  const { set, unset } = applyScalarFields(payload, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: false })
-  applyMetadata(payload, set)
+  if ('title' in payload && !trimOrNull(payload.title)) return fail('Title is required.')
+  if ('originalTitle' in payload && !trimOrNull(payload.originalTitle)) {
+    return fail('Original title is required.')
+  }
+
+  const { set, unset } = applyScalarFields(payload, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: false, existing })
+  applyMetadata(payload, set, unset, { isCreate: false, existing })
   applyLockedFields(payload, set, unset)
+  migrateLegacyManualSources(existing, set, unset)
   set.updatedAt = new Date()
 
   const update = {}
@@ -345,13 +432,19 @@ export async function saveTVShowAction(_prevState, payload = {}) {
     throw error
   }
 
-  // Cascade a display-title change to denormalized showTitle on seasons + episodes
-  // so their unique indexes ({showTitle, seasonNumber} / {..., episodeNumber}) stay
-  // consistent and natural-key lookups keep resolving.
+  // Keep both denormalized identities synchronized on child records: showTitle
+  // is the display value, while originalTitle is the filesystem key.
+  const childIdentityUpdates = {}
   if ('title' in set && set.title !== existing.title) {
+    childIdentityUpdates.showTitle = set.title
+  }
+  if ('originalTitle' in set && set.originalTitle !== existing.originalTitle) {
+    childIdentityUpdates.originalTitle = set.originalTitle
+  }
+  if (Object.keys(childIdentityUpdates).length > 0) {
     await Promise.all([
-      db.collection('FlatSeasons').updateMany({ showId: _id }, { $set: { showTitle: set.title } }),
-      db.collection('FlatEpisodes').updateMany({ showId: _id }, { $set: { showTitle: set.title } }),
+      db.collection('FlatSeasons').updateMany({ showId: _id }, { $set: childIdentityUpdates }),
+      db.collection('FlatEpisodes').updateMany({ showId: _id }, { $set: childIdentityUpdates }),
     ])
   }
 
@@ -396,7 +489,10 @@ export async function saveSeasonAction(_prevState, payload = {}) {
 
   const client = await clientPromise
   const db = client.db(DB_NAME)
-  const show = await db.collection('FlatTVShows').findOne({ _id: showId }, { projection: { title: 1 } })
+  const show = await db.collection('FlatTVShows').findOne(
+    { _id: showId },
+    { projection: { title: 1, originalTitle: 1 } }
+  )
   if (!show) return fail('Parent TV show not found.')
 
   const seasonsCol = db.collection('FlatSeasons')
@@ -405,9 +501,10 @@ export async function saveSeasonAction(_prevState, payload = {}) {
     ? await seasonsCol.findOne({ _id: seasonObjId })
     : await seasonsCol.findOne({ showId, seasonNumber })
 
-  const { set, unset } = applyScalarFields(payload, SEASON_FIELDS, SEASON_MANUAL_TRACKED_FIELDS, { isCreate: !existing })
-  applyMetadata(payload, set)
+  const { set, unset } = applyScalarFields(payload, SEASON_FIELDS, SEASON_MANUAL_TRACKED_FIELDS, { isCreate: !existing, existing })
+  applyMetadata(payload, set, unset, { isCreate: !existing, existing })
   applyLockedFields(payload, set, unset)
+  migrateLegacyManualSources(existing, set, unset)
   set.showTitle = show.title
   set.showId = showId
   set.seasonNumber = seasonNumber
@@ -428,7 +525,7 @@ export async function saveSeasonAction(_prevState, payload = {}) {
     _id: new ObjectId(),
     type: 'season',
     manualEntry: true,
-    ...set,
+    ...materializeDottedFields(set),
     createdAt: new Date(),
   }
   try {
@@ -452,7 +549,10 @@ export async function deleteSeasonAction(_prevState, payload = {}) {
 
   const client = await clientPromise
   const db = client.db(DB_NAME)
-  const show = await db.collection('FlatTVShows').findOne({ _id: showId }, { projection: { title: 1 } })
+  const show = await db.collection('FlatTVShows').findOne(
+    { _id: showId },
+    { projection: { title: 1, originalTitle: 1 } }
+  )
   // Remove the season and all of its episodes
   await db.collection('FlatEpisodes').deleteMany({ showId, seasonNumber })
   const result = await db.collection('FlatSeasons').deleteOne({ showId, seasonNumber })
@@ -476,7 +576,10 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
 
   const client = await clientPromise
   const db = client.db(DB_NAME)
-  const show = await db.collection('FlatTVShows').findOne({ _id: showId }, { projection: { title: 1 } })
+  const show = await db.collection('FlatTVShows').findOne(
+    { _id: showId },
+    { projection: { title: 1, originalTitle: 1 } }
+  )
   if (!show) return fail('Parent TV show not found.')
 
   const season = await db
@@ -490,12 +593,14 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
     ? await episodesCol.findOne({ _id: episodeObjId })
     : await episodesCol.findOne({ showId, seasonId: season._id, episodeNumber })
 
-  const { set, unset } = applyScalarFields(payload, EPISODE_FIELDS, EPISODE_MANUAL_TRACKED_FIELDS, { isCreate: !existing })
-  applyMetadata(payload, set)
+  const { set, unset } = applyScalarFields(payload, EPISODE_FIELDS, EPISODE_MANUAL_TRACKED_FIELDS, { isCreate: !existing, existing })
+  applyMetadata(payload, set, unset, { isCreate: !existing, existing })
   applyLockedFields(payload, set, unset)
+  migrateLegacyManualSources(existing, set, unset)
   set.showId = showId
   set.seasonId = season._id
   set.showTitle = show.title
+  set.originalTitle = show.originalTitle || show.title
   set.seasonNumber = seasonNumber
   set.episodeNumber = episodeNumber
   set.updatedAt = new Date()
@@ -515,7 +620,7 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
     _id: new ObjectId(),
     type: 'episode',
     manualEntry: true,
-    ...set,
+    ...materializeDottedFields(set),
     createdAt: new Date(),
   }
   try {

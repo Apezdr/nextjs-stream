@@ -16,7 +16,7 @@ import { onProviderChange, onProviderSetup } from './clientSide'
 import { Inconsolata } from 'next/font/google'
 import Media_Poster from '../MediaPoster'
 import VolumeRegulator from './VolumeRegulator'
-import { getServer } from '@src/utils/config'
+import { getServerIfConfigured } from '@src/utils/config'
 import { Suspense } from 'react'
 import WithPlaybackCoordinator from '@components/built-in/WithPlaybackCoordinator'
 
@@ -158,10 +158,13 @@ async function VideoPlayer({
   let hdr = false
 
   // Access the server configuration using the media's videoSource
-  const serverConfig = getServer(media?.videoSource || media?.videoInfoSource || 'default')
+  const processorServerId = media?.videoSource
+  const serverConfig = processorServerId
+    ? getServerIfConfigured(processorServerId)
+    : null
 
   // Extract the Node.js server URL (syncEndpoint) from the server configuration
-  const nodeServerUrl = serverConfig.syncEndpoint
+  const nodeServerUrl = serverConfig?.syncEndpoint || null
 
   if (metadata && mediaType === 'tv') {
     title = metadata.name || metadata.title || media.title // Use 'name' for TV show episodes, 'title' for general metadata
@@ -186,9 +189,11 @@ async function VideoPlayer({
       chapters = `/api/authenticated/chapter?name=${encodeURIComponent(
         mediaTitle
       )}&type=${mediaType}&season=${season_number}&episode=${episode_number}`
-      chapterThumbnailURL = `${nodeServerUrl}/frame/tv/${encodeURIComponent(
-        media.originalTitle ?? mediaTitle
-      )}/${season_number}/${episode_number}/`
+      if (nodeServerUrl) {
+        chapterThumbnailURL = `${nodeServerUrl}/frame/tv/${encodeURIComponent(
+          media.originalTitle ?? mediaTitle
+        )}/${season_number}/${episode_number}/`
+      }
     }
     thumbnailURL = `/api/authenticated/thumbnails?name=${encodeURIComponent(
       mediaTitle
@@ -236,7 +241,11 @@ async function VideoPlayer({
       chapters = buildURL(`/api/authenticated/chapter?name=${encodeURIComponent(
         mediaTitle
       )}&type=${mediaType}`)
-      chapterThumbnailURL = `${nodeServerUrl}/frame/movie/${encodeURIComponent(mediaTitle)}/`
+      if (nodeServerUrl) {
+        chapterThumbnailURL = `${nodeServerUrl}/frame/movie/${encodeURIComponent(
+          media.originalTitle ?? mediaTitle
+        )}/`
+      }
     }
     thumbnailURL = buildURL(`/api/authenticated/thumbnails?name=${encodeURIComponent(
       mediaTitle

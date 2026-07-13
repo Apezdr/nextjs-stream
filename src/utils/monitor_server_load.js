@@ -45,9 +45,14 @@ const DISK_HEALTH_PATHS = process.env.DISK_HEALTH_PATHS
 // ── Per-metric enable/disable flags ─────────────────────────────────────────
 // Set SERVER_LOAD_CPU_ENABLED=false, SERVER_LOAD_MEMORY_ENABLED=false, or
 // SERVER_LOAD_DISK_ENABLED=false to suppress that metric from the API response.
-const CPU_ENABLED    = process.env.SERVER_LOAD_CPU_ENABLED    !== 'false';
-const MEMORY_ENABLED = process.env.SERVER_LOAD_MEMORY_ENABLED !== 'false';
-const DISK_ENABLED   = process.env.SERVER_LOAD_DISK_ENABLED   !== 'false';
+function isMetricEnabled(value) {
+  if (value === undefined) return true;
+  return !['false', '0', 'off', 'no'].includes(String(value).trim().toLowerCase());
+}
+
+const CPU_ENABLED    = isMetricEnabled(process.env.SERVER_LOAD_CPU_ENABLED);
+const MEMORY_ENABLED = isMetricEnabled(process.env.SERVER_LOAD_MEMORY_ENABLED);
+const DISK_ENABLED   = isMetricEnabled(process.env.SERVER_LOAD_DISK_ENABLED);
 
 // ── Alert thresholds ─────────────────────────────────────────────────────────
 // Percentages at which the admin panel transitions from "normal" → "warning"
@@ -63,21 +68,47 @@ const DISK_ENABLED   = process.env.SERVER_LOAD_DISK_ENABLED   !== 'false';
 //     SERVER_LOAD_MEMORY_WARN_THRESHOLD / SERVER_LOAD_MEMORY_CRITICAL_THRESHOLD
 //     SERVER_LOAD_DISK_WARN_THRESHOLD / SERVER_LOAD_DISK_CRITICAL_THRESHOLD
 function parseThreshold(envVar, defaultValue) {
-  const parsed = parseInt(process.env[envVar], 10);
-  return Number.isFinite(parsed) && parsed >= 0 && parsed <= 100 ? parsed : defaultValue;
+  const raw = process.env[envVar];
+  if (typeof raw !== 'string' || !/^\d+$/.test(raw.trim())) return defaultValue;
+  const parsed = Number(raw.trim());
+  return Number.isInteger(parsed) && parsed >= 0 && parsed <= 100 ? parsed : defaultValue;
 }
 
-// Global defaults
-const WARN_THRESHOLD     = parseThreshold('SERVER_LOAD_WARN_THRESHOLD',     50);
-const CRITICAL_THRESHOLD = parseThreshold('SERVER_LOAD_CRITICAL_THRESHOLD', 80);
+function resolveThresholdPair(warnEnvVar, criticalEnvVar, fallback) {
+  const warnThreshold = parseThreshold(warnEnvVar, fallback.warnThreshold);
+  const criticalThreshold = parseThreshold(criticalEnvVar, fallback.criticalThreshold);
+
+  // Equal or inverted levels make the warning state unreachable or misleading.
+  // Reject the pair as a unit rather than silently swapping operator intent.
+  if (warnThreshold >= criticalThreshold) return fallback;
+  return { warnThreshold, criticalThreshold };
+}
+
+const DEFAULT_THRESHOLDS = { warnThreshold: 50, criticalThreshold: 80 };
+const globalThresholds = resolveThresholdPair(
+  'SERVER_LOAD_WARN_THRESHOLD',
+  'SERVER_LOAD_CRITICAL_THRESHOLD',
+  DEFAULT_THRESHOLDS
+);
+const WARN_THRESHOLD = globalThresholds.warnThreshold;
+const CRITICAL_THRESHOLD = globalThresholds.criticalThreshold;
 
 // Per-metric thresholds (fall back to global)
-const CPU_WARN_THRESHOLD        = parseThreshold('SERVER_LOAD_CPU_WARN_THRESHOLD',        WARN_THRESHOLD);
-const CPU_CRITICAL_THRESHOLD    = parseThreshold('SERVER_LOAD_CPU_CRITICAL_THRESHOLD',    CRITICAL_THRESHOLD);
-const MEMORY_WARN_THRESHOLD     = parseThreshold('SERVER_LOAD_MEMORY_WARN_THRESHOLD',     WARN_THRESHOLD);
-const MEMORY_CRITICAL_THRESHOLD = parseThreshold('SERVER_LOAD_MEMORY_CRITICAL_THRESHOLD', CRITICAL_THRESHOLD);
-const DISK_WARN_THRESHOLD       = parseThreshold('SERVER_LOAD_DISK_WARN_THRESHOLD',       WARN_THRESHOLD);
-const DISK_CRITICAL_THRESHOLD   = parseThreshold('SERVER_LOAD_DISK_CRITICAL_THRESHOLD',   CRITICAL_THRESHOLD);
+const cpuThresholds = resolveThresholdPair(
+  'SERVER_LOAD_CPU_WARN_THRESHOLD',
+  'SERVER_LOAD_CPU_CRITICAL_THRESHOLD',
+  globalThresholds
+);
+const memoryThresholds = resolveThresholdPair(
+  'SERVER_LOAD_MEMORY_WARN_THRESHOLD',
+  'SERVER_LOAD_MEMORY_CRITICAL_THRESHOLD',
+  globalThresholds
+);
+const diskThresholds = resolveThresholdPair(
+  'SERVER_LOAD_DISK_WARN_THRESHOLD',
+  'SERVER_LOAD_DISK_CRITICAL_THRESHOLD',
+  globalThresholds
+);
 
 // Function to aggregate CPU times across all cores
 function getCpuTimes() {
@@ -136,53 +167,61 @@ function sampleDisk() {
 
 // Sampling function to calculate CPU and Memory usage
 function sample() {
-  const { idle, total } = getCpuTimes();
+  if (CPU_ENABLED) {
+    const { idle, total } = getCpuTimes();
 
-  if (initialized) {
-    const deltaTotal = total - previousTotal;
-    const deltaIdle = idle - previousIdle;
+    if (initialized) {
+      const deltaTotal = total - previousTotal;
+      const deltaIdle = idle - previousIdle;
 
-    // Calculate CPU usage percentage
-    cpuUsage = deltaTotal ? ((deltaTotal - deltaIdle) / deltaTotal) * 100 : 0;
-  } else {
-    initialized = true;
+      // Calculate CPU usage percentage
+      cpuUsage = deltaTotal ? ((deltaTotal - deltaIdle) / deltaTotal) * 100 : 0;
+    } else {
+      initialized = true;
+    }
+
+    // Update previous CPU times for next sampling
+    previousTotal = total;
+    previousIdle = idle;
   }
 
-  // Update previous CPU times for next sampling
-  previousTotal = total;
-  previousIdle = idle;
+  if (MEMORY_ENABLED) {
+    // Calculate Memory usage percentage using MemAvailable on Linux so cached
+    // pages aren't counted as "used" — see readAvailableMemBytes() above.
+    const totalMemBytes = os.totalmem();
+    const availableMemBytes = readAvailableMemBytes();
+    const usedMemBytes = totalMemBytes - availableMemBytes;
+    memoryUsage = (usedMemBytes / totalMemBytes) * 100;
 
-  // Calculate Memory usage percentage using MemAvailable on Linux so cached
-  // pages aren't counted as "used" — see readAvailableMemBytes() above.
-  const totalMemBytes = os.totalmem();
-  const availableMemBytes = readAvailableMemBytes();
-  const usedMemBytes = totalMemBytes - availableMemBytes;
-  memoryUsage = (usedMemBytes / totalMemBytes) * 100;
-
-  // Convert Memory usage from bytes to gigabytes (GB)
-  memoryTotal = (totalMemBytes / (1024 ** 3)).toFixed(2); // Total memory in GB
-  memoryUsed = (usedMemBytes / (1024 ** 3)).toFixed(2); // Used memory in GB
+    // Convert Memory usage from bytes to gigabytes (GB)
+    memoryTotal = (totalMemBytes / (1024 ** 3)).toFixed(2); // Total memory in GB
+    memoryUsed = (usedMemBytes / (1024 ** 3)).toFixed(2); // Used memory in GB
+  }
 }
 
 // Start sampling at regular intervals (every 3 seconds)
 const samplingInterval = 3000; // 3000ms = 3 seconds
-const intervalId = setInterval(sample, samplingInterval);
+const intervalId = CPU_ENABLED || MEMORY_ENABLED
+  ? setInterval(sample, samplingInterval)
+  : null;
 // Disk changes slowly — sample every 30 seconds
-const diskIntervalId = setInterval(sampleDisk, 30000);
+const diskIntervalId = DISK_ENABLED ? setInterval(sampleDisk, 30000) : null;
 
 // Perform an initial sample immediately
-sample();
-sampleDisk();
+if (CPU_ENABLED || MEMORY_ENABLED) sample();
+if (DISK_ENABLED) sampleDisk();
 
 // Graceful shutdown to clear the interval when the process exits
 function shutdown() {
-  clearInterval(intervalId);
-  clearInterval(diskIntervalId);
+  if (intervalId) clearInterval(intervalId);
+  if (diskIntervalId) clearInterval(diskIntervalId);
   process.exit();
 }
 
-process.on('SIGINT', shutdown);
-process.on('SIGTERM', shutdown);
+if (intervalId || diskIntervalId) {
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
+}
 
 // Export the usage metrics
 module.exports = {
@@ -231,16 +270,16 @@ module.exports = {
     criticalThreshold: CRITICAL_THRESHOLD,
     // Per-metric thresholds (equal to global when not individually overridden)
     cpu: {
-      warnThreshold:     CPU_WARN_THRESHOLD,
-      criticalThreshold: CPU_CRITICAL_THRESHOLD,
+      warnThreshold:     cpuThresholds.warnThreshold,
+      criticalThreshold: cpuThresholds.criticalThreshold,
     },
     memory: {
-      warnThreshold:     MEMORY_WARN_THRESHOLD,
-      criticalThreshold: MEMORY_CRITICAL_THRESHOLD,
+      warnThreshold:     memoryThresholds.warnThreshold,
+      criticalThreshold: memoryThresholds.criticalThreshold,
     },
     disk: {
-      warnThreshold:     DISK_WARN_THRESHOLD,
-      criticalThreshold: DISK_CRITICAL_THRESHOLD,
+      warnThreshold:     diskThresholds.warnThreshold,
+      criticalThreshold: diskThresholds.criticalThreshold,
     },
   },
 };

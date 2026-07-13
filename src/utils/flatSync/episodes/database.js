@@ -360,6 +360,7 @@ export async function updateEpisodeShowTitles(
         withSyncRunIdMarker({
           $set: {
             showTitle: showTitle,
+            originalTitle: showOriginalTitle,
           },
         })
       )

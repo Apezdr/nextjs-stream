@@ -6,9 +6,8 @@
 
 import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { EpisodeEntity, DatabaseError } from '../../core/types'
-import { BaseRepository } from './BaseRepository'
+import { BaseRepository, removeConflictingUnsetPaths } from './BaseRepository'
 import { ResourceManager } from '../../core/ResourceManager'
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
 import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
 
@@ -250,7 +249,10 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
       // Only $unset fields that actually have a value on the existing doc — avoids
       // a pointless write when the caller's candidate list is already cleared.
       const unsetFields = (unset || []).filter(f => (existing as any)[f] !== undefined)
-      const allUnsetFields = [...unsetFields, ...BaseRepository.manualFieldsToClear(existing, diff)]
+      const allUnsetFields = removeConflictingUnsetPaths(Object.keys(diff), [
+        ...unsetFields,
+        ...BaseRepository.manualFieldsToClear(existing, diff, unsetFields),
+      ])
       if (Object.keys(diff).length === 0 && allUnsetFields.length === 0) continue  // unchanged — skip write
 
       const update: Record<string, any> = {

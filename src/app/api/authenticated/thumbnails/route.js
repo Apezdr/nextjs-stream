@@ -1,5 +1,5 @@
-import isAuthenticated, { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
-import { getServer, multiServerHandler, nodeJSURL } from '@src/utils/config'
+import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { getServerIfConfigured } from '@src/utils/config'
 import { httpGet } from '@src/lib/httpHelper'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 
@@ -42,11 +42,11 @@ export const GET = async (req) => {
     // Determine the server ID based on media type
     let serverId
     if (type === 'movie') {
-      serverId = media.videoSource || media.videoInfoSource
+      serverId = media.videoSource
     } else if (type === 'tv') {
       if (episode) {
         // For episodes, the videoSource is directly on the episode
-        serverId = media.videoSource || media.videoInfoSource
+        serverId = media.videoSource
       } else {
         // For TV shows or seasons without episode, we can't determine the server
         // We would need to fetch specific episode information
@@ -61,7 +61,13 @@ export const GET = async (req) => {
     }
 
     // Access the server configuration using the media's videoSource
-    const serverConfig = getServer(serverId || 'default')
+    const serverConfig = serverId ? getServerIfConfigured(serverId) : null
+    if (!serverConfig) {
+      return new Response(JSON.stringify({ error: 'Media server provenance is unavailable' }), {
+        status: 503,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
 
     // Extract the Node.js server URL (syncEndpoint) from the server configuration
     // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.

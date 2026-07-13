@@ -52,7 +52,9 @@ const EnhancedServerStats = () => {
             disk:   diskConfig   = {},
         } = {},
     } = data
-    const memoryUsage = ((memoryUsed / memoryTotal) * 100)
+    const memoryUsage = memoryEnabled && Number.isFinite(Number(memoryUsed)) && Number(memoryTotal) > 0
+        ? (Number(memoryUsed) / Number(memoryTotal)) * 100
+        : 0
 
     // Resolved per-metric thresholds
     const cpuWarn        = cpuConfig.warnThreshold     ?? warnThreshold

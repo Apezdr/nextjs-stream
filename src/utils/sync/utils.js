@@ -7,6 +7,23 @@ export const MediaType = {
   MOVIES: 'movies',
 }
 
+const PRIMARY_FIELD_BY_SOURCE_FIELD = {
+  titleSource: ['title'],
+  originalTitleSource: ['originalTitle'],
+  metadataSource: 'metadata',
+  videoSource: 'videoURL',
+  videoInfoSource: ['videoInfo', 'duration', 'dimensions', 'hdr', 'mediaQuality', 'mediaLastModified', 'videoCodec'],
+  captionSource: ['captionURLs'],
+  posterSource: 'posterURL',
+  posterBlurhashSource: 'posterBlurhash',
+  backdropSource: 'backdrop',
+  backdropBlurhashSource: 'backdropBlurhash',
+  logoSource: 'logo',
+  chapterSource: 'chapterURL',
+  thumbnailSource: 'thumbnail',
+  thumbnailBlurhashSource: 'thumbnailBlurhash',
+}
+
 // File Pattern Constants
 const EPISODE_FILENAME_PATTERNS = [
   /S(\d+)E(\d+)(?:\s*-\s*(.+?))?(?:\s*-\s*.+?)?\.([^.]+)$/i, // Matches 'S01E01 - Title - Extra.mp4'
@@ -43,6 +60,7 @@ export function filterLockedFields(existingDoc, updateData) {
       if (current[part] === true) {
         return true
       } else if (typeof current[part] === 'object' && current[part] !== null) {
+        if (parts.length === 1) return true
         current = current[part]
       } else {
         return false
@@ -57,6 +75,10 @@ export function filterLockedFields(existingDoc, updateData) {
       const fullPath = path ? `${path}.${key}` : key
 
       if (isFieldLocked(fullPath)) continue
+      const sourcePrimaryFields = !path
+        ? [PRIMARY_FIELD_BY_SOURCE_FIELD[key]].flat().filter(Boolean)
+        : []
+      if (sourcePrimaryFields.some((field) => isFieldLocked(field))) continue
 
       const existingValue = existingObj ? existingObj[key] : undefined
 
@@ -103,6 +125,7 @@ export function filterLockedFieldsPreserveStructure(existingDoc, updateData) {
       if (current[part] === true) {
         return true
       } else if (typeof current[part] === 'object' && current[part] !== null) {
+        if (parts.length === 1) return true
         current = current[part]
       } else {
         return false
@@ -120,6 +143,10 @@ export function filterLockedFieldsPreserveStructure(existingDoc, updateData) {
       const fullPath = path ? `${path}.${key}` : key
 
       if (isFieldLocked(fullPath)) continue
+      const sourcePrimaryFields = !path
+        ? [PRIMARY_FIELD_BY_SOURCE_FIELD[key]].flat().filter(Boolean)
+        : []
+      if (sourcePrimaryFields.some((field) => isFieldLocked(field))) continue
 
       // Special handling for Date objects - treat them as primitive values
       if (value instanceof Date) {
@@ -192,6 +219,73 @@ export function isCurrentServerHighestPriorityForField(
   }, Infinity)
 
   return serverConfig.priority <= highestPriority
+}
+
+/**
+ * Checks priority only when the availability map confirms that the current
+ * server reported the exact field path. Unlike the legacy helper above, a
+ * missing path fails closed instead of being treated as unclaimed data.
+ *
+ * Use this for compound TV paths where guessing a season/episode key could
+ * otherwise let a lower-priority server overwrite an authoritative value.
+ */
+export function isCurrentServerHighestPriorityForReportedField(
+  fieldAvailability,
+  mediaType,
+  mediaTitle,
+  fieldPath,
+  serverConfig
+) {
+  if (!mediaTitle || !serverConfig?.id) return false
+
+  const serversWithData = fieldAvailability?.[mediaType]?.[mediaTitle]?.[fieldPath]
+  if (!Array.isArray(serversWithData) || !serversWithData.includes(serverConfig.id)) {
+    return false
+  }
+
+  return isCurrentServerHighestPriorityForField(
+    fieldAvailability,
+    mediaType,
+    mediaTitle,
+    fieldPath,
+    serverConfig
+  )
+}
+
+/**
+ * Check one logical field that can be represented by several equivalent leaf
+ * paths. The current server must report at least one exact path; ownership is
+ * then calculated across every server reporting any equivalent path.
+ */
+export function isCurrentServerHighestPriorityForReportedFieldGroup(
+  fieldAvailability,
+  mediaType,
+  mediaTitle,
+  fieldPaths,
+  serverConfig
+) {
+  if (!mediaTitle || !serverConfig?.id || !Array.isArray(fieldPaths)) return false
+
+  const availability = fieldAvailability?.[mediaType]?.[mediaTitle]
+  if (!availability) return false
+
+  const serversWithData = [...new Set(fieldPaths.flatMap((fieldPath) => {
+    const reporters = availability[fieldPath]
+    return Array.isArray(reporters) ? reporters : []
+  }))]
+
+  if (!serversWithData.includes(serverConfig.id)) return false
+
+  const highestPriority = serversWithData.reduce((minPriority, serverId) => {
+    try {
+      const server = getServer(serverId)
+      return Math.min(minPriority, server.priority)
+    } catch {
+      return minPriority
+    }
+  }, Infinity)
+
+  return Number.isFinite(highestPriority) && serverConfig.priority <= highestPriority
 }
 
 /**

@@ -1,5 +1,5 @@
 import { formatDateToEST, getFullImageUrl } from '@src/utils'
-import { getServer } from './config'
+import { getServerIfConfigured } from './config'
 import { cache } from 'react'
 import { normalize } from 'path'
 
@@ -764,6 +764,7 @@ export function sanitizeCardData(item, popup = false, context = {}) {
             const itemForClipGeneration = {
               ...item,
               videoURL: videoURL,
+              videoSource: item.videoSource || item.media?.videoSource || item.episode?.videoSource || item.media?.episode?.videoSource,
               // Ensure duration is available for clip generation
               duration: item.duration || item.media?.duration || item.episode?.duration || item.media?.episode?.duration || 0,
               // Ensure season/episode numbers are available for TV shows
@@ -772,7 +773,9 @@ export function sanitizeCardData(item, popup = false, context = {}) {
             }
             // Use original video quality for TV devices
             const useOriginalVideo = context.isTVdevice === true;
-            sanitized.clipVideoURL = generateClipVideoURL(itemForClipGeneration, type, originalTitle || title, useOriginalVideo);
+            sanitized.clipVideoURL = originalTitle
+              ? generateClipVideoURL(itemForClipGeneration, type, originalTitle, useOriginalVideo)
+              : null;
           } catch (clipError) {
             if (Boolean(process.env.DEBUG) == true) {
               console.warn(`Error generating clip URL for ${title}:`, clipError.message);
@@ -836,9 +839,10 @@ export const generateClipVideoURL = cache((item, type, title, useOriginalVideo =
     }
 
     // Generate sanitized URL with adjusted start and end times
-    const nodeJSURL = getServer(
-      item?.videoSource || item?.videoInfoSource || 'default'
-    ).syncEndpoint
+    const serverId = item?.videoSource
+    const serverConfig = serverId ? getServerIfConfigured(serverId) : null
+    if (!serverConfig?.syncEndpoint) return null
+    const nodeJSURL = serverConfig.syncEndpoint
     
     // For TV shows, check for season/episode data in multiple locations
     let seasonEpisodePath = ''

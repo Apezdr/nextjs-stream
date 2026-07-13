@@ -31,6 +31,8 @@ export interface CleanableField {
   entityField: string
   /** fieldAvailability lookup path (e.g. 'seasons.Season 2.episodes.S02E05.thumbnail'). */
   fieldPath: string
+  /** Equivalent file-server paths; the field is present when any path has reporters. */
+  alternativeFieldPaths?: string[]
   /** Companion fields cleared alongside the primary (e.g. 'thumbnailSource'). */
   companions?: string[]
 }
@@ -125,7 +127,8 @@ export function detectAbsentFields(input: AbsenceCleanupInput): AbsenceCleanupRe
       )
     }
 
-    const serversWithData = serverBucket[field.fieldPath] ?? []
+    const fieldPaths = [field.fieldPath, ...(field.alternativeFieldPaths || [])]
+    const serversWithData = fieldPaths.flatMap((fieldPath) => serverBucket[fieldPath] ?? [])
     // Some server still reports it → keep. This is the empty-array branch that
     // isCurrentServerHighestPriorityForField returns true for, but here we read
     // it directly because we want the "nobody has it" signal, not priority.

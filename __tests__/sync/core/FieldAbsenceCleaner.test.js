@@ -40,6 +40,22 @@ describe('detectAbsentFields', () => {
     expect(res.fieldsToUnset).toEqual([])
   })
 
+  it('no-ops when an equivalent alternative path is reported', () => {
+    const alternatePath = `${THUMB_PATH}URL`
+    const res = detectAbsentFields(
+      baseInput({
+        fieldAvailability: fa({ [alternatePath]: ['default'] }),
+        fields: [{
+          entityField: 'thumbnail',
+          fieldPath: THUMB_PATH,
+          alternativeFieldPaths: [alternatePath],
+          companions: ['thumbnailSource'],
+        }],
+      })
+    )
+    expect(res.fieldsToUnset).toEqual([])
+  })
+
   it('no-ops when the field is already absent in the entity', () => {
     const res = detectAbsentFields(baseInput({ entity: { videoURL: 'x' } }))
     expect(res.fieldsToUnset).toEqual([])

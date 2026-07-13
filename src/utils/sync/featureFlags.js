@@ -25,10 +25,26 @@ export function shouldUseNewArchitecture(options = {}) {
 
   // Check environment variable
   const envFlag = process.env.USE_NEW_SYNC_ARCHITECTURE
+  const normalizedEnvFlag = typeof envFlag === 'string'
+    ? envFlag.trim().toLowerCase()
+    : undefined
   
-  if (envFlag === 'true' || envFlag === '1') {
+  if (normalizedEnvFlag === 'true' || normalizedEnvFlag === '1') {
     console.log('🆕 Feature flag: Using NEW sync architecture (environment enabled)')
     return true
+  }
+
+  if (normalizedEnvFlag === 'false' || normalizedEnvFlag === '0') {
+    console.log('🔄 Feature flag: Using OLD sync architecture (environment disabled)')
+    return false
+  }
+
+  if (normalizedEnvFlag) {
+    console.warn(
+      `⚠️ Feature flag: Invalid USE_NEW_SYNC_ARCHITECTURE value "${envFlag}"; ` +
+      'using OLD sync architecture as the safe fallback'
+    )
+    return false
   }
 
   // Default to new architecture
