@@ -207,9 +207,28 @@ const getPlaylistMetadata = cache(async (playlistId) => {
  * @param {string} [options.userId] - Optional user ID to skip auth() call
  * @returns {Promise<Array|number>} Watchlist items or count
  */
+// The Watchlist collection ships with no secondary indexes; ensure the one that
+// serves the hot find({playlistId}).sort({dateAdded}) path exists. Memoized per
+// process so polling requests don't pay a round trip (mirrors ensurePlaylistVisibilityIndexes).
+let watchlistIndexesEnsured = false
+async function ensureWatchlistIndexes() {
+  if (watchlistIndexesEnsured) return
+  try {
+    const client = await clientPromise
+    await client
+      .db('Media')
+      .collection('Watchlist')
+      .createIndex({ playlistId: 1, dateAdded: -1 }, { name: 'by_playlist_dateAdded' })
+    watchlistIndexesEnsured = true
+  } catch (error) {
+    console.warn('[Watchlist] Index ensure warning:', error?.message || error)
+  }
+}
+
 export const getUserWatchlist = cache(async function getUserWatchlist({
   page = 0,
   limit = 20,
+  offset = null,
   mediaType,
   playlistId,
   countOnly = false,
@@ -237,6 +256,8 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
   console.log(`[getUserWatchlist ENTRY] callId=${callId}, playlistId=${playlistId || 'default'}, page=${page}, limit=${limit}, mediaType=${mediaType || 'all'}, internalOnly=${internalOnly}`)
 
   try {
+    await ensureWatchlistIndexes()
+
     const client = await clientPromise
     const db = client.db('Media')
     const collection = db.collection('Watchlist')
@@ -329,11 +350,11 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
       sortObj.dateAdded = -1 // Default sort for custom or other sorts
     }
 
-    // Query watchlist items
+    // Query watchlist items (absolute offset overrides page-based skip for windowed fetches)
     const watchlistItems = await collection
       .find(filter)
       .sort(sortObj)
-      .skip(page * limit)
+      .skip(offset ?? page * limit)
       .limit(limit)
       .toArray()
 

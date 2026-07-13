@@ -1,7 +1,63 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { findPlaybackForUser, hasWatchHistory } from '@src/utils/watchHistory/database'
 import { cache } from 'react'
+
+/**
+ * Builds the dual-key lookup map (normalizedVideoId + raw videoId) from raw
+ * WatchHistory documents. Shared by the full and bounded fetch paths.
+ *
+ * @param {Array} watchHistoryEntries - Raw WatchHistory documents
+ * @returns {Map} Map keyed by normalizedVideoId and raw videoId
+ */
+function buildWatchHistoryLookupMap(watchHistoryEntries) {
+  const lookupMap = new Map()
+
+  if (watchHistoryEntries && watchHistoryEntries.length > 0) {
+    // Process each watch history entry and create lookup map
+    watchHistoryEntries.forEach(entry => {
+        // Use normalizedVideoId if available, otherwise generate it
+        let normalizedId = entry.normalizedVideoId
+        if (!normalizedId && entry.videoId) {
+          normalizedId = generateNormalizedVideoId(entry.videoId)
+        }
+
+        if (normalizedId) {
+          lookupMap.set(normalizedId, {
+            playbackTime: entry.playbackTime || 0,
+            lastWatched: entry.lastUpdated,
+            isWatched: true,
+            normalizedVideoId: normalizedId,
+            // Include additional metadata for TV shows
+            ...(entry.mediaType === 'tv' && {
+              showId: entry.showId,
+              seasonNumber: entry.seasonNumber,
+              episodeNumber: entry.episodeNumber
+            })
+          })
+        }
+
+        // Also add entry by direct videoId for fallback matching
+        if (entry.videoId) {
+          lookupMap.set(entry.videoId, {
+            playbackTime: entry.playbackTime || 0,
+            lastWatched: entry.lastUpdated,
+            isWatched: true,
+            normalizedVideoId: normalizedId,
+            // Include additional metadata for TV shows
+            ...(entry.mediaType === 'tv' && {
+              showId: entry.showId,
+              seasonNumber: entry.seasonNumber,
+              episodeNumber: entry.episodeNumber
+            })
+          })
+        }
+      })
+  }
+
+  return lookupMap
+}
 
 /**
  * Fetches user's watch history and creates a lookup map for efficient matching
@@ -37,51 +93,7 @@ export const createWatchHistoryLookupMap = cache(async function(userId) {
       )
       .toArray()
 
-    const lookupMap = new Map()
-
-    if (watchHistoryEntries && watchHistoryEntries.length > 0) {
-      // Process each watch history entry and create lookup map
-      watchHistoryEntries.forEach(entry => {
-          // Use normalizedVideoId if available, otherwise generate it
-          let normalizedId = entry.normalizedVideoId
-          if (!normalizedId && entry.videoId) {
-            normalizedId = generateNormalizedVideoId(entry.videoId)
-          }
-
-          if (normalizedId) {
-            lookupMap.set(normalizedId, {
-              playbackTime: entry.playbackTime || 0,
-              lastWatched: entry.lastUpdated,
-              isWatched: true,
-              normalizedVideoId: normalizedId,
-              // Include additional metadata for TV shows
-              ...(entry.mediaType === 'tv' && {
-                showId: entry.showId,
-                seasonNumber: entry.seasonNumber,
-                episodeNumber: entry.episodeNumber
-              })
-            })
-          }
-
-          // Also add entry by direct videoId for fallback matching
-          if (entry.videoId) {
-            lookupMap.set(entry.videoId, {
-              playbackTime: entry.playbackTime || 0,
-              lastWatched: entry.lastUpdated,
-              isWatched: true,
-              normalizedVideoId: normalizedId,
-              // Include additional metadata for TV shows
-              ...(entry.mediaType === 'tv' && {
-                showId: entry.showId,
-                seasonNumber: entry.seasonNumber,
-                episodeNumber: entry.episodeNumber
-              })
-            })
-          }
-        })
-    }
-
-    return lookupMap
+    return buildWatchHistoryLookupMap(watchHistoryEntries)
   } catch (error) {
     console.error('Error creating watch history lookup map:', error)
     return new Map() // Return empty map on error to allow graceful degradation
@@ -184,6 +196,84 @@ export async function addWatchHistoryToItems(items, userId) {
     return augmentedItems
   } catch (error) {
     console.error('Error adding watch history to items:', error)
+    // Return original items on error for graceful degradation
+    return items
+  }
+}
+
+/**
+ * Adds watch history to media items using a bounded query — fetches only the
+ * WatchHistory entries whose normalizedVideoId matches one of the given items,
+ * instead of the user's entire history.
+ *
+ * Only suitable for items that carry a stored `normalizedVideoId` (e.g. cards
+ * produced by sanitizeCardData). Items matched by raw videoURL or by the
+ * JS-generated hash fallback need addWatchHistoryToItems' full fetch instead.
+ *
+ * @param {Array} items - Array of media items (each with normalizedVideoId)
+ * @param {string|ObjectId} userId - User ID
+ * @returns {Promise<Array>} Items augmented with watch history
+ */
+export async function addWatchHistoryToItemsBounded(items, userId) {
+  try {
+    if (!items || !Array.isArray(items) || items.length === 0) {
+      return items
+    }
+
+    if (process.env.DEBUG) {
+      console.time('addWatchHistoryToItemsBounded:total')
+      console.log(`[PERF] Adding bounded watch history to ${items.length} items for user ${userId}`)
+    }
+
+    const normalizedIds = [...new Set(items.map(item => item?.normalizedVideoId).filter(Boolean))]
+
+    const entries = normalizedIds.length > 0
+      ? await findPlaybackForUser(userId, {
+          filter: { isValid: { $ne: false }, normalizedVideoId: { $in: normalizedIds } },
+          projection: {
+            videoId: 1,
+            normalizedVideoId: 1,
+            playbackTime: 1,
+            lastUpdated: 1,
+            mediaType: 1,
+            showId: 1,
+            seasonNumber: 1,
+            episodeNumber: 1
+          }
+        })
+      : []
+
+    let augmentedItems
+    if (entries.length === 0) {
+      // Match the unbounded path's semantics: items pass through untouched when
+      // the user has no history at all (empty lookup map); otherwise every item
+      // gets the zeroed watchHistory stub.
+      if (!(await hasWatchHistory(userId))) {
+        augmentedItems = items
+      } else {
+        augmentedItems = items.map(item => ({
+          ...item,
+          watchHistory: {
+            playbackTime: 0,
+            lastWatched: null,
+            isWatched: false,
+            normalizedVideoId: null
+          }
+        }))
+      }
+    } else {
+      augmentedItems = augmentItemsWithWatchHistory(items, buildWatchHistoryLookupMap(entries))
+    }
+
+    if (process.env.DEBUG) {
+      const itemsWithHistory = augmentedItems.filter(item => item.watchHistory?.isWatched).length
+      console.log(`[PERF] Bounded: ${entries.length} history entries fetched, ${itemsWithHistory} of ${augmentedItems.length} items matched`)
+      console.timeEnd('addWatchHistoryToItemsBounded:total')
+    }
+
+    return augmentedItems
+  } catch (error) {
+    console.error('Error adding bounded watch history to items:', error)
     // Return original items on error for graceful degradation
     return items
   }

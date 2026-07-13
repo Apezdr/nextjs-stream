@@ -373,6 +373,7 @@ export function generateNormalizedVideoId(url) {
  * @param {number} [page=1] - The page number for pagination (1-based).
  * @param {number} [limit=0] - The number of items per page.
  * @param {object} [customProjection={}] - Optional custom projection object to merge with default.
+ * @param {object} [options={}] - Optional settings. `options.skip` overrides page-based skip with an absolute document offset (used for windowed fetches spanning page boundaries).
  * @returns {Promise} Resolves to an array of poster objects or the count of records.
  */
 export async function getFlatPosters(
@@ -380,7 +381,8 @@ export async function getFlatPosters(
   countOnly = false,
   page = 1,
   limit = 15,
-  customProjection = {}
+  customProjection = {},
+  options = {}
 ) {
   const client = await clientPromise
   const collection = type === 'movie' ? 'FlatMovies' : 'FlatTVShows'
@@ -408,8 +410,8 @@ export async function getFlatPosters(
     return await client.db('Media').collection(collection).countDocuments()
   }
 
-  // Ensure page is at least 1 for 1-based pagination
-  const skip = page * limit
+  // Absolute skip override supports windowed fetches that straddle page boundaries
+  const skip = options.skip ?? page * limit
   const queryOptions = { projection: finalProjection } // Use the merged projection
   if (limit > 0) {
     queryOptions.limit = limit
@@ -545,6 +547,7 @@ export async function getFlatRecentlyWatchedForUser({
   userId,
   page = 0,
   limit = 15,
+  offset = null,
   countOnly = false,
   shouldExposeAdditionalData = false,
   projection = null,
@@ -604,6 +607,9 @@ export async function getFlatRecentlyWatchedForUser({
       console.time('getFlatRecentlyWatchedForUser:aggregate')
     }
 
+    // An absolute offset overrides page-based skip for windowed fetches
+    const skipVal = offset ?? validPage * limit
+
     const watchedVideos = await findPlaybackForUser(userId, {
       filter: { isValid: { $ne: false } },
       projection: {
@@ -619,9 +625,10 @@ export async function getFlatRecentlyWatchedForUser({
         showId: 1,
       },
       sort: { lastUpdated: -1 },
-      skip: validPage * limit,
+      skip: skipVal,
       limit: limit,
     })
+
 
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getFlatRecentlyWatchedForUser:aggregate')
@@ -1053,6 +1060,29 @@ export async function getFlatRecentlyWatchedForUser({
       limit,
       contextObj
     )
+
+    // For windowed callers (offset set), stamp each hydrated item with the absolute
+    // list position of its raw WatchHistory row (dual-key match, sequential fallback)
+    // so windows split correctly even when hydration dropped orphaned rows. Windowed
+    // callers strip __listPosition before responding; page-based callers never see it.
+    if (offset !== null && Array.isArray(watchedDetails)) {
+      const positionByNormalizedId = new Map(
+        watchedVideos.map((video, index) => [video.normalizedVideoId, skipVal + index])
+      )
+      const positionByVideoId = new Map(
+        watchedVideos.map((video, index) => [video.videoId, skipVal + index])
+      )
+      watchedDetails.forEach((item, index) => {
+        const byNormalizedId =
+          item?.normalizedVideoId != null
+            ? positionByNormalizedId.get(item.normalizedVideoId)
+            : undefined
+        const itemVideoURL =
+          item?.videoURL || item?.media?.videoURL || item?.media?.episode?.videoURL
+        const byVideoId = itemVideoURL != null ? positionByVideoId.get(itemVideoURL) : undefined
+        item.__listPosition = byNormalizedId ?? byVideoId ?? skipVal + index
+      })
+    }
 
     // Enhanced diagnostic logging for pagination consistency
     if (
@@ -1560,6 +1590,7 @@ export async function processFlatWatchedDetails(
 export async function getFlatRecentlyAddedMedia({
   page = 0,
   limit = 15,
+  offset = null,
   countOnly = false,
   shouldExposeAdditionalData = false,
   projection = null,
@@ -1739,8 +1770,9 @@ export async function getFlatRecentlyAddedMedia({
 
     // Apply pagination to the combined and arranged result
     // This ensures we maintain consistent pagination across all pages
+    // An absolute offset overrides page-based indexing for windowed fetches
     const validPage = Math.max(page, 0) // Ensure page is at least 0
-    const startIndex = validPage * limit
+    const startIndex = offset ?? validPage * limit
     const endIndex = startIndex + limit
 
     // If we're requesting a page beyond what we have data for, return empty array
@@ -2367,7 +2399,7 @@ export async function getFlatMoviesLastUpdatedTimestamp() {
  * @returns {Promise<Array>} Array of TV shows with fields needed by the TVList component
  */
 export async function getFlatTVList(options = {}) {
-  const { page = 0, limit = 0, sort = true } = options
+  const { page = 0, limit = 0, sort = true, skip = null } = options
 
   try {
     const client = await clientPromise
@@ -2385,9 +2417,9 @@ export async function getFlatTVList(options = {}) {
     // Setup query options with pagination
     const queryOptions = { projection }
     if (limit > 0) {
-      const skip = page * limit // Calculate offset for pagination
       queryOptions.limit = limit
-      queryOptions.skip = skip // Add skip for pagination
+      // Absolute skip override supports windowed fetches that straddle page boundaries
+      queryOptions.skip = skip ?? page * limit
     }
 
     // Fetch TV shows from flat database
@@ -2406,97 +2438,97 @@ export async function getFlatTVList(options = {}) {
       })
     }
 
-    // Process TV shows and fetch seasons for each show
-    return await Promise.all(
-      tvShows.map(async (tvShow) => {
-        // Ensure we have a poster URL
-        const posterURL =
-          tvShow.posterURL ||
-          (tvShow.metadata?.poster_path ? getFullImageUrl(tvShow.metadata.poster_path) : null) ||
-          '/sorry-image-not-available.jpg'
-
-        // Get show ID as string for queries
-        const showId = tvShow._id.toString()
-
-        // Fetch all seasons for this TV show
-        const seasons = await client
+    // Batch-fetch seasons and episodes for the whole page in two queries
+    // (replaces the previous per-show/per-season fan-out of 1 + 2×seasons queries per show)
+    const showIds = tvShows.map((tvShow) => tvShow._id)
+    const allSeasons = showIds.length
+      ? await client
           .db('Media')
           .collection('FlatSeasons')
-          .find({ showId: tvShow._id })
-          .sort({ seasonNumber: 1 })
+          .find({ showId: { $in: showIds } })
+          .sort({ showId: 1, seasonNumber: 1 })
           .toArray()
+      : []
 
-        // For each season, create a properly serialized version with episode information
-        const seasonsWithEpisodes = await Promise.all(
-          seasons.map(async (season) => {
-            // Get the season ID as a string for the episode query
-            const seasonId = season._id.toString()
-
-            // Just get episode count for each season, which is safer for serialization
-            const episodeCount = await client
-              .db('Media')
-              .collection('FlatEpisodes')
-              .countDocuments({ seasonId: season._id })
-
-            // Get minimal dimension and HDR data for this season's episodes
-            // We'll use aggregation to get just the specific fields we need
-            const episodeStats = await client
-              .db('Media')
-              .collection('FlatEpisodes')
-              .find(
-                { seasonId: season._id },
-                {
-                  projection: {
-                    _id: 1,
-                    normalizedVideoId: 1,
-                    episodeNumber: 1,
-                    dimensions: 1,
-                    hdr: 1,
-                  },
-                }
-              )
-              .toArray()
-
-            // Create our serialized episode objects
-            let serializedEpisodes = episodeStats.map((episode) => ({
-              _id: episode._id.toString(),
-              episodeNumber: episode.episodeNumber,
-              dimensions: episode.dimensions || '0x0', // Ensure we have a dimension string
-              hdr: episode.hdr || false,
-            }))
-
-            // If no episodes were found, create a placeholder array
-            if (serializedEpisodes.length === 0) {
-              serializedEpisodes = Array(episodeCount).fill({
-                dimensions: '0x0',
-                hdr: false,
-              })
+    const seasonIds = allSeasons.map((season) => season._id)
+    const allEpisodes = seasonIds.length
+      ? await client
+          .db('Media')
+          .collection('FlatEpisodes')
+          .find(
+            { seasonId: { $in: seasonIds } },
+            {
+              projection: {
+                _id: 1,
+                normalizedVideoId: 1,
+                episodeNumber: 1,
+                dimensions: 1,
+                hdr: 1,
+                seasonId: 1,
+              },
             }
+          )
+          .toArray()
+      : []
 
-            // Return a serialized season object with its episodes
-            return {
-              _id: seasonId,
-              seasonNumber: season.seasonNumber,
-              title: season.title || null,
-              episodes: serializedEpisodes,
-            }
-          })
-        )
+    const episodesBySeason = new Map()
+    for (const episode of allEpisodes) {
+      const key = episode.seasonId.toString()
+      if (!episodesBySeason.has(key)) episodesBySeason.set(key, [])
+      episodesBySeason.get(key).push(episode)
+    }
 
-        // Return a fully serialized TV show object
+    const seasonsByShow = new Map()
+    for (const season of allSeasons) {
+      const key = season.showId.toString()
+      if (!seasonsByShow.has(key)) seasonsByShow.set(key, [])
+      seasonsByShow.get(key).push(season)
+    }
+
+    // Process TV shows using the pre-grouped season/episode data
+    return tvShows.map((tvShow) => {
+      // Ensure we have a poster URL
+      const posterURL =
+        tvShow.posterURL ||
+        (tvShow.metadata?.poster_path ? getFullImageUrl(tvShow.metadata.poster_path) : null) ||
+        '/sorry-image-not-available.jpg'
+
+      const showId = tvShow._id.toString()
+      const seasons = seasonsByShow.get(showId) || []
+
+      const seasonsWithEpisodes = seasons.map((season) => {
+        const seasonId = season._id.toString()
+        const episodeStats = episodesBySeason.get(seasonId) || []
+
+        const serializedEpisodes = episodeStats.map((episode) => ({
+          _id: episode._id.toString(),
+          episodeNumber: episode.episodeNumber,
+          dimensions: episode.dimensions || '0x0', // Ensure we have a dimension string
+          hdr: episode.hdr || false,
+        }))
+
+        // Return a serialized season object with its episodes
         return {
-          _id: showId,
-          id: showId,
-          title: tvShow.title,
-          posterURL: posterURL,
-          posterBlurhash: tvShow.posterBlurhash || null,
-          metadata: tvShow.metadata || {},
-          link: encodeURIComponent(tvShow.title) || null,
-          type: 'tv',
-          seasons: seasonsWithEpisodes,
+          _id: seasonId,
+          seasonNumber: season.seasonNumber,
+          title: season.title || null,
+          episodes: serializedEpisodes,
         }
       })
-    )
+
+      // Return a fully serialized TV show object
+      return {
+        _id: showId,
+        id: showId,
+        title: tvShow.title,
+        posterURL: posterURL,
+        posterBlurhash: tvShow.posterBlurhash || null,
+        metadata: tvShow.metadata || {},
+        link: encodeURIComponent(tvShow.title) || null,
+        type: 'tv',
+        seasons: seasonsWithEpisodes,
+      }
+    })
   } catch (error) {
     console.error(`Error in getFlatTVList: ${error.message}`)
     throw error

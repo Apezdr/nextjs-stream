@@ -319,9 +319,10 @@ export function findFlatFirstEpisode(show) {
  * @param {Array} items - Array of items to paginate
  * @param {number} page - Page number (0-based)
  * @param {number} limit - Number of items per page
+ * @param {number|null} offset - Absolute item offset; overrides page-based skip for windowed fetches
  * @returns {Array} Paginated items
  */
-export function paginateItems(items, page = 0, limit = 30) {
+export function paginateItems(items, page = 0, limit = 30, offset = null) {
   if (!items || !Array.isArray(items)) {
     // If no items, return a dummy array for testing
     if (page === 0) {
@@ -369,6 +370,6 @@ export function paginateItems(items, page = 0, limit = 30) {
     console.log(`Page ${page} has fewer than ${limit} items (${stableSortedItems.length} total)`);
   }
   
-  const skip = page * limit;
+  const skip = offset ?? page * limit;
   return stableSortedItems.slice(skip, Math.min(skip + limit, stableSortedItems.length));
 }

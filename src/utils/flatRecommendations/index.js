@@ -41,7 +41,7 @@ import {
  * @param {number} limit - The number of items to return per page
  * @returns {Promise<Object>} Object containing hasWatched flag, recommended items, and genre info
  */
-export async function getFlatGenreBasedRecommendations(userId, page = 0, limit = 30, shouldExposeAdditionalData = false) {
+export async function getFlatGenreBasedRecommendations(userId, page = 0, limit = 30, shouldExposeAdditionalData = false, offset = null) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -367,11 +367,11 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
       console.log(`Not enough items for page ${page}, returning available items`);
     }
     
-    // Skip items based on page
-    const paginatedItems = paginateItems(diverseRecommendations, page, limit);
+    // Skip items based on page (or absolute offset for windowed fetches)
+    const paginatedItems = paginateItems(diverseRecommendations, page, limit, offset);
 
-    return { 
-      hasWatched: true, 
+    return {
+      hasWatched: true,
       items: paginatedItems,
       genres: sortedGenres
     }
@@ -388,7 +388,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
  * @param {number} limit - The number of items to return per page
  * @returns {Promise<Array>} Array of popular content items
  */
-export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExposeAdditionalData = false) {
+export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExposeAdditionalData = false, offset = null) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -641,13 +641,13 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
       });
     }
 
-    // Skip items based on page
-    const paginatedItems = paginateItems(uniqueItems, page, limit);
+    // Skip items based on page (or absolute offset for windowed fetches)
+    const paginatedItems = paginateItems(uniqueItems, page, limit, offset);
 
     return paginatedItems
   } catch (error) {
     console.error('Error in getFlatMostPopularContent:', error)
-    return getFlatRandomRecommendations(page, limit, shouldExposeAdditionalData)
+    return getFlatRandomRecommendations(page, limit, shouldExposeAdditionalData, offset)
   }
 }
 
@@ -658,7 +658,7 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
  * @param {number} limit - The number of items to return per page
  * @returns {Promise<Array>} Array of random content items
  */
-export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldExposeAdditionalData = false) {
+export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldExposeAdditionalData = false, offset = null) {
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -782,8 +782,8 @@ export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldE
       console.log(`Not enough random items (${uniqueItems.length}) for page ${page}, returning available items`);
     }
     
-    // Skip items based on page
-    return paginateItems(uniqueItems, page, limit);
+    // Skip items based on page (or absolute offset for windowed fetches)
+    return paginateItems(uniqueItems, page, limit, offset);
   } catch (error) {
     console.error('Error in getFlatRandomRecommendations:', error)
     return []
@@ -829,7 +829,7 @@ async function getFlatLatestWatchTimestamp(userId) {
  * @param {boolean} shouldExposeAdditionalData - Whether to expose additional data in the response ex. videoURL, duration
  * @returns {Promise<Object>} Object containing recommendations data
  */
-export async function getFlatRecommendations(userId, page = 0, limit = 30, countOnly = false, shouldExposeAdditionalData = false) {
+export async function getFlatRecommendations(userId, page = 0, limit = 30, countOnly = false, shouldExposeAdditionalData = false, offset = null) {
   try {
     // Get the latest watch timestamp for this user (for logging purposes only)
     const latestWatchTimestamp = await getFlatLatestWatchTimestamp(userId)
@@ -841,15 +841,15 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
     const context = { dateContext: 'recommendations' }
     
     // Get recommendations based on user's watch history
-    const recommendations = await getFlatGenreBasedRecommendations(userId, page, limit, shouldExposeAdditionalData)
-    
+    const recommendations = await getFlatGenreBasedRecommendations(userId, page, limit, shouldExposeAdditionalData, offset)
+
     // If user has no watch history or we couldn't find genre-based recommendations,
     // fall back to most popular content
     let items = recommendations.items
     let hasWatched = recommendations.hasWatched
-    
+
     if (!hasWatched || items.length === 0) {
-      items = await getFlatMostPopularContent(page, limit, shouldExposeAdditionalData)
+      items = await getFlatMostPopularContent(page, limit, shouldExposeAdditionalData, offset)
       hasWatched = false
     }
 
