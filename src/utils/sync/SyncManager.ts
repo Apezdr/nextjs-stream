@@ -4,7 +4,6 @@
  */
 
 import pLimit from 'p-limit'
-import clientPromise from '@src/lib/mongodb'
 import {
   MediaType,
   SyncContext,
@@ -65,9 +64,8 @@ export class SyncManager {
     try {
       syncLogger.info('Initializing new sync architecture...')
       
-      // Initialize database adapter
-      const client = await clientPromise
-      this.dbAdapter = await createDatabaseAdapter(client)
+      // Initialize database adapter (runs on the sync-dedicated Mongo pool)
+      this.dbAdapter = await createDatabaseAdapter()
       syncLogger.info('Database adapter initialized')
 
       // Initialize domain services

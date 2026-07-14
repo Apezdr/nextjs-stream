@@ -204,10 +204,19 @@ declare global {
  * dropped on a transient connection close) re-runs here on the next sync. Caching
  * the init PROMISE instead, as before, pinned a half-indexed adapter for the whole
  * process lifetime and required a restart to recover.
+ *
+ * The adapter's repositories run on the SYNC-DEDICATED MongoClient (own pool,
+ * appName nextjs-stream-sync), resolved here rather than accepted as a
+ * parameter: the instance is cached on globalThis, so a caller passing the
+ * request-serving client would silently bind sync's bulk writes to the shared
+ * pool for the whole process lifetime — which is exactly the production
+ * failure this isolates (sync ticks exhausting the pool and queueing request
+ * queries for seconds behind bulk operations).
  */
-export async function createDatabaseAdapter(client: MongoClient): Promise<MongoDBAdapter> {
+export async function createDatabaseAdapter(): Promise<MongoDBAdapter> {
   if (!globalThis.__syncDatabaseAdapter) {
-    globalThis.__syncDatabaseAdapter = new MongoDBAdapter(client)
+    const { getSyncClientPromise } = await import('@src/lib/mongodb')
+    globalThis.__syncDatabaseAdapter = new MongoDBAdapter(await getSyncClientPromise())
   }
   const adapter = globalThis.__syncDatabaseAdapter
   await adapter.initialize()

@@ -996,8 +996,9 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     // createDatabaseAdapter is idempotent — it initialises the singleton adapter
     // and calls createIndexes() on all four collections (Movies, TVShows, Seasons,
     // Episodes) if they haven't been created yet in this process lifetime.
-    const client = await clientPromise
-    await createDatabaseAdapter(client)
+    // The adapter resolves the sync-dedicated Mongo pool internally so bulk
+    // sync writes can't starve the request-serving pool.
+    await createDatabaseAdapter()
 
     // Authoritative-pass gate for field-absence cleanup. getFileServerData sets
     // `errors` (an array) only when a server failed to respond; undefined means
