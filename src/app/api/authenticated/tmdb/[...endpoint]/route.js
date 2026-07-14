@@ -2,6 +2,7 @@ import { tmdbNodeServerURL } from '@src/utils/config'
 import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { httpGet } from '@src/lib/httpHelper'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
+import { hasMatchingETag, createNotModifiedResponse } from '@src/utils/cache/etagHelpers'
 
 /**
  * httpHelper (here and on the backend) caches JSON/text responses wrapped as
@@ -84,7 +85,10 @@ export async function GET(request, { params }) {
       endpointPath.includes('videos') ||
       endpointPath.includes('comprehensive')
 
-    // Use enhanced HTTP client with retry and caching
+    // Use enhanced HTTP client with retry and caching. httpGet revalidates
+    // against the backend with If-None-Match (ETag stored in Redis alongside
+    // the body) and serves the cached body on a 304, so unchanged payloads
+    // never re-transfer from the backend.
     const response = await httpGet(
       backendUrl.toString(),
       {
@@ -106,7 +110,20 @@ export async function GET(request, { params }) {
       shouldCache
     ) // Cache based on endpoint type
 
-    return Response.json(unwrapCachedEnvelope(response.data))
+    // Propagate the backend's content ETag so this proxy's own clients
+    // (RN/TV app, browser) can revalidate against us the same way we
+    // revalidate against the backend
+    const backendETag = response.headers?.etag || null
+    if (backendETag && hasMatchingETag(request, backendETag)) {
+      return createNotModifiedResponse(backendETag)
+    }
+
+    return Response.json(
+      unwrapCachedEnvelope(response.data),
+      backendETag
+        ? { headers: { ETag: backendETag, 'Cache-Control': 'no-cache' } }
+        : undefined
+    )
   } catch (error) {
     console.error('TMDB proxy error:', error)
 
