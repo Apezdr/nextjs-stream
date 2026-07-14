@@ -492,6 +492,14 @@ let startTime = null
 let activeSyncOperation = null
 let syncSubscribers = []
 
+// A sync "running" longer than this is presumed wedged (a full library sync
+// completes in seconds-to-minutes) and its handle is abandoned so the next
+// tick can take over — see the stale-takeover block in handleSyncOperation.
+const SYNC_OPERATION_STALE_MS = (() => {
+  const parsed = Number(process.env.SYNC_OPERATION_STALE_MS)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 30 * 60 * 1000
+})()
+
 // Running snapshot of sync state — updated live via event bus subscriptions.
 // Exposed through sync-status so late-joining clients can catch up without
 // relying on event bus history (which may overflow for large syncs).
@@ -738,18 +746,37 @@ async function handleRevalidateMedia(request) {
  * @returns {Promise<Response>} - Response to the sync request
  */
 async function handleSyncOperation(request, webhookId) {
-  // If a sync is already running, return the stream URL so the client can subscribe
+  // If a sync is already running, return the stream URL so the client can
+  // subscribe — UNLESS it has been "running" long past any plausible duration.
+  // activeSyncOperation is an in-memory promise handle cleared only when the
+  // sync settles; a Mongo operation that never settles (observed 2026-07-14:
+  // a tick parked for 10 hours on an unbounded driver wait while mongod was
+  // crash-looping) would otherwise gate out every future sync until a process
+  // restart. Stale takeover is safe: the write-phase orchestration lock has
+  // its own 10-minute watchdog, and the settlement handler below is
+  // identity-guarded so a late-settling zombie cannot clobber the new run.
   if (activeSyncOperation) {
-    return new Response(
-      JSON.stringify({
-        alreadyRunning: true,
-        streamUrl: '/api/authenticated/admin/sync-stream',
-      }),
-      {
-        status: 202,
-        headers: { 'Content-Type': 'application/json' },
-      }
+    const ageMs = startTime ? Date.now() - new Date(startTime).getTime() : 0
+    if (ageMs < SYNC_OPERATION_STALE_MS) {
+      return new Response(
+        JSON.stringify({
+          alreadyRunning: true,
+          streamUrl: '/api/authenticated/admin/sync-stream',
+        }),
+        {
+          status: 202,
+          headers: { 'Content-Type': 'application/json' },
+        }
+      )
+    }
+
+    console.error(
+      `[SYNC] Stale sync takeover: previous sync started ${startTime} ` +
+      `(${Math.round(ageMs / 60000)}m ago) and never settled — abandoning its handle and starting fresh`
     )
+    activeSyncOperation = null
+    syncSubscribers = []
+    stopSnapshotTracking()
   }
 
   // Read sync options from the request body (Force Refresh checkbox in the
@@ -765,17 +792,24 @@ async function handleSyncOperation(request, webhookId) {
   startTime = new Date().toISOString()
   startSnapshotTracking()
 
-  // Fire and forget — response is delivered via SSE stream
-  activeSyncOperation = handleSync(webhookId, request, { forceSync })
-  activeSyncOperation
+  // Fire and forget — response is delivered via SSE stream.
+  // The settlement handlers compare identity before touching module state:
+  // after a stale takeover, the abandoned run may still settle eventually and
+  // must not clear the CURRENT run's handle or subscribers.
+  const thisOperation = handleSync(webhookId, request, { forceSync })
+  activeSyncOperation = thisOperation
+  thisOperation
     .then(() => {
+      if (activeSyncOperation !== thisOperation) return
       syncSubscribers.forEach((s) => s.resolve())
     })
     .catch((err) => {
       console.error('Sync operation failed:', err)
+      if (activeSyncOperation !== thisOperation) return
       syncSubscribers.forEach((s) => s.reject(err))
     })
     .finally(() => {
+      if (activeSyncOperation !== thisOperation) return
       activeSyncOperation = null
       syncSubscribers = []
       stopSnapshotTracking()
