@@ -35,12 +35,34 @@ const options: MongoClientOptions = {
   appName: 'nextjs-stream',
 }
 
+// Sync-dedicated pool. The multi-server sync's bulk phases fan out enough
+// concurrent operations to exhaust the shared request-serving pool — observed
+// in production as request queries queueing 4-5s for a connection checkout
+// mid-tick while the query itself ran in single-digit milliseconds. Routing
+// the sync's repositories through their own client caps sync's blast radius
+// at its own pool and leaves the pool above exclusively serving requests.
+//
+// minPoolSize defaults to 0: syncs run every ~3 minutes and maxIdleTimeMS
+// drains idle sockets after 60s, so warm connections would be re-established
+// each tick anyway — the background pool fill at tick start is cheap and
+// beats holding 40 idle connections around the clock.
+const syncOptions: MongoClientOptions = {
+  minPoolSize: envInt(process.env.MONGODB_SYNC_MIN_POOL_SIZE, 0),
+  maxPoolSize: envInt(process.env.MONGODB_SYNC_MAX_POOL_SIZE, 40),
+  maxIdleTimeMS: envInt(process.env.MONGODB_SYNC_MAX_IDLE_TIME_MS, 60_000),
+  serverSelectionTimeoutMS: envInt(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS, 10_000),
+  // Distinct appName so sync traffic is attributable in mongod logs/metrics.
+  appName: 'nextjs-stream-sync',
+}
+
 declare global {
   // Cached across HMR reloads in development so we don't open a new pool (and
   // leak minPoolSize connections) on every file change. Unused in production,
   // where the module singleton persists for the process lifetime.
   var _mongoClient: MongoClient | undefined
   var _mongoClientPromise: Promise<MongoClient> | undefined
+  var _mongoSyncClient: MongoClient | undefined
+  var _mongoSyncClientPromise: Promise<MongoClient> | undefined
 }
 
 class Singleton {
@@ -90,3 +112,43 @@ export default clientPromise
 
 // Synchronous client reference (connected lazily) — used where a Db instance is needed synchronously
 export const mongoClient = Singleton.client
+
+class SyncSingleton {
+  private static _instance: SyncSingleton
+  private client: MongoClient
+  private clientPromise: Promise<MongoClient>
+  private constructor() {
+    if (
+      process.env.NODE_ENV === 'development' &&
+      global._mongoSyncClient &&
+      global._mongoSyncClientPromise
+    ) {
+      // Reuse the existing client/pool across HMR reloads.
+      this.client = global._mongoSyncClient
+      this.clientPromise = global._mongoSyncClientPromise
+    } else {
+      this.client = new MongoClient(uri, syncOptions)
+      this.clientPromise = this.client.connect()
+      if (process.env.NODE_ENV === 'development') {
+        global._mongoSyncClient = this.client
+        global._mongoSyncClientPromise = this.clientPromise
+      }
+    }
+  }
+
+  public static get instance() {
+    if (!this._instance) {
+      this._instance = new SyncSingleton()
+    }
+    return this._instance.clientPromise
+  }
+}
+
+/**
+ * Sync-dedicated MongoClient promise (lazy — the pool is only created when the
+ * sync path first asks for it). Use ONLY for sync bulk work; request-serving
+ * code stays on the default export's pool.
+ */
+export function getSyncClientPromise(): Promise<MongoClient> {
+  return SyncSingleton.instance
+}
