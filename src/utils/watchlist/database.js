@@ -976,6 +976,11 @@ export async function moveItemsToPlaylist(itemIds, targetPlaylistId) {
  * @param {string} userId - User ID
  * @returns {Promise<Object>} Default playlist
  */
+// Process-lifetime guard for the unique-default index ensure inside
+// ensureDefaultPlaylist — the playlist existence/cleanup logic itself must
+// keep running per call, only the createIndex round trip is memoized.
+let defaultPlaylistIndexEnsured = false
+
 export async function ensureDefaultPlaylist(userId) {
 
   if (!userId) {
@@ -1021,15 +1026,20 @@ export async function ensureDefaultPlaylist(userId) {
     }
 
     // 2) Enforce at DB level: one default playlist per user (after cleanup to avoid duplicate key)
+    // Memoized per process — this runs on every default-playlist resolution
+    // and was the last remaining per-request createIndexes round trip.
     try {
-      await collection.createIndex(
-        { ownerId: 1, isDefault: 1 },
-        {
-          name: 'unique_default_playlist_per_user',
-          unique: true,
-          partialFilterExpression: { isDefault: true },
-        }
-      )
+      if (!defaultPlaylistIndexEnsured) {
+        await collection.createIndex(
+          { ownerId: 1, isDefault: 1 },
+          {
+            name: 'unique_default_playlist_per_user',
+            unique: true,
+            partialFilterExpression: { isDefault: true },
+          }
+        )
+        defaultPlaylistIndexEnsured = true
+      }
     } catch (e) {
       // Index exists or conflicting transient state; continue
       if (process.env.DEBUG === 'true') {
