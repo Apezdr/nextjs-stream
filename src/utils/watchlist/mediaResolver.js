@@ -10,7 +10,7 @@
 import { cache } from 'react'
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
-import { getComprehensiveDetails } from '@src/utils/tmdb/client'
+import { fetchTmdbFromBackend } from '@src/utils/tmdb/backendClient'
 
 /**
  * Internal implementation (not cached) - does the actual work
@@ -349,14 +349,17 @@ async function batchResolveMediaInternal(items, options = {}) {
  */
 const getCachedTMDBDetails = cache(async function getCachedTMDBDetails(tmdbId, mediaType, authHeaders = null) {
   console.log(`[getCachedTMDBDetails] Fetching TMDB data for ${mediaType}/${tmdbId}`, authHeaders ? '(with auth)' : '(no auth)')
-  
+
   try {
-    const tmdbData = await getComprehensiveDetails({
-      tmdbId: tmdbId,
-      type: mediaType,
-      authHeaders  // Forward auth headers for authentication
-    })
-    
+    // Direct backend call (Redis + ETag revalidation inside) — avoids the
+    // previous self-HTTP hop through our own proxy route, which paid Next
+    // routing plus two session lookups per item
+    const { data: tmdbData } = await fetchTmdbFromBackend(
+      `comprehensive/${mediaType}`,
+      { blurhash: 'true', tmdb_id: tmdbId },
+      { authHeaders }
+    )
+
     if (!tmdbData) {
       console.log(`[getCachedTMDBDetails] No data returned from TMDB for ${mediaType}/${tmdbId}`)
       return null

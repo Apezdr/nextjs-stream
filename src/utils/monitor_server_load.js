@@ -1,6 +1,6 @@
 const os = require('os');
 const fs = require('fs');
-const { execSync } = require('child_process');
+const { execFile } = require('child_process');
 
 // On Linux, os.freemem() returns MemFree, which excludes reclaimable page
 // cache and buffers — on a server warming a disk cache this routinely shows
@@ -103,35 +103,62 @@ function getCpuTimes() {
 // Flag to check if initial sampling is done
 let initialized = false;
 
+// Guards against stacking df children when a sample outlives the interval
+let diskSampleInProgress = false;
+
 function sampleDisk() {
-  try {
-    const output = execSync(
-      'df -BGB --output=source,target,size,used,avail,pcent 2>/dev/null',
-      { timeout: 3000, encoding: 'utf8' }
-    );
-    diskStats = output.trim().split('\n')
-      .slice(1)
-      .filter(Boolean)
-      .map(line => {
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 6) return null;
-        const [source, mountpoint, sizeRaw, usedRaw, availRaw, pcentRaw] = parts;
-        const percent = parseInt(pcentRaw);
-        const size = parseInt(sizeRaw);
-        const used = parseInt(usedRaw);
-        const avail = parseInt(availRaw);
-        if (isNaN(percent) || isNaN(size) || size === 0) return null;
-        const isHealthDrive = DISK_HEALTH_PATHS
-          ? DISK_HEALTH_PATHS.has(mountpoint)
-          : !SYSTEM_MOUNTS.has(mountpoint) && source.startsWith('/dev/');
-        return { source, mountpoint, size, used, avail, percent, isHealthDrive };
-      })
-      .filter(Boolean)
-      .filter(d => !d.source.startsWith('/dev/loop'))
-      .filter(d => d.source.startsWith('/dev/'));
-  } catch {
-    // df unavailable (Windows dev env) — leave diskStats empty
+  // Async by design: `df` can hang for seconds on a slow or unresponsive mount
+  // (network share / USB drive in uninterruptible I/O sleep). The previous
+  // execSync version blocked the entire event loop for the duration, freezing
+  // every in-flight request in the process on each 30s tick.
+  if (diskSampleInProgress) return;
+  diskSampleInProgress = true;
+
+  // When DISK_HEALTH_PATHS is configured, stat only those filesystems so df
+  // never touches unrelated (potentially hanging) mounts at all.
+  const args = ['-BGB', '--output=source,target,size,used,avail,pcent'];
+  if (DISK_HEALTH_PATHS) {
+    args.push(...DISK_HEALTH_PATHS);
   }
+
+  execFile(
+    'df',
+    args,
+    { timeout: 5000, killSignal: 'SIGKILL', encoding: 'utf8' },
+    (error, stdout) => {
+      diskSampleInProgress = false;
+
+      if (error || !stdout) {
+        // df unavailable (Windows dev env) or timed out — keep last-known stats
+        return;
+      }
+
+      try {
+        diskStats = stdout.trim().split('\n')
+          .slice(1)
+          .filter(Boolean)
+          .map(line => {
+            const parts = line.trim().split(/\s+/);
+            if (parts.length < 6) return null;
+            const [source, mountpoint, sizeRaw, usedRaw, availRaw, pcentRaw] = parts;
+            const percent = parseInt(pcentRaw);
+            const size = parseInt(sizeRaw);
+            const used = parseInt(usedRaw);
+            const avail = parseInt(availRaw);
+            if (isNaN(percent) || isNaN(size) || size === 0) return null;
+            const isHealthDrive = DISK_HEALTH_PATHS
+              ? DISK_HEALTH_PATHS.has(mountpoint)
+              : !SYSTEM_MOUNTS.has(mountpoint) && source.startsWith('/dev/');
+            return { source, mountpoint, size, used, avail, percent, isHealthDrive };
+          })
+          .filter(Boolean)
+          .filter(d => !d.source.startsWith('/dev/loop'))
+          .filter(d => d.source.startsWith('/dev/'));
+      } catch {
+        // Parse failure — keep last-known stats
+      }
+    }
+  );
 }
 
 // Sampling function to calculate CPU and Memory usage
