@@ -283,9 +283,11 @@ export const GET = async (req) => {
           timestamp: new Date().toISOString()
         })
 
-        // Get playlist info and user visibility settings in parallel
+        // Get playlist info and user visibility settings in parallel.
+        // The route's authenticated user is threaded through so neither
+        // helper re-runs a session lookup.
         const [playlistInfoResult, visibilityResult] = await Promise.allSettled([
-          getPlaylistById(playlistId),
+          getPlaylistById(playlistId, { user: authResult }),
           getPlaylistVisibility(authResult?.id, playlistId)
         ])
         
@@ -380,7 +382,7 @@ export const GET = async (req) => {
             items,
             playlistInfo,
             !shouldHideUnavailable,  // includeUnavailable (inverted)
-            { authHeaders }  // Forward auth headers for TMDB authentication
+            { authHeaders, itemsArePreResolved: true }  // items are getUserWatchlist output
           )
           
           // Apply TV device handling for episodes and movies
@@ -439,7 +441,7 @@ export const GET = async (req) => {
             prevPageResult,
             playlistInfo,
             !shouldHideUnavailable,
-            { authHeaders }
+            { authHeaders, itemsArePreResolved: true }
           )
           
           if (prevCardItems.length > 0) {
@@ -456,7 +458,7 @@ export const GET = async (req) => {
             nextPageResult,
             playlistInfo,
             !shouldHideUnavailable,
-            { authHeaders }
+            { authHeaders, itemsArePreResolved: true }
           )
           
           if (nextCardItems.length > 0) {

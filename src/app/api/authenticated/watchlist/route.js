@@ -911,7 +911,7 @@ async function handleGetPlaylistById(req, user) {
     validateObjectId(playlistId, 'playlistId')
 
     // Get playlist by ID (includes public playlists)
-    const playlist = await getPlaylistById(playlistId)
+    const playlist = await getPlaylistById(playlistId, { user })
     
     if (!playlist) {
       return createErrorResponse('Playlist not found or not accessible', 404)
@@ -979,7 +979,7 @@ async function handleGetPlaylistItems(req, user) {
       }
     } else {
       // For specific playlist IDs, use getPlaylistById which includes public playlists
-      playlistInfo = await getPlaylistById(playlistId)
+      playlistInfo = await getPlaylistById(playlistId, { user })
       
       if (!playlistInfo) {
         return createErrorResponse('Playlist not found or not accessible', 404)

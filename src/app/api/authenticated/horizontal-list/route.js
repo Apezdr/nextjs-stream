@@ -7,6 +7,7 @@ import { getFullImageUrl } from '@src/utils'
 import { addWatchHistoryToItemsBounded } from '@src/utils/watchHistoryUtils'
 // Watchlist playlist support
 import { getUserWatchlist, getPlaylistById, getMinimalCardDataForPlaylist, getPlaylistVisibility } from '@src/utils/watchlist'
+import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 // Cached windowed data fetchers for improved performance
 import {
   getCachedMovieWindow,
@@ -271,9 +272,11 @@ export const GET = async (req) => {
           break
         }
 
-        // Fetched once per request; also feeds the playlist metadata below
+        // Fetched once per request; also feeds the playlist metadata below.
+        // The route's authenticated user is threaded through so neither
+        // helper re-runs a session lookup.
         const [playlistInfoResult, visibilityResult] = await Promise.allSettled([
-          getPlaylistById(playlistIdParam),
+          getPlaylistById(playlistIdParam, { user: authResult }),
           getPlaylistVisibility(authResult?.id, playlistIdParam)
         ])
 
@@ -294,14 +297,21 @@ export const GET = async (req) => {
           offset,
           limit: windowCount,
           playlistId: playlistIdParam,
+          userId: authResult?.id, // skip the getSession() fallback inside
           internalOnly: hideUnavailable  // Conditional filtering based on user preference
         })
 
-        // Get card media documents
+        // Get card media documents. Items arrive pre-resolved from
+        // getUserWatchlist, so external items skip a second TMDB round trip;
+        // auth headers cover any residual fetch (e.g. an earlier failure).
         const rows = await getMinimalCardDataForPlaylist(
           watchlistItems,
           playlistInfo,
-          !hideUnavailable  // Include unavailable items unless user wants to hide them
+          !hideUnavailable,  // Include unavailable items unless user wants to hide them
+          {
+            itemsArePreResolved: true,
+            authHeaders: await getBackendAuthHeaders(req)
+          }
         )
         split = splitWindow(rows, { limit: itemsPerPage, wantPrev })
         break

@@ -1247,10 +1247,12 @@ export const getUserPlaylists = cache(async function getUserPlaylists(
  * @param {string} playlistId - Playlist ID
  * @returns {Promise<Object|null>} Playlist or null if not found/not accessible
  */
-export async function getPlaylistById(playlistId) {
-  const session = await getSession()
+export async function getPlaylistById(playlistId, { user = null } = {}) {
+  // Prefer the already-authenticated user from the calling route (saves a
+  // session lookup); fall back to getSession() for callers without one.
+  const requestUser = user ?? (await getSession())?.user
 
-  if (!session?.user?.id) {
+  if (!requestUser?.id) {
     throw new Error('User not authenticated')
   }
 
@@ -1261,9 +1263,9 @@ export async function getPlaylistById(playlistId) {
 
     const watchlistCollection = db.collection('Watchlist')
 
-    const userId = session.user.id
+    const userId = requestUser.id
     const userObjectId = new ObjectId(userId)
-    const isGlobalAdmin = isGlobalAdminUser(session?.user)
+    const isGlobalAdmin = isGlobalAdminUser(requestUser)
 
     // Find playlist that is either:
     // 1. Owned by user
@@ -1764,7 +1766,11 @@ export async function updatePlaylistCustomOrder(playlistId, itemIds) {
  * - secondary on playlistId
  * - compound to support showInApp queries
  */
+// Memoized per process (flag set only on success) so polling requests don't
+// pay createIndex round trips — mirrors ensureWatchlistIndexes.
+let playlistVisibilityIndexesEnsured = false
 async function ensurePlaylistVisibilityIndexes() {
+  if (playlistVisibilityIndexesEnsured) return
   try {
     const client = await clientPromise
     const usersDb = client.db('Users')
@@ -1784,6 +1790,8 @@ async function ensurePlaylistVisibilityIndexes() {
       { userId: 1, showInApp: 1, appOrder: 1, dateUpdated: -1 },
       { name: 'by_user_showInApp_appOrder' }
     )
+
+    playlistVisibilityIndexesEnsured = true
   } catch (e) {
     if (process.env.DEBUG === 'true') {
       console.warn('[PlaylistVisibility] Index ensure warning:', e?.message || e)
@@ -2057,7 +2065,11 @@ export async function findUsersForAdmin({ search = '', page = 0, limit = 20 } = 
  * - Unique compound index on (tmdbId, mediaType)
  * - Secondary indexes for queries
  */
+// Memoized per process (flag set only on success) so polling requests don't
+// pay createIndex round trips — mirrors ensureWatchlistIndexes.
+let comingSoonIndexesEnsured = false
 async function ensureComingSoonIndexes() {
+  if (comingSoonIndexesEnsured) return
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -2080,6 +2092,8 @@ async function ensureComingSoonIndexes() {
       { setAt: 1 },
       { name: 'by_setAt' }
     )
+
+    comingSoonIndexesEnsured = true
   } catch (e) {
     if (process.env.DEBUG === 'true') {
       console.warn('[ComingSoon] Index ensure warning:', e?.message || e)
@@ -2403,7 +2417,11 @@ export async function cleanExpiredComingSoon() {
  * @returns {Promise<Array>} Minimal card data optimized for horizontal list performance
  */
 export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = null, includeUnavailable = true, options = {}) {
-  const { authHeaders = null } = options
+  // itemsArePreResolved: set by callers whose watchlistItems are getUserWatchlist
+  // output — those items already carry the batchResolveMedia fields (isExternal,
+  // title, posterURL, blurhashes, tmdbMetadata, ...) spread onto them, so external
+  // items can reuse that resolution instead of a second TMDB round trip.
+  const { authHeaders = null, itemsArePreResolved = false } = options
   if (!watchlistItems || watchlistItems.length === 0) {
     return []
   }
@@ -2491,35 +2509,55 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
       return !availableMediaMap.has(tmdbId) && includeUnavailable
     })
 
-    // Fetch TMDB metadata for external items using batchResolveMedia
+    // Resolve TMDB metadata for external items. Pre-resolved items (already
+    // enhanced by getUserWatchlist's batchResolveMedia pass) are reused as-is —
+    // their fields are the same resolved shape the card branch below reads —
+    // and only the remainder (e.g. items whose earlier resolution failed) is fetched.
     let externalTmdbData = new Map()
     if (externalItems.length > 0) {
-      try {
-        console.log(`[getMinimalCardDataForPlaylist] Fetching TMDB data for ${externalItems.length} external items:`,
-          externalItems.map(item => `${item.mediaType}/${item.tmdbId}`).join(', '))
-        
-        const tmdbResults = await batchResolveMedia(
-          externalItems.map(item => ({
-            tmdbId: parseInt(item.tmdbId),
-            mediaType: item.mediaType
-          })),
-          { authHeaders }  // Forward auth headers for authentication
-        )
-        externalTmdbData = tmdbResults
-        
-        // Log TMDB fetch success/failure
-        const successCount = externalTmdbData.size
-        const failureCount = externalItems.length - successCount
-        console.log(`[getMinimalCardDataForPlaylist] TMDB fetch results: ${successCount} success, ${failureCount} failures`)
-        
-        if (failureCount > 0) {
-          const failedItems = externalItems.filter(item => !externalTmdbData.has(parseInt(item.tmdbId)))
-          console.warn(`[getMinimalCardDataForPlaylist] Failed to fetch TMDB data for items:`,
-            failedItems.map(item => `${item.mediaType}/${item.tmdbId}`).join(', '))
+      const preResolvedItems = itemsArePreResolved
+        ? externalItems.filter(item => item.isExternal === true && item.title)
+        : []
+      for (const item of preResolvedItems) {
+        externalTmdbData.set(parseInt(item.tmdbId), item)
+      }
+
+      const itemsToFetch = externalItems.filter(item => !externalTmdbData.has(parseInt(item.tmdbId)))
+
+      if (preResolvedItems.length > 0) {
+        console.log(`[getMinimalCardDataForPlaylist] Reusing pre-resolved TMDB data for ${preResolvedItems.length} external items`)
+      }
+
+      if (itemsToFetch.length > 0) {
+        try {
+          console.log(`[getMinimalCardDataForPlaylist] Fetching TMDB data for ${itemsToFetch.length} external items:`,
+            itemsToFetch.map(item => `${item.mediaType}/${item.tmdbId}`).join(', '))
+
+          const tmdbResults = await batchResolveMedia(
+            itemsToFetch.map(item => ({
+              tmdbId: parseInt(item.tmdbId),
+              mediaType: item.mediaType
+            })),
+            { authHeaders }  // Forward auth headers for authentication
+          )
+          for (const [tmdbId, mediaData] of tmdbResults) {
+            externalTmdbData.set(tmdbId, mediaData)
+          }
+
+          // Log TMDB fetch success/failure
+          const successCount = tmdbResults.size
+          const failureCount = itemsToFetch.length - successCount
+          console.log(`[getMinimalCardDataForPlaylist] TMDB fetch results: ${successCount} success, ${failureCount} failures`)
+
+          if (failureCount > 0) {
+            const failedItems = itemsToFetch.filter(item => !externalTmdbData.has(parseInt(item.tmdbId)))
+            console.warn(`[getMinimalCardDataForPlaylist] Failed to fetch TMDB data for items:`,
+              failedItems.map(item => `${item.mediaType}/${item.tmdbId}`).join(', '))
+          }
+        } catch (error) {
+          console.error('[getMinimalCardDataForPlaylist] Error fetching TMDB data for external items:', error)
+          // Continue with empty data - fallback to 'Unknown Title' / placeholder images
         }
-      } catch (error) {
-        console.error('[getMinimalCardDataForPlaylist] Error fetching TMDB data for external items:', error)
-        // Continue with empty data - fallback to 'Unknown Title' / placeholder images
       }
     }
 
