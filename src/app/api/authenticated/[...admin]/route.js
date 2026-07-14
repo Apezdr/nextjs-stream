@@ -927,7 +927,17 @@ async function handleSync(webhookId, request, syncOptions = {}) {
       tv: {},
     }
 
-    // Build availability maps per server
+    // Build availability maps per server.
+    // The collectFieldAvailability recursion over the full library is the
+    // single largest synchronous block in a sync tick — with no yields it
+    // starves every in-flight request for its whole duration (observed as
+    // multi-second slow-request bursts aligned to sync starts). Yield to the
+    // event loop every N titles so concurrent requests keep getting turns.
+    const FIELD_AVAILABILITY_YIELD_EVERY = 50
+    const fieldAvailabilityStart = performance.now()
+    let titlesSinceYield = 0
+    const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve))
+
     for (const [serverId, fileServer] of Object.entries(fileServers)) {
       // For Movies - add null check to avoid errors on undefined
       if (fileServer.movies) {
@@ -937,6 +947,11 @@ async function handleSync(webhookId, request, syncOptions = {}) {
           }
 
           collectFieldAvailability(movieData, '', serverId, fieldAvailability.movies[movieTitle])
+
+          if (++titlesSinceYield >= FIELD_AVAILABILITY_YIELD_EVERY) {
+            titlesSinceYield = 0
+            await yieldToEventLoop()
+          }
         }
       }
 
@@ -948,9 +963,19 @@ async function handleSync(webhookId, request, syncOptions = {}) {
           }
 
           collectFieldAvailability(showData, '', serverId, fieldAvailability.tv[showTitle])
+
+          if (++titlesSinceYield >= FIELD_AVAILABILITY_YIELD_EVERY) {
+            titlesSinceYield = 0
+            await yieldToEventLoop()
+          }
         }
       }
     }
+
+    console.log(
+      `[SYNC PERF] fieldAvailability built in ${(performance.now() - fieldAvailabilityStart).toFixed(0)}ms ` +
+      `(${Object.keys(fieldAvailability.movies).length} movies, ${Object.keys(fieldAvailability.tv).length} shows)`
+    )
 
     const importSettings = await getFileServerImportSettings()
     console.log('Import Settings:', importSettings)

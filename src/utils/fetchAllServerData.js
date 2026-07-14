@@ -148,10 +148,25 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3) {
         throw error;
       }
 
-      const [tvData, moviesData] = await Promise.all([
-        tvResponse.json(),
-        moviesResponse.json()
+      // Download the bodies as text (async, streamed) and parse them
+      // separately: response.json() buffers AND parses in one synchronous
+      // block, which for full-library payloads holds the event loop for the
+      // combined duration. Parsing the two payloads with a yield in between
+      // halves the longest block, and the timing log quantifies whether a
+      // worker-thread offload is warranted (sync-tick stall follow-up).
+      const [tvText, moviesText] = await Promise.all([
+        tvResponse.text(),
+        moviesResponse.text()
       ]);
+
+      const parseStart = performance.now();
+      const tvData = JSON.parse(tvText);
+      await new Promise((resolve) => setImmediate(resolve));
+      const moviesData = JSON.parse(moviesText);
+      console.log(
+        `[SYNC PERF] ${server.id}: parsed tv=${(tvText.length / 1048576).toFixed(1)}MB + ` +
+        `movies=${(moviesText.length / 1048576).toFixed(1)}MB in ${(performance.now() - parseStart).toFixed(0)}ms`
+      );
 
       if (tvData.version !== fileServerVersionTV) {
         console.error(
