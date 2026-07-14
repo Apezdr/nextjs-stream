@@ -19,8 +19,13 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
     try {
       await Promise.all([
         // Primary lookup indexes — name must match flatSync/initializeDatabase.js
-        // to avoid "Index already exists with a different name" conflicts
-        this.createIndexSafely({ title: 1 }, { unique: true, name: 'title_index' }),
+        // to avoid "Index already exists with a different name" conflicts.
+        // title is deliberately NOT unique: it is the TMDB display name and two
+        // distinct shows can legally share it (Kingdom 2019 vs Kingdom 2025
+        // threw E11000 on every sync until 2026-07-14). Uniqueness lives on
+        // originalTitle (the filesystem key) per CLAUDE.md — matching
+        // flatSync/initializeDatabase.js.
+        this.createIndexSafely({ title: 1 }, { name: 'title_index' }),
         this.createIndexSafely({ title: 1, serverId: 1 }),
 
         // originalTitle — used by findByOriginalTitle() before every show sync
