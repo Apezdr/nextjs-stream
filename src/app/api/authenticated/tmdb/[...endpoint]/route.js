@@ -1,28 +1,7 @@
-import { tmdbNodeServerURL } from '@src/utils/config'
 import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
-import { httpGet } from '@src/lib/httpHelper'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
+import { fetchTmdbFromBackend, unwrapCachedEnvelope } from '@src/utils/tmdb/backendClient'
 import { hasMatchingETag, createNotModifiedResponse } from '@src/utils/cache/etagHelpers'
-
-/**
- * httpHelper (here and on the backend) caches JSON/text responses wrapped as
- * `{ _dataType, _isBuffer, data }`. On a cache hit that envelope can reach us
- * instead of the bare body, which breaks clients expecting the payload at the
- * top level (e.g. `results`/`posters`). Unwrap it before responding; a no-op for
- * already-unwrapped fresh bodies.
- */
-function unwrapCachedEnvelope(payload) {
-  if (
-    payload &&
-    typeof payload === 'object' &&
-    !Array.isArray(payload) &&
-    (payload._dataType === 'json' || payload._dataType === 'text') &&
-    'data' in payload
-  ) {
-    return payload.data
-  }
-  return payload
-}
 
 /**
  * Dynamic TMDB proxy route
@@ -54,72 +33,33 @@ export async function GET(request, { params }) {
       return Response.json({ error: 'Invalid endpoint' }, { status: 400 })
     }
 
-    // Using NODE_SERVER_INTERNAL_URL for server-to-server TMDB proxy requests; fallback to NODE_SERVER_URL when not configured
-    const backendServerURL =
-      process.env.NODE_SERVER_INTERNAL_URL || process.env.NODE_SERVER_URL || 'http://localhost:3000'
-
-    // Check if backend server is configured
-    if (!backendServerURL) {
-      return Response.json({ error: 'Backend/TMDB server URL not configured' }, { status: 503 })
-    }
-
-    // Build backend URL with correct path
+    // Build query params for the shared backend client
     const endpointPath = endpoint.join('/')
-    const backendUrl = new URL(`${backendServerURL}/api/tmdb/${endpointPath}`)
-
-    // Copy all search parameters
+    const params = {}
     searchParams.forEach((value, key) => {
-      backendUrl.searchParams.append(key, value)
+      params[key] = value
     })
 
-    // Build headers with authentication
-    const headers = {
-      'Content-Type': 'application/json',
-      ...await getBackendAuthHeaders(request),
-    }
-
-    // Determine caching strategy based on endpoint
-    const shouldCache =
-      endpointPath.includes('images') ||
-      endpointPath.includes('cast') ||
-      endpointPath.includes('videos') ||
-      endpointPath.includes('comprehensive')
-
-    // Use enhanced HTTP client with retry and caching. httpGet revalidates
-    // against the backend with If-None-Match (ETag stored in Redis alongside
-    // the body) and serves the cached body on a 304, so unchanged payloads
-    // never re-transfer from the backend.
-    const response = await httpGet(
-      backendUrl.toString(),
-      {
-        headers,
-        timeout: 15000,
-        responseType: 'json',
-        retry: {
-          limit: 3,
-          baseDelay: 1000,
-          maxDelay: 5000,
-          shouldRetry: (error, attemptCount) => {
-            // Retry on network errors and 5xx/429 status codes
-            if (!error.response) return true
-            const statusCode = error.response.statusCode
-            return statusCode >= 500 || statusCode === 429
-          },
-        },
-      },
-      shouldCache
-    ) // Cache based on endpoint type
+    // Shared transport: Redis body+ETag cache with If-None-Match revalidation
+    // against the backend, cached body served on 304. Serve-from-cache is
+    // unconditional inside fetchTmdbFromBackend — httpGet stores every 2xx
+    // regardless, so a non-serving caller would receive `data: null` once the
+    // backend starts answering 304 (previously a latent bug here for the
+    // endpoints outside the old shouldCache list).
+    const { data, headers: backendHeaders } = await fetchTmdbFromBackend(endpointPath, params, {
+      authHeaders: await getBackendAuthHeaders(request),
+    })
 
     // Propagate the backend's content ETag so this proxy's own clients
     // (RN/TV app, browser) can revalidate against us the same way we
     // revalidate against the backend
-    const backendETag = response.headers?.etag || null
+    const backendETag = backendHeaders?.etag || null
     if (backendETag && hasMatchingETag(request, backendETag)) {
       return createNotModifiedResponse(backendETag)
     }
 
     return Response.json(
-      unwrapCachedEnvelope(response.data),
+      data,
       backendETag
         ? { headers: { ETag: backendETag, 'Cache-Control': 'no-cache' } }
         : undefined
