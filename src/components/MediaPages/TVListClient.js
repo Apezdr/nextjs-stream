@@ -22,6 +22,7 @@ import SkeletonCard from '@components/SkeletonCard'
 import Loading from '@src/app/loading'
 import { getTVListData } from '@src/utils/actions/mediaListActions'
 import { tvPosterName } from '@src/utils/viewTransitionNames'
+import { mediaLinkParam } from '@src/utils/media/urlParser'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -39,7 +40,7 @@ const TVCard = memo(({ tv, index }) => {
         duration: 0.4,
       }}
     >
-      <Link href={`/list/tv/${encodeURIComponent(tv.title)}`} className="group" scroll={true} prefetch={true}>
+      <Link href={`/list/tv/${mediaLinkParam(tv)}`} className="group" scroll={true} prefetch={true}>
         <Suspense fallback={<SkeletonCard key={index} heightClass={'h-[582px]'} imageOnly />}>
           <Detailed tvShow={tv} check4kandHDR={true} viewTransitionName={tvPosterName(tv.title)} />
         </Suspense>

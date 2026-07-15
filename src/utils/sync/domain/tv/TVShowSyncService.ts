@@ -84,7 +84,7 @@ export class TVShowSyncService {
           if (cached && metadataHashMatches && contentHashOk) {
             const expectedEpisodes = this.countExpectedEpisodes(showTitle, context)
             const actualEpisodes = expectedEpisodes > 0
-              ? await this.episodeRepository.getEpisodeCount(cached.title)
+              ? await this.episodeRepository.getEpisodeCount(cached.title, undefined, (cached as any)._id)
               : 0
             // Season-count drift: a past cleanup can delete a show's seasons while
             // leaving its episodes intact and its hash unchanged. Without this
@@ -92,7 +92,7 @@ export class TVShowSyncService {
             // re-created (episodes render under seasons, so the UI shows nothing).
             const expectedSeasons = this.countExpectedSeasons(showTitle, context)
             const actualSeasons = expectedSeasons > 0
-              ? await this.seasonRepository.getSeasonCount(cached.title)
+              ? await this.seasonRepository.getSeasonCount(cached.title, (cached as any)._id)
               : 0
 
             if (actualEpisodes >= expectedEpisodes && actualSeasons >= expectedSeasons) {

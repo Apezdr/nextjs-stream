@@ -7,6 +7,7 @@
 
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
+import { mediaLinkParam } from '@src/utils/media/urlParser'
 import {
   serializeForClient,
   validatePaginationParams,
@@ -82,6 +83,7 @@ export async function getFilteredTVList({
           $project: {
             _id: 1,
             title: 1,
+            originalTitle: 1,
             posterURL: 1,
             posterBlurhash: 1,
             posterBlurhashSource: 1,
@@ -106,6 +108,7 @@ export async function getFilteredTVList({
       const tvShowProjection = {
         _id: 1,
         title: 1,
+        originalTitle: 1,
         posterURL: 1,
         posterBlurhash: 1,
         posterBlurhashSource: 1,
@@ -181,10 +184,11 @@ export async function getFilteredTVList({
           _id: tvShow._id.toString(),
           id: tvShow._id.toString(),
           title: tvShow.title,
+          originalTitle: tvShow.originalTitle || null,
           posterURL,
           posterBlurhash: tvShow.posterBlurhash || null,
           metadata: tvShow.metadata || {},
-          link: encodeURIComponent(tvShow.title) || null,
+          link: mediaLinkParam(tvShow),
           type: 'tv',
           seasons: seasonsWithEpisodes,
           availableHdrTypes: tvShow.availableHdrTypes || [] // Include for reference

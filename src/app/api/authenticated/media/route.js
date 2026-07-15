@@ -9,10 +9,16 @@ export async function POST(req) {
     return authResult
   }
   const data = await req.json()
-  const { mediaType, mediaTitle } = data
+  const { mediaType, mediaTitle, mediaOriginalTitle } = data
+  // Prefer the unique originalTitle when the client sends it; the resolver is
+  // originalTitle-first so an originalTitle value in either param resolves the
+  // exact item (no _id/mediaId churn, no display-title collisions).
+  const resolvedTitle = mediaOriginalTitle
+    ? decodeURIComponent(mediaOriginalTitle)
+    : (mediaTitle ? decodeURIComponent(mediaTitle) : null)
   const media = await getFlatRequestedMedia({
     type: mediaType,
-    title: mediaTitle ? decodeURIComponent(mediaTitle) : null,
+    title: resolvedTitle,
   })
   return new Response(JSON.stringify(media))
 }
@@ -26,6 +32,7 @@ export async function GET(req) {
     const url = new URL(req.url)
     const mediaType = url.searchParams.get('mediaType')
     const mediaTitle = url.searchParams.get('mediaTitle')
+    const mediaOriginalTitle = url.searchParams.get('mediaOriginalTitle')
     const mediaId = url.searchParams.get('mediaId')
     const mediaSeason = url.searchParams.get('season')
     const mediaEpisode = url.searchParams.get('episode')
@@ -38,10 +45,21 @@ export async function GET(req) {
       console.log(`Media API request: type=${mediaType}, id=${mediaId}, season=${mediaSeason}, episode=${mediaEpisode}, isCard=${isCard}, isTVdevice=${isTVdevice}`);
     }
     
+    // Prefer the unique originalTitle when the client explicitly sends it. The
+    // resolver treats a valid ObjectId (mediaId) as authoritative, so clients
+    // that dual-send mediaId + originalTitle (e.g. the RN app during its staged
+    // migration) would otherwise have mediaId win and the migration silently
+    // no-op. When mediaOriginalTitle is present we resolve by it and drop mediaId,
+    // giving callers a clean opt-in to stable-key resolution.
+    const preferOriginalTitle = Boolean(mediaOriginalTitle)
+    const resolvedTitle = preferOriginalTitle
+      ? decodeURIComponent(mediaOriginalTitle)
+      : (mediaTitle ? decodeURIComponent(mediaTitle) : null)
+
     const mediaRequest = {
       type: mediaType,
-      title: mediaTitle ? decodeURIComponent(mediaTitle) : null,
-      id: mediaId ? decodeURIComponent(mediaId) : null,
+      title: resolvedTitle,
+      id: preferOriginalTitle ? null : (mediaId ? decodeURIComponent(mediaId) : null),
     }
 
     if (mediaSeason && mediaSeason !== 'null') {
@@ -85,8 +103,8 @@ export async function GET(req) {
             // First, get the full show data (without season/episode) to get all seasons info
             const fullShowRequest = {
               type: mediaType,
-              title: mediaTitle ? decodeURIComponent(mediaTitle) : null,
-              id: mediaId ? decodeURIComponent(mediaId) : null,
+              title: resolvedTitle,
+              id: preferOriginalTitle ? null : (mediaId ? decodeURIComponent(mediaId) : null),
               // Don't include season/episode to get full show data
             }
             
@@ -99,7 +117,8 @@ export async function GET(req) {
               // For season requests, also fetch episode list
               if (mediaSeason && !mediaEpisode) {
                 const seasonWithEpisodes = await getFlatTVSeasonWithEpisodes({
-                  showTitle: fullShowData?.title || media.title,
+                  // Resolve by the unique originalTitle to avoid display-title collisions
+                  showTitle: fullShowData?.originalTitle || media.originalTitle || fullShowData?.title || media.title,
                   seasonNumber: parseInt(mediaSeason.replace('Season ', ''))
                 })
                 
@@ -193,6 +212,7 @@ export async function GET(req) {
             partialData: media ? {
               id: media.id,
               title: media.title,
+              originalTitle: media.originalTitle || null,
               type: media.type,
               posterURL: media.posterURL
             } : null
@@ -216,6 +236,7 @@ export async function GET(req) {
             partialData: media ? {
               id: media.id,
               title: media.title,
+              originalTitle: media.originalTitle || null,
               type: media.type,
               posterURL: media.posterURL
             } : null

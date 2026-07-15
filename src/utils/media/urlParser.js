@@ -49,8 +49,43 @@ export function parseMediaParams(params) {
 }
 
 /**
+ * The unique routing key for a media item.
+ *
+ * `originalTitle` is the filesystem key and is unique per frontend instance
+ * (the display `title` is NOT — two shows/movies can share it, e.g. "Kingdom"
+ * 2019 vs 2025). All `/list/...` links and page routes must key on this, never
+ * on `title`. No `title` fallback: `originalTitle` is a verified invariant
+ * (unique index + sync always sets it), so a null return signals a genuine data
+ * bug (the item reads as unavailable) rather than silently reintroducing the
+ * ambiguous title.
+ *
+ * @param {Object} item - A media item/record with an `originalTitle` field
+ * @returns {string|null} The originalTitle, or null if absent
+ */
+export function mediaLinkKey(item) {
+  return item?.originalTitle ?? null
+}
+
+/**
+ * The URL-encoded routing key for a media item, ready to drop into a `link`
+ * field or path segment.
+ *
+ * Guards the encode: returns `null` when `mediaLinkKey` is absent rather than
+ * `encodeURIComponent(null)` (which yields the truthy string "null" and a broken
+ * `/list/tv/null` link). A real null keeps the fail-visible contract — the item
+ * reads as unavailable instead of routing somewhere wrong.
+ *
+ * @param {Object} item - A media item/record with an `originalTitle` field
+ * @returns {string|null} encodeURIComponent(originalTitle), or null if absent
+ */
+export function mediaLinkParam(item) {
+  const key = mediaLinkKey(item)
+  return key ? encodeURIComponent(key) : null
+}
+
+/**
  * Build canonical media URL from parsed parameters
- * 
+ *
  * @param {Object} options - URL building options
  * @param {string} options.mediaType - 'movie' or 'tv'
  * @param {string} options.mediaTitle - Media title (will be URL encoded)

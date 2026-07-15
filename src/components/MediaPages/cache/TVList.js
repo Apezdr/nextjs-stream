@@ -8,6 +8,7 @@ import Link from 'next/link'
 import SkeletonCard from '@components/SkeletonCard'
 import Loading from '@src/app/loading'
 import { useMediaUrlParams } from '@src/utils/mediaListUtils/urlParamManager'
+import { mediaLinkParam } from '@src/utils/media/urlParser'
 
 /**
  * Extracts and sorts unique genres from a TV show list
@@ -88,7 +89,7 @@ const TVCard = memo(({ tv, index }) => {
         duration: 0.4,
       }}
     >
-      <Link href={`/list/tv/${encodeURIComponent(tv.title)}`} className="group">
+      <Link href={`/list/tv/${mediaLinkParam(tv)}`} className="group">
         <Suspense fallback={<SkeletonCard key={index} heightClass={'h-[582px]'} imageOnly />}>
           <Detailed tvShow={tv} check4kandHDR={true} />
         </Suspense>

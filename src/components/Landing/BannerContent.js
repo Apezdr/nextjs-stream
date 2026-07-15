@@ -10,6 +10,7 @@ import { InformationCircleIcon } from '@heroicons/react/20/solid'
 import { HeartIcon, PlayCircleIcon } from '@heroicons/react/24/outline'
 import WatchlistButton from '@components/WatchlistButton'
 import { movieBackdropName, movieLogoName } from '@src/utils/viewTransitionNames'
+import { mediaLinkParam } from '@src/utils/media/urlParser'
 
 const BannerVideoPlayer = dynamic(() => import('./BannerVideoPlayer'), {
   ssr: false,
@@ -213,7 +214,7 @@ const BannerContent = ({
             <div className={`flex flex-row md:flex-col gap-2 md:gap-0 ${variant.rowJustify}`}>
               <div className={`flex gap-2 text-xs sm:text-sm ${variant.rowJustify}`}>
                 <Link
-                  href={`/list/movie/${encodeURIComponent(currentMedia.title)}/play`}
+                  href={`/list/movie/${mediaLinkParam(currentMedia)}/play`}
                   className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-black bg-white rounded-full hover:bg-white/90 transition"
                 >
                   <svg
@@ -271,7 +272,7 @@ const BannerContent = ({
               </div>
               <div>
                 <Link
-                  href={`/list/movie/${encodeURIComponent(currentMedia.title)}`}
+                  href={`/list/movie/${mediaLinkParam(currentMedia)}`}
                   className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-white/15 border border-white/30 rounded-full hover:bg-white/25 backdrop-blur-sm transition"
                   prefetch={true}
                 >

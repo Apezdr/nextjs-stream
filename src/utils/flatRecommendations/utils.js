@@ -1,4 +1,5 @@
 import { getFullImageUrl } from '@src/utils'
+import { mediaLinkKey, mediaLinkParam } from '@src/utils/media/urlParser'
 
 /**
  * Filter out invalid episodes (those without videoURL)
@@ -117,9 +118,9 @@ export async function ensureMediaProperties(item) {
         // Format: showTitle/seasonNumber/episodeNumber
         enhancedItem.link = `${enhancedItem.link}/${enhancedItem.seasonNumber}/${enhancedItem.episode.episodeNumber}`;
       } 
-      // If link doesn't exist but title does, create it
-      else if (!enhancedItem.link && enhancedItem.title) {
-        enhancedItem.link = `${encodeURIComponent(enhancedItem.title)}/${enhancedItem.seasonNumber}/${enhancedItem.episode.episodeNumber}`;
+      // If link doesn't exist but the originalTitle routing key does, create it
+      else if (!enhancedItem.link && mediaLinkKey(enhancedItem)) {
+        enhancedItem.link = `${mediaLinkParam(enhancedItem)}/${enhancedItem.seasonNumber}/${enhancedItem.episode.episodeNumber}`;
       }
     }
   }

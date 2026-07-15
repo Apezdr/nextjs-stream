@@ -7,7 +7,7 @@ import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { SeasonEntity, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
 import { ResourceManager } from '../../core/ResourceManager'
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+ 
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
 import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
 
@@ -22,8 +22,13 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
   async createIndexes(): Promise<boolean> {
     try {
       await Promise.all([
-        // Primary lookup indexes
-        this.createIndexSafely({ showTitle: 1, seasonNumber: 1 }, { unique: true }),
+        // Primary lookup indexes.
+        // NOTE: {showTitle, seasonNumber} is NON-unique. showTitle is the TMDB
+        // display title, which is NOT unique across shows (e.g. "Kingdom" 2019 vs
+        // 2025). A unique constraint here throws E11000 when the second same-title
+        // show's seasons sync, leaving it with zero seasons. Uniqueness lives on
+        // {showId, seasonNumber} below (the real natural key).
+        this.createIndexSafely({ showTitle: 1, seasonNumber: 1 }),
         this.createIndexSafely({ showTitle: 1 }),
         this.createIndexSafely({ title: 1 }),
 
@@ -63,11 +68,15 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
   }
 
   /**
-   * Find seasons by show title
+   * Find seasons for a show. Prefer the unique `showId`: `showTitle` is the shared
+   * TMDB display title, so keying on it returns a MIX of every same-title show's
+   * seasons (e.g. both "Kingdom"s). `showTitle` is a fallback only for legacy docs
+   * written before their parent show resolved (no showId).
    */
-  async findByShow(showTitle: string): Promise<SeasonEntity[]> {
+  async findByShow(showTitle: string, showId?: any): Promise<SeasonEntity[]> {
     try {
-      return await this.collection.find({ showTitle })
+      const filter = showId ? { showId } : { showTitle }
+      return await this.collection.find(filter)
         .sort({ seasonNumber: 1 })
         .toArray()
     } catch (error) {
@@ -76,14 +85,14 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
   }
 
   /**
-   * Find specific season
+   * Find a specific season. Prefer the unique `showId` over the shared display
+   * `showTitle` (see findByShow); showTitle is a legacy no-showId fallback.
    */
-  async findSeason(showTitle: string, seasonNumber: number): Promise<SeasonEntity | null> {
+  async findSeason(showTitle: string, seasonNumber: number, showId?: any): Promise<SeasonEntity | null> {
     try {
-      return await this.collection.findOne({
-        showTitle,
-        seasonNumber
-      })
+      return await this.collection.findOne(
+        showId ? { showId, seasonNumber } : { showTitle, seasonNumber }
+      )
     } catch (error) {
       throw new DatabaseError(`Failed to find season ${showTitle} S${seasonNumber}: ${error}`)
     }
@@ -216,9 +225,11 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
   /**
    * Get season count for a show
    */
-  async getSeasonCount(showTitle: string): Promise<number> {
+  async getSeasonCount(showTitle: string, showId?: any): Promise<number> {
     try {
-      return await this.collection.countDocuments({ showTitle })
+      // Prefer the unique showId; showTitle is shared across same-title shows and
+      // would sum both shows' seasons (inflating drift-repair counts).
+      return await this.collection.countDocuments(showId ? { showId } : { showTitle })
     } catch (error) {
       throw new DatabaseError(`Failed to get season count for ${showTitle}: ${error}`)
     }
@@ -296,7 +307,10 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
   }
 
   /**
-   * Delete seasons for a show
+   * Delete seasons for a show.
+   * ⚠️ Currently UNUSED. If you wire this up, DO NOT delete by the shared display
+   * `showTitle` — it would delete a same-titled show's seasons too (e.g. both
+   * "Kingdom"s). Delete by the unique `showId` (live cleanup already does).
    */
   async deleteByShow(showTitle: string): Promise<number> {
     try {

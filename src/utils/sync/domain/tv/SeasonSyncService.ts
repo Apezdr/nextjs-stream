@@ -63,8 +63,9 @@ export class SeasonSyncService {
       // Use the display title for showTitle on seasons (matches legacy document shape)
       const displayTitle = parentShow?.title || showTitle
 
-      // Find existing seasons by display title (legacy uses display title as showTitle)
-      const existingSeasons = await this.seasonRepository.findByShow(displayTitle)
+      // Find existing seasons for THIS show. Key on showId, not the shared display
+      // title, so a same-titled show's seasons don't leak into the merge/diff.
+      const existingSeasons = await this.seasonRepository.findByShow(displayTitle, showId)
       const existingByNumber = new Map(
         existingSeasons.map(s => [s.seasonNumber, s])
       )

@@ -1,6 +1,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { addCustomUrlToFlatMedia } from '@src/utils/flatDatabaseUtils'
+import { mediaLinkParam } from '@src/utils/media/urlParser'
 import { sanitizeRecord } from '@src/utils/auth_utils'
 import { findPlaybackForUser, getAllPlaybackEntries } from '@src/utils/watchHistory/database'
 
@@ -228,7 +229,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
           episodeNumber: nextEpisodeInfo.episodeNumber,
           isNextEpisode: true,
           // Explicitly include the episode data needed for media endpoint
-          link: `${encodeURIComponent(showData.title)}/${nextEpisodeInfo.seasonNumber}/${nextEpisodeInfo.episodeNumber}`,
+          link: `${mediaLinkParam(showData)}/${nextEpisodeInfo.seasonNumber}/${nextEpisodeInfo.episodeNumber}`,
           mediaId: showData._id.toString(),
           title: showData.title
         });
@@ -286,7 +287,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
             episodeNumber: firstEpisodeInfo.episode.episodeNumber,
             isNewShow: true,
             // Explicitly include the episode data needed for media endpoint
-            link: `${encodeURIComponent(show.title)}/${firstEpisodeInfo.seasonNumber}/${firstEpisodeInfo.episode.episodeNumber}`,
+            link: `${mediaLinkParam(show)}/${firstEpisodeInfo.seasonNumber}/${firstEpisodeInfo.episode.episodeNumber}`,
             mediaId: show._id.toString(),
             title: show.title
           });
@@ -728,7 +729,7 @@ export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldE
           episodeNumber: firstEpisodeInfo.episode.episodeNumber,
           isNewShow: true,
           // Explicitly include the episode data needed for media endpoint
-          link: `${encodeURIComponent(show.title)}/${firstEpisodeInfo.seasonNumber}/${firstEpisodeInfo.episode.episodeNumber}`,
+          link: `${mediaLinkParam(show)}/${firstEpisodeInfo.seasonNumber}/${firstEpisodeInfo.episode.episodeNumber}`,
           mediaId: show._id.toString(),
           title: show.title
         });

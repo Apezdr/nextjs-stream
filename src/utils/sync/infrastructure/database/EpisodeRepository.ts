@@ -8,7 +8,7 @@ import { MongoClient, AnyBulkWriteOperation } from 'mongodb'
 import { EpisodeEntity, DatabaseError } from '../../core/types'
 import { BaseRepository } from './BaseRepository'
 import { ResourceManager } from '../../core/ResourceManager'
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+ 
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
 import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
 
@@ -24,9 +24,14 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
   async createIndexes(): Promise<boolean> {
     try {
       await Promise.all([
-        // Primary lookup indexes - most critical for performance
+        // Primary lookup indexes - most critical for performance.
+        // NOTE: {showTitle, seasonNumber, episodeNumber} is NON-unique. showTitle is
+        // the TMDB display title, NOT unique across shows (e.g. "Kingdom" 2019 vs
+        // 2025). A unique constraint throws E11000 when the second same-title show's
+        // episodes sync, leaving it with zero episodes. Uniqueness lives on
+        // {showId, seasonNumber, episodeNumber} below (the real natural key).
         this.createIndexSafely({ title: 1 }),
-        this.createIndexSafely({ showTitle: 1, seasonNumber: 1, episodeNumber: 1 }, { unique: true }),
+        this.createIndexSafely({ showTitle: 1, seasonNumber: 1, episodeNumber: 1 }),
         this.createIndexSafely({ showTitle: 1, seasonNumber: 1 }),
         this.createIndexSafely({ showTitle: 1 }),
 
@@ -119,14 +124,15 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
   }
 
   /**
-   * Find episodes by show and season (most common query)
+   * Find episodes by show and season (most common query). Prefer the unique
+   * `showId`: `showTitle` is the shared TMDB display title, so keying on it returns
+   * a MIX of every same-title show's episodes. `showTitle` is a fallback only for
+   * legacy docs written before their parent show resolved (no showId).
    */
-  async findByShowAndSeason(showTitle: string, seasonNumber: number): Promise<EpisodeEntity[]> {
+  async findByShowAndSeason(showTitle: string, seasonNumber: number, showId?: any): Promise<EpisodeEntity[]> {
     try {
-      return await this.collection.find({
-        showTitle,
-        seasonNumber
-      }).sort({ episodeNumber: 1 }).toArray()
+      const filter = showId ? { showId, seasonNumber } : { showTitle, seasonNumber }
+      return await this.collection.find(filter).sort({ episodeNumber: 1 }).toArray()
     } catch (error) {
       throw new DatabaseError(`Failed to find episodes for ${showTitle} S${seasonNumber}: ${error}`)
     }
@@ -282,9 +288,11 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
   /**
    * Get episode count by show and season
    */
-  async getEpisodeCount(showTitle: string, seasonNumber?: number): Promise<number> {
+  async getEpisodeCount(showTitle: string, seasonNumber?: number, showId?: any): Promise<number> {
     try {
-      const filter: any = { showTitle }
+      // Prefer the unique showId; showTitle is shared across same-title shows and
+      // would sum both shows' episodes (inflating drift-repair counts).
+      const filter: any = showId ? { showId } : { showTitle }
       if (seasonNumber !== undefined) {
         filter.seasonNumber = seasonNumber
       }
@@ -356,7 +364,10 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
   }
 
   /**
-   * Delete episodes for a show/season (cleanup operations)
+   * Delete episodes for a show/season (cleanup operations).
+   * ⚠️ Currently UNUSED. If you wire this up, DO NOT delete by the shared display
+   * `showTitle` — it would delete a same-titled show's episodes too (e.g. both
+   * "Kingdom"s). Delete by the unique `showId` (live cleanup already does).
    */
   async deleteByShowAndSeason(showTitle: string, seasonNumber?: number): Promise<number> {
     try {

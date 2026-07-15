@@ -4,6 +4,7 @@ import { cache } from 'react'
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { getFullImageUrl } from '@src/utils'
+import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { batchResolveMedia, getMediaByTMDBId } from './mediaResolver.js'
 import { getSession } from '@src/lib/cachedAuth.js'
 import { userQueries } from '@src/lib/userQueries'
@@ -2459,6 +2460,7 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
     const minimalProjection = {
       _id: 1,
       title: 1,
+      originalTitle: 1,
       type: 1,
       posterURL: 1,
       posterBlurhash: 1,
@@ -2595,8 +2597,12 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
           type: derivedType,
           id: availableMedia._id?.toString() || availableMedia.id,
           tmdbId: tmdbId,
-          link: availableMedia.link || availableMedia.title || '',
-          url: availableMedia.url || (availableMedia.link ? `/list/${derivedType === 'tv' ? 'tv' : 'movie'}/${availableMedia.link || availableMedia.title}` : null),
+          link: mediaLinkKey(availableMedia)
+            ? encodeURIComponent(mediaLinkKey(availableMedia))
+            : availableMedia.link || '',
+          url: mediaLinkKey(availableMedia)
+            ? `/list/${derivedType === 'tv' ? 'tv' : 'movie'}/${encodeURIComponent(mediaLinkKey(availableMedia))}`
+            : availableMedia.url || null,
           // Availability flags
           isAvailable: true,
           comingSoon: comingSoonData?.comingSoon || false,
@@ -2861,8 +2867,12 @@ export async function getFullMediaDocumentsForPlaylist(watchlistItems, includeVi
           ...availableMedia,
           type: availableMedia.type || (availableMedia.mediaType === 'tv' ? 'tv' : 'movie'),
           id: availableMedia._id?.toString() || availableMedia.id,
-          link: availableMedia.link || availableMedia.title || '',
-          url: availableMedia.url || (availableMedia.link ? `/list/${availableMedia.type === 'tv' ? 'tv' : 'movie'}/${availableMedia.link || availableMedia.title}` : null),
+          link: mediaLinkKey(availableMedia)
+            ? encodeURIComponent(mediaLinkKey(availableMedia))
+            : availableMedia.link || '',
+          url: mediaLinkKey(availableMedia)
+            ? `/list/${availableMedia.type === 'tv' ? 'tv' : 'movie'}/${encodeURIComponent(mediaLinkKey(availableMedia))}`
+            : availableMedia.url || null,
           // Availability flags from global ComingSoon collection
           isAvailable: true,
           comingSoon: comingSoonData?.comingSoon || false,

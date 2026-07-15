@@ -7,6 +7,7 @@
 
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
+import { mediaLinkParam } from '@src/utils/media/urlParser'
 import {
   serializeForClient,
   validatePaginationParams,
@@ -59,6 +60,7 @@ export async function getFilteredMovieList({
     const projection = {
       _id: 1,
       title: 1,
+      originalTitle: 1,
       posterURL: 1,
       posterBlurhash: 1,
       posterBlurhashSource: 1,
@@ -104,7 +106,7 @@ export async function getFilteredMovieList({
         ...movie,
         posterURL,
         backdrop,
-        link: encodeURIComponent(movie.title) || null,
+        link: mediaLinkParam(movie),
         type: 'movie'
       };
     });

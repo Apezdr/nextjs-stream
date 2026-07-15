@@ -1,5 +1,6 @@
 import { formatDateToEST, getFullImageUrl } from '@src/utils'
 import { getServer } from './config'
+import { mediaLinkParam } from './media/urlParser'
 import { cache } from 'react'
 import { normalize } from 'path'
 
@@ -11,6 +12,7 @@ export const movieProjectionFields = {
   backdrop: 1,
   backdropBlurhash: 1,
   title: 1,
+  originalTitle: 1, // unique routing key — links/routes use this, not `title`
   dimensions: 1,
   posterBlurhashSource: 1,
   backdropBlurhashSource: 1,
@@ -30,6 +32,7 @@ export const tvShowProjectionFields = {
   backdrop: 1,
   backdropBlurhash: 1,
   title: 1,
+  originalTitle: 1, // unique routing key — links/routes use this, not `title`
   posterSource: 1,
   posterBlurhashSource: 1,
   backdropBlurhashSource: 1,
@@ -504,7 +507,11 @@ export async function sanitizeRecord(record, type, context = {}) {
         _id: record._id,
         normalizedVideoId: record.episode.normalizedVideoId,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
-        link: `${record.title}/${record.seasonNumber}/${record.episode.episodeNumber}`,
+        // Route by the show's unique originalTitle (encoded), not the display title
+        link: mediaLinkParam(record)
+          ? `${mediaLinkParam(record)}/${record.seasonNumber}/${record.episode.episodeNumber}`
+          : null,
+        originalTitle: record.originalTitle || null,
         duration: record.duration ?? record.episode.duration ?? 0,
         posterURL: poster,
         posterBlurhash: record.posterBlurhash || null,
@@ -544,7 +551,8 @@ export async function sanitizeRecord(record, type, context = {}) {
         _id: record._id,
         normalizedVideoId: record.normalizedVideoId,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
-        link: encodeURIComponent(record.title),
+        link: mediaLinkParam(record),
+        originalTitle: record.originalTitle || null,
         duration: record.duration ?? 0,
         posterURL: poster,
         posterBlurhash: record.posterBlurhash || null,
@@ -717,6 +725,8 @@ export function sanitizeCardData(item, popup = false, context = {}) {
       if (addedDate) sanitized.addedDate = addedDate
       if (releaseDate) sanitized.releaseDate = releaseDate
       if (link) sanitized.link = link
+      // originalTitle is the unique routing key clients use to build /list links
+      if (originalTitle) sanitized.originalTitle = originalTitle
       if (logo) sanitized.logo = logo
       if (url) sanitized.url = url // Preserve external video URL (e.g., YouTube trailer)
       if (item.tmdbId) sanitized.tmdbId = item.tmdbId
@@ -941,6 +951,8 @@ export function sanitizeTVData(media, options = {}) {
     const tvData = {
       id: media.id || media._id?.toString(),
       title: media.title,
+      // Unique routing key clients should prefer over the churning _id/mediaId
+      originalTitle: media.originalTitle || null,
       type: media.type || mediaType,
       
       // TV-optimized images (higher quality for TV screens)
