@@ -53,9 +53,9 @@ export async function fetchMediaWithRedirect(params) {
     })
     
     // Check for redirect
-    if (media && shouldRedirect(media)) {
+    if (media && shouldRedirect(media, mediaTitle)) {
       const redirectUrl = buildRedirectUrl(media, params)
-      logRedirect(mediaTitle, media.title, redirectUrl, 'mediaFetcher')
+      logRedirect(mediaTitle, media.originalTitle, redirectUrl, 'mediaFetcher')
       return { media, redirectUrl, notFoundType: null }
     }
     
@@ -84,9 +84,9 @@ export async function fetchMediaWithRedirect(params) {
     }
     
     // Show exists, check for redirect
-    if (shouldRedirect(baseShow)) {
+    if (shouldRedirect(baseShow, mediaTitle)) {
       const redirectUrl = buildRedirectUrl(baseShow, params)
-      logRedirect(mediaTitle, baseShow.title, redirectUrl, 'mediaFetcher')
+      logRedirect(mediaTitle, baseShow.originalTitle, redirectUrl, 'mediaFetcher')
       return { media: baseShow, redirectUrl, notFoundType: null }
     }
     

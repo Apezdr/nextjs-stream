@@ -24,9 +24,11 @@ export class NewContentNotificationGenerator {
    * @param {number} episodeNumber - Episode number (optional, for specific episode)
    * @returns {string} Action URL
    */
-  static generateTVActionUrl(showTitle, seasonNumber = null, episodeNumber = null) {
-    const encodedShowTitle = encodeURIComponent(showTitle);
-    
+  static generateTVActionUrl(showTitle, seasonNumber = null, episodeNumber = null, originalTitle = null) {
+    // Route by the show's unique originalTitle; fall back to the display title
+    // only when originalTitle is missing (legacy/edge data).
+    const encodedShowTitle = encodeURIComponent(originalTitle || showTitle);
+
     if (seasonNumber !== null && episodeNumber !== null) {
       // Specific episode URL
       return `/list/tv/${encodedShowTitle}/${seasonNumber}/${episodeNumber}`;
@@ -134,7 +136,7 @@ export class NewContentNotificationGenerator {
       subtype: 'new_movie',
       title: `New Movie: ${movie.title}`,
       message: this.formatMovieMessage(movie),
-      actionUrl: this.generateMovieActionUrl(movie.title),
+      actionUrl: this.generateMovieActionUrl(movie.originalTitle || movie.title),
       data: {
         contentType: 'movie',
         contentId: movie.id,
@@ -226,26 +228,26 @@ export class NewContentNotificationGenerator {
    * @returns {Object} Notification object
    */
   static createShowEpisodeNotification(showData, includeMetadata = true, maxEpisodes = 10) {
-    const { showTitle, episodes, totalNewEpisodes, latestSeason, latestEpisode } = showData;
+    const { showTitle, originalTitle, episodes, totalNewEpisodes, latestSeason, latestEpisode } = showData;
     const displayEpisodes = episodes.slice(0, maxEpisodes);
-    
+
     let title, message, actionUrl;
     if (totalNewEpisodes === 1) {
       const episode = episodes[0];
       title = `New Episode: ${showTitle}`;
       message = `S${episode.seasonNumber}E${episode.episodeNumber}${episode.title ? ` - ${episode.title}` : ''} is now available.`;
       // Link to specific episode for single episode notifications
-      actionUrl = this.generateTVActionUrl(showTitle, episode.seasonNumber, episode.episodeNumber);
+      actionUrl = this.generateTVActionUrl(showTitle, episode.seasonNumber, episode.episodeNumber, originalTitle);
     } else if (totalNewEpisodes <= 3) {
       title = `${totalNewEpisodes} New Episodes: ${showTitle}`;
       message = `${totalNewEpisodes} new episodes are now available for ${showTitle}.`;
       // Link to show page for multiple episodes
-      actionUrl = this.generateTVActionUrl(showTitle);
+      actionUrl = this.generateTVActionUrl(showTitle, null, null, originalTitle);
     } else {
       title = `${totalNewEpisodes} New Episodes: ${showTitle}`;
       message = `${totalNewEpisodes} new episodes are now available for ${showTitle}, including S${latestSeason}E${latestEpisode}.`;
       // Link to show page for many episodes
-      actionUrl = this.generateTVActionUrl(showTitle);
+      actionUrl = this.generateTVActionUrl(showTitle, null, null, originalTitle);
     }
 
     const baseNotification = {

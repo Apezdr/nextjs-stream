@@ -24,6 +24,7 @@ import Loading from '@src/app/loading'
 import { ShareIcon } from '@heroicons/react/20/solid'
 import { getMovieListData } from '@src/utils/actions/mediaListActions'
 import { moviePosterName } from '@src/utils/viewTransitionNames'
+import { mediaLinkParam } from '@src/utils/media/urlParser'
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
@@ -45,7 +46,7 @@ const MovieCard = memo(({movie, index }) => {
         duration: 0.4,
       }}
     >
-      <Link href={`movie/${encodeURIComponent(movie.title)}`} className="group" scroll={true} prefetch={true}>
+      <Link href={`movie/${mediaLinkParam(movie)}`} className="group" scroll={true} prefetch={true}>
         <div className="relative block w-auto mx-auto overflow-hidden rounded-lg focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-100 ">
           <Suspense fallback={<SkeletonCard key={index} heightClass={'h-[582px]'} imageOnly />}>
             <MediaPoster movie={movie} viewTransitionName={moviePosterName(movie.title)} />

@@ -718,6 +718,8 @@ export const GET = async (req) => {
     const responseData = {
       _id: mediaResult._id?.toString() || null,
       title: mediaResult.title || mediaResult.metadata?.title,
+      // Stable routing key so clients can deep-link without the churning _id
+      originalTitle: mediaResult.originalTitle || null,
       logo: mediaResult.logo || null,
       backdrop: mediaResult.backdrop || null,
       type: mediaResult.type,

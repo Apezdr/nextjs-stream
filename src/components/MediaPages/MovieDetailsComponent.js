@@ -8,6 +8,7 @@ import RetryImage from '@components/RetryImage'
 import WatchlistButton from '@components/WatchlistButton'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { moviePosterName, movieBackdropName, movieLogoName } from '@src/utils/viewTransitionNames'
+import { mediaLinkParam } from '@src/utils/media/urlParser'
 
 // Lazy load the cast grid section which can be heavy
 const CastSection = dynamic(() => 
@@ -190,7 +191,7 @@ const MovieDetailsComponent = ({ media }) => {
                     </div> */}
           <div className='flex flex-row justify-evenly'>
           <Link
-            href={`/list/movie/${encodeURIComponent(title)}/play`}
+            href={`/list/movie/${mediaLinkParam(media)}/play`}
             className={classNames(
               'relative inline-flex flex-row items-center gap-2',
               'opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'

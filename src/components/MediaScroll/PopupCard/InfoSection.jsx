@@ -66,15 +66,21 @@ const InfoSection = ({
   // For release status banner, use dateInfo if it's a release status
   const releaseStatus = dateInfo?.isReleaseStatus ? dateInfo : null
 
+  // Show routing key for breadcrumb links. `link` is the originalTitle-based key
+  // (either `originalTitle` or `originalTitle/season/episode`), so its first
+  // segment is the encoded show key. Falls back to the encoded display title so a
+  // missing link still yields a resolvable (redirecting) URL, not a broken one.
+  const showLinkKey = link ? link.split('/')[0] : encodeURIComponent(title || '')
+
   return (
     <div className="p-4">
       {/* Breadcrumb Navigation for TV Shows */}
       {type === 'tv' && title && (
         <div className="flex items-center text-sm text-gray-600 mb-2 flex-wrap">
           <Link
-            href={`/list/${type}/${encodeURIComponent(title)}`}
+            href={`/list/${type}/${showLinkKey}`}
             className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
-            onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${encodeURIComponent(title)}`)}
+            onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${showLinkKey}`)}
           >
             {title}
           </Link>
@@ -83,9 +89,9 @@ const InfoSection = ({
             <>
               <span className="mx-1.5">/</span>
               <Link
-                href={`/list/${type}/${encodeURIComponent(title)}/${seasonNumber}`}
+                href={`/list/${type}/${showLinkKey}/${seasonNumber}`}
                 className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
-                onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${encodeURIComponent(title)}/${seasonNumber}`)}
+                onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${showLinkKey}/${seasonNumber}`)}
               >
                 Season {seasonNumber}
               </Link>

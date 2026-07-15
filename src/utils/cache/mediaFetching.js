@@ -50,9 +50,9 @@ export async function getCachedMediaWithRedirect(parsedParams) {
     })
     
     // Check for redirect
-    if (media && shouldRedirect(media)) {
+    if (media && shouldRedirect(media, mediaTitle)) {
       const redirectUrl = buildRedirectUrl(media, parsedParams)
-      logRedirect(mediaTitle, media.title, redirectUrl, 'cachedMedia')
+      logRedirect(mediaTitle, media.originalTitle, redirectUrl, 'cachedMedia')
       return { media, redirectUrl, notFoundType: null }
     }
     
@@ -82,7 +82,7 @@ export async function getCachedMediaWithRedirect(parsedParams) {
     // Show exists, check for redirect
     if (shouldRedirect(baseShow)) {
       const redirectUrl = buildRedirectUrl(baseShow, parsedParams)
-      logRedirect(mediaTitle, baseShow.title, redirectUrl, 'cachedMedia')
+      logRedirect(mediaTitle, baseShow.originalTitle, redirectUrl, 'cachedMedia')
       return { media: baseShow, redirectUrl, notFoundType: null }
     }
     

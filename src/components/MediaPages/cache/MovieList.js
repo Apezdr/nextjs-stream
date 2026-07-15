@@ -10,6 +10,7 @@ import SkeletonCard from '@components/SkeletonCard'
 import Loading from '@src/app/loading'
 import { useMediaUrlParams } from '@src/utils/mediaListUtils/urlParamManager'
 import { ShareIcon } from '@heroicons/react/20/solid'
+import { mediaLinkParam } from '@src/utils/media/urlParser'
 
 /**
  * Extracts and sorts unique genres from a movie list
@@ -55,7 +56,7 @@ const MovieCard = memo(({ movie, index }) => {
         duration: 0.4,
       }}
     >
-      <Link href={`movie/${encodeURIComponent(movie.title)}`} className="group">
+      <Link href={`movie/${mediaLinkParam(movie)}`} className="group">
         <div className="relative block w-auto mx-auto overflow-hidden rounded-lg focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-100 ">
           <Suspense fallback={<SkeletonCard key={index} heightClass={'h-[582px]'} imageOnly />}><MediaPoster movie={movie} /></Suspense>
           <button type="button" className="absolute inset-0 focus:outline-none">

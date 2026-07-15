@@ -129,7 +129,8 @@ export class MediaAdditionAnalyzer {
         // Store only essential identifiers and minimal fallback data
         const episodeData = {
           id: episode._id,
-          showTitle: episode.showTitle, // Keep for grouping and fallback
+          showTitle: episode.showTitle, // Display title (fallback only)
+          originalTitle: episode.originalTitle, // Show's unique routing key for /list links
           seasonNumber: episode.seasonNumber,
           episodeNumber: episode.episodeNumber,
           createdAt: episode.createdAt || new Date()
@@ -138,11 +139,14 @@ export class MediaAdditionAnalyzer {
 
         episodes.push(episodeData);
 
-        // Group by show
-        const showKey = episode.showTitle;
+        // Group by the show's unique originalTitle (two shows can share a display
+        // title, e.g. "Kingdom" 2019 vs 2025 — grouping by showTitle would merge
+        // them into one notification and produce an ambiguous deep-link).
+        const showKey = episode.originalTitle || episode.showTitle;
         if (!showsMap.has(showKey)) {
           showsMap.set(showKey, {
             showTitle: episode.showTitle,
+            originalTitle: episode.originalTitle,
             episodes: [],
             totalNewEpisodes: 0,
             latestSeason: 0,

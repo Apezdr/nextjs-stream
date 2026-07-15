@@ -11,6 +11,7 @@ import { cache } from 'react'
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { fetchTmdbFromBackend } from '@src/utils/tmdb/backendClient'
+import { mediaLinkKey } from '@src/utils/media/urlParser'
 
 /**
  * Internal implementation (not cached) - does the actual work
@@ -73,6 +74,7 @@ async function batchResolveMediaInternal(items, options = {}) {
                 projection: {
                   _id: 1,
                   title: 1,
+                  originalTitle: 1,
                   posterURL: 1,
                   posterBlurhash: 1,
                   backdrop: 1,
@@ -96,6 +98,7 @@ async function batchResolveMediaInternal(items, options = {}) {
                 projection: {
                   _id: 1,
                   title: 1,
+                  originalTitle: 1,
                   posterURL: 1,
                   posterBlurhash: 1,
                   backdrop: 1,
@@ -126,6 +129,7 @@ async function batchResolveMediaInternal(items, options = {}) {
               projection: {
                 _id: 1,
                 title: 1,
+                originalTitle: 1,
                 posterURL: 1,
                 posterBlurhash: 1,
                 backdrop: 1,
@@ -149,6 +153,7 @@ async function batchResolveMediaInternal(items, options = {}) {
               projection: {
                 _id: 1,
                 title: 1,
+                originalTitle: 1,
                 posterURL: 1,
                 posterBlurhash: 1,
                 backdrop: 1,
@@ -179,6 +184,7 @@ async function batchResolveMediaInternal(items, options = {}) {
         mediaType: 'movie',
         currentMediaId: movie._id.toString(),
         title: movie.title,
+        originalTitle: movie.originalTitle || null,
         posterURL: movie.posterURL || (movie.metadata?.poster_path
           ? getFullImageUrl(movie.metadata.poster_path, 'w500')
           : '/sorry-image-not-available.jpg'),
@@ -192,8 +198,8 @@ async function batchResolveMediaInternal(items, options = {}) {
         genres: movie.metadata?.genres || [],
         voteAverage: movie.metadata?.vote_average,
         isInternal: true,
-        url: `/list/movie/${encodeURIComponent(movie.title)}`,
-        link: encodeURIComponent(movie.title)
+        url: `/list/movie/${encodeURIComponent(mediaLinkKey(movie))}`,
+        link: encodeURIComponent(mediaLinkKey(movie))
       })
     }
   }
@@ -207,6 +213,7 @@ async function batchResolveMediaInternal(items, options = {}) {
         mediaType: 'tv',
         currentMediaId: show._id.toString(),
         title: show.title,
+        originalTitle: show.originalTitle || null,
         posterURL: show.posterURL || (show.metadata?.poster_path 
           ? getFullImageUrl(show.metadata.poster_path, 'w500') 
           : '/sorry-image-not-available.jpg'),
@@ -220,8 +227,8 @@ async function batchResolveMediaInternal(items, options = {}) {
         genres: show.metadata?.genres || [],
         voteAverage: show.metadata?.vote_average,
         isInternal: true,
-        url: `/list/tv/${encodeURIComponent(show.title)}`,
-        link: encodeURIComponent(show.title)
+        url: `/list/tv/${encodeURIComponent(mediaLinkKey(show))}`,
+        link: encodeURIComponent(mediaLinkKey(show))
       })
     }
   }

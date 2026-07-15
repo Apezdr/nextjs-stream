@@ -8,6 +8,7 @@ import {
 import { getFullImageUrl } from '@src/utils'
 import { userQueries } from '@src/lib/userQueries'
 import { countPlaybackForUser, findPlaybackForUser } from '@src/utils/watchHistory/database'
+import { mediaLinkParam } from '@src/utils/media/urlParser'
 
 /**
  * Projection profiles for different use cases to optimize data transfer
@@ -274,6 +275,13 @@ function getProjectionForCollection(profile, collection, shouldExposeAdditionalD
 
   let projection = { ...projectionProfile[collection] }
 
+  // originalTitle is the unique routing key clients use to build /list links.
+  // Ensure movies/shows always carry it regardless of profile (skip empty
+  // projections, which return the full doc — originalTitle included already).
+  if ((collection === 'movies' || collection === 'shows') && Object.keys(projection).length > 0) {
+    projection.originalTitle = 1
+  }
+
   // Handle special cases for shouldExposeAdditionalData
   if (shouldExposeAdditionalData && collection === 'episodes' && profile !== 'full') {
     projection.duration = 1 // Always include duration for TV devices
@@ -392,6 +400,7 @@ export async function getFlatPosters(
     _id: 1,
     normalizedVideoId: 1,
     title: 1,
+    originalTitle: 1, // unique routing key for /list links
     posterURL: 1,
     posterBlurhash: 1,
     backdrop: 1,
@@ -438,7 +447,7 @@ export async function getFlatPosters(
       const returnData = {
         ...record,
         posterURL: poster,
-        link: encodeURIComponent(record.title) || null,
+        link: mediaLinkParam(record),
         type: type,
         //media: record
       }
@@ -461,11 +470,12 @@ export async function addCustomUrlToFlatMedia(mediaArray, type, preserveAddition
     mediaArray.map(async (media) => {
       const id = media._id.toString()
       delete media._id
+      const routeKey = mediaLinkParam(media) // encoded originalTitle, or null if absent
       let returnObj = {
         ...media,
         _id: id,
-        url: `/list/${type}/${encodeURIComponent(media.title)}`,
-        link: encodeURIComponent(media.title) || null,
+        url: routeKey ? `/list/${type}/${routeKey}` : null,
+        link: routeKey,
         description: media.metadata?.overview,
         type,
         // Preserve additional fields for TV device mode when requested
@@ -1320,6 +1330,7 @@ export async function processFlatWatchedDetails(
             showId: episodeDetails.episode.showId.toString() || null,
             showTmdbId: episodeDetails.showTmdbId || null,
             title: episodeDetails.title,
+            originalTitle: episodeDetails.originalTitle || null, // show's unique routing key
             showTitleFormatted: `${episodeDetails.title} S${episodeDetails.episode.seasonNumber?.toString().padStart(2, '0') || '01'}E${episodeDetails.episode.episodeNumber?.toString().padStart(2, '0') || '01'}`,
             seasonNumber: episodeDetails.episode.seasonNumber,
             seasons: episodeDetails.seasons,
@@ -1905,22 +1916,20 @@ export const fetchFlatRandomBannerMedia = async () => {
  *
  * @param {Object} db - MongoDB database instance.
  * @param {string} searchTitle - The title to search for.
- * @returns {Promise<Object|null>} The TV show with foundByOriginalTitle flag if found via originalTitle.
+ * @returns {Promise<Object|null>} The TV show with foundByTitleFallback flag if found via originalTitle.
  */
 async function findTVShowByTitleOrOriginal(db, searchTitle) {
-  // First try to find by title
-  let tvShow = await db.collection('FlatTVShows').findOne({ title: searchTitle })
+  // originalTitle is the unique routing key — try it FIRST (the canonical URL).
+  let tvShow = await db.collection('FlatTVShows').findOne({ originalTitle: searchTitle })
+  if (tvShow) return tvShow
 
-  if (!tvShow) {
-    // If not found, try by originalTitle
-    tvShow = await db.collection('FlatTVShows').findOne({ originalTitle: searchTitle })
-    if (tvShow) {
-      // Return with a flag indicating it was found by originalTitle
-      return { ...tvShow, foundByOriginalTitle: true }
-    }
-  }
+  // Back-compat ONLY for legacy title-based URLs/bookmarks: resolve by the
+  // (non-unique) display title and flag it so the caller canonical-redirects to
+  // the originalTitle URL. On a title collision this returns the first match.
+  tvShow = await db.collection('FlatTVShows').findOne({ title: searchTitle })
+  if (tvShow) return { ...tvShow, foundByTitleFallback: true }
 
-  return tvShow
+  return null
 }
 
 /**
@@ -1958,15 +1967,8 @@ export async function getFlatRequestedMedia({
         console.time('getFlatRequestedMedia:fetchMovie')
       }
 
-      // Build query
-      const query = {}
-      if (title) query.title = title
-
       // Only treat id as a database ObjectId if it is valid; otherwise ignore it.
       const hasValidObjectId = id && ObjectId.isValid(id)
-      if (hasValidObjectId) {
-        query._id = new ObjectId(id)
-      }
 
       // If we have neither a title nor a valid ObjectId, there is no way
       // to resolve this to an internal flat-media record (e.g., external IDs).
@@ -1977,8 +1979,21 @@ export async function getFlatRequestedMedia({
         return null
       }
 
-      // Fetch movie
-      const movie = await db.collection('FlatMovies').findOne(query)
+      // Resolve by unique key first. A valid ObjectId is authoritative (used by
+      // the media API); otherwise originalTitle is the canonical routing key.
+      // The (non-unique) display title is only a legacy-URL back-compat fallback,
+      // flagged so the caller canonical-redirects to the originalTitle URL.
+      let movie = null
+      let foundByTitleFallback = false
+      if (hasValidObjectId) {
+        movie = await db.collection('FlatMovies').findOne({ _id: new ObjectId(id) })
+      } else {
+        movie = await db.collection('FlatMovies').findOne({ originalTitle: title })
+        if (!movie) {
+          movie = await db.collection('FlatMovies').findOne({ title })
+          if (movie) foundByTitleFallback = true
+        }
+      }
 
       if (!movie) {
         if (Boolean(process.env.DEBUG) == true) {
@@ -1994,6 +2009,7 @@ export async function getFlatRequestedMedia({
         _id: movie._id.toString(),
         type: 'movie',
       }
+      if (foundByTitleFallback) result.foundByTitleFallback = true
 
       // Add cast data if available
       if (result.metadata?.cast) {
@@ -2022,14 +2038,14 @@ export async function getFlatRequestedMedia({
 
       // Fetch TV show using enhanced search (title first, then originalTitle)
       let tvShow
-      let foundByOriginalTitle = false
+      let foundByTitleFallback = false
 
       if (title) {
         // Use the helper function for title-based search
         const searchResult = await findTVShowByTitleOrOriginal(db, title)
         if (searchResult) {
           tvShow = searchResult
-          foundByOriginalTitle = searchResult.foundByOriginalTitle || false
+          foundByTitleFallback = searchResult.foundByTitleFallback || false
         }
       } else if (hasValidObjectId) {
         // Direct ID search for when using ObjectId
@@ -2066,8 +2082,8 @@ export async function getFlatRequestedMedia({
           })),
         }
 
-        if (foundByOriginalTitle) {
-          result.foundByOriginalTitle = foundByOriginalTitle // Indicate it was found by originalTitle
+        if (foundByTitleFallback) {
+          result.foundByTitleFallback = foundByTitleFallback // Indicate it was found by originalTitle
         }
 
         // Add cast data if available
@@ -2154,8 +2170,8 @@ export async function getFlatRequestedMedia({
           }
           delete result._id
 
-          if (foundByOriginalTitle) {
-            result.foundByOriginalTitle = foundByOriginalTitle
+          if (foundByTitleFallback) {
+            result.foundByTitleFallback = foundByTitleFallback
           }
 
           if (Boolean(process.env.DEBUG) == true) {
@@ -2242,8 +2258,8 @@ export async function getFlatRequestedMedia({
             },
           }
 
-          if (foundByOriginalTitle) {
-            result.foundByOriginalTitle = foundByOriginalTitle
+          if (foundByTitleFallback) {
+            result.foundByTitleFallback = foundByTitleFallback
           }
 
           // Handle next episode info
@@ -2408,6 +2424,7 @@ export async function getFlatTVList(options = {}) {
     const projection = {
       _id: 1,
       title: 1,
+      originalTitle: 1, // unique routing key for /list links
       posterURL: 1,
       posterBlurhash: 1,
       posterBlurhashSource: 1,
@@ -2521,10 +2538,11 @@ export async function getFlatTVList(options = {}) {
         _id: showId,
         id: showId,
         title: tvShow.title,
+        originalTitle: tvShow.originalTitle || null, // unique routing key for /list links
         posterURL: posterURL,
         posterBlurhash: tvShow.posterBlurhash || null,
         metadata: tvShow.metadata || {},
-        link: encodeURIComponent(tvShow.title) || null,
+        link: mediaLinkParam(tvShow),
         type: 'tv',
         seasons: seasonsWithEpisodes,
       }
@@ -2728,10 +2746,12 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
       return null
     }
 
-    // Get the full season details
+    // Get the full season details. Re-resolve by the show's unique originalTitle,
+    // not the display title (two shows can share a display title and the title
+    // fallback would resolve an arbitrary one).
     const season = await getFlatRequestedMedia({
       type: 'tv',
-      title: tvShow.title,
+      title: tvShow.originalTitle || tvShow.title,
       season: `Season ${seasonNumber}`,
     })
 

@@ -8,31 +8,40 @@
 import { buildMediaUrl } from './urlParser'
 
 /**
- * Check if media should trigger a redirect (found via originalTitle)
- * 
- * @param {Object} media - Media object from database
+ * Check if media should trigger a canonical redirect.
+ *
+ * The canonical URL keys on the unique `originalTitle`. A request only needs
+ * redirecting when it resolved via the legacy display-title fallback
+ * (`foundByTitleFallback`) AND the canonical originalTitle differs from what was
+ * requested — i.e. an old title-based bookmark should be sent to its
+ * originalTitle URL. Requests already on the originalTitle URL carry no flag and
+ * never redirect.
+ *
+ * @param {Object} media - Media object from database (resolver output)
+ * @param {string} requestedTitle - The (decoded) title/originalTitle from the URL
  * @returns {boolean} Whether a redirect should occur
  */
-export function shouldRedirect(media) {
-  return Boolean(media?.foundByOriginalTitle)
+export function shouldRedirect(media, requestedTitle) {
+  return Boolean(
+    media?.foundByTitleFallback &&
+    media.originalTitle &&
+    media.originalTitle !== requestedTitle
+  )
 }
 
 /**
- * Build canonical redirect URL for media found via originalTitle
- * 
- * @param {Object} media - Media object with canonical title
+ * Build canonical redirect URL keyed on the unique originalTitle.
+ *
+ * @param {Object} media - Media object with canonical originalTitle
  * @param {Object} parsedParams - Parsed URL parameters
  * @returns {string} Canonical URL to redirect to
  */
 export function buildRedirectUrl(media, parsedParams) {
   const { mediaType, mediaSeason, mediaEpisode, isPlayerPage } = parsedParams
-  
-  // Use the canonical title from the media object
-  const canonicalTitle = media.title
-  
+
   return buildMediaUrl({
     mediaType,
-    mediaTitle: canonicalTitle,
+    mediaTitle: media.originalTitle,
     mediaSeason,
     mediaEpisode,
     includePlay: isPlayerPage,

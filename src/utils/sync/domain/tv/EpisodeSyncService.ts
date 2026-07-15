@@ -72,10 +72,12 @@ export class EpisodeSyncService {
       // Use the display title for showTitle on episodes (matches legacy document shape)
       const displayTitle = parentShow?.title || showTitle
 
-      // Find existing episodes and parent season using display title
+      // Find existing episodes and parent season for THIS show. Key on showId, not
+      // the shared display title, so a same-titled show's rows don't leak in — and
+      // so parentSeason (→ seasonId FK stamped on every episode) is the right show's.
       const [existingEpisodes, parentSeason] = await Promise.all([
-        this.episodeRepository.findByShowAndSeason(displayTitle, seasonNumber),
-        this.seasonRepository.findSeason(displayTitle, seasonNumber)
+        this.episodeRepository.findByShowAndSeason(displayTitle, seasonNumber, showId),
+        this.seasonRepository.findSeason(displayTitle, seasonNumber, showId)
       ])
 
       const existingByNumber = new Map(

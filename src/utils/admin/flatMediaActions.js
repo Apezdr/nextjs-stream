@@ -215,7 +215,9 @@ export async function createMovieAction(_prevState, payload = {}) {
 
   revalidateMedia()
   // Bust public detail page + landing horizontal lists (media-library/movies/all).
-  await invalidateMovieDetailsCache(title)
+  // Detail pages tag on the unique originalTitle (the canonical URL key), so
+  // invalidate on originalTitle, not the display title.
+  await invalidateMovieDetailsCache(originalTitle)
   return ok({ id: doc._id.toString() })
 }
 
@@ -250,12 +252,13 @@ export async function saveMovieAction(_prevState, payload = {}) {
 
   revalidateMedia()
   revalidatePath(`/admin/media/movies/${payload.id}`)
-  // Bust public detail page + landing horizontal lists. On a rename, bust both
-  // the new and old display titles (the old title's detail tag would otherwise linger).
-  const movieTitle = set.title ?? existing.title
-  if (movieTitle) await invalidateMovieDetailsCache(movieTitle)
-  if (set.title && set.title !== existing.title && existing.title) {
-    await invalidateMovieDetailsCache(existing.title)
+  // Bust public detail page + landing horizontal lists. Detail pages tag on the
+  // unique originalTitle (the canonical URL key). On an originalTitle change, bust
+  // both the new and old keys (the old key's detail tag would otherwise linger).
+  const movieKey = (set.originalTitle ?? existing.originalTitle) || (set.title ?? existing.title)
+  if (movieKey) await invalidateMovieDetailsCache(movieKey)
+  if (set.originalTitle && set.originalTitle !== existing.originalTitle && existing.originalTitle) {
+    await invalidateMovieDetailsCache(existing.originalTitle)
   }
   return ok({ id: payload.id })
 }
@@ -266,12 +269,13 @@ export async function deleteMovieAction(_prevState, payload = {}) {
 
   const client = await clientPromise
   const col = client.db(DB_NAME).collection('FlatMovies')
-  const existing = await col.findOne({ _id }, { projection: { title: 1 } })
+  const existing = await col.findOne({ _id }, { projection: { title: 1, originalTitle: 1 } })
   const result = await col.deleteOne({ _id })
   if (result.deletedCount === 0) return fail('Movie not found.')
 
   revalidateMedia()
-  if (existing?.title) await invalidateMovieDetailsCache(existing.title)
+  const movieKey = existing?.originalTitle || existing?.title
+  if (movieKey) await invalidateMovieDetailsCache(movieKey)
   return ok({ deleted: true })
 }
 
@@ -315,7 +319,8 @@ export async function createTVShowAction(_prevState, payload = {}) {
   }
 
   revalidateMedia()
-  await invalidateTVShowDetailsCache(title)
+  // Detail pages tag on the unique originalTitle (the canonical URL key).
+  await invalidateTVShowDetailsCache(originalTitle)
   return ok({ id: doc._id.toString() })
 }
 
@@ -359,10 +364,10 @@ export async function saveTVShowAction(_prevState, payload = {}) {
   revalidatePath(`/admin/media/tv/${payload.id}`)
   // Bust public detail page + landing lists (media-library/tv/all). Cover the old
   // title too on a rename so its stale detail/list entries clear.
-  const showTitle = set.title ?? existing.title
-  if (showTitle) await invalidateTVShowDetailsCache(showTitle)
-  if (set.title && set.title !== existing.title && existing.title) {
-    await invalidateTVShowDetailsCache(existing.title)
+  const showKey = (set.originalTitle ?? existing.originalTitle) || (set.title ?? existing.title)
+  if (showKey) await invalidateTVShowDetailsCache(showKey)
+  if (set.originalTitle && set.originalTitle !== existing.originalTitle && existing.originalTitle) {
+    await invalidateTVShowDetailsCache(existing.originalTitle)
   }
   return ok({ id: payload.id })
 }
@@ -373,7 +378,7 @@ export async function deleteTVShowAction(_prevState, payload = {}) {
 
   const client = await clientPromise
   const db = client.db(DB_NAME)
-  const existing = await db.collection('FlatTVShows').findOne({ _id }, { projection: { title: 1 } })
+  const existing = await db.collection('FlatTVShows').findOne({ _id }, { projection: { title: 1, originalTitle: 1 } })
   if (!existing) return fail('TV show not found.')
 
   // Cascade delete: episodes → seasons → show
@@ -382,7 +387,8 @@ export async function deleteTVShowAction(_prevState, payload = {}) {
   await db.collection('FlatTVShows').deleteOne({ _id })
 
   revalidateMedia()
-  if (existing.title) await invalidateTVShowDetailsCache(existing.title)
+  const showKey = existing.originalTitle || existing.title
+  if (showKey) await invalidateTVShowDetailsCache(showKey)
   return ok({ deleted: true })
 }
 
@@ -396,7 +402,7 @@ export async function saveSeasonAction(_prevState, payload = {}) {
 
   const client = await clientPromise
   const db = client.db(DB_NAME)
-  const show = await db.collection('FlatTVShows').findOne({ _id: showId }, { projection: { title: 1 } })
+  const show = await db.collection('FlatTVShows').findOne({ _id: showId }, { projection: { title: 1, originalTitle: 1 } })
   if (!show) return fail('Parent TV show not found.')
 
   const seasonsCol = db.collection('FlatSeasons')
@@ -420,7 +426,7 @@ export async function saveSeasonAction(_prevState, payload = {}) {
     revalidateMedia()
     revalidatePath(`/admin/media/tv/${showId.toString()}`)
     // Bust public season + parent-show detail pages and landing lists.
-    await invalidateSeasonDetailsCache(show.title, seasonNumber)
+    await invalidateSeasonDetailsCache(show.originalTitle || show.title, seasonNumber)
     return ok({ id: existing._id.toString() })
   }
 
@@ -452,7 +458,7 @@ export async function deleteSeasonAction(_prevState, payload = {}) {
 
   const client = await clientPromise
   const db = client.db(DB_NAME)
-  const show = await db.collection('FlatTVShows').findOne({ _id: showId }, { projection: { title: 1 } })
+  const show = await db.collection('FlatTVShows').findOne({ _id: showId }, { projection: { title: 1, originalTitle: 1 } })
   // Remove the season and all of its episodes
   await db.collection('FlatEpisodes').deleteMany({ showId, seasonNumber })
   const result = await db.collection('FlatSeasons').deleteOne({ showId, seasonNumber })
@@ -460,7 +466,8 @@ export async function deleteSeasonAction(_prevState, payload = {}) {
 
   revalidateMedia()
   revalidatePath(`/admin/media/tv/${showId.toString()}`)
-  if (show?.title) await invalidateSeasonDetailsCache(show.title, seasonNumber)
+  const seasonShowKey = show?.originalTitle || show?.title
+  if (seasonShowKey) await invalidateSeasonDetailsCache(seasonShowKey, seasonNumber)
   return ok({ deleted: true })
 }
 
@@ -476,7 +483,7 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
 
   const client = await clientPromise
   const db = client.db(DB_NAME)
-  const show = await db.collection('FlatTVShows').findOne({ _id: showId }, { projection: { title: 1 } })
+  const show = await db.collection('FlatTVShows').findOne({ _id: showId }, { projection: { title: 1, originalTitle: 1 } })
   if (!show) return fail('Parent TV show not found.')
 
   const season = await db
@@ -507,7 +514,7 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
     revalidateMedia()
     revalidatePath(`/admin/media/tv/${showId.toString()}`)
     // Bust public episode/season/show detail pages + landing lists.
-    await invalidateEpisodeDetailsCache(show.title, seasonNumber, episodeNumber)
+    await invalidateEpisodeDetailsCache(show.originalTitle || show.title, seasonNumber, episodeNumber)
     return ok({ id: existing._id.toString() })
   }
 
@@ -536,18 +543,31 @@ export async function deleteEpisodeAction(_prevState, payload = {}) {
   if (!_id) return fail('A valid episode id is required.')
 
   const client = await clientPromise
-  const col = client.db(DB_NAME).collection('FlatEpisodes')
+  const db = client.db(DB_NAME)
+  const col = db.collection('FlatEpisodes')
   const existing = await col.findOne(
     { _id },
-    { projection: { showTitle: 1, seasonNumber: 1, episodeNumber: 1 } }
+    { projection: { showId: 1, showTitle: 1, seasonNumber: 1, episodeNumber: 1 } }
   )
   const result = await col.deleteOne({ _id })
   if (result.deletedCount === 0) return fail('Episode not found.')
 
   revalidateMedia()
   if (payload.showId) revalidatePath(`/admin/media/tv/${payload.showId}`)
-  if (existing?.showTitle && existing.seasonNumber != null && existing.episodeNumber != null) {
-    await invalidateEpisodeDetailsCache(existing.showTitle, existing.seasonNumber, existing.episodeNumber)
+  if (existing?.seasonNumber != null && existing.episodeNumber != null) {
+    // Detail pages tag on the show's unique originalTitle. The episode only
+    // denormalizes the display showTitle, so resolve the show's originalTitle via
+    // showId (falling back to the denormalized display title if the show is gone).
+    const show = existing.showId
+      ? await db.collection('FlatTVShows').findOne(
+          { _id: existing.showId },
+          { projection: { title: 1, originalTitle: 1 } }
+        )
+      : null
+    const episodeShowKey = show?.originalTitle || show?.title || existing.showTitle
+    if (episodeShowKey) {
+      await invalidateEpisodeDetailsCache(episodeShowKey, existing.seasonNumber, existing.episodeNumber)
+    }
   }
   return ok({ deleted: true })
 }
