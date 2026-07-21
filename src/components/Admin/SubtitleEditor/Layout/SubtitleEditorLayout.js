@@ -672,11 +672,13 @@ export default function SubtitleEditorLayout({
     />
   ) : null;
 
-  // Save changes
+  // Save changes for the language currently loaded in the editor — the player's
+  // showing track can differ from the editor selection, so the target language
+  // must travel with the content
   const handleSave = async () => {
     if (onSave) {
       const vttContent = exportToVTT(subtitles)
-      await onSave(vttContent)
+      await onSave(vttContent, currentSubtitleLanguage)
       setHasChanges(false)
     }
   }

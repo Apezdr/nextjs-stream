@@ -44,12 +44,9 @@ export async function POST(req) {
     // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.
     const nodeServerUrl = server.internalEndpoint || server.syncEndpoint
 
-    console.log(`sub save server: ${JSON.stringify(server, null, 2)}`)
-    console.log(`nodeServerUrl: ${nodeServerUrl}`)
-
     // Construct URL for saving the subtitle file
     let saveUrl = `${nodeServerUrl}/api/admin/subtitles/save`
-    console.log(`Saving subtitles to URL: ${saveUrl}`)
+    console.log(`Saving subtitles via server ${server.id} to URL: ${saveUrl}`)
 
     // Build headers with authentication
     const headers = {
@@ -78,14 +75,15 @@ export async function POST(req) {
       const errorData = await response.json().catch(() => ({}))
       console.error('Failed to save subtitles:', errorData)
       console.error(`Endpoint: ${saveUrl}`)
-      console.log(
-        `Request Body: ${JSON.stringify({
-          subtitleContent,
+      // Metadata only — the full subtitle content is megabytes of log noise
+      console.error(
+        `Request metadata: ${JSON.stringify({
           mediaType,
           mediaTitle,
           language,
           season,
           episode,
+          contentLength: subtitleContent?.length,
         })}`
       )
 

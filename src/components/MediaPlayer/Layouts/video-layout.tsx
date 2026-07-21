@@ -28,6 +28,7 @@ export interface AdminProps {
   session: any;
   mediaType: string;
   mediaTitle: string;
+  originalTitle?: string;
   season_number?: number;
   episode_number?: number;
 }
@@ -213,53 +214,17 @@ export function VideoLayout({
           mediaTitle={adminProps.mediaTitle}
           seasonNumber={adminProps.season_number}
           episodeNumber={adminProps.episode_number}
-          onSave={async (content) => {
+          onSave={async (content: string, language: string) => {
             try {
-              // Get the current subtitle track info and convert to array
-              const textTracks = player?.textTracks;
-              // Convert TextTrackList to array to use array methods
-              const tracksArray = textTracks ? Array.from(textTracks) : [];
-              
-              // Find the first enabled caption/subtitle track
-              const activeTrack = tracksArray.find(track => 
-                track && 
-                (track.kind === 'subtitles' || track.kind === 'captions') && 
-                track.mode === 'showing'
-              );
-              
-              if (!activeTrack) return;
-              
-              const language = activeTrack.label || '';
-              
-              // Extract media info from the URL structure
-              if (!activeTrack.src) return;
-              
-              // Parse query parameters from the src (handles both relative and absolute URLs)
-              const srcUrl = activeTrack.src;
-              const queryStart = srcUrl.indexOf('?');
-              const params = queryStart !== -1 ? new URLSearchParams(srcUrl.substring(queryStart)) : new URLSearchParams();
-              
-              const mediaTitle = params.get('name') || adminProps.mediaTitle;
-              const mediaType = params.get('type') || adminProps.mediaType;
-              const season = params.get('season') || adminProps.season_number?.toString();
-              const episode = params.get('episode') || adminProps.episode_number?.toString();
-              
-              // Extract sourceServerId from captions data structure
-              let sourceServerId = ''; 
-              if (captions) {
-                // Find the caption entry matching the current language
-                const captionEntry = Object.entries(captions).find(
-                  ([lang, data]) => lang === language
-                );
-                
-                if (captionEntry && captionEntry[1]) {
-                  // Extract the sourceServerId if it exists
-                  sourceServerId = captionEntry[1].sourceServerId || '';
-                  console.log(`Using sourceServerId: ${sourceServerId} for language: ${language}`);
-                }
+              // The editor reports which language its content belongs to; the
+              // player's showing track can be a different one, so the save
+              // target must never be derived from player state
+              const captionEntry = language ? captions?.[language] : undefined;
+              if (!captionEntry) {
+                alert(`Cannot save: no subtitle track found for "${language || 'unknown language'}".`);
+                return;
               }
-              
-              // Save the edited subtitles
+
               const response = await fetch('/api/authenticated/admin/subtitles/save', {
                 method: 'POST',
                 headers: {
@@ -267,25 +232,18 @@ export function VideoLayout({
                 },
                 body: JSON.stringify({
                   subtitleContent: content,
-                  mediaType,
-                  mediaTitle,
+                  mediaType: adminProps.mediaType,
+                  // originalTitle is the filesystem key on the file server;
+                  // mediaTitle (route slug) only as last-resort fallback
+                  mediaTitle: adminProps.originalTitle || adminProps.mediaTitle,
                   language,
-                  season,
-                  episode,
-                  sourceServerId
+                  season: adminProps.season_number?.toString(),
+                  episode: adminProps.episode_number?.toString(),
+                  sourceServerId: captionEntry.sourceServerId || ''
                 }),
               });
-              
+
               if (response.ok) {
-                // Reload the current subtitle track
-                const trackSrc = activeTrack.src;
-                if (!trackSrc) return;
-                
-                // Add a timestamp to force reload
-                const refreshedSrc = `${trackSrc}${trackSrc.includes('?') ? '&' : '?'}_t=${Date.now()}`;
-                
-                // This would ideally update the track, but we might need to reload the page
-                // to see the changes depending on how the player handles track updates
                 alert('Subtitles saved successfully! You may need to reload the page to see the changes.');
               } else {
                 alert('Failed to save subtitles.');
