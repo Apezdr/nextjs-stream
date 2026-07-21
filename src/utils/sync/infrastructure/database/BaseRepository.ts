@@ -6,7 +6,7 @@
 import { MongoClient, Collection, UpdateResult, DeleteResult } from 'mongodb'
 import { BaseMediaEntity, MediaRepository, DatabaseError } from '../../core/types'
 import isEqual from 'lodash/isEqual'
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+ 
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
 import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
 
@@ -29,7 +29,7 @@ const DIFF_EXCLUDED_FIELDS = new Set(['_id', 'lastSynced', 'updatedAt', 'created
  * sub-path-precise dot-path writes; the new architecture is coarser but never
  * overwrites an admin's locked value.
  */
-function isTopLevelFieldLocked(lockedFields: any, key: string): boolean {
+export function isTopLevelFieldLocked(lockedFields: any, key: string): boolean {
   if (!lockedFields || typeof lockedFields !== 'object') return false
   const lock = lockedFields[key]
   return lock === true || (lock !== null && typeof lock === 'object')

@@ -23,7 +23,13 @@ import {
   type CleanupPlan
 } from '../../core'
 
-import { EpisodeRepository, SeasonRepository, TVShowRepository, UrlBuilder } from '../../infrastructure'
+import {
+  EpisodeRepository,
+  SeasonRepository,
+  TVShowRepository,
+  UrlBuilder,
+  isTopLevelFieldLocked,
+} from '../../infrastructure'
 import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
@@ -357,9 +363,21 @@ export class EpisodeSyncService {
       context.fieldAvailability, 'tv', showOriginalTitle, 'videoURL', context.serverConfig
     )
     if (canUpdateVideo && fileData?.videoURL) {
-      entity.videoURL = createFullUrl(fileData.videoURL, context.serverConfig)
-      entity.videoSource = context.serverConfig.id
-      entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
+      if (isTopLevelFieldLocked((existing as any)?.lockedFields, 'videoURL')) {
+        // videoURL is admin-locked: computeDiff would drop the URL write
+        // anyway, but videoSource would leak through and normalizedVideoId
+        // would derive from a URL that is never stored. Keep the stored
+        // (effective) videoURL and derive identity from it so it matches
+        // what clients actually play and report. Locked JIT-transcoder URLs
+        // canonicalize to the source pathname inside the shared impl.
+        if (entity.videoURL) {
+          entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
+        }
+      } else {
+        entity.videoURL = createFullUrl(fileData.videoURL, context.serverConfig)
+        entity.videoSource = context.serverConfig.id
+        entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
+      }
     }
 
     // --- Video info (follows video priority) ---

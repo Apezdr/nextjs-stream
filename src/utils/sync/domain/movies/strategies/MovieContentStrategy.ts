@@ -25,12 +25,15 @@ import {
   safeStringify,
 } from '../../../core'
 
-import { MovieRepository, UrlBuilder } from '../../../infrastructure'
+import { MovieRepository, UrlBuilder, isTopLevelFieldLocked } from '../../../infrastructure'
 
 import { FileServerAdapter } from '../../../core'
 
 import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
 import { syncLogger } from '../../../core/logger'
+ 
+// @ts-ignore — dependency-free sibling JS module (CJS) with no .d.ts
+import { generateNormalizedVideoId as computeNormalizedVideoId } from '@src/utils/videoIdentity'
 
 export class MovieContentStrategy implements SyncStrategy {
   readonly name = 'MovieContentStrategy'
@@ -429,12 +432,20 @@ export class MovieContentStrategy implements SyncStrategy {
     }
 
     // Step 3: Generate normalized video ID for deduplication.
-    // Computed from videoUrl pathname only — must agree with
+    // Derived from the EFFECTIVE videoURL — the one that will actually be in
+    // the doc after lock enforcement (computeDiff drops a locked videoURL, so
+    // deriving from the incoming file-server URL would fork identity from
+    // what clients play and report). For a locked JIT-transcoder URL the
+    // shared canonicalizer maps it to the source pathname, so locked-JIT and
+    // unlocked produce the same id. Must agree with
     // flatDatabaseUtils.generateNormalizedVideoId so WatchHistory joins work.
     // Not tracked in fieldAvailability (it's derivable, not authoritative).
-    if (videoUrl) {
+    const effectiveVideoUrl = isTopLevelFieldLocked((currentMovie as any)?.lockedFields, 'videoURL')
+      ? currentMovie.videoURL
+      : videoUrl
+    if (effectiveVideoUrl) {
       const normalizedId = this.generateNormalizedVideoId(
-        videoUrl,
+        effectiveVideoUrl,
         originalTitle,
         fileServerMovieData
       )
@@ -977,10 +988,13 @@ export class MovieContentStrategy implements SyncStrategy {
   /**
    * Compute the URL-pathname-derived `normalizedVideoId` for a movie.
    *
-   * Returns a 16-char SHA-256 hex prefix of the lowercased URL pathname,
-   * matching `flatDatabaseUtils.generateNormalizedVideoId` exactly. Every
-   * cross-domain consumer (WatchHistory writer, validators, lookup maps,
-   * view counts) expects this exact form, so all writes have to agree on it.
+   * Delegates to the shared implementation in `@src/utils/videoIdentity`
+   * (also re-exported by `flatDatabaseUtils`), which every cross-domain
+   * consumer (WatchHistory writer, validators, lookup maps, view counts)
+   * uses — the writer/reader lockstep invariant is enforced by construction
+   * instead of parallel maintenance. The shared impl also canonicalizes
+   * JIT-transcoder stream URLs back to their source pathname, keeping
+   * identity transport-invariant.
    *
    * Historical note: an earlier version of this method short-circuited to
    * `fileServerData._id` when the file server reported one, on the theory
@@ -1004,47 +1018,7 @@ export class MovieContentStrategy implements SyncStrategy {
       return ''
     }
 
-    try {
-      const crypto = require('crypto')
-
-      // Normalize URL before hashing (same as legacy)
-      let normalizedUrl = videoUrl
-
-      // Try to decode if encoded
-      try {
-        normalizedUrl = decodeURIComponent(decodeURIComponent(videoUrl))
-      } catch (e) {
-        try {
-          normalizedUrl = decodeURIComponent(videoUrl)
-        } catch (e2) {
-          normalizedUrl = videoUrl
-        }
-      }
-
-      // Extract path portion only
-      try {
-        const urlObj = new URL(normalizedUrl)
-        normalizedUrl = urlObj.pathname
-      } catch (e) {
-        // Use whole string if URL parsing fails
-      }
-
-      // Convert to lowercase
-      normalizedUrl = normalizedUrl.toLowerCase()
-
-      // Create SHA-256 hash
-      const hash = crypto.createHash('sha256')
-      hash.update(normalizedUrl)
-
-      // Return first 16 characters (matches flatDatabaseUtils.generateNormalizedVideoId)
-      return hash.digest('hex').substring(0, 16)
-    } catch (error) {
-      syncLogger.error(`Error generating normalized video ID for URL: ${videoUrl}`, error)
-
-      // Fallback to simple string manipulation
-      const fallbackStr = videoUrl.toLowerCase().replace(/[^a-z0-9]/g, '')
-      return `fallback_${fallbackStr.substring(0, 10)}`
-    }
+    return computeNormalizedVideoId(videoUrl)
   }
 
   /**

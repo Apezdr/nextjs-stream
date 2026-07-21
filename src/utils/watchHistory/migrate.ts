@@ -20,7 +20,7 @@ const log = createLogger('WatchHistory.Migration')
 
 declare global {
   // Prevent double-init in dev / hot reload
-  // eslint-disable-next-line no-var
+   
   var __watchHistoryMigrationStarted: boolean | undefined
 }
 

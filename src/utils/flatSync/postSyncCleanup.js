@@ -135,7 +135,7 @@ const EMPTY_RESULT = Object.freeze({
  *   marker-based path requires this; if absent the cleanup is skipped.
  * @returns {Promise<Object>} { removed, errors, cache, watchHistoryValidation, migration }
  */
-// eslint-disable-next-line no-unused-vars
+ 
 export async function runPostSyncCleanup(allFileServers, _fieldAvailability, options = {}) {
   const log = createLogger('FlatSync.PostSyncCleanup')
   const { syncRunId, preTagCoverage, runStartedAt } = options

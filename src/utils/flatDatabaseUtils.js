@@ -291,86 +291,13 @@ function getProjectionForCollection(profile, collection, shouldExposeAdditionalD
 }
 
 /**
- * Generates a consistent hash identifier from a video URL.
- * Uses cryptographic hashing for reliability across different encoding variations.
- *
- * @param {string} url - The original video URL
- * @returns {string} A hash string identifier
+ * Video identity derivation (normalizedVideoId hash + JIT-transcoder URL
+ * canonicalization) lives in the dependency-free module
+ * `@src/utils/videoIdentity` so tests and scripts can use the exact
+ * production implementation without importing this module's MongoClient.
+ * Re-exported here so the ~15 existing import sites keep working unchanged.
  */
-export function generateNormalizedVideoId(url) {
-  if (!url) return ''
-
-  try {
-    // Import Node.js crypto module dynamically for hashing
-    const crypto = require('crypto')
-
-    // Normalize URL before hashing to handle encoding variations
-    let normalizedUrl = url
-
-    // Decode URL-encoded characters to ensure consistent hashing
-    // Keep decoding until fully decoded (handles multiple encoding levels)
-    let previousUrl = ''
-    while (previousUrl !== normalizedUrl) {
-      previousUrl = normalizedUrl
-      try {
-        const decoded = decodeURIComponent(normalizedUrl)
-        // Only accept the decode if it actually changed something
-        if (decoded !== normalizedUrl) {
-          normalizedUrl = decoded
-        } else {
-          break // Already fully decoded
-        }
-      } catch (e) {
-        // Decode failed - URL is either malformed or already decoded
-        break
-      }
-    }
-
-    // Extract URL portions based on URL type
-    try {
-      const urlObj = new URL(normalizedUrl)
-
-      // Detect if this is a true external service (YouTube, Vimeo, etc.)
-      // vs an internal file server (even if served over HTTPS)
-      const isYouTubeOrSimilar =
-        urlObj.hostname.includes('youtube.com') ||
-        urlObj.hostname.includes('youtu.be') ||
-        urlObj.hostname.includes('vimeo.com') ||
-        urlObj.hostname.includes('dailymotion.com')
-
-      if (isYouTubeOrSimilar) {
-        // Keep full URL for external video services to preserve video ID in query params
-        // Example: youtube.com/watch?v=ABC123 vs youtube.com/watch?v=XYZ789
-        normalizedUrl = urlObj.href
-      } else {
-        // For internal file servers, use just the pathname (strips protocol/hostname/port)
-        // This handles different server URLs pointing to the same file
-        // Example: http://server1/video.mp4 and https://server2/video.mp4 → same hash
-        normalizedUrl = urlObj.pathname
-      }
-    } catch (e) {
-      // If URL parsing fails, use the whole string
-    }
-
-    // Convert to lowercase before hashing to ensure case-insensitive matching
-    normalizedUrl = normalizedUrl.toLowerCase()
-
-    // Use SHA-256 for hashing - a modern, reliable hash algorithm
-    // We're not using this for security, just for consistent identifiers
-    const hash = crypto.createHash('sha256')
-    hash.update(normalizedUrl)
-
-    // Return first 16 characters of hex digest - good balance of uniqueness vs length
-    return hash.digest('hex').substring(0, 16)
-  } catch (error) {
-    console.error(`Error generating hash for URL: ${url}`, error)
-
-    // Fallback: if crypto fails, use basic string manipulation
-    // This should almost never happen, but just in case
-    const fallbackStr = url.toLowerCase().replace(/[^a-z0-9]/g, '')
-    return `fallback_${fallbackStr.substring(0, 10)}`
-  }
-}
+export { generateNormalizedVideoId, canonicalizeStreamPathname } from '@src/utils/videoIdentity'
 
 /**
  * Gets posters for movies or TV shows from the flat database structure.

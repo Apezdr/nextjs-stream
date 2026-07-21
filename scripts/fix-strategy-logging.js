@@ -61,7 +61,7 @@ for (const filename of files) {
       const newContent = content.replace(debugBlockRe, (match, innerBlock) => {
         changed = true
         // Dedent by removing 2 extra spaces from each line of innerBlock
-        return innerBlock.replace(/\n  /g, '\n')
+        return innerBlock.replace(/\n {2}/g, '\n')
       })
       if (newContent !== content) {
         content = newContent

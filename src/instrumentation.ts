@@ -14,9 +14,9 @@ import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions'
 
 declare global {
   // Prevent double-init in dev / hot reload
-  // eslint-disable-next-line no-var
+   
   var __otelLogsStarted: boolean | undefined
-  // eslint-disable-next-line no-var
+   
   var __otelMetricsStarted: boolean | undefined
 }
 
