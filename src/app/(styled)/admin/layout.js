@@ -16,6 +16,7 @@ import {
 import {
   Bars3Icon,
   BellIcon,
+  BugAntIcon,
   CalendarIcon,
   FolderIcon,
   HomeIcon,
@@ -49,6 +50,7 @@ const navigation = [
   { name: 'Deletion Requests', href: '/admin/deletion-requests', icon: TrashIcon },
   { name: 'Settings', href: '/admin/settings', icon: Cog8ToothIcon },
   { name: 'Logs', href: '/admin/logs', icon: InformationCircleIcon },
+  { name: 'Client Errors', href: '/admin/client-errors', icon: BugAntIcon },
 ]
 const teams = [
   { id: 1, name: 'Heroicons', href: '#', initial: 'H', current: false },

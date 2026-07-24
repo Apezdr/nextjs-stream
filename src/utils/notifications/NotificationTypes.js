@@ -10,7 +10,8 @@ export const NOTIFICATION_TYPES = {
   SYNC_ERROR: 'sync_error',
   NEW_EPISODE: 'new_episode',
   NEW_MOVIE: 'new_movie',
-  MAINTENANCE: 'maintenance'
+  MAINTENANCE: 'maintenance',
+  CLIENT_ERROR: 'client_error'
 };
 
 export const NOTIFICATION_PRIORITIES = {
@@ -134,6 +135,8 @@ export const getNotificationIcon = (type) => {
       return '📢';
     case NOTIFICATION_TYPES.MAINTENANCE:
       return '🔧';
+    case NOTIFICATION_TYPES.CLIENT_ERROR:
+      return '🚨';
     default:
       return '🔔';
   }
