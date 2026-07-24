@@ -31,6 +31,7 @@ function minimizeMediaItemsForUX(items, includeAdditionalData = false) {
     thumbnailBlurhash: item.posterBlurhash,
     type: item.type,
     link: item.link,
+    originalTitle: item.originalTitle,
     backdropUrl: item.backdrop,
     backdropBlurhash: item.backdropBlurhash,
     logo: item.logo,

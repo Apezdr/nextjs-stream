@@ -3184,6 +3184,7 @@ export async function getFlatContentByGenres({
         _id: 1,
         normalizedVideoId: 1,
         title: 1,
+        originalTitle: 1, // unique routing key for /list links
         posterURL: 1,
         posterBlurhash: 1,
         backdrop: 1,
@@ -3240,6 +3241,7 @@ export async function getFlatContentByGenres({
         _id: 1,
         normalizedVideoId: 1,
         title: 1,
+        originalTitle: 1, // unique routing key for /list links
         posterURL: 1,
         posterBlurhash: 1,
         backdrop: 1,
