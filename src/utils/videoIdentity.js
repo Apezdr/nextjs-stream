@@ -23,11 +23,18 @@ const crypto = require('crypto')
  * Transcoder URL contract (jit-transcoder): the served manifest URL is
  *   /stream/<base64(source-relative-path)>/master.m3u8   (HLS)
  *   /stream/<base64(source-relative-path)>/manifest.mpd  (DASH)
- * where the base64 segment encodes the file path relative to the media root
- * (e.g. "movies/Backrooms/Backrooms.2026.2160p....mp4" — no leading slash).
- * Decoding it and prefixing "/" yields exactly the file server's URL
- * pathname, so hash(JIT URL) === hash(source URL) and watch history survives
- * switching a title between direct play and JIT transcoding.
+ * where the base64 segment encodes the RAW (un-percent-encoded) file path
+ * relative to the media root (e.g. "movies/Kingdom of Heaven/….mkv" — no
+ * leading slash, literal spaces).
+ *
+ * Served file URLs, by contrast, are percent-encoded, and the direct-play
+ * hash pipeline extracts its pathname via the WHATWG URL parser (which
+ * percent-encodes spaces etc.). So the decoded segment must be re-serialized
+ * THROUGH THE SAME PARSER — `new URL().pathname` — before hashing, or every
+ * spaced/non-ASCII title forks identity between direct and JIT playback.
+ * Serializer parity also makes edge cases ('#'/'?' truncation, stray '%')
+ * behave identically in both flows, which is the actual invariant: not a
+ * particular encoding, but BYTE-IDENTICAL serialization on both paths.
  *
  * The regex is deliberately exact (master.m3u8 / manifest.mpd, end-anchored):
  * variant playlists and segments are never reported as a playback videoId,
@@ -44,6 +51,26 @@ const crypto = require('crypto')
  * @returns {string} The canonical source pathname, or the input unchanged
  */
 function canonicalizeStreamPathname(pathname) {
+  return canonicalizeStreamPathnameWith(pathname, whatwgSerializePath)
+}
+
+/**
+ * LEGACY canonical form ('/' + raw decoded path, no re-serialization) —
+ * TRANSITION SHIM ONLY. WatchHistory rows written for spaced-path JIT plays
+ * before the WHATWG-parity fix are keyed on hashes of this form; the shim in
+ * upsertPlayback / the resume readers uses it to find and re-key those rows
+ * until scripts/remediateJitWatchHistory.js --apply reports zero remaining.
+ * DELETE this export (and its consumers) after that.
+ */
+function canonicalizeStreamPathnameLegacy(pathname) {
+  return canonicalizeStreamPathnameWith(pathname, (decoded) => '/' + decoded)
+}
+
+function whatwgSerializePath(decoded) {
+  return new URL('http://x/' + decoded).pathname
+}
+
+function canonicalizeStreamPathnameWith(pathname, finalize) {
   if (typeof pathname !== 'string') return pathname
 
   const match = /^\/stream\/([A-Za-z0-9+/_-]+={0,2})\/(?:master\.m3u8|manifest\.mpd)$/.exec(
@@ -71,7 +98,7 @@ function canonicalizeStreamPathname(pathname) {
     // Path-shape guard: the transcoder encodes source-RELATIVE paths.
     if (!decoded || !decoded.includes('/') || decoded.startsWith('/')) return pathname
 
-    return '/' + decoded
+    return finalize(decoded)
   } catch (e) {
     return pathname
   }
@@ -89,6 +116,21 @@ function canonicalizeStreamPathname(pathname) {
  * @returns {string} A hash string identifier
  */
 function generateNormalizedVideoId(url) {
+  return generateNormalizedVideoIdWith(url, canonicalizeStreamPathname)
+}
+
+/**
+ * TRANSITION SHIM ONLY — the hash as computed before the WHATWG-parity fix
+ * (differs from generateNormalizedVideoId only for JIT URLs whose decoded
+ * path contains characters the URL parser percent-encodes, e.g. spaces).
+ * Used to locate and re-key pre-fix WatchHistory rows. DELETE after the
+ * remediation script reports zero remaining legacy-keyed rows.
+ */
+function generateLegacyNormalizedVideoId(url) {
+  return generateNormalizedVideoIdWith(url, canonicalizeStreamPathnameLegacy)
+}
+
+function generateNormalizedVideoIdWith(url, canonicalize) {
   if (!url) return ''
 
   try {
@@ -137,12 +179,12 @@ function generateNormalizedVideoId(url) {
         // JIT-transcoder stream pathnames are canonicalized to the source
         // file's pathname (base64 is case-sensitive, so this must happen
         // before the lowercasing below).
-        normalizedUrl = canonicalizeStreamPathname(urlObj.pathname)
+        normalizedUrl = canonicalize(urlObj.pathname)
       }
     } catch (e) {
       // If URL parsing fails, use the whole string (canonicalize defensively
       // in case a bare pathname was passed in)
-      normalizedUrl = canonicalizeStreamPathname(normalizedUrl)
+      normalizedUrl = canonicalize(normalizedUrl)
     }
 
     // Convert to lowercase before hashing to ensure case-insensitive matching
@@ -165,4 +207,10 @@ function generateNormalizedVideoId(url) {
   }
 }
 
-module.exports = { generateNormalizedVideoId, canonicalizeStreamPathname }
+module.exports = {
+  generateNormalizedVideoId,
+  canonicalizeStreamPathname,
+  // Transition-shim exports — delete after the spaced-path remediation lands:
+  generateLegacyNormalizedVideoId,
+  canonicalizeStreamPathnameLegacy,
+}

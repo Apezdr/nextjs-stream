@@ -7,7 +7,11 @@
  * normalizedVideoId in the database — do not update the expected values
  * without a full re-keying migration.
  */
-import { generateNormalizedVideoId, canonicalizeStreamPathname } from '@src/utils/videoIdentity'
+import {
+  generateNormalizedVideoId,
+  canonicalizeStreamPathname,
+  generateLegacyNormalizedVideoId,
+} from '@src/utils/videoIdentity'
 
 const REL = 'movies/Backrooms/Backrooms.2026.2160p.iT.WEB-DL.DV.HDR10+-Ben.The.Men.mp4'
 const REL_HASH = 'c99b3efd02ee33fd'
@@ -136,5 +140,73 @@ describe('canonicalizeStreamPathname', () => {
   test('non-string input passes through', () => {
     expect(canonicalizeStreamPathname(null)).toBe(null)
     expect(canonicalizeStreamPathname(undefined)).toBe(undefined)
+  })
+})
+
+describe('WHATWG serialization parity (spaced/non-ASCII paths)', () => {
+  // The backend base64s the RAW path while served URLs are percent-encoded.
+  // The canonical form must be re-serialized through the same WHATWG parser
+  // the direct-play flow uses, or every spaced title forks identity between
+  // JIT and direct playback.
+
+  test('Kingdom of Heaven production pair: jit === direct', () => {
+    // b64 captured from the live transcoder; path contains spaces.
+    const jit =
+      'https://transcoder.adamdrumm.com/stream/bW92aWVzL0tpbmdkb20gb2YgSGVhdmVuL0tpbmdkb20ub2YuSGVhdmVuLjIwMDUuREMuNEsuSERSLkRWLjIxNjBwLkJEUmVtdXguSXRhLkVuZy54MjY1LU5BSE9NLm1rdg/master.m3u8'
+    const direct =
+      'https://personalserver.adamdrumm.com/movies/Kingdom%20of%20Heaven/Kingdom.of.Heaven.2005.DC.4K.HDR.DV.2160p.BDRemux.Ita.Eng.x265-NAHOM.mkv'
+    expect(generateNormalizedVideoId(jit)).toBe(generateNormalizedVideoId(direct))
+  })
+
+  test('Partly Cloudy (the executed counter-example): jit === direct === production pin', () => {
+    const rel = 'movies/Partly Cloudy/Partly.Cloudy.2009.BluRay.1080p.DD5.1-EX.AVC.REMUX-FraMeSToR.mp4'
+    const b64 = Buffer.from(rel).toString('base64').replace(/=+$/, '')
+    const jit = `https://t/stream/${b64}/master.m3u8`
+    expect(generateNormalizedVideoId(jit)).toBe('eb1a24a1c68b9990')
+  })
+
+  test('non-ASCII path: jit === direct', () => {
+    const rel = 'movies/Amélie/Amélie.2001.mkv'
+    const b64 = Buffer.from(rel).toString('base64').replace(/=+$/, '')
+    expect(generateNormalizedVideoId(`https://t/stream/${b64}/master.m3u8`)).toBe(
+      generateNormalizedVideoId('https://h/movies/Am%C3%A9lie/Am%C3%A9lie.2001.mkv')
+    )
+  })
+
+  test('"#" truncation parity: both flows truncate identically', () => {
+    // A literal '#' in a filename truncates the WHATWG pathname in BOTH
+    // flows (direct play decodes %23 to '#' before re-parsing). The quirk is
+    // fine as long as it is byte-identical on both paths.
+    const rel = 'movies/Test #1/file.mp4'
+    const b64 = Buffer.from(rel).toString('base64').replace(/=+$/, '')
+    expect(generateNormalizedVideoId(`https://t/stream/${b64}/master.m3u8`)).toBe(
+      generateNormalizedVideoId('https://h/movies/Test%20%231/file.mp4')
+    )
+  })
+
+  test('spaced canonical pathname is the percent-encoded form', () => {
+    const rel = 'movies/Kingdom of Heaven/x.mkv'
+    const b64 = Buffer.from(rel).toString('base64').replace(/=+$/, '')
+    expect(canonicalizeStreamPathname(`/stream/${b64}/master.m3u8`)).toBe(
+      '/movies/Kingdom%20of%20Heaven/x.mkv'
+    )
+  })
+})
+
+describe('legacy transition-shim exports', () => {
+  test('legacy differs from current ONLY for paths the parser percent-encodes', () => {
+    const spacedRel = 'movies/Partly Cloudy/x.mp4'
+    const spacedB64 = Buffer.from(spacedRel).toString('base64').replace(/=+$/, '')
+    const spacedJit = `https://t/stream/${spacedB64}/master.m3u8`
+    expect(generateLegacyNormalizedVideoId(spacedJit)).not.toBe(generateNormalizedVideoId(spacedJit))
+
+    const plainJit = `https://transcoder.adamdrumm.com/stream/${B64}/master.m3u8`
+    expect(generateLegacyNormalizedVideoId(plainJit)).toBe(generateNormalizedVideoId(plainJit))
+    expect(generateLegacyNormalizedVideoId(plainJit)).toBe(REL_HASH)
+  })
+
+  test('legacy is a no-op for direct (non-JIT) URLs', () => {
+    const direct = `https://personalserver.adamdrumm.com/${REL}`
+    expect(generateLegacyNormalizedVideoId(direct)).toBe(generateNormalizedVideoId(direct))
   })
 })

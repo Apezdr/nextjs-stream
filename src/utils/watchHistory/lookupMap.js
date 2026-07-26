@@ -48,7 +48,7 @@ export const createWatchHistoryLookupMap = cache(async function(userId) {
     // Create map for O(1) lookups by normalizedVideoId
     const lookupMap = new Map()
     for (const entry of entries) {
-      lookupMap.set(entry.normalizedVideoId, {
+      const value = {
         videoId: entry.videoId,
         playbackTime: entry.playbackTime,
         lastUpdated: entry.lastUpdated,
@@ -58,7 +58,19 @@ export const createWatchHistoryLookupMap = cache(async function(userId) {
         seasonNumber: entry.seasonNumber,
         episodeNumber: entry.episodeNumber,
         isValid: entry.isValid
-      })
+      }
+      lookupMap.set(entry.normalizedVideoId, value)
+
+      // TRANSITION SHIM (delete with the legacy exports in videoIdentity.js):
+      // rows keyed under a stale hash (pre-WHATWG-parity spaced-path JIT
+      // plays) also register under the CURRENT canonical hash of their own
+      // videoId, so catalog-side lookups by the new id still find them.
+      if (entry.videoId) {
+        const derivedNid = generateNormalizedVideoId(entry.videoId)
+        if (derivedNid && derivedNid !== entry.normalizedVideoId && !lookupMap.has(derivedNid)) {
+          lookupMap.set(derivedNid, value)
+        }
+      }
     }
 
     return lookupMap

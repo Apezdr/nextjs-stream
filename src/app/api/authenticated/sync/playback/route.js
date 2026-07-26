@@ -1,6 +1,7 @@
 import { getVideosWatched } from '@src/utils/auth_database'
 import { isAuthenticatedServer } from '@src/utils/routeAuth'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { generateLegacyNormalizedVideoId } from '@src/utils/videoIdentity'
 
 /**
  * Get playback position for a specific video (on-demand fetch)
@@ -27,12 +28,17 @@ export async function GET(req) {
   
   // Normalize the requested videoId for matching
   const normalizedVideoId = generateNormalizedVideoId(videoId)
-  
+  // TRANSITION SHIM (delete with the legacy exports): rows written before
+  // the WHATWG-parity canonicalizer fix may still be keyed under the legacy
+  // id for spaced-path JIT URLs.
+  const legacyNormalizedVideoId = generateLegacyNormalizedVideoId(videoId)
+
   // Find playback position for this specific video
   const playbackData = watchedMedia.find(
-    item => 
-      item.videoId === videoId || 
-      item.normalizedVideoId === normalizedVideoId
+    item =>
+      item.videoId === videoId ||
+      item.normalizedVideoId === normalizedVideoId ||
+      item.normalizedVideoId === legacyNormalizedVideoId
   )
 
   if (!playbackData) {
