@@ -86,6 +86,11 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         // flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
         this.createIndexSafely({ normalizedVideoId: 1 }, { name: 'normalized_id_index' }),
 
+        // Backend-sourced content identity (`${showMediaId}:s##e##`). Sparse —
+        // only episodes whose show resolved an identity carry it. Name matches
+        // media_id_index in flatSync/initializeDatabase.js.
+        this.createIndexSafely({ mediaId: 1 }, { sparse: true, name: 'media_id_index' }),
+
         // Covered-query index for validateWatchHistoryAgainstDatabase(), which
         // projects only { videoURL, normalizedVideoId } — an index-only scan with
         // no document fetch. Mirrors videoURL_normalizedId_covered_index in

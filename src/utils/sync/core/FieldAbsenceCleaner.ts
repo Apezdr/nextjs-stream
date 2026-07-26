@@ -74,6 +74,11 @@ const REQUIRED_FIELD_DENYLIST = new Set<string>([
   '_id', 'title', 'originalTitle', 'type', 'createdAt', 'lastSynced', 'updatedAt',
   'syncRunId', 'syncHash', 'lockedFields', 'showId', 'seasonId',
   'episodeNumber', 'seasonNumber', 'showTitle', 'metadata',
+  // Backend-sourced content identity: durable, set-only, and what watch
+  // history joins on. A pass in which no server reports it (probe gap,
+  // sidecar not yet written) must never clear it — losing it orphans a
+  // title's history.
+  'mediaId',
 ])
 
 const DEFAULT_MAX_FIELDS_PER_ENTITY = 5

@@ -45,7 +45,15 @@ export type MovieFieldPath =
   | 'urls.mediaLastModified'
   | 'urls.metadata'
   | 'urls.chapters'
-  
+
+  // Delivery facts describing the primary source. Declared for diagnostics
+  // and completeness only — ingestion gates them on 'urls.mp4' (the video
+  // block's own path) because they describe the file videoURL points at and
+  // must share its owner. Do NOT gate on these leaves directly.
+  | 'urls.jitEligible'
+  | 'urls.jitUrl'
+
+
   // Video info fields (normalized in fieldAvailability under additional_metadata)
   | 'additional_metadata.duration'
   | 'additional_metadata.dimensions'

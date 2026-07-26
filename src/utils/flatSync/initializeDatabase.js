@@ -86,6 +86,9 @@ export async function createFlatDatabaseIndexes() {
       { key: { type: 1 }, name: 'type_index' },
       { key: { videoURL: 1 }, name: 'videoURL_index' },
       { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' },
+      // Backend-sourced content identity ("mid:..."). Sparse: only titles the
+      // scanner could resolve carry it. Serves the watch-history resolver.
+      { key: { mediaId: 1 }, sparse: true, name: 'media_id_index' },
       // Index for trailer URL lookups (e.g., YouTube trailers stored on metadata.trailer_url)
       // Used by: getFlatRecentlyWatchedForUser when resolving trailer watch entries to movies
       { key: { 'metadata.trailer_url': 1 }, name: 'trailer_url_index' },
@@ -190,6 +193,9 @@ export async function createFlatDatabaseIndexes() {
       { key: { type: 1 }, name: 'type_index' },
       { key: { videoURL: 1 }, name: 'videoURL_index' },
       { key: { normalizedVideoId: 1 }, name: 'normalized_id_index' },
+      // Backend-sourced content identity (`${showMediaId}:s##e##`). Sparse:
+      // only episodes whose show resolved an identity carry it.
+      { key: { mediaId: 1 }, sparse: true, name: 'media_id_index' },
       { key: { duration: 1 }, name: 'duration_index' },
       { key: { videoSource: 1 }, name: 'videoSource_index' },
       

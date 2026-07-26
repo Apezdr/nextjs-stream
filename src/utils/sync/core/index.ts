@@ -21,6 +21,9 @@ export * from './logSanitizer'
 // Field path mappings (type-safe fieldAvailability lookups)
 export * from './fieldPaths'
 
+// Identity + delivery-fact resolution (shared by movie and TV ingestion)
+export * from './deliveryFacts'
+
 // Field absence detection (drops stale optional fields no server reports anymore)
 export {
   detectAbsentFields,

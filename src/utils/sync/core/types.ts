@@ -216,22 +216,72 @@ export interface BaseMediaEntity {
   syncVersion?: string  // Version of sync logic that last updated this record
 }
 
+/**
+ * One video file belonging to a title, as published by the media-processor's
+ * `sources[]` (backend components/media-scanner/domain/video-sources.mjs).
+ *
+ * A title can hold several containers of the same content; exactly one is
+ * `isPrimary` and its `url` is what `videoURL` points at. The array's ORDER is
+ * a backend hash contract (VIDEO_EXTENSIONS priority, then filename) — store
+ * it verbatim, never re-sort.
+ *
+ * `jitEligible` is a CAPABILITY claim (can the transcoder serve this without
+ * the viewer losing an audio language), never a liveness signal.
+ */
+export interface MediaSourceEntry {
+  url: string
+  filename: string
+  container: string          // 'mp4' | 'm4v' | 'mov' | 'mkv' | 'webm' | 'avi'
+  formatName?: string | null // ffprobe format_name, verbatim
+  size?: number | null
+  length?: number | null     // duration, ms
+  dimensions?: string | null
+  videoCodec?: string | null
+  pixFmt?: string | null
+  fieldOrder?: string | null // null = unknown; treat as progressive
+  hdr?: string | null
+  audioTrackCount?: number
+  audioLanguages?: string[]  // distinct strict language codes; [] when untagged
+  mediaLastModified?: string | null
+  uuid?: string | null       // info.uuid of THIS file, not of the title
+  isPrimary?: boolean
+  jitEligible?: boolean
+  jitReason?: string | null  // why not, when ineligible
+  jitKey?: string | null
+  jitUrl?: string | null
+}
+
 export interface MovieEntity extends BaseMediaEntity {
   // Type marker - REQUIRED for collection queries
   type?: string  // 'movie' - must always be set for new records
-  
+
   // Creation tracking - REQUIRED for "recently added" features
   createdAt?: Date
   initialDiscoveryDate?: Date
   initialDiscoveryServer?: string
-  
+
   // Video and info
   videoURL?: string
   videoSource?: string
   videoInfo?: VideoInfo
   videoInfoSource?: string
   normalizedVideoId?: string
-  
+
+  // Backend-sourced content identity (`mid:<sha256[0:16]>` of the library-
+  // relative folder path, sidecar-persisted so it survives renames and
+  // re-encodes). This is what watch history joins on — distinct from `_id`,
+  // which is per-file and churns. Set-only: never written as null, and
+  // protected from absence cleanup.
+  mediaId?: string
+
+  // Delivery facts describing the PRIMARY source (companions of the video
+  // block — same owner as videoSource, mirrored so a host disabling JIT
+  // clears them).
+  sources?: MediaSourceEntry[] | null
+  primaryContainer?: string | null  // container of the isPrimary source
+  jitEligible?: boolean | null
+  jitUrl?: string | null
+
   // Video metadata (FLAT at root level - matches legacy structure)
   duration?: number  // Video duration in seconds
   dimensions?: string  // e.g., "1920x1080"
@@ -300,6 +350,17 @@ export interface EpisodeEntity extends BaseMediaEntity {
   videoURL?: string
   videoSource?: string
   normalizedVideoId?: string
+
+  // Backend-sourced content identity — `${showMediaId}:s##e##`. Set-only,
+  // protected from absence cleanup. See MovieEntity.mediaId.
+  mediaId?: string
+
+  // Delivery facts describing the PRIMARY source (episodes carry these flat,
+  // beside videoURL, matching the backend's episode payload convention).
+  sources?: MediaSourceEntry[] | null
+  primaryContainer?: string | null
+  jitEligible?: boolean | null
+  jitUrl?: string | null
   thumbnail?: string   // NOT thumbnailURL - legacy field name
   thumbnailSource?: string
   captionURLs?: Record<string, {   // NOT captions - legacy field name (object keyed by language)

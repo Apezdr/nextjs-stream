@@ -19,6 +19,8 @@ import {
   SyncOperation,
   syncEventBus,
   planFieldCleanup,
+  resolveMediaId,
+  resolveDeliveryFacts,
   type CleanableField,
   type CleanupPlan
 } from '../../core'
@@ -263,6 +265,25 @@ export class EpisodeSyncService {
   }
 
   /**
+   * The fieldAvailability leaf path for an episode's videoURL, or the bare
+   * 'videoURL' fallback when the literal season/episode keys cannot be
+   * resolved. See the call site for why the fallback is acceptable: an
+   * unresolvable path and an unclaimed path behave identically (the priority
+   * helper treats an empty bucket as "anyone may write").
+   */
+  private buildEpisodeVideoFieldPath(
+    showOriginalTitle: string,
+    seasonNumber: number,
+    episodeFileName: string | undefined,
+    context: SyncContext
+  ): string {
+    if (!episodeFileName) return 'videoURL'
+    const seasonKey = this.resolveSeasonKey(showOriginalTitle, seasonNumber, context)
+    if (!seasonKey) return 'videoURL'
+    return `seasons.${seasonKey}.episodes.${episodeFileName}.videoURL`
+  }
+
+  /**
    * Build the field-absence cleanup candidates for one episode. Returns the
    * fields to $unset (enforce) and human-readable diagnostics (both modes), or
    * null when cleanup is disabled / not applicable. Conservative scope for the
@@ -359,8 +380,25 @@ export class EpisodeSyncService {
     entity.showTitle = displayTitle
 
     // --- Video URL (priority-gated, use originalTitle for field availability lookup) ---
+    //
+    // The leaf path must be the LITERAL one collectFieldAvailability walked —
+    // `seasons.<seasonKey>.episodes.<episodeKey>.videoURL`, where seasonKey is
+    // the file server's own season key (a real folder name like "Season 01",
+    // not a reconstructed "Season 1"). A bare 'videoURL' claims a leaf nobody
+    // ever populates, and an unclaimed leaf makes the priority helper return
+    // true for EVERY server — i.e. the gate silently did nothing.
+    //
+    // resolveSeasonKey returns null when it cannot identify the key; that path
+    // falls back to the old permissive behavior rather than guessing a path
+    // (a wrong path would be indistinguishable from an unclaimed one anyway).
+    const videoFieldPath = this.buildEpisodeVideoFieldPath(
+      showOriginalTitle,
+      seasonNumber,
+      episodeFileName,
+      context
+    )
     const canUpdateVideo = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability, 'tv', showOriginalTitle, 'videoURL', context.serverConfig
+      context.fieldAvailability, 'tv', showOriginalTitle, videoFieldPath, context.serverConfig
     )
     if (canUpdateVideo && fileData?.videoURL) {
       if (isTopLevelFieldLocked((existing as any)?.lockedFields, 'videoURL')) {
@@ -378,6 +416,44 @@ export class EpisodeSyncService {
         entity.videoSource = context.serverConfig.id
         entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
       }
+    }
+
+    // --- Content identity + delivery facts (follow video priority) ---
+    //
+    // Episodes carry these flat beside videoURL, matching the backend's
+    // episode payload convention. Two write disciplines, same as movies:
+    // mediaId is SET-ONLY (durable identity — a payload that cannot resolve
+    // it sends null, which must never clear what we hold, and it is on
+    // FieldAbsenceCleaner's denylist); the delivery facts are MIRRORED so
+    // that disabling JIT on the owning host clears them on the next sync.
+    if (canUpdateVideo && fileData) {
+      const incomingMediaId = resolveMediaId(fileData.mediaIdentity)
+      if (incomingMediaId) {
+        if (existing?.mediaId && existing.mediaId !== incomingMediaId) {
+          pinoLog.warn(
+            {
+              showOriginalTitle,
+              seasonNumber,
+              episodeNumber,
+              storedMediaId: existing.mediaId,
+              incomingMediaId,
+              serverId: context.serverConfig.id,
+            },
+            'mediaId mismatch for episode — video owner wins'
+          )
+        }
+        entity.mediaId = incomingMediaId
+      }
+
+      // Episodes carry these flat; source urls go through the same
+      // createFullUrl transform as videoURL above.
+      const facts = resolveDeliveryFacts(fileData, (url) =>
+        createFullUrl(url, context.serverConfig)
+      )
+      entity.sources = facts.sources
+      entity.primaryContainer = facts.primaryContainer
+      entity.jitEligible = facts.jitEligible
+      entity.jitUrl = facts.jitUrl
     }
 
     // --- Video info (follows video priority) ---

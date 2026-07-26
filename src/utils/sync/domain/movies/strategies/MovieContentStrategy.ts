@@ -12,6 +12,8 @@ import {
   MediaType,
   BaseMediaEntity,
   MovieEntity,
+  resolveMediaId,
+  resolveDeliveryFacts,
   VideoInfo,
   MediaQuality,
   ServerConfig,
@@ -31,6 +33,7 @@ import { FileServerAdapter } from '../../../core'
 
 import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
 import { syncLogger } from '../../../core/logger'
+import isEqual from 'lodash/isEqual'
  
 // @ts-ignore — dependency-free sibling JS module (CJS) with no .d.ts
 import { generateNormalizedVideoId as computeNormalizedVideoId } from '@src/utils/videoIdentity'
@@ -136,7 +139,17 @@ export class MovieContentStrategy implements SyncStrategy {
 
         // Add source tracking for updated content fields
         Object.keys(contentUpdates).forEach((field) => {
-          if (field === 'videoURL') {
+          if (
+            field === 'videoURL' ||
+            // Delivery/identity facts are companions of the video block: they
+            // describe the primary source that videoURL points at, so they
+            // share its owner rather than carrying independent provenance.
+            field === 'sources' ||
+            field === 'primaryContainer' ||
+            field === 'jitEligible' ||
+            field === 'jitUrl' ||
+            field === 'mediaId'
+          ) {
             movieToSave.videoSource = context.serverConfig.id
           } else if (
             field === 'duration' ||
@@ -462,6 +475,22 @@ export class MovieContentStrategy implements SyncStrategy {
       }
     }
 
+    // Step 3b: Ingest the backend's content identity and delivery facts.
+    //
+    // These ride the video block's ownership (see the source-stamp mapping in
+    // sync()) rather than claiming their own fieldAvailability leaves: they
+    // describe the primary source that videoURL points at, so a server that
+    // does not own videoURL must not be able to publish them.
+    if (fileServerMovieData && shouldUpdate) {
+      this.applyIdentityAndDeliveryUpdates(
+        updates,
+        currentMovie,
+        fileServerMovieData,
+        originalTitle,
+        context
+      )
+    }
+
     // Step 4: Process captions from file server data
     if (fileServerMovieData) {
       const allCaptions = this.extractCaptionsFromFileServerData(
@@ -536,6 +565,91 @@ export class MovieContentStrategy implements SyncStrategy {
    * Get video URL from existing file server data (passed through sync context)
    * The file server data is already fetched via single API call (e.g., /nodejs/media/movies)
    */
+  /**
+   * Ingest the backend's content identity (`mediaIdentity.id`) and the
+   * delivery facts describing the primary source (`sources[]`,
+   * `primaryContainer`, `jitEligible`, `jitUrl`).
+   *
+   * Two deliberately different write disciplines:
+   *
+   * - `mediaId` is SET-ONLY. It is durable content identity (folder-derived,
+   *   sidecar-persisted); a payload that cannot resolve it emits `null`, which
+   *   must never clear a value we already hold. It is also on
+   *   FieldAbsenceCleaner's denylist for the same reason.
+   *
+   * - The delivery facts are MIRRORED: present → set, payload-present-but-
+   *   absent → explicit null/false. That mirroring IS the durable off-switch —
+   *   when an operator disables JIT on the owning host, the next sync clears
+   *   the URL and those titles stop being served through the transcoder.
+   *   FieldAbsenceCleaner is the wrong rail for this (it probes all servers
+   *   and has no episode-level equivalent), so the owner mirrors instead.
+   *
+   * Both are gated by the caller on the videoURL priority check, so a server
+   * that does not own the video cannot publish either.
+   */
+  private applyIdentityAndDeliveryUpdates(
+    updates: any,
+    currentMovie: MovieEntity,
+    fileServerData: any,
+    originalTitle: string,
+    context: SyncContext
+  ): void {
+    // --- Content identity (set-only) ---
+    const incomingMediaId = resolveMediaId(fileServerData.mediaIdentity)
+    if (incomingMediaId) {
+      if (currentMovie.mediaId && currentMovie.mediaId !== incomingMediaId) {
+        // Two servers derive the same id for the same folder by construction,
+        // so a mismatch means a sidecar was pinned on one side (e.g. a folder
+        // renamed on one server only). The video owner wins; surface it so the
+        // divergence is fixable rather than silently absorbed.
+        syncLogger.warn(
+          `⚠️ mediaId mismatch for "${originalTitle}": stored "${currentMovie.mediaId}" (source ${currentMovie.videoSource}) → incoming "${incomingMediaId}" from server ${context.serverConfig.id}`
+        )
+      }
+      if (currentMovie.mediaId !== incomingMediaId) {
+        updates.mediaId = incomingMediaId
+      }
+    }
+
+    // --- Delivery facts (mirrored) ---
+    // Movies nest these under `urls`; the same prefix-strip + createFullUrl
+    // transform used for urls.mp4 is applied to each source url so a source
+    // entry and videoURL can never disagree about host or encoding.
+    const facts = resolveDeliveryFacts(
+      {
+        sources: fileServerData.urls?.sources,
+        jitEligible: fileServerData.urls?.jitEligible,
+        jitUrl: fileServerData.urls?.jitUrl,
+      },
+      (url) => this.toFullSourceUrl(url, context)
+    )
+
+    if (!isEqual(currentMovie.sources ?? null, facts.sources)) {
+      updates.sources = facts.sources
+    }
+    if ((currentMovie.primaryContainer ?? null) !== facts.primaryContainer) {
+      updates.primaryContainer = facts.primaryContainer
+    }
+    if ((currentMovie.jitEligible ?? false) !== facts.jitEligible) {
+      updates.jitEligible = facts.jitEligible
+    }
+    if ((currentMovie.jitUrl ?? null) !== facts.jitUrl) {
+      updates.jitUrl = facts.jitUrl
+    }
+  }
+
+  /**
+   * Mirror of the urls.mp4 conversion: strip a doubled server prefix, then
+   * build the full URL.
+   */
+  private toFullSourceUrl(url: string, context: SyncContext): string {
+    let relativePath = url
+    if (context.serverConfig.prefix && relativePath.startsWith(context.serverConfig.prefix)) {
+      relativePath = relativePath.substring(context.serverConfig.prefix.length)
+    }
+    return UrlBuilder.createFullUrl(relativePath, context.serverConfig)
+  }
+
   private getVideoUrlFromFileServerData(
     originalTitle: string,
     fileServerData: any,

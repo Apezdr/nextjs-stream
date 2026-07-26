@@ -49,6 +49,11 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
         this.createIndexSafely({ normalizedVideoId: 1 }, { name: 'normalized_id_index' }),
         this.createIndexSafely({ 'metadata.trailer_url': 1 }, { name: 'trailer_url_index' }),
 
+        // Backend-sourced content identity ("mid:..."). Sparse — only titles
+        // whose identity the scanner resolved carry it. Name matches
+        // media_id_index in flatSync/initializeDatabase.js.
+        this.createIndexSafely({ mediaId: 1 }, { sparse: true, name: 'media_id_index' }),
+
         // Covered-query index for validateWatchHistoryAgainstDatabase() — projects
         // only { videoURL, normalizedVideoId } for an index-only scan. Mirrors
         // videoURL_normalizedId_covered_index in flatSync/initializeDatabase.js.
