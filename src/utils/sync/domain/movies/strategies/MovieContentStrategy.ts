@@ -40,16 +40,17 @@ export class MovieContentStrategy implements SyncStrategy {
   readonly supportedOperations = [SyncOperation.Content]
   readonly supportedMediaTypes = [MediaType.Movie]
 
-  // Common video file extensions in priority order (best quality first)
+  // Video extensions in selection-priority order — MUST mirror the backend's
+  // VIDEO_EXTENSIONS (media-processor node/utils/utils.mjs). The order is
+  // load-bearing there: it decides which file a multi-container folder
+  // publishes, and .mp4 stays first so existing titles keep their URL.
   private readonly VIDEO_EXTENSIONS = [
     '.mp4',
-    '.mkv',
-    '.avi',
-    '.mov',
-    '.wmv',
-    '.flv',
-    '.webm',
     '.m4v',
+    '.mov',
+    '.mkv',
+    '.webm',
+    '.avi',
   ]
 
   // Common video filenames to check (in priority order)
@@ -569,16 +570,21 @@ export class MovieContentStrategy implements SyncStrategy {
         return videoUrl
       }
 
-      // Fallback: look for MP4 file in fileNames and construct URL
+      // Fallback: look for a video file in fileNames (container-agnostic,
+      // backend extension-priority order) and construct URL
       if (fileServerData.fileNames && Array.isArray(fileServerData.fileNames)) {
-        const mp4File = fileServerData.fileNames.find((name: string) => name.endsWith('.mp4'))
-        if (mp4File) {
-          const relativePath = `/movies/${originalTitle}/${mp4File}`
-          const videoUrl = UrlBuilder.createFullUrl(relativePath, context.serverConfig)
-          syncLogger.debug(
-            `✅ Found video file via fileNames (relative: ${relativePath}) -> full: ${videoUrl}`
+        for (const ext of this.VIDEO_EXTENSIONS) {
+          const videoFile = fileServerData.fileNames.find((name: string) =>
+            name.toLowerCase().endsWith(ext)
           )
-          return videoUrl
+          if (videoFile) {
+            const relativePath = `/movies/${originalTitle}/${videoFile}`
+            const videoUrl = UrlBuilder.createFullUrl(relativePath, context.serverConfig)
+            syncLogger.debug(
+              `✅ Found video file via fileNames (relative: ${relativePath}) -> full: ${videoUrl}`
+            )
+            return videoUrl
+          }
         }
       }
 
@@ -660,16 +666,12 @@ export class MovieContentStrategy implements SyncStrategy {
         return null
       }
 
-      // Find the MP4 file to get its metadata
-      let mp4File = null
-      if (fileServerData.fileNames && Array.isArray(fileServerData.fileNames)) {
-        mp4File = fileServerData.fileNames.find((name: string) => name.endsWith('.mp4'))
-      }
-
-      if (!mp4File) {
-        console.log(`❌ No MP4 file found in fileNames for: "${originalTitle}"`)
-        return null
-      }
+      // NOTE: no container gate here. This used to bail unless an .mp4 was
+      // present in fileNames, which made every MKV/MOV-only movie (visible
+      // since the backend's container-agnostic pivot) sync a videoURL with
+      // NO duration/dimensions/hdr/size/mediaQuality. All fields below read
+      // container-agnostic payload data (additional_metadata.*, hdr,
+      // urls.mediaLastModified) — the file's container is irrelevant.
 
       // Extract metadata using the same patterns as the old sync system
       const result: any = {}

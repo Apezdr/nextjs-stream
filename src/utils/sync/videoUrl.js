@@ -26,9 +26,15 @@ export async function processMovieVideoURL(
   }
 
   if (!fileServerData.urls?.mp4) {
-    throw new Error(
-      `No MP4 video URL found for movie "${movie.title}" on server ${serverConfig.id}`
+    // Post-pivot, urls.mp4 is a container-agnostic locator that is emitted
+    // whenever ANY video container exists — its absence means this server
+    // has no video for the title, which is a skip, not a sync-fatal error.
+    console.warn(
+      chalk.yellow(
+        `No video URL (urls.mp4 locator) for movie "${movie.title}" on server ${serverConfig.id} — skipping videoURL update`
+      )
     )
+    return null
   }
 
   // Construct the field path for the movie video URL

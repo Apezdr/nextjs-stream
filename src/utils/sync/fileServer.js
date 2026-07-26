@@ -106,9 +106,14 @@ export async function identifyMissingMedia(fileServer, currentDB) {
  * @returns {Object|null} Processed movie data or null
  */
 export async function processMovieData(movieTitle, movieData, serverConfig) {
-  const mp4File = movieData.fileNames.find((name) => name.endsWith('.mp4'))
-  if (!mp4File) {
-    console.log(`Movie: No MP4 file found for ${movieTitle}. Skipping.`)
+  // Container-agnostic (backend priority order) — the payload pivot made
+  // MKV/MOV-only titles visible, and urls.mp4 is a locator, not a container.
+  const VIDEO_EXTENSIONS = ['.mp4', '.m4v', '.mov', '.mkv', '.webm', '.avi']
+  const videoFile = movieData.fileNames.find((name) =>
+    VIDEO_EXTENSIONS.some((ext) => name.toLowerCase().endsWith(ext))
+  )
+  if (!videoFile) {
+    console.log(`Movie: No video file found for ${movieTitle}. Skipping.`)
     return null
   }
 
