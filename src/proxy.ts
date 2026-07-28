@@ -17,6 +17,27 @@ const AUTH_COOKIE_NAMES = COOKIE_PREFIXES.flatMap((prefix) => [
 
 const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN?.replace(/^\./, '')
 
+// Authenticated API routes that manage their own caching (ETag + no-cache
+// revalidation chains, public caption caching, SSE streams). Headers set in
+// this proxy are applied to the response BEFORE the route handler runs, and
+// a header the proxy already set cannot be overridden by the route handler
+// (sendResponse only appends headers that aren't present) — so the no-store
+// default below would silently break these routes' caching if they weren't
+// skipped. Any new route under /api/authenticated/ that sets its own
+// Cache-Control MUST be added here.
+const SELF_CACHED_API_PREFIXES = [
+  '/api/authenticated/tmdb',
+  '/api/authenticated/screensaver',
+  '/api/authenticated/captions',
+  '/api/authenticated/admin/sync-stream',
+  '/api/authenticated/system-status',
+  '/api/authenticated/notifications',
+  '/api/authenticated/banner',
+  '/api/authenticated/horizontal-list',
+  '/api/authenticated/sync/pullPlayback',
+  '/api/authenticated/watchlist',
+]
+
 export function proxy(request: NextRequest) {
   // Optional imgproxy offload: when IMGPROXY_URL is set, hand image
   // optimization to an external imgproxy container instead of the built-in
@@ -39,6 +60,20 @@ export function proxy(request: NextRequest) {
   }
 
   const response = NextResponse.next()
+
+  // Default the authenticated API surface to no-store. Most of these routes
+  // return bare `new Response(JSON.stringify(...))` with no Cache-Control at
+  // all, which leaves caching up to client heuristics — Apple's NSURLCache on
+  // iOS/tvOS will heuristically cache a 200 GET that carries no freshness
+  // info, which served the RN TV app stale videoURLs from the media endpoint.
+  // Per-user payloads with playback URLs must never be stored by any cache.
+  const { pathname } = request.nextUrl
+  if (
+    pathname.startsWith('/api/authenticated/') &&
+    !SELF_CACHED_API_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+  ) {
+    response.headers.set('Cache-Control', 'no-store, private')
+  }
 
   if (COOKIE_DOMAIN) {
     // When AUTH_COOKIE_DOMAIN is set, better-auth sets session cookies with

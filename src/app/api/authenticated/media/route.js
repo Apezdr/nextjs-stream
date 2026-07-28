@@ -3,6 +3,18 @@ import isAuthenticated, { isAuthenticatedAndApproved } from '../../../../utils/r
 import { getFlatRequestedMedia, getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils'
 import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
 
+// This payload carries videoURL — it must always be current, so no HTTP
+// cache (including tvOS NSURLCache, which heuristically caches responses
+// with no freshness info) may ever store it. Belt-and-suspenders with the
+// same no-store default applied in src/proxy.ts for /api/authenticated/.
+const NO_STORE_HEADERS = {
+  'Content-Type': 'application/json',
+  'Cache-Control': 'no-store, private',
+}
+
+const jsonResponse = (data, status = 200) =>
+  new Response(JSON.stringify(data), { status, headers: NO_STORE_HEADERS })
+
 export async function POST(req) {
   const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
@@ -20,7 +32,7 @@ export async function POST(req) {
     type: mediaType,
     title: resolvedTitle,
   })
-  return new Response(JSON.stringify(media))
+  return jsonResponse(media)
 }
 
 export async function GET(req) {
@@ -74,10 +86,7 @@ export async function GET(req) {
     
     if (!media) {
       console.warn(`No media found for request: ${JSON.stringify(mediaRequest)}`);
-      return new Response(
-        JSON.stringify({ error: 'Media not found' }),
-        { status: 404 }
-      )
+      return jsonResponse({ error: 'Media not found' }, 404)
     }
 
     // Add watch history if requested - only for playable media items (movies, episodes)
@@ -202,23 +211,20 @@ export async function GET(req) {
           seasonNumber: mediaSeason,
           episodeNumber: mediaEpisode
         })
-        return new Response(JSON.stringify(tvData))
+        return jsonResponse(tvData)
       } catch (tvError) {
         console.error('Error in sanitizeTVData:', tvError);
         // Return partial data if possible
-        return new Response(
-          JSON.stringify({
-            error: 'Error processing TV data',
-            partialData: media ? {
-              id: media.id,
-              title: media.title,
-              originalTitle: media.originalTitle || null,
-              type: media.type,
-              posterURL: media.posterURL
-            } : null
-          }),
-          { status: 206 } // Partial Content
-        )
+        return jsonResponse({
+          error: 'Error processing TV data',
+          partialData: media ? {
+            id: media.id,
+            title: media.title,
+            originalTitle: media.originalTitle || null,
+            type: media.type,
+            posterURL: media.posterURL
+          } : null
+        }, 206) // Partial Content
       }
     }
 
@@ -226,35 +232,29 @@ export async function GET(req) {
     if (isCard) {
       try {
         const cardData = await sanitizeCardData(media, true)
-        return new Response(JSON.stringify(cardData))
+        return jsonResponse(cardData)
       } catch (cardError) {
         console.error('Error in sanitizeCardData:', cardError);
         // Return partial data if possible
-        return new Response(
-          JSON.stringify({
-            error: 'Error processing card data',
-            partialData: media ? {
-              id: media.id,
-              title: media.title,
-              originalTitle: media.originalTitle || null,
-              type: media.type,
-              posterURL: media.posterURL
-            } : null
-          }),
-          { status: 206 } // Partial Content
-        )
+        return jsonResponse({
+          error: 'Error processing card data',
+          partialData: media ? {
+            id: media.id,
+            title: media.title,
+            originalTitle: media.originalTitle || null,
+            type: media.type,
+            posterURL: media.posterURL
+          } : null
+        }, 206) // Partial Content
       }
     }
-    return new Response(JSON.stringify(media))
+    return jsonResponse(media)
   } catch (error) {
     console.error('Error in media API:', error);
-    return new Response(
-      JSON.stringify({ 
-        error: 'Failed to fetch media data', 
-        details: error.message,
-        stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
-      }),
-      { status: 500 }
-    )
+    return jsonResponse({
+      error: 'Failed to fetch media data',
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    }, 500)
   }
 }
