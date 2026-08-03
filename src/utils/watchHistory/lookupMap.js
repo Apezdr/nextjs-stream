@@ -60,17 +60,6 @@ export const createWatchHistoryLookupMap = cache(async function(userId) {
         isValid: entry.isValid
       }
       lookupMap.set(entry.normalizedVideoId, value)
-
-      // TRANSITION SHIM (delete with the legacy exports in videoIdentity.js):
-      // rows keyed under a stale hash (pre-WHATWG-parity spaced-path JIT
-      // plays) also register under the CURRENT canonical hash of their own
-      // videoId, so catalog-side lookups by the new id still find them.
-      if (entry.videoId) {
-        const derivedNid = generateNormalizedVideoId(entry.videoId)
-        if (derivedNid && derivedNid !== entry.normalizedVideoId && !lookupMap.has(derivedNid)) {
-          lookupMap.set(derivedNid, value)
-        }
-      }
     }
 
     return lookupMap

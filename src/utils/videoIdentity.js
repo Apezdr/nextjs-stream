@@ -54,18 +54,6 @@ function canonicalizeStreamPathname(pathname) {
   return canonicalizeStreamPathnameWith(pathname, whatwgSerializePath)
 }
 
-/**
- * LEGACY canonical form ('/' + raw decoded path, no re-serialization) —
- * TRANSITION SHIM ONLY. WatchHistory rows written for spaced-path JIT plays
- * before the WHATWG-parity fix are keyed on hashes of this form; the shim in
- * upsertPlayback / the resume readers uses it to find and re-key those rows
- * until scripts/remediateJitWatchHistory.js --apply reports zero remaining.
- * DELETE this export (and its consumers) after that.
- */
-function canonicalizeStreamPathnameLegacy(pathname) {
-  return canonicalizeStreamPathnameWith(pathname, (decoded) => '/' + decoded)
-}
-
 function whatwgSerializePath(decoded) {
   return new URL('http://x/' + decoded).pathname
 }
@@ -117,17 +105,6 @@ function canonicalizeStreamPathnameWith(pathname, finalize) {
  */
 function generateNormalizedVideoId(url) {
   return generateNormalizedVideoIdWith(url, canonicalizeStreamPathname)
-}
-
-/**
- * TRANSITION SHIM ONLY — the hash as computed before the WHATWG-parity fix
- * (differs from generateNormalizedVideoId only for JIT URLs whose decoded
- * path contains characters the URL parser percent-encodes, e.g. spaces).
- * Used to locate and re-key pre-fix WatchHistory rows. DELETE after the
- * remediation script reports zero remaining legacy-keyed rows.
- */
-function generateLegacyNormalizedVideoId(url) {
-  return generateNormalizedVideoIdWith(url, canonicalizeStreamPathnameLegacy)
 }
 
 function generateNormalizedVideoIdWith(url, canonicalize) {
@@ -207,10 +184,4 @@ function generateNormalizedVideoIdWith(url, canonicalize) {
   }
 }
 
-module.exports = {
-  generateNormalizedVideoId,
-  canonicalizeStreamPathname,
-  // Transition-shim exports — delete after the spaced-path remediation lands:
-  generateLegacyNormalizedVideoId,
-  canonicalizeStreamPathnameLegacy,
-}
+module.exports = { generateNormalizedVideoId, canonicalizeStreamPathname }

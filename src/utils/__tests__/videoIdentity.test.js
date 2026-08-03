@@ -7,11 +7,7 @@
  * normalizedVideoId in the database — do not update the expected values
  * without a full re-keying migration.
  */
-import {
-  generateNormalizedVideoId,
-  canonicalizeStreamPathname,
-  generateLegacyNormalizedVideoId,
-} from '@src/utils/videoIdentity'
+import { generateNormalizedVideoId, canonicalizeStreamPathname } from '@src/utils/videoIdentity'
 
 const REL = 'movies/Backrooms/Backrooms.2026.2160p.iT.WEB-DL.DV.HDR10+-Ben.The.Men.mp4'
 const REL_HASH = 'c99b3efd02ee33fd'
@@ -190,23 +186,5 @@ describe('WHATWG serialization parity (spaced/non-ASCII paths)', () => {
     expect(canonicalizeStreamPathname(`/stream/${b64}/master.m3u8`)).toBe(
       '/movies/Kingdom%20of%20Heaven/x.mkv'
     )
-  })
-})
-
-describe('legacy transition-shim exports', () => {
-  test('legacy differs from current ONLY for paths the parser percent-encodes', () => {
-    const spacedRel = 'movies/Partly Cloudy/x.mp4'
-    const spacedB64 = Buffer.from(spacedRel).toString('base64').replace(/=+$/, '')
-    const spacedJit = `https://t/stream/${spacedB64}/master.m3u8`
-    expect(generateLegacyNormalizedVideoId(spacedJit)).not.toBe(generateNormalizedVideoId(spacedJit))
-
-    const plainJit = `https://transcoder.adamdrumm.com/stream/${B64}/master.m3u8`
-    expect(generateLegacyNormalizedVideoId(plainJit)).toBe(generateNormalizedVideoId(plainJit))
-    expect(generateLegacyNormalizedVideoId(plainJit)).toBe(REL_HASH)
-  })
-
-  test('legacy is a no-op for direct (non-JIT) URLs', () => {
-    const direct = `https://personalserver.adamdrumm.com/${REL}`
-    expect(generateLegacyNormalizedVideoId(direct)).toBe(generateNormalizedVideoId(direct))
   })
 })

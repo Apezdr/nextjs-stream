@@ -8,7 +8,6 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
-import { generateLegacyNormalizedVideoId } from '@src/utils/videoIdentity'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('WatchHistory.Database')
@@ -44,36 +43,6 @@ export async function upsertPlayback({
 
     const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
     const normalizedVideoId = generateNormalizedVideoId(videoId)
-
-    // TRANSITION SHIM (delete after scripts/remediateJitWatchHistory.js
-    // --apply reports zero remaining legacy-keyed rows): the WHATWG-parity
-    // canonicalizer fix moved the computed id for spaced-path JIT URLs, so a
-    // row written pre-fix may exist under the legacy id. Re-key it in place
-    // before the upsert so this heartbeat updates that row instead of
-    // creating a duplicate and stranding the user's progress.
-    const legacyNormalizedVideoId = generateLegacyNormalizedVideoId(videoId)
-    if (legacyNormalizedVideoId && legacyNormalizedVideoId !== normalizedVideoId) {
-      try {
-        await collection.updateOne(
-          { userId: userIdObj, normalizedVideoId: legacyNormalizedVideoId },
-          { $set: { normalizedVideoId } }
-        )
-      } catch (shimError) {
-        if (shimError?.code === 11000) {
-          // Rows exist under BOTH ids — the new-keyed row is the live one;
-          // drop the stale legacy row (its data is superseded by this beat).
-          await collection.deleteOne({
-            userId: userIdObj,
-            normalizedVideoId: legacyNormalizedVideoId,
-          })
-        } else {
-          log.warn(
-            { error: shimError, userId: userIdObj.toString(), legacyNormalizedVideoId },
-            'Legacy nid re-key shim failed; continuing with upsert'
-          )
-        }
-      }
-    }
 
     const result = await collection.updateOne(
       { userId: userIdObj, normalizedVideoId },
