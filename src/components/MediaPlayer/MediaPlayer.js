@@ -57,6 +57,10 @@ async function VideoPlayer({
   goBack,
   searchParams = { clipStartTime: false, clipEndTime: false, start: false },
   shouldValidateURL = true,
+  // Preflight result computed by the parent view (MoviePlayerView /
+  // TVEpisodePlayerView already HEAD the URL). When provided, this component
+  // must NOT issue a second HEAD of its own.
+  isValidVideoURL: preflightedIsValid = undefined,
   session,
   savedPlaybackTime = null,
   hasFullAccess = true,
@@ -98,7 +102,18 @@ async function VideoPlayer({
     }
   }
 
-  const isValidVideoURL = shouldValidateURL ? await validateVideoURL(videoURL, updateValidationStatus) : true
+  // Preflight precedence: (1) skip entirely for JIT manifests — a first-hit
+  // master request may legitimately block on the transcoder's one-time
+  // keyframe scan, and the serve layer already health-checked it; (2) reuse
+  // the parent view's result instead of re-HEADing; (3) legacy self-check.
+  const isManifestURL = /\.m3u8($|\?)/i.test(videoURL || '')
+  const isValidVideoURL = isManifestURL
+    ? true
+    : typeof preflightedIsValid === 'boolean'
+      ? preflightedIsValid
+      : shouldValidateURL
+        ? await validateVideoURL(videoURL, updateValidationStatus)
+        : true
   if (!isValidVideoURL) {
     return (
       <div className="w-96">

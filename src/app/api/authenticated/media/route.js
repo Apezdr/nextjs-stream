@@ -2,6 +2,15 @@ import { sanitizeCardData, sanitizeTVData } from '@src/utils/auth_utils'
 import isAuthenticated, { isAuthenticatedAndApproved } from '../../../../utils/routeAuth'
 import { getFlatRequestedMedia, getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils'
 import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
+import { applyJitPreference } from '@src/utils/jit/preference'
+
+// IDENTITY HIERARCHY — three layers, each with one job; never invent a fourth:
+//   originalTitle — the ROUTING key (unique folder name; how clients address media)
+//   mediaId       — the IDENTITY key ('mid:…', folder-derived, rename/re-encode-proof;
+//                   what watch history will join on after the P5 cutover)
+//   _id           — per-scan EPHEMERAL (mediainfo header hash; rotates on re-encode)
+// The serve-time JIT swap below changes none of them: videoURL is DELIVERY,
+// and watch-history hashing canonicalizes jit and raw URLs to the same id.
 
 // This payload carries videoURL — it must always be current, so no HTTP
 // cache (including tvOS NSURLCache, which heuristically caches responses
@@ -32,6 +41,7 @@ export async function POST(req) {
     type: mediaType,
     title: resolvedTitle,
   })
+  await applyJitPreference(media)
   return jsonResponse(media)
 }
 
@@ -89,6 +99,11 @@ export async function GET(req) {
       return jsonResponse({ error: 'Media not found' }, 404)
     }
 
+    // Serve-time delivery decision (payload-only; see jit/preference.js).
+    // Applied before the TV/card branches so both clients receive the chosen
+    // URL through the existing videoURL contract field.
+    await applyJitPreference(media)
+
     // Add watch history if requested - only for playable media items (movies, episodes)
     if (includeWatchHistory && authResult.id && media?.normalizedVideoId) {
       try {
@@ -142,6 +157,11 @@ export async function GET(req) {
                       // Continue with episodes without watch history
                     }
                   }
+
+                  // The RN app can start playback straight from this list, so
+                  // each episode gets the same delivery decision as the detail
+                  // payload (health result is cached — one probe per origin).
+                  await Promise.all(episodesWithHistory.map((ep) => applyJitPreference(ep)))
 
                   // Extract available season numbers from full show data
                   const availableSeasons = fullShowData?.seasons

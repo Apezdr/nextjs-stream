@@ -1039,6 +1039,10 @@ export function sanitizeTVData(media, options = {}) {
           videoURL: media.videoURL,
           description: media.metadata?.overview,
           normalizedVideoId: media.normalizedVideoId,
+          // Stable content identity + serve-time delivery facts (jit swap)
+          mediaId: media.mediaId || null,
+          playbackSource: media.playbackSource || null,
+          rawVideoURL: media.rawVideoURL || null,
           hdr: media.hdr || false,
           mediaQuality: media.mediaQuality || null,
           dimensions: media.dimensions
@@ -1077,6 +1081,10 @@ export function sanitizeTVData(media, options = {}) {
           hdr: episode.hdr || false,
           dimensions: episode.dimensions,
           normalizedVideoId: episode.normalizedVideoId,
+          // Stable content identity + serve-time delivery facts (jit swap)
+          mediaId: episode.mediaId || null,
+          playbackSource: episode.playbackSource || null,
+          rawVideoURL: episode.rawVideoURL || null,
           watchHistory: episode.watchHistory || null
         }))
       }
@@ -1095,6 +1103,10 @@ export function sanitizeTVData(media, options = {}) {
     if (mediaType === 'movie' || media.type === 'movie') {
       tvData.duration = media.duration
       tvData.videoURL = media.videoURL
+      // Stable content identity + serve-time delivery facts (jit swap)
+      tvData.mediaId = media.mediaId || null
+      tvData.playbackSource = media.playbackSource || null
+      tvData.rawVideoURL = media.rawVideoURL || null
       tvData.hdr = media.hdr || false
       tvData.dimensions = media.dimensions
       

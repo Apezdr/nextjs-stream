@@ -16,13 +16,22 @@ import { shouldRedirect, buildRedirectUrl, logRedirect } from './redirectHandler
 const getCachedRequestedMedia = cache(getFlatRequestedMedia)
 const getCachedTrailerMedia = cache(getTrailerMedia)
 
-// Create a cached version of video URL validation to avoid repeated HEAD requests
+// Create a cached version of video URL validation to avoid repeated HEAD requests.
+// Timeout-bounded: a slow origin must degrade to "assume playable and let the
+// player's own load be the real test", never hang the server render.
+const PREFLIGHT_TIMEOUT_MS = 4000
 const getCachedVideoValidation = cache(async (url) => {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), PREFLIGHT_TIMEOUT_MS)
   try {
-    const response = await fetch(url, { method: 'HEAD' })
+    const response = await fetch(url, { method: 'HEAD', signal: controller.signal })
     return response.ok
   } catch (error) {
-    return false
+    // Timeout/abort ≠ proven-dead: fail open so the player still tries.
+    // A genuinely dead URL fails visibly in the player either way.
+    return error?.name === 'AbortError'
+  } finally {
+    clearTimeout(timer)
   }
 })
 
@@ -172,7 +181,14 @@ export async function fetchTrailerMedia(mediaType, mediaTitle) {
  */
 export async function validateVideoURL(url) {
   if (!url) return false
-  
+
+  // NEVER preflight a JIT manifest URL. The transcoder's first master
+  // request for a large direct-play-eligible source can block on a one-time
+  // keyframe scan (minutes for a big remux) — a HEAD here would misreport a
+  // warming service as dead. The player's manifest GET is the real test,
+  // and the serve layer already health-checked the transcoder.
+  if (/\.m3u8($|\?)/i.test(url)) return true
+
   return await getCachedVideoValidation(url)
 }
 
