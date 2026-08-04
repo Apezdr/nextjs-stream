@@ -1,11 +1,17 @@
 'use server'
 
 //import { updateSettingsInDB } from '@src/utils/sync_db'
-import { AutoSyncManager, SyncAggressivenessManager, AutoCaptionsManager } from '@src/utils/admin_database'
+import {
+  AutoSyncManager,
+  SyncAggressivenessManager,
+  AutoCaptionsManager,
+  JitServeSettingsManager,
+} from '@src/utils/admin_database'
 
 const autoSyncManager = new AutoSyncManager()
 const syncAgressivenessManager = new SyncAggressivenessManager()
 const autoCaptionsManager = new AutoCaptionsManager()
+const jitServeSettingsManager = new JitServeSettingsManager()
 
 const ALLOWED_LANG_CODES = new Set([
   'en', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'ru',
@@ -37,6 +43,31 @@ export async function updateAutomaticSync(formData) {
   await autoSyncManager.setAutoSync(automaticSyncEnabled)
 
   // Optionally, provide feedback
+}
+
+export async function updateJitServeSettings(formData) {
+  'use server'
+
+  // 'env' clears the runtime override (serve layer falls back to the
+  // JIT_SERVE_MODE env var); the three concrete modes set it.
+  const rawMode = formData.get('jitServeMode')
+  if (!['env', 'off', 'rescue', 'prefer'].includes(rawMode)) {
+    throw new Error('Invalid JIT serve mode')
+  }
+  const mode = rawMode === 'env' ? null : rawMode
+
+  // Blank clears the queue-ceiling override; otherwise a non-negative int.
+  const rawQueued = String(formData.get('jitServeMaxQueued') ?? '').trim()
+  let maxQueued = null
+  if (rawQueued !== '') {
+    const n = Number.parseInt(rawQueued, 10)
+    if (!Number.isInteger(n) || n < 0) {
+      throw new Error('Invalid JIT queue ceiling — must be a non-negative integer or blank')
+    }
+    maxQueued = n
+  }
+
+  await jitServeSettingsManager.setJitServeSettings({ mode, maxQueued })
 }
 
 export async function updateAutoCaptions(formData) {

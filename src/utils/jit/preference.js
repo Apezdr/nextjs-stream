@@ -19,14 +19,20 @@
  * First-deploy default is `rescue`; flip to `prefer` after a validation
  * window. An unrecognized value fails closed to `off` (direct play always
  * works) with a warning, rather than guessing.
+ *
+ * Mode precedence: admin runtime override (/admin/settings, cached ~20s)
+ * > JIT_SERVE_MODE env > 'rescue'. The runtime override exists so flipping
+ * delivery never requires a redeploy.
  */
 
 import { isBrowserPlayableUrl } from '@src/utils/mediaVisibility'
 import { isTranscoderHealthy } from './health'
+import { getCachedJitServeSettings } from './serveSettings'
 
 const VALID_MODES = new Set(['off', 'rescue', 'prefer'])
 let warnedInvalidMode = false
 
+/** Env-level mode (no runtime override applied). */
 export function getJitServeMode() {
   const raw = (process.env.JIT_SERVE_MODE || '').trim().toLowerCase()
   if (!raw) return 'rescue'
@@ -36,6 +42,13 @@ export function getJitServeMode() {
     warnedInvalidMode = true
   }
   return 'off'
+}
+
+/** Effective mode: admin runtime override when valid, else env. */
+export async function getEffectiveJitServeMode() {
+  const settings = await getCachedJitServeSettings()
+  if (settings && VALID_MODES.has(settings.mode)) return settings.mode
+  return getJitServeMode()
 }
 
 /**
@@ -52,7 +65,7 @@ export function getJitServeMode() {
 export async function applyJitPreference(media) {
   if (!media || typeof media.jitUrl !== 'string' || !media.jitUrl) return media
 
-  const mode = getJitServeMode()
+  const mode = await getEffectiveJitServeMode()
   if (mode === 'off') return media
   if (mode === 'rescue' && isBrowserPlayableUrl(media.videoURL)) return media
 

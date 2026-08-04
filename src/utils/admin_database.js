@@ -77,6 +77,47 @@ export class AutoCaptionsManager {
   }
 }
 
+const JIT_SERVE_DEFAULTS = Object.freeze({
+  // null = no runtime override; the serve layer falls back to the
+  // JIT_SERVE_MODE env var (and its own 'rescue' default).
+  mode: null,
+  // null = no queue ceiling override; falls back to JIT_SERVE_MAX_QUEUED.
+  maxQueued: null,
+})
+
+export class JitServeSettingsManager {
+  async getJitServeSettings() {
+    const client = await clientPromise
+    const doc = await client
+      .db('app_config')
+      .collection('settings')
+      .findOne({ name: 'jitServe' })
+    return { ...JIT_SERVE_DEFAULTS, ...(doc?.value || {}) }
+  }
+
+  async setJitServeSettings({ mode, maxQueued }) {
+    const client = await clientPromise
+    const update = {}
+    // mode: 'off' | 'rescue' | 'prefer' sets an override; null clears it
+    // (follow env). Anything else is a caller bug — reject upstream.
+    if (mode === null || ['off', 'rescue', 'prefer'].includes(mode)) {
+      update['value.mode'] = mode
+    }
+    if (maxQueued === null || (Number.isInteger(maxQueued) && maxQueued >= 0)) {
+      update['value.maxQueued'] = maxQueued
+    }
+    if (Object.keys(update).length === 0) return
+    await client
+      .db('app_config')
+      .collection('settings')
+      .updateOne(
+        { name: 'jitServe' },
+        { $set: update, $setOnInsert: { name: 'jitServe' } },
+        { upsert: true }
+      )
+  }
+}
+
 export class SyncAggressivenessManager {
   async getSyncAggressiveness() {
     const client = await clientPromise

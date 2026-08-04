@@ -5,8 +5,9 @@ import {
   visibleShowFilter,
   isShowWebVisible,
 } from '@src/utils/mediaVisibility'
-import { applyJitPreference, getJitServeMode } from '@src/utils/jit/preference'
+import { applyJitPreference, getJitServeMode, getEffectiveJitServeMode } from '@src/utils/jit/preference'
 import { isTranscoderHealthy, _resetHealthCacheForTests } from '@src/utils/jit/health'
+import { _setJitServeSettingsForTests } from '@src/utils/jit/serveSettings'
 import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
 
 const JIT = 'https://transcoder.example.com/stream/bW92aWVzL1gvWC5ta3Y/master.m3u8'
@@ -160,6 +161,52 @@ describe('applyJitPreference', () => {
     expect(getJitServeMode()).toBe('rescue')
     process.env.JIT_SERVE_MODE = 'aggressive'
     expect(getJitServeMode()).toBe('off')
+  })
+})
+
+describe('admin runtime override (settings > env > default)', () => {
+  const origEnv = process.env.JIT_SERVE_MODE
+  const origFetch = global.fetch
+
+  afterEach(() => {
+    process.env.JIT_SERVE_MODE = origEnv
+    global.fetch = origFetch
+    _setJitServeSettingsForTests(undefined)
+    _resetHealthCacheForTests()
+  })
+
+  test('a valid runtime mode beats the env var', async () => {
+    process.env.JIT_SERVE_MODE = 'prefer'
+    _setJitServeSettingsForTests({ mode: 'off', maxQueued: null })
+    expect(await getEffectiveJitServeMode()).toBe('off')
+    // and the kill switch actually kills the swap
+    global.fetch = mockFetchOk()
+    const m = await applyJitPreference({ videoURL: 'https://h/x.mkv', jitUrl: JIT })
+    expect(m.videoURL).toBe('https://h/x.mkv')
+  })
+
+  test('a null/invalid runtime mode falls back to env', async () => {
+    process.env.JIT_SERVE_MODE = 'prefer'
+    _setJitServeSettingsForTests({ mode: null, maxQueued: null })
+    expect(await getEffectiveJitServeMode()).toBe('prefer')
+    _setJitServeSettingsForTests({ mode: 'sideways', maxQueued: null })
+    expect(await getEffectiveJitServeMode()).toBe('prefer')
+  })
+
+  test('no runtime settings at all falls back to env (test-env guard path)', async () => {
+    process.env.JIT_SERVE_MODE = 'rescue'
+    _setJitServeSettingsForTests(undefined)
+    expect(await getEffectiveJitServeMode()).toBe('rescue')
+  })
+
+  test('runtime maxQueued overrides the env ceiling in the health check', async () => {
+    delete process.env.JIT_SERVE_MAX_QUEUED
+    _setJitServeSettingsForTests({ mode: null, maxQueued: 2 })
+    global.fetch = mockFetchOk({ status: 'healthy', queued: 5 })
+    expect(await isTranscoderHealthy('https://t-override.example')).toBe(false)
+    _resetHealthCacheForTests()
+    global.fetch = mockFetchOk({ status: 'healthy', queued: 1 })
+    expect(await isTranscoderHealthy('https://t-override.example')).toBe(true)
   })
 })
 

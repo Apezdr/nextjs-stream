@@ -18,6 +18,8 @@
  * health-probe flood, while recovery after an outage is noticed quickly.
  */
 
+import { getCachedJitServeSettings } from './serveSettings'
+
 const HEALTHY_TTL_MS = 30_000
 const UNHEALTHY_TTL_MS = 10_000
 const PROBE_TIMEOUT_MS = 1_500
@@ -27,9 +29,14 @@ const cache = new Map()
 
 /**
  * Max acceptable value of /health's `queued` before we shed to direct play.
- * Unset/empty disables the capacity arm (liveness-only).
+ * Precedence: admin runtime override > JIT_SERVE_MAX_QUEUED env > null
+ * (capacity arm disabled, liveness-only).
  */
-function maxQueued() {
+async function maxQueued() {
+  const settings = await getCachedJitServeSettings()
+  if (settings && Number.isInteger(settings.maxQueued) && settings.maxQueued >= 0) {
+    return settings.maxQueued
+  }
   const raw = (process.env.JIT_SERVE_MAX_QUEUED || '').trim()
   if (!raw) return null
   const n = Number.parseInt(raw, 10)
@@ -61,7 +68,7 @@ export async function isTranscoderHealthy(origin) {
         cache: 'no-store',
       })
       if (res.ok) {
-        const ceiling = maxQueued()
+        const ceiling = await maxQueued()
         if (ceiling === null) {
           healthy = true
         } else {

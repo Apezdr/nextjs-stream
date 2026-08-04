@@ -11,7 +11,7 @@ import {
   syncMoviesURL,
   syncTVURL,
 } from '@src/utils/config'
-import { AutoSyncManager, AutoCaptionsManager, getLastSynced } from './admin_database'
+import { AutoSyncManager, AutoCaptionsManager, JitServeSettingsManager, getLastSynced } from './admin_database'
 import { formatServerLabel } from '@src/utils/serverLabel'
 
 async function getFileServerImportSettings() {
@@ -43,11 +43,13 @@ async function setFileServerImportSettings(settings) {
 
 const autoSync = new AutoSyncManager()
 const autoCaptions = new AutoCaptionsManager()
+const jitServe = new JitServeSettingsManager()
 
 async function getServerSettings() {
   const lastSyncTime = await getLastSynced()
   const fileImportSettings = await getFileServerImportSettings()
   const automaticSyncEnabled = await autoSync.getAutoSync()
+  const jitServeConfig = await jitServe.getJitServeSettings()
   const autoCaptionsConfig = await autoCaptions.getAutoCaptions()
   const servers = getAllServers()
   const webhookConfigs = await getAllWebhookConfigs()
@@ -78,6 +80,7 @@ async function getServerSettings() {
     syncAggressiveness: 'Full',
     automaticSyncEnabled: automaticSyncEnabled,
     autoCaptionsConfig: autoCaptionsConfig,
+    jitServeConfig: jitServeConfig,
     lastSyncTime: lastSyncTime,
     automated: {
       runDownloadTmdbImages: {

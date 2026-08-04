@@ -4,6 +4,7 @@ import WebhookSettings from '@components/Admin/Settings/WebhookSettings'
 import AutomatedTasksSettings from '@components/Admin/Settings/AutomatedTasksSettings'
 import AutoSyncToggle from '@components/Admin/Settings/AutoSyncToggle'
 import AutoCaptionsSettings from '@components/Admin/Settings/AutoCaptionsSettings'
+import JitServeSettings from '@components/Admin/Settings/JitServeSettings'
 import LastSyncTime from '@components/Admin/Settings/LastSyncTime'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/20/solid'
 import ServerList from './ServerList'
@@ -24,6 +25,7 @@ export default function SettingsList({ settings }) {
     syncAggressiveness,
     automaticSyncEnabled,
     autoCaptionsConfig,
+    jitServeConfig,
     webhookVisibility,
     automated,
   } = settings
@@ -76,6 +78,11 @@ export default function SettingsList({ settings }) {
             <AutoCaptionsSettings
               enabled={autoCaptionsConfig?.enabled}
               languages={autoCaptionsConfig?.languages}
+            />
+            <JitServeSettings
+              mode={jitServeConfig?.mode ?? null}
+              maxQueued={jitServeConfig?.maxQueued ?? null}
+              envMode={(process.env.JIT_SERVE_MODE || 'rescue').toLowerCase()}
             />
           </SettingsSection>
         </div>
