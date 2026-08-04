@@ -25,7 +25,7 @@ describe('mediaVisibility', () => {
   })
 
   test('jitUrl presence rescues a non-playable container', () => {
-    expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT })).toBe(true)
+    expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT, jitEligible: true })).toBe(true)
     expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: '' })).toBe(false)
     expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: null })).toBe(false)
   })
@@ -98,8 +98,8 @@ describe('applyJitPreference', () => {
     _resetHealthCacheForTests()
   })
 
-  const mkvMedia = () => ({ videoURL: 'https://h/movies/X/x.mkv', jitUrl: JIT })
-  const mp4Media = () => ({ videoURL: 'https://h/movies/X/x.mp4', jitUrl: JIT })
+  const mkvMedia = () => ({ videoURL: 'https://h/movies/X/x.mkv', jitUrl: JIT, jitEligible: true })
+  const mp4Media = () => ({ videoURL: 'https://h/movies/X/x.mp4', jitUrl: JIT, jitEligible: true })
 
   test('rescue mode swaps a non-playable primary when healthy', async () => {
     process.env.JIT_SERVE_MODE = 'rescue'
@@ -216,6 +216,7 @@ describe('admin runtime override (settings > env > default)', () => {
     const m = await applyJitPreference({
       videoURL: 'https://h/x.mkv',
       jitUrl: JIT,
+      jitEligible: true,
       jitServeOverride: 'off',
     })
     expect(m.videoURL).toBe('https://h/x.mkv')
@@ -228,6 +229,7 @@ describe('admin runtime override (settings > env > default)', () => {
     const m = await applyJitPreference({
       videoURL: 'https://h/x.mp4',
       jitUrl: JIT,
+      jitEligible: true,
       jitServeOverride: 'on',
     })
     expect(m.videoURL).toBe(JIT)
@@ -247,13 +249,62 @@ describe('admin runtime override (settings > env > default)', () => {
   })
 
   test('an "off" override neutralizes the jitUrl arm of visibility', () => {
-    expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT })).toBe(true)
-    expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT, jitServeOverride: 'off' })).toBe(false)
+    expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT, jitEligible: true })).toBe(true)
+    expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT, jitEligible: true, jitServeOverride: 'off' })).toBe(false)
     // A playable primary stays visible regardless of the override.
     expect(isWebVisible({ primaryContainer: 'mp4', jitServeOverride: 'off' })).toBe(true)
     // The Mongo fragment mirrors the predicate.
     const arm = visibleMovieFilter().$or[0]
     expect(arm.jitServeOverride).toEqual({ $ne: 'off' })
+  })
+
+  test('addressable-but-ineligible (decoupled contract): default modes never swap', async () => {
+    // Primate scenario: backend emits jitUrl for a multi-audio file with
+    // jitEligible:false. prefer/rescue must NOT auto-accept the audio loss.
+    process.env.JIT_SERVE_MODE = 'prefer'
+    global.fetch = mockFetchOk()
+    const m = await applyJitPreference({
+      videoURL: 'https://h/movies/Primate/p.mp4',
+      jitUrl: JIT,
+      jitEligible: false,
+    })
+    expect(m.videoURL).toBe('https://h/movies/Primate/p.mp4')
+    expect(m.playbackSource).toBeUndefined()
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  test('missing jitEligible is treated as ineligible for default modes (fail-closed)', async () => {
+    process.env.JIT_SERVE_MODE = 'prefer'
+    global.fetch = mockFetchOk()
+    const m = await applyJitPreference({ videoURL: 'https://h/x.mkv', jitUrl: JIT })
+    expect(m.videoURL).toBe('https://h/x.mkv')
+  })
+
+  test('per-media "on" override consumes jitUrl despite jitEligible:false', async () => {
+    // The explicit accept-the-loss switch — the whole point of decoupling.
+    process.env.JIT_SERVE_MODE = 'rescue'
+    global.fetch = mockFetchOk()
+    const m = await applyJitPreference({
+      videoURL: 'https://h/movies/Primate/p.mp4',
+      jitUrl: JIT,
+      jitEligible: false,
+      jitServeOverride: 'on',
+    })
+    expect(m.videoURL).toBe(JIT)
+    expect(m.rawVideoURL).toBe('https://h/movies/Primate/p.mp4')
+    expect(m.playbackSource).toBe('jit')
+  })
+
+  test('visibility: addressable-but-ineligible is hidden unless overridden on', () => {
+    // Default modes would refuse to swap it, so surfacing it is a dead-end.
+    expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT, jitEligible: false })).toBe(false)
+    expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT })).toBe(false)
+    expect(
+      isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT, jitEligible: false, jitServeOverride: 'on' })
+    ).toBe(true)
+    // The Mongo fragment carries the matching nested $or.
+    const arm = visibleMovieFilter().$or[0]
+    expect(arm.$or).toEqual([{ jitEligible: true }, { jitServeOverride: 'on' }])
   })
 
   test('runtime maxQueued overrides the env ceiling in the health check', async () => {

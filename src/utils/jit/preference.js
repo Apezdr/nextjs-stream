@@ -74,9 +74,16 @@ export async function applyJitPreference(media) {
   if (mode === 'off') return media
 
   // Per-media admin override (episode > season > show for TV): 'off' pins
-  // direct play; 'on' serves JIT regardless of rescue's playability test.
+  // direct play; 'on' serves JIT regardless of rescue's playability test
+  // AND regardless of eligibility (the explicit accept-the-loss switch).
   const override = await resolveJitOverride(media)
   if (override === 'off') return media
+
+  // Addressability ≠ recommendation: once the backend emits jitUrl for all
+  // servable files, jitEligible=false means "playing this via JIT loses
+  // something" (e.g. an audio language). Default modes never auto-accept
+  // that loss — only an explicit per-media 'on' override does.
+  if (override !== 'on' && media.jitEligible !== true) return media
   if (override !== 'on' && mode === 'rescue' && isBrowserPlayableUrl(media.videoURL)) return media
 
   let origin

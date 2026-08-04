@@ -54,11 +54,22 @@ export function isBrowserPlayableUrl(url) {
  */
 export function isWebVisible(doc) {
   if (!doc) return false
-  // A per-media admin override of 'off' means this doc will never be served
-  // through the transcoder, so its jitUrl cannot make it playable. (Level-
-  // local: a season/show-level 'off' affects DELIVERY of its episodes but
-  // not their visibility — accepted edge, see jit/overrides.js.)
-  if (typeof doc.jitUrl === 'string' && doc.jitUrl && doc.jitServeOverride !== 'off') return true
+  // The jitUrl arm counts only when this doc would actually be SERVED via
+  // JIT: not overridden 'off', and either recommended (jitEligible — the
+  // backend's no-loss verdict) or explicitly overridden 'on' by an admin
+  // accepting the loss. Addressability alone (jitUrl on an ineligible doc,
+  // once the backend decouples the two) must not surface a title the
+  // default serve modes would refuse to swap — that's a dead-end click.
+  // (Level-local: season/show overrides affect DELIVERY, not visibility —
+  // accepted edge, see jit/overrides.js.)
+  if (
+    typeof doc.jitUrl === 'string' &&
+    doc.jitUrl &&
+    doc.jitServeOverride !== 'off' &&
+    (doc.jitEligible === true || doc.jitServeOverride === 'on')
+  ) {
+    return true
+  }
   if (typeof doc.primaryContainer === 'string') {
     return BROWSER_PLAYABLE_CONTAINERS.includes(doc.primaryContainer.toLowerCase())
   }
@@ -72,8 +83,14 @@ export function isWebVisible(doc) {
 export function visibleMovieFilter() {
   return {
     $or: [
-      // jitUrl only counts when no per-media 'off' override neutralizes it.
-      { jitUrl: { $type: 'string', $ne: '' }, jitServeOverride: { $ne: 'off' } },
+      // jitUrl counts only when the doc would actually be served via JIT:
+      // not overridden 'off', and recommended (jitEligible) or explicitly
+      // overridden 'on'. Mirrors isWebVisible — keep in lockstep.
+      {
+        jitUrl: { $type: 'string', $ne: '' },
+        jitServeOverride: { $ne: 'off' },
+        $or: [{ jitEligible: true }, { jitServeOverride: 'on' }],
+      },
       { primaryContainer: { $in: BROWSER_PLAYABLE_CONTAINERS } },
       // Legacy arm: docs from before primaryContainer shipped. Anchored
       // suffix match on the pathname-ish tail; not sargable, but it only
