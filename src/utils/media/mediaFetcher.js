@@ -9,12 +9,26 @@
 
 import { cache } from 'react'
 import { getFlatRequestedMedia, getTrailerMedia } from '@src/utils/flatDatabaseUtils'
+import { applyJitPreference } from '@src/utils/jit/preference'
 import { shouldRedirect, buildRedirectUrl, logRedirect } from './redirectHandler'
 
 // Create cached versions of database functions to eliminate duplicate calls
 // between generateMetadata and the page component
 const getCachedRequestedMedia = cache(getFlatRequestedMedia)
 const getCachedTrailerMedia = cache(getTrailerMedia)
+
+/**
+ * Serve-time delivery decision for the WEB player pages. The RN app gets
+ * this through the media API route; the web player fetches server-side via
+ * this module, so the same swap must happen here or web playback never uses
+ * the transcoder. Player pages only (detail/metadata pages keep the raw
+ * doc), and on a SHALLOW COPY — getCachedRequestedMedia shares one object
+ * per request via React cache(), which must stay pristine.
+ */
+async function withDeliveryPreference(media, isPlayerPage) {
+  if (!isPlayerPage || !media || typeof media.jitUrl !== 'string' || !media.jitUrl) return media
+  return await applyJitPreference({ ...media })
+}
 
 // Create a cached version of video URL validation to avoid repeated HEAD requests.
 // Timeout-bounded: a slow origin must degrade to "assume playable and let the
@@ -69,7 +83,7 @@ export async function fetchMediaWithRedirect(params) {
     }
     
     return {
-      media,
+      media: await withDeliveryPreference(media, isPlayerPage),
       redirectUrl: null,
       notFoundType: media ? null : 'movie',
     }
@@ -131,9 +145,10 @@ export async function fetchMediaWithRedirect(params) {
         }
       }
       
-      // Season/episode found successfully
+      // Season/episode found successfully. Only an EPISODE payload is
+      // playable — season-only fetches feed listing pages.
       return {
-        media,
+        media: mediaEpisode ? await withDeliveryPreference(media, isPlayerPage) : media,
         redirectUrl: null,
         notFoundType: null,
       }
