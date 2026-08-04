@@ -50,17 +50,21 @@ export async function upsertPlayback({
     // KEY stays {userId, normalizedVideoId} — mediaId is additive.
     const resolved = await resolveMediaIdForNid(normalizedVideoId)
 
+    // The row's `mediaId` field is DURABLE-IDENTITY-ONLY ('mid:…') from the
+    // cutover on. extractPlaybackMetadata still emits a legacy `mediaId`
+    // (client-sent churning hex _id, or null) — it must NEVER reach $set:
+    // when resolution misses a beat, spreading it would clobber a
+    // previously backfilled durable id and flip-flop the row's identity.
+    // TV hydration fallbacks use the separate showId/season/episode fields.
+    const { mediaId: _legacyClientMediaId, ...safeMetadata } = metadata
+
     const updateDoc = {
       $set: {
         videoId,
         playbackTime,
         isPaused: isPaused === true,
         lastUpdated: new Date(),
-        ...metadata,
-        // AFTER the metadata spread: extractPlaybackMetadata always emits a
-        // `mediaId` key (the client-sent churning hex _id, or null), which
-        // would otherwise clobber the durable server-resolved identity.
-        // When resolution misses, the legacy client value flows unchanged.
+        ...safeMetadata,
         ...(resolved?.mediaId && { mediaId: resolved.mediaId }),
         ...(deviceInfo && { deviceInfo }),
         ...(ipAddress && { ipAddress }),

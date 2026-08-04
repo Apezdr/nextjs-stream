@@ -75,9 +75,15 @@ function movieFolderFromVideoId(videoId) {
 }
 
 async function mergeDuplicates(collection, counts) {
+  // DURABLE ids only. Legacy rows carry the client-sent hex _id in the same
+  // field — and for TV that is the SHOW _id, shared by every episode row of
+  // the show. Grouping on those would "merge" (delete!) a user's entire
+  // per-episode history down to one row per show. The dry run of the first
+  // version of this script proposed exactly that (2905 deletions); this
+  // filter is what stands between the merge policy and that outcome.
   const dupGroups = await collection
     .aggregate([
-      { $match: { mediaId: { $exists: true } } },
+      { $match: { mediaId: /^mid:/ } },
       { $group: { _id: { userId: '$userId', mediaId: '$mediaId' }, rows: { $push: { id: '$_id', lastUpdated: '$lastUpdated', playbackTime: '$playbackTime' } }, c: { $sum: 1 } } },
       { $match: { c: { $gt: 1 } } },
     ])
@@ -133,9 +139,11 @@ async function main() {
     }
     console.log(`catalog: ${nidToMediaId.size} nid mappings, ${folderToMediaId.size} movie folders\n`)
 
-    // Steps 1+2: stamp rows lacking mediaId
+    // Steps 1+2: stamp rows lacking a DURABLE id. `$not: /^mid:/` covers
+    // both a missing field and the legacy client-sent hex _id living in the
+    // same field (which gets overwritten with the durable identity).
     const cursor = wh.find(
-      { mediaId: { $exists: false } },
+      { mediaId: { $not: /^mid:/ } },
       { projection: { userId: 1, videoId: 1, normalizedVideoId: 1, lastUpdated: 1, mediaType: 1 } }
     )
     for await (const row of cursor) {
@@ -197,7 +205,12 @@ async function main() {
             { userId: 1, mediaId: 1 },
             {
               unique: true,
-              partialFilterExpression: { mediaId: { $exists: true } },
+              // Durable 'mid:'-prefixed ids ONLY. Partial filters don't
+              // support regex; the string range [ 'mid:', 'mid;' ) covers
+              // exactly the prefix. A bare $exists would also index legacy
+              // hex values — where TV rows share the show _id and would
+              // collide instantly.
+              partialFilterExpression: { mediaId: { $gt: 'mid:', $lt: 'mid;' } },
               name: 'userId_mediaId_unique',
             }
           )

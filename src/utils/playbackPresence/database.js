@@ -84,6 +84,9 @@ export async function upsertPresenceHeartbeat({
     // Same durable identity as WatchHistory (shared cached resolver). TTL'd
     // collection — no backfill; keyed {userId, sessionId} so no index change.
     const resolved = await resolveMediaIdForNid(normalizedVideoId)
+    // mediaId is durable-identity-only — strip the legacy client value the
+    // metadata always carries (see upsertPlayback for the full rationale).
+    const { mediaId: _legacyClientMediaId, ...safeMetadata } = metadata
 
     await collection.updateOne(
       { userId: userIdObj, sessionId },
@@ -94,9 +97,7 @@ export async function upsertPresenceHeartbeat({
           playbackTime,
           isPaused: isPaused === true,
           lastHeartbeat: new Date(),
-          ...metadata,
-          // AFTER metadata: it always emits a `mediaId` key (legacy client
-          // hex _id or null) which would clobber the durable identity.
+          ...safeMetadata,
           ...(resolved?.mediaId && { mediaId: resolved.mediaId }),
           ...(deviceInfo && { deviceInfo }),
           ...(ipAddress && { ipAddress }),
