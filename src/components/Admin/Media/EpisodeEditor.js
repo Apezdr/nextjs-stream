@@ -6,8 +6,9 @@ import { saveEpisodeAction, deleteEpisodeAction } from '@src/utils/admin/flatMed
 import LockableField from './LockableField'
 import ImagePreview from './ImagePreview'
 import RawRecordButton from './RawRecordButton'
+import JitOverrideSelect from './JitOverrideSelect'
 
-const SCALAR_KEYS = ['title', 'videoURL', 'thumbnail', 'thumbnailBlurhash', 'chapterURL', 'hdr', 'duration']
+const SCALAR_KEYS = ['title', 'videoURL', 'thumbnail', 'thumbnailBlurhash', 'chapterURL', 'hdr', 'duration', 'jitServeOverride']
 
 function initForm(episode) {
   const f = {}
@@ -146,6 +147,11 @@ export default function EpisodeEditor({ showId, seasonNumber, episode = null, is
               {field('chapterURL', 'Chapter URL')}
               {field('hdr', 'HDR')}
               {field('duration', 'Duration (ms)', { type: 'number' })}
+              <JitOverrideSelect
+                id={`episode-${seasonNumber}-${epNumber || 'new'}-jit-override`}
+                value={form.jitServeOverride}
+                onChange={setField('jitServeOverride')}
+              />
             </div>
           </div>
 

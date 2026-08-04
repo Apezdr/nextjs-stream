@@ -199,6 +199,52 @@ describe('admin runtime override (settings > env > default)', () => {
     expect(await getEffectiveJitServeMode()).toBe('rescue')
   })
 
+  test('per-media override "off" pins direct play even in prefer mode', async () => {
+    process.env.JIT_SERVE_MODE = 'prefer'
+    global.fetch = mockFetchOk()
+    const m = await applyJitPreference({
+      videoURL: 'https://h/x.mkv',
+      jitUrl: JIT,
+      jitServeOverride: 'off',
+    })
+    expect(m.videoURL).toBe('https://h/x.mkv')
+    expect(m.playbackSource).toBeUndefined()
+  })
+
+  test('per-media override "on" serves JIT for a playable primary in rescue mode', async () => {
+    process.env.JIT_SERVE_MODE = 'rescue'
+    global.fetch = mockFetchOk()
+    const m = await applyJitPreference({
+      videoURL: 'https://h/x.mp4',
+      jitUrl: JIT,
+      jitServeOverride: 'on',
+    })
+    expect(m.videoURL).toBe(JIT)
+    expect(m.rawVideoURL).toBe('https://h/x.mp4')
+  })
+
+  test('the global kill switch beats a per-media "on" override', async () => {
+    process.env.JIT_SERVE_MODE = 'off'
+    global.fetch = mockFetchOk()
+    const m = await applyJitPreference({
+      videoURL: 'https://h/x.mkv',
+      jitUrl: JIT,
+      jitServeOverride: 'on',
+    })
+    expect(m.videoURL).toBe('https://h/x.mkv')
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  test('an "off" override neutralizes the jitUrl arm of visibility', () => {
+    expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT })).toBe(true)
+    expect(isWebVisible({ primaryContainer: 'mkv', jitUrl: JIT, jitServeOverride: 'off' })).toBe(false)
+    // A playable primary stays visible regardless of the override.
+    expect(isWebVisible({ primaryContainer: 'mp4', jitServeOverride: 'off' })).toBe(true)
+    // The Mongo fragment mirrors the predicate.
+    const arm = visibleMovieFilter().$or[0]
+    expect(arm.jitServeOverride).toEqual({ $ne: 'off' })
+  })
+
   test('runtime maxQueued overrides the env ceiling in the health check', async () => {
     delete process.env.JIT_SERVE_MAX_QUEUED
     _setJitServeSettingsForTests({ mode: null, maxQueued: 2 })

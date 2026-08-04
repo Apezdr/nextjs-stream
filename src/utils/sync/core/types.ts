@@ -281,6 +281,9 @@ export interface MovieEntity extends BaseMediaEntity {
   primaryContainer?: string | null  // container of the isPrimary source
   jitEligible?: boolean | null
   jitUrl?: string | null
+  // Admin-set JIT delivery override ('on'|'off'; absent = follow the
+  // global mode). Written ONLY by the admin editors — sync never touches it.
+  jitServeOverride?: 'on' | 'off' | null
 
   // Video metadata (FLAT at root level - matches legacy structure)
   duration?: number  // Video duration in seconds
@@ -361,6 +364,9 @@ export interface EpisodeEntity extends BaseMediaEntity {
   primaryContainer?: string | null
   jitEligible?: boolean | null
   jitUrl?: string | null
+  // Admin-set JIT delivery override ('on'|'off'; absent = follow the
+  // global mode). Written ONLY by the admin editors — sync never touches it.
+  jitServeOverride?: 'on' | 'off' | null
   thumbnail?: string   // NOT thumbnailURL - legacy field name
   thumbnailSource?: string
   captionURLs?: Record<string, {   // NOT captions - legacy field name (object keyed by language)
@@ -399,6 +405,10 @@ export interface SeasonEntity extends BaseMediaEntity {
   showTitle: string
   posterURL?: string
   episodeCount?: number
+  // Admin-set JIT delivery override ('on'|'off'; absent = follow the
+  // global mode). Written ONLY by the admin editors — sync never touches it.
+  jitServeOverride?: 'on' | 'off' | null
+
   posterBlurhash?: string
   posterBlurhashSource?: string
 
@@ -426,6 +436,9 @@ export interface TVShowEntity extends BaseMediaEntity {
   // (mediaVisibility.visibleEpisodeFilter). Written after each show's
   // episodes sync; show-level list filters key on it (visibleShowFilter).
   visibleEpisodeCount?: number
+  // Admin-set JIT delivery override ('on'|'off'; absent = follow the
+  // global mode). Written ONLY by the admin editors — sync never touches it.
+  jitServeOverride?: 'on' | 'off' | null
   posterBlurhash?: string
   posterBlurhashSource?: string
   backdropBlurhash?: string

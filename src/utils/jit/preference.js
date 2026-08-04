@@ -28,6 +28,7 @@
 import { isBrowserPlayableUrl } from '@src/utils/mediaVisibility'
 import { isTranscoderHealthy } from './health'
 import { getCachedJitServeSettings } from './serveSettings'
+import { resolveJitOverride } from './overrides'
 
 const VALID_MODES = new Set(['off', 'rescue', 'prefer'])
 let warnedInvalidMode = false
@@ -66,8 +67,14 @@ export async function applyJitPreference(media) {
   if (!media || typeof media.jitUrl !== 'string' || !media.jitUrl) return media
 
   const mode = await getEffectiveJitServeMode()
+  // Global kill switch always wins — not defeatable per-title.
   if (mode === 'off') return media
-  if (mode === 'rescue' && isBrowserPlayableUrl(media.videoURL)) return media
+
+  // Per-media admin override (episode > season > show for TV): 'off' pins
+  // direct play; 'on' serves JIT regardless of rescue's playability test.
+  const override = await resolveJitOverride(media)
+  if (override === 'off') return media
+  if (override !== 'on' && mode === 'rescue' && isBrowserPlayableUrl(media.videoURL)) return media
 
   let origin
   try {

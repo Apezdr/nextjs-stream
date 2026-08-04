@@ -7,6 +7,7 @@ import LockableField from './LockableField'
 import ImagePreview from './ImagePreview'
 import EpisodeEditor from './EpisodeEditor'
 import RawRecordButton from './RawRecordButton'
+import JitOverrideSelect from './JitOverrideSelect'
 
 /**
  * Season accordion: editable season poster + its episode list (each episode is
@@ -41,6 +42,7 @@ export default function SeasonEditor({ showId, season, defaultOpen = false, init
 
   const [posterURL, setPosterURL] = useState(season?.posterURL ?? '')
   const [posterBlurhash, setPosterBlurhash] = useState(season?.posterBlurhash ?? '')
+  const [jitServeOverride, setJitServeOverride] = useState(season?.jitServeOverride ?? '')
   const [locks, setLocks] = useState(() => ({ ...(season?.lockedFields ?? {}) }))
 
   const episodes = useMemo(() => season?.episodes ?? [], [season])
@@ -63,6 +65,7 @@ export default function SeasonEditor({ showId, season, defaultOpen = false, init
     ...(season?._id ? { seasonId: season._id } : {}),
     posterURL,
     posterBlurhash,
+    jitServeOverride,
     lockedFields: locks,
   }
 
@@ -112,6 +115,13 @@ export default function SeasonEditor({ showId, season, defaultOpen = false, init
                 onToggleLock={() => toggleLock('posterBlurhash')}
               />
               <ImagePreview url={posterURL} alt="Season poster" className="h-40" />
+              <JitOverrideSelect
+                id={`season-${season.seasonNumber}-jit-override`}
+                value={jitServeOverride}
+                onChange={setJitServeOverride}
+                label="JIT Delivery (whole season)"
+                helpText="Applies to this season's episodes unless an episode sets its own override."
+              />
             </div>
             <div className="flex flex-col items-start gap-3">
               <button

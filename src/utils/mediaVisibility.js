@@ -54,7 +54,11 @@ export function isBrowserPlayableUrl(url) {
  */
 export function isWebVisible(doc) {
   if (!doc) return false
-  if (typeof doc.jitUrl === 'string' && doc.jitUrl) return true
+  // A per-media admin override of 'off' means this doc will never be served
+  // through the transcoder, so its jitUrl cannot make it playable. (Level-
+  // local: a season/show-level 'off' affects DELIVERY of its episodes but
+  // not their visibility — accepted edge, see jit/overrides.js.)
+  if (typeof doc.jitUrl === 'string' && doc.jitUrl && doc.jitServeOverride !== 'off') return true
   if (typeof doc.primaryContainer === 'string') {
     return BROWSER_PLAYABLE_CONTAINERS.includes(doc.primaryContainer.toLowerCase())
   }
@@ -68,7 +72,8 @@ export function isWebVisible(doc) {
 export function visibleMovieFilter() {
   return {
     $or: [
-      { jitUrl: { $type: 'string', $ne: '' } },
+      // jitUrl only counts when no per-media 'off' override neutralizes it.
+      { jitUrl: { $type: 'string', $ne: '' }, jitServeOverride: { $ne: 'off' } },
       { primaryContainer: { $in: BROWSER_PLAYABLE_CONTAINERS } },
       // Legacy arm: docs from before primaryContainer shipped. Anchored
       // suffix match on the pathname-ish tail; not sargable, but it only

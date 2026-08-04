@@ -15,8 +15,9 @@ import DeleteMediaButton from './DeleteMediaButton'
 import TmdbConfigButton from './TmdbConfigButton'
 import RawRecordButton from './RawRecordButton'
 import SeasonEditor from './SeasonEditor'
+import JitOverrideSelect from './JitOverrideSelect'
 
-const SCALAR_KEYS = ['title', 'originalTitle', 'posterURL', 'posterBlurhash', 'backdrop', 'backdropBlurhash', 'logo']
+const SCALAR_KEYS = ['title', 'originalTitle', 'posterURL', 'posterBlurhash', 'backdrop', 'backdropBlurhash', 'logo', 'jitServeOverride']
 
 function initForm(record) {
   const f = {}
@@ -173,6 +174,13 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
               helpText="Locking applies to all metadata."
             />
             <LockableField id="overview" label="Overview" value={overview} onChange={setOverview} locked={isLocked('metadata')} onToggleLock={() => toggleLock('metadata')} textarea />
+            <JitOverrideSelect
+              id="show-jit-override"
+              value={form.jitServeOverride}
+              onChange={setField('jitServeOverride')}
+              label="JIT Delivery (whole show)"
+              helpText="Applies to every episode unless a season or episode sets its own override."
+            />
           </div>
         </section>
 

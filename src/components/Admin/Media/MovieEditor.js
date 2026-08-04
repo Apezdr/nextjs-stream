@@ -11,10 +11,12 @@ import CaptionsEditor from './CaptionsEditor'
 import DeleteMediaButton from './DeleteMediaButton'
 import TmdbConfigButton from './TmdbConfigButton'
 import RawRecordButton from './RawRecordButton'
+import JitOverrideSelect from './JitOverrideSelect'
 
 const SCALAR_KEYS = [
   'title', 'originalTitle', 'videoURL', 'posterURL', 'posterBlurhash',
   'backdrop', 'backdropBlurhash', 'logo', 'chapterURL', 'hdr', 'duration',
+  'jitServeOverride',
 ]
 
 function initForm(record) {
@@ -169,6 +171,11 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
             {field('chapterURL', 'Chapter URL')}
             {field('hdr', 'HDR', { placeholder: 'e.g. HDR10, Dolby Vision' })}
             {field('duration', 'Duration (ms)', { type: 'number' })}
+            <JitOverrideSelect
+              id="movie-jit-override"
+              value={form.jitServeOverride}
+              onChange={setField('jitServeOverride')}
+            />
             <LockableField
               id="overview"
               label="Overview"

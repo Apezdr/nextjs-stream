@@ -104,6 +104,13 @@ function applyScalarFields(payload, fields, manualTrackedFields, { isCreate }) {
       continue
     }
 
+    // Tri-state JIT delivery override: only 'on'/'off' may be stored
+    // (empty = follow global, handled by the unset path above). Anything
+    // else is a caller bug — reject, never coerce.
+    if (field === 'jitServeOverride' && value !== 'on' && value !== 'off') {
+      throw new Error(`Invalid jitServeOverride "${value}" — must be "on", "off", or empty`)
+    }
+
     set[field] = value
     if (manualTrackedFields.includes(field)) set[`manualFields.${field}`] = true
     if (field === 'videoURL') set.normalizedVideoId = generateNormalizedVideoId(value)
@@ -147,6 +154,7 @@ function applyLockedFields(payload, set, unset) {
 const MOVIE_FIELDS = [
   'title', 'originalTitle', 'videoURL', 'posterURL', 'posterBlurhash',
   'backdrop', 'backdropBlurhash', 'logo', 'chapterURL', 'hdr', 'duration',
+  'jitServeOverride',
 ]
 const MOVIE_MANUAL_TRACKED_FIELDS = [
   'posterURL', 'posterBlurhash', 'backdrop', 'backdropBlurhash', 'logo', 'videoURL',
@@ -154,17 +162,18 @@ const MOVIE_MANUAL_TRACKED_FIELDS = [
 
 const SHOW_FIELDS = [
   'title', 'originalTitle', 'posterURL', 'posterBlurhash',
-  'backdrop', 'backdropBlurhash', 'logo',
+  'backdrop', 'backdropBlurhash', 'logo', 'jitServeOverride',
 ]
 const SHOW_MANUAL_TRACKED_FIELDS = [
   'posterURL', 'posterBlurhash', 'backdrop', 'backdropBlurhash', 'logo',
 ]
 
-const SEASON_FIELDS = ['posterURL', 'posterBlurhash']
+const SEASON_FIELDS = ['posterURL', 'posterBlurhash', 'jitServeOverride']
 const SEASON_MANUAL_TRACKED_FIELDS = ['posterURL', 'posterBlurhash']
 
 const EPISODE_FIELDS = [
   'title', 'videoURL', 'thumbnail', 'thumbnailBlurhash', 'chapterURL', 'hdr', 'duration',
+  'jitServeOverride',
 ]
 const EPISODE_MANUAL_TRACKED_FIELDS = ['videoURL', 'thumbnail', 'thumbnailBlurhash']
 
