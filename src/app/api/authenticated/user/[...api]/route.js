@@ -1,5 +1,5 @@
 import { getSession } from '@src/lib/cachedAuth'
-import { getRecentlyWatchedForUser } from '@src/utils/auth_database'
+import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import isAuthenticated, { isValidWebhook } from '@src/utils/routeAuth'
 
 async function getUserID(request, isWebhook) {
@@ -29,7 +29,9 @@ async function handleRequest(request, params, isWebhook) {
   if (fetchRecentlyWatched) {
     const page = request?.query?.page || 1
     const limit = request?.query?.limit || 15
-    const recentlyWatched = await getRecentlyWatchedForUser({
+    // Flat collections replace the deprecated nested Movies/TV read path.
+    // Same sanitizeRecord output shape (or null when no history) as before.
+    const recentlyWatched = await getFlatRecentlyWatchedForUser({
       userId: userID,
       page: page,
       limit: limit,

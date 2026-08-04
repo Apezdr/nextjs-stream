@@ -2,6 +2,8 @@
  * Filtering functions for the recommendation system
  */
 
+import { isWebVisible, isShowWebVisible } from '@src/utils/mediaVisibility'
+
 /**
  * Filter out items that don't have required fields
  * @param {Array} items - Array of media items
@@ -9,16 +11,20 @@
  */
 export function filterValidItems(items) {
   if (!items || !Array.isArray(items)) return [];
-  
+
   return items.filter(item => {
     if (!item) return false;
-    
+
     // Common required fields for all media types
     if (!item.posterURL || !item.title || !item.id) return false;
-    
+
     // Additional requirements for TV shows
     if (item.type === 'tv' && (!item.episode || !item.seasonNumber)) return false;
-    
+
+    // Web-visibility: TV items are show-shaped docs (no file-level signals),
+    // so they take the show predicate — the movie/episode one would hide all TV
+    if (item.type === 'tv' ? !isShowWebVisible(item) : !isWebVisible(item)) return false;
+
     return true;
   });
 }

@@ -96,6 +96,14 @@ export class TVShowSyncService {
               : 0
 
             if (actualEpisodes >= expectedEpisodes && actualSeasons >= expectedSeasons) {
+              // One-time backfill: a show that early-skips forever would never
+              // acquire visibleEpisodeCount (episode visibility inputs are in
+              // the episode hash, so any real change routes through the full
+              // sync below). visibleShowFilter fails open on the missing
+              // field, so this is convergence, not correctness.
+              if ((cached as any).visibleEpisodeCount === undefined) {
+                await this.updateVisibleEpisodeCount(showTitle, cached)
+              }
               syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
                 totalOperations: 0, successful: 0, failed: 0
               })
@@ -149,6 +157,10 @@ export class TVShowSyncService {
 
       // 5. Bulk-upsert all episodes (one bulkWrite per season)
       allResults.push(...await this.episodeSyncService.syncShow(showTitle, context))
+
+      // 6. Recount web-visible episodes now that they are all written —
+      //    the denormalized signal every show-level list filter keys on.
+      await this.updateVisibleEpisodeCount(showTitle, null)
 
       syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
         totalOperations: allResults.length,
@@ -215,6 +227,40 @@ export class TVShowSyncService {
   // ---------------------------------------------------------------------------
   // Private helpers
   // ---------------------------------------------------------------------------
+
+  /**
+   * Recompute and persist the show's denormalized `visibleEpisodeCount`
+   * (episodes passing mediaVisibility.visibleEpisodeFilter). Derived data:
+   * flows through smartUpsert (single write chokepoint — computeDiff writes
+   * the field only when it changed), never fails the sync (a stale count
+   * degrades to slightly-wrong list filtering, self-healing next pass).
+   *
+   * @param cachedShow pass the already-fetched doc on the skip path to save
+   *                   a find; null on the full-sync path (re-fetched, since
+   *                   the doc was just rewritten by steps 3-5).
+   */
+  private async updateVisibleEpisodeCount(
+    showTitle: string,
+    cachedShow: TVShowEntity | null
+  ): Promise<void> {
+    try {
+      const show = cachedShow ?? await this.tvShowRepository.findByOriginalTitle(showTitle)
+      if (!show || !(show as any)._id) return
+
+      const count = await this.episodeRepository.getVisibleEpisodeCount((show as any)._id)
+      if ((show as any).visibleEpisodeCount === count) return
+
+      await this.tvShowRepository.smartUpsert(
+        { ...show, visibleEpisodeCount: count } as TVShowEntity,
+        show
+      )
+    } catch (error) {
+      pinoLog.warn(
+        { showTitle, err: error instanceof Error ? error.message : String(error) },
+        'visibleEpisodeCount recount failed — list filtering may lag one sync'
+      )
+    }
+  }
 
   /**
    * Build a TV show entity by merging existing data with incoming file-server

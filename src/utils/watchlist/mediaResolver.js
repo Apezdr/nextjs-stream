@@ -12,6 +12,7 @@ import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { fetchTmdbFromBackend } from '@src/utils/tmdb/backendClient'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
+import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
 
 /**
  * Internal implementation (not cached) - does the actual work
@@ -66,10 +67,11 @@ async function batchResolveMediaInternal(items, options = {}) {
       const client = await clientPromise
       const db = client.db('Media')
       
+      // Web-hidden titles are excluded so they resolve as external TMDB cards
       ;[movies, tvShows] = await Promise.all([
         availableMovieIds.length > 0
           ? db.collection('FlatMovies').find(
-              { 'metadata.id': { $in: availableMovieIds } },
+              { $and: [{ 'metadata.id': { $in: availableMovieIds } }, visibleMovieFilter()] },
               {
                 projection: {
                   _id: 1,
@@ -93,7 +95,7 @@ async function batchResolveMediaInternal(items, options = {}) {
         
         availableTvIds.length > 0
           ? db.collection('FlatTVShows').find(
-              { 'metadata.id': { $in: availableTvIds } },
+              { $and: [{ 'metadata.id': { $in: availableTvIds } }, visibleShowFilter()] },
               {
                 projection: {
                   _id: 1,
@@ -121,10 +123,11 @@ async function batchResolveMediaInternal(items, options = {}) {
     const client = await clientPromise
     const db = client.db('Media')
     
+    // Same visibility rule as the precomputed path — the two must agree
     ;[movies, tvShows] = await Promise.all([
       movieTmdbIds.length > 0
         ? db.collection('FlatMovies').find(
-            { 'metadata.id': { $in: movieTmdbIds } },
+            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, visibleMovieFilter()] },
             {
               projection: {
                 _id: 1,
@@ -148,7 +151,7 @@ async function batchResolveMediaInternal(items, options = {}) {
       
       tvTmdbIds.length > 0
         ? db.collection('FlatTVShows').find(
-            { 'metadata.id': { $in: tvTmdbIds } },
+            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, visibleShowFilter()] },
             {
               projection: {
                 _id: 1,

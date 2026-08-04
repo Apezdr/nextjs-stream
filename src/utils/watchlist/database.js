@@ -8,6 +8,7 @@ import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { batchResolveMedia, getMediaByTMDBId } from './mediaResolver.js'
 import { getSession } from '@src/lib/cachedAuth.js'
 import { userQueries } from '@src/lib/userQueries'
+import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
 
 /**
  * Helper function to check if an input is a valid MongoDB ObjectId
@@ -159,21 +160,23 @@ const checkLibraryAvailability = cache(async (movieTmdbIds, tvTmdbIds) => {
   const client = await clientPromise
   const db = client.db('Media')
   
+  // "Available" means in the library AND web-visible — hidden titles degrade
+  // to the external/unavailable card (must agree with every availability site)
   const [movieMatches, tvMatches] = await Promise.all([
     movieTmdbIds.length > 0
       ? db.collection('FlatMovies').find(
-          { 'metadata.id': { $in: movieTmdbIds } },
+          { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, visibleMovieFilter()] },
           { projection: { 'metadata.id': 1 } }
         ).toArray()
       : Promise.resolve([]),
     tvTmdbIds.length > 0
       ? db.collection('FlatTVShows').find(
-          { 'metadata.id': { $in: tvTmdbIds } },
+          { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, visibleShowFilter()] },
           { projection: { 'metadata.id': 1 } }
         ).toArray()
       : Promise.resolve([])
   ])
-  
+
   return new Set([
     ...movieMatches.map(m => m.metadata?.id).filter(Boolean),
     ...tvMatches.map(t => t.metadata?.id).filter(Boolean)
@@ -298,17 +301,18 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
         .filter(item => item.mediaType === 'tv' && item.tmdbId)
         .map(item => parseInt(item.tmdbId))
       
-      // Check which TMDB IDs exist in library
+      // Check which TMDB IDs exist in library AND are web-visible
+      // (must agree with checkLibraryAvailability or items oscillate)
       const [movieMatches, tvMatches] = await Promise.all([
         movieTmdbIds.length > 0
           ? db.collection('FlatMovies').find(
-              { 'metadata.id': { $in: movieTmdbIds } },
+              { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, visibleMovieFilter()] },
               { projection: { 'metadata.id': 1 } }
             ).toArray()
           : Promise.resolve([]),
         tvTmdbIds.length > 0
           ? db.collection('FlatTVShows').find(
-              { 'metadata.id': { $in: tvTmdbIds } },
+              { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, visibleShowFilter()] },
               { projection: { 'metadata.id': 1 } }
             ).toArray()
           : Promise.resolve([])
@@ -2383,18 +2387,25 @@ export async function cleanExpiredComingSoon() {
     .filter((item) => item.mediaType === 'tv')
     .map((item) => item.tmdbId)
 
-  // Check which items now exist in library
+  // Check which items now exist in library AND are web-visible — a hidden
+  // title is still "coming soon" to clients, so keep its entry until visible
   const [movieMatches, tvMatches] = await Promise.all([
     movieTmdbIds.length > 0
       ? db
           .collection('FlatMovies')
-          .find({ 'metadata.id': { $in: movieTmdbIds } }, { projection: { 'metadata.id': 1 } })
+          .find(
+            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, visibleMovieFilter()] },
+            { projection: { 'metadata.id': 1 } }
+          )
           .toArray()
       : Promise.resolve([]),
     tvTmdbIds.length > 0
       ? db
           .collection('FlatTVShows')
-          .find({ 'metadata.id': { $in: tvTmdbIds } }, { projection: { 'metadata.id': 1 } })
+          .find(
+            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, visibleShowFilter()] },
+            { projection: { 'metadata.id': 1 } }
+          )
           .toArray()
       : Promise.resolve([]),
   ])
@@ -2476,12 +2487,14 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
 
     const queries = []
     
+    // Web-hidden titles are excluded here so they fall through to the
+    // external-TMDB card branch below (degrade to unavailable, not dead-end)
     if (movieTmdbIds.length > 0) {
       queries.push(
         db
           .collection('FlatMovies')
           .find(
-            { 'metadata.id': { $in: movieTmdbIds } },
+            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, visibleMovieFilter()] },
             { projection: minimalProjection }
           )
           .toArray()
@@ -2489,13 +2502,13 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
     } else {
       queries.push(Promise.resolve([]))
     }
-    
+
     if (tvTmdbIds.length > 0) {
       queries.push(
         db
           .collection('FlatTVShows')
           .find(
-            { 'metadata.id': { $in: tvTmdbIds } },
+            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, visibleShowFilter()] },
             { projection: minimalProjection }
           )
           .toArray()

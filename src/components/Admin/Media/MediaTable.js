@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { PencilSquareIcon, LockClosedIcon } from '@heroicons/react/24/outline'
+import { isWebVisible, isShowWebVisible } from '@src/utils/mediaVisibility'
 import DeleteMediaButton from './DeleteMediaButton'
 
 const FALLBACK_POSTER = '/sorry-image-not-available.jpg'
@@ -77,6 +78,16 @@ export default function MediaTable({ type, items }) {
                   {type === 'movie' && !item.hasVideo && (
                     <span className="rounded bg-yellow-100 px-1.5 py-0.5 text-xs font-medium text-yellow-700">
                       No video
+                    </span>
+                  )}
+                  {type === 'movie' && !isWebVisible(item) && (
+                    <span className="rounded bg-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-700">
+                      Hidden
+                    </span>
+                  )}
+                  {type === 'tv' && !isShowWebVisible(item) && (
+                    <span className="rounded bg-gray-200 px-1.5 py-0.5 text-xs font-medium text-gray-700">
+                      Hidden
                     </span>
                   )}
                   {item.lockedCount > 0 && (

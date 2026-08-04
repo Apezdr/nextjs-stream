@@ -1,11 +1,12 @@
 import { httpGet } from '@src/lib/httpHelper'
-import { fetchRandomBannerMedia } from '@src/utils/auth_database'
+import { fetchFlatRandomBannerMedia } from '@src/utils/flatDatabaseUtils'
 
 // Used by chromecast to fetch a random banner media
 export const GET = async (req) => {
   try {
-    // Fetch random banner media info
-    const mediaResult = await fetchRandomBannerMedia()
+    // Fetch random banner media info (flat collections; same {error,status} /
+    // backdrop contract as the retired legacy helper)
+    const mediaResult = await fetchFlatRandomBannerMedia()
     if (mediaResult.error) {
       return new Response(JSON.stringify({ error: mediaResult.error }), {
         status: mediaResult.status,

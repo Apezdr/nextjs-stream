@@ -422,6 +422,10 @@ export interface TVShowEntity extends BaseMediaEntity {
   logo?: string       // NOT logoURL - legacy field name
   seasonCount?: number
   totalEpisodeCount?: number
+  // Denormalized count of episodes passing the web-visibility rule
+  // (mediaVisibility.visibleEpisodeFilter). Written after each show's
+  // episodes sync; show-level list filters key on it (visibleShowFilter).
+  visibleEpisodeCount?: number
   posterBlurhash?: string
   posterBlurhashSource?: string
   backdropBlurhash?: string

@@ -8,6 +8,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
+import { visibleMovieFilter } from '@src/utils/mediaVisibility'
 import {
   serializeForClient,
   validatePaginationParams,
@@ -46,13 +47,18 @@ export async function getFilteredMovieList({
     // Validate and normalize pagination params
     const { page: validPage, limit: validLimit, skip } = validatePaginationParams(page, limit);
     
-    // Build match query with filters
+    // Build match query with filters ($and because the visibility fragment has a top-level $or)
     const matchQuery = {
-      ...buildGenreFilter(genres),
-      ...buildHdrFilter(hdrTypes),
-      ...buildResolutionFilter(resolutions)
+      $and: [
+        {
+          ...buildGenreFilter(genres),
+          ...buildHdrFilter(hdrTypes),
+          ...buildResolutionFilter(resolutions)
+        },
+        visibleMovieFilter()
+      ]
     };
-    
+
     // Build sort query
     const sortQuery = buildSortQuery(sortOrder, 'metadata.release_date');
     
@@ -137,13 +143,18 @@ export async function getFilteredMovieCount({
     const client = await clientPromise;
     const db = client.db('Media');
     
-    // Build match query with filters
+    // Build match query with filters (must stay in lockstep with getFilteredMovieList)
     const matchQuery = {
-      ...buildGenreFilter(genres),
-      ...buildHdrFilter(hdrTypes),
-      ...buildResolutionFilter(resolutions)
+      $and: [
+        {
+          ...buildGenreFilter(genres),
+          ...buildHdrFilter(hdrTypes),
+          ...buildResolutionFilter(resolutions)
+        },
+        visibleMovieFilter()
+      ]
     };
-    
+
     // Get count
     const count = await db
       .collection('FlatMovies')
@@ -172,6 +183,8 @@ export async function getMovieFilterOptions() {
     const genreResults = await db
       .collection('FlatMovies')
       .aggregate([
+        // Filter chips should not advertise values only hidden titles have
+        { $match: visibleMovieFilter() },
         { $unwind: '$metadata.genres' },
         { $group: { _id: '$metadata.genres.name' } },
         { $sort: { _id: 1 } }
@@ -184,6 +197,7 @@ export async function getMovieFilterOptions() {
     const hdrResults = await db
       .collection('FlatMovies')
       .aggregate([
+        { $match: visibleMovieFilter() },
         { $match: { hdr: { $exists: true, $nin: [null, false] } } },
         { $group: { _id: '$hdr' } },
         { $sort: { _id: 1 } }
@@ -209,6 +223,7 @@ export async function getMovieFilterOptions() {
     const resolutionResults = await db
       .collection('FlatMovies')
       .aggregate([
+        { $match: visibleMovieFilter() },
         { $match: { dimensions: { $exists: true, $ne: null } } },
         { $group: { _id: '$dimensions' } }
       ])

@@ -97,6 +97,10 @@ export async function listAdminMovies({ page = 1, pageSize = 25, search = '', so
     manualEntry: 1,
     lockedFields: 1,
     updatedAt: 1,
+    // Web-visibility signals for the admin "Hidden" badge (admin sees all —
+    // never filter here)
+    primaryContainer: 1,
+    jitUrl: 1,
     'metadata.poster_path': 1,
     'metadata.release_date': 1,
   }
@@ -115,6 +119,10 @@ export async function listAdminMovies({ page = 1, pageSize = 25, search = '', so
       (m.metadata?.poster_path ? getFullImageUrl(m.metadata.poster_path, 'w185') : null),
     year: getYear(m.metadata?.release_date),
     hasVideo: Boolean(m.videoURL),
+    // Raw signals so the UI can evaluate isWebVisible(item)
+    videoURL: m.videoURL ?? null,
+    primaryContainer: m.primaryContainer ?? null,
+    jitUrl: m.jitUrl ?? null,
     hdr: m.hdr ?? null,
     manualEntry: Boolean(m.manualEntry),
     lockedCount: countLocks(m.lockedFields),
@@ -143,6 +151,8 @@ export async function listAdminTVShows({ page = 1, pageSize = 25, search = '', s
     manualEntry: 1,
     lockedFields: 1,
     updatedAt: 1,
+    // Web-visibility signal for the admin "Hidden" badge (admin sees all)
+    visibleEpisodeCount: 1,
     'metadata.poster_path': 1,
     'metadata.first_air_date': 1,
     'metadata.last_air_date': 1,
@@ -193,6 +203,8 @@ export async function listAdminTVShows({ page = 1, pageSize = 25, search = '', s
       years,
       seasonCount: seasonCountMap.get(idStr) ?? 0,
       episodeCount: episodeCountMap.get(idStr) ?? 0,
+      // Raw signal so the UI can evaluate isShowWebVisible(item)
+      visibleEpisodeCount: s.visibleEpisodeCount ?? null,
       manualEntry: Boolean(s.manualEntry),
       lockedCount: countLocks(s.lockedFields),
     }

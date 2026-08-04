@@ -2,6 +2,8 @@ import {
   isWebVisible,
   isBrowserPlayableUrl,
   visibleMovieFilter,
+  visibleShowFilter,
+  isShowWebVisible,
 } from '@src/utils/mediaVisibility'
 import { applyJitPreference, getJitServeMode } from '@src/utils/jit/preference'
 import { isTranscoderHealthy, _resetHealthCacheForTests } from '@src/utils/jit/health'
@@ -53,6 +55,23 @@ describe('mediaVisibility', () => {
     expect(isBrowserPlayableUrl('https://h/x.m4v#t=30')).toBe(true)
     expect(isBrowserPlayableUrl('https://h/x.m3u8')).toBe(false)
     expect(isBrowserPlayableUrl(undefined)).toBe(false)
+  })
+
+  test('show-level visibility FAILS OPEN on the missing denormalized field', () => {
+    // A show not yet re-synced since visibleEpisodeCount shipped must keep
+    // status-quo behavior, not vanish from every rail until convergence.
+    expect(isShowWebVisible({ title: 'Unconverged' })).toBe(true)
+    expect(isShowWebVisible({ visibleEpisodeCount: null })).toBe(true)
+    expect(isShowWebVisible({ visibleEpisodeCount: 0 })).toBe(false)
+    expect(isShowWebVisible({ visibleEpisodeCount: 3 })).toBe(true)
+    expect(isShowWebVisible(null)).toBe(false)
+  })
+
+  test('visibleShowFilter mirrors the fail-open predicate', () => {
+    const f = visibleShowFilter()
+    expect(f.$or).toHaveLength(2)
+    expect(f.$or[0].visibleEpisodeCount.$gt).toBe(0)
+    expect(f.$or[1].visibleEpisodeCount.$exists).toBe(false)
   })
 })
 

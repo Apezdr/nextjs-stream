@@ -86,4 +86,31 @@ export function visibleEpisodeFilter() {
   return visibleMovieFilter()
 }
 
+/**
+ * Show-level visibility. FlatTVShows docs carry no per-file signals — the
+ * sync writes a denormalized `visibleEpisodeCount` (count of episodes
+ * matching `visibleEpisodeFilter`) after each show's episodes land.
+ *
+ * FAIL-OPEN on the missing field, deliberately: a show that has not been
+ * re-synced since the field shipped keeps its status-quo behavior instead of
+ * vanishing from every rail until convergence. After one full sync (or the
+ * skip-path backfill) every show carries it and the open arm is inert.
+ */
+export function visibleShowFilter() {
+  return {
+    $or: [
+      { visibleEpisodeCount: { $gt: 0 } },
+      { visibleEpisodeCount: { $exists: false } },
+    ],
+  }
+}
+
+/** JS predicate twin of `visibleShowFilter` (admin badge = !isShowWebVisible). */
+export function isShowWebVisible(doc) {
+  if (!doc) return false
+  return doc.visibleEpisodeCount === undefined || doc.visibleEpisodeCount === null
+    ? true
+    : doc.visibleEpisodeCount > 0
+}
+
 export { BROWSER_PLAYABLE_CONTAINERS }

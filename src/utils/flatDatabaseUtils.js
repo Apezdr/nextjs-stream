@@ -9,6 +9,11 @@ import { getFullImageUrl } from '@src/utils'
 import { userQueries } from '@src/lib/userQueries'
 import { countPlaybackForUser, findPlaybackForUser } from '@src/utils/watchHistory/database'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
+import {
+  visibleMovieFilter,
+  visibleEpisodeFilter,
+  visibleShowFilter,
+} from '@src/utils/mediaVisibility'
 
 /**
  * Projection profiles for different use cases to optimize data transfer
@@ -342,8 +347,12 @@ export async function getFlatPosters(
   // Merge default projection with custom projection
   const finalProjection = { ...defaultProjection, ...customProjection }
 
+  // Web-visibility fragment per collection; count and list must stay in lockstep
+  // or pagination shows phantom pages.
+  const visibilityFilter = type === 'movie' ? visibleMovieFilter() : visibleShowFilter()
+
   if (countOnly) {
-    return await client.db('Media').collection(collection).countDocuments()
+    return await client.db('Media').collection(collection).countDocuments(visibilityFilter)
   }
 
   // Absolute skip override supports windowed fetches that straddle page boundaries
@@ -354,7 +363,11 @@ export async function getFlatPosters(
     queryOptions.skip = skip
   }
 
-  const records = await client.db('Media').collection(collection).find({}, queryOptions).toArray()
+  const records = await client
+    .db('Media')
+    .collection(collection)
+    .find(visibilityFilter, queryOptions)
+    .toArray()
 
   return await Promise.all(
     records.map(async (record) => {
@@ -527,6 +540,9 @@ export async function getFlatRecentlyWatchedForUser({
         console.time('getFlatRecentlyWatchedForUser:count')
       }
 
+      // WatchHistory-based count: hydration below drops web-hidden movies/episodes,
+      // so this can slightly over-report — accepted, same class as the documented
+      // FK-orphan drift (see the [recently-watched] warning further down).
       const count = await countPlaybackForUser(userId, { isValid: { $ne: false } })
 
       if (Boolean(process.env.DEBUG) == true) {
@@ -671,9 +687,20 @@ export async function getFlatRecentlyWatchedForUser({
         .collection('FlatMovies')
         .find(
           {
+            // Web-visibility applies to the playback arms only — the trailer arm
+            // stays unfiltered because trailer plays are YouTube (always playable).
             $or: [
-              { normalizedVideoId: { $in: normalizedVideoIds } },
-              { videoURL: { $in: videoIds } },
+              {
+                $and: [
+                  {
+                    $or: [
+                      { normalizedVideoId: { $in: normalizedVideoIds } },
+                      { videoURL: { $in: videoIds } },
+                    ],
+                  },
+                  visibleMovieFilter(),
+                ],
+              },
               // Match YouTube trailer URLs stored on the movie metadata
               { 'metadata.trailer_url': { $in: videoIds } },
             ],
@@ -686,9 +713,14 @@ export async function getFlatRecentlyWatchedForUser({
         .collection('FlatEpisodes')
         .find(
           {
-            $or: [
-              { normalizedVideoId: { $in: normalizedVideoIds } },
-              { videoURL: { $in: videoIds } },
+            $and: [
+              {
+                $or: [
+                  { normalizedVideoId: { $in: normalizedVideoIds } },
+                  { videoURL: { $in: videoIds } },
+                ],
+              },
+              visibleEpisodeFilter(),
             ],
           },
           { projection: episodeProjection }
@@ -701,11 +733,16 @@ export async function getFlatRecentlyWatchedForUser({
             .collection('FlatEpisodes')
             .find(
               {
-                $or: episodeLookups.map((lookup) => ({
-                  showId: new ObjectId(lookup.showId),
-                  seasonNumber: lookup.seasonNumber,
-                  episodeNumber: lookup.episodeNumber,
-                })),
+                $and: [
+                  {
+                    $or: episodeLookups.map((lookup) => ({
+                      showId: new ObjectId(lookup.showId),
+                      seasonNumber: lookup.seasonNumber,
+                      episodeNumber: lookup.episodeNumber,
+                    })),
+                  },
+                  visibleEpisodeFilter(),
+                ],
               },
               { projection: episodeProjection }
             )
@@ -726,7 +763,10 @@ export async function getFlatRecentlyWatchedForUser({
         ? _client
             .db('Media')
             .collection('FlatMovies')
-            .find({ _id: { $in: movieMediaIds } }, { projection: movieProjection })
+            .find(
+              { _id: { $in: movieMediaIds }, ...visibleMovieFilter() },
+              { projection: movieProjection }
+            )
             .toArray()
         : [],
       // Direct mediaId lookup for TV shows (indexed _id field, fastest)
@@ -1554,13 +1594,17 @@ export async function getFlatRecentlyAddedMedia({
 
       const [moviesCount, episodeGroupsCount] = await Promise.all([
         // Movies, capped at half the maximum.
-        db.collection('FlatMovies').countDocuments({}, { limit: MAX_RECENTLY_ADDED_ITEMS / 2 }),
+        db
+          .collection('FlatMovies')
+          .countDocuments(visibleMovieFilter(), { limit: MAX_RECENTLY_ADDED_ITEMS / 2 }),
 
         // Unique TV shows among the most recently-modified episodes, capped at half
         // the maximum. Uses the { mediaLastModified: -1, showId: 1 } index.
+        // Visibility $match comes first so the $limit cap isn't biased by hidden rows.
         db
           .collection('FlatEpisodes')
           .aggregate([
+            { $match: visibleEpisodeFilter() },
             { $sort: { mediaLastModified: -1 } },
             { $limit: 1000 }, // Look at the 1000 most recent episodes
             { $group: { _id: '$showId' } },
@@ -1634,7 +1678,7 @@ export async function getFlatRecentlyAddedMedia({
     // Get most recently added movies
     const movies = await db
       .collection('FlatMovies')
-      .find({}, { projection: movieProjectionFields })
+      .find(visibleMovieFilter(), { projection: movieProjectionFields })
       .sort({ mediaLastModified: -1 })
       .limit(poolSize)
       .toArray()
@@ -1650,6 +1694,8 @@ export async function getFlatRecentlyAddedMedia({
     const recentEpisodes = await db
       .collection('FlatEpisodes')
       .aggregate([
+        // Visibility first so the pool cap and grouping aren't biased by hidden rows
+        { $match: visibleEpisodeFilter() },
         { $sort: { mediaLastModified: -1 } },
         { $limit: poolSize * 2 }, // Get more than needed to account for grouping
         {
@@ -1752,7 +1798,7 @@ export const fetchFlatBannerMedia = async () => {
 
     const media = await db
       .collection('FlatMovies') // Use FlatMovies collection
-      .find({})
+      .find(visibleMovieFilter())
       .sort({ 'metadata.release_date': -1 }) // Sort by release date descending
       .limit(8) // Limit to 8 movies
       .toArray()
@@ -1804,8 +1850,12 @@ export const fetchFlatRandomBannerMedia = async () => {
 
     const collection = db.collection(collectionName)
 
+    // Web-visibility fragment per collection; count and find must use the same
+    // filter or the random offset can point past the filtered set.
+    const visibilityFilter = type === 'movie' ? visibleMovieFilter() : visibleShowFilter()
+
     // Get the total count of documents (use an indexed field for efficiency)
-    const totalCount = await collection.countDocuments()
+    const totalCount = await collection.countDocuments(visibilityFilter)
 
     if (totalCount === 0) {
       return { error: 'No media found', status: 404 }
@@ -1816,7 +1866,7 @@ export const fetchFlatRandomBannerMedia = async () => {
     const randomOffset = Math.floor(Math.random() * totalCount)
 
     // Use find with _id index for consistent ordering, skip and limit
-    const [item] = await collection.find({}).skip(randomOffset).limit(1).toArray()
+    const [item] = await collection.find(visibilityFilter).skip(randomOffset).limit(1).toArray()
 
     if (!item) {
       return { error: 'No media found', status: 404 }
@@ -2125,12 +2175,14 @@ export async function getFlatRequestedMedia({
             return null
           }
 
-          // Get next episode (if available)
+          // Get next episode (if available). Web-visibility applies: a next-episode
+          // pointer at a hidden episode would dead-end autoplay.
           const nextEpisode = await db.collection('FlatEpisodes').findOne(
             {
               showId: tvShow._id,
               seasonId: seasonData._id,
               episodeNumber: { $gt: episodeNumber },
+              ...visibleEpisodeFilter(),
             },
             {
               sort: { episodeNumber: 1 },
@@ -2290,6 +2342,7 @@ export async function getFlatAvailableMoviesCount() {
       .db('Media')
       .collection('FlatMovies')
       .aggregate([
+        { $match: visibleMovieFilter() },
         {
           $group: {
             _id: null,
@@ -2370,7 +2423,7 @@ export async function getFlatTVList(options = {}) {
     let tvShows = await client
       .db('Media')
       .collection('FlatTVShows')
-      .find({}, queryOptions)
+      .find(visibleShowFilter(), queryOptions)
       .toArray()
 
     // Sort by last air date if requested
@@ -2400,7 +2453,7 @@ export async function getFlatTVList(options = {}) {
           .db('Media')
           .collection('FlatEpisodes')
           .find(
-            { seasonId: { $in: seasonIds } },
+            { seasonId: { $in: seasonIds }, ...visibleEpisodeFilter() },
             {
               projection: {
                 _id: 1,
@@ -2494,6 +2547,7 @@ export async function getFlatAvailableTVShowsCount() {
       .db('Media')
       .collection('FlatEpisodes')
       .aggregate([
+        { $match: visibleEpisodeFilter() },
         {
           $group: {
             _id: null,
@@ -2505,7 +2559,10 @@ export async function getFlatAvailableTVShowsCount() {
       .toArray()
 
     // Also get the count of TV shows for the UI
-    const showCount = await client.db('Media').collection('FlatTVShows').countDocuments()
+    const showCount = await client
+      .db('Media')
+      .collection('FlatTVShows')
+      .countDocuments(visibleShowFilter())
 
     return {
       count: showCount,
@@ -2694,6 +2751,7 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
       .collection('FlatEpisodes')
       .find({
         seasonId: new ObjectId(matchingSeason._id),
+        ...visibleEpisodeFilter(),
       })
       .sort({ episodeNumber: 1 })
       .toArray()
@@ -2953,10 +3011,16 @@ export async function getFlatAvailableGenres({
       collections.push({ name: 'FlatTVShows', type: 'tv' })
     }
 
+    // Web-visibility fragment per collection (shows carry none of the movie/episode
+    // signals, so they get the show-level fragment).
+    const visibilityFilterFor = (collection) =>
+      collection.type === 'movie' ? visibleMovieFilter() : visibleShowFilter()
+
     if (countOnly) {
       // Get unique genre count across all specified collections
       const genreCountPromises = collections.map(async (collection) => {
         const pipeline = [
+          { $match: visibilityFilterFor(collection) },
           { $unwind: '$metadata.genres' },
           { $group: { _id: '$metadata.genres.name' } },
           { $count: 'uniqueGenres' },
@@ -2972,6 +3036,7 @@ export async function getFlatAvailableGenres({
 
       for (const collection of collections) {
         const pipeline = [
+          { $match: visibilityFilterFor(collection) },
           { $unwind: '$metadata.genres' },
           { $group: { _id: '$metadata.genres.name' } },
         ]
@@ -2996,6 +3061,7 @@ export async function getFlatAvailableGenres({
       }
 
       const pipeline = [
+        { $match: visibilityFilterFor(collection) },
         { $unwind: '$metadata.genres' },
         {
           $group: {
@@ -3066,11 +3132,15 @@ export async function getFlatAvailableGenres({
       total: 0,
     }
 
+    // Same visibility fragments as the genre pipelines above, so the summary
+    // counts agree with the per-genre counts in this response.
     if (type === 'all' || type === 'movie') {
-      mediaTypeCounts.movies = await db.collection('FlatMovies').countDocuments()
+      mediaTypeCounts.movies = await db.collection('FlatMovies').countDocuments(visibleMovieFilter())
     }
     if (type === 'all' || type === 'tv') {
-      mediaTypeCounts.tvShows = await db.collection('FlatTVShows').countDocuments()
+      mediaTypeCounts.tvShows = await db
+        .collection('FlatTVShows')
+        .countDocuments(visibleShowFilter())
     }
     mediaTypeCounts.total = mediaTypeCounts.movies + mediaTypeCounts.tvShows
 
@@ -3142,14 +3212,20 @@ export async function getFlatContentByGenres({
       'metadata.genres.name': { $in: genres },
     }
 
+    // Per-collection web-visibility composed with the genre filter via $and (the
+    // fragments carry a top-level $or). Count and list branches must use the
+    // identical query or clients paginate phantom pages.
+    const movieGenreQuery = { $and: [genreQuery, visibleMovieFilter()] }
+    const tvGenreQuery = { $and: [genreQuery, visibleShowFilter()] }
+
     if (countOnly) {
       let totalCount = 0
 
       if (type === 'all' || type === 'movie') {
-        totalCount += await db.collection('FlatMovies').countDocuments(genreQuery)
+        totalCount += await db.collection('FlatMovies').countDocuments(movieGenreQuery)
       }
       if (type === 'all' || type === 'tv') {
-        totalCount += await db.collection('FlatTVShows').countDocuments(genreQuery)
+        totalCount += await db.collection('FlatTVShows').countDocuments(tvGenreQuery)
       }
 
       if (Boolean(process.env.DEBUG) == true) {
@@ -3207,7 +3283,7 @@ export async function getFlatContentByGenres({
 
       const movies = await db
         .collection('FlatMovies')
-        .find(genreQuery, { projection: movieProjection })
+        .find(movieGenreQuery, { projection: movieProjection })
         .sort(movieSort)
         .toArray()
 
@@ -3266,7 +3342,7 @@ export async function getFlatContentByGenres({
         // Standard TV show retrieval with minimal projection
         tvShows = await db
           .collection('FlatTVShows')
-          .find(genreQuery, { projection: tvProjection })
+          .find(tvGenreQuery, { projection: tvProjection })
           .sort(tvSort)
           .toArray()
 
@@ -3414,11 +3490,13 @@ export async function getFlatMoviesByCollectionId(collectionId) {
     const client = await clientPromise
     const db = client.db('Media')
 
-    // Query movies that belong to this collection
+    // Query movies that belong to this collection. Web-visibility applies —
+    // a hidden movie's card on the collection page would dead-end.
     const movies = await db
       .collection('FlatMovies')
       .find({
         'metadata.belongs_to_collection.id': parseInt(collectionId),
+        ...visibleMovieFilter(),
       })
       .toArray()
 

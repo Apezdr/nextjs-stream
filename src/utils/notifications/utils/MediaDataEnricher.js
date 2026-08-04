@@ -7,6 +7,7 @@
 
 import clientPromise from '@src/lib/mongodb';
 import { ObjectId } from 'mongodb';
+import { isWebVisible } from '@src/utils/mediaVisibility';
 
 export class MediaDataEnricher {
   /**
@@ -79,13 +80,17 @@ export class MediaDataEnricher {
       }
 
       // Batch fetch movies from database
-      const movies = await client
+      const fetchedMovies = await client
         .db('Media')
         .collection('FlatMovies')
-        .find({ 
-          _id: { $in: movieIds } 
+        .find({
+          _id: { $in: movieIds }
         })
         .toArray();
+
+      // Web-hidden titles take the same fallback path as deleted docs so
+      // notifications never deep-link to them
+      const movies = fetchedMovies.filter(isWebVisible);
 
       // Create a map for efficient lookup
       const movieMap = new Map();
@@ -157,13 +162,16 @@ export class MediaDataEnricher {
       }
 
       // Batch fetch episodes from database
-      const episodes = await client
+      const fetchedEpisodes = await client
         .db('Media')
         .collection('FlatEpisodes')
-        .find({ 
-          _id: { $in: episodeIds } 
+        .find({
+          _id: { $in: episodeIds }
         })
         .toArray();
+
+      // Web-hidden episodes take the same fallback path as deleted docs
+      const episodes = fetchedEpisodes.filter(isWebVisible);
 
       // Create a map for efficient lookup
       const episodeMap = new Map();
@@ -236,13 +244,16 @@ export class MediaDataEnricher {
       }
 
       // Batch fetch all episodes
-      const episodes = await client
+      const fetchedEpisodes = await client
         .db('Media')
         .collection('FlatEpisodes')
-        .find({ 
-          _id: { $in: allEpisodeIds } 
+        .find({
+          _id: { $in: allEpisodeIds }
         })
         .toArray();
+
+      // Web-hidden episodes are dropped like missing ones below
+      const episodes = fetchedEpisodes.filter(isWebVisible);
 
       // Create a map for efficient lookup
       const episodeMap = new Map();

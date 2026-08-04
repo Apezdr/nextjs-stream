@@ -11,6 +11,8 @@ import { ResourceManager } from '../../core/ResourceManager'
  
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
 import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
+// @ts-ignore — dependency-light JS module with no .d.ts
+import { visibleEpisodeFilter } from '@src/utils/mediaVisibility'
 
 export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
   constructor(client: MongoClient) {
@@ -305,6 +307,19 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
       return await this.collection.countDocuments(filter)
     } catch (error) {
       throw new DatabaseError(`Failed to get episode count for ${showTitle}: ${error}`)
+    }
+  }
+
+  /**
+   * Count a show's episodes that pass the web-visibility rule. Feeds the
+   * denormalized FlatTVShows.visibleEpisodeCount written by
+   * TVShowSyncService after each show's episodes land.
+   */
+  async getVisibleEpisodeCount(showId: any): Promise<number> {
+    try {
+      return await this.collection.countDocuments({ showId, ...visibleEpisodeFilter() } as any)
+    } catch (error) {
+      throw new DatabaseError(`Failed to get visible episode count: ${error}`)
     }
   }
 

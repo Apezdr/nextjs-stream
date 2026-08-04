@@ -4,6 +4,11 @@ import { addCustomUrlToFlatMedia } from '@src/utils/flatDatabaseUtils'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
 import { sanitizeRecord } from '@src/utils/auth_utils'
 import { findPlaybackForUser, getAllPlaybackEntries } from '@src/utils/watchHistory/database'
+import {
+  visibleMovieFilter,
+  visibleEpisodeFilter,
+  visibleShowFilter
+} from '@src/utils/mediaVisibility'
 
 // Import utility functions
 import {
@@ -179,10 +184,15 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
     // Calculate how many items to fetch - use a larger number to ensure we have enough
     const fetchLimit = Math.min(500, Math.max(100, limit * 5))
 
-    // Query for unwatched movies with matching genres
+    // Query for unwatched movies with matching genres ($and: visibility fragment has a top-level $or)
     const movieQuery = {
-      '_id': { $nin: Array.from(watchedMovieIds).map(id => new ObjectId(id)) },
-      'metadata.genres.id': { $in: sortedGenres }
+      $and: [
+        {
+          '_id': { $nin: Array.from(watchedMovieIds).map(id => new ObjectId(id)) },
+          'metadata.genres.id': { $in: sortedGenres }
+        },
+        visibleMovieFilter()
+      ]
     }
 
     // Fetch movie recommendations with pagination
@@ -211,7 +221,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
       // For each season, get its episodes
       for (const season of showSeasons) {
         season.episodes = await db.collection('FlatEpisodes')
-          .find({ seasonId: season._id })
+          .find({ $and: [{ seasonId: season._id }, visibleEpisodeFilter()] })
           .sort({ episodeNumber: 1 })
           .toArray();
       }
@@ -243,8 +253,13 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
       
       // Query for unwatched TV shows with matching genres
       const tvQuery = {
-        '_id': { $nin: Array.from(watchedTVShowIds).map(id => new ObjectId(id)) },
-        'metadata.genres.id': { $in: sortedGenres }
+        $and: [
+          {
+            '_id': { $nin: Array.from(watchedTVShowIds).map(id => new ObjectId(id)) },
+            'metadata.genres.id': { $in: sortedGenres }
+          },
+          visibleShowFilter()
+        ]
       }
       
       const newTVShows = await db.collection('FlatTVShows')
@@ -269,7 +284,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
         // Get episodes for the first season
         const firstSeason = showSeasons[0];
         firstSeason.episodes = await db.collection('FlatEpisodes')
-          .find({ seasonId: firstSeason._id })
+          .find({ $and: [{ seasonId: firstSeason._id }, visibleEpisodeFilter()] })
           .sort({ episodeNumber: 1 })
           .toArray();
           
@@ -425,8 +440,11 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
     }
     
     // Find corresponding movies and episodes in flat database
+    // (movies feed the rail directly, so hide non-web-visible ones here)
     const [movies, episodes] = await Promise.all([
-      db.collection('FlatMovies').find({ videoURL: { $in: allVideoIds } }).toArray(),
+      db.collection('FlatMovies')
+        .find({ $and: [{ videoURL: { $in: allVideoIds } }, visibleMovieFilter()] })
+        .toArray(),
       db.collection('FlatEpisodes').find({ videoURL: { $in: allVideoIds } }).toArray()
     ])
 
@@ -544,7 +562,7 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
         
         // Get episodes for the first season
         firstSeason.episodes = await db.collection('FlatEpisodes')
-          .find({ seasonId: firstSeason._id })
+          .find({ $and: [{ seasonId: firstSeason._id }, visibleEpisodeFilter()] })
           .sort({ episodeNumber: 1 })
           .toArray();
           
@@ -666,8 +684,8 @@ export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldE
     
     // Get total counts first to know how many items are available
     const [totalMovies, totalTVShows] = await Promise.all([
-      db.collection('FlatMovies').countDocuments({}),
-      db.collection('FlatTVShows').countDocuments({})
+      db.collection('FlatMovies').countDocuments(visibleMovieFilter()),
+      db.collection('FlatTVShows').countDocuments(visibleShowFilter())
     ])
     
     console.log(`Total available: ${totalMovies} movies and ${totalTVShows} TV shows`)
@@ -678,13 +696,13 @@ export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldE
     // Fetch random movies and TV shows with skip for pagination
     const [randomMovies, randomTVShows] = await Promise.all([
       db.collection('FlatMovies')
-        .find({})
+        .find(visibleMovieFilter())
         .sort({ title: 1 }) // Consistent sort for pagination
         .skip(page * Math.ceil(limit / 2))
         .limit(fetchLimit)
         .toArray(),
       db.collection('FlatTVShows')
-        .find({})
+        .find(visibleShowFilter())
         .sort({ title: 1 }) // Consistent sort for pagination
         .skip(page * Math.ceil(limit / 2))
         .limit(fetchLimit)
@@ -711,7 +729,7 @@ export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldE
       // Get episodes for the first season
       const firstSeason = showSeasons[0];
       firstSeason.episodes = await db.collection('FlatEpisodes')
-        .find({ seasonId: firstSeason._id })
+        .find({ $and: [{ seasonId: firstSeason._id }, visibleEpisodeFilter()] })
         .sort({ episodeNumber: 1 })
         .toArray();
         
@@ -859,9 +877,10 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
     const db = client.db('Media')
     
     // Get total counts to know how many pages are available
+    // (show count uses the show fragment — the movie fragment here would zero TV totals)
     const [totalMovies, totalTVShows] = await Promise.all([
-      db.collection('FlatMovies').countDocuments({}),
-      db.collection('FlatTVShows').countDocuments({})
+      db.collection('FlatMovies').countDocuments(visibleMovieFilter()),
+      db.collection('FlatTVShows').countDocuments(visibleShowFilter())
     ])
     
     // Calculate total pages based on the total number of items and limit

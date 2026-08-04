@@ -8,6 +8,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
+import { visibleShowFilter, visibleEpisodeFilter } from '@src/utils/mediaVisibility'
 import {
   serializeForClient,
   validatePaginationParams,
@@ -58,6 +59,9 @@ export async function getFilteredTVList({
       
       // Use aggregation pipeline to filter by episodes with HDR
       const pipeline = [
+        // Web-visibility first so later stages only see visible shows
+        { $match: visibleShowFilter() },
+
         // Match TV shows by genre if specified
         ...(genres.length > 0 ? [{ $match: buildGenreFilter(genres) }] : []),
         
@@ -67,6 +71,8 @@ export async function getFilteredTVList({
             from: 'FlatEpisodes',
             localField: '_id',
             foreignField: 'showId',
+            // Hidden episodes must not satisfy the HDR match below
+            pipeline: [{ $match: visibleEpisodeFilter() }],
             as: 'episodes'
           }
         },
@@ -101,8 +107,8 @@ export async function getFilteredTVList({
       
       tvShows = await db.collection('FlatTVShows').aggregate(pipeline).toArray();
     } else {
-      // No HDR filtering - use simple find query
-      const matchQuery = buildGenreFilter(genres);
+      // No HDR filtering - use simple find query ($and: visibility fragment has a top-level $or)
+      const matchQuery = { $and: [buildGenreFilter(genres), visibleShowFilter()] };
       const sortQuery = buildSortQuery(sortOrder, 'metadata.last_air_date');
       
       const tvShowProjection = {
@@ -150,7 +156,7 @@ export async function getFilteredTVList({
             const episodes = await db
               .collection('FlatEpisodes')
               .find(
-                { seasonId: season._id },
+                { $and: [{ seasonId: season._id }, visibleEpisodeFilter()] },
                 {
                   projection: {
                     _id: 1,
@@ -231,6 +237,9 @@ export async function getFilteredTVCount({
       
       // Use aggregation pipeline to count
       const pipeline = [
+        // Web-visibility first so later stages only see visible shows
+        { $match: visibleShowFilter() },
+
         // Match TV shows by genre if specified
         ...(genres.length > 0 ? [{ $match: buildGenreFilter(genres) }] : []),
         
@@ -240,6 +249,8 @@ export async function getFilteredTVCount({
             from: 'FlatEpisodes',
             localField: '_id',
             foreignField: 'showId',
+            // Hidden episodes must not satisfy the HDR match below
+            pipeline: [{ $match: visibleEpisodeFilter() }],
             as: 'episodes'
           }
         },
@@ -258,8 +269,8 @@ export async function getFilteredTVCount({
       const result = await db.collection('FlatTVShows').aggregate(pipeline).toArray();
       return result.length > 0 ? result[0].total : 0;
     } else {
-      // No HDR filtering - use simple count
-      const matchQuery = buildGenreFilter(genres);
+      // No HDR filtering - use simple count (must stay in lockstep with getFilteredTVList)
+      const matchQuery = { $and: [buildGenreFilter(genres), visibleShowFilter()] };
       return await db.collection('FlatTVShows').countDocuments(matchQuery);
     }
   } catch (error) {
@@ -286,6 +297,8 @@ export async function getTVFilterOptions() {
     const genreResults = await db
       .collection('FlatTVShows')
       .aggregate([
+        // Filter chips should not advertise values only hidden titles have
+        { $match: visibleShowFilter() },
         { $unwind: '$metadata.genres' },
         { $group: { _id: '$metadata.genres.name' } },
         { $sort: { _id: 1 } }
@@ -299,6 +312,7 @@ export async function getTVFilterOptions() {
     const hdrResults = await db
       .collection('FlatTVShows')
       .aggregate([
+        { $match: visibleShowFilter() },
         { $match: { availableHdrTypes: { $exists: true, $ne: [] } } },
         { $unwind: '$availableHdrTypes' },
         { $group: { _id: '$availableHdrTypes' } },
@@ -314,6 +328,7 @@ export async function getTVFilterOptions() {
       const episodeHdrResults = await db
         .collection('FlatEpisodes')
         .aggregate([
+          { $match: visibleEpisodeFilter() },
           { $match: { hdr: { $exists: true, $nin: [null, false, ''] } } },
           { $group: { _id: '$hdr' } },
           { $sort: { _id: 1 } }

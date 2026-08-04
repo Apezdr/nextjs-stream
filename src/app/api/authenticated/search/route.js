@@ -1,5 +1,6 @@
 import clientPromise from '@src/lib/mongodb'
 import { addCustomUrlToFlatMedia, getFlatRecentlyAddedMedia } from '@src/utils/flatDatabaseUtils'
+import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
 import {
   arrangeMediaByLatestModification,
   movieProjectionFields,
@@ -50,14 +51,21 @@ async function searchMedia(query, limit, isTVdevice = false) {
 
   if (query) {
     // Perform search if query is provided
+    // $and because the visibility fragments carry a top-level $or
     ;[movies, tvShows] = await Promise.all([
       db
         .collection('FlatMovies')
-        .find({ title: { $regex: query, $options: 'i' } }, { projection: movieProjectionFields })
+        .find(
+          { $and: [{ title: { $regex: query, $options: 'i' } }, visibleMovieFilter()] },
+          { projection: movieProjectionFields }
+        )
         .toArray(),
       db
         .collection('FlatTVShows')
-        .find({ title: { $regex: query, $options: 'i' } }, { projection: tvShowProjectionFields })
+        .find(
+          { $and: [{ title: { $regex: query, $options: 'i' } }, visibleShowFilter()] },
+          { projection: tvShowProjectionFields }
+        )
         .toArray(),
     ])
   } else {
