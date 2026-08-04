@@ -87,23 +87,49 @@ async function migrateUserPlayback(
 }
 
 /**
- * Create indexes on WatchHistory collection
+ * Create indexes on WatchHistory collection.
+ *
+ * This is the LIVE declaration site for WatchHistory indexes — a fresh
+ * deployment gets them from here on startup, with no manual DB work.
+ * (`flatSync/initializeDatabase.js` also declares them, but the new sync
+ * architecture never calls it, so a spec that lives only there is a no-op
+ * in production.)
  */
 async function createWatchHistoryIndexes(db: any): Promise<void> {
   const collection = db.collection('WatchHistory')
 
-  const indexes = [
+  const indexes: Array<{
+    key: Record<string, 1 | -1>
+    name: string
+    unique?: boolean
+    partialFilterExpression?: Record<string, unknown>
+  }> = [
     { key: { userId: 1, normalizedVideoId: 1 }, unique: true, name: 'userId_normalizedId_unique' },
     { key: { userId: 1 }, name: 'userId_index' },
     { key: { normalizedVideoId: 1 }, name: 'normalizedVideoId_index' },
-    { key: { userId: 1, lastUpdated: -1 }, name: 'userId_lastUpdated_index' }
+    { key: { userId: 1, lastUpdated: -1 }, name: 'userId_lastUpdated_index' },
+    {
+      key: { userId: 1, mediaId: 1 },
+      unique: true,
+      name: 'userId_mediaId_unique',
+      // Durable 'mid:'-prefixed ids ONLY. Partial filters don't support
+      // regex; the string range [ 'mid:', 'mid;' ) covers exactly the
+      // prefix. A bare $exists would also index legacy client-sent hex
+      // values — where TV rows share the show _id and collide instantly.
+      // Must stay byte-identical to scripts/backfillWatchHistoryMediaId.js,
+      // or startup hits an IndexOptionsConflict against the existing index.
+      partialFilterExpression: { mediaId: { $gt: 'mid:', $lt: 'mid;' } }
+    }
   ]
 
   for (const indexSpec of indexes) {
     try {
       await collection.createIndex(indexSpec.key, {
         name: indexSpec.name,
-        unique: indexSpec.unique || false
+        unique: indexSpec.unique || false,
+        ...(indexSpec.partialFilterExpression && {
+          partialFilterExpression: indexSpec.partialFilterExpression
+        })
       })
     } catch (error: any) {
       // Index already exists - this is fine
@@ -129,6 +155,12 @@ export async function migratePlaybackStatusIfNeeded(): Promise<void> {
     const client = await clientPromise
     const db = client.db('Media')
 
+    // ALWAYS ensure indexes, independent of whether migration is needed —
+    // the early returns below used to skip this entirely, which meant a
+    // fresh deployment (no PlaybackStatus data) never got ANY WatchHistory
+    // index, including the load-bearing unique upsert key.
+    await createWatchHistoryIndexes(db)
+
     // Check if migration is needed
     const watchHistoryCount = await db.collection('WatchHistory').countDocuments()
     const playbackStatusCount = await db.collection('PlaybackStatus').countDocuments()
@@ -149,9 +181,6 @@ export async function migratePlaybackStatusIfNeeded(): Promise<void> {
     }
 
     log.info({ playbackStatusCount }, 'Starting PlaybackStatus to WatchHistory migration...')
-
-    // Create indexes first
-    await createWatchHistoryIndexes(db)
 
     // Migrate data in batches
     const playbackStatusCollection = db.collection('PlaybackStatus')

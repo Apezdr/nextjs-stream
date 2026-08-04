@@ -19,12 +19,14 @@
  *                  Never touches isValid — sync validation is the sole
  *                  authority and will judge the survivor by its mediaId arm.
  *  4. --create-index — verify zero duplicate (userId, mediaId) groups, then
- *                  create { userId: 1, mediaId: 1 } UNIQUE with
- *                  partialFilterExpression { mediaId: { $exists: true } }.
- *                  Partial is mandatory: rows without mediaId all "share"
- *                  a missing key, and a plain unique index would collide
- *                  them. Retries the merge+create loop on a race with live
- *                  heartbeats (max 3 attempts).
+ *                  create { userId: 1, mediaId: 1 } UNIQUE, partial on the
+ *                  string range { mediaId: { $gt: 'mid:', $lt: 'mid;' } }
+ *                  (durable ids only — a bare $exists would also index
+ *                  legacy client-sent hex values, where TV rows share the
+ *                  show _id and collide). Retries the merge+create loop on
+ *                  a race with live heartbeats (max 3 attempts). The same
+ *                  spec is declared in watchHistory/migrate.ts so fresh
+ *                  deployments get it on startup without this script.
  *
  * DRY-RUN BY DEFAULT. `--apply` executes steps 1-3; `--create-index`
  * additionally runs step 4 (implies --apply must have converged — it
