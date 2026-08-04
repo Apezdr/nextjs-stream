@@ -8,6 +8,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('PlaybackPresence.Database')
@@ -80,6 +81,9 @@ export async function upsertPresenceHeartbeat({
     const collection = db.collection('PlaybackPresence')
     const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
     const normalizedVideoId = generateNormalizedVideoId(videoId)
+    // Same durable identity as WatchHistory (shared cached resolver). TTL'd
+    // collection — no backfill; keyed {userId, sessionId} so no index change.
+    const resolved = await resolveMediaIdForNid(normalizedVideoId)
 
     await collection.updateOne(
       { userId: userIdObj, sessionId },
@@ -91,6 +95,9 @@ export async function upsertPresenceHeartbeat({
           isPaused: isPaused === true,
           lastHeartbeat: new Date(),
           ...metadata,
+          // AFTER metadata: it always emits a `mediaId` key (legacy client
+          // hex _id or null) which would clobber the durable identity.
+          ...(resolved?.mediaId && { mediaId: resolved.mediaId }),
           ...(deviceInfo && { deviceInfo }),
           ...(ipAddress && { ipAddress }),
           ...(localIp && { localIp }),

@@ -60,6 +60,7 @@ const MovieCard = memo(({movie, index }) => {
             length={movie.metadata?.runtime ? movie.metadata.runtime * 60000 : 0}
             metadata={movie.metadata}
             videoURL={movie.videoURL}
+            mediaId={movie.mediaId}
             watchedSeconds={movie.watchHistory?.playbackTime !== undefined ? Math.round(movie.watchHistory.playbackTime) : undefined}
           />
         </p>

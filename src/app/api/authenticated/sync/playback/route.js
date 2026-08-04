@@ -1,6 +1,7 @@
 import { getVideosWatched } from '@src/utils/auth_database'
 import { isAuthenticatedServer } from '@src/utils/routeAuth'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
 
 /**
  * Get playback position for a specific video (on-demand fetch)
@@ -29,11 +30,27 @@ export async function GET(req) {
   const normalizedVideoId = generateNormalizedVideoId(videoId)
 
   // Find playback position for this specific video
-  const playbackData = watchedMedia.find(
+  let playbackData = watchedMedia.find(
     item =>
       item.videoId === videoId ||
       item.normalizedVideoId === normalizedVideoId
   )
+
+  // Rename-proof fallback: no row is keyed under this URL/nid (e.g. the file
+  // was re-encoded or renamed, so its nid changed). Resolve the URL's durable
+  // content identity ('mid:…') from the catalog (cached, fail-open) and take
+  // the newest row stamped with it. Additive only — the exact URL/nid matches
+  // above always win, and a null resolution degrades to today's behavior.
+  if (!playbackData) {
+    const resolved = await resolveMediaIdForNid(normalizedVideoId)
+    if (resolved?.mediaId) {
+      playbackData = watchedMedia
+        .filter(item => item.mediaId === resolved.mediaId)
+        .sort(
+          (a, b) => new Date(b.lastUpdated || 0).getTime() - new Date(a.lastUpdated || 0).getTime()
+        )[0] || null
+    }
+  }
 
   if (!playbackData) {
     return new Response(

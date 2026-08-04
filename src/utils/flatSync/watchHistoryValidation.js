@@ -44,24 +44,31 @@ export async function validateWatchHistoryAgainstDatabase() {
     const flatEpisodesCollection = db.collection('FlatEpisodes');
 
     // Build the union of valid identifiers — videoURLs and normalizedVideoIds
-    // from FlatMovies and FlatEpisodes. Uses the existing covered index
-    // `videoURL_normalizedId_covered_index` (initializeDatabase.js:99,172),
-    // so this is index-only.
+    // — plus the durable mediaIds (P5 cutover), from FlatMovies and
+    // FlatEpisodes. No longer a covered read (mediaId forces a FETCH), but
+    // still two streamed full scans per cycle.
     const validIds = new Set();
-    const proj = { projection: { _id: 0, videoURL: 1, normalizedVideoId: 1 } };
+    const validMediaIds = new Set();
+    const proj = { projection: { _id: 0, videoURL: 1, normalizedVideoId: 1, mediaId: 1 } };
     const movieCursor = flatMoviesCollection.find({}, proj);
     for await (const d of movieCursor) {
       if (d.videoURL)          validIds.add(d.videoURL);
       if (d.normalizedVideoId) validIds.add(d.normalizedVideoId);
+      if (d.mediaId)           validMediaIds.add(d.mediaId);
     }
     const episodeCursor = flatEpisodesCollection.find({}, proj);
     for await (const d of episodeCursor) {
       if (d.videoURL)          validIds.add(d.videoURL);
       if (d.normalizedVideoId) validIds.add(d.normalizedVideoId);
+      if (d.mediaId)           validMediaIds.add(d.mediaId);
     }
     const validArr = [...validIds];
+    const validMediaIdArr = [...validMediaIds];
     const now = new Date().toISOString();
-    log.info({ validIdCount: validArr.length }, 'Built validation lookup set');
+    log.info(
+      { validIdCount: validArr.length, validMediaIdCount: validMediaIdArr.length },
+      'Built validation lookup set'
+    );
 
     // Two bulk updates — one for now-valid, one for now-invalid. The $ne
     // predicate ensures we only touch records whose state is changing,
@@ -73,12 +80,26 @@ export async function validateWatchHistoryAgainstDatabase() {
     // `flatDatabaseUtils.generateNormalizedVideoId` — see the 2026-05-09 fix
     // in MovieContentStrategy.generateNormalizedVideoId, which removed an
     // `_id` short-circuit that broke this invariant.
+    // P5 cutover: a row is valid when EITHER identity matches the catalog —
+    // the URL-hash (nid) or the durable mediaId. The invalid arm requires
+    // BOTH to miss ($nin matches a missing mediaId field, so legacy rows
+    // without one are judged on nid alone, exactly as before).
     const validResult = await watchHistoryCollection.updateMany(
-      { normalizedVideoId: { $in:  validArr }, isValid: { $ne: true  } },
+      {
+        $or: [
+          { normalizedVideoId: { $in: validArr } },
+          { mediaId: { $in: validMediaIdArr } },
+        ],
+        isValid: { $ne: true },
+      },
       { $set: { isValid: true,  lastScanned: now } }
     );
     const invalidResult = await watchHistoryCollection.updateMany(
-      { normalizedVideoId: { $nin: validArr }, isValid: { $ne: false } },
+      {
+        normalizedVideoId: { $nin: validArr },
+        mediaId: { $nin: validMediaIdArr },
+        isValid: { $ne: false },
+      },
       { $set: { isValid: false, lastScanned: now } }
     );
 

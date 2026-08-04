@@ -69,6 +69,7 @@ function MediaPoster({
           length={_media.duration ?? (_media.metadata?.runtime ? _media.metadata.runtime * 60000 : 0)}
           metadata={_media.metadata}
           videoURL={_media.videoURL}
+          mediaId={_media.mediaId}
           classNames="absolute bottom-0 w-full text-center z-10 text-[0.55rem]"
         />
       ) : null}

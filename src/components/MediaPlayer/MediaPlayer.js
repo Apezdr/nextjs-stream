@@ -332,6 +332,7 @@ async function VideoPlayer({
             <Suspense>
               <WithPlaybackTracker
                 videoURL={videoURL}
+                mediaId={media.mediaId || null}
                 start={start}
                 savedPlaybackTime={savedPlaybackTime}
                 mediaMetadata={{
@@ -371,7 +372,7 @@ async function VideoPlayer({
           {captions ? (
             <CaptionPreferenceManager
               captions={captions}
-              mediaKey={videoURL}
+              mediaKey={media.mediaId || videoURL}
             />
           ) : null}
         </MediaProvider>

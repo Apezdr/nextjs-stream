@@ -8,6 +8,7 @@ import {
 import { getFullImageUrl } from '@src/utils'
 import { userQueries } from '@src/lib/userQueries'
 import { countPlaybackForUser, findPlaybackForUser } from '@src/utils/watchHistory/database'
+import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
 import {
   visibleMovieFilter,
@@ -287,6 +288,13 @@ function getProjectionForCollection(profile, collection, shouldExposeAdditionalD
     projection.originalTitle = 1
   }
 
+  // mediaId is the durable content identity ('mid:…') that WatchHistory rows
+  // join on. Movies/episodes must always carry it so the rename-proof
+  // row→doc match arms below can key their lookup maps by it.
+  if ((collection === 'movies' || collection === 'episodes') && Object.keys(projection).length > 0) {
+    projection.mediaId = 1
+  }
+
   // Handle special cases for shouldExposeAdditionalData
   if (shouldExposeAdditionalData && collection === 'episodes' && profile !== 'full') {
     projection.duration = 1 // Always include duration for TV devices
@@ -303,6 +311,20 @@ function getProjectionForCollection(profile, collection, shouldExposeAdditionalD
  * Re-exported here so the ~15 existing import sites keep working unchanged.
  */
 export { generateNormalizedVideoId, canonicalizeStreamPathname } from '@src/utils/videoIdentity'
+
+/**
+ * Durable content identity check ('mid:…', backend folder-derived — see
+ * sync/core/deliveryFacts.resolveMediaId). WatchHistory rows may carry
+ * `mediaId` in TWO forms: legacy client-sent ObjectId hex strings (doc _id,
+ * consumed by the `_id`-based lookups) and the new 'mid:…' identity (matched
+ * against Flat* docs' `mediaId` field). This discriminates the two.
+ *
+ * @param {*} id - Candidate mediaId value from a WatchHistory row
+ * @returns {boolean} True when the value is a 'mid:…' durable identity
+ */
+function isDurableMediaId(id) {
+  return typeof id === 'string' && id.startsWith('mid:')
+}
 
 /**
  * Gets posters for movies or TV shows from the flat database structure.
@@ -602,9 +624,19 @@ export async function getFlatRecentlyWatchedForUser({
       .filter((video) => video.normalizedVideoId)
       .map((video) => video.normalizedVideoId)
 
-    // Extract mediaIds for direct indexed lookups (much faster than URL matching)
+    // Durable content identities ('mid:…') carried by the rows. These join
+    // rename-proof against FlatMovies/FlatEpisodes.mediaId — a row whose URL
+    // (and thus nid) went stale after a re-encode/rename still hydrates.
+    // Legacy ObjectId-hex mediaIds keep flowing through the _id lookups below.
+    const rowContentIds = [
+      ...new Set(watchedVideos.map((v) => v.mediaId).filter(isDurableMediaId)),
+    ]
+
+    // Extract mediaIds for direct indexed lookups (much faster than URL matching).
+    // 'mid:…' identities are NOT ObjectIds — they are handled by rowContentIds
+    // above and must not reach the ObjectId conversions here.
     const movieMediaIds = watchedVideos
-      .filter((v) => v.mediaId && v.mediaType === 'movie')
+      .filter((v) => v.mediaId && !isDurableMediaId(v.mediaId) && v.mediaType === 'movie')
       .map((v) => {
         try {
           return new ObjectId(v.mediaId)
@@ -616,7 +648,10 @@ export async function getFlatRecentlyWatchedForUser({
       .filter(Boolean)
 
     const tvShowMediaIds = watchedVideos
-      .filter((v) => (v.showId || v.mediaId) && v.mediaType === 'tv')
+      .filter(
+        (v) =>
+          (v.showId || (v.mediaId && !isDurableMediaId(v.mediaId))) && v.mediaType === 'tv'
+      )
       .map((v) => {
         try {
           // For TV, mediaId often contains the showId
@@ -632,7 +667,9 @@ export async function getFlatRecentlyWatchedForUser({
     const episodeLookups = watchedVideos
       .filter((v) => v.mediaType === 'tv' && v.seasonNumber && v.episodeNumber)
       .map((v) => ({
-        showId: v.showId || v.mediaId, // mediaId is often the showId for TV
+        // mediaId is often the showId for TV (legacy hex form only — a 'mid:…'
+        // identity is an episode identity, never a show ObjectId)
+        showId: v.showId || (isDurableMediaId(v.mediaId) ? null : v.mediaId),
         seasonNumber: v.seasonNumber,
         episodeNumber: v.episodeNumber,
       }))
@@ -696,6 +733,11 @@ export async function getFlatRecentlyWatchedForUser({
                     $or: [
                       { normalizedVideoId: { $in: normalizedVideoIds } },
                       { videoURL: { $in: videoIds } },
+                      // Rename-proof arm: rows stamped with the durable
+                      // identity match even after the file's URL/nid changed.
+                      ...(rowContentIds.length > 0
+                        ? [{ mediaId: { $in: rowContentIds } }]
+                        : []),
                     ],
                   },
                   visibleMovieFilter(),
@@ -718,6 +760,10 @@ export async function getFlatRecentlyWatchedForUser({
                 $or: [
                   { normalizedVideoId: { $in: normalizedVideoIds } },
                   { videoURL: { $in: videoIds } },
+                  // Rename-proof arm: durable-identity match (see movies above)
+                  ...(rowContentIds.length > 0
+                    ? [{ mediaId: { $in: rowContentIds } }]
+                    : []),
                 ],
               },
               visibleEpisodeFilter(),
@@ -816,6 +862,12 @@ export async function getFlatRecentlyWatchedForUser({
         movieMap.set(movie.normalizedVideoId, movie)
       }
 
+      // Durable-identity key ('mid:…') — rename-proof row→doc match. The key
+      // space is disjoint from URLs, nids, and ObjectId-hex _id keys.
+      if (isDurableMediaId(movie.mediaId)) {
+        movieMap.set(movie.mediaId, movie)
+      }
+
       // Separate lookup for trailer URLs (e.g., YouTube trailers)
       if (movie.metadata && typeof movie.metadata.trailer_url === 'string') {
         trailerToMovieMap.set(movie.metadata.trailer_url, movie)
@@ -836,6 +888,11 @@ export async function getFlatRecentlyWatchedForUser({
 
       if (movie.normalizedVideoId && !movieMap.has(movie.normalizedVideoId)) {
         movieMap.set(movie.normalizedVideoId, movie)
+      }
+
+      // Durable-identity key ('mid:…') — same rename-proof arm as above
+      if (isDurableMediaId(movie.mediaId) && !movieMap.has(movie.mediaId)) {
+        movieMap.set(movie.mediaId, movie)
       }
 
       // Also add to trailer map if needed
@@ -911,6 +968,11 @@ export async function getFlatRecentlyWatchedForUser({
           // Also add using normalizedVideoId key (secondary) if available
           if (episode.normalizedVideoId) {
             episodeMap.set(episode.normalizedVideoId, fullEpisodeObj)
+          }
+
+          // Durable-identity key ('mid:…') — rename-proof row→doc match
+          if (isDurableMediaId(episode.mediaId)) {
+            episodeMap.set(episode.mediaId, fullEpisodeObj)
           }
         } else {
           // FK-orphan guard: the episode resolved by videoId/normalizedVideoId but
@@ -1174,6 +1236,13 @@ export async function processFlatWatchedDetails(
   const results = []
   const processingErrors = []
 
+  // Identity dedupe: pre-backfill quality swaps leave two rows (old nid + new
+  // nid) carrying the same durable mediaId — both now resolve to the same doc
+  // through the mediaId arms. Rows arrive sorted lastUpdated DESC (see
+  // getFlatRecentlyWatchedForUser), so first-seen wins = the newest beat.
+  // Trailer watches are distinct entries and never dedupe against playback.
+  const seenDocIdentities = new Set()
+
   for (let i = 0; i < lastWatched[0].videosWatched.length; i++) {
     const video = lastWatched[0].videosWatched[i]
 
@@ -1187,8 +1256,11 @@ export async function processFlatWatchedDetails(
 
       let movie = null
 
-      // PRIORITY 1: Try direct mediaId lookup (fastest - indexed _id field)
-      if (video.mediaId && video.mediaType === 'movie') {
+      // PRIORITY 1: Try direct mediaId lookup. Legacy hex mediaIds (doc _id)
+      // require the row's mediaType gate; durable 'mid:…' identities are
+      // collection-safe (key spaces are disjoint), so try them regardless —
+      // a miss simply falls through to the URL/nid arms or the episode path.
+      if (video.mediaId && (video.mediaType === 'movie' || isDurableMediaId(video.mediaId))) {
         if (Boolean(process.env.DEBUG) == true) {
           console.log(
             `[FLAT_DEBUG] Trying mediaId movie lookup for ${video.videoId} with mediaId: ${video.mediaId}`
@@ -1223,6 +1295,16 @@ export async function processFlatWatchedDetails(
           (video.externalVideoURL && typeof video.externalVideoURL === 'string') ||
           (typeof video.videoId === 'string' &&
             (video.videoId.includes('youtube.com/') || video.videoId.includes('youtu.be/')))
+
+        // Skip older sibling rows that resolved to a movie doc we already
+        // emitted (same user, same content under a stale nid). Newest wins.
+        if (!isTrailerWatch && movie._id) {
+          const docIdentity = `movie:${movie._id.toString()}`
+          if (seenDocIdentities.has(docIdentity)) {
+            continue
+          }
+          seenDocIdentities.add(docIdentity)
+        }
 
         // Prepare movie for sanitization, ensuring we preserve the WatchHistory's normalizedVideoId
         // (which is based on what was actually watched), not the movie's normalizedVideoId
@@ -1259,11 +1341,17 @@ export async function processFlatWatchedDetails(
       // Try TV episode lookup with priority ordering
       let episodeDetails = null
 
-      // Note: For TV episodes, we don't use mediaId directly since episodes aren't top-level media
-      // The showId is tracked instead, but episode lookup still relies on videoId/normalizedVideoId
+      // PRIORITY 0: Try the durable identity ('mid:…') — rename-proof match
+      // against the episode doc's mediaId. Legacy hex mediaIds (show _id)
+      // never key episodeMap and are skipped here.
+      if (isDurableMediaId(video.mediaId)) {
+        episodeDetails = episodeMap.get(video.mediaId)
+      }
 
       // PRIORITY 1: Try direct video ID (URL-based lookup)
-      episodeDetails = episodeMap.get(video.videoId)
+      if (!episodeDetails) {
+        episodeDetails = episodeMap.get(video.videoId)
+      }
 
       // PRIORITY 2: Try normalizedVideoId if available
       if (!episodeDetails && video.normalizedVideoId) {
@@ -1277,6 +1365,16 @@ export async function processFlatWatchedDetails(
 
       // Process TV episode if found
       if (episodeDetails) {
+        // Skip older sibling rows resolving to an episode doc we already
+        // emitted (same content under a stale nid). Newest wins.
+        if (episodeDetails.episode?._id) {
+          const docIdentity = `episode:${episodeDetails.episode._id.toString()}`
+          if (seenDocIdentities.has(docIdentity)) {
+            continue
+          }
+          seenDocIdentities.add(docIdentity)
+        }
+
         if (Boolean(process.env.DEBUG) == true) {
           console.log(`[FLAT_DEBUG] Found episode details for ${video.videoId}`)
           console.log(`[FLAT_DEBUG] Episode structure:`, {
@@ -2576,14 +2674,20 @@ export async function getFlatAvailableTVShowsCount() {
 }
 
 /**
- * Count unique users who have watched a specific media by its normalized video id.
- * This function searches through the WatchHistory collection to find all users
- * who have a video with the matching normalizedVideoId in their watched history.
+ * Count unique users who have watched a specific media by its normalized video
+ * id and/or its durable content identity ('mid:…').
+ *
+ * Rows written before a rename/re-encode carry a stale normalizedVideoId but
+ * (once stamped) the same mediaId, so the count matches EITHER identity. When
+ * the caller does not supply the mediaId, it is resolved internally from the
+ * catalog by nid (cached, fail-open — a null resolution degrades to today's
+ * nid-only count). Rows without mediaId behave exactly as before.
  *
  * @param {string} normalizedVideoId - The normalized video ID to search for
+ * @param {string|null} [mediaId=null] - Optional durable content identity of the media doc
  * @returns {Promise<number>} The count of unique users who have watched this media
  */
-export async function countUniqueViewersByNormalizedId(normalizedVideoId) {
+export async function countUniqueViewersByNormalizedId(normalizedVideoId, mediaId = null) {
   try {
     if (Boolean(process.env.DEBUG) == true) {
       console.time('countUniqueViewersByNormalizedId:total')
@@ -2592,16 +2696,27 @@ export async function countUniqueViewersByNormalizedId(normalizedVideoId) {
 
     const client = await clientPromise
 
+    // Resolve the durable identity when not supplied so viewers counted under
+    // a prior URL/nid (quality swaps, renames) are still included.
+    let contentId = isDurableMediaId(mediaId) ? mediaId : null
+    if (!contentId && normalizedVideoId) {
+      const resolved = await resolveMediaIdForNid(normalizedVideoId)
+      contentId = resolved?.mediaId ?? null
+    }
+
     // Query WatchHistory collection - much faster, no array operations or locks
     // Each document = one user+video pair, so simple distinct query on userId
     const result = await client
       .db('Media')
       .collection('WatchHistory')
       .aggregate([
-        // Match videos with this normalizedVideoId and valid status
+        // Match videos by either identity, valid entries only
         {
           $match: {
-            normalizedVideoId: normalizedVideoId,
+            $or: [
+              { normalizedVideoId: normalizedVideoId },
+              ...(contentId ? [{ mediaId: contentId }] : []),
+            ],
             isValid: { $ne: false }, // Only count valid entries
           },
         },

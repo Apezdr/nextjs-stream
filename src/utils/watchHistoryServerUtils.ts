@@ -1,6 +1,22 @@
 'use server'
 
 import { createWatchHistoryLookupMap } from './watchHistoryUtils'
+import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
+
+/**
+ * Resolve a video's watch data from the lookup map: exact URL key first
+ * (row.videoId === videoURL), then the normalized id (nid). The nid arm heals
+ * URL-shape mismatches — e.g. a row written while playing through the JIT
+ * transcoder canonicalizes to the same nid as the source videoURL, so the
+ * saved position is found instead of reading 0.
+ */
+function lookupWatchData(watchMap: Map<string, any>, videoURL: string) {
+  const direct = watchMap.get(videoURL)
+  if (direct) return direct
+
+  const normalizedVideoId = generateNormalizedVideoId(videoURL)
+  return normalizedVideoId ? watchMap.get(normalizedVideoId) : undefined
+}
 
 /**
  * Get watch history lookup map for a specific user
@@ -36,7 +52,7 @@ export async function getWatchTimeForVideo(videoURL: string, userId: string | nu
   
   try {
     const watchMap = await getCurrentUserWatchHistory(userId)
-    const watchData = watchMap.get(videoURL)
+    const watchData = lookupWatchData(watchMap, videoURL)
     return watchData?.playbackTime ?? 0
   } catch (error) {
     console.error('[watchHistoryServerUtils] Error getting watch time:', error)
@@ -57,8 +73,8 @@ export async function getWatchDataForVideo(videoURL: string, userId: string | nu
   
   try {
     const watchMap = await getCurrentUserWatchHistory(userId)
-    const watchData = watchMap.get(videoURL)
-    
+    const watchData = lookupWatchData(watchMap, videoURL)
+
     if (!watchData) return null
     
     return {

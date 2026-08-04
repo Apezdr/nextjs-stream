@@ -1,10 +1,14 @@
 'use client'
 
 import { cache, useMemo } from 'react'
+import { getPlaybackStorageKey, readWithLegacyFallback } from '@src/utils/playbackStorageKey'
 
-export function getWatchedTime(videoURL) {
+export function getWatchedTime(videoURL, mediaId = null) {
   if (typeof window === 'undefined') return 0
-  const savedData = JSON.parse(localStorage.getItem(videoURL))
+  // Stable identity key when resolved; falls back to (and migrates forward
+  // from) the legacy videoURL key.
+  const stableKey = getPlaybackStorageKey({ mediaId, videoURL })
+  const savedData = JSON.parse(readWithLegacyFallback(stableKey, videoURL))
   const savedTime = savedData ? Math.round(parseFloat(savedData.playbackTime)) : 0
   return savedTime
 }
@@ -40,28 +44,28 @@ export function formatWatchedTime(watchedSeconds, totalRuntime) {
   return `${formattedWatched} - ${convertRuntime(totalRuntime)}`
 }
 
-export function TotalRuntime({ length, metadata, videoURL, classNames, watchedSeconds }) {
+export function TotalRuntime({ length, metadata, videoURL, mediaId = null, classNames, watchedSeconds }) {
   const displayTime = useMemo(() => {
     // Prefer server-provided watchedSeconds, fallback to localStorage
     const watchedTimeInSeconds = (watchedSeconds !== undefined && watchedSeconds !== null)
       ? watchedSeconds
-      : getWatchedTime(videoURL)
+      : getWatchedTime(videoURL, mediaId)
     const formattedDisplayTime = formatWatchedTime(
       watchedTimeInSeconds,
       length ?? metadata?.runtime ?? 'Unknown'
     )
     return formattedDisplayTime
-  }, [length, metadata, videoURL, watchedSeconds])
+  }, [length, metadata, videoURL, mediaId, watchedSeconds])
 
   return <span className={classNames}>{displayTime}</span>
 }
 
-export const totalRuntimeInPercentage = cache((length, metadata, videoURL) => {
-  if (!videoURL) {
+export const totalRuntimeInPercentage = cache((length, metadata, videoURL, mediaId = null) => {
+  if (!videoURL && !mediaId) {
     return 0
   }
 
-  const watchedTimeInSeconds = getWatchedTime(videoURL)
+  const watchedTimeInSeconds = getWatchedTime(videoURL, mediaId)
   let totalRuntimeInSeconds = 0
 
   if (length) {

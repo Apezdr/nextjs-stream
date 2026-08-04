@@ -5,11 +5,24 @@ import { findPlaybackForUser, hasWatchHistory } from '@src/utils/watchHistory/da
 import { cache } from 'react'
 
 /**
- * Builds the dual-key lookup map (normalizedVideoId + raw videoId) from raw
- * WatchHistory documents. Shared by the full and bounded fetch paths.
+ * Durable content identity check ('mid:…', backend folder-derived). Rows may
+ * also carry legacy client-sent ObjectId-hex mediaIds (doc _id) — those never
+ * key catalog items' `mediaId` field and are excluded from identity keying.
+ *
+ * @param {*} id - Candidate mediaId value
+ * @returns {boolean} True when the value is a 'mid:…' durable identity
+ */
+function isDurableMediaId(id) {
+  return typeof id === 'string' && id.startsWith('mid:')
+}
+
+/**
+ * Builds the multi-key lookup map (normalizedVideoId + raw videoId + durable
+ * mediaId) from raw WatchHistory documents. Shared by the full and bounded
+ * fetch paths.
  *
  * @param {Array} watchHistoryEntries - Raw WatchHistory documents
- * @returns {Map} Map keyed by normalizedVideoId and raw videoId
+ * @returns {Map} Map keyed by normalizedVideoId, raw videoId, and mediaId ('mid:…')
  */
 function buildWatchHistoryLookupMap(watchHistoryEntries) {
   const lookupMap = new Map()
@@ -23,35 +36,39 @@ function buildWatchHistoryLookupMap(watchHistoryEntries) {
           normalizedId = generateNormalizedVideoId(entry.videoId)
         }
 
-        if (normalizedId) {
-          lookupMap.set(normalizedId, {
-            playbackTime: entry.playbackTime || 0,
-            lastWatched: entry.lastUpdated,
-            isWatched: true,
-            normalizedVideoId: normalizedId,
-            // Include additional metadata for TV shows
-            ...(entry.mediaType === 'tv' && {
-              showId: entry.showId,
-              seasonNumber: entry.seasonNumber,
-              episodeNumber: entry.episodeNumber
-            })
+        const watchData = {
+          playbackTime: entry.playbackTime || 0,
+          lastWatched: entry.lastUpdated,
+          isWatched: true,
+          normalizedVideoId: normalizedId,
+          // Include additional metadata for TV shows
+          ...(entry.mediaType === 'tv' && {
+            showId: entry.showId,
+            seasonNumber: entry.seasonNumber,
+            episodeNumber: entry.episodeNumber
           })
+        }
+
+        if (normalizedId) {
+          lookupMap.set(normalizedId, watchData)
         }
 
         // Also add entry by direct videoId for fallback matching
         if (entry.videoId) {
-          lookupMap.set(entry.videoId, {
-            playbackTime: entry.playbackTime || 0,
-            lastWatched: entry.lastUpdated,
-            isWatched: true,
-            normalizedVideoId: normalizedId,
-            // Include additional metadata for TV shows
-            ...(entry.mediaType === 'tv' && {
-              showId: entry.showId,
-              seasonNumber: entry.seasonNumber,
-              episodeNumber: entry.episodeNumber
-            })
-          })
+          lookupMap.set(entry.videoId, watchData)
+        }
+
+        // Durable-identity key ('mid:…'): rename-proof arm for item-side
+        // lookups. Two rows can share a mediaId pre-backfill (quality swap
+        // duplicates) — the row with the newer lastUpdated wins the key.
+        if (isDurableMediaId(entry.mediaId)) {
+          const existing = lookupMap.get(entry.mediaId)
+          if (
+            !existing ||
+            new Date(entry.lastUpdated || 0) >= new Date(existing.lastWatched || 0)
+          ) {
+            lookupMap.set(entry.mediaId, watchData)
+          }
         }
       })
   }
@@ -85,6 +102,7 @@ export const createWatchHistoryLookupMap = cache(async function(userId) {
             playbackTime: 1,
             lastUpdated: 1,
             mediaType: 1,
+            mediaId: 1,
             showId: 1,
             seasonNumber: 1,
             episodeNumber: 1
@@ -114,8 +132,13 @@ export function augmentItemsWithWatchHistory(items, watchHistoryMap) {
   return items.map(item => {
     let watchData = null
 
-    // Try to match by normalizedVideoId first (most reliable)
-    if (item.normalizedVideoId && watchHistoryMap.has(item.normalizedVideoId)) {
+    // Try the durable content identity first ('mid:…') — rename-proof: it
+    // matches rows written before the item's URL (and thus nid) changed
+    if (item.mediaId && watchHistoryMap.has(item.mediaId)) {
+      watchData = watchHistoryMap.get(item.mediaId)
+    }
+    // Then match by normalizedVideoId (most reliable URL-derived key)
+    else if (item.normalizedVideoId && watchHistoryMap.has(item.normalizedVideoId)) {
       watchData = watchHistoryMap.get(item.normalizedVideoId)
     }
     // Fallback to videoURL matching
@@ -227,15 +250,31 @@ export async function addWatchHistoryToItemsBounded(items, userId) {
 
     const normalizedIds = [...new Set(items.map(item => item?.normalizedVideoId).filter(Boolean))]
 
-    const entries = normalizedIds.length > 0
+    // Durable identities carried by the items — fetch rows keyed under a prior
+    // URL/nid (quality swaps, renames) that only the mediaId arm can match.
+    const itemMediaIds = [...new Set(items.map(item => item?.mediaId).filter(isDurableMediaId))]
+
+    const rowFilter =
+      itemMediaIds.length > 0
+        ? {
+            isValid: { $ne: false },
+            $or: [
+              { normalizedVideoId: { $in: normalizedIds } },
+              { mediaId: { $in: itemMediaIds } }
+            ]
+          }
+        : { isValid: { $ne: false }, normalizedVideoId: { $in: normalizedIds } }
+
+    const entries = normalizedIds.length > 0 || itemMediaIds.length > 0
       ? await findPlaybackForUser(userId, {
-          filter: { isValid: { $ne: false }, normalizedVideoId: { $in: normalizedIds } },
+          filter: rowFilter,
           projection: {
             videoId: 1,
             normalizedVideoId: 1,
             playbackTime: 1,
             lastUpdated: 1,
             mediaType: 1,
+            mediaId: 1,
             showId: 1,
             seasonNumber: 1,
             episodeNumber: 1

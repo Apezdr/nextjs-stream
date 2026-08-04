@@ -8,6 +8,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('WatchHistory.Database')
@@ -44,22 +45,54 @@ export async function upsertPlayback({
     const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
     const normalizedVideoId = generateNormalizedVideoId(videoId)
 
-    const result = await collection.updateOne(
-      { userId: userIdObj, normalizedVideoId },
-      {
-        $set: {
-          videoId,
-          playbackTime,
-          isPaused: isPaused === true,
-          lastUpdated: new Date(),
-          ...metadata,
-          ...(deviceInfo && { deviceInfo }),
-          ...(ipAddress && { ipAddress }),
-          ...(localIp && { localIp })
-        }
-      },
-      { upsert: true }
-    )
+    // P5 identity cutover: stamp the durable content identity, resolved
+    // server-side from the played URL's hash (cached; fail-open). The upsert
+    // KEY stays {userId, normalizedVideoId} — mediaId is additive.
+    const resolved = await resolveMediaIdForNid(normalizedVideoId)
+
+    const updateDoc = {
+      $set: {
+        videoId,
+        playbackTime,
+        isPaused: isPaused === true,
+        lastUpdated: new Date(),
+        ...metadata,
+        // AFTER the metadata spread: extractPlaybackMetadata always emits a
+        // `mediaId` key (the client-sent churning hex _id, or null), which
+        // would otherwise clobber the durable server-resolved identity.
+        // When resolution misses, the legacy client value flows unchanged.
+        ...(resolved?.mediaId && { mediaId: resolved.mediaId }),
+        ...(deviceInfo && { deviceInfo }),
+        ...(ipAddress && { ipAddress }),
+        ...(localIp && { localIp })
+      }
+    }
+    const filter = { userId: userIdObj, normalizedVideoId }
+
+    let result
+    try {
+      result = await collection.updateOne(filter, updateDoc, { upsert: true })
+    } catch (error) {
+      // Once the partial unique index {userId, mediaId} exists, a quality
+      // swap (same folder, new file → new nid, same mediaId) makes this
+      // upsert INSERT a second row for the same identity and violate it.
+      // Merge policy: this beat is the newest state — drop the sibling
+      // row(s) holding the same identity under an older nid, retry once.
+      const isMediaIdUnique =
+        error?.code === 11000 &&
+        (error?.keyPattern?.mediaId !== undefined ||
+          String(error?.message || '').includes('userId_mediaId_unique'))
+      if (isMediaIdUnique && resolved?.mediaId) {
+        await collection.deleteMany({
+          userId: userIdObj,
+          mediaId: resolved.mediaId,
+          normalizedVideoId: { $ne: normalizedVideoId },
+        })
+        result = await collection.updateOne(filter, updateDoc, { upsert: true })
+      } else {
+        throw error
+      }
+    }
 
     log.debug(
       { userId: userIdObj.toString(), normalizedVideoId, matched: result.matchedCount, upserted: result.upsertedCount },

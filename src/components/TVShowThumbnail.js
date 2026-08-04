@@ -45,6 +45,7 @@ export default function TVShowThumbnail({ episode, metadata, viewTransitionName 
           length={episode.duration ?? (episode.metadata?.runtime ? episode.metadata.runtime * 60000 : 0)}
           metadata={episode.metadata}
           videoURL={episode.videoURL}
+          mediaId={episode.mediaId}
           classNames="absolute bottom-0 w-full text-center z-[10] text-[0.55rem]"
         />
       )}

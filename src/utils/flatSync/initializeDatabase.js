@@ -249,6 +249,18 @@ export async function createFlatDatabaseIndexes() {
       // CRITICAL: Compound unique index prevents duplicate watch history entries per user+video
       // Used by: playback sync, watch history queries, migration from old PlaybackStatus schema
       { key: { userId: 1, normalizedVideoId: 1 }, unique: true, name: 'userId_normalizedId_unique' },
+      // P5 identity invariant: one row per user per TITLE (durable mediaId),
+      // not per URL-hash. PARTIAL is mandatory — rows without mediaId all
+      // "share" a missing key and a plain unique would collide them.
+      // Created in prod by scripts/backfillWatchHistoryMediaId.js
+      // --create-index AFTER the backfill converges; declared here for
+      // fresh-database rebuild parity.
+      {
+        key: { userId: 1, mediaId: 1 },
+        unique: true,
+        partialFilterExpression: { mediaId: { $exists: true } },
+        name: 'userId_mediaId_unique',
+      },
       
       // Index for user-specific queries
       { key: { userId: 1 }, name: 'userId_index' },

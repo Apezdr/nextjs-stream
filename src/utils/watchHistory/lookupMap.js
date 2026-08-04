@@ -45,7 +45,7 @@ export const createWatchHistoryLookupMap = cache(async function(userId) {
       )
       .toArray()
 
-    // Create map for O(1) lookups by normalizedVideoId
+    // Create map for O(1) lookups by normalizedVideoId and durable mediaId
     const lookupMap = new Map()
     for (const entry of entries) {
       const value = {
@@ -60,6 +60,20 @@ export const createWatchHistoryLookupMap = cache(async function(userId) {
         isValid: entry.isValid
       }
       lookupMap.set(entry.normalizedVideoId, value)
+
+      // Durable-identity key ('mid:…'): rename-proof arm. Legacy ObjectId-hex
+      // mediaIds (doc _id semantics) are not identity keys and are skipped.
+      // Two rows can share a mediaId pre-backfill (quality-swap duplicates) —
+      // the row with the newer lastUpdated wins the key.
+      if (typeof entry.mediaId === 'string' && entry.mediaId.startsWith('mid:')) {
+        const existing = lookupMap.get(entry.mediaId)
+        if (
+          !existing ||
+          new Date(entry.lastUpdated || 0) >= new Date(existing.lastUpdated || 0)
+        ) {
+          lookupMap.set(entry.mediaId, value)
+        }
+      }
     }
 
     return lookupMap

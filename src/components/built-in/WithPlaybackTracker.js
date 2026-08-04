@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useMediaPlayer, useMediaRemote, useMediaState } from '@vidstack/react';
 import throttle from 'lodash/throttle';
 import { useRouter, usePathname } from 'next/navigation';
+import { getPlaybackStorageKey, readWithLegacyFallback } from '@src/utils/playbackStorageKey';
 
 // Presence ping cadence while paused and foregrounded. Coarser than the 1s
 // playing heartbeat on purpose — see plans/media-activity-presence.md.
@@ -34,9 +35,15 @@ export default function WithPlayBackTracker({
   videoURL,
   start = null,
   mediaMetadata = null,
-  savedPlaybackTime = null
+  savedPlaybackTime = null,
+  // Stable content identity ('mid:…') when resolved; null/absent falls back
+  // to the legacy videoURL key so behavior is unchanged for unresolved titles.
+  mediaId = null
 }) {
   const player = useMediaPlayer();
+  // localStorage progress key: stable identity when available, else videoURL.
+  // The worker payload keeps sending the raw videoURL (server contract).
+  const storageKey = getPlaybackStorageKey({ mediaId, videoURL });
   const canPlay = useMediaState('canPlay');
   const paused = useMediaState('paused');
   const remote = useMediaRemote();
@@ -63,8 +70,9 @@ export default function WithPlayBackTracker({
     let urlCleanupTimeout = null;
 
     const restorePlaybackPosition = async () => {
-      // Try localStorage first (fastest)
-      const savedData = localStorage.getItem(videoURL);
+      // Try localStorage first (fastest) — stable key, with legacy
+      // videoURL-key fallback that migrates the value forward.
+      const savedData = readWithLegacyFallback(storageKey, videoURL);
       const savedTime = savedData ? parseFloat(JSON.parse(savedData).playbackTime) : null;
 
       if (!hasAppliedStartRef.current) {
@@ -85,7 +93,7 @@ export default function WithPlayBackTracker({
         else if (savedPlaybackTime !== null && savedPlaybackTime > 0) {
           remote.seek(savedPlaybackTime);
           // Cache it locally for future use
-          localStorage.setItem(videoURL, JSON.stringify({
+          localStorage.setItem(storageKey, JSON.stringify({
             playbackTime: savedPlaybackTime,
             lastUpdated: new Date().toISOString()
           }));
@@ -103,7 +111,7 @@ export default function WithPlayBackTracker({
     return () => {
       if (urlCleanupTimeout) clearTimeout(urlCleanupTimeout);
     };
-  }, [remote, canPlay, videoURL, start, pathname, savedPlaybackTime]);
+  }, [remote, canPlay, storageKey, videoURL, start, pathname, savedPlaybackTime]);
 
   // Initialize the web worker with error handling and fallback logic.
   useEffect(() => {
@@ -201,7 +209,7 @@ export default function WithPlayBackTracker({
         isFetchingRef.current = true;
 
         localStorage.setItem(
-          videoURL,
+          storageKey,
           JSON.stringify({
             playbackTime: currentTime,
             lastUpdated: new Date().toISOString(),
@@ -231,7 +239,7 @@ export default function WithPlayBackTracker({
       unsubscribe();
       throttledUpdateServer.cancel();
     };
-  }, [player, videoURL, canPlay, mediaMetadata]);
+  }, [player, storageKey, videoURL, canPlay, mediaMetadata]);
 
   // Send a heartbeat whenever the paused state changes so the live activity
   // view keeps showing the session (as paused) instead of dropping it.

@@ -25,7 +25,11 @@ import {
  *
  * `mediaKey` is whatever uniquely identifies the current video — used to
  * gate the initial-apply effect so navigating between videos re-applies the
- * preference exactly once per video.
+ * preference exactly once per video. Callers pass the stable content
+ * identity (media.mediaId || videoURL) so a serve-time JIT URL swap of the
+ * same video doesn't read as a new one. Note: mediaKey is a session gate
+ * only — the stored preference itself is a single GLOBAL localStorage key
+ * (see captionPreference.js), so no per-media key migration is needed here.
  */
 export default function CaptionPreferenceManager({ captions, mediaKey }) {
   const player = useMediaPlayer()
