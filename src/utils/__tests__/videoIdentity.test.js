@@ -34,6 +34,18 @@ describe('generateNormalizedVideoId', () => {
     ).toBe(REL_HASH)
   })
 
+  test('pins the production rung-URL rows to the direct-play hash (identity fork fix)', () => {
+    // Exact videoIds from the July 2026 orphaned WatchHistory rows — variant
+    // rungs of the 2160p Backrooms file (= REL). Before the rung fix these
+    // hashed as opaque pathnames (393f6c8b…/305cd958…), forking identity.
+    const v2 =
+      'https://transcoder.adamdrumm.com/stream/bW92aWVzL0JhY2tyb29tcy9CYWNrcm9vbXMuMjAyNi4yMTYwcC5pVC5XRUItREwuRFYuSERSMTArLUJlbi5UaGUuTWVuLm1wNA/v/2/index.m3u8'
+    const v1 =
+      'https://transcoder.adamdrumm.com/stream/bW92aWVzL0JhY2tyb29tcy9CYWNrcm9vbXMuMjAyNi4yMTYwcC5pVC5XRUItREwuRFYuSERSMTArLUJlbi5UaGUuTWVuLm1wNA/v/1/index.m3u8'
+    expect(generateNormalizedVideoId(v2)).toBe(REL_HASH)
+    expect(generateNormalizedVideoId(v1)).toBe(REL_HASH)
+  })
+
   test('pins the production JIT WatchHistory row hash equivalence', () => {
     // Exact videoId stored in a production WatchHistory row; its canonical
     // identity must equal the direct-play 1080p hash.
@@ -107,9 +119,16 @@ describe('canonicalizeStreamPathname', () => {
   test('leaves non-matching pathnames unchanged', () => {
     expect(canonicalizeStreamPathname(`/${REL}`)).toBe(`/${REL}`)
     expect(canonicalizeStreamPathname('/stream/')).toBe('/stream/')
-    expect(canonicalizeStreamPathname(`/stream/${B64}/v/720p/index.m3u8`)).toBe(
-      `/stream/${B64}/v/720p/index.m3u8`
-    )
+    expect(canonicalizeStreamPathname(`/stream/${B64}`)).toBe(`/stream/${B64}`)
+  })
+
+  test('variant rungs, audio rungs, and segments canonicalize like the master', () => {
+    // Production falsified the "rungs are never reported" assumption (July
+    // 2026: players echoed /v/N/index.m3u8 as videoId for Backrooms). Every
+    // path under /stream/<b64>/ names the same source file.
+    for (const tail of ['v/2/index.m3u8', 'v/720p/index.m3u8', 'a/0/index.m3u8', 'v/0/seg-00042.m4s']) {
+      expect(canonicalizeStreamPathname(`/stream/${B64}/${tail}`)).toBe(`/${REL}`)
+    }
   })
 
   test('rejects non-base64 stream segments via round-trip guard', () => {

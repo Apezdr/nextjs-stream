@@ -36,9 +36,14 @@ const crypto = require('crypto')
  * behave identically in both flows, which is the actual invariant: not a
  * particular encoding, but BYTE-IDENTICAL serialization on both paths.
  *
- * The regex is deliberately exact (master.m3u8 / manifest.mpd, end-anchored):
- * variant playlists and segments are never reported as a playback videoId,
- * and any future change to the transcoder's URL shape must be mirrored here.
+ * ANY tail under /stream/<b64>/ canonicalizes — master.m3u8, manifest.mpd,
+ * variant rungs (v/2/index.m3u8), audio rungs, segments. The original design
+ * matched only the master/manifest tails on the assumption that rungs are
+ * never reported as a playback videoId; production falsified it (July 2026:
+ * players echoed /v/N/index.m3u8 rows for Backrooms, forking identity). The
+ * base64 segment IS the identity — every path under it names the same source
+ * file — and the decode guards below still reject anything that merely looks
+ * like the shape.
  *
  * MUST be called BEFORE any lowercasing — base64 is case-sensitive.
  *
@@ -61,9 +66,12 @@ function whatwgSerializePath(decoded) {
 function canonicalizeStreamPathnameWith(pathname, finalize) {
   if (typeof pathname !== 'string') return pathname
 
-  const match = /^\/stream\/([A-Za-z0-9+/_-]+={0,2})\/(?:master\.m3u8|manifest\.mpd)$/.exec(
-    pathname
-  )
+  // The key is the FIRST path segment only — no '/' in the class. The
+  // transcoder mints strict URL_SAFE_NO_PAD keys and rejects the standard
+  // alphabet, so a slash can never be part of a real key; allowing it here
+  // would make the capture ambiguous against multi-segment tails ('+'/'='
+  // stay tolerated for the manually-pasted era of standard-alphabet URLs).
+  const match = /^\/stream\/([A-Za-z0-9+_-]+={0,2})\/.+$/.exec(pathname)
   if (!match) return pathname
 
   const segment = match[1]

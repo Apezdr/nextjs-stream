@@ -53,7 +53,11 @@ const APPLY = process.argv.includes('--apply')
 // Matches the videoId shape the canonicalizer acts on. Deliberately broad
 // (any host) — generateNormalizedVideoId is the actual decision authority:
 // rows whose id it does not change are reported as `unchanged`.
-const JIT_VIDEO_ID_REGEX = '\\/stream\\/[A-Za-z0-9+/_-]+={0,2}\\/(master\\.m3u8|manifest\\.mpd)$'
+// Any tail under /stream/<b64>/ — matching canonicalizeStreamPathname's
+// scope since the rung-URL fix (players were observed echoing variant
+// playlists like /v/2/index.m3u8 as videoId, not just the master manifest).
+// The key is the first path segment only (strict base64url, no '/').
+const JIT_VIDEO_ID_REGEX = '\\/stream\\/[A-Za-z0-9+_-]+={0,2}\\/.+$'
 
 function logAction(action, details) {
   console.log(JSON.stringify({ action: APPLY ? action : `would-${action}`, ...details }))
