@@ -1,6 +1,28 @@
 import { cacheLife, cacheTag } from 'next/cache'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
+import { applyJitPreference } from '@src/utils/jit/preference'
 import { shouldRedirect, buildRedirectUrl, logRedirect } from '@src/utils/media/redirectHandler'
+
+/**
+ * Per-request delivery decision for PLAYER pages, applied AFTER the cached
+ * fetch — deliberately NOT inside the 'use cache' scope. The JIT swap
+ * depends on the admin serve mode, per-media overrides, and a live
+ * transcoder health probe; baking it into a cross-request cache entry would
+ * freeze one moment's decision for every user until revalidation (and turn
+ * the kill switch into a "kill within cacheLife, maybe"). 'use cache' reads
+ * return fresh copies, but the swap works on its own shallow copy anyway.
+ *
+ * Call this at PAGE render for player routes; generateMetadata keeps the
+ * raw cached doc (metadata never plays anything).
+ */
+export async function applyPlayerDelivery(result, parsedParams) {
+  if (!parsedParams?.isPlayerPage) return result
+  if (!result?.media || typeof result.media.jitUrl !== 'string' || !result.media.jitUrl) {
+    return result
+  }
+  const media = await applyJitPreference({ ...result.media })
+  return { ...result, media }
+}
 import {
   movieDetailsTag,
   tvShowDetailsTag,

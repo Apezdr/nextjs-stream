@@ -148,6 +148,17 @@ describe('applyJitPreference', () => {
     expect(m.videoURL).toBe('https://h/movies/X/x.mkv')
   })
 
+  test('idempotent: a second application never clobbers rawVideoURL', async () => {
+    process.env.JIT_SERVE_MODE = 'prefer'
+    global.fetch = mockFetchOk()
+    const m = await applyJitPreference(mkvMedia())
+    expect(m.rawVideoURL).toBe('https://h/movies/X/x.mkv')
+    const again = await applyJitPreference(m)
+    expect(again.rawVideoURL).toBe('https://h/movies/X/x.mkv')
+    expect(again.videoURL).toBe(JIT)
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
   test('no jitUrl is a no-op regardless of mode', async () => {
     process.env.JIT_SERVE_MODE = 'prefer'
     global.fetch = mockFetchOk()

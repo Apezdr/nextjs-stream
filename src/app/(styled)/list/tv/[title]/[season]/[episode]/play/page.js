@@ -6,7 +6,7 @@ import {
   MediaNotFound,
   TVEpisodePlayerView,
 } from '@src/components/MediaPages/DynamicPage'
-import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
+import { getCachedMediaWithRedirect, applyPlayerDelivery } from '@src/utils/cache/mediaFetching'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
 
 function buildParsedParams(title, season, episode) {
@@ -67,6 +67,10 @@ export default async function TVEpisodePlayerPage({ params, searchParams }) {
   if (result.redirectUrl) {
     redirect(result.redirectUrl)
   }
+
+  // Serve-time JIT delivery decision — per request, OUTSIDE the cached fetch
+  // (mode/health/overrides must never be frozen into a cache entry).
+  result = await applyPlayerDelivery(result, parsedParams)
 
   const { media, notFoundType } = result
   const hasFullAccess =

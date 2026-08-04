@@ -21,7 +21,7 @@ import { withApprovedUser } from '@src/components/HOC/ApprovedUser'
 // Utilities
 import { parseMediaParams } from '@src/utils/media/urlParser'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
-import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
+import { getCachedMediaWithRedirect, applyPlayerDelivery } from '@src/utils/cache/mediaFetching'
 
 // Components
 import {
@@ -160,6 +160,10 @@ async function MediaPage({ params, searchParams }) {
   if (result.redirectUrl) {
     redirect(result.redirectUrl)
   }
+
+  // Serve-time JIT delivery decision — per request, OUTSIDE the cached fetch
+  // (mode/health/overrides must never be frozen into a cache entry).
+  result = await applyPlayerDelivery(result, parsedParams)
 
   const { media, notFoundType } = result
 

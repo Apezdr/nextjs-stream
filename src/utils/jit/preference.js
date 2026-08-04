@@ -65,6 +65,9 @@ export async function getEffectiveJitServeMode() {
  */
 export async function applyJitPreference(media) {
   if (!media || typeof media.jitUrl !== 'string' || !media.jitUrl) return media
+  // Idempotent: multiple serve layers may compose (route + player page) —
+  // a second application must not clobber rawVideoURL with the manifest.
+  if (media.playbackSource === 'jit') return media
 
   const mode = await getEffectiveJitServeMode()
   // Global kill switch always wins — not defeatable per-title.
