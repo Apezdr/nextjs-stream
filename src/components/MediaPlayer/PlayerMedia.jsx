@@ -30,8 +30,11 @@ export default function PlayerMedia({
     )
   }
   if (thumbnailsURL) {
+    // `default` puts the track in 'hidden' mode so the browser actually loads
+    // the VTT — the store only reads cues, it never enables the track itself.
+    // (Spec allows one default per kind category, so chapters+metadata is fine.)
     trackEls.push(
-      <track key="thumbnails" kind="metadata" label="thumbnails" src={thumbnailsURL} />
+      <track key="thumbnails" kind="metadata" label="thumbnails" src={thumbnailsURL} default />
     )
   }
   if (captions) {
