@@ -35,7 +35,7 @@ function ChapterTicks() {
       {cues.slice(1).map((cue) => (
         <div
           key={cue.startTime}
-          className="absolute top-1/2 h-[5px] w-[2.5px] -translate-y-1/2 bg-black/60"
+          className="absolute top-1/2 h-[5px] w-[2px] -translate-y-1/2 bg-black/40"
           style={{ left: `${(cue.startTime / duration) * 100}%` }}
         />
       ))}

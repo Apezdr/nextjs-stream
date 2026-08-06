@@ -3,6 +3,7 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { classNames } from '@src/utils'
 import useYouTubePlayer from '@components/VideoPreview/useYouTubePlayer'
+import useVideoElementTeardown from '@components/VideoPreview/useVideoElementTeardown'
 import { extractYouTubeId } from '@components/VideoPreview/youtubeUrl'
 
 const VOLUME_KEY = 'videoVolumeCard'
@@ -89,7 +90,9 @@ function FilePreview({
   onPlaying,
   onPlayingChange,
 }) {
-  const videoRef = useRef(null)
+  // Real-unmount teardown: a playing <video> removed from the DOM keeps its
+  // audio alive until GC — pause + release on unmount.
+  const videoRef = useVideoElementTeardown()
   const readyNotifiedRef = useRef(false)
   const [instanceKey, setInstanceKey] = useState(0)
 
