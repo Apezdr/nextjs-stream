@@ -13,7 +13,7 @@ export function Volume() {
       <VolumeSlider.Track className="relative z-0 h-[5px] w-full rounded-sm bg-white/30">
         <VolumeSlider.Fill className="absolute h-full w-[var(--media-slider-fill)] rounded-sm bg-blue-300 will-change-[width]" />
       </VolumeSlider.Track>
-      <VolumeSlider.Preview className="pointer-events-none !bottom-full z-30 mb-3 flex flex-col items-center opacity-0 transition-opacity duration-200 group-data-[interactive]:opacity-100">
+      <VolumeSlider.Preview className="pointer-events-none !bottom-full z-30 -mb-2 flex flex-col items-center opacity-0 transition-opacity duration-200 group-data-[interactive]:opacity-100">
         <VolumeSlider.Value className="rounded-sm bg-black px-2 py-px text-[13px] font-medium" />
       </VolumeSlider.Preview>
       <VolumeSlider.Thumb className={thumbClass} />
@@ -69,7 +69,7 @@ export function Time({ hasThumbnails }) {
       <TimeSlider.Thumb className={thumbClass} />
       <TimeSlider.Preview
         overflow="clamp"
-        className="pointer-events-none !bottom-full z-30 mb-3 flex flex-col items-center opacity-0 transition-opacity duration-200 group-data-[pointing]:opacity-100"
+        className="pointer-events-none !bottom-full z-30 -mb-2 flex flex-col items-center opacity-0 transition-opacity duration-200 group-data-[pointing]:opacity-100"
       >
         {hasThumbnails ? (
           // Reads the sprite VTT from the media's kind="metadata" label="thumbnails"
