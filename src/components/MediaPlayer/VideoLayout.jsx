@@ -89,6 +89,9 @@ export function VideoLayout({
         <SpinnerIcon className="h-16 w-16 animate-spin text-white/90" />
       </BufferingIndicator>
       <Controls.Root className="absolute inset-0 z-10 flex h-full w-full flex-col bg-gradient-to-t from-black/10 to-transparent opacity-0 transition-opacity pointer-events-none data-[visible]:opacity-100">
+        {/* Bottom gradient shown only while hovering the seek bar (rises to
+            ~mid-thumbnail height); toggled via :has() in player.css. */}
+        <div className="seek-hover-gradient pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 transition-opacity duration-300" />
         {/* Top Bar */}
         <Controls.Group className="pointer-events-auto relative left-1 top-4 flex h-12 w-16 items-center px-2">
           <Buttons.GoBack goBack={goBack} />

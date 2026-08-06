@@ -21,6 +21,12 @@
   transition: transform 0.3s;
 }
 
+/* Reveal the bottom gradient only while the pointer is over the seek bar
+ * (data-pointing is stamped on the TimeSlider root by the framework). */
+.player-container:has(.time-slider[data-pointing]) .seek-hover-gradient {
+  opacity: 1;
+}
+
 /* The media element fills the container. */
 .player-container video {
   width: 100%;
