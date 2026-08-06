@@ -94,9 +94,11 @@ function FilePreview({
   const [instanceKey, setInstanceKey] = useState(0)
 
   const callbacksRef = useRef({})
-  callbacksRef.current = { onVideoReady, onVideoEnd, onPlaying, onPlayingChange }
   const shouldPlayRef = useRef(shouldPlay)
-  shouldPlayRef.current = shouldPlay
+  useEffect(() => {
+    callbacksRef.current = { onVideoReady, onVideoEnd, onPlaying, onPlayingChange }
+    shouldPlayRef.current = shouldPlay
+  })
 
   // Mirror play/pause intent.
   useEffect(() => {
@@ -203,7 +205,9 @@ function YouTubePreview({
   })
 
   const onPlayingChangeRef = useRef(onPlayingChange)
-  onPlayingChangeRef.current = onPlayingChange
+  useEffect(() => {
+    onPlayingChangeRef.current = onPlayingChange
+  })
   useEffect(() => {
     if (onPlayingChangeRef.current) onPlayingChangeRef.current(isPlaying)
   }, [isPlaying])

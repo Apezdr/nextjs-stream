@@ -38,24 +38,26 @@ export default function useYouTubePlayer({
 
   const [isPlaying, setIsPlaying] = useState(false)
   const [hasFailed, setHasFailed] = useState(false)
-  const [isVisible, setIsVisible] = useState(!deferUntilVisible)
+  const [isVisible, setIsVisible] = useState(
+    () => !deferUntilVisible || typeof IntersectionObserver === 'undefined'
+  )
   const [instanceKey, setInstanceKey] = useState(0)
 
   // Callbacks and play/mute/volume intents live in refs so the create-player
-  // effect never re-runs on a new closure or prop flip.
+  // effect never re-runs on a new closure or prop flip. Synced post-commit
+  // (declared before the create effect so ordering holds on first mount).
   const callbacksRef = useRef({})
-  callbacksRef.current = { onTime, onPlaying, onEnded, onReady, onError }
-  const intentRef = useRef({})
-  intentRef.current = { shouldPlay, muted, volume }
+  const intentRef = useRef({ shouldPlay, muted, volume })
+  useEffect(() => {
+    callbacksRef.current = { onTime, onPlaying, onEnded, onReady, onError }
+    intentRef.current = { shouldPlay, muted, volume }
+  })
 
   // Defer creation until the mount point scrolls near the viewport.
   useEffect(() => {
     if (!deferUntilVisible || isVisible) return undefined
     const node = containerRef.current
-    if (!node || typeof IntersectionObserver === 'undefined') {
-      setIsVisible(true)
-      return undefined
-    }
+    if (!node) return undefined
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) setIsVisible(true)

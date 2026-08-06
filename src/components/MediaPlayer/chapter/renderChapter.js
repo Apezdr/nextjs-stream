@@ -1,8 +1,10 @@
 'use client'
-import { RadioGroup } from '@vidstack/react'
-import Image from 'next/image'
-import { useCallback } from 'react'
 
+import Image from 'next/image'
+import { Menu } from './../videojs'
+import { classNames } from '@src/utils'
+
+// The frame endpoint expects a zero-padded HH:MM:SS path segment.
 function convertTimeFormat(startTimeText) {
   const parts = startTimeText.split(':')
   let hours, minutes, seconds
@@ -24,31 +26,24 @@ function convertTimeFormat(startTimeText) {
 }
 
 const RenderChapter = ({
-  cue,
   label,
-  value,
   startTimeText,
   durationText,
-  select,
-  setProgressVar,
+  isActive,
+  onSelect,
   chapterThumbnailURL,
-  chapterTitle,
 }) => {
-  const handleSelect = useCallback(() => {
-    select(value)
-  }, [select, value])
-
   return (
-    <RadioGroup.Item
-      className="vds-chapter-radio vds-radio max-w-[91vw]"
-      value={value}
-      key={value + chapterTitle}
-      onSelect={handleSelect}
-      ref={setProgressVar}
+    <Menu.Item
+      onClick={onSelect}
+      className={classNames(
+        'flex w-full max-w-[91vw] cursor-pointer select-none items-center gap-3 rounded-sm p-2 outline-none ring-blue-400 hover:bg-white/10 focus-visible:ring-[3px] data-[highlighted]:bg-white/10',
+        isActive ? 'bg-white/15' : ''
+      )}
     >
       {chapterThumbnailURL && (
         <Image
-          className="vds-thumbnail"
+          className="h-[52px] w-[92px] shrink-0 rounded-sm border border-white/20 object-cover"
           src={`${chapterThumbnailURL}${convertTimeFormat(startTimeText)}`}
           alt="Chapter Thumbnail"
           width={160}
@@ -56,18 +51,12 @@ const RenderChapter = ({
           unoptimized
         />
       )}
-      <div className="vds-chapter-radio-content">
-        <span className="vds-chapter-radio-label" data-part="label">
-          {label}
-        </span>
-        <span className="vds-chapter-radio-start-time" data-part="start-time">
-          {startTimeText}
-        </span>
-        <span className="vds-chapter-radio-duration" data-part="duration">
-          {durationText}
-        </span>
+      <div className="flex min-w-0 flex-col text-left">
+        <span className="truncate text-sm font-medium text-white">{label}</span>
+        <span className="text-xs text-red-400">{startTimeText}</span>
+        <span className="text-xs text-white/50">{durationText}</span>
       </div>
-    </RadioGroup.Item>
+    </Menu.Item>
   )
 }
 

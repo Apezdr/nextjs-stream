@@ -1,13 +1,12 @@
 'use client'
-import { useMediaPlayer, useMediaProvider, useMediaRemote, useMediaState } from '@vidstack/react'
 import { useEffect, useRef } from 'react'
+import { Player } from './videojs'
 
 const VolumeRegulator = () => {
-  const remote = useMediaRemote()
-  const player = useMediaPlayer()
-  const volume = useMediaState('volume', player)
-  const canSetVolume = useMediaState('canSetVolume', player)
-  const started = useMediaState('started', player)
+  const store = Player.usePlayer()
+  const volume = Player.usePlayer((s) => s.volume)
+  const started = Player.usePlayer((s) => s.started)
+  const canSetVolume = Player.usePlayer((s) => s.volumeAvailability !== 'unavailable')
   const hasMounted = useRef(false)
   const initialVolumeSet = useRef(false)
 
@@ -15,15 +14,15 @@ const VolumeRegulator = () => {
     if (started && canSetVolume && !initialVolumeSet.current) {
       const storedVolume = parseFloat(localStorage.getItem('videoVolumeMedia'))
       if (!isNaN(storedVolume) && storedVolume !== volume) {
-        remote.changeVolume(storedVolume)
+        store.setVolume(storedVolume)
         initialVolumeSet.current = true
       }
     }
-  }, [started, canSetVolume, remote, volume])
+  }, [started, canSetVolume, store, volume])
 
   useEffect(() => {
     if (hasMounted.current && started && canSetVolume) {
-      if (volume !== localStorage.getItem('videoVolumeMedia')) {
+      if (String(volume) !== localStorage.getItem('videoVolumeMedia')) {
         localStorage.setItem('videoVolumeMedia', volume)
       }
     } else if (started) {

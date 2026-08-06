@@ -1,9 +1,9 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useMediaPlayer, useMediaRemote, useMediaState } from '@vidstack/react';
+import { Player } from '@components/MediaPlayer/videojs';
 import throttle from 'lodash/throttle';
-import { useRouter, usePathname } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { getPlaybackStorageKey, readWithLegacyFallback } from '@src/utils/playbackStorageKey';
 
 // Presence ping cadence while paused and foregrounded. Coarser than the 1s
@@ -40,14 +40,13 @@ export default function WithPlayBackTracker({
   // to the legacy videoURL key so behavior is unchanged for unresolved titles.
   mediaId = null
 }) {
-  const player = useMediaPlayer();
+  const store = Player.usePlayer();
   // localStorage progress key: stable identity when available, else videoURL.
   // The worker payload keeps sending the raw videoURL (server contract).
   const storageKey = getPlaybackStorageKey({ mediaId, videoURL });
-  const canPlay = useMediaState('canPlay');
-  const paused = useMediaState('paused');
-  const remote = useMediaRemote();
-  const [lastTimeSent, setLastTimeSent] = useState(0);
+  const canPlay = Player.usePlayer((s) => s.canPlay);
+  const paused = Player.usePlayer((s) => s.paused);
+  const [, setLastTimeSent] = useState(0);
   const isFetchingRef = useRef(false);
   const nextUpdateTimeRef = useRef(null);
   const pausedRef = useRef(false);
@@ -58,14 +57,12 @@ export default function WithPlayBackTracker({
   if (sessionIdRef.current === null) {
     sessionIdRef.current = generateSessionId();
   }
-  
-  // Next.js routing hooks for URL manipulation
-  const router = useRouter();
+
   const pathname = usePathname();
 
   // Restore saved playback time when the player is ready.
   useEffect(() => {
-    if (!canPlay || !remote) return;
+    if (!canPlay || !store) return;
 
     let urlCleanupTimeout = null;
 
@@ -78,7 +75,7 @@ export default function WithPlayBackTracker({
       if (!hasAppliedStartRef.current) {
         // Priority 1: URL parameter (deep links) - highest priority
         if (start !== null && start !== undefined) {
-          remote.seek(start);
+          store.seek(start);
 
           // Clean up the URL by removing query parameters
           urlCleanupTimeout = setTimeout(() => {
@@ -91,7 +88,7 @@ export default function WithPlayBackTracker({
         }
         // Priority 2: Server-provided savedPlaybackTime (passed as prop from server)
         else if (savedPlaybackTime !== null && savedPlaybackTime > 0) {
-          remote.seek(savedPlaybackTime);
+          store.seek(savedPlaybackTime);
           // Cache it locally for future use
           localStorage.setItem(storageKey, JSON.stringify({
             playbackTime: savedPlaybackTime,
@@ -100,7 +97,7 @@ export default function WithPlayBackTracker({
         }
         // Priority 3: localStorage (for recently synced videos)
         else if (!isNaN(savedTime) && savedTime !== null) {
-          remote.seek(savedTime);
+          store.seek(savedTime);
         }
         hasAppliedStartRef.current = true;
       }
@@ -111,7 +108,7 @@ export default function WithPlayBackTracker({
     return () => {
       if (urlCleanupTimeout) clearTimeout(urlCleanupTimeout);
     };
-  }, [remote, canPlay, storageKey, videoURL, start, pathname, savedPlaybackTime]);
+  }, [store, canPlay, storageKey, videoURL, start, pathname, savedPlaybackTime]);
 
   // Initialize the web worker with error handling and fallback logic.
   useEffect(() => {
@@ -123,21 +120,8 @@ export default function WithPlayBackTracker({
     let worker;
 
     try {
-      // Option 1: Use the module-relative URL.
-      //
-      // This works if your bundler (e.g. Next.js with Webpack 5) correctly handles worker files.
-      //
-      // If you experience sporadic URL issues, you can uncomment Option 2 below.
       const workerUrl = new URL('./updatePlaybackWorker.js', import.meta.url);
       worker = new Worker(workerUrl, { type: 'module' });
-
-      /* Option 2: Use a worker file placed in the public directory.
-      
-      // First, move updatePlaybackWorker.js to your public/ folder.
-      // Then, instantiate the worker with the absolute URL:
-      const workerUrl = '/updatePlaybackWorker.js';
-      worker = new Worker(workerUrl, { type: 'module' });
-      */
     } catch (error) {
       console.error('Failed to instantiate worker:', error);
       return;
@@ -200,9 +184,9 @@ export default function WithPlayBackTracker({
     };
   }, []);
 
-  // Subscribe to the media player's current time and throttle updates to the worker.
+  // Subscribe to the player store's current time and throttle updates to the worker.
   useEffect(() => {
-    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
+    if (!canPlay || !store || !updatePlaybackWorkerRef.current) return;
 
     const throttledUpdateServer = throttle((currentTime) => {
       if (!isFetchingRef.current) {
@@ -230,8 +214,10 @@ export default function WithPlayBackTracker({
       }
     }, 1000); // Throttle to 1 second.
 
-    // Subscribe to player time updates.
-    const unsubscribe = player.subscribe(({ currentTime }) => {
+    // The store notifies on every state change (currentTime updates at
+    // timeupdate cadence); the 1s throttle gates the write rate as before.
+    const unsubscribe = store.subscribe(() => {
+      const currentTime = store.currentTime;
       if (currentTime > 0) throttledUpdateServer(currentTime);
     });
 
@@ -239,14 +225,14 @@ export default function WithPlayBackTracker({
       unsubscribe();
       throttledUpdateServer.cancel();
     };
-  }, [player, storageKey, videoURL, canPlay, mediaMetadata]);
+  }, [store, storageKey, videoURL, canPlay, mediaMetadata]);
 
   // Send a heartbeat whenever the paused state changes so the live activity
   // view keeps showing the session (as paused) instead of dropping it.
   useEffect(() => {
     pausedRef.current = paused === true;
-    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
-    const currentTime = player.state?.currentTime || 0;
+    if (!canPlay || !store || !updatePlaybackWorkerRef.current) return;
+    const currentTime = store.currentTime || 0;
     if (currentTime <= 0) return;
     updatePlaybackWorkerRef.current.postMessage({
       videoURL,
@@ -256,17 +242,17 @@ export default function WithPlayBackTracker({
       localIp: localIpRef.current,
       sessionId: sessionIdRef.current,
     });
-  }, [paused, canPlay, player, videoURL, mediaMetadata]);
+  }, [paused, canPlay, store, videoURL, mediaMetadata]);
 
   // Keep presence alive at a low frequency while paused and foregrounded.
   // The currentTime-driven heartbeat stops when playback pauses.
   useEffect(() => {
-    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
+    if (!canPlay || !store || !updatePlaybackWorkerRef.current) return;
 
     const interval = setInterval(() => {
       if (!pausedRef.current) return;
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      const currentTime = player.state?.currentTime || 0;
+      const currentTime = store.currentTime || 0;
       if (currentTime <= 0) return;
       updatePlaybackWorkerRef.current.postMessage({
         videoURL,
@@ -279,7 +265,7 @@ export default function WithPlayBackTracker({
     }, PAUSED_HEARTBEAT_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [canPlay, player, videoURL, mediaMetadata]);
+  }, [canPlay, store, videoURL, mediaMetadata]);
 
   // Best-effort explicit "stopped watching" signal. keepalive lets the
   // request survive page unload; the server-side presence window is fallback.

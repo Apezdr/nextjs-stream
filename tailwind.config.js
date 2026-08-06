@@ -15,7 +15,6 @@ module.exports = {
   },
   plugins: [
     require('@tailwindcss/aspect-ratio'),
-    require('@vidstack/react/tailwind.cjs'),
     require('tailwind-scrollbar')({ nocompatible: true }),
     require('@tailwindcss/forms'),
   ],

@@ -1,5 +1,5 @@
 'use client'
-import { useMediaState } from '@vidstack/react'
+import { Player } from './videojs'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -15,7 +15,7 @@ function NextUpCard({
   hasNextEpisode,
   mediaLength,
 }) {
-  const currentPlaybackTime = useMediaState('currentTime')
+  const currentPlaybackTime = Player.usePlayer((s) => s.currentTime)
   const playbackTimeRef = useRef(currentPlaybackTime)
   const [isHovering, setIsHovering] = useState(false)
   const [remainingTime, setRemainingTime] = useState(15000)
@@ -53,7 +53,7 @@ function NextUpCard({
         }
       }, 1000)
     },
-    [mediaTitle, season_number, nextEpisodeNumber]
+    [mediaTitle, season_number, nextEpisodeNumber, router]
   )
 
   useEffect(() => {

@@ -1,178 +1,138 @@
+'use client'
+
+import { cloneElement } from 'react'
+import Link from 'next/link'
+import { classNames } from '@src/utils'
 import {
-  CaptionButton,
-  FullscreenButton,
-  isTrackCaptionKind,
-  MuteButton,
-  PIPButton,
-  PlayButton,
+  Player,
   Tooltip,
-  useMediaState,
+  PlayButton,
+  MuteButton,
+  PiPButton,
+  FullscreenButton,
   SeekButton,
-  GoogleCastButton,
+  CastButton,
   AirPlayButton,
-} from '@vidstack/react'
-import {
-  ClosedCaptionsIcon,
-  ClosedCaptionsOnIcon,
-  FullscreenExitIcon,
-  FullscreenIcon,
-  MuteIcon,
-  PauseIcon,
-  PictureInPictureExitIcon,
-  PictureInPictureIcon,
   PlayIcon,
+  PauseIcon,
   VolumeHighIcon,
   VolumeLowIcon,
-  SeekForward10Icon,
-  SeekBackward10Icon,
-  ChromecastIcon,
-  AirPlayIcon,
-} from '@vidstack/react/icons'
-import * as Sliders from '@components/MediaPlayer/sliders'
-import Link from 'next/link'
-import { Fragment } from 'react'
-//import ChromecastButton from './ChromecastButton'
+  VolumeOffIcon,
+  PipEnterIcon,
+  PipExitIcon,
+  FullscreenEnterIcon,
+  FullscreenExitIcon,
+  CastEnterIcon,
+  CastExitIcon,
+  AirPlayEnterIcon,
+  AirPlayExitIcon,
+  SeekIcon,
+} from './videojs'
 
 export const buttonClass =
-  'group ring-media-focus relative inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-md outline-none ring-inset hover:bg-white/20 data-[focus]:ring-4'
+  'group relative inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-md outline-none ring-inset ring-blue-400 hover:bg-white/20 focus-visible:ring-4'
 
 export const tooltipClass =
-  'animate-out fade-out slide-out-to-bottom-2 data-[visible]:animate-in data-[visible]:fade-in data-[visible]:slide-in-from-bottom-4 z-10 rounded-sm bg-black/90 px-2 py-0.5 text-sm font-medium text-white parent-data-[open]:hidden'
+  'z-10 rounded-sm bg-black/90 px-2 py-0.5 text-sm font-medium text-white opacity-0 transition-opacity duration-150 data-[open]:opacity-100'
 
-export function Play({ tooltipPlacement }) {
-  const isPaused = useMediaState('paused')
+/**
+ * Wraps a single interactive element with a styled tooltip. The trigger's
+ * accessibility/hover props are merged onto the child via cloneElement.
+ */
+export function ButtonTooltip({ label, side = 'top', align = 'center', children }) {
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <PlayButton className={buttonClass}>
-          {isPaused ? <PlayIcon className="w-12 h-12" /> : <PauseIcon className="w-8 h-8" />}
-        </PlayButton>
-      </Tooltip.Trigger>
-      <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
-        {isPaused ? 'Play' : 'Pause'}
-      </Tooltip.Content>
+    <Tooltip.Root side={side} align={align} delay={300}>
+      <Tooltip.Trigger
+        render={(props) =>
+          cloneElement(children, {
+            ...props,
+            className: classNames(props?.className, children.props?.className),
+          })
+        }
+      />
+      <Tooltip.Popup className={tooltipClass}>
+        <Tooltip.Label>{label}</Tooltip.Label>
+      </Tooltip.Popup>
     </Tooltip.Root>
   )
 }
 
-export function Mute({ tooltipPlacement, toggleSliderOnUnmute = false }) {
-  const volume = useMediaState('volume'),
-    isMuted = useMediaState('muted')
+export function Play({ side = 'top', align = 'center' }) {
+  const isPaused = Player.usePlayer((s) => s.paused)
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <div className="flex flex-row">
-          <MuteButton className={buttonClass}>
-            {isMuted || volume == 0 ? (
-              <MuteIcon className="w-8 h-8" />
-            ) : volume < 0.5 ? (
-              <VolumeLowIcon className="w-8 h-8" />
-            ) : (
-              <VolumeHighIcon className="w-8 h-8" />
-            )}
-          </MuteButton>
-          {toggleSliderOnUnmute && !isMuted ? (
-            <div className="min-w-24">
-              <Sliders.Volume />
-            </div>
-          ) : null}
-        </div>
-      </Tooltip.Trigger>
-      <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
-        {isMuted ? 'Unmute' : 'Mute'}
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <ButtonTooltip label={isPaused ? 'Play' : 'Pause'} side={side} align={align}>
+      <PlayButton className={buttonClass}>
+        {isPaused ? <PlayIcon className="h-12 w-12" /> : <PauseIcon className="h-8 w-8" />}
+      </PlayButton>
+    </ButtonTooltip>
   )
 }
 
-export function Caption({ tooltipPlacement }) {
-  const track = useMediaState('textTrack'),
-    isOn = track && isTrackCaptionKind(track)
+export function Mute({ side = 'top', align = 'center' }) {
+  const volume = Player.usePlayer((s) => s.volume)
+  const isMuted = Player.usePlayer((s) => s.muted)
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <CaptionButton className={buttonClass}>
-          {isOn ? (
-            <ClosedCaptionsOnIcon className="w-8 h-8" />
-          ) : (
-            <ClosedCaptionsIcon className="w-8 h-8" />
-          )}
-        </CaptionButton>
-      </Tooltip.Trigger>
-      <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
-        {isOn ? 'Turn Closed-Captions Off' : 'Turn Closed-Captions On'}
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <ButtonTooltip label={isMuted ? 'Unmute' : 'Mute'} side={side} align={align}>
+      <MuteButton className={buttonClass}>
+        {isMuted || volume === 0 ? (
+          <VolumeOffIcon className="h-8 w-8" />
+        ) : volume < 0.5 ? (
+          <VolumeLowIcon className="h-8 w-8" />
+        ) : (
+          <VolumeHighIcon className="h-8 w-8" />
+        )}
+      </MuteButton>
+    </ButtonTooltip>
   )
 }
 
-export function PIP({ tooltipPlacement }) {
-  const isActive = useMediaState('pictureInPicture')
+export function PIP({ side = 'top', align = 'center' }) {
+  const isActive = Player.usePlayer((s) => s.pip)
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <PIPButton className={buttonClass}>
-          {isActive ? (
-            <PictureInPictureExitIcon className="w-8 h-8" />
-          ) : (
-            <PictureInPictureIcon className="w-8 h-8" />
-          )}
-        </PIPButton>
-      </Tooltip.Trigger>
-      <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
-        {isActive ? 'Exit PIP' : 'Enter PIP'}
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <ButtonTooltip label={isActive ? 'Exit PIP' : 'Enter PIP'} side={side} align={align}>
+      <PiPButton className={buttonClass}>
+        {isActive ? <PipExitIcon className="h-8 w-8" /> : <PipEnterIcon className="h-8 w-8" />}
+      </PiPButton>
+    </ButtonTooltip>
   )
 }
 
-export function Fullscreen({ tooltipPlacement }) {
-  const isActive = useMediaState('fullscreen')
+export function Fullscreen({ side = 'top', align = 'center' }) {
+  const isActive = Player.usePlayer((s) => s.fullscreen)
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <FullscreenButton className={buttonClass}>
-          {isActive ? (
-            <FullscreenExitIcon className="w-8 h-8" />
-          ) : (
-            <FullscreenIcon className="w-8 h-8" />
-          )}
-        </FullscreenButton>
-      </Tooltip.Trigger>
-      <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
-        {isActive ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <ButtonTooltip
+      label={isActive ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+      side={side}
+      align={align}
+    >
+      <FullscreenButton className={buttonClass}>
+        {isActive ? (
+          <FullscreenExitIcon className="h-8 w-8" />
+        ) : (
+          <FullscreenEnterIcon className="h-8 w-8" />
+        )}
+      </FullscreenButton>
+    </ButtonTooltip>
   )
 }
 
-export function SeekForward({ tooltipPlacement }) {
+export function SeekForward({ side = 'top', align = 'center' }) {
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <SeekButton seconds={10} className={buttonClass}>
-          <SeekForward10Icon className="w-8 h-8" />
-        </SeekButton>
-      </Tooltip.Trigger>
-      <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
-        Skip Forward 10 Seconds
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <ButtonTooltip label="Skip Forward 10 Seconds" side={side} align={align}>
+      <SeekButton seconds={10} className={buttonClass}>
+        <SeekIcon className="h-8 w-8" />
+      </SeekButton>
+    </ButtonTooltip>
   )
 }
 
-export function SeekBackward({ tooltipPlacement }) {
+export function SeekBackward({ side = 'top', align = 'center' }) {
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <SeekButton seconds={-10} className={buttonClass}>
-          <SeekBackward10Icon className="w-8 h-8" />
-        </SeekButton>
-      </Tooltip.Trigger>
-      <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
-        Rewind 10 Seconds
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <ButtonTooltip label="Rewind 10 Seconds" side={side} align={align}>
+      <SeekButton seconds={-10} className={buttonClass}>
+        <SeekIcon className="h-8 w-8 -scale-x-100" />
+      </SeekButton>
+    </ButtonTooltip>
   )
 }
 
@@ -180,7 +140,7 @@ export function GoBack({ goBack }) {
   return (
     <Link
       href={goBack}
-      className="z-[1] p-2 text-white rounded-full hover:bg-gray-700 hover:bg-opacity-30"
+      className="z-[1] rounded-full p-2 text-white hover:bg-gray-700 hover:bg-opacity-30"
     >
       <svg
         xmlns="http://www.w3.org/2000/svg"
@@ -188,7 +148,7 @@ export function GoBack({ goBack }) {
         viewBox="0 0 24 24"
         strokeWidth={1.5}
         stroke="currentColor"
-        className="w-12 h-12"
+        className="h-12 w-12"
       >
         <path
           strokeLinecap="round"
@@ -200,41 +160,32 @@ export function GoBack({ goBack }) {
   )
 }
 
-export function Chromecast({ tooltipPlacement, videoURL, captions }) {
+export function Chromecast({ side = 'top', align = 'center' }) {
+  const remoteState = Player.usePlayer((s) => s.remotePlaybackState)
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <>
-          {/* <ChromecastButton
-            className="group ring-media-focus relative inline-flex h-10 w-10 cursor-pointer items-center justify-center rounded-md outline-none ring-inset hover:bg-white/20 data-[focus]:ring-4"
-            videoURL={videoURL}
-            captions={captions}
-          /> */}
-          <GoogleCastButton className="vds-button">
-            <ChromecastIcon className="vds-icon" />
-          </GoogleCastButton>
-        </>
-      </Tooltip.Trigger>
-      <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
-        Cast
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <ButtonTooltip label="Cast" side={side} align={align}>
+      <CastButton className={buttonClass}>
+        {remoteState === 'connected' ? (
+          <CastExitIcon className="h-8 w-8" />
+        ) : (
+          <CastEnterIcon className="h-8 w-8" />
+        )}
+      </CastButton>
+    </ButtonTooltip>
   )
 }
 
-export function AirPlay({ tooltipPlacement }) {
+export function AirPlay({ side = 'top', align = 'center' }) {
+  const remoteState = Player.usePlayer((s) => s.remotePlaybackState)
   return (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <>
-          <AirPlayButton className="vds-button">
-            <AirPlayIcon className="vds-icon" />
-          </AirPlayButton>
-        </>
-      </Tooltip.Trigger>
-      <Tooltip.Content className={tooltipClass} placement={tooltipPlacement}>
-        AirPlay
-      </Tooltip.Content>
-    </Tooltip.Root>
+    <ButtonTooltip label="AirPlay" side={side} align={align}>
+      <AirPlayButton className={buttonClass}>
+        {remoteState === 'connected' ? (
+          <AirPlayExitIcon className="h-8 w-8" />
+        ) : (
+          <AirPlayEnterIcon className="h-8 w-8" />
+        )}
+      </AirPlayButton>
+    </ButtonTooltip>
   )
 }

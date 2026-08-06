@@ -25,7 +25,3 @@ export function extractYouTubeId(url) {
   }
   return null
 }
-
-export function isYouTubeUrl(url) {
-  return extractYouTubeId(url) !== null
-}

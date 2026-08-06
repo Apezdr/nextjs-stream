@@ -1,0 +1,30 @@
+/*
+ * Main player styles that Tailwind utilities can't express.
+ * Replaces the vendored vidstack stylesheets (menus.css, sliders.css,
+ * video-layout.module.css, captions.module.css).
+ */
+
+/* Native caption cue styling (the framework has no cue renderer — the browser
+ * draws cues for the showing track). */
+.player-container video::cue {
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+  font-size: clamp(14px, 2.4cqi, 30px);
+  line-height: 1.35;
+}
+
+/* Lift cues above the control bar while controls are visible.
+ * WebKit/Blink only — Firefox keeps the default position. */
+.player-container:has([data-visible]) video::-webkit-media-text-track-container {
+  transform: translateY(-70px);
+  transition: transform 0.3s;
+}
+
+/* The media element fills the container. */
+.player-container video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+}

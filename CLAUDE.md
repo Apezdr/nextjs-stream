@@ -343,7 +343,7 @@ This script physically deletes source files and strips `export` keywords based o
 **Why knip gets it wrong here:**
 - `next/dynamic()` and React `lazy()` use dynamic `import()` strings — knip cannot trace these statically
 - Components loaded via lazy-loading appear "unused" to knip even though they're critical at runtime
-- Cross-package peer dependencies (e.g. `media-icons` used internally by `@vidstack/react`) appear "unlisted"
+- Cross-package peer dependencies used internally by another package can appear "unlisted"
 - Re-exported functions used only in certain runtime contexts look dead to static analysis
 
 ### Safe knip workflow
@@ -375,11 +375,14 @@ git --no-pager diff --name-only --diff-filter=D HEAD src/
 ### Pinned dependency versions (learned the hard way)
 | Package | Version | Reason |
 |---------|---------|--------|
-| `media-icons` | `1.1.5` | `@vidstack/react@1.12.13` imports `accessibilityPaths` which only exists in `1.x`, not `0.x` |
+| `@videojs/react` | `10.0.0-beta.26` (exact) | v10 beta API may still change; the ONLY file allowed to import it is `src/components/MediaPlayer/videojs.js` (beta-drift firewall) — absorb upstream renames there |
 | `react-countup` | installed | Used in search count components via direct import |
 
+### Video player (post-vidstack)
+- The player stack is `@videojs/react` (Video.js v10 React framework). vidstack, `media-icons`, and the top-level `hls.js` dep were removed — HLS comes via `@videojs/media`'s bundled hls.js (`HlsJsVideo`).
+- Banner trailer + hover-card previews do NOT use the player framework — they run on the YouTube IFrame API (`src/components/VideoPreview/`), with a plain `<video>` branch for direct-file clips.
+
 ### knip.json — key decisions
-- `media-icons` is in `ignoreDependencies` — used internally by `@vidstack/react`, not directly in our source
 - `sharp` is in `ignoreDependencies` — Next.js image optimization uses it at runtime
 - Entry globs use directory wildcards (`Landing/**/*`) to cover lazy-loaded siblings
 - `ignoreExportsUsedInFile: true` prevents false positives for module-local helpers

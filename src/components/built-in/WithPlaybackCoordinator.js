@@ -1,82 +1,69 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useMediaPlayer, useMediaRemote, useMediaState } from '@vidstack/react';
+import { useEffect, useRef, useState } from 'react';
+import { Player } from '@components/MediaPlayer/videojs';
 import { usePlaybackCoordinator } from '@src/contexts/PlaybackCoordinatorContext';
 
 /**
  * WithPlaybackCoordinator - Client component that coordinates playback between
  * the main media player and thumbnail previews.
- * 
+ *
  * This component doesn't render anything, but connects the media player
  * to our PlaybackCoordinatorContext.
  */
 export default function WithPlaybackCoordinator() {
-  const player = useMediaPlayer();
-  const remote = useMediaRemote();
-  const playing = useMediaState('playing');
-  const paused = useMediaState('paused');
+  const store = Player.usePlayer();
+  const paused = Player.usePlayer((s) => s.paused);
   const { activePlayer, wasMainPlayerPaused, setWasMainPlayerPaused } = usePlaybackCoordinator();
-  
+
   // Track if the user has manually paused the player
   const [manuallyPaused, setManuallyPaused] = useState(false);
-  
-  // Watch for manual pause events
+
+  const activePlayerRef = useRef(activePlayer);
   useEffect(() => {
-    if (!player) return;
-    
-    const handlePause = () => {
-      // Only consider it a manual pause if no thumbnail is active
-      if (activePlayer !== 'thumbnail') {
-        setManuallyPaused(true);
+    activePlayerRef.current = activePlayer;
+  }, [activePlayer]);
+
+  // Watch for pause/play transitions via the store subscription. A pause only
+  // counts as manual when no thumbnail preview is active (the coordinator's
+  // own pause sets activePlayer='thumbnail' first).
+  useEffect(() => {
+    if (!store) return;
+    let prevPaused = store.paused;
+    const unsubscribe = store.subscribe(() => {
+      const nowPaused = store.paused;
+      if (nowPaused === prevPaused) return;
+      prevPaused = nowPaused;
+      if (nowPaused) {
+        if (activePlayerRef.current !== 'thumbnail') {
+          setManuallyPaused(true);
+        }
+      } else {
+        setManuallyPaused(false);
       }
-    };
-    
-    const handlePlay = () => {
-      // Reset manual pause flag when user plays
-      setManuallyPaused(false);
-    };
-    
-    player.addEventListener('pause', handlePause);
-    player.addEventListener('play', handlePlay);
-    
-    return () => {
-      player.removeEventListener('pause', handlePause);
-      player.removeEventListener('play', handlePlay);
-    };
-  }, [player, activePlayer]);
+    });
+    return unsubscribe;
+  }, [store]);
 
   // Handle playback coordination when active player changes
   useEffect(() => {
-    if (!player || !remote) return;
-    
+    if (!store) return;
+
     if (activePlayer === 'thumbnail') {
       // Store current state before pausing
       setWasMainPlayerPaused(paused);
       if (!paused) {
-        remote.pause();
+        store.pause();
       }
     } else if (activePlayer === null) {
       // Only resume if:
       // 1. It wasn't paused before the thumbnail started
       // 2. AND the user hasn't manually paused while we were showing thumbnails
       if (!wasMainPlayerPaused && !manuallyPaused && paused) {
-        remote.play();
+        store.play();
       }
     }
-  }, [activePlayer, remote, player, paused, wasMainPlayerPaused, setWasMainPlayerPaused, manuallyPaused]);
-
-  // Register the main player when it's playing
-  useEffect(() => {
-    if (!player) return;
-    
-    // Only register as the main player when actually playing
-    if (playing && activePlayer !== 'thumbnail') {
-      // This will unset any other active player
-      // But we check it's not a thumbnail to avoid race conditions
-      // requestPlayback('main', true);
-    }
-  }, [playing, player, activePlayer]);
+  }, [activePlayer, store, paused, wasMainPlayerPaused, setWasMainPlayerPaused, manuallyPaused]);
 
   // This component doesn't render anything
   return null;

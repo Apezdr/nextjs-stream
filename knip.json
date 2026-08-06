@@ -30,8 +30,7 @@
   ],
   "ignoreDependencies": [
     "sharp",
-    "@eslint/js",
-    "media-icons"
+    "@eslint/js"
   ],
   "ignoreExportsUsedInFile": true
 }

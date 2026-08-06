@@ -24,8 +24,9 @@
  */
 
 /**
- * Containers the web player's provider selection actually loads
- * (vidstack's VIDEO_EXTENSIONS set, minus the audio/ogg entries).
+ * Containers the web player's media element actually loads. The @videojs/react
+ * <Video> element is a native <video> (m4v/mov resolve to video/mp4, webm to
+ * video/webm), so the supported set is unchanged from the vidstack era.
  */
 const BROWSER_PLAYABLE_CONTAINERS = ['mp4', 'm4v', 'mov', 'webm']
 

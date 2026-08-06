@@ -1,10 +1,6 @@
-import {
-  Title as MediaTitle,
-  useMediaPlayer,
-  useMediaState,
-  ChapterTitle as MediaChapterTitle,
-  useChapterTitle,
-} from '@vidstack/react'
+'use client'
+
+import { Player } from './videojs'
 import { classNames, getResolutionLabel } from '@src/utils'
 
 import GeneralAudiencesBadge from '@src/components/MediaPlayer/Ratings/general_audiences_badge.svg'
@@ -14,8 +10,16 @@ import RestrictedBadge from '@src/components/MediaPlayer/Ratings/restricted_badg
 import No17AndUnderBadge from '@src/components/MediaPlayer/Ratings/no_17_and_under_badge.svg'
 import RetryImage from '@components/RetryImage'
 
-export function Title() {
-  //const isPaused = useMediaState('paused')
+/** Current chapter text derived from the chapters track + playback position. */
+function useCurrentChapterTitle() {
+  const cues = Player.usePlayer((s) => s.chaptersCues)
+  const currentTime = Player.usePlayer((s) => s.currentTime)
+  if (!cues?.length) return ''
+  return cues.find((cue) => currentTime >= cue.startTime && currentTime < cue.endTime)?.text ?? ''
+}
+
+export function Title({ titleLabel }) {
+  const chapterTitle = useCurrentChapterTitle()
   return (
     <span
       className={classNames(
@@ -27,20 +31,19 @@ export function Title() {
         className={classNames(
           'flex flex-col items-center justify-normal sm:min-h-0 sm:px-0 sm:pb-0 sm:bg-inherit sm:relative sm:translate-x-0 sm:left-0',
           'bg-opacity-80 sm:transition-none transition-colors duration-1000 absolute left-1/2 -translate-x-1/2 rounded-b-lg px-4 pt-3 sm:pt-0 pb-2 sm:pb-0 min-h-14 justify-center',
-          /* isPaused ? 'bg-black delay-1000' : 'bg-transparent delay-200', */
           'max-w-[98vw] w-[90vw] sm:w-auto sm:max-w-none'
         )}
       >
-        <MediaTitle className="text-pretty" />
-        <MediaChapterTitle className="text-pretty" />
+        <span className="text-pretty">{titleLabel}</span>
+        {chapterTitle ? <span className="text-pretty">{chapterTitle}</span> : null}
       </div>
     </span>
   )
 }
 
 export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo }) {
-  const isPaused = useMediaState('paused'),
-    player = useMediaPlayer()
+  const isPaused = Player.usePlayer((s) => s.paused)
+  const started = Player.usePlayer((s) => s.started)
   return (
     <>
       <div
@@ -111,7 +114,7 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
       <div
         className={classNames(
           `media-labels z-10 relative`,
-          isPaused || player.currentTime <= 0 ? '' : 'playing'
+          isPaused || !started ? '' : 'playing'
         )}
       >
         <div className={classNames('media-title', isPaused ? '' : 'playing')}>
@@ -124,13 +127,9 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
             />
           ) : (
             <h5 className={`font-sans max-w-sm xl:max-w-xl font-bold text-white ml-4`}>
-              {mediaMetadata?.mediaTitle ? (
-                decodeURIComponent(mediaMetadata.mediaTitle)
-              ) : mediaMetadata?.title ? (
-                mediaMetadata.title
-              ) : (
-                <MediaTitle />
-              )}
+              {mediaMetadata?.mediaTitle
+                ? decodeURIComponent(mediaMetadata.mediaTitle)
+                : (mediaMetadata?.title ?? '')}
             </h5>
           )}
           {mediaMetadata?.season_number ? ` - S${mediaMetadata?.season_number}:` : ''}
