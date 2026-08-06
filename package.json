@@ -36,6 +36,7 @@
     "@opentelemetry/semantic-conventions": "^1.41.1",
     "@tailwindcss/forms": "^0.5.11",
     "@vercel/otel": "^2.1.2",
+    "@videojs/react": "10.0.0-beta.26",
     "@vidstack/react": "^1.12.13",
     "axios": "^1.16.0",
     "better-auth": "^1.6.9",
