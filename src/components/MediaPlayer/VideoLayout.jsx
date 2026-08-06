@@ -146,7 +146,7 @@ export function VideoLayout({
           // bare element, which silently broke those paths).
           videoRef={{ current: media }}
           videoURL={videoURL}
-          initialTime={store.currentTime || 0}
+          initialTime={(store.target ? store.currentTime : 0) || 0}
           subtitleUrl={editorSubtitleUrl}
           availableSubtitles={captions}
           selectedSubtitleLanguage={editorLanguage}
@@ -195,8 +195,8 @@ export function VideoLayout({
               alert('An error occurred while saving subtitles.')
             }
           }}
-          currentTime={store.currentTime || 0}
-          duration={store.duration || 0}
+          currentTime={(store.target ? store.currentTime : 0) || 0}
+          duration={(store.target ? store.duration : 0) || 0}
         />
       )}
     </>

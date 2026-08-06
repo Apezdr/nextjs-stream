@@ -29,8 +29,11 @@ export default function WithPlaybackCoordinator() {
   // own pause sets activePlayer='thumbnail' first).
   useEffect(() => {
     if (!store) return;
-    let prevPaused = store.paused;
+    // Direct state reads throw StoreError NO_TARGET before the store attaches
+    // to the media element — gate every read on store.target.
+    let prevPaused = store.target ? store.paused : undefined;
     const unsubscribe = store.subscribe(() => {
+      if (!store.target) return;
       const nowPaused = store.paused;
       if (nowPaused === prevPaused) return;
       prevPaused = nowPaused;
@@ -47,7 +50,7 @@ export default function WithPlaybackCoordinator() {
 
   // Handle playback coordination when active player changes
   useEffect(() => {
-    if (!store) return;
+    if (!store || !store.target) return;
 
     if (activePlayer === 'thumbnail') {
       // Store current state before pausing

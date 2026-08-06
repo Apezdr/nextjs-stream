@@ -19,6 +19,7 @@ export default function ClipWindow({ clipStartTime, clipEndTime }) {
 
   useEffect(() => {
     if (!canPlay || !clipStartTime || appliedStartRef.current) return
+    if (!store.target) return // direct reads throw NO_TARGET pre-attach
     appliedStartRef.current = true
     // Only jump forward — if the resume ladder already seeked past the clip
     // start, leave that position alone.
@@ -30,7 +31,7 @@ export default function ClipWindow({ clipStartTime, clipEndTime }) {
   useEffect(() => {
     if (!clipEndTime) return
     const unsubscribe = store.subscribe(() => {
-      if (endedRef.current) return
+      if (endedRef.current || !store.target) return
       if (store.currentTime >= clipEndTime && !store.paused) {
         endedRef.current = true
         store.pause()

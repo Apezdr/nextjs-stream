@@ -216,7 +216,9 @@ export default function WithPlayBackTracker({
 
     // The store notifies on every state change (currentTime updates at
     // timeupdate cadence); the 1s throttle gates the write rate as before.
+    // Direct state reads throw NO_TARGET before/after the media attaches.
     const unsubscribe = store.subscribe(() => {
+      if (!store.target) return;
       const currentTime = store.currentTime;
       if (currentTime > 0) throttledUpdateServer(currentTime);
     });
@@ -231,7 +233,7 @@ export default function WithPlayBackTracker({
   // view keeps showing the session (as paused) instead of dropping it.
   useEffect(() => {
     pausedRef.current = paused === true;
-    if (!canPlay || !store || !updatePlaybackWorkerRef.current) return;
+    if (!canPlay || !store || !store.target || !updatePlaybackWorkerRef.current) return;
     const currentTime = store.currentTime || 0;
     if (currentTime <= 0) return;
     updatePlaybackWorkerRef.current.postMessage({
@@ -252,6 +254,7 @@ export default function WithPlayBackTracker({
     const interval = setInterval(() => {
       if (!pausedRef.current) return;
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
+      if (!store.target) return;
       const currentTime = store.currentTime || 0;
       if (currentTime <= 0) return;
       updatePlaybackWorkerRef.current.postMessage({
