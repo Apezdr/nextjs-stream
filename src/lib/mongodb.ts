@@ -31,6 +31,12 @@ const options: MongoClientOptions = {
   // Fail fast (instead of the 30s default) if the standalone is briefly
   // unreachable — pages already stream a skeleton while this resolves.
   serverSelectionTimeoutMS: envInt(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS, 10_000),
+  // Bound the two waits the driver defaults to INFINITY. Without these, an
+  // operation whose pool is saturated, or whose checked-out socket never gets
+  // a reply (e.g. mongod dies mid-command), parks forever with no error and
+  // no log — a 2026-07-14 sync held its in-memory gate for 10 hours this way.
+  waitQueueTimeoutMS: envInt(process.env.MONGODB_WAIT_QUEUE_TIMEOUT_MS, 30_000),
+  socketTimeoutMS: envInt(process.env.MONGODB_SOCKET_TIMEOUT_MS, 120_000),
   // Tag connections so they're attributable in mongod logs / metrics.
   appName: 'nextjs-stream',
 }
@@ -51,6 +57,11 @@ const syncOptions: MongoClientOptions = {
   maxPoolSize: envInt(process.env.MONGODB_SYNC_MAX_POOL_SIZE, 40),
   maxIdleTimeMS: envInt(process.env.MONGODB_SYNC_MAX_IDLE_TIME_MS, 60_000),
   serverSelectionTimeoutMS: envInt(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS, 10_000),
+  // Longer bounds than the request pool (bulk writes and index builds run for
+  // a while), but still finite — see the request-pool comment. A parked sync
+  // op must eventually reject so the sync settles and releases its gate.
+  waitQueueTimeoutMS: envInt(process.env.MONGODB_SYNC_WAIT_QUEUE_TIMEOUT_MS, 60_000),
+  socketTimeoutMS: envInt(process.env.MONGODB_SYNC_SOCKET_TIMEOUT_MS, 300_000),
   // Distinct appName so sync traffic is attributable in mongod logs/metrics.
   appName: 'nextjs-stream-sync',
 }

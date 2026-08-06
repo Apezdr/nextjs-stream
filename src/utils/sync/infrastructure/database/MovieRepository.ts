@@ -19,8 +19,12 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
     try {
       await Promise.all([
         // Primary lookup indexes — names must match flatSync/initializeDatabase.js
-        // to avoid "Index already exists with a different name" conflicts
-        this.createIndexSafely({ title: 1 }, { unique: true, name: 'title_index' }),
+        // to avoid "Index already exists with a different name" conflicts.
+        // title is deliberately NOT unique: it is the TMDB display name and two
+        // distinct movies can legally share it (remakes — same class of bug as
+        // the Kingdom show E11000 incident). Uniqueness lives on originalTitle
+        // (the filesystem key) per CLAUDE.md — matching flatSync/initializeDatabase.js.
+        this.createIndexSafely({ title: 1 }, { name: 'title_index' }),
         this.createIndexSafely({ originalTitle: 1 }, { unique: true, name: 'originalTitle_index' }),
         this.createIndexSafely({ title: 1, serverId: 1 }),
         

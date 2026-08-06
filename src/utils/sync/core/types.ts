@@ -199,7 +199,11 @@ export interface BaseMediaEntity {
   
   lastSynced: Date
   metadata?: Record<string, any>
-  
+
+  // Creation tracking (every concrete entity re-declares this; the base-level
+  // declaration lets BaseRepository.save() preserve it generically)
+  createdAt?: Date
+
   // Field-level source tracking (sources are tracked per field)
   metadataSource?: string
   titleSource?: string
