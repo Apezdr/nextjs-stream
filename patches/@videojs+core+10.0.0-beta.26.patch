@@ -1,0 +1,32 @@
+diff --git a/node_modules/@videojs/core/dist/default/dom/ui/popover/popover-positioning.js b/node_modules/@videojs/core/dist/default/dom/ui/popover/popover-positioning.js
+index 12df03a..febec15 100644
+--- a/node_modules/@videojs/core/dist/default/dom/ui/popover/popover-positioning.js
++++ b/node_modules/@videojs/core/dist/default/dom/ui/popover/popover-positioning.js
+@@ -73,7 +73,10 @@ function getAnchorPositionCSS(anchorName, opts, cssVars = PopoverCSSVars, trigge
+ 	const style = {
+ 		positionAnchor: `--${anchorName}`,
+ 		position: "fixed",
+-		inset: "auto",
++		top: "auto",
++		right: "auto",
++		bottom: "auto",
++		left: "auto",
+ 		margin: "0",
+ 		justifySelf: "normal",
+ 		alignSelf: "normal",
+diff --git a/node_modules/@videojs/core/dist/dev/dom/ui/popover/popover-positioning.js b/node_modules/@videojs/core/dist/dev/dom/ui/popover/popover-positioning.js
+index 12df03a..febec15 100644
+--- a/node_modules/@videojs/core/dist/dev/dom/ui/popover/popover-positioning.js
++++ b/node_modules/@videojs/core/dist/dev/dom/ui/popover/popover-positioning.js
+@@ -73,7 +73,10 @@ function getAnchorPositionCSS(anchorName, opts, cssVars = PopoverCSSVars, trigge
+ 	const style = {
+ 		positionAnchor: `--${anchorName}`,
+ 		position: "fixed",
+-		inset: "auto",
++		top: "auto",
++		right: "auto",
++		bottom: "auto",
++		left: "auto",
+ 		margin: "0",
+ 		justifySelf: "normal",
+ 		alignSelf: "normal",
