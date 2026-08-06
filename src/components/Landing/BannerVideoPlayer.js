@@ -1,90 +1,47 @@
 'use client'
-import '@vidstack/react/player/styles/default/theme.css'
-import './media-player.css'
-import '@components/MediaPlayer/Layouts/menus.css'
-import { MediaPlayer, MediaProvider } from '@vidstack/react'
-import { memo, useRef, useState, useEffect, useCallback } from 'react'
+
+import { memo, useState } from 'react'
 import { motion } from 'framer-motion'
+import useYouTubePlayer from '@components/VideoPreview/useYouTubePlayer'
+import { extractYouTubeId } from '@components/VideoPreview/youtubeUrl'
 
 const VOLUME_KEY = 'videoVolumeBanner'
 
 function BannerVideoPlayer({ media, muted, paused, onTimeUpdate, currentMediaIndex }) {
   const { videoURL } = media
-  const playerRef = useRef(null)
-  const [isPlayerReady, setPlayerReady] = useState(false)
+  const videoId = extractYouTubeId(videoURL)
 
-  // Volume preference persists across sessions; mute lives in the parent (per-session sessionStorage).
+  // Volume preference persists across sessions; mute lives in the parent
+  // (per-session sessionStorage). The banner has no volume control of its own,
+  // so the stored value is read-only here.
   const [initialVolume] = useState(() => {
     if (typeof window === 'undefined') return 1
     const stored = localStorage.getItem(VOLUME_KEY)
     return stored ? Number(stored) : 1
   })
 
-  const handleVolumeChange = useCallback(() => {
-    const player = playerRef.current
-    if (player) {
-      localStorage.setItem(VOLUME_KEY, player.volume)
-    }
-  }, [])
+  const { containerRef, isPlaying, hasFailed } = useYouTubePlayer({
+    videoId,
+    shouldPlay: !paused,
+    muted,
+    volume: initialVolume,
+    onTime: onTimeUpdate,
+  })
 
-  // Mirror the parent's `paused` prop onto the underlying player.
-  useEffect(() => {
-    const player = playerRef.current
-    if (!player || !isPlayerReady) return
-    if (paused) {
-      player.pause()
-    } else {
-      player.play()
-    }
-  }, [paused, isPlayerReady])
-
-  // Mirror the parent's `muted` prop onto the underlying player.
-  // Vidstack treats <MediaPlayer muted> as initial-only, so prop changes after mount need
-  // to be applied imperatively via the ref.
-  useEffect(() => {
-    const player = playerRef.current
-    if (!player || !isPlayerReady) return
-    player.muted = muted
-  }, [muted, isPlayerReady])
-
-  const handlePlaying = useCallback(() => {
-    setPlayerReady(true)
-  }, [])
-
-  const handleTimeUpdate = useCallback(() => {
-    const player = playerRef.current
-    if (player && onTimeUpdate) {
-      onTimeUpdate(player.currentTime || 0, player.duration || 0)
-    }
-  }, [onTimeUpdate])
+  if (!videoId || hasFailed) return null
 
   return (
     <motion.div
       key={`video-player-${currentMediaIndex}`}
       initial={{ opacity: 0 }}
-      animate={{ opacity: isPlayerReady ? 1 : 0 }}
+      animate={{ opacity: isPlaying ? 1 : 0 }}
       transition={{ duration: 0.75, ease: 'easeInOut' }}
       className="h-full w-full"
     >
-      <MediaPlayer
-        key={videoURL}
-        ref={playerRef}
-        src={videoURL}
-        autoPlay={true}
-        streamType="on-demand"
-        playsInline
-        load="eager"
-        aspectRatio="16/9"
-        fullscreenOrientation="landscape"
-        className="absolute inset-0 w-full h-full select-none pointer-events-none z-0"
-        muted={muted}
-        volume={initialVolume}
-        onVolumeChange={handleVolumeChange}
-        onPlaying={handlePlaying}
-        onTimeUpdate={handleTimeUpdate}
-      >
-        <MediaProvider />
-      </MediaPlayer>
+      <div
+        ref={containerRef}
+        className="absolute inset-0 w-full h-full select-none pointer-events-none z-0 [&_iframe]:absolute [&_iframe]:inset-0 [&_iframe]:h-full [&_iframe]:w-full"
+      />
     </motion.div>
   )
 }

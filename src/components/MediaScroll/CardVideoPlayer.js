@@ -1,11 +1,220 @@
 'use client'
-import './media-player.css'
-import '@components/MediaPlayer/Layouts/menus.css'
-import { Controls, MediaPlayer, MediaProvider } from '@vidstack/react'
-import { memo, useRef, useState, useEffect, useCallback, cache } from 'react'
-import * as Buttons from '@components/MediaPlayer/buttons'
+
+import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { classNames } from '@src/utils'
-import { GesturesNoFullscreen } from '@components/MediaPlayer/Layouts/video-layout'
+import useYouTubePlayer from '@components/VideoPreview/useYouTubePlayer'
+import { extractYouTubeId } from '@components/VideoPreview/youtubeUrl'
+
+const VOLUME_KEY = 'videoVolumeCard'
+const MUTED_KEY = 'videoMutedCard'
+
+// The `muted` prop only forces mute when strictly true — otherwise the stored
+// preference wins (long-standing contract; EpisodeThumbnail passes false and
+// expects the stored value).
+function readInitialMuted(mutedProp) {
+  if (mutedProp === true) return true
+  if (typeof window === 'undefined') return true
+  const stored = localStorage.getItem(MUTED_KEY)
+  return stored !== null ? stored === 'true' : true
+}
+
+function readInitialVolume() {
+  if (typeof window === 'undefined') return 1
+  return parseFloat(localStorage.getItem(VOLUME_KEY)) || 1
+}
+
+/** Compact bottom-left mute toggle that reveals a volume slider on unmute. */
+function MuteControl({ muted, volume, onToggleMute, onVolumeChange }) {
+  const [showSlider, setShowSlider] = useState(false)
+
+  const handleToggle = useCallback(
+    (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      const nextMuted = onToggleMute()
+      if (nextMuted === false) setShowSlider(true)
+    },
+    [onToggleMute]
+  )
+
+  return (
+    <div
+      className="absolute bottom-4 left-4 z-[5] flex items-center gap-2 pointer-events-auto"
+      onClick={(event) => {
+        // Keep clicks on the control from reaching card links underneath.
+        event.preventDefault()
+        event.stopPropagation()
+      }}
+    >
+      <button
+        type="button"
+        aria-label={muted ? 'Unmute' : 'Mute'}
+        onClick={handleToggle}
+        className="group flex h-9 w-9 items-center justify-center rounded-full bg-black/60 text-white outline-none hover:bg-black/80"
+      >
+        {muted ? (
+          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M3.63 3.63a1 1 0 0 1 1.41 0L20.37 18.96a1 1 0 0 1-1.41 1.41l-2.4-2.4A8.9 8.9 0 0 1 14 19.13V17a7 7 0 0 0 1.11-.47l-3.11-3.1V18a1 1 0 0 1-1.7.71L6.59 15H4a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h2.59l.9-.9-3.86-3.06a1 1 0 0 1 0-1.41ZM12 5.99v3.2L9.45 6.63l.85-.85A1 1 0 0 1 12 6Z" />
+          </svg>
+        ) : (
+          <svg className="h-5 w-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M11.3 5.29A1 1 0 0 1 13 6v12a1 1 0 0 1-1.7.71L7.59 15H5a1 1 0 0 1-1-1v-4a1 1 0 0 1 1-1h2.59ZM16 8.5a1 1 0 0 1 1.41 0 5 5 0 0 1 0 7.07A1 1 0 1 1 16 14.16a3 3 0 0 0 0-4.25 1 1 0 0 1 0-1.41Zm2.83-2.83a1 1 0 0 1 1.41 0 9 9 0 0 1 0 12.73 1 1 0 1 1-1.41-1.42 7 7 0 0 0 0-9.9 1 1 0 0 1 0-1.41Z" />
+          </svg>
+        )}
+      </button>
+      {!muted && showSlider && (
+        <input
+          type="range"
+          min="0"
+          max="1"
+          step="0.05"
+          value={volume}
+          aria-label="Volume"
+          onChange={(event) => onVolumeChange(Number(event.target.value))}
+          className="h-1 w-20 cursor-pointer accent-white"
+        />
+      )}
+    </div>
+  )
+}
+
+/** Direct-file preview branch — a plain <video> with the 416-remount guard. */
+function FilePreview({
+  videoURL,
+  shouldPlay,
+  muted,
+  volume,
+  onVideoReady,
+  onVideoEnd,
+  onPlaying,
+  onPlayingChange,
+}) {
+  const videoRef = useRef(null)
+  const readyNotifiedRef = useRef(false)
+  const [instanceKey, setInstanceKey] = useState(0)
+
+  const callbacksRef = useRef({})
+  callbacksRef.current = { onVideoReady, onVideoEnd, onPlaying, onPlayingChange }
+  const shouldPlayRef = useRef(shouldPlay)
+  shouldPlayRef.current = shouldPlay
+
+  // Mirror play/pause intent.
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    if (shouldPlay) {
+      video.play().catch(() => {})
+    } else if (!video.paused) {
+      video.pause()
+    }
+  }, [shouldPlay, instanceKey])
+
+  // Mirror mute/volume.
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+    video.muted = muted
+    video.volume = volume
+  }, [muted, volume, instanceKey])
+
+  // Resume when the tab becomes visible again while we still should play.
+  useEffect(() => {
+    const handleVisibility = () => {
+      const video = videoRef.current
+      if (
+        video &&
+        document.visibilityState === 'visible' &&
+        video.paused &&
+        shouldPlayRef.current
+      ) {
+        video.play().catch(() => {})
+      }
+    }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [])
+
+  const handleError = useCallback(() => {
+    const video = videoRef.current
+    const error = video?.error
+    console.error('Card video player error:', error)
+    // "416 Range Not Satisfiable" leaves the element wedged; a full remount is
+    // the reliable cure (long-standing workaround carried over from vidstack).
+    setInstanceKey((key) => key + 1)
+  }, [])
+
+  return (
+    <video
+      key={instanceKey}
+      ref={videoRef}
+      src={videoURL}
+      playsInline
+      preload="auto"
+      className="absolute inset-0 h-full w-full object-cover"
+      onCanPlay={() => {
+        if (readyNotifiedRef.current) return
+        readyNotifiedRef.current = true
+        const { onVideoReady: notify } = callbacksRef.current
+        if (notify) notify(videoRef.current)
+      }}
+      onPlaying={() => {
+        const { onPlaying: notify, onPlayingChange } = callbacksRef.current
+        if (onPlayingChange) onPlayingChange(true)
+        if (notify) notify()
+      }}
+      onPause={() => {
+        const { onPlayingChange } = callbacksRef.current
+        if (onPlayingChange) onPlayingChange(false)
+        // Auto-resume unexpected pauses while the parent still wants playback.
+        const video = videoRef.current
+        if (video && shouldPlayRef.current && document.visibilityState === 'visible') {
+          video.play().catch(() => {})
+        }
+      }}
+      onEnded={() => {
+        const { onVideoEnd: notify, onPlayingChange } = callbacksRef.current
+        if (onPlayingChange) onPlayingChange(false)
+        if (notify) notify(videoRef.current)
+      }}
+      onError={handleError}
+    />
+  )
+}
+
+/** YouTube trailer branch built on the IFrame API hook. */
+function YouTubePreview({
+  videoId,
+  shouldPlay,
+  muted,
+  volume,
+  onVideoReady,
+  onVideoEnd,
+  onPlaying,
+  onPlayingChange,
+}) {
+  const { containerRef, isPlaying } = useYouTubePlayer({
+    videoId,
+    shouldPlay,
+    muted,
+    volume,
+    onReady: onVideoReady,
+    onPlaying,
+    onEnded: onVideoEnd,
+  })
+
+  const onPlayingChangeRef = useRef(onPlayingChange)
+  onPlayingChangeRef.current = onPlayingChange
+  useEffect(() => {
+    if (onPlayingChangeRef.current) onPlayingChangeRef.current(isPlaying)
+  }, [isPlaying])
+
+  return (
+    <div
+      ref={containerRef}
+      className="absolute inset-0 h-full w-full [&_iframe]:absolute [&_iframe]:inset-0 [&_iframe]:h-full [&_iframe]:w-full"
+    />
+  )
+}
 
 function CardVideoPlayer({
   className,
@@ -18,158 +227,62 @@ function CardVideoPlayer({
   shouldPlay = false,
   muted = null,
 }) {
-  const playerRef = useRef(null)
-  const [isPlayerReady, setPlayerReady] = useState(false)
-  const [playerKey, setPlayerKey] = useState(0) // Added key to force re-render when needed
+  const youTubeId = extractYouTubeId(videoURL)
+  const [isMuted, setIsMuted] = useState(() => readInitialMuted(muted))
+  const [volume, setVolume] = useState(() => readInitialVolume())
+  const [isPlaying, setIsPlaying] = useState(false)
 
-  const handleError = useCallback((event) => {
-    const error = event.detail
-    console.error('Video player error:', error)
-    
-    // Check for "416 Range Not Satisfiable" error
-    // This can appear in different ways depending on the browser and network stack
-    if (
-      (error?.message && error.message.includes('Range Not Satisfiable')) ||
-      (error?.code === 416) || 
-      (error?.status === 416) ||
-      (error?.toString?.() && error.toString().includes('416'))
-    ) {
-      console.log('Detected 416 Range Not Satisfiable error, restarting video player')
-      // Increment the key to force a complete re-render of the MediaPlayer
-      setPlayerKey(prevKey => prevKey + 1)
-    }
+  const handleToggleMute = useCallback(() => {
+    let next
+    setIsMuted((current) => {
+      next = !current
+      localStorage.setItem(MUTED_KEY, String(next))
+      return next
+    })
+    return next
   }, [])
 
-  const handleMuteChange = useCallback((player = playerRef?.current) => {
-    if (player) {
-      localStorage.setItem('videoMutedCard', player.muted)
-    }
+  const handleVolumeChange = useCallback((value) => {
+    setVolume(value)
+    localStorage.setItem(VOLUME_KEY, String(value))
   }, [])
 
-  const handleVolumeChange = useCallback(() => {
-    const player = playerRef?.current
-    if (player) {
-      localStorage.setItem('videoVolumeCard', player.volume)
-      handleMuteChange(player)
-    }
-  }, [handleMuteChange])
+  if (!videoURL) return null
 
-  const handleVisibilityChange = useCallback(() => {
-    const player = playerRef?.current
-    // If the tab becomes visible again AND we shouldPlay is true, attempt auto-play:
-    if (
-      isPlayerReady &&
-      document.visibilityState === 'visible' &&
-      player &&
-      player.state.paused &&
-      shouldPlay
-    ) {
-      player.play()
-    }
-  }, [isPlayerReady, shouldPlay])
-
-  useEffect(() => {
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
-    }
-  }, [handleVisibilityChange])
-
-  const handlePlaying = useCallback(() => {
-    if (onPlaying) onPlaying()
-  }, [onPlaying])
-
-  const handleCanPlay = useCallback(() => {
-    const player = playerRef?.current
-    setPlayerReady(true)
-    if (onVideoReady) {
-      onVideoReady(player) // Notify parent that video is ready
-    }
-  }, [onVideoReady])
-
-  // Whenever parent changes shouldPlay -> false, ensure player is paused
-  useEffect(() => {
-    const player = playerRef.current
-    if (!player) return
-
-    if (shouldPlay) {
-      // If we should be playing, start playback if ready
-      if (isPlayerReady && player.state.paused) {
-        player.play()
-      }
-    } else {
-      // If we should NOT play, pause immediately
-      if (!player.state.paused) {
-        player.pause()
-      }
-    }
-  }, [shouldPlay, isPlayerReady])
+  const branchProps = {
+    shouldPlay,
+    muted: isMuted,
+    volume,
+    onVideoReady,
+    onVideoEnd,
+    onPlaying,
+    onPlayingChange: setIsPlaying,
+  }
 
   return (
-    <MediaPlayer
-      key={playerKey} // Add key to force re-render when needed
-      ref={playerRef}
-      src={videoURL}
-      height={height}
-      width={width}
-      autoPlay={false}
-      controlsDelay={-1}
-      streamType="on-demand"
-      playsInline
-      load="visible"
-      aspectRatio="16/9"
-      fullscreenOrientation="landscape"
+    <div
+      style={{ height, width }}
       className={classNames(
-        "z-[40]",
-        "absolute inset-0 w-full h-full select-none pointer-events-none media-playing:opacity-100 media-paused:opacity-0",
-        "opacity-0 transition-opacity duration-700",
-        className,
-        shouldPlay ? 'shouldPlay !opacity-100' : ''
+        'z-[40]',
+        'absolute inset-0 h-full w-full select-none pointer-events-none',
+        'transition-opacity duration-700',
+        isPlaying || shouldPlay ? 'opacity-100' : 'opacity-0',
+        className
       )}
-      muted={
-        muted ? muted : // if muted is not passed, check localStorage
-        typeof localStorage !== 'undefined' && localStorage?.getItem('videoMutedCard')
-          ? localStorage.getItem('videoMutedCard') === 'true'
-          : true
-      }
-      volume={typeof localStorage !== 'undefined' ? parseFloat(localStorage?.getItem('videoVolumeCard')) || 1 : 1}
-      onPause={() => {
-        // Only auto-resume if we STILL shouldPlay:
-        const player = playerRef?.current
-        if (
-          isPlayerReady &&
-          player &&
-          player.state.paused &&
-          document.visibilityState === 'visible' &&
-          shouldPlay && // check parent's "shouldPlay" again here
-          player.state.fullscreen === false
-        ) {
-          player.play()
-        }
-      }}
-      onVolumeChange={handleVolumeChange}
-      onEnded={() => {
-        const player = playerRef?.current
-        // if (player) {
-        //   // Pause just to be 100% sure we don't auto-resume
-        //   player.pause()
-        // }
-        if (onVideoEnd) onVideoEnd(player)
-      }}
-      onCanPlay={handleCanPlay}
-      onPlaying={handlePlaying}
-      onError={handleError} // Add error event handler
-      loop={false}
     >
-      <MediaProvider />
-      <GesturesNoFullscreen />
-      <Controls.Root className="absolute bottom-4 left-4 flex space-x-2 z-[5]">
-        <Controls.Group className="flex w-full items-center px-2">
-          <Buttons.Mute tooltipPlacement="top" toggleSliderOnUnmute={true} />
-        </Controls.Group>
-      </Controls.Root>
-    </MediaPlayer>
+      {youTubeId ? (
+        <YouTubePreview videoId={youTubeId} {...branchProps} />
+      ) : (
+        <FilePreview videoURL={videoURL} {...branchProps} />
+      )}
+      <MuteControl
+        muted={isMuted}
+        volume={volume}
+        onToggleMute={handleToggleMute}
+        onVolumeChange={handleVolumeChange}
+      />
+    </div>
   )
 }
 
-export default cache(CardVideoPlayer)
+export default memo(CardVideoPlayer)
