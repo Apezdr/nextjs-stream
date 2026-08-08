@@ -2,6 +2,7 @@
 
 import { memo, useState } from 'react'
 import { motion } from 'framer-motion'
+import '@components/VideoPreview/preview.css'
 import useYouTubePlayer from '@components/VideoPreview/useYouTubePlayer'
 import { extractYouTubeId } from '@components/VideoPreview/youtubeUrl'
 
@@ -38,9 +39,10 @@ function BannerVideoPlayer({ media, muted, paused, onTimeUpdate, currentMediaInd
       transition={{ duration: 0.75, ease: 'easeInOut' }}
       className="h-full w-full"
     >
+      {/* yt-cover: fills the banner instead of letterboxing — see preview.css */}
       <div
         ref={containerRef}
-        className="absolute inset-0 w-full h-full select-none pointer-events-none z-0 [&_iframe]:absolute [&_iframe]:inset-0 [&_iframe]:h-full [&_iframe]:w-full"
+        className="yt-cover absolute inset-0 w-full h-full select-none pointer-events-none z-0"
       />
     </motion.div>
   )

@@ -5,6 +5,7 @@ import { classNames } from '@src/utils'
 import useYouTubePlayer from '@components/VideoPreview/useYouTubePlayer'
 import useVideoElementTeardown from '@components/VideoPreview/useVideoElementTeardown'
 import { extractYouTubeId } from '@components/VideoPreview/youtubeUrl'
+import '@components/VideoPreview/preview.css'
 
 const VOLUME_KEY = 'videoVolumeCard'
 const MUTED_KEY = 'videoMutedCard'
@@ -216,10 +217,8 @@ function YouTubePreview({
   }, [isPlaying])
 
   return (
-    <div
-      ref={containerRef}
-      className="absolute inset-0 h-full w-full [&_iframe]:absolute [&_iframe]:inset-0 [&_iframe]:h-full [&_iframe]:w-full"
-    />
+    // yt-cover matches the direct-file branch's object-cover — see preview.css
+    <div ref={containerRef} className="yt-cover absolute inset-0 h-full w-full" />
   )
 }
 
