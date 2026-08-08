@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { classNames } from '@src/utils'
@@ -9,7 +9,7 @@ import { extractYouTubeId } from '@components/VideoPreview/youtubeUrl'
 const VOLUME_KEY = 'videoVolumeCard'
 const MUTED_KEY = 'videoMutedCard'
 
-// The `muted` prop only forces mute when strictly true — otherwise the stored
+// The `muted` prop only forces mute when strictly true â€” otherwise the stored
 // preference wins (long-standing contract; EpisodeThumbnail passes false and
 // expects the stored value).
 function readInitialMuted(mutedProp) {
@@ -79,7 +79,7 @@ function MuteControl({ muted, volume, onToggleMute, onVolumeChange }) {
   )
 }
 
-/** Direct-file preview branch — a plain <video> with the 416-remount guard. */
+/** Direct-file preview branch â€” a plain <video> with the 416-remount guard. */
 function FilePreview({
   videoURL,
   shouldPlay,
@@ -91,7 +91,7 @@ function FilePreview({
   onPlayingChange,
 }) {
   // Real-unmount teardown: a playing <video> removed from the DOM keeps its
-  // audio alive until GC — pause + release on unmount.
+  // audio alive until GC â€” pause + release on unmount.
   const videoRef = useVideoElementTeardown()
   const readyNotifiedRef = useRef(false)
   const [instanceKey, setInstanceKey] = useState(0)
@@ -112,7 +112,7 @@ function FilePreview({
     } else if (!video.paused) {
       video.pause()
     }
-  }, [shouldPlay, instanceKey])
+  }, [shouldPlay, instanceKey, videoRef])
 
   // Mirror mute/volume.
   useEffect(() => {
@@ -120,7 +120,7 @@ function FilePreview({
     if (!video) return
     video.muted = muted
     video.volume = volume
-  }, [muted, volume, instanceKey])
+  }, [muted, volume, instanceKey, videoRef])
 
   // Resume when the tab becomes visible again while we still should play.
   useEffect(() => {
@@ -137,7 +137,7 @@ function FilePreview({
     }
     document.addEventListener('visibilitychange', handleVisibility)
     return () => document.removeEventListener('visibilitychange', handleVisibility)
-  }, [])
+  }, [videoRef])
 
   const handleError = useCallback(() => {
     const video = videoRef.current
@@ -146,7 +146,7 @@ function FilePreview({
     // "416 Range Not Satisfiable" leaves the element wedged; a full remount is
     // the reliable cure (long-standing workaround carried over from vidstack).
     setInstanceKey((key) => key + 1)
-  }, [])
+  }, [videoRef])
 
   return (
     <video

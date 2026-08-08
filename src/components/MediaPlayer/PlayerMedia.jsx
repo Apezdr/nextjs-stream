@@ -1,7 +1,6 @@
 'use client'
 
 import { Video, HlsJsVideo } from './videojs'
-import useVideoElementTeardown from '@components/VideoPreview/useVideoElementTeardown'
 
 /**
  * The media element for the main player: <HlsJsVideo> for JIT .m3u8 manifests
@@ -21,11 +20,10 @@ export default function PlayerMedia({
   captions,
   nonces = {},
   onEnded,
+  // Owned by MainVideoPlayer (teardown + visibility-pause + heartbeat gating).
+  videoRef,
 }) {
   const isManifest = /\.m3u8($|\?)/i.test(videoURL || '')
-  // The framework only detaches its store on unmount — it never pauses the
-  // element, which leaves ghost audio playing until GC. Real-unmount teardown:
-  const videoRef = useVideoElementTeardown()
 
   const trackEls = []
   if (chaptersURL) {

@@ -255,6 +255,18 @@ export default function WithPlayBackTracker({
       if (!pausedRef.current) return;
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
       if (!store.target) return;
+      // Skip while this page sits hidden in Next's segment cache — a hidden
+      // paused player must not keep its presence session alive. (Router
+      // context is frozen for cached pages, so visibility is checked on the
+      // element itself.)
+      const target = store.target;
+      if (
+        target instanceof Element &&
+        typeof target.checkVisibility === 'function' &&
+        !target.checkVisibility()
+      ) {
+        return;
+      }
       const currentTime = store.currentTime || 0;
       if (currentTime <= 0) return;
       updatePlaybackWorkerRef.current.postMessage({

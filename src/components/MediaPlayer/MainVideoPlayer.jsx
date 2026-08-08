@@ -13,7 +13,8 @@ import AutoCaptionsManager from './AutoCaptionsManager'
 import { AutoCaptionsProgressProvider } from './AutoCaptionsProgressContext'
 import CaptionPreferenceManager from './CaptionPreferenceManager'
 import WithPlaybackTracker from '../built-in/WithPlaybackTracker'
-import WithPlaybackCoordinator from '@components/built-in/WithPlaybackCoordinator'
+import { usePlaybackCoordinator } from '@src/contexts/PlaybackCoordinatorContext'
+import usePlayerMediaElement from './usePlayerMediaElement'
 
 /**
  * Client root for the main watch-page player, assembled from @videojs/react
@@ -55,6 +56,12 @@ export default function MainVideoPlayer({
     setNonces((prev) => ({ ...prev, [label]: nonce }))
   }, [])
 
+  // Owns the media element: lifecycle (pause + release on real unmount) and
+  // whether it should be playing (user intent vs. suppressors — hidden
+  // segment-cached page, hover preview). See usePlayerMediaElement.
+  const { activePlayer } = usePlaybackCoordinator()
+  const videoRef = usePlayerMediaElement(activePlayer === 'thumbnail')
+
   return (
     <Player.Provider>
       <AutoCaptionsProgressProvider>
@@ -65,6 +72,7 @@ export default function MainVideoPlayer({
             thumbnailsURL={thumbnailsURL}
             captions={captions}
             nonces={nonces}
+            videoRef={videoRef}
           />
           <GoogleCast receiver={castReceiverId || undefined} />
           <VolumeRegulator />
@@ -77,7 +85,6 @@ export default function MainVideoPlayer({
               mediaMetadata={playbackMetadata}
             />
           ) : null}
-          <WithPlaybackCoordinator />
           {clipStartTime || clipEndTime ? (
             <ClipWindow clipStartTime={clipStartTime} clipEndTime={clipEndTime} />
           ) : null}

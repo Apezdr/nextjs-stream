@@ -7,12 +7,12 @@ const PlaybackCoordinatorContext = createContext(null);
 
 // Provider component that wraps parts of our app
 export function PlaybackCoordinatorProvider({ children }) {
-  // Track which player is currently active (could be 'main', 'thumbnail', or null)
+  // Track which player is currently active ('thumbnail' or null). The main
+  // player consumes this as a playback suppressor via useManagedPlayback —
+  // the old pause/resume bookkeeping (wasMainPlayerPaused) lives there now
+  // as user intent.
   const [activePlayer, setActivePlayer] = useState(null);
-  
-  // Tracks if the main player was already paused before a thumbnail started
-  const [wasMainPlayerPaused, setWasMainPlayerPaused] = useState(false);
-  
+
   // Function to request playback from a specific source
   const requestPlayback = (playerType, shouldPlay) => {
     if (shouldPlay) {
@@ -21,13 +21,11 @@ export function PlaybackCoordinatorProvider({ children }) {
       setActivePlayer(null);
     }
   };
-  
+
   // Value object passed to consumers
   const value = {
     activePlayer,
-    requestPlayback,
-    wasMainPlayerPaused,
-    setWasMainPlayerPaused
+    requestPlayback
   };
   
   return (
