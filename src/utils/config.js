@@ -1,5 +1,6 @@
 // Create URL handlers for all servers
 import { createURLHandler, createMultiServerURLHandler } from './url_utils'
+import { normalizeServerDisplayName } from './serverLabel'
 // Import webhook functions
 import {
   getAllWebhookConfigs,
@@ -25,6 +26,8 @@ import {
  * @property {string} prefixPath - Prefix path for media files
  * @property {string} syncEndpoint - Base endpoint for sync operations
  * @property {string} internalEndpoint - Internal network endpoint for server-to-server calls (defaults to syncEndpoint)
+ * @property {string} environmentDisplayName - Optional deployment-owned display label
+ * @property {string} displayNameEnvironmentVariable - Environment variable associated with the display label
  * @property {ServerPaths} paths - Server-specific paths
  * @property {boolean} isDefault - Whether this is the default server
  */
@@ -60,6 +63,8 @@ const createServerConfig = ({
   prefixPath = '',
   syncEndpoint,
   internalEndpoint,
+  environmentDisplayName,
+  displayNameEnvironmentVariable,
   isDefault = false,
   priority = 1
 }) => {
@@ -72,6 +77,8 @@ const createServerConfig = ({
     prefixPath,
     syncEndpoint,
     internalEndpoint: finalInternalEndpoint,
+    environmentDisplayName: normalizeServerDisplayName(environmentDisplayName),
+    displayNameEnvironmentVariable,
     paths: {
       sync: createSyncUrls(syncEndpoint)
     },
@@ -120,6 +127,8 @@ const loadServerConfigurations = () => {
     prefixPath: process.env.FILE_SERVER_PREFIX_PATH || '',
     syncEndpoint: defaultSyncEndpoint,
     internalEndpoint: process.env.NODE_SERVER_INTERNAL_URL,
+    environmentDisplayName: process.env.SERVER_DISPLAY_NAME,
+    displayNameEnvironmentVariable: 'SERVER_DISPLAY_NAME',
     isDefault: true,
     priority: 1
   }))
@@ -133,6 +142,8 @@ const loadServerConfigurations = () => {
       prefixPath: process.env[`FILE_SERVER_PREFIX_PATH_${serverIndex}`] || '',
       syncEndpoint: process.env[`NODE_SERVER_URL_${serverIndex}`],
       internalEndpoint: process.env[`NODE_SERVER_INTERNAL_URL_${serverIndex}`],
+      environmentDisplayName: process.env[`SERVER_DISPLAY_NAME_${serverIndex}`],
+      displayNameEnvironmentVariable: `SERVER_DISPLAY_NAME_${serverIndex}`,
       isDefault: false,
       priority: serverIndex
     }))

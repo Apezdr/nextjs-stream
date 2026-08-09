@@ -5,6 +5,7 @@ import { QuestionMarkCircleIcon, XMarkIcon } from '@heroicons/react/24/outline' 
 import NodeJSDocumentation from './ServerInfo/NodeJSDocumentation'
 import PropTypes from 'prop-types'
 import { formatServerLabel } from '@src/utils/serverLabel'
+import ServerDisplayNameForm from './ServerDisplayNameForm'
 
 function ServerList({ servers, organizrURL }) {
   const [isOpen, setIsOpen] = useState(false)
@@ -29,7 +30,7 @@ function ServerList({ servers, organizrURL }) {
       <div className="mt-6 space-y-8 divide-y divide-gray-200">
         {/* Iterate through each server and render its settings */}
         {servers.map((server) => {
-          const serverLabel = formatServerLabel(server.id)
+          const serverLabel = server.displayName || formatServerLabel(server.id)
 
           return (
             <div key={server.id} className="pt-6">
@@ -37,6 +38,16 @@ function ServerList({ servers, organizrURL }) {
             <h3 className="text-lg font-medium text-gray-800 mb-4">
               Server: <span className="font-semibold">{serverLabel}</span>
             </h3>
+            <p className="text-xs text-gray-500">
+              Internal ID: <code>{server.id}</code>. Renaming changes only the Admin UI label.
+            </p>
+            <ServerDisplayNameForm
+              serverId={server.id}
+              displayName={serverLabel}
+              displayNameOverride={server.displayNameOverride || ''}
+              displayNameEditable={server.displayNameEditable !== false}
+              displayNameEnvironmentVariable={server.displayNameEnvironmentVariable}
+            />
 
             <dl className="space-y-6">
               {/* File Server URL */}
@@ -203,6 +214,11 @@ ServerList.propTypes = {
   servers: PropTypes.arrayOf(
     PropTypes.shape({
       id: PropTypes.string.isRequired,
+      displayName: PropTypes.string,
+      displayNameOverride: PropTypes.string,
+      displayNameEditable: PropTypes.bool,
+      displayNameEnvironmentVariable: PropTypes.string,
+      displayNameSource: PropTypes.oneOf(['environment', 'database', 'derived']),
       baseURL: PropTypes.string.isRequired,
       prefixPath: PropTypes.string,
       syncEndpoint: PropTypes.string.isRequired,
