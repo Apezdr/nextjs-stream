@@ -1,6 +1,7 @@
 import { cache } from 'react'
 import { auth } from '@src/lib/auth'
 import { headers } from 'next/headers'
+import { getLocalOwnerSession } from '@src/lib/localOwnerSession'
 
 /**
  * Request-scoped session store. React's cache() only memoizes during RSC
@@ -32,7 +33,18 @@ export const getSession = cache(async () => {
     return memoized
   }
 
-  const sessionPromise = auth.api.getSession({ headers: requestHeaders })
+  const sessionPromise = resolveSession(requestHeaders)
   sessionByRequest.set(requestHeaders, sessionPromise)
   return sessionPromise
 })
+
+/**
+ * A real session always wins. Local owner access is only consulted when the
+ * request carries no session at all, so it can never upgrade or replace the
+ * identity of someone who is already signed in.
+ */
+async function resolveSession(requestHeaders) {
+  const session = await auth.api.getSession({ headers: requestHeaders })
+  if (session?.user) return session
+  return getLocalOwnerSession(requestHeaders)
+}
