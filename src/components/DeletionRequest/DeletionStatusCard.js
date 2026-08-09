@@ -8,7 +8,7 @@ import {
   XCircleIcon,
   InformationCircleIcon
 } from '@heroicons/react/24/outline'
-import { formatDateToEST } from '@src/utils'
+import { useAppDateFormatter } from '@src/contexts/AppTimeZoneContext'
 
 const statusConfig = {
   pending: {
@@ -75,6 +75,7 @@ export default function DeletionStatusCard({
   showCancelButton = true,
   isLoading = false 
 }) {
+  const { formatDateTime } = useAppDateFormatter()
   const [isCancelling, setIsCancelling] = useState(false)
   const [cancelReason, setCancelReason] = useState('')
   const [showCancelForm, setShowCancelForm] = useState(false)
@@ -142,7 +143,7 @@ export default function DeletionStatusCard({
             <div className="text-sm">
               <span className="font-medium text-gray-700 dark:text-gray-300">Submitted:</span>
               <span className="ml-2 text-gray-600 dark:text-gray-400">
-                {formatDateToEST(request.createdAt)}
+                {formatDateTime(request.createdAt)}
               </span>
             </div>
 
@@ -176,7 +177,7 @@ export default function DeletionStatusCard({
                       {calculateDaysRemaining(request.scheduledDeletionDate)} days remaining until permanent deletion
                     </p>
                     <p className="text-xs text-orange-600 dark:text-orange-400 mt-1">
-                      Scheduled for: {formatDateToEST(request.scheduledDeletionDate)}
+                      Scheduled for: {formatDateTime(request.scheduledDeletionDate)}
                     </p>
                   </div>
                 </div>

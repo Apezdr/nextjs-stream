@@ -2,8 +2,10 @@
 
 import { buildURL, fetcher } from "@src/utils"
 import useSWR from 'swr'
+import { useAppDateFormatter } from '@src/contexts/AppTimeZoneContext'
 
 export default function LastSyncTime({ lastSyncTime: initialLastSyncTime }) {
+    const { formatDateTime } = useAppDateFormatter()
     const { data, error } = useSWR(buildURL(`/api/authenticated/admin/lastSynced`), fetcher, {
         refreshInterval: 5000,
         revalidateOnFocus: true,
@@ -16,8 +18,7 @@ export default function LastSyncTime({ lastSyncTime: initialLastSyncTime }) {
     if (error) {
         displayTime = 'Error loading sync time'
     } else if (data && data.lastSyncTime) {
-        const date = new Date(data.lastSyncTime)
-        displayTime = isNaN(date) ? 'Invalid Date' : date.toLocaleString()
+        displayTime = formatDateTime(data.lastSyncTime)
     }
 
     return (

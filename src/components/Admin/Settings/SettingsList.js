@@ -8,6 +8,10 @@ import JitServeSettings from '@components/Admin/Settings/JitServeSettings'
 import LastSyncTime from '@components/Admin/Settings/LastSyncTime'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/20/solid'
 import ServerList from './ServerList'
+import SyncServerLatencyToggle from './SyncServerLatencyToggle'
+import AppTimeZoneSettings from './AppTimeZoneSettings'
+import SystemPerformanceAlertsToggle from './SystemPerformanceAlertsToggle'
+import LocalAccessToggle from './LocalAccessToggle'
 
 export default function SettingsList({ settings }) {
   const {
@@ -26,6 +30,9 @@ export default function SettingsList({ settings }) {
     automaticSyncEnabled,
     autoCaptionsConfig,
     jitServeConfig,
+    syncServerLatencyEnabled,
+    localAccess,    timeZone,
+    systemPerformanceAlertsEnabled,
     webhookVisibility,
     automated,
   } = settings
@@ -84,6 +91,21 @@ export default function SettingsList({ settings }) {
               maxQueued={jitServeConfig?.maxQueued ?? null}
               envMode={(process.env.JIT_SERVE_MODE || 'rescue').toLowerCase()}
             />
+            <div className="mt-6 border-t border-gray-100 pt-6">
+              <SyncServerLatencyToggle enabled={syncServerLatencyEnabled !== false} />
+            </div>
+            <AppTimeZoneSettings timeZone={timeZone} />
+            <div className="mt-6 border-t border-gray-100 pt-6">
+              <SystemPerformanceAlertsToggle enabled={systemPerformanceAlertsEnabled !== false} />
+            </div>
+            <div className="mt-6 border-t border-gray-100 pt-6">
+              <LocalAccessToggle
+                enabled={localAccess?.enabled === true}
+                configured={localAccess?.configured === true}
+                ownerEmail={localAccess?.ownerEmail ?? null}
+                allowedNetworks={localAccess?.networks ?? ''}
+              />
+            </div>
           </SettingsSection>
         </div>
       </div>

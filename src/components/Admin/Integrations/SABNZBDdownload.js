@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import AppDateTime from '@components/AppDateTime';
 
 /**
  * Format bytes to human-readable size
@@ -124,7 +125,7 @@ const DownloadStatus = ({ data }) => {
               <div>
                 {slot.eta && (
                   <span className="inline-block">
-                    ETA: {new Date(slot.eta).toLocaleTimeString()}
+                    ETA: <AppDateTime value={slot.eta} options={{ year: undefined, month: undefined, day: undefined }} />
                   </span>
                 )}
               </div>

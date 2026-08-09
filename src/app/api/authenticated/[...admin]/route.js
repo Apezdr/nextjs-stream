@@ -3,6 +3,7 @@ import { isAdmin, isAdminOrWebhook } from '../../../../utils/routeAuth'
 import {
   getAllUsers,
   getLastSynced,
+  SyncServerLatencySettingsManager,
 } from '@src/utils/admin_database'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { getActivePresenceForUsers } from '@src/utils/playbackPresence/database'
@@ -20,9 +21,25 @@ import axios from 'axios'
 import chalk from 'chalk'
 import { getFileServerImportSettings } from '@src/utils/sync_db'
 import { getAllServers } from '@src/utils/config'
+import { getServersWithDisplayNames } from '@src/utils/serverDisplayNames'
+import { formatServerLabel } from '@src/utils/serverLabel'
+import { getRemoteSyncServerLatencies } from '@src/utils/syncServerLatency'
 import { exec } from 'child_process'
 import clientPromise from '@src/lib/mongodb'
-import { getCpuUsage, getMemoryTotal, getMemoryUsage, getMemoryUsed, getDiskStats, monitorConfig } from '@src/utils/monitor_server_load'
+import {
+  getCpuUsage,
+  getCpuInfo,
+  getMemoryTotal,
+  getMemoryInfo,
+  getMemoryUsage,
+  getMemoryUsed,
+  getDiskStats,
+  getDiskSummary,
+  getNetworkStats,
+  getGpuStats,
+  getTelemetryHistory,
+  monitorConfig,
+} from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { syncAllServers } from '@src/utils/sync'
 import { syncEventBus } from '@src/utils/sync/core/events'
@@ -45,9 +62,8 @@ import { createLogger } from '@src/lib/logger'
  * Extracts all server endpoints from the configuration.
  * @returns {Array<Object>} Array of server endpoints with relevant URLs.
  */
-function extractServerEndpoints() {
-  const servers = getAllServers()
-  return servers
+async function extractServerEndpoints() {
+  return getServersWithDisplayNames()
 }
 
 /**
@@ -344,7 +360,17 @@ export async function GET(request, props) {
         
       case 'servers':
         {
-          responseData = extractServerEndpoints()
+          responseData = await extractServerEndpoints()
+        }
+        break
+
+      case 'server-latency':
+        {
+          const enabled = await new SyncServerLatencySettingsManager().getEnabled()
+          const force = new URL(request.url).searchParams.get('refresh') === '1'
+          responseData = enabled
+            ? { enabled: true, ...(await getRemoteSyncServerLatencies({ force })) }
+            : { enabled: false, state: 'disabled', checkedAt: null, servers: [] }
         }
         break
       
@@ -396,11 +422,14 @@ export async function GET(request, props) {
 
       case 'server-load':
         {
-          const { cpuEnabled, memoryEnabled, diskEnabled } = monitorConfig
+          const { cpuEnabled, memoryEnabled, diskEnabled, networkEnabled, gpuEnabled } = monitorConfig
           responseData = {
-            ...(cpuEnabled    ? { cpu: getCpuUsage() }                                                              : {}),
-            ...(memoryEnabled ? { memoryUsed: getMemoryUsed(), memoryTotal: getMemoryTotal(), memoryUsage: getMemoryUsage() } : {}),
-            ...(diskEnabled   ? { drives: getDiskStats() }                                                          : { drives: [] }),
+            ...(cpuEnabled    ? { cpu: getCpuUsage(), cpuInfo: getCpuInfo() }                                       : {}),
+            ...(memoryEnabled ? { memoryUsed: getMemoryUsed(), memoryTotal: getMemoryTotal(), memoryUsage: getMemoryUsage(), memoryInfo: getMemoryInfo() } : {}),
+            ...(diskEnabled   ? { drives: getDiskStats(), disk: getDiskSummary() }                                  : { drives: [] }),
+            ...(networkEnabled ? { network: getNetworkStats() } : {}),
+            ...(gpuEnabled ? { gpus: getGpuStats() } : {}),
+            history: getTelemetryHistory(),
             config: monitorConfig,
           }
         }
@@ -414,8 +443,10 @@ export async function GET(request, props) {
         break
       case 'sync-status':
         responseData = {
+          observedAt: new Date().toISOString(),
           active: activeSyncOperation !== null,
           startTime: activeSyncOperation ? startTime : null,
+          lastCompletedAt,
           streamUrl: activeSyncOperation ? '/api/authenticated/admin/sync-stream' : null,
           snapshot: syncSnapshot ? {
             servers: syncSnapshot.servers,
@@ -483,7 +514,13 @@ export async function GET(request, props) {
 
   return new Response(JSON.stringify(responseData), {
     status: 200,
-    headers: { 'Content-Type': 'application/json' },
+    // Admin snapshots can reveal host capabilities and must never be reused by
+    // a shared cache or by a different authenticated browser session.
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'private, no-store',
+      'Vary': 'Cookie, Authorization',
+    },
   })
 }
 
@@ -491,6 +528,7 @@ export async function GET(request, props) {
 let startTime = null
 let activeSyncOperation = null
 let syncSubscribers = []
+let lastCompletedAt = null
 
 // A sync "running" longer than this is presumed wedged (a full library sync
 // completes in seconds-to-minutes) and its handle is abandoned so the next
@@ -529,6 +567,7 @@ function startSnapshotTracking() {
     }
 
     if (event.entityId === '__sync_complete__') {
+      lastCompletedAt = new Date(event.timestamp || Date.now()).toISOString()
       syncSnapshot = null  // Sync done — clear snapshot
       return
     }
@@ -1059,9 +1098,14 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     
     // Create admin-only sync completion notification
     try {
-      // Determine server name - use first file server or default
-      const serverNames = Object.keys(fileServers);
-      const serverName = serverNames.length > 0 ? serverNames[0] : 'Unknown Server';
+      // The notification is user-facing, so it must carry the same labels the
+      // Admin UI shows, not the internal server ids used as fileServers keys.
+      const configuredServers = await getServersWithDisplayNames();
+      const displayNameById = new Map(configuredServers.map((server) => [server.id, server.displayName]));
+      const syncedServerIds = Object.keys(fileServers || {});
+      const serverName = syncedServerIds.length > 0
+        ? syncedServerIds.map((id) => displayNameById.get(id) || formatServerLabel(id)).join(', ')
+        : configuredServers.find((server) => server.isDefault)?.displayName || formatServerLabel('default');
       
       // Extract sync statistics from the result
       const stats = {

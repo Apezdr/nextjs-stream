@@ -1,10 +1,11 @@
 'use client'
 
 import { Dialog, Transition } from '@headlessui/react'
-import { Fragment, useEffect, useMemo, useReducer, useRef, useState, useDeferredValue, useTransition } from 'react'
+import { Fragment, useEffect, useEffectEvent, useMemo, useReducer, useRef, useState, useDeferredValue } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import useSWR from 'swr'
-import { classNames } from '@src/utils'
+import { buildURL, classNames } from '@src/utils'
+import { formatServerLabel } from '@src/utils/serverLabel'
 
 // Rule 6.3: Hoist static JSX outside the component — avoids re-creation on every render
 const SYNC_ICON = (
@@ -168,7 +169,7 @@ function AnimatedTicker({
   )
 }
 
-function ServerCard({ server }) {
+function ServerCard({ server, displayName }) {
   const [errorsExpanded, setErrorsExpanded] = useState(false)
   const hasErrors = server.errorCount > 0
 
@@ -187,7 +188,9 @@ function ServerCard({ server }) {
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <StatusDot status={server.status} />
-          <span className="font-semibold text-gray-800 truncate">{server.id}</span>
+          <span className="font-semibold text-gray-800 truncate">
+            {displayName || formatServerLabel(server.id)}
+          </span>
         </div>
         <div className="flex items-center gap-2 shrink-0 text-gray-500">
           <span>{statusLabel}</span>
@@ -271,10 +274,9 @@ function summaryReducer(state, action) {
   }
 }
 
-// SWR fetcher for the in-progress sync snapshot. Preserves the exact GET request
-// the autoConnect effect used to issue inline.
 const fetchSyncStatus = async (url) => {
   const res = await fetch(url)
+  if (!res.ok) throw new Error(`Request failed (${res.status})`)
   return res.json()
 }
 
@@ -287,8 +289,14 @@ export default function SyncMediaPopup({
 }) {
   const cancelButtonRef = useRef(null)
   const esRef = useRef(null)
+  const streamGenerationRef = useRef(0)
+  const streamResolveRef = useRef(null)
+  const observedActiveRef = useRef(false)
+  const inactiveObservationsRef = useRef(0)
+  const lastStatusObservationRef = useRef(null)
+  const runStartedAtRef = useRef(null)
 
-  const [isSyncing, startSyncTransition] = useTransition()
+  const [isSyncing, setIsSyncing] = useState(false)
 
   const [summary, dispatchSummary] = useReducer(summaryReducer, INITIAL_SUMMARY)
   const { data: syncData, notReady: syncNotReady, duration: syncDuration, startTime: syncstartTime, error: syncError } = summary
@@ -297,6 +305,19 @@ export default function SyncMediaPopup({
   const deferredCounts = useDeferredValue(progressCounts)
 
   const [serverStates, setServerStates] = useState({})
+  const { data: configuredServers = [] } = useSWR(
+    isOpen ? '/api/authenticated/admin/servers' : null,
+    fetchSyncStatus,
+    {
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      shouldRetryOnError: false,
+    }
+  )
+  const serverDisplayNames = useMemo(
+    () => Object.fromEntries(configuredServers.map((server) => [server.id, server.displayName])),
+    [configuredServers]
+  )
   // Total entities to process across all servers — drives the determinate
   // progress bar and the "processed / total" label.
   const syncTotal = useMemo(
@@ -312,6 +333,18 @@ export default function SyncMediaPopup({
   // the typical sync should leverage the optimisation.
   const [forceRefresh, setForceRefresh] = useState(false)
 
+  const { data: authoritativeSyncStatus } = useSWR(
+    isOpen && isSyncing ? buildURL('/api/authenticated/admin/sync-status') : null,
+    fetchSyncStatus,
+    {
+      refreshInterval: 3000,
+      dedupingInterval: 3000,
+      revalidateOnFocus: false,
+      revalidateOnReconnect: false,
+      shouldRetryOnError: false,
+    }
+  )
+
   useEffect(() => {
     return () => { esRef.current?.close() }
   }, [])
@@ -325,11 +358,14 @@ export default function SyncMediaPopup({
    * so the popup closes correctly even if sync finished during connection setup.
    */
   const subscribeToStream = (streamUrl, { skipReplayed = false } = {}) => {
+    const generation = ++streamGenerationRef.current
     return new Promise((resolve, reject) => {
       const es = new EventSource(streamUrl)
       esRef.current = es
+      streamResolveRef.current = resolve
 
       es.onmessage = (event) => {
+        if (streamGenerationRef.current !== generation) return
         let payload
         try { payload = JSON.parse(event.data) } catch { return }
         if (payload.type === 'heartbeat') return
@@ -350,6 +386,7 @@ export default function SyncMediaPopup({
           updateProcessedData('media')
           setLastSync(new Date())
           es.close()
+          streamResolveRef.current = null
           resolve()
           return
         }
@@ -435,85 +472,138 @@ export default function SyncMediaPopup({
       }
 
       es.onerror = () => {
+        if (streamGenerationRef.current !== generation) return
         es.close()
+        streamResolveRef.current = null
         reject(new Error('Sync stream connection lost'))
       }
     })
   }
 
-  // Auto-connect to an in-progress sync when the popup is opened via "View Info".
-  // autoConnect=true means we already know a sync is running — the connecting
-  // indicator is already visible because isConnecting was initialized from the prop.
-  //
-  // The status snapshot is fetched via SWR (key disabled until the popup is open
-  // in autoConnect mode and no sync run is active locally). All revalidation is
-  // disabled so the one-shot snapshot can't refetch and clobber live progress;
-  // the connect-and-subscribe work runs in onSuccess (a callback, not an effect).
-  const autoConnectedRef = useRef(false)
   useEffect(() => {
-    // Allow a fresh connect each time the popup is reopened.
-    if (!isOpen) autoConnectedRef.current = false
-  }, [isOpen])
+    if (!isSyncing || syncData !== null || syncError !== null || !authoritativeSyncStatus) return
+    if (authoritativeSyncStatus.active !== true && authoritativeSyncStatus.active !== false) return
+    // Only a fresh server response may advance the two-observation watchdog;
+    // unrelated React renders can revisit the same SWR value.
+    if (!authoritativeSyncStatus.observedAt ||
+      authoritativeSyncStatus.observedAt === lastStatusObservationRef.current) return
+    lastStatusObservationRef.current = authoritativeSyncStatus.observedAt
 
-  useSWR(
-    isOpen && autoConnect && !isSyncing && syncData === null
-      ? '/api/authenticated/admin/sync-status'
-      : null,
-    fetchSyncStatus,
-    {
-      revalidateOnFocus: false,
-      revalidateIfStale: false,
-      revalidateOnReconnect: false,
-      shouldRetryOnError: false,
-      onSuccess: (status) => {
-        if (autoConnectedRef.current) return
-        autoConnectedRef.current = true
-
-        if (!status.active) {
-          // Sync finished between click and popup opening
-          setIsConnecting(false)
-          return
-        }
-
-        dispatchSummary({ type: 'startTime', startTime: status.startTime })
-
-        // Pre-populate state from the server-side snapshot so the user immediately
-        // sees all servers (including completed ones) and accurate processed counts,
-        // rather than waiting for SSE replay which may be incomplete.
-        if (status.snapshot) {
-          setServerStates(status.snapshot.servers || {})
-          setProgressCounts({
-            processed: status.snapshot.totals?.processed ?? 0,
-            errors: status.snapshot.totals?.errors ?? 0,
-          })
-        }
-
-        startSyncTransition(async () => {
-          setIsConnecting(false)
-          try {
-            // skipReplayed=true because snapshot already represents state at
-            // connect-time — replayed events would re-animate old entities and
-            // hold the counter frozen until replay catches up to snapshot value.
-            await subscribeToStream(status.streamUrl, { skipReplayed: !!status.snapshot })
-          } catch (err) {
-            dispatchSummary({ type: 'error', error: err.message })
-          }
-        })
-      },
-      onError: () => {
-        if (autoConnectedRef.current) return
-        autoConnectedRef.current = true
-        setIsConnecting(false)
-      },
+    if (authoritativeSyncStatus.active === true) {
+      observedActiveRef.current = true
+      inactiveObservationsRef.current = 0
+      return
     }
-  )
+
+    const startedAtMs = Date.parse(runStartedAtRef.current || syncstartTime || '')
+    const completedAtMs = Date.parse(authoritativeSyncStatus.lastCompletedAt || '')
+    const completionMatchesRun = Number.isFinite(startedAtMs) &&
+      Number.isFinite(completedAtMs) && completedAtMs >= startedAtMs
+    if (!observedActiveRef.current && !completionMatchesRun) return
+
+    inactiveObservationsRef.current += 1
+    if (inactiveObservationsRef.current < 2) return
+
+    // The server is authoritatively idle but this window never received the
+    // final summary. Stop showing stale progress without inventing results.
+    streamGenerationRef.current += 1
+    esRef.current?.close()
+    esRef.current = null
+    streamResolveRef.current?.()
+    streamResolveRef.current = null
+    setIsSyncing(false)
+    setServerStates(previous => Object.fromEntries(
+      Object.entries(previous).map(([serverId, server]) => [
+        serverId,
+        { ...server, status: 'complete', currentEntity: null, currentOperation: null },
+      ])
+    ))
+    dispatchSummary({
+      type: 'error',
+      error: 'The server finished the sync, but this window did not receive the final details. No sync is currently running.',
+    })
+  }, [authoritativeSyncStatus, isSyncing, syncData, syncError, syncstartTime])
+
+  const joinActiveSync = useEffectEvent(async (signal) => {
+    try {
+      const response = await fetch('/api/authenticated/admin/sync-status', {
+        cache: 'no-store',
+        signal,
+      })
+      if (!response.ok) throw new Error(`Unable to check sync status (${response.status})`)
+      const status = await response.json()
+      if (signal.aborted) return
+
+      if (!status.active || !status.streamUrl) {
+        setIsConnecting(false)
+        dispatchSummary({
+          type: 'error',
+          error: 'The sync finished before this window connected. You can start a new sync.',
+        })
+        return
+      }
+
+      dispatchSummary({ type: 'startTime', startTime: status.startTime })
+      runStartedAtRef.current = status.startTime || null
+      observedActiveRef.current = true
+      inactiveObservationsRef.current = 0
+      if (status.snapshot) {
+        setServerStates(status.snapshot.servers || {})
+        setProgressCounts({
+          processed: status.snapshot.totals?.processed ?? 0,
+          errors: status.snapshot.totals?.errors ?? 0,
+        })
+      }
+
+      setIsConnecting(false)
+      setIsSyncing(true)
+      void subscribeToStream(status.streamUrl, { skipReplayed: !!status.snapshot })
+        .catch((err) => {
+          if (!signal.aborted) dispatchSummary({ type: 'error', error: err.message })
+        })
+        .finally(() => {
+          setIsSyncing(false)
+        })
+    } catch (error) {
+      if (signal.aborted && signal.reason !== 'timeout') return
+      setIsConnecting(false)
+      dispatchSummary({
+        type: 'error',
+        error: signal.reason === 'timeout'
+          ? 'Timed out while connecting to the active sync. Try opening it again.'
+          : error.message,
+      })
+    }
+  })
+
+  useEffect(() => {
+    if (!isOpen || !autoConnect) return
+
+    // Do not reuse the dashboard's SWR cache here: opening View Info is an
+    // imperative join request and must observe a fresh stream URL every time.
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort('timeout'), 10000)
+    setIsConnecting(true)
+    void joinActiveSync(controller.signal).finally(() => clearTimeout(timeoutId))
+
+    return () => {
+      clearTimeout(timeoutId)
+      controller.abort('closed')
+      esRef.current?.close()
+    }
+  }, [isOpen, autoConnect])
 
   const handleSyncClick = () => {
     dispatchSummary({ type: 'reset' })
     setProgressCounts({ processed: 0, errors: 0 })
     setServerStates({})
+    observedActiveRef.current = false
+    inactiveObservationsRef.current = 0
+    lastStatusObservationRef.current = null
+    runStartedAtRef.current = null
+    setIsSyncing(true)
 
-    startSyncTransition(async () => {
+    void (async () => {
       try {
         const response = await fetch('/api/authenticated/admin/sync', {
           method: 'POST',
@@ -523,7 +613,10 @@ export default function SyncMediaPopup({
         const data = await response.json()
         const { streamUrl, startTime: syncStart, alreadyRunning } = data
 
-        if (syncStart) dispatchSummary({ type: 'startTime', startTime: syncStart })
+        if (syncStart) {
+          runStartedAtRef.current = syncStart
+          dispatchSummary({ type: 'startTime', startTime: syncStart })
+        }
 
         if (alreadyRunning) {
           // Sync was already in progress — fetch snapshot to pre-populate state,
@@ -549,8 +642,10 @@ export default function SyncMediaPopup({
       } catch (err) {
         console.error('Sync failed:', err)
         dispatchSummary({ type: 'error', error: err.message })
+      } finally {
+        setIsSyncing(false)
       }
-    })
+    })()
   }
 
   const isComplete = !isSyncing && syncData !== null
@@ -671,7 +766,11 @@ export default function SyncMediaPopup({
 
                               <div className="space-y-2">
                                 {Object.values(serverStates).map(server => (
-                                  <ServerCard key={server.id} server={server} />
+                                  <ServerCard
+                                    key={server.id}
+                                    server={server}
+                                    displayName={serverDisplayNames[server.id]}
+                                  />
                                 ))}
                               </div>
                             </>
@@ -682,7 +781,11 @@ export default function SyncMediaPopup({
                       {isComplete && Object.keys(serverStates).length > 0 ? (
                         <div className="mb-4 space-y-2">
                           {Object.values(serverStates).map(server => (
-                            <ServerCard key={server.id} server={server} />
+                            <ServerCard
+                              key={server.id}
+                              server={server}
+                              displayName={serverDisplayNames[server.id]}
+                            />
                           ))}
                         </div>
                       ) : null}
@@ -705,7 +808,9 @@ export default function SyncMediaPopup({
                               return (
                                 <div className="mb-4" key={serverName}>
                                   <h2 className="text-xs font-bold underline">
-                                    Missing Media from <span className="text-blue-600">{serverName}</span>
+                                    Missing Media from <span className="text-blue-600">
+                                      {serverDisplayNames[serverName] || formatServerLabel(serverName)}
+                                    </span>
                                   </h2>
 
                                   {hasTv ? (
@@ -781,7 +886,9 @@ export default function SyncMediaPopup({
                                   className="p-4 mb-4 rounded-lg border border-gray-500"
                                 >
                                   <h2 className="text-xs font-bold underline text-red-800 text-center">
-                                    Missing MP4 Files on <span className="text-black">{serverName}</span>
+                                    Missing MP4 Files on <span className="text-black">
+                                      {serverDisplayNames[serverName] || formatServerLabel(serverName)}
+                                    </span>
                                   </h2>
 
                                   {hasMovies ? (

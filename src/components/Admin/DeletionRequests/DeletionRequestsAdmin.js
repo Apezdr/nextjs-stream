@@ -10,7 +10,7 @@ import {
   TrashIcon,
   XMarkIcon
 } from '@heroicons/react/24/outline'
-import { formatDateToEST } from '@src/utils'
+import { useAppDateFormatter } from '@src/contexts/AppTimeZoneContext'
 
 const statusConfig = {
   pending: {
@@ -80,6 +80,7 @@ function requestsReducer(state, action) {
 }
 
 export default function DeletionRequestsAdmin() {
+  const { formatDateTime } = useAppDateFormatter()
   const [requestsState, dispatch] = useReducer(requestsReducer, initialRequestsState)
   const { requests, loading, error, actionLoading } = requestsState
 
@@ -352,7 +353,7 @@ export default function DeletionRequestsAdmin() {
                           {request.email || request.userId}
                         </div>
                         <div className="text-sm text-gray-500 dark:text-gray-400">
-                          {formatDateToEST(request.createdAt)}
+                          {formatDateTime(request.createdAt)}
                         </div>
                         <button
                           onClick={() => setExpandedRequest(isExpanded ? null : request._id)}
@@ -382,6 +383,7 @@ export default function DeletionRequestsAdmin() {
 }
 
 function RequestDetails({ request, onAction, actionLoading }) {
+  const { formatDateTime } = useAppDateFormatter()
   const [showActionForm, setShowActionForm] = useState(null)
   const [actionReason, setActionReason] = useState('')
 
@@ -420,7 +422,7 @@ function RequestDetails({ request, onAction, actionLoading }) {
               <div>
                 <dt className="inline font-medium text-gray-700 dark:text-gray-300">Scheduled:</dt>
                 <dd className="inline ml-2 text-gray-600 dark:text-gray-400">
-                  {formatDateToEST(request.scheduledDeletionDate)}
+                  {formatDateTime(request.scheduledDeletionDate)}
                 </dd>
               </div>
             )}

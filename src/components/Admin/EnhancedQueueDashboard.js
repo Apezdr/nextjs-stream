@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { MaterialCard, MaterialCardHeader, MaterialCardContent, MaterialButton, StatusBadge } from './BaseComponents'
+import AppDateTime from '@components/AppDateTime'
 
 /**
  * Enhanced Queue Dashboard component with Material Design styling
@@ -257,7 +258,7 @@ const ArrQueueContent = ({ data, type }) => {
             </span>
             {item.estimatedCompletionTime && (
               <span className="text-xs text-gray-500">
-                ETA: {new Date(item.estimatedCompletionTime).toLocaleTimeString()}
+                ETA: <AppDateTime value={item.estimatedCompletionTime} options={{ year: undefined, month: undefined, day: undefined }} />
               </span>
             )}
           </div>
