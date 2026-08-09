@@ -2,8 +2,10 @@
 
 import useSWR from 'swr';
 import { buildURL, fetcher } from '@src/utils';
+import { formatServerLabel } from '@src/utils/serverLabel';
 import Loading from '@src/app/loading';
 import { useMemo, useState } from 'react';
+import AppDateTime from '@components/AppDateTime';
 
 function normalizeServerProcessesPayload(payload) {
   if (Array.isArray(payload)) {
@@ -42,7 +44,7 @@ export function ServerProcesses() {
         server.processes.forEach((process) => {
           processes.push({
             ...process,
-            serverName: server.server
+            serverName: server.displayName || formatServerLabel(server.server)
           });
         });
       }
@@ -180,7 +182,7 @@ export function ServerProcesses() {
                   {process.status}
                 </td>
                 <td className="px-4 py-2 text-sm text-gray-800 dark:text-gray-200">
-                  {new Date(process.last_updated).toLocaleString()}
+                  <AppDateTime value={process.last_updated} />
                 </td>
               </tr>
             ))
@@ -265,6 +267,12 @@ export function MinimalizedServerProcesses() {
   const { data, error } = useSWR(buildURL('/api/authenticated/admin/server-processes'), fetcher, {
     refreshInterval: 5000,
   });
+  // Same key/cadence as the dashboard process card, so SWR dedupes this and
+  // both surfaces agree about the app-owned media sync operation.
+  const { data: syncStatus } = useSWR(buildURL('/api/authenticated/admin/sync-status'), fetcher, {
+    refreshInterval: 3000,
+  });
+  const isSyncActive = syncStatus?.active === true;
 
   const hasDataError = Boolean(data && !Array.isArray(data) && data.error);
   const serverProcesses = useMemo(() => normalizeServerProcessesPayload(data), [data]);
@@ -277,7 +285,7 @@ export function MinimalizedServerProcesses() {
     );
   }
 
-  if (!data) {
+  if (!data && !isSyncActive) {
     return (
       <div className="w-full px-2 py-2 bg-gray-800 rounded-md mb-4">
         <div className="flex justify-center items-center h-24">
@@ -293,7 +301,7 @@ export function MinimalizedServerProcesses() {
   );
 
   // If no servers have active processes, render a simple message
-  if (activeServers.length === 0) {
+  if (activeServers.length === 0 && !isSyncActive) {
     return (
       <div className="w-full px-2 py-2 bg-gray-800 rounded-md mb-4 text-gray-400 text-sm text-center">
         No active processes.
@@ -303,6 +311,17 @@ export function MinimalizedServerProcesses() {
 
   return (
     <div className="w-full space-y-2">
+      {isSyncActive && (
+        <div className="rounded-md bg-blue-950 px-2 py-2 ring-1 ring-blue-700/50">
+          <div className="flex items-center justify-between gap-2 text-xs">
+            <strong className="text-blue-100">Media Sync</strong>
+            <span className="inline-flex items-center gap-1 text-blue-300">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-blue-400" />
+              Running
+            </span>
+          </div>
+        </div>
+      )}
       {activeServers.map((server) => {
         // Only look at processes that are not completed
         const activeProcesses = server.processes ? server.processes.filter(

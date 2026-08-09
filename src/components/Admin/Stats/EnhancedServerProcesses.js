@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { buildURL, fetcher } from '@src/utils'
+import { formatServerLabel } from '@src/utils/serverLabel'
 import { StatusBadge, MaterialButton } from '../BaseComponents'
 import ServerProcessesModal from './ServerProcessesModal'
 
@@ -250,7 +251,7 @@ const EnhancedServerProcesses = ({ onSyncViewClick }) => {
                 {activeServers.map(server => (
                     <ProcessCard
                         key={server.server}
-                        serverName={server.server}
+                        serverName={server.displayName || formatServerLabel(server.server)}
                         processes={server.processes}
                     />
                 ))}
