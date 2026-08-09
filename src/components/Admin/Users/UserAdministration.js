@@ -8,6 +8,7 @@ import {
   CheckBadgeIcon,
   NoSymbolIcon,
   ClockIcon,
+  ShieldCheckIcon,
 } from '@heroicons/react/24/outline'
 
 function StatCard({ label, value, icon: Icon, accent = 'blue' }) {
@@ -16,6 +17,7 @@ function StatCard({ label, value, icon: Icon, accent = 'blue' }) {
     emerald: 'bg-emerald-500/15 text-emerald-300',
     rose: 'bg-rose-500/15 text-rose-300',
     amber: 'bg-amber-500/15 text-amber-300',
+    violet: 'bg-violet-500/15 text-violet-300',
   }
 
   return (
@@ -48,6 +50,7 @@ export default function UserAdmin({ processedUserData }) {
 
     return {
       total: users.length,
+      admins: users.filter((u) => u.role === 'admin').length,
       approved: users.filter((u) => u.approved === 'true').length,
       limited: users.filter((u) => u.limitedAccess === true).length,
       pending: users.filter((u) => u.approved !== 'true').length,
@@ -70,8 +73,9 @@ export default function UserAdmin({ processedUserData }) {
             </p>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
             <StatCard label="Total Users" value={stats.total} icon={UsersIcon} accent="blue" />
+            <StatCard label="Admins" value={stats.admins} icon={ShieldCheckIcon} accent="violet" />
             <StatCard label="Approved" value={stats.approved} icon={CheckBadgeIcon} accent="emerald" />
             <StatCard label="Limited Access" value={stats.limited} icon={NoSymbolIcon} accent="rose" />
             <StatCard label="Pending" value={stats.pending} icon={ClockIcon} accent="amber" />

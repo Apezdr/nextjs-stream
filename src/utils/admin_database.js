@@ -1,5 +1,6 @@
 import clientPromise from '../lib/mongodb'
 import { userQueries } from '@src/lib/userQueries'
+import { DEFAULT_APP_TIME_ZONE, normalizeTimeZone } from '@src/utils/dateTime'
 
 export async function getAllUsers() {
   const users = await userQueries.findAll()
@@ -113,6 +114,139 @@ export class JitServeSettingsManager {
       .updateOne(
         { name: 'jitServe' },
         { $set: update, $setOnInsert: { name: 'jitServe' } },
+        { upsert: true }
+      )
+  }
+}
+
+export class ServerDisplayNameManager {
+  async getServerDisplayNames() {
+    const client = await clientPromise
+    const doc = await client
+      .db('app_config')
+      .collection('settings')
+      .findOne({ name: 'serverDisplayNames' })
+    return doc?.value && typeof doc.value === 'object' ? doc.value : {}
+  }
+
+  async setServerDisplayName(serverId, displayName) {
+    if (serverId !== 'default' && !/^server\d+$/.test(serverId)) {
+      throw new Error('Invalid server ID')
+    }
+
+    const client = await clientPromise
+    const collection = client.db('app_config').collection('settings')
+    if (displayName) {
+      await collection.updateOne(
+        { name: 'serverDisplayNames' },
+        {
+          $set: { [`value.${serverId}`]: displayName },
+          $setOnInsert: { name: 'serverDisplayNames' },
+        },
+        { upsert: true }
+      )
+    } else {
+      // Clearing a label restores the derived fallback without mutating the
+      // load-bearing ID stored throughout sync and field provenance.
+      await collection.updateOne(
+        { name: 'serverDisplayNames' },
+        { $unset: { [`value.${serverId}`]: '' } }
+      )
+    }
+  }
+}
+
+export class LocalAccessSettingsManager {
+  async getEnabled() {
+    const client = await clientPromise
+    const doc = await client
+      .db('app_config')
+      .collection('settings')
+      .findOne({ name: 'localAccess' })
+    // Off unless explicitly turned on — this one weakens authentication.
+    return doc?.value?.enabled === true
+  }
+
+  async setEnabled(enabled) {
+    const client = await clientPromise
+    await client
+      .db('app_config')
+      .collection('settings')
+      .updateOne(
+        { name: 'localAccess' },
+        { $set: { 'value.enabled': enabled === true }, $setOnInsert: { name: 'localAccess' } },
+        { upsert: true }
+      )
+  }
+}
+
+export class SyncServerLatencySettingsManager {
+  async getEnabled() {
+    const client = await clientPromise
+    const doc = await client
+      .db('app_config')
+      .collection('settings')
+      .findOne({ name: 'syncServerLatency' })
+    return doc?.value?.enabled !== false
+  }
+
+  async setEnabled(enabled) {
+    const client = await clientPromise
+    await client
+      .db('app_config')
+      .collection('settings')
+      .updateOne(
+        { name: 'syncServerLatency' },
+        { $set: { 'value.enabled': enabled }, $setOnInsert: { name: 'syncServerLatency' } },
+        { upsert: true }
+      )
+  }
+}
+
+export class AppTimeZoneManager {
+  async getTimeZone() {
+    const client = await clientPromise
+    const doc = await client
+      .db('app_config')
+      .collection('settings')
+      .findOne({ name: 'appTimeZone' })
+    return normalizeTimeZone(doc?.value) || DEFAULT_APP_TIME_ZONE
+  }
+
+  async setTimeZone(timeZone) {
+    const normalized = normalizeTimeZone(timeZone)
+    if (!normalized) throw new Error('Invalid IANA time zone')
+    const client = await clientPromise
+    await client
+      .db('app_config')
+      .collection('settings')
+      .updateOne(
+        { name: 'appTimeZone' },
+        { $set: { value: normalized }, $setOnInsert: { name: 'appTimeZone' } },
+        { upsert: true }
+      )
+    return normalized
+  }
+}
+
+export class SystemPerformanceAlertSettingsManager {
+  async getEnabled() {
+    const client = await clientPromise
+    const doc = await client
+      .db('app_config')
+      .collection('settings')
+      .findOne({ name: 'systemPerformanceAlerts' })
+    return doc?.value?.enabled !== false
+  }
+
+  async setEnabled(enabled) {
+    const client = await clientPromise
+    await client
+      .db('app_config')
+      .collection('settings')
+      .updateOne(
+        { name: 'systemPerformanceAlerts' },
+        { $set: { 'value.enabled': enabled }, $setOnInsert: { name: 'systemPerformanceAlerts' } },
         { upsert: true }
       )
   }

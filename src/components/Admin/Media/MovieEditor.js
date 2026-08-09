@@ -10,6 +10,7 @@ import ImagePreview from './ImagePreview'
 import CaptionsEditor from './CaptionsEditor'
 import DeleteMediaButton from './DeleteMediaButton'
 import TmdbConfigButton from './TmdbConfigButton'
+import ViewInLibraryButton from './ViewInLibraryButton'
 import RawRecordButton from './RawRecordButton'
 import JitOverrideSelect from './JitOverrideSelect'
 
@@ -101,6 +102,7 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
         </div>
         {!isNew && record?._id && (
           <div className="flex items-center gap-3">
+            <ViewInLibraryButton type="movie" originalTitle={record?.originalTitle} title={record?.title} />
             <RawRecordButton record={record} title="Movie record" />
             {record?.originalTitle && (
               <TmdbConfigButton

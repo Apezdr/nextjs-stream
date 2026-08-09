@@ -13,6 +13,7 @@ import LockableField from './LockableField'
 import ImagePreview from './ImagePreview'
 import DeleteMediaButton from './DeleteMediaButton'
 import TmdbConfigButton from './TmdbConfigButton'
+import ViewInLibraryButton from './ViewInLibraryButton'
 import RawRecordButton from './RawRecordButton'
 import SeasonEditor from './SeasonEditor'
 import JitOverrideSelect from './JitOverrideSelect'
@@ -131,6 +132,7 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
         </div>
         {!isNew && record?._id && (
           <div className="flex items-center gap-3">
+            <ViewInLibraryButton type="tv" originalTitle={record?.originalTitle} title={record?.title} />
             <RawRecordButton record={record} title="TV show record" />
             {record?.originalTitle && (
               <TmdbConfigButton

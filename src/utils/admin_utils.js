@@ -10,6 +10,7 @@ import {
   tdarrURL,
 } from '@src/utils/ssr_config'
 import { multiServerHandler } from './config'
+import { formatServerLabel } from './serverLabel'
 //import axiosInstance from './axiosInstance'
 import pLimit from 'p-limit'
 import { httpGet } from '@src/lib/httpHelper'
@@ -31,13 +32,14 @@ export function processUserData(jsonResponse) {
   const users = jsonResponse
 
   // Prepare headers for the user table
-  const userHeaders = ['Name', 'Email', 'Image', 'Limited Access', 'Approved', 'Actions']
+  const userHeaders = ['Name', 'Email', 'Role', 'Image', 'Limited Access', 'Approved', 'Actions']
 
   // Transform data for users
   const userData = users.map((user) => ({
     id: user._id.toString(),
     name: user.name,
     email: user.email,
+    role: user.role === 'admin' ? 'admin' : 'user',
     imageUrl: user.image, // Add image URL
     limitedAccess: user.limitedAccess ? true : false, // If the user is approved to view content
     approved: user.approved.toString(), // If the user is approved to view content
@@ -453,7 +455,7 @@ export function getSystemStatusMessage(level, statuses) {
   if (level === 'critical') {
     const criticalServers = statuses
       .filter(s => s.level === 'critical')
-      .map(s => s.serverName)
+      .map(s => s.serverName || formatServerLabel(s.serverId))
       .join(', ');
     return `Critical load on ${criticalServers}. Some features may be unavailable.`;
   }
