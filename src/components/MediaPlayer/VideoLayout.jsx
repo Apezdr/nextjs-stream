@@ -10,6 +10,7 @@ import * as Sliders from './sliders'
 import { TimeGroup } from './time-group'
 import { Title, VideoMetadata } from './title'
 import NextUpCard from './NextUpCard'
+import CastingOverlay from './CastingOverlay'
 
 /**
  * Declarative pointer gestures: tap toggles pause, center double-tap toggles
@@ -85,6 +86,7 @@ export function VideoLayout({
     <>
       <Gestures />
       <Hotkeys />
+      <CastingOverlay titleLabel={titleLabel} />
       <BufferingIndicator className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-200 data-[buffering]:opacity-100">
         <SpinnerIcon className="h-16 w-16 animate-spin text-white/90" />
       </BufferingIndicator>

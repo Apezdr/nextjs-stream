@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cinema Sanctuary — Cast Receiver</title>
+
+    <!--
+      This is deliberately a STATIC page in /public, not a Next route.
+
+      A CAF receiver must call context.start() within a few hundred ms of load
+      or the sender's launch times out with a black screen on the TV. The old
+      App Router version (/receiver) could not: it rendered nothing until a
+      client-side SWR fetch resolved, loaded the receiver module with
+      strategy="lazyOnload" (window load + requestIdleCallback), and sat inside
+      the root template's framer-motion wrapper at opacity: 0 until React
+      hydrated. Cast devices run an older Chromium; any hiccup in that chain is
+      an unrecoverable black screen with no diagnostics.
+
+      Nothing below may block context.start(). The cosmetic styling is applied
+      afterwards, and failing to fetch it is harmless.
+    -->
+
+    <!-- CAF receiver SDK. Must be synchronous and first. -->
+    <script src="https://www.gstatic.com/cast/sdk/libs/caf_receiver/v3/cast_receiver_framework.js"></script>
+    <!-- Required: js/receiver.js calls cast.debug.CastDebugLogger.getInstance() -->
+    <script src="https://www.gstatic.com/cast/sdk/libs/devtools/debug_layer/caf_receiver_logger.js"></script>
+
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        background: #000;
+        overflow: hidden;
+      }
+
+      cast-media-player {
+        --splash-size: cover;
+        --background-size: cover;
+      }
+    </style>
+  </head>
+  <body>
+    <cast-media-player></cast-media-player>
+
+    <!--
+      Starts the receiver — context.start() is the last statement in this
+      module, and its own imports (./queuing.js, ./media_fetcher.js,
+      ./cast_analytics.js) resolve against the module's own URL.
+
+      The path MUST be absolute. This file is served at /receiver via a rewrite
+      (see next.config.js), so the document URL has no trailing slash and a
+      relative "./js/receiver.js" would resolve to /js/receiver.js and 404 —
+      leaving the splash on screen, no debug overlay, and a launch timeout.
+    -->
+    <script type="module" src="/receiver/js/receiver.js"></script>
+
+    <!--
+      Cosmetic only: idle/splash artwork, applied once the receiver is already
+      running. Served from this same origin, so no config round-trip is needed
+      for the common case; if the request fails the receiver still works.
+    -->
+    <script>
+      ;(function applyArtwork() {
+        var origin = window.location.origin
+        var scrim =
+          'linear-gradient(0deg, rgba(0,0,0,0.73) 0%, rgba(0,0,0,0.58) 12%, rgba(255,255,255,0) 100%)'
+
+        function setVars(fileServer) {
+          var collage = fileServer + 'poster_collage.jpg'
+          var root = document.querySelector('cast-media-player')
+          if (!root) return
+          root.style.setProperty('--splash-image', scrim + ", url('" + collage + "')")
+          root.style.setProperty('--background-image', scrim + ", url('" + collage + "')")
+          for (var i = 1; i <= 10; i++) {
+            root.style.setProperty(
+              '--slideshow-image-' + i,
+              "url('" + origin + '/api/random-banner?t=' + i + "')"
+            )
+          }
+        }
+
+        // Same-origin default keeps this working with no network dependency;
+        // the config endpoint only refines the file-server location.
+        setVars(origin + '/media/')
+
+        fetch(origin + '/api/getserverconfig')
+          .then(function (r) {
+            return r.ok ? r.json() : null
+          })
+          .then(function (config) {
+            if (config && config.defaultFileServer) setVars(config.defaultFileServer)
+          })
+          .catch(function () {
+            /* artwork is optional */
+          })
+      })()
+    </script>
+  </body>
+</html>

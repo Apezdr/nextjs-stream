@@ -133,6 +133,24 @@ const nextConfig = {
     '@vercel/otel',
     'pino',
   ],
+  // The Cast receiver URL registered in the Google Cast Developer Console is
+  // https://<host>/receiver, but the receiver must be a STATIC page: a CAF
+  // receiver has to call context.start() within a few hundred ms of launch or
+  // the sender times out with a black screen on the TV. Rendering it as an app
+  // route cannot meet that — the page has to download the client bundle and
+  // hydrate first (it works in a desktop browser, which is fast enough, and
+  // fails on a Cast device's older Chromium).
+  //
+  // beforeFiles runs ahead of the filesystem and app routes, so this serves
+  // public/receiver/index.html without needing a console change.
+  async rewrites() {
+    return {
+      beforeFiles: [{ source: '/receiver', destination: '/receiver/index.html' }],
+      afterFiles: [],
+      fallback: [],
+    }
+  },
+
   // Additional Next.js configurations can be added here
   /* webpack(config) {
     Object.defineProperty(config, 'devtool', {

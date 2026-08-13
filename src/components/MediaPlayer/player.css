@@ -30,7 +30,7 @@
 /* The media element fills the container. */
 .player-container video {
   width: 100%;
-  height: 100%;
+  height: 100vh;
   object-fit: contain;
   background: #000;
 }

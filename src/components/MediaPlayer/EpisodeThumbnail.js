@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useCallback } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import CardVideoPlayer from '@components/MediaScroll/CardVideoPlayer';
@@ -38,6 +38,19 @@ export default function EpisodeThumbnail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [episode._id]);
 
+  // Release the playback claim when this page is hidden or unmounted.
+  // Clicking the very thumbnail you are hovering navigates away without ever
+  // firing mouseleave, so without this the claim latches and permanently
+  // suppresses the main player when the user comes back.
+  useLayoutEffect(() => {
+    return () => {
+      setIsHovering(false);
+      setVideoState(INITIAL_VIDEO_STATE);
+      requestPlayback('thumbnail', false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Handlers for video player events
   const handleVideoReady = useCallback((player) => {
     setVideoState((prev) => ({ ...prev, videoReady: true }));
@@ -59,6 +72,9 @@ export default function EpisodeThumbnail({
     <Link 
       href={episodeLink}
       prefetch={false}
+      // Keep the viewport where it is: the user is browsing the episode rail
+      // at the bottom of the page, and Next scrolls to top on push by default.
+      scroll={false}
       className={`flex-shrink-0 relative group rounded-lg overflow-hidden transition-all duration-300 transform ${
         isCurrentEpisode 
           ? 'ring-2 ring-indigo-500 scale-105 z-10' 

@@ -90,9 +90,16 @@ export {
   selectRemotePlayback,
 } from '@videojs/react'
 
-// Media elements
-export { Video } from '@videojs/react/video'
+// Media elements.
+//
+// Both are media HOSTS (HTMLVideoElementHost), which is a hard requirement for
+// Google Cast: useMediaComponent ignores anything that isn't a host, so with a
+// plain <Video> (a raw <video> element) the <GoogleCast> component silently
+// no-ops and the cast button falls through to the browser's native Remote
+// Playback API — Chrome's default receiver, without our receiver app,
+// subtitles or metadata.
 export { HlsJsVideo } from '@videojs/react/media/hlsjs-video'
+export { NativeHlsVideo } from '@videojs/react/media/native-hls-video'
 export { GoogleCast } from '@videojs/react/media/google-cast'
 
 // Icons

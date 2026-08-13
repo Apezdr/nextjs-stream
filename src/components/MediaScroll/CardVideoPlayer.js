@@ -1,6 +1,6 @@
 ﻿'use client'
 
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { classNames } from '@src/utils'
 import useYouTubePlayer from '@components/VideoPreview/useYouTubePlayer'
 import useVideoElementTeardown from '@components/VideoPreview/useVideoElementTeardown'
@@ -97,6 +97,27 @@ function FilePreview({
   const readyNotifiedRef = useRef(false)
   const [instanceKey, setInstanceKey] = useState(0)
 
+  // Stop when the surrounding page is hidden by Next's segment cache (or
+  // unmounted). Layout-effect cleanup is the prescribed hook for that, and
+  // `hidden` also gates the onPause auto-resume below, which would otherwise
+  // immediately undo this pause.
+  const hiddenRef = useRef(false)
+  useLayoutEffect(() => {
+    hiddenRef.current = false
+    return () => {
+      hiddenRef.current = true
+      try {
+        // Read at cleanup time on purpose: this hybrid callback ref tracks the
+        // live element across the 416-recovery remount, so a value captured at
+        // setup could be the wrong (already replaced) node.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        videoRef.current?.pause()
+      } catch {
+        /* already gone */
+      }
+    }
+  }, [videoRef])
+
   const callbacksRef = useRef({})
   const shouldPlayRef = useRef(shouldPlay)
   useEffect(() => {
@@ -108,7 +129,7 @@ function FilePreview({
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
-    if (shouldPlay) {
+    if (shouldPlay && !hiddenRef.current) {
       video.play().catch(() => {})
     } else if (!video.paused) {
       video.pause()
@@ -171,9 +192,15 @@ function FilePreview({
       onPause={() => {
         const { onPlayingChange } = callbacksRef.current
         if (onPlayingChange) onPlayingChange(false)
-        // Auto-resume unexpected pauses while the parent still wants playback.
+        // Auto-resume unexpected pauses while the parent still wants playback
+        // â€” never once the page is hidden, where that pause was ours.
         const video = videoRef.current
-        if (video && shouldPlayRef.current && document.visibilityState === 'visible') {
+        if (
+          video &&
+          !hiddenRef.current &&
+          shouldPlayRef.current &&
+          document.visibilityState === 'visible'
+        ) {
           video.play().catch(() => {})
         }
       }}

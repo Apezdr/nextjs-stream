@@ -1,6 +1,31 @@
 'use client'
 
-import { Video, HlsJsVideo } from './videojs'
+import { HlsJsVideo, NativeHlsVideo } from './videojs'
+
+/** Whether a source is an HLS manifest rather than a progressive file. */
+export function isManifestSource(url) {
+  return /\.m3u8($|\?)/i.test(url || '')
+}
+
+const CONTAINER_MIME = {
+  mp4: 'video/mp4',
+  m4v: 'video/mp4',
+  mov: 'video/mp4',
+  webm: 'video/webm',
+}
+
+/**
+ * MIME type for a source, for the Cast load request.
+ *
+ * The sender only infers a content type for HLS; a progressive file is sent
+ * with an empty one, leaving the receiver to guess. Returns undefined for
+ * anything unrecognised so the receiver keeps its own inference.
+ */
+export function castContentType(url) {
+  if (isManifestSource(url)) return 'application/x-mpegURL'
+  const ext = (url || '').split(/[?#]/)[0].split('.').pop()?.toLowerCase()
+  return CONTAINER_MIME[ext]
+}
 
 /**
  * The media element for the main player: <HlsJsVideo> for JIT .m3u8 manifests
@@ -23,7 +48,7 @@ export default function PlayerMedia({
   // Owned by MainVideoPlayer (teardown + visibility-pause + heartbeat gating).
   videoRef,
 }) {
-  const isManifest = /\.m3u8($|\?)/i.test(videoURL || '')
+  const isManifest = isManifestSource(videoURL)
 
   const trackEls = []
   if (chaptersURL) {
@@ -76,7 +101,7 @@ export default function PlayerMedia({
     playsInline: true,
     preload: 'auto',
     onEnded,
-    className: 'h-full w-full',
+    className: 'h-screen min-h-screen w-full',
   }
 
   return isManifest ? (
@@ -84,8 +109,11 @@ export default function PlayerMedia({
       {trackEls}
     </HlsJsVideo>
   ) : (
-    <Video ref={videoRef} src={videoURL} {...commonProps}>
+    // NativeHlsVideo, not a plain <Video>: for a non-manifest source it is just
+    // `target.src = src` with no hls.js engine, but it IS a media host, which
+    // is what lets <GoogleCast> register and cast to our own receiver.
+    <NativeHlsVideo ref={videoRef} src={videoURL} streamType="on-demand" {...commonProps}>
       {trackEls}
-    </Video>
+    </NativeHlsVideo>
   )
 }

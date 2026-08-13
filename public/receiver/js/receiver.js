@@ -46,25 +46,23 @@ const castDebugLogger = cast.debug.CastDebugLogger.getInstance()
 const LOG_RECEIVER_TAG = 'Receiver'
 
 /*
- * WARNING: Make sure to turn off debug logger for production release as it
- * may expose details of your app.
- * Uncomment below line to enable debug logger, show a 'DEBUG MODE' tag at
- * top left corner and show debug overlay.
+ * TEMPORARY — DEBUG OVERLAY IS ON UNCONDITIONALLY.
+ *
+ * Prints the incoming LOAD request and any playback error on the TV itself.
+ * Without it a rejected LOAD and a receiver that never started look identical:
+ * black screen, then the launch timeout.
+ *
+ * It is deliberately not gated on a ?debug=1 URL parameter right now so that
+ * diagnosing needs no Cast Developer Console edit. TURN THIS BACK OFF before
+ * production — the overlay shows a DEBUG MODE tag and can expose app details.
+ * The gate to restore:
+ *   const on = /(^|[?&])debug=1(&|$)/.test(location.search || '')
  */
-//  context.addEventListener(cast.framework.system.EventType.READY, () => {
-//   if (!castDebugLogger.debugOverlayElement_) {
-//     /**
-//      *  Enable debug logger and show a 'DEBUG MODE' tag at
-//      *  top left corner.
-//      */
-//       castDebugLogger.setEnabled(true);
-
-//     /**
-//      * Show debug overlay.
-//      */
-//       castDebugLogger.showDebugLogs(true);
-//   }
-// });
+context.addEventListener(cast.framework.system.EventType.READY, () => {
+  if (castDebugLogger.debugOverlayElement_) return
+  castDebugLogger.setEnabled(true)
+  castDebugLogger.showDebugLogs(true)
+})
 
 /*
  * Set verbosity level for Core events.
