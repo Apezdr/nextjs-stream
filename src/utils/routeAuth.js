@@ -41,6 +41,19 @@ export async function isAdmin(req = false) {
 }
 
 /**
+ * Require admin authorization from a Server Action or other non-HTTP caller.
+ * Throwing prevents callers from treating an error Response as a valid user
+ * and continuing with a privileged mutation.
+ */
+export async function requireAdminAction() {
+  const session = await getSession()
+  if (!session?.user || session.user.role !== 'admin') {
+    throw new Error('Admin access required.')
+  }
+  return session.user
+}
+
+/**
  * Authenticate as admin OR via valid webhook ID.
  */
 export async function isAdminOrWebhook(req) {
