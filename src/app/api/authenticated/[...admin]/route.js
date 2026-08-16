@@ -40,6 +40,7 @@ import {
   getAllEpisodeCacheTags,
 } from '@src/utils/cache/mediaPagesTags'
 import { createLogger } from '@src/lib/logger'
+import { createSyncOperationState } from '@src/utils/syncOperationState'
 
 /**
  * Extracts all server endpoints from the configuration.
@@ -412,17 +413,20 @@ export async function GET(request, props) {
           responseData = processes
         }
         break
-      case 'sync-status':
+      case 'sync-status': {
+        const activeSync = syncOperationState.get()
         responseData = {
-          active: activeSyncOperation !== null,
-          startTime: activeSyncOperation ? startTime : null,
-          streamUrl: activeSyncOperation ? '/api/authenticated/admin/sync-stream' : null,
+          active: activeSync !== null,
+          forced: activeSync?.forced ?? false,
+          startTime: activeSync?.startTime ?? null,
+          streamUrl: activeSync ? '/api/authenticated/admin/sync-stream' : null,
           snapshot: syncSnapshot ? {
             servers: syncSnapshot.servers,
             totals: syncSnapshot.totals,
           } : null,
         }
         break
+      }
       case 'sync-verification':
         {
           // Get query parameter for comparison with file servers
@@ -488,8 +492,7 @@ export async function GET(request, props) {
 }
 
 // Track ongoing sync operations
-let startTime = null
-let activeSyncOperation = null
+const syncOperationState = createSyncOperationState()
 let syncSubscribers = []
 
 // A sync "running" longer than this is presumed wedged (a full library sync
@@ -755,8 +758,9 @@ async function handleSyncOperation(request, webhookId) {
   // restart. Stale takeover is safe: the write-phase orchestration lock has
   // its own 10-minute watchdog, and the settlement handler below is
   // identity-guarded so a late-settling zombie cannot clobber the new run.
-  if (activeSyncOperation) {
-    const ageMs = startTime ? Date.now() - new Date(startTime).getTime() : 0
+  const activeSync = syncOperationState.get()
+  if (activeSync) {
+    const ageMs = activeSync.startTime ? Date.now() - new Date(activeSync.startTime).getTime() : 0
     if (ageMs < SYNC_OPERATION_STALE_MS) {
       return new Response(
         JSON.stringify({
@@ -771,10 +775,10 @@ async function handleSyncOperation(request, webhookId) {
     }
 
     console.error(
-      `[SYNC] Stale sync takeover: previous sync started ${startTime} ` +
+      `[SYNC] Stale sync takeover: previous sync started ${activeSync.startTime} ` +
       `(${Math.round(ageMs / 60000)}m ago) and never settled — abandoning its handle and starting fresh`
     )
-    activeSyncOperation = null
+    syncOperationState.abandon()
     syncSubscribers = []
     stopSnapshotTracking()
   }
@@ -789,7 +793,7 @@ async function handleSyncOperation(request, webhookId) {
     // No JSON body or invalid — leave forceSync at default (false)
   }
 
-  startTime = new Date().toISOString()
+  const operationStartTime = new Date().toISOString()
   startSnapshotTracking()
 
   // Fire and forget — response is delivered via SSE stream.
@@ -797,20 +801,22 @@ async function handleSyncOperation(request, webhookId) {
   // after a stale takeover, the abandoned run may still settle eventually and
   // must not clear the CURRENT run's handle or subscribers.
   const thisOperation = handleSync(webhookId, request, { forceSync })
-  activeSyncOperation = thisOperation
+  syncOperationState.begin(thisOperation, {
+    startTime: operationStartTime,
+    forced: forceSync,
+  })
   thisOperation
     .then(() => {
-      if (activeSyncOperation !== thisOperation) return
+      if (!syncOperationState.isCurrent(thisOperation)) return
       syncSubscribers.forEach((s) => s.resolve())
     })
     .catch((err) => {
       console.error('Sync operation failed:', err)
-      if (activeSyncOperation !== thisOperation) return
+      if (!syncOperationState.isCurrent(thisOperation)) return
       syncSubscribers.forEach((s) => s.reject(err))
     })
     .finally(() => {
-      if (activeSyncOperation !== thisOperation) return
-      activeSyncOperation = null
+      if (!syncOperationState.clear(thisOperation)) return
       syncSubscribers = []
       stopSnapshotTracking()
     })
@@ -818,7 +824,7 @@ async function handleSyncOperation(request, webhookId) {
   return new Response(
     JSON.stringify({
       started: true,
-      startTime,
+      startTime: operationStartTime,
       streamUrl: '/api/authenticated/admin/sync-stream',
     }),
     {
