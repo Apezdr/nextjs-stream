@@ -9,6 +9,7 @@ import {
   saveTVShowAction,
   saveSeasonAction,
 } from '@src/utils/admin/flatMediaActions'
+import { parseContentDescriptorInput } from '@src/utils/contentRatingSchema'
 import LockableField from './LockableField'
 import ImagePreview from './ImagePreview'
 import DeleteMediaButton from './DeleteMediaButton'
@@ -16,6 +17,7 @@ import TmdbConfigButton from './TmdbConfigButton'
 import RawRecordButton from './RawRecordButton'
 import SeasonEditor from './SeasonEditor'
 import JitOverrideSelect from './JitOverrideSelect'
+import ContentRatingEditorField from './ContentRatingEditorField'
 
 const SCALAR_KEYS = ['title', 'originalTitle', 'posterURL', 'posterBlurhash', 'backdrop', 'backdropBlurhash', 'logo', 'jitServeOverride']
 
@@ -68,7 +70,27 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
   const [form, setForm] = useState(() => initForm(record))
   const [tmdbId, setTmdbId] = useState(() => record?.metadata?.id ?? '')
   const [overview, setOverview] = useState(() => record?.metadata?.overview ?? '')
+  const [contentRatingCode, setContentRatingCode] = useState(() =>
+    record?.lockedFields?.contentRating === true
+      ? record?.contentRatingOverride?.contentRating ?? ''
+      : ''
+  )
+  const [contentRatingDescriptorText, setContentRatingDescriptorText] = useState(() =>
+    record?.lockedFields?.contentRating === true &&
+    Array.isArray(record?.contentRatingOverride?.descriptors)
+      ? record.contentRatingOverride.descriptors.join('\n')
+      : ''
+  )
   const [locks, setLocks] = useState(() => ({ ...(record?.lockedFields ?? {}) }))
+  const hasStoredRatingOverride = Boolean(
+    record && Object.prototype.hasOwnProperty.call(record, 'contentRatingOverride')
+  )
+  const automaticContentRating = hasStoredRatingOverride
+    ? record?.metadata?.contentRating?.contentRating ?? record?.metadata?.rating ?? null
+    : record?.contentRating?.contentRating ?? record?.metadata?.rating ?? null
+  const automaticContentDescriptors = hasStoredRatingOverride
+    ? record?.metadata?.contentRating?.descriptors ?? []
+    : record?.contentRating?.descriptors ?? []
 
   useEffect(() => {
     if (state.status === 'success' && isNew && state.id) {
@@ -85,6 +107,19 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
       else next[key] = true
       return next
     })
+  const contentRatingLocked = isLocked('contentRating')
+  const toggleContentRatingLock = () => {
+    if (contentRatingLocked) {
+      setContentRatingCode('')
+      setContentRatingDescriptorText('')
+    } else if (!contentRatingCode && automaticContentRating) {
+      setContentRatingCode(automaticContentRating)
+      if (!contentRatingDescriptorText && automaticContentDescriptors.length > 0) {
+        setContentRatingDescriptorText(automaticContentDescriptors.join('\n'))
+      }
+    }
+    toggleLock('contentRating')
+  }
 
   const seasons = useMemo(() => record?.seasons ?? [], [record])
   const nextSeasonNumber = seasons.length
@@ -101,10 +136,17 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
     return {
       ...(isNew ? {} : { id: record?._id }),
       ...form,
+      contentRatingIntent: contentRatingLocked
+        ? contentRatingCode.trim()
+          ? 'set'
+          : 'suppress'
+        : 'automatic',
+      contentRatingCode,
+      contentRatingDescriptors: parseContentDescriptorInput(contentRatingDescriptorText),
       ...(Object.keys(metadata).length ? { metadata } : {}),
       lockedFields: locks,
     }
-  }, [form, tmdbId, overview, locks, isNew, record])
+  }, [form, tmdbId, overview, contentRatingLocked, contentRatingCode, contentRatingDescriptorText, locks, isNew, record])
 
   const field = (key, label, opts = {}) => (
     <LockableField
@@ -174,6 +216,16 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
               helpText="Locking applies to all metadata."
             />
             <LockableField id="overview" label="Overview" value={overview} onChange={setOverview} locked={isLocked('metadata')} onToggleLock={() => toggleLock('metadata')} textarea />
+            <ContentRatingEditorField
+              mediaType="tv"
+              value={contentRatingCode}
+              onChange={setContentRatingCode}
+              locked={contentRatingLocked}
+              onToggleLock={toggleContentRatingLock}
+              automaticRating={automaticContentRating}
+              descriptors={contentRatingDescriptorText}
+              onDescriptorsChange={setContentRatingDescriptorText}
+            />
             <JitOverrideSelect
               id="show-jit-override"
               value={form.jitServeOverride}

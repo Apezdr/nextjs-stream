@@ -3,6 +3,7 @@ import { getServer } from './config'
 import { mediaLinkParam } from './media/urlParser'
 import { cache } from 'react'
 import { normalize } from 'path'
+import { resolveContentRating } from './contentRating'
 
 export const movieProjectionFields = {
   _id: 1,
@@ -954,6 +955,7 @@ export function sanitizeTVData(media, options = {}) {
       // Unique routing key clients should prefer over the churning _id/mediaId
       originalTitle: media.originalTitle || null,
       type: media.type || mediaType,
+      contentRating: resolveContentRating(media, media.type || mediaType),
       
       // TV-optimized images (higher quality for TV screens)
       posterURL: media.posterURL || getFullImageUrl(media.metadata?.poster_path, 'w780'),

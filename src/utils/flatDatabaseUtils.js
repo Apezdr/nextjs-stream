@@ -15,6 +15,7 @@ import {
   visibleEpisodeFilter,
   visibleShowFilter,
 } from '@src/utils/mediaVisibility'
+import { resolveContentRating } from '@src/utils/contentRating'
 
 /**
  * Projection profiles for different use cases to optimize data transfer
@@ -2084,6 +2085,7 @@ export async function getFlatRequestedMedia({
         _id: movie._id.toString(),
         type: 'movie',
       }
+      result.contentRating = resolveContentRating(result, 'movie')
       if (foundByTitleFallback) result.foundByTitleFallback = true
 
       // Add cast data if available
@@ -2156,6 +2158,7 @@ export async function getFlatRequestedMedia({
             seasonNumber: season.seasonNumber,
           })),
         }
+        result.contentRating = resolveContentRating(result, 'tv')
 
         if (foundByTitleFallback) {
           result.foundByTitleFallback = foundByTitleFallback // Indicate it was found by originalTitle
@@ -2233,6 +2236,8 @@ export async function getFlatRequestedMedia({
             title: tvShow.title,
             originalTitle: tvShow.originalTitle,
             type: 'tv',
+            contentRatingOverride: tvShow.contentRatingOverride,
+            contentRating: resolveContentRating(tvShow, 'tv'),
             metadata: {
               ...(seasonData.metadata || {}),
               tvOverview: tvShow.metadata?.overview,
@@ -2308,6 +2313,8 @@ export async function getFlatRequestedMedia({
             title: episodeData.title, // Use episode title
             originalTitle: tvShow.originalTitle,
             logo: tvShow.logo,
+            contentRatingOverride: tvShow.contentRatingOverride,
+            contentRating: resolveContentRating(tvShow, 'tv'),
             seasonNumber: seasonNumber,
             episodeNumber: episodeNumber,
             type: 'tv',
