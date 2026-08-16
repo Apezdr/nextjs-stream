@@ -1195,7 +1195,9 @@ function collectFieldAvailability(mediaData, currentPath, serverId, availability
 
 export async function DELETE(request, props) {
   const params = await props.params
-  const authResult = await isAdminOrWebhook(request)
+  // Sync webhooks are accepted by POST operations, but must never inherit
+  // authority to erase the entire media catalog.
+  const authResult = await isAdmin(request)
   if (authResult instanceof Response) {
     return authResult
   }
