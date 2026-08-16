@@ -244,8 +244,8 @@ export async function listAdminMovies({
     manualEntry: 1,
     lockedFields: 1,
     updatedAt: 1,
-    // Web-visibility signals for the admin "Hidden" badge (admin sees all 
-    // never filter here)
+    // Web-visibility signals for the admin "Hidden" badge (admin sees all;
+    // never filter here).
     primaryContainer: 1,
     jitUrl: 1,
     'metadata.poster_path': 1,
