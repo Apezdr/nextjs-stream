@@ -35,7 +35,10 @@
 import { ObjectId } from 'mongodb'
 import { revalidatePath } from 'next/cache'
 import clientPromise from '@src/lib/mongodb'
+import { getSession } from '@src/lib/cachedAuth'
+import { adminUserEmails } from '@src/utils/config'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { prepareContentRatingOverrideUpdate } from '@src/utils/admin/contentRatingOverride'
 import {
   invalidateMovieDetailsCache,
   invalidateTVShowDetailsCache,
@@ -48,6 +51,15 @@ const DB_NAME = 'Media'
 // ─── Result helpers ──────────────────────────────────────────────────────────
 const ok = (extra = {}) => ({ status: 'success', message: 'Saved.', ...extra })
 const fail = (message) => ({ status: 'error', message })
+
+async function authorizeAdminAction() {
+  const session = await getSession()
+  return Boolean(
+    session?.user?.email &&
+    Array.isArray(adminUserEmails) &&
+    adminUserEmails.includes(session.user.email)
+  )
+}
 
 // ─── Small utilities ─────────────────────────────────────────────────────────
 function toObjectId(id) {
@@ -180,6 +192,8 @@ const EPISODE_MANUAL_TRACKED_FIELDS = ['videoURL', 'thumbnail', 'thumbnailBlurha
 // ─── Movies ──────────────────────────────────────────────────────────────────
 
 export async function createMovieAction(_prevState, payload = {}) {
+  if (!(await authorizeAdminAction())) return fail('Not authorized.')
+
   const title = trimOrNull(payload.title)
   const videoURL = trimOrNull(payload.videoURL)
   if (!title) return fail('Title is required.')
@@ -197,6 +211,9 @@ export async function createMovieAction(_prevState, payload = {}) {
 
   const now = new Date()
   const { set } = applyScalarFields({ ...payload, title, originalTitle, videoURL }, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: true })
+  const ratingUpdate = prepareContentRatingOverrideUpdate(payload, 'movie', { isCreate: true })
+  if (ratingUpdate.error) return fail(ratingUpdate.error)
+  Object.assign(set, ratingUpdate.set)
   applyMetadata(payload, set)
   applyCaptionURLs(payload, set, {})
   applyLockedFields(payload, set, {})
@@ -231,6 +248,11 @@ export async function createMovieAction(_prevState, payload = {}) {
 }
 
 export async function saveMovieAction(_prevState, payload = {}) {
+  if (!(await authorizeAdminAction())) return fail('Not authorized.')
+
+  const ratingUpdate = prepareContentRatingOverrideUpdate(payload, 'movie', { isCreate: false })
+  if (ratingUpdate.error) return fail(ratingUpdate.error)
+
   const _id = toObjectId(payload.id)
   if (!_id) return fail('A valid movie id is required.')
 
@@ -240,6 +262,8 @@ export async function saveMovieAction(_prevState, payload = {}) {
   if (!existing) return fail('Movie not found.')
 
   const { set, unset } = applyScalarFields(payload, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: false })
+  Object.assign(set, ratingUpdate.set)
+  Object.assign(unset, ratingUpdate.unset)
   applyMetadata(payload, set)
   applyCaptionURLs(payload, set, unset)
   applyLockedFields(payload, set, unset)
@@ -291,6 +315,8 @@ export async function deleteMovieAction(_prevState, payload = {}) {
 // ─── TV Shows ────────────────────────────────────────────────────────────────
 
 export async function createTVShowAction(_prevState, payload = {}) {
+  if (!(await authorizeAdminAction())) return fail('Not authorized.')
+
   const title = trimOrNull(payload.title)
   if (!title) return fail('Title is required.')
 
@@ -306,6 +332,9 @@ export async function createTVShowAction(_prevState, payload = {}) {
 
   const now = new Date()
   const { set } = applyScalarFields({ ...payload, title, originalTitle }, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: true })
+  const ratingUpdate = prepareContentRatingOverrideUpdate(payload, 'tv', { isCreate: true })
+  if (ratingUpdate.error) return fail(ratingUpdate.error)
+  Object.assign(set, ratingUpdate.set)
   applyMetadata(payload, set)
   applyLockedFields(payload, set, {})
 
@@ -334,6 +363,11 @@ export async function createTVShowAction(_prevState, payload = {}) {
 }
 
 export async function saveTVShowAction(_prevState, payload = {}) {
+  if (!(await authorizeAdminAction())) return fail('Not authorized.')
+
+  const ratingUpdate = prepareContentRatingOverrideUpdate(payload, 'tv', { isCreate: false })
+  if (ratingUpdate.error) return fail(ratingUpdate.error)
+
   const _id = toObjectId(payload.id)
   if (!_id) return fail('A valid show id is required.')
 
@@ -344,6 +378,8 @@ export async function saveTVShowAction(_prevState, payload = {}) {
   if (!existing) return fail('TV show not found.')
 
   const { set, unset } = applyScalarFields(payload, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: false })
+  Object.assign(set, ratingUpdate.set)
+  Object.assign(unset, ratingUpdate.unset)
   applyMetadata(payload, set)
   applyLockedFields(payload, set, unset)
   set.updatedAt = new Date()

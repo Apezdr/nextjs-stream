@@ -19,6 +19,7 @@ export default function LockableField({
   placeholder = '',
   type = 'text',
   textarea = false,
+  options = null,
   rows = 3,
   disabled = false,
   helpText,
@@ -56,7 +57,21 @@ export default function LockableField({
           </button>
         )}
       </div>
-      {textarea ? (
+      {Array.isArray(options) ? (
+        <select
+          id={id}
+          value={value ?? ''}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+          className={inputClass}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      ) : textarea ? (
         <textarea
           id={id}
           rows={rows}

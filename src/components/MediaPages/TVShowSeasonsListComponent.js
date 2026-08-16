@@ -12,6 +12,8 @@ import { getResolutionLabel } from '@src/utils';
 import SeasonItem from './Item/SeasonItem';
 import AdminEditButton from '@components/MediaPages/AdminEditButton';
 import { tvPosterName } from '@src/utils/viewTransitionNames';
+import ContentRatingBadge from '@components/ContentRatingBadge';
+import { getContentRatingForDisplay } from '@src/utils/contentRating';
 
 export default async function TVShowSeasonsList({ showTitle }) {
   // Fetch the TV show and its seasons from flat database
@@ -96,6 +98,7 @@ export default async function TVShowSeasonsList({ showTitle }) {
   const totalEpisodes = processedSeasons.reduce((total, season) => {
     return total + (season.episodes ? season.episodes.length : 0);
   }, 0);
+  const displayContentRating = getContentRatingForDisplay(tvShow, tvShow.metadata?.rating);
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-transparent">
@@ -111,6 +114,14 @@ export default async function TVShowSeasonsList({ showTitle }) {
             overallHasHDR10={overallHasHDR10}
             viewTransitionName={tvPosterName(tvShow.title)}
           />
+          {displayContentRating ? (
+            <div className="mt-3 flex justify-center">
+              <ContentRatingBadge
+                rating={displayContentRating}
+                mediaType="tv"
+              />
+            </div>
+          ) : null}
           <div className="flex flex-row gap-x-4 mt-4 justify-center">
             <Link href="/list/tv" className="self-center">
               <button

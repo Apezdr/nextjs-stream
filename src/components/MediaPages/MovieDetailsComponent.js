@@ -9,6 +9,8 @@ import WatchlistButton from '@components/WatchlistButton'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { moviePosterName, movieBackdropName, movieLogoName } from '@src/utils/viewTransitionNames'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
+import ContentRatingPanel from '@components/ContentRatingPanel'
+import { getContentRatingForDisplay } from '@src/utils/contentRating'
 
 // Lazy load the cast grid section which can be heavy
 const CastSection = dynamic(() => 
@@ -25,6 +27,7 @@ const MovieDetailsComponent = ({ media }) => {
   const { title, backdrop, posterURL, logo, metadata, hdr, duration,  } = media
   const { release_date, genres, cast, overview, runtime, tagline, trailer_url } = metadata || {}
   const collectionData = metadata?.belongs_to_collection
+  const displayContentRating = getContentRatingForDisplay(media, metadata?.rating)
 
   const convertToLocaleTime = (minutes) => {
     const hours = Math.floor(minutes / 60);
@@ -155,6 +158,11 @@ const MovieDetailsComponent = ({ media }) => {
                 ) : null}
               </Suspense>
             </div>
+            {displayContentRating ? (
+              <div className="mt-3 w-80 max-w-full">
+                <ContentRatingPanel rating={displayContentRating} />
+              </div>
+            ) : null}
             {tagline ? <p className="text-gray-300 italic">{tagline}</p> : null}
             {release_date ? (
               <p className="mt-2">

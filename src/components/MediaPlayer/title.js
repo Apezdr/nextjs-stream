@@ -6,13 +6,9 @@ import {
   useChapterTitle,
 } from '@vidstack/react'
 import { classNames, getResolutionLabel } from '@src/utils'
-
-import GeneralAudiencesBadge from '@src/components/MediaPlayer/Ratings/general_audiences_badge.svg'
-import ParentalGuidanceBadge from '@src/components/MediaPlayer/Ratings/parental_guidance_badge.svg'
-import ParensStronglyCautionedBadge from '@src/components/MediaPlayer/Ratings/parens_strongly_cautioned_badge.svg'
-import RestrictedBadge from '@src/components/MediaPlayer/Ratings/restricted_badge.svg'
-import No17AndUnderBadge from '@src/components/MediaPlayer/Ratings/no_17_and_under_badge.svg'
-import RetryImage from '@components/RetryImage'
+import ContentRatingBadge from '@components/ContentRatingBadge'
+import ContentRatingPanel from '@components/ContentRatingPanel'
+import { normalizeContentRating } from '@src/utils/contentRating'
 
 export function Title() {
   //const isPaused = useMediaState('paused')
@@ -41,6 +37,11 @@ export function Title() {
 export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo }) {
   const isPaused = useMediaState('paused'),
     player = useMediaPlayer()
+  const contentRating = normalizeContentRating(
+    mediaMetadata?.contentRating,
+    mediaMetadata?.mediaType
+  ) || normalizeContentRating(mediaMetadata?.rating, mediaMetadata?.mediaType)
+  const movieContentRating = contentRating?.mediaType === 'movie' ? contentRating : null
   return (
     <>
       <div
@@ -50,48 +51,33 @@ export function VideoMetadata({ dims = '', hdr = '', mediaMetadata = {}, logo })
           isPaused ? 'bg-black delay-1000' : 'bg-transparent delay-200'
         )}
       ></div>
-      {mediaMetadata?.rating && (
+      {contentRating && (
         <span
+          data-player-rating-panel={movieContentRating ? true : undefined}
           className={classNames(
-            `font-sans hidden sm:block max-w-sm xl:max-w-lg text-xl text-gray-300 media-rating`,
+            'font-sans hidden sm:block media-rating',
+            movieContentRating
+              ? 'w-56 max-w-[35vw] xl:w-64'
+              : 'max-w-sm text-xl text-gray-300 xl:max-w-lg',
             isPaused ? '' : 'playing'
           )}
         >
-          {(() => {
-            switch (mediaMetadata.rating) {
-              case 'G':
-                return (
-                  <RetryImage src={GeneralAudiencesBadge} alt="Rated G" className="max-h-20 w-auto" />
-                )
-              case 'PG':
-                return (
-                  <RetryImage src={ParentalGuidanceBadge} alt="Rated PG" className="max-h-20 w-auto" />
-                )
-              case 'PG-13':
-                return (
-                  <RetryImage
-                    src={ParensStronglyCautionedBadge}
-                    alt="Rated PG-13"
-                    className="max-h-20 w-auto"
-                  />
-                )
-              case 'R':
-                return <RetryImage src={RestrictedBadge} alt="Rated R" className="max-h-20 w-auto" />
-              case 'NC-17':
-                return (
-                  <RetryImage src={No17AndUnderBadge} alt="Rated NC-17" className="max-h-20 w-auto" />
-                )
-              default:
-                return `Rated ${mediaMetadata.rating}`
-            }
-          })()}
+          {movieContentRating ? (
+            <ContentRatingPanel rating={movieContentRating} />
+          ) : (
+            <ContentRatingBadge rating={contentRating} variant="player" />
+          )}
         </span>
       )}
       {(hdr || dims) && (
         <span
           className={classNames(
             `font-sans hidden sm:block max-w-sm xl:max-w-lg text-xl text-gray-300 media-HDR`,
-            mediaMetadata?.rating ? 'top-[10rem]' : 'top-8',
+            movieContentRating
+              ? 'top-[12rem]'
+              : contentRating
+                ? 'top-[10rem]'
+                : 'top-8',
             isPaused ? '' : 'playing'
           )}
         >

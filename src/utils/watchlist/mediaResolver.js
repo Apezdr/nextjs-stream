@@ -13,6 +13,7 @@ import { getFullImageUrl } from '@src/utils'
 import { fetchTmdbFromBackend } from '@src/utils/tmdb/backendClient'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
+import { resolveContentRating } from '@src/utils/contentRating'
 
 /**
  * Internal implementation (not cached) - does the actual work
@@ -271,6 +272,7 @@ async function batchResolveMediaInternal(items, options = {}) {
           releaseDate: tmdbData.release_date || tmdbData.first_air_date,
           genres: tmdbData.genres || [],
           voteAverage: tmdbData.vote_average,
+          contentRating: resolveContentRating({ metadata: tmdbData }, item.mediaType),
           isInternal: false,
           isExternal: true,
           url: null,

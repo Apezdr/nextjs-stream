@@ -2912,6 +2912,7 @@ export async function getFullMediaDocumentsForPlaylist(watchlistItems, includeVi
             posterBlurhash: null,
             backdrop: resolvedTmdbMedia.backdropURL,
             backdropBlurhash: null,
+            contentRating: resolvedTmdbMedia.contentRating || null,
             // Use comprehensive tmdbMetadata from resolved data - this includes cast!
             metadata: resolvedTmdbMedia.tmdbMetadata || {
               id: tmdbId,

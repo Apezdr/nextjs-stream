@@ -59,6 +59,10 @@ export function proxy(request: NextRequest) {
     return NextResponse.rewrite(target.url, { request: { headers } })
   }
 
+  if (request.nextUrl.pathname.startsWith('/api/rating-badge/')) {
+    return NextResponse.next()
+  }
+
   const response = NextResponse.next()
 
   // Default the authenticated API surface to no-store. Most of these routes

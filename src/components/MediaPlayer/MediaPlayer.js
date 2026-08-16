@@ -19,6 +19,7 @@ import VolumeRegulator from './VolumeRegulator'
 import { getServer } from '@src/utils/config'
 import { Suspense } from 'react'
 import WithPlaybackCoordinator from '@components/built-in/WithPlaybackCoordinator'
+import { getContentRatingForDisplay } from '@src/utils/contentRating'
 
 const inconsolata = Inconsolata({ subsets: ['latin'] })
 
@@ -68,6 +69,7 @@ async function VideoPlayer({
   // Check if user is an admin
   const isAdmin = session?.user?.role === 'admin'
   const { videoURL, metadata } = media
+  const displayContentRating = getContentRatingForDisplay(media, metadata?.rating)
   
   // Conditionally import the SubtitleEditor component only for admin users
   let SubtitleEditor = null;
@@ -213,6 +215,7 @@ async function VideoPlayer({
     }
 
     mediaMetadata = {
+      mediaType,
       mediaTitle,
       title,
       released,
@@ -225,7 +228,8 @@ async function VideoPlayer({
       nextEpisodeTitle,
       nextEpisodeNumber,
       mediaLength,
-      rating,
+      rating: displayContentRating ? rating : undefined,
+      contentRating: displayContentRating,
     }
   } else if (metadata && mediaType === 'movie') {
     // Fallback for movies or other media types
@@ -260,12 +264,14 @@ async function VideoPlayer({
       hdr = media.hdr
     }
     mediaMetadata = {
+      mediaType,
       mediaTitle,
       title,
       released,
       overview,
       mediaLength,
-      rating,
+      rating: displayContentRating ? rating : undefined,
+      contentRating: displayContentRating,
     }
   }
 
