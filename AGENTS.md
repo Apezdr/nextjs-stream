@@ -28,6 +28,17 @@ reading, not background.
 | [USER_APPROVAL_SYSTEM.md](USER_APPROVAL_SYSTEM.md), [ACCOUNT_DELETION_SYSTEM.md](ACCOUNT_DELETION_SYSTEM.md), [NOTIFICATION_FRAMEWORK_DESIGN.md](NOTIFICATION_FRAMEWORK_DESIGN.md) | The subsystems they name |
 | `docs/api/*.md` | The endpoints they document |
 
+## Next.js documentation
+
+What you remember about Next.js is probably wrong for this project. Version-matched
+documentation ships inside the installed package at `node_modules/next/dist/docs/`,
+laid out like the documentation site. Read the relevant guide there before writing
+framework code and prefer it over recall.
+
+This is a lookup, not a gate. It does not take precedence over the rest of this
+file, and it is not a reason to stop and fetch docs for work that touches no
+framework API.
+
 ## Never destroy existing work
 
 Treat every pre-existing change in the working tree — staged, unstaged or
@@ -315,6 +326,10 @@ a render path, a per-item map or a high-frequency polling path, calculate the
 realistic call count. Prefer batching, caching, bulk operations, precomputed
 data and comprehensive responses. Respect documented request budgets.
 
+That count is an estimate. When the path is already live, the observed numbers
+exist — see [Measure performance before opening a pull
+request](#measure-performance-before-opening-a-pull-request) for how to get them.
+
 ## Dependencies require justification
 
 Do not run `npm update`, `npm audit fix`, `npm audit fix --force` or
@@ -332,9 +347,10 @@ passed unless it actually ran and succeeded.**
 
 ## Measure performance before opening a pull request
 
-Every pull request records a before/after comparison against its merge base.
-`.github/pull_request_template.md` carries the table and the exact commands —
-fill it in rather than describing the change in prose.
+Every pull request records a before/after comparison against its merge base, as
+a table of numbers rather than a prose description of the change. Where
+`.github/pull_request_template.md` is present it carries that table and the exact
+commands — fill it in.
 
 Three things decide whether those numbers mean anything:
 
@@ -353,6 +369,19 @@ Three things decide whether those numbers mean anything:
   freshly started one compares warm to cold, not branch to base; that mistake
   once reported +539 MiB where the true cost was +5.8 MiB.
 
+None of those measurements show request rate, database span cost or error rate
+under real traffic. That data exists: this repository exports OpenTelemetry to
+the operator's SigNoz stack (`src/instrumentation.ts`, and the `OTEL_*` block in
+`.env.example`). A coding agent cannot reach that UI from a sandbox, so when a
+change touches a hot request path, a poller or a timer, ask the operator for the
+figures — route rate, latency, error rate, Mongo or downstream span cost, before
+against after — and record which you were given and which were unavailable.
+Never write "looks fine in SigNoz" about a dashboard you did not see.
+
+Cite metric names and magnitudes only. Collector hostnames,
+`OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_EXPORTER_OTLP_HEADERS` and tokenised
+dashboard links never belong in a commit, a fixture or a pull request body.
+
 Write "no performance impact expected" only together with the reason it is
 expected. Absence of a measurement is not evidence of absence of a cost.
 
@@ -369,7 +398,7 @@ verification you did not perform.
 - Path aliases are `@src/*` and `@components/*`.
 - Tests are Jest, under `__tests__/`. Run a subset with
   `npx jest __tests__/<dir>`.
-- `src/utils/mediaActivity.js` reads `FlatEpisodes.size` and `Movies.size`
+- `src/utils/mediaActivity.js` reads `FlatEpisodes.size` and `FlatMovies.size`
   directly as bytes and performs **no** unit conversion. The stored unit is not
   consistent — historically most episode documents hold KiB while movies hold
   bytes — so size and bitrate derived from legacy episode documents can be off
@@ -380,7 +409,11 @@ verification you did not perform.
   silently never be committed.
 - The deployment topology (containers, ports, compose file) lives in the
   separate `Adams-Media-Server` folder, which is not part of this repository.
-- Do not point `npx @next/codemod agents-md` at `AGENTS.md` or `CLAUDE.md`. It
-  overwrites the file with a generated Next.js documentation index. A previous
-  run left both files carrying a 7.9 KB index of a `.next-docs` directory that
-  does not exist in this repository.
+- `npx @next/codemod agents-md` is the legacy documentation mechanism, for
+  Next.js 16.1 and earlier. It downloads docs into a gitignored `.next-docs/`
+  and writes an index between `<!-- NEXT-AGENTS-MD-START -->` markers, appending
+  to an existing file rather than overwriting it. This project is on 16.2, where
+  the docs ship inside the package instead, so that index was stale and is gone.
+  Do not run it again. On 16.3 or later, `next dev` maintains its own block
+  between `<!-- BEGIN:nextjs-agent-rules -->` markers and preserves everything
+  outside them; `agentRules: false` in `next.config.js` opts out.

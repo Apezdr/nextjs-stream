@@ -118,9 +118,14 @@ if (canUpdate) {
 
 ## Sync system
 
-Data is stored in flat collections — `Movies`, `TVShows`, `Seasons`,
+Data is stored in flat collections — `FlatMovies`, `FlatTVShows`, `FlatSeasons`,
 `FlatEpisodes` — rather than nested documents. Two orchestration paths write to
 them.
+
+A separate legacy `Movies` collection still exists and is still read by
+`src/utils/recommendations/index.js`, `src/utils/auth_database.js`,
+`src/utils/sync/chapters.js` and `src/utils/sync/videoAvailability.js`. It is not
+the flat collection and nothing new should be pointed at it.
 
 **Domain-driven sync (`src/utils/sync/domain/`) is the live default.**
 `shouldUseNewArchitecture()` in `src/utils/sync/featureFlags.js` returns true
@@ -133,10 +138,11 @@ Its defining property is a **single write chokepoint per entity**:
 `SeasonRepository.smartBulkUpsert`. That is where `lockedFields` enforcement
 (`computeDiff`) and `manualFields` cleanup (`manualFieldsToClear`) live.
 
-**Legacy flat sync (`src/utils/flatSync/`) remains the automatic fallback** if
-the new architecture throws or fails a compatibility check (`flatSync/index.js`).
-It has no single chokepoint: each field — poster, backdrop, metadata — issues its
-own `updateOne` per media type.
+**Legacy flat sync (`src/utils/flatSync/`) is deprecated and remains the
+automatic fallback** if the new architecture throws or fails a compatibility
+check (`flatSync/index.js`). It has no single chokepoint: each field — poster,
+backdrop, metadata — issues its own `updateOne` per media type. Fix bugs in it;
+do not add features to it.
 
 Writing a new sync strategy:
 
