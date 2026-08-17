@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A new push to the same branch supersedes the previous run.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Lint, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Check out the branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 26.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm run lint` is `eslint --fix .`, which rewrites files. CI must never
+      # mutate the tree, so ESLint is invoked directly instead.
+      - name: Lint
+        run: npx eslint .
+
+      - name: Test
+        run: npm test -- --ci --runInBand
+
+      - name: Build
+        run: npm run build
+
+      # Catches a step that silently rewrote a tracked file, such as a
+      # formatter or a codemod pulled in by a dependency update.
+      - name: Verify the working tree is unchanged
+        run: git diff --exit-code

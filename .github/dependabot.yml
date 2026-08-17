@@ -1,0 +1,68 @@
+version: 2
+
+updates:
+  # Application dependencies. Weekly, so a break is discovered in a batch that
+  # is still small enough to bisect by hand.
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: sunday
+      time: "06:00"
+      timezone: America/New_York
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      # Minor and patch bumps arrive as one reviewable PR rather than dozens.
+      # Majors are deliberately left ungrouped so each gets its own PR and its
+      # own CI run.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+      # These must move together. package.json pins react/react-dom exactly and
+      # overrides @types/react*, so bumping one without the others produces a PR
+      # that cannot install or type-check.
+      react:
+        patterns:
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+      # eslint-config-next is version-locked to next; splitting them breaks lint.
+      next:
+        patterns:
+          - next
+          - eslint-config-next
+          - "@next/*"
+
+  # Keeps the actions used by .github/workflows current, including their
+  # security patches.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: sunday
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore
+
+  # Base images in the root Dockerfile.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: sunday
+      timezone: America/New_York
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+    commit-message:
+      prefix: chore
