@@ -21,7 +21,7 @@ reading, not background.
 | Document | Read it before |
 | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | **Any change under `src/utils/sync/` or `src/utils/flatSync/`**, and any work on the stack, layout, dual-title or field-priority rules |
-| [README.md](README.md) | Self-hosting setup, and any environment-variable change |
+| [README.md](README.md), [.env.example](.env.example) | Self-hosting setup, and any environment-variable addition, removal or default change |
 | [plans/media-activity-api.md](plans/media-activity-api.md) | Media Activity endpoints, session XML shape, skin request budget |
 | [plans/media-activity-presence.md](plans/media-activity-presence.md) | `PlaybackPresence`, heartbeat cadence, read windows |
 | [plans/media-activity-presence-rn-integration.md](plans/media-activity-presence-rn-integration.md) | The contract the React Native app implements |
@@ -136,11 +136,39 @@ correct at all times:
 | `AGENTS.md` | Global engineering rules for every agent |
 | `ARCHITECTURE.md` | Stack, commands, layout, sync architecture, knip config decisions |
 | `README.md` | Self-hosting setup and the full environment variable list |
+| `.env.example` | Committed environment-variable template and documented defaults |
 | `plans/media-activity-api.md` | Media Activity endpoints, session XML shape, skin request budget |
 | `plans/media-activity-presence.md` | `PlaybackPresence` collection, heartbeat cadences, read windows |
 | `plans/media-activity-presence-rn-integration.md` | The contract the React Native app implements |
 | `docs/api/*.md` | Individual endpoint contracts |
 | `USER_APPROVAL_SYSTEM.md`, `ACCOUNT_DELETION_SYSTEM.md`, `NOTIFICATION_FRAMEWORK_DESIGN.md` | The subsystems they name |
+
+### Pull request documentation gate
+
+Before opening or updating a pull request, review the final diff against the
+authoritative documents above. A PR is incomplete while any affected
+instruction, setup step, command, interface contract, environment variable,
+example or architectural statement is stale.
+
+- Update `AGENTS.md` in the same change when a durable repository-wide rule,
+  ownership boundary, validated command, source-of-truth mapping or required
+  workflow changes. Remove or replace instructions that are no longer true.
+- Update `ARCHITECTURE.md` when the stack, commands, layout, sync or data-model
+  invariants, conventions or tool configuration change.
+- Update `README.md` and `.env.example` together when self-hosting behaviour or
+  an environment variable's name, presence, meaning or default changes.
+- Update the owning current-state API, design or system document when a public
+  interface, persisted field, request budget, authentication rule or cache
+  contract changes.
+- Update `CLAUDE.md` or `.github/copilot-instructions.md` only when that
+  vendor's instruction discovery or integration changes. Repository-wide rules
+  still belong only in `AGENTS.md`.
+- Verify changed documentation against source, tests, `package.json` and the
+  lockfile as applicable. Check relative links, examples, commands, version
+  claims and environment-variable names rather than assuming they are current.
+- The PR description must include a `Documentation` section listing each
+  authoritative document changed and why. If none are affected, state
+  `Documentation not affected` and give the verified reason.
 
 Point-in-time records — **do not** rewrite these to match current code. They
 record what was decided and when, and their value is that they are not edited
@@ -306,8 +334,9 @@ passed unless it actually ran and succeeded.**
 
 Inspect the final diff before claiming completion, then report: current branch,
 commits created, files changed and why, tests run, lint or static analysis run,
-build result, pre-existing failures, checks not performed, and remaining risk.
-Do not claim verification you did not perform.
+build result, documentation reviewed or updated (or why it is not affected),
+pre-existing failures, checks not performed, and remaining risk. Do not claim
+verification you did not perform.
 
 ## Repository facts
 
