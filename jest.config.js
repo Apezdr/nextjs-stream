@@ -26,8 +26,12 @@ const config = {
   // Indicates whether the coverage information should be collected while executing the test
   // collectCoverage: false,
 
-  // An array of glob patterns indicating a set of files for which coverage information should be collected
-  // collectCoverageFrom: undefined,
+  // Keep CI coverage representative of the entire application, not only files imported by tests.
+  collectCoverageFrom: [
+    '<rootDir>/src/**/*.{js,jsx,ts,tsx}',
+    '!<rootDir>/src/**/*.d.ts',
+    '!<rootDir>/src/**/__tests__/**',
+  ],
 
   // The directory where Jest should output its coverage files
   // coverageDirectory: undefined,
@@ -48,8 +52,15 @@ const config = {
   //   "clover"
   // ],
 
-  // An object that configures minimum threshold enforcement for coverage results
-  // coverageThreshold: undefined,
+  // Initial non-regression floor measured on origin/main.
+  coverageThreshold: {
+    global: {
+      branches: 38,
+      functions: 8,
+      lines: 2.5,
+      statements: 2.5,
+    },
+  },
 
   // A path to a custom dependency extractor
   // dependencyExtractor: undefined,
