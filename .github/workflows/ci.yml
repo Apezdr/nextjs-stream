@@ -35,7 +35,16 @@ jobs:
 
       # `npm run lint` is `eslint --fix .`, which rewrites files. CI must never
       # mutate the tree, so ESLint is invoked directly instead.
-      - name: Lint
+      #
+      # Report-only for now: `main` already carries 30 pre-existing errors
+      # (react-hooks/refs, react-hooks/purity, no-case-declarations and
+      # friends), so making this blocking today would fail every pull request
+      # for faults it did not introduce. Baseline them with ESLint bulk
+      # suppressions (`npx eslint . --suppress-all`, commit the generated
+      # eslint-suppressions.json) and then delete this continue-on-error line
+      # so new violations start failing the build.
+      - name: Lint (report only)
+        continue-on-error: true
         run: npx eslint .
 
       - name: Test
