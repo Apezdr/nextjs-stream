@@ -168,6 +168,43 @@ To implement the NextJS-Stream app, follow these steps:
    **Multiple:**
    `email1@xxxx.com,email2@zzzz.com`
 
+   ## Local network sign-in (optional)
+
+   Lets a browser on your own network reach the admin UI as the server owner without going through OAuth. It is **disabled by default** and stays inert until every piece below is in place.
+
+   The app sits behind a reverse proxy, so it cannot trust a client-supplied address on its own — anyone can send an `X-Real-IP` header. The proxy proves the address is its own by attaching a shared secret:
+
+   ```env
+   LOCAL_ACCESS_ASSERTION_SECRET=your_32_char_or_longer_secret
+   LOCAL_ACCESS_ALLOWED_NETWORKS=192.168.0.0/16,10.0.0.0/8
+   # Optional; defaults to the earliest-created admin
+   LOCAL_ACCESS_OWNER_EMAIL=owner@example.com
+   ```
+
+   The proxy must send that same secret and overwrite the client address on every request it forwards:
+
+   ```nginx
+   proxy_set_header X-Real-IP $remote_addr;
+   proxy_set_header X-Local-Access-Assertion "your_32_char_or_longer_secret";
+   ```
+
+   What the app enforces:
+
+   - the secret must be at least 32 characters, and is compared with `timingSafeEqual`
+   - the client address must fall inside `LOCAL_ACCESS_ALLOWED_NETWORKS`
+   - the resolved owner must still be an admin, so demoting or deleting them revokes access immediately
+
+   If the secret is unset, too short, or does not match, the request falls back to normal authentication. Only the proxy location that sets the assertion may pass it through — every other location must strip `X-Local-Access-Assertion` so a client can never supply its own.
+
+   ## Admin server monitoring (optional)
+
+   The admin dashboard reports CPU, memory, disk, network, and GPU telemetry. Every metric is enabled by default, can be switched off individually, and has its own warning and critical thresholds. The full list of variables lives in [`.env.example`](.env.example).
+
+   Two notes that are easy to miss:
+
+   - GPU telemetry reads DRM sysfs for AMD/Intel and `nvidia-smi` for NVIDIA. On an Alpine/musl image the NVIDIA tooling injected by the container runtime fails to load, so GPU reports as unavailable even when the host driver is healthy; use a glibc-based image if you need it.
+   - A container cannot see host hardware the kernel does not expose to it. `SERVER_CPU_HARDWARE`, `SERVER_MEMORY_HARDWARE`, and `SERVER_GPU_INVENTORY` let you supply that detail as JSON so the panel can display it.
+
    ## Cross-Domain Authentication
 
    If your Next.js app and Node server are running on different subdomains of the same parent domain, you can enable cross-domain authentication to allow session cookies to work across both domains.
