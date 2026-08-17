@@ -330,6 +330,32 @@ a bug fix, add regression coverage when practical. Distinguish new regressions
 from pre-existing failures and from checks you did not run. **Never say a check
 passed unless it actually ran and succeeded.**
 
+## Measure performance before opening a pull request
+
+Every pull request records a before/after comparison against its merge base.
+`.github/pull_request_template.md` carries the table and the exact commands —
+fill it in rather than describing the change in prose.
+
+Three things decide whether those numbers mean anything:
+
+- Bundle sizes are deterministic for a given commit. Building the same commit
+  twice produces a byte-identical total, so a non-zero delta is real signal.
+  Cold build and Jest wall-times swing by roughly 10% on a loaded machine.
+  Record them, but never read a small difference there as a speed-up or a
+  regression.
+- Assets in `public/` never appear in `.next/static`. A change that adds images
+  or icons shows up in the `public/` row and nowhere else, so measuring only
+  the build output reports a zero impact that is not real.
+- When the change adds background work — a timer, a poll, a child process — or
+  touches a hot request path, compare two containers built from the same
+  Dockerfile with the same environment, and **restart both immediately before
+  sampling**. Measuring a container that has served traffic for hours against a
+  freshly started one compares warm to cold, not branch to base; that mistake
+  once reported +539 MiB where the true cost was +5.8 MiB.
+
+Write "no performance impact expected" only together with the reason it is
+expected. Absence of a measurement is not evidence of absence of a cost.
+
 ## Finish with an auditable report
 
 Inspect the final diff before claiming completion, then report: current branch,
