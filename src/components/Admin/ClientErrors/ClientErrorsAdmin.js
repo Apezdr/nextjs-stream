@@ -11,7 +11,8 @@ import {
   TvIcon,
 } from '@heroicons/react/24/outline'
 import { toast } from 'react-toastify'
-import { buildURL, fetcher, formatDateToEST } from '@src/utils'
+import { buildURL, fetcher } from '@src/utils'
+import { useAppDateFormatter } from '@src/contexts/AppTimeZoneContext'
 
 const REFRESH_INTERVAL_MS = 15000
 
@@ -51,6 +52,7 @@ function groupsKeyFor(severity, category, page) {
 }
 
 export default function ClientErrorsAdmin() {
+  const { formatDateTime } = useAppDateFormatter()
   const [severityFilter, setSeverityFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [page, setPage] = useState(1)
@@ -268,7 +270,7 @@ export default function ClientErrorsAdmin() {
                           {group.count} report{group.count !== 1 ? 's' : ''} · {group.userCount}{' '}
                           user{group.userCount !== 1 ? 's' : ''}
                           {deviceSummary && <> · {deviceSummary}</>}
-                          {' · '}last seen {formatDateToEST(group.lastSeen)}
+                          {' · '}last seen {formatDateTime(group.lastSeen)}
                         </p>
                       </div>
 
@@ -372,6 +374,7 @@ function GroupReports({ dedupeKey }) {
 }
 
 function ReportDetails({ report }) {
+  const { formatDateTime } = useAppDateFormatter()
   const details = report.details || {}
   const isPlayback = report.category === 'playback'
   const codecSupport = Array.isArray(details.codecSupport) ? details.codecSupport : []
@@ -389,7 +392,7 @@ function ReportDetails({ report }) {
     <div className="rounded-md bg-gray-50 dark:bg-gray-700 p-4">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-gray-600 dark:text-gray-300">
         <span className="font-medium">{report.userEmail || String(report.userId)}</span>
-        <span>received {formatDateToEST(report.receivedAt)}</span>
+        <span>received {formatDateTime(report.receivedAt)}</span>
       </div>
 
       <dl className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 text-xs">

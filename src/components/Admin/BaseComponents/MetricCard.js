@@ -12,6 +12,7 @@ import { classNames } from '@src/utils'
  * @param {string} [props.trend] - Trend indicator ('up'|'down'|'neutral')
  * @param {string} [props.trendValue] - Trend value (e.g., '+5%')
  * @param {'success'|'warning'|'error'|'info'|'neutral'} [props.status] - Status for color coding
+ * @param {string} [props.badgeLabel] - Badge text; also forces the badge to show for calm statuses
  * @param {string} [props.className] - Additional CSS classes
  * @param {Function} [props.onClick] - Click handler for interactive cards
  */
@@ -23,6 +24,7 @@ const MetricCard = ({
   trend,
   trendValue,
   status = 'neutral',
+  badgeLabel,
   className = '',
   onClick,
   ...props
@@ -53,6 +55,21 @@ const MetricCard = ({
     neutral: 'text-gray-600'
   }
 
+  const statusLabels = {
+    success: 'Healthy',
+    warning: 'Warning',
+    error: 'Error',
+    info: 'Info',
+    neutral: 'Unknown'
+  }
+
+  // `status` is an internal colour token, so it must never be rendered as text.
+  const resolvedBadgeLabel = badgeLabel ?? statusLabels[status]
+  // A calm status is already carried by the tinted icon and value; badging it
+  // too only restates the colour and crowds the card.
+  const showBadge = Boolean(resolvedBadgeLabel) &&
+    (badgeLabel != null || status === 'warning' || status === 'error')
+
   return (
     <MaterialCard
       className={classNames('h-full', className)}
@@ -62,8 +79,9 @@ const MetricCard = ({
       {...props}
     >
       <MaterialCardContent>
-        <div className="flex items-start justify-between">
-          <div className="flex-1">
+        <div className="flex items-start justify-between gap-3">
+          {/* min-w-0 lets this column shrink, so the badge stays inside the card */}
+          <div className="min-w-0 flex-1">
             <div className="flex items-center space-x-2 mb-2">
               {icon && (
                 <div className={classNames('flex-shrink-0', statusColors[status])}>
@@ -104,14 +122,14 @@ const MetricCard = ({
             )}
           </div>
           
-          {status !== 'neutral' && (
-            <div className="flex-shrink-0 ml-4">
+          {showBadge && (
+            <div className="flex-shrink-0">
               <StatusBadge 
                 status={status} 
                 size="small"
                 variant="soft"
               >
-                {status}
+                {resolvedBadgeLabel}
               </StatusBadge>
             </div>
           )}

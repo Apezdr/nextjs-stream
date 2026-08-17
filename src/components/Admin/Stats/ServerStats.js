@@ -10,6 +10,7 @@ import {
 } from 'chart.js';
 import Loading from '@src/app/loading';
 import { fetcher } from '@src/utils';
+import { formatBytesAsBitRate } from '@src/utils/formatBitRate';
 
 ChartJS.register(ArcElement, Tooltip, Legend);
 
@@ -41,25 +42,40 @@ function MinimalServerStats() {
     );
   }
 
-  const { cpu, memoryUsed, memoryTotal } = data;
-  const memoryPercentage = ((memoryUsed / memoryTotal) * 100).toFixed(1);
+  const { cpu = 0, cpuInfo, memoryUsed = 0, memoryTotal = 0, network, disk, gpus } = data;
+  const memoryPercentage = memoryTotal > 0 ? ((memoryUsed / memoryTotal) * 100).toFixed(1) : '0.0';
 
   return (
-    <div className="flex flex-col space-y-2 text-sm">
-      {/* CPU Bar */}
-      <div className="flex items-center space-x-2">
-        <span className="text-gray-400 w-8">CPU</span>
-        <div className="relative w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden">
-          <div 
-            className={`absolute left-0 top-0 h-full ${getColorClass(cpu)} transition-all duration-300`} 
-            style={{ width: `${cpu}%` }}
-          />
+    <div className="flex flex-col gap-2 text-sm">
+      {network?.state === 'available' && (
+        <div className="order-5 flex items-center space-x-2 text-xs text-gray-400">
+          <span className="w-8">Net</span>
+          <span>↓ {network.total?.rxMbps ?? 0}</span>
+          <span>↑ {network.total?.txMbps ?? 0} Mbps</span>
         </div>
-        <span className="text-gray-400 text-xs">{cpu}%</span>
+      )}
+
+      {/* CPU Bar */}
+      <div className="order-1 space-y-1" title={cpuInfo?.model || undefined}>
+        <div className="flex items-center space-x-2">
+          <span className="text-gray-400 w-8">CPU</span>
+          <div className="relative w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+            <div
+              className={`absolute left-0 top-0 h-full ${getColorClass(cpu)} transition-all duration-300`}
+              style={{ width: `${cpu}%` }}
+            />
+          </div>
+          <span className="text-gray-400 text-xs">{cpu}%</span>
+        </div>
+        <div className="pl-10 text-[10px] text-gray-500">
+          {Number.isFinite(cpuInfo?.clockMHz) ? `${(cpuInfo.clockMHz / 1000).toFixed(2)} GHz` : 'Clock —'}
+          {' · '}{cpuInfo?.logicalThreads ?? '—'} threads
+          {' · '}{Number.isFinite(cpuInfo?.temperatureC) ? `${cpuInfo.temperatureC}°C` : 'Temp —'}
+        </div>
       </div>
 
       {/* Memory Bar */}
-      <div className="flex items-center space-x-2">
+      <div className="order-2 flex items-center space-x-2">
         <span className="text-gray-400 w-8">Mem</span>
         <div className="relative w-24 h-1.5 bg-gray-700 rounded-full overflow-hidden">
           <div 
@@ -71,6 +87,33 @@ function MinimalServerStats() {
           {memoryUsed}/{memoryTotal}GB
         </span>
       </div>
+
+      {disk?.capacity && (
+        <div className="order-3 space-y-1 text-xs text-gray-400">
+          <div className="flex items-center space-x-2">
+            <span className="w-8">Disk</span>
+            <div className="relative h-1.5 w-24 overflow-hidden rounded-full bg-gray-700">
+              <div
+                className={`absolute left-0 top-0 h-full ${getColorClass(disk.capacity.percent)}`}
+                style={{ width: `${disk.capacity.percent}%` }}
+              />
+            </div>
+            <span>{disk.capacity.percent}%</span>
+          </div>
+          <div className="pl-10 text-[10px] text-gray-500">
+            R {formatBytesAsBitRate(disk.io?.readBytesPerSecond)} · W {formatBytesAsBitRate(disk.io?.writeBytesPerSecond)}
+          </div>
+        </div>
+      )}
+
+      {['available', 'partial', 'stale'].includes(gpus?.state) && gpus.devices?.[0] && (
+        <div className="order-4 flex items-center space-x-2 text-xs text-gray-400">
+          <span className="w-8">GPU</span>
+          <span className="truncate">{gpus.devices[0].name}</span>
+          <span>{Number.isFinite(gpus.devices[0].utilizationPct) ? `${gpus.devices[0].utilizationPct}%` : '—'}</span>
+          <span>{Number.isFinite(gpus.devices[0].temperatureC) ? `${gpus.devices[0].temperatureC}°C` : '—'}</span>
+        </div>
+      )}
     </div>
   );
 }

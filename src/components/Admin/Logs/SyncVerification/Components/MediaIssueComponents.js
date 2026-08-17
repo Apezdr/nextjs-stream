@@ -1,6 +1,7 @@
 'use client'
 import React, { useState } from 'react';
 import { formatNumber } from '../utils';
+import { formatServerLabel } from '@src/utils/serverLabel';
 
 /**
  * Media item with issues component (expandable/collapsible)
@@ -74,7 +75,7 @@ export const MediaItemWithIssues = ({ item, type }) => {
                 {item.videoSource && (
                   <>
                     <div className="text-gray-500">Source Server:</div>
-                    <div>{item.videoSource}</div>
+                    <div>{formatServerLabel(item.videoSource)}</div>
                   </>
                 )}
               </>
@@ -93,7 +94,7 @@ export const MediaItemWithIssues = ({ item, type }) => {
                     {item.videoSource && (
                       <>
                         <div className="text-gray-500">Source Server:</div>
-                        <div>{item.videoSource}</div>
+                        <div>{formatServerLabel(item.videoSource)}</div>
                       </>
                     )}
                   </>

@@ -4,7 +4,9 @@ import { Dialog, Transition } from '@headlessui/react'
 import { Fragment, useRef, useState, useMemo } from 'react'
 import useSWR from 'swr'
 import { buildURL, fetcher } from '@src/utils'
+import { formatServerLabel } from '@src/utils/serverLabel'
 import { StatusBadge } from '../BaseComponents'
+import AppDateTime from '@components/AppDateTime'
 
 export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClick }) {
   const cancelButtonRef = useRef(null)
@@ -29,7 +31,10 @@ export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClic
   const isSyncActive = syncStatus?.active === true
 
   const hasDataError = Boolean(data && !Array.isArray(data) && data.error)
-  const serverProcesses = Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : []
+  const serverProcesses = useMemo(
+    () => Array.isArray(data) ? data : Array.isArray(data?.data) ? data.data : [],
+    [data]
+  )
 
   // Flatten all processes from all servers into a single array
   const allProcesses = useMemo(() => {
@@ -41,7 +46,7 @@ export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClic
         server.processes.forEach((process) => {
           processes.push({
             ...process,
-            serverName: server.server
+            serverName: server.displayName || formatServerLabel(server.server)
           });
         });
       }
@@ -159,7 +164,7 @@ export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClic
                         <div>
                           <div className="text-sm font-medium text-gray-900">Media Sync In Progress</div>
                           <div className="text-xs text-gray-500">
-                            Started {syncStatus?.startTime ? new Date(syncStatus.startTime).toLocaleTimeString() : 'recently'}
+                            Started {syncStatus?.startTime ? <AppDateTime value={syncStatus.startTime} options={{ year: undefined, month: undefined, day: undefined }} /> : 'recently'}
                           </div>
                         </div>
                       </div>
@@ -252,7 +257,7 @@ export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClic
                                       </StatusBadge>
                                     </td>
                                     <td className="px-4 py-3 text-sm text-gray-600">
-                                      {new Date(process.last_updated).toLocaleString()}
+                                      <AppDateTime value={process.last_updated} />
                                     </td>
                                   </tr>
                                 )

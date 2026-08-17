@@ -1,4 +1,6 @@
-import { getAllServers, getWebhookIdForServer } from '@src/utils/config'
+import { getWebhookIdForServer } from '@src/utils/config'
+import { getServersWithDisplayNames } from '@src/utils/serverDisplayNames'
+import { formatServerLabel } from '@src/utils/serverLabel'
 import { httpGet } from '@src/lib/httpHelper'
 import { getLatestSystemStatus, getSystemStatusMessage } from '@src/utils/admin_utils'
 
@@ -28,7 +30,7 @@ function withTimeout(promise, ms, message) {
 function buildStatus(server, data = null, headers = {}, error = null) {
   const base = {
     serverId: server.id,
-    serverName: server.name ?? server.id,
+    serverName: server.displayName || formatServerLabel(server.id),
     lastUpdated: headers['last-modified'] ?? new Date().toISOString(),
   }
 
@@ -78,7 +80,7 @@ async function fetchOneStatus(server) {
  * @returns {Promise<Object>} Processed system status data
  */
 export async function getProcessedSystemStatus() {
-  const servers = getAllServers()
+  const servers = await getServersWithDisplayNames()
 
   const normalizeServerStatusList = (serversValue) => {
     if (Array.isArray(serversValue)) return serversValue

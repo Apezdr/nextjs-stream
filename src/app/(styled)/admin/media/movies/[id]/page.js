@@ -1,7 +1,9 @@
 import { redirect, notFound } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { getSession } from '@src/lib/cachedAuth'
-import { adminUserEmails, getAllServers, getDefaultServer } from '@src/utils/config'
+import { adminUserEmails, getDefaultServer } from '@src/utils/config'
+import { getServersWithDisplayNames } from '@src/utils/serverDisplayNames'
+import { formatServerLabel } from '@src/utils/serverLabel'
 import { getAdminMovie } from '@src/utils/admin/flatMediaAdmin'
 import MovieEditor from '@components/Admin/Media/MovieEditor'
 
@@ -16,18 +18,18 @@ import MovieEditor from '@components/Admin/Media/MovieEditor'
  * wins via priority (lower number = higher) without modifying the source
  * server. This object lets the dialog say so plainly.
  */
-function computeMovieOwnership(record) {
+async function computeMovieOwnership(record) {
   if (!record) return null
   const hostingServerId = record.videoSource || record.metadataSource || record.posterSource || null
   const defaultServer = getDefaultServer()
-  const byId = new Map(getAllServers().map((s) => [s.id, s]))
+  const byId = new Map((await getServersWithDisplayNames()).map((s) => [s.id, s]))
   const hosting = hostingServerId ? byId.get(hostingServerId) : null
   const isLocalOverride = Boolean(hostingServerId) && hostingServerId !== defaultServer.id
   return {
     isLocalOverride,
-    hostingServerLabel: hosting?.id || hostingServerId || 'unknown',
+    hostingServerLabel: hosting?.displayName || (hostingServerId ? formatServerLabel(hostingServerId) : 'unknown'),
     hostingPriority: hosting?.priority ?? null,
-    writeTargetLabel: defaultServer.id,
+    writeTargetLabel: byId.get(defaultServer.id)?.displayName || formatServerLabel(defaultServer.id),
     writeTargetPriority: defaultServer.priority,
     // The override only takes effect if the write target outranks (or ties) the
     // hosting server (lower priority number = higher precedence).
@@ -48,7 +50,7 @@ async function MovieEditorPage({ params }) {
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
-      <MovieEditor record={record} isNew={isNew} ownership={computeMovieOwnership(record)} />
+      <MovieEditor record={record} isNew={isNew} ownership={await computeMovieOwnership(record)} />
     </div>
   )
 }

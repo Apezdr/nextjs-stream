@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { testTMDBConnection, validateTMDBConfiguration } from '@src/utils/tmdb/client'
 import { MaterialCard, MaterialCardHeader, MaterialCardContent, MaterialButton, StatusBadge } from './BaseComponents'
+import AppDateTime from '@components/AppDateTime'
 
 /**
  * Enhanced TMDB Server Status Component with Material Design styling
@@ -236,7 +237,7 @@ export function EnhancedTMDBStatus() {
         {/* Last Checked */}
         {status.lastChecked && (
           <div className="text-xs text-gray-500 text-center border-t border-gray-200 pt-4">
-            Last checked: {new Date(status.lastChecked).toLocaleString()}
+            Last checked: <AppDateTime value={status.lastChecked} />
           </div>
         )}
       </MaterialCardContent>

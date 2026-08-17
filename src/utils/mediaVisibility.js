@@ -17,9 +17,9 @@
  *  - `primaryContainer` (ingested from sources[] since Phase 1) makes the
  *    check index-sargable; a `videoURL` suffix regex covers legacy docs
  *    that have not resynced since the field shipped.
- *  - Visibility keys on `jitUrl` PRESENCE, never `jitEligible` — the backend
- *    emits eligible-but-URL-less when no public transcoder URL is
- *    configured, and an eligible title without a URL is still unplayable.
+ *  - JIT visibility requires a non-empty URL that is not forced off, plus
+ *    either backend eligibility or an explicit admin `on` override. An
+ *    eligible title without a URL remains unplayable and hidden.
  *  - Missing both signals → hidden (fail-closed).
  */
 

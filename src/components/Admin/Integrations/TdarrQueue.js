@@ -1,6 +1,7 @@
 'use client'
 import { useState, useEffect } from 'react'
 import DashboardCard from './DashboardCard'
+import AppDateTime from '@components/AppDateTime'
 
 // Helper function to format bytes to human-readable form
 const formatBytes = (bytes, decimals = 2) => {
@@ -250,7 +251,7 @@ const WorkerProgressBar = ({ worker, nodeName }) => {
             <div>
               <div className="font-semibold mb-1">Job Details</div>
               <div className="mb-1">Job ID: {job?.jobId || 'N/A'}</div>
-              <div className="mb-1">Start Time: {new Date(startTime).toLocaleString()}</div>
+              <div className="mb-1">Start Time: <AppDateTime value={startTime} /></div>
               <div className="mb-1">Type: {job?.type || 'N/A'}</div>
             </div>
             <div className="col-span-2 md:col-span-1">

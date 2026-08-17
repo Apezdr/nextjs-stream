@@ -1,0 +1,61 @@
+FROM docker:29-cli AS docker-cli
+FROM node:26-bookworm-slim AS base
+
+FROM base AS deps
+WORKDIR /app
+
+COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml* .npmrc* ./
+RUN \
+  if [ -f package-lock.json ]; then npm install --legacy-peer-deps; \
+  else echo "Lockfile not found." && exit 1; \
+  fi
+
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+
+RUN \
+  if [ -f yarn.lock ]; then yarn run build; \
+  elif [ -f package-lock.json ]; then npm run build --legacy-peer-deps; \
+  elif [ -f pnpm-lock.yaml ]; then corepack enable pnpm && pnpm run build; \
+  else echo "Lockfile not found." && exit 1; \
+  fi
+
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV=production
+ENV OTEL_ENABLED="false"
+ENV OTEL_SERVICE_NAME="nextjs-stream"
+ENV OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
+ENV OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
+ENV OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,service.version=latest,service.namespace=nextjs-stream"
+ENV OTEL_PROPAGATORS="tracecontext,baggage"
+ENV OTEL_TRACES_SAMPLER="always_on"
+ENV NEXT_OTEL_VERBOSE="0"
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates wget tar && \
+    rm -rf /var/lib/apt/lists/* && \
+    wget -O /tmp/dotenvx.tar.gz https://github.com/dotenvx/dotenvx/releases/download/v1.52.0/dotenvx-1.52.0-linux-x86_64.tar.gz && \
+    tar -xzf /tmp/dotenvx.tar.gz -C /usr/local/bin/ && \
+    rm /tmp/dotenvx.tar.gz
+COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
+
+COPY --from=builder /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+COPY --from=builder /app/src/instrumentation.ts ./src/instrumentation.ts
+COPY --from=builder /app/node_modules/@vercel ./node_modules/@vercel
+COPY --from=builder /app/node_modules/@opentelemetry ./node_modules/@opentelemetry
+COPY --from=builder /app/node_modules/pino ./node_modules/pino
+
+RUN dotenvx ext prebuild
+
+EXPOSE 3000
+ENV PORT=3000
+ENV HOSTNAME="0.0.0.0"
+
+CMD ["dotenvx", "run", "--", "node", "server.js"]

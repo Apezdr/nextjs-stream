@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useReducer, useSyncExternalStore } from 'react';
 import { useSystemStatus } from '@src/contexts/SystemStatusContext';
+import { formatServerLabel } from '@src/utils/serverLabel';
 
 // Banner presentation state (dismissal, tracked level, dock/expand) transitions together,
 // so it lives in one reducer. timeAgoRefresh stays a standalone re-render tick.
@@ -56,7 +57,7 @@ function formatTimeAgo(dateStr) {
  * Client-side banner component that handles dismissal and styling
  * Uses SystemStatusContext for data fetching with automatic refreshing
  */
-export default function StatusBannerClient({ status: initialStatus }) {
+export default function StatusBannerClient({ status: initialStatus, serverNames = {} }) {
   const [, setTimeAgoRefresh] = useState(0); // Trigger time ago refreshes
 
   // useSyncExternalStore with a server snapshot of `false` is the official React
@@ -247,10 +248,10 @@ export default function StatusBannerClient({ status: initialStatus }) {
               </button>
               <button
                 onClick={() => dispatchBanner({ type: 'dismiss' })}
-                className="p-2 rounded hover:bg-red-700 transition-colors"
-                aria-label="Dismiss"
+                className="rounded px-3 py-2 text-sm font-semibold hover:bg-red-700 transition-colors"
+                aria-label="Ignore this performance alert"
               >
-                ×
+                Ignore
               </button>
             </div>
           </div>
@@ -345,7 +346,7 @@ export default function StatusBannerClient({ status: initialStatus }) {
                         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm1 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V8zm1 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1v-2z" clipRule="evenodd" />
                         </svg>
-                        Server: {status.serverId}
+                        Server: {serverNames[status.serverId] || formatServerLabel(status.serverId)}
                       </span>
                     )}
                   </div>

@@ -28,6 +28,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { ArrowLeftIcon, ChevronDownIcon, InformationCircleIcon, MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import Link from 'next/link'
+import Image from 'next/image'
 import { siteTitle } from '@src/utils/config'
 import { useRouter } from 'next/navigation'
 import Logo from '../../logo'
@@ -42,8 +43,8 @@ const navigation = [
     href: '/admin/media',
     icon: FolderIcon,
     subItems: [
-      { name: 'TV', href: '/admin/media/tv' },
       { name: 'Movies', href: '/admin/media/movies' },
+      { name: 'TV', href: '/admin/media/tv' },
     ],
   },
   { name: 'Calendar', href: '/admin/calendar', icon: CalendarIcon },
@@ -51,11 +52,6 @@ const navigation = [
   { name: 'Settings', href: '/admin/settings', icon: Cog8ToothIcon },
   { name: 'Logs', href: '/admin/logs', icon: InformationCircleIcon },
   { name: 'Client Errors', href: '/admin/client-errors', icon: BugAntIcon },
-]
-const teams = [
-  { id: 1, name: 'Heroicons', href: '#', initial: 'H', current: false },
-  { id: 2, name: 'Tailwind Labs', href: '#', initial: 'T', current: false },
-  { id: 3, name: 'Workcation', href: '#', initial: 'W', current: false },
 ]
 const userNavigation = [
   //{ name: 'Your profile', href: '#' },
@@ -231,31 +227,6 @@ export default function AdminLayout({ children }) {
                         />
                       ))}</ul>
                     </li>
-                    <li>
-                      <div className="text-xs font-semibold leading-6 text-gray-400">
-                        Your teams
-                      </div>
-                      <ul className="-mx-2 mt-2 space-y-1">
-                        {teams.map((team) => (
-                          <li key={team.name}>
-                            <Link
-                              href={team.href}
-                              className={classNames(
-                                team.current
-                                  ? 'bg-gray-800 text-white'
-                                  : 'text-gray-400 hover:bg-gray-800 hover:text-white',
-                                'group flex gap-x-3 rounded-md p-2 text-sm font-semibold leading-6'
-                              )}
-                            >
-                              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-700 bg-gray-800 text-[0.625rem] font-medium text-gray-400 group-hover:text-white">
-                                {team.initial}
-                              </span>
-                              <span className="truncate">{team.name}</span>
-                            </Link>
-                          </li>
-                        ))}
-                      </ul>
-                    </li>
                     <li className="mt-auto">
                       <div className="px-2">
                         <div className="text-xs font-semibold leading-6 text-gray-400 mb-2">Server Processes</div>
@@ -265,13 +236,13 @@ export default function AdminLayout({ children }) {
                         <div className="text-xs font-semibold leading-6 text-gray-400 mb-2">Server Status</div>
                         <MinimalServerStats />
                       </div>
-                      <a
+                      <Link
                         href="/list"
                         className="group -mx-2 flex gap-x-3 rounded-md p-2 text-sm font-semibold leading-6 text-gray-400 hover:bg-gray-800 hover:text-white"
                       >
                         <ArrowLeftIcon aria-hidden="true" className="h-6 w-6 shrink-0" />
                         Go back to Site
-                      </a>
+                      </Link>
                     </li>
                   </ul>
                 </nav>
@@ -300,29 +271,6 @@ export default function AdminLayout({ children }) {
                         />
                       ))}</ul>
                 </li>
-                <li>
-                  <div className="text-xs font-semibold leading-6 text-gray-400">Your teams</div>
-                  <ul className="-mx-2 mt-2 space-y-1">
-                    {teams.map((team) => (
-                      <li key={team.name}>
-                        <Link
-                          href={team.href}
-                          className={classNames(
-                            team.current
-                              ? 'bg-gray-800 text-white'
-                              : 'text-gray-400 hover:bg-gray-800 hover:text-white',
-                            'group flex gap-x-3 rounded-md p-2 text-sm font-semibold leading-6'
-                          )}
-                        >
-                          <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-lg border border-gray-700 bg-gray-800 text-[0.625rem] font-medium text-gray-400 group-hover:text-white">
-                            {team.initial}
-                          </span>
-                          <span className="truncate">{team.name}</span>
-                        </Link>
-                      </li>
-                    ))}
-                  </ul>
-                </li>
                 <li className="mt-auto">
                   <div className="px-2">
                     <div className="text-xs font-semibold leading-6 text-gray-400 mb-2">Server Processes</div>
@@ -332,13 +280,13 @@ export default function AdminLayout({ children }) {
                     <div className="text-xs font-semibold leading-6 text-gray-400 mb-2">Server Status</div>
                     <MinimalServerStats />
                   </div>
-                  <a
+                  <Link
                     href="/list"
                     className="group -mx-2 flex gap-x-3 rounded-md p-2 text-sm font-semibold leading-6 text-gray-400 hover:bg-gray-800 hover:text-white"
                   >
                     <ArrowLeftIcon aria-hidden="true" className="h-6 w-6 shrink-0" />
                     Go back to Site
-                  </a>
+                  </Link>
                 </li>
               </ul>
             </nav>
@@ -392,13 +340,19 @@ export default function AdminLayout({ children }) {
                 <Menu as="div" className="relative">
                   <MenuButton className="-m-1.5 flex items-center p-1.5">
                     <span className="sr-only">Open user menu</span>
-                    <img
-                      alt={`${user.name} Profile Picture`}
-                      src={user.image}
-                      width={256}
-                      height={256}
-                      className="h-8 w-8 rounded-full bg-gray-50"
-                    />
+                    {user.image ? (
+                      <Image
+                        alt={`${user.name} Profile Picture`}
+                        src={user.image}
+                        width={32}
+                        height={32}
+                        className="h-8 w-8 rounded-full bg-gray-50"
+                      />
+                    ) : (
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-200 text-sm font-semibold text-gray-700">
+                        {user.name?.charAt(0)?.toUpperCase() || '?'}
+                      </span>
+                    )}
                     <span className="hidden lg:flex lg:items-center">
                       <span
                         aria-hidden="true"

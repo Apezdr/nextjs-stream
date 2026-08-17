@@ -8,6 +8,28 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { StatusBadge } from './BaseComponents'
 import DeviceBadge from './DeviceBadge'
+import { PencilSquareIcon } from '@heroicons/react/24/outline'
+import {
+  buildWatchHistoryAdminEditHref,
+  buildWatchHistoryLibraryHref,
+  buildWatchHistoryPlaybackHref,
+  formatPlaybackPosition,
+} from '@src/utils/watchHistoryPlayback'
+import {
+  PLAYBACK_END_STATE_LABELS,
+  normalizePlaybackEndState,
+} from '@src/utils/watchHistory/playbackState'
+
+// Darker than the surrounding gray-400 labels: these sit at text-xs on white,
+// where the -600 shades fall under the WCAG AA 4.5:1 minimum.
+const END_STATE_TONES = {
+  error: 'text-red-700',
+  buffering: 'text-amber-700',
+  ended: 'text-emerald-700',
+  paused: 'text-gray-700',
+  playing: 'text-gray-700',
+}
+import { useAppDateFormatter } from '@src/contexts/AppTimeZoneContext'
 
 const fade = { hidden: { opacity: 0 }, enter: { opacity: 1 } }
 
@@ -250,24 +272,64 @@ const UserLane = memo(function UserLane({ media, onUserClick }) {
 
 /* ---------- Media Chip ---------- */
 
+// Paused wins over buffering so a player paused mid-stall reads as paused,
+// matching what the Media Activity API reports for the same session.
+function getPlaybackStatus(video) {
+  if (video?.isPaused) return { status: 'warning', label: 'Paused', pulse: false }
+  if (video?.isBuffering) return { status: 'info', label: 'Buffering', pulse: true }
+  return { status: 'success', label: 'Watching', pulse: true }
+}
+
 function MediaChip({ video }) {
+  const { formatDateTime } = useAppDateFormatter()
   const title = video?.title || 'Unknown'
   const isTv = video?.type === 'tv'
+  const playbackStatus = getPlaybackStatus(video)
   const pct = Math.min(
     100,
     Math.max(0, ((video?.playbackTime || 0) / ((video?.duration || 1) / 1000)) * 100)
   ).toFixed(0)
+  const libraryHref = buildWatchHistoryLibraryHref(video)
+  const editHref = buildWatchHistoryAdminEditHref(video)
+  const activityTime = video.lastWatchedTimestamp
+    ? formatDateTime(video.lastWatchedTimestamp, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: undefined })
+    : video.lastWatchedDate || 'Unknown'
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200">
+    <div className="group bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200">
       <div className="relative w-full aspect-[3/4]">
-        <Image
-          src={video.posterURL || '/sorry-image-not-available.jpg'}
-          alt={title}
-          fill
-          sizes="(max-width: 768px) 120px, 160px"
-          className="object-cover"
-        />
+        {libraryHref ? (
+          <Link href={libraryHref} aria-label={`View ${title} in the library`} className="block h-full">
+            <Image
+              src={video.posterURL || '/sorry-image-not-available.jpg'}
+              alt={title}
+              fill
+              unoptimized
+              sizes="(max-width: 768px) 120px, 160px"
+              className="object-cover transition-opacity hover:opacity-90"
+            />
+          </Link>
+        ) : (
+          <Image
+            src={video.posterURL || '/sorry-image-not-available.jpg'}
+            alt={title}
+            fill
+            unoptimized
+            sizes="(max-width: 768px) 120px, 160px"
+            className="object-cover"
+          />
+        )}
+
+        {editHref ? (
+          <Link
+            href={editHref}
+            title={`Edit ${title}`}
+            aria-label={`Edit ${title}`}
+            className="absolute left-1 top-1 z-20 flex h-8 w-8 items-center justify-center rounded-md bg-white/95 text-gray-700 opacity-0 shadow transition hover:bg-white hover:text-indigo-600 focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <PencilSquareIcon className="h-4 w-4" />
+          </Link>
+        ) : null}
         
         {/* Device Badge */}
         {video.deviceInfo?.deviceType && (
@@ -283,9 +345,13 @@ function MediaChip({ video }) {
 
         {/* Watching Now Badge */}
         {video.watchingNow && (
-          <div className="absolute top-1 left-1">
-            <StatusBadge status={video.isPaused ? 'warning' : 'success'} size="small" pulse={!video.isPaused}>
-              {video.isPaused ? 'Paused' : 'Watching'}
+          <div className={classNames('absolute top-1', editHref ? 'left-10' : 'left-1')}>
+            <StatusBadge
+              status={playbackStatus.status}
+              size="small"
+              pulse={playbackStatus.pulse}
+            >
+              {playbackStatus.label}
             </StatusBadge>
           </div>
         )}
@@ -304,11 +370,11 @@ function MediaChip({ video }) {
           <div className="text-xs text-gray-500 truncate">{video.title}</div>
         )}
         
-        <div className="flex flex-col sm:flex-row items-center justify-between mt-1">
+        <div className="mt-1 flex items-center justify-between gap-2">
           <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">
-            {pct}%
+            {formatPlaybackPosition(video.playbackTime)} · {pct}%
           </span>
-          <span className="text-xs text-gray-400">{video.lastWatchedDate}</span>
+          <span className="truncate text-xs text-gray-400" title={`Last activity: ${activityTime}`}>{activityTime}</span>
         </div>
       </div>
     </div>
@@ -413,22 +479,63 @@ function UserDetailModal({ isOpen, onClose, userData, isLoading, currentPage, to
 /* ---------- Modal Card ---------- */
 
 function ModalMediaCard({ item }) {
+  const { formatDateTime } = useAppDateFormatter()
   const isTv = item.type === 'tv'
   const pct = Math.min(
     100,
     Math.max(0, ((item?.playbackTime || 0) / ((item?.duration || 1) / 1000)) * 100)
   ).toFixed(0)
+  const playbackHref = buildWatchHistoryPlaybackHref(item)
+  const libraryHref = buildWatchHistoryLibraryHref(item)
+  const endState = normalizePlaybackEndState(item.sessionEndState)
+  const editHref = buildWatchHistoryAdminEditHref(item)
+  const startedAt = item.sessionStartedAt
+    ? formatDateTime(item.sessionStartedAt)
+    : 'Not recorded for this legacy session'
+  const stoppedAt = item.sessionStoppedAt
+    ? formatDateTime(item.sessionStoppedAt)
+    : item.lastWatchedTimestamp ? formatDateTime(item.lastWatchedTimestamp) : 'Not recorded'
+  const stoppedLabel = item.sessionStoppedAt ? 'Stopped' : 'Last activity'
+  const durationSeconds = Number(item.duration) > 0 ? Number(item.duration) / 1000 : null
 
   return (
-    <div className="overflow-hidden rounded-lg bg-white border border-gray-200 transition hover:shadow-md">
+    <div className="group overflow-hidden rounded-lg bg-white border border-gray-200 transition hover:shadow-md">
       <div className="relative">
-        <Image
-          src={item.posterURL || '/sorry-image-not-available.jpg'}
-          alt={item.title}
-          width={isTv ? 352 : 138}
-          height={isTv ? 144 : 208}
-          className={classNames('mx-auto object-cover', isTv ? 'h-36 w-full' : 'h-52 w-auto')}
-        />
+        {libraryHref ? (
+          <Link href={libraryHref} aria-label={`View ${item.title} in the library`} className="block">
+            <Image
+              src={item.posterURL || '/sorry-image-not-available.jpg'}
+              alt={item.title}
+              width={isTv ? 352 : 138}
+              height={isTv ? 144 : 208}
+              unoptimized
+              className={classNames(
+                'mx-auto object-cover transition-opacity hover:opacity-90',
+                isTv ? 'h-36 w-full' : 'h-52 w-auto'
+              )}
+            />
+          </Link>
+        ) : (
+          <Image
+            src={item.posterURL || '/sorry-image-not-available.jpg'}
+            alt={item.title}
+            width={isTv ? 352 : 138}
+            height={isTv ? 144 : 208}
+            unoptimized
+            className={classNames('mx-auto object-cover', isTv ? 'h-36 w-full' : 'h-52 w-auto')}
+          />
+        )}
+
+        {editHref ? (
+          <Link
+            href={editHref}
+            title={`Edit ${item.title}`}
+            aria-label={`Edit ${item.title}`}
+            className="absolute left-2 top-2 z-20 flex h-9 w-9 items-center justify-center rounded-md bg-white/95 text-gray-700 opacity-0 shadow transition hover:bg-white hover:text-indigo-600 focus-visible:opacity-100 group-hover:opacity-100"
+          >
+            <PencilSquareIcon className="h-5 w-5" />
+          </Link>
+        ) : null}
         
         {/* Device Badge */}
         {item.deviceInfo?.deviceType && (
@@ -458,9 +565,27 @@ function ModalMediaCard({ item }) {
         {isTv && item.title ? (
           <div className="mt-0.5 truncate text-xs text-gray-600">{item.title}</div>
         ) : null}
-        <div className="mt-2 flex items-center justify-between text-xs text-gray-500">
+        <dl className="mt-3 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1.5 border-t border-gray-100 pt-3 text-xs">
+          <dt className="text-gray-400">Started</dt>
+          <dd className="text-right text-gray-700">{startedAt}</dd>
+          <dt className="text-gray-400">{stoppedLabel}</dt>
+          <dd className="text-right text-gray-700">{stoppedAt}</dd>
+          <dt className="text-gray-400">Position</dt>
+          <dd className="text-right font-medium text-gray-700">
+            {formatPlaybackPosition(item.playbackTime)}
+            {durationSeconds !== null ? ` / ${formatPlaybackPosition(durationSeconds)}` : ''}
+          </dd>
+          {endState ? (
+            <>
+              <dt className="text-gray-400">Stopped while</dt>
+              <dd className={`text-right font-medium ${END_STATE_TONES[endState]}`}>
+                {PLAYBACK_END_STATE_LABELS[endState]}
+              </dd>
+            </>
+          ) : null}
+        </dl>
+        <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
           <div className="flex items-center space-x-2">
-            <span>{item.lastWatchedDate}</span>
             {item.deviceInfo?.deviceType && (
               <DeviceBadge
                 deviceType={item.deviceInfo.deviceType}
@@ -470,9 +595,9 @@ function ModalMediaCard({ item }) {
               />
             )}
           </div>
-          {item.link ? (
-            <Link href={`/list/${item.type}/${item.link}`} className="text-blue-600 hover:underline">
-              Open
+          {playbackHref ? (
+            <Link href={playbackHref} className="text-blue-600 hover:underline">
+              Open at timestamp
             </Link>
           ) : <span />}
         </div>

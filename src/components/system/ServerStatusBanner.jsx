@@ -3,6 +3,8 @@
 import { getSession } from '@src/lib/cachedAuth';
 import { getProcessedSystemStatus } from '@src/utils/getProcessedSystemStatus';
 import StatusBannerClient from './StatusBannerClient';
+import { SystemPerformanceAlertSettingsManager } from '@src/utils/admin_database';
+import { getServersWithDisplayNames } from '@src/utils/serverDisplayNames';
 
 /**
  * Server component that fetches system status and renders the banner
@@ -14,6 +16,9 @@ export default async function ServerStatusBanner() {
   
   // Only show for authenticated users
   if (!session || !session.user) {
+    return null;
+  }
+  if (!(await new SystemPerformanceAlertSettingsManager().getEnabled())) {
     return null;
   }
   
@@ -79,6 +84,19 @@ export default async function ServerStatusBanner() {
     };
   }
   
+  // The banner also refreshes client-side, so it needs the whole map rather
+  // than just the label for the server that is currently worst. This renders in
+  // the shared styled layout, so a config read failure must degrade the banner
+  // to raw ids rather than fail every page.
+  let serverNames = {};
+  try {
+    serverNames = Object.fromEntries(
+      (await getServersWithDisplayNames()).map((server) => [server.id, server.displayName])
+    );
+  } catch (error) {
+    console.error('ServerStatusBanner: display names unavailable', error);
+  }
+
   // Pass this data to a client component that handles visibility state
-  return <StatusBannerClient status={statusInfo} />;
+  return <StatusBannerClient status={statusInfo} serverNames={serverNames} />;
 }

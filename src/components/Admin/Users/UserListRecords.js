@@ -38,6 +38,24 @@ function StatusPill({ approved }) {
   )
 }
 
+function RolePill({ role }) {
+  const isAdmin = role === 'admin'
+
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset',
+        isAdmin
+          ? 'bg-violet-500/10 text-violet-300 ring-violet-400/20'
+          : 'bg-slate-500/10 text-slate-300 ring-slate-400/20'
+      )}
+    >
+      {isAdmin ? <ShieldCheckIcon className="h-3.5 w-3.5" /> : null}
+      {isAdmin ? 'Admin' : 'User'}
+    </span>
+  )
+}
+
 function AccessPill({ limitedAccess }) {
   return (
     <span
@@ -164,6 +182,9 @@ function UserListRecords({
                 Email
               </th>
               <th className="px-6 py-5 text-left text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
+                Role
+              </th>
+              <th className="px-6 py-5 text-left text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
                 Access
               </th>
               <th className="px-6 py-5 text-left text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
@@ -194,6 +215,10 @@ function UserListRecords({
                     <div className="truncate text-sm font-medium text-slate-200" title={item.email}>
                       {item.email}
                     </div>
+                  </td>
+
+                  <td className="px-6 py-5">
+                    <RolePill role={item.role} />
                   </td>
 
                   <td className="px-6 py-5">

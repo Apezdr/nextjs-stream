@@ -142,7 +142,7 @@ export default function LogsAdministration() {
                   <option value="">Select Server(s)</option>
                   {servers.map((server) => (
                     <option key={server.id} value={server.syncEndpoint}>
-                      {formatServerLabel(server.id)} ({server.baseURL})
+                      {server.displayName || formatServerLabel(server.id)} ({server.baseURL})
                     </option>
                   ))}
                 </select>

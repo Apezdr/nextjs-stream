@@ -2,6 +2,7 @@
 import Loading from "@src/app/loading";
 import { buildURL } from "@src/utils";
 import useSWR from "swr";
+import AppDateTime from '@components/AppDateTime';
 
 const fetchLastUpdated = async () => {
   const response = await fetch(buildURL("/api/authenticated/admin/dockerhub-lastupdated"));
@@ -52,7 +53,7 @@ export default function DockerHubLastUpdated() {
                   <span className="text-green-600 font-medium block">Up to date</span>
                 ) : null}
                 <span className="text-gray-700">
-                    Last updated: <span className="font-medium">{new Date(last_updated).toLocaleString()}</span>
+                    Last updated: <span className="font-medium"><AppDateTime value={last_updated} /></span>
                   </span>
               </p>
             </div>
