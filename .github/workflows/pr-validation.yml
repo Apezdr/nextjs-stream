@@ -1,0 +1,234 @@
+name: Pull Request CI
+
+on:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+  merge_group:
+    types:
+      - checks_requested
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CI: 'true'
+  LANG: C.UTF-8
+  LC_ALL: C.UTF-8
+  NEXT_TELEMETRY_DISABLED: '1'
+  NPM_CONFIG_AUDIT: 'false'
+  NPM_CONFIG_FUND: 'false'
+  TZ: UTC
+
+jobs:
+  policy:
+    name: Policy and workflow syntax
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26'
+
+      - name: Validate repository CI policy
+        run: node .github/scripts/validate-ci-policy.mjs
+
+      - name: Validate workflow syntax
+        env:
+          ACTIONLINT_ARCHIVE_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          ACTIONLINT_VERSION: 1.7.12
+        run: |
+          archive="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          url="https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${archive}"
+          curl --fail --location --silent --show-error --output "${RUNNER_TEMP}/${archive}" "${url}"
+          echo "${ACTIONLINT_ARCHIVE_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
+          tar --extract --gzip --file "${RUNNER_TEMP}/${archive}" --directory "${RUNNER_TEMP}" actionlint
+          "${RUNNER_TEMP}/actionlint" -color
+
+  application:
+    name: Application validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '26'
+          cache: npm
+
+      - name: Restore Next.js build cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .next/cache
+          key: next-${{ runner.os }}-node26-${{ hashFiles('package-lock.json', 'next.config.js', 'tsconfig.json') }}-${{ hashFiles('src/**/*.js', 'src/**/*.jsx', 'src/**/*.ts', 'src/**/*.tsx') }}
+          restore-keys: |
+            next-${{ runner.os }}-node26-${{ hashFiles('package-lock.json', 'next.config.js', 'tsconfig.json') }}-
+
+      - name: Validate dependency install scripts
+        run: node .github/scripts/validate-ci-policy.mjs
+
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Smoke-test native dependencies
+        run: node -e "for (const packageName of ['sharp', 'unrs-resolver', 'protobufjs']) require(packageName)"
+
+      - name: Lint
+        id: lint
+        continue-on-error: true
+        run: npm run lint:ci
+
+      - name: Type-check
+        id: typecheck
+        continue-on-error: true
+        run: npm run typecheck
+
+      - name: Run tests with coverage
+        id: tests
+        continue-on-error: true
+        run: npm run test:ci
+
+      - name: Check dependency hygiene
+        id: dependencies
+        continue-on-error: true
+        run: npm run knip:ci
+
+      - name: Build production application
+        id: build
+        continue-on-error: true
+        env:
+          BETTER_AUTH_SECRET: ci-only-not-a-production-secret-000000
+          BETTER_AUTH_URL: http://127.0.0.1:3000
+          FILE_SERVER_URL: http://127.0.0.1:1
+          MONGODB_MIN_POOL_SIZE: '0'
+          MONGODB_SERVER_SELECTION_TIMEOUT_MS: '500'
+          MONGODB_SOCKET_TIMEOUT_MS: '500'
+          MONGODB_URI: mongodb://127.0.0.1:1/ci
+          MONGODB_WAIT_QUEUE_TIMEOUT_MS: '500'
+          NEXT_PUBLIC_BASE_URL: http://127.0.0.1:3000
+          NODE_SERVER_URL: http://127.0.0.1:1
+          OTEL_ENABLED: 'false'
+          OTEL_EXPORTER_OTLP_ENDPOINT: http://127.0.0.1:1
+          OTEL_EXPORTER_OTLP_HEADERS: ''
+          OTEL_SDK_DISABLED: 'true'
+        run: npm run build
+
+      - name: Verify checks did not rewrite tracked files
+        id: clean
+        continue-on-error: true
+        run: git diff --exit-code
+
+      - name: Enforce application results
+        if: always()
+        env:
+          BUILD_RESULT: ${{ steps.build.outcome }}
+          CLEAN_RESULT: ${{ steps.clean.outcome }}
+          DEPENDENCIES_RESULT: ${{ steps.dependencies.outcome }}
+          LINT_RESULT: ${{ steps.lint.outcome }}
+          TESTS_RESULT: ${{ steps.tests.outcome }}
+          TYPECHECK_RESULT: ${{ steps.typecheck.outcome }}
+        run: |
+          failed=0
+          for result in \
+            "lint=${LINT_RESULT}" \
+            "typecheck=${TYPECHECK_RESULT}" \
+            "tests=${TESTS_RESULT}" \
+            "dependencies=${DEPENDENCIES_RESULT}" \
+            "build=${BUILD_RESULT}" \
+            "clean=${CLEAN_RESULT}"
+          do
+            name="${result%%=*}"
+            outcome="${result#*=}"
+            printf '%-14s %s\n' "${name}" "${outcome}"
+            if [[ "${outcome}" != 'success' ]]; then
+              failed=1
+            fi
+          done
+          exit "${failed}"
+
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        if: github.event_name == 'pull_request'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Review dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          comment-summary-in-pr: never
+          fail-on-scopes: runtime, development, unknown
+          fail-on-severity: high
+          license-check: false
+          show-openssf-scorecard: false
+          vulnerability-check: true
+          warn-only: false
+
+      - name: Skip outside pull requests
+        if: github.event_name != 'pull_request'
+        run: echo 'Dependency review applies only to pull requests.'
+
+  required:
+    name: Required checks
+    if: always()
+    needs:
+      - policy
+      - application
+      - dependency-review
+    permissions: {}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Enforce required job results
+        env:
+          APPLICATION_RESULT: ${{ needs.application.result }}
+          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
+          POLICY_RESULT: ${{ needs.policy.result }}
+        run: |
+          failed=0
+          for result in \
+            "policy=${POLICY_RESULT}" \
+            "application=${APPLICATION_RESULT}" \
+            "dependency-review=${DEPENDENCY_REVIEW_RESULT}"
+          do
+            name="${result%%=*}"
+            outcome="${result#*=}"
+            printf '%-20s %s\n' "${name}" "${outcome}"
+            if [[ "${outcome}" != 'success' ]]; then
+              failed=1
+            fi
+          done
+          exit "${failed}"

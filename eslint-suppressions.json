@@ -1,0 +1,61 @@
+{
+  "scripts/remove-dead-functions.mjs": {
+    "no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/components/Admin/SubtitleEditor/Layout/EditorVideoPlayer.js": {
+    "react-hooks/refs": {
+      "count": 4
+    }
+  },
+  "src/components/Admin/SubtitleEditor/Layout/SubtitleInspector.js": {
+    "react-hooks/rules-of-hooks": {
+      "count": 3
+    }
+  },
+  "src/components/Admin/TMDBServerStatus.js": {
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "src/components/HOC/FrozenRoute.js": {
+    "react-hooks/refs": {
+      "count": 1
+    }
+  },
+  "src/components/MediaPages/Collection/VirtualizedHorizontalList.js": {
+    "react-hooks/refs": {
+      "count": 3
+    }
+  },
+  "src/components/MediaPages/CollectionPageComponent.js": {
+    "no-case-declarations": {
+      "count": 8
+    },
+    "react-hooks/purity": {
+      "count": 4
+    },
+    "react-hooks/rules-of-hooks": {
+      "count": 1
+    }
+  },
+  "src/components/MediaPlayer/NextUpCard.js": {
+    "react-hooks/preserve-manual-memoization": {
+      "count": 1
+    },
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  },
+  "src/components/Navigation/useScroll.js": {
+    "react-hooks/use-memo": {
+      "count": 1
+    }
+  },
+  "src/components/system/StatusBanner.jsx": {
+    "react-hooks/set-state-in-effect": {
+      "count": 1
+    }
+  }
+}
