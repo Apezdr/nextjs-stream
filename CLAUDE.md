@@ -28,8 +28,10 @@ which is now in `AGENTS.md`, imported above.
 ## Claude Code specifics
 
 - Prefer plan mode for changes under `src/utils/sync/` and
-  `src/utils/flatSync/`. The sync path has a single write chokepoint per entity
-  and a field-level priority system that is easy to bypass by accident.
+  `src/utils/flatSync/`. The domain-driven sync path has a single write
+  chokepoint per entity and a field-level priority system that is easy to bypass
+  by accident. The legacy flat-sync fallback has no such chokepoint, so check it
+  separately.
 - `.claude*/` is gitignored, so `.claude/rules/` cannot be committed and shared.
   Rules that the team needs belong in `AGENTS.md`.
 - Imports are expanded at launch and count against context, so keep this file

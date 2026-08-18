@@ -15,14 +15,14 @@ table cannot drift into a lie:
 
 | Piece | What is installed |
 | --- | --- |
-| Framework | Next.js 16, App Router |
+| Framework | Next.js 16, App Router, plus one remaining Pages Router route |
 | UI | React 19, Tailwind CSS 3 |
 | Language | Mixed TypeScript / JavaScript |
-| Database | MongoDB, driver 7, reached through `clientPromise` in `src/lib/mongodb.ts` |
+| Database | MongoDB, driver 7, reached through `src/lib/mongodb.ts` — see Conventions, there are two pools |
 | Authentication | better-auth 1.x — see `src/lib/auth.ts` |
 | Player | `@vidstack/react` |
 | External metadata | TMDB |
-| Tests | Jest 30 + React Testing Library, jsdom environment |
+| Tests | Jest 30, jsdom environment. `@testing-library/jest-dom` matchers only — `@testing-library/react` is **not** installed |
 | Dead-code analysis | knip 6 |
 
 TypeScript runs with `"strict": false` and `"strictNullChecks": true`
@@ -37,22 +37,27 @@ guarantees.
 | `npm run build` | Production build |
 | `npm run start` | Production server |
 | `npm test` / `npm run test:watch` | Jest |
-| `npm run analyze` | Build with bundle analysis |
+| `npx tsc --noEmit` | Typecheck, read-only. Passes clean on this branch |
 | `npm run knip` | Dead-code analysis, read-only |
+| `npm run analyze` | **Does nothing useful.** It is `ANALYZE=true next build`, but nothing reads `ANALYZE` and `@next/bundle-analyzer` is not installed, so it is a plain production build. Do not cite it as bundle evidence |
 | `npm run lint` | **Mutating.** Runs `eslint --fix .` across the whole repository |
 | `npm run knip:fix` | **Mutating.** Runs `knip --fix`, which deletes code |
+| `npm run knip:report` | **Mutating.** Writes `knip-report.json` into the repo root, which is not gitignored |
 
 `lint-staged` is configured in `package.json`, but no hook installer (husky or
-equivalent) is present, so nothing runs it automatically on commit.
+equivalent) is present, so nothing runs it automatically on commit. `prettier`
+itself is not a declared dependency, so `npx lint-staged` would fetch it from the
+network.
 
 ## Directory layout
 
 - `src/app/` — App Router pages and API routes
+- `src/pages/` — one surviving Pages Router route, the Chromecast receiver
 - `src/components/` — React components, grouped by feature
 - `src/lib/` — core utilities: MongoDB client, auth configuration
 - `src/utils/` — business logic and database operations
 - `src/contexts/` — React contexts for global state
-- `__tests__/` — Jest tests
+- `__tests__/` — Jest tests, plus colocated `src/**/__tests__/` directories
 - `__mocks__/` — mocks for external dependencies
 
 Path aliases are `@src/*` and `@components/*`.
@@ -128,10 +133,13 @@ A separate legacy `Movies` collection still exists and is still read by
 the flat collection and nothing new should be pointed at it.
 
 **Domain-driven sync (`src/utils/sync/domain/`) is the live default.**
-`shouldUseNewArchitecture()` in `src/utils/sync/featureFlags.js` returns true
-unless explicitly forced off via `USE_NEW_SYNC_ARCHITECTURE`. It uses a strategy
-pattern with domain services (`MovieSyncService`, `EpisodeSyncService`, and
-siblings) and TypeScript interfaces.
+`shouldUseNewArchitecture()` in `src/utils/sync/featureFlags.js` returns `true`
+in every environment branch. `USE_NEW_SYNC_ARCHITECTURE` is read and logged but
+cannot turn the new path off — and `.env.example` ships it as `false`, which has
+no effect. The only real off-switches are the runtime `forceOld` option and the
+automatic fallback in `flatSync/index.js`. It uses a strategy pattern with domain
+services (`MovieSyncService`, `EpisodeSyncService`, and siblings) and TypeScript
+interfaces.
 
 Its defining property is a **single write chokepoint per entity**:
 `BaseRepository.smartUpsert`, `EpisodeRepository.smartBulkUpsert` and
@@ -178,15 +186,17 @@ X-Webhook-ID: <your WEBHOOK_ID — never commit the real value>
 ```
 
 `X-Webhook-ID` is a bearer credential. `src/utils/routeAuth.js` accepts it in
-place of an admin session, so treat it as a secret, not an identifier.
+place of an admin session, so treat it as a secret, not an identifier. It is
+also accepted as a `?webhookId=` query parameter, which puts the secret into
+URLs, browser history and access logs — prefer the header, and never build a
+link that carries it.
 
 ### Common sync mistakes
 
 - Using `title` for a filesystem path or a database key. Use `originalTitle`.
 - Assigning a field without checking priority first, which overwrites
   higher-priority data.
-- Substituting a default value so execution can continue after an error. The
-  sync path must rely on data properly passed through the functions.
+- Putting sync or bulk work on the request-serving MongoDB pool. See Conventions.
 
 ## Other subsystems
 
@@ -205,27 +215,36 @@ place of an admin session, so treat it as a secret, not an identifier.
 - Authenticated routes live under `/api/authenticated/`. Path is a convention,
   not an enforcement mechanism — see the trust-boundary rule in
   [AGENTS.md](AGENTS.md).
-- Use `clientPromise` from `@src/lib/mongodb` for database access.
+- **There are two MongoDB pools and picking the wrong one has caused an outage.**
+  Request, route-handler and RSC paths use the default export:
+  `import clientPromise from '@src/lib/mongodb'`. Sync orchestration, bulk
+  writes, index builds and full-collection scans use `getSyncClientPromise()`.
+  `src/lib/mongodb.ts` records why: sync work exhausted the shared pool and
+  request queries queued 4-5 seconds for a connection checkout. Never hand the
+  request client to a process-cached sync adapter.
 - Components use Tailwind, skeleton loading states, and React hooks; follow
   accessibility practice.
 - Use error boundaries and toast notifications; log errors without exposing
   sensitive data.
-- Environment configuration lives in `.env.local`. `README.md` owns the full
-  variable list.
+- Environment configuration lives in `.env.local`. `.env.example` is the
+  complete variable template; `README.md` covers the setup narrative and does
+  not list every variable.
 
 ## knip configuration
 
 Decisions encoded in `knip.json`, recorded so nobody "cleans them up":
 
 - `media-icons` is in `ignoreDependencies` — it is used internally by
-  `@vidstack/react`, not imported directly by our source. It is pinned to `1.1.5`
-  because `@vidstack/react` imports `accessibilityPaths`, which exists only in
-  `1.x`.
-- `sharp` is in `ignoreDependencies` — Next.js image optimisation uses it at
-  runtime.
-- `@eslint/js` is in `ignoreDependencies`.
+  `@vidstack/react`, not imported directly by our source. It is constrained to
+  `^1.1.5`, i.e. 1.x only, because `@vidstack/react` imports
+  `accessibilityPaths`, which exists only in `1.x`.
+- `sharp` is in `ignoreDependencies`, but it is no longer declared in
+  `package.json` — Next.js resolves it as its own optional dependency, so the
+  entry is vestigial.
+- `@eslint/js` is in `ignoreDependencies` because `eslint.config.js` requires it
+  while `package.json` does not declare it; it resolves transitively through
+  `eslint`.
 - Entry globs use directory wildcards (`Landing/**/*`) so lazy-loaded siblings
   are covered.
 - `ignoreExportsUsedInFile: true` avoids false positives for module-local
   helpers.
-- `react-countup` is used through direct imports in search count components.
