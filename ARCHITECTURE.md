@@ -20,7 +20,7 @@ table cannot drift into a lie:
 | Language | Mixed TypeScript / JavaScript |
 | Database | MongoDB, driver 7, reached through `src/lib/mongodb.ts` — see Conventions, there are two pools |
 | Authentication | better-auth 1.x — see `src/lib/auth.ts` |
-| Player | `@vidstack/react` |
+| Player | `@videojs/react` |
 | External metadata | TMDB |
 | Tests | Jest 30, jsdom environment. `@testing-library/jest-dom` matchers only — `@testing-library/react` is **not** installed |
 | Dead-code analysis | knip 6 |
@@ -48,6 +48,22 @@ guarantees.
 equivalent) is present, so nothing runs it automatically on commit. `prettier`
 itself is not a declared dependency, so `npx lint-staged` would fetch it from the
 network.
+
+## Sensitive dependencies
+
+- `@videojs/react` is pinned exactly to `10.0.0-beta.26` while v10 remains in
+  beta. Only `src/components/MediaPlayer/videojs.js` may import it directly.
+  Treat that file as a beta-drift firewall and absorb upstream API renames
+  there instead of scattering them across the app.
+- `better-auth` is pinned exactly to `1.6.9` temporarily. From `1.6.11`
+  onward, `POST /device/approve` and `/device/deny` reject with
+  `400 invalid_request` unless `GET /device?user_code=…` has already bound the
+  code to the verifying session; `src/app/(styled)/device/device-auth-client.tsx`
+  does not make that call yet, so upgrading would break QR/TV sign-in. When
+  this hold is lifted, also set `advanced.ipAddress.trustedProxies` in
+  `src/lib/auth.ts` before moving past `1.6.21`, or unresolved client IPs
+  behind Cloudflare/Apache collapse every device into one shared rate-limit
+  bucket.
 
 ## Directory layout
 
@@ -210,6 +226,16 @@ link that carries it.
   database and TMDB, external media via TMDB, deduplication and deterministic
   hydration.
 
+## Video player
+
+- The web player stack is `@videojs/react` (Video.js v10 React framework).
+- The old vidstack, `media-icons`, and top-level `hls.js` dependencies were
+  removed. HLS now comes through `@videojs/media`'s bundled hls.js via
+  `HlsJsVideo`.
+- Banner trailer and hover-card previews do not use the player framework. They
+  use the YouTube IFrame API in `src/components/VideoPreview/`, with a plain
+  `<video>` branch for direct-file clips.
+
 ## Conventions
 
 - Authenticated routes live under `/api/authenticated/`. Path is a convention,
@@ -234,10 +260,6 @@ link that carries it.
 
 Decisions encoded in `knip.json`, recorded so nobody "cleans them up":
 
-- `media-icons` is in `ignoreDependencies` — it is used internally by
-  `@vidstack/react`, not imported directly by our source. It is constrained to
-  `^1.1.5`, i.e. 1.x only, because `@vidstack/react` imports
-  `accessibilityPaths`, which exists only in `1.x`.
 - `sharp` is in `ignoreDependencies`, but it is no longer declared in
   `package.json` — Next.js resolves it as its own optional dependency, so the
   entry is vestigial.

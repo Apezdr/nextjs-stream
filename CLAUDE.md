@@ -10,8 +10,8 @@ This file holds only what is specific to Claude Code.
 
 ## Where the project truth moved
 
-Architecture, the sync system, dual-title semantics, field-level priority and
-the knip configuration decisions now live in
+Architecture, the sync system, dual-title semantics, field-level priority,
+dependency hold notes and the knip configuration decisions now live in
 [ARCHITECTURE.md](ARCHITECTURE.md). Read it before changing anything under
 `src/utils/sync/` or `src/utils/flatSync/`.
 
