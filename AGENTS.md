@@ -25,6 +25,7 @@ reading, not background.
 | [plans/media-activity-api.md](plans/media-activity-api.md) | Media Activity endpoints and session XML shape |
 | [plans/media-activity-presence.md](plans/media-activity-presence.md) | `PlaybackPresence`, heartbeat cadence, read windows |
 | [plans/media-activity-presence-rn-integration.md](plans/media-activity-presence-rn-integration.md) | The contract the React Native app implements |
+| [docs/react-native-app/front-end-api-contract.md](docs/react-native-app/front-end-api-contract.md) | Any change to an authenticated API response shape — the TV/mobile app consumes these; `nextItem: null` is its end-of-list signal |
 | [USER_APPROVAL_SYSTEM.md](USER_APPROVAL_SYSTEM.md), [ACCOUNT_DELETION_SYSTEM.md](ACCOUNT_DELETION_SYSTEM.md), [NOTIFICATION_FRAMEWORK_DESIGN.md](NOTIFICATION_FRAMEWORK_DESIGN.md) | The subsystems they name |
 | `docs/api/*.md` | The endpoints they document |
 
@@ -160,6 +161,7 @@ correct at all times:
 | `plans/media-activity-api.md` | Media Activity endpoints and session XML shape |
 | `plans/media-activity-presence.md` | `PlaybackPresence` collection, heartbeat cadences, read windows |
 | `plans/media-activity-presence-rn-integration.md` | The contract the React Native app implements |
+| `docs/react-native-app/front-end-api-contract.md` | The authenticated API surface as the React Native / TV app consumes it |
 | `docs/api/*.md` | Individual endpoint contracts |
 | `USER_APPROVAL_SYSTEM.md`, `ACCOUNT_DELETION_SYSTEM.md`, `NOTIFICATION_FRAMEWORK_DESIGN.md` | The subsystems they name |
 

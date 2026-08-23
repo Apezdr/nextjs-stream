@@ -104,7 +104,10 @@ const wrongPath = `/movies/${movie.title}/poster.jpg`
 ```
 
 This invariant reaches beyond the sync trees: routing, admin actions and media
-pages all rely on it.
+pages all rely on it. Routing rides on it deliberately — `/list` links, the
+media resolver and the media API key on unique `originalTitle`, not display
+title (two shows can share a display title; "Kingdom" did). Build media links
+through the `mediaLinkParam` helper rather than concatenating titles.
 
 ## Multi-server field-level priority
 
@@ -136,6 +139,13 @@ if (canUpdate) {
   movie.posterSource = serverConfig.id
 }
 ```
+
+These checks **fail closed**: the priority lookup requires the exact literal
+leaf path that `collectFieldAvailability` emits. A path that does not match —
+a typo, a renamed field, a different nesting — does not error; that field
+silently never syncs again. When adding a reported field, mirror the
+identifier scheme `collectFieldAvailability` uses, and verify the field
+actually updates end-to-end.
 
 ## Sync system
 
@@ -194,6 +204,37 @@ Supporting components: `SyncManager` orchestrates and carries both titles;
 priority checks; `BaseRepository` keys everything on `originalTitle`;
 `SyncContext` carries `entityTitle` and `entityOriginalTitle`.
 
+### Sync write invariants
+
+- **Stamp the current `syncRunId` on every `Flat*` write.** Post-sync cleanup
+  deletes any document not stamped with the current run's id
+  (`src/utils/flatSync/preTagSyncRunId.js` / `postSyncCleanup.js`).
+  `BaseRepository` injects it at the chokepoint, but a domain repository
+  override that writes directly bypasses the injection — stamp it explicitly
+  there, or cleanup deletes what you just wrote.
+- **Out-of-band writes need `manualEntry: true`.** Any document created outside
+  a sync run — admin actions, one-off scripts — is deleted by the next sync's
+  cleanup unless it carries `manualEntry: true`
+  (`src/utils/admin/flatMediaActions.js` shows the pattern).
+- **Declare new indexes in the owning repository's `createIndexes()`** (invoked
+  through `DatabaseAdapter`). The domain path never calls
+  `initializeFlatDatabase()`, so an index declared only there is never created
+  in production.
+- **`revalidateTag` inside the admin sync is a no-op.** The sync endpoint is
+  fire-and-forget, so tag invalidations push into an already-flushed request
+  context and vanish. Invalidate from `after()` or a client-triggered route
+  instead.
+
+### Delivery and identity (JIT)
+
+- `jitEligible` is **absent, not `false`,** on ineligible movies. Count or
+  filter ineligible media with `{ jitEligible: { $ne: true } }`; default serve
+  modes gate on `=== true` (the explicit override-on mode knowingly bypasses).
+- `normalizedVideoId` is derived **only** in `src/utils/videoIdentity.js` (JIT
+  `/stream/<b64>/` URLs canonicalize back to the source pathname before
+  lowercasing). Never re-derive it locally — dozens of files consume the single
+  implementation, and a second derivation forks identity.
+
 To trigger a sync locally:
 
 ```
@@ -235,6 +276,12 @@ link that carries it.
 - Banner trailer and hover-card previews do not use the player framework. They
   use the YouTube IFrame API in `src/components/VideoPreview/`, with a plain
   `<video>` branch for direct-file clips.
+- **Navigated-away pages stay alive.** Next.js keeps the previous page mounted
+  under `display:none` (no unmount, `usePathname` frozen), so a hidden page's
+  `<video>` keeps playing. All playback runs through the coordinator in
+  `src/contexts/PlaybackCoordinatorContext.js` (`useManagedPlayback`), which
+  models explicit user intent plus a visibility suppressor. Never mount a
+  playing media element outside it — that reintroduces the ghost-audio bug.
 
 ## Conventions
 
@@ -255,6 +302,15 @@ link that carries it.
 - Environment configuration lives in `.env.local`. `.env.example` is the
   complete variable template; `README.md` covers the setup narrative and does
   not list every variable.
+- **`src/proxy.ts` forces `Cache-Control: no-store` on `/api/authenticated/*`**
+  unless the route's prefix is listed in `SELF_CACHED_API_PREFIXES` (same
+  file). The proxy header silently clobbers whatever the route handler set, so
+  a new self-caching route must be added to that list or its caching never
+  takes effect.
+- The React Native / TV app's use of the authenticated API is specified in
+  [docs/react-native-app/front-end-api-contract.md](docs/react-native-app/front-end-api-contract.md)
+  — check it before changing any authenticated response shape (`nextItem: null`
+  is that client's end-of-list signal).
 
 ## knip configuration
 
@@ -270,3 +326,17 @@ Decisions encoded in `knip.json`, recorded so nobody "cleans them up":
   are covered.
 - `ignoreExportsUsedInFile: true` avoids false positives for module-local
   helpers.
+
+## Known issues
+
+Current behaviour that looks like a bug report waiting to happen — do not
+"discover" these from scratch, and do not paper over them locally:
+
+- **Episode orphan add/delete cycle.** Production FlatSync continuously adds
+  and then deletes TV episodes (episodes only; shows and seasons are stable):
+  marker-based cleanup hard-deletes episodes on transient pre-tag gaps and
+  cascades, aggravated by the ~3-minute sync cadence. Diagnosed 2026-06-08;
+  cascade/FK hardening exists on the unmerged `feat/autocaptions` branch.
+- **"Recently Added" sorts by file mtime,** not by when the title entered the
+  library. A new title whose files preserved old mtimes gets buried — it
+  presents as "sync is broken" but sync is fine.
