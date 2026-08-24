@@ -105,6 +105,37 @@ playerManager.addEventListener(cast.framework.events.EventType.ERROR, (event) =>
 })
 
 /*
+ * Restyle the subtitle cues once the player has loaded an item.
+ *
+ * Registered once here rather than from inside the LOAD interceptor, where it
+ * used to live: the interceptor runs per load, so every item played added
+ * another copy of this listener for the lifetime of the receiver. It also
+ * reached through two levels of shadow DOM with no null check, which throws
+ * inside an event handler on any CAF build that names the element differently.
+ */
+playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
+  const cueStyleElement = document
+    .querySelector('cast-media-player')
+    ?.shadowRoot?.querySelector('#cue-style')
+
+  if (!cueStyleElement) {
+    castDebugLogger.warn(LOG_RECEIVER_TAG, 'cue-style element not found; captions keep default styling')
+    return
+  }
+
+  cueStyleElement.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=PT+Sans+Caption:wght@400;700&display=swap');
+    ::cue {
+      font-family: "PT Sans Caption", sans-serif;
+      font-weight: 700;
+      font-style: normal;
+      background-color: transparent;
+      text-shadow: 1px 1px 5px black;
+    }
+  `
+})
+
+/*
  * Example analytics tracking implementation. To enable this functionality see
  * the implmentation and complete the TODO item in ./google_analytics.js. Once
  * complete uncomment the the calls to startTracking below to enable each
@@ -196,32 +227,6 @@ playerManager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (l
             return loadRequestData
           })
         }
-      })
-      .then(() => {
-        // Wait for the media player to be loaded
-        playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
-          const mediaPlayer = document.querySelector('cast-media-player')
-
-          // Access the shadow DOM of the media player
-          const shadowRoot = mediaPlayer.shadowRoot
-
-          // Find the cue-style element
-          const cueStyleElement = shadowRoot.querySelector('#cue-style')
-
-          // Apply custom styling to the cue-style element
-          cueStyleElement.textContent = `
-          @import url('https://fonts.googleapis.com/css2?family=PT+Sans+Caption:wght@400;700&display=swap');
-          ::cue {
-            font-family: "PT Sans Caption", sans-serif;
-            font-weight: 700;
-            font-style: normal;
-            background-color: transparent;
-            text-shadow: 1px 1px 5px black;
-          }
-        `
-        })
-
-        return loadRequestData
       })
       .catch((errorMessage) => {
         let error = new cast.framework.messages.ErrorData(
