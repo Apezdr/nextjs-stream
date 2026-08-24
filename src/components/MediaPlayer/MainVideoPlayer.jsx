@@ -17,6 +17,7 @@ import WithPlaybackTracker from '../built-in/WithPlaybackTracker'
 import { usePlaybackCoordinator } from '@src/contexts/PlaybackCoordinatorContext'
 import usePlayerMediaElement from './usePlayerMediaElement'
 import { useCastAdoption } from '@components/Cast/useCastSession'
+import useCastHintSuppression from '@components/Cast/useCastHintSuppression'
 import useActivityVisible from './useActivityVisible'
 import useLocalSilence from './useLocalSilence'
 import CastTransportBridge from './CastTransportBridge'
@@ -110,9 +111,13 @@ function ActiveVideoPlayer({
   // constructor, so the snapshot is already populated when we read it.
   const { adopted: castingThisTitle } = useCastAdoption(videoURL)
 
-  // Backstop for a hard reload, where nothing can know we are casting until the
-  // SDK finishes loading and autoplay may already have fired.
-  useLocalSilence(videoRef, castingThisTitle)
+  // On a hard reload the Cast SDK has not been fetched yet, so for the first
+  // second nothing on the page CAN know this title is on a television — which
+  // is how a refresh ended up flashing the video from the beginning. The
+  // localStorage breadcrumb is the only thing readable synchronously at that
+  // moment; it holds the element back until the SDK confirms or denies it.
+  const castHintSilence = useCastHintSuppression(videoURL, castingThisTitle)
+  useLocalSilence(videoRef, castingThisTitle || castHintSilence)
 
   // Stop playback the instant the page is hidden — synchronously, before the
   // browser paints and before the unmount above lands. This is the cleanup

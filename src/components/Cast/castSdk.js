@@ -159,6 +159,82 @@ export function castMatchesSource(snapshot, url) {
   )
 }
 
+/**
+ * A breadcrumb in localStorage saying "this browser was casting X".
+ *
+ * A full page load starts with no Cast SDK at all — it is fetched lazily — so
+ * for the first moment nothing on the page can know a session exists, however
+ * the code is arranged. Chrome does resume the session by itself (the framework
+ * asks for `resumeSavedSession` with an origin-scoped auto-join policy), but
+ * only after the script arrives and the handshake completes. That gap is why a
+ * reloaded watch page flashes a second of video from the beginning before
+ * standing down, and why the casting chip cannot exist at all on a page that
+ * never mounts a player.
+ *
+ * This closes both: it is the one thing that survives a reload synchronously,
+ * so the first render can suppress autoplay, and any page can decide whether
+ * loading the ~90KB Cast SDK is worth it.
+ *
+ * It is a HINT, never a source of truth. It can be stale — the session may have
+ * ended while the tab was closed — so everything that reads it must recover
+ * gracefully when the SDK later says otherwise, and clear it when it does.
+ */
+const HINT_KEY = 'cast:last-session'
+const HINT_TTL_MS = 12 * 60 * 60 * 1000
+
+export function readCastHint() {
+  try {
+    const raw = globalThis.localStorage?.getItem(HINT_KEY)
+    if (!raw) return null
+    const hint = JSON.parse(raw)
+    if (!hint?.at || Date.now() - hint.at > HINT_TTL_MS) {
+      clearCastHint()
+      return null
+    }
+    return hint
+  } catch {
+    return null
+  }
+}
+
+export function clearCastHint() {
+  try {
+    globalThis.localStorage?.removeItem(HINT_KEY)
+  } catch {
+    /* storage unavailable or full */
+  }
+}
+
+/** Mirror the current snapshot into the hint. Called whenever cast state moves. */
+function persistCastHint(snapshot) {
+  try {
+    if (!snapshot?.active) {
+      // Authoritative: the SDK is loaded and says nothing is casting.
+      clearCastHint()
+      return
+    }
+    globalThis.localStorage?.setItem(
+      HINT_KEY,
+      JSON.stringify({
+        contentId: snapshot.contentId,
+        contentUrl: snapshot.contentUrl,
+        deviceName: snapshot.deviceName,
+        title: snapshot.title,
+        at: Date.now(),
+      })
+    )
+  } catch {
+    /* storage unavailable or full */
+  }
+}
+
+/** Whether the hint names this exact source, for a first-render decision. */
+export function hintMatchesSource(url) {
+  const hint = readCastHint()
+  if (!hint || !url) return false
+  return castMatchesSource({ ...hint, active: true }, url)
+}
+
 // Every mounted consumer's onChange, so a stop can notify them all at once
 // rather than waiting for an SDK event that may never come.
 const subscribers = new Set()
@@ -196,9 +272,16 @@ export function subscribeCast(onChange) {
     const context = getContext()
     if (!context || !framework?.CastContextEventType) return false
 
+    // Every state change updates the breadcrumb before waking React, so the
+    // hint is written by the SDK's own events rather than during a render.
+    const notify = () => {
+      persistCastHint(readCastSnapshot())
+      onChange()
+    }
+
     const { SESSION_STATE_CHANGED, CAST_STATE_CHANGED } = framework.CastContextEventType
-    context.addEventListener(SESSION_STATE_CHANGED, onChange)
-    context.addEventListener(CAST_STATE_CHANGED, onChange)
+    context.addEventListener(SESSION_STATE_CHANGED, notify)
+    context.addEventListener(CAST_STATE_CHANGED, notify)
 
     const remote = getRemote()
     const remoteEvents = []
@@ -218,24 +301,24 @@ export function subscribeCast(onChange) {
         DISPLAY_NAME_CHANGED,
       ]) {
         if (!type) continue
-        remote.controller.addEventListener(type, onChange)
+        remote.controller.addEventListener(type, notify)
         remoteEvents.push(type)
       }
     }
 
     detach = () => {
-      context.removeEventListener(SESSION_STATE_CHANGED, onChange)
-      context.removeEventListener(CAST_STATE_CHANGED, onChange)
+      context.removeEventListener(SESSION_STATE_CHANGED, notify)
+      context.removeEventListener(CAST_STATE_CHANGED, notify)
       for (const type of remoteEvents) {
         try {
-          remote.controller.removeEventListener(type, onChange)
+          remote.controller.removeEventListener(type, notify)
         } catch {
           /* controller already gone */
         }
       }
     }
 
-    onChange()
+    notify()
     return true
   }
 
