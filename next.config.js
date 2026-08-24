@@ -143,6 +143,12 @@ const nextConfig = {
   //
   // beforeFiles runs ahead of the filesystem and app routes, so this serves
   // public/receiver/index.html without needing a console change.
+  //
+  // This rewrite is now LOAD-BEARING WITH NO FALLBACK. The app route that used
+  // to sit at src/app/receiver/ was removed, so if the source string is ever
+  // edited or this block dropped, /receiver 404s — which on a Cast device is an
+  // unrecoverable black screen with no diagnostics. Change it only alongside
+  // the Receiver Application URL in the Cast Developer Console.
   async rewrites() {
     return {
       beforeFiles: [{ source: '/receiver', destination: '/receiver/index.html' }],

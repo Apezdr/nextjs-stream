@@ -8,7 +8,6 @@
     "src/app/**/error.{js,jsx,ts,tsx}",
     "src/app/**/not-found.{js,jsx,ts,tsx}",
     "src/app/**/route.{js,ts}",
-    "src/pages/**/*.{js,jsx,ts,tsx}",
     "src/utils/config.js",
     "src/utils/monitor_server_load.js",
     "scripts/**/*.{js,ts}",
