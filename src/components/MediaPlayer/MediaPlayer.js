@@ -1,5 +1,7 @@
 import MainVideoPlayer from './MainVideoPlayer'
 import { buildURL, getFullImageUrl } from '@src/utils'
+import { mintCastPlaybackToken } from '@src/lib/castPlaybackToken'
+import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
 import Media_Poster from '../MediaPoster'
 import { getServer } from '@src/utils/config'
 import { Suspense } from 'react'
@@ -283,10 +285,34 @@ async function VideoPlayer({
     captions = updatedCaptions
   }
 
+  // A capability for the Cast receiver to report this title's position back
+  // once the browser is gone. Minted here, on the server, from the session this
+  // render already has — a mint endpoint would be one more thing to authorize.
+  //
+  // It is scoped to one user and one title and expires within the day, because
+  // it travels through the Cast channel to a television whose debug overlay and
+  // developer console can both read it. A signed-out or unapproved viewer gets
+  // null, so their cast plays and records nothing, matching what the web path
+  // already does. The `approved !== false` test mirrors isAuthenticatedAndApproved.
+  const castPlaybackToken =
+    session?.user?.id && session.user.approved !== false && videoURL
+      ? mintCastPlaybackToken({
+          userId: session.user.id,
+          normalizedVideoId: generateNormalizedVideoId(videoURL),
+          metadata: {
+            mediaType,
+            showId: mediaType === 'tv' ? media.showId ?? null : null,
+            seasonNumber: mediaType === 'tv' ? season_number ?? null : null,
+            episodeNumber: mediaType === 'tv' ? episode_number ?? null : null,
+          },
+        })
+      : null
+
   return (
     <Suspense fallback={<div>Loading...</div>}>
       <MainVideoPlayer
         videoURL={videoURL}
+        castToken={castPlaybackToken}
         poster={poster}
         titleLabel={mediaPlayerTitleLabel}
         title={title}

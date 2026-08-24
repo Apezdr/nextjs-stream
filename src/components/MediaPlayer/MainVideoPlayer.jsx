@@ -2,7 +2,7 @@
 
 import './player.css'
 
-import { useCallback, useLayoutEffect, useState } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useState } from 'react'
 import { Player, GoogleCast } from './videojs'
 import PlayerMedia, { castContentType } from './PlayerMedia'
 import { VideoLayout } from './VideoLayout'
@@ -82,6 +82,7 @@ function ActiveVideoPlayer({
   playbackMetadata,
   mediaKey,
   castReceiverId,
+  castToken,
   isAdmin,
   adminProps,
 }) {
@@ -109,6 +110,12 @@ function ActiveVideoPlayer({
   // browser paints and before the unmount above lands. This is the cleanup
   // React and Next both prescribe for media inside an Activity boundary;
   // display:none does not stop a <video>.
+  // What lets the receiver keep recording this title's position after the tab
+  // is gone. Memoized deliberately: the media's `customData` setter compares by
+  // identity and re-issues loadMedia() to the receiver when it changes, so an
+  // inline object literal would restart playback on the TV on every render.
+  const castCustomData = useMemo(() => (castToken ? { castToken } : null), [castToken])
+
   useLayoutEffect(() => {
     const video = videoRef.current
     return () => {
@@ -139,6 +146,7 @@ function ActiveVideoPlayer({
           <GoogleCast
             receiver={castReceiverId || undefined}
             contentType={castContentType(videoURL)}
+            customData={castCustomData}
           />
           <VolumeRegulator />
           <CastResumeGuard />

@@ -19,6 +19,7 @@ limitations under the License.
 import { CastQueue } from './queuing.js'
 import { MediaFetcher } from './media_fetcher.js'
 import { AdsTracker, SenderTracker, ContentTracker } from './cast_analytics.js'
+import { startPlaybackReporter, redactLoadRequest } from './playback-reporter.js'
 
 /**
  * @fileoverview This sample demonstrates how to build your own Web Receiver for
@@ -145,39 +146,12 @@ function addBreaks(mediaInformation) {
   })
 }
 
-/**
- * A LOAD request rendered for the debug overlay, with customData VALUES
- * withheld — it carries credentials (see the progress-reporting token) and the
- * overlay paints them on a TV and copies them into the Cast Developer Console.
- * Keys are kept, since knowing which fields arrived is the whole diagnostic.
- * @param {cast.framework.messages.LoadRequestData} req
- * @return {string}
- */
-function summarizeLoadRequest(req) {
-  try {
-    const media = req?.media || {}
-    return JSON.stringify({
-      contentId: media.contentId,
-      contentUrl: media.contentUrl,
-      contentType: media.contentType,
-      streamType: media.streamType,
-      entity: media.entity,
-      currentTime: req?.currentTime,
-      autoplay: req?.autoplay,
-      tracks: Array.isArray(media.tracks) ? media.tracks.length : 0,
-      customData: Object.keys(req?.customData || {}),
-    })
-  } catch (err) {
-    return `<unserializable load request: ${err}>`
-  }
-}
-
 /*
  * Intercept the LOAD request to load and set the contentUrl.
  */
 playerManager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (loadRequestData) => {
   if (loadRequestData?.customData?.debug === true) enableDebugOverlay()
-  castDebugLogger.debug(LOG_RECEIVER_TAG, `loadRequestData: ${summarizeLoadRequest(loadRequestData)}`)
+  castDebugLogger.debug(LOG_RECEIVER_TAG, `loadRequestData: ${redactLoadRequest(loadRequestData)}`)
 
   // If the loadRequestData is incomplete, return an error message.
   if (!loadRequestData || !loadRequestData.media) {
@@ -315,5 +289,20 @@ castReceiverOptions.supportedCommands =
  * line below to enable the queue.
  */
 // castReceiverOptions.queue = new CastQueue();
+
+/*
+ * Report playback position back to the app.
+ *
+ * Started before context.start() so its listeners are registered before the
+ * first LOAD can arrive. While a sender is connected it stays silent — the
+ * sender is already reporting — and takes over once the last one disconnects,
+ * which is the window that previously went unrecorded entirely.
+ */
+startPlaybackReporter({
+  context,
+  playerManager,
+  castDebugLogger,
+  logTag: LOG_RECEIVER_TAG,
+})
 
 context.start(castReceiverOptions)

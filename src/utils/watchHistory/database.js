@@ -118,6 +118,139 @@ export async function upsertPlayback({
 }
 
 /**
+ * How long a row must sit untouched before a Cast receiver may move it
+ * backwards. Below this, assume a live client owns the position.
+ */
+const CAST_STALE_GUARD_MS = 60 * 1000
+
+/**
+ * Upsert a playback position reported by a Cast receiver.
+ *
+ * Separate from upsertPlayback because the two writers are not equivalent. A
+ * player reports a position it is rendering, so its word is current by
+ * definition. The receiver reports a position for a screen the user may have
+ * walked away from, and its report can land after a local one — the web player
+ * writes every second, the receiver every fifteen. A blind $set would let a
+ * late cast report drag a row back over a resume the user just performed.
+ *
+ * So the write is guarded, and applies only when one of three things holds:
+ *
+ *   1. the row already belongs to the cast writer — the TV owns this title,
+ *      including when the user rewinds with the remote, which is legitimately
+ *      backwards;
+ *   2. the position moves forward — always safe, and this is what lets the
+ *      first report after a handoff take ownership of a row a client wrote a
+ *      second ago;
+ *   3. nobody has touched the row for a minute — no live client to contradict.
+ *
+ * Otherwise the report is dropped and `false` comes back. That is a normal
+ * outcome, not an error: the receiver never retries, so the next tick carries a
+ * freshly read position rather than a stale one.
+ *
+ * @param {Object} options
+ * @param {ObjectId} options.userId
+ * @param {string} options.videoId - content URL exactly as the receiver loaded it
+ * @param {string} options.normalizedVideoId - from the token's signed claims
+ * @param {number} options.playbackTime
+ * @param {boolean} [options.isPaused]
+ * @param {Object} [options.metadata] - from signed claims only, never from the body
+ * @param {Object} [options.deviceInfo]
+ * @param {string} [options.ipAddress]
+ * @param {string} [options.castSessionId]
+ * @returns {Promise<boolean>} whether the write was applied
+ */
+export async function upsertPlaybackFromCast({
+  userId,
+  videoId,
+  normalizedVideoId,
+  playbackTime,
+  isPaused = false,
+  metadata = {},
+  deviceInfo = null,
+  ipAddress = null,
+  castSessionId = null,
+}) {
+  const client = await clientPromise
+  const db = client.db('Media')
+  const collection = db.collection('WatchHistory')
+
+  const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
+  const resolved = await resolveMediaIdForNid(normalizedVideoId)
+
+  // Same rule as upsertPlayback: only a resolved durable identity may be
+  // written, never a client-supplied one.
+  const { mediaId: _legacyClientMediaId, ...safeMetadata } = metadata
+
+  const $set = {
+    videoId,
+    playbackTime,
+    isPaused: isPaused === true,
+    lastUpdated: new Date(),
+    ...safeMetadata,
+    ...(resolved?.mediaId && { mediaId: resolved.mediaId }),
+    ...(deviceInfo && { deviceInfo }),
+    ...(ipAddress && { ipAddress }),
+    ...(castSessionId && { castSessionId }),
+    lastWriter: 'cast',
+  }
+
+  const identity = { userId: userIdObj, normalizedVideoId }
+  const guard = {
+    ...identity,
+    $or: [
+      { lastWriter: 'cast' },
+      { playbackTime: { $lte: playbackTime } },
+      { lastUpdated: { $lt: new Date(Date.now() - CAST_STALE_GUARD_MS) } },
+    ],
+  }
+
+  const guarded = await collection.updateOne(guard, { $set }, { upsert: false })
+  if (guarded.matchedCount > 0) {
+    log.debug(
+      { userId: userIdObj.toString(), normalizedVideoId, playbackTime },
+      'Cast playback applied'
+    )
+    return true
+  }
+
+  // No match means one of two things, and they need opposite responses: either
+  // the guard rejected a stale report, or there is simply no row yet. Only the
+  // second may insert — an upsert here would resurrect a row the guard just
+  // refused, which is the exact bug the guard exists to prevent.
+  const exists = await collection.countDocuments(identity, { limit: 1 })
+  if (exists) {
+    log.debug(
+      { userId: userIdObj.toString(), normalizedVideoId, playbackTime },
+      'Cast playback rejected as stale'
+    )
+    return false
+  }
+
+  try {
+    await collection.updateOne(identity, { $set }, { upsert: true })
+  } catch (error) {
+    // Mirrors upsertPlayback: with the partial unique {userId, mediaId} index
+    // in place, a quality swap makes this INSERT collide with the sibling row
+    // held under the old nid. This report is the newest state, so drop the
+    // sibling and retry once.
+    const isMediaIdUnique =
+      error?.code === 11000 &&
+      (error?.keyPattern?.mediaId !== undefined ||
+        String(error?.message || '').includes('userId_mediaId_unique'))
+    if (!isMediaIdUnique || !resolved?.mediaId) throw error
+
+    await collection.deleteMany({
+      userId: userIdObj,
+      mediaId: resolved.mediaId,
+      normalizedVideoId: { $ne: normalizedVideoId },
+    })
+    await collection.updateOne(identity, { $set }, { upsert: true })
+  }
+
+  return true
+}
+
+/**
  * Get all playback entries for a user
  * 
  * @param {string|ObjectId} userId - User ID
