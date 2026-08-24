@@ -46,22 +46,30 @@ const castDebugLogger = cast.debug.CastDebugLogger.getInstance()
 const LOG_RECEIVER_TAG = 'Receiver'
 
 /*
- * TEMPORARY — DEBUG OVERLAY IS ON UNCONDITIONALLY.
+ * On-TV debug overlay — OFF unless explicitly asked for.
  *
- * Prints the incoming LOAD request and any playback error on the TV itself.
- * Without it a rejected LOAD and a receiver that never started look identical:
- * black screen, then the launch timeout.
+ * It prints the incoming LOAD request and any playback error on the screen
+ * itself, which is the only way to tell a rejected LOAD apart from a receiver
+ * that never started: both look like a black screen and then a launch timeout.
  *
- * It is deliberately not gated on a ?debug=1 URL parameter right now so that
- * diagnosing needs no Cast Developer Console edit. TURN THIS BACK OFF before
- * production — the overlay shows a DEBUG MODE tag and can expose app details.
- * The gate to restore:
- *   const on = /(^|[?&])debug=1(&|$)/.test(location.search || '')
+ * It also tags the screen DEBUG MODE and mirrors everything into the Cast
+ * Developer Console, so it must not be on for ordinary viewers. Two ways in:
+ *
+ *  - append `?debug=1` to the Receiver Application URL in the Cast Developer
+ *    Console (survives a reload, needs a console edit to undo), or
+ *  - have the sender put `debug: true` in the LOAD request's customData
+ *    (per-session, no console edit) — see enableDebugOverlay() below.
  */
-context.addEventListener(cast.framework.system.EventType.READY, () => {
+const DEBUG_VIA_URL = /(^|[?&])debug=1(&|$)/.test(location.search || '')
+
+function enableDebugOverlay() {
   if (castDebugLogger.debugOverlayElement_) return
   castDebugLogger.setEnabled(true)
   castDebugLogger.showDebugLogs(true)
+}
+
+context.addEventListener(cast.framework.system.EventType.READY, () => {
+  if (DEBUG_VIA_URL) enableDebugOverlay()
 })
 
 /*
@@ -137,11 +145,39 @@ function addBreaks(mediaInformation) {
   })
 }
 
+/**
+ * A LOAD request rendered for the debug overlay, with customData VALUES
+ * withheld — it carries credentials (see the progress-reporting token) and the
+ * overlay paints them on a TV and copies them into the Cast Developer Console.
+ * Keys are kept, since knowing which fields arrived is the whole diagnostic.
+ * @param {cast.framework.messages.LoadRequestData} req
+ * @return {string}
+ */
+function summarizeLoadRequest(req) {
+  try {
+    const media = req?.media || {}
+    return JSON.stringify({
+      contentId: media.contentId,
+      contentUrl: media.contentUrl,
+      contentType: media.contentType,
+      streamType: media.streamType,
+      entity: media.entity,
+      currentTime: req?.currentTime,
+      autoplay: req?.autoplay,
+      tracks: Array.isArray(media.tracks) ? media.tracks.length : 0,
+      customData: Object.keys(req?.customData || {}),
+    })
+  } catch (err) {
+    return `<unserializable load request: ${err}>`
+  }
+}
+
 /*
  * Intercept the LOAD request to load and set the contentUrl.
  */
 playerManager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (loadRequestData) => {
-  castDebugLogger.debug(LOG_RECEIVER_TAG, `loadRequestData: ${JSON.stringify(loadRequestData)}`)
+  if (loadRequestData?.customData?.debug === true) enableDebugOverlay()
+  castDebugLogger.debug(LOG_RECEIVER_TAG, `loadRequestData: ${summarizeLoadRequest(loadRequestData)}`)
 
   // If the loadRequestData is incomplete, return an error message.
   if (!loadRequestData || !loadRequestData.media) {

@@ -68,7 +68,14 @@ export async function upsertPlayback({
         ...(resolved?.mediaId && { mediaId: resolved.mediaId }),
         ...(deviceInfo && { deviceInfo }),
         ...(ipAddress && { ipAddress }),
-        ...(localIp && { localIp })
+        ...(localIp && { localIp }),
+        // Who wrote this row last. Every caller of this function is a player
+        // reporting its OWN position — web player, RN TV app — so they are all
+        // 'client'. It exists to be told apart from writers that report a
+        // position they are not currently rendering (the Cast receiver), which
+        // need to know whether a live client owns the row before moving it.
+        // Last in the object deliberately: metadata must not override it.
+        lastWriter: 'client'
       }
     }
     const filter = { userId: userIdObj, normalizedVideoId }
