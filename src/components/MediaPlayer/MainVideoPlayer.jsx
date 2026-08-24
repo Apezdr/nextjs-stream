@@ -16,7 +16,7 @@ import CaptionPreferenceManager from './CaptionPreferenceManager'
 import WithPlaybackTracker from '../built-in/WithPlaybackTracker'
 import { usePlaybackCoordinator } from '@src/contexts/PlaybackCoordinatorContext'
 import usePlayerMediaElement from './usePlayerMediaElement'
-import useCastSession from '@components/Cast/useCastSession'
+import { useCastAdoption } from '@components/Cast/useCastSession'
 import useActivityVisible from './useActivityVisible'
 
 /**
@@ -102,9 +102,11 @@ function ActiveVideoPlayer({
   // title mounts a fresh, DISCONNECTED cast provider (its adoption path is
   // event-driven and never re-checks on mount), so autoPlay would start the
   // local element alongside the TV. Ask the SDK directly and stay silent.
-  const castSession = useCastSession()
-  const castingThisTitle =
-    castSession.active && !!videoURL && castSession.contentId === videoURL
+  //
+  // This is correct on the first render of the returning mount, not a beat
+  // later: the SDK's RemotePlayerController binds to a live session in its
+  // constructor, so the snapshot is already populated when we read it.
+  const { adopted: castingThisTitle } = useCastAdoption(videoURL)
 
   // Stop playback the instant the page is hidden — synchronously, before the
   // browser paints and before the unmount above lands. This is the cleanup
