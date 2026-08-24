@@ -39,7 +39,7 @@ export default function CastSessionBar() {
           animate={{ opacity: 1, y: 0 }}
           exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 12 }}
           transition={{ duration: reduceMotion ? 0.15 : 0.28, ease: 'easeOut' }}
-          className="fixed bottom-4 left-1/2 z-[60] flex max-w-[92vw] -translate-x-1/2 items-center gap-3 rounded-full border border-white/10 bg-black/85 py-2 pl-4 pr-2 text-white shadow-lg backdrop-blur-sm"
+          className="fixed bottom-4 right-4 z-[60] flex max-w-[92vw] items-center gap-3 rounded-full border border-white/10 bg-black/85 py-2 pl-4 pr-2 text-white shadow-lg backdrop-blur-sm"
           role="status"
         >
           <CastEnterIcon className="h-5 w-5 shrink-0 text-white/90" aria-hidden="true" />

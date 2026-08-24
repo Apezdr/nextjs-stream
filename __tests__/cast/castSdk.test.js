@@ -26,7 +26,12 @@ import {
 const CastState = { CONNECTED: 'CONNECTED', CONNECTING: 'CONNECTING', NOT_CONNECTED: 'NOT_CONNECTED' }
 
 /** A CastContext faithful to the real teardown order. */
-function makeSdk({ castState = CastState.CONNECTED, media = null, device = 'Living Room TV' } = {}) {
+function makeSdk({
+  castState = CastState.CONNECTED,
+  media = null,
+  device = 'Living Room TV',
+  receiverApp = 'My Receiver App',
+} = {}) {
   const listeners = { caststatechanged: [], sessionstatechanged: [] }
   const remoteListeners = {}
 
@@ -50,7 +55,8 @@ function makeSdk({ castState = CastState.CONNECTED, media = null, device = 'Livi
   const player = {
     isMediaLoaded: Boolean(media),
     mediaInfo: media,
-    displayName: device,
+    // RemotePlayer.displayName is the Cast APPLICATION name, not the device.
+    displayName: receiverApp,
     title: media?.metadata?.title ?? null,
     controller: {
       addEventListener: (type, fn) => {
@@ -111,8 +117,21 @@ describe('castSdk', () => {
       makeSdk({ media: { contentId: 'https://x/a.mp4', metadata: { title: 'A Film' } } })
       const snap = readCastSnapshot()
       expect(snap.active).toBe(true)
-      expect(snap.deviceName).toBe('Living Room TV')
       expect(snap.contentId).toBe('https://x/a.mp4')
+    })
+
+    it('names the television, not the receiver application', () => {
+      makeSdk({ device: 'Living Room TV', receiverApp: 'Adam Cinema - Local' })
+      // "Casting to Adam Cinema - Local" tells the user nothing about where the
+      // film is playing; RemotePlayer.displayName is the app name, and only
+      // getCastDevice().friendlyName is the device.
+      expect(readCastSnapshot().deviceName).toBe('Living Room TV')
+    })
+
+    it('says nothing rather than something wrong when the device is unknown', () => {
+      const sdk = makeSdk({ receiverApp: 'Adam Cinema - Local' })
+      sdk.context._session.getCastDevice = () => null
+      expect(readCastSnapshot().deviceName).toBeNull()
     })
 
     it('reports NOT casting the instant castState flips, even though getCurrentSession() still returns the dying session', () => {

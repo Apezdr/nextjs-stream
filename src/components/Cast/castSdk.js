@@ -125,7 +125,14 @@ export function readCastSnapshot() {
       active: castState === framework.CastState?.CONNECTED,
       connecting: castState === framework.CastState?.CONNECTING,
       mediaLoaded: Boolean(player?.isMediaLoaded),
-      deviceName: player?.displayName || session?.getCastDevice?.()?.friendlyName || null,
+      // The DEVICE, not the receiver application. RemotePlayer.displayName is
+      // copied straight from session.displayName, which is the name of the Cast
+      // app — so it reads "Adam Cinema - Local" rather than the television it is
+      // playing on, which is the one thing a person actually wants to be told.
+      // getCastDevice() returns a chrome.cast.Receiver, whose friendlyName is
+      // the device. There is deliberately no fallback to the app name: with no
+      // device name the UI says plain "Casting", which is at least true.
+      deviceName: session?.getCastDevice?.()?.friendlyName || null,
       contentId: info?.contentId ?? null,
       contentUrl: info?.contentUrl ?? null,
       title: player?.title || info?.metadata?.title || null,
