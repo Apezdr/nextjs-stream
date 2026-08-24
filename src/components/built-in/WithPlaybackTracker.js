@@ -12,6 +12,14 @@ const PAUSED_HEARTBEAT_INTERVAL_MS = 3 * 60 * 1000;
 
 const PRESENCE_END_URL = '/api/authenticated/sync/presence/end';
 
+// Never persist a position this close to the start. A resume point in the
+// first seconds is worthless, and a spurious ~0 — e.g. the Cast provider
+// forcing the element to 0 on disconnect, see CastResumeGuard — otherwise
+// overwrites a real resume point in both localStorage and Mongo within ~250ms,
+// unrecoverably. The only behaviour lost is "restarted a title and left again
+// within two seconds".
+const MIN_PERSISTED_POSITION_S = 2;
+
 function generateSessionId() {
   // crypto.randomUUID requires a secure context; this app can run over
   // plain HTTP on a LAN, so fall back rather than ever leaving this null.
@@ -220,7 +228,7 @@ export default function WithPlayBackTracker({
     const unsubscribe = store.subscribe(() => {
       if (!store.target) return;
       const currentTime = store.currentTime;
-      if (currentTime > 0) throttledUpdateServer(currentTime);
+      if (currentTime > MIN_PERSISTED_POSITION_S) throttledUpdateServer(currentTime);
     });
 
     return () => {
@@ -235,7 +243,7 @@ export default function WithPlayBackTracker({
     pausedRef.current = paused === true;
     if (!canPlay || !store || !store.target || !updatePlaybackWorkerRef.current) return;
     const currentTime = store.currentTime || 0;
-    if (currentTime <= 0) return;
+    if (currentTime <= MIN_PERSISTED_POSITION_S) return;
     updatePlaybackWorkerRef.current.postMessage({
       videoURL,
       currentTime,
@@ -259,16 +267,18 @@ export default function WithPlayBackTracker({
       // paused player must not keep its presence session alive. (Router
       // context is frozen for cached pages, so visibility is checked on the
       // element itself.)
-      const target = store.target;
+      // store.target is { media, container }, never an element — reach the
+      // real node through the media host.
+      const element = store.target?.media?.target;
       if (
-        target instanceof Element &&
-        typeof target.checkVisibility === 'function' &&
-        !target.checkVisibility()
+        element &&
+        typeof element.checkVisibility === 'function' &&
+        !element.checkVisibility()
       ) {
         return;
       }
       const currentTime = store.currentTime || 0;
-      if (currentTime <= 0) return;
+      if (currentTime <= MIN_PERSISTED_POSITION_S) return;
       updatePlaybackWorkerRef.current.postMessage({
         videoURL,
         currentTime,

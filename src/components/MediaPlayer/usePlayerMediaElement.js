@@ -11,6 +11,10 @@ import { useEffect, useMemo, useRef } from 'react'
  */
 function isHidden(el) {
   if (typeof document !== 'undefined' && document.pictureInPictureElement === el) return false
+  // Native RemotePlayback (AirPlay). Note this does NOT cover Google Cast:
+  // that path swaps `remote` on the media HOST, not on this raw element, so
+  // el.remote stays 'disconnected' throughout a cast session. Harmless here —
+  // the page is on screen while casting, so isHidden is false anyway.
   if (el.remote?.state === 'connected') return false
   if (!el.isConnected) return true
   const rect = el.getBoundingClientRect()
