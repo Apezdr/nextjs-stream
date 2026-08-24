@@ -18,6 +18,8 @@ import { usePlaybackCoordinator } from '@src/contexts/PlaybackCoordinatorContext
 import usePlayerMediaElement from './usePlayerMediaElement'
 import { useCastAdoption } from '@components/Cast/useCastSession'
 import useActivityVisible from './useActivityVisible'
+import useLocalSilence from './useLocalSilence'
+import CastTransportBridge from './CastTransportBridge'
 
 /**
  * Client root for the main watch-page player.
@@ -108,6 +110,10 @@ function ActiveVideoPlayer({
   // constructor, so the snapshot is already populated when we read it.
   const { adopted: castingThisTitle } = useCastAdoption(videoURL)
 
+  // Backstop for a hard reload, where nothing can know we are casting until the
+  // SDK finishes loading and autoplay may already have fired.
+  useLocalSilence(videoRef, castingThisTitle)
+
   // Stop playback the instant the page is hidden — synchronously, before the
   // browser paints and before the unmount above lands. This is the cleanup
   // React and Next both prescribe for media inside an Activity boundary;
@@ -150,6 +156,10 @@ function ActiveVideoPlayer({
             contentType={castContentType(videoURL)}
             customData={castCustomData}
           />
+          {/* AFTER <GoogleCast>: the framework's component is consulted first
+              for media ownership, so a genuinely connected provider always wins
+              and this only takes over a session it did not start. */}
+          <CastTransportBridge videoURL={videoURL} />
           <VolumeRegulator />
           <CastResumeGuard />
           {videoURL ? (
