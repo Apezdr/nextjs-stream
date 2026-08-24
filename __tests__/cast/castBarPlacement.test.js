@@ -31,7 +31,10 @@ describe('castBarPlacement', () => {
       const placement = castBarPlacement(OTHER_MOVIE, MOVIE)
       expect(placement.visible).toBe(true)
       // Bottom-right would sit on the player's fullscreen button.
-      expect(placement.anchor).toBe('top-4 right-4')
+      expect(placement.position).toBe('top')
+      // ...and the top slot is shared with the system status banner, whose own
+      // dismiss button is top-right, so it starts below wherever that ends.
+      expect(placement.style.top).toBe('calc(var(--system-banner-bottom, 0px) + 1rem)')
     })
 
     it('appears while casting a movie and watching an episode, and vice versa', () => {
@@ -42,7 +45,8 @@ describe('castBarPlacement', () => {
     it('appears on ordinary pages, out of the way at the bottom', () => {
       const placement = castBarPlacement(BROWSE, MOVIE)
       expect(placement.visible).toBe(true)
-      expect(placement.anchor).toBe('bottom-4 right-4')
+      expect(placement.position).toBe('bottom')
+      expect(placement.style.top).toBeUndefined()
     })
   })
 
@@ -62,8 +66,8 @@ describe('castBarPlacement', () => {
   describe('route matching', () => {
     it('does not mistake a title page for its watch page', () => {
       // /list/movie/X is the detail page; only /play is the player.
-      expect(castBarPlacement('/list/movie/Some%20Film', null).anchor).toBe('bottom-4 right-4')
-      expect(castBarPlacement('/list/tv/Some%20Show/1/2', null).anchor).toBe('bottom-4 right-4')
+      expect(castBarPlacement('/list/movie/Some%20Film', null).position).toBe('bottom')
+      expect(castBarPlacement('/list/tv/Some%20Show/1/2', null).position).toBe('bottom')
     })
 
     it('treats a missing pathname as an ordinary page rather than throwing', () => {

@@ -29,9 +29,14 @@ const isWatchPage = (pathname) =>
  * itself is unaffected either way: the chip lives outside the player subtree,
  * so it is not painted while the player is the fullscreen element.
  *
+ * The top slot is shared with the system status banner, which is also fixed and
+ * whose own dismiss button sits top-right. Rather than guess a clearance — the
+ * banner's height depends on how far its message wraps — it publishes where it
+ * ends as `--system-banner-bottom`, and the chip starts below that.
+ *
  * @param {string} pathname
  * @param {string|null} castPath - route recorded when the session started
- * @returns {{ visible: boolean, anchor: string, offset: number }}
+ * @returns {{ visible: boolean, position: 'top'|'bottom', style: object, offset: number }}
  */
 export function castBarPlacement(pathname, castPath) {
   const route = pathname || ''
@@ -40,7 +45,10 @@ export function castBarPlacement(pathname, castPath) {
 
   return {
     visible: !onCastingPage,
-    anchor: onWatchPage ? 'top-4 right-4' : 'bottom-4 right-4',
+    position: onWatchPage ? 'top' : 'bottom',
+    style: onWatchPage
+      ? { top: 'calc(var(--system-banner-bottom, 0px) + 1rem)' }
+      : { bottom: '1rem' },
     // Slide in from whichever edge it is anchored to.
     offset: onWatchPage ? -12 : 12,
   }
@@ -79,7 +87,8 @@ export default function CastSessionBar() {
           animate={{ opacity: 1, y: 0 }}
           exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: placement.offset }}
           transition={{ duration: reduceMotion ? 0.15 : 0.28, ease: 'easeOut' }}
-          className={`fixed ${placement.anchor} z-[60] flex max-w-[92vw] items-center gap-3 rounded-full border border-white/10 bg-black/85 py-2 pl-4 pr-2 text-white shadow-lg backdrop-blur-sm`}
+          style={placement.style}
+          className="fixed right-4 z-[60] flex max-w-[92vw] items-center gap-3 rounded-full border border-white/10 bg-black/85 py-2 pl-4 pr-2 text-white shadow-lg backdrop-blur-sm"
           role="status"
         >
           <CastEnterIcon className="h-5 w-5 shrink-0 text-white/90" aria-hidden="true" />

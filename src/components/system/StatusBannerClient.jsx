@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useReducer, useSyncExternalStore } from 'react';
+import { useState, useEffect, useMemo, useReducer, useRef, useSyncExternalStore } from 'react';
 import { useSystemStatus } from '@src/contexts/SystemStatusContext';
 
 // Banner presentation state (dismissal, tracked level, dock/expand) transitions together,
@@ -142,6 +142,42 @@ export default function StatusBannerClient({ status: initialStatus }) {
 
   // Derive visibility: not dismissed (critical status forces visibility through reset above)
   const visible = !dismissed;
+
+  // Publish where a top-anchored banner ends, so other fixed UI can sit clear
+  // of it instead of guessing a clearance. The casting chip is the first
+  // consumer: it anchors top-right on a watch page (the player's control bar
+  // owns the bottom) and was landing squarely on this banner's dismiss button.
+  //
+  // Measured rather than hardcoded because the height depends on how long the
+  // status message wraps, and the expanded pill is a different shape again.
+  // The bottom-docked variant leaves it at zero: it is not in anyone's way.
+  const topBannerRef = useRef(null);
+  useEffect(() => {
+    const root = document.documentElement;
+    const el = topBannerRef.current;
+
+    if (!el) {
+      root.style.removeProperty('--system-banner-bottom');
+      return undefined;
+    }
+
+    const measure = () => {
+      root.style.setProperty(
+        '--system-banner-bottom',
+        `${Math.round(el.getBoundingClientRect().bottom)}px`
+      );
+    };
+
+    measure();
+    const observer =
+      typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null;
+    observer?.observe(el);
+
+    return () => {
+      observer?.disconnect();
+      root.style.removeProperty('--system-banner-bottom');
+    };
+  }, [visible, status.level, docked, expanded]);
   
   // Refresh time ago display more frequently (every 30 seconds)
   useEffect(() => {
@@ -221,7 +257,10 @@ export default function StatusBannerClient({ status: initialStatus }) {
   // Critical status always shows full-width banner
   if (status.level === 'critical') {
     return (
-      <div className="fixed top-0 left-0 right-0 z-50 bg-red-600 text-white shadow-lg border-b-2 border-red-800">
+      <div
+        ref={topBannerRef}
+        className="fixed top-0 left-0 right-0 z-50 bg-red-600 text-white shadow-lg border-b-2 border-red-800"
+      >
         <div className="container mx-auto px-4 py-3">
           <div className="flex justify-between items-center gap-3">
             <div className="flex items-center gap-3 flex-1">
@@ -290,7 +329,10 @@ export default function StatusBannerClient({ status: initialStatus }) {
       )}
       
       {/* Floating pill */}
-      <div className={`fixed z-50 transition-all duration-300 ease-out top-4 left-1/2 -translate-x-1/2 w-[min(92vw,560px)]`}>
+      <div
+        ref={topBannerRef}
+        className={`fixed z-50 transition-all duration-300 ease-out top-4 left-1/2 -translate-x-1/2 w-[min(92vw,560px)]`}
+      >
         <div className={`
           rounded-2xl bg-[rgba(18,18,24,0.62)] backdrop-blur-md 
           shadow-[0_12px_40px_rgba(0,0,0,0.45)] 
