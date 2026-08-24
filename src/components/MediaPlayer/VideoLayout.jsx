@@ -11,6 +11,7 @@ import { TimeGroup } from './time-group'
 import { Title, VideoMetadata } from './title'
 import NextUpCard from './NextUpCard'
 import CastingOverlay from './CastingOverlay'
+import useIsCasting from './useIsCasting'
 
 /**
  * Declarative pointer gestures: tap toggles pause, center double-tap toggles
@@ -66,6 +67,7 @@ export function VideoLayout({
   adminProps,
 }) {
   const [isSubtitleEditorOpen, setIsSubtitleEditorOpen] = useState(false)
+  const { isCasting } = useIsCasting(videoURL)
   const store = Player.usePlayer()
   const media = Player.useMedia()
   const captionsSnapshot = Player.usePlayer((s) => ({
@@ -87,9 +89,23 @@ export function VideoLayout({
       <Gestures />
       <Hotkeys />
       <CastingOverlay titleLabel={titleLabel} videoURL={videoURL} />
-      <BufferingIndicator className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-200 data-[buffering]:opacity-100">
-        <SpinnerIcon className="h-16 w-16 animate-spin text-white/90" />
-      </BufferingIndicator>
+      {/* data-visible, not data-buffering: BufferingIndicatorDataAttrs is
+          { visible: 'data-visible' }, so the old selector never matched and the
+          spinner has been pinned at opacity-0 since the migration — buffering
+          has looked like a frozen picture with no explanation.
+
+          Hidden while casting. It is centred on the container, and so is the
+          casting banner, which would put a 64px spinner straight through the
+          "Casting to <device>" line. Buffering is genuinely reachable during a
+          session: the transport bridge reports readyState 2 while the receiver
+          buffers, and the store derives waiting from readyState < 3. The
+          receiver draws its own spinner on the television, which is where the
+          person is looking. */}
+      {!isCasting ? (
+        <BufferingIndicator className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-200 data-[visible]:opacity-100">
+          <SpinnerIcon className="h-16 w-16 animate-spin text-white/90" />
+        </BufferingIndicator>
+      ) : null}
       <Controls.Root className="absolute inset-0 z-10 flex h-full w-full flex-col bg-gradient-to-t from-black/10 to-transparent opacity-0 transition-opacity pointer-events-none data-[visible]:opacity-100">
         {/* Bottom gradient shown only while hovering the seek bar (rises to
             ~mid-thumbnail height); toggled via :has() in player.css. */}
