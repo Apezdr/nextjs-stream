@@ -16,6 +16,8 @@ import {
   clearCastHint,
   hintMatchesSource,
   subscribeCast,
+  rememberCastPath,
+  readCastSnapshot,
 } from '@src/components/Cast/castSdk'
 
 const CastState = { CONNECTED: 'CONNECTED', NOT_CONNECTED: 'NOT_CONNECTED' }
@@ -123,6 +125,45 @@ describe('cast hint', () => {
       JSON.stringify({ contentId: 'entity-id', contentUrl: 'https://x/a.mp4', at: Date.now() })
     )
     expect(hintMatchesSource('https://x/a.mp4')).toBe(true)
+  })
+
+  it('remembers the route the session was started from', () => {
+    installSdk({ media: { contentId: 'https://x/a.mp4' } })
+    const unsubscribe = subscribeCast(() => {})
+
+    rememberCastPath('/list/movie/Some%20Film/play')
+
+    expect(readCastHint().path).toBe('/list/movie/Some%20Film/play')
+    expect(readCastSnapshot().path).toBe('/list/movie/Some%20Film/play')
+    unsubscribe()
+  })
+
+  it('keeps the route when later cast events rewrite the hint', () => {
+    const sdk = installSdk({ media: { contentId: 'https://x/a.mp4' } })
+    const unsubscribe = subscribeCast(() => {})
+    // A distinct route per test: `castPath` is module state that outlives a
+    // single test, so reusing one would pass even if nothing were written.
+    rememberCastPath('/list/tv/Some%20Show/1/2/play')
+
+    // Any cast event rewrites the whole hint; the route must survive it, or the
+    // way back disappears the first time the receiver reports anything.
+    for (const fn of sdk.listeners.sessionstatechanged) fn()
+
+    expect(readCastHint().path).toBe('/list/tv/Some%20Show/1/2/play')
+    unsubscribe()
+  })
+
+  it('forgets the route when the session ends', () => {
+    const sdk = installSdk({ media: { contentId: 'https://x/a.mp4' } })
+    const unsubscribe = subscribeCast(() => {})
+    rememberCastPath('/list/movie/Another%20Film/play')
+
+    sdk.context._castState = CastState.NOT_CONNECTED
+    for (const fn of sdk.listeners.caststatechanged) fn()
+
+    expect(readCastHint()).toBeNull()
+    expect(readCastSnapshot().path).toBeNull()
+    unsubscribe()
   })
 
   it('clearCastHint is safe with nothing stored', () => {

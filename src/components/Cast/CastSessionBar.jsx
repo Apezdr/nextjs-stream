@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import useCastSession, { endCastSession } from './useCastSession'
@@ -25,10 +26,14 @@ const isWatchPage = (pathname) =>
  */
 export default function CastSessionBar() {
   const pathname = usePathname()
-  const { active, deviceName, title } = useCastSession()
+  const { active, deviceName, title, path } = useCastSession()
   const reduceMotion = useReducedMotion()
 
   const visible = active && !isWatchPage(pathname || '')
+  // The route the session was started from, recorded by the player. Absent for
+  // a session that predates this being remembered, so the control is offered
+  // only when there is somewhere real to go.
+  const canReturn = Boolean(path) && path !== pathname
 
   return (
     <AnimatePresence>
@@ -49,6 +54,17 @@ export default function CastSessionBar() {
             </p>
             {title ? <p className="truncate text-xs text-white/60">{title}</p> : null}
           </div>
+          {canReturn ? (
+            <Link
+              href={path}
+              aria-label={
+                title ? `Open the player for ${title}` : 'Open the player for what is casting'
+              }
+              className="shrink-0 rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold outline-none ring-blue-400 transition hover:bg-white/20 focus-visible:ring-2"
+            >
+              Open
+            </Link>
+          ) : null}
           <button
             type="button"
             onClick={endCastSession}

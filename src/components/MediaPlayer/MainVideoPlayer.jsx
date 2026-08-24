@@ -2,7 +2,7 @@
 
 import './player.css'
 
-import { useCallback, useLayoutEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
 import { Player, GoogleCast } from './videojs'
 import PlayerMedia, { castContentType } from './PlayerMedia'
 import { VideoLayout } from './VideoLayout'
@@ -18,6 +18,8 @@ import { usePlaybackCoordinator } from '@src/contexts/PlaybackCoordinatorContext
 import usePlayerMediaElement from './usePlayerMediaElement'
 import { useCastAdoption } from '@components/Cast/useCastSession'
 import useCastHintSuppression from '@components/Cast/useCastHintSuppression'
+import { rememberCastPath } from '@components/Cast/castSdk'
+import { usePathname } from 'next/navigation'
 import useActivityVisible from './useActivityVisible'
 import useLocalSilence from './useLocalSilence'
 import CastTransportBridge from './CastTransportBridge'
@@ -118,6 +120,15 @@ function ActiveVideoPlayer({
   // moment; it holds the element back until the SDK confirms or denies it.
   const castHintSilence = useCastHintSuppression(videoURL, castingThisTitle)
   useLocalSilence(videoRef, castingThisTitle || castHintSilence)
+
+  // While this title is the one on the receiver, remember the route it is
+  // playing from, so the casting indicator elsewhere in the app can offer a way
+  // back. Recorded rather than derived: this page already knows its own URL,
+  // and reversing a video URL into a route would need a server lookup.
+  const pathname = usePathname()
+  useEffect(() => {
+    if (castingThisTitle && pathname) rememberCastPath(pathname)
+  }, [castingThisTitle, pathname])
 
   // Stop playback the instant the page is hidden — synchronously, before the
   // browser paints and before the unmount above lands. This is the cleanup

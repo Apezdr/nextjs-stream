@@ -14,7 +14,16 @@ import {
 // every read would loop forever. Cache and only swap when a field changes.
 let cached = EMPTY_CAST_SNAPSHOT
 
-const FIELDS = ['active', 'connecting', 'mediaLoaded', 'deviceName', 'contentId', 'contentUrl', 'title']
+const FIELDS = [
+  'active',
+  'connecting',
+  'mediaLoaded',
+  'deviceName',
+  'contentId',
+  'contentUrl',
+  'title',
+  'path',
+]
 
 function getSnapshot() {
   const read = readCastSnapshot()

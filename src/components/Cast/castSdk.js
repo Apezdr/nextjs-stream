@@ -39,6 +39,7 @@ const EMPTY = Object.freeze({
   contentId: null,
   contentUrl: null,
   title: null,
+  path: null,
 })
 
 export function getFramework() {
@@ -136,6 +137,7 @@ export function readCastSnapshot() {
       contentId: info?.contentId ?? null,
       contentUrl: info?.contentUrl ?? null,
       title: player?.title || info?.metadata?.title || null,
+      path: loadCastPath(),
     }
   } catch {
     return EMPTY
@@ -189,6 +191,31 @@ export function castMatchesSource(snapshot, url) {
 const HINT_KEY = 'cast:last-session'
 const HINT_TTL_MS = 12 * 60 * 60 * 1000
 
+/**
+ * The watch page the casting title came from.
+ *
+ * Recorded rather than derived: the page that starts a session already knows
+ * its own route, and working backwards from a video URL to a route would mean
+ * a server lookup for something we had in hand all along. Held in memory as
+ * well as storage so reading it is free during render.
+ *
+ * `undefined` means "not yet loaded from storage", `null` means "none known".
+ */
+let castPath
+
+function loadCastPath() {
+  if (castPath === undefined) castPath = readCastHint()?.path ?? null
+  return castPath
+}
+
+/** Called by the player while its own title is the one on the receiver. */
+export function rememberCastPath(path) {
+  if (!path || path === loadCastPath()) return
+  castPath = path
+  const snapshot = readCastSnapshot()
+  if (snapshot.active) persistCastHint(snapshot)
+}
+
 export function readCastHint() {
   try {
     const raw = globalThis.localStorage?.getItem(HINT_KEY)
@@ -205,6 +232,7 @@ export function readCastHint() {
 }
 
 export function clearCastHint() {
+  castPath = null
   try {
     globalThis.localStorage?.removeItem(HINT_KEY)
   } catch {
@@ -227,6 +255,7 @@ function persistCastHint(snapshot) {
         contentUrl: snapshot.contentUrl,
         deviceName: snapshot.deviceName,
         title: snapshot.title,
+        path: loadCastPath(),
         at: Date.now(),
       })
     )
