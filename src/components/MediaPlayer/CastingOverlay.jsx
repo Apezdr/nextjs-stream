@@ -1,8 +1,8 @@
 'use client'
 
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
-import { Player, CastEnterIcon } from './videojs'
-import { useCastAdoption } from '@components/Cast/useCastSession'
+import { CastEnterIcon } from './videojs'
+import useIsCasting from './useIsCasting'
 
 /**
  * The banner itself. Split out so its animation only mounts when there is
@@ -46,7 +46,7 @@ function CastingBanner({ connecting, deviceName, titleLabel }) {
       initial="hidden"
       animate="visible"
       exit="exit"
-      className="pointer-events-none absolute inset-0 z-[5] flex flex-col items-center justify-center gap-4 bg-black/80 px-6 text-center backdrop-blur-sm"
+      className="pointer-events-none absolute inset-0 z-[5] flex flex-col items-center justify-center gap-4 bg-black/60 px-6 text-center backdrop-blur-md"
     >
       <motion.div variants={item}>
         <CastEnterIcon className="h-16 w-16 text-white/90" />
@@ -71,24 +71,21 @@ function CastingBanner({ connecting, deviceName, titleLabel }) {
  * and this is pointer-events-none so gestures still reach the surface
  * underneath.
  *
- * Two ways to be casting, and both must be handled. The player store knows
- * about a session THIS player started. It knows nothing about one that was
- * already running when the page mounted — adoption in the framework is
- * event-driven and never re-checked on mount — so that case is read from the
- * Cast SDK directly, which is the only thing that survives navigation.
+ * The backdrop is deliberately not opaque. The video element fades to nothing
+ * at the same moment this appears (see PlayerMedia), so during the transition
+ * the picture is still visible through it and dissolves away rather than being
+ * hidden behind a wall that drops into place. Both halves read the same
+ * useIsCasting so they always move together.
  */
 export default function CastingOverlay({ titleLabel, videoURL }) {
-  const remoteState = Player.usePlayer((s) => s.remotePlaybackState)
-  const { adopted, connecting, deviceName } = useCastAdoption(videoURL)
-
-  const isCasting = remoteState === 'connected' || remoteState === 'connecting' || adopted
+  const { isCasting, connecting, deviceName } = useIsCasting(videoURL)
 
   return (
     <AnimatePresence>
       {isCasting ? (
         <CastingBanner
           key="casting"
-          connecting={remoteState === 'connecting' || (connecting && !adopted)}
+          connecting={connecting}
           deviceName={deviceName}
           titleLabel={titleLabel}
         />

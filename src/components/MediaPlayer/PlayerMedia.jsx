@@ -1,6 +1,7 @@
 'use client'
 
 import { HlsJsVideo, NativeHlsVideo } from './videojs'
+import useIsCasting from './useIsCasting'
 
 /** Whether a source is an HLS manifest rather than a progressive file. */
 export function isManifestSource(url) {
@@ -53,6 +54,13 @@ export default function PlayerMedia({
 }) {
   const isManifest = isManifestSource(videoURL)
 
+  // While the receiver has this title, the local picture is not what anyone is
+  // watching, so it dissolves out under the casting overlay instead of sitting
+  // there as a frozen frame. Opacity only: the element must stay laid out and
+  // fully functional, since the transport bridge still reads and drives it, and
+  // display/visibility would take it out of the flow.
+  const { isCasting } = useIsCasting(videoURL)
+
   const trackEls = []
   if (chaptersURL) {
     trackEls.push(
@@ -104,7 +112,9 @@ export default function PlayerMedia({
     playsInline: true,
     preload: 'auto',
     onEnded,
-    className: 'h-screen min-h-screen w-full',
+    className: `h-screen min-h-screen w-full transition-opacity duration-700 ease-out ${
+      isCasting ? 'opacity-0' : 'opacity-100'
+    }`,
   }
 
   return isManifest ? (
