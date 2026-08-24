@@ -119,7 +119,10 @@ function ActiveVideoPlayer({
   // localStorage breadcrumb is the only thing readable synchronously at that
   // moment; it holds the element back until the SDK confirms or denies it.
   const castHintSilence = useCastHintSuppression(videoURL, castingThisTitle)
-  useLocalSilence(videoRef, castingThisTitle || castHintSilence)
+  // The third argument says the reason is only a guess: when the SDK has not yet
+  // confirmed adoption, a wrong guess must be undone by playing. Once it HAS
+  // confirmed, the session ending must leave the video paused.
+  useLocalSilence(videoRef, castingThisTitle || castHintSilence, !castingThisTitle)
 
   // While this title is the one on the receiver, remember the route it is
   // playing from, so the casting indicator elsewhere in the app can offer a way
@@ -185,6 +188,7 @@ function ActiveVideoPlayer({
               start={start}
               savedPlaybackTime={savedPlaybackTime}
               mediaMetadata={playbackMetadata}
+              castAdopted={castingThisTitle}
             />
           ) : null}
           {clipStartTime || clipEndTime ? (

@@ -46,7 +46,10 @@ export default function WithPlayBackTracker({
   savedPlaybackTime = null,
   // Stable content identity ('mid:…') when resolved; null/absent falls back
   // to the legacy videoURL key so behavior is unchanged for unresolved titles.
-  mediaId = null
+  mediaId = null,
+  // True while a Cast receiver is playing THIS title and the transport bridge
+  // is mirroring it. The position on screen then belongs to the television.
+  castAdopted = false
 }) {
   const store = Player.usePlayer();
   // localStorage progress key: stable identity when available, else videoURL.
@@ -70,7 +73,26 @@ export default function WithPlayBackTracker({
 
   // Restore saved playback time when the player is ready.
   useEffect(() => {
-    if (!canPlay || !store) return;
+    if (!store) return;
+
+    // While the television owns this title, the saved position must not be
+    // applied — seeking here would seek the RECEIVER, dragging the TV back to
+    // whatever this page last recorded.
+    //
+    // Burning the one-shot rather than merely returning is the load-bearing
+    // part. The bridge holds readyState below HAVE_ENOUGH_DATA for the whole
+    // session, so this effect never gets to run and the flag would stay unset;
+    // then the handoff at session end dispatches a synthetic `canplay`, this
+    // fires for the first time, and overwrites the position just handed over
+    // from the receiver with a stale one from render time. That is exactly
+    // what made a stopped cast resume in the wrong place while the server's
+    // watch history had the right one all along.
+    if (castAdopted) {
+      hasAppliedStartRef.current = true;
+      return;
+    }
+
+    if (!canPlay) return;
 
     let urlCleanupTimeout = null;
 
@@ -116,7 +138,7 @@ export default function WithPlayBackTracker({
     return () => {
       if (urlCleanupTimeout) clearTimeout(urlCleanupTimeout);
     };
-  }, [store, canPlay, storageKey, videoURL, start, pathname, savedPlaybackTime]);
+  }, [store, canPlay, storageKey, videoURL, start, pathname, savedPlaybackTime, castAdopted]);
 
   // Initialize the web worker with error handling and fallback logic.
   useEffect(() => {
@@ -195,6 +217,11 @@ export default function WithPlayBackTracker({
   // Subscribe to the player store's current time and throttle updates to the worker.
   useEffect(() => {
     if (!canPlay || !store || !updatePlaybackWorkerRef.current) return;
+    // The receiver reports its own position while no sender is connected; a
+    // client write here would stamp lastWriter:'client' and lock those reports
+    // out for a minute. canPlay is already false while adopted — this is the
+    // invariant stated outright rather than inherited.
+    if (castAdopted) return;
 
     const throttledUpdateServer = throttle((currentTime) => {
       if (!isFetchingRef.current) {
@@ -235,13 +262,14 @@ export default function WithPlayBackTracker({
       unsubscribe();
       throttledUpdateServer.cancel();
     };
-  }, [store, storageKey, videoURL, canPlay, mediaMetadata]);
+  }, [store, storageKey, videoURL, canPlay, mediaMetadata, castAdopted]);
 
   // Send a heartbeat whenever the paused state changes so the live activity
   // view keeps showing the session (as paused) instead of dropping it.
   useEffect(() => {
     pausedRef.current = paused === true;
     if (!canPlay || !store || !store.target || !updatePlaybackWorkerRef.current) return;
+    if (castAdopted) return;
     const currentTime = store.currentTime || 0;
     if (currentTime <= MIN_PERSISTED_POSITION_S) return;
     updatePlaybackWorkerRef.current.postMessage({
@@ -252,12 +280,13 @@ export default function WithPlayBackTracker({
       localIp: localIpRef.current,
       sessionId: sessionIdRef.current,
     });
-  }, [paused, canPlay, store, videoURL, mediaMetadata]);
+  }, [paused, canPlay, store, videoURL, mediaMetadata, castAdopted]);
 
   // Keep presence alive at a low frequency while paused and foregrounded.
   // The currentTime-driven heartbeat stops when playback pauses.
   useEffect(() => {
     if (!canPlay || !store || !updatePlaybackWorkerRef.current) return;
+    if (castAdopted) return;
 
     const interval = setInterval(() => {
       if (!pausedRef.current) return;
@@ -290,7 +319,7 @@ export default function WithPlayBackTracker({
     }, PAUSED_HEARTBEAT_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [canPlay, store, videoURL, mediaMetadata]);
+  }, [canPlay, store, videoURL, mediaMetadata, castAdopted]);
 
   // Best-effort explicit "stopped watching" signal. keepalive lets the
   // request survive page unload; the server-side presence window is fallback.

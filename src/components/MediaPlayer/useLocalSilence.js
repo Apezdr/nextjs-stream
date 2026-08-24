@@ -26,26 +26,31 @@ import { useEffect, useRef } from 'react'
  * way. Together the worst case is a frame rather than a video playing
  * underneath the television.
  *
- * The caller decides what `silent` means; on a cold load it comes from the
- * localStorage breadcrumb, which is a guess. So this remembers whether it was
- * the reason playback did not start, and starts it if the guess turns out to
- * be wrong — while never touching a video the user paused themselves.
+ * The caller decides what `silent` means, and says via `guess` whether it is
+ * sure. On a cold load the reason is the localStorage breadcrumb, which can be
+ * stale; once the SDK confirms a session it is certain. That distinction
+ * decides what happens when silence lifts:
+ *
+ *  - a wrong guess should be undone, since the page was asked to autoplay and
+ *    was held back for nothing;
+ *  - a confirmed session ending should NOT start playing. Stopping a cast is a
+ *    stop, not a transfer of playback to this screen.
+ *
+ * Either way a video the user paused themselves is never started behind their
+ * back, because only suppression this hook caused is ever undone.
  */
-export default function useLocalSilence(videoRef, silent) {
-  // Whether WE are the reason it is not playing, so a video the user paused
-  // deliberately is never started behind their back.
-  const suppressedRef = useRef(false)
+export default function useLocalSilence(videoRef, silent, guess = false) {
+  // null when we are not the reason it is paused, otherwise why we paused it.
+  const suppressedRef = useRef(null)
 
   useEffect(() => {
     const el = videoRef?.current
     if (!el) return undefined
 
     if (!silent) {
-      // Suppression lifting means the guess was wrong — most likely a stale
-      // breadcrumb from a session that ended while the tab was closed. The
-      // page was asked to autoplay, so honour that now.
-      if (suppressedRef.current) {
-        suppressedRef.current = false
+      const reason = suppressedRef.current
+      suppressedRef.current = null
+      if (reason === 'guess') {
         el.play?.().catch(() => {
           /* autoplay policy, or the source went away */
         })
@@ -53,7 +58,7 @@ export default function useLocalSilence(videoRef, silent) {
       return undefined
     }
 
-    suppressedRef.current = true
+    suppressedRef.current = guess ? 'guess' : 'confirmed'
 
     // Clearing the property is what PREVENTS the start rather than cancelling
     // it: autoplay is consulted as readyState advances, which is well after
@@ -85,5 +90,5 @@ export default function useLocalSilence(videoRef, silent) {
       el.removeEventListener('play', stop)
       el.removeEventListener('playing', stop)
     }
-  }, [videoRef, silent])
+  }, [videoRef, silent, guess])
 }
