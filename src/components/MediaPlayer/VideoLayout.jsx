@@ -86,7 +86,7 @@ export function VideoLayout({
     <>
       <Gestures />
       <Hotkeys />
-      <CastingOverlay titleLabel={titleLabel} />
+      <CastingOverlay titleLabel={titleLabel} videoURL={videoURL} />
       <BufferingIndicator className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-200 data-[buffering]:opacity-100">
         <SpinnerIcon className="h-16 w-16 animate-spin text-white/90" />
       </BufferingIndicator>

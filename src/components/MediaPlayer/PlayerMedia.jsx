@@ -47,6 +47,9 @@ export default function PlayerMedia({
   onEnded,
   // Owned by MainVideoPlayer (teardown + visibility-pause + heartbeat gating).
   videoRef,
+  // The receiver is already playing this title, so the local element must not
+  // start alongside it — see MainVideoPlayer.
+  suppressAutoplay = false,
 }) {
   const isManifest = isManifestSource(videoURL)
 
@@ -97,7 +100,7 @@ export default function PlayerMedia({
   }
 
   const commonProps = {
-    autoPlay: true,
+    autoPlay: !suppressAutoplay,
     playsInline: true,
     preload: 'auto',
     onEnded,

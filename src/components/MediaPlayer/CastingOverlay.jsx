@@ -3,6 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { Player, CastEnterIcon } from './videojs'
+import useCastSession from '@components/Cast/useCastSession'
 
 /** The Cast session's device name, or null when unavailable. */
 function getDeviceName() {
@@ -100,9 +101,15 @@ function CastingBanner({ connecting, titleLabel }) {
  * (they drive the remote player), and this is pointer-events-none so gestures
  * still reach the surface underneath.
  */
-export default function CastingOverlay({ titleLabel }) {
+export default function CastingOverlay({ titleLabel, videoURL }) {
   const remoteState = Player.usePlayer((s) => s.remotePlaybackState)
-  const isCasting = remoteState === 'connected' || remoteState === 'connecting'
+  // The store only knows about sessions THIS player started. Returning to a
+  // watch page while a session is live mounts a fresh, disconnected provider
+  // (its adoption path is event-driven and never re-checks on mount), so the
+  // SDK is asked directly whether the receiver is already playing this title.
+  const session = useCastSession()
+  const adopted = session.active && !!videoURL && session.contentId === videoURL
+  const isCasting = remoteState === 'connected' || remoteState === 'connecting' || adopted
 
   return (
     <AnimatePresence>
