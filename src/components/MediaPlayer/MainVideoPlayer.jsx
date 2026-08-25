@@ -50,7 +50,7 @@ export default function MainVideoPlayer(props) {
     return (
       <div
         aria-hidden="true"
-        className="player-container relative z-10 aspect-video max-h-screen w-full bg-black dark"
+        className="player-container relative z-10 aspect-video max-h-screen w-full bg-transparent dark"
       />
     )
   }
@@ -157,7 +157,13 @@ function ActiveVideoPlayer({
   return (
     <Player.Provider>
       <AutoCaptionsProgressProvider>
-        <Player.Container className="player-container relative z-10 aspect-video max-h-screen w-full bg-black dark">
+        {/* Transparent, not black: while casting the video fades to nothing and
+            the page backdrop shows through the translucent overlay instead of a
+            flat black panel. This costs nothing during ordinary playback — the
+            media element carries its own `background: #000` (player.css) and
+            fills the container, so the letterbox bars stay black and only
+            disappear when the picture itself fades out. */}
+        <Player.Container className="player-container relative z-10 aspect-video max-h-screen w-full bg-transparent dark">
           <PlayerMedia
             videoURL={videoURL}
             chaptersURL={chaptersURL}
