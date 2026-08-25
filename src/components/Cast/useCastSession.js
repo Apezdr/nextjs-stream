@@ -17,6 +17,7 @@ let cached = EMPTY_CAST_SNAPSHOT
 const FIELDS = [
   'active',
   'connecting',
+  'ending',
   'mediaLoaded',
   'deviceName',
   'contentId',
@@ -27,9 +28,13 @@ const FIELDS = [
 
 function getSnapshot() {
   const read = readCastSnapshot()
-  // A stop that has been requested but not yet acknowledged reads as inactive,
-  // so the UI follows the click instead of the network.
-  const next = read.active && isEnding() ? { ...read, active: false } : read
+  // A stop that has been requested but not yet acknowledged reads as inactive
+  // AND as ending, so the UI follows the click instead of the network.
+  const pendingStop = isEnding()
+  const next =
+    pendingStop && (read.active || !read.ending)
+      ? { ...read, active: false, ending: true, connecting: false }
+      : read
 
   if (FIELDS.every((key) => next[key] === cached[key])) return cached
   cached = next

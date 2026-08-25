@@ -28,6 +28,7 @@ const CastState = { CONNECTED: 'CONNECTED', CONNECTING: 'CONNECTING', NOT_CONNEC
 /** A CastContext faithful to the real teardown order. */
 function makeSdk({
   castState = CastState.CONNECTED,
+  sessionState = 'SESSION_STARTED',
   media = null,
   device = 'Living Room TV',
   receiverApp = 'My Receiver App',
@@ -42,8 +43,10 @@ function makeSdk({
 
   const context = {
     _castState: castState,
+    _sessionState: sessionState,
     _session: session,
     getCastState: () => context._castState,
+    getSessionState: () => context._sessionState,
     getCurrentSession: () => context._session,
     addEventListener: (type, fn) => listeners[type]?.push(fn),
     removeEventListener: (type, fn) => {
@@ -72,6 +75,12 @@ function makeSdk({
   globalThis.cast = {
     framework: {
       CastState,
+      SessionState: {
+        SESSION_STARTING: 'SESSION_STARTING',
+        SESSION_STARTED: 'SESSION_STARTED',
+        SESSION_ENDING: 'SESSION_ENDING',
+        SESSION_ENDED: 'SESSION_ENDED',
+      },
       CastContextEventType: {
         CAST_STATE_CHANGED: 'caststatechanged',
         SESSION_STATE_CHANGED: 'sessionstatechanged',
@@ -152,6 +161,24 @@ describe('castSdk', () => {
       // which is otherwise bound to a CastContext that no longer exists.
       makeSdk({ media: { contentId: 'https://x/second.mp4' } })
       expect(readCastSnapshot().contentId).toBe('https://x/second.mp4')
+    })
+
+    it('reports a session being torn down as ending, never as connecting', () => {
+      // The SDK maps SESSION_ENDING to castState CONNECTING — the same value a
+      // session being STARTED uses. Conflating them made stopping a cast flash
+      // "Connecting…" over the title on the way out.
+      makeSdk({ castState: CastState.CONNECTING, sessionState: 'SESSION_ENDING' })
+      const snap = readCastSnapshot()
+      expect(snap.ending).toBe(true)
+      expect(snap.connecting).toBe(false)
+      expect(snap.active).toBe(false)
+    })
+
+    it('still reports a session being started as connecting', () => {
+      makeSdk({ castState: CastState.CONNECTING, sessionState: 'SESSION_STARTING' })
+      const snap = readCastSnapshot()
+      expect(snap.connecting).toBe(true)
+      expect(snap.ending).toBe(false)
     })
 
     it('survives the SDK being absent', () => {

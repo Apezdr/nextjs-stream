@@ -34,6 +34,7 @@ const SDK_POLL_MS = 2000
 const EMPTY = Object.freeze({
   active: false,
   connecting: false,
+  ending: false,
   mediaLoaded: false,
   deviceName: null,
   contentId: null,
@@ -117,6 +118,7 @@ export function readCastSnapshot() {
     if (!framework || !context) return EMPTY
 
     const castState = context.getCastState?.() ?? null
+    const sessionState = context.getSessionState?.() ?? null
     const player = getRemote()?.player
     // Display fields only — never the liveness decision.
     const session = context.getCurrentSession?.()
@@ -124,7 +126,15 @@ export function readCastSnapshot() {
 
     return {
       active: castState === framework.CastState?.CONNECTED,
-      connecting: castState === framework.CastState?.CONNECTING,
+      // The SDK maps SESSION_ENDING to castState CONNECTING — the same value it
+      // uses for a session being started. Without separating them, tearing a
+      // session down announces itself as "Connecting…", which is both wrong and
+      // the opposite of what is happening. Only a genuine start counts as
+      // connecting; ending is its own state.
+      ending: sessionState === (framework.SessionState?.SESSION_ENDING ?? 'SESSION_ENDING'),
+      connecting:
+        castState === framework.CastState?.CONNECTING &&
+        sessionState !== (framework.SessionState?.SESSION_ENDING ?? 'SESSION_ENDING'),
       mediaLoaded: Boolean(player?.isMediaLoaded),
       // The DEVICE, not the receiver application. RemotePlayer.displayName is
       // copied straight from session.displayName, which is the name of the Cast

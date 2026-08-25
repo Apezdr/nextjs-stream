@@ -22,7 +22,17 @@ import { useCastAdoption } from '@components/Cast/useCastSession'
  */
 export default function useIsCasting(videoURL) {
   const remoteState = Player.usePlayer((s) => s.remotePlaybackState)
-  const { adopted, connecting, deviceName } = useCastAdoption(videoURL)
+  const { adopted, connecting, ending, deviceName } = useCastAdoption(videoURL)
+
+  // A session being torn down is not a session. The store cannot tell the
+  // difference on its own: the provider sets remotePlaybackState to
+  // 'connecting' whenever the SDK's cast state is CONNECTING, and the SDK uses
+  // that same value for SESSION_ENDING. Left alone, stopping a cast flashed
+  // "Connecting…" over the title on the way out. The SDK's session state is
+  // the only thing that separates the two, so it wins here.
+  if (ending) {
+    return { isCasting: false, connecting: false, deviceName }
+  }
 
   return {
     isCasting: remoteState === 'connected' || remoteState === 'connecting' || adopted,
