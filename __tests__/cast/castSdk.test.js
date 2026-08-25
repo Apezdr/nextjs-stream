@@ -21,6 +21,7 @@ import {
   subscribeCast,
   endCastSession,
   isEnding,
+  readFinalRemotePosition,
 } from '@src/components/Cast/castSdk'
 
 const CastState = { CONNECTED: 'CONNECTED', CONNECTING: 'CONNECTING', NOT_CONNECTED: 'NOT_CONNECTED' }
@@ -57,6 +58,7 @@ function makeSdk({
 
   const player = {
     isMediaLoaded: Boolean(media),
+    currentTime: 0,
     mediaInfo: media,
     // RemotePlayer.displayName is the Cast APPLICATION name, not the device.
     displayName: receiverApp,
@@ -91,6 +93,7 @@ function makeSdk({
         MEDIA_INFO_CHANGED: 'mediaInfoChanged',
         TITLE_CHANGED: 'titleChanged',
         DISPLAY_NAME_CHANGED: 'displayNameChanged',
+        CURRENT_TIME_CHANGED: 'currentTimeChanged',
       },
       CastContext: { getInstance: () => context },
       RemotePlayer: function RemotePlayer() {
@@ -112,7 +115,11 @@ function makeSdk({
     context._session = null
   }
 
-  return { context, player, teardown, listeners }
+  const fireRemote = (type) => {
+    for (const fn of remoteListeners[type] || []) fn()
+  }
+
+  return { context, player, teardown, listeners, fireRemote }
 }
 
 describe('castSdk', () => {
@@ -211,6 +218,51 @@ describe('castSdk', () => {
       unsubscribe()
       expect(sdk.listeners.sessionstatechanged).toHaveLength(0)
       expect(sdk.listeners.caststatechanged).toHaveLength(0)
+    })
+  })
+
+  describe('final position recorder', () => {
+    it('retains the last real position through teardown, which zeroes after unloading', () => {
+      const sdk = makeSdk({ media: { contentId: 'https://x/a.mp4' } })
+      const unsubscribe = subscribeCast(() => {})
+
+      sdk.player.currentTime = 1234
+      sdk.fireRemote('currentTimeChanged')
+
+      // Teardown, in the SDK's real order: media unloads FIRST, then the
+      // position is zeroed. The recorder must keep 1234, not take the 0.
+      sdk.player.isMediaLoaded = false
+      sdk.player.currentTime = 0
+      sdk.fireRemote('currentTimeChanged')
+
+      const final = readFinalRemotePosition()
+      expect(final?.time).toBe(1234)
+      expect(final?.contentId).toBe('https://x/a.mp4')
+      unsubscribe()
+    })
+
+    it('snapshots on a chip-initiated stop, covering a paused receiver with no ticker', () => {
+      const sdk = makeSdk({ media: { contentId: 'https://x/b.mp4' } })
+      const unsubscribe = subscribeCast(() => {})
+      sdk.player.currentTime = 777
+      // No currentTimeChanged ever fired — a PAUSED receiver arms no ticker.
+      endCastSession()
+      expect(readFinalRemotePosition()?.time).toBe(777)
+      unsubscribe()
+    })
+
+    it('expires rather than restoring an hours-old position', () => {
+      // Real elapsed time, not a boundary trick: a record made "now" with
+      // maxAge 0 sits exactly ON the boundary and is arguably valid.
+      jest.useFakeTimers()
+      const sdk = makeSdk({ media: { contentId: 'https://x/c.mp4' } })
+      const unsubscribe = subscribeCast(() => {})
+      sdk.player.currentTime = 500
+      sdk.fireRemote('currentTimeChanged')
+
+      jest.setSystemTime(Date.now() + 31000)
+      expect(readFinalRemotePosition()).toBeNull()
+      unsubscribe()
     })
   })
 

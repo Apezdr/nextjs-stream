@@ -26,6 +26,18 @@ jest.mock('@src/components/MediaPlayer/videojs', () => ({
   Player: { useMedia: () => null, usePlayer: () => 'disconnected' },
 }))
 
+// The bridge reads the SDK through castSdk; give the test control of the
+// final-position record while keeping getRemote/castMatchesSource real-shaped.
+let mockFinalPosition = null
+jest.mock('@components/Cast/castSdk', () => {
+  const actual = jest.requireActual('@components/Cast/castSdk')
+  return {
+    __esModule: true,
+    ...actual,
+    readFinalRemotePosition: () => mockFinalPosition,
+  }
+})
+
 import { CastTransport } from '@src/components/MediaPlayer/CastTransportBridge'
 
 const PlayerState = { IDLE: 'IDLE', PLAYING: 'PLAYING', PAUSED: 'PAUSED', BUFFERING: 'BUFFERING' }
@@ -291,6 +303,44 @@ describe('CastTransport handoff and listener hygiene', () => {
     // Object keys stringify, so a missing name would otherwise register under
     // the literal string "undefined" and quietly never fire.
     expect(Object.keys(listeners)).not.toContain('undefined')
+  })
+
+  it('seeds the handoff position at enable, so an immediate Stop still lands right', () => {
+    setupSdk({ currentTime: 432 })
+    const target = makeTarget()
+    target.el.paused = false
+    const t = new CastTransport()
+    t.attach(target.el)
+    t.setEnabled(true)
+    // No remote tick ever fires; the seed from #initialSync must carry it.
+    t.setEnabled(false)
+    expect(target.el.currentTime).toBe(432)
+  })
+
+  it('falls back to the recorded final position when no tick arrived, if it names this source', () => {
+    setupSdk({ currentTime: 0 })
+    mockFinalPosition = { time: 987, contentId: 'https://x/film.mp4', contentUrl: null, at: Date.now() }
+    const target = makeTarget()
+    const t = new CastTransport()
+    t.setSource('https://x/film.mp4')
+    t.attach(target.el)
+    t.setEnabled(true)
+    t.setEnabled(false)
+    expect(target.el.currentTime).toBe(987)
+    mockFinalPosition = null
+  })
+
+  it('ignores a recorded final position for a DIFFERENT title', () => {
+    setupSdk({ currentTime: 0 })
+    mockFinalPosition = { time: 987, contentId: 'https://x/other.mp4', contentUrl: null, at: Date.now() }
+    const target = makeTarget()
+    const t = new CastTransport()
+    t.setSource('https://x/film.mp4')
+    t.attach(target.el)
+    t.setEnabled(true)
+    t.setEnabled(false)
+    expect(target.el.currentTime).toBe(0)
+    mockFinalPosition = null
   })
 
   it('hands the receiver position to the local element, paused, when the session ends', () => {

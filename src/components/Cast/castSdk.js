@@ -96,6 +96,51 @@ export function getRemote() {
 }
 
 /**
+ * The last real position the receiver reported, with the identity of what it
+ * was playing.
+ *
+ * This exists because session teardown destroys the evidence: the controller
+ * zeroes currentTime and nulls mediaInfo during the same synchronous dispatch
+ * chain that announces the disconnect, so anything that waits for the end of a
+ * session to ask "where was it?" reads zeroes. Crucially the SDK clears
+ * isMediaLoaded BEFORE it zeroes currentTime, so a recorder gated on
+ * isMediaLoaded provably retains the last genuine position through teardown.
+ *
+ * Both stop paths consume it — the transport bridge's handoff and
+ * CastResumeGuard — which is the point: one authoritative end-of-session
+ * position instead of several restorers racing with stale inputs.
+ */
+let lastRemotePosition = null
+
+function recordRemotePosition() {
+  try {
+    const player = getRemote()?.player
+    if (!player?.isMediaLoaded) return
+    const time = player.currentTime
+    if (!Number.isFinite(time) || time <= 0) return
+    const info = player.mediaInfo
+    lastRemotePosition = {
+      time,
+      contentId: info?.contentId ?? null,
+      contentUrl: info?.contentUrl ?? null,
+      at: Date.now(),
+    }
+  } catch {
+    /* never let bookkeeping break an event handler */
+  }
+}
+
+/**
+ * The receiver's final (or latest) position, or null when there is none fresh
+ * enough to trust. Not consume-once: both stop owners may read it.
+ */
+export function readFinalRemotePosition(maxAgeMs = 30000) {
+  if (!lastRemotePosition) return null
+  if (Date.now() - lastRemotePosition.at > maxAgeMs) return null
+  return lastRemotePosition
+}
+
+/**
  * Whether a stop was requested and has not yet been acknowledged.
  *
  * endCurrentSession() is fire-and-forget with a no-op error callback over a
@@ -394,6 +439,7 @@ export function subscribeCast(onChange) {
 
     const remote = getRemote()
     const remoteEvents = []
+    const silentEvents = []
     if (remote && framework.RemotePlayerEventType) {
       const {
         IS_CONNECTED_CHANGED,
@@ -413,6 +459,15 @@ export function subscribeCast(onChange) {
         remote.controller.addEventListener(type, notify)
         remoteEvents.push(type)
       }
+
+      // SILENT — records the position without waking React. The rule that
+      // position events must not cause renders stands; this only keeps the
+      // end-of-session recorder current.
+      const timeType = framework.RemotePlayerEventType.CURRENT_TIME_CHANGED
+      if (timeType) {
+        remote.controller.addEventListener(timeType, recordRemotePosition)
+        silentEvents.push(timeType)
+      }
     }
 
     detach = () => {
@@ -421,6 +476,13 @@ export function subscribeCast(onChange) {
       for (const type of remoteEvents) {
         try {
           remote.controller.removeEventListener(type, notify)
+        } catch {
+          /* controller already gone */
+        }
+      }
+      for (const type of silentEvents) {
+        try {
+          remote.controller.removeEventListener(type, recordRemotePosition)
         } catch {
           /* controller already gone */
         }
@@ -464,6 +526,11 @@ export function endCastSession() {
     notifyAll()
     return
   }
+
+  // The freshest possible final position, taken before teardown destroys it.
+  // Also covers a PAUSED receiver, which never arms the SDK's 1s ticker and so
+  // may not have fired CURRENT_TIME_CHANGED recently.
+  recordRemotePosition()
 
   // Slightly longer than chrome.cast.timeout.stopSession (3000ms).
   endingUntil = Date.now() + 3500

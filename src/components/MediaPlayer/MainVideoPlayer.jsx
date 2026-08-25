@@ -186,7 +186,7 @@ function ActiveVideoPlayer({
               and this only takes over a session it did not start. */}
           <CastTransportBridge videoURL={videoURL} />
           <VolumeRegulator />
-          <CastResumeGuard />
+          <CastResumeGuard videoURL={videoURL} />
           {videoURL ? (
             <WithPlaybackTracker
               videoURL={videoURL}

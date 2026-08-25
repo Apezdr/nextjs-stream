@@ -5,6 +5,7 @@ import { SystemStatusProvider } from '@src/contexts/SystemStatusContext'
 import { NavigationProvider } from '@src/contexts/NavigationContext'
 import CastSessionBar from '@components/Cast/CastSessionBar'
 import CastBootstrap from '@components/Cast/CastBootstrap'
+import CastPositionMirror from '@components/Cast/CastPositionMirror'
 
 /**
  * Client-side provider wrapper component
@@ -22,6 +23,10 @@ export default function ClientProviders({ children, castReceiverId = null }) {
               The bootstrap is what lets them work after a full page load, on
               a page that never mounts a player and so never loads the SDK. */}
           <CastBootstrap receiverId={castReceiverId} />
+          {/* Records the receiver's progress while a session is live — from
+              here rather than the watch page, because the session outlives any
+              page and so must its reporter. */}
+          <CastPositionMirror />
           <CastSessionBar />
         </NavigationProvider>
       </SystemStatusProvider>

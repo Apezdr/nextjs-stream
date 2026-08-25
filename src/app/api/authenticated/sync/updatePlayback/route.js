@@ -1,7 +1,8 @@
 import { ObjectId } from 'mongodb'
 import { isAuthenticatedAndApproved } from '../../../../../utils/routeAuth'
-import { upsertPlayback } from '@src/utils/watchHistory/database'
+import { upsertPlayback, upsertPlaybackFromCast } from '@src/utils/watchHistory/database'
 import { extractPlaybackMetadata } from '@src/utils/watchHistory/metadata'
+import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
 import { createPlaybackDeviceInfo } from '@src/utils/deviceDetection'
 import { getClientIP } from '@src/utils/rateLimiter'
 import { invalidateUserWatchHistoryCache } from '@src/utils/cache/invalidation'
@@ -31,7 +32,7 @@ export const POST = async (req) => {
 
   try {
     const body = await req.json()
-    const { videoId, playbackTime, mediaMetadata, isPaused, localIp, sessionId } = body
+    const { videoId, playbackTime, mediaMetadata, isPaused, localIp, sessionId, source } = body
 
     // Validate required fields
     if (!videoId || typeof playbackTime !== 'number') {
@@ -39,6 +40,39 @@ export const POST = async (req) => {
         JSON.stringify({ error: 'Missing or invalid videoId or playbackTime' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       )
+    }
+
+    // A cast mirror is the page reporting a position the TELEVISION is at, not
+    // one it is rendering — which is the definition of the cast writer, so it
+    // goes through the guarded cast upsert rather than the blind client one.
+    // Three deliberate differences from the default path:
+    //   - metadata: {} spreads nothing, so the row's grouping fields survive.
+    //     The default path would run extractPlaybackMetadata(undefined) and
+    //     $set explicit nulls over mediaType/showId/season/episode.
+    //   - lastWriter stays 'cast', so the receiver's own reports pass the
+    //     ordering guard unconditionally the moment the tab closes — including
+    //     a legitimate rewind on the TV remote. A 'client' stamp would lock
+    //     them out for a minute.
+    //   - no presence heartbeat: mirroring is not a viewing session.
+    if (source === 'cast-mirror') {
+      const applied = await upsertPlaybackFromCast({
+        userId: new ObjectId(authResult.id),
+        videoId,
+        normalizedVideoId: generateNormalizedVideoId(videoId),
+        playbackTime,
+        isPaused: isPaused === true,
+        metadata: {},
+        deviceInfo: createPlaybackDeviceInfo(req.headers.get('user-agent')),
+        ipAddress: (() => {
+          const ip = getClientIP(req)
+          return ip && ip !== 'unknown' ? ip : null
+        })(),
+      })
+      if (applied) await invalidateUserWatchHistoryCache(authResult.id)
+      return new Response(JSON.stringify({ message: 'Cast position mirrored', applied }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     // Extract and format metadata

@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import { addMediaComponent, HTMLMediaElementHost } from '@videojs/media/dom/media-host'
 import { Player } from './videojs'
 import { useCastAdoption } from '@components/Cast/useCastSession'
-import { getRemote } from '@components/Cast/castSdk'
+import { getRemote, readFinalRemotePosition, castMatchesSource } from '@components/Cast/castSdk'
 
 /**
  * Makes the player's controls drive the television when the receiver is
@@ -51,6 +51,7 @@ function currentMedia() {
 /** Exported for tests; the React wrapper below is the only production entry point. */
 export class CastTransport {
   #target = null
+  #source = null
   #enabled = false
   #seeking = false
   #attached = false
@@ -67,6 +68,11 @@ export class CastTransport {
   setMedia() {
     // The host is not needed: events are dispatched on the target, which the
     // host forwards to itself for every type the store subscribed to.
+  }
+
+  /** The URL this player is for, so a final position can be identity-checked. */
+  setSource(url) {
+    this.#source = url || null
   }
 
   attach(target) {
@@ -123,6 +129,12 @@ export class CastTransport {
   #initialSync() {
     const player = getRemote()?.player
     if (!player || !this.#target || !player.isMediaLoaded) return
+    // Seed the handoff position immediately rather than waiting for the first
+    // remote tick — a Stop within a second of arriving otherwise found
+    // #lastRemoteTime still at 0 and skipped the seek entirely.
+    if (Number.isFinite(player.currentTime) && player.currentTime > 0) {
+      this.#lastRemoteTime = player.currentTime
+    }
     this.#dispatch('durationchange', 'timeupdate', 'volumechange')
     this.#dispatch(player.isPaused ? 'pause' : 'play')
     const PS = playerStates()
@@ -144,9 +156,27 @@ export class CastTransport {
   #handoff() {
     const target = this.#target
     if (!target) return
+    // The ticks may never have arrived (a paused receiver arms no ticker, and
+    // teardown zeroes everything). The SDK layer keeps one authoritative
+    // end-of-session position; use it when it names this same source.
+    let position = this.#lastRemoteTime
+    if (position <= 1) {
+      const final = readFinalRemotePosition()
+      if (
+        final &&
+        final.time > 1 &&
+        this.#source &&
+        castMatchesSource(
+          { active: true, contentId: final.contentId, contentUrl: final.contentUrl },
+          this.#source
+        )
+      ) {
+        position = final.time
+      }
+    }
     try {
-      if (this.#lastRemoteTime > 1 && Number.isFinite(target.duration)) {
-        target.currentTime = this.#lastRemoteTime
+      if (position > 1 && Number.isFinite(target.duration)) {
+        target.currentTime = position
       }
       if (!target.paused) target.pause()
     } catch {
@@ -357,6 +387,10 @@ export default function CastTransportBridge({ videoURL }) {
     if (!(media instanceof HTMLMediaElementHost)) return undefined
     return addMediaComponent(media, component)
   }, [media, component])
+
+  useEffect(() => {
+    component.setSource(videoURL)
+  }, [videoURL, component])
 
   // Never contend with a real connection: when this player started the session,
   // the provider owns everything and this stands down.

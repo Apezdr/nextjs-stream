@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { Player } from './videojs'
+import { readFinalRemotePosition, castMatchesSource } from '@components/Cast/castSdk'
 
 // Positions below this are "the start", not somewhere the viewer had reached.
 const MEANINGFUL_POSITION_S = 1
@@ -32,7 +33,7 @@ const RESTORE_WINDOW_MS = 4000
  * remotePlaybackState and seeked via the store on a setTimeout — it always ran
  * too late and read a mirror that hadn't been updated yet.
  */
-export default function CastResumeGuard() {
+export default function CastResumeGuard({ videoURL = null }) {
   const media = Player.useMedia()
 
   useEffect(() => {
@@ -78,7 +79,31 @@ export default function CastResumeGuard() {
       const taken = snapshot
       snapshot = null
       remoteTime = null
-      if (!target || !taken) return
+      if (!target) return
+
+      // A real end-of-session position beats everything below. The SDK layer
+      // records the receiver's last genuine position through teardown; when it
+      // names this same title, land there — never on the connect snapshot,
+      // which in a long session with no writer holds the cast-START position
+      // and is exactly the backwards jump being prevented. The snapshot logic
+      // below remains for the case it was built for: a session cancelled
+      // before the receiver ever played, where no final position exists.
+      const final = readFinalRemotePosition()
+      if (
+        final &&
+        final.time > MEANINGFUL_POSITION_S &&
+        videoURL &&
+        castMatchesSource(
+          { active: true, contentId: final.contentId, contentUrl: final.contentUrl },
+          videoURL
+        )
+      ) {
+        target.currentTime = final.time
+        latch = { time: final.time, expiresAt: performance.now() + RESTORE_WINDOW_MS }
+        return
+      }
+
+      if (!taken) return
 
       // Nothing worth protecting — the viewer was at the start anyway.
       if (taken.time <= MEANINGFUL_POSITION_S) return
@@ -151,7 +176,7 @@ export default function CastResumeGuard() {
       remoteTime = null
       latch = null
     }
-  }, [media])
+  }, [media, videoURL])
 
   return null
 }

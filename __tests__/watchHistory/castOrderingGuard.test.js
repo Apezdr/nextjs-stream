@@ -169,6 +169,46 @@ describe('upsertPlaybackFromCast — ordering guard', () => {
     expect(store.seasonNumber).toBe(2)
   })
 
+  it('leaves the row grouping fields alone when a mirror writes with no metadata', async () => {
+    // The chip-level mirror knows only the content URL — sending empty metadata
+    // must not null the fields Continue Watching groups episodes by. (The
+    // default client path would: extractPlaybackMetadata(undefined) returns
+    // explicit nulls that $set spreads over the row.)
+    seed({
+      playbackTime: 100,
+      lastWriter: 'client',
+      lastUpdated: new Date(),
+      mediaType: 'tv',
+      showId: 'show-1',
+      seasonNumber: 2,
+      episodeNumber: 7,
+    })
+    await expect(
+      upsertPlaybackFromCast({
+        userId: USER,
+        videoId: VIDEO,
+        normalizedVideoId: NID,
+        playbackTime: 200,
+        metadata: {},
+      })
+    ).resolves.toBe(true)
+    expect(store.playbackTime).toBe(200)
+    expect(store.mediaType).toBe('tv')
+    expect(store.showId).toBe('show-1')
+    expect(store.seasonNumber).toBe(2)
+    expect(store.episodeNumber).toBe(7)
+  })
+
+  it('lets the receiver rewind immediately after a mirror write — no client lockout', async () => {
+    // The mirror stamps lastWriter 'cast', so when the tab closes and the
+    // receiver takes over, even a BACKWARDS report (user rewound on the TV
+    // remote) applies at once under clause 1. A 'client' stamp would have
+    // locked it out for a minute.
+    seed({ playbackTime: 900, lastWriter: 'cast', lastUpdated: new Date() })
+    await expect(report(600)).resolves.toBe(true)
+    expect(store.playbackTime).toBe(600)
+  })
+
   it('never writes a client-supplied mediaId over the resolved one', async () => {
     await upsertPlaybackFromCast({
       userId: USER,
