@@ -71,7 +71,13 @@ export class CastTransport {
 
   attach(target) {
     this.#target = target
-    if (this.#enabled) this.#attachRemote()
+    if (!this.#enabled) return
+    // setEnabled can land before the media host has a target: on a client-side
+    // navigation `adopted` is already true on the first render, while
+    // Player.useMedia() is still null. Without syncing here the store would
+    // keep showing the local element until the receiver's next tick.
+    this.#attachRemote()
+    this.#initialSync()
   }
 
   detach() {
@@ -116,7 +122,7 @@ export class CastTransport {
    */
   #initialSync() {
     const player = getRemote()?.player
-    if (!player || !this.#target) return
+    if (!player || !this.#target || !player.isMediaLoaded) return
     this.#dispatch('durationchange', 'timeupdate', 'volumechange')
     this.#dispatch(player.isPaused ? 'pause' : 'play')
     const PS = playerStates()
@@ -168,6 +174,14 @@ export class CastTransport {
         this.#dispatch('timeupdate')
       },
       [E.DURATION_CHANGED]: () => this.#dispatch('durationchange'),
+      // targetOverride refuses ownership until the receiver reports media
+      // loaded, so this is the moment the bridge becomes able to serve the
+      // transport at all. Nothing else dispatches then, and the store only
+      // re-reads properties on events — without this it would go on showing
+      // the local element's zeroes.
+      [E.IS_MEDIA_LOADED_CHANGED]: () => {
+        if (player.isMediaLoaded) this.#initialSync()
+      },
       [E.VOLUME_LEVEL_CHANGED]: () => this.#dispatch('volumechange'),
       [E.IS_MUTED_CHANGED]: () => this.#dispatch('volumechange'),
       [E.IS_PAUSED_CHANGED]: () => this.#dispatch(player.isPaused ? 'pause' : 'play'),
@@ -188,6 +202,11 @@ export class CastTransport {
     }
 
     for (const [type, handler] of Object.entries(this.#listeners)) {
+      // An event name the installed SDK does not define arrives here as the
+      // string "undefined" (object keys stringify), which would register a
+      // listener nothing ever fires. Beta drift upstream should cost a missing
+      // update, not a phantom subscription.
+      if (!type || type === 'undefined') continue
       remote.controller.addEventListener(type, handler)
     }
     this.#attached = true

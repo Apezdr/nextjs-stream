@@ -76,6 +76,7 @@ function setupSdk({ isConnected = true, isMediaLoaded = true, isPaused = false, 
         IS_MUTED_CHANGED: 'isMutedChanged',
         IS_PAUSED_CHANGED: 'isPausedChanged',
         PLAYER_STATE_CHANGED: 'playerStateChanged',
+        IS_MEDIA_LOADED_CHANGED: 'isMediaLoadedChanged',
       },
       CastContext: { getInstance: () => ({ getCurrentSession: () => null }) },
       RemotePlayer: function RemotePlayer() {
@@ -268,9 +269,28 @@ describe('CastTransport handoff and listener hygiene', () => {
     const { listeners } = setupSdk()
     const t = new CastTransport()
     t.setEnabled(true)
+    // Count what one registration installs rather than hardcoding a number —
+    // the invariant is that re-attaching adds nothing, not how many events the
+    // bridge happens to mirror today.
+    const afterEnable = Object.values(listeners).flat().length
+    expect(afterEnable).toBeGreaterThan(0)
+
     t.attach(makeTarget().el)
     t.attach(makeTarget().el)
-    expect(Object.values(listeners).flat().length).toBe(6)
+    expect(Object.values(listeners).flat().length).toBe(afterEnable)
+  })
+
+  it('never subscribes to an event name the installed SDK does not define', () => {
+    const { listeners } = setupSdk()
+    delete globalThis.cast.framework.RemotePlayerEventType.IS_MEDIA_LOADED_CHANGED
+
+    const t = new CastTransport()
+    t.attach(makeTarget().el)
+    t.setEnabled(true)
+
+    // Object keys stringify, so a missing name would otherwise register under
+    // the literal string "undefined" and quietly never fire.
+    expect(Object.keys(listeners)).not.toContain('undefined')
   })
 
   it('hands the receiver position to the local element, paused, when the session ends', () => {

@@ -250,14 +250,24 @@ export function clearCastHint() {
   }
 }
 
+// Whether a live session has been observed in this page's lifetime. Until one
+// has, "not casting" is not authoritative — see persistCastHint.
+let sawActiveSession = false
+
 /** Mirror the current snapshot into the hint. Called whenever cast state moves. */
 function persistCastHint(snapshot) {
   try {
     if (!snapshot?.active) {
-      // Authoritative: the SDK is loaded and says nothing is casting.
-      clearCastHint()
+      // Only authoritative once a session has actually been seen. On a cold
+      // load the SDK becomes available BEFORE it finishes resuming, so the
+      // first read is always inactive — clearing on it would delete the very
+      // breadcrumb that is about to be needed, taking the chip's route and the
+      // autoplay suppression with it. A genuinely stale hint is still cleared,
+      // by CastBootstrap once the resume window has passed.
+      if (sawActiveSession) clearCastHint()
       return
     }
+    sawActiveSession = true
     globalThis.localStorage?.setItem(
       HINT_KEY,
       JSON.stringify({
@@ -279,6 +289,55 @@ export function hintMatchesSource(url) {
   const hint = readCastHint()
   if (!hint || !url) return false
   return castMatchesSource({ ...hint, active: true }, url)
+}
+
+/**
+ * Ask the receiver what it is playing.
+ *
+ * A RemotePlayer only learns about media for a session this page did not start
+ * when something requests a media status, and in the whole stack exactly one
+ * thing ever does: GoogleCastProvider.onSessionStateChanged, which fires only
+ * on a live SESSION_RESUMED event. The listener that delivers that event is
+ * installed by registerCastFramework, which only a mounted player reaches.
+ *
+ * So a session resumed on a page with no player — which is precisely what the
+ * app-wide bootstrap does — leaves the RemotePlayer permanently empty:
+ * isMediaLoaded false, no media info, no position. Everything downstream then
+ * quietly declines to act, because each of those checks is individually
+ * correct. Asking directly is the missing step.
+ *
+ * Fired at most once per session, and only when nothing is loaded.
+ */
+let statusRequestedFor = null
+
+function ensureRemoteMediaStatus(onSettled) {
+  try {
+    const context = getContext()
+    const session = context?.getCurrentSession?.()
+    if (!session) return
+
+    const player = getRemote()?.player
+    if (!player || player.isMediaLoaded) return
+
+    const sessionId = session.getSessionId?.() ?? 'unknown'
+    if (statusRequestedFor === sessionId) return
+    statusRequestedFor = sessionId
+
+    const media = session.getSessionObj?.()?.media?.[0]
+    const Request = globalThis.chrome?.cast?.media?.GetStatusRequest
+    if (!media?.getStatus || !Request) return
+
+    media.getStatus(
+      new Request(),
+      () => onSettled?.(),
+      () => {
+        // Let a later change try again rather than latching on one failure.
+        statusRequestedFor = null
+      }
+    )
+  } catch {
+    statusRequestedFor = null
+  }
 }
 
 // Every mounted consumer's onChange, so a stop can notify them all at once
@@ -321,7 +380,11 @@ export function subscribeCast(onChange) {
     // Every state change updates the breadcrumb before waking React, so the
     // hint is written by the SDK's own events rather than during a render.
     const notify = () => {
-      persistCastHint(readCastSnapshot())
+      const snapshot = readCastSnapshot()
+      persistCastHint(snapshot)
+      // A live session with nothing loaded means nobody has asked the receiver
+      // what it is playing. Ask, and re-notify when the answer lands.
+      if (snapshot.active && !snapshot.mediaLoaded) ensureRemoteMediaStatus(onChange)
       onChange()
     }
 
