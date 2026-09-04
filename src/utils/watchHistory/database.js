@@ -14,6 +14,36 @@ import { createLogger } from '@src/lib/logger'
 const log = createLogger('WatchHistory.Database')
 
 /**
+ * Positions below this never overwrite a resume point that is already worth
+ * keeping.
+ *
+ * A player reports where it currently is, and every player passes through
+ * ~0 on its way to somewhere: on mount before the saved position is seeked,
+ * after a source swap, when a Cast provider forces the element back to zero
+ * on disconnect. A heartbeat that lands in that window is not a viewing
+ * position — it is the player booting — and a blind write turns a two-hour
+ * resume point into "1.7 seconds", unrecoverably.
+ *
+ * The web player has refused to send these since the Cast-disconnect bug
+ * (MIN_PERSISTED_POSITION_S in WithPlaybackTracker), but a client-side rule
+ * only protects the client that implements it: the RN apps guard on
+ * `currentTime > 0`, which lets 0.5s through, and their heartbeat is on a
+ * 30-second interval — so an organic write under two seconds essentially
+ * cannot happen, while a spurious one destroys the row. Production carried
+ * seven such rows on TV devices (0.55s, 0.74s, 0.86s, 1.16s, 1.50s, 1.71s,
+ * 1.87s) against ~490 rows from those devices.
+ *
+ * So the floor lives here, at the write chokepoint every client shares.
+ *
+ * The cost is one edge: a viewer who deliberately restarts a title and stops
+ * again inside the first two seconds keeps their old position until the next
+ * heartbeat carries a real one. That is the same trade the web client has
+ * been making, and it is the right way round — the alternative loses the
+ * position outright.
+ */
+export const MIN_PERSISTED_POSITION_S = 2
+
+/**
  * Upsert a single playback entry for a user
  * Atomic operation: updates existing or creates new
  * 
@@ -80,9 +110,36 @@ export async function upsertPlayback({
     }
     const filter = { userId: userIdObj, normalizedVideoId }
 
+    // Apply the resume floor (see MIN_PERSISTED_POSITION_S). Only the position
+    // is withheld — liveness, pause state and device still update, so the row
+    // stays correct about the session that is running; it just does not forget
+    // where the viewer was.
+    //
+    // Read-then-write is safe here because the branch only ever REMOVES a
+    // field from the write: two racing sub-threshold beats both keep the
+    // stored position, and a real position landing in between is not
+    // overwritten by either.
+    let update = updateDoc
+    if (playbackTime < MIN_PERSISTED_POSITION_S) {
+      const existing = await collection.findOne(filter, { projection: { playbackTime: 1 } })
+      if (existing && (existing.playbackTime ?? 0) >= MIN_PERSISTED_POSITION_S) {
+        const { playbackTime: _startingUp, ...keepPosition } = updateDoc.$set
+        update = { $set: keepPosition }
+        log.debug(
+          {
+            userId: userIdObj.toString(),
+            normalizedVideoId,
+            reported: playbackTime,
+            kept: existing.playbackTime,
+          },
+          'Sub-threshold position ignored; stored resume point kept'
+        )
+      }
+    }
+
     let result
     try {
-      result = await collection.updateOne(filter, updateDoc, { upsert: true })
+      result = await collection.updateOne(filter, update, { upsert: true })
     } catch (error) {
       // Once the partial unique index {userId, mediaId} exists, a quality
       // swap (same folder, new file → new nid, same mediaId) makes this
@@ -99,7 +156,7 @@ export async function upsertPlayback({
           mediaId: resolved.mediaId,
           normalizedVideoId: { $ne: normalizedVideoId },
         })
-        result = await collection.updateOne(filter, updateDoc, { upsert: true })
+        result = await collection.updateOne(filter, update, { upsert: true })
       } else {
         throw error
       }
