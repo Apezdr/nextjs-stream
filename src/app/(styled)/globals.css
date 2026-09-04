@@ -112,36 +112,77 @@ body.playing #backdrop-cover {
   transition-delay: .55s, .2s, .55s;
 }
 
-.media-rating {
-  transition: height 2s ease-out, opacity .55s ease-out, margin 2s ease-out;
-  transition-delay: 1.1s;
-  height: 25px;
+/* Top-right metadata rail: rating → decode-health chip → resolution.
+ *
+ * These were three independently absolutely-positioned spans, each carrying its
+ * own `top` — so the resolution badge's offset was a literal in title.js that
+ * had to know whether a rating was present, and adding a third row meant a
+ * four-case matrix. Worse, the arithmetic could never be right: `.media-rating`
+ * declared height:25px while its child image renders at 80px, overflowing the
+ * box by 55px, and the TV-ratings path renders text at 28px instead. One flex
+ * column instead, so a new row is just a new child.
+ *
+ * The breakpoint lives here rather than as `hidden sm:block` on the element:
+ * globals.css is emitted after `@tailwind utilities`, so this rule's
+ * `display: flex` would beat both `hidden` and `sm:block` at equal specificity.
+ * (The player box is `aspect-video w-full` — 219px tall on a 390px phone — so
+ * the stack genuinely has no room below sm.) */
+.media-rail {
+  display: none;
   position: absolute;
   top: 4rem;
   right: 2.5rem;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1rem;
+}
+
+@media (min-width: 640px) {
+  .media-rail {
+    display: flex;
+  }
+}
+
+/* No `height` on any rail child. It was a harmless lie while these were
+ * absolutely positioned with overflow:visible — in flow it would clip the
+ * rating to a third of its size, and animating it to 0 on exit would jump every
+ * row below it 25px mid-fade. Opacity only. */
+.media-rating {
+  transition: opacity .55s ease-out, margin 2s ease-out;
+  transition-delay: 1.1s;
+}
+
+.media-decode {
+  transition: opacity .55s ease-out;
+  transition-delay: 1.1s;
 }
 
 .media-HDR {
   transition: opacity .55s ease-out, margin 2s ease-out;
   transition-delay: 1.1s;
   height: 30px;
-  position: absolute;
-  /* top: 10rem; */
-  right: 2.5rem;
   background: #ffffff2b;
   padding: 0px 12px;
   border-radius: 4px;
 }
 
+/* Staggered exit, top row first — the same 0.2s → 0.55s spread the previous
+ * rules produced by accident (their delay lists were shorter than their
+ * property lists, so `.55s, .2s` wrapped and landed on opacity differently in
+ * each rule). Stated outright now, with the chip splitting the difference. */
 .playing.media-rating {
   opacity: 0;
-  height: 0;
-  transition-delay: .55s, .2s;
+  transition-delay: .2s;
+}
+
+.playing.media-decode {
+  opacity: 0;
+  transition-delay: .38s;
 }
 
 .playing.media-HDR {
   opacity: 0;
-  transition-delay: .55s, .2s;
+  transition-delay: .55s;
 }
 
 /* */

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Player, Controls, Gesture, Hotkey, BufferingIndicator, SpinnerIcon } from './videojs'
 
 import * as Buttons from './buttons'
@@ -12,6 +12,8 @@ import { Title, VideoMetadata } from './title'
 import NextUpCard from './NextUpCard'
 import CastingOverlay from './CastingOverlay'
 import useIsCasting from './useIsCasting'
+import useDecodeHealth from './useDecodeHealth'
+import { DecodeHealthModal } from './DecodeHealthNotice'
 
 /**
  * Declarative pointer gestures: tap toggles pause, center double-tap toggles
@@ -70,6 +72,24 @@ export function VideoLayout({
   const { isCasting } = useIsCasting(videoURL)
   const store = Player.usePlayer()
   const media = Player.useMedia()
+
+  // Whether this browser is quietly playing a lesser version of the title.
+  const { verdict: decodeHealth, dismissedTier, dismiss: dismissDecodeHealth } = useDecodeHealth(
+    videoURL,
+    isCasting
+  )
+  // Reopening from the chip, after the modal has already been dismissed.
+  const [decodeNoticeReopened, setDecodeNoticeReopened] = useState(false)
+  // Derived, not an effect: dismissing writes the session flag AND advances
+  // dismissedTier, which closes the auto-open branch on the next render.
+  const decodeNoticeOpen =
+    Boolean(decodeHealth) && (decodeNoticeReopened || dismissedTier !== decodeHealth.tier)
+  // Stable identity: the modal keys its native keydown listener on this, and a
+  // new function every render would rebind it on every store tick.
+  const closeDecodeNotice = useCallback(() => {
+    setDecodeNoticeReopened(false)
+    dismissDecodeHealth()
+  }, [dismissDecodeHealth])
   const captionsSnapshot = Player.usePlayer((s) => ({
     textTrackList: s.textTrackList,
   }))
@@ -116,8 +136,21 @@ export function VideoLayout({
         </Controls.Group>
         {/* End Top Bar */}
         <div className="flex-1" />
-        <Controls.Group className="flex !h-auto max-w-sm flex-col justify-end !pointer-events-none sm:max-w-lg xl:max-w-3xl">
-          <VideoMetadata dims={dimsVal} hdr={hdrVal} mediaMetadata={mediaMetadata} logo={logo} />
+        {/* `group` so the decode chip can take the pointer only while the
+            controls are up — Controls.Root carries data-interactive and the tap
+            gesture bails on closest('[data-interactive]'), so a permanently
+            clickable badge would kill tap-to-pause in the top-right corner even
+            at opacity 0. ControlsGroup receives the same state attrs as the
+            root, so data-visible is stamped here too. */}
+        <Controls.Group className="group flex !h-auto max-w-sm flex-col justify-end !pointer-events-none sm:max-w-lg xl:max-w-3xl">
+          <VideoMetadata
+            dims={dimsVal}
+            hdr={hdrVal}
+            mediaMetadata={mediaMetadata}
+            logo={logo}
+            decodeHealth={decodeHealth}
+            onOpenDecodeHealth={() => setDecodeNoticeReopened(true)}
+          />
         </Controls.Group>
         <div className="flex-1" />
         <Controls.Group className="pointer-events-auto flex w-full items-center px-2">
@@ -156,6 +189,19 @@ export function VideoLayout({
           <Buttons.Fullscreen align="end" />
         </Controls.Group>
       </Controls.Root>
+
+      {/* Sibling of Controls.Root, not a child: inside it the modal would
+          inherit both pointer-events-none and the data-[visible] fade, so it
+          would dissolve after two seconds of stillness — the exact behaviour a
+          read-and-dismiss dialog must not have. Inside Player.Container though,
+          because fullscreen is requested on the container and anything outside
+          it disappears the moment the viewer goes fullscreen. */}
+      <DecodeHealthModal
+        verdict={decodeHealth}
+        open={decodeNoticeOpen}
+        delayMs={decodeNoticeReopened ? 0 : 2500}
+        onClose={closeDecodeNotice}
+      />
 
       {/* Subtitle Editor - Only rendered for admin users */}
       {isAdmin && adminProps && isSubtitleEditorOpen && captions && (
