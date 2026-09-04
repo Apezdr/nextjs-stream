@@ -106,7 +106,7 @@ export default function EpisodeThumbnail({
             )}
             blurDataURL={episode.thumbnailBlurhash ? `data:image/png;base64,${episode.thumbnailBlurhash}` : undefined}
             placeholder={episode.thumbnailBlurhash ? "blur" : "empty"}
-            quality={80}
+            quality={75}
           />
         )}
         
