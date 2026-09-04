@@ -24,6 +24,9 @@ export * from './fieldPaths'
 // Identity + delivery-fact resolution (shared by movie and TV ingestion)
 export * from './deliveryFacts'
 
+// Which URL a document's normalizedVideoId must be derived from
+export * from './videoIdentityWrite'
+
 // Field absence detection (drops stale optional fields no server reports anymore)
 export {
   detectAbsentFields,
