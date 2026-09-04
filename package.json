@@ -1,6 +1,6 @@
 {
   "name": "nextjs-stream",
-  "version": "2024.11.20",
+  "version": "2026.09.01",
   "private": true,
   "scripts": {
     "postinstall": "patch-package",
