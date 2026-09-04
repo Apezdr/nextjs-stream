@@ -249,6 +249,10 @@ export const multiServerHandler = createMultiServerURLHandler(serverManager.getA
 // Basic configuration exports
 export const organizrURL = process.env.ORGANIZR_URL || null
 export { siteTitle, siteDescription } from './publicConfig'
+
+// Origins allowed as forward-auth login-redirect targets (/api/authz/verify).
+// Explicit allow-list — never build that redirect from a forwarded header alone.
+export { gatedAuthOrigins, gatedAuthTrustedOrigins, isGatedAuthUrl } from './gatedAuthOrigins'
 export const adminUserEmails = process.env.ADMIN_USER_EMAILS
   ? process.env.ADMIN_USER_EMAILS.split(',').map((email) => email.trim())
   : []

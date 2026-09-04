@@ -1,11 +1,13 @@
 'use client'
 
 import { authClient } from '@src/lib/auth-client'
+import { normalizeAuthCallbackURL } from '@src/utils/authCallbackUrl'
 import GoogleButton from 'react-google-button'
 import { DiscordLoginButton, FacebookLoginButton } from 'react-social-login-buttons'
 
 export default function SignInButtons({ callbackUrl = '/list', enabledProviders = {} }) {
   const { google: isGoogleEnabled, discord: isDiscordEnabled, facebook: isFacebookEnabled } = enabledProviders
+  const normalizedCallbackUrl = normalizeAuthCallbackURL(callbackUrl, '/list')
 
   // Check if any auth providers are enabled
   const hasAnyProvider = isGoogleEnabled || isDiscordEnabled || isFacebookEnabled
@@ -25,18 +27,18 @@ export default function SignInButtons({ callbackUrl = '/list', enabledProviders 
   return (
     <>
       {isGoogleEnabled && (
-        <GoogleButton onClick={() => authClient.signIn.social({ provider: 'google', callbackURL: callbackUrl })} />
+        <GoogleButton onClick={() => authClient.signIn.social({ provider: 'google', callbackURL: normalizedCallbackUrl })} />
       )}
       {isDiscordEnabled && (
         <DiscordLoginButton
           className="max-w-[240px] !text-sm"
-          onClick={() => authClient.signIn.social({ provider: 'discord', callbackURL: callbackUrl })}
+          onClick={() => authClient.signIn.social({ provider: 'discord', callbackURL: normalizedCallbackUrl })}
         />
       )}
       {isFacebookEnabled && (
         <FacebookLoginButton
           className="max-w-[240px] !text-sm"
-          onClick={() => authClient.signIn.social({ provider: 'facebook', callbackURL: callbackUrl })}
+          onClick={() => authClient.signIn.social({ provider: 'facebook', callbackURL: normalizedCallbackUrl })}
         />
       )}
     </>

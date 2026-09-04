@@ -3,6 +3,7 @@
 // Handles the interactive parts of the RFC 8628 device authorization page.
 import { useState, useReducer } from 'react'
 import { authClient } from '@src/lib/auth-client'
+import { normalizeAuthCallbackURL } from '@src/utils/authCallbackUrl'
 import { useRouter } from 'next/navigation'
 
 interface DeviceAuthClientProps {
@@ -128,7 +129,8 @@ export default function DeviceAuthClient({
     const callbackUrl = userCode
       ? `/device?user_code=${encodeURIComponent(userCode)}`
       : '/device'
-    authClient.signIn.social({ provider: provider as 'google' | 'discord', callbackURL: callbackUrl })
+    const normalizedCallbackUrl = normalizeAuthCallbackURL(callbackUrl, '/device')
+    authClient.signIn.social({ provider: provider as 'google' | 'discord', callbackURL: normalizedCallbackUrl })
   }
 
   if (success) {
