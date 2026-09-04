@@ -37,8 +37,8 @@
     "@opentelemetry/semantic-conventions": "^1.41.1",
     "@tailwindcss/forms": "^0.5.11",
     "@vercel/otel": "^2.1.2",
-    "@videojs/react": "10.0.0-beta.26",
     "@videojs/media": "10.0.0-beta.26",
+    "@videojs/react": "10.0.0-beta.26",
     "axios": "^1.16.0",
     "better-auth": "1.6.9",
     "chalk": "^5.6.2",
@@ -77,6 +77,7 @@
   "devDependencies": {
     "@tailwindcss/aspect-ratio": "^0.4.2",
     "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
     "@types/lodash": "^4.17.23",
     "@types/node": "^25.1.0",
     "@types/react": "19.2.14",
