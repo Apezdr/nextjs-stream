@@ -1,4 +1,5 @@
 import { cache } from 'react'
+import { DEFAULT_IMAGE_QUALITY, nearestAllowedQuality } from '@src/utils/imageQualities'
 
 export const classNames = cache((...classes) => {
   return classes.filter(Boolean).join(' ')
@@ -282,21 +283,27 @@ export const getResolutionLabel = cache((dims) => {
 })
 
 /**
- * Builds a Next.js optimized image URL for preloading
- * Replicates Next.js default loader behavior: /_next/image?url={encoded_src}&w={width}&q={quality}
+ * Builds a Next.js optimized image URL for preloading.
+ *
+ * Replicates the default loader's shape: /_next/image?url={src}&w={width}&q={quality}.
+ * Because this bypasses <Image>, nothing validates `quality` on the way out —
+ * so it is snapped to the configured allow-list here. It previously clamped to
+ * 1-100, which is the wrong range: the optimizer refuses anything not in
+ * images.qualities, and a rejected preload is silent (no console error, just a
+ * wasted round trip and a cache miss on the real fetch).
+ *
  * @param {string} src - The original image source URL
  * @param {number} width - The desired width for optimization
- * @param {number} quality - The desired quality (1-100, defaults to 75)
+ * @param {number} quality - The desired quality; snapped to the nearest allowed value
  * @returns {string|null} The optimized Next.js image URL or null if no src
  */
-export const buildNextOptimizedImageUrl = cache((src, width, quality = 75) => {
+export const buildNextOptimizedImageUrl = cache((src, width, quality = DEFAULT_IMAGE_QUALITY) => {
   if (!src || !width) return null
-  
-  // Ensure quality is between 1-100
-  const clampedQuality = Math.min(100, Math.max(1, quality || 75))
-  
+
+  const allowedQuality = nearestAllowedQuality(quality)
+
   // Encode the source URL for the Next.js image optimization endpoint
   const encodedSrc = encodeURIComponent(src)
-  
-  return `/_next/image?url=${encodedSrc}&w=${width}&q=${clampedQuality}`
+
+  return `/_next/image?url=${encodedSrc}&w=${width}&q=${allowedQuality}`
 })

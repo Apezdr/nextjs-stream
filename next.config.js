@@ -2,6 +2,11 @@
 const dotenv = require('dotenv')
 dotenv.config()
 
+// Shared with buildNextOptimizedImageUrl and buildImgproxyTarget, both of
+// which build /_next/image URLs that never pass through <Image>'s prop
+// validation. See src/utils/imageQualities.js.
+const { IMAGE_QUALITIES } = require('./src/utils/imageQualities')
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -75,7 +80,7 @@ const nextConfig = {
       port: '',
       pathname: '/**',
     }],
-    qualities: [25, 50, 75, 90, 100],
+    qualities: IMAGE_QUALITIES,
     // remotePatterns: process.env.REMOTE_PATTERNS
     //   ? process.env.REMOTE_PATTERNS.split(',').map((pattern) => {
     //       const [protocol, hostname] = pattern.trim().split('://')
