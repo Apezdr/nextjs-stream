@@ -1,4 +1,5 @@
 import { createHmac } from 'node:crypto'
+import { isAllowedQuality } from '@src/utils/imageQualities'
 
 /**
  * Optional imgproxy offload for next/image optimization.
@@ -89,7 +90,15 @@ export function buildImgproxyTarget(searchParams: URLSearchParams): ImgproxyTarg
   // traffic compared to posters/backdrops from the file servers and TMDB.
   if (!src || !/^https?:\/\//i.test(src)) return null
   if (!Number.isInteger(width) || width <= 0) return null
-  if (!Number.isInteger(quality) || quality <= 0 || quality > 100) return null
+
+  // `q` is checked against images.qualities, not merely 1-100. This branch
+  // runs in middleware and returns before Next's optimizer route, so it is the
+  // ONLY place that allow-list can be enforced on the imgproxy path — without
+  // this, an out-of-set quality was rejected with imgproxy off and quietly
+  // honored with it on, which is both an inconsistency and a hole in the
+  // control Next added the list for. Falling through to the built-in optimizer
+  // (rather than 400-ing here) keeps one rejection path for both configs.
+  if (!isAllowedQuality(quality)) return null
 
   // rs:fit keeps aspect ratio and never upscales — the same contract as the
   // built-in optimizer. The source URL is base64url-encoded to survive query

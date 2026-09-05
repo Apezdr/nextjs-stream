@@ -1,4 +1,5 @@
 import { buildImgproxyTarget, signImgproxyPath } from '@src/lib/imgproxy'
+import { IMAGE_QUALITIES } from '@src/utils/imageQualities'
 
 const IMGPROXY_ENV_VARS = ['IMGPROXY_URL', 'IMGPROXY_KEY', 'IMGPROXY_SALT', 'IMGPROXY_REQUEST_MODE']
 
@@ -108,5 +109,41 @@ describe('buildImgproxyTarget', () => {
     expect(buildImgproxyTarget(params({ w: undefined }))).toBeNull()
     expect(buildImgproxyTarget(params({ w: '-1' }))).toBeNull()
     expect(buildImgproxyTarget(params({ q: '101' }))).toBeNull()
+  })
+
+  // This branch runs in middleware and returns before Next's optimizer route,
+  // so it is the only place images.qualities can be enforced on the imgproxy
+  // path. Without these, an off-list quality was refused with imgproxy off and
+  // quietly honored with it on.
+  describe('the images.qualities allow-list', () => {
+    beforeEach(() => {
+      process.env.IMGPROXY_URL = 'http://imgproxy:8080'
+    })
+
+    it('offloads every configured quality', () => {
+      for (const quality of IMAGE_QUALITIES) {
+        expect(buildImgproxyTarget(params({ q: String(quality) }))).not.toBeNull()
+      }
+    })
+
+    it('refuses an in-range quality that is not on the list', () => {
+      // 80 is a perfectly ordinary number and was accepted here before.
+      expect(buildImgproxyTarget(params({ q: '80' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: '1' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: '99' }))).toBeNull()
+    })
+
+    it('cannot be talked past with a fractional or padded value', () => {
+      expect(buildImgproxyTarget(params({ q: '75.5' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: '0075' }))).not.toBeNull() // Number('0075') === 75
+      expect(buildImgproxyTarget(params({ q: '7 5' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: '' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: undefined }))).toBeNull()
+    })
+
+    it('puts the honored quality into the imgproxy path', () => {
+      const target = buildImgproxyTarget(params({ q: '90' }))
+      expect(target.url).toContain('/q:90/')
+    })
   })
 })
