@@ -83,7 +83,10 @@ export function buildImgproxyTarget(searchParams: URLSearchParams): ImgproxyTarg
 
   const src = searchParams.get('url')
   const width = Number(searchParams.get('w'))
-  const quality = Number(searchParams.get('q'))
+  // Kept as the RAW string: isAllowedQuality mirrors Next's own /^[0-9]+$/
+  // gate, and coercing here first would throw that check away — Number('1e2')
+  // is 100, which the built-in optimizer rejects outright.
+  const rawQuality = searchParams.get('q')
 
   // Only absolute remote sources are offloaded — imgproxy cannot resolve
   // app-relative /public paths, and those are a negligible share of image
@@ -98,14 +101,14 @@ export function buildImgproxyTarget(searchParams: URLSearchParams): ImgproxyTarg
   // honored with it on, which is both an inconsistency and a hole in the
   // control Next added the list for. Falling through to the built-in optimizer
   // (rather than 400-ing here) keeps one rejection path for both configs.
-  if (!isAllowedQuality(quality)) return null
+  if (!isAllowedQuality(rawQuality)) return null
 
   // rs:fit keeps aspect ratio and never upscales — the same contract as the
   // built-in optimizer. The source URL is base64url-encoded to survive query
   // strings and special characters. Output format is left to imgproxy's
   // Accept-header detection (enable IMGPROXY_ENABLE_WEBP_DETECTION /
   // IMGPROXY_ENABLE_AVIF_DETECTION on the imgproxy container).
-  const path = `/rs:fit:${width}:0/q:${quality}/${Buffer.from(src).toString('base64url')}`
+  const path = `/rs:fit:${width}:0/q:${Number(rawQuality)}/${Buffer.from(src).toString('base64url')}`
   const signature =
     config.key && config.salt ? signImgproxyPath(path, config.key, config.salt) : 'insecure'
 

@@ -135,10 +135,20 @@ describe('buildImgproxyTarget', () => {
 
     it('cannot be talked past with a fractional or padded value', () => {
       expect(buildImgproxyTarget(params({ q: '75.5' }))).toBeNull()
-      expect(buildImgproxyTarget(params({ q: '0075' }))).not.toBeNull() // Number('0075') === 75
+      expect(buildImgproxyTarget(params({ q: '0075' }))).not.toBeNull() // digits; Next reads 75 too
       expect(buildImgproxyTarget(params({ q: '7 5' }))).toBeNull()
       expect(buildImgproxyTarget(params({ q: '' }))).toBeNull()
       expect(buildImgproxyTarget(params({ q: undefined }))).toBeNull()
+    })
+
+    // Verified against Next 16.2.6 by curl: each of these is a 400 at the
+    // built-in optimizer ("q parameter must be an integer between 1 and 100"),
+    // so offloading them would make the same URL succeed with IMGPROXY_URL set
+    // and fail without it.
+    it('refuses what the built-in optimizer would refuse, not merely what Number() dislikes', () => {
+      expect(buildImgproxyTarget(params({ q: '1e2' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: '0x4B' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: ' 75 ' }))).toBeNull()
     })
 
     it('puts the honored quality into the imgproxy path', () => {

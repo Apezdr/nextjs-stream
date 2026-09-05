@@ -45,6 +45,21 @@ describe('isAllowedQuality', () => {
     expect(isAllowedQuality(undefined)).toBe(false)
     expect(isAllowedQuality(Infinity)).toBe(false)
   })
+
+  // Next gates `q` on /^[0-9]+$/ before parsing it, so these are all 400s at
+  // the built-in optimizer. A bare Number() reads them as 100, 75 and 75 —
+  // which would let the imgproxy path serve what the built-in path refuses.
+  it('rejects the string forms Number() would silently accept', () => {
+    expect(isAllowedQuality('1e2')).toBe(false)
+    expect(isAllowedQuality('0x4B')).toBe(false)
+    expect(isAllowedQuality(' 75 ')).toBe(false)
+    expect(isAllowedQuality('75.0')).toBe(false)
+    expect(isAllowedQuality('+75')).toBe(false)
+  })
+
+  it('still accepts the digit strings Next accepts', () => {
+    expect(isAllowedQuality('0075')).toBe(true) // leading zeros are digits
+  })
 })
 
 describe('nearestAllowedQuality', () => {

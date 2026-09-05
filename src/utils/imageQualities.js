@@ -41,14 +41,25 @@ const DEFAULT_IMAGE_QUALITY = 75
  * Whether `quality` is one this deployment will serve.
  *
  * Accepts the string form a query parameter arrives as, so callers reading
- * from URLSearchParams do not each repeat the coercion.
+ * from URLSearchParams do not each repeat the coercion — but deliberately
+ * mirrors Next's own parse rather than using a bare `Number()`.
+ *
+ * Next's optimizer (`ImageOptimizerCache.validateParams`) gates `q` on
+ * `/^[0-9]+$/` BEFORE parsing it, so a query value must be a pure digit
+ * string. `Number()` is looser in ways that matter: it happily reads '1e2'
+ * and '0x4B' as 100 and 75, and trims whitespace in ' 75 '. Accepting those
+ * here would let the imgproxy path serve requests the built-in path answers
+ * with a 400 — reintroducing, in miniature, exactly the
+ * behaves-differently-depending-on-IMGPROXY_URL split this module exists to
+ * close.
  *
  * @param {number|string|null|undefined} quality
  * @returns {boolean}
  */
 function isAllowedQuality(quality) {
+  if (typeof quality === 'string' && !/^[0-9]+$/.test(quality)) return false
   const requested = Number(quality)
-  return Number.isFinite(requested) && IMAGE_QUALITIES.includes(requested)
+  return Number.isInteger(requested) && IMAGE_QUALITIES.includes(requested)
 }
 
 /**
