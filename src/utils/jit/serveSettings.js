@@ -38,8 +38,21 @@ export async function getCachedJitServeSettings() {
   }
 }
 
+/**
+ * Drop this process's runtime-settings snapshot after an admin write.
+ *
+ * Other instances still converge within TTL_MS, but the instance handling the
+ * mutation must not render a freshly revalidated player with the old setting.
+ */
+export function invalidateCachedJitServeSettings() {
+  cached = { value: null, expiresAt: 0 }
+}
+
 /** Test hook — inject settings (or null) and bypass the DB entirely. */
 export function _setJitServeSettingsForTests(value) {
-  cached = { value, expiresAt: value === undefined ? 0 : Date.now() + TTL_MS }
-  if (value === undefined) cached = { value: null, expiresAt: 0 }
+  if (value === undefined) {
+    invalidateCachedJitServeSettings()
+    return
+  }
+  cached = { value, expiresAt: Date.now() + TTL_MS }
 }

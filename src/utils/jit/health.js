@@ -90,7 +90,12 @@ export async function isTranscoderHealthy(origin) {
   return healthy
 }
 
+/** Drop cached liveness/capacity decisions after the queue policy changes. */
+export function invalidateTranscoderHealthCache() {
+  cache.clear()
+}
+
 /** Test hook — clears the module-level cache. */
 export function _resetHealthCacheForTests() {
-  cache.clear()
+  invalidateTranscoderHealthCache()
 }

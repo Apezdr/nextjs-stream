@@ -1,5 +1,6 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
 //import { updateSettingsInDB } from '@src/utils/sync_db'
 import {
   AutoSyncManager,
@@ -7,6 +8,8 @@ import {
   AutoCaptionsManager,
   JitServeSettingsManager,
 } from '@src/utils/admin_database'
+import { invalidateCachedJitServeSettings } from '@src/utils/jit/serveSettings'
+import { invalidateTranscoderHealthCache } from '@src/utils/jit/health'
 
 const autoSyncManager = new AutoSyncManager()
 const syncAgressivenessManager = new SyncAggressivenessManager()
@@ -68,6 +71,15 @@ export async function updateJitServeSettings(formData) {
   }
 
   await jitServeSettingsManager.setJitServeSettings({ mode, maxQueued })
+
+  // The delivery choice is embedded in the Server Component payload as the
+  // player's videoURL. Clear process-local policy decisions first, then evict
+  // every route shape that can hold a previously selected direct/HLS source.
+  invalidateCachedJitServeSettings()
+  invalidateTranscoderHealthCache()
+  revalidatePath('/list/movie/[title]/play', 'page')
+  revalidatePath('/list/tv/[title]/[season]/[episode]/play', 'page')
+  revalidatePath('/list/[...media]', 'page')
 }
 
 export async function updateAutoCaptions(formData) {
