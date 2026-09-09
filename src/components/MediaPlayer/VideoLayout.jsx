@@ -1,7 +1,7 @@
 'use client'
 
-import { useCallback, useState } from 'react'
-import { Player, Controls, Gesture, Hotkey, BufferingIndicator, SpinnerIcon } from './videojs'
+import { useCallback, useRef, useState } from 'react'
+import { Player, Controls, Gesture, Hotkey } from './videojs'
 
 import * as Buttons from './buttons'
 import SubtitleEditorButton from './buttons/SubtitleEditorButton'
@@ -14,6 +14,8 @@ import CastingOverlay from './CastingOverlay'
 import useIsCasting from './useIsCasting'
 import useDecodeHealth from './useDecodeHealth'
 import { DecodeHealthModal } from './DecodeHealthNotice'
+import usePlaybackDiagnostics from './usePlaybackDiagnostics'
+import PlaybackStatusOverlay from './PlaybackStatusOverlay'
 
 /**
  * Declarative pointer gestures: tap toggles pause, center double-tap toggles
@@ -78,6 +80,12 @@ export function VideoLayout({
     videoURL,
     isCasting
   )
+  // Records element / host / store readings side by side whenever the
+  // buffering indicator shows, plus the non-fatal hls.js traffic the framework
+  // discards. Read-only; see usePlaybackDiagnostics for the questions it
+  // exists to answer and how to read the log.
+  const spinnerRef = useRef(null)
+  usePlaybackDiagnostics({ store, media, videoURL, spinnerRef, isCasting })
   // Reopening from the chip, after the modal has already been dismissed.
   const [decodeNoticeReopened, setDecodeNoticeReopened] = useState(false)
   // Derived, not an effect: dismissing writes the session flag AND advances
@@ -109,24 +117,14 @@ export function VideoLayout({
       <Gestures />
       <Hotkeys />
       <CastingOverlay titleLabel={titleLabel} videoURL={videoURL} />
-      {/* data-visible, not data-buffering: BufferingIndicatorDataAttrs is
-          { visible: 'data-visible' }, so the old selector never matched and the
-          spinner has been pinned at opacity-0 since the migration — buffering
-          has looked like a frozen picture with no explanation.
-
-          Hidden while casting. It is centred on the container, and so is the
-          casting banner, which would put a 64px spinner straight through the
-          "Casting to <device>" line. Buffering is genuinely reachable during a
-          session: the transport bridge reports readyState 2 while the receiver
-          buffers, and the store derives waiting from readyState < 3. The
-          receiver draws its own spinner on the television, which is where the
-          person is looking. */}
-      {!isCasting ? (
-        <BufferingIndicator className="pointer-events-none absolute left-1/2 top-1/2 z-20 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity duration-200 data-[visible]:opacity-100">
-          <SpinnerIcon className="h-16 w-16 animate-spin text-white/90" />
-        </BufferingIndicator>
-      ) : null}
-      <Controls.Root className="absolute inset-0 z-10 flex h-full w-full flex-col bg-gradient-to-t from-black/10 to-transparent opacity-0 transition-opacity pointer-events-none data-[visible]:opacity-100">
+      {/* One status surface for cold start, deferred play, mid-stream
+          buffering and errors, read off the element — the framework's
+          <BufferingIndicator> (store.waiting && !paused) was silent for the
+          first two, which on a just-in-time origin is where the wait actually
+          is. Hidden while casting: the casting banner shares this centre and
+          the television draws its own spinner. */}
+      <PlaybackStatusOverlay ref={spinnerRef} videoURL={videoURL} hidden={isCasting} />
+      <Controls.Root className="player-controls absolute inset-0 z-10 flex h-full w-full flex-col bg-gradient-to-t from-black/10 to-transparent opacity-0 transition-opacity pointer-events-none data-[visible]:opacity-100">
         {/* Bottom gradient shown only while hovering the seek bar (rises to
             ~mid-thumbnail height); toggled via :has() in player.css. */}
         <div className="seek-hover-gradient pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 transition-opacity duration-300" />

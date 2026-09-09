@@ -19,6 +19,9 @@
  */
 
 import { getCachedJitServeSettings } from './serveSettings'
+import { createLogger } from '@src/lib/logger'
+
+const log = createLogger('JIT.Health')
 
 const HEALTHY_TTL_MS = 30_000
 const UNHEALTHY_TTL_MS = 10_000
@@ -26,6 +29,19 @@ const PROBE_TIMEOUT_MS = 1_500
 
 /** origin -> { healthy: boolean, expiresAt: number } */
 const cache = new Map()
+
+/**
+ * origin -> what the LAST real probe saw. Serve decisions are fail-closed on
+ * this probe, so when a title is served raw the only useful question is
+ * "what did the probe actually see" — a timeout, a non-200, a full queue —
+ * and how long it took against the 1.5 s budget.
+ */
+const lastProbe = new Map()
+
+/** @returns {{at: number, ms: number, ok: boolean, status?: number, queued?: number, error?: string}|null} */
+export function getLastHealthProbe(origin) {
+  return lastProbe.get(origin) ?? null
+}
 
 /**
  * Max acceptable value of /health's `queued` before we shed to direct play.
@@ -59,20 +75,36 @@ export async function isTranscoderHealthy(origin) {
   if (cached && cached.expiresAt > Date.now()) return cached.healthy
 
   let healthy = false
+  const started = Date.now()
+  const probe = { at: started, ms: 0, ok: false }
+  // Only OUR timer may turn an abort into a verdict. Caught live: Next's
+  // prerender pass aborts dynamic fetches (the same mechanism behind the
+  // "headers() rejects when the prerender is complete" build noise), the
+  // AbortError arrived after 76 ms, and the fail-closed branch below
+  // negative-cached "unhealthy" for 10 s — which the real dynamic render
+  // then read back and served the title raw. The play page prerenders; the
+  // media API route does not, which is why only the page ever went raw.
+  let timedOut = false
+  let foreignAbort = false
   try {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
+    const timer = setTimeout(() => {
+      timedOut = true
+      controller.abort()
+    }, PROBE_TIMEOUT_MS)
     try {
       const res = await fetch(`${origin}/health`, {
         signal: controller.signal,
         cache: 'no-store',
       })
+      probe.status = res.status
       if (res.ok) {
         const ceiling = await maxQueued()
         if (ceiling === null) {
           healthy = true
         } else {
           const body = await res.json().catch(() => null)
+          probe.queued = body ? Number(body.queued ?? 0) : undefined
           healthy = body ? Number(body.queued ?? 0) <= ceiling : true
         }
       }
@@ -81,6 +113,30 @@ export async function isTranscoderHealthy(origin) {
     }
   } catch (e) {
     healthy = false
+    if (e?.name === 'AbortError') {
+      foreignAbort = !timedOut
+      probe.error = timedOut ? `timeout>${PROBE_TIMEOUT_MS}ms` : 'aborted-by-environment'
+    } else {
+      probe.error = String(e?.message ?? e)
+    }
+  }
+  probe.ms = Date.now() - started
+  probe.ok = healthy
+  lastProbe.set(origin, probe)
+
+  if (foreignAbort) {
+    // Not a verdict about the transcoder. Do not cache it: the render that
+    // was aborted is discarded anyway, and the next real probe must run.
+    // Prefer any still-valid prior verdict so a warm process never regresses.
+    const prior = cache.get(origin)
+    if (prior && prior.expiresAt > Date.now()) return prior.healthy
+    return false
+  }
+
+  if (!healthy) {
+    // This is the moment a title silently becomes a raw file for the next
+    // UNHEALTHY_TTL_MS. Loud on purpose.
+    log.warn({ origin, ...probe }, 'transcoder health probe failed — serving raw for 10s')
   }
 
   cache.set(origin, {

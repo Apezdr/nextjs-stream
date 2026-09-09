@@ -326,6 +326,13 @@ async function VideoPlayer({
         mediaMetadata={mediaMetadata}
         logo={logo}
         hdrVal={hdr}
+        // The serve-time delivery decision, for the diagnostics and support:
+        // which transport this page was handed, and why JIT was skipped if it was.
+        delivery={{
+          source: media?.playbackSource === 'jit' ? 'jit' : 'raw',
+          skipReason: media?.jitSkipReason ?? null,
+          skipDetail: media?.jitSkipDetail ?? null,
+        }}
         dimsVal={media.dimensions}
         nextUpCard={{
           mediaTitle: mediaTitle,

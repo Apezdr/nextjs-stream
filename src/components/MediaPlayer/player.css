@@ -16,7 +16,9 @@
 
 /* Lift cues above the control bar while controls are visible.
  * WebKit/Blink only — Firefox keeps the default position. */
-.player-container:has([data-visible]) video::-webkit-media-text-track-container {
+/* Scoped to the controls root: the status overlay stamps data-visible too,
+ * and a loading spinner must not shove the subtitles 70px upward. */
+.player-container:has(.player-controls[data-visible]) video::-webkit-media-text-track-container {
   transform: translateY(-70px);
   transition: transform 0.3s;
 }

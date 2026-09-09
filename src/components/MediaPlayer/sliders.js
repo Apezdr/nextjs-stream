@@ -1,6 +1,7 @@
 'use client'
 
-import { Player, TimeSlider, VolumeSlider, Slider } from './videojs'
+import { Player, TimeSlider, VolumeSlider } from './videojs'
+import ScrubPreview from './ScrubPreview'
 
 // The framework writes slider CSS vars as ready-made percentage strings
 // (e.g. --media-slider-fill: "45.000%"), so they're used directly.
@@ -71,11 +72,7 @@ export function Time({ hasThumbnails }) {
         overflow="clamp"
         className="pointer-events-none !bottom-full z-30 -mb-2 flex flex-col items-center opacity-0 transition-opacity duration-200 group-data-[pointing]:opacity-100"
       >
-        {hasThumbnails ? (
-          // Reads the sprite VTT from the media's kind="metadata" label="thumbnails"
-          // track automatically (parses #xywh media fragments).
-          <Slider.Thumbnail className="block max-h-[160px] min-h-[80px] min-w-[120px] max-w-[180px] overflow-hidden border border-white bg-black" />
-        ) : null}
+        {hasThumbnails ? <ScrubPreview /> : null}
         <ChapterPointerTitle />
         <TimeSlider.Value type="pointer" className="text-[13px]" />
       </TimeSlider.Preview>
