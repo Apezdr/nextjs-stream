@@ -104,8 +104,12 @@ export async function GET(req) {
     // URL through the existing videoURL contract field.
     await applyJitPreference(media)
 
-    // Add watch history if requested - only for playable media items (movies, episodes)
-    if (includeWatchHistory && authResult.id && media?.normalizedVideoId) {
+    // Add watch history if requested - only for playable media items (movies,
+    // episodes). Gate on "has something to play", not on the stored hash: a
+    // doc that lost its normalizedVideoId still resolves through its URLs and
+    // mediaId (watchHistory/resolve.js), and failing closed here let an RN
+    // session start at 0 and blind-write over a position the web still read.
+    if (includeWatchHistory && authResult.id && (media?.videoURL || media?.normalizedVideoId)) {
       try {
         const mediaArray = await addWatchHistoryToItems([media], authResult.id)
         media = mediaArray[0] || media
@@ -147,6 +151,13 @@ export async function GET(req) {
                 })
                 
                 if (seasonWithEpisodes && seasonWithEpisodes.episodes) {
+                  // The RN app can start playback straight from this list, so
+                  // each episode gets the same delivery decision as the detail
+                  // payload — applied BEFORE the watch-history join, in the same
+                  // order as the detail path above (health result is cached —
+                  // one probe per origin).
+                  await Promise.all(seasonWithEpisodes.episodes.map((ep) => applyJitPreference(ep)))
+
                   // Add watch history to episodes if requested
                   let episodesWithHistory = seasonWithEpisodes.episodes
                   if (includeWatchHistory && authResult.id) {
@@ -157,11 +168,6 @@ export async function GET(req) {
                       // Continue with episodes without watch history
                     }
                   }
-
-                  // The RN app can start playback straight from this list, so
-                  // each episode gets the same delivery decision as the detail
-                  // payload (health result is cached — one probe per origin).
-                  await Promise.all(episodesWithHistory.map((ep) => applyJitPreference(ep)))
 
                   // Extract available season numbers from full show data
                   const availableSeasons = fullShowData?.seasons

@@ -122,7 +122,7 @@ describe('applyJitPreference', () => {
     global.fetch = mockFetchOk()
     const m = await applyJitPreference(mp4Media())
     expect(m.videoURL).toBe('https://h/movies/X/x.mp4')
-    expect(m.playbackSource).toBeUndefined()
+    expect(m.playbackSource).toBe('raw') // every skip exit names the raw file (TV app labels its Original row on this literal)
   })
 
   test('prefer mode swaps playable primaries too', async () => {
@@ -145,7 +145,7 @@ describe('applyJitPreference', () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: false })
     const m = await applyJitPreference(mkvMedia())
     expect(m.videoURL).toBe('https://h/movies/X/x.mkv')
-    expect(m.playbackSource).toBeUndefined()
+    expect(m.playbackSource).toBe('raw') // every skip exit names the raw file (TV app labels its Original row on this literal)
   })
 
   test('probe failure (network error) falls back to direct', async () => {
@@ -237,7 +237,7 @@ describe('admin runtime override (settings > env > default)', () => {
       jitServeOverride: 'off',
     })
     expect(m.videoURL).toBe('https://h/x.mkv')
-    expect(m.playbackSource).toBeUndefined()
+    expect(m.playbackSource).toBe('raw') // every skip exit names the raw file (TV app labels its Original row on this literal)
   })
 
   test('per-media override "on" serves JIT for a playable primary in rescue mode', async () => {
@@ -286,7 +286,7 @@ describe('admin runtime override (settings > env > default)', () => {
       jitEligible: false,
     })
     expect(m.videoURL).toBe('https://h/movies/Primate/p.mp4')
-    expect(m.playbackSource).toBeUndefined()
+    expect(m.playbackSource).toBe('raw') // every skip exit names the raw file (TV app labels its Original row on this literal)
     expect(global.fetch).not.toHaveBeenCalled()
   })
 

@@ -506,6 +506,7 @@ export async function sanitizeRecord(record, type, context = {}) {
       result = {
         _id: record._id,
         normalizedVideoId: record.episode.normalizedVideoId,
+        mediaId: record.episode.mediaId || record.mediaId || null,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         // Route by the show's unique originalTitle (encoded), not the display title
         link: mediaLinkParam(record)
@@ -550,6 +551,7 @@ export async function sanitizeRecord(record, type, context = {}) {
       result = {
         _id: record._id,
         normalizedVideoId: record.normalizedVideoId,
+        mediaId: record.mediaId || null,
         ...dateValues, // Spread all date values (lastWatchedDate, addedDate, releaseDate)
         link: mediaLinkParam(record),
         originalTitle: record.originalTitle || null,
@@ -682,6 +684,13 @@ export function sanitizeCardData(item, popup = false, context = {}) {
     // Basic properties that should always be included
     if (id || _id) sanitized.id = id ?? _id
     if (normalizedVideoId) sanitized.normalizedVideoId = normalizedVideoId
+    // Durable content identity ('mid:…') — the watch-history join arm that
+    // survives a rename or quality swap. Cards used to drop it, which left
+    // the bounded card join with nothing but the hash.
+    if (typeof item.mediaId === 'string' && item.mediaId.startsWith('mid:')) sanitized.mediaId = item.mediaId
+    // Runtime in ms: what turns a matched row into progressPercent/completed
+    // for the card, and what the TV app's Continue Watching bars divide by.
+    if (Number.isFinite(item.duration) && item.duration > 0) sanitized.duration = item.duration
     if (finalTitle) sanitized.title = finalTitle
     if (posterURL) sanitized.posterURL = posterURL
     if (type) sanitized.type = type
@@ -1017,6 +1026,11 @@ export function sanitizeTVData(media, options = {}) {
       // Add watch history data if available
       tvData.watchHistory = media.watchHistory
     }
+    // Why the serve layer kept the raw file (absent on a JIT swap). The TV
+    // app can say "Original unavailable, raw file served" only with this.
+    if (media.jitSkipReason) {
+      tvData.jitSkipReason = media.jitSkipReason
+    }
 
     // Handle TV show specific data
     if (mediaType === 'tv' || media.type === 'tv') {
@@ -1043,6 +1057,9 @@ export function sanitizeTVData(media, options = {}) {
           mediaId: media.mediaId || null,
           playbackSource: media.playbackSource || null,
           rawVideoURL: media.rawVideoURL || null,
+          // The contract documents `episode.watchHistory`; emit it rather than
+          // leaving readers of the nested object with nothing.
+          watchHistory: media.watchHistory || null,
           hdr: media.hdr || false,
           mediaQuality: media.mediaQuality || null,
           dimensions: media.dimensions

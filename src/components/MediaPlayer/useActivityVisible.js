@@ -19,10 +19,16 @@ import { useLayoutEffect, useRef, useState } from 'react'
  * resetting transient UI (see "Preserving UI state"); hidden trees still
  * re-render, at lower priority.
  *
- * @returns {boolean} false while parked in a hidden Activity boundary
+ * @param {{ withReshown?: boolean }} [options] pass `withReshown` to get the
+ *   `{ visible, reshown }` pair instead of the bare boolean
+ * @returns {boolean|{ visible: boolean, reshown: boolean }} false while parked
+ *   in a hidden Activity boundary; `reshown` is true from the first re-show
+ *   on, which is how a caller tells a fresh mount (server props are current)
+ *   from a return to a cached page (server props are frozen at render time)
  */
-export default function useActivityVisible() {
+export default function useActivityVisible(options = {}) {
   const [visible, setVisible] = useState(true)
+  const [reshown, setReshown] = useState(false)
   // Refs survive hide/show cycles, so this stays true after the first mount
   // and lets us tell a genuine re-show from the initial mount.
   const mountedOnceRef = useRef(false)
@@ -35,11 +41,12 @@ export default function useActivityVisible() {
       // could derive its value during render — this one cannot.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setVisible(true)
+      setReshown(true)
     } else {
       mountedOnceRef.current = true
     }
     return () => setVisible(false)
   }, [])
 
-  return visible
+  return options.withReshown ? { visible, reshown } : visible
 }

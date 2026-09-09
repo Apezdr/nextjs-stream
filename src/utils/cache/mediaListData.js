@@ -11,6 +11,7 @@ import {
 } from '@src/utils/mediaListUtils/tvListQueries'
 import { CONSTANTS } from '@src/utils/mediaListUtils/shared'
 import { getCurrentUserWatchHistory } from '@src/utils/watchHistoryServerUtils'
+import { resolveWatchEntry, buildWatchHistoryObject } from '@src/utils/watchHistory/resolve'
 
 function normalizeOptions(options = {}) {
   return {
@@ -23,14 +24,14 @@ function normalizeOptions(options = {}) {
   }
 }
 
+// Same precedence as every other surface (mediaId → nid → hashed URLs → raw
+// URLs). The raw-URL-only lookup this replaced could not see a row written
+// through the JIT transcoder — 48% of rows at the time — so a title watched
+// on the TV app showed no progress on these pages.
 function attachWatchHistory(items, watchMap) {
   return items.map(item => ({
     ...item,
-    watchHistory: watchMap.get(item.videoURL) || {
-      playbackTime: 0,
-      lastWatched: null,
-      isWatched: false,
-    },
+    watchHistory: buildWatchHistoryObject(item, resolveWatchEntry(item, watchMap)),
   }))
 }
 

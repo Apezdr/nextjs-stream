@@ -44,6 +44,53 @@ const log = createLogger('WatchHistory.Database')
 export const MIN_PERSISTED_POSITION_S = 2
 
 /**
+ * Whether a duplicate-key error came from the partial unique index on
+ * {userId, mediaId} ('mid:…' rows only).
+ */
+function isMediaIdUniqueViolation(error) {
+  return (
+    error?.code === 11000 &&
+    (error?.keyPattern?.mediaId !== undefined ||
+      String(error?.message || '').includes('userId_mediaId_unique'))
+  )
+}
+
+/**
+ * Quality-swap merge. The catalog re-keyed a title (same folder, new file →
+ * new nid, same durable mediaId) and this write tried to INSERT a second row
+ * for that identity. Move the existing row to the new nid and apply the write
+ * to it, instead of deleting it and inserting fresh: lastUpdated ordering and
+ * device history survive, and the resume floor still applies — a position
+ * under 2 s (a player booting on the new file) never replaces the old
+ * resume point. Pre-backfill duplicates (several rows, one identity) collapse
+ * to the newest.
+ *
+ * @returns {Promise<Object|null>} the update result, or null when no sibling existed
+ */
+async function rekeySiblingAndApply(collection, { userIdObj, mediaId, normalizedVideoId, update }) {
+  const siblings = await collection
+    .find({ userId: userIdObj, mediaId, normalizedVideoId: { $ne: normalizedVideoId } })
+    .sort({ lastUpdated: -1 })
+    .toArray()
+  if (siblings.length === 0) return null
+
+  const [keep, ...rest] = siblings
+  if (rest.length > 0) {
+    await collection.deleteMany({ _id: { $in: rest.map((r) => r._id) } })
+  }
+
+  const $set = { ...(update.$set || {}), normalizedVideoId }
+  if (
+    Number.isFinite($set.playbackTime) &&
+    $set.playbackTime < MIN_PERSISTED_POSITION_S &&
+    (keep.playbackTime ?? 0) >= MIN_PERSISTED_POSITION_S
+  ) {
+    delete $set.playbackTime
+  }
+  return collection.updateOne({ _id: keep._id }, { ...update, $set })
+}
+
+/**
  * Upsert a single playback entry for a user
  * Atomic operation: updates existing or creates new
  * 
@@ -86,7 +133,15 @@ export async function upsertPlayback({
     // when resolution misses a beat, spreading it would clobber a
     // previously backfilled durable id and flip-flop the row's identity.
     // TV hydration fallbacks use the separate showId/season/episode fields.
-    const { mediaId: _legacyClientMediaId, ...safeMetadata } = metadata
+    //
+    // Nulls never reach $set either. A heartbeat that omits showId/season/
+    // episode (the contract marks them optional) means "unchanged", and an
+    // explicit null in $set would erase the grouping the Continue Watching
+    // rail and the sessions view read off the row.
+    const { mediaId: _legacyClientMediaId, ...rawMetadata } = metadata || {}
+    const safeMetadata = Object.fromEntries(
+      Object.entries(rawMetadata).filter(([, v]) => v !== null && v !== undefined)
+    )
 
     const updateDoc = {
       $set: {
@@ -144,19 +199,17 @@ export async function upsertPlayback({
       // Once the partial unique index {userId, mediaId} exists, a quality
       // swap (same folder, new file → new nid, same mediaId) makes this
       // upsert INSERT a second row for the same identity and violate it.
-      // Merge policy: this beat is the newest state — drop the sibling
-      // row(s) holding the same identity under an older nid, retry once.
-      const isMediaIdUnique =
-        error?.code === 11000 &&
-        (error?.keyPattern?.mediaId !== undefined ||
-          String(error?.message || '').includes('userId_mediaId_unique'))
-      if (isMediaIdUnique && resolved?.mediaId) {
-        await collection.deleteMany({
-          userId: userIdObj,
-          mediaId: resolved.mediaId,
-          normalizedVideoId: { $ne: normalizedVideoId },
-        })
-        result = await collection.updateOne(filter, update, { upsert: true })
+      // Merge policy: move the existing row to the new nid and apply this
+      // write to it (see rekeySiblingAndApply); retry the plain upsert only
+      // if no sibling was found after all.
+      if (isMediaIdUniqueViolation(error) && resolved?.mediaId) {
+        result =
+          (await rekeySiblingAndApply(collection, {
+            userIdObj,
+            mediaId: resolved.mediaId,
+            normalizedVideoId,
+            update,
+          })) ?? (await collection.updateOne(filter, update, { upsert: true }))
       } else {
         throw error
       }
@@ -288,20 +341,17 @@ export async function upsertPlaybackFromCast({
   } catch (error) {
     // Mirrors upsertPlayback: with the partial unique {userId, mediaId} index
     // in place, a quality swap makes this INSERT collide with the sibling row
-    // held under the old nid. This report is the newest state, so drop the
-    // sibling and retry once.
-    const isMediaIdUnique =
-      error?.code === 11000 &&
-      (error?.keyPattern?.mediaId !== undefined ||
-        String(error?.message || '').includes('userId_mediaId_unique'))
-    if (!isMediaIdUnique || !resolved?.mediaId) throw error
+    // held under the old nid. Move that row to the new nid and apply this
+    // report to it.
+    if (!isMediaIdUniqueViolation(error) || !resolved?.mediaId) throw error
 
-    await collection.deleteMany({
-      userId: userIdObj,
+    const merged = await rekeySiblingAndApply(collection, {
+      userIdObj,
       mediaId: resolved.mediaId,
-      normalizedVideoId: { $ne: normalizedVideoId },
+      normalizedVideoId,
+      update: { $set },
     })
-    await collection.updateOne(identity, { $set }, { upsert: true })
+    if (!merged) await collection.updateOne(identity, { $set }, { upsert: true })
   }
 
   return true

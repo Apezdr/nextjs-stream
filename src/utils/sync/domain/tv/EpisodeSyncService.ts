@@ -35,6 +35,7 @@ import {
 import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { warnOnJitIdentityFork } from '@src/utils/sync/core/jitIdentityParity'
 import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Episode')
@@ -454,6 +455,18 @@ export class EpisodeSyncService {
       entity.primaryContainer = facts.primaryContainer
       entity.jitEligible = facts.jitEligible
       entity.jitUrl = facts.jitUrl
+
+      // The JIT manifest for the same file must key to the same identity as
+      // the stored videoURL, or rows written through the transcoder never
+      // join this episode. Compared against the post-lock videoURL.
+      warnOnJitIdentityFork(
+        {
+          videoURL: entity.videoURL ?? null,
+          jitUrl: entity.jitUrl ?? null,
+          label: `episode:${showOriginalTitle} S${entity.seasonNumber}E${entity.episodeNumber}`,
+        },
+        (fields, message) => pinoLog.warn(fields, message)
+      )
     }
 
     // --- Video info (follows video priority) ---

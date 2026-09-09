@@ -34,6 +34,7 @@ import { FileServerAdapter } from '../../../core'
 
 import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
 import { syncLogger } from '../../../core/logger'
+import { warnOnJitIdentityFork } from '../../../core/jitIdentityParity'
 import isEqual from 'lodash/isEqual'
  
 // @ts-ignore — dependency-free sibling JS module (CJS) with no .d.ts
@@ -493,6 +494,16 @@ export class MovieContentStrategy implements SyncStrategy {
           `📝 NormalizedVideoId unchanged: "${normalizedId}"`
         )
       }
+      // The JIT manifest for the same file must key to the same identity, or
+      // rows written through the transcoder never join this document.
+      warnOnJitIdentityFork(
+        {
+          videoURL: effectiveVideoUrl,
+          jitUrl: ('jitUrl' in updates ? updates.jitUrl : currentMovie.jitUrl) ?? null,
+          label: `movie:${originalTitle}`,
+        },
+        (fields, message) => syncLogger.warn(`${message} ${JSON.stringify(fields)}`)
+      )
     }
 
     // Step 3b: Ingest the backend's content identity and delivery facts.

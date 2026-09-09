@@ -3,7 +3,7 @@ import { cache, useSyncExternalStore, ViewTransition } from 'react'
 import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '../utils'
 import HD4kBanner from '../../public/4kBanner.png'
 import hdr10PlusLogo from '../../public/HDR10+_Logo_light.svg'
-import useWatchedWidth from './useWatchedWidth'
+import useWatchedWidth, { isWatchedComplete } from './useWatchedWidth'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/24/outline'
 import RetryImage from './RetryImage'
@@ -57,7 +57,7 @@ function MediaPoster({
       className={classNames(contClassName, 'watched-border', watchedWidth ? 'relative' : '')}
       style={isClient ? { '--watched-width': `${watchedWidth.toFixed(2)}%` } : {}}
     >
-      {watchedWidth > 90 && (
+      {isWatchedComplete(_media, watchedWidth) && (
         <div className="absolute inset-0 bg-black bg-opacity-50 flex flex-col justify-center items-center z-[9]">
           <ArrowPathIcon className="text-white w-11 group-hover:animate-[spin_1s_ease-in-out_1]" />
           <span>Restart</span>

@@ -78,6 +78,7 @@ export async function getFilteredMovieList({
       duration: 1,
       videoURL: 1,
       normalizedVideoId: 1,
+      mediaId: 1, // durable identity — the watch-history arm that survives a quality swap
       captionURLs: 1,
       metadata: 1 // Full metadata for now
     };

@@ -312,6 +312,11 @@ function getProjectionForCollection(profile, collection, shouldExposeAdditionalD
  */
 export { generateNormalizedVideoId, canonicalizeStreamPathname } from '@src/utils/videoIdentity'
 
+/** The durable 'mid:…' identity, or null for legacy hex ids and blanks. */
+function durableMediaId(v) {
+  return (typeof v === 'string' && v.startsWith('mid:')) ? v : null
+}
+
 /**
  * Durable content identity check ('mid:…', backend folder-derived — see
  * sync/core/deliveryFacts.resolveMediaId). WatchHistory rows may carry
@@ -1314,6 +1319,9 @@ export async function processFlatWatchedDetails(
           // CRITICAL: Use the WatchHistory normalizedVideoId (based on actual watched URL)
           // NOT the movie's normalizedVideoId (based on internal videoURL)
           normalizedVideoId: video.normalizedVideoId,
+          // Durable identity: the row's when stamped, else the doc's — the card
+          // join arm that survives a rename or quality swap.
+          mediaId: durableMediaId(video.mediaId) || durableMediaId(movie.mediaId) || null,
           // If trailer watch, add trailer-specific fields
           ...(isTrailerWatch && {
             url: video.externalVideoURL || video.videoId,
@@ -1408,6 +1416,12 @@ export async function processFlatWatchedDetails(
             episode: {
               ...episodeDetails.episode,
               videoURL: video.videoId, // Ensure we use the original videoId for consistency
+              // Like movies: the card carries the ROW's nid (what was actually
+              // watched), not the episode doc's, so the bounded card join and
+              // __listPosition find this row after a quality swap too.
+              normalizedVideoId: video.normalizedVideoId || episodeDetails.episode.normalizedVideoId,
+              mediaId:
+                durableMediaId(video.mediaId) || durableMediaId(episodeDetails.episode.mediaId) || null,
             },
           }
 

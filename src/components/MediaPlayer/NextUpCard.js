@@ -42,7 +42,9 @@ function NextUpCard({
 
       let endTime = Date.now() + duration
       timerRef.current = setTimeout(() => {
-        router.push(`/list/tv/${encodeURIComponent(mediaTitle)}/${season_number}/${nextEpisodeNumber}`)
+        // Straight into playback from the top, the same landing the card's
+        // link asks for — not the details page with the player stopped.
+        router.push(`/list/tv/${encodeURIComponent(mediaTitle)}/${season_number}/${nextEpisodeNumber}/play?start=0`)
       }, duration)
 
       intervalRef.current = setInterval(() => {

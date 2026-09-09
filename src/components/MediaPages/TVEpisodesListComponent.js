@@ -20,6 +20,7 @@ import { generateClipVideoURL } from '@src/utils/auth_utils'
 import RetryImage from '@components/RetryImage'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { createWatchHistoryLookupMap } from '@src/utils/watchHistoryUtils'
+import { resolveWatchEntry, buildWatchHistoryObject } from '@src/utils/watchHistory/resolve'
 import { tvSeasonPosterName, tvEpisodePosterName } from '@src/utils/viewTransitionNames'
 
 const variants = {
@@ -65,15 +66,12 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
   // lives inside a `'use cache'` subtree and can't call getSession itself.
   const watchHistoryMap = userId ? await createWatchHistoryLookupMap(userId) : new Map()
   
-  // Augment episodes with watch history data
+  // Augment episodes with watch history data through the shared precedence
+  // (mediaId → nid → hashed URLs → raw URLs), so an episode watched through
+  // the transcoder on either client shows its progress here too.
   const episodesWithHistory = season.episodes.map(episode => ({
     ...episode,
-    watchHistory: watchHistoryMap.get(episode.videoURL) || {
-      playbackTime: 0,
-      lastWatched: null,
-      isWatched: false,
-      normalizedVideoId: null
-    }
+    watchHistory: buildWatchHistoryObject(episode, resolveWatchEntry(episode, watchHistoryMap)),
   }))
 
   return (

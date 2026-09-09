@@ -10,30 +10,53 @@ import { createLogger } from '@src/lib/logger'
 const log = createLogger('WatchHistory.Metadata')
 
 /**
- * Extract and format media metadata for storage
- * Validates metadata structure and ensures type safety
- * 
+ * A season or episode number as the client sent it, or undefined when it did
+ * not send one. Zero is a real value — Specials live in season 0 — so this is
+ * `??`-shaped, not `||`-shaped. Numeric strings are accepted because route
+ * params arrive that way from some clients.
+ */
+function presentNumber(value) {
+  if (value === undefined || value === null || value === '') return undefined
+  const n = typeof value === 'string' ? Number(value) : value
+  return Number.isFinite(n) ? n : undefined
+}
+
+function presentString(value) {
+  if (value === undefined || value === null) return undefined
+  const s = typeof value === 'string' ? value : String(value)
+  return s === '' ? undefined : s
+}
+
+/**
+ * Extract and format media metadata for storage.
+ *
+ * Only fields the client actually sent come back. Every consumer spreads this
+ * into a `$set`, and an explicit null there is not "unknown" — it is "erase
+ * what the row already knows". A heartbeat that omits showId/seasonNumber/
+ * episodeNumber (the contract marks them optional) must leave the row's TV
+ * grouping alone, not wipe it.
+ *
  * @param {Object} mediaMetadata - The media metadata object from frontend
- * @returns {Object} Formatted metadata for database storage
+ * @returns {Object} Formatted metadata for database storage (present fields only)
  */
 export function extractPlaybackMetadata(mediaMetadata) {
-  if (!mediaMetadata) {
-    return {
-      mediaType: null,
-      mediaId: null,
-      showId: null,
-      seasonNumber: null,
-      episodeNumber: null
-    }
+  if (!mediaMetadata || typeof mediaMetadata !== 'object') {
+    return {}
   }
 
-  return {
-    mediaType: mediaMetadata.mediaType || null,
-    mediaId: mediaMetadata.mediaId || null,
-    showId: mediaMetadata.showId || null,
-    seasonNumber: mediaMetadata.seasonNumber || null,
-    episodeNumber: mediaMetadata.episodeNumber || null
-  }
+  const out = {}
+  const mediaType = presentString(mediaMetadata.mediaType)
+  const mediaId = presentString(mediaMetadata.mediaId)
+  const showId = presentString(mediaMetadata.showId)
+  const seasonNumber = presentNumber(mediaMetadata.seasonNumber)
+  const episodeNumber = presentNumber(mediaMetadata.episodeNumber)
+
+  if (mediaType !== undefined) out.mediaType = mediaType
+  if (mediaId !== undefined) out.mediaId = mediaId
+  if (showId !== undefined) out.showId = showId
+  if (seasonNumber !== undefined) out.seasonNumber = seasonNumber
+  if (episodeNumber !== undefined) out.episodeNumber = episodeNumber
+  return out
 }
 
 /**
@@ -46,29 +69,22 @@ export function extractPlaybackMetadata(mediaMetadata) {
 export function buildPlaybackMetadata(mediaMetadata) {
   const base = extractPlaybackMetadata(mediaMetadata)
 
-  // Ensure mediaType is valid
-  if (base.mediaType && !['movie', 'tv'].includes(base.mediaType)) {
-    log.warn({ mediaType: base.mediaType }, 'Invalid media type, treating as null')
-    base.mediaType = null
+  // Ensure mediaType is valid — an unknown type is dropped, never nulled
+  if (base.mediaType !== undefined && !['movie', 'tv'].includes(base.mediaType)) {
+    log.warn({ mediaType: base.mediaType }, 'Invalid media type, dropping it')
+    delete base.mediaType
   }
 
-  // Ensure numeric fields are valid
-  if (base.seasonNumber && (!Number.isInteger(base.seasonNumber) || base.seasonNumber < 1)) {
-    log.warn({ seasonNumber: base.seasonNumber }, 'Invalid season number')
-    base.seasonNumber = null
+  // Season 0 (Specials) and episode 0 are real; negatives and fractions are not
+  if (base.seasonNumber !== undefined && (!Number.isInteger(base.seasonNumber) || base.seasonNumber < 0)) {
+    log.warn({ seasonNumber: base.seasonNumber }, 'Invalid season number, dropping it')
+    delete base.seasonNumber
   }
 
-  if (base.episodeNumber && (!Number.isInteger(base.episodeNumber) || base.episodeNumber < 1)) {
-    log.warn({ episodeNumber: base.episodeNumber }, 'Invalid episode number')
-    base.episodeNumber = null
+  if (base.episodeNumber !== undefined && (!Number.isInteger(base.episodeNumber) || base.episodeNumber < 0)) {
+    log.warn({ episodeNumber: base.episodeNumber }, 'Invalid episode number, dropping it')
+    delete base.episodeNumber
   }
-
-  // Remove empty strings and undefined values
-  Object.keys(base).forEach(key => {
-    if (base[key] === '' || base[key] === undefined) {
-      delete base[key]
-    }
-  })
 
   return base
 }

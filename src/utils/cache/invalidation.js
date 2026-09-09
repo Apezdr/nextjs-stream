@@ -85,14 +85,21 @@ export async function invalidateUserWatchHistoryCache(userId) {
   if (!userId) return false
   
   try {
-    // Use revalidateTag for watch history updates (works in both Server Actions and Route Handlers)
-    revalidateTag(`user-watch-history-${userId}`, 'max')
+    // Expire, do not merely mark stale. With the 'max' profile the next read
+    // of a /list page still served the pre-session progress bars and only the
+    // read after that was fresh — so a title finished on the TV app showed the
+    // old position on the web once. `updateTag` is the read-your-own-writes
+    // primitive but is Server-Action-only; in this Route Handler the
+    // equivalent is an immediate expiry, which makes the next read a blocking
+    // cache miss rather than a stale hit. Only the tag that pages actually
+    // declare gets it; the other two are not declared anywhere yet.
+    revalidateTag(`user-watch-history-${userId}`, { expire: 0 })
     revalidateTag(`user-content-${userId}`, 'max')
-    
+
     // Also invalidate general watch history updates
     revalidateTag('watch-history-updates', 'max')
-    
-    console.log(`[Cache SWR] Invalidated watch history cache for user ${userId}`)
+
+    console.log(`[Cache] Expired watch history cache for user ${userId}`)
     return true
   } catch (error) {
     console.error('[Cache SWR] Failed to invalidate watch history cache:', error)

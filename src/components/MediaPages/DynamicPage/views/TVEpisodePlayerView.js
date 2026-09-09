@@ -13,7 +13,7 @@ import SyncClientWithServerWatched from '@src/components/SyncClientWithServerWat
 import Loading from '@src/app/loading'
 import { validateVideoURL } from '@src/utils/media/mediaFetcher'
 import { buildMediaUrl } from '@src/utils/media/urlParser'
-import { getWatchTimeForVideo } from '@src/utils/watchHistoryServerUtils'
+import { getResumePositionForMedia } from '@src/utils/watchHistoryServerUtils'
 
 /**
  * TVEpisodePlayerView Component
@@ -40,8 +40,11 @@ export default async function TVEpisodePlayerView({ media, session, searchParams
     includePlay: false,
   })
   
-  // Fetch saved playback position server-side (prevents flash on load)
-  const savedPlaybackTime = media?.videoURL ? await getWatchTimeForVideo(media.videoURL, session.user.id) : 0
+  // Fetch saved playback position server-side (prevents flash on load).
+  // The whole media item goes in, not just the URL: the durable mediaId arm
+  // is what finds the row after a quality swap, and duration is what turns a
+  // finished episode into "start over".
+  const savedPlaybackTime = media?.videoURL ? await getResumePositionForMedia(media, session.user.id) : 0
   return (
     <PlaybackCoordinatorProvider>
       <>

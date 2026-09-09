@@ -2,6 +2,7 @@ import { getVideosWatched } from '@src/utils/auth_database'
 import { isAuthenticatedServer } from '@src/utils/routeAuth'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
+import { computeWatchProgress } from '@src/utils/watchHistory/progress'
 
 /**
  * Get playback position for a specific video (on-demand fetch)
@@ -36,13 +37,16 @@ export async function GET(req) {
       item.normalizedVideoId === normalizedVideoId
   )
 
+  // The catalog identity for this URL (cached, fail-open): the durable
+  // 'mid:…' for the rename-proof fallback below, and the runtime for the
+  // completion flag the web player uses on an Activity re-show.
+  const resolved = await resolveMediaIdForNid(normalizedVideoId)
+
   // Rename-proof fallback: no row is keyed under this URL/nid (e.g. the file
-  // was re-encoded or renamed, so its nid changed). Resolve the URL's durable
-  // content identity ('mid:…') from the catalog (cached, fail-open) and take
-  // the newest row stamped with it. Additive only — the exact URL/nid matches
-  // above always win, and a null resolution degrades to today's behavior.
+  // was re-encoded or renamed, so its nid changed). Take the newest row
+  // stamped with the durable identity. Additive only — the exact URL/nid
+  // matches above always win, and a null resolution degrades gracefully.
   if (!playbackData) {
-    const resolved = await resolveMediaIdForNid(normalizedVideoId)
     if (resolved?.mediaId) {
       playbackData = watchedMedia
         .filter(item => item.mediaId === resolved.mediaId)
@@ -58,17 +62,23 @@ export async function GET(req) {
         videoId,
         playbackTime: 0,
         lastUpdated: null,
+        completed: false,
+        progressPercent: 0,
         found: false
       }),
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     )
   }
 
+  const progress = computeWatchProgress(playbackData.playbackTime || 0, resolved?.durationMs ?? null)
+
   return new Response(
     JSON.stringify({
       videoId: playbackData.videoId,
       playbackTime: playbackData.playbackTime || 0,
       lastUpdated: playbackData.lastUpdated,
+      completed: progress.completed,
+      progressPercent: progress.progressPercent,
       found: true
     }),
     { status: 200, headers: { 'Content-Type': 'application/json' } }
