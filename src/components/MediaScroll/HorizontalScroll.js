@@ -115,6 +115,13 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
     if (itemsPerPage) params.append('limit', itemsPerPage)
     if (sortOrder) params.append('sortOrder', sortOrder)
     params.append('page', pageIndex)
+    // Only the Continue Watching rail carries the watchHistory object. It is
+    // volatile (lastWatched moves every heartbeat), and this list already
+    // re-polls every 10 s, so a rail that carried it would re-download its
+    // whole payload while anything on it is being watched. Every other rail
+    // stays ETag-stable; its cards and popups read progress from the local
+    // mirror instead (useLiveProgress).
+    if (listType === 'recentlyWatched') params.append('includeWatchHistory', 'true')
     return `/api/authenticated/horizontal-list?${params.toString()}`
   }, [itemsPerPage, listType, sort, sortOrder, playlistId])
 
@@ -418,6 +425,10 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
                         metadata={item.metadata}
                         // Trailer/external video flag
                         isTrailer={item.isTrailer}
+                        // Watch progress (server-attached; duration in ms)
+                        watchHistory={item.watchHistory}
+                        duration={item.duration}
+                        durableMediaId={item.mediaId}
                       />
                     </div>
                   )

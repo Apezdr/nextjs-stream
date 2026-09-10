@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { getWatchedTime } from './watched'
+import { getWatchedTime, getWatchedEntry } from './watched'
 import { WATCH_COMPLETION_PERCENT } from '@src/utils/watchHistory/progress'
 
 const computeTotalRuntimeInPercentage = (metadata, videoURL, duration = false, watchedSeconds = null, mediaId = null) => {
@@ -36,8 +36,9 @@ const computeTotalRuntimeInPercentage = (metadata, videoURL, duration = false, w
  */
 export function isWatchedComplete(media, watchedWidth) {
   const serverFlag = media?.watchHistory?.completed
-  if (typeof serverFlag === 'boolean') return serverFlag
-  return Number.isFinite(watchedWidth) && watchedWidth >= WATCH_COMPLETION_PERCENT
+  // The live width can cross the line after the server object was rendered
+  // (the title finishing on another device), so either source may say done.
+  return serverFlag === true || (Number.isFinite(watchedWidth) && watchedWidth >= WATCH_COMPLETION_PERCENT)
 }
 
 const useWatchedWidth = (metadata, media) => {
@@ -45,13 +46,24 @@ const useWatchedWidth = (metadata, media) => {
 
   useEffect(() => {
     const checkForChanges = () => {
-      // The server's progressPercent is the same number the TV app renders;
-      // prefer it, then the server position, then localStorage.
+      // The server's progressPercent is the same number the TV app renders,
+      // but it is frozen at render time. The localStorage mirror is refreshed
+      // every 5 s from the server rows (and every second by this browser's
+      // player), so when its entry is NEWER than the server object it wins —
+      // that is what keeps a grid bar moving while the title plays elsewhere.
       const serverPercent = media.watchHistory?.progressPercent
-      const watchedSeconds = media.watchHistory?.playbackTime
-        ? Math.round(media.watchHistory.playbackTime)
-        : null
-      const newWidth = Number.isFinite(serverPercent) && serverPercent > 0
+      const serverAt = media.watchHistory?.lastWatched ? new Date(media.watchHistory.lastWatched).getTime() : NaN
+      const local = getWatchedEntry(media.videoURL, media?.mediaId)
+      const localIsNewer =
+        local !== null &&
+        local.lastUpdated !== null &&
+        (!Number.isFinite(serverAt) || local.lastUpdated > serverAt)
+      const watchedSeconds = localIsNewer
+        ? Math.round(local.playbackTime)
+        : media.watchHistory?.playbackTime
+          ? Math.round(media.watchHistory.playbackTime)
+          : null
+      const newWidth = !localIsNewer && Number.isFinite(serverPercent) && serverPercent > 0
         ? serverPercent
         : computeTotalRuntimeInPercentage(metadata, media.videoURL, media?.duration, watchedSeconds, media?.mediaId)
       if (newWidth !== watchedWidth) {
@@ -66,7 +78,7 @@ const useWatchedWidth = (metadata, media) => {
     return () => {
       clearInterval(intervalId)
     }
-  }, [metadata, media.videoURL, media?.mediaId, media?.duration, media.watchHistory?.playbackTime, media.watchHistory?.progressPercent, watchedWidth])
+  }, [metadata, media.videoURL, media?.mediaId, media?.duration, media.watchHistory?.playbackTime, media.watchHistory?.progressPercent, media.watchHistory?.lastWatched, watchedWidth])
 
   return watchedWidth
 }

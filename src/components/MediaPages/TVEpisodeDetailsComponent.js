@@ -5,6 +5,7 @@ import ViewCount from './ViewCount'
 import dynamic from 'next/dynamic'
 import RetryImage from '@components/RetryImage'
 import WatchlistButton from '@components/WatchlistButton'
+import WatchProgressPanel from '@components/WatchProgress/WatchProgressPanel'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { tvEpisodePosterName } from '@src/utils/viewTransitionNames'
 
@@ -179,6 +180,16 @@ const TVEpisodeDetailsComponent = ({ media }) => {
                             ))}
                         </div>
                     </div> */}
+          {/* Where this viewer is in the episode — read on the client, since this
+              subtree is cached for everyone. */}
+          {media.videoURL ? (
+            <WatchProgressPanel
+              videoURL={media.videoURL}
+              mediaId={media.mediaId || null}
+              durationMs={duration ?? (runtime ? runtime * 60000 : null)}
+              playHref={`/list/tv/${encodeURIComponent(originalTitle || showTitle)}/${seasonNumber}/${episodeNumber}/play`}
+            />
+          ) : null}
           <div className='flex flex-row justify-evenly'>
           <Link
             href={`/list/tv/${encodeURIComponent(originalTitle || showTitle)}/${seasonNumber}/${episodeNumber}/play`}

@@ -3,6 +3,26 @@
 import { cache, useMemo } from 'react'
 import { getPlaybackStorageKey, readWithLegacyFallback } from '@src/utils/playbackStorageKey'
 
+/**
+ * The tracker/mirror entry for a title, with its timestamp, so callers can
+ * tell whether it is newer than a server value they already hold.
+ *
+ * @returns {{ playbackTime: number, lastUpdated: number|null }|null}
+ */
+export function getWatchedEntry(videoURL, mediaId = null) {
+  if (typeof window === 'undefined') return null
+  const stableKey = getPlaybackStorageKey({ mediaId, videoURL })
+  try {
+    const savedData = JSON.parse(readWithLegacyFallback(stableKey, videoURL))
+    const playbackTime = parseFloat(savedData?.playbackTime)
+    if (!Number.isFinite(playbackTime) || playbackTime <= 0) return null
+    const lastUpdated = savedData?.lastUpdated ? new Date(savedData.lastUpdated).getTime() : NaN
+    return { playbackTime, lastUpdated: Number.isFinite(lastUpdated) ? lastUpdated : null }
+  } catch {
+    return null
+  }
+}
+
 export function getWatchedTime(videoURL, mediaId = null) {
   if (typeof window === 'undefined') return 0
   // Stable identity key when resolved; falls back to (and migrates forward

@@ -9,6 +9,7 @@ import WatchlistButton from '@components/WatchlistButton'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { moviePosterName, movieBackdropName, movieLogoName } from '@src/utils/viewTransitionNames'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
+import WatchProgressPanel from '@components/WatchProgress/WatchProgressPanel'
 
 // Lazy load the cast grid section which can be heavy
 const CastSection = dynamic(() => 
@@ -189,6 +190,16 @@ const MovieDetailsComponent = ({ media }) => {
                             ))}
                         </div>
                     </div> */}
+          {/* Where this viewer is in the film — read on the client, since this
+              subtree is cached for everyone. */}
+          {media.videoURL ? (
+            <WatchProgressPanel
+              videoURL={media.videoURL}
+              mediaId={media.mediaId || null}
+              durationMs={duration ?? (runtime ? runtime * 60000 : null)}
+              playHref={`/list/movie/${mediaLinkParam(media)}/play`}
+            />
+          ) : null}
           <div className='flex flex-row justify-evenly'>
           <Link
             href={`/list/movie/${mediaLinkParam(media)}/play`}

@@ -691,6 +691,9 @@ export function sanitizeCardData(item, popup = false, context = {}) {
     // Runtime in ms: what turns a matched row into progressPercent/completed
     // for the card, and what the TV app's Continue Watching bars divide by.
     if (Number.isFinite(item.duration) && item.duration > 0) sanitized.duration = item.duration
+    // Already-joined watch history (the media route joins before this card
+    // branch; the horizontal-list route joins after it, so this is a no-op there).
+    if (item.watchHistory && typeof item.watchHistory === 'object') sanitized.watchHistory = item.watchHistory
     if (finalTitle) sanitized.title = finalTitle
     if (posterURL) sanitized.posterURL = posterURL
     if (type) sanitized.type = type
