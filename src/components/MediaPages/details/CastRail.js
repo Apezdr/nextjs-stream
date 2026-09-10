@@ -12,7 +12,7 @@ function CastMember({ person, className = '' }) {
   const photo = person.profile_path ? getFullImageUrl(person.profile_path, 'w185') : null
   const body = (
     <>
-      <div className="relative size-20 overflow-hidden rounded-full bg-white/10 ring-1 ring-white/10">
+      <div className="relative size-20 overflow-hidden rounded-full bg-white/10 ring-1 ring-white/10 transition-[box-shadow,filter] duration-200 group-hover:brightness-110 group-hover:ring-2 group-hover:ring-white/50 group-focus-visible:ring-2 group-focus-visible:ring-blue-300">
         {photo ? (
           <RetryImage src={photo} alt="" width={80} height={80} sizes="80px" quality={60} loading="lazy" className="size-20 object-cover" />
         ) : (
@@ -21,12 +21,12 @@ function CastMember({ person, className = '' }) {
           </span>
         )}
       </div>
-      <p className="mt-2 line-clamp-2 text-sm font-semibold leading-tight text-white">{person.name}</p>
+      <p className="mt-2 line-clamp-2 text-sm font-semibold leading-tight text-white group-hover:underline">{person.name}</p>
       {person.character ? <p className="mt-0.5 line-clamp-2 text-xs leading-tight text-white/55">{person.character}</p> : null}
     </>
   )
   const classes = classNames(
-    'flex w-24 flex-col items-center text-center transition-transform duration-200 hover:scale-105 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300 rounded-lg',
+    'group flex w-24 flex-col items-center rounded-lg text-center focus-visible:outline-none',
     className
   )
   return href ? (
@@ -89,7 +89,7 @@ export default function CastRail({ cast, title = 'Cast' }) {
           ))}
         </ul>
       ) : (
-        <ul className="-mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-2 scrollbar-none sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+        <ul className="-mx-4 flex snap-x gap-4 overflow-x-auto px-4 py-1 scrollbar-none sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
           {shown.map((person, i) => (
             <li key={person.id ?? `${person.name}-${i}`} className="shrink-0 snap-start">
               <CastMember person={person} />

@@ -20,7 +20,7 @@ const {
   movieFacts,
   episodeFacts,
   episodeTypeLabel,
-  sourceHostOf,
+  displayTitleOf,
 } = require('@src/utils/media/detailsFacts')
 
 const hobbit = {
@@ -220,7 +220,7 @@ describe('crewNames', () => {
 
 describe('movieFacts', () => {
   it('lists what the hero does not already show, then the file facts', () => {
-    const rows = movieFacts(hobbit, { sourceHost: 'personalserver.adamdrumm.com' })
+    const rows = movieFacts(hobbit)
     expect(rows.map((r) => r.label)).toEqual([
       'Language',
       'Studio',
@@ -234,7 +234,6 @@ describe('movieFacts', () => {
       'Subtitles',
       'File',
       'Added',
-      'Source',
     ])
     const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]))
     expect(byLabel.Language.value).toBe('English')
@@ -248,7 +247,8 @@ describe('movieFacts', () => {
     expect(byLabel.Subtitles).toEqual({ label: 'Subtitles', value: 'English, Spanish', note: 'English auto-captions generating' })
     expect(byLabel.File.value).toBe('MP4 · 7.07 GB')
     expect(byLabel.Added.value).toBe('Apr 22, 2025')
-    expect(byLabel.Source.value).toBe('personalserver.adamdrumm.com')
+    // Where the file lives is not a viewer's business
+    expect(byLabel.Source).toBeUndefined()
   })
 
   it('leaves out rows with nothing to say instead of printing Unknown', () => {
@@ -280,10 +280,21 @@ describe('episodeFacts', () => {
   })
 })
 
-describe('sourceHostOf', () => {
-  it('reads the host out of a server config, tolerating junk', () => {
-    expect(sourceHostOf({ baseURL: 'https://personalserver.adamdrumm.com/media' })).toBe('personalserver.adamdrumm.com')
-    expect(sourceHostOf({ baseURL: 'not a url' })).toBeNull()
-    expect(sourceHostOf(null)).toBeNull()
+describe('displayTitleOf', () => {
+  it('restores TMDB punctuation when the display title is just the folder name', () => {
+    expect(
+      displayTitleOf({
+        title: 'The Lord of the Rings The Fellowship of the Ring',
+        originalTitle: 'The Lord of the Rings The Fellowship of the Ring',
+        metadata: { title: 'The Lord of the Rings: The Fellowship of the Ring' },
+      })
+    ).toBe('The Lord of the Rings: The Fellowship of the Ring')
+  })
+
+  it('keeps a title that was set on purpose, and copes with missing pieces', () => {
+    expect(displayTitleOf({ title: 'My Custom Name', originalTitle: 'Folder Name', metadata: { title: 'TMDB Name' } })).toBe('My Custom Name')
+    expect(displayTitleOf({ title: 'Folder Name', originalTitle: 'Folder Name', metadata: {} })).toBe('Folder Name')
+    expect(displayTitleOf({ originalTitle: 'Folder Name', metadata: { title: 'TMDB Name' } })).toBe('TMDB Name')
+    expect(displayTitleOf(null)).toBe('')
   })
 })

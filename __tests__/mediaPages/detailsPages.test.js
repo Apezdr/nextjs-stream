@@ -36,13 +36,6 @@ jest.mock('@src/lib/auth-client', () => ({
   authClient: { useSession: () => ({ data: { user: { id: 'u1', role: 'user' } }, isPending: false }) },
 }))
 
-jest.mock('@src/utils/config', () => ({
-  getServer: (id) => {
-    if (id && id !== 'default') throw new Error(`No server found with ID: ${id}`)
-    return { id: 'default', baseURL: 'https://personalserver.example.com/media' }
-  },
-}))
-
 jest.mock('@components/MediaPages/details/CollectionCard', () => ({
   __esModule: true,
   default: ({ collection, currentOriginalTitle }) => (
@@ -200,11 +193,11 @@ describe('MovieDetailsComponent', () => {
     // Details panel: catalog facts, file facts, source host and watched-by row
     const panel = screen.getByRole('heading', { name: 'Movie details' }).closest('section')
     const rows = within(panel).getAllByRole('term').map((dt) => dt.textContent)
-    expect(rows).toEqual(['Language', 'Studio', 'Country', 'Released', 'TMDB score', 'Resolution', 'Video', 'Dynamic range', 'Audio', 'Subtitles', 'File', 'Added', 'Source', 'Watched by'])
+    expect(rows).toEqual(['Language', 'Studio', 'Country', 'Released', 'TMDB score', 'Resolution', 'Video', 'Dynamic range', 'Audio', 'Subtitles', 'File', 'Added', 'Watched by'])
     expect(within(panel).getByText('3840 × 2160 (4K)')).toBeInTheDocument()
     expect(within(panel).getByText('HEVC (H.265) · 10-bit')).toBeInTheDocument()
     expect(within(panel).getByText('MKV · 56.81 GB')).toBeInTheDocument()
-    expect(within(panel).getByText('personalserver.example.com')).toBeInTheDocument()
+    expect(within(panel).queryByText(/adamdrumm|example.com/)).not.toBeInTheDocument()
     expect(screen.getByTestId('watched-by')).toHaveTextContent('6a63359ffa2aa04e')
   })
 
@@ -212,9 +205,8 @@ describe('MovieDetailsComponent', () => {
     render(<MovieDetailsComponent media={{ _id: 'x', title: 'Untitled', originalTitle: 'Untitled' }} />)
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Untitled')
     expect(screen.queryByTestId('collection-card')).not.toBeInTheDocument()
-    // Nothing but the owning server is known about the file
-    const panel = screen.getByRole('heading', { name: 'Movie details' }).closest('section')
-    expect(within(panel).getAllByRole('term').map((dt) => dt.textContent)).toEqual(['Source'])
+    // Nothing is known about the file, so there is no panel to show
+    expect(screen.queryByRole('heading', { name: 'Movie details' })).not.toBeInTheDocument()
   })
 })
 
@@ -241,8 +233,6 @@ describe('TVEpisodeDetailsComponent', () => {
     const rows = within(panel).getAllByRole('term').map((dt) => dt.textContent)
     expect(rows.slice(0, 4)).toEqual(['Director', 'Writer', 'Network', 'Language'])
     expect(within(panel).getByText('Derek Tsang Kwok-Cheung')).toBeInTheDocument()
-    // An unknown server id leaves the Source row out instead of throwing
-    expect(rows).not.toContain('Source')
     expect(rows).toContain('Watched by')
   })
 })

@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import Image from 'next/image'
-import { ArrowRightIcon } from '@heroicons/react/20/solid'
+import { ArrowRightIcon, CheckCircleIcon } from '@heroicons/react/20/solid'
 import RetryImage from '@components/RetryImage'
 import { classNames, getFullImageUrl } from '@src/utils'
 import { getFlatMoviesByCollectionId } from '@src/utils/flatDatabaseUtils'
@@ -58,7 +58,7 @@ export default async function CollectionCard({ collection, currentOriginalTitle 
         </div>
 
         {count > 1 ? (
-          <ul className="mt-4 flex gap-2.5 overflow-x-auto pb-1 scrollbar-none" aria-label="Films in this collection">
+          <ul className="mt-3 flex gap-3 overflow-x-auto px-2 pb-1 pt-3 scrollbar-none" aria-label="Films in this collection">
             {siblings.map((film) => {
               const current = film.originalTitle === currentOriginalTitle
               const year = yearOf(film.metadata?.release_date)
@@ -67,29 +67,38 @@ export default async function CollectionCard({ collection, currentOriginalTitle 
                   <Link
                     href={film.url || `/list/movie/${encodeURIComponent(film.originalTitle)}`}
                     aria-current={current ? 'page' : undefined}
-                    title={year ? `${film.title} (${year})` : film.title}
+                    aria-label={`${film.title}${year ? ` (${year})` : ''}${current ? ', the film you are viewing' : ''}`}
+                    title={current ? `${film.title} — you are here` : year ? `${film.title} (${year})` : film.title}
                     className={classNames(
-                      'block w-14 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300',
+                      'block w-16 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300',
                       current ? '' : 'opacity-75 transition-opacity hover:opacity-100'
                     )}
                   >
                     <div
                       className={classNames(
-                        'relative aspect-[2/3] overflow-hidden rounded-md bg-white/10',
+                        'relative aspect-[2/3] rounded-md bg-white/10',
                         current ? 'ring-2 ring-blue-400 ring-offset-2 ring-offset-[#0f1633]' : 'ring-1 ring-white/10'
                       )}
                     >
-                      <RetryImage
-                        src={film.posterURL || '/sorry-image-not-available.jpg'}
-                        alt={film.title}
-                        fill
-                        sizes="56px"
-                        quality={50}
-                        className="object-cover"
-                      />
+                      <div className="absolute inset-0 overflow-hidden rounded-md">
+                        <RetryImage
+                          src={film.posterURL || '/sorry-image-not-available.jpg'}
+                          alt=""
+                          fill
+                          sizes="64px"
+                          quality={50}
+                          className="object-cover"
+                        />
+                      </div>
+                      {current ? (
+                        <CheckCircleIcon
+                          className="absolute -right-2 -top-2 size-5 rounded-full bg-[#0f1633] text-blue-400"
+                          aria-hidden="true"
+                        />
+                      ) : null}
                     </div>
-                    <p className={classNames('mt-1.5 truncate text-center text-[11px] leading-tight', current ? 'font-semibold text-white' : 'text-white/60')}>
-                      {current ? 'You are here' : year || film.title}
+                    <p className={classNames('mt-1.5 truncate text-center text-[11px] leading-tight tabular-nums', current ? 'font-semibold text-white' : 'text-white/60')}>
+                      {year || '—'}
                     </p>
                   </Link>
                 </li>

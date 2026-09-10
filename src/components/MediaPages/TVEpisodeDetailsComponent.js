@@ -1,7 +1,6 @@
 import { Suspense, ViewTransition } from 'react'
-import { getServer } from '@src/utils/config'
 import { tvSeasonPosterName } from '@src/utils/viewTransitionNames'
-import { splitTitle, qualityChips, certificationOf, episodeFacts, episodeTypeLabel, formatDate, sourceHostOf } from '@src/utils/media/detailsFacts'
+import { splitTitle, qualityChips, certificationOf, episodeFacts, episodeTypeLabel, formatDate } from '@src/utils/media/detailsFacts'
 import { durationMsFrom, formatRuntime } from '@components/WatchProgress/progress'
 import WatchProgressPanel from '@components/WatchProgress/WatchProgressPanel'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
@@ -16,14 +15,6 @@ import CastRail from './details/CastRail'
 const ACTIONS_ID = 'episode-hero-actions'
 
 const pad2 = (n) => String(n).padStart(2, '0')
-
-function sourceHostFor(serverId) {
-  try {
-    return sourceHostOf(getServer(serverId || undefined))
-  } catch {
-    return null
-  }
-}
 
 /**
  * The episode info page: the same frame as the movie page, with the show as
@@ -51,7 +42,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
   const code = `S${pad2(seasonNumber)}E${pad2(episodeNumber)}`
   const finale = episodeTypeLabel(episode_type)
   const chips = [...(finale ? [finale] : []), ...qualityChips(media)]
-  const facts = episodeFacts(media, { sourceHost: sourceHostFor(media.videoSource) })
+  const facts = episodeFacts(media)
   const genreNames = (genres || []).map((g) => g?.name).filter(Boolean)
   const position = { videoURL: media.videoURL || null, mediaId: media.mediaId || null, durationMs }
   const stickyTitle = `${code} · ${headline}`

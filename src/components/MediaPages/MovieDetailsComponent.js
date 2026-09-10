@@ -1,9 +1,8 @@
 import { Suspense, ViewTransition } from 'react'
 import { classNames } from '@src/utils'
-import { getServer } from '@src/utils/config'
 import { moviePosterName } from '@src/utils/viewTransitionNames'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
-import { splitTitle, yearOf, qualityChips, certificationOf, movieFacts, sourceHostOf } from '@src/utils/media/detailsFacts'
+import { displayTitleOf, splitTitle, yearOf, qualityChips, certificationOf, movieFacts } from '@src/utils/media/detailsFacts'
 import { durationMsFrom, formatRuntime } from '@components/WatchProgress/progress'
 import WatchProgressPanel from '@components/WatchProgress/WatchProgressPanel'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
@@ -17,19 +16,6 @@ import CollectionCard from './details/CollectionCard'
 
 /** The hero's action row; the sticky bar appears once this scrolls out. */
 const ACTIONS_ID = 'movie-hero-actions'
-
-/**
- * Host name of the server that owns the file, for the details panel.
- * Unknown ids (a retired server) fall back to nothing rather than throwing
- * inside the cached subtree.
- */
-function sourceHostFor(serverId) {
-  try {
-    return sourceHostOf(getServer(serverId || undefined))
-  } catch {
-    return null
-  }
-}
 
 /**
  * The movie info page.
@@ -48,16 +34,17 @@ const MovieDetailsComponent = ({ media }) => {
     return <div className="text-center py-4">Loading...</div>
   }
 
-  const { title, posterURL, posterBlurhash, metadata, duration } = media
+  const { posterURL, posterBlurhash, metadata, duration } = media
   const { release_date, genres, overview, tagline, trailer_url } = metadata || {}
   const cast = media.cast || metadata?.cast || []
   const collection = metadata?.belongs_to_collection
 
+  const title = displayTitleOf(media)
   const { headline, subtitle } = splitTitle(title)
   const durationMs = durationMsFrom({ duration, metadata })
   const playHref = `/list/movie/${mediaLinkParam(media)}/play`
   const chips = qualityChips(media)
-  const facts = movieFacts(media, { sourceHost: sourceHostFor(media.videoSource) })
+  const facts = movieFacts(media)
   const genreNames = (genres || []).map((g) => g?.name).filter(Boolean)
   const position = { videoURL: media.videoURL || null, mediaId: media.mediaId || null, durationMs }
 
@@ -69,7 +56,7 @@ const MovieDetailsComponent = ({ media }) => {
       </div>
 
       <header className="mt-6 grid grid-cols-[120px_minmax(0,1fr)] gap-x-5 gap-y-6 sm:mt-10 sm:grid-cols-[170px_minmax(0,1fr)] sm:gap-x-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <ViewTransition name={moviePosterName(title)}>
+        <ViewTransition name={moviePosterName(media.title)}>
           <HeroPoster src={posterURL} alt={`${title} poster`} blurhash={posterBlurhash} className="sm:row-span-2" />
         </ViewTransition>
 
