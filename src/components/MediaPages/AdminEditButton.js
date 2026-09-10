@@ -1,7 +1,9 @@
 'use client'
 
 import Link from 'next/link'
+import { PencilSquareIcon } from '@heroicons/react/20/solid'
 import { authClient } from '@src/lib/auth-client'
+import { classNames } from '@src/utils'
 
 /**
  * Admin-only "Edit in Admin" button shown on media detail pages.
@@ -15,11 +17,31 @@ import { authClient } from '@src/lib/auth-client'
  * @param {Object} props
  * @param {string} props.href - Admin editor URL (e.g. `/admin/media/movies/<id>`).
  * @param {string} [props.label] - Visible button label.
+ * @param {'button'|'subtle'} [props.variant] - `subtle` is the quiet pencil link
+ *   in the corner of an info page; `button` is the amber block on list pages.
+ * @param {string} [props.className]
  */
-export default function AdminEditButton({ href, label = 'Edit in Admin' }) {
+export default function AdminEditButton({ href, label = 'Edit in Admin', variant = 'button', className = '' }) {
   const { data: session } = authClient.useSession()
 
   if (!href || session?.user?.role !== 'admin') return null
+
+  if (variant === 'subtle') {
+    return (
+      <Link
+        href={href}
+        prefetch={false}
+        className={classNames(
+          'inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-white/70 transition-colors',
+          'hover:bg-white/10 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300',
+          className
+        )}
+      >
+        <PencilSquareIcon className="size-4" aria-hidden="true" />
+        {label}
+      </Link>
+    )
+  }
 
   return (
     <Link href={href} className="self-center" prefetch={false}>

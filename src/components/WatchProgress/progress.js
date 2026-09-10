@@ -1,6 +1,7 @@
 /**
  * Pure helpers behind every web watch-progress surface (rail card bar, popup
- * row, details-page panel). No React here so they can be unit tested.
+ * row, details-page panel, sticky title bar). No React here so they can be
+ * unit tested.
  *
  * Inputs are what the server now emits on every playable item: a
  * `watchHistory` object with `playbackTime` (seconds), `progressPercent` and
@@ -14,8 +15,9 @@ import { WATCH_COMPLETION_PERCENT } from '@src/utils/watchHistory/progress'
 const pad = (n) => String(n).padStart(2, '0')
 
 /**
- * "HH:MM:SS" for a number of seconds. Hours are always shown and zero-padded
- * so a position and a runtime line up as "01:12:34 / 02:01:54".
+ * "H:MM:SS" for a number of seconds, the way a player's clock reads it:
+ * hours unpadded and only when there are any, so a position and a runtime
+ * line up as "1:40:13 / 3:02:29" and a short film reads "42:10".
  *
  * @param {number} seconds
  * @returns {string}
@@ -25,7 +27,37 @@ export function formatClock(seconds) {
   const h = Math.floor(total / 3600)
   const m = Math.floor((total % 3600) / 60)
   const s = total % 60
-  return `${pad(h)}:${pad(m)}:${pad(s)}`
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`
+}
+
+/**
+ * How much is left, in words: "1h 22m left", "22m left", "Under a minute left".
+ *
+ * @param {number} seconds
+ * @returns {string}
+ */
+export function formatRemaining(seconds) {
+  const total = Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : 0
+  if (total < 60) return 'Under a minute left'
+  const h = Math.floor(total / 3600)
+  const m = Math.round((total % 3600) / 60)
+  if (h > 0) return m > 0 ? `${h}h ${m}m left` : `${h}h left`
+  return `${m}m left`
+}
+
+/**
+ * A runtime in words: "3h 2m", "58m".
+ *
+ * @param {number|null} durationMs
+ * @returns {string|null}
+ */
+export function formatRuntime(durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) return null
+  const totalMinutes = Math.round(durationMs / 60000)
+  const h = Math.floor(totalMinutes / 60)
+  const m = totalMinutes % 60
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  return `${m}m`
 }
 
 /**
@@ -50,7 +82,7 @@ export function durationMsFrom(item) {
  * @param {Object|null} [options.watchHistory] - server object (preferred)
  * @param {number|null} [options.playbackTime] - seconds, when known without the object
  * @param {number|null} [options.durationMs]
- * @returns {{ playbackTime: number, durationMs: number|null, progressPercent: number, completed: boolean, hasProgress: boolean, clock: string }}
+ * @returns {{ playbackTime: number, durationMs: number|null, progressPercent: number, completed: boolean, hasProgress: boolean, clock: string, remainingSeconds: number|null }}
  */
 export function readProgress({ watchHistory = null, playbackTime = null, durationMs = null } = {}) {
   const position = Number.isFinite(watchHistory?.playbackTime)
@@ -75,6 +107,7 @@ export function readProgress({ watchHistory = null, playbackTime = null, duratio
       : progressPercent >= WATCH_COMPLETION_PERCENT
 
   const clock = runtime ? `${formatClock(position)} / ${formatClock(runtime / 1000)}` : formatClock(position)
+  const remainingSeconds = runtime ? Math.max(0, runtime / 1000 - position) : null
 
   return {
     playbackTime: position,
@@ -83,6 +116,7 @@ export function readProgress({ watchHistory = null, playbackTime = null, duratio
     completed,
     hasProgress: position > 0 || progressPercent > 0,
     clock,
+    remainingSeconds,
   }
 }
 

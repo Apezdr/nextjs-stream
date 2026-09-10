@@ -3,8 +3,8 @@
 import { useCallback } from 'react'
 import useSWR from 'swr'
 import useSWRMutation from 'swr/mutation'
-import { HeartIcon } from '@heroicons/react/24/outline'
-import { HeartIcon as HeartIconSolid } from '@heroicons/react/24/solid'
+import { HeartIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { HeartIcon as HeartIconSolid, CheckIcon } from '@heroicons/react/24/solid'
 import { toast } from 'react-toastify'
 import { authClient } from '@src/lib/auth-client'
 import { LoadingDots } from '@src/app/loading'
@@ -63,6 +63,14 @@ const toggleFetcher = async (url, { arg: body }) => {
   }
   return res.json()
 }
+
+/**
+ * The outline pill used beside a details page's primary button: a quarter
+ * white border that holds on a dim backdrop, label hidden on phones so the
+ * secondaries collapse to icons.
+ */
+const OUTLINE_CLASSES =
+  'h-12 gap-2 rounded-md border border-white/25 px-4 text-sm font-medium text-white hover:border-white/50 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300'
 
 export default function WatchlistButton({
   mediaId,
@@ -161,6 +169,18 @@ export default function WatchlistButton({
   }
 
   // While loading session or status
+  if ((isPending || isChecking) && variant === 'outline') {
+    return (
+      <span
+        className={`${OUTLINE_CLASSES} cursor-progress opacity-60 ${className}`}
+        aria-busy="true"
+        aria-label="Checking your list"
+      >
+        <PlusIcon className="size-5" aria-hidden="true" />
+        <span className="hidden sm:inline">My list</span>
+      </span>
+    )
+  }
   if (isPending || isChecking) {
     return (
       <div className={`inline-flex items-center justify-center ${className}`}>
@@ -177,8 +197,9 @@ export default function WatchlistButton({
   if (!isPending && !session) return null
 
   // Pick icon/text
-  const Icon = inWatchlist ? HeartIconSolid : HeartIcon
-  const label = inWatchlist ? 'In Watchlist' : 'Add to Watchlist'
+  const isOutline = variant === 'outline'
+  const Icon = isOutline ? (inWatchlist ? CheckIcon : PlusIcon) : inWatchlist ? HeartIconSolid : HeartIcon
+  const label = isOutline ? (inWatchlist ? 'In my list' : 'My list') : inWatchlist ? 'In Watchlist' : 'Add to Watchlist'
   const togglingLabel = isMutating ? (inWatchlist ? 'Removing…' : 'Adding…') : label
 
   return (
@@ -188,11 +209,13 @@ export default function WatchlistButton({
       className={`${className} inline-flex items-center justify-center transition-all duration-300 ${
         variant === 'icon-only'
           ? 'p-2 rounded-full'
-          : `px-3 py-2 rounded-md border ${
-              inWatchlist
-                ? 'bg-red-600 text-white border-red-600 hover:bg-red-700'
-                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-            }`
+          : isOutline
+            ? `${OUTLINE_CLASSES} ${inWatchlist ? 'border-white/60 bg-white/10' : ''}`
+            : `px-3 py-2 rounded-md border ${
+                inWatchlist
+                  ? 'bg-red-600 text-white border-red-600 hover:bg-red-700'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`
       }`}
       aria-label={togglingLabel}
       title={togglingLabel}
@@ -213,7 +236,9 @@ export default function WatchlistButton({
           className={`w-5 h-5 ${
             variant === 'icon-only'
               ? (inWatchlist ? 'text-red-500' : '')
-              : 'mr-2'
+              : isOutline
+                ? 'sm:mr-2'
+                : 'mr-2'
           }`}
         />
       </motion.div>
@@ -241,7 +266,7 @@ export default function WatchlistButton({
                   ease: [0.4, 0, 0.2, 1]
                 }
               }}
-              className="text-sm block"
+              className={isOutline ? 'text-sm hidden sm:block' : 'text-sm block'}
             >
               {togglingLabel}
             </motion.span>

@@ -4,26 +4,54 @@
  * are pinned here once.
  */
 
-const { formatClock, readProgress, durationMsFrom, canShowProgress } = require('@src/components/WatchProgress/progress')
+const {
+  formatClock,
+  formatRemaining,
+  formatRuntime,
+  readProgress,
+  durationMsFrom,
+  canShowProgress,
+} = require('@src/components/WatchProgress/progress')
 
 describe('formatClock', () => {
-  it('always shows zero-padded hours so position and runtime line up', () => {
-    expect(formatClock(0)).toBe('00:00:00')
-    expect(formatClock(59)).toBe('00:00:59')
-    expect(formatClock(4354.6)).toBe('01:12:34')
-    expect(formatClock(7314.724)).toBe('02:01:54')
-    expect(formatClock(NaN)).toBe('00:00:00')
-    expect(formatClock(-5)).toBe('00:00:00')
+  it('reads like a player clock: unpadded hours, and none when under an hour', () => {
+    expect(formatClock(0)).toBe('0:00')
+    expect(formatClock(59)).toBe('0:59')
+    expect(formatClock(2530)).toBe('42:10')
+    expect(formatClock(4354.6)).toBe('1:12:34')
+    expect(formatClock(7314.724)).toBe('2:01:54')
+    expect(formatClock(36_000)).toBe('10:00:00')
+    expect(formatClock(NaN)).toBe('0:00')
+    expect(formatClock(-5)).toBe('0:00')
+  })
+})
+
+describe('formatRemaining and formatRuntime', () => {
+  it('says what is left in hours and minutes', () => {
+    expect(formatRemaining(4936)).toBe('1h 22m left')
+    expect(formatRemaining(3600)).toBe('1h left')
+    expect(formatRemaining(1320)).toBe('22m left')
+    expect(formatRemaining(45)).toBe('Under a minute left')
+    expect(formatRemaining(0)).toBe('Under a minute left')
+  })
+
+  it('formats a runtime the way the meta line shows it', () => {
+    expect(formatRuntime(10_949_000)).toBe('3h 2m')
+    expect(formatRuntime(3_600_000)).toBe('1h')
+    expect(formatRuntime(3_480_000)).toBe('58m')
+    expect(formatRuntime(null)).toBeNull()
+    expect(formatRuntime(0)).toBeNull()
   })
 })
 
 describe('readProgress', () => {
-  it('prefers the server fields and renders "HH:MM:SS / HH:MM:SS"', () => {
+  it('prefers the server fields and renders "H:MM:SS / H:MM:SS"', () => {
     const p = readProgress({
       watchHistory: { playbackTime: 6472.66, progressPercent: 88.5, completed: false },
       durationMs: 7314724,
     })
-    expect(p.clock).toBe('01:47:52 / 02:01:54')
+    expect(p.clock).toBe('1:47:52 / 2:01:54')
+    expect(p.remainingSeconds).toBeCloseTo(842.064, 3)
     expect(p.progressPercent).toBe(88.5)
     expect(p.completed).toBe(false)
     expect(p.hasProgress).toBe(true)
@@ -43,11 +71,12 @@ describe('readProgress', () => {
   it('reports no progress for an unwatched or missing row', () => {
     expect(readProgress({ watchHistory: null, durationMs: 7_200_000 }).hasProgress).toBe(false)
     expect(readProgress({ watchHistory: { playbackTime: 0, progressPercent: 0, completed: false } }).hasProgress).toBe(false)
-    expect(readProgress({}).clock).toBe('00:00:00')
+    expect(readProgress({}).clock).toBe('0:00')
+    expect(readProgress({}).remainingSeconds).toBeNull()
   })
 
   it('falls back to a position-only clock when the runtime is unknown', () => {
-    expect(readProgress({ playbackTime: 125 }).clock).toBe('00:02:05')
+    expect(readProgress({ playbackTime: 125 }).clock).toBe('2:05')
   })
 })
 

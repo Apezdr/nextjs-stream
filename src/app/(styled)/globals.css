@@ -285,3 +285,24 @@ body.playing #backdrop-cover {
   End of Scroll Container on Home Page
   -----
 */
+/* Movie / episode info pages: the fixed backdrop is the hero art. The page
+   marks itself with .media-details-page and the cover lifts to show the art
+   at roughly 40% at the top of the viewport (crisp, no blur), darker toward
+   the text edge on the left, and settling into the page colour lower down.
+   Specificity ties body:not(.playing) #backdrop-cover above, so this must
+   stay below it in source order. */
+body:has(.media-details-page) #backdrop-cover {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background:
+    linear-gradient(to right, rgba(5, 9, 24, 0.55) 0%, rgba(5, 9, 24, 0.2) 45%, rgba(5, 9, 24, 0) 70%),
+    linear-gradient(to bottom, rgba(5, 9, 24, 0.38) 0%, rgba(5, 9, 24, 0.55) 45vh, rgba(7, 11, 29, 0.9) 100%);
+}
+
+/* The same page on a phone: no left scrim (the title sits over the whole
+   width) and a little more cover, since the art is cropped tight. */
+@media (max-width: 640px) {
+  body:has(.media-details-page) #backdrop-cover {
+    background: linear-gradient(to bottom, rgba(5, 9, 24, 0.5) 0%, rgba(5, 9, 24, 0.62) 40vh, rgba(7, 11, 29, 0.92) 100%);
+  }
+}

@@ -2346,6 +2346,11 @@ export async function getFlatRequestedMedia({
               backdrop_path: episodeData.metadata?.backdrop_path || tvShow.metadata?.backdrop_path,
               rating: tvShow.metadata?.rating || null,
               trailer_url: tvShow.metadata?.trailer_url || null,
+              // Show-level facts the episode page shows in its eyebrow and
+              // details panel; episode metadata never carries these itself.
+              genres: episodeData.metadata?.genres || tvShow.metadata?.genres || [],
+              networks: tvShow.metadata?.networks || [],
+              original_language: episodeData.metadata?.original_language || tvShow.metadata?.original_language || null,
             },
           }
 
