@@ -14,7 +14,7 @@ function CastMember({ person, className = '' }) {
     <>
       <div className="relative size-20 overflow-hidden rounded-full bg-white/10 ring-1 ring-white/10 transition-[box-shadow,filter] duration-200 group-hover:brightness-110 group-hover:ring-2 group-hover:ring-white/50 group-focus-visible:ring-2 group-focus-visible:ring-blue-300">
         {photo ? (
-          <RetryImage src={photo} alt="" width={80} height={80} sizes="80px" quality={60} loading="lazy" className="size-20 object-cover" />
+          <RetryImage src={photo} alt="" width={80} height={80} sizes="80px" quality={50} loading="lazy" className="size-20 object-cover" />
         ) : (
           <span className="flex size-full items-center justify-center text-lg font-semibold text-white/40" aria-hidden="true">
             {initials(person.name)}

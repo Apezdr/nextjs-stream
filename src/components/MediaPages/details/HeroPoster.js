@@ -21,7 +21,7 @@ export default function HeroPoster({ src, alt, blurhash = null, className = '' }
         alt={alt}
         fill
         sizes="(max-width: 640px) 120px, (max-width: 1024px) 170px, 220px"
-        quality={85}
+        quality={90}
         priority
         className="object-cover"
         {...placeholder}

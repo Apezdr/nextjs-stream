@@ -51,13 +51,22 @@ export const formatTime = cache((milliseconds) => {
     .padStart(2, '0')}`
 })
 
+const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/'
+const TMDB_SIZED_URL = /^(https?:\/\/image\.tmdb\.org\/t\/p\/)([^/]+)(\/.+)$/
+
 export const getFullImageUrl = cache((imagePath, size = 'w780') => {
   if (!imagePath) {
     return null
   }
+  // Some stored paths (cast profile_path, for one) are already absolute
+  // TMDB URLs. Re-size those in place rather than prefixing the base again,
+  // which produced ".../t/p/w185https://image.tmdb.org/..." requests.
+  if (/^https?:\/\//i.test(imagePath)) {
+    const sized = imagePath.match(TMDB_SIZED_URL)
+    return sized ? `${sized[1]}${size}${sized[3]}` : imagePath
+  }
   // Adjust the size as needed (e.g., 'w780', 'original')
-  const baseUrl = 'https://image.tmdb.org/t/p/'
-  return `${baseUrl}${size}${imagePath}`
+  return `${TMDB_IMAGE_BASE}${size}${imagePath}`
 })
 
 export const buildURL = cache((url) => {
