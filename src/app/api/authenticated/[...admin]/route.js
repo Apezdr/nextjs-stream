@@ -6,6 +6,7 @@ import {
 } from '@src/utils/admin_database'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { getActivePresenceForUsers } from '@src/utils/playbackPresence/database'
+import { attachPresenceToVideos } from '@src/utils/playbackPresence/attach'
 import { ObjectId } from 'mongodb'
 import { userQueries } from '@src/lib/userQueries'
 import {
@@ -263,16 +264,11 @@ export async function GET(request, props) {
 
                 // Flag whichever of this user's recently-watched videos matches
                 // a currently-active presence session, so the dashboard can
-                // show a live "Watching Now"/"Paused" badge on it.
+                // show a live "Watching Now"/"Paused" badge on it. With several
+                // sessions on one title the newest heartbeat decides both the
+                // badge and the device icon; see playbackPresence/attach.js.
                 const activeSessions = activePresenceByUser.get(user._id.toString()) || []
-                const videosWithPresence = watchedMedia.map((video) => {
-                  const activeSession = activeSessions.find(
-                    (session) => session.normalizedVideoId && session.normalizedVideoId === video.normalizedVideoId
-                  )
-                  return activeSession
-                    ? { ...video, watchingNow: true, isPaused: activeSession.isPaused === true }
-                    : video
-                })
+                const videosWithPresence = attachPresenceToVideos(watchedMedia, activeSessions)
 
                 // Format the data to match the structure expected by the component
                 return {

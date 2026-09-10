@@ -250,6 +250,70 @@ const UserLane = memo(function UserLane({ media, onUserClick }) {
 
 /* ---------- Media Chip ---------- */
 
+const DEVICE_LABELS = { tv: 'TV', desktop: 'Desktop', mobile: 'Mobile', tablet: 'Tablet' }
+
+/** "12s ago" / "3m ago" / "2h ago" for a presence heartbeat. */
+function heartbeatAge(lastHeartbeat) {
+  const t = lastHeartbeat ? new Date(lastHeartbeat).getTime() : NaN
+  if (!Number.isFinite(t)) return ''
+  const seconds = Math.max(0, Math.round((Date.now() - t) / 1000))
+  if (seconds < 60) return `${seconds}s ago`
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  return `${Math.round(minutes / 60)}h ago`
+}
+
+function describeDevice(device) {
+  const label = DEVICE_LABELS[device.deviceType] || 'Unknown device'
+  const state = device.isPaused ? 'Paused' : 'Watching'
+  const age = heartbeatAge(device.lastHeartbeat)
+  return age ? `${label} · ${state} · ${age}` : `${label} · ${state}`
+}
+
+/**
+ * "N devices" for a title with more than one live session. The badge and
+ * icon on the card belong to the newest session; this is where the others
+ * are. Hover shows them as a native tooltip, tap or click expands them
+ * inline (the card clips overflow, so nothing floats).
+ */
+function ActiveDevicesNote({ devices }) {
+  const [open, setOpen] = useState(false)
+  if (!Array.isArray(devices) || devices.length < 2) return null
+  const tooltip = devices.map(describeDevice).join('\n')
+
+  return (
+    <div className="mt-1">
+      <button
+        type="button"
+        title={tooltip}
+        aria-expanded={open}
+        onClick={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setOpen((v) => !v)
+        }}
+        className="inline-flex items-center gap-1 rounded bg-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-gray-600 hover:bg-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+      >
+        <span className="inline-block h-1.5 w-1.5 rounded-full bg-blue-500" aria-hidden="true" />
+        {devices.length} devices
+      </button>
+      {open && (
+        <ul className="mt-1 space-y-1">
+          {devices.map((device, index) => (
+            <li key={`${device.deviceType}-${index}`} className="flex items-center gap-1.5 text-[10px] text-gray-600">
+              <DeviceBadge deviceType={device.deviceType} userAgent={device.userAgentTruncated} size="small" />
+              <span className={device.isPaused ? 'text-amber-700' : 'text-green-700'}>
+                {device.isPaused ? 'Paused' : 'Watching'}
+              </span>
+              <span className="text-gray-400">{heartbeatAge(device.lastHeartbeat)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 function MediaChip({ video }) {
   const title = video?.title || 'Unknown'
   const isTv = video?.type === 'tv'
@@ -310,6 +374,7 @@ function MediaChip({ video }) {
           </span>
           <span className="text-xs text-gray-400">{video.lastWatchedDate}</span>
         </div>
+        <ActiveDevicesNote devices={video.activeDevices} />
       </div>
     </div>
   )
