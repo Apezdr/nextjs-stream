@@ -21,10 +21,15 @@ export const POSITION_REFRESH_MS = 15000
  * focus so a film playing on the Shield moves the bar here. The local
  * mirror (useLiveProgress) fills the first paint and the seconds between.
  *
- * @param {{ videoURL: string|null, mediaId?: string|null, durationMs?: number|null }} options
+ * A page that already joined the viewer's watch history on the server (the
+ * show and season pages render per user) passes that object as
+ * `watchHistory`: it stands in until the endpoint answers, so the first
+ * paint already reads the right position instead of "Play".
+ *
+ * @param {{ videoURL: string|null, mediaId?: string|null, durationMs?: number|null, watchHistory?: Object|null }} options
  * @returns {{ progress: ReturnType<typeof useLiveProgress>, settled: boolean }}
  */
-export default function useWatchPosition({ videoURL, mediaId = null, durationMs = null }) {
+export default function useWatchPosition({ videoURL, mediaId = null, durationMs = null, watchHistory = null }) {
   const key = videoURL ? `/api/authenticated/sync/playback?videoId=${encodeURIComponent(videoURL)}` : null
   const { data, error, isLoading } = useSWR(key, fetcher, {
     revalidateOnFocus: true,
@@ -32,7 +37,7 @@ export default function useWatchPosition({ videoURL, mediaId = null, durationMs 
     dedupingInterval: 5000,
   })
 
-  const watchHistory =
+  const server =
     data && data.found
       ? {
           playbackTime: data.playbackTime,
@@ -40,9 +45,9 @@ export default function useWatchPosition({ videoURL, mediaId = null, durationMs 
           completed: data.completed,
           lastWatched: data.lastUpdated,
         }
-      : null
+      : watchHistory
 
-  const progress = useLiveProgress({ watchHistory, mediaId, videoURL, durationMs })
+  const progress = useLiveProgress({ watchHistory: server, mediaId, videoURL, durationMs })
 
   return { progress, settled: !key || data !== undefined || Boolean(error) || !isLoading }
 }

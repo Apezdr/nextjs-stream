@@ -3,14 +3,19 @@
 import { classNames } from '@src/utils'
 import WatchlistButton from '@components/WatchlistButton'
 import PrimaryPlayButton from './PrimaryPlayButton'
+import { SECONDARY_CLASSES } from './Primitives'
 
-const SECONDARY_CLASSES =
-  'inline-flex h-12 items-center gap-2 rounded-md border border-white/25 px-4 text-sm font-medium text-white transition-colors hover:border-white/50 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300'
+// Re-exported for client surfaces (the episode action dialog, secondaries
+// passed as children). A server component should import it from
+// './Primitives' (see the note there).
+export { SECONDARY_CLASSES }
 
 /**
  * The button row in the hero: one filled primary, then outline secondaries.
  * On phones the primary spans the row and the secondaries drop to icon
- * buttons beneath it.
+ * buttons beneath it. Extra secondaries (a season's "Episode details" link)
+ * come in as children, styled with SECONDARY_CLASSES, after the watchlist
+ * button.
  *
  * @param {Object} props
  * @param {string|null} props.videoURL
@@ -20,8 +25,24 @@ const SECONDARY_CLASSES =
  * @param {string|null} [props.trailerUrl]
  * @param {Object|null} [props.watchlist] - props for WatchlistButton, or null to hide it
  * @param {string} [props.className]
+ * @param {string|null} [props.noun] - see PrimaryPlayButton
+ * @param {string|null} [props.restartNoun] - see PrimaryPlayButton
+ * @param {Object|null} [props.watchHistory] - server watch-history seed, see PrimaryPlayButton
+ * @param {import('react').ReactNode} [props.children]
  */
-export default function ActionRow({ videoURL, mediaId = null, durationMs = null, playHref, trailerUrl = null, watchlist = null, className = '' }) {
+export default function ActionRow({
+  videoURL,
+  mediaId = null,
+  durationMs = null,
+  playHref,
+  trailerUrl = null,
+  watchlist = null,
+  className = '',
+  noun = null,
+  restartNoun = noun,
+  watchHistory = null,
+  children = null,
+}) {
   return (
     <div className={classNames('flex flex-wrap items-center gap-3', className)}>
       <PrimaryPlayButton
@@ -29,6 +50,9 @@ export default function ActionRow({ videoURL, mediaId = null, durationMs = null,
         mediaId={mediaId}
         durationMs={durationMs}
         playHref={playHref}
+        noun={noun}
+        restartNoun={restartNoun}
+        watchHistory={watchHistory}
         className="w-full sm:w-auto"
       />
       {trailerUrl ? (
@@ -50,6 +74,7 @@ export default function ActionRow({ videoURL, mediaId = null, durationMs = null,
         </a>
       ) : null}
       {watchlist ? <WatchlistButton {...watchlist} variant="outline" /> : null}
+      {children}
     </div>
   )
 }

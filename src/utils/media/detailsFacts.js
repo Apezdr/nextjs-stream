@@ -230,10 +230,33 @@ export function primarySource(media) {
   return sources.find((s) => s?.isPrimary) || sources[0] || null
 }
 
+const SDR_RE = /\bSDR\b/i
+
+/**
+ * Whether the file is standard dynamic range: its declared `hdr` label or
+ * the probe's format says so ("10-bit SDR (BT.709)"), or the probe flags
+ * rule HDR out. A document with neither signal is unknown, not SDR.
+ *
+ * @param {Object|null|undefined} media
+ * @returns {boolean}
+ */
+export function isSdr(media) {
+  const hdr = typeof media?.hdr === 'string' ? media.hdr : ''
+  const format = typeof media?.mediaQuality?.format === 'string' ? media.mediaQuality.format : ''
+  return (
+    SDR_RE.test(hdr) ||
+    SDR_RE.test(format) ||
+    media?.mediaQuality?.isHDR === false ||
+    media?.mediaQuality?.viewingExperience?.highDynamicRange === false
+  )
+}
+
 /**
  * The chips on the meta line: resolution, then dynamic-range formats. Reads
  * the document's own `hdr` label first, then the probe flags, so "Dolby
- * Vision" beats a generic "HDR" and nothing is listed twice.
+ * Vision" beats a generic "HDR" and nothing is listed twice. A file known
+ * to be SDR gets an "SDR" chip in that slot instead; the raw "10-bit SDR
+ * (BT.709)" label is never a chip of its own.
  *
  * @param {Object} media
  * @returns {string[]}
@@ -258,7 +281,7 @@ export function qualityChips(media) {
     declared
       .split(/\s*[,/&]\s*|\s+and\s+/i)
       .map((s) => s.trim())
-      .filter(Boolean)
+      .filter((s) => s && !SDR_RE.test(s))
       .forEach(add)
   }
 
@@ -266,6 +289,9 @@ export function qualityChips(media) {
   if (ve?.dolbyVision) add('Dolby Vision')
   if (ve?.hdr10Plus) add('HDR10+')
   if (ve?.standardHDR && !seen.has('HDR10') && !seen.has('HDR10+') && !seen.has('Dolby Vision')) add('HDR')
+
+  // No dynamic-range format found, and the file says it is SDR
+  if (seen.size === 0 && isSdr(media)) chips.push('SDR')
 
   return chips
 }

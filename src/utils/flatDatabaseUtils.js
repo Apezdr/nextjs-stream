@@ -10,6 +10,7 @@ import { userQueries } from '@src/lib/userQueries'
 import { countPlaybackForUser, findPlaybackForUser } from '@src/utils/watchHistory/database'
 import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
+import { durationMsForItem } from '@src/utils/watchHistory/progress'
 import {
   visibleMovieFilter,
   visibleEpisodeFilter,
@@ -2288,26 +2289,51 @@ export async function getFlatRequestedMedia({
           }
 
           // Get next episode (if available). Web-visibility applies: a next-episode
-          // pointer at a hidden episode would dead-end autoplay.
-          const nextEpisode = await db.collection('FlatEpisodes').findOne(
-            {
-              showId: tvShow._id,
-              seasonId: seasonData._id,
-              episodeNumber: { $gt: episodeNumber },
-              ...visibleEpisodeFilter(),
-            },
-            {
-              sort: { episodeNumber: 1 },
-              projection: {
-                _id: 1,
-                normalizedVideoId: 1,
-                episodeNumber: 1,
-                title: 1,
-                thumbnail: 1,
-                metadata: 1,
+          // pointer at a hidden episode would dead-end autoplay. The previous
+          // visible episode and the season's visible count feed the episode
+          // page's nav bar; the three lookups are independent, so they run
+          // together.
+          const [nextEpisode, previousEpisode, seasonEpisodeCount] = await Promise.all([
+            db.collection('FlatEpisodes').findOne(
+              {
+                showId: tvShow._id,
+                seasonId: seasonData._id,
+                episodeNumber: { $gt: episodeNumber },
+                ...visibleEpisodeFilter(),
               },
-            }
-          )
+              {
+                sort: { episodeNumber: 1 },
+                projection: {
+                  _id: 1,
+                  normalizedVideoId: 1,
+                  episodeNumber: 1,
+                  title: 1,
+                  thumbnail: 1,
+                  thumbnailBlurhash: 1,
+                  metadata: 1,
+                  duration: 1,
+                  dimensions: 1,
+                  hdr: 1,
+                },
+              }
+            ),
+            db.collection('FlatEpisodes').findOne(
+              {
+                showId: tvShow._id,
+                seasonId: seasonData._id,
+                episodeNumber: { $lt: episodeNumber },
+                ...visibleEpisodeFilter(),
+              },
+              {
+                sort: { episodeNumber: -1 },
+                projection: { episodeNumber: 1, title: 1, 'metadata.name': 1 },
+              }
+            ),
+            db.collection('FlatEpisodes').countDocuments({
+              seasonId: seasonData._id,
+              ...visibleEpisodeFilter(),
+            }),
+          ])
 
           const result = {
             ...episodeData,
@@ -2373,6 +2399,10 @@ export async function getFlatRequestedMedia({
               : null
             result.nextEpisodeTitle = nextEpisode.title || nextEpisode.metadata?.name || null
             result.nextEpisodeNumber = nextEpisode.episodeNumber
+            // What the "Next in Season N" card shows under the title
+            result.nextEpisodeDuration = durationMsForItem(nextEpisode)
+            result.nextEpisodeDimensions = typeof nextEpisode.dimensions === 'string' ? nextEpisode.dimensions : null
+            result.nextEpisodeHdr = typeof nextEpisode.hdr === 'string' ? nextEpisode.hdr : null
 
             // determine which thumbnail is used; then based on that set the blurhash
             if (result.nextEpisodeThumbnailBlurhash == null) {
@@ -2389,7 +2419,18 @@ export async function getFlatRequestedMedia({
             }
           } else {
             result.hasNextEpisode = false
+            result.nextEpisodeDuration = null
+            result.nextEpisodeDimensions = null
+            result.nextEpisodeHdr = null
           }
+
+          // Episode-page navigation: the previous visible episode and the
+          // season's visible episode count ("Episode 3 of 10").
+          result.previousEpisodeNumber = previousEpisode ? previousEpisode.episodeNumber : null
+          result.previousEpisodeTitle = previousEpisode
+            ? previousEpisode.title || previousEpisode.metadata?.name || null
+            : null
+          result.seasonEpisodeCount = seasonEpisodeCount
 
           // Handle cast data - keep cast and guestStars separate
           if (tvShow.metadata?.cast) {
@@ -2880,15 +2921,27 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
       return null
     }
 
-    // Fetch episodes for this season from the flat database
-    const episodes = await db
-      .collection('FlatEpisodes')
-      .find({
-        seasonId: new ObjectId(matchingSeason._id),
-        ...visibleEpisodeFilter(),
-      })
-      .sort({ episodeNumber: 1 })
-      .toArray()
+    // Fetch episodes for this season from the flat database, and count the
+    // show's visible episodes per season in the same round trip (the season
+    // selector hides seasons with nothing to play).
+    const [episodes, seasonCounts] = await Promise.all([
+      db
+        .collection('FlatEpisodes')
+        .find({
+          seasonId: new ObjectId(matchingSeason._id),
+          ...visibleEpisodeFilter(),
+        })
+        .sort({ episodeNumber: 1 })
+        .toArray(),
+      db
+        .collection('FlatEpisodes')
+        .aggregate([
+          { $match: { showId: new ObjectId(tvShow._id), ...visibleEpisodeFilter() } },
+          { $group: { _id: '$seasonNumber', n: { $sum: 1 } } },
+        ])
+        .toArray(),
+    ])
+    const visibleCountBySeason = new Map(seasonCounts.map((row) => [row._id, row.n]))
 
     if (Boolean(process.env.DEBUG) == true) {
       console.log(
@@ -2913,6 +2966,28 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
     // Set basic info about the parent TV show for the component
     season.showTitle = tvShow.title
 
+    // The show's other seasons (for the season selector) and a light show
+    // summary (for the hero and the trail). Additive keys: the RN media
+    // route receives them too and ignores what it does not know.
+    season.siblingSeasons = (tvShow.seasons || [])
+      .map((s) => ({
+        seasonNumber: s.seasonNumber,
+        title: s.title ?? null,
+        episodeCount: s.episodeCount ?? null,
+        visibleEpisodeCount: visibleCountBySeason.get(s.seasonNumber) ?? 0,
+      }))
+      .sort((a, b) => a.seasonNumber - b.seasonNumber)
+    season.showSummary = {
+      id: String(tvShow._id),
+      title: tvShow.title,
+      originalTitle: tvShow.originalTitle,
+      name: tvShow.metadata?.name ?? null,
+      overview: tvShow.metadata?.overview ?? tvShow.overview ?? null,
+      posterURL: tvShow.posterURL ?? null,
+      posterBlurhash: tvShow.posterBlurhash ?? null,
+      tmdbId: tvShow.metadata?.id ?? null,
+    }
+
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getFlatTVSeasonWithEpisodes:total')
     }
@@ -2925,6 +3000,87 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
     }
     throw error
   }
+}
+
+/**
+ * Every visible episode of a show, in season/episode order, with only what
+ * the show page needs to join watch history and pick "next up": the
+ * identity keys `candidateKeysForItem` reads (mediaId, normalizedVideoId,
+ * videoURL, jitUrl), the runtime, the quality fields for the season tiles
+ * and the title for the status line. Full documents are not loaded.
+ *
+ * Runs as an index scan on the showId prefix of the
+ * { showId, seasonNumber, episodeNumber } index with the visibility `$or`
+ * evaluated per document; the index also satisfies the sort (verified with
+ * explain on the largest show: no SORT stage, keys examined = docs returned).
+ *
+ * @param {string|ObjectId} showId - the FlatTVShows _id
+ * @returns {Promise<Array<{ _id: string, seasonId: string, seasonNumber: number, episodeNumber: number, title: string|null, mediaId: string|null, videoURL: string|null, jitUrl: string|null, normalizedVideoId: string|null, duration: number|null, dimensions: string|null, hdr: string|null, metadata: { runtime?: number, name?: string } }>>} empty for a show without visible episodes
+ * @throws {Error} when `showId` is not a valid ObjectId
+ */
+export async function getFlatShowEpisodesForProgress(showId) {
+  const id =
+    showId instanceof ObjectId
+      ? showId
+      : typeof showId === 'string' && ObjectId.isValid(showId)
+        ? new ObjectId(showId)
+        : null
+  if (!id) {
+    throw new Error('getFlatShowEpisodesForProgress: showId must be a valid ObjectId')
+  }
+
+  const client = await clientPromise
+  const db = client.db('Media')
+
+  const docs = await db
+    .collection('FlatEpisodes')
+    .find(
+      { showId: id, ...visibleEpisodeFilter() },
+      {
+        projection: {
+          _id: 1,
+          seasonId: 1,
+          seasonNumber: 1,
+          episodeNumber: 1,
+          title: 1,
+          mediaId: 1,
+          videoURL: 1,
+          jitUrl: 1,
+          normalizedVideoId: 1,
+          duration: 1,
+          dimensions: 1,
+          hdr: 1,
+          'metadata.runtime': 1,
+          'metadata.name': 1,
+        },
+      }
+    )
+    .sort({ seasonNumber: 1, episodeNumber: 1 })
+    .toArray()
+
+  const stringOrNull = (value) => (typeof value === 'string' && value ? value : null)
+
+  return docs.map((doc) => {
+    const rawDuration = typeof doc.duration === 'string' ? Number(doc.duration) : doc.duration
+    const metadata = {}
+    if (Number.isFinite(doc.metadata?.runtime)) metadata.runtime = doc.metadata.runtime
+    if (typeof doc.metadata?.name === 'string') metadata.name = doc.metadata.name
+    return {
+      _id: doc._id.toString(),
+      seasonId: doc.seasonId ? doc.seasonId.toString() : null,
+      seasonNumber: doc.seasonNumber,
+      episodeNumber: doc.episodeNumber,
+      title: stringOrNull(doc.title),
+      mediaId: stringOrNull(doc.mediaId),
+      videoURL: stringOrNull(doc.videoURL),
+      jitUrl: stringOrNull(doc.jitUrl),
+      normalizedVideoId: stringOrNull(doc.normalizedVideoId),
+      duration: Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : null,
+      dimensions: stringOrNull(doc.dimensions),
+      hdr: stringOrNull(doc.hdr),
+      metadata,
+    }
+  })
 }
 
 /**

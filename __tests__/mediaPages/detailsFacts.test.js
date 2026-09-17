@@ -24,6 +24,7 @@ const {
   episodeFacts,
   episodeTypeLabel,
   displayTitleOf,
+  isSdr,
 } = require('@src/utils/media/detailsFacts')
 
 const hobbit = {
@@ -194,8 +195,17 @@ describe('small formatters', () => {
 
 describe('qualityChips', () => {
   it('shows resolution and dynamic range once each, in that order', () => {
-    expect(qualityChips(hobbit)).toEqual(['1080p'])
+    expect(qualityChips(hobbit)).toEqual(['1080p', 'SDR'])
     expect(qualityChips(countdown)).toEqual(['4K', 'HDR10'])
+  })
+
+  it('marks a file known to be SDR, and never chips the raw SDR label', () => {
+    expect(qualityChips({ dimensions: '1920x1080', hdr: '10-bit SDR (BT.709)' })).toEqual(['1080p', 'SDR'])
+    expect(qualityChips({ dimensions: '1920x1080', mediaQuality: { isHDR: false } })).toEqual(['1080p', 'SDR'])
+    // Nothing says either way: no dynamic-range chip at all
+    expect(qualityChips({ dimensions: '3840x2160' })).toEqual(['4K'])
+    // A declared HDR format is never contradicted by a stale probe flag
+    expect(qualityChips({ dimensions: '3840x2160', hdr: 'HDR10', mediaQuality: { isHDR: false } })).toEqual(['4K', 'HDR10'])
   })
 
   it('reads a combined hdr label and the probe flags without repeating', () => {
@@ -207,6 +217,19 @@ describe('qualityChips', () => {
     expect(qualityChips({ dimensions: '3840x2160', mediaQuality: { viewingExperience: { standardHDR: true } } })).toEqual(['4K', 'HDR'])
     expect(qualityChips({ dimensions: '3840x2160', hdr: 'HDR10+' })).toEqual(['4K', 'HDR10+'])
     expect(qualityChips({})).toEqual([])
+  })
+})
+
+describe('isSdr', () => {
+  it('reads the declared label, the probe format and the probe flags', () => {
+    expect(isSdr(hobbit)).toBe(true)
+    expect(isSdr(countdown)).toBe(false)
+    expect(isSdr({ hdr: '10-bit SDR (BT.709)' })).toBe(true)
+    expect(isSdr({ mediaQuality: { format: '8-bit SDR (BT.709)' } })).toBe(true)
+    expect(isSdr({ mediaQuality: { viewingExperience: { highDynamicRange: false } } })).toBe(true)
+    expect(isSdr({ hdr: 'HDR10' })).toBe(false)
+    expect(isSdr({})).toBe(false)
+    expect(isSdr(null)).toBe(false)
   })
 })
 

@@ -7,6 +7,12 @@ import { classNames, getFullImageUrl } from '@src/utils'
 /** How many faces the rail shows before "See all". */
 const RAIL_LIMIT = 24
 
+/** The scroller bleeding to the page edges (the movie page's full-width surface). */
+const BLEED_SCROLLER =
+  '-mx-4 flex snap-x gap-4 overflow-x-auto px-4 py-1 scroll-px-4 scrollbar-none sm:-mx-6 sm:px-6 sm:scroll-px-6 lg:-mx-8 lg:px-8 lg:scroll-px-8'
+/** The same scroller kept inside its box, for a rail in a grid cell. */
+const INSET_SCROLLER = 'flex snap-x gap-4 overflow-x-auto px-1 py-1 scroll-px-1 scrollbar-none'
+
 function CastMember({ person, className = '' }) {
   const href = person.id ? `https://www.themoviedb.org/person/${person.id}` : null
   const photo = person.profile_path ? getFullImageUrl(person.profile_path, 'h632') : null
@@ -51,9 +57,13 @@ function initials(name) {
  * Cast as a horizontal row of circular portraits on the page surface — no
  * box, no inner scrollbar — with "See all" opening the full list as a grid.
  *
- * @param {{ cast: Array<{ id?: number, name: string, character?: string, profile_path?: string|null }>, title?: string }} props
+ * @param {Object} props
+ * @param {Array<{ id?: number, name: string, character?: string, profile_path?: string|null }>} props.cast
+ * @param {string} [props.title]
+ * @param {boolean} [props.hideHeading] - drop the heading row (a tab strip already names the rail); the section is labelled by `title` instead
+ * @param {boolean} [props.bleed] - false keeps the scroller inside its box so the rail fits a grid cell
  */
-export default function CastRail({ cast, title = 'Cast' }) {
+export default function CastRail({ cast, title = 'Cast', hideHeading = false, bleed = true }) {
   const [expanded, setExpanded] = useState(false)
   const people = Array.isArray(cast) ? cast.filter((p) => p && p.name) : []
   if (people.length === 0) return null
@@ -61,25 +71,30 @@ export default function CastRail({ cast, title = 'Cast' }) {
   const overflow = people.length > RAIL_LIMIT
   const shown = expanded ? people : people.slice(0, RAIL_LIMIT)
   const headingId = `cast-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+  const toggle = overflow ? (
+    <button
+      type="button"
+      onClick={() => setExpanded((v) => !v)}
+      className="rounded text-sm font-medium text-blue-300 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300"
+      aria-expanded={expanded}
+    >
+      {expanded ? 'Show fewer' : `See all ${people.length}`}
+    </button>
+  ) : null
 
   return (
-    <section aria-labelledby={headingId}>
-      <div className="mb-4 flex items-baseline justify-between gap-4">
-        <h2 id={headingId} className="text-lg font-semibold text-white">
-          {title}
-          <span className="ml-2 text-sm font-normal text-white/45">{people.length}</span>
-        </h2>
-        {overflow ? (
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="rounded text-sm font-medium text-blue-300 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300"
-            aria-expanded={expanded}
-          >
-            {expanded ? 'Show fewer' : `See all ${people.length}`}
-          </button>
-        ) : null}
-      </div>
+    <section aria-labelledby={hideHeading ? undefined : headingId} aria-label={hideHeading ? title : undefined}>
+      {hideHeading ? (
+        toggle ? <div className="mb-3 flex justify-end">{toggle}</div> : null
+      ) : (
+        <div className="mb-4 flex items-baseline justify-between gap-4">
+          <h2 id={headingId} className="text-lg font-semibold text-white">
+            {title}
+            <span className="ml-2 text-sm font-normal text-white/45">{people.length}</span>
+          </h2>
+          {toggle}
+        </div>
+      )}
       {expanded ? (
         <ul className="grid grid-cols-[repeat(auto-fill,minmax(6rem,1fr))] justify-items-center gap-x-4 gap-y-6">
           {shown.map((person, i) => (
@@ -89,7 +104,7 @@ export default function CastRail({ cast, title = 'Cast' }) {
           ))}
         </ul>
       ) : (
-        <ul className="-mx-4 flex snap-x gap-4 overflow-x-auto px-4 py-1 scroll-px-4 scrollbar-none sm:-mx-6 sm:px-6 sm:scroll-px-6 lg:-mx-8 lg:px-8 lg:scroll-px-8">
+        <ul className={bleed ? BLEED_SCROLLER : INSET_SCROLLER}>
           {shown.map((person, i) => (
             <li key={person.id ?? `${person.name}-${i}`} className="shrink-0 snap-start">
               <CastMember person={person} />

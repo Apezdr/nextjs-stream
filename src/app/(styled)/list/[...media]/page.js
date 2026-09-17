@@ -249,11 +249,11 @@ function MediaRouter({ media, notFoundType, session, searchParams, parsedParams 
   }
 
   if (isTVSeasonEpisodesList && media) {
-    return <TVSeasonView media={media} parsedParams={parsedParams} />
+    return <TVSeasonView media={media} parsedParams={parsedParams} userId={session?.user?.id} />
   }
 
   if (isTVShowSeasonsList) {
-    return <TVShowView parsedParams={parsedParams} />
+    return <TVShowView parsedParams={parsedParams} userId={session?.user?.id} />
   }
 
   // List views
