@@ -521,3 +521,31 @@ describe('EpisodeActionDialog', () => {
     expect(container).toBeEmptyDOMElement()
   })
 })
+
+describe('EpisodePageSkeleton', () => {
+  const fs = require('fs')
+  const path = require('path')
+  const EpisodePageSkeleton = require('@components/MediaPages/details/EpisodePageSkeleton').default
+
+  it('announces itself and holds the same frame as the episode page', () => {
+    render(<EpisodePageSkeleton />)
+    const status = screen.getByRole('status', { name: 'Loading episode' })
+    expect(status).toHaveAttribute('aria-busy', 'true')
+
+    // The frame and hero grid must match TVEpisodeDetailsComponent, or the swap reflows
+    const page = fs.readFileSync(path.join(process.cwd(), 'src/components/MediaPages/TVEpisodeDetailsComponent.js'), 'utf8')
+    const frame = 'media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8'
+    const heroGrid = 'mt-6 grid gap-6 sm:mt-10 lg:grid-cols-[minmax(0,55fr)_minmax(0,45fr)] lg:gap-x-10'
+    expect(status).toHaveClass(...frame.split(' '))
+    expect(page).toContain(frame)
+    expect(status.querySelector('header')).toHaveClass(...heroGrid.split(' '))
+    expect(page).toContain(heroGrid)
+  })
+
+  it('is the fallback on the episode route and its view', () => {
+    const route = fs.readFileSync(path.join(process.cwd(), 'src/app/(styled)/list/tv/[title]/[season]/[episode]/page.js'), 'utf8')
+    const view = fs.readFileSync(path.join(process.cwd(), 'src/components/MediaPages/DynamicPage/views/TVEpisodeDetailsView.js'), 'utf8')
+    expect(route).toContain('fallback={<EpisodePageSkeleton />}')
+    expect(view).toContain('fallback={<EpisodePageSkeleton />}')
+  })
+})
