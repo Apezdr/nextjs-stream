@@ -1,5 +1,4 @@
 import { Suspense, ViewTransition } from 'react'
-import Link from 'next/link'
 import { tvEpisodePosterName } from '@src/utils/viewTransitionNames'
 import { splitTitle, qualityChips, certificationOf, episodeFacts, episodeTypeLabel, formatDate } from '@src/utils/media/detailsFacts'
 import { tvHrefs, seasonLabel, blurDataURL } from '@src/utils/media/tvFacts'
@@ -22,8 +21,9 @@ const EYEBROW = 'text-xs font-semibold uppercase tracking-[0.18em] text-white/60
 const pad2 = (n) => String(n).padStart(2, '0')
 
 /**
- * The episode info page: the show and season as the eyebrow, the episode
- * as the title, the still beside it, then the previous/next rail, the
+ * The episode info page: the trail carries show, season and episode; the
+ * eyebrow adds the genres (as the movie page does), then the episode
+ * as the title with the still beside it, the previous/next rail, the
  * cast tabs with the episode facts, and the next episode's card.
  *
  * Renders inside a `'use cache'` subtree shared by every viewer, so
@@ -41,7 +41,7 @@ const TVEpisodeDetailsComponent = ({ media }) => {
   }
 
   const metadata = media.metadata || {}
-  const { air_date, overview, tagline, trailer_url, name, guest_stars, episode_type } = metadata
+  const { air_date, genres, networks, overview, tagline, trailer_url, name, guest_stars, episode_type } = metadata
   const { title, showTitle, originalTitle, seasonNumber, episodeNumber, duration } = media
 
   const episodeTitle = name || title || `Episode ${episodeNumber}`
@@ -55,6 +55,9 @@ const TVEpisodeDetailsComponent = ({ media }) => {
   // What the progress-aware pieces (primary button, resume panel, sticky bar) need to look the position up
   const progressProps = { videoURL: media.videoURL || null, mediaId: media.mediaId || null, durationMs }
   const stickyTitle = `${code} · ${headline}`
+  // Genres first (what the movie page shows); a show without them falls back to its network
+  const genreNames = (genres || []).map((g) => g?.name).filter(Boolean)
+  const eyebrow = genreNames.length > 0 ? genreNames.slice(0, 3).join(' · ') : (networks || []).map((n) => n?.name).filter(Boolean)[0] || null
 
   const count = Number.isInteger(media.seasonEpisodeCount) && media.seasonEpisodeCount > 0 ? media.seasonEpisodeCount : null
   const neighbour = (n, epTitle) =>
@@ -94,25 +97,9 @@ const TVEpisodeDetailsComponent = ({ media }) => {
 
       <header className="mt-6 grid gap-6 sm:mt-10 lg:grid-cols-[minmax(0,55fr)_minmax(0,45fr)] lg:gap-x-10">
         <div className="min-w-0 lg:col-start-1 lg:row-start-1">
-          <p className={EYEBROW}>
-            {hrefs.show ? (
-              <Link href={hrefs.show} className="hover:text-white">
-                {showTitle}
-              </Link>
-            ) : (
-              showTitle
-            )}
-            <span className="text-white/40"> / </span>
-            {hrefs.season ? (
-              <Link href={hrefs.season} className="hover:text-white">
-                {seasonName}
-              </Link>
-            ) : (
-              seasonName
-            )}
-            <span className="text-white/40"> · </span>
-            Episode {episodeNumber}
-          </p>
+          {/* The trail above already names the show, season and episode; the
+              eyebrow says what the trail does not, as the movie page's does. */}
+          {eyebrow ? <p className={EYEBROW}>{eyebrow}</p> : null}
           <h1 className="mt-2 text-balance text-3xl font-bold leading-[1.05] tracking-tight text-white drop-shadow-md sm:text-5xl">{headline}</h1>
           {subtitle ? <p className="mt-1.5 text-balance text-xl font-semibold leading-tight text-white/85 sm:text-3xl">{subtitle}</p> : null}
           <MetaLine className="mt-3" items={[formatDate(air_date), formatRuntime(durationMs), certificationOf(metadata)]} chips={chips} />

@@ -241,7 +241,10 @@ describe('TVEpisodeDetailsComponent', () => {
     render(<TVEpisodeDetailsComponent media={withNeighbours} />)
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Countdown')
-    // The trail, the eyebrow and the facts panel all link back to the show and the season
+    // The trail and the facts panel link back to the show and the season; the eyebrow
+    // does not repeat them
+    expect(screen.getAllByRole('link', { name: '3 Body Problem' })).toHaveLength(2)
+    expect(screen.getByText('Sci-Fi & Fantasy · Drama')).toBeInTheDocument()
     expect(screen.getAllByRole('link', { name: '3 Body Problem' }).some((a) => a.getAttribute('href') === '/list/tv/3%20Body%20Problem')).toBe(true)
     expect(screen.getAllByRole('link', { name: 'Season 1' }).some((a) => a.getAttribute('href') === '/list/tv/3%20Body%20Problem/1')).toBe(true)
     expect(screen.getByRole('link', { name: 'TV' })).toHaveAttribute('href', '/list/tv')
