@@ -70,7 +70,7 @@ const toggleFetcher = async (url, { arg: body }) => {
  * secondaries collapse to icons.
  */
 const OUTLINE_CLASSES =
-  'h-12 gap-2 rounded-md border border-white/25 px-4 text-sm font-medium text-white hover:border-white/50 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300'
+  'inline-flex h-12 items-center justify-center gap-2 rounded-md border border-white/25 px-4 text-sm font-medium text-white transition-colors hover:border-white/50 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300'
 
 export default function WatchlistButton({
   mediaId,
@@ -172,7 +172,7 @@ export default function WatchlistButton({
   if ((isPending || isChecking) && variant === 'outline') {
     return (
       <span
-        className={`${OUTLINE_CLASSES} cursor-progress opacity-60 ${className}`}
+        className={`${OUTLINE_CLASSES} animate-pulse cursor-progress ${className}`}
         aria-busy="true"
         aria-label="Checking your list"
       >
@@ -206,7 +206,7 @@ export default function WatchlistButton({
     <motion.button
       onClick={handleToggle}
       disabled={isMutating}
-      className={`${className} inline-flex items-center justify-center transition-all duration-300 ${
+      className={`${className} inline-flex items-center justify-center transition-colors duration-300 ${
         variant === 'icon-only'
           ? 'p-2 rounded-full'
           : isOutline
@@ -219,6 +219,9 @@ export default function WatchlistButton({
       }`}
       aria-label={togglingLabel}
       title={togglingLabel}
+      initial={{ opacity: 0.5 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
     >
@@ -237,14 +240,14 @@ export default function WatchlistButton({
             variant === 'icon-only'
               ? (inWatchlist ? 'text-red-500' : '')
               : isOutline
-                ? 'sm:mr-2'
+                ? ''
                 : 'mr-2'
           }`}
         />
       </motion.div>
       {variant !== 'icon-only' ? (
         <div className="relative overflow-hidden">
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait" initial={false}>
             <motion.span
               key={isMutating ? 'toggling' : inWatchlist ? 'in-watchlist' : 'add-to-watchlist'}
               initial={{ opacity: 0, y: 10, scale: 0.95 }}
