@@ -26,17 +26,19 @@ const ArtworkViewer = dynamic(() => import('./ArtworkViewer'), { ssr: false })
  * @param {number|string|null} [props.tmdbId]
  * @param {'movie'|'tv'} props.type
  * @param {Object} [props.inUse] - `{ poster, backdrop, logo }`, each `{ path, url, label? }`; see buildArtworkTabs
- * @param {'posters'|'backdrops'|'logos'} [props.initialTab]
+ * @param {{ season: number, episode: number }|null} [props.episode] - open this episode's stills instead (tmdbId is then the show's id)
+ * @param {'posters'|'backdrops'|'logos'|'stills'} [props.initialTab]
+ * @param {boolean} [props.fill] - the child takes its width from its container (an episode still) rather than carrying its own (a poster)
  * @param {string} [props.className]
  * @param {import('react').ReactNode} props.children - the poster
  */
-export default function ArtworkButton({ title, tmdbId = null, type, inUse = {}, initialTab = 'posters', className = '', children }) {
+export default function ArtworkButton({ title, tmdbId = null, type, inUse = {}, episode = null, initialTab = 'posters', fill = false, className = '', children }) {
   const [open, setOpen] = useState(false)
   // Mount the viewer on first open and keep it, so closing keeps its cached list and tab
   const [mounted, setMounted] = useState(false)
 
   const hasAnything = Boolean(tmdbId) || Object.values(inUse || {}).some((entry) => entry?.url)
-  if (!hasAnything) return <div className={classNames('self-start', className)}>{children}</div>
+  if (!hasAnything) return <div className={classNames('self-start', fill ? 'w-full' : '', className)}>{children}</div>
 
   return (
     <>
@@ -49,7 +51,8 @@ export default function ArtworkButton({ title, tmdbId = null, type, inUse = {}, 
         aria-haspopup="dialog"
         aria-label={`View artwork for ${title}`}
         className={classNames(
-          'group relative block w-fit cursor-zoom-in self-start rounded-lg text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-300',
+          'group relative block cursor-zoom-in self-start rounded-lg text-left focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-blue-300',
+          fill ? 'w-full' : 'w-fit',
           className
         )}
       >
@@ -63,7 +66,7 @@ export default function ArtworkButton({ title, tmdbId = null, type, inUse = {}, 
           </span>
         </span>
       </button>
-      {mounted ? <ArtworkViewer open={open} onClose={() => setOpen(false)} title={title} tmdbId={tmdbId} type={type} inUse={inUse} initialTab={initialTab} /> : null}
+      {mounted ? <ArtworkViewer open={open} onClose={() => setOpen(false)} title={title} tmdbId={tmdbId} type={type} inUse={inUse} episode={episode} initialTab={initialTab} /> : null}
     </>
   )
 }

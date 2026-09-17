@@ -18,6 +18,13 @@ const mockImages = {
   logos: [],
 }
 
+jest.mock('next/image', () => ({
+  __esModule: true,
+  // Stand-in that exposes what the optimizer would be asked for
+  // eslint-disable-next-line @next/next/no-img-element
+  default: ({ src, alt, fill, priority, quality, placeholder, blurDataURL, sizes, ...rest }) => <img src={typeof src === 'string' ? src : ''} alt={alt} data-quality={quality} data-sizes={sizes} {...rest} />,
+}))
+
 let mockSwrState = { data: mockImages, error: undefined, isLoading: false }
 const mockSwr = jest.fn((key) => (key ? mockSwrState : { data: undefined, error: undefined, isLoading: false }))
 jest.mock('swr', () => ({ __esModule: true, default: (...args) => mockSwr(...args) }))
@@ -52,7 +59,7 @@ describe('buildArtworkTabs', () => {
     expect(posters.items[0]).toMatchObject({
       inUse: true,
       badge: 'In use',
-      thumb: 'https://image.tmdb.org/t/p/w342/used.jpg',
+      thumb: 'https://image.tmdb.org/t/p/w500/used.jpg',
       preview: 'https://image.tmdb.org/t/p/w780/used.jpg',
       full: 'https://image.tmdb.org/t/p/original/used.jpg',
     })
@@ -101,8 +108,13 @@ describe('ArtworkViewer', () => {
     expect(within(dialog).getByRole('tab', { name: /Posters · 5/ })).toHaveAttribute('aria-selected', 'true')
     expect(within(dialog).getByRole('tab', { name: /Backdrops · 2/ })).toBeInTheDocument()
     expect(within(dialog).queryByRole('tab', { name: /Logos/ })).toBeNull()
-    expect(within(dialog).getByRole('button', { name: 'Poster 1, In use' })).toBeInTheDocument()
+    const inUseTile = within(dialog).getByRole('button', { name: 'Poster 1, In use' })
     expect(within(dialog).getByText('de')).toBeInTheDocument()
+    // Tiles go through the optimizer with a declared size, not straight to TMDB at full tilt
+    const tileImage = inUseTile.querySelector('img')
+    expect(tileImage).toHaveAttribute('src', 'https://image.tmdb.org/t/p/w500/used.jpg')
+    expect(tileImage).toHaveAttribute('data-quality', '75')
+    expect(tileImage.getAttribute('data-sizes')).toMatch(/200px$/)
   })
 
   it('previews a tile with previous/next and a full-size link, and steps back to the grid', async () => {
@@ -111,6 +123,10 @@ describe('ArtworkViewer', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Poster 2' }))
     expect(within(dialog).getByText('2 of 5')).toBeInTheDocument()
     expect(within(dialog).getByText(/2000 × 3000/)).toBeInTheDocument()
+    // The preview is optimized from a mid-size source; the link hands over TMDB's untouched original
+    const preview = within(dialog).getByAltText('Supergirl poster 2 of 5')
+    expect(preview).toHaveAttribute('src', 'https://image.tmdb.org/t/p/w780/en-high.jpg')
+    expect(preview).toHaveAttribute('data-quality', '90')
     const full = within(dialog).getByRole('link', { name: /Open full size/ })
     expect(full).toHaveAttribute('href', 'https://image.tmdb.org/t/p/original/en-high.jpg')
     expect(full).toHaveAttribute('target', '_blank')
@@ -168,5 +184,37 @@ describe('ArtworkButton', () => {
     )
     expect(screen.queryByRole('button')).toBeNull()
     expect(screen.getByText('poster')).toBeInTheDocument()
+  })
+})
+
+describe('episode stills', () => {
+  const stills = { stills: [{ file_path: '/s2.jpg', width: 1920, height: 1080, iso_639_1: null, vote_average: 6 }, { file_path: '/s1.jpg', width: 3840, height: 2160, iso_639_1: null, vote_average: 5 }] }
+
+  it('builds a stills tab from the original files, the in-use frame first', () => {
+    const [tab] = buildArtworkTabs({ images: stills, inUse: { still: { path: '/s1.jpg', url: 'https://files.example.com/thumb.jpg' } } })
+    expect(tab).toMatchObject({ id: 'stills', label: 'Stills' })
+    expect(tab.items.map((i) => i.key)).toEqual(['/s1.jpg', '/s2.jpg'])
+    expect(tab.items[0]).toMatchObject({ badge: 'In use', thumb: 'https://image.tmdb.org/t/p/original/s1.jpg' })
+  })
+
+  it('asks the episode endpoint with the show id, season and episode', async () => {
+    mockSwrState = { data: stills, error: undefined, isLoading: false }
+    render(<ArtworkViewer open onClose={jest.fn()} title="3 Body Problem · Countdown" tmdbId={108545} type="tv" episode={{ season: 1, episode: 2 }} initialTab="stills" />)
+    expect(mockSwr.mock.calls.at(-1)[0]).toBe('/api/authenticated/tmdb/episode/images?tmdb_id=108545&season=1&episode=2')
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getAllByRole('button', { name: /^Still \d/ })).toHaveLength(2)
+    // One kind only, so no tab strip
+    expect(within(dialog).queryByRole('tablist')).toBeNull()
+  })
+
+  it('lets a still fill its column instead of shrinking to fit', () => {
+    render(
+      <ArtworkButton title="Countdown" tmdbId={108545} type="tv" episode={{ season: 1, episode: 1 }} fill>
+        <span>still</span>
+      </ArtworkButton>
+    )
+    const button = screen.getByRole('button', { name: 'View artwork for Countdown' })
+    expect(button).toHaveClass('w-full')
+    expect(button).not.toHaveClass('w-fit')
   })
 })

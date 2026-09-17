@@ -2,7 +2,9 @@
  * Pure helpers behind the artwork viewer: turn TMDB's image lists plus the
  * images a title currently uses into tabs of tiles. No React, no I/O.
  *
- * TMDB's lists come from the app's TMDB proxy (`/images/movie|tv`), each
+ * TMDB's lists come from the app's TMDB proxy (`/images/movie|tv` for a
+ * title's posters, backdrops and logos; `/episode/images` for an episode's
+ * stills), each
  * entry `{ file_path, width, height, iso_639_1, vote_average }`. "In use"
  * comes from the title's record: the TMDB path its metadata names and the
  * URL the library actually serves, which may be a custom upload TMDB has
@@ -11,11 +13,21 @@
 
 const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/'
 
-/** One tab per kind: where it reads from, and the TMDB size buckets for grid, preview and full view. */
+/**
+ * One tab per kind: where it reads from, and the TMDB size bucket used as
+ * the SOURCE for the grid tile and the preview. The viewer runs both through
+ * the app's image optimizer, which only ever scales down, so each source is
+ * a step larger than the tile it feeds (a 200px poster tile on a 2x screen
+ * wants 400px). "Full" is always TMDB's original, linked directly.
+ */
 export const ARTWORK_KINDS = [
-  { id: 'posters', label: 'Posters', inUseKey: 'poster', thumb: 'w342', preview: 'w780' },
-  { id: 'backdrops', label: 'Backdrops', inUseKey: 'backdrop', thumb: 'w500', preview: 'w1280' },
-  { id: 'logos', label: 'Logos', inUseKey: 'logo', thumb: 'w300', preview: 'w500' },
+  { id: 'posters', label: 'Posters', inUseKey: 'poster', thumb: 'w500', preview: 'w780' },
+  { id: 'backdrops', label: 'Backdrops', inUseKey: 'backdrop', thumb: 'w780', preview: 'w1280' },
+  { id: 'logos', label: 'Logos', inUseKey: 'logo', thumb: 'w500', preview: 'w500' },
+  // An episode's stills. TMDB's still buckets stop at w300, too small to feed a
+  // 330px tile on a 2x screen, so both read the original (an episode has a
+  // handful of stills, not a hundred posters).
+  { id: 'stills', label: 'Stills', inUseKey: 'still', thumb: 'original', preview: 'original' },
 ]
 
 /**
@@ -61,8 +73,8 @@ function languageRank(code) {
  * its own from the library URL, so "what is in use" is always answered.
  *
  * @param {Object} options
- * @param {{ posters?: Array, backdrops?: Array, logos?: Array }|null|undefined} options.images
- * @param {{ poster?: { path?: string|null, url?: string|null, label?: string }, backdrop?: Object, logo?: Object }} [options.inUse]
+ * @param {{ posters?: Array, backdrops?: Array, logos?: Array, stills?: Array }|null|undefined} options.images
+ * @param {{ poster?: { path?: string|null, url?: string|null, label?: string }, backdrop?: Object, logo?: Object, still?: Object }} [options.inUse]
  * @returns {Array<{ id: string, label: string, items: ArtworkItem[] }>}
  */
 export function buildArtworkTabs({ images, inUse = {} } = {}) {

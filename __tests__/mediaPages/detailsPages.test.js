@@ -259,6 +259,8 @@ describe('TVEpisodeDetailsComponent', () => {
 
     // The still and the watched-by line beside the text
     expect(screen.getByAltText('Countdown still')).toHaveAttribute('src', withNeighbours.thumbnail)
+    // The still is the way into the episode's stills
+    expect(screen.getByRole('button', { name: 'View artwork for 3 Body Problem · Countdown' })).toContainElement(screen.getByAltText('Countdown still'))
     expect(screen.getByTestId('watched-by-line')).toBeInTheDocument()
 
     // Primary says what it plays

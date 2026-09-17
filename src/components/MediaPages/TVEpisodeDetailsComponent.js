@@ -8,6 +8,7 @@ import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { WatchedByLine } from './ViewCount'
 import { Trail, MetaLine, DetailsPanel } from './details/Primitives'
 import EpisodeThumbnail from './details/EpisodeThumbnail'
+import ArtworkButton from './details/ArtworkButton'
 import ActionRow from './details/ActionRow'
 import StickyTitleBar from './details/StickyTitleBar'
 import CastTabs from './details/CastTabs'
@@ -119,14 +120,25 @@ const TVEpisodeDetailsComponent = ({ media }) => {
 
         <div className="order-first lg:order-none lg:col-start-2 lg:row-span-2 lg:row-start-1">
           <ViewTransition name={tvEpisodePosterName(showTitle, seasonNumber, episodeNumber)}>
-            <EpisodeThumbnail
-              src={media.thumbnail || null}
-              blurDataURL={blurDataURL(media.thumbnailBlurhash)}
-              alt={`${episodeTitle} still`}
-              sizes="(max-width: 1024px) 100vw, 480px"
-              priority
-              className="shadow-2xl shadow-black/60"
-            />
+            {/* The still opens this episode's stills; the library's own frame is pinned first */}
+            <ArtworkButton
+              title={showTitle ? `${showTitle} · ${episodeTitle}` : episodeTitle}
+              tmdbId={media.showTmdbId ?? null}
+              type="tv"
+              episode={{ season: seasonNumber, episode: episodeNumber }}
+              inUse={{ still: { path: metadata.still_path || null, url: media.thumbnail || null } }}
+              initialTab="stills"
+              fill
+            >
+              <EpisodeThumbnail
+                src={media.thumbnail || null}
+                blurDataURL={blurDataURL(media.thumbnailBlurhash)}
+                alt={`${episodeTitle} still`}
+                sizes="(max-width: 1024px) 100vw, 480px"
+                priority
+                className="shadow-2xl shadow-black/60"
+              />
+            </ArtworkButton>
           </ViewTransition>
           {media.normalizedVideoId ? (
             <Suspense fallback={null}>

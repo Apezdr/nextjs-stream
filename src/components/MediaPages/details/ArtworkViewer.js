@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import useSWR from 'swr'
+import Image from 'next/image'
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react'
 import { XMarkIcon, ChevronLeftIcon, ChevronRightIcon, ArrowTopRightOnSquareIcon, Squares2X2Icon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
@@ -13,10 +14,13 @@ const QUIET_BUTTON = classNames('inline-flex items-center gap-1.5 rounded-md px-
 
 /** Grid columns and tile shape per kind: posters are tall, backdrops wide, logos transparent marks. */
 const TAB_LAYOUT = {
-  posters: { grid: 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5', frame: 'aspect-[2/3]', fit: 'object-cover' },
-  backdrops: { grid: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3', frame: 'aspect-[16/9]', fit: 'object-cover' },
-  logos: { grid: 'grid-cols-2 sm:grid-cols-3', frame: 'aspect-[16/9]', fit: 'object-contain p-4' },
+  posters: { grid: 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5', frame: 'aspect-[2/3]', fit: 'object-cover', sizes: '(max-width: 640px) 33vw, (max-width: 768px) 25vw, 200px' },
+  backdrops: { grid: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3', frame: 'aspect-[16/9]', fit: 'object-cover', sizes: '(max-width: 640px) 100vw, (max-width: 768px) 50vw, 330px' },
+  logos: { grid: 'grid-cols-2 sm:grid-cols-3', frame: 'aspect-[16/9]', fit: 'object-contain p-4', sizes: '(max-width: 640px) 50vw, 330px' },
+  stills: { grid: 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3', frame: 'aspect-[16/9]', fit: 'object-cover', sizes: '(max-width: 640px) 100vw, (max-width: 768px) 50vw, 330px' },
 }
+/** The dialog is at most max-w-5xl (1024px) with 20px of padding each side */
+const PREVIEW_SIZES = '(max-width: 1024px) 100vw, 980px'
 
 async function fetchImages(url) {
   const res = await fetch(url, { credentials: 'include', headers: { Accept: 'application/json' } })
@@ -31,11 +35,17 @@ async function fetchImages(url) {
  * original to a new tab, which is how a viewer takes an image with them.
  *
  * Nothing is fetched until the dialog is open (the pages it opens from are
- * cached and shared), and the list is cached client-side after that. The
- * tiles are plain `<img>` elements on purpose: a popular title has well
- * over a hundred images, and running each through the image optimizer
- * would re-encode them all on this server for no gain — TMDB already
- * serves sized variants.
+ * cached and shared), and the list is cached client-side after that.
+ *
+ * Tiles and the preview go through the app's image optimizer like every
+ * other image: with IMGPROXY_URL set the resize and encode run in imgproxy,
+ * not this container (src/lib/imgproxy.ts); TMDB's JPEGs come out as AVIF
+ * or WebP at a fraction of the size; and the result is cached, so TMDB is
+ * asked once per image rather than once per viewer. A popular title has
+ * well over a hundred images, so tiles stay lazy and only the visible ones
+ * are requested. "Open full size" is the exception and links TMDB's
+ * original directly: its point is handing over the untouched file, and the
+ * optimizer would return a recompressed copy at a capped width.
  *
  * @param {Object} props
  * @param {boolean} props.open
@@ -44,12 +54,16 @@ async function fetchImages(url) {
  * @param {number|string|null} [props.tmdbId]
  * @param {'movie'|'tv'} props.type
  * @param {Object} [props.inUse] - see buildArtworkTabs
- * @param {'posters'|'backdrops'|'logos'} [props.initialTab]
+ * @param {{ season: number, episode: number }|null} [props.episode] - list this episode's stills (tmdbId is then the SHOW's id) instead of the title's artwork
+ * @param {'posters'|'backdrops'|'logos'|'stills'} [props.initialTab]
  */
-export default function ArtworkViewer({ open, onClose, title, tmdbId = null, type, inUse = {}, initialTab = 'posters' }) {
+export default function ArtworkViewer({ open, onClose, title, tmdbId = null, type, inUse = {}, episode = null, initialTab = 'posters' }) {
   const [tabId, setTabId] = useState(initialTab)
   const [index, setIndex] = useState(null)
-  const key = open && tmdbId ? `/api/authenticated/tmdb/images/${type}?tmdb_id=${encodeURIComponent(tmdbId)}` : null
+  const listUrl = episode
+    ? `/api/authenticated/tmdb/episode/images?tmdb_id=${encodeURIComponent(tmdbId)}&season=${encodeURIComponent(episode.season)}&episode=${encodeURIComponent(episode.episode)}`
+    : `/api/authenticated/tmdb/images/${type}?tmdb_id=${encodeURIComponent(tmdbId)}`
+  const key = open && tmdbId ? listUrl : null
   const { data, error, isLoading } = useSWR(key, fetchImages, { revalidateOnFocus: false, revalidateOnReconnect: false, dedupingInterval: 600000 })
 
   const tabs = buildArtworkTabs({ images: data, inUse })
@@ -118,9 +132,17 @@ export default function ArtworkViewer({ open, onClose, title, tmdbId = null, typ
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
             {item ? (
               <div>
-                <div className="flex items-center justify-center rounded-xl bg-black/40 p-2">
-                  {/* eslint-disable-next-line @next/next/no-img-element -- see the component note: TMDB serves sized variants */}
-                  <img src={item.preview} alt={`${title} ${active.label.toLowerCase().replace(/s$/, '')} ${index + 1} of ${active.items.length}`} className="max-h-[58vh] w-auto max-w-full rounded-lg object-contain" />
+                {/* A fixed-height stage: aspect ratios vary from tall posters to wide logos, so the image is contained in it */}
+                <div className="relative h-[58vh] w-full overflow-hidden rounded-xl bg-black/40">
+                  <Image
+                    key={item.key}
+                    src={item.preview}
+                    alt={`${title} ${active.label.toLowerCase().replace(/s$/, '')} ${index + 1} of ${active.items.length}`}
+                    fill
+                    sizes={PREVIEW_SIZES}
+                    quality={90}
+                    className="object-contain p-2"
+                  />
                 </div>
                 <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
                   <p className="flex flex-wrap items-center gap-2 text-sm text-white/60">
@@ -178,8 +200,7 @@ export default function ArtworkViewer({ open, onClose, title, tmdbId = null, typ
                           tile.inUse ? 'ring-2 ring-blue-400' : 'ring-white/10 hover:ring-white/40'
                         )}
                       >
-                        {/* eslint-disable-next-line @next/next/no-img-element -- see the component note: TMDB serves sized variants */}
-                        <img src={tile.thumb} alt="" loading="lazy" decoding="async" className={classNames('absolute inset-0 size-full', layout.fit)} />
+                        <Image src={tile.thumb} alt="" fill sizes={layout.sizes} quality={75} className={layout.fit} />
                         {tile.badge ? (
                           <span className="absolute left-1.5 top-1.5 rounded-full bg-blue-500 px-2 py-0.5 text-[11px] font-semibold text-white shadow">{tile.badge}</span>
                         ) : null}
