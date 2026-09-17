@@ -1,267 +1,205 @@
-// Auth (and the unauthenticated UI fallback) is handled by the parent
-// page's <AuthGuard> wrapper. This component runs only for authenticated
-// users and lives inside a `'use cache'` subtree, so it must not call any
-// dynamic APIs (cookies, headers, getSession) directly — userId is passed
-// in as a prop instead.
+// Auth (and the unauthenticated fallback) is the route's <AuthGuard>. This
+// component renders inside the route's 'use cache' subtree (TVSeasonContent),
+// whose cache key includes the viewer id it passes down — the per-viewer
+// pieces here (next-up, row progress) are safe only because `userId`
+// arrives as a prop from that cached function's argument. Never read the
+// session or any other dynamic API here.
+import { ViewTransition } from 'react'
+import Link from 'next/link'
+import { ChevronRightIcon, InformationCircleIcon } from '@heroicons/react/20/solid'
 import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils'
 import { refreshEpisodes } from '@src/utils/actions/refreshEpisodes'
-import Link from 'next/link'
-import MediaPoster from '@components/MediaPoster'
-import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence'
-import TVShowThumbnail from '@components/TVShowThumbnail'
-import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
-import { Suspense } from 'react'
-import Loading from '@src/app/loading'
-import NoEpisodesFound from './NoEpisodesFound'
-import { CaptionSVG } from '@components/SVGIcons'
-import HD4kBanner from '../../../public/4kBanner.png'
-import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
-import { generateClipVideoURL } from '@src/utils/auth_utils'
-import RetryImage from '@components/RetryImage'
-import AdminEditButton from '@components/MediaPages/AdminEditButton'
-import { createWatchHistoryLookupMap } from '@src/utils/watchHistoryUtils'
-import { resolveWatchEntry, buildWatchHistoryObject } from '@src/utils/watchHistory/resolve'
+import { isDurableMediaId } from '@src/utils/watchHistory/resolve'
+import { joinEpisodeWatchHistory, plainWatchHistory } from '@src/utils/watchHistory/joinEpisodes'
+import { durationMsFrom } from '@components/WatchProgress/progress'
+import { yearOf } from '@src/utils/media/detailsFacts'
+import {
+  showTitleOf,
+  tvHrefs,
+  seasonLabel,
+  seasonQuality,
+  episodeRowChips,
+  pickNextUp,
+  nextUpNoun,
+  seasonFacts,
+  blurDataURL,
+} from '@src/utils/media/tvFacts'
 import { tvSeasonPosterName, tvEpisodePosterName } from '@src/utils/viewTransitionNames'
+import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
+import AdminEditButton from '@components/MediaPages/AdminEditButton'
+import NoEpisodesFound from './NoEpisodesFound'
+import { Trail, MetaLine, FactRow, SECONDARY_CLASSES } from './details/Primitives'
+import HeroPoster from './details/HeroPoster'
+import ActionRow from './details/ActionRow'
+import SeasonEpisodeList from './SeasonEpisodeList'
 
-const variants = {
-  hidden: { opacity: 0, x: 0, y: -20 },
-  enter: { opacity: 1, x: 0, y: 0 },
+const EYEBROW = 'text-xs font-semibold uppercase tracking-[0.18em] text-white/60'
+const FOCUS_RING = 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300'
+
+function SeasonNotFound({ showTitle, seasonNumber }) {
+  return (
+    <div className="media-details-page mx-auto w-full max-w-6xl px-4 py-24 text-center sm:px-6 lg:px-8">
+      <h1 className="text-2xl font-bold text-white">
+        We don&apos;t have {seasonLabel(Number(seasonNumber))} of {showTitle}
+      </h1>
+      <p className="mt-2 text-sm text-white/60">That season is not in the library.</p>
+      <Link href="/list/tv" className={`${SECONDARY_CLASSES} mt-6`}>
+        Back to TV
+      </Link>
+    </div>
+  )
 }
 
-export default async function TVEpisodesListComponent({ showTitle, originalTitle, seasonNumber, userId }) {
-  // Fetch the TV show season with its episodes using the flat database structure
-  const season = await getFlatTVSeasonWithEpisodes({
-    showTitle: decodeURIComponent(showTitle),
-    seasonNumber: parseInt(seasonNumber)
-  })
-
-  if (!season) {
-    // Handle the case where the TV show or season is not found
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-transparent">
-        TV Season Episodes not found
-      </div>
-    )
-  }
-
-  // Season metadata
-  const seasonMetadata = season?.metadata ?? {
-    episodes: [],
-  }
-  
-  // Make sure we have episodes
+/**
+ * The season info page: a hero with the season's next-up episode, then the
+ * episode list (list or grid) with per-episode progress and the action
+ * dialog.
+ *
+ * @param {Object} props
+ * @param {string} props.showTitle - already decoded by the route
+ * @param {string} [props.originalTitle] - the show's filesystem key, when the route knows it
+ * @param {string|number} props.seasonNumber
+ * @param {string|null} [props.userId] - the viewer, for next-up and row progress
+ */
+export default async function TVEpisodesListComponent({ showTitle, originalTitle, seasonNumber, userId = null }) {
+  const season = await getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber: parseInt(seasonNumber, 10) })
+  if (!season) return <SeasonNotFound showTitle={showTitle} seasonNumber={seasonNumber} />
   if (!season.episodes || season.episodes.length === 0) {
-    return (
-      <NoEpisodesFound 
-        onRetry={refreshEpisodes} 
-        showTitle={showTitle} 
-        seasonNumber={seasonNumber}
-        season={season}
-      />
-    )
+    return <NoEpisodesFound onRetry={refreshEpisodes} showTitle={showTitle} seasonNumber={seasonNumber} season={season} />
   }
-  
-  // Fetch watch history once for all episodes (server-side with React.cache)
-  // userId is passed in as a prop from the page handler since this component
-  // lives inside a `'use cache'` subtree and can't call getSession itself.
-  const watchHistoryMap = userId ? await createWatchHistoryLookupMap(userId) : new Map()
-  
-  // Augment episodes with watch history data through the shared precedence
-  // (mediaId → nid → hashed URLs → raw URLs), so an episode watched through
-  // the transcoder on either client shows its progress here too.
-  const episodesWithHistory = season.episodes.map(episode => ({
-    ...episode,
-    watchHistory: buildWatchHistoryObject(episode, resolveWatchEntry(episode, watchHistoryMap)),
-  }))
+
+  const n = season.seasonNumber
+  const summary = season.showSummary || {
+    title: season.showTitle || showTitle,
+    originalTitle: originalTitle || season.showTitle || showTitle,
+  }
+  const showDisplay = showTitleOf(summary)
+  const showId = season.showId != null ? String(season.showId) : summary.id || null
+  const episodes = await joinEpisodeWatchHistory(season.episodes, userId)
+  const nextUp = pickNextUp(episodes)
+  const ep = nextUp?.episode || null
+  const hrefs = tvHrefs({
+    originalTitle: summary.originalTitle,
+    showTitle: summary.title,
+    seasonNumber: n,
+    episodeNumber: ep?.episodeNumber,
+  })
+  const routeKey = encodeURIComponent(summary.originalTitle || summary.title || '')
+  const quality = seasonQuality(season.episodes)
+  const count = episodes.length
+  const overview = season.metadata?.overview || season.overview || null
+  const showOverview = season.metadata?.tvOverview || summary.overview || null
+  const facts = seasonFacts(season)
+  const rows = episodes.map((e) => {
+    const h = tvHrefs({ originalTitle: summary.originalTitle, showTitle: summary.title, seasonNumber: n, episodeNumber: e.episodeNumber })
+    return {
+      _id: e._id != null ? String(e._id) : null,
+      showId: e.showId != null ? String(e.showId) : showId,
+      seasonNumber: n,
+      episodeNumber: e.episodeNumber,
+      title: e.title || e.metadata?.name || `Episode ${e.episodeNumber}`,
+      overview: e.metadata?.overview || null,
+      thumbnail: e.thumbnail || null,
+      thumbnailBlurDataURL: blurDataURL(e.thumbnailBlurhash),
+      durationMs: durationMsFrom(e),
+      videoURL: e.videoURL || null,
+      mediaId: isDurableMediaId(e.mediaId) ? e.mediaId : null,
+      chips: episodeRowChips(e),
+      hrefs: { info: h.episode, play: h.play },
+      watchHistory: plainWatchHistory(e.watchHistory),
+      viewTransitionName: tvEpisodePosterName(season.showTitle, n, e.episodeNumber),
+    }
+  })
+  const siblingSeasons = (season.siblingSeasons || [])
+    .filter((s) => s && s.visibleEpisodeCount > 0)
+    .map((s) => ({ seasonNumber: s.seasonNumber, title: s.title ?? null }))
+  const selectorSeasons = siblingSeasons.some((s) => s.seasonNumber === n)
+    ? siblingSeasons
+    : [...siblingSeasons, { seasonNumber: n, title: season.title ?? null }].sort((a, b) => a.seasonNumber - b.seasonNumber)
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-transparent">
+    <div className="media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8">
       <SyncClientWithServerWatched />
-      <div className="h-auto flex items-center justify-center py-32 lg:py-0 px-4 xl:px-0 sm:mt-20">
-        <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-x-4 gap-y-8 sm:gap-x-6 xl:gap-x-8">
-          <Suspense fallback={<Loading />}>
-            {/* Summary Poster */}
-            <li className="col-span-1 sm:col-span-2 xl:col-span-1 lg:row-span-3 text-center">
-              <MediaPoster
-                tv={season}
-                className="max-w-full rounded-lg !mx-auto"
-                contClassName="mx-auto"
-                viewTransitionName={tvSeasonPosterName(season.showTitle || showTitle, season.seasonNumber)}
-              />
-              <h2 className="mx-auto max-w-2xl text-2xl font-bold tracking-tight text-white sm:text-3xl pb-8 xl:pb-0 px-4 xl:px-0">
-                Viewing Season {season.seasonNumber}
-              </h2>
-              <h2 className="mx-auto max-w-2xl text-2xl font-bold tracking-tight text-white sm:text-3xl pb-8 xl:pb-0 px-4 xl:px-0">
-                {season.episodes.length} Episodes
-              </h2>
-              {(seasonMetadata?.airDate || season?.airDate) && (
-                <div className="flex flex-row gap-x-4 justify-center">
-                  Originally Aired: {seasonMetadata?.airDate
-                    ? new Date(seasonMetadata?.airDate).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                      })
-                    : new Date(season?.airDate).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                      })}
-                </div>
-              )}
-              <div className="mt-2 text-center text-sm font-medium text-gray-300 group-hover:text-white pt-2 border-t border-solid border-t-[#c1c1c133]">
-                {seasonMetadata?.overview || season.overview}
-              </div>
-              {seasonMetadata?.vote_average ? (
-                <div className="flex flex-row gap-x-4 mt-4 justify-center items-center">
-                  <span className="text-yellow-400 font-bold">Popularity:</span>
-                  <div className="relative w-48 h-4 bg-gray-700 rounded-full">
-                  <div
-                    className="absolute top-0 left-0 h-full bg-yellow-400 rounded-full"
-                    style={{ width: `${seasonMetadata?.vote_average * 10}%` }}
-                  ></div>
-                  </div>
-                  <span className="text-white font-bold">{seasonMetadata?.vote_average} / 10</span>
-                </div>
-                ) : season?.popularity ? (
-                <div className="flex flex-row gap-x-4 mt-4 justify-center items-center">
-                  <span className="text-yellow-400 font-bold">Popularity:</span>
-                  <div className="relative w-48 h-4 bg-gray-700 rounded-full">
-                  <div
-                    className="absolute top-0 left-0 h-full bg-yellow-400 rounded-full"
-                    style={{ width: `${season?.popularity}%` }}
-                  ></div>
-                  </div>
-                  <span className="text-white font-bold">{season?.popularity} / 10</span>
-                </div>
-              ) : null}
-              <div className="flex flex-row gap-x-4 mt-4 justify-center">
-                <Link href={`/list/tv/${encodeURIComponent(originalTitle || showTitle)}`} className="self-center">
-                  <button
-                    type="button"
-                    className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      strokeWidth={1.5}
-                      stroke="currentColor"
-                      className="w-6 h-6"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
-                      />
-                    </svg>
-                    Go Back
-                  </button>
-                </Link>
-                <AdminEditButton
-                  href={season?.showId ? `/admin/media/tv/${season.showId}?season=${season.seasonNumber}` : null}
-                />
-              </div>
-            </li>
-            {/* Episodes List */}
-            {await Promise.all(
-              episodesWithHistory.map(async (episode, episodeIndex) => {
-                // Get episode metadata from season metadata if available
-                let episodeMetadata = seasonMetadata?.episodes?.find(
-                  (ep) => ep?.episode_number === episode?.episodeNumber
-                )
-
-                // Fallback to episode metadata if not found
-                if (!episodeMetadata) {
-                  episodeMetadata = episode.metadata
-                }
-
-                let dims, is4k, is1080p
-                if (episode.dimensions) {
-                  dims = episode.dimensions?.split('x')
-                  is4k = parseInt(dims[0]) >= 3840 || parseInt(dims[1]) >= 2160
-                  is1080p = parseInt(dims[0]) >= 1920 || parseInt(dims[1]) >= 1080
-                }
-                
-                let hdr
-                if (episode.hdr) {
-                  hdr = episode.hdr
-                }
-
-                // Generate clip video URL if videoURL is available
-                if (episode.videoURL && originalTitle) {
-                  episode.clipVideoURL = generateClipVideoURL(episode, 'tv', originalTitle)
-                }
-
-                const episodeTitle = episodeMetadata?.name ?? episode.title
-                const listKey = `episode-${episode.episodeNumber}-${episode._id || episodeIndex}`
-
-                return (
-                  <li key={listKey + '-AnimationCont'} className="relative min-w-[250px]">
-                    <PageContentAnimatePresence
-                      variants={variants}
-                      transition={{
-                        type: 'linear',
-                        duration: 0.45,
-                      }}
-                      key={listKey}
-                    >
-                      <Link
-                        href={`/list/tv/${encodeURIComponent(originalTitle || showTitle)}/${season.seasonNumber}/${episode.episodeNumber}`}
-                        prefetch={true}
-                      >
-                        <div className="group block mb-2 w-full">
-                          <div className="flex flex-col">
-                            <div className="relative block mx-auto overflow-hidden rounded-lg bg-gray-800 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-100">
-                              <TVShowThumbnail
-                                episode={episode}
-                                metadata={episodeMetadata}
-                                viewTransitionName={tvEpisodePosterName(showTitle, season.seasonNumber, episode.episodeNumber)}
-                              />
-                              {episode.dimensions && (
-                                <div className="flex gap-3 bg-gray-900 justify-center content-center flex-wrap pb-[18px] pt-3 text-white transition-opacity duration-700 inset-0 text-xs h-3.5 opacity-75 group-hover:opacity-100 relative z-10">
-                                  <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
-                                    {is4k ? (
-                                      <RetryImage
-                                        src={HD4kBanner}
-                                        className="h-4 w-auto"
-                                        alt={'4k Banner'}
-                                        loading="lazy"
-                                        placeholder="blur"
-                                      />
-                                    ) : is1080p ? (
-                                      <span className="text-yellow-500 font-bold">1080p</span>
-                                    ) : (
-                                      dims[0] + 'p'
-                                    )}
-                                  </div>
-                                  {hdr ? (
-                                    <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
-                                    {hdr === 'HDR10' ? (
-                                    <RetryImage src={hdr10PlusLogo} alt={'HDR10 Logo'} className="h-4 w-auto" loading="lazy" />  
-                                    ) : (
-                                    <>{hdr}</>
-                                    )}
-                                  </div>
-                                  ) : null}
-                                </div>
-                              )}
-                              <div className="inset-0 pt-2 pb-4 text-center rounded-b-lg text-sm font-medium text-gray-200 group-hover:text-gray-300 relative z-10">
-                                {episode?.captionURLs ? <CaptionSVG className="mr-1.5" /> : ''}
-                                Episode {episode.episodeNumber}: {episodeTitle}
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </Link>
-                    </PageContentAnimatePresence>
-                  </li>
-                )
-              })
-            )}
-          </Suspense>
-        </ul>
+      <div className="flex min-w-0 items-center justify-between gap-4 pt-4">
+        <Trail items={[{ label: 'TV', href: '/list/tv' }, { label: showDisplay, href: hrefs.show }, { label: seasonLabel(n) }]} />
+        <AdminEditButton variant="subtle" label="Edit season" href={showId ? `/admin/media/tv/${showId}?season=${n}` : null} />
       </div>
+
+      <header className="mt-6 grid grid-cols-[120px_minmax(0,1fr)] gap-x-5 gap-y-6 sm:mt-10 sm:gap-x-8">
+        <ViewTransition name={tvSeasonPosterName(season.showTitle, n)}>
+          <HeroPoster
+            src={season.posterURL}
+            alt={`${showDisplay} ${seasonLabel(n)} poster`}
+            blurhash={season.posterBlurhash}
+            widthClassName="w-[120px]"
+            sizes="120px"
+            className="row-span-2"
+          />
+        </ViewTransition>
+
+        <div className="min-w-0">
+          <p className={EYEBROW}>
+            <Link href={hrefs.show} className="hover:text-white">
+              {showDisplay}
+            </Link>
+          </p>
+          <h1 className="mt-2 text-balance text-3xl font-bold leading-[1.05] tracking-tight text-white drop-shadow-md sm:text-5xl">{seasonLabel(n)}</h1>
+          <MetaLine
+            className="mt-3"
+            items={[yearOf(season.airDate || season.metadata?.air_date), `${count} episode${count === 1 ? '' : 's'}`]}
+            chips={quality.chips}
+          />
+          {overview ? <p className="mt-3 max-w-[65ch] text-[15px] leading-relaxed text-white/85 sm:text-base">{overview}</p> : null}
+          {showOverview || facts.length > 0 ? (
+            <details className="group mt-4">
+              <summary
+                className={`inline-flex cursor-pointer list-none items-center gap-1 rounded text-sm font-medium text-blue-300 hover:text-white ${FOCUS_RING} [&::-webkit-details-marker]:hidden`}
+              >
+                <ChevronRightIcon className="size-4 transition-transform group-open:rotate-90" aria-hidden="true" />
+                More about this season
+              </summary>
+              <div className="mt-3 max-w-[65ch] space-y-3 text-[15px] leading-relaxed text-white/85">
+                {showOverview ? <p>{showOverview}</p> : null}
+                {facts.length > 0 ? (
+                  <dl className="grid grid-cols-[minmax(6.5rem,max-content)_1fr] gap-x-6 gap-y-2 text-sm">
+                    {facts.map((row) => (
+                      <FactRow key={row.label} label={row.label} note={row.note}>
+                        {Array.isArray(row.value) ? row.value.join(', ') : row.value}
+                      </FactRow>
+                    ))}
+                  </dl>
+                ) : null}
+              </div>
+            </details>
+          ) : null}
+        </div>
+
+        <div className="col-span-2 self-start sm:col-span-1 sm:col-start-2">
+          {ep && ep.videoURL && hrefs.play ? (
+            <ActionRow
+              videoURL={ep.videoURL}
+              mediaId={ep.mediaId || null}
+              durationMs={durationMsFrom(ep)}
+              playHref={hrefs.play}
+              noun={nextUpNoun(nextUp, 'season')}
+              watchHistory={plainWatchHistory(ep.watchHistory)}
+              trailerUrl={null}
+              watchlist={null}
+            >
+              {hrefs.episode ? (
+                <Link href={hrefs.episode} className={SECONDARY_CLASSES}>
+                  <InformationCircleIcon className="size-5" aria-hidden="true" />
+                  Episode details
+                </Link>
+              ) : null}
+            </ActionRow>
+          ) : null}
+        </div>
+      </header>
+
+      <section aria-labelledby="episodes-heading" className="mt-10 sm:mt-14">
+        <SeasonEpisodeList episodes={rows} seasons={selectorSeasons} current={n} routeKey={routeKey} />
+      </section>
     </div>
   )
 }

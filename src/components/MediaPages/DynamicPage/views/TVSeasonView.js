@@ -21,13 +21,15 @@ export default function TVSeasonView({ media, parsedParams, userId }) {
   const { mediaTitle, mediaSeason } = parsedParams
 
   return (
-    <Suspense fallback={<Loading />}>
-      <TVEpisodesListComponent
-        showTitle={mediaTitle}
-        originalTitle={media?.originalTitle}
-        seasonNumber={mediaSeason}
-        userId={userId}
-      />
-    </Suspense>
+    <div className="pt-16 w-full">
+      <Suspense fallback={<Loading />}>
+        <TVEpisodesListComponent
+          showTitle={mediaTitle}
+          originalTitle={media?.originalTitle}
+          seasonNumber={mediaSeason}
+          userId={userId}
+        />
+      </Suspense>
+    </div>
   )
 }

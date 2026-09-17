@@ -54,6 +54,11 @@ jest.mock('@components/MediaPages/ViewCount', () => ({
       <dd data-testid="watched-by">{normalizedVideoId}</dd>
     </>
   ),
+  WatchedByLine: ({ normalizedVideoId, className }) => (
+    <p data-testid="watched-by-line" className={className}>
+      Watched by 1 person ({normalizedVideoId})
+    </p>
+  ),
 }))
 
 jest.mock('react-dom', () => ({
@@ -214,28 +219,86 @@ describe('MovieDetailsComponent', () => {
 })
 
 describe('TVEpisodeDetailsComponent', () => {
-  it('composes the episode page with the show as the eyebrow and the code on the meta line', () => {
-    render(<TVEpisodeDetailsComponent media={countdown} />)
+  // The loader's navigation fields (additive, always present for a real episode)
+  const withNeighbours = {
+    ...countdown,
+    thumbnail: 'https://files.example.com/tv/3BP/S01E01-thumb.jpg',
+    thumbnailBlurhash: 'AAAA',
+    previousEpisodeNumber: null,
+    previousEpisodeTitle: null,
+    seasonEpisodeCount: 8,
+    hasNextEpisode: true,
+    nextEpisodeNumber: 2,
+    nextEpisodeTitle: 'Red Coast',
+    nextEpisodeThumbnail: 'https://files.example.com/tv/3BP/S01E02-thumb.jpg',
+    nextEpisodeThumbnailBlurhash: 'data:image/png;base64,BBBB',
+    nextEpisodeDuration: 3_360_000,
+    nextEpisodeDimensions: '3840x2160',
+    nextEpisodeHdr: 'HDR10',
+  }
+
+  it('composes the episode page: trail, eyebrow, still, nav, cast tabs, facts and the next card', () => {
+    render(<TVEpisodeDetailsComponent media={withNeighbours} />)
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Countdown')
-    expect(screen.getByText(/3 Body Problem/, { selector: 'p' })).toBeInTheDocument()
-    expect(screen.getByText('S01E01')).toBeInTheDocument()
+    // The trail, the eyebrow and the facts panel all link back to the show and the season
+    expect(screen.getAllByRole('link', { name: '3 Body Problem' }).some((a) => a.getAttribute('href') === '/list/tv/3%20Body%20Problem')).toBe(true)
+    expect(screen.getAllByRole('link', { name: 'Season 1' }).some((a) => a.getAttribute('href') === '/list/tv/3%20Body%20Problem/1')).toBe(true)
+    expect(screen.getByRole('link', { name: 'TV' })).toHaveAttribute('href', '/list/tv')
+
+    // Meta line: date, runtime, rating, finale and quality chips; the code moved to the sticky bar
     expect(screen.getByText('Mar 21, 2024')).toBeInTheDocument()
     expect(screen.getByText('1h 1m')).toBeInTheDocument()
     expect(screen.getByText('TV-MA')).toBeInTheDocument()
     expect(screen.getByText('Season finale')).toBeInTheDocument()
+    expect(screen.queryByText('S01E01')).toBeNull()
+    expect(screen.getByText(/S01E01 · Countdown/)).toBeInTheDocument()
 
-    expect(screen.getByRole('link', { name: /3 Body Problem · Season 1/ })).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1')
-    expect(screen.getAllByRole('link', { name: /^play$/i })[0]).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1/1/play')
+    // The still and the watched-by line beside the text
+    expect(screen.getByAltText('Countdown still')).toHaveAttribute('src', withNeighbours.thumbnail)
+    expect(screen.getByTestId('watched-by-line')).toBeInTheDocument()
 
-    // Guest stars and cast are separate rails
-    expect(screen.getByRole('heading', { name: /^Guest stars/ })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: /^Cast/ })).toBeInTheDocument()
+    // Primary says what it plays
+    expect(screen.getAllByRole('link', { name: /^play episode$/i })[0]).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1/1/play')
 
+    // Previous / all / next
+    const nav = screen.getByRole('navigation', { name: 'Episode navigation' })
+    expect(within(nav).getByText('Previous episode')).toHaveAttribute('aria-disabled', 'true')
+    expect(within(nav).getByRole('link', { name: 'All 8 episodes' })).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1')
+    expect(within(nav).getByRole('link', { name: /Next episode · Red Coast/ })).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1/2')
+
+    // Guest stars and series cast are tabs, guests first
+    expect(screen.getByRole('tab', { name: /Guest stars · 1/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: /Series cast · 1/ })).toBeInTheDocument()
+    expect(screen.getByText('Guest One')).toBeInTheDocument()
+
+    // Facts: show, season and position first, then the episode's own credits
     const panel = screen.getByRole('heading', { name: 'Episode details' }).closest('section')
     const rows = within(panel).getAllByRole('term').map((dt) => dt.textContent)
-    expect(rows.slice(0, 4)).toEqual(['Director', 'Writer', 'Network', 'Language'])
+    expect(rows.slice(0, 7)).toEqual(['Show', 'Season', 'Episode', 'Director', 'Writer', 'Network', 'Language'])
+    expect(within(panel).getByRole('link', { name: '3 Body Problem' })).not.toHaveAttribute('target')
+    expect(within(panel).getByText('1 of 8')).toBeInTheDocument()
     expect(within(panel).getByText('Derek Tsang Kwok-Cheung')).toBeInTheDocument()
-    expect(rows).toContain('Watched by')
+    expect(rows).not.toContain('Watched by')
+
+    // The next episode's card
+    const card = screen.getByRole('link', { name: 'Episode 2: Red Coast' })
+    expect(card).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1/2')
+    expect(card).toHaveTextContent('56m · 4K · HDR10')
+
+    // Where the files live is not a viewer's business
+    expect(document.body.textContent).not.toMatch(/files\.example\.com/)
+  })
+
+  it('renders the stand-in a limited-access viewer gets, with no counts or neighbours', () => {
+    const { seasonEpisodeCount, previousEpisodeNumber, nextEpisodeNumber, thumbnail, ...bare } = withNeighbours
+    render(<TVEpisodeDetailsComponent media={{ ...bare, hasNextEpisode: false }} />)
+
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Countdown')
+    expect(screen.queryByRole('navigation', { name: 'Episode navigation' })).toBeNull()
+    expect(screen.queryByRole('link', { name: /^Episode 2:/ })).toBeNull()
+    expect(screen.queryByText(/undefined|NaN/)).toBeNull()
+    const panel = screen.getByRole('heading', { name: 'Episode details' }).closest('section')
+    expect(within(panel).queryByText(/ of /)).toBeNull()
   })
 })

@@ -43,13 +43,22 @@ async function fetchShow(title) {
  * Cached subtree — owns the data fetch and the rendered output. Layout +
  * AuthGuard wrap this in a Suspense boundary so the page chrome paints
  * immediately while the cached subtree resolves (or returns instantly when
- * warm). Cache is keyed by `{ title, isLimitedAccess }`, so non-limited
- * users share a single cache entry per show.
+ * warm). Cache is keyed by `{ title, isLimitedAccess, userId }`: the page
+ * shows the viewer's next-up episode and per-season progress, so every
+ * viewer has their own entry, tagged with their watch history so a playback
+ * write expires it. Nothing inside may read the session — the viewer is
+ * known only through the `userId` argument.
  */
-async function TVShowContent({ title, isLimitedAccess }) {
+async function TVShowContent({ title, isLimitedAccess, userId }) {
   'use cache'
   cacheLife('mediaLists')
-  cacheTag('media-library', 'tv', MEDIA_CACHE_TAGS.TV_DETAILS, tvShowDetailsTag(decodeURIComponent(title)))
+  cacheTag(
+    'media-library',
+    'tv',
+    MEDIA_CACHE_TAGS.TV_DETAILS,
+    tvShowDetailsTag(decodeURIComponent(title)),
+    `user-watch-history-${userId ?? 'anon'}`
+  )
 
   const parsedParams = buildParsedParams(title)
   let result = await getCachedMediaWithRedirect(parsedParams)
@@ -74,7 +83,7 @@ async function TVShowContent({ title, isLimitedAccess }) {
     )
   }
 
-  return <TVShowView parsedParams={parsedParams} />
+  return <TVShowView parsedParams={parsedParams} media={result.media} userId={userId} />
 }
 
 export async function generateMetadata({ params }, parent) {
@@ -88,6 +97,7 @@ export default async function TVShowPage({ params }) {
   const { title } = await params
   const session = await getSession()
   const isLimitedAccess = !!session?.user?.limitedAccess
+  const userId = session?.user?.id
 
   return (
     <AuthGuard
@@ -96,7 +106,7 @@ export default async function TVShowPage({ params }) {
       variant="skeleton"
     >
       <Suspense fallback={<Loading />}>
-        <TVShowContent title={title} isLimitedAccess={isLimitedAccess} />
+        <TVShowContent title={title} isLimitedAccess={isLimitedAccess} userId={userId} />
       </Suspense>
     </AuthGuard>
   )
