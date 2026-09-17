@@ -237,7 +237,7 @@ describe('TVEpisodeDetailsComponent', () => {
     nextEpisodeHdr: 'HDR10',
   }
 
-  it('composes the episode page: trail, eyebrow, still, nav, cast tabs, facts and the next card', () => {
+  it('composes the episode page: trail, eyebrow, still, neighbour cards, cast tabs and facts', () => {
     render(<TVEpisodeDetailsComponent media={withNeighbours} />)
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Countdown')
@@ -266,9 +266,14 @@ describe('TVEpisodeDetailsComponent', () => {
 
     // Previous / all / next
     const nav = screen.getByRole('navigation', { name: 'Episode navigation' })
-    expect(within(nav).getByText('Previous episode')).toHaveAttribute('aria-disabled', 'true')
+    expect(within(nav).queryByRole('link', { name: /^Previous episode/ })).toBeNull()
     expect(within(nav).getByRole('link', { name: 'All 8 episodes' })).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1')
-    expect(within(nav).getByRole('link', { name: /Next episode · Red Coast/ })).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1/2')
+    const nextCard = within(nav).getByRole('link', { name: 'Next episode: Episode 2, Red Coast' })
+    expect(nextCard).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1/2')
+    expect(nextCard).toHaveTextContent('56m')
+    expect(nextCard.querySelector('img')).toHaveAttribute('src', withNeighbours.nextEpisodeThumbnail)
+    // One way to the next episode: the old foot-of-page card is gone
+    expect(screen.queryByRole('heading', { name: /^Next in/ })).toBeNull()
 
     // Guest stars and series cast are tabs, guests first
     expect(screen.getByRole('tab', { name: /Guest stars · 1/ })).toHaveAttribute('aria-selected', 'true')
@@ -284,10 +289,6 @@ describe('TVEpisodeDetailsComponent', () => {
     expect(within(panel).getByText('Derek Tsang Kwok-Cheung')).toBeInTheDocument()
     expect(rows).not.toContain('Watched by')
 
-    // The next episode's card
-    const card = screen.getByRole('link', { name: 'Episode 2: Red Coast' })
-    expect(card).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1/2')
-    expect(card).toHaveTextContent('56m · 4K · HDR10')
 
     // Where the files live is not a viewer's business
     expect(document.body.textContent).not.toMatch(/files\.example\.com/)
@@ -299,7 +300,7 @@ describe('TVEpisodeDetailsComponent', () => {
 
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Countdown')
     expect(screen.queryByRole('navigation', { name: 'Episode navigation' })).toBeNull()
-    expect(screen.queryByRole('link', { name: /^Episode 2:/ })).toBeNull()
+    expect(screen.queryByRole('link', { name: /^Next episode/ })).toBeNull()
     expect(screen.queryByText(/undefined|NaN/)).toBeNull()
     const panel = screen.getByRole('heading', { name: 'Episode details' }).closest('section')
     expect(within(panel).queryByText(/ of /)).toBeNull()

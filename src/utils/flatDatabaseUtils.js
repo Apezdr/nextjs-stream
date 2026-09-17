@@ -2326,7 +2326,7 @@ export async function getFlatRequestedMedia({
               },
               {
                 sort: { episodeNumber: -1 },
-                projection: { episodeNumber: 1, title: 1, 'metadata.name': 1 },
+                projection: { episodeNumber: 1, title: 1, 'metadata.name': 1, 'metadata.runtime': 1, thumbnail: 1, thumbnailBlurhash: 1, duration: 1 },
               }
             ),
             db.collection('FlatEpisodes').countDocuments({
@@ -2431,6 +2431,13 @@ export async function getFlatRequestedMedia({
             ? previousEpisode.title || previousEpisode.metadata?.name || null
             : null
           result.seasonEpisodeCount = seasonEpisodeCount
+          // The previous episode's still and runtime, for its navigation card.
+          // Same shape as the next episode's: a URL, a complete data: URL, ms.
+          result.previousEpisodeThumbnail = previousEpisode?.thumbnail || null
+          result.previousEpisodeThumbnailBlurhash = previousEpisode?.thumbnailBlurhash
+            ? `data:image/png;base64,${previousEpisode.thumbnailBlurhash}`
+            : null
+          result.previousEpisodeDuration = previousEpisode ? durationMsForItem(previousEpisode) : null
 
           // Handle cast data - keep cast and guestStars separate
           if (tvShow.metadata?.cast) {

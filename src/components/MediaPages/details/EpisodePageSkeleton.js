@@ -74,11 +74,23 @@ export default function EpisodePageSkeleton() {
           </div>
         </header>
 
-        {/* Previous / all / next */}
-        <div className="mt-8 grid grid-cols-3 items-center gap-4 py-4">
-          <Bar className="h-5 w-32" />
-          <Bar className="h-5 w-28 justify-self-center" />
-          <Bar className="h-5 w-40 max-w-full justify-self-end" />
+        {/* Previous card / all / next card */}
+        <div className="mt-8 grid grid-cols-2 items-center gap-x-4 gap-y-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+          <div className="order-1 flex items-center gap-3 p-2">
+            <Bar className="hidden aspect-[16/9] w-24 shrink-0 rounded-md sm:block" />
+            <div className="space-y-1.5">
+              <Bar className="h-4 w-36" />
+              <Bar className="h-5 w-44 max-w-full" />
+            </div>
+          </div>
+          <Bar className="order-3 col-span-2 h-5 w-28 justify-self-center sm:order-2 sm:col-span-1" />
+          <div className="order-2 flex flex-row-reverse items-center gap-3 justify-self-end p-2 sm:order-3">
+            <Bar className="hidden aspect-[16/9] w-24 shrink-0 rounded-md sm:block" />
+            <div className="flex flex-col items-end space-y-1.5">
+              <Bar className="h-4 w-36" />
+              <Bar className="h-5 w-44 max-w-full" />
+            </div>
+          </div>
         </div>
 
         {/* Surface: cast tabs left, facts panel right */}

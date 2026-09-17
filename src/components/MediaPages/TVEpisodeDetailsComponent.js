@@ -12,7 +12,6 @@ import ActionRow from './details/ActionRow'
 import StickyTitleBar from './details/StickyTitleBar'
 import CastTabs from './details/CastTabs'
 import EpisodeNav from './details/EpisodeNav'
-import NextEpisodeCard from './details/NextEpisodeCard'
 
 /** The hero's action row; the sticky bar appears once this scrolls out. */
 const ACTIONS_ID = 'episode-hero-actions'
@@ -23,8 +22,8 @@ const pad2 = (n) => String(n).padStart(2, '0')
 /**
  * The episode info page: the trail carries show, season and episode; the
  * eyebrow adds the genres (as the movie page does), then the episode
- * as the title with the still beside it, the previous/next rail, the
- * cast tabs with the episode facts, and the next episode's card.
+ * as the title with the still beside it, the previous/next cards, and the
+ * cast tabs with the episode facts.
  *
  * Renders inside a `'use cache'` subtree shared by every viewer, so
  * nothing here may read per-user state: the primary button's label, the
@@ -60,10 +59,22 @@ const TVEpisodeDetailsComponent = ({ media }) => {
   const eyebrow = genreNames.length > 0 ? genreNames.slice(0, 3).join(' · ') : (networks || []).map((n) => n?.name).filter(Boolean)[0] || null
 
   const count = Number.isInteger(media.seasonEpisodeCount) && media.seasonEpisodeCount > 0 ? media.seasonEpisodeCount : null
-  const neighbour = (n, epTitle) =>
-    n != null && hrefs.season ? { href: tvHrefs({ originalTitle, showTitle, seasonNumber, episodeNumber: n }).episode, episodeNumber: n, title: epTitle ?? null } : null
-  const prev = neighbour(media.previousEpisodeNumber, media.previousEpisodeTitle)
-  const next = media.hasNextEpisode ? neighbour(media.nextEpisodeNumber, media.nextEpisodeTitle) : null
+  const neighbour = (n, extra) =>
+    n != null && hrefs.season ? { href: tvHrefs({ originalTitle, showTitle, seasonNumber, episodeNumber: n }).episode, episodeNumber: n, ...extra } : null
+  const prev = neighbour(media.previousEpisodeNumber, {
+    title: media.previousEpisodeTitle ?? null,
+    thumbnail: media.previousEpisodeThumbnail || null,
+    blurDataURL: blurDataURL(media.previousEpisodeThumbnailBlurhash),
+    durationMs: media.previousEpisodeDuration ?? null,
+  })
+  const next = media.hasNextEpisode
+    ? neighbour(media.nextEpisodeNumber, {
+        title: media.nextEpisodeTitle ?? null,
+        thumbnail: media.nextEpisodeThumbnail || null,
+        blurDataURL: blurDataURL(media.nextEpisodeThumbnailBlurhash),
+        durationMs: media.nextEpisodeDuration ?? null,
+      })
+    : null
 
   const facts = [
     ...(hrefs.show && showTitle ? [{ label: 'Show', value: showTitle, links: [{ label: showTitle, href: hrefs.show, external: false }] }] : []),
@@ -75,7 +86,6 @@ const TVEpisodeDetailsComponent = ({ media }) => {
     { id: 'guests', label: 'Guest stars', cast: media.guestStars || guest_stars || [] },
     { id: 'series', label: 'Series cast', cast: media.cast || [] },
   ]
-  const nextChips = next ? qualityChips({ dimensions: media.nextEpisodeDimensions, hdr: media.nextEpisodeHdr }).filter((c) => c !== 'SDR') : []
 
   return (
     <div className="media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8">
@@ -147,19 +157,6 @@ const TVEpisodeDetailsComponent = ({ media }) => {
         <DetailsPanel id="episode-details" title="Episode details" rows={facts} />
       </div>
 
-      {next ? (
-        <NextEpisodeCard
-          className="mt-10"
-          href={next.href}
-          seasonNumber={seasonNumber}
-          episodeNumber={next.episodeNumber}
-          title={next.title}
-          thumbnail={media.nextEpisodeThumbnail || null}
-          blurDataURL={blurDataURL(media.nextEpisodeThumbnailBlurhash)}
-          durationMs={media.nextEpisodeDuration ?? null}
-          chips={nextChips}
-        />
-      ) : null}
     </div>
   )
 }

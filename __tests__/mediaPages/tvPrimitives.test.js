@@ -66,7 +66,6 @@ const ActionRow = require('@components/MediaPages/details/ActionRow')
 const CastRail = require('@components/MediaPages/details/CastRail').default
 const CastTabs = require('@components/MediaPages/details/CastTabs').default
 const EpisodeNav = require('@components/MediaPages/details/EpisodeNav').default
-const NextEpisodeCard = require('@components/MediaPages/details/NextEpisodeCard').default
 const SeasonTile = require('@components/MediaPages/details/SeasonTile').default
 const EpisodeRow = require('@components/MediaPages/details/EpisodeRow').default
 const { default: ViewToggle, useStoredView } = require('@components/MediaPages/details/ViewToggle')
@@ -314,46 +313,50 @@ describe('CastTabs', () => {
 })
 
 describe('EpisodeNav', () => {
-  it('disables Previous, keeps the centre link and hides Next when there is none', () => {
-    render(<EpisodeNav previous={null} all={{ href: '/list/tv/Preacher/1', count: 8 }} next={null} />)
+  const season = { href: '/list/tv/Preacher/1', count: 8 }
+
+  it("leaves a missing neighbour's column empty and keeps the centre link", () => {
+    render(<EpisodeNav previous={null} all={season} next={null} />)
     const nav = screen.getByRole('navigation', { name: 'Episode navigation' })
-    expect(within(nav).getByText('Previous episode')).toHaveAttribute('aria-disabled', 'true')
-    expect(within(nav).queryByRole('link', { name: /previous/i })).not.toBeInTheDocument()
+    expect(within(nav).getAllByRole('link')).toHaveLength(1)
     expect(within(nav).getByRole('link', { name: 'All 8 episodes' })).toHaveAttribute('href', '/list/tv/Preacher/1')
-    expect(within(nav).queryByText(/Next episode/)).not.toBeInTheDocument()
+    // Three cells either way, so the middle stays centred
+    expect(nav.children).toHaveLength(3)
   })
 
-  it('links both neighbours, pluralises the count and falls back to the episode number', () => {
-    render(<EpisodeNav previous={{ href: '/list/tv/Preacher/1/1', episodeNumber: 1, title: 'Pilot' }} all={{ href: '/list/tv/Preacher/1', count: 1 }} next={{ href: '/list/tv/Preacher/1/3', episodeNumber: 3, title: null }} />)
-    expect(screen.getByRole('link', { name: 'Previous episode' })).toHaveAttribute('href', '/list/tv/Preacher/1/1')
+  it('cards both neighbours with their still, number, title and runtime', () => {
+    render(
+      <EpisodeNav
+        previous={{ href: '/list/tv/Preacher/1/1', episodeNumber: 1, title: 'Pilot', thumbnail: 'https://files.example.com/S01E01.jpg', durationMs: 3_840_000 }}
+        all={{ href: '/list/tv/Preacher/1', count: 1 }}
+        next={{ href: '/list/tv/Preacher/1/3', episodeNumber: 3, title: null, thumbnail: null }}
+      />
+    )
+    const previous = screen.getByRole('link', { name: 'Previous episode: Episode 1, Pilot' })
+    expect(previous).toHaveAttribute('href', '/list/tv/Preacher/1/1')
+    expect(within(previous).getByText('Previous · Episode 1')).toBeInTheDocument()
+    expect(within(previous).getByText('1h 4m')).toBeInTheDocument()
+    expect(previous.querySelector('img')).toHaveAttribute('src', 'https://files.example.com/S01E01.jpg')
+
+    // No title falls back to the number; no still leaves a blank frame; no runtime, no line
+    const next = screen.getByRole('link', { name: 'Next episode: Episode 3, Episode 3' })
+    expect(next).toHaveAttribute('href', '/list/tv/Preacher/1/3')
+    expect(next.querySelector('img')).toBeNull()
     expect(screen.getByRole('link', { name: 'All 1 episode' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Next episode · Episode 3' })).toHaveAttribute('href', '/list/tv/Preacher/1/3')
+  })
+
+  it('truncates a long title inside its card instead of stretching the row', () => {
+    const long = 'Spoiler: Dexys Midnight Runners Get a Royalty Payment and Then Some More Words'
+    render(<EpisodeNav previous={null} all={season} next={{ href: '/x', episodeNumber: 7, title: long }} />)
+    const nav = screen.getByRole('navigation', { name: 'Episode navigation' })
+    expect(nav.className).toContain('sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]')
+    const card = screen.getByRole('link', { name: `Next episode: Episode 7, ${long}` })
+    expect(card).toHaveClass('min-w-0', 'max-w-full')
+    expect(within(card).getByText(long)).toHaveClass('truncate')
   })
 
   it('renders nothing when there is nothing to navigate to', () => {
     const { container } = render(<EpisodeNav previous={null} all={null} next={null} />)
-    expect(container).toBeEmptyDOMElement()
-  })
-})
-
-describe('NextEpisodeCard', () => {
-  it('is one link named by the episode, with the runtime and chips', () => {
-    render(<NextEpisodeCard href="/list/tv/Preacher/1/2" seasonNumber={1} episodeNumber={2} title="See" thumbnail="https://files.example.com/S01E02.jpg" durationMs={2_940_000} chips={['1080p']} />)
-    expect(screen.getByRole('heading', { name: 'Next in Season 1' })).toBeInTheDocument()
-    const link = screen.getByRole('link', { name: 'Episode 2: See' })
-    expect(link).toHaveAttribute('href', '/list/tv/Preacher/1/2')
-    expect(within(link).getByText('49m · 1080p')).toBeInTheDocument()
-    // The still is decorative (alt ""), so it has no img role: query the element
-    expect(link.querySelector('img')).toHaveAttribute('src', 'https://files.example.com/S01E02.jpg')
-  })
-
-  it('copes with no still, no runtime and Specials, and renders nothing without an href', () => {
-    const { container: withoutStill } = render(<NextEpisodeCard href="/list/tv/Preacher/0/2" seasonNumber={0} episodeNumber={2} title={null} thumbnail={null} />)
-    expect(screen.getByRole('heading', { name: 'Next in Specials' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Episode 2: Episode 2' })).toBeInTheDocument()
-    expect(withoutStill.querySelector('img')).toBeNull()
-
-    const { container } = render(<NextEpisodeCard href={null} seasonNumber={1} episodeNumber={2} title="See" thumbnail={null} />)
     expect(container).toBeEmptyDOMElement()
   })
 })
