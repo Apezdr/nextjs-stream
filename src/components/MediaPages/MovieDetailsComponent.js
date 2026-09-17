@@ -2,6 +2,7 @@ import { Suspense, ViewTransition } from 'react'
 import { classNames } from '@src/utils'
 import { moviePosterName } from '@src/utils/viewTransitionNames'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
+import { artworkInUse } from '@src/utils/media/artwork'
 import { displayTitleOf, splitTitle, yearOf, qualityChips, certificationOf, movieFacts } from '@src/utils/media/detailsFacts'
 import { durationMsFrom, formatRuntime } from '@components/WatchProgress/progress'
 import WatchProgressPanel from '@components/WatchProgress/WatchProgressPanel'
@@ -9,6 +10,7 @@ import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { WatchedByRow } from './ViewCount'
 import { Breadcrumb, MetaLine, DetailsPanel } from './details/Primitives'
 import HeroPoster from './details/HeroPoster'
+import ArtworkButton from './details/ArtworkButton'
 import ActionRow from './details/ActionRow'
 import StickyTitleBar from './details/StickyTitleBar'
 import CastRail from './details/CastRail'
@@ -58,7 +60,9 @@ const MovieDetailsComponent = ({ media }) => {
 
       <header className="mt-6 grid grid-cols-[120px_minmax(0,1fr)] gap-x-5 gap-y-6 sm:mt-10 sm:grid-cols-[170px_minmax(0,1fr)] sm:gap-x-8 lg:grid-cols-[220px_minmax(0,1fr)]">
         <ViewTransition name={moviePosterName(media.title)}>
-          <HeroPoster src={posterURL} alt={`${title} poster`} blurhash={posterBlurhash} className="sm:row-span-2" />
+          <ArtworkButton title={title} tmdbId={metadata?.id ?? null} type="movie" inUse={artworkInUse(media)} className="sm:row-span-2">
+            <HeroPoster src={posterURL} alt={`${title} poster`} blurhash={posterBlurhash} />
+          </ArtworkButton>
         </ViewTransition>
 
         <div className="min-w-0">

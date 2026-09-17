@@ -9,6 +9,7 @@ import Link from 'next/link'
 import { getFlatRequestedMedia, getFlatShowEpisodesForProgress } from '@src/utils/flatDatabaseUtils'
 import { joinEpisodeWatchHistory, plainWatchHistory } from '@src/utils/watchHistory/joinEpisodes'
 import { durationMsFrom } from '@components/WatchProgress/progress'
+import { artworkInUse } from '@src/utils/media/artwork'
 import { tvPosterName, tvSeasonPosterName } from '@src/utils/viewTransitionNames'
 import {
   showTitleOf,
@@ -29,6 +30,7 @@ import WatchlistButton from '@components/WatchlistButton'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { Trail, MetaLine, SectionHeading, DetailsPanel, SECONDARY_CLASSES } from './details/Primitives'
 import HeroPoster from './details/HeroPoster'
+import ArtworkButton from './details/ArtworkButton'
 import PrimaryPlayButton from './details/PrimaryPlayButton'
 import SeasonTile from './details/SeasonTile'
 import CastRail from './details/CastRail'
@@ -139,13 +141,15 @@ export default async function TVShowSeasonsList({ showTitle, show = null, userId
 
         <div className="col-start-1 row-start-1 sm:row-span-2 lg:col-start-2">
           <ViewTransition name={tvPosterName(doc.title)}>
-            <HeroPoster
-              src={doc.posterURL}
-              alt={`${display} poster`}
-              blurhash={doc.posterBlurhash}
-              widthClassName="w-[120px] sm:w-[170px] lg:w-[230px]"
-              sizes="(max-width: 640px) 120px, (max-width: 1024px) 170px, 230px"
-            />
+            <ArtworkButton title={display} tmdbId={m.id ?? null} type="tv" inUse={artworkInUse(doc)}>
+              <HeroPoster
+                src={doc.posterURL}
+                alt={`${display} poster`}
+                blurhash={doc.posterBlurhash}
+                widthClassName="w-[120px] sm:w-[170px] lg:w-[230px]"
+                sizes="(max-width: 640px) 120px, (max-width: 1024px) 170px, 230px"
+              />
+            </ArtworkButton>
           </ViewTransition>
         </div>
 

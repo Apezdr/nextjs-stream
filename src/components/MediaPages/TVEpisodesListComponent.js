@@ -30,6 +30,7 @@ import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import NoEpisodesFound from './NoEpisodesFound'
 import { Trail, MetaLine, FactRow, SECONDARY_CLASSES } from './details/Primitives'
 import HeroPoster from './details/HeroPoster'
+import ArtworkButton from './details/ArtworkButton'
 import ActionRow from './details/ActionRow'
 import SeasonEpisodeList from './SeasonEpisodeList'
 
@@ -127,14 +128,17 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
 
       <header className="mt-6 grid grid-cols-[120px_minmax(0,1fr)] gap-x-5 gap-y-6 sm:mt-10 sm:gap-x-8">
         <ViewTransition name={tvSeasonPosterName(season.showTitle, n)}>
-          <HeroPoster
-            src={season.posterURL}
-            alt={`${showDisplay} ${seasonLabel(n)} poster`}
-            blurhash={season.posterBlurhash}
-            widthClassName="w-[120px]"
-            sizes="120px"
+          {/* No season-level image list exists, so the viewer shows the show's
+              artwork with this season's own poster pinned first */}
+          <ArtworkButton
+            title={`${showDisplay} · ${seasonLabel(n)}`}
+            tmdbId={summary.tmdbId ?? null}
+            type="tv"
+            inUse={{ poster: { path: season.metadata?.poster_path || null, url: season.posterURL || null, label: 'This season' } }}
             className="row-span-2"
-          />
+          >
+            <HeroPoster src={season.posterURL} alt={`${showDisplay} ${seasonLabel(n)} poster`} blurhash={season.posterBlurhash} widthClassName="w-[120px]" sizes="120px" />
+          </ArtworkButton>
         </ViewTransition>
 
         <div className="min-w-0">
