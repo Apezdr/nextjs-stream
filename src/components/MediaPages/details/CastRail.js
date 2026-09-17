@@ -9,12 +9,12 @@ const RAIL_LIMIT = 24
 
 function CastMember({ person, className = '' }) {
   const href = person.id ? `https://www.themoviedb.org/person/${person.id}` : null
-  const photo = person.profile_path ? getFullImageUrl(person.profile_path, 'w185') : null
+  const photo = person.profile_path ? getFullImageUrl(person.profile_path, 'h632') : null
   const body = (
     <>
       <div className="relative size-20 overflow-hidden rounded-full bg-white/10 ring-1 ring-white/10 transition-[box-shadow,filter] duration-200 group-hover:brightness-110 group-hover:ring-2 group-hover:ring-white/50 group-focus-visible:ring-2 group-focus-visible:ring-blue-300">
         {photo ? (
-          <RetryImage src={photo} alt="" width={80} height={80} sizes="80px" quality={50} loading="lazy" className="size-20 object-cover" />
+          <RetryImage src={photo} alt="" width={80} height={80} sizes="80px" quality={90} loading="lazy" className="size-20 object-cover" />
         ) : (
           <span className="flex size-full items-center justify-center text-lg font-semibold text-white/40" aria-hidden="true">
             {initials(person.name)}
@@ -89,7 +89,7 @@ export default function CastRail({ cast, title = 'Cast' }) {
           ))}
         </ul>
       ) : (
-        <ul className="-mx-4 flex snap-x gap-4 overflow-x-auto px-4 py-1 scrollbar-none sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+        <ul className="-mx-4 flex snap-x gap-4 overflow-x-auto px-4 py-1 scroll-px-4 scrollbar-none sm:-mx-6 sm:px-6 sm:scroll-px-6 lg:-mx-8 lg:px-8 lg:scroll-px-8">
           {shown.map((person, i) => (
             <li key={person.id ?? `${person.name}-${i}`} className="shrink-0 snap-start">
               <CastMember person={person} />
