@@ -39,7 +39,7 @@ export default async function CollectionCard({ collection, currentOriginalTitle 
         <div className="flex gap-4">
           <Link href={collectionHref} className="shrink-0 rounded-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300">
             <div className="relative h-28 w-[4.7rem] overflow-hidden rounded-md bg-white/10 shadow-md shadow-black/40">
-              {art ? <Image src={art} alt="" fill sizes="76px" className="object-cover" /> : null}
+              {art ? <Image src={art} alt="" fill sizes="152px" quality={90} className="object-cover" /> : null}
             </div>
           </Link>
           <div className="min-w-0 flex-1">
@@ -85,8 +85,8 @@ export default async function CollectionCard({ collection, currentOriginalTitle 
                           src={film.posterURL || '/sorry-image-not-available.jpg'}
                           alt=""
                           fill
-                          sizes="64px"
-                          quality={50}
+                          sizes="128px"
+                          quality={90}
                           className="object-cover"
                         />
                       </div>
