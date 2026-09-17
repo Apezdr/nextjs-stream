@@ -17,6 +17,9 @@ const {
   certificationOf,
   subtitleSummary,
   crewNames,
+  crewRows,
+  formatMoney,
+  movieLinks,
   movieFacts,
   episodeFacts,
   episodeTypeLabel,
@@ -65,6 +68,21 @@ const hobbit = {
     production_countries: [{ iso_3166_1: 'JP', name: 'Japan' }, { iso_3166_1: 'US', name: 'United States of America' }],
     release_date: '1977-11-27T00:00:00.000Z',
     vote_average: 6.6,
+    vote_count: 512,
+    id: 21873,
+    imdb_id: 'tt0077687',
+    homepage: '',
+    status: 'Released',
+    original_title: 'The Hobbit',
+    budget: 3000000,
+    revenue: 0,
+    crew: [
+      { id: 1, name: 'Jules Bass', job: 'Director', department: 'Directing' },
+      { id: 2, name: 'Arthur Rankin, Jr.', job: 'Director', department: 'Directing' },
+      { id: 3, name: 'Romeo Muller', job: 'Screenplay', department: 'Writing' },
+      { id: 4, name: 'J. R. R. Tolkien', job: 'Novel', department: 'Writing' },
+      { id: 5, name: 'Maury Laws', job: 'Original Music Composer', department: 'Sound' },
+    ],
     runtime: 77,
   },
 }
@@ -222,11 +240,16 @@ describe('movieFacts', () => {
   it('lists what the hero does not already show, then the file facts', () => {
     const rows = movieFacts(hobbit)
     expect(rows.map((r) => r.label)).toEqual([
+      'Directors',
+      'Writers',
+      'Music',
       'Language',
       'Studio',
       'Country',
       'Released',
       'TMDB score',
+      'Budget',
+      'Links',
       'Resolution',
       'Video',
       'Dynamic range',
@@ -236,10 +259,23 @@ describe('movieFacts', () => {
       'Added',
     ])
     const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]))
+    expect(byLabel.Directors.value).toBe('Jules Bass, Arthur Rankin, Jr.')
+    expect(byLabel.Writers.value).toBe('Romeo Muller, J. R. R. Tolkien')
+    expect(byLabel.Music.value).toBe('Maury Laws')
     expect(byLabel.Language.value).toBe('English')
     expect(byLabel.Studio.value).toBe('Rankin/Bass Productions, Topcraft')
     expect(byLabel.Released.value).toBe('Nov 27, 1977')
-    expect(byLabel['TMDB score'].value).toBe('6.6 / 10')
+    expect(byLabel['TMDB score'].value).toBe('6.6 / 10 · 512 votes')
+    expect(byLabel.Budget.value).toBe('$3M')
+    // A zero revenue is "unknown" to TMDB, not a flop; an empty homepage is no link
+    expect(byLabel['Box office']).toBeUndefined()
+    expect(byLabel.Links.links).toEqual([
+      { label: 'IMDb', href: 'https://www.imdb.com/title/tt0077687/' },
+      { label: 'TMDB', href: 'https://www.themoviedb.org/movie/21873' },
+    ])
+    // Same as the display title, and the everyday status: nothing to add
+    expect(byLabel['Original title']).toBeUndefined()
+    expect(byLabel.Status).toBeUndefined()
     expect(byLabel.Resolution.value).toBe('1440 × 1080 (1080p)')
     expect(byLabel.Video.value).toBe('H.264 · 8-bit')
     expect(byLabel['Dynamic range'].value).toBe('8-bit SDR (BT.709)')
@@ -254,6 +290,69 @@ describe('movieFacts', () => {
   it('leaves out rows with nothing to say instead of printing Unknown', () => {
     const rows = movieFacts({ metadata: {} })
     expect(rows).toEqual([])
+  })
+
+  it('names a foreign title, an unreleased status, box office and the official site', () => {
+    const rows = movieFacts({
+      title: 'Spirited Away',
+      metadata: {
+        title: 'Spirited Away',
+        original_title: '千と千尋の神隠し',
+        status: 'Post Production',
+        budget: 0,
+        revenue: 395580000,
+        vote_average: 0,
+        imdb_id: 'not-an-id',
+        homepage: 'https://www.ghibli.jp/works/chihiro/',
+      },
+    })
+    expect(rows).toEqual([
+      { label: 'Original title', value: '千と千尋の神隠し' },
+      { label: 'Status', value: 'Post Production' },
+      { label: 'Box office', value: '$395.6M' },
+      { label: 'Links', value: 'Official site', links: [{ label: 'Official site', href: 'https://www.ghibli.jp/works/chihiro/' }] },
+    ])
+  })
+})
+
+describe('crew, money and links', () => {
+  it('groups crew into billing rows, capping long lists', () => {
+    const crew = [
+      { name: 'D1', job: 'Director' },
+      { name: 'W1', job: 'Writer' },
+      { name: 'W1', job: 'Screenplay' },
+      { name: 'P1', job: 'Producer' },
+      { name: 'P2', job: 'Producer' },
+      { name: 'P3', job: 'Producer' },
+      { name: 'P4', job: 'Producer' },
+      { name: 'C1', job: 'Director of Photography' },
+      { name: 'G1', job: 'Gaffer' },
+    ]
+    expect(crewRows(crew)).toEqual([
+      { label: 'Director', value: 'D1' },
+      { label: 'Writer', value: 'W1' },
+      { label: 'Producers', value: 'P1, P2, P3' },
+      { label: 'Cinematography', value: 'C1' },
+    ])
+    expect(crewRows(undefined)).toEqual([])
+  })
+
+  it('formats money compactly and treats zero as unknown', () => {
+    expect(formatMoney(175000000)).toBe('$175M')
+    expect(formatMoney(126366532)).toBe('$126.4M')
+    expect(formatMoney(1200000000)).toBe('$1.2B')
+    expect(formatMoney(900000)).toBe('$900K')
+    expect(formatMoney(0)).toBeNull()
+    expect(formatMoney('nope')).toBeNull()
+  })
+
+  it('links only well-formed ids and absolute homepages', () => {
+    expect(movieLinks({ imdb_id: 'tt8814476', id: 1234, homepage: 'www.example.com' })).toEqual([
+      { label: 'IMDb', href: 'https://www.imdb.com/title/tt8814476/' },
+      { label: 'TMDB', href: 'https://www.themoviedb.org/movie/1234' },
+    ])
+    expect(movieLinks({ id: 'abc', homepage: 'http://example.com' })).toEqual([{ label: 'Official site', href: 'http://example.com' }])
+    expect(movieLinks(null)).toEqual([])
   })
 })
 

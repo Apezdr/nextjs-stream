@@ -109,12 +109,40 @@ export function DetailsPanel({ id = 'details', title = 'Details', rows, children
       <dl className="grid grid-cols-[minmax(6.5rem,max-content)_1fr] gap-x-6 gap-y-3 rounded-xl bg-white/5 p-5 text-sm ring-1 ring-white/10">
         {rows.map((row) => (
           <FactRow key={row.label} label={row.label} note={row.note}>
-            {Array.isArray(row.value) ? row.value.join(', ') : row.value}
+            {Array.isArray(row.links) && row.links.length > 0 ? (
+              <LinkList links={row.links} />
+            ) : Array.isArray(row.value) ? (
+              row.value.join(', ')
+            ) : (
+              row.value
+            )}
           </FactRow>
         ))}
         {children}
       </dl>
     </section>
+  )
+}
+
+/**
+ * External links inside a FactRow (IMDb, TMDB, an official site), each
+ * opening in a new tab.
+ */
+function LinkList({ links }) {
+  return (
+    <span className="flex flex-wrap gap-x-4 gap-y-1">
+      {links.map((link) => (
+        <a
+          key={link.href}
+          href={link.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="rounded text-blue-300 underline-offset-2 hover:text-white hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300"
+        >
+          {link.label}
+        </a>
+      ))}
+    </span>
   )
 }
 

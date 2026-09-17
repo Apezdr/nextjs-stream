@@ -325,6 +325,67 @@ export function crewNames(crew, jobs) {
 const WRITER_JOBS = ['Writer', 'Screenplay', 'Story', 'Teleplay', 'Novel', 'Author', 'Original Story', 'Characters']
 
 /**
+ * The credit rows on a movie page, in billing order. Each row collapses the
+ * TMDB jobs a viewer would group together (a "Screenplay" and a "Novel"
+ * credit are both writers) and caps long lists so a committee of producers
+ * does not swamp the panel.
+ */
+const CREW_ROWS = [
+  { jobs: ['Director'], one: 'Director', many: 'Directors', max: 3 },
+  { jobs: WRITER_JOBS, one: 'Writer', many: 'Writers', max: 4 },
+  { jobs: ['Producer'], one: 'Producer', many: 'Producers', max: 3 },
+  { jobs: ['Original Music Composer', 'Music'], one: 'Music', many: 'Music', max: 2 },
+  { jobs: ['Director of Photography'], one: 'Cinematography', many: 'Cinematography', max: 2 },
+]
+
+/**
+ * Director / Writers / Producers / Music / Cinematography rows from a crew
+ * list, leaving out any credit the list does not carry.
+ *
+ * @param {Array<{ name?: string, job?: string }>|null|undefined} crew
+ * @returns {Array<{ label: string, value: string }>}
+ */
+export function crewRows(crew) {
+  const rows = []
+  for (const { jobs, one, many, max } of CREW_ROWS) {
+    const names = crewNames(crew, jobs)
+    if (names.length) rows.push({ label: names.length > 1 ? many : one, value: names.slice(0, max).join(', ') })
+  }
+  return rows
+}
+
+/**
+ * Whole dollars → "$175M", "$126.4M", "$1.2B". TMDB stores 0 when it does
+ * not know a figure, so zero reads as unknown and yields null.
+ *
+ * @param {number|string|null|undefined} amount
+ * @returns {string|null}
+ */
+export function formatMoney(amount) {
+  const n = typeof amount === 'number' ? amount : Number(amount)
+  if (!Number.isFinite(n) || n <= 0) return null
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 1 }).format(n)
+}
+
+/**
+ * Where else to read about a movie: IMDb, TMDB and the official site, as
+ * `{ label, href }`. Only well-formed ids and absolute URLs become links.
+ *
+ * @param {{ imdb_id?: string|null, id?: number|string|null, homepage?: string|null }|null|undefined} meta
+ * @returns {Array<{ label: string, href: string }>}
+ */
+export function movieLinks(meta) {
+  const links = []
+  const imdb = typeof meta?.imdb_id === 'string' ? meta.imdb_id.trim() : ''
+  if (/^tt\d+$/.test(imdb)) links.push({ label: 'IMDb', href: `https://www.imdb.com/title/${imdb}/` })
+  const tmdbId = Number(meta?.id)
+  if (Number.isInteger(tmdbId) && tmdbId > 0) links.push({ label: 'TMDB', href: `https://www.themoviedb.org/movie/${tmdbId}` })
+  const home = typeof meta?.homepage === 'string' ? meta.homepage.trim() : ''
+  if (/^https?:\/\//i.test(home)) links.push({ label: 'Official site', href: home })
+  return links
+}
+
+/**
  * Human date, or null.
  */
 export function formatDate(value, options = { year: 'numeric', month: 'short', day: 'numeric' }) {
@@ -388,14 +449,20 @@ export function fileFacts(media) {
 }
 
 /**
- * Rows for a movie: the catalog facts the hero does not already show (the
- * year, runtime, certification and quality chips live on the meta line),
- * then the file facts. Studios stand in for a director/writer credit
- * because the movie documents carry TMDB cast but no crew.
+ * Rows for a movie: the credits, then the catalog facts the hero does not
+ * already show (the year, runtime, certification and quality chips live on
+ * the meta line), then the file facts. The crew rows depend on the media
+ * processor having written `metadata.crew`; a record from before that
+ * simply has no credit rows, and studios carry the panel.
  */
 export function movieFacts(media) {
-  const rows = []
   const meta = media?.metadata || {}
+  const rows = crewRows(meta.crew)
+
+  // A foreign film's own title, when the display title is a translation
+  const shown = displayTitleOf(media)
+  const originalTitle = typeof meta.original_title === 'string' ? meta.original_title.trim() : ''
+  if (originalTitle && originalTitle.toLowerCase() !== shown.toLowerCase()) rows.push({ label: 'Original title', value: originalTitle })
 
   const original = languageName(meta.original_language)
   if (original) rows.push({ label: 'Language', value: original })
@@ -413,8 +480,24 @@ export function movieFacts(media) {
   const released = formatDate(meta.release_date)
   if (released) rows.push({ label: 'Released', value: released })
 
+  // "Released" is the norm and says nothing; anything else is worth a line
+  const status = typeof meta.status === 'string' ? meta.status.trim() : ''
+  if (status && status.toLowerCase() !== 'released') rows.push({ label: 'Status', value: status })
+
   const vote = Number(meta.vote_average)
-  if (Number.isFinite(vote) && vote > 0) rows.push({ label: 'TMDB score', value: `${vote.toFixed(1)} / 10` })
+  if (Number.isFinite(vote) && vote > 0) {
+    const votes = Number(meta.vote_count)
+    const count = Number.isInteger(votes) && votes > 0 ? `${votes.toLocaleString('en-US')} vote${votes === 1 ? '' : 's'}` : null
+    rows.push({ label: 'TMDB score', value: [`${vote.toFixed(1)} / 10`, count].filter(Boolean).join(' · ') })
+  }
+
+  const budget = formatMoney(meta.budget)
+  if (budget) rows.push({ label: 'Budget', value: budget })
+  const revenue = formatMoney(meta.revenue)
+  if (revenue) rows.push({ label: 'Box office', value: revenue })
+
+  const links = movieLinks(meta)
+  if (links.length) rows.push({ label: 'Links', value: links.map((l) => l.label).join(', '), links })
 
   return rows.concat(fileFacts(media))
 }

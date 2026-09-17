@@ -164,7 +164,7 @@ describe('MovieDetailsComponent', () => {
     expect(screen.getAllByText('4K').length).toBeGreaterThan(0)
     expect(screen.getAllByText('Dolby Vision').length).toBeGreaterThan(0)
 
-    // Chrome
+    // Page primitives
     expect(screen.getByRole('link', { name: /back to movies/i })).toHaveAttribute('href', '/list/movie')
     expect(screen.queryByText('Edit movie')).not.toBeInTheDocument() // not an admin
 
@@ -193,7 +193,10 @@ describe('MovieDetailsComponent', () => {
     // Details panel: catalog facts, file facts, source host and watched-by row
     const panel = screen.getByRole('heading', { name: 'Movie details' }).closest('section')
     const rows = within(panel).getAllByRole('term').map((dt) => dt.textContent)
-    expect(rows).toEqual(['Language', 'Studio', 'Country', 'Released', 'TMDB score', 'Resolution', 'Video', 'Dynamic range', 'Audio', 'Subtitles', 'File', 'Added', 'Watched by'])
+    expect(rows).toEqual(['Language', 'Studio', 'Country', 'Released', 'TMDB score', 'Links', 'Resolution', 'Video', 'Dynamic range', 'Audio', 'Subtitles', 'File', 'Added', 'Watched by'])
+    const tmdbLink = within(panel).getByRole('link', { name: 'TMDB' })
+    expect(tmdbLink).toHaveAttribute('href', 'https://www.themoviedb.org/movie/49051')
+    expect(tmdbLink).toHaveAttribute('target', '_blank')
     expect(within(panel).getByText('3840 × 2160 (4K)')).toBeInTheDocument()
     expect(within(panel).getByText('HEVC (H.265) · 10-bit')).toBeInTheDocument()
     expect(within(panel).getByText('MKV · 56.81 GB')).toBeInTheDocument()
