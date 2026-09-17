@@ -240,6 +240,32 @@ describe('CastRail', () => {
     expect(container.querySelector('ul')).not.toHaveClass('-mx-4')
     expect(container.querySelector('ul')).toHaveClass('px-1')
   })
+
+  it('scrolls freely with a visible scrollbar: no snapping, no hidden bar', () => {
+    const { container } = render(<CastRail cast={cast} />)
+    const list = container.querySelector('ul')
+    expect(list).toHaveClass('overflow-x-auto', 'scrollbar-thin')
+    expect(list.className).not.toMatch(/snap-|scrollbar-none/)
+    expect(container.querySelector('li').className).not.toMatch(/snap-/)
+  })
+
+  it('lays out as a wrapping grid on request: three rows first, the rest behind See all', () => {
+    const many = Array.from({ length: 29 }, (_, i) => ({ id: i + 1, name: `Person ${i + 1}`, character: 'Role', profile_path: null }))
+    const { container } = render(<CastRail cast={many} title="Series cast" hideHeading bleed={false} layout="grid" />)
+    const list = container.querySelector('ul')
+    expect(list).toHaveClass('grid')
+    expect(list).not.toHaveClass('overflow-x-auto')
+    expect(container.querySelectorAll('li')).toHaveLength(12)
+
+    fireEvent.click(screen.getByRole('button', { name: 'See all 29' }))
+    expect(container.querySelectorAll('li')).toHaveLength(29)
+    expect(screen.getByRole('button', { name: 'Show fewer' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('needs no toggle when everyone fits', () => {
+    render(<CastRail cast={cast} hideHeading bleed={false} layout="grid" />)
+    expect(screen.queryByRole('button')).not.toBeInTheDocument()
+  })
 })
 
 describe('CastTabs', () => {

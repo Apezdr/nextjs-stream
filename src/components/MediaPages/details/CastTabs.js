@@ -25,7 +25,7 @@ export default function CastTabs({ tabs, defaultTab = null }) {
     .filter((tab) => tab.cast.length > 0)
 
   if (usable.length === 0) return null
-  if (usable.length === 1) return <CastRail cast={usable[0].cast} title={usable[0].label} bleed={false} />
+  if (usable.length === 1) return <CastRail cast={usable[0].cast} title={usable[0].label} bleed={false} layout="grid" />
 
   const active = usable.find((tab) => tab.id === selected) || usable[0]
 
@@ -80,7 +80,7 @@ export default function CastTabs({ tabs, defaultTab = null }) {
         })}
       </div>
       <div role="tabpanel" id={`panel-${active.id}`} aria-labelledby={`tab-${active.id}`}>
-        <CastRail key={active.id} cast={active.cast} title={active.label} hideHeading bleed={false} />
+        <CastRail key={active.id} cast={active.cast} title={active.label} hideHeading bleed={false} layout="grid" />
       </div>
     </div>
   )

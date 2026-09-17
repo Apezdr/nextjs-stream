@@ -21,7 +21,7 @@ function Bar({ className }) {
   return <span className={classNames(BAR, className)} />
 }
 
-const CAST_PLACEHOLDERS = [0, 1, 2, 3, 4]
+const CAST_PLACEHOLDERS = [0, 1, 2, 3, 4, 5, 6, 7]
 const FACT_PLACEHOLDERS = ['w-24', 'w-40', 'w-16', 'w-36', 'w-28', 'w-44', 'w-32', 'w-20']
 
 export default function EpisodePageSkeleton() {
@@ -88,9 +88,9 @@ export default function EpisodePageSkeleton() {
               <Bar className="h-5 w-28" />
               <Bar className="h-5 w-28" />
             </div>
-            <div className="flex gap-4 overflow-hidden px-1 py-1">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(6rem,1fr))] justify-items-center gap-x-4 gap-y-6">
               {CAST_PLACEHOLDERS.map((i) => (
-                <div key={i} className="flex w-24 shrink-0 flex-col items-center">
+                <div key={i} className="flex w-24 flex-col items-center">
                   <span className="block size-20 rounded-full bg-white/10 motion-safe:animate-pulse" />
                   <Bar className="mt-2 h-4 w-20" />
                   <Bar className="mt-1 h-3 w-14" />
