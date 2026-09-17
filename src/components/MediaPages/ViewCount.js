@@ -1,6 +1,6 @@
 import { EyeIcon } from '@heroicons/react/20/solid'
 import { countUniqueViewersByNormalizedId } from '@src/utils/flatDatabaseUtils'
-import { FactRow } from './details/Chrome'
+import { FactRow } from './details/Primitives'
 
 /**
  * "Watched by N people" — distinct viewers across every identity the title

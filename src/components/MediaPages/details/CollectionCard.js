@@ -5,7 +5,7 @@ import RetryImage from '@components/RetryImage'
 import { classNames, getFullImageUrl } from '@src/utils'
 import { getFlatMoviesByCollectionId } from '@src/utils/flatDatabaseUtils'
 import { yearOf } from '@src/utils/media/detailsFacts'
-import { SectionHeading } from './Chrome'
+import { SectionHeading } from './Primitives'
 
 /**
  * "In this collection": a compact card for the collection itself plus a

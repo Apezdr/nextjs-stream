@@ -3,7 +3,7 @@ import { ChevronLeftIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 
 /**
- * The small shared pieces of an info page: the breadcrumb, the meta line
+ * The primitives every info page is built from: the breadcrumb, the meta line
  * with its quality chips, a section heading and the label/value panel.
  * All server-renderable; nothing here reads per-user state.
  */

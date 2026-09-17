@@ -7,7 +7,7 @@ import { durationMsFrom, formatRuntime } from '@components/WatchProgress/progres
 import WatchProgressPanel from '@components/WatchProgress/WatchProgressPanel'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { WatchedByRow } from './ViewCount'
-import { Breadcrumb, MetaLine, DetailsPanel } from './details/Chrome'
+import { Breadcrumb, MetaLine, DetailsPanel } from './details/Primitives'
 import HeroPoster from './details/HeroPoster'
 import ActionRow from './details/ActionRow'
 import StickyTitleBar from './details/StickyTitleBar'
@@ -46,7 +46,8 @@ const MovieDetailsComponent = ({ media }) => {
   const chips = qualityChips(media)
   const facts = movieFacts(media)
   const genreNames = (genres || []).map((g) => g?.name).filter(Boolean)
-  const position = { videoURL: media.videoURL || null, mediaId: media.mediaId || null, durationMs }
+  // What the progress-aware pieces (primary button, resume panel, sticky bar) need to look the position up
+  const progressProps = { videoURL: media.videoURL || null, mediaId: media.mediaId || null, durationMs }
 
   return (
     <div className="media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8">
@@ -73,16 +74,16 @@ const MovieDetailsComponent = ({ media }) => {
 
         <div id={ACTIONS_ID} className="col-span-2 self-start sm:col-span-1 sm:col-start-2">
           <ActionRow
-            {...position}
+            {...progressProps}
             playHref={playHref}
             trailerUrl={trailer_url || null}
             watchlist={{ mediaId: media.id ?? media._id, tmdbId: metadata?.id, mediaType: 'movie', title }}
           />
-          {media.videoURL ? <WatchProgressPanel {...position} playHref={playHref} className="mt-5 max-w-xl" /> : null}
+          {media.videoURL ? <WatchProgressPanel {...progressProps} playHref={playHref} className="mt-5 max-w-xl" /> : null}
         </div>
       </header>
 
-      <StickyTitleBar sentinelId={ACTIONS_ID} title={headline} subtitle={subtitle} {...position} playHref={playHref} />
+      <StickyTitleBar sentinelId={ACTIONS_ID} title={headline} subtitle={subtitle} {...progressProps} playHref={playHref} />
 
       <div className="mt-10 space-y-12 rounded-2xl bg-[#070b1d]/65 px-4 py-8 ring-1 ring-white/5 sm:mt-14 sm:px-6 lg:px-8">
         {cast.length > 0 ? <CastRail cast={cast} /> : null}
