@@ -18,7 +18,8 @@ const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/'
  * the SOURCE for the grid tile and the preview. The viewer runs both through
  * the app's image optimizer, which only ever scales down, so each source is
  * a step larger than the tile it feeds (a 200px poster tile on a 2x screen
- * wants 400px). "Full" is always TMDB's original, linked directly.
+ * wants 400px). "Full" is TMDB's original, which the viewer opens through
+ * the optimizer too (see fullSizeHref).
  */
 export const ARTWORK_KINDS = [
   { id: 'posters', label: 'Posters', inUseKey: 'poster', thumb: 'w500', preview: 'w780' },
@@ -147,4 +148,23 @@ export function artworkInUse(record) {
     backdrop: { path: meta.backdrop_path || null, url: record?.backdrop || null },
     logo: { path: meta.logo_path || null, url: record?.logo || null },
   }
+}
+
+/** The optimizer's largest width step and top quality: it never enlarges, so this returns the image at its own size. */
+const FULL_SIZE_WIDTH = 3840
+const FULL_SIZE_QUALITY = 100
+
+/**
+ * Where "Open full size" points: the image through the app's own optimizer
+ * (imgproxy when configured) at its largest step, not the source host. It is
+ * served and cached like every other image in the app, and the new tab's
+ * address is the app's — which matters for a custom image, whose source URL
+ * is the library's file server.
+ *
+ * @param {string|null|undefined} url - the source image (TMDB original or a library URL)
+ * @returns {string|null}
+ */
+export function fullSizeHref(url) {
+  if (typeof url !== 'string' || !url) return null
+  return `/_next/image?url=${encodeURIComponent(url)}&w=${FULL_SIZE_WIDTH}&q=${FULL_SIZE_QUALITY}`
 }

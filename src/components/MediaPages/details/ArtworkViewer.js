@@ -7,7 +7,7 @@ import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/re
 import { XMarkIcon, ChevronLeftIcon, ChevronRightIcon, ArrowTopRightOnSquareIcon, Squares2X2Icon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 import { languageName } from '@src/utils/media/detailsFacts'
-import { buildArtworkTabs } from '@src/utils/media/artwork'
+import { buildArtworkTabs, fullSizeHref } from '@src/utils/media/artwork'
 
 const FOCUS_RING = 'focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300'
 const QUIET_BUTTON = classNames('inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-white/80 hover:bg-white/10 hover:text-white', FOCUS_RING)
@@ -43,9 +43,9 @@ async function fetchImages(url) {
  * or WebP at a fraction of the size; and the result is cached, so TMDB is
  * asked once per image rather than once per viewer. A popular title has
  * well over a hundred images, so tiles stay lazy and only the visible ones
- * are requested. "Open full size" is the exception and links TMDB's
- * original directly: its point is handing over the untouched file, and the
- * optimizer would return a recompressed copy at a capped width.
+ * are requested. "Open full size" goes the same way, at the optimizer's
+ * largest step and top quality (it never enlarges), so the new tab shows the
+ * app's address rather than TMDB's or the file server's.
  *
  * @param {Object} props
  * @param {boolean} props.open
@@ -170,7 +170,7 @@ export default function ArtworkViewer({ open, onClose, title, tmdbId = null, typ
                       <Squares2X2Icon className="size-4" aria-hidden="true" />
                       All {active.label.toLowerCase()}
                     </button>
-                    <a href={item.full} target="_blank" rel="noopener noreferrer" className={classNames(QUIET_BUTTON, 'text-blue-300')}>
+                    <a href={fullSizeHref(item.full)} target="_blank" rel="noopener noreferrer" className={classNames(QUIET_BUTTON, 'text-blue-300')}>
                       Open full size
                       <ArrowTopRightOnSquareIcon className="size-4" aria-hidden="true" />
                     </a>

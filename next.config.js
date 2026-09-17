@@ -74,6 +74,12 @@ const nextConfig = {
   images: {
     formats: ['image/avif', 'image/webp'],
     minimumCacheTTL: 259200,
+    // The artwork viewer's "Open full size" opens an optimizer URL in a new tab.
+    // Next's default, 'attachment', would download it instead of showing it
+    // (and only on the built-in optimizer, so dev and an imgproxy deployment
+    // would behave differently). The default exists to defuse scriptable SVGs;
+    // dangerouslyAllowSVG is off here, so only raster images are ever served.
+    contentDispositionType: 'inline',
     remotePatterns: [{
       protocol: 'https',
       hostname: '**', // Allows all hosts

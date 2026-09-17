@@ -29,7 +29,7 @@ let mockSwrState = { data: mockImages, error: undefined, isLoading: false }
 const mockSwr = jest.fn((key) => (key ? mockSwrState : { data: undefined, error: undefined, isLoading: false }))
 jest.mock('swr', () => ({ __esModule: true, default: (...args) => mockSwr(...args) }))
 
-const { buildArtworkTabs, tmdbFileName, artworkInUse } = require('@src/utils/media/artwork')
+const { buildArtworkTabs, tmdbFileName, artworkInUse, fullSizeHref } = require('@src/utils/media/artwork')
 const ArtworkViewer = require('@components/MediaPages/details/ArtworkViewer').default
 const ArtworkButton = require('@components/MediaPages/details/ArtworkButton').default
 
@@ -82,6 +82,11 @@ describe('buildArtworkTabs', () => {
     expect(buildArtworkTabs()).toEqual([])
   })
 
+  it('points full size at the optimizer, at its largest step and top quality', () => {
+    expect(fullSizeHref('https://image.tmdb.org/t/p/original/a b.jpg')).toBe('/_next/image?url=https%3A%2F%2Fimage.tmdb.org%2Ft%2Fp%2Foriginal%2Fa%20b.jpg&w=3840&q=100')
+    expect(fullSizeHref(null)).toBeNull()
+  })
+
   it('maps a record to its in-use images', () => {
     expect(artworkInUse({ posterURL: 'p', backdrop: 'b', logo: null, metadata: { poster_path: '/p.jpg' } })).toEqual({
       poster: { path: '/p.jpg', url: 'p' },
@@ -123,12 +128,12 @@ describe('ArtworkViewer', () => {
     fireEvent.click(within(dialog).getByRole('button', { name: 'Poster 2' }))
     expect(within(dialog).getByText('2 of 5')).toBeInTheDocument()
     expect(within(dialog).getByText(/2000 × 3000/)).toBeInTheDocument()
-    // The preview is optimized from a mid-size source; the link hands over TMDB's untouched original
+    // The preview is optimized from a mid-size source; the link opens the original through the app's optimizer
     const preview = within(dialog).getByAltText('Supergirl poster 2 of 5')
     expect(preview).toHaveAttribute('src', 'https://image.tmdb.org/t/p/w780/en-high.jpg')
     expect(preview).toHaveAttribute('data-quality', '90')
     const full = within(dialog).getByRole('link', { name: /Open full size/ })
-    expect(full).toHaveAttribute('href', 'https://image.tmdb.org/t/p/original/en-high.jpg')
+    expect(full).toHaveAttribute('href', '/_next/image?url=https%3A%2F%2Fimage.tmdb.org%2Ft%2Fp%2Foriginal%2Fen-high.jpg&w=3840&q=100')
     expect(full).toHaveAttribute('target', '_blank')
 
     fireEvent.click(within(dialog).getByRole('button', { name: /Previous/ }))
@@ -145,7 +150,11 @@ describe('ArtworkViewer', () => {
     open({ initialTab: 'backdrops' })
     const dialog = await screen.findByRole('dialog')
     fireEvent.click(within(dialog).getByRole('button', { name: 'Backdrop 1, In use · custom' }))
-    expect(within(dialog).getByRole('link', { name: /Open full size/ })).toHaveAttribute('href', inUse.backdrop.url)
+    // Through the optimizer, so the new tab never shows the file server's address
+    const href = within(dialog).getByRole('link', { name: /Open full size/ }).getAttribute('href')
+    expect(href).toBe(fullSizeHref(inUse.backdrop.url))
+    expect(href.startsWith('/_next/image?url=')).toBe(true)
+    expect(href).not.toMatch(/^https?:/)
   })
 
   it('falls back to what the title uses when the list fails, and says so', async () => {
