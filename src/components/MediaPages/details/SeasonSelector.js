@@ -29,7 +29,8 @@ export default function SeasonSelector({ seasons, current, routeKey }) {
       <span className="relative inline-flex items-center">
         <select
           value={String(current)}
-          onChange={(event) => router.push(`/list/tv/${routeKey}/${Number(event.target.value)}`)}
+          // scroll: false keeps the viewer at the episode list, where the selector lives, instead of jumping to the top
+          onChange={(event) => router.push(`/list/tv/${routeKey}/${Number(event.target.value)}`, { scroll: false })}
           className="appearance-none rounded-md border border-white/20 bg-white/5 bg-none py-1 pl-3 pr-8 text-sm text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300"
         >
           {options.map((season) => (

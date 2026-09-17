@@ -20,6 +20,10 @@ function Neighbour({ item, direction }) {
   return (
     <Link
       href={item.href}
+      // Stay put: jumping to the top on each step made a change of episode
+      // read as a page reload. The row sits under the hero, so the new
+      // episode's title and still are already in view.
+      scroll={false}
       aria-label={`${word} episode: Episode ${item.episodeNumber}, ${title}`}
       className={classNames(
         'group flex min-w-0 max-w-full items-center gap-3 rounded-lg p-2 transition-colors hover:bg-white/10',

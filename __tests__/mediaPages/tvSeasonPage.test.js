@@ -212,7 +212,7 @@ describe('TVEpisodesListComponent', () => {
   it('switches seasons through the selector', async () => {
     await renderSeason()
     fireEvent.change(screen.getByRole('combobox'), { target: { value: '2' } })
-    expect(mockPush).toHaveBeenCalledWith('/list/tv/Preacher/2')
+    expect(mockPush).toHaveBeenCalledWith('/list/tv/Preacher/2', { scroll: false })
   })
 
   it('says so when the season is not in the library', async () => {

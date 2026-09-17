@@ -502,7 +502,7 @@ describe('SeasonSelector', () => {
     expect(within(select).getAllByRole('option').map((o) => o.textContent)).toEqual(['Specials', 'Season 1', 'Season 2', 'Season 4'])
 
     fireEvent.change(select, { target: { value: '2' } })
-    expect(mockPush).toHaveBeenCalledWith('/list/tv/Preacher/2')
+    expect(mockPush).toHaveBeenCalledWith('/list/tv/Preacher/2', { scroll: false })
   })
 })
 
@@ -576,5 +576,30 @@ describe('EpisodePageSkeleton', () => {
     const view = fs.readFileSync(path.join(process.cwd(), 'src/components/MediaPages/DynamicPage/views/TVEpisodeDetailsView.js'), 'utf8')
     expect(route).toContain('fallback={<EpisodePageSkeleton />}')
     expect(view).toContain('fallback={<EpisodePageSkeleton />}')
+  })
+})
+
+describe('SeasonPageSkeleton', () => {
+  const fs = require('fs')
+  const path = require('path')
+  const SeasonPageSkeleton = require('@components/MediaPages/details/SeasonPageSkeleton').default
+
+  it('announces itself and holds the same frame and hero grid as the season page', () => {
+    render(<SeasonPageSkeleton />)
+    const status = screen.getByRole('status', { name: 'Loading season' })
+    const page = fs.readFileSync(path.join(process.cwd(), 'src/components/MediaPages/TVEpisodesListComponent.js'), 'utf8')
+    const frame = 'media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8'
+    const heroGrid = 'mt-6 grid grid-cols-[120px_minmax(0,1fr)] gap-x-5 gap-y-6 sm:mt-10 sm:gap-x-8'
+    expect(status).toHaveClass(...frame.split(' '))
+    expect(page).toContain(frame)
+    expect(status.querySelector('header')).toHaveClass(...heroGrid.split(' '))
+    expect(page).toContain(heroGrid)
+  })
+
+  it('is the fallback on the season route and its view', () => {
+    const route = fs.readFileSync(path.join(process.cwd(), 'src/app/(styled)/list/tv/[title]/[season]/page.js'), 'utf8')
+    const view = fs.readFileSync(path.join(process.cwd(), 'src/components/MediaPages/DynamicPage/views/TVSeasonView.js'), 'utf8')
+    expect(route).toContain('fallback={<SeasonPageSkeleton />}')
+    expect(view).toContain('<SeasonPageSkeleton />')
   })
 })
