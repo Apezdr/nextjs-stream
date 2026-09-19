@@ -25,6 +25,10 @@ COPY . .
 # Uncomment the following line in case you want to disable telemetry during the build.
 # ENV NEXT_TELEMETRY_DISABLED=1
 
+# This stage starts clean and is discarded, so a Turbopack build cache would be
+# written and never read. See turbopackFileSystemCacheForBuild in next.config.js.
+ENV NEXT_BUILD_CACHE=off
+
 RUN \
   if [ -f yarn.lock ]; then yarn run build; \
   elif [ -f package-lock.json ]; then npm run build --legacy-peer-deps; \

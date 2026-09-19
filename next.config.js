@@ -32,6 +32,13 @@ const nextConfig = {
     // Turn it on as its own change, after re-testing rapid back/forth in a
     // production build.
     cachedNavigations: false,
+    // From 16.3 `next build` writes a Turbopack cache to .next/cache and
+    // starts warm when it finds one. That pays off locally, where .next
+    // survives between builds. The Docker build starts from a clean layer
+    // (.next is in .dockerignore) and the builder stage is thrown away, so
+    // there the cache would be written and never read; the Dockerfile sets
+    // NEXT_BUILD_CACHE=off to skip it.
+    turbopackFileSystemCacheForBuild: process.env.NEXT_BUILD_CACHE !== 'off',
     // staleTimes is left OFF (default dynamic: 0). Setting it to a positive
     // value caused rapid back/forth navigation to wedge in production — the
     // client router cache + action queue interaction would silently drop
