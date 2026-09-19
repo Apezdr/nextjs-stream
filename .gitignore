@@ -49,6 +49,11 @@ cline_docs*/
 .cline*/
 .claude*/
 
+# Playwright: the signed-in test session and run output
+e2e/.auth/
+test-results/
+playwright-report/
+
 # AI Docs
 docs/
 

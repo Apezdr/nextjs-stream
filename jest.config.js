@@ -193,6 +193,8 @@ const config = {
   //   "/node_modules/"
   // ],
   testPathIgnorePatterns: [
+    // Playwright specs; they run against a production build, not under jest
+    '<rootDir>/e2e/',
     '[/\\\\]node_modules[/\\\\].+[^esm]\\.(js|jsx|mjs|cjs|ts|tsx)$',
     '^.+\\.module\\.(css|sass|scss)$',
   ],

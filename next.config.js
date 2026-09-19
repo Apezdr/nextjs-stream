@@ -39,6 +39,11 @@ const nextConfig = {
     // there the cache would be written and never read; the Dockerfile sets
     // NEXT_BUILD_CACHE=off to skip it.
     turbopackFileSystemCacheForBuild: process.env.NEXT_BUILD_CACHE !== 'off',
+    // Lets the Playwright instant() helper hold a navigation at its
+    // prefetched UI against a production build (prefetching never runs in
+    // `next dev`). Compiled into the artifact, so it has to be set for
+    // `next build`; real builds never set it. See instant-nav.rig.md.
+    exposeTestingApiInProductionBuild: process.env.EXPOSE_TESTING_API === '1',
     // staleTimes is left OFF (default dynamic: 0). Setting it to a positive
     // value caused rapid back/forth navigation to wedge in production — the
     // client router cache + action queue interaction would silently drop
