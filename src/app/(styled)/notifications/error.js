@@ -1,7 +1,7 @@
 'use client'
 import { useEffect } from 'react'
 
-export default function Error({ error, unstable_retry }) {
+export default function Error({ error, retry }) {
   useEffect(() => {
     console.error(error) // Log the error (error.digest correlates to server logs)
   }, [error])
@@ -12,10 +12,10 @@ export default function Error({ error, unstable_retry }) {
         <h2>Something went wrong!</h2>
         <button
           className="rounded bg-gray-500 hover:bg-gray-700 transition-colors px-2 py-1 text-base font-semibold text-white shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-          // unstable_retry re-fetches AND re-renders the server components, so
+          // retry re-fetches AND re-renders the server components, so
           // transient server-side failures recover without a full page reload
           // (reset() only re-renders the already-failed payload).
-          onClick={() => unstable_retry()}
+          onClick={() => retry()}
         >
           Try again
         </button>
