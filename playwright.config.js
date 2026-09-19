@@ -13,7 +13,7 @@ module.exports = defineConfig({
   timeout: 60_000,
   reporter: [['list']],
   use: {
-    baseURL: process.env.BASE_URL || 'http://localhost:3233',
+    baseURL: process.env.BASE_URL || 'https://cinema-local.adamdrumm.com',
     trace: 'retain-on-failure',
   },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],

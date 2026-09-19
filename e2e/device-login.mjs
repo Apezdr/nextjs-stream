@@ -2,17 +2,17 @@
 //
 // Sign-in is OAuth-only, so a test can't log in by itself. This asks the running
 // server for a device code, prints the address to approve it at, and waits.
-// Approve it in a browser where you are already signed in (localhost cookies are
-// shared across ports, so a session from the dev server counts). The resulting
-// session token is written to e2e/.auth/token, which is gitignored.
+// Approve it in a browser where you are already signed in. The OAuth providers
+// only accept the local domain, not localhost, which is why the rig serves the
+// build on the dev server's port behind that domain. The resulting session token is written to e2e/.auth/token, which is gitignored.
 //
-//   npm run e2e:start      (in another terminal, after npm run e2e:build)
+//   npm run e2e:start      (in another terminal, after npm run e2e:build; stop the dev server first)
 //   npm run e2e:login
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const BASE_URL = process.env.BASE_URL || 'http://localhost:3233'
+const BASE_URL = process.env.BASE_URL || 'https://cinema-local.adamdrumm.com'
 const CLIENT_ID = 'e2e-instant-navigation'
 const TOKEN_FILE = resolve(dirname(fileURLToPath(import.meta.url)), '.auth/token')
 
