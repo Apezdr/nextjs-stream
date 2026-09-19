@@ -4,7 +4,6 @@ import { NotificationProvider } from '@src/contexts/NotificationContext'
 import { SystemStatusProvider } from '@src/contexts/SystemStatusContext'
 import { NavigationProvider } from '@src/contexts/NavigationContext'
 import CastSessionBar from '@components/Cast/CastSessionBar'
-import CastBootstrap from '@components/Cast/CastBootstrap'
 import CastPositionMirror from '@components/Cast/CastPositionMirror'
 
 /**
@@ -12,7 +11,7 @@ import CastPositionMirror from '@components/Cast/CastPositionMirror'
  * Handles all the context providers that require client-side rendering.
  * better-auth does not require a session provider wrapper.
  */
-export default function ClientProviders({ children, castReceiverId = null }) {
+export default function ClientProviders({ children, castBootstrap = null }) {
   return (
     <NotificationProvider>
       <SystemStatusProvider>
@@ -22,7 +21,10 @@ export default function ClientProviders({ children, castReceiverId = null }) {
               indicator and its stop control live here, above the routes.
               The bootstrap is what lets them work after a full page load, on
               a page that never mounts a player and so never loads the SDK. */}
-          <CastBootstrap receiverId={castReceiverId} />
+          {/* Passed in as a node: its receiver id is a request-time value, and
+              reading it here would make this whole wrapper wait for a request
+              (see the (styled) layout). */}
+          {castBootstrap}
           {/* Records the receiver's progress while a session is live — from
               here rather than the watch page, because the session outlives any
               page and so must its reporter. */}

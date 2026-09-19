@@ -5,7 +5,7 @@
  */
 
 // Guards
-export { AuthGuard, handleLimitedAccess, hasLimitedAccess } from './guards'
+export { AuthGuard, SessionGate, handleLimitedAccess, hasLimitedAccess } from './guards'
 
 // Errors
 export { MediaNotFound, NotFoundHeader, NotFoundContent } from './errors'

@@ -1,9 +1,8 @@
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cacheLife, cacheTag } from 'next/cache'
-import { getSession } from '@src/lib/cachedAuth'
 import {
-  AuthGuard,
+  SessionGate,
   MediaNotFound,
   MovieDetailsView,
 } from '@src/components/MediaPages/DynamicPage'
@@ -89,20 +88,17 @@ export async function generateMetadata({ params }, parent) {
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
 
-export default async function MovieDetailPage({ params }) {
-  const { title } = await params
-  const session = await getSession()
-  const isLimitedAccess = !!session?.user?.limitedAccess
-
+// Nothing is awaited up here: the params and the session are read by
+// SessionGate, inside the boundary, so the skeleton is this route's
+// prerendered shell and a link can have it ready before the click.
+export default function MovieDetailPage({ params }) {
   return (
-    <AuthGuard
-      session={session}
-      callbackUrl={`/list/movie/${encodeURIComponent(title)}`}
-      variant="skeleton"
-    >
-      <Suspense fallback={<Loading />}>
-        <MovieDetailContent title={title} isLimitedAccess={isLimitedAccess} />
-      </Suspense>
-    </AuthGuard>
+    <Suspense fallback={<Loading />}>
+      <SessionGate params={params} callbackUrl={({ title }) => `/list/movie/${encodeURIComponent(title)}`}>
+        {({ session, params: { title } }) => (
+          <MovieDetailContent title={title} isLimitedAccess={!!session.user.limitedAccess} />
+        )}
+      </SessionGate>
+    </Suspense>
   )
 }

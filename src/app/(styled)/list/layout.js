@@ -34,8 +34,18 @@ function BannerSection() {
   )
 }
 
-export default async function ListLayout({ children }) {
-  // Single auth() call to determine all user data upfront
+const BANNER_PLACEHOLDER = <div className="relative w-full h-[40vh] md:h-[79vh] bg-black" />
+
+/**
+ * The navigation bar and the /list banner: the parts of this layout that depend
+ * on who is signed in. Awaited here, inside a Suspense boundary, rather than in
+ * the layout body, which would keep every page under /list out of the
+ * prerendered shell (see the (styled) layout for the same rule).
+ *
+ * This only decides what chrome to SHOW. It was never what protects a page:
+ * each page runs its own session check before rendering anything.
+ */
+async function SessionChrome() {
   const session = await getSession()
   const email = session?.user?.email
   const profileImage = session?.user?.image
@@ -53,32 +63,73 @@ export default async function ListLayout({ children }) {
       ]
     : []
 
+  if (!email || !isApproved) return null
+
+  return (
+    <>
+      {/* Navigation - fully cached with all data determined upfront */}
+      <CacheableNavigation
+        email={email}
+        profileImage={profileImage}
+        adminNavItems={adminNavItems}
+      />
+      <Suspense fallback={BANNER_PLACEHOLDER}>
+        <BannerSection />
+      </Suspense>
+    </>
+  )
+}
+
+/** Footer - only for authenticated AND approved users */
+async function SessionFooter() {
+  const session = await getSession()
+  if (!session?.user?.email || session.user.approved === false) return null
+  return <TVAppsFooter />
+}
+
+/**
+ * What holds the banner's place while SessionChrome resolves. The banner sits
+ * in the page flow on /list, so without this the page content would paint at
+ * the top and then jump down by most of a screen when the banner arrives. On
+ * every other path ShouldRenderContent renders nothing.
+ */
+function ChromeFallback() {
+  return (
+    <ShouldRenderContent allowedPaths={['/list']} suspenseSkeleton={BANNER_PLACEHOLDER}>
+      {BANNER_PLACEHOLDER}
+    </ShouldRenderContent>
+  )
+}
+
+export default function ListLayout({ children }) {
   return (
     <Fragment>
       {/* TVAppsNotification - dynamic due to auth() usage */}
-      <TVAppsNotification />
+      <Suspense>
+        <TVAppsNotification />
+      </Suspense>
 
-      {/* Navigation - fully cached with all data determined upfront */}
       <div className="relative">
-        {email && isApproved && (
-          <>
-            <CacheableNavigation
-              email={email}
-              profileImage={profileImage}
-              adminNavItems={adminNavItems}
-            />
-            <Suspense fallback={<div className="relative w-full h-[40vh] md:h-[79vh] bg-black" />}>
-              <BannerSection />
+        {/* The fallback has a boundary of its own: it reads the pathname, which
+            suspends during prerender on routes with dynamic params, and a
+            fallback that suspends would take the whole shell down with it. */}
+        <Suspense
+          fallback={
+            <Suspense>
+              <ChromeFallback />
             </Suspense>
-          </>
-        )}
+          }
+        >
+          <SessionChrome />
+        </Suspense>
       </div>
 
       {/* Dynamic page content */}
       {children}
 
-      {/* Footer - only show for authenticated AND approved users */}
-      {email && isApproved && <TVAppsFooter />}
+      <Suspense>
+        <SessionFooter />
+      </Suspense>
     </Fragment>
   )
 }

@@ -1,9 +1,8 @@
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cacheLife, cacheTag } from 'next/cache'
-import { getSession } from '@src/lib/cachedAuth'
 import {
-  AuthGuard,
+  SessionGate,
   MediaNotFound,
   TVSeasonView,
 } from '@src/components/MediaPages/DynamicPage'
@@ -84,28 +83,29 @@ export async function generateMetadata({ params }, parent) {
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
 
-export default async function TVSeasonPage({ params }) {
-  const { title, season } = await params
-  const session = await getSession()
-  const isLimitedAccess = !!session?.user?.limitedAccess
-  const userId = session?.user?.id
-
+// Nothing is awaited up here: the params and the session are read by
+// SessionGate, inside the boundary, so the skeleton is this route's
+// prerendered shell and a link can have it ready before the click.
+export default function TVSeasonPage({ params }) {
   return (
-    <AuthGuard
-      session={session}
-      callbackUrl={`/list/tv/${encodeURIComponent(title)}/${encodeURIComponent(season)}`}
-      variant="skeleton"
-    >
-      {/* The page's own frame as the fallback, so switching seasons fills the
-          layout in rather than collapsing to a spinner and reflowing. */}
-      <Suspense fallback={<SeasonPageSkeleton />}>
-        <TVSeasonContent
-          title={title}
-          season={season}
-          isLimitedAccess={isLimitedAccess}
-          userId={userId}
-        />
-      </Suspense>
-    </AuthGuard>
+    // The page's own frame as the fallback, so switching seasons fills the
+    // layout in rather than collapsing to a spinner and reflowing.
+    <Suspense fallback={<SeasonPageSkeleton />}>
+      <SessionGate
+        params={params}
+        callbackUrl={({ title, season }) =>
+          `/list/tv/${encodeURIComponent(title)}/${encodeURIComponent(season)}`
+        }
+      >
+        {({ session, params: { title, season } }) => (
+          <TVSeasonContent
+            title={title}
+            season={season}
+            isLimitedAccess={!!session.user.limitedAccess}
+            userId={session.user.id}
+          />
+        )}
+      </SessionGate>
+    </Suspense>
   )
 }
