@@ -2,6 +2,11 @@
 const dotenv = require('dotenv')
 dotenv.config()
 
+// Shared with buildNextOptimizedImageUrl and buildImgproxyTarget, both of
+// which build /_next/image URLs that never pass through <Image>'s prop
+// validation. See src/utils/imageQualities.js.
+const { IMAGE_QUALITIES } = require('./src/utils/imageQualities')
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
@@ -69,13 +74,19 @@ const nextConfig = {
   images: {
     formats: ['image/avif', 'image/webp'],
     minimumCacheTTL: 259200,
+    // The artwork viewer's "Open full size" opens an optimizer URL in a new tab.
+    // Next's default, 'attachment', would download it instead of showing it
+    // (and only on the built-in optimizer, so dev and an imgproxy deployment
+    // would behave differently). The default exists to defuse scriptable SVGs;
+    // dangerouslyAllowSVG is off here, so only raster images are ever served.
+    contentDispositionType: 'inline',
     remotePatterns: [{
       protocol: 'https',
       hostname: '**', // Allows all hosts
       port: '',
       pathname: '/**',
     }],
-    qualities: [25, 50, 75, 90, 100],
+    qualities: IMAGE_QUALITIES,
     // remotePatterns: process.env.REMOTE_PATTERNS
     //   ? process.env.REMOTE_PATTERNS.split(',').map((pattern) => {
     //       const [protocol, hostname] = pattern.trim().split('://')
@@ -133,6 +144,30 @@ const nextConfig = {
     '@vercel/otel',
     'pino',
   ],
+  // The Cast receiver URL registered in the Google Cast Developer Console is
+  // https://<host>/receiver, but the receiver must be a STATIC page: a CAF
+  // receiver has to call context.start() within a few hundred ms of launch or
+  // the sender times out with a black screen on the TV. Rendering it as an app
+  // route cannot meet that — the page has to download the client bundle and
+  // hydrate first (it works in a desktop browser, which is fast enough, and
+  // fails on a Cast device's older Chromium).
+  //
+  // beforeFiles runs ahead of the filesystem and app routes, so this serves
+  // public/receiver/index.html without needing a console change.
+  //
+  // This rewrite is now LOAD-BEARING WITH NO FALLBACK. The app route that used
+  // to sit at src/app/receiver/ was removed, so if the source string is ever
+  // edited or this block dropped, /receiver 404s — which on a Cast device is an
+  // unrecoverable black screen with no diagnostics. Change it only alongside
+  // the Receiver Application URL in the Cast Developer Console.
+  async rewrites() {
+    return {
+      beforeFiles: [{ source: '/receiver', destination: '/receiver/index.html' }],
+      afterFiles: [],
+      fallback: [],
+    }
+  },
+
   // Additional Next.js configurations can be added here
   /* webpack(config) {
     Object.defineProperty(config, 'devtool', {

@@ -7,41 +7,61 @@ const MAX_CACHED_VIDEOS = 200 // Keep at most 200 videos in localStorage
 const RETENTION_DAYS = 30 // Only sync videos updated in last 30 days
 const SYNC_INTERVAL_MS = 5000 // Sync every 5 seconds
 
+/**
+ * The keys a row is mirrored under. The durable identity ('mid:…') is what
+ * the posters read first (playbackStorageKey.js), so a row the TV app wrote
+ * through the transcoder — whose raw videoId is a manifest URL nobody on the
+ * web ever looks up — still reaches the localStorage fallback. The raw
+ * videoId string stays for the legacy readers.
+ */
+function mirrorKeysFor(item) {
+  const keys = []
+  if (typeof item.mediaId === 'string' && item.mediaId.startsWith('mid:')) keys.push(item.mediaId)
+  if (item.videoId) keys.push(item.videoId)
+  return keys
+}
+
+function writeIfNewer(key, playbackTime, serverLastUpdated) {
+  const localDataJSON = localStorage.getItem(key)
+  let shouldUpdate = true
+
+  if (localDataJSON) {
+    try {
+      const localData = JSON.parse(localDataJSON)
+
+      // Only update if server timestamp is newer
+      const serverTime = new Date(serverLastUpdated).getTime()
+      const localTime = new Date(localData.lastUpdated).getTime()
+      shouldUpdate = serverTime > localTime
+    } catch (e) {
+      // Invalid local data, will overwrite
+      shouldUpdate = true
+    }
+  }
+
+  if (!shouldUpdate) return false
+  localStorage.setItem(
+    key,
+    JSON.stringify({
+      playbackTime,
+      lastUpdated: serverLastUpdated,
+    })
+  )
+  return true
+}
+
 // Helper function to process and sync video data
 function processSyncData(serverData) {
   if (serverData && serverData.length) {
     let updatedCount = 0
 
     serverData.forEach((item) => {
-      const { videoId, playbackTime, lastUpdated: serverLastUpdated } = item
-
-      const localDataJSON = localStorage.getItem(videoId)
-      let shouldUpdate = true
-
-      if (localDataJSON) {
-        try {
-          const localData = JSON.parse(localDataJSON)
-
-          // Only update if server timestamp is newer
-          const serverTime = new Date(serverLastUpdated).getTime()
-          const localTime = new Date(localData.lastUpdated).getTime()
-          shouldUpdate = serverTime > localTime
-        } catch (e) {
-          // Invalid local data, will overwrite
-          shouldUpdate = true
-        }
+      const { playbackTime, lastUpdated: serverLastUpdated } = item
+      let updated = false
+      for (const key of mirrorKeysFor(item)) {
+        if (writeIfNewer(key, playbackTime, serverLastUpdated)) updated = true
       }
-
-      if (shouldUpdate) {
-        localStorage.setItem(
-          videoId,
-          JSON.stringify({
-            playbackTime,
-            lastUpdated: serverLastUpdated,
-          })
-        )
-        updatedCount++
-      }
+      if (updated) updatedCount++
     })
 
     if (updatedCount > 0) {
@@ -132,8 +152,8 @@ function cleanupOldEntries() {
   // Collect all watch history entries from localStorage
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i)
-    // Video URLs typically start with http:// or https://
-    if (key && (key.startsWith('http://') || key.startsWith('https://'))) {
+    // Video URLs start with http:// or https://; durable identities with 'mid:'
+    if (key && (key.startsWith('http://') || key.startsWith('https://') || key.startsWith('mid:'))) {
       try {
         const data = JSON.parse(localStorage.getItem(key))
         if (data.lastUpdated) {

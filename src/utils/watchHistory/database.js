@@ -14,6 +14,83 @@ import { createLogger } from '@src/lib/logger'
 const log = createLogger('WatchHistory.Database')
 
 /**
+ * Positions below this never overwrite a resume point that is already worth
+ * keeping.
+ *
+ * A player reports where it currently is, and every player passes through
+ * ~0 on its way to somewhere: on mount before the saved position is seeked,
+ * after a source swap, when a Cast provider forces the element back to zero
+ * on disconnect. A heartbeat that lands in that window is not a viewing
+ * position — it is the player booting — and a blind write turns a two-hour
+ * resume point into "1.7 seconds", unrecoverably.
+ *
+ * The web player has refused to send these since the Cast-disconnect bug
+ * (MIN_PERSISTED_POSITION_S in WithPlaybackTracker), but a client-side rule
+ * only protects the client that implements it: the RN apps guard on
+ * `currentTime > 0`, which lets 0.5s through, and their heartbeat is on a
+ * 30-second interval — so an organic write under two seconds essentially
+ * cannot happen, while a spurious one destroys the row. Production carried
+ * seven such rows on TV devices (0.55s, 0.74s, 0.86s, 1.16s, 1.50s, 1.71s,
+ * 1.87s) against ~490 rows from those devices.
+ *
+ * So the floor lives here, at the write chokepoint every client shares.
+ *
+ * The cost is one edge: a viewer who deliberately restarts a title and stops
+ * again inside the first two seconds keeps their old position until the next
+ * heartbeat carries a real one. That is the same trade the web client has
+ * been making, and it is the right way round — the alternative loses the
+ * position outright.
+ */
+export const MIN_PERSISTED_POSITION_S = 2
+
+/**
+ * Whether a duplicate-key error came from the partial unique index on
+ * {userId, mediaId} ('mid:…' rows only).
+ */
+function isMediaIdUniqueViolation(error) {
+  return (
+    error?.code === 11000 &&
+    (error?.keyPattern?.mediaId !== undefined ||
+      String(error?.message || '').includes('userId_mediaId_unique'))
+  )
+}
+
+/**
+ * Quality-swap merge. The catalog re-keyed a title (same folder, new file →
+ * new nid, same durable mediaId) and this write tried to INSERT a second row
+ * for that identity. Move the existing row to the new nid and apply the write
+ * to it, instead of deleting it and inserting fresh: lastUpdated ordering and
+ * device history survive, and the resume floor still applies — a position
+ * under 2 s (a player booting on the new file) never replaces the old
+ * resume point. Pre-backfill duplicates (several rows, one identity) collapse
+ * to the newest.
+ *
+ * @returns {Promise<Object|null>} the update result, or null when no sibling existed
+ */
+async function rekeySiblingAndApply(collection, { userIdObj, mediaId, normalizedVideoId, update }) {
+  const siblings = await collection
+    .find({ userId: userIdObj, mediaId, normalizedVideoId: { $ne: normalizedVideoId } })
+    .sort({ lastUpdated: -1 })
+    .toArray()
+  if (siblings.length === 0) return null
+
+  const [keep, ...rest] = siblings
+  if (rest.length > 0) {
+    await collection.deleteMany({ _id: { $in: rest.map((r) => r._id) } })
+  }
+
+  const $set = { ...(update.$set || {}), normalizedVideoId }
+  if (
+    Number.isFinite($set.playbackTime) &&
+    $set.playbackTime < MIN_PERSISTED_POSITION_S &&
+    (keep.playbackTime ?? 0) >= MIN_PERSISTED_POSITION_S
+  ) {
+    delete $set.playbackTime
+  }
+  return collection.updateOne({ _id: keep._id }, { ...update, $set })
+}
+
+/**
  * Upsert a single playback entry for a user
  * Atomic operation: updates existing or creates new
  * 
@@ -56,7 +133,15 @@ export async function upsertPlayback({
     // when resolution misses a beat, spreading it would clobber a
     // previously backfilled durable id and flip-flop the row's identity.
     // TV hydration fallbacks use the separate showId/season/episode fields.
-    const { mediaId: _legacyClientMediaId, ...safeMetadata } = metadata
+    //
+    // Nulls never reach $set either. A heartbeat that omits showId/season/
+    // episode (the contract marks them optional) means "unchanged", and an
+    // explicit null in $set would erase the grouping the Continue Watching
+    // rail and the sessions view read off the row.
+    const { mediaId: _legacyClientMediaId, ...rawMetadata } = metadata || {}
+    const safeMetadata = Object.fromEntries(
+      Object.entries(rawMetadata).filter(([, v]) => v !== null && v !== undefined)
+    )
 
     const updateDoc = {
       $set: {
@@ -68,31 +153,63 @@ export async function upsertPlayback({
         ...(resolved?.mediaId && { mediaId: resolved.mediaId }),
         ...(deviceInfo && { deviceInfo }),
         ...(ipAddress && { ipAddress }),
-        ...(localIp && { localIp })
+        ...(localIp && { localIp }),
+        // Who wrote this row last. Every caller of this function is a player
+        // reporting its OWN position — web player, RN TV app — so they are all
+        // 'client'. It exists to be told apart from writers that report a
+        // position they are not currently rendering (the Cast receiver), which
+        // need to know whether a live client owns the row before moving it.
+        // Last in the object deliberately: metadata must not override it.
+        lastWriter: 'client'
       }
     }
     const filter = { userId: userIdObj, normalizedVideoId }
 
+    // Apply the resume floor (see MIN_PERSISTED_POSITION_S). Only the position
+    // is withheld — liveness, pause state and device still update, so the row
+    // stays correct about the session that is running; it just does not forget
+    // where the viewer was.
+    //
+    // Read-then-write is safe here because the branch only ever REMOVES a
+    // field from the write: two racing sub-threshold beats both keep the
+    // stored position, and a real position landing in between is not
+    // overwritten by either.
+    let update = updateDoc
+    if (playbackTime < MIN_PERSISTED_POSITION_S) {
+      const existing = await collection.findOne(filter, { projection: { playbackTime: 1 } })
+      if (existing && (existing.playbackTime ?? 0) >= MIN_PERSISTED_POSITION_S) {
+        const { playbackTime: _startingUp, ...keepPosition } = updateDoc.$set
+        update = { $set: keepPosition }
+        log.debug(
+          {
+            userId: userIdObj.toString(),
+            normalizedVideoId,
+            reported: playbackTime,
+            kept: existing.playbackTime,
+          },
+          'Sub-threshold position ignored; stored resume point kept'
+        )
+      }
+    }
+
     let result
     try {
-      result = await collection.updateOne(filter, updateDoc, { upsert: true })
+      result = await collection.updateOne(filter, update, { upsert: true })
     } catch (error) {
       // Once the partial unique index {userId, mediaId} exists, a quality
       // swap (same folder, new file → new nid, same mediaId) makes this
       // upsert INSERT a second row for the same identity and violate it.
-      // Merge policy: this beat is the newest state — drop the sibling
-      // row(s) holding the same identity under an older nid, retry once.
-      const isMediaIdUnique =
-        error?.code === 11000 &&
-        (error?.keyPattern?.mediaId !== undefined ||
-          String(error?.message || '').includes('userId_mediaId_unique'))
-      if (isMediaIdUnique && resolved?.mediaId) {
-        await collection.deleteMany({
-          userId: userIdObj,
-          mediaId: resolved.mediaId,
-          normalizedVideoId: { $ne: normalizedVideoId },
-        })
-        result = await collection.updateOne(filter, updateDoc, { upsert: true })
+      // Merge policy: move the existing row to the new nid and apply this
+      // write to it (see rekeySiblingAndApply); retry the plain upsert only
+      // if no sibling was found after all.
+      if (isMediaIdUniqueViolation(error) && resolved?.mediaId) {
+        result =
+          (await rekeySiblingAndApply(collection, {
+            userIdObj,
+            mediaId: resolved.mediaId,
+            normalizedVideoId,
+            update,
+          })) ?? (await collection.updateOne(filter, update, { upsert: true }))
       } else {
         throw error
       }
@@ -108,6 +225,136 @@ export async function upsertPlayback({
     log.error({ error, userId, videoId }, 'Failed to upsert playback')
     throw error
   }
+}
+
+/**
+ * How long a row must sit untouched before a Cast receiver may move it
+ * backwards. Below this, assume a live client owns the position.
+ */
+const CAST_STALE_GUARD_MS = 60 * 1000
+
+/**
+ * Upsert a playback position reported by a Cast receiver.
+ *
+ * Separate from upsertPlayback because the two writers are not equivalent. A
+ * player reports a position it is rendering, so its word is current by
+ * definition. The receiver reports a position for a screen the user may have
+ * walked away from, and its report can land after a local one — the web player
+ * writes every second, the receiver every fifteen. A blind $set would let a
+ * late cast report drag a row back over a resume the user just performed.
+ *
+ * So the write is guarded, and applies only when one of three things holds:
+ *
+ *   1. the row already belongs to the cast writer — the TV owns this title,
+ *      including when the user rewinds with the remote, which is legitimately
+ *      backwards;
+ *   2. the position moves forward — always safe, and this is what lets the
+ *      first report after a handoff take ownership of a row a client wrote a
+ *      second ago;
+ *   3. nobody has touched the row for a minute — no live client to contradict.
+ *
+ * Otherwise the report is dropped and `false` comes back. That is a normal
+ * outcome, not an error: the receiver never retries, so the next tick carries a
+ * freshly read position rather than a stale one.
+ *
+ * @param {Object} options
+ * @param {ObjectId} options.userId
+ * @param {string} options.videoId - content URL exactly as the receiver loaded it
+ * @param {string} options.normalizedVideoId - from the token's signed claims
+ * @param {number} options.playbackTime
+ * @param {boolean} [options.isPaused]
+ * @param {Object} [options.metadata] - from signed claims only, never from the body
+ * @param {Object} [options.deviceInfo]
+ * @param {string} [options.ipAddress]
+ * @param {string} [options.castSessionId]
+ * @returns {Promise<boolean>} whether the write was applied
+ */
+export async function upsertPlaybackFromCast({
+  userId,
+  videoId,
+  normalizedVideoId,
+  playbackTime,
+  isPaused = false,
+  metadata = {},
+  deviceInfo = null,
+  ipAddress = null,
+  castSessionId = null,
+}) {
+  const client = await clientPromise
+  const db = client.db('Media')
+  const collection = db.collection('WatchHistory')
+
+  const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
+  const resolved = await resolveMediaIdForNid(normalizedVideoId)
+
+  // Same rule as upsertPlayback: only a resolved durable identity may be
+  // written, never a client-supplied one.
+  const { mediaId: _legacyClientMediaId, ...safeMetadata } = metadata
+
+  const $set = {
+    videoId,
+    playbackTime,
+    isPaused: isPaused === true,
+    lastUpdated: new Date(),
+    ...safeMetadata,
+    ...(resolved?.mediaId && { mediaId: resolved.mediaId }),
+    ...(deviceInfo && { deviceInfo }),
+    ...(ipAddress && { ipAddress }),
+    ...(castSessionId && { castSessionId }),
+    lastWriter: 'cast',
+  }
+
+  const identity = { userId: userIdObj, normalizedVideoId }
+  const guard = {
+    ...identity,
+    $or: [
+      { lastWriter: 'cast' },
+      { playbackTime: { $lte: playbackTime } },
+      { lastUpdated: { $lt: new Date(Date.now() - CAST_STALE_GUARD_MS) } },
+    ],
+  }
+
+  const guarded = await collection.updateOne(guard, { $set }, { upsert: false })
+  if (guarded.matchedCount > 0) {
+    log.debug(
+      { userId: userIdObj.toString(), normalizedVideoId, playbackTime },
+      'Cast playback applied'
+    )
+    return true
+  }
+
+  // No match means one of two things, and they need opposite responses: either
+  // the guard rejected a stale report, or there is simply no row yet. Only the
+  // second may insert — an upsert here would resurrect a row the guard just
+  // refused, which is the exact bug the guard exists to prevent.
+  const exists = await collection.countDocuments(identity, { limit: 1 })
+  if (exists) {
+    log.debug(
+      { userId: userIdObj.toString(), normalizedVideoId, playbackTime },
+      'Cast playback rejected as stale'
+    )
+    return false
+  }
+
+  try {
+    await collection.updateOne(identity, { $set }, { upsert: true })
+  } catch (error) {
+    // Mirrors upsertPlayback: with the partial unique {userId, mediaId} index
+    // in place, a quality swap makes this INSERT collide with the sibling row
+    // held under the old nid. Move that row to the new nid and apply this
+    // report to it.
+    if (!isMediaIdUniqueViolation(error) || !resolved?.mediaId) throw error
+
+    const merged = await rekeySiblingAndApply(collection, {
+      userIdObj,
+      mediaId: resolved.mediaId,
+      normalizedVideoId,
+      update: { $set },
+    })
+    if (!merged) await collection.updateOne(identity, { $set }, { upsert: true })
+  }
+
+  return true
 }
 
 /**

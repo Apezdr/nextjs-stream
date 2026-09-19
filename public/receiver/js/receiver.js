@@ -19,6 +19,7 @@ limitations under the License.
 import { CastQueue } from './queuing.js'
 import { MediaFetcher } from './media_fetcher.js'
 import { AdsTracker, SenderTracker, ContentTracker } from './cast_analytics.js'
+import { startPlaybackReporter, redactLoadRequest } from './playback-reporter.js'
 
 /**
  * @fileoverview This sample demonstrates how to build your own Web Receiver for
@@ -46,25 +47,31 @@ const castDebugLogger = cast.debug.CastDebugLogger.getInstance()
 const LOG_RECEIVER_TAG = 'Receiver'
 
 /*
- * WARNING: Make sure to turn off debug logger for production release as it
- * may expose details of your app.
- * Uncomment below line to enable debug logger, show a 'DEBUG MODE' tag at
- * top left corner and show debug overlay.
+ * On-TV debug overlay — OFF unless explicitly asked for.
+ *
+ * It prints the incoming LOAD request and any playback error on the screen
+ * itself, which is the only way to tell a rejected LOAD apart from a receiver
+ * that never started: both look like a black screen and then a launch timeout.
+ *
+ * It also tags the screen DEBUG MODE and mirrors everything into the Cast
+ * Developer Console, so it must not be on for ordinary viewers. Two ways in:
+ *
+ *  - append `?debug=1` to the Receiver Application URL in the Cast Developer
+ *    Console (survives a reload, needs a console edit to undo), or
+ *  - have the sender put `debug: true` in the LOAD request's customData
+ *    (per-session, no console edit) — see enableDebugOverlay() below.
  */
-//  context.addEventListener(cast.framework.system.EventType.READY, () => {
-//   if (!castDebugLogger.debugOverlayElement_) {
-//     /**
-//      *  Enable debug logger and show a 'DEBUG MODE' tag at
-//      *  top left corner.
-//      */
-//       castDebugLogger.setEnabled(true);
+const DEBUG_VIA_URL = /(^|[?&])debug=1(&|$)/.test(location.search || '')
 
-//     /**
-//      * Show debug overlay.
-//      */
-//       castDebugLogger.showDebugLogs(true);
-//   }
-// });
+function enableDebugOverlay() {
+  if (castDebugLogger.debugOverlayElement_) return
+  castDebugLogger.setEnabled(true)
+  castDebugLogger.showDebugLogs(true)
+}
+
+context.addEventListener(cast.framework.system.EventType.READY, () => {
+  if (DEBUG_VIA_URL) enableDebugOverlay()
+})
 
 /*
  * Set verbosity level for Core events.
@@ -95,6 +102,37 @@ playerManager.addEventListener(cast.framework.events.EventType.ERROR, (event) =>
       'LOAD_FAILED: Verify the load request is set up ' + 'properly and the media is able to play.'
     )
   }
+})
+
+/*
+ * Restyle the subtitle cues once the player has loaded an item.
+ *
+ * Registered once here rather than from inside the LOAD interceptor, where it
+ * used to live: the interceptor runs per load, so every item played added
+ * another copy of this listener for the lifetime of the receiver. It also
+ * reached through two levels of shadow DOM with no null check, which throws
+ * inside an event handler on any CAF build that names the element differently.
+ */
+playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
+  const cueStyleElement = document
+    .querySelector('cast-media-player')
+    ?.shadowRoot?.querySelector('#cue-style')
+
+  if (!cueStyleElement) {
+    castDebugLogger.warn(LOG_RECEIVER_TAG, 'cue-style element not found; captions keep default styling')
+    return
+  }
+
+  cueStyleElement.textContent = `
+    @import url('https://fonts.googleapis.com/css2?family=PT+Sans+Caption:wght@400;700&display=swap');
+    ::cue {
+      font-family: "PT Sans Caption", sans-serif;
+      font-weight: 700;
+      font-style: normal;
+      background-color: transparent;
+      text-shadow: 1px 1px 5px black;
+    }
+  `
 })
 
 /*
@@ -143,7 +181,8 @@ function addBreaks(mediaInformation) {
  * Intercept the LOAD request to load and set the contentUrl.
  */
 playerManager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (loadRequestData) => {
-  castDebugLogger.debug(LOG_RECEIVER_TAG, `loadRequestData: ${JSON.stringify(loadRequestData)}`)
+  if (loadRequestData?.customData?.debug === true) enableDebugOverlay()
+  castDebugLogger.debug(LOG_RECEIVER_TAG, `loadRequestData: ${redactLoadRequest(loadRequestData)}`)
 
   // If the loadRequestData is incomplete, return an error message.
   if (!loadRequestData || !loadRequestData.media) {
@@ -188,32 +227,6 @@ playerManager.setMessageInterceptor(cast.framework.messages.MessageType.LOAD, (l
             return loadRequestData
           })
         }
-      })
-      .then(() => {
-        // Wait for the media player to be loaded
-        playerManager.addEventListener(cast.framework.events.EventType.PLAYER_LOAD_COMPLETE, () => {
-          const mediaPlayer = document.querySelector('cast-media-player')
-
-          // Access the shadow DOM of the media player
-          const shadowRoot = mediaPlayer.shadowRoot
-
-          // Find the cue-style element
-          const cueStyleElement = shadowRoot.querySelector('#cue-style')
-
-          // Apply custom styling to the cue-style element
-          cueStyleElement.textContent = `
-          @import url('https://fonts.googleapis.com/css2?family=PT+Sans+Caption:wght@400;700&display=swap');
-          ::cue {
-            font-family: "PT Sans Caption", sans-serif;
-            font-weight: 700;
-            font-style: normal;
-            background-color: transparent;
-            text-shadow: 1px 1px 5px black;
-          }
-        `
-        })
-
-        return loadRequestData
       })
       .catch((errorMessage) => {
         let error = new cast.framework.messages.ErrorData(
@@ -281,5 +294,20 @@ castReceiverOptions.supportedCommands =
  * line below to enable the queue.
  */
 // castReceiverOptions.queue = new CastQueue();
+
+/*
+ * Report playback position back to the app.
+ *
+ * Started before context.start() so its listeners are registered before the
+ * first LOAD can arrive. While a sender is connected it stays silent — the
+ * sender is already reporting — and takes over once the last one disconnects,
+ * which is the window that previously went unrecorded entirely.
+ */
+startPlaybackReporter({
+  context,
+  playerManager,
+  castDebugLogger,
+  logTag: LOG_RECEIVER_TAG,
+})
 
 context.start(castReceiverOptions)

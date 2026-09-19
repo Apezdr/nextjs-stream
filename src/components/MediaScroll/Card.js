@@ -9,6 +9,9 @@ import dynamic from 'next/dynamic'
 import { preload } from 'swr'
 import RetryImage from '@components/RetryImage'
 import PopupCard from './PopupCard'
+import ProgressBar from '@components/WatchProgress/ProgressBar'
+import useLiveProgress from '@components/WatchProgress/useLiveProgress'
+import { canShowProgress, durationMsFrom } from '@components/WatchProgress/progress'
 
 // Consolidated interaction/popup state machine (replaces several related useState hooks)
 const initialInteractionState = {
@@ -81,6 +84,14 @@ const Card = ({
   metadata = null,
   // Trailer/External video flags
   isTrailer = false,
+  // Watch progress: the server's watchHistory object and the runtime (ms).
+  // The bar is drawn on the Continue Watching rail (TV/mobile card style);
+  // the popup shows progress for any movie or episode.
+  watchHistory = null,
+  duration = null,
+  // Durable 'mid:…' identity — the localStorage mirror's key, which is what
+  // keeps the bar moving between rail refreshes.
+  durableMediaId = null,
 }) => {
   const [imageDimensions, setImageDimensions] = useState({
     width: 0,
@@ -115,6 +126,18 @@ const Card = ({
   const hoverTimeoutRef = useRef(null)
 
   const isHovered = isMouseOverCard || isMouseOverPortal
+
+  // Progress under the poster — only where a single position exists (a movie
+  // or an episode, not a whole show) and only on the Continue Watching rail.
+  // Live: the newer of the rail's server object and the local mirror.
+  const progressEligible = canShowProgress({ type, seasonNumber, episodeNumber })
+  const progress = useLiveProgress({
+    watchHistory,
+    mediaId: durableMediaId,
+    durationMs: durationMsFrom({ duration, metadata }),
+    enabled: progressEligible,
+  })
+  const showProgressBar = listType === 'recentlyWatched' && progressEligible && progress.hasProgress
 
   // Memoize expensive date calculations (React 19.2 optimization)
   const dateInfo = useMemo(() => {
@@ -628,6 +651,14 @@ const Card = ({
                 onError={handleImageError}
                 style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
+              {showProgressBar && (
+                <ProgressBar
+                  progressPercent={progress.progressPercent}
+                  completed={progress.completed}
+                  label={progress.completed ? 'Watched' : `${Math.round(progress.progressPercent)}% watched`}
+                  className="absolute z-20 bottom-0 left-0 right-0 h-1.5 rounded-b-lg"
+                />
+              )}
               {imageError && (
                 <div 
                   className="absolute inset-0 flex items-center justify-center bg-gray-200 rounded-lg"
@@ -696,6 +727,10 @@ const Card = ({
             metadata={metadata}
             // Pass the shared date info
             dateInfo={dateInfo}
+            // Watch progress known from the rail, before the popup's own fetch lands
+            watchHistory={watchHistory}
+            duration={duration}
+            durableMediaId={durableMediaId}
           />,
           document.body
         )}

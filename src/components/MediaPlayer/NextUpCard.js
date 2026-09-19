@@ -1,5 +1,5 @@
 'use client'
-import { useMediaState } from '@vidstack/react'
+import { Player } from './videojs'
 import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -15,7 +15,7 @@ function NextUpCard({
   hasNextEpisode,
   mediaLength,
 }) {
-  const currentPlaybackTime = useMediaState('currentTime')
+  const currentPlaybackTime = Player.usePlayer((s) => s.currentTime)
   const playbackTimeRef = useRef(currentPlaybackTime)
   const [isHovering, setIsHovering] = useState(false)
   const [remainingTime, setRemainingTime] = useState(15000)
@@ -42,7 +42,9 @@ function NextUpCard({
 
       let endTime = Date.now() + duration
       timerRef.current = setTimeout(() => {
-        router.push(`/list/tv/${encodeURIComponent(mediaTitle)}/${season_number}/${nextEpisodeNumber}`)
+        // Straight into playback from the top, the same landing the card's
+        // link asks for — not the details page with the player stopped.
+        router.push(`/list/tv/${encodeURIComponent(mediaTitle)}/${season_number}/${nextEpisodeNumber}/play?start=0`)
       }, duration)
 
       intervalRef.current = setInterval(() => {
@@ -53,7 +55,7 @@ function NextUpCard({
         }
       }, 1000)
     },
-    [mediaTitle, season_number, nextEpisodeNumber]
+    [mediaTitle, season_number, nextEpisodeNumber, router]
   )
 
   useEffect(() => {

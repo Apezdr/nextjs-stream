@@ -34,7 +34,10 @@ export default async function styledLayout({ children }) {
   
   return (
     <Suspense>
-      <ClientProviders>
+      {/* Server-only env var, handed to the client so a page with no player
+          can still rejoin a running Cast session — Chrome only resumes a saved
+          session for the SAME receiver id. */}
+      <ClientProviders castReceiverId={process.env.CHROMECAST_RECEIVER_ID || null}>
         <div
           className={classNames(inter.className, `transition-colors duration-1000`)}
         >

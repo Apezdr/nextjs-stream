@@ -7,7 +7,7 @@ import {
   MediaNotFound,
   TVEpisodeDetailsView,
 } from '@src/components/MediaPages/DynamicPage'
-import Loading from '@src/app/loading'
+import EpisodePageSkeleton from '@src/components/MediaPages/details/EpisodePageSkeleton'
 import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
 import { fetchTrailerMedia } from '@src/utils/media/mediaFetcher'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
@@ -103,7 +103,9 @@ export default async function TVEpisodePage({ params }) {
       callbackUrl={`/list/tv/${encodeURIComponent(title)}/${encodeURIComponent(season)}/${encodeURIComponent(episode)}`}
       variant="skeleton"
     >
-      <Suspense fallback={<Loading />}>
+      {/* The page's own frame as the fallback, so moving between episodes fills
+          the layout in rather than collapsing to a spinner and reflowing. */}
+      <Suspense fallback={<EpisodePageSkeleton />}>
         <TVEpisodeContent
           title={title}
           season={season}

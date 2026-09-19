@@ -1,20 +1,9 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
-import { findPlaybackForUser, hasWatchHistory } from '@src/utils/watchHistory/database'
+import { findPlaybackForUser } from '@src/utils/watchHistory/database'
+import { isDurableMediaId, resolveWatchEntry, buildWatchHistoryObject } from '@src/utils/watchHistory/resolve'
 import { cache } from 'react'
-
-/**
- * Durable content identity check ('mid:…', backend folder-derived). Rows may
- * also carry legacy client-sent ObjectId-hex mediaIds (doc _id) — those never
- * key catalog items' `mediaId` field and are excluded from identity keying.
- *
- * @param {*} id - Candidate mediaId value
- * @returns {boolean} True when the value is a 'mid:…' durable identity
- */
-function isDurableMediaId(id) {
-  return typeof id === 'string' && id.startsWith('mid:')
-}
 
 /**
  * Builds the multi-key lookup map (normalizedVideoId + raw videoId + durable
@@ -41,6 +30,7 @@ function buildWatchHistoryLookupMap(watchHistoryEntries) {
           lastWatched: entry.lastUpdated,
           isWatched: true,
           normalizedVideoId: normalizedId,
+          mediaId: isDurableMediaId(entry.mediaId) ? entry.mediaId : null,
           // Include additional metadata for TV shows
           ...(entry.mediaType === 'tv' && {
             showId: entry.showId,
@@ -119,74 +109,26 @@ export const createWatchHistoryLookupMap = cache(async function(userId) {
 })
 
 /**
- * Augments media items with watch history data
+ * Augments media items with watch history data.
+ *
+ * Every item comes back with a `watchHistory` object of the same shape —
+ * matched or not — so no client has to tell "absent" from "null" from
+ * "zeroed". Matching goes through resolveWatchEntry (mediaId → nid → hashed
+ * URLs → raw URLs), the same precedence every other surface uses.
+ *
  * @param {Array} items - Array of media items to augment
  * @param {Map} watchHistoryMap - Lookup map created by createWatchHistoryLookupMap
  * @returns {Array} Array of items augmented with watch history
  */
 export function augmentItemsWithWatchHistory(items, watchHistoryMap) {
-  if (!items || !Array.isArray(items) || watchHistoryMap.size === 0) {
+  if (!items || !Array.isArray(items)) {
     return items
   }
 
-  return items.map(item => {
-    let watchData = null
-
-    // Try the durable content identity first ('mid:…') — rename-proof: it
-    // matches rows written before the item's URL (and thus nid) changed
-    if (item.mediaId && watchHistoryMap.has(item.mediaId)) {
-      watchData = watchHistoryMap.get(item.mediaId)
-    }
-    // Then match by normalizedVideoId (most reliable URL-derived key)
-    else if (item.normalizedVideoId && watchHistoryMap.has(item.normalizedVideoId)) {
-      watchData = watchHistoryMap.get(item.normalizedVideoId)
-    }
-    // Fallback to videoURL matching
-    else if (item.videoURL && watchHistoryMap.has(item.videoURL)) {
-      watchData = watchHistoryMap.get(item.videoURL)
-    }
-    // For TV shows, try to match by episode data if available
-    else if (item.type === 'tv' && item.episode?.videoURL && watchHistoryMap.has(item.episode.videoURL)) {
-      watchData = watchHistoryMap.get(item.episode.videoURL)
-    }
-    // Generate normalizedVideoId and try matching if not already present
-    else if (item.videoURL && !item.normalizedVideoId) {
-      const generatedNormalizedId = generateNormalizedVideoId(item.videoURL)
-      if (generatedNormalizedId && watchHistoryMap.has(generatedNormalizedId)) {
-        watchData = watchHistoryMap.get(generatedNormalizedId)
-      }
-    }
-
-    // Add watch history if found
-    if (watchData) {
-      return {
-        ...item,
-        watchHistory: {
-          playbackTime: watchData.playbackTime,
-          lastWatched: watchData.lastWatched,
-          isWatched: watchData.isWatched,
-          normalizedVideoId: watchData.normalizedVideoId,
-          // Include TV-specific metadata if available
-          ...(watchData.showId && {
-            showId: watchData.showId,
-            seasonNumber: watchData.seasonNumber,
-            episodeNumber: watchData.episodeNumber
-          })
-        }
-      }
-    }
-
-    // Return item without watch history if no match found
-    return {
-      ...item,
-      watchHistory: {
-        playbackTime: 0,
-        lastWatched: null,
-        isWatched: false,
-        normalizedVideoId: null
-      }
-    }
-  })
+  return items.map(item => ({
+    ...item,
+    watchHistory: buildWatchHistoryObject(item, resolveWatchEntry(item, watchHistoryMap)),
+  }))
 }
 
 /**
@@ -282,27 +224,8 @@ export async function addWatchHistoryToItemsBounded(items, userId) {
         })
       : []
 
-    let augmentedItems
-    if (entries.length === 0) {
-      // Match the unbounded path's semantics: items pass through untouched when
-      // the user has no history at all (empty lookup map); otherwise every item
-      // gets the zeroed watchHistory stub.
-      if (!(await hasWatchHistory(userId))) {
-        augmentedItems = items
-      } else {
-        augmentedItems = items.map(item => ({
-          ...item,
-          watchHistory: {
-            playbackTime: 0,
-            lastWatched: null,
-            isWatched: false,
-            normalizedVideoId: null
-          }
-        }))
-      }
-    } else {
-      augmentedItems = augmentItemsWithWatchHistory(items, buildWatchHistoryLookupMap(entries))
-    }
+    // Same shape whether or not anything matched (see augmentItemsWithWatchHistory).
+    const augmentedItems = augmentItemsWithWatchHistory(items, buildWatchHistoryLookupMap(entries))
 
     if (process.env.DEBUG) {
       const itemsWithHistory = augmentedItems.filter(item => item.watchHistory?.isWatched).length

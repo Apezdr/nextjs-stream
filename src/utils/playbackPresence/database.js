@@ -51,16 +51,23 @@ async function ensurePresenceIndexes(db) {
 /**
  * Upsert (or refresh) a presence heartbeat for a player session.
  *
+ * When `playbackTime` is not a finite number the write is a keep-alive: it
+ * refreshes liveness and pause state on an EXISTING row and leaves the row's
+ * stored position alone. It never inserts — a positionless ping has nothing
+ * to say about a session the server does not know, and the next real
+ * position write recreates the row.
+ *
  * @param {Object} options
  * @param {string|ObjectId} options.userId
  * @param {string} options.sessionId - Client-generated UUID, one per player mount
  * @param {string} options.videoId - Video URL (same value WatchHistory.videoId stores)
- * @param {number} options.playbackTime
+ * @param {number} [options.playbackTime] - omitted on a keep-alive
  * @param {boolean} options.isPaused
  * @param {Object} [options.metadata] - { mediaType, seasonNumber, episodeNumber, showId, mediaId }
  * @param {Object} [options.deviceInfo]
  * @param {string} [options.ipAddress] - Server-observed client IP (proxy-aware)
  * @param {string} [options.localIp] - Optional device-reported local/LAN IP
+ * @returns {Promise<boolean>} whether a row was written or refreshed
  */
 export async function upsertPresenceHeartbeat({
   userId,
@@ -86,15 +93,21 @@ export async function upsertPresenceHeartbeat({
     const resolved = await resolveMediaIdForNid(normalizedVideoId)
     // mediaId is durable-identity-only — strip the legacy client value the
     // metadata always carries (see upsertPlayback for the full rationale).
-    const { mediaId: _legacyClientMediaId, ...safeMetadata } = metadata
+    // Nulls never reach $set either: absent means "unchanged", not "erase".
+    const { mediaId: _legacyClientMediaId, ...rawMetadata } = metadata || {}
+    const safeMetadata = Object.fromEntries(
+      Object.entries(rawMetadata).filter(([, v]) => v !== null && v !== undefined)
+    )
 
-    await collection.updateOne(
+    const hasPosition = Number.isFinite(playbackTime)
+
+    const result = await collection.updateOne(
       { userId: userIdObj, sessionId },
       {
         $set: {
           videoId,
           normalizedVideoId,
-          playbackTime,
+          ...(hasPosition && { playbackTime }),
           isPaused: isPaused === true,
           lastHeartbeat: new Date(),
           ...safeMetadata,
@@ -104,11 +117,54 @@ export async function upsertPresenceHeartbeat({
           ...(localIp && { localIp }),
         },
       },
-      { upsert: true }
+      { upsert: hasPosition }
     )
+    return (result.matchedCount ?? 0) > 0 || (result.upsertedCount ?? 0) > 0
   } catch (error) {
     log.error({ error, userId, sessionId, videoId }, 'Failed to upsert presence heartbeat')
     throw error
+  }
+}
+
+/**
+ * Whether a paused write from `sessionId` merely repeats the position that
+ * session already reported — i.e. it is the client's paused keep-alive ping
+ * wearing a `progress` body.
+ *
+ * Pre-`kind` clients (every TV build before d84b7df, every web build before
+ * the same change) re-post their paused position every few minutes to keep
+ * presence alive. Against a blind $set that ping drags the WatchHistory row
+ * back over progress made on another device. The presence row is the tell:
+ * it stores the last position THIS session sent, and a genuine pause flip
+ * arrives with the presence row still marked playing (or at a different
+ * position), while a keep-alive repeat arrives paused at the same position.
+ *
+ * @param {Object} options
+ * @param {string|ObjectId} options.userId
+ * @param {string} options.sessionId
+ * @param {number} options.playbackTime
+ * @returns {Promise<boolean>}
+ */
+export async function isRepeatPausedPing({ userId, sessionId, playbackTime }) {
+  if (!sessionId || !Number.isFinite(playbackTime)) return false
+  try {
+    const client = await clientPromise
+    const db = client.db('Media')
+    const collection = db.collection('PlaybackPresence')
+    const userIdObj = typeof userId === 'string' ? new ObjectId(userId) : userId
+    const row = await collection.findOne(
+      { userId: userIdObj, sessionId },
+      { projection: { playbackTime: 1, isPaused: 1 } }
+    )
+    if (!row || row.isPaused !== true) return false
+    // Sub-second jitter between what a player reports on pause and what it
+    // re-reads for the ping is common; anything under a second is "the same".
+    return Math.abs((row.playbackTime ?? NaN) - playbackTime) < 1
+  } catch (error) {
+    // Best-effort classification: when in doubt, treat the write as progress
+    // (the pre-existing behaviour) rather than dropping a real position.
+    log.warn({ error, userId, sessionId }, 'Could not classify paused write; treating as progress')
+    return false
   }
 }
 

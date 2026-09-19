@@ -42,7 +42,7 @@ export default function FullScreenBackdrop({ media }) {
         fill
         placeholder="blur"
         blurDataURL={`data:image/png;base64,${lowResImageUrl}`}
-        sizes="(max-width: 768px) 100vw, 50vw"
+        sizes="100vw"
         className="relative z-[-2] object-cover"
       />
     </motion.div>

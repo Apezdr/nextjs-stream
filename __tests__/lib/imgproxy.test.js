@@ -1,4 +1,5 @@
 import { buildImgproxyTarget, signImgproxyPath } from '@src/lib/imgproxy'
+import { IMAGE_QUALITIES } from '@src/utils/imageQualities'
 
 const IMGPROXY_ENV_VARS = ['IMGPROXY_URL', 'IMGPROXY_KEY', 'IMGPROXY_SALT', 'IMGPROXY_REQUEST_MODE']
 
@@ -108,5 +109,51 @@ describe('buildImgproxyTarget', () => {
     expect(buildImgproxyTarget(params({ w: undefined }))).toBeNull()
     expect(buildImgproxyTarget(params({ w: '-1' }))).toBeNull()
     expect(buildImgproxyTarget(params({ q: '101' }))).toBeNull()
+  })
+
+  // This branch runs in middleware and returns before Next's optimizer route,
+  // so it is the only place images.qualities can be enforced on the imgproxy
+  // path. Without these, an off-list quality was refused with imgproxy off and
+  // quietly honored with it on.
+  describe('the images.qualities allow-list', () => {
+    beforeEach(() => {
+      process.env.IMGPROXY_URL = 'http://imgproxy:8080'
+    })
+
+    it('offloads every configured quality', () => {
+      for (const quality of IMAGE_QUALITIES) {
+        expect(buildImgproxyTarget(params({ q: String(quality) }))).not.toBeNull()
+      }
+    })
+
+    it('refuses an in-range quality that is not on the list', () => {
+      // 80 is a perfectly ordinary number and was accepted here before.
+      expect(buildImgproxyTarget(params({ q: '80' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: '1' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: '99' }))).toBeNull()
+    })
+
+    it('cannot be talked past with a fractional or padded value', () => {
+      expect(buildImgproxyTarget(params({ q: '75.5' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: '0075' }))).not.toBeNull() // digits; Next reads 75 too
+      expect(buildImgproxyTarget(params({ q: '7 5' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: '' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: undefined }))).toBeNull()
+    })
+
+    // Verified against Next 16.2.6 by curl: each of these is a 400 at the
+    // built-in optimizer ("q parameter must be an integer between 1 and 100"),
+    // so offloading them would make the same URL succeed with IMGPROXY_URL set
+    // and fail without it.
+    it('refuses what the built-in optimizer would refuse, not merely what Number() dislikes', () => {
+      expect(buildImgproxyTarget(params({ q: '1e2' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: '0x4B' }))).toBeNull()
+      expect(buildImgproxyTarget(params({ q: ' 75 ' }))).toBeNull()
+    })
+
+    it('puts the honored quality into the imgproxy path', () => {
+      const target = buildImgproxyTarget(params({ q: '90' }))
+      expect(target.url).toContain('/q:90/')
+    })
   })
 })

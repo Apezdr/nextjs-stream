@@ -1,16 +1,25 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { useMediaPlayer, useMediaRemote, useMediaState } from '@vidstack/react';
+import { Player } from '@components/MediaPlayer/videojs';
+import usePlaybackReady from '@components/MediaPlayer/usePlaybackReady';
 import throttle from 'lodash/throttle';
-import { useRouter, usePathname } from 'next/navigation';
-import { getPlaybackStorageKey, readWithLegacyFallback } from '@src/utils/playbackStorageKey';
+import { usePathname } from 'next/navigation';
+import { getPlaybackStorageKey } from '@src/utils/playbackStorageKey';
 
 // Presence ping cadence while paused and foregrounded. Coarser than the 1s
 // playing heartbeat on purpose — see plans/media-activity-presence.md.
 const PAUSED_HEARTBEAT_INTERVAL_MS = 3 * 60 * 1000;
 
 const PRESENCE_END_URL = '/api/authenticated/sync/presence/end';
+
+// Never persist a position this close to the start. A resume point in the
+// first seconds is worthless, and a spurious ~0 — e.g. the Cast provider
+// forcing the element to 0 on disconnect, see CastResumeGuard — otherwise
+// overwrites a real resume point in both localStorage and Mongo within ~250ms,
+// unrecoverably. The only behaviour lost is "restarted a title and left again
+// within two seconds".
+const MIN_PERSISTED_POSITION_S = 2;
 
 function generateSessionId() {
   // crypto.randomUUID requires a secure context; this app can run over
@@ -33,85 +42,127 @@ function generateSessionId() {
 
 export default function WithPlayBackTracker({
   videoURL,
-  start = null,
   mediaMetadata = null,
-  savedPlaybackTime = null,
+  // Where this mount starts, resolved once by MainVideoPlayer (deep link >
+  // server watch history > localStorage, re-read from the server on an
+  // Activity re-show). 0 is an explicit restart; null means "from the top".
+  resumeAt = null,
+  // True when hls.js was handed `resumeAt` as startPosition and will land the
+  // element there itself once the first fragment at that point is buffered.
+  // The restore below must then NOT seek: a cold seek on a fresh engine is
+  // exactly what held Chrome at readyState 2 for 14-24 s (hlsPlaybackConfig).
+  // False for a raw file, which has no engine: the seek is issued here, once,
+  // at HAVE_METADATA.
+  engineOwnsResume = false,
+  // True when the page was opened with a `?start=` deep link; the address
+  // bar is cleaned up once the position has been applied.
+  clearStartParam = false,
   // Stable content identity ('mid:…') when resolved; null/absent falls back
   // to the legacy videoURL key so behavior is unchanged for unresolved titles.
-  mediaId = null
+  mediaId = null,
+  // True while a Cast receiver is playing THIS title and the transport bridge
+  // is mirroring it. The position on screen then belongs to the television.
+  castAdopted = false
 }) {
-  const player = useMediaPlayer();
+  const store = Player.usePlayer();
   // localStorage progress key: stable identity when available, else videoURL.
   // The worker payload keeps sending the raw videoURL (server contract).
   const storageKey = getPlaybackStorageKey({ mediaId, videoURL });
-  const canPlay = useMediaState('canPlay');
-  const paused = useMediaState('paused');
-  const remote = useMediaRemote();
-  const [lastTimeSent, setLastTimeSent] = useState(0);
+  // Not the store's `canPlay` (readyState 4, sampled on four events). Against
+  // the JIT origin that sample can simply never land, and then the saved
+  // position is never applied and no progress is ever written. These are read
+  // off the raw element on a wider event set — see playbackReadiness.js — and
+  // are already false while `castAdopted`; the explicit guards below stay
+  // regardless, as the second line rather than the only one.
+  const { canSeek, canTrack } = usePlaybackReady(store, { castAdopted });
+  const paused = Player.usePlayer((s) => s.paused);
+  const [, setLastTimeSent] = useState(0);
   const isFetchingRef = useRef(false);
   const nextUpdateTimeRef = useRef(null);
   const pausedRef = useRef(false);
   const updatePlaybackWorkerRef = useRef(null);
+  // Set once the resume position has been applied (or found unnecessary).
+  // Every write below waits for it: a heartbeat that lands between mount and
+  // the resume seek reports the player booting, not a viewing position.
   const hasAppliedStartRef = useRef(false);
   const localIpRef = useRef(null);
+  const latestRef = useRef({ store: null, videoURL: null, mediaMetadata: null, castAdopted: false });
   const sessionIdRef = useRef(null);
   if (sessionIdRef.current === null) {
     sessionIdRef.current = generateSessionId();
   }
-  
-  // Next.js routing hooks for URL manipulation
-  const router = useRouter();
+
   const pathname = usePathname();
 
-  // Restore saved playback time when the player is ready.
+  // Apply the resume position when the player is ready.
   useEffect(() => {
-    if (!canPlay || !remote) return;
+    if (!store) return;
+    if (hasAppliedStartRef.current) return;
+
+    // While the television owns this title, the saved position must not be
+    // applied — seeking here would seek the RECEIVER, dragging the TV back to
+    // whatever this page last recorded.
+    //
+    // Burning the one-shot rather than merely returning is the load-bearing
+    // part. Readiness is held false for the whole adopted session (the hook
+    // folds `castAdopted` in, and the bridge caps the host's readyState
+    // besides), so this effect never gets to run and the flag would stay
+    // unset; then at session end readiness rises, this fires for the first
+    // time, and overwrites the position just handed over from the receiver
+    // with a stale one from render time. That is exactly what made a stopped
+    // cast resume in the wrong place while the server's watch history had the
+    // right one all along.
+    if (castAdopted) {
+      hasAppliedStartRef.current = true;
+      return;
+    }
 
     let urlCleanupTimeout = null;
-
-    const restorePlaybackPosition = async () => {
-      // Try localStorage first (fastest) — stable key, with legacy
-      // videoURL-key fallback that migrates the value forward.
-      const savedData = readWithLegacyFallback(storageKey, videoURL);
-      const savedTime = savedData ? parseFloat(JSON.parse(savedData).playbackTime) : null;
-
-      if (!hasAppliedStartRef.current) {
-        // Priority 1: URL parameter (deep links) - highest priority
-        if (start !== null && start !== undefined) {
-          remote.seek(start);
-
-          // Clean up the URL by removing query parameters
-          urlCleanupTimeout = setTimeout(() => {
-            try {
-              window.history.replaceState({}, '', pathname);
-            } catch (err) {
-              console.error("Error replacing URL:", err);
-            }
-          }, 100);
+    const cleanupStartParam = () => {
+      if (!clearStartParam) return;
+      // The address bar, not the seek: drop `?start=` so a reload or a
+      // shared link does not re-apply it.
+      urlCleanupTimeout = setTimeout(() => {
+        try {
+          window.history.replaceState({}, '', pathname);
+        } catch (err) {
+          console.error('Error replacing URL:', err);
         }
-        // Priority 2: Server-provided savedPlaybackTime (passed as prop from server)
-        else if (savedPlaybackTime !== null && savedPlaybackTime > 0) {
-          remote.seek(savedPlaybackTime);
-          // Cache it locally for future use
-          localStorage.setItem(storageKey, JSON.stringify({
-            playbackTime: savedPlaybackTime,
-            lastUpdated: new Date().toISOString()
-          }));
-        }
-        // Priority 3: localStorage (for recently synced videos)
-        else if (!isNaN(savedTime) && savedTime !== null) {
-          remote.seek(savedTime);
-        }
-        hasAppliedStartRef.current = true;
-      }
+      }, 100);
     };
 
-    restorePlaybackPosition();
+    // The engine owns the initial seek (startPosition). Burn the one-shot so
+    // no cold seek is ever issued from here.
+    if (engineOwnsResume) {
+      hasAppliedStartRef.current = true;
+      cleanupStartParam();
+      return () => {
+        if (urlCleanupTimeout) clearTimeout(urlCleanupTimeout);
+      };
+    }
+
+    // Nothing to seek to: from the top (null) or an explicit restart (0).
+    if (!Number.isFinite(resumeAt) || resumeAt <= 0) {
+      hasAppliedStartRef.current = true;
+      cleanupStartParam();
+      return () => {
+        if (urlCleanupTimeout) clearTimeout(urlCleanupTimeout);
+      };
+    }
+
+    // A raw file with a saved position. HAVE_METADATA plus a known duration —
+    // a seek needs nothing more, and waiting for HAVE_ENOUGH_DATA is what let
+    // the JIT origin starve this.
+    if (!canSeek) return;
+
+    store.seek(resumeAt);
+    hasAppliedStartRef.current = true;
+    cleanupStartParam();
 
     return () => {
       if (urlCleanupTimeout) clearTimeout(urlCleanupTimeout);
     };
-  }, [remote, canPlay, storageKey, videoURL, start, pathname, savedPlaybackTime]);
+  }, [store, canSeek, resumeAt, engineOwnsResume, clearStartParam, pathname, castAdopted]);
 
   // Initialize the web worker with error handling and fallback logic.
   useEffect(() => {
@@ -123,21 +174,8 @@ export default function WithPlayBackTracker({
     let worker;
 
     try {
-      // Option 1: Use the module-relative URL.
-      //
-      // This works if your bundler (e.g. Next.js with Webpack 5) correctly handles worker files.
-      //
-      // If you experience sporadic URL issues, you can uncomment Option 2 below.
       const workerUrl = new URL('./updatePlaybackWorker.js', import.meta.url);
       worker = new Worker(workerUrl, { type: 'module' });
-
-      /* Option 2: Use a worker file placed in the public directory.
-      
-      // First, move updatePlaybackWorker.js to your public/ folder.
-      // Then, instantiate the worker with the absolute URL:
-      const workerUrl = '/updatePlaybackWorker.js';
-      worker = new Worker(workerUrl, { type: 'module' });
-      */
     } catch (error) {
       console.error('Failed to instantiate worker:', error);
       return;
@@ -200,9 +238,14 @@ export default function WithPlayBackTracker({
     };
   }, []);
 
-  // Subscribe to the media player's current time and throttle updates to the worker.
+  // Subscribe to the player store's current time and throttle updates to the worker.
   useEffect(() => {
-    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
+    if (!canTrack || !store || !updatePlaybackWorkerRef.current) return;
+    // The receiver reports its own position while no sender is connected; a
+    // client write here would stamp lastWriter:'client' and lock those reports
+    // out for a minute. canTrack is already false while adopted — this is the
+    // invariant stated outright rather than inherited.
+    if (castAdopted) return;
 
     const throttledUpdateServer = throttle((currentTime) => {
       if (!isFetchingRef.current) {
@@ -230,24 +273,32 @@ export default function WithPlayBackTracker({
       }
     }, 1000); // Throttle to 1 second.
 
-    // Subscribe to player time updates.
-    const unsubscribe = player.subscribe(({ currentTime }) => {
-      if (currentTime > 0) throttledUpdateServer(currentTime);
+    // The store notifies on every state change (currentTime updates at
+    // timeupdate cadence); the 1s throttle gates the write rate as before.
+    // Direct state reads throw NO_TARGET before/after the media attaches.
+    const unsubscribe = store.subscribe(() => {
+      if (!store.target) return;
+      // Nothing is a viewing position until the resume seek has been applied.
+      if (!hasAppliedStartRef.current) return;
+      const currentTime = store.currentTime;
+      if (currentTime > MIN_PERSISTED_POSITION_S) throttledUpdateServer(currentTime);
     });
 
     return () => {
       unsubscribe();
       throttledUpdateServer.cancel();
     };
-  }, [player, storageKey, videoURL, canPlay, mediaMetadata]);
+  }, [store, storageKey, videoURL, canTrack, mediaMetadata, castAdopted]);
 
   // Send a heartbeat whenever the paused state changes so the live activity
   // view keeps showing the session (as paused) instead of dropping it.
   useEffect(() => {
     pausedRef.current = paused === true;
-    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
-    const currentTime = player.state?.currentTime || 0;
-    if (currentTime <= 0) return;
+    if (!canTrack || !store || !store.target || !updatePlaybackWorkerRef.current) return;
+    if (castAdopted) return;
+    if (!hasAppliedStartRef.current) return;
+    const currentTime = store.currentTime || 0;
+    if (currentTime <= MIN_PERSISTED_POSITION_S) return;
     updatePlaybackWorkerRef.current.postMessage({
       videoURL,
       currentTime,
@@ -256,21 +307,40 @@ export default function WithPlayBackTracker({
       localIp: localIpRef.current,
       sessionId: sessionIdRef.current,
     });
-  }, [paused, canPlay, player, videoURL, mediaMetadata]);
+  }, [paused, canTrack, store, videoURL, mediaMetadata, castAdopted]);
 
   // Keep presence alive at a low frequency while paused and foregrounded.
   // The currentTime-driven heartbeat stops when playback pauses.
   useEffect(() => {
-    if (!canPlay || !player || !updatePlaybackWorkerRef.current) return;
+    if (!canTrack || !store || !updatePlaybackWorkerRef.current) return;
+    if (castAdopted) return;
 
     const interval = setInterval(() => {
       if (!pausedRef.current) return;
       if (typeof document !== 'undefined' && document.visibilityState !== 'visible') return;
-      const currentTime = player.state?.currentTime || 0;
-      if (currentTime <= 0) return;
+      if (!store.target) return;
+      // Skip while this page sits hidden in Next's segment cache — a hidden
+      // paused player must not keep its presence session alive. (Router
+      // context is frozen for cached pages, so visibility is checked on the
+      // element itself.)
+      // store.target is { media, container }, never an element — reach the
+      // real node through the media host.
+      const element = store.target?.media?.target;
+      if (
+        element &&
+        typeof element.checkVisibility === 'function' &&
+        !element.checkVisibility()
+      ) {
+        return;
+      }
+      // A keep-alive carries no position on purpose. The pause flip above
+      // already wrote where this tab stopped; re-posting that same number
+      // every three minutes is what let an idle paused tab drag the row
+      // back over progress made on the TV in the meantime. The server
+      // refreshes presence from this and leaves the resume point alone.
       updatePlaybackWorkerRef.current.postMessage({
         videoURL,
-        currentTime,
+        kind: 'keepalive',
         mediaMetadata,
         isPaused: true,
         localIp: localIpRef.current,
@@ -279,11 +349,59 @@ export default function WithPlayBackTracker({
     }, PAUSED_HEARTBEAT_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [canPlay, player, videoURL, mediaMetadata]);
+  }, [canTrack, store, videoURL, mediaMetadata, castAdopted]);
+
+  // Latest values for the unload path below, which is bound once per mount.
+  useEffect(() => {
+    latestRef.current = { store, videoURL, mediaMetadata, castAdopted };
+  });
 
   // Best-effort explicit "stopped watching" signal. keepalive lets the
   // request survive page unload; the server-side presence window is fallback.
+  //
+  // The final position goes first, as a `final` write with no sessionId (the
+  // TV app does the same on exit). The 1 s throttle drops whatever tick was
+  // pending when the tab went away, and lodash's trailing call is cancelled
+  // in the heartbeat effect's cleanup — without this, the last second of
+  // every session was lost while the TV app kept its last 30.
   useEffect(() => {
+    let flushed = false;
+    const flushFinal = () => {
+      if (flushed) return;
+      const { store: s, videoURL: url, mediaMetadata: meta, castAdopted: adopted } = latestRef.current;
+      // The television owns the position while adopted; nothing to flush.
+      if (adopted || !s || !url) return;
+      // Never flush a position the saved point was not applied to yet: a
+      // tab closed before the resume seek landed would write ~0 forward.
+      if (!hasAppliedStartRef.current) return;
+      let currentTime = 0;
+      try {
+        if (!s.target) return;
+        currentTime = s.currentTime || 0;
+      } catch {
+        return;
+      }
+      if (currentTime <= MIN_PERSISTED_POSITION_S) return;
+      flushed = true;
+      try {
+        fetch('/api/authenticated/sync/updatePlayback', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            videoId: url,
+            playbackTime: currentTime,
+            kind: 'final',
+            mediaMetadata: meta,
+            isPaused: true,
+            ...(localIpRef.current ? { localIp: localIpRef.current } : {}),
+          }),
+          keepalive: true,
+        }).catch(() => {});
+      } catch {
+        // Best-effort — the last throttled heartbeat is the backstop.
+      }
+    };
+
     const endPresence = () => {
       const sessionId = sessionIdRef.current;
       if (!sessionId) return;
@@ -299,7 +417,10 @@ export default function WithPlayBackTracker({
       }
     };
 
-    const handlePageHide = () => endPresence();
+    const handlePageHide = () => {
+      flushFinal();
+      endPresence();
+    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden' && pausedRef.current) {
         endPresence();
@@ -312,6 +433,7 @@ export default function WithPlayBackTracker({
     return () => {
       window.removeEventListener('pagehide', handlePageHide);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      flushFinal();
       endPresence();
     };
   }, []);

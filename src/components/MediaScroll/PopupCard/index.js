@@ -51,6 +51,9 @@ const PopupCard = (props) => {
     isAvailable,
     metadata,
     dateInfo,
+    watchHistory: railWatchHistory = null,
+    duration: railDuration = null,
+    durableMediaId = null,
   } = props
 
   // 1. Data Fetching - Build endpoint and fetch data
@@ -74,6 +77,9 @@ const PopupCard = (props) => {
     errorRetryCount: 20,
     keepPreviousData: true,  // Prevents flash of loading state during transitions
     compare: (a, b) => JSON.stringify(a) === JSON.stringify(b), // Stable comparison for object data
+    // A popup left open while the title plays elsewhere keeps its position
+    // current (the local mirror covers the seconds in between).
+    refreshInterval: 20000,
   })
 
   // 2. Derived Data
@@ -246,6 +252,11 @@ const PopupCard = (props) => {
           hasVideo={hasVideo}
           videoURL={videoURL}
           handleNavigationWithLoading={handleNavigationWithLoading}
+          // The popup's own fetch carries the freshest position; the rail's
+          // copy fills the first paint.
+          watchHistory={data?.watchHistory ?? railWatchHistory}
+          duration={data?.duration ?? railDuration}
+          durableMediaId={data?.mediaId ?? durableMediaId}
         />
 
         {/* SECTION 3: Cast */}

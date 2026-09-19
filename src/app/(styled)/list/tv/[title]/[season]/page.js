@@ -7,7 +7,7 @@ import {
   MediaNotFound,
   TVSeasonView,
 } from '@src/components/MediaPages/DynamicPage'
-import Loading from '@src/app/loading'
+import SeasonPageSkeleton from '@src/components/MediaPages/details/SeasonPageSkeleton'
 import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
 import { fetchTrailerMedia } from '@src/utils/media/mediaFetcher'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
@@ -96,7 +96,9 @@ export default async function TVSeasonPage({ params }) {
       callbackUrl={`/list/tv/${encodeURIComponent(title)}/${encodeURIComponent(season)}`}
       variant="skeleton"
     >
-      <Suspense fallback={<Loading />}>
+      {/* The page's own frame as the fallback, so switching seasons fills the
+          layout in rather than collapsing to a spinner and reflowing. */}
+      <Suspense fallback={<SeasonPageSkeleton />}>
         <TVSeasonContent
           title={title}
           season={season}

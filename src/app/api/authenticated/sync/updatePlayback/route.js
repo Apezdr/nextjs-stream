@@ -1,11 +1,13 @@
 import { ObjectId } from 'mongodb'
 import { isAuthenticatedAndApproved } from '../../../../../utils/routeAuth'
-import { upsertPlayback } from '@src/utils/watchHistory/database'
+import { upsertPlayback, upsertPlaybackFromCast } from '@src/utils/watchHistory/database'
 import { extractPlaybackMetadata } from '@src/utils/watchHistory/metadata'
+import { normalizePlaybackKind, kindWritesPosition } from '@src/utils/watchHistory/writeKinds'
+import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
 import { createPlaybackDeviceInfo } from '@src/utils/deviceDetection'
 import { getClientIP } from '@src/utils/rateLimiter'
 import { invalidateUserWatchHistoryCache } from '@src/utils/cache/invalidation'
-import { upsertPresenceHeartbeat } from '@src/utils/playbackPresence/database'
+import { upsertPresenceHeartbeat, isRepeatPausedPing } from '@src/utils/playbackPresence/database'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('API.UpdatePlayback')
@@ -31,14 +33,57 @@ export const POST = async (req) => {
 
   try {
     const body = await req.json()
-    const { videoId, playbackTime, mediaMetadata, isPaused, localIp, sessionId } = body
+    const { videoId, playbackTime, mediaMetadata, isPaused, localIp, sessionId, source } = body
 
-    // Validate required fields
-    if (!videoId || typeof playbackTime !== 'number') {
+    // What this write means — see writeKinds.js. Absent means `progress`.
+    const kind = normalizePlaybackKind(body.kind)
+    if (kind === null) {
+      return new Response(
+        JSON.stringify({ error: `Invalid kind: ${String(body.kind)}` }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // A keep-alive carries no position by design; every other kind must.
+    const hasPosition = typeof playbackTime === 'number' && Number.isFinite(playbackTime)
+    if (!videoId || (kindWritesPosition(kind) && !hasPosition)) {
       return new Response(
         JSON.stringify({ error: 'Missing or invalid videoId or playbackTime' }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       )
+    }
+
+    // A cast mirror is the page reporting a position the TELEVISION is at, not
+    // one it is rendering — which is the definition of the cast writer, so it
+    // goes through the guarded cast upsert rather than the blind client one.
+    // Three deliberate differences from the default path:
+    //   - metadata: {} spreads nothing, so the row's grouping fields survive
+    //     (the default path now also omits absent fields, but the mirror has
+    //     no metadata to offer at all).
+    //   - lastWriter stays 'cast', so the receiver's own reports pass the
+    //     ordering guard unconditionally the moment the tab closes — including
+    //     a legitimate rewind on the TV remote. A 'client' stamp would lock
+    //     them out for a minute.
+    //   - no presence heartbeat: mirroring is not a viewing session.
+    if (source === 'cast-mirror') {
+      const applied = await upsertPlaybackFromCast({
+        userId: new ObjectId(authResult.id),
+        videoId,
+        normalizedVideoId: generateNormalizedVideoId(videoId),
+        playbackTime,
+        isPaused: isPaused === true,
+        metadata: {},
+        deviceInfo: createPlaybackDeviceInfo(req.headers.get('user-agent')),
+        ipAddress: (() => {
+          const ip = getClientIP(req)
+          return ip && ip !== 'unknown' ? ip : null
+        })(),
+      })
+      if (applied) await invalidateUserWatchHistoryCache(authResult.id)
+      return new Response(JSON.stringify({ message: 'Cast position mirrored', applied }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
 
     // Extract and format metadata
@@ -59,40 +104,62 @@ export const POST = async (req) => {
     // Convert userId string to ObjectId
     const userId = new ObjectId(authResult.id)
 
-    log.info(
-      { userId: userId.toString(), videoId, playbackTime },
-      'Updating playback status'
-    )
+    // Pre-`kind` clients re-post their paused position every few minutes as a
+    // plain write. Reclassify that as the keep-alive it is, so an idle paused
+    // device never drags the row back over progress made elsewhere. Only an
+    // undeclared kind is inferred; a client that says `progress` is believed.
+    let effectiveKind = kind
+    if (body.kind === undefined && isPaused === true && sessionId && hasPosition) {
+      if (await isRepeatPausedPing({ userId, sessionId, playbackTime })) {
+        effectiveKind = 'keepalive'
+      }
+    }
 
-    // Use new WatchHistory module for atomic, efficient upsert
-    // This replaces the old nested array operations with simple document upserts
-    // Result: 50x faster writes, zero lock contention
-    const result = await upsertPlayback({
-      userId,
-      videoId,
-      playbackTime,
-      metadata,
-      deviceInfo,
-      ipAddress,
-      localIp: reportedLocalIp,
-      isPaused: isPaused === true,
-    })
+    let result = null
+    if (kindWritesPosition(effectiveKind)) {
+      log.info(
+        { userId: userId.toString(), videoId, playbackTime, kind: effectiveKind },
+        'Updating playback status'
+      )
 
-    log.info(
-      { userId: userId.toString(), videoId, result },
-      'Playback status updated'
-    )
+      // Use new WatchHistory module for atomic, efficient upsert
+      // This replaces the old nested array operations with simple document upserts
+      // Result: 50x faster writes, zero lock contention
+      result = await upsertPlayback({
+        userId,
+        videoId,
+        playbackTime,
+        metadata,
+        deviceInfo,
+        ipAddress,
+        localIp: reportedLocalIp,
+        isPaused: isPaused === true,
+      })
+
+      log.info(
+        { userId: userId.toString(), videoId, result },
+        'Playback status updated'
+      )
+    } else {
+      log.debug(
+        { userId: userId.toString(), videoId, sessionId, inferred: body.kind === undefined },
+        'Keep-alive: presence refreshed, position untouched'
+      )
+    }
 
     // Presence is a best-effort, ephemeral "is this session active" signal —
     // a failure here must never fail the durable WatchHistory write above.
-    // sessionId is optional for backward compatibility with older clients.
+    // sessionId is optional for backward compatibility with older clients,
+    // and a `final` write deliberately omits it (it is paired with
+    // presence/end). A keep-alive refreshes the row without a position.
+    let presenceRefreshed = false
     if (sessionId) {
       try {
-        await upsertPresenceHeartbeat({
+        presenceRefreshed = await upsertPresenceHeartbeat({
           userId,
           sessionId,
           videoId,
-          playbackTime,
+          playbackTime: kindWritesPosition(effectiveKind) ? playbackTime : undefined,
           isPaused: isPaused === true,
           metadata,
           deviceInfo,
@@ -104,13 +171,17 @@ export const POST = async (req) => {
       }
     }
 
-    // Invalidate user's watch history cache to ensure fresh data on next page load
-    await invalidateUserWatchHistoryCache(authResult.id)
+    // Invalidate user's watch history cache to ensure fresh data on next page
+    // load. A keep-alive changed nothing durable, so it invalidates nothing.
+    if (result) {
+      await invalidateUserWatchHistoryCache(authResult.id)
+    }
 
     return new Response(
-      JSON.stringify({ 
-        message: 'Playback status updated successfully',
-        acknowledged: result.acknowledged 
+      JSON.stringify({
+        message: result ? 'Playback status updated successfully' : 'Keep-alive acknowledged',
+        acknowledged: result ? result.acknowledged : presenceRefreshed,
+        kind: effectiveKind,
       }),
       {
         status: 200,

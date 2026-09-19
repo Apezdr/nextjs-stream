@@ -9,7 +9,7 @@
 
 import { Suspense } from 'react'
 import TVEpisodeDetailsComponent from '@src/components/MediaPages/TVEpisodeDetailsComponent'
-import Loading from '@src/app/loading'
+import EpisodePageSkeleton from '@src/components/MediaPages/details/EpisodePageSkeleton'
 import { cacheLife, cacheTag } from 'next/cache'
 import { episodeDetailsTag, tvShowDetailsTag, seasonDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTags'
 
@@ -39,7 +39,7 @@ async function CachedEpisodeDetails({ media }) {
  */
 export default function TVEpisodeDetailsView({ media }) {
   return (
-    <Suspense fallback={<Loading />}>
+    <Suspense fallback={<EpisodePageSkeleton />}>
       <div className="pt-16 w-full">
         <CachedEpisodeDetails media={media} />
       </div>

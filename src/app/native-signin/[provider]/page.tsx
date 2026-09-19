@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { authClient } from '@src/lib/auth-client'
+import { normalizeAuthCallbackURL } from '@src/utils/authCallbackUrl'
 import * as React from 'react'
 
 interface PageProps {
@@ -15,10 +16,11 @@ export default function NativeSignInPage({ params }: PageProps) {
 
   const search = useSearchParams()
   const callback = search?.get('callbackUrl') || '/'
+  const normalizedCallback = normalizeAuthCallbackURL(callback, '/')
 
   useEffect(() => {
-    authClient.signIn.social({ provider: provider as 'google' | 'discord', callbackURL: callback })
-  }, [provider, callback])
+    authClient.signIn.social({ provider: provider as 'google' | 'discord', callbackURL: normalizedCallback })
+  }, [provider, normalizedCallback])
 
   return (
     <div style={{height:'100vh',display:'flex',justifyContent:'center',alignItems:'center',color:'#333'}}>

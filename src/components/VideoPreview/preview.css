@@ -1,0 +1,41 @@
+/*
+ * Cover behavior for YouTube preview iframes.
+ *
+ * A YouTube iframe letterboxes its 16:9 video inside whatever box it is
+ * given, so stretching it to a non-16:9 container (the 16:6.6 banner, the
+ * ~1.4:1 episode thumbnail) leaves black bars instead of filling the frame.
+ * `object-fit: cover` doesn't apply to iframes, so size the iframe from the
+ * container's own dimensions: take whichever of width/height is the binding
+ * constraint and derive the other from 16:9, then crop the overflow.
+ *
+ * Container query units make that expressible in CSS — 100cqw/100cqh are the
+ * container's width/height, so max() picks the dimension that needs to grow.
+ * Setting both min-width and min-height to 100% instead does NOT work: both
+ * minimums bind and the aspect-ratio is discarded, which just stretches the
+ * iframe again.
+ */
+.yt-cover {
+  container-type: size;
+  overflow: hidden;
+}
+
+/* !important is required: the YouTube IFrame API writes width/height as an
+ * inline style on the iframe it creates, which would otherwise win. */
+.yt-cover iframe {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: max(100cqw, calc(100cqh * 16 / 9)) !important;
+  height: auto !important;
+  aspect-ratio: 16 / 9;
+  border: 0;
+}
+
+/* Without container query units the iframe still fills the width; the video
+ * letterboxes rather than covering, which is the pre-existing behavior. */
+@supports not (width: 1cqw) {
+  .yt-cover iframe {
+    width: 100% !important;
+  }
+}

@@ -1,6 +1,6 @@
 'use client'
 import { useSyncExternalStore, ViewTransition } from 'react'
-import useWatchedWidth from './useWatchedWidth'
+import useWatchedWidth, { isWatchedComplete } from './useWatchedWidth'
 import Image from 'next/image'
 import { TotalRuntime } from './watched'
 import { ArrowPathIcon } from '@heroicons/react/20/solid'
@@ -33,7 +33,7 @@ export default function TVShowThumbnail({ episode, metadata, viewTransitionName 
       className="watched-border"
       style={isClient ? { '--watched-width': `${watchedWidth.toFixed(2)}%` } : {}}
     >
-      {watchedWidth > 90 && (
+      {isWatchedComplete(episode, watchedWidth) && (
         <div className="absolute inset-0 bg-black bg-opacity-50 flex flex-col justify-center items-center z-[9]">
           <ArrowPathIcon className="text-white w-11 group-hover:animate-[spin_1s_ease-in-out_1]" />
           <span>Restart</span>

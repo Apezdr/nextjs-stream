@@ -14,6 +14,7 @@ import {
   MovieEntity,
   resolveMediaId,
   resolveDeliveryFacts,
+  resolveEffectiveVideoUrl,
   VideoInfo,
   MediaQuality,
   ServerConfig,
@@ -33,6 +34,7 @@ import { FileServerAdapter } from '../../../core'
 
 import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
 import { syncLogger } from '../../../core/logger'
+import { warnOnJitIdentityFork } from '../../../core/jitIdentityParity'
 import isEqual from 'lodash/isEqual'
  
 // @ts-ignore — dependency-free sibling JS module (CJS) with no .d.ts
@@ -446,17 +448,36 @@ export class MovieContentStrategy implements SyncStrategy {
     }
 
     // Step 3: Generate normalized video ID for deduplication.
-    // Derived from the EFFECTIVE videoURL — the one that will actually be in
-    // the doc after lock enforcement (computeDiff drops a locked videoURL, so
-    // deriving from the incoming file-server URL would fork identity from
-    // what clients play and report). For a locked JIT-transcoder URL the
-    // shared canonicalizer maps it to the source pathname, so locked-JIT and
-    // unlocked produce the same id. Must agree with
+    // Derived from the EFFECTIVE videoURL — the value this write actually
+    // leaves in the doc, which is NOT always the URL this server reported.
+    // Two things withhold it, and both must be honored here:
+    //
+    //   1. An admin lock, which computeDiff drops on the way to Mongo.
+    //   2. Field PRIORITY. A server that does not own videoURL never gets its
+    //      URL written (the block above is gated on `shouldUpdate`), but this
+    //      step used to hash that URL anyway — so on a title present on two
+    //      servers, the non-owner's pass silently re-keyed the doc to its own
+    //      path shape while videoURL kept the owner's. Every
+    //      `WatchHistory.normalizedVideoId === FlatMovies.normalizedVideoId`
+    //      join for that title then failed: the client reports a hash of the
+    //      URL it was served, and the catalog holds a hash of a URL nobody
+    //      plays. Observed as three movies keyed to an un-prefixed path while
+    //      served from a `prefixPath: '/media'` server.
+    //
+    // Deriving from the post-write value covers both, and makes any server's
+    // pass repair a title that drifted. The rule itself lives in
+    // `resolveEffectiveVideoUrl` (sync/core) — the TV path applies the same
+    // discipline inline in EpisodeSyncService, deriving from `entity.videoURL`
+    // inside its own priority gate. For a locked JIT-transcoder URL the shared
+    // canonicalizer maps it to the source pathname, so locked-JIT and unlocked
+    // produce the same id. Must agree with
     // flatDatabaseUtils.generateNormalizedVideoId so WatchHistory joins work.
     // Not tracked in fieldAvailability (it's derivable, not authoritative).
-    const effectiveVideoUrl = isTopLevelFieldLocked((currentMovie as any)?.lockedFields, 'videoURL')
-      ? currentMovie.videoURL
-      : videoUrl
+    const effectiveVideoUrl = resolveEffectiveVideoUrl({
+      currentVideoUrl: currentMovie.videoURL,
+      updates,
+      isVideoUrlLocked: isTopLevelFieldLocked((currentMovie as any)?.lockedFields, 'videoURL'),
+    })
     if (effectiveVideoUrl) {
       const normalizedId = this.generateNormalizedVideoId(
         effectiveVideoUrl,
@@ -473,6 +494,16 @@ export class MovieContentStrategy implements SyncStrategy {
           `📝 NormalizedVideoId unchanged: "${normalizedId}"`
         )
       }
+      // The JIT manifest for the same file must key to the same identity, or
+      // rows written through the transcoder never join this document.
+      warnOnJitIdentityFork(
+        {
+          videoURL: effectiveVideoUrl,
+          jitUrl: ('jitUrl' in updates ? updates.jitUrl : currentMovie.jitUrl) ?? null,
+          label: `movie:${originalTitle}`,
+        },
+        (fields, message) => syncLogger.warn(`${message} ${JSON.stringify(fields)}`)
+      )
     }
 
     // Step 3b: Ingest the backend's content identity and delivery facts.

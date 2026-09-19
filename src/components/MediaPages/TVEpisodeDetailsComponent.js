@@ -1,256 +1,174 @@
-import { classNames } from '@src/utils'
-import Link from 'next/link'
 import { Suspense, ViewTransition } from 'react'
-import ViewCount from './ViewCount'
-import dynamic from 'next/dynamic'
-import RetryImage from '@components/RetryImage'
-import WatchlistButton from '@components/WatchlistButton'
-import AdminEditButton from '@components/MediaPages/AdminEditButton'
 import { tvEpisodePosterName } from '@src/utils/viewTransitionNames'
+import { splitTitle, qualityChips, certificationOf, episodeFacts, episodeTypeLabel, formatDate } from '@src/utils/media/detailsFacts'
+import { tvHrefs, seasonLabel, blurDataURL } from '@src/utils/media/tvFacts'
+import { durationMsFrom, formatRuntime } from '@components/WatchProgress/progress'
+import WatchProgressPanel from '@components/WatchProgress/WatchProgressPanel'
+import AdminEditButton from '@components/MediaPages/AdminEditButton'
+import { WatchedByLine } from './ViewCount'
+import { Trail, MetaLine, DetailsPanel } from './details/Primitives'
+import EpisodeThumbnail from './details/EpisodeThumbnail'
+import ArtworkButton from './details/ArtworkButton'
+import ActionRow from './details/ActionRow'
+import StickyTitleBar from './details/StickyTitleBar'
+import CastTabs from './details/CastTabs'
+import EpisodeNav from './details/EpisodeNav'
 
-// Lazy load the cast grid section which can be heavy
-const CastSection = dynamic(() => 
-  import('./CastSection').then(mod => ({ default: props => <mod.default {...props} /> })),
-  { ssr: true, loading: () => <div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse" /> }
-)
+/** The hero's action row; the sticky bar appears once this scrolls out. */
+const ACTIONS_ID = 'episode-hero-actions'
+const EYEBROW = 'text-xs font-semibold uppercase tracking-[0.18em] text-white/60'
 
+const pad2 = (n) => String(n).padStart(2, '0')
 
+/**
+ * The episode info page: the trail carries show, season and episode; the
+ * eyebrow adds the genres (as the movie page does), then the episode
+ * as the title with the still beside it, the previous/next cards, and the
+ * cast tabs with the episode facts.
+ *
+ * Renders inside a `'use cache'` subtree shared by every viewer, so
+ * nothing here may read per-user state: the primary button's label, the
+ * resume block and the sticky bar read the viewer's position on the client,
+ * and the admin edit link decides its own visibility after hydration.
+ *
+ * A limited-access viewer gets the show's trailer stand-in as `media`,
+ * which carries none of the counts or neighbours; every one of those is
+ * guarded so the page still renders.
+ */
 const TVEpisodeDetailsComponent = ({ media }) => {
-   if (!media) {
+  if (!media) {
     return <div className="text-center py-4">Loading...</div>
   }
 
-  // If it's brand new or not updated from TMDB yet, it won't have metadata
-  let air_date, genres, overview, runtime, tagline, trailer_url, name, guest_stars
-  if (media.metadata) {
-    air_date = media.metadata.air_date
-    genres = media.metadata.genres
-    overview = media.metadata.overview
-    runtime = media.metadata.runtime
-    tagline = media.metadata.tagline
-    trailer_url = media.metadata.trailer_url
-    name = media.metadata.name
-    guest_stars = media.metadata.guest_stars
-  }
-  const { title, showTitle, originalTitle, backdrop, logo, hdr, episodeNumber, seasonNumber, cast, duration } = media
+  const metadata = media.metadata || {}
+  const { air_date, genres, networks, overview, tagline, trailer_url, name, guest_stars, episode_type } = metadata
+  const { title, showTitle, originalTitle, seasonNumber, episodeNumber, duration } = media
 
-  const thumbnail = media.thumbnail
-  const posterURL = media.posterURL
+  const episodeTitle = name || title || `Episode ${episodeNumber}`
+  const { headline, subtitle } = splitTitle(episodeTitle)
+  const durationMs = durationMsFrom({ duration, metadata })
+  const hrefs = tvHrefs({ originalTitle, showTitle, seasonNumber, episodeNumber })
+  const seasonName = seasonLabel(seasonNumber)
+  const code = `S${pad2(seasonNumber)}E${pad2(episodeNumber)}`
+  const finale = episodeTypeLabel(episode_type)
+  const chips = [...(finale ? [finale] : []), ...qualityChips(media)]
+  // What the progress-aware pieces (primary button, resume panel, sticky bar) need to look the position up
+  const progressProps = { videoURL: media.videoURL || null, mediaId: media.mediaId || null, durationMs }
+  const stickyTitle = `${code} · ${headline}`
+  // Genres first (what the movie page shows); a show without them falls back to its network
+  const genreNames = (genres || []).map((g) => g?.name).filter(Boolean)
+  const eyebrow = genreNames.length > 0 ? genreNames.slice(0, 3).join(' · ') : (networks || []).map((n) => n?.name).filter(Boolean)[0] || null
 
-  let blurhash = null
+  const count = Number.isInteger(media.seasonEpisodeCount) && media.seasonEpisodeCount > 0 ? media.seasonEpisodeCount : null
+  const neighbour = (n, extra) =>
+    n != null && hrefs.season ? { href: tvHrefs({ originalTitle, showTitle, seasonNumber, episodeNumber: n }).episode, episodeNumber: n, ...extra } : null
+  const prev = neighbour(media.previousEpisodeNumber, {
+    title: media.previousEpisodeTitle ?? null,
+    thumbnail: media.previousEpisodeThumbnail || null,
+    blurDataURL: blurDataURL(media.previousEpisodeThumbnailBlurhash),
+    durationMs: media.previousEpisodeDuration ?? null,
+  })
+  const next = media.hasNextEpisode
+    ? neighbour(media.nextEpisodeNumber, {
+        title: media.nextEpisodeTitle ?? null,
+        thumbnail: media.nextEpisodeThumbnail || null,
+        blurDataURL: blurDataURL(media.nextEpisodeThumbnailBlurhash),
+        durationMs: media.nextEpisodeDuration ?? null,
+      })
+    : null
 
-  const convertToLocaleTime = (minutes) => {
-    const hours = Math.floor(minutes / 60);
-    const remainingMinutes = Math.floor(minutes % 60);
-    const seconds = Math.floor((minutes * 60) % 60);
-    return `${hours}h ${remainingMinutes}m ${seconds}s`;
-  }
-
-  const calculatedRuntime = duration ? convertToLocaleTime(duration / 60000) : runtime ? convertToLocaleTime(runtime) : null;
-
-  if (backdrop) {
-    blurhash = media.backdropBlurhash
-  } else if (thumbnail) {
-    blurhash = media.thumbnailBlurhash
-  } else if (posterURL) {
-    blurhash = media.posterBlurhash
-  }
+  const facts = [
+    ...(hrefs.show && showTitle ? [{ label: 'Show', value: showTitle, links: [{ label: showTitle, href: hrefs.show, external: false }] }] : []),
+    ...(hrefs.season ? [{ label: 'Season', value: seasonName, links: [{ label: seasonName, href: hrefs.season, external: false }] }] : []),
+    ...(count ? [{ label: 'Episode', value: `${episodeNumber} of ${count}` }] : []),
+    ...episodeFacts(media),
+  ]
+  const tabs = [
+    { id: 'guests', label: 'Guest stars', cast: media.guestStars || guest_stars || [] },
+    { id: 'series', label: 'Series cast', cast: media.cast || [] },
+  ]
 
   return (
-    <div className="max-w-4xl mx-auto p-4">
-      <div className="flex flex-col gap-2">
-        <div>
-          <ViewTransition name={tvEpisodePosterName(showTitle, seasonNumber, episodeNumber)}>
-            <div className="relative">
-              <Suspense fallback={<div className="w-full h-64 bg-gray-700 animate-pulse rounded-lg shadow-md"></div>}>
-                {blurhash ?
-                  <RetryImage
-                    src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-                    alt={`${title} backdrop`}
-                    quality={100}
-                    width={1200}
-                    height={256}
-                    placeholder="blur"
-                    blurDataURL={`data:image/png;base64,${blurhash}`}
-                    className="w-full h-64 object-cover rounded-lg shadow-md"
-                    priority={true}
-                  />
-                  :
-                  <RetryImage
-                    src={backdrop ?? thumbnail ?? posterURL ?? `/sorry-image-not-available-banner.jpg`}
-                    alt={`${title} backdrop`}
-                    quality={100}
-                    width={1200}
-                    height={256}
-                    placeholder="blur"
-                    blurDataURL={`data:image/png;base64,${blurhash}`}
-                    className="w-full h-64 object-cover rounded-lg shadow-md"
-                    priority={true}
-                  />
-                }
-                {logo && (
-                  <div className="absolute top-4 left-4">
-                    <RetryImage
-                      src={logo}
-                      alt={`${showTitle} logo`}
-                      quality={100}
-                      width={128}
-                      height={40}
-                      className="w-32 h-auto"
-                      priority={true}
-                    />
-                  </div>
-                )}
-              </Suspense>
-            </div>
-          </ViewTransition>
-          <div className="mt-4">
-            <div className="flex flex-row gap-x-4 justify-center">
-              <Link href={`/list/tv/${encodeURIComponent(originalTitle || showTitle)}/${seasonNumber}`} className="self-center">
-                <button
-                  type="button"
-                  className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    strokeWidth={1.5}
-                    stroke="currentColor"
-                    className="w-6 h-6"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
-                    />
-                  </svg>
-                  Go Back
-                </button>
-              </Link>
-              <AdminEditButton
-                href={
-                  media?.showMediaId
-                    ? `/admin/media/tv/${media.showMediaId}?season=${seasonNumber}&episode=${episodeNumber}`
-                    : null
-                }
-              />
-            </div>
-            <div className="flex flex-row w-full gap-2">
-              <h1 className="text-3xl font-bold">{name ?? title}</h1>
-              <strong>S{seasonNumber}E{episodeNumber}</strong>
-              <Suspense fallback={null}>
-                {media?.normalizedVideoId ? (
-                  <ViewCount normalizedVideoId={media.normalizedVideoId} />
-                ) : null}
-              </Suspense>
-            </div>
-            <p className="text-gray-300 italic">{tagline}</p>
-            {air_date ? (
-              <p className="mt-2">
-                <strong>Air Date:</strong> {new Date(air_date).toLocaleDateString()}
-              </p>
-            ):null}
-            {genres ? (
-              <p>
-                <strong>Genres:</strong> {genres.map((genre) => genre.name).join(', ')}
-              </p>
-            ) : null}
-            {calculatedRuntime ? (
-              <p>
-                <strong>Runtime:</strong> {calculatedRuntime}
-              </p>
-            ) : null}
-            {overview ? (
-              <p className="mt-4">
-                <strong>Overview:</strong> {overview}
-              </p>
-            ) : null}
-          </div>
-          {/* <div className="mt-6">
-                        <h2 className="text-2xl font-semibold">Cast</h2>
-                        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 mt-4">
-                            {cast.map(member => (
-                                <div key={member.id} className="flex flex-col items-center">
-                                    <img src={member.profile_path} alt={member.name} className="w-24 h-24 object-cover rounded-full shadow-md" />
-                                    <p className="mt-2 text-center">{member.name}</p>
-                                    <p className="text-sm text-gray-500">{member.character}</p>
-                                </div>
-                            ))}
-                        </div>
-                    </div> */}
-          <div className='flex flex-row justify-evenly'>
-          <Link
-            href={`/list/tv/${encodeURIComponent(originalTitle || showTitle)}/${seasonNumber}/${episodeNumber}/play`}
-            className={classNames(
-              'relative inline-flex flex-row items-center gap-2',
-              'opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'
-            )}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 24 24"
-              fill="currentColor"
-              className="w-5 h-5"
-            >
-              <path
-                fillRule="evenodd"
-                d="M4.5 5.653c0-1.426 1.529-2.33 2.779-1.643l11.54 6.348c1.295.712 1.295 2.573 0 3.285L7.28 19.991c-1.25.687-2.779-.217-2.779-1.643V5.653z"
-                clipRule="evenodd"
-              />
-            </svg>
-            <span>Watch Now {hdr ? `in ${hdr}` : null}</span>
-          </Link>
-          {trailer_url ? (
-          <Link
-            href={trailer_url}
-            target={'_blank'}
-            className="h-12 mt-4 px-6 py-2 text-slate-200 hover:text-white bg-blue-700 rounded-full hover:bg-blue-800 transition flex items-center gap-2"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              viewBox="0 0 28.57 20"
-              className="size-6 inline"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28.57 20">
-                <path
-                  fill="red"
-                  d="M27.973 3.123A3.578 3.578 0 0 0 25.447.597C23.22 0 14.285 0 14.285 0S5.35 0 3.123.597A3.578 3.578 0 0 0 .597 3.123C0 5.35 0 10 0 10s0 4.65.597 6.877a3.578 3.578 0 0 0 2.526 2.526C5.35 20 14.285 20 14.285 20s8.935 0 11.162-.597a3.578 3.578 0 0 0 2.526-2.526C28.57 14.65 28.57 10 28.57 10s-.002-4.65-.597-6.877Z"
-                />
-                <path fill="#fff" d="M11.425 14.285 18.848 10l-7.423-4.285v8.57Z" />
-              </svg>
-            </svg>
-            Trailer
-          </Link>
-          ) : null}
-          {/* Add show to watchlist button for episodes */}
-          {showTitle && (
-            <WatchlistButton
-              mediaId={media.showMediaId}
-              tmdbId={media.showTmdbId}
-              mediaType="tv"
-              title={showTitle}
-              className="h-12 mt-4 px-4 py-2 rounded-md"
-            />
-          )}
-          </div>
-        </div>
-        {(cast && cast.length || guest_stars && guest_stars.length) ? (
-            <hr className="my-8 border-gray-300" />
-        ) : null}
-        <div className='flex flex-col gap-8'>
-          {guest_stars && guest_stars.length > 0 ? (
-            <Suspense fallback={<div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse"></div>}>
-              <CastSection cast={guest_stars} title="Guest Stars" />
-            </Suspense>
-          ): null}
-          {cast && cast.length > 0 ? (
-            <Suspense fallback={<div className="p-4 relative h-[31rem] bg-white bg-opacity-80 rounded-lg animate-pulse"></div>}>
-              <CastSection cast={cast} />
-            </Suspense>
-          ): null}
-        </div>
+    <div className="media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8">
+      <div className="flex min-w-0 items-center justify-between gap-4 pt-4">
+        <Trail
+          items={[
+            { label: 'TV', href: '/list/tv' },
+            { label: showTitle || 'Show', href: hrefs.show },
+            { label: seasonName, href: hrefs.season },
+            { label: `Episode ${episodeNumber}` },
+          ]}
+        />
+        <AdminEditButton
+          variant="subtle"
+          label="Edit episode"
+          href={media.showMediaId ? `/admin/media/tv/${media.showMediaId}?season=${seasonNumber}&episode=${episodeNumber}` : null}
+        />
       </div>
+
+      <header className="mt-6 grid gap-6 sm:mt-10 lg:grid-cols-[minmax(0,55fr)_minmax(0,45fr)] lg:gap-x-10">
+        <div className="min-w-0 lg:col-start-1 lg:row-start-1">
+          {/* The trail above already names the show, season and episode; the
+              eyebrow says what the trail does not, as the movie page's does. */}
+          {eyebrow ? <p className={EYEBROW}>{eyebrow}</p> : null}
+          <h1 className="mt-2 text-balance text-3xl font-bold leading-[1.05] tracking-tight text-white drop-shadow-md sm:text-5xl">{headline}</h1>
+          {subtitle ? <p className="mt-1.5 text-balance text-xl font-semibold leading-tight text-white/85 sm:text-3xl">{subtitle}</p> : null}
+          <MetaLine className="mt-3" items={[formatDate(air_date), formatRuntime(durationMs), certificationOf(metadata)]} chips={chips} />
+          {tagline ? <p className="mt-4 text-base italic text-white/70">{tagline}</p> : null}
+          {overview ? <p className="mt-3 max-w-[65ch] text-[15px] leading-relaxed text-white/85 sm:text-base">{overview}</p> : null}
+        </div>
+
+        <div className="order-first lg:order-none lg:col-start-2 lg:row-span-2 lg:row-start-1">
+          <ViewTransition name={tvEpisodePosterName(showTitle, seasonNumber, episodeNumber)}>
+            {/* The still opens this episode's stills; the library's own frame is pinned first */}
+            <ArtworkButton
+              title={showTitle ? `${showTitle} · ${episodeTitle}` : episodeTitle}
+              tmdbId={media.showTmdbId ?? null}
+              type="tv"
+              episode={{ season: seasonNumber, episode: episodeNumber }}
+              inUse={{ still: { path: metadata.still_path || null, url: media.thumbnail || null } }}
+              initialTab="stills"
+              fill
+            >
+              <EpisodeThumbnail
+                src={media.thumbnail || null}
+                blurDataURL={blurDataURL(media.thumbnailBlurhash)}
+                alt={`${episodeTitle} still`}
+                sizes="(max-width: 1024px) 100vw, 480px"
+                priority
+                className="shadow-2xl shadow-black/60"
+              />
+            </ArtworkButton>
+          </ViewTransition>
+          {media.normalizedVideoId ? (
+            <Suspense fallback={null}>
+              <WatchedByLine normalizedVideoId={media.normalizedVideoId} mediaId={media.mediaId || null} className="mt-2 justify-end" />
+            </Suspense>
+          ) : null}
+        </div>
+
+        <div id={ACTIONS_ID} className="self-start lg:col-start-1 lg:row-start-2">
+          <ActionRow
+            {...progressProps}
+            playHref={hrefs.play}
+            trailerUrl={trailer_url || null}
+            watchlist={showTitle ? { mediaId: media.showMediaId, tmdbId: media.showTmdbId, mediaType: 'tv', title: showTitle } : null}
+            noun="episode"
+            restartNoun=""
+          />
+          {media.videoURL ? <WatchProgressPanel {...progressProps} playHref={hrefs.play} className="mt-5 max-w-xl" /> : null}
+        </div>
+      </header>
+
+      <EpisodeNav className="mt-8" previous={prev} all={count && hrefs.season ? { href: hrefs.season, count } : null} next={next} />
+
+      <StickyTitleBar sentinelId={ACTIONS_ID} title={stickyTitle} subtitle={subtitle} {...progressProps} playHref={hrefs.play} />
+
+      <div className="mt-10 grid gap-8 rounded-2xl bg-[#070b1d]/65 px-4 py-8 ring-1 ring-white/5 sm:mt-14 sm:px-6 lg:grid-cols-2 lg:px-8">
+        <CastTabs tabs={tabs} defaultTab="guests" />
+        <DetailsPanel id="episode-details" title="Episode details" rows={facts} />
+      </div>
+
     </div>
   )
 }

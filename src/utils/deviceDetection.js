@@ -68,6 +68,12 @@ export function detectDeviceType(userAgent) {
     ua.includes('roku') ||
     ua.includes('appletv') ||
     ua.includes('chromecast') ||
+    // Cast receivers identify themselves with CrKey, not 'Chromecast': a
+    // classic dongle sends `... Safari/537.36 CrKey/1.54.250320`, and
+    // Chromecast with Google TV sends `DeviceType/AndroidTV` (no space), so
+    // neither reaches the checks around this one and both fell through to
+    // 'desktop'. Nest Hubs carry CrKey too; 'tv' is the right bucket for all.
+    ua.includes('crkey') ||
     ua.includes('fire tv') ||
     ua.includes('firetv') ||
     ua.includes('android tv') ||
@@ -363,6 +369,17 @@ export function getDefaultTestCases() {
     {
       userAgent: 'NextJSStreamTVApp/1.0.0 (android; tablet; samsung SM-X910)',
       expected: 'tablet'
+    },
+    // Cast receivers — our own CAF receiver runs in this browser
+    {
+      userAgent:
+        'Mozilla/5.0 (X11; Linux armv7l) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.79 Safari/537.36 CrKey/1.54.250320',
+      expected: 'tv'
+    },
+    {
+      userAgent:
+        'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 CrKey/1.56.500000 DeviceType/AndroidTV',
+      expected: 'tv'
     },
     // Legacy TV User-Agent
     {

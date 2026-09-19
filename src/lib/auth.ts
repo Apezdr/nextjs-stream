@@ -9,6 +9,7 @@ import { ObjectId } from 'mongodb'
 import { mongoClient } from './mongodb'
 import { getDefaultApprovalStatus } from '@src/utils/autoApproval'
 import { userQueries } from './userQueries'
+import { gatedAuthTrustedOrigins } from '@src/utils/gatedAuthOrigins'
 
 const adminEmails = (process.env.ADMIN_USER_EMAILS || '')
   .split(',')
@@ -39,15 +40,18 @@ export const auth = betterAuth({
 
   // Allow all subdomains of AUTH_COOKIE_DOMAIN plus the explicit base URL.
   // When AUTH_COOKIE_DOMAIN is not set, only BETTER_AUTH_URL is trusted (single-domain).
-  trustedOrigins: (
-    process.env.AUTH_COOKIE_DOMAIN
+  // Gated forward-auth origins are added so /auth/signin can hand the social flow a
+  // callbackURL that lands back on the external app instead of being rejected.
+  trustedOrigins: [
+    ...(process.env.AUTH_COOKIE_DOMAIN
       ? [
           process.env.BETTER_AUTH_URL,
           // Wildcard covers every subdomain (app.example.com, api.example.com, …)
           `https://*.${process.env.AUTH_COOKIE_DOMAIN.replace(/^\./, '')}`,
         ]
-      : [process.env.BETTER_AUTH_URL, process.env.NEXT_PUBLIC_BASE_URL]
-  ).filter(Boolean) as string[],
+      : [process.env.BETTER_AUTH_URL, process.env.NEXT_PUBLIC_BASE_URL]),
+    ...gatedAuthTrustedOrigins,
+  ].filter(Boolean) as string[],
 
   socialProviders: {
     google: {

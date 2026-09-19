@@ -3,8 +3,8 @@
 import { useCallback } from 'react'
 import useSWR from 'swr'
 import useSWRMutation from 'swr/mutation'
-import { HeartIcon } from '@heroicons/react/24/outline'
-import { HeartIcon as HeartIconSolid } from '@heroicons/react/24/solid'
+import { HeartIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { HeartIcon as HeartIconSolid, CheckIcon } from '@heroicons/react/24/solid'
 import { toast } from 'react-toastify'
 import { authClient } from '@src/lib/auth-client'
 import { LoadingDots } from '@src/app/loading'
@@ -63,6 +63,14 @@ const toggleFetcher = async (url, { arg: body }) => {
   }
   return res.json()
 }
+
+/**
+ * The outline pill used beside a details page's primary button: a quarter
+ * white border that holds on a dim backdrop, label hidden on phones so the
+ * secondaries collapse to icons.
+ */
+const OUTLINE_CLASSES =
+  'inline-flex h-12 items-center justify-center gap-2 rounded-md border border-white/25 px-4 text-sm font-medium text-white transition-colors hover:border-white/50 hover:bg-white/10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300'
 
 export default function WatchlistButton({
   mediaId,
@@ -161,6 +169,18 @@ export default function WatchlistButton({
   }
 
   // While loading session or status
+  if ((isPending || isChecking) && variant === 'outline') {
+    return (
+      <span
+        className={`${OUTLINE_CLASSES} animate-pulse cursor-progress ${className}`}
+        aria-busy="true"
+        aria-label="Checking your list"
+      >
+        <PlusIcon className="size-5" aria-hidden="true" />
+        <span className="hidden sm:inline">My list</span>
+      </span>
+    )
+  }
   if (isPending || isChecking) {
     return (
       <div className={`inline-flex items-center justify-center ${className}`}>
@@ -177,25 +197,31 @@ export default function WatchlistButton({
   if (!isPending && !session) return null
 
   // Pick icon/text
-  const Icon = inWatchlist ? HeartIconSolid : HeartIcon
-  const label = inWatchlist ? 'In Watchlist' : 'Add to Watchlist'
+  const isOutline = variant === 'outline'
+  const Icon = isOutline ? (inWatchlist ? CheckIcon : PlusIcon) : inWatchlist ? HeartIconSolid : HeartIcon
+  const label = isOutline ? (inWatchlist ? 'In my list' : 'My list') : inWatchlist ? 'In Watchlist' : 'Add to Watchlist'
   const togglingLabel = isMutating ? (inWatchlist ? 'Removing…' : 'Adding…') : label
 
   return (
     <motion.button
       onClick={handleToggle}
       disabled={isMutating}
-      className={`${className} inline-flex items-center justify-center transition-all duration-300 ${
+      className={`${className} inline-flex items-center justify-center transition-colors duration-300 ${
         variant === 'icon-only'
           ? 'p-2 rounded-full'
-          : `px-3 py-2 rounded-md border ${
-              inWatchlist
-                ? 'bg-red-600 text-white border-red-600 hover:bg-red-700'
-                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
-            }`
+          : isOutline
+            ? `${OUTLINE_CLASSES} ${inWatchlist ? 'border-white/60 bg-white/10' : ''}`
+            : `px-3 py-2 rounded-md border ${
+                inWatchlist
+                  ? 'bg-red-600 text-white border-red-600 hover:bg-red-700'
+                  : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'
+              }`
       }`}
       aria-label={togglingLabel}
       title={togglingLabel}
+      initial={{ opacity: 0.5 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.98 }}
     >
@@ -213,13 +239,15 @@ export default function WatchlistButton({
           className={`w-5 h-5 ${
             variant === 'icon-only'
               ? (inWatchlist ? 'text-red-500' : '')
-              : 'mr-2'
+              : isOutline
+                ? ''
+                : 'mr-2'
           }`}
         />
       </motion.div>
       {variant !== 'icon-only' ? (
         <div className="relative overflow-hidden">
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait" initial={false}>
             <motion.span
               key={isMutating ? 'toggling' : inWatchlist ? 'in-watchlist' : 'add-to-watchlist'}
               initial={{ opacity: 0, y: 10, scale: 0.95 }}
@@ -241,7 +269,7 @@ export default function WatchlistButton({
                   ease: [0.4, 0, 0.2, 1]
                 }
               }}
-              className="text-sm block"
+              className={isOutline ? 'text-sm hidden sm:block' : 'text-sm block'}
             >
               {togglingLabel}
             </motion.span>

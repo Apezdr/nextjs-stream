@@ -26,7 +26,7 @@
  */
 
 import { isBrowserPlayableUrl } from '@src/utils/mediaVisibility'
-import { isTranscoderHealthy } from './health'
+import { isTranscoderHealthy, getLastHealthProbe } from './health'
 import { getCachedJitServeSettings } from './serveSettings'
 import { resolveJitOverride } from './overrides'
 
@@ -69,32 +69,52 @@ export async function applyJitPreference(media) {
   // a second application must not clobber rawVideoURL with the manifest.
   if (media.playbackSource === 'jit') return media
 
+  // Every non-swap exit names itself. A title silently served raw is
+  // indistinguishable from one the operator pinned raw, and the play page
+  // and the media route can disagree seconds apart (health probe, cache
+  // instance) with nothing to compare. `jitSkipReason` is additive and
+  // absent on a swap. `playbackSource` is 'raw' on every skip exit — the TV
+  // app labels its Original row "raw file served" only on that literal, and
+  // an absent field used to read as "older server" there.
+  const skip = (reason, detail) => {
+    media.jitSkipReason = reason
+    if (detail) media.jitSkipDetail = detail
+    media.playbackSource = 'raw'
+    return media
+  }
+
   const mode = await getEffectiveJitServeMode()
   // Global kill switch always wins — not defeatable per-title.
-  if (mode === 'off') return media
+  if (mode === 'off') return skip('mode-off')
 
   // Per-media admin override (episode > season > show for TV): 'off' pins
   // direct play; 'on' serves JIT regardless of rescue's playability test
   // AND regardless of eligibility (the explicit accept-the-loss switch).
   const override = await resolveJitOverride(media)
-  if (override === 'off') return media
+  if (override === 'off') return skip('override-off')
 
   // Addressability ≠ recommendation: once the backend emits jitUrl for all
   // servable files, jitEligible=false means "playing this via JIT loses
   // something" (e.g. an audio language). Default modes never auto-accept
   // that loss — only an explicit per-media 'on' override does.
-  if (override !== 'on' && media.jitEligible !== true) return media
-  if (override !== 'on' && mode === 'rescue' && isBrowserPlayableUrl(media.videoURL)) return media
+  if (override !== 'on' && media.jitEligible !== true) return skip('ineligible')
+  if (override !== 'on' && mode === 'rescue' && isBrowserPlayableUrl(media.videoURL)) {
+    return skip('rescue-playable')
+  }
 
   let origin
   try {
     origin = new URL(media.jitUrl).origin
   } catch (e) {
-    return media // malformed manifest URL — never serve it
+    return skip('malformed-jit-url') // never serve it
   }
 
-  if (!(await isTranscoderHealthy(origin))) return media
+  if (!(await isTranscoderHealthy(origin))) {
+    return skip('transcoder-unhealthy', getLastHealthProbe(origin))
+  }
 
+  delete media.jitSkipReason
+  delete media.jitSkipDetail
   media.rawVideoURL = media.videoURL
   media.videoURL = media.jitUrl
   media.playbackSource = 'jit'

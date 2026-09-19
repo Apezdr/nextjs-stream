@@ -14,7 +14,9 @@ import { buildURL } from '@src/utils'
  */
 export const getApiEndpoint = ({ isAvailable, type, mediaId, seasonNumber, episodeNumber, metadata }) => {
   if (isAvailable !== false) {
-    const baseParams = `mediaId=${mediaId}&mediaType=${type}&card=true`
+    // includeWatchHistory: the popup shows where the viewer is in a movie or
+    // episode; the server attaches the object before the card branch.
+    const baseParams = `mediaId=${mediaId}&mediaType=${type}&card=true&includeWatchHistory=true`
     const extraParams = type === 'tv' ? `&season=${seasonNumber}&episode=${episodeNumber}` : ''
     return buildURL(`/api/authenticated/media?${baseParams}${extraParams}`)
   }

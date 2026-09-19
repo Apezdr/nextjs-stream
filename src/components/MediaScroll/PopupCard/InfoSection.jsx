@@ -6,6 +6,9 @@ import { motion } from 'framer-motion'
 import { InformationCircleIcon } from '@heroicons/react/20/solid'
 import { classNames, getFullImageUrl } from '@src/utils'
 import Loading from '@src/app/loading'
+import ProgressBar from '@components/WatchProgress/ProgressBar'
+import useLiveProgress from '@components/WatchProgress/useLiveProgress'
+import { canShowProgress, durationMsFrom } from '@components/WatchProgress/progress'
 
 const WatchlistButton = dynamic(() => import('@components/WatchlistButton'), {
   ssr: false,
@@ -56,8 +59,23 @@ const InfoSection = ({
   hasVideo,
   videoURL,
   handleNavigationWithLoading,
+  watchHistory = null,
+  duration = null,
+  durableMediaId = null,
 }) => {
   const isTrailer = !data?.clipVideoURL && data?.trailer_url
+
+  // Where the viewer is in this title. Movies and specific episodes only; a
+  // show-level card has no single position. Live: the newer of the fetched
+  // object and the local mirror.
+  const progressEligible = canShowProgress({ type, seasonNumber, episodeNumber })
+  const progress = useLiveProgress({
+    watchHistory,
+    mediaId: durableMediaId,
+    durationMs: durationMsFrom({ duration, metadata: data?.metadata ?? metadata }),
+    enabled: progressEligible,
+  })
+  const showProgress = progressEligible && progress.hasProgress
   const hdr = data?.hdr || false
   
   // Use the shared dateInfo from Card component
@@ -164,6 +182,23 @@ const InfoSection = ({
             {displayDate.label}:
           </span>
           <span className="text-sm text-gray-800 font-medium">{displayDate.value}</span>
+        </div>
+      )}
+
+      {showProgress && (
+        <div className="mb-3" data-testid="popup-watch-progress">
+          <div className="flex items-baseline justify-between gap-3 text-sm">
+            <span className={classNames('font-medium', progress.completed ? 'text-green-700' : 'text-blue-700')}>
+              {progress.completed ? 'Watched' : 'Continue Watching'}
+            </span>
+            <span className="font-mono tabular-nums text-gray-800">{progress.clock}</span>
+          </div>
+          <ProgressBar
+            progressPercent={progress.progressPercent}
+            completed={progress.completed}
+            className="mt-1 h-1.5 rounded-full"
+            trackClassName="bg-gray-200"
+          />
         </div>
       )}
       

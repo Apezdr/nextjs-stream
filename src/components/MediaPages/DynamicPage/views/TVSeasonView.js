@@ -7,7 +7,7 @@
 
 import { Suspense } from 'react'
 import TVEpisodesListComponent from '@src/components/MediaPages/TVEpisodesListComponent'
-import Loading from '@src/app/loading'
+import SeasonPageSkeleton from '@src/components/MediaPages/details/SeasonPageSkeleton'
 
 /**
  * TVSeasonView Component
@@ -21,13 +21,16 @@ export default function TVSeasonView({ media, parsedParams, userId }) {
   const { mediaTitle, mediaSeason } = parsedParams
 
   return (
-    <Suspense fallback={<Loading />}>
-      <TVEpisodesListComponent
-        showTitle={mediaTitle}
-        originalTitle={media?.originalTitle}
-        seasonNumber={mediaSeason}
-        userId={userId}
-      />
+    // The boundary sits outside the padding wrapper, as in the episode view: the skeleton brings its own
+    <Suspense fallback={<SeasonPageSkeleton />}>
+      <div className="pt-16 w-full">
+        <TVEpisodesListComponent
+          showTitle={mediaTitle}
+          originalTitle={media?.originalTitle}
+          seasonNumber={mediaSeason}
+          userId={userId}
+        />
+      </div>
     </Suspense>
   )
 }

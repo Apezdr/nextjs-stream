@@ -8,8 +8,7 @@ module.exports = [
             "**/node_modules/**",
             "**/.next/**",
             "**/out/**",
-            "**/dist/**",
-            "src/pages/chromecast/receiver.js"
+            "**/dist/**"
         ]
     },
     js.configs.recommended,

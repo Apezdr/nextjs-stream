@@ -1,19 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { buildImgproxyTarget } from '@src/lib/imgproxy'
-
-// All known cookie prefixes — includes legacy 'better-auth' default and
-// the current 'nextjs-stream' prefix so users migrating from either are covered.
-const COOKIE_PREFIXES = ['better-auth', 'nextjs-stream']
-
-const AUTH_COOKIE_NAMES = COOKIE_PREFIXES.flatMap((prefix) => [
-  `${prefix}.session_token`,
-  `${prefix}.session_data`,
-  `${prefix}.dont_remember`,
-  `__Secure-${prefix}.session_token`,
-  `__Secure-${prefix}.session_data`,
-  `__Secure-${prefix}.dont_remember`,
-])
+import { AUTH_COOKIE_NAMES, stripAuthCookies } from '@src/lib/authCookies'
 
 const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN?.replace(/^\./, '')
 
@@ -59,7 +47,40 @@ export function proxy(request: NextRequest) {
     return NextResponse.rewrite(target.url, { request: { headers } })
   }
 
-  const response = NextResponse.next()
+  // A client presenting `Authorization: Bearer <token>` has already told us
+  // which credential it means. better-auth's bearer plugin does NOT honor that
+  // directly: it re-signs the token and APPENDS it to the request's Cookie
+  // header, and better-call's parseCookies keeps only the FIRST occurrence of
+  // any name. So a session cookie already on the request silently outranks the
+  // bearer token — and a stale one (minted before a BETTER_AUTH_SECRET
+  // rotation) makes every bearer request resolve to a null session.
+  //
+  // The RN TV app hit exactly this: okhttp's CookieJar held a dead
+  // session_token, /device/token emits no Set-Cookie that would overwrite it,
+  // and the app looped forever on a valid token it was never allowed to use.
+  // A Set-Cookie fix can't be relied on here — a stale cookie at a different
+  // scope is a distinct cookie, and RFC 6265 orders the older one first, so it
+  // would keep winning. Dropping the auth cookies is scope-independent.
+  //
+  // Only auth cookies are removed, and only when a bearer token is present, so
+  // browser sessions (which send no Authorization header) are untouched.
+  const authorization = request.headers.get('authorization')
+  const cookieHeader = request.headers.get('cookie')
+  let response: NextResponse
+
+  if (
+    cookieHeader &&
+    authorization?.slice(0, 7).toLowerCase() === 'bearer ' &&
+    AUTH_COOKIE_NAMES.some((name) => cookieHeader.includes(name))
+  ) {
+    const headers = new Headers(request.headers)
+    const remaining = stripAuthCookies(cookieHeader)
+    if (remaining) headers.set('cookie', remaining)
+    else headers.delete('cookie')
+    response = NextResponse.next({ request: { headers } })
+  } else {
+    response = NextResponse.next()
+  }
 
   // Default the authenticated API surface to no-store. Most of these routes
   // return bare `new Response(JSON.stringify(...))` with no Cache-Control at

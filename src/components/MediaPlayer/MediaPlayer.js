@@ -1,26 +1,10 @@
-import '@vidstack/react/player/styles/default/theme.css'
-//import '@vidstack/react/player/styles/default/layouts/video.css'
-import './Layouts/video-layout.module.css'
-import './Layouts/menus.css'
-import './Layouts/sliders.css'
-
-import { MediaPlayer, MediaProvider, Track } from '@vidstack/react'
-import WithPlaybackTracker from '../built-in/WithPlaybackTracker'
-import { VideoLayout } from './Layouts/video-layout'
-import MediaPoster from './MediaPoster'
-import AutoCaptionTracks from './AutoCaptionTracks'
-import { AutoCaptionsProgressProvider } from './AutoCaptionsProgressContext'
-import CaptionPreferenceManager from './CaptionPreferenceManager'
+import MainVideoPlayer from './MainVideoPlayer'
 import { buildURL, getFullImageUrl } from '@src/utils'
-import { onProviderChange, onProviderSetup } from './clientSide'
-import { Inconsolata } from 'next/font/google'
+import { mintCastPlaybackToken } from '@src/lib/castPlaybackToken'
+import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
 import Media_Poster from '../MediaPoster'
-import VolumeRegulator from './VolumeRegulator'
 import { getServer } from '@src/utils/config'
 import { Suspense } from 'react'
-import WithPlaybackCoordinator from '@components/built-in/WithPlaybackCoordinator'
-
-const inconsolata = Inconsolata({ subsets: ['latin'] })
 
 async function validateVideoURL(url, updateValidationStatus = null) {
   try {
@@ -301,116 +285,90 @@ async function VideoPlayer({
     captions = updatedCaptions
   }
 
+  // A capability for the Cast receiver to report this title's position back
+  // once the browser is gone. Minted here, on the server, from the session this
+  // render already has — a mint endpoint would be one more thing to authorize.
+  //
+  // It is scoped to one user and one title and expires within the day, because
+  // it travels through the Cast channel to a television whose debug overlay and
+  // developer console can both read it. A signed-out or unapproved viewer gets
+  // null, so their cast plays and records nothing, matching what the web path
+  // already does. The `approved !== false` test mirrors isAuthenticatedAndApproved.
+  const castPlaybackToken =
+    session?.user?.id && session.user.approved !== false && videoURL
+      ? mintCastPlaybackToken({
+          userId: session.user.id,
+          normalizedVideoId: generateNormalizedVideoId(videoURL),
+          metadata: {
+            mediaType,
+            showId: mediaType === 'tv' ? media.showId ?? null : null,
+            seasonNumber: mediaType === 'tv' ? season_number ?? null : null,
+            episodeNumber: mediaType === 'tv' ? episode_number ?? null : null,
+          },
+        })
+      : null
+
   return (
     <Suspense fallback={<div>Loading...</div>}>
-      <MediaPlayer
-        title={mediaPlayerTitleLabel}
-        src={videoURL}
+      <MainVideoPlayer
+        videoURL={videoURL}
+        castToken={castPlaybackToken}
         poster={poster}
-        autoPlay={true}
-        controlsDelay={6000}
-        onProviderChange={onProviderChange}
-        onProviderSetup={onProviderSetup}
-        streamType="on-demand"
-        playsInline
-        load="eager"
-        aspectRatio="16/9"
-        fullscreenOrientation="landscape"
-        className="max-h-screen dark z-10"
+        titleLabel={mediaPlayerTitleLabel}
+        title={title}
+        captions={captions}
+        chaptersURL={chapters}
+        thumbnailsURL={thumbnailURL}
+        chapterThumbnailURL={chapterThumbnailURL}
+        hasCaptions={hasCaptions}
+        hasChapters={hasChapters}
+        goBack={goBack}
+        mediaMetadata={mediaMetadata}
+        logo={logo}
+        hdrVal={hdr}
+        // The serve-time delivery decision, for the diagnostics and support:
+        // which transport this page was handed, and why JIT was skipped if it was.
+        delivery={{
+          source: media?.playbackSource === 'jit' ? 'jit' : 'raw',
+          skipReason: media?.jitSkipReason ?? null,
+          skipDetail: media?.jitSkipDetail ?? null,
+        }}
+        dimsVal={media.dimensions}
+        nextUpCard={{
+          mediaTitle: mediaTitle,
+          season_number: season_number,
+          nextEpisodeNumber: nextEpisodeNumber,
+          nextEpisodeThumbnail: nextEpisodeThumbnail,
+          nextEpisodeThumbnailBlurhash: nextEpisodeThumbnailBlurhash,
+          nextEpisodeTitle: nextEpisodeTitle,
+          hasNextEpisode: hasNextEpisode,
+          mediaLength: mediaLength,
+        }}
         clipStartTime={clipStartTime}
         clipEndTime={clipEndTime}
-        googleCast={{
-          receiverApplicationId: process.env.CHROMECAST_RECEIVER_ID || undefined,
-          resumeSavedSession: true,
+        start={start}
+        savedPlaybackTime={savedPlaybackTime}
+        mediaId={media.mediaId || null}
+        playbackMetadata={{
+          mediaType: mediaType,
+          mediaId: media._id,
+          showId: mediaType === 'tv' ? media.showId : undefined,
+          seasonNumber: mediaType === 'tv' ? season_number : undefined,
+          episodeNumber: mediaType === 'tv' ? episode_number : undefined,
         }}
-      >
-        <AutoCaptionsProgressProvider>
-        <MediaProvider>
-          <VolumeRegulator />
-          {poster ? <MediaPoster poster={poster} title={title} /> : null}
-          {videoURL ? (
-            <Suspense>
-              <WithPlaybackTracker
-                videoURL={videoURL}
-                mediaId={media.mediaId || null}
-                start={start}
-                savedPlaybackTime={savedPlaybackTime}
-                mediaMetadata={{
-                  mediaType: mediaType,
-                  mediaId: media._id,
-                  showId: mediaType === 'tv' ? media.showId : undefined,
-                  seasonNumber: mediaType === 'tv' ? season_number : undefined,
-                  episodeNumber: mediaType === 'tv' ? episode_number : undefined
-                }}
-              />
-            </Suspense>
-          ) : null}
-          <Suspense fallback={null}><WithPlaybackCoordinator /></Suspense>
-          {chapters ? <Track kind="chapters" src={chapters} lang="en-US" default /> : null}
-          {/*
-            Auto-generated tracks mount FIRST so they appear at the top of the
-            captions menu. Default selection is no longer driven by JSX
-            `default` props — CaptionPreferenceManager applies the user's
-            stored preference (or the no-pref fallback) once tracks are added.
-          */}
-          {captions ? <AutoCaptionTracks captions={captions} /> : null}
-          {captions
-            ? Object.entries(captions)
-                .filter(([, c]) => !c?.autoGenerated)
-                .map(([language, captionObject], index) => {
-                  return (
-                    <Track
-                      key={language + index}
-                      src={captionObject.url}
-                      kind="subtitles"
-                      label={language}
-                      lang={captionObject.srcLang}
-                    />
-                  )
-                })
-            : null}
-          {captions ? (
-            <CaptionPreferenceManager
-              captions={captions}
-              mediaKey={media.mediaId || videoURL}
-            />
-          ) : null}
-        </MediaProvider>
-        <VideoLayout
-          thumbnails={thumbnailURL}
-          hasCaptions={hasCaptions}
-          hasChapters={hasChapters}
-          goBack={goBack}
-          mediaMetadata={mediaMetadata}
-          logo={logo}
-          videoURL={videoURL}
-          captions={captions}
-          nextUpCard={{
-            mediaTitle: mediaTitle,
-            season_number: season_number,
-            nextEpisodeNumber: nextEpisodeNumber,
-            nextEpisodeThumbnail: nextEpisodeThumbnail,
-            nextEpisodeThumbnailBlurhash: nextEpisodeThumbnailBlurhash,
-            nextEpisodeTitle: nextEpisodeTitle,
-            hasNextEpisode: hasNextEpisode,
-            mediaLength: mediaLength,
-          }}
-          chapterThumbnailURL={chapterThumbnailURL}
-          hdrVal={hdr}
-          dimsVal={media.dimensions}
-          isAdmin={isAdmin}
-          adminProps={isAdmin ? {
-            SubtitleEditor,
-            session,
-            mediaType,
-            mediaTitle,
-            originalTitle: lookupTitle,
-            season_number,
-            episode_number
-          } : null}
-        />
-        </AutoCaptionsProgressProvider>
-      </MediaPlayer>
+        mediaKey={media.mediaId || videoURL}
+        castReceiverId={process.env.CHROMECAST_RECEIVER_ID || null}
+        isAdmin={isAdmin}
+        adminProps={isAdmin ? {
+          SubtitleEditor,
+          session,
+          mediaType,
+          mediaTitle,
+          originalTitle: lookupTitle,
+          season_number,
+          episode_number
+        } : null}
+      />
     </Suspense>
   )
 }

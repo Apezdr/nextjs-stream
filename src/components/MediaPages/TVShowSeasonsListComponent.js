@@ -1,147 +1,212 @@
-// TVShowSeasonsList.js
-// Auth (and the unauthenticated UI fallback) is handled by the parent
-// page's <AuthGuard> wrapper. This component runs only for authenticated
-// users and lives inside a `'use cache'` subtree, so it must not call any
-// dynamic APIs (cookies, headers, getSession) directly.
-import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils';
-import Link from 'next/link';
-import SkeletonCard from '@components/SkeletonCard';
-import Detailed from '@components/Poster/Detailed';
-import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched';
-import { getResolutionLabel } from '@src/utils';
-import SeasonItem from './Item/SeasonItem';
-import AdminEditButton from '@components/MediaPages/AdminEditButton';
-import { tvPosterName } from '@src/utils/viewTransitionNames';
+// Auth (and the unauthenticated fallback) is the route's <AuthGuard>. This
+// component renders inside the route's 'use cache' subtree (TVShowContent),
+// whose cache key includes the viewer id it passes down — the per-viewer
+// pieces here (next-up, season status) are safe only because `userId`
+// arrives as a prop from that cached function's argument. Never read the
+// session or any other dynamic API here.
+import { ViewTransition } from 'react'
+import Link from 'next/link'
+import { getFlatRequestedMedia, getFlatShowEpisodesForProgress } from '@src/utils/flatDatabaseUtils'
+import { joinEpisodeWatchHistory, plainWatchHistory } from '@src/utils/watchHistory/joinEpisodes'
+import { durationMsFrom } from '@components/WatchProgress/progress'
+import { artworkInUse } from '@src/utils/media/artwork'
+import { tvPosterName, tvSeasonPosterName } from '@src/utils/viewTransitionNames'
+import {
+  showTitleOf,
+  showEyebrow,
+  showYears,
+  showStatusChip,
+  tvHrefs,
+  seasonLabel,
+  mergeSeasons,
+  seasonsSummary,
+  seasonTileStatus,
+  pickNextUp,
+  nextUpNoun,
+  showFacts,
+} from '@src/utils/media/tvFacts'
+import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched'
+import WatchlistButton from '@components/WatchlistButton'
+import AdminEditButton from '@components/MediaPages/AdminEditButton'
+import { Trail, MetaLine, SectionHeading, DetailsPanel, SECONDARY_CLASSES } from './details/Primitives'
+import HeroPoster from './details/HeroPoster'
+import ArtworkButton from './details/ArtworkButton'
+import PrimaryPlayButton from './details/PrimaryPlayButton'
+import SeasonTile from './details/SeasonTile'
+import CastRail from './details/CastRail'
+import ShowNextUpLine from './ShowNextUpLine'
 
-export default async function TVShowSeasonsList({ showTitle }) {
-  // Fetch the TV show and its seasons from flat database
-  const tvShow = await getFlatRequestedMedia({
-    type: 'tv',
-    title: decodeURIComponent(showTitle)
-  });
+const EYEBROW = 'text-xs font-semibold uppercase tracking-[0.18em] text-white/60'
 
-  if (!tvShow) {
-    // TV show not found
-    return (
-      <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-transparent">
-        <div>
-          <SkeletonCard />
-          <h2 className="text-center mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0 mt-4">
-            `{decodeURIComponent(showTitle)}`
-          </h2>
-          <h2 className="mx-auto max-w-2xl text-3xl font-bold tracking-tight text-white sm:text-4xl pb-8 xl:pb-0 px-4 xl:px-0 mt-4">
-            We don't have that one
-          </h2>
-          <div className="flex flex-row gap-x-4 mt-4 justify-center">
-            <Link href="/list/tv" className="self-center">
-              <button
-                type="button"
-                className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={1.5}
-                  stroke="currentColor"
-                  className="w-6 h-6"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
-                  />
-                </svg>
-                Go Back
-              </button>
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
+/** A show document as the loader returns it, rather than a trailer stand-in. */
+function isShowDoc(show) {
+  return Boolean(show && show._id && Array.isArray(show.seasons))
+}
 
-  // Process all seasons: fetch blurhash and compute flags
-  // Note: getFlatRequestedMedia already processes the blurhashes
-  const processedSeasons = await Promise.all(
-    tvShow.seasons.map(async (season) => {
-      // Check all episodes for HDR and 4k
-      const episodes = season.episodes || [];
+/** Genre names from TMDB metadata first, then the synced top-level list. */
+function genreNamesOf(doc) {
+  const source = Array.isArray(doc.metadata?.genres) && doc.metadata.genres.length ? doc.metadata.genres : doc.genres
+  return (Array.isArray(source) ? source : []).map((g) => (typeof g === 'string' ? g : g?.name)).filter(Boolean)
+}
 
-      const has4k = episodes.some(
-        (episode) => getResolutionLabel(episode?.dimensions).is4k
-      );
+function ShowNotFound({ title }) {
+  return (
+    <div className="media-details-page mx-auto w-full max-w-6xl px-4 py-24 text-center sm:px-6 lg:px-8">
+      <h1 className="text-2xl font-bold text-white">We don&apos;t have {title}</h1>
+      <p className="mt-2 text-sm text-white/60">That show is not in the library.</p>
+      <Link href="/list/tv" className={`${SECONDARY_CLASSES} mt-6`}>
+        Back to TV
+      </Link>
+    </div>
+  )
+}
 
-      const hasHDR = episodes.some((episode) => episode?.hdr);
+/**
+ * The show info page: a hero with the viewer's next-up episode, the seasons
+ * grid (TMDB's list merged with what the library holds), the series cast
+ * and the show facts.
+ *
+ * @param {Object} props
+ * @param {string} props.showTitle - already decoded by the route
+ * @param {Object|null} [props.show] - the show document when the route fetched it
+ * @param {string|null} [props.userId] - the viewer, for next-up and season status
+ */
+export default async function TVShowSeasonsList({ showTitle, show = null, userId = null }) {
+  const doc = isShowDoc(show) ? show : await getFlatRequestedMedia({ type: 'tv', title: showTitle })
+  if (!doc) return <ShowNotFound title={showTitle} />
 
-      const hasHDR10 = episodes.some((episode) => episode?.hdr === 'HDR10');
-
-      return { 
-        ...season, 
-        has4k, 
-        hasHDR, 
-        hasHDR10,
-        // Ensure field naming is consistent with what the component expects
-        posterURL: season.posterURL || season.season_poster,
-      };
-    })
-  );
-
-  // Compute overall flags for 4K and HDR
-  const overallHas4k = processedSeasons.some((season) => season.has4k);
-  const overallHasHDR = processedSeasons.some((season) => season.hasHDR);
-  const overallHasHDR10 = processedSeasons.some((season) => season.hasHDR10);
-
-  // Calculate total episodes
-  const totalEpisodes = processedSeasons.reduce((total, season) => {
-    return total + (season.episodes ? season.episodes.length : 0);
-  }, 0);
+  const m = doc.metadata || {}
+  const display = showTitleOf(doc)
+  const rawEpisodes = doc._id ? await getFlatShowEpisodesForProgress(doc._id) : []
+  const episodes = await joinEpisodeWatchHistory(rawEpisodes, userId)
+  const nextUp = pickNextUp(episodes)
+  const ep = nextUp?.episode || null
+  const tiles = mergeSeasons(doc, episodes)
+  const hrefs = tvHrefs({
+    originalTitle: doc.originalTitle,
+    showTitle: doc.title,
+    seasonNumber: ep?.seasonNumber,
+    episodeNumber: ep?.episodeNumber,
+  })
+  const eyebrow = showEyebrow(doc)
+  const statusChip = showStatusChip(m)
+  const genreNames = genreNamesOf(doc)
+  const overview = m.overview || doc.overview || null
+  const inProgressSeason = nextUp && (nextUp.kind === 'resume' || nextUp.kind === 'next') ? ep.seasonNumber : null
+  const cast = Array.isArray(m.cast) ? m.cast : []
+  const facts = showFacts(doc, { libraryEpisodeCount: episodes.length })
+  const epHistory = ep ? plainWatchHistory(ep.watchHistory) : null
+  const nextUpProps = ep
+    ? {
+        kind: nextUp.kind,
+        episode: {
+          title: ep.title ?? null,
+          metadata: { name: ep.metadata?.name ?? null },
+          seasonNumber: ep.seasonNumber,
+          episodeNumber: ep.episodeNumber,
+          videoURL: ep.videoURL ?? null,
+          mediaId: ep.mediaId ?? null,
+          durationMs: durationMsFrom(ep),
+          watchHistory: epHistory,
+        },
+      }
+    : null
+  const badge =
+    inProgressSeason != null ? (
+      <span className="rounded-full bg-blue-500/20 px-3 py-1 text-xs font-semibold text-blue-200">
+        {seasonLabel(inProgressSeason)} in progress
+      </span>
+    ) : null
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-transparent">
+    <div className="media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8">
       <SyncClientWithServerWatched />
-      <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-3 lg:grid-cols-5 2xl:grid-cols-6 xl:gap-x-2 mt-32">
-        {/* Summary Poster */}
-        <li className="col-span-1 sm:col-span-3 xl:col-span-2 lg:row-span-3">
-          <Detailed
-            tvShow={tvShow}
-            totalEpisodes={totalEpisodes}
-            overallHas4k={overallHas4k}
-            overallHasHDR={overallHasHDR}
-            overallHasHDR10={overallHasHDR10}
-            viewTransitionName={tvPosterName(tvShow.title)}
+      <div className="flex min-w-0 items-center justify-between gap-4 pt-4">
+        <Trail items={[{ label: 'TV', href: '/list/tv' }, { label: display }]} />
+        <AdminEditButton variant="subtle" label="Edit show" href={doc._id ? `/admin/media/tv/${doc._id}` : null} />
+      </div>
+
+      <header className="mt-6 grid grid-cols-[120px_minmax(0,1fr)] gap-x-5 gap-y-6 sm:mt-10 sm:grid-cols-[170px_minmax(0,1fr)] sm:gap-x-8 lg:grid-cols-[minmax(0,1fr)_230px] lg:gap-x-10">
+        <div className="col-start-2 row-start-1 min-w-0 lg:col-start-1">
+          {eyebrow ? <p className={EYEBROW}>{eyebrow}</p> : null}
+          <h1 className="mt-2 text-balance text-3xl font-bold leading-[1.05] tracking-tight text-white drop-shadow-md sm:text-5xl">{display}</h1>
+          <MetaLine
+            className="mt-3"
+            items={[showYears(m), genreNames.length ? genreNames.join(' / ') : null]}
+            chips={statusChip ? [{ label: statusChip, tone: 'status' }] : []}
           />
-          <div className="flex flex-row gap-x-4 mt-4 justify-center">
-            <Link href="/list/tv" className="self-center">
-              <button
-                type="button"
-                className="flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  strokeWidth={1.5}
-                  stroke="currentColor"
-                  className="w-6 h-6"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"
-                  />
-                </svg>
-                Go Back
-              </button>
-            </Link>
-            <AdminEditButton href={tvShow?._id ? `/admin/media/tv/${tvShow._id}` : null} />
+          {m.tagline ? <p className="mt-4 text-base italic text-white/70">{m.tagline}</p> : null}
+          {overview ? <p className="mt-3 max-w-[65ch] text-[15px] leading-relaxed text-white/85 sm:text-base">{overview}</p> : null}
+        </div>
+
+        <div className="col-start-1 row-start-1 sm:row-span-2 lg:col-start-2">
+          <ViewTransition name={tvPosterName(doc.title)}>
+            <ArtworkButton title={display} tmdbId={m.id ?? null} type="tv" inUse={artworkInUse(doc)}>
+              <HeroPoster
+                src={doc.posterURL}
+                alt={`${display} poster`}
+                blurhash={doc.posterBlurhash}
+                widthClassName="w-[120px] sm:w-[170px] lg:w-[230px]"
+                sizes="(max-width: 640px) 120px, (max-width: 1024px) 170px, 230px"
+              />
+            </ArtworkButton>
+          </ViewTransition>
+        </div>
+
+        <div id="show-hero-actions" className="col-span-2 row-start-2 self-start sm:col-span-1 sm:col-start-2 lg:col-start-1">
+          <div className="flex flex-wrap items-center gap-3">
+            {ep && ep.videoURL && hrefs.play ? (
+              <PrimaryPlayButton
+                videoURL={ep.videoURL}
+                mediaId={ep.mediaId || null}
+                durationMs={durationMsFrom(ep)}
+                playHref={hrefs.play}
+                noun={nextUpNoun(nextUp, 'show')}
+                watchHistory={epHistory}
+                className="w-full sm:w-auto"
+              />
+            ) : null}
+            <WatchlistButton mediaId={doc._id} tmdbId={m.id} mediaType="tv" title={display} variant="outline" />
           </div>
-        </li>
-        {/* Seasons List */}
-        {processedSeasons.map((season) => (
-          <SeasonItem key={season.seasonNumber} season={season} showTitle={showTitle} />
-        ))}
-      </ul>
+          {nextUpProps ? <ShowNextUpLine nextUp={nextUpProps} totalEpisodes={episodes.length} className="mt-3 text-sm text-white/70" /> : null}
+        </div>
+      </header>
+
+      <section aria-labelledby="seasons-heading" className="mt-10 sm:mt-14">
+        <SectionHeading id="seasons-heading" aside={badge}>
+          Seasons
+        </SectionHeading>
+        {tiles.length > 0 ? <p className="-mt-2 mb-4 text-sm text-white/55">{seasonsSummary(doc, tiles)}</p> : null}
+        {tiles.length === 0 ? (
+          <p className="text-sm text-white/55">No seasons in your library yet.</p>
+        ) : (
+          <ul className="grid grid-cols-2 gap-x-4 gap-y-8 sm:grid-cols-3 lg:grid-cols-4">
+            {tiles.map((tile) => (
+              <li key={tile.seasonNumber}>
+                <SeasonTile
+                  seasonNumber={tile.seasonNumber}
+                  title={tile.title}
+                  href={tile.href}
+                  posterURL={tile.posterURL}
+                  posterBlurhash={tile.posterBlurhash}
+                  available={tile.available}
+                  year={tile.year}
+                  episodeCount={tile.episodeCount}
+                  status={seasonTileStatus({ seasonNumber: tile.seasonNumber, episodes, nextUp })}
+                  viewTransitionName={tvSeasonPosterName(doc.title, tile.seasonNumber)}
+                />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {cast.length > 0 || facts.length > 0 ? (
+        <div className="mt-10 space-y-12 rounded-2xl bg-[#070b1d]/65 px-4 py-8 ring-1 ring-white/5 sm:mt-14 sm:px-6 lg:px-8">
+          {cast.length > 0 ? <CastRail cast={cast} title="Cast" /> : null}
+          <DetailsPanel id="show-details" title="Show details" rows={facts} />
+        </div>
+      ) : null}
     </div>
-  );
+  )
 }

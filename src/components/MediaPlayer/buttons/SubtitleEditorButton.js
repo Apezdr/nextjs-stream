@@ -1,40 +1,35 @@
 'use client'
 
 import { forwardRef } from 'react'
-import { Tooltip, useMediaState } from '@vidstack/react'
+import { Player } from '../videojs'
 import { classNames } from '@src/utils'
+import { ButtonTooltip, buttonClass } from '../buttons'
 
 export const SubtitleEditorButton = forwardRef(
-  ({ className, tooltipPlacement = 'top', onEditSubtitles, ...props }, forwardedRef) => {
-    // Check if subtitles are available
-    const captionTrack = useMediaState('textTrack')
-    const hasCaptions = !!captionTrack
+  ({ className, onEditSubtitles, ...props }, forwardedRef) => {
+    // Enabled only while a caption/subtitle track is showing.
+    const hasShowingTrack = Player.usePlayer((s) =>
+      Boolean(
+        s.textTrackList?.some(
+          (t) => (t.kind === 'subtitles' || t.kind === 'captions') && t.mode === 'showing'
+        )
+      )
+    )
 
     return (
-      <Tooltip.Root>
-        <Tooltip.Trigger asChild>
-          <button
-            ref={forwardedRef}
-            className={classNames(
-              'group/subtitle-editor ring-media-focus relative overflow-hidden rounded-md focus:ring-4',
-              className
-            )}
-            aria-label="Edit Subtitles"
-            disabled={!hasCaptions}
-            onClick={onEditSubtitles}
-            type="button"
-            {...props}
-          >
-            <SubtitleEditorButton.Icon />
-          </button>
-        </Tooltip.Trigger>
-        <Tooltip.Content 
-          className="animate-out fade-out slide-out-to-bottom-2 data-[opened]:animate-in data-[opened]:fade-in data-[opened]:slide-in-from-bottom-4 bg-black/90 text-white z-10 rounded-sm px-2 py-1 data-[opened]:data-[placement=top]:slide-in-from-bottom-2" 
-          placement={tooltipPlacement}
+      <ButtonTooltip label="Edit Subtitles">
+        <button
+          ref={forwardedRef}
+          className={classNames(buttonClass, 'disabled:opacity-40', className)}
+          aria-label="Edit Subtitles"
+          disabled={!hasShowingTrack}
+          onClick={onEditSubtitles}
+          type="button"
+          {...props}
         >
-          <span className="block text-sm">Edit Subtitles</span>
-        </Tooltip.Content>
-      </Tooltip.Root>
+          <SubtitleEditorButton.Icon />
+        </button>
+      </ButtonTooltip>
     )
   }
 )

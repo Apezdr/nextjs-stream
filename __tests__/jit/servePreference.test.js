@@ -6,8 +6,15 @@ import {
   isShowWebVisible,
 } from '@src/utils/mediaVisibility'
 import { applyJitPreference, getJitServeMode, getEffectiveJitServeMode } from '@src/utils/jit/preference'
-import { isTranscoderHealthy, _resetHealthCacheForTests } from '@src/utils/jit/health'
-import { _setJitServeSettingsForTests } from '@src/utils/jit/serveSettings'
+import {
+  isTranscoderHealthy,
+  invalidateTranscoderHealthCache,
+  _resetHealthCacheForTests,
+} from '@src/utils/jit/health'
+import {
+  invalidateCachedJitServeSettings,
+  _setJitServeSettingsForTests,
+} from '@src/utils/jit/serveSettings'
 import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
 
 const JIT = 'https://transcoder.example.com/stream/bW92aWVzL1gvWC5ta3Y/master.m3u8'
@@ -115,7 +122,7 @@ describe('applyJitPreference', () => {
     global.fetch = mockFetchOk()
     const m = await applyJitPreference(mp4Media())
     expect(m.videoURL).toBe('https://h/movies/X/x.mp4')
-    expect(m.playbackSource).toBeUndefined()
+    expect(m.playbackSource).toBe('raw') // every skip exit names the raw file (TV app labels its Original row on this literal)
   })
 
   test('prefer mode swaps playable primaries too', async () => {
@@ -138,7 +145,7 @@ describe('applyJitPreference', () => {
     global.fetch = jest.fn().mockResolvedValue({ ok: false })
     const m = await applyJitPreference(mkvMedia())
     expect(m.videoURL).toBe('https://h/movies/X/x.mkv')
-    expect(m.playbackSource).toBeUndefined()
+    expect(m.playbackSource).toBe('raw') // every skip exit names the raw file (TV app labels its Original row on this literal)
   })
 
   test('probe failure (network error) falls back to direct', async () => {
@@ -210,6 +217,16 @@ describe('admin runtime override (settings > env > default)', () => {
     expect(await getEffectiveJitServeMode()).toBe('rescue')
   })
 
+  test('invalidating the runtime snapshot exposes the current fallback immediately', async () => {
+    process.env.JIT_SERVE_MODE = 'prefer'
+    _setJitServeSettingsForTests({ mode: 'off', maxQueued: null })
+    expect(await getEffectiveJitServeMode()).toBe('off')
+
+    invalidateCachedJitServeSettings()
+
+    expect(await getEffectiveJitServeMode()).toBe('prefer')
+  })
+
   test('per-media override "off" pins direct play even in prefer mode', async () => {
     process.env.JIT_SERVE_MODE = 'prefer'
     global.fetch = mockFetchOk()
@@ -220,7 +237,7 @@ describe('admin runtime override (settings > env > default)', () => {
       jitServeOverride: 'off',
     })
     expect(m.videoURL).toBe('https://h/x.mkv')
-    expect(m.playbackSource).toBeUndefined()
+    expect(m.playbackSource).toBe('raw') // every skip exit names the raw file (TV app labels its Original row on this literal)
   })
 
   test('per-media override "on" serves JIT for a playable primary in rescue mode', async () => {
@@ -269,7 +286,7 @@ describe('admin runtime override (settings > env > default)', () => {
       jitEligible: false,
     })
     expect(m.videoURL).toBe('https://h/movies/Primate/p.mp4')
-    expect(m.playbackSource).toBeUndefined()
+    expect(m.playbackSource).toBe('raw') // every skip exit names the raw file (TV app labels its Original row on this literal)
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
@@ -333,6 +350,14 @@ describe('isTranscoderHealthy', () => {
     await isTranscoderHealthy('https://t1.example')
     await isTranscoderHealthy('https://t1.example')
     expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  test('runtime invalidation clears cached health decisions', async () => {
+    global.fetch = mockFetchOk()
+    await isTranscoderHealthy('https://t-invalidate.example')
+    invalidateTranscoderHealthCache()
+    await isTranscoderHealthy('https://t-invalidate.example')
+    expect(global.fetch).toHaveBeenCalledTimes(2)
   })
 
   test('queue ceiling sheds when configured and exceeded', async () => {
