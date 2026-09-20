@@ -18,7 +18,7 @@ import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresen
 import MediaPoster from '@components/MediaPoster'
 import { CaptionSVG } from '@components/SVGIcons'
 import { TotalRuntime } from '@components/watched'
-import Link from 'next/link'
+import IntentPrefetchLink from '@components/MediaPages/IntentPrefetchLink'
 import SkeletonCard from '@components/SkeletonCard'
 import Loading from '@src/app/loading'
 import { ShareIcon } from '@heroicons/react/20/solid'
@@ -46,7 +46,7 @@ const MovieCard = memo(({movie, index }) => {
         duration: 0.4,
       }}
     >
-      <Link href={`movie/${mediaLinkParam(movie)}`} className="group" scroll={true} prefetch={true}>
+      <IntentPrefetchLink href={`movie/${mediaLinkParam(movie)}`} className="group" scroll={true}>
         <div className="relative block w-auto mx-auto overflow-hidden rounded-lg focus-within:ring-2 focus-within:ring-indigo-500 focus-within:ring-offset-2 focus-within:ring-offset-gray-100 ">
           <Suspense fallback={<SkeletonCard key={index} heightClass={'h-[582px]'} imageOnly />}>
             <MediaPoster movie={movie} viewTransitionName={moviePosterName(movie.title)} />
@@ -96,7 +96,7 @@ const MovieCard = memo(({movie, index }) => {
             </p>
           </PageContentAnimatePresence>
         ) : null}
-      </Link>
+      </IntentPrefetchLink>
     </PageContentAnimatePresence>
   );
 });

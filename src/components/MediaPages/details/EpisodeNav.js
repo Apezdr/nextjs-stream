@@ -24,6 +24,10 @@ function Neighbour({ item, direction }) {
       // read as a page reload. The row sits under the hero, so the new
       // episode's title and still are already in view.
       scroll={false}
+      // Have the neighbour's content ready before the click, not just the page
+      // skeleton. It costs one server render per visible link, which is fine
+      // for two links and is why the season page's episode rows do NOT do this.
+      prefetch={true}
       aria-label={`${word} episode: Episode ${item.episodeNumber}, ${title}`}
       className={classNames(
         'group flex min-w-0 max-w-full items-center gap-3 rounded-lg p-2 transition-colors hover:bg-white/10',
