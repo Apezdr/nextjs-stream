@@ -11,6 +11,7 @@ import { redirect } from 'next/navigation'
 import { getSession } from '@src/lib/cachedAuth'
 import { AuthGuard } from '@components/MediaPages/DynamicPage'
 import { getCachedCollectionDetails } from './cachedFetchers'
+import { CollectionPageSkeleton } from '@components/MediaPages/Collection/Skeletons'
 
 // *** VERCEL BEST PRACTICE: Cache Components Compatibility ***
 // Using centralized cacheLife profiles from next.config.js (cacheComponents: true)
@@ -167,4 +168,17 @@ async function CollectionPage({ params, searchParams }) {
   );
 }
 
-export default withApprovedUser(CollectionPage);
+// The same approval check, session read and params read as before, unchanged.
+// They now run INSIDE a Suspense boundary instead of at the top of the page:
+// whatever a page awaits at its top is absent from the route's prerendered
+// shell, which left this route with an empty one. The page skeleton (the same
+// pieces the sections below fall back to) is the shell now.
+const ApprovedCollectionPage = withApprovedUser(CollectionPage);
+
+export default function CollectionRoute(props) {
+  return (
+    <Suspense fallback={<CollectionPageSkeleton />}>
+      <ApprovedCollectionPage {...props} />
+    </Suspense>
+  );
+}
