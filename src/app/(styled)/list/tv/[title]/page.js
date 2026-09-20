@@ -39,10 +39,10 @@ async function fetchShow(title) {
 }
 
 /**
- * Cached subtree — owns the data fetch and the rendered output. Layout +
- * AuthGuard wrap this in a Suspense boundary so the page chrome paints
- * immediately while the cached subtree resolves (or returns instantly when
- * warm). Cache is keyed by `{ title, isLimitedAccess, userId }`: the page
+ * Cached subtree — owns the data fetch and the rendered output. The page
+ * renders it behind SessionGate, inside a Suspense boundary whose fallback is
+ * the page skeleton, so the skeleton paints at once (it is the route's
+ * prerendered shell) while this resolves, or returns instantly when warm. Cache is keyed by `{ title, isLimitedAccess, userId }`: the page
  * shows the viewer's next-up episode and per-season progress, so every
  * viewer has their own entry, tagged with their watch history so a playback
  * write expires it. Nothing inside may read the session — the viewer is

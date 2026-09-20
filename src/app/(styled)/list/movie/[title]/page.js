@@ -39,10 +39,10 @@ async function fetchMovie(title) {
 }
 
 /**
- * Cached subtree — owns the data fetch and the rendered output. Layout +
- * AuthGuard wrap this in a Suspense boundary so the page chrome paints
- * immediately while the cached subtree resolves (or returns instantly when
- * warm). Cache is keyed by `{ title, isLimitedAccess }`, so non-limited
+ * Cached subtree — owns the data fetch and the rendered output. The page
+ * renders it behind SessionGate, inside a Suspense boundary whose fallback is
+ * the page skeleton, so the skeleton paints at once (it is the route's
+ * prerendered shell) while this resolves, or returns instantly when warm. Cache is keyed by `{ title, isLimitedAccess }`, so non-limited
  * users share a single cache entry per movie.
  */
 async function MovieDetailContent({ title, isLimitedAccess }) {

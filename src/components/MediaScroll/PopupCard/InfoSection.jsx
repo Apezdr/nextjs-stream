@@ -40,7 +40,7 @@ const WatchlistButton = dynamic(() => import('@components/WatchlistButton'), {
  * @param {Object} props.dateInfo - Date information object
  * @param {boolean} props.hasVideo - Whether video is available
  * @param {string} props.videoURL - Video URL if available
- * @param {Function} props.handleNavigationWithLoading - Navigation handler with loading state
+ * @param {Function} props.handleNavigationWithLoading - Shows the loading overlay and collapses the card; the link itself navigates
  */
 const InfoSection = ({
   data,
@@ -98,7 +98,7 @@ const InfoSection = ({
           <Link
             href={`/list/${type}/${showLinkKey}`}
             className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
-            onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${showLinkKey}`)}
+            onClick={handleNavigationWithLoading}
           >
             {title}
           </Link>
@@ -109,7 +109,7 @@ const InfoSection = ({
               <Link
                 href={`/list/${type}/${showLinkKey}/${seasonNumber}`}
                 className="text-blue-600 hover:text-blue-800 hover:underline font-medium"
-                onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${showLinkKey}/${seasonNumber}`)}
+                onClick={handleNavigationWithLoading}
               >
                 Season {seasonNumber}
               </Link>
@@ -237,7 +237,7 @@ const InfoSection = ({
                 className={classNames(
                   'relative inline-flex items-center gap-2 opacity-80 hover:opacity-100 bg-slate-500 hover:bg-slate-600 text-white font-bold rounded-md px-4 py-2 mt-4'
                 )}
-                onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${link}/play`)}
+                onClick={handleNavigationWithLoading}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -257,7 +257,7 @@ const InfoSection = ({
             <Link
               href={`/list/${type}/${link}`}
               className="h-12 mt-4 flex flex-row items-center self-center px-6 py-2 text-white bg-blue-600 rounded-full hover:bg-blue-700 transition"
-              onClick={(e) => handleNavigationWithLoading(e, `/list/${type}/${link}`)}
+              onClick={handleNavigationWithLoading}
               prefetch={true}
             >
               <InformationCircleIcon className="size-6 mr-0 sm:mr-2" />
