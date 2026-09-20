@@ -20,11 +20,25 @@ const nextConfig = {
   // This allows instant static shell loads while dynamic content streams in
   cacheComponents: true,
   experimental: {
-    // View transitions stay disabled for now — re-enabling depends on whether
-    // we want forward-only morph back (works without staleTimes) or accept
-    // the no-morph baseline. <ViewTransition> wrappers throughout the app are
-    // inert when this is false; flipping to true brings them back.
-    viewTransition: true,
+    // (No viewTransition key: from 16.3 <ViewTransition> works in the App
+    // Router without a flag, and the key was removed from the config schema.)
+    //
+    // cachedNavigations is forced OFF. From 16.3 it defaults to ON whenever
+    // cacheComponents is on: the client router keeps parts of pages it has
+    // navigated to and replays them on later navigations. That is the same
+    // territory as the staleTimes wedge described below, and it would also
+    // replay per-viewer watch progress. Holding it off keeps navigation exactly
+    // as it was on 16.2 so the version bump changes nothing about routing.
+    // Turn it on as its own change, after re-testing rapid back/forth in a
+    // production build.
+    cachedNavigations: false,
+    // From 16.3 `next build` writes a Turbopack cache to .next/cache and
+    // starts warm when it finds one. That pays off locally, where .next
+    // survives between builds. The Docker build starts from a clean layer
+    // (.next is in .dockerignore) and the builder stage is thrown away, so
+    // there the cache would be written and never read; the Dockerfile sets
+    // NEXT_BUILD_CACHE=off to skip it.
+    turbopackFileSystemCacheForBuild: process.env.NEXT_BUILD_CACHE !== 'off',
     // staleTimes is left OFF (default dynamic: 0). Setting it to a positive
     // value caused rapid back/forth navigation to wedge in production — the
     // client router cache + action queue interaction would silently drop
