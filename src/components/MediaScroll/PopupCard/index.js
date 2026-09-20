@@ -2,7 +2,6 @@
 
 import { useState, useRef, useCallback, useMemo, Suspense } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { useRouter } from 'next/navigation'
 import useSWR from 'swr'
 import { classNames, fetcher } from '@src/utils'
 import { usePopupPlayback } from './hooks/usePopupPlayback'
@@ -98,22 +97,22 @@ const PopupCard = (props) => {
   })
 
   // 4. Navigation Logic
-  const router = useRouter()
   const [isNavigating, setIsNavigating] = useState(false)
   const portalRef = useRef(null)
 
-  const handleNavigationWithLoading = useCallback((e, href) => {
-    e.preventDefault() // Stop default Link behavior
+  // The <Link> does the navigating. This used to preventDefault() and call
+  // router.push(href) instead, which threw away what the link had prefetched: a
+  // <Link prefetch={true}> click lands on the prefetched page, while router.push
+  // to the same address only had the route's skeleton ready (measured with a
+  // held navigation). Modifier-clicks and middle-clicks work again too.
+  const handleNavigationWithLoading = useCallback(() => {
     setIsNavigating(true) // Show blur overlay
-    
-    // Navigate programmatically
-    router.push(href)
-    
+
     // Collapse popup after navigation starts
     setTimeout(() => {
       handleCollapse()
     }, 300) // Short delay for smooth transition
-  }, [router, handleCollapse])
+  }, [handleCollapse])
 
   // 5. Event Handlers
   const handlePortalKeyDown = useCallback(

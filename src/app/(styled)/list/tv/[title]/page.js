@@ -92,9 +92,6 @@ export async function generateMetadata({ params }, parent) {
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
 
-// See: https://nextjs.org/docs/app/guides/adopting-partial-prefetching
-export const prefetch = 'partial'
-
 // Nothing is awaited up here: the params and the session are read by
 // SessionGate, inside the boundary, so the skeleton is this route's
 // prerendered shell and a link can have it ready before the click.

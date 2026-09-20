@@ -19,6 +19,14 @@ const nextConfig = {
   // Enable Cache Components for Partial Pre-rendering (PPR)
   // This allows instant static shell loads while dynamic content streams in
   cacheComponents: true,
+  // A link prefetches its route's shared shell (the page skeleton and whatever
+  // else does not depend on the URL) once per route, instead of each visible
+  // link fetching its own copy of the destination. <Link prefetch={true}> adds
+  // that link's own cached content, at one server render per visible link, so
+  // it is reserved for the banner, the hover card and the prev/next episode
+  // cards; grids use IntentPrefetchLink. What each link has ready is pinned by
+  // e2e/prefetch-preservation.spec.js (see instant-nav.rig.md).
+  partialPrefetching: true,
   experimental: {
     // (No viewTransition key: from 16.3 <ViewTransition> works in the App
     // Router without a flag, and the key was removed from the config schema.)

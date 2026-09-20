@@ -46,9 +46,6 @@ async function AuthedListContent() {
   )
 }
 
-// See: https://nextjs.org/docs/app/guides/adopting-partial-prefetching
-export const prefetch = 'partial'
-
 export default function MediaDirectory() {
   return (
     <Suspense fallback={<LandingPageSkeleton />}>

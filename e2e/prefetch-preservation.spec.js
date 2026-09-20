@@ -80,9 +80,42 @@ test.describe('forced-prefetch links keep the destination title ready', () => {
     })
   })
 
-  // The hover card opens from a rail item after a delay and its markup has not
-  // been exercised under Playwright yet; write this one with the rig running.
-  test.fixme('Hover card "View Details" -> details page', async () => {})
+  // A rail card expands into the hover card after resting under the pointer
+  // for a second; "View Details" inside it uses prefetch={true}. One such link
+  // exists at a time, and only for something already being looked at.
+  test('Hover card "View Details" -> details page', async ({ page }) => {
+    await page.goto('/list')
+    // Peeking cards at the rail's edges are dimmed and do not expand
+    const card = page.locator('.card[role="button"]:not(.opacity-50)').first()
+    await expect(card).toBeVisible()
+    await settle(page)
+    await card.scrollIntoViewIfNeeded()
+    // This link does not exist until the card opens, so its prefetch starts
+    // late and settle() alone can return before it has even been requested.
+    // Collect the prefetch responses for it and wait until one has arrived.
+    const prefetched = []
+    page.on('response', (res) => {
+      if (res.url().includes('_rsc=') && res.request().headers()['next-router-prefetch']) prefetched.push(new URL(res.url()).pathname)
+    })
+    await card.hover()
+    // The banner has a "View Details" too; the hover card's is the blue one
+    const link = page.locator('a.bg-blue-600:has-text("View Details")').first()
+    await expect(link).toBeVisible({ timeout: 10_000 })
+    const href = await link.getAttribute('href')
+    const hrefPath = new URL(href, 'http://x').pathname
+    await expect.poll(() => prefetched.includes(hrefPath), { timeout: 15_000 }).toBe(true)
+    // The response has started; its body streams. Playwright never reports this
+    // request as finished (measured: 'requestfinished' did not fire in 15 s), so
+    // give the body a fixed moment. A person takes longer than this to move from
+    // the card to the button.
+    await page.waitForTimeout(2500)
+    await settle(page)
+    await instant(page, async () => {
+      await link.click()
+      await page.waitForURL((url) => url.pathname === new URL(href, url.origin).pathname)
+      await expect(page.locator(DETAILS_HEADING)).toBeVisible()
+    })
+  })
 })
 
 test.describe('stepping between episodes', () => {
