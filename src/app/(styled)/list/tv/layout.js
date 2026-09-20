@@ -1,16 +1,15 @@
-import { redirect } from 'next/navigation'
-import { getSession } from '@src/lib/cachedAuth'
-
 /**
- * TV subtree layout — runs the approval check that used to live on the
- * `withApprovedUser` HOC around the now-replaced catch-all MediaPage.
- * Mirrors the movie subtree layout.
+ * TV subtree layout. Deliberately does nothing.
+ *
+ * It used to await the session and redirect unapproved accounts. A layout that
+ * awaits anything keeps every page beneath it out of the prerendered shell, so
+ * no link could have these pages ready before the click. The approval check now
+ * runs in each page, inside the page's own Suspense boundary: SessionGate for
+ * the browse and info pages, an inline redirect in the player page.
+ *
+ * SECURITY: a page added under this folder gets NO approval check from here.
+ * __tests__/app/approvalGates.test.js fails until it has its own.
  */
-export default async function TVSubtreeLayout({ children }) {
-  const session = await getSession()
-  if (session?.user && session.user.approved === false) {
-    redirect('/auth/error?error=APPROVAL_PENDING')
-  }
-
+export default function TVSubtreeLayout({ children }) {
   return children
 }

@@ -1,5 +1,6 @@
 'use client'
 
+import { Suspense } from 'react'
 import { NotificationProvider } from '@src/contexts/NotificationContext'
 import { SystemStatusProvider } from '@src/contexts/SystemStatusContext'
 import { NavigationProvider } from '@src/contexts/NavigationContext'
@@ -29,7 +30,13 @@ export default function ClientProviders({ children, castBootstrap = null }) {
               here rather than the watch page, because the session outlives any
               page and so must its reporter. */}
           <CastPositionMirror />
-          <CastSessionBar />
+          {/* Its own boundary: the bar reads the pathname, which suspends during
+              prerender on any route with URL params. Unwrapped, that one read
+              suspended this whole provider tree and left those routes with an
+              empty shell. */}
+          <Suspense>
+            <CastSessionBar />
+          </Suspense>
         </NavigationProvider>
       </SystemStatusProvider>
     </NotificationProvider>
