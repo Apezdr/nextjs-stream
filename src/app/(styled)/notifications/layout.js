@@ -1,9 +1,17 @@
 import { adminUserEmails } from '@src/utils/config'
-import { Fragment, lazy } from 'react'
+import { Fragment, Suspense } from 'react'
 import Nav from '@components/Navigation/Nav'
 import { getSession } from '@src/lib/cachedAuth'
 
-export default async function ListLayout({ children }) {
+/**
+ * The navigation bar: the one part of this layout that depends on who is
+ * signed in. It is awaited here, inside a Suspense boundary, and not in the
+ * layout body, which would keep the page beneath it out of the prerendered
+ * shell (the same rule as the list layout).
+ *
+ * It only decides what chrome to SHOW. The page runs its own approval check.
+ */
+async function SessionNav() {
   const session = await getSession()
   const email = session?.user?.email
   const profileImage = session?.user?.image
@@ -37,15 +45,24 @@ export default async function ListLayout({ children }) {
         },
       ]
     : []
+  if (!email || !isApproved) return null
+
+  return (
+    <div className="relative">
+      <div className="w-full h-auto flex flex-col items-center justify-center text-center z-[3]">
+        <Nav adminNavItems={adminNavItems} profileImage={profileImage} />
+      </div>
+    </div>
+  )
+}
+
+export default function NotificationsLayout({ children }) {
   return (
     <Fragment>
-      {email && isApproved ? (
-        <div className="relative">
-          <div className="w-full h-auto flex flex-col items-center justify-center text-center z-[3]">
-            <Nav adminNavItems={adminNavItems} profileImage={profileImage} />
-          </div>
-        </div>
-      ) : null}
+      {/* The bar is position:fixed, so it arriving after the page shifts nothing */}
+      <Suspense>
+        <SessionNav />
+      </Suspense>
       {children}
     </Fragment>
   )
