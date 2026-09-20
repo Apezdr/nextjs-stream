@@ -19,35 +19,37 @@ prefetch in `next dev`.
   flow: `npm run e2e:login` prints a `/device?user_code=…` address; approve it in
   a browser where you are signed in. The session token lands in `e2e/.auth/token`
   (gitignored) and `e2e/fixtures.js` sends it as a bearer token to the app's own
-  origin only. State that changes the UI: the account must be approved and must
+  origin only, and refuses every write (see the comment there), so the suite
+  cannot change the account it runs as. Delete the token and sign that session
+  out when you are done: it is a full 30-day session for a real account.
+  State that changes the UI: the account must be approved and must
   not be limited-access (limited-access accounts get trailers, not info pages).
 - DRIFT: the library is live data. Specs read titles from the page instead of
   naming them, but they need at least one TV show, one movie, and a banner item
   on `/list`. An empty or syncing library fails for that reason, not because a
   prefetch changed.
-- CONTRACTS (each has its own test in `e2e/prefetch-preservation.spec.js`):
-  - TV grid card (`TVListClient`) -> `/list/tv/[title]`: page heading ready, AFTER
-    hover. Cards prefetch the full page on intent (`IntentPrefetchLink`), not
-    on sight; decided 2026-09-19 to stop one server render per visible poster.
-  - Movie grid card (`MovieListClient`) -> `/list/movie/[title]`: same.
-  - Banner "View Details" (`BannerContent`) -> `/list/movie/[title]`: page heading ready.
-  - Next episode card (`EpisodeNav`, prefetch={true}) -> next episode: its title
-    parts and its link back to the previous episode ready. New with adoption.
-  - "View media catalog" (`ViewCatalogButton`, on `/`) -> `/list`: catalog
-    skeleton ready. New with adoption: flag-off, nothing of `/list` committed
-    while the navigation was held. The navigation bar is not part of it (it
-    needs the session, cached 30 s, under the 5 min the shared shell requires).
-  - Hover card "View Details" (`PopupCard/InfoSection`, prefetch={true}) ->
-    `/list/{type}/[title]`: page heading ready. Only true because the card's
-    links navigate natively; when its click handler used router.push, the same
-    navigation had only the skeleton ready.
-  - `MediaPages/Item/SeasonItem.js` also forces a prefetch but nothing renders
-    it any more, so it has no contract.
-  - History: baseline 2026-09-19, Partial Prefetching off, Next 16.3.5:
-    3 passed (TV card, movie card, banner), 2 fixme. After adopting
-    `/list`, movie, show, season and episode with `prefetch = 'partial'`:
-    7 passed, 1 fixme. With the global `partialPrefetching` flag ON, the per-route
-    exports removed by codemod, and the browse routes adopted: 8 passed, 0 fixme.
+- CONTRACTS (each has its own test in `e2e/prefetch-preservation.spec.js`; the rules
+  behind them are in `INSTANT_NAVIGATION.md`):
+  - Full prefetch on intent (`IntentPrefetchLink`; the test rests the pointer on
+    the link and waits for its full prefetch): TV grid card -> show page, movie
+    grid card -> movie page, season tile -> season page. Page heading ready; for
+    the season, an episode row too.
+  - Full prefetch on sight (`prefetch={true}`): banner "View Details" -> movie
+    page, hover card "View Details" -> details page, next-episode card -> the
+    next episode (its title parts and its link back to the previous episode).
+  - Default link, route shell only: "View media catalog" -> `/list` has the
+    catalog skeleton; Play -> the player frame (`role=status`, "Loading player").
+    The navigation bar is never part of a shell: it needs the session, cached
+    30 s, under the 5 min the shared shell requires.
+  - The HTML the server sends for `/` and `/list` has no `<main>` at opacity 0.
+  - `e2e/navigation-stability.spec.js`: sixteen unsettled back/forward steps then
+    a click that must still navigate; scroll retained when stepping episodes.
+  - History: 2026-09-19 baseline with Partial Prefetching off, Next 16.3.5:
+    3 passed (TV card, movie card, banner). After adoption and the global flag:
+    8 passed. 2026-09-20, with page shells for the player, watchlist,
+    notifications and collections, intent prefetch on in-page links, the CSS
+    page fade, and `cachedNavigations` on: 12 passed, and the two stability
+    specs 16/16 over eight repeats.
 - LOOP: local. build -> start -> login (once per token lifetime) -> `npm run e2e`
   -> stop the server -> edit -> repeat. Agent limits: the agent cannot approve
   the device code; a person has to open the printed address once.
