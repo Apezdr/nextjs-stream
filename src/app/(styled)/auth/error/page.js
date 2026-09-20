@@ -3,6 +3,7 @@
 import { useState, useEffect, useReducer } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
+import { hardNavigate } from '@src/utils/hardNavigate'
 import PendingApprovalPoller from '@src/components/Auth/PendingApprovalPoller'
 import { authClient } from '@src/lib/auth-client'
 
@@ -166,9 +167,8 @@ const AuthError = () => {
   const handleSignOut = async () => {
     await authClient.signOut({
       fetchOptions: {
-        onSuccess: () => {
-          router.push('/')
-        },
+        // A full load, not router.push: see hardNavigate for what survives otherwise
+        onSuccess: () => hardNavigate('/'),
       },
     })
   }

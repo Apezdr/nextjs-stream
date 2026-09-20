@@ -1,9 +1,8 @@
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cacheLife, cacheTag } from 'next/cache'
-import { getSession } from '@src/lib/cachedAuth'
 import {
-  AuthGuard,
+  SessionGate,
   MediaNotFound,
   TVEpisodeDetailsView,
 } from '@src/components/MediaPages/DynamicPage'
@@ -92,27 +91,29 @@ export async function generateMetadata({ params }, parent) {
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
 
-export default async function TVEpisodePage({ params }) {
-  const { title, season, episode } = await params
-  const session = await getSession()
-  const isLimitedAccess = !!session?.user?.limitedAccess
-
+// Nothing is awaited up here: the params and the session are read by
+// SessionGate, inside the boundary, so the skeleton is this route's
+// prerendered shell and a link can have it ready before the click.
+export default function TVEpisodePage({ params }) {
   return (
-    <AuthGuard
-      session={session}
-      callbackUrl={`/list/tv/${encodeURIComponent(title)}/${encodeURIComponent(season)}/${encodeURIComponent(episode)}`}
-      variant="skeleton"
-    >
-      {/* The page's own frame as the fallback, so moving between episodes fills
-          the layout in rather than collapsing to a spinner and reflowing. */}
-      <Suspense fallback={<EpisodePageSkeleton />}>
-        <TVEpisodeContent
-          title={title}
-          season={season}
-          episode={episode}
-          isLimitedAccess={isLimitedAccess}
-        />
-      </Suspense>
-    </AuthGuard>
+    // The page's own frame as the fallback, so moving between episodes fills
+    // the layout in rather than collapsing to a spinner and reflowing.
+    <Suspense fallback={<EpisodePageSkeleton />}>
+      <SessionGate
+        params={params}
+        callbackUrl={({ title, season, episode }) =>
+          `/list/tv/${encodeURIComponent(title)}/${encodeURIComponent(season)}/${encodeURIComponent(episode)}`
+        }
+      >
+        {({ session, params: { title, season, episode } }) => (
+          <TVEpisodeContent
+            title={title}
+            season={season}
+            episode={episode}
+            isLimitedAccess={!!session.user.limitedAccess}
+          />
+        )}
+      </SessionGate>
+    </Suspense>
   )
 }

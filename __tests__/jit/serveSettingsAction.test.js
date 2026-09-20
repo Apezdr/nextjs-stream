@@ -48,7 +48,6 @@ describe('updateJitServeSettings', () => {
     expect(revalidatePath.mock.calls).toEqual([
       ['/list/movie/[title]/play', 'page'],
       ['/list/tv/[title]/[season]/[episode]/play', 'page'],
-      ['/list/[...media]', 'page'],
     ])
 
     const writeOrder = mockSetJitServeSettings.mock.invocationCallOrder[0]

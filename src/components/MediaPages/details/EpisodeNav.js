@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import IntentPrefetchLink from '@components/MediaPages/IntentPrefetchLink'
 import { ArrowLeftIcon, ArrowRightIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 import { formatRuntime } from '@components/WatchProgress/progress'
@@ -24,6 +25,10 @@ function Neighbour({ item, direction }) {
       // read as a page reload. The row sits under the hero, so the new
       // episode's title and still are already in view.
       scroll={false}
+      // Have the neighbour's content ready before the click, not just the page
+      // skeleton. It costs one server render per visible link, which is fine
+      // for two links and is why the season page's episode rows do NOT do this.
+      prefetch={true}
       aria-label={`${word} episode: Episode ${item.episodeNumber}, ${title}`}
       className={classNames(
         'group flex min-w-0 max-w-full items-center gap-3 rounded-lg p-2 transition-colors hover:bg-white/10',
@@ -83,12 +88,12 @@ export default function EpisodeNav({ previous, all, next, className = '' }) {
     >
       {previous ? <Neighbour item={previous} direction="previous" /> : <span className="order-1" />}
       {all ? (
-        <Link
+        <IntentPrefetchLink
           href={all.href}
           className={classNames('order-3 col-span-2 justify-self-center rounded text-sm text-white/70 hover:text-white sm:order-2 sm:col-span-1', FOCUS_RING)}
         >
           All {all.count} episode{all.count === 1 ? '' : 's'}
-        </Link>
+        </IntentPrefetchLink>
       ) : (
         <span className="order-3 col-span-2 sm:order-2 sm:col-span-1" />
       )}

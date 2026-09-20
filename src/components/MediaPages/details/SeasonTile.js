@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import IntentPrefetchLink from '@components/MediaPages/IntentPrefetchLink'
 import { ViewTransition } from 'react'
 import { CheckIcon } from '@heroicons/react/20/solid'
 import RetryImage from '@components/RetryImage'
@@ -84,13 +84,13 @@ export default function SeasonTile({
   )
 
   return (
-    <Link
+    <IntentPrefetchLink
       href={href}
       aria-label={[label, line2, statusLabel].filter(Boolean).join(', ')}
       className="group block rounded-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300"
     >
       {viewTransitionName ? <ViewTransition name={viewTransitionName}>{portrait}</ViewTransition> : portrait}
       {caption}
-    </Link>
+    </IntentPrefetchLink>
   )
 }

@@ -1,25 +1,14 @@
 import { Suspense } from 'react'
-import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence'
 import AnimatedBackground from '@components/Landing/AnimatedBackground'
 import { AnimatedHeading } from '@components/Landing/AnimatedText'
 import ServerStatusCheck from '@components/Login/ServerStatusCheck'
 
-const variants = {
-  hidden: { opacity: 0, x: 0, y: -60 },
-  enter: { opacity: 1, x: 0, y: 0 },
-}
-
 export default function Home() {
   return (
-    <PageContentAnimatePresence
-      _key={'ReleaseCalendar-Container-AnimationCont'}
-      variants={variants}
-      transition={{
-        type: 'linear',
-        duration: 0.45,
-        delay: 0.3,
-      }}
-    >
+    // The drop-in is a CSS animation (see tailwind.config.js). As a
+    // framer-motion wrapper it was server-rendered at opacity 0 and the whole
+    // landing page stayed invisible until its JavaScript had hydrated.
+    <div className="motion-safe:animate-rise-in">
       <main className="sm:mx-auto sm:max-w-7xl sm:px-6 lg:px-8">
         <div className="flex min-h-screen flex-col items-center justify-between xl:p-24">
           <div className="mx-auto w-full sm:w-auto sm:max-w-7xl py-24 sm:px-6 sm:py-32 lg:px-8">
@@ -43,6 +32,6 @@ export default function Home() {
           </div>
         </div>
       </main>
-    </PageContentAnimatePresence>
+    </div>
   )
 }

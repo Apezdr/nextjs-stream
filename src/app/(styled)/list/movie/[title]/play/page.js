@@ -1,4 +1,6 @@
+import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
+import PlayerPageSkeleton from '@src/components/MediaPlayer/PlayerPageSkeleton'
 import { getSession } from '@src/lib/cachedAuth'
 import {
   AuthGuard,
@@ -43,10 +45,24 @@ export async function generateMetadata({ params }, parent) {
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
 
-export default async function MoviePlayerPage({ params, searchParams }) {
+// Everything that decides what this viewer may see runs here, exactly as it did
+// when this was the page component: the session, the approved-account gate, the
+// limited-access swap, the redirect, the serve-time delivery decision. The only
+// change is where it sits: inside the page's Suspense boundary (below), so the
+// route has a prerendered shell.
+async function MoviePlayer({ params, searchParams }) {
   const { title } = await params
   const _searchParams = (await searchParams) ?? {}
   const session = await getSession()
+
+  // Approved-account gate, before anything is fetched. This page would
+  // otherwise render the player for an unapproved account (hasFullAccess only
+  // trims the UI). The movie/ layout used to run this check for every page
+  // beneath it; each page now runs its own. See the layout's comment.
+  if (session?.user && session.user.approved === false) {
+    redirect('/auth/error?error=APPROVAL_PENDING')
+  }
+
   const { parsedParams, result: initialResult } = await fetchMovieForPlayer(title)
 
   let result = initialResult
@@ -87,5 +103,15 @@ export default async function MoviePlayerPage({ params, searchParams }) {
         />
       )}
     </AuthGuard>
+  )
+}
+
+// Nothing is awaited here. The black player frame is this route's prerendered
+// shell, so the Play button has something to show the moment it is clicked.
+export default function MoviePlayerPage(props) {
+  return (
+    <Suspense fallback={<PlayerPageSkeleton />}>
+      <MoviePlayer {...props} />
+    </Suspense>
   )
 }

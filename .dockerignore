@@ -1,6 +1,17 @@
-# Ignore environment variables
-.env
-.env.local
+# Ignore environment variables. A pattern, not a list: the exact names `.env`
+# and `.env.local` let backups such as `.env.bak.local` through, and
+# `COPY . .` put them, secrets and all, into the builder stage. The image gets
+# its environment at run time and the build reads no env file.
+.env*
+
+# End-to-end tests. `e2e/.auth/token` is a live signed-in session for the person
+# who ran the suite, and a failed run leaves trace archives in test-results
+# that contain the same session header. None of it belongs in a build context.
+e2e
+test-results
+playwright-report
+playwright.config.js
+playwright-session.json
 
 # Ignore node_modules
 node_modules

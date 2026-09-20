@@ -19,19 +19,33 @@ const nextConfig = {
   // Enable Cache Components for Partial Pre-rendering (PPR)
   // This allows instant static shell loads while dynamic content streams in
   cacheComponents: true,
+  // A link prefetches its route's shared shell (the page skeleton and whatever
+  // else does not depend on the URL) once per route, instead of each visible
+  // link fetching its own copy of the destination. <Link prefetch={true}> adds
+  // that link's own cached content, at one server render per visible link, so
+  // it is reserved for the banner, the hover card and the prev/next episode
+  // cards; grids use IntentPrefetchLink. What each link has ready is pinned by
+  // e2e/prefetch-preservation.spec.js (see instant-nav.rig.md).
+  partialPrefetching: true,
   experimental: {
     // (No viewTransition key: from 16.3 <ViewTransition> works in the App
     // Router without a flag, and the key was removed from the config schema.)
     //
-    // cachedNavigations is forced OFF. From 16.3 it defaults to ON whenever
-    // cacheComponents is on: the client router keeps parts of pages it has
-    // navigated to and replays them on later navigations. That is the same
-    // territory as the staleTimes wedge described below, and it would also
-    // replay per-viewer watch progress. Holding it off keeps navigation exactly
-    // as it was on 16.2 so the version bump changes nothing about routing.
-    // Turn it on as its own change, after re-testing rapid back/forth in a
-    // production build.
-    cachedNavigations: false,
+    // cachedNavigations is ON, which is 16.3's default whenever cacheComponents
+    // is on (so there is no key here): the client router keeps parts of pages it
+    // has navigated to and replays them on a later navigation to the same page.
+    // It was held off through the 16.3 upgrade because it is the same territory
+    // as the staleTimes wedge described below, and was turned on once
+    // e2e/navigation-stability.spec.js existed to judge it (sixteen unsettled
+    // back/forward steps, then a click that must still navigate).
+    //
+    // A replay lasts as long as the shortest-lived cache entry on the page. On
+    // the media pages that is SessionGate's 30 s private session cache, so a
+    // replayed page is never older than that; live watch progress is overlaid
+    // client-side on top of it (useLiveProgress).
+    //
+    // If navigation ever wedges again, set `cachedNavigations: false` here
+    // first: it is the one client-cache feature that can be switched off alone.
     // From 16.3 `next build` writes a Turbopack cache to .next/cache and
     // starts warm when it finds one. That pays off locally, where .next
     // survives between builds. The Docker build starts from a clean layer
@@ -39,6 +53,11 @@ const nextConfig = {
     // there the cache would be written and never read; the Dockerfile sets
     // NEXT_BUILD_CACHE=off to skip it.
     turbopackFileSystemCacheForBuild: process.env.NEXT_BUILD_CACHE !== 'off',
+    // Lets the Playwright instant() helper hold a navigation at its
+    // prefetched UI against a production build (prefetching never runs in
+    // `next dev`). Compiled into the artifact, so it has to be set for
+    // `next build`; real builds never set it. See instant-nav.rig.md.
+    exposeTestingApiInProductionBuild: process.env.EXPOSE_TESTING_API === '1',
     // staleTimes is left OFF (default dynamic: 0). Setting it to a positive
     // value caused rapid back/forth navigation to wedge in production — the
     // client router cache + action queue interaction would silently drop

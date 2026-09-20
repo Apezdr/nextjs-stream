@@ -17,7 +17,7 @@ import { useRouter, usePathname, useSearchParams } from 'next/navigation'
 import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence'
 import Detailed from '@components/Poster/Detailed'
 import { ShareIcon } from '@heroicons/react/20/solid'
-import Link from 'next/link'
+import IntentPrefetchLink from '@components/MediaPages/IntentPrefetchLink'
 import SkeletonCard from '@components/SkeletonCard'
 import Loading from '@src/app/loading'
 import { getTVListData } from '@src/utils/actions/mediaListActions'
@@ -40,11 +40,11 @@ const TVCard = memo(({ tv, index }) => {
         duration: 0.4,
       }}
     >
-      <Link href={`/list/tv/${mediaLinkParam(tv)}`} className="group" scroll={true} prefetch={true}>
+      <IntentPrefetchLink href={`/list/tv/${mediaLinkParam(tv)}`} className="group" scroll={true}>
         <Suspense fallback={<SkeletonCard key={index} heightClass={'h-[582px]'} imageOnly />}>
           <Detailed tvShow={tv} check4kandHDR={true} viewTransitionName={tvPosterName(tv.title)} />
         </Suspense>
-      </Link>
+      </IntentPrefetchLink>
     </PageContentAnimatePresence>
   );
 });

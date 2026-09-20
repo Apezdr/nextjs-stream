@@ -32,7 +32,7 @@ export default function EpisodeThumbnail({
   // CSS in this project and the frame would collapse to zero height.
   return (
     <div className={classNames('relative aspect-[16/9] overflow-hidden rounded-lg bg-white/5 ring-1 ring-white/10', className)}>
-      {src ? <RetryImage src={src} alt={alt} fill sizes={sizes} quality={85} priority={priority} className="object-cover" {...placeholder} /> : null}
+      {src ? <RetryImage src={src} alt={alt} fill sizes={sizes} quality={90} priority={priority} className="object-cover" {...placeholder} /> : null}
       {children}
     </div>
   )

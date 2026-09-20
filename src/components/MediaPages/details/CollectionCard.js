@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import IntentPrefetchLink from '@components/MediaPages/IntentPrefetchLink'
 import Image from 'next/image'
 import { ArrowRightIcon, CheckCircleIcon } from '@heroicons/react/20/solid'
 import RetryImage from '@components/RetryImage'
@@ -64,7 +65,7 @@ export default async function CollectionCard({ collection, currentOriginalTitle 
               const year = yearOf(film.metadata?.release_date)
               return (
                 <li key={film._id || film.originalTitle} className="shrink-0">
-                  <Link
+                  <IntentPrefetchLink
                     href={film.url || `/list/movie/${encodeURIComponent(film.originalTitle)}`}
                     aria-current={current ? 'page' : undefined}
                     aria-label={`${film.title}${year ? ` (${year})` : ''}${current ? ', the film you are viewing' : ''}`}
@@ -100,7 +101,7 @@ export default async function CollectionCard({ collection, currentOriginalTitle 
                     <p className={classNames('mt-1.5 truncate text-center text-[11px] leading-tight tabular-nums', current ? 'font-semibold text-white' : 'text-white/60')}>
                       {year || '—'}
                     </p>
-                  </Link>
+                  </IntentPrefetchLink>
                 </li>
               )
             })}

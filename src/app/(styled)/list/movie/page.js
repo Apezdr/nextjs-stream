@@ -1,14 +1,21 @@
-import { getSession } from '@src/lib/cachedAuth'
-import AuthGuard from '@src/components/MediaPages/DynamicPage/guards/AuthGuard'
+import { Suspense } from 'react'
+import SessionGate from '@src/components/MediaPages/DynamicPage/guards/SessionGate'
 import MovieListView from '@src/components/MediaPages/DynamicPage/views/MovieListView'
+import MediaListPageSkeleton from '@components/MediaPages/MediaListPageSkeleton'
 
-export default async function MovieListPage({ searchParams }) {
+async function FilteredList({ searchParams, session }) {
   const _searchParams = (await searchParams) ?? {}
-  const session = await getSession()
+  return <MovieListView searchParams={_searchParams} session={session} />
+}
 
+// The session and the filters are read inside the boundary (see SessionGate),
+// so the route has a prerendered shell a link can have ready before the click.
+export default function MovieListPage({ searchParams }) {
   return (
-    <AuthGuard session={session} callbackUrl="/list/movie" variant="skeleton">
-      <MovieListView searchParams={_searchParams} session={session} />
-    </AuthGuard>
+    <Suspense fallback={<MediaListPageSkeleton />}>
+      <SessionGate callbackUrl={() => '/list/movie'}>
+        {({ session }) => <FilteredList searchParams={searchParams} session={session} />}
+      </SessionGate>
+    </Suspense>
   )
 }

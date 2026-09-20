@@ -1,13 +1,12 @@
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { cacheLife, cacheTag } from 'next/cache'
-import { getSession } from '@src/lib/cachedAuth'
 import {
-  AuthGuard,
+  SessionGate,
   MediaNotFound,
   TVShowView,
 } from '@src/components/MediaPages/DynamicPage'
-import Loading from '@src/app/loading'
+import ShowPageSkeleton from '@src/components/MediaPages/details/ShowPageSkeleton'
 import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
 import { fetchTrailerMedia } from '@src/utils/media/mediaFetcher'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
@@ -40,10 +39,10 @@ async function fetchShow(title) {
 }
 
 /**
- * Cached subtree — owns the data fetch and the rendered output. Layout +
- * AuthGuard wrap this in a Suspense boundary so the page chrome paints
- * immediately while the cached subtree resolves (or returns instantly when
- * warm). Cache is keyed by `{ title, isLimitedAccess, userId }`: the page
+ * Cached subtree — owns the data fetch and the rendered output. The page
+ * renders it behind SessionGate, inside a Suspense boundary whose fallback is
+ * the page skeleton, so the skeleton paints at once (it is the route's
+ * prerendered shell) while this resolves, or returns instantly when warm. Cache is keyed by `{ title, isLimitedAccess, userId }`: the page
  * shows the viewer's next-up episode and per-season progress, so every
  * viewer has their own entry, tagged with their watch history so a playback
  * write expires it. Nothing inside may read the session — the viewer is
@@ -93,21 +92,22 @@ export async function generateMetadata({ params }, parent) {
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
 
-export default async function TVShowPage({ params }) {
-  const { title } = await params
-  const session = await getSession()
-  const isLimitedAccess = !!session?.user?.limitedAccess
-  const userId = session?.user?.id
-
+// Nothing is awaited up here: the params and the session are read by
+// SessionGate, inside the boundary, so the skeleton is this route's
+// prerendered shell and a link can have it ready before the click.
+export default function TVShowPage({ params }) {
   return (
-    <AuthGuard
-      session={session}
-      callbackUrl={`/list/tv/${encodeURIComponent(title)}`}
-      variant="skeleton"
-    >
-      <Suspense fallback={<Loading />}>
-        <TVShowContent title={title} isLimitedAccess={isLimitedAccess} userId={userId} />
-      </Suspense>
-    </AuthGuard>
+    // The page's own frame as the fallback (and so as this route's shell)
+    <Suspense fallback={<ShowPageSkeleton />}>
+      <SessionGate params={params} callbackUrl={({ title }) => `/list/tv/${encodeURIComponent(title)}`}>
+        {({ session, params: { title } }) => (
+          <TVShowContent
+            title={title}
+            isLimitedAccess={!!session.user.limitedAccess}
+            userId={session.user.id}
+          />
+        )}
+      </SessionGate>
+    </Suspense>
   )
 }

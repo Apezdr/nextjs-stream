@@ -22,7 +22,6 @@ export default function ViewCatalogButton() {
   return (
     <Link
       href="/list"
-      prefetch={true}
       onClick={handleClick}
       className={`flex flex-row gap-x-2 rounded bg-indigo-600 px-2 py-1 text-base font-semibold text-white shadow-sm hover:bg-indigo-500 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600 transition-opacity ${
         isPending ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''

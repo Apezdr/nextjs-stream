@@ -11,6 +11,10 @@
     "analyze": "ANALYZE=true next build",
     "test": "jest",
     "test:watch": "jest --watch",
+    "e2e:build": "node e2e/build.mjs",
+    "e2e:start": "next start -p 3232",
+    "e2e:login": "node e2e/device-login.mjs",
+    "e2e": "playwright test",
     "knip": "knip",
     "knip:fix": "knip --fix",
     "knip:report": "knip --reporter json > knip-report.json"
@@ -75,6 +79,8 @@
     "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@next/playwright": "16.3.5",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/aspect-ratio": "^0.4.2",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

@@ -55,7 +55,18 @@ Admins can manage user approvals through the admin panel:
 ### Key Components
 
 - **`src/components/HOC/ApprovedUser.js`**: Higher-order component that redirects unapproved users
+- **`src/components/MediaPages/DynamicPage/guards/SessionGate.js`**: The same redirect, plus the sign-in check, for the media browse and info pages
 - **`src/components/Admin/Users/UserListRecords.js`**: Admin interface for managing user approvals
+
+### Where the approval check runs
+
+In each page, never in a layout. The `list/tv/` and `list/movie/` layouts used to run it for every page beneath them; they no longer do, because a layout that awaits the session keeps those pages out of the prerendered shell (see `INSTANT_NAVIGATION.md`). Each page now uses one of:
+
+- `SessionGate` (browse and info pages), rendered inside the page's `<Suspense>`
+- an inline `redirect('/auth/error?error=APPROVAL_PENDING')` before anything is fetched (the two player pages, which would otherwise render the player for an unapproved account)
+- `withApprovedUser(...)` (watchlist, notifications, collections), also inside the page's `<Suspense>`
+
+A new page under `list/tv/` or `list/movie/` gets no check from a layout. `__tests__/app/approvalGates.test.js` walks both folders and fails until the page has one.
 - **`src/lib/auth.ts`**: Authentication configuration and session management
 
 ## Security Considerations
