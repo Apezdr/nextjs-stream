@@ -1,4 +1,6 @@
+import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
+import PlayerPageSkeleton from '@src/components/MediaPlayer/PlayerPageSkeleton'
 import { getSession } from '@src/lib/cachedAuth'
 import {
   AuthGuard,
@@ -42,7 +44,12 @@ export async function generateMetadata({ params }, parent) {
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
 
-export default async function TVEpisodePlayerPage({ params, searchParams }) {
+// Everything that decides what this viewer may see runs here, exactly as it did
+// when this was the page component: the session, the approved-account gate, the
+// limited-access swap, the redirect, the serve-time delivery decision. The only
+// change is where it sits: inside the page's Suspense boundary (below), so the
+// route has a prerendered shell.
+async function TVEpisodePlayer({ params, searchParams }) {
   const { title, season, episode } = await params
   const _searchParams = (await searchParams) ?? {}
   const session = await getSession()
@@ -104,5 +111,15 @@ export default async function TVEpisodePlayerPage({ params, searchParams }) {
         />
       )}
     </AuthGuard>
+  )
+}
+
+// Nothing is awaited here. The black player frame is this route's prerendered
+// shell, so the Play button has something to show the moment it is clicked.
+export default function TVEpisodePlayerPage(props) {
+  return (
+    <Suspense fallback={<PlayerPageSkeleton />}>
+      <TVEpisodePlayer {...props} />
+    </Suspense>
   )
 }
