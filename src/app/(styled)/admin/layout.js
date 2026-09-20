@@ -30,6 +30,7 @@ import { ArrowLeftIcon, ChevronDownIcon, InformationCircleIcon, MagnifyingGlassI
 import Link from 'next/link'
 import { siteTitle } from '@src/utils/config'
 import { useRouter } from 'next/navigation'
+import { hardNavigate } from '@src/utils/hardNavigate'
 import Logo from '../../logo'
 import { MinimalServerStats } from '@components/Admin/Stats/ServerStats'
 import { MinimalizedServerProcesses } from '@components/Admin/Stats/ServerProcesses'
@@ -420,9 +421,8 @@ export default function AdminLayout({ children }) {
                             onClick={async () => {
                               await authClient.signOut({
                                 fetchOptions: {
-                                  onSuccess: () => {
-                                    router.push('/')
-                                  },
+                                  // A full load, not router.push: see hardNavigate for what survives otherwise
+                                  onSuccess: () => hardNavigate('/'),
                                 },
                               })
                             }}

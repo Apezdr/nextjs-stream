@@ -1,21 +1,18 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
 import { authClient } from '@src/lib/auth-client'
+import { hardNavigate } from '@src/utils/hardNavigate'
 import { classNames } from '../utils'
 
 const SignOutButton = ({
   className = 'bg-indigo-600 hover:bg-indigo-500 focus-visible:outline-indigo-600',
   fontcolorClass = 'text-white',
 }) => {
-  const router = useRouter()
-
   const handleSignOut = async () => {
     await authClient.signOut({
       fetchOptions: {
-        onSuccess: () => {
-          router.push('/')
-        },
+        // A full load, not router.push: see hardNavigate for what survives otherwise
+        onSuccess: () => hardNavigate('/'),
       },
     })
   }
