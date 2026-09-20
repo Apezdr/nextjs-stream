@@ -31,15 +31,21 @@ const nextConfig = {
     // (No viewTransition key: from 16.3 <ViewTransition> works in the App
     // Router without a flag, and the key was removed from the config schema.)
     //
-    // cachedNavigations is forced OFF. From 16.3 it defaults to ON whenever
-    // cacheComponents is on: the client router keeps parts of pages it has
-    // navigated to and replays them on later navigations. That is the same
-    // territory as the staleTimes wedge described below, and it would also
-    // replay per-viewer watch progress. Holding it off keeps navigation exactly
-    // as it was on 16.2 so the version bump changes nothing about routing.
-    // Turn it on as its own change, after re-testing rapid back/forth in a
-    // production build.
-    cachedNavigations: false,
+    // cachedNavigations is ON, which is 16.3's default whenever cacheComponents
+    // is on (so there is no key here): the client router keeps parts of pages it
+    // has navigated to and replays them on a later navigation to the same page.
+    // It was held off through the 16.3 upgrade because it is the same territory
+    // as the staleTimes wedge described below, and was turned on once
+    // e2e/navigation-stability.spec.js existed to judge it (sixteen unsettled
+    // back/forward steps, then a click that must still navigate).
+    //
+    // A replay lasts as long as the shortest-lived cache entry on the page. On
+    // the media pages that is SessionGate's 30 s private session cache, so a
+    // replayed page is never older than that; live watch progress is overlaid
+    // client-side on top of it (useLiveProgress).
+    //
+    // If navigation ever wedges again, set `cachedNavigations: false` here
+    // first: it is the one client-cache feature that can be switched off alone.
     // From 16.3 `next build` writes a Turbopack cache to .next/cache and
     // starts warm when it finds one. That pays off locally, where .next
     // survives between builds. The Docker build starts from a clean layer
