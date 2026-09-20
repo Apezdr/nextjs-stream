@@ -26,20 +26,25 @@ prefetch in `next dev`.
   on `/list`. An empty or syncing library fails for that reason, not because a
   prefetch changed.
 - CONTRACTS (each has its own test in `e2e/prefetch-preservation.spec.js`):
-  - TV grid card (`TVListClient`) -> `/list/tv/[title]`: page heading ready.
-  - Movie grid card (`MovieListClient`) -> `/list/movie/[title]`: page heading ready.
+  - TV grid card (`TVListClient`) -> `/list/tv/[title]`: page heading ready, AFTER
+    hover. Cards prefetch the full page on intent (`IntentPrefetchLink`), not
+    on sight; decided 2026-09-19 to stop one server render per visible poster.
+  - Movie grid card (`MovieListClient`) -> `/list/movie/[title]`: same.
   - Banner "View Details" (`BannerContent`) -> `/list/movie/[title]`: page heading ready.
+  - Next episode card (`EpisodeNav`, prefetch={true}) -> next episode: its title
+    parts and its link back to the previous episode ready. New with adoption.
+  - "View media catalog" (`ViewCatalogButton`, on `/`) -> `/list`: catalog
+    skeleton ready. New with adoption: flag-off, nothing of `/list` committed
+    while the navigation was held. The navigation bar is not part of it (it
+    needs the session, cached 30 s, under the 5 min the shared shell requires).
   - Hover card "View Details" (`PopupCard/InfoSection`) -> `/list/{type}/[title]`:
-    page heading ready. NOT WRITTEN YET (`test.fixme`): needs the rig running to
-    find a stable way to open the card.
-  - "View media catalog" (`ViewCatalogButton`, on `/`) -> `/list`: NOT in the
-    baseline (`test.fixme`). Measured flag-off: nothing commits while the
-    navigation is held, so there is no legacy UI to preserve. Target after
-    `/list` gets a real shell: site navigation ready.
-  - Baseline recorded 2026-09-19, Partial Prefetching off, Next 16.3.5:
-    `npm run e2e` -> 3 passed, 2 skipped, exit 0.
+    NOT WRITTEN YET (`test.fixme`); the link still uses prefetch={true}.
   - `MediaPages/Item/SeasonItem.js` also forces a prefetch but nothing renders
     it any more, so it has no contract.
+  - History: baseline 2026-09-19, Partial Prefetching off, Next 16.3.5:
+    3 passed (TV card, movie card, banner), 2 fixme. After adopting
+    `/list`, movie, show, season and episode with `prefetch = 'partial'`:
+    7 passed, 1 fixme. The global `partialPrefetching` flag is still OFF.
 - LOOP: local. build -> start -> login (once per token lifetime) -> `npm run e2e`
   -> stop the server -> edit -> repeat. Agent limits: the agent cannot approve
   the device code; a person has to open the printed address once.

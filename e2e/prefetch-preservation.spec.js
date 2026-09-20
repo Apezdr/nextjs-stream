@@ -136,7 +136,7 @@ test.describe('landing page', () => {
   // ready before the click (unheld, it commits in ~250 ms and then streams).
   // There is no legacy UI to preserve; this becomes a target once /list has a
   // real shell, and the fixme comes off then.
-  test.fixme('"View media catalog" -> /list has the site navigation ready', async ({ page }) => {
+  test('"View media catalog" -> /list has the catalog skeleton ready', async ({ page }) => {
     await page.goto('/')
     const link = page.getByRole('link', { name: 'View media catalog' })
     await expect(link).toBeVisible()
@@ -144,7 +144,11 @@ test.describe('landing page', () => {
     await instant(page, async () => {
       await link.click()
       await page.waitForURL((url) => url.pathname === '/list')
-      await expect(page.getByRole('navigation').first()).toBeVisible()
+      // The skeleton's row labels are static text in /list's prerendered shell.
+      // (The navigation bar is NOT expected here: it depends on the session,
+      // and the session is only cached for 30 s, below the 5 minutes the
+      // shared shell requires. It streams in right after.)
+      await expect(page.getByText('Recently Added').first()).toBeVisible()
     })
   })
 })
