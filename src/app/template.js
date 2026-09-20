@@ -1,31 +1,24 @@
 'use client'
-import { motion } from 'framer-motion'
 import { ToastContainer } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 import { SystemStatusProvider } from '@src/contexts/SystemStatusContext'
 import { NotificationProvider } from '@src/contexts/NotificationContext'
 
-const variants = {
-  hidden: { opacity: 0, x: 0, y: 0 },
-  enter: { opacity: 1, x: 0, y: 0 },
-}
-
 export default function Template({ children }) {
   return (
     <SystemStatusProvider>
       <NotificationProvider>
-        <motion.main
-          variants={variants}
-          initial="hidden"
-          exit="hidden"
-          animate="enter"
-          transition={{ type: 'linear', duration: 0.85 }}
-          key="LandingPage"
-          className="!will-change-[unset]"
-        >
+        {/* The page's fade-in is a CSS animation, not a framer-motion one. This
+            <main> wraps every page in the app, and as a motion component with
+            initial="hidden" it was server-rendered at opacity 0: the whole
+            page, prerendered skeleton included, stayed invisible until the
+            JavaScript had loaded and hydrated, and then took 0.85 s to fade in.
+            See the keyframes in tailwind.config.js. motion-safe: people who ask
+            for reduced motion get the page with no fade at all. */}
+        <main className="motion-safe:animate-page-enter">
           <ToastContainer stacked />
           {children}
-        </motion.main>
+        </main>
       </NotificationProvider>
     </SystemStatusProvider>
   )
