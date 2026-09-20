@@ -13,6 +13,9 @@ const TOKEN_FILE = path.join(__dirname, '.auth', 'token')
 // except these, which are POSTs only because they carry a body and read
 // nothing but data. A spec that needs another one adds it here deliberately.
 const READ_ONLY_POSTS = ['/api/authenticated/media', '/api/authenticated/search']
+// Cloudflare's own beacons and bot checks, injected when the site is reached
+// through it. They never touch the app, and refusing them could trip its checks.
+const NOT_THE_APP = '/cdn-cgi/'
 // (This exists because a script that opened the player for five seconds
 // rewrote the account's resume position for that episode.)
 
@@ -42,7 +45,10 @@ const test = base.test.extend({
       const request = route.request()
       const method = request.method()
       const pathname = new URL(request.url()).pathname
-      if (method !== 'GET' && method !== 'HEAD' && !READ_ONLY_POSTS.includes(pathname)) {
+      // Not the app's: let it through untouched, and without the session
+      if (pathname.startsWith(NOT_THE_APP)) return route.continue()
+      const isWrite = method !== 'GET' && method !== 'HEAD'
+      if (isWrite && !READ_ONLY_POSTS.includes(pathname)) {
         refused.add(`${method} ${pathname}`)
         return route.abort()
       }
