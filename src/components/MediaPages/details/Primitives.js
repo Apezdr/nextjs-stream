@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import IntentPrefetchLink from '@components/MediaPages/IntentPrefetchLink'
 import { ChevronLeftIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 
@@ -38,7 +39,7 @@ const FACT_LINK_CLASSES =
  */
 export function Breadcrumb({ href, children, className = '' }) {
   return (
-    <Link
+    <IntentPrefetchLink
       href={href}
       className={classNames(
         'inline-flex min-w-0 max-w-full items-center gap-1 rounded-md py-1.5 pl-1 pr-2.5 text-sm font-medium text-white/70 transition-colors',
@@ -48,7 +49,7 @@ export function Breadcrumb({ href, children, className = '' }) {
     >
       <ChevronLeftIcon className="size-5" aria-hidden="true" />
       {children}
-    </Link>
+    </IntentPrefetchLink>
   )
 }
 
@@ -74,9 +75,9 @@ export function Trail({ items, className = '' }) {
               </span>
             ) : null}
             {item.href && i < last ? (
-              <Link href={item.href} className={classNames('rounded text-white/70 hover:text-white', FOCUS_RING)}>
+              <IntentPrefetchLink href={item.href} className={classNames('rounded text-white/70 hover:text-white', FOCUS_RING)}>
                 {item.label}
-              </Link>
+              </IntentPrefetchLink>
             ) : (
               <span className="truncate text-white" aria-current={i === last ? 'page' : undefined}>
                 {item.label}

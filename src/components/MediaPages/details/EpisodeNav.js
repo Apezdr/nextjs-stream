@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import IntentPrefetchLink from '@components/MediaPages/IntentPrefetchLink'
 import { ArrowLeftIcon, ArrowRightIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 import { formatRuntime } from '@components/WatchProgress/progress'
@@ -87,12 +88,12 @@ export default function EpisodeNav({ previous, all, next, className = '' }) {
     >
       {previous ? <Neighbour item={previous} direction="previous" /> : <span className="order-1" />}
       {all ? (
-        <Link
+        <IntentPrefetchLink
           href={all.href}
           className={classNames('order-3 col-span-2 justify-self-center rounded text-sm text-white/70 hover:text-white sm:order-2 sm:col-span-1', FOCUS_RING)}
         >
           All {all.count} episode{all.count === 1 ? '' : 's'}
-        </Link>
+        </IntentPrefetchLink>
       ) : (
         <span className="order-3 col-span-2 sm:order-2 sm:col-span-1" />
       )}

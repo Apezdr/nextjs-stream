@@ -1,6 +1,6 @@
 'use client'
 
-import Link from 'next/link'
+import IntentPrefetchLink from '@components/MediaPages/IntentPrefetchLink'
 import { ViewTransition } from 'react'
 import { CheckIcon, EllipsisHorizontalIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
@@ -65,7 +65,7 @@ export default function EpisodeRow({ episode, view = 'list', onActions }) {
   const titleText = `${episode.episodeNumber}. ${episode.title}`
 
   const thumbnail = (
-    <Link href={episode.hrefs.info} tabIndex={-1} aria-hidden="true" className="block">
+    <IntentPrefetchLink href={episode.hrefs.info} tabIndex={-1} aria-hidden="true" className="block">
       <ViewTransition name={episode.viewTransitionName}>
         <EpisodeThumbnail src={episode.thumbnail} blurDataURL={episode.thumbnailBlurDataURL} alt="">
           {progress.hasProgress && !progress.completed ? (
@@ -73,7 +73,7 @@ export default function EpisodeRow({ episode, view = 'list', onActions }) {
           ) : null}
         </EpisodeThumbnail>
       </ViewTransition>
-    </Link>
+    </IntentPrefetchLink>
   )
 
   const statusLine = (
@@ -100,9 +100,9 @@ export default function EpisodeRow({ episode, view = 'list', onActions }) {
     return (
       <li className="flex flex-col gap-2">
         {thumbnail}
-        <Link href={episode.hrefs.info} className={classNames('font-semibold text-white hover:underline rounded', FOCUS_RING)}>
+        <IntentPrefetchLink href={episode.hrefs.info} className={classNames('font-semibold text-white hover:underline rounded', FOCUS_RING)}>
           {titleText}
-        </Link>
+        </IntentPrefetchLink>
         <p className="flex flex-wrap items-center gap-2 text-sm">
           {statusLine}
           {chips}
@@ -120,9 +120,9 @@ export default function EpisodeRow({ episode, view = 'list', onActions }) {
       <span className="pt-0.5 text-sm tabular-nums text-white/40">{String(episode.episodeNumber).padStart(2, '0')}</span>
       <div className="max-w-[220px]">{thumbnail}</div>
       <div className="col-start-2 min-w-0 sm:col-start-auto">
-        <Link href={episode.hrefs.info} className={classNames('font-semibold text-white hover:underline rounded', FOCUS_RING)}>
+        <IntentPrefetchLink href={episode.hrefs.info} className={classNames('font-semibold text-white hover:underline rounded', FOCUS_RING)}>
           {titleText}
-        </Link>
+        </IntentPrefetchLink>
         {episode.overview ? (
           <p className="mt-1 text-sm leading-relaxed text-white/70 line-clamp-3">{episode.overview}</p>
         ) : (
