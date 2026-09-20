@@ -6,7 +6,7 @@ import {
   MediaNotFound,
   TVShowView,
 } from '@src/components/MediaPages/DynamicPage'
-import Loading from '@src/app/loading'
+import ShowPageSkeleton from '@src/components/MediaPages/details/ShowPageSkeleton'
 import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
 import { fetchTrailerMedia } from '@src/utils/media/mediaFetcher'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
@@ -100,7 +100,8 @@ export const prefetch = 'partial'
 // prerendered shell and a link can have it ready before the click.
 export default function TVShowPage({ params }) {
   return (
-    <Suspense fallback={<Loading />}>
+    // The page's own frame as the fallback (and so as this route's shell)
+    <Suspense fallback={<ShowPageSkeleton />}>
       <SessionGate params={params} callbackUrl={({ title }) => `/list/tv/${encodeURIComponent(title)}`}>
         {({ session, params: { title } }) => (
           <TVShowContent

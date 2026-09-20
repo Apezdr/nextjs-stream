@@ -9,7 +9,7 @@
 
 import { Suspense } from 'react'
 import MovieDetailsComponent from '@src/components/MediaPages/MovieDetailsComponent'
-import Loading from '@src/app/loading'
+import MoviePageSkeleton from '@src/components/MediaPages/details/MoviePageSkeleton'
 import { cacheLife, cacheTag } from 'next/cache'
 import { movieDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTags'
 
@@ -32,7 +32,7 @@ async function CachedMovieDetails({ media }) {
  */
 export default function MovieDetailsView({ media }) {
   return (
-    <Suspense fallback={<Loading />}>
+    <Suspense fallback={<MoviePageSkeleton />}>
       <div className="pt-16 w-full">
         <CachedMovieDetails media={media} />
       </div>

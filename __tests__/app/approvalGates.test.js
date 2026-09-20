@@ -20,6 +20,9 @@ const mockRedirect = jest.fn((url) => {
 })
 jest.mock('next/navigation', () => ({ redirect: (url) => mockRedirect(url) }))
 
+// 'use cache: private' is a build-time directive; under jest it is an inert string
+jest.mock('next/cache', () => ({ cacheLife: jest.fn() }))
+
 const mockGetSession = jest.fn()
 jest.mock('@src/lib/cachedAuth', () => ({ getSession: () => mockGetSession() }))
 
@@ -64,13 +67,19 @@ describe('SessionGate', () => {
   })
 
   it('builds the content for an approved account, with the session and the resolved params', async () => {
-    const session = { user: { id: 'u1', approved: true, limitedAccess: false } }
-    mockGetSession.mockResolvedValue(session)
+    mockGetSession.mockResolvedValue({
+      session: { token: 'secret', expiresAt: new Date() },
+      user: { id: 'u1', approved: true, limitedAccess: undefined, email: 'someone@example.com', createdAt: new Date() },
+    })
     const children = jest.fn(() => 'content')
 
     const result = await SessionGate({ params: Promise.resolve({ title: 'Preacher' }), callbackUrl, children })
 
-    expect(children).toHaveBeenCalledWith({ session, params: { title: 'Preacher' } })
+    // Only what the gate needs crosses the cache boundary: no token, no email, no Dates
+    expect(children).toHaveBeenCalledWith({
+      session: { user: { id: 'u1', approved: true, limitedAccess: false } },
+      params: { title: 'Preacher' },
+    })
     expect(result.props.children).toBe('content')
   })
 
