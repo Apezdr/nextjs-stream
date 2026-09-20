@@ -47,6 +47,15 @@ export default async function MoviePlayerPage({ params, searchParams }) {
   const { title } = await params
   const _searchParams = (await searchParams) ?? {}
   const session = await getSession()
+
+  // Approved-account gate, before anything is fetched. This page would
+  // otherwise render the player for an unapproved account (hasFullAccess only
+  // trims the UI). The movie/ layout used to run this check for every page
+  // beneath it; each page now runs its own. See the layout's comment.
+  if (session?.user && session.user.approved === false) {
+    redirect('/auth/error?error=APPROVAL_PENDING')
+  }
+
   const { parsedParams, result: initialResult } = await fetchMovieForPlayer(title)
 
   let result = initialResult

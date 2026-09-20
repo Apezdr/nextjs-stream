@@ -46,6 +46,15 @@ export default async function TVEpisodePlayerPage({ params, searchParams }) {
   const { title, season, episode } = await params
   const _searchParams = (await searchParams) ?? {}
   const session = await getSession()
+
+  // Approved-account gate, before anything is fetched. This page would
+  // otherwise render the player for an unapproved account (hasFullAccess only
+  // trims the UI). The tv/ layout used to run this check for every page
+  // beneath it; each page now runs its own. See the layout's comment.
+  if (session?.user && session.user.approved === false) {
+    redirect('/auth/error?error=APPROVAL_PENDING')
+  }
+
   const { parsedParams, result: initialResult } = await fetchEpisode(title, season, episode)
 
   let result = initialResult
