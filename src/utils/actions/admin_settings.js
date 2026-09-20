@@ -75,11 +75,12 @@ export async function updateJitServeSettings(formData) {
   // The delivery choice is embedded in the Server Component payload as the
   // player's videoURL. Clear process-local policy decisions first, then evict
   // every route shape that can hold a previously selected direct/HLS source.
+  // Those are the two player routes. (The /list/[...media] catch-all used to
+  // be a third: it could render a player too. It only answers 404 now.)
   invalidateCachedJitServeSettings()
   invalidateTranscoderHealthCache()
   revalidatePath('/list/movie/[title]/play', 'page')
   revalidatePath('/list/tv/[title]/[season]/[episode]/play', 'page')
-  revalidatePath('/list/[...media]', 'page')
 }
 
 export async function updateAutoCaptions(formData) {
