@@ -37,19 +37,33 @@ prefetch in `next dev`.
     skeleton ready. New with adoption: flag-off, nothing of `/list` committed
     while the navigation was held. The navigation bar is not part of it (it
     needs the session, cached 30 s, under the 5 min the shared shell requires).
-  - Hover card "View Details" (`PopupCard/InfoSection`) -> `/list/{type}/[title]`:
-    NOT WRITTEN YET (`test.fixme`); the link still uses prefetch={true}.
+  - Hover card "View Details" (`PopupCard/InfoSection`, prefetch={true}) ->
+    `/list/{type}/[title]`: page heading ready. Only true because the card's
+    links navigate natively; when its click handler used router.push, the same
+    navigation had only the skeleton ready.
   - `MediaPages/Item/SeasonItem.js` also forces a prefetch but nothing renders
     it any more, so it has no contract.
   - History: baseline 2026-09-19, Partial Prefetching off, Next 16.3.5:
     3 passed (TV card, movie card, banner), 2 fixme. After adopting
     `/list`, movie, show, season and episode with `prefetch = 'partial'`:
-    7 passed, 1 fixme. The global `partialPrefetching` flag is still OFF.
+    7 passed, 1 fixme. With the global `partialPrefetching` flag ON, the per-route
+    exports removed by codemod, and the browse routes adopted: 8 passed, 0 fixme.
 - LOOP: local. build -> start -> login (once per token lifetime) -> `npm run e2e`
   -> stop the server -> edit -> repeat. Agent limits: the agent cannot approve
   the device code; a person has to open the printed address once.
 - LIVENESS: n/a; local build and start.
+- DEV SWEEP (the insights only appear in `next dev`): drive real link clicks
+  and read the dev log for "Next.js encountered" lines. If Playwright intercepts
+  requests, DELETE the `cache-control` and `pragma` headers before continuing
+  them: interception makes Chromium send `no-cache`, and the dev server turns
+  its caches off for such requests ("rendering with server caches disabled"),
+  which hides what is and is not prefetchable. Last sweep 2026-09-19, flag on:
+  browse, show, season, episode, player, movie, /list, /, watchlist,
+  notifications, privacy, device, admin home: no insights. Admin sub-pages
+  were not walked.
 - WALLS:
+  - In dev the mock system-status banner is fixed over the navigation bar and
+    swallows clicks on it. Click in-page links (trail, cards), or use goto.
   - Click only after the network settles (`settle()` in the spec). A held
     navigation with no finished prefetch never commits and the test times out,
     which looks like a lost prefetch but is only a fast click.
