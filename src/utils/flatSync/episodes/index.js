@@ -197,6 +197,10 @@ async function syncSingleEpisode(
         episodeNumber: episode.episodeNumber,
         type: 'episode',
         createdAt: new Date(),
+        // Library-add date — what "Recently Added" ranks on. Seeded once here,
+        // exactly as the new-architecture path does (sync/core/discovery.ts).
+        initialDiscoveryDate: new Date(),
+        initialDiscoveryServer: serverConfig.id,
         ...(fileServerEpisodeData.videoURL && {
           videoSource: serverConfig.id,
           videoURL: newVideoURL,

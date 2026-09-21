@@ -269,7 +269,10 @@ export async function syncEpisodeMetadata(client, show, season, episode, fileSer
           seasonNumber: season.seasonNumber,
           episodeNumber: episode.episodeNumber,
           type: 'episode',
-          createdAt: new Date()
+          createdAt: new Date(),
+          // Library-add date, seeded once (sync/core/discovery.ts)
+          initialDiscoveryDate: new Date(),
+          initialDiscoveryServer: serverConfig.id
         };
 
         const createResult = await createEpisodeInFlatDB(client, newEpisodeData);
@@ -373,7 +376,10 @@ export async function syncEpisodeMetadata(client, show, season, episode, fileSer
         seasonNumber: season.seasonNumber,
         episodeNumber: episode.episodeNumber,
         type: 'episode',
-        createdAt: new Date()
+        createdAt: new Date(),
+        // Library-add date, seeded once (sync/core/discovery.ts)
+        initialDiscoveryDate: new Date(),
+        initialDiscoveryServer: serverConfig.id
       };
 
       // Use our improved function that handles duplicates
@@ -721,7 +727,10 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
                     seasonNumber: seasonNumber,
                     episodeNumber: episode.episodeNumber,
                     type: 'episode',
-                    createdAt: new Date()
+                    createdAt: new Date(),
+                    // Library-add date, seeded once (sync/core/discovery.ts)
+                    initialDiscoveryDate: new Date(),
+                    initialDiscoveryServer: serverConfig.id
                   };
                 }
 
@@ -873,7 +882,10 @@ export async function syncShowEpisodesMetadataWithHashes(client, show, seasons, 
                   seasonNumber: seasonNumber,
                   episodeNumber: episodeNumber,
                   type: 'episode',
-                  createdAt: new Date()
+                  createdAt: new Date(),
+                  // Library-add date, seeded once (sync/core/discovery.ts)
+                  initialDiscoveryDate: new Date(),
+                  initialDiscoveryServer: serverConfig.id
                 };
 
                 // Create a temporary season object with the episode

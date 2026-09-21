@@ -81,7 +81,10 @@ async function syncSingleTVShow(client, showTitle, fileServerData, serverConfig,
         _id: new ObjectId(),
         title: showTitle,
         type: 'tvShow',
-        createdAt: new Date()
+        createdAt: new Date(),
+        // Library-add date, seeded once (sync/core/discovery.ts)
+        initialDiscoveryDate: new Date(),
+        initialDiscoveryServer: serverConfig.id
       };
       
       // Create in database

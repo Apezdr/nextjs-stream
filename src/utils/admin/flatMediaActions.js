@@ -212,6 +212,10 @@ export async function createMovieAction(_prevState, payload = {}) {
     normalizedVideoId: generateNormalizedVideoId(videoURL),
     mediaLastModified: now,
     createdAt: now,
+    // Library-add date — what "Recently Added" ranks on. Set on CREATE only;
+    // an edit is never an arrival, so the save actions must not touch it.
+    initialDiscoveryDate: now,
+    initialDiscoveryServer: 'manual',
     updatedAt: now,
   }
 
@@ -317,6 +321,8 @@ export async function createTVShowAction(_prevState, payload = {}) {
     title,
     originalTitle,
     createdAt: now,
+    initialDiscoveryDate: now,
+    initialDiscoveryServer: 'manual',
     updatedAt: now,
   }
 
@@ -445,6 +451,8 @@ export async function saveSeasonAction(_prevState, payload = {}) {
     manualEntry: true,
     ...set,
     createdAt: new Date(),
+    initialDiscoveryDate: new Date(),
+    initialDiscoveryServer: 'manual',
   }
   try {
     await seasonsCol.insertOne(doc)
@@ -533,6 +541,10 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
     manualEntry: true,
     ...set,
     createdAt: new Date(),
+    // The grain "Recently Added" ranks TV on: a manually added episode lifts
+    // its show exactly as a synced one does.
+    initialDiscoveryDate: new Date(),
+    initialDiscoveryServer: 'manual',
   }
   try {
     await episodesCol.insertOne(doc)

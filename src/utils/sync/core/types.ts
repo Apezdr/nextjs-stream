@@ -204,6 +204,16 @@ export interface BaseMediaEntity {
   // declaration lets BaseRepository.save() preserve it generically)
   createdAt?: Date
 
+  // When this content first entered the library — what "Recently Added" ranks
+  // on. NOT createdAt (a document-lifecycle stamp that resets when a doc is
+  // deleted and re-created) and NOT mediaLastModified (file mtime, which a
+  // quality upgrade bumps and a preserved download mtime buries). Seeded once,
+  // never moved later, earlier-wins against the backend's sidecar date — the
+  // whole rule lives in core/discovery.ts. `initialDiscoveryServer` is a server
+  // id, or the sentinels 'backfill' / 'manual'.
+  initialDiscoveryDate?: Date
+  initialDiscoveryServer?: string
+
   // Field-level source tracking (sources are tracked per field)
   metadataSource?: string
   titleSource?: string
@@ -430,6 +440,11 @@ export interface TVShowEntity extends BaseMediaEntity {
   // Legacy structural fields
   type?: string           // 'tvShow'
   createdAt?: Date
+
+  // Backend-sourced show identity ('mid:…'), published from payload version 6.
+  // Every episode's mediaId is this plus an ':s##e##' coordinate. Set-only,
+  // same discipline as MovieEntity.mediaId.
+  mediaId?: string
 
   posterURL?: string
   backdrop?: string   // NOT backdropURL - legacy field name
