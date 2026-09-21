@@ -305,7 +305,9 @@ describe('movieFacts', () => {
     expect(byLabel.Audio.value).toBe('1 track · English')
     expect(byLabel.Subtitles).toEqual({ label: 'Subtitles', value: 'English, Spanish', note: 'English auto-captions generating' })
     expect(byLabel.File.value).toBe('MP4 · 7.07 GB')
-    expect(byLabel.Added.value).toBe('Apr 22, 2025')
+    // The library-add date (initialDiscoveryDate), NOT the file mtime: this
+    // fixture's file is dated Apr 22, 2025 but entered the library in Jul 2026.
+    expect(byLabel.Added.value).toBe('Jul 9, 2026')
     // Where the file lives is not a viewer's business
     expect(byLabel.Source).toBeUndefined()
   })

@@ -468,7 +468,10 @@ export function fileFacts(media) {
   const size = formatBytes(media?.size ?? source?.size)
   if (container || size) rows.push({ label: 'File', value: [container, size].filter(Boolean).join(' · ') })
 
-  const added = formatDate(media?.mediaLastModified || media?.initialDiscoveryDate || media?.createdAt)
+  // Library-add date first. mediaLastModified is the file's mtime: a quality
+  // upgrade re-dates it and a preserved download mtime back-dates it, so it is
+  // the last resort here, not the answer to "when was this added".
+  const added = formatDate(media?.initialDiscoveryDate || media?.createdAt || media?.mediaLastModified)
   if (added) rows.push({ label: 'Added', value: added })
 
   return rows

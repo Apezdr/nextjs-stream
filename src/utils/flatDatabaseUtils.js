@@ -1,7 +1,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import {
-  arrangeMediaByLatestModification,
+  arrangeMediaByAddedDate,
   sanitizeRecord,
   generateClipVideoURL,
 } from '@src/utils/auth_utils'
@@ -1698,6 +1698,17 @@ export async function getFlatRecentlyAddedMedia({
     const client = await clientPromise
     const db = client.db('Media')
 
+    // "Recently Added" ranks on the LIBRARY-ADD date, with the video file's
+    // mtime as the tiebreak only. It used to rank on mtime alone, which is not
+    // an add date: a quality upgrade (Radarr/Sonarr replacing the file, Tdarr
+    // re-encoding it) bumps it on a title that has been here for months, and a
+    // download that preserves its original mtime arrives already years old. A
+    // prod audit of the top 100 movies found 25 within a day of their real add
+    // date. initialDiscoveryDate is seeded once and never moved by anything
+    // that later happens to the file (src/utils/sync/core/discovery.ts).
+    // Backed by recently_added_index on FlatMovies and FlatEpisodes.
+    const RECENTLY_ADDED_SORT = { initialDiscoveryDate: -1, mediaLastModified: -1 }
+
     // Count-only short-circuit. The "Recently Added" row only needs a count, so
     // skip the entire display pipeline below (movie pool fetch + recent-episode
     // grouping aggregate + TV-show $in lookup) — none of that affects the count.
@@ -1718,8 +1729,8 @@ export async function getFlatRecentlyAddedMedia({
           .collection('FlatEpisodes')
           .aggregate([
             { $match: visibleEpisodeFilter() },
-            { $sort: { mediaLastModified: -1 } },
-            { $limit: 1000 }, // Look at the 1000 most recent episodes
+            { $sort: RECENTLY_ADDED_SORT },
+            { $limit: 1000 }, // Look at the 1000 most recently added episodes
             { $group: { _id: '$showId' } },
             { $count: 'total' },
           ])
@@ -1767,6 +1778,7 @@ export async function getFlatRecentlyAddedMedia({
     const movieProjectionFields = {
       ...movieProjection,
       mediaLastModified: 1,
+      initialDiscoveryDate: 1,
     }
 
     const episodeProjectionFields = {
@@ -1792,7 +1804,7 @@ export async function getFlatRecentlyAddedMedia({
     const movies = await db
       .collection('FlatMovies')
       .find(visibleMovieFilter(), { projection: movieProjectionFields })
-      .sort({ mediaLastModified: -1 })
+      .sort(RECENTLY_ADDED_SORT)
       .limit(poolSize)
       .toArray()
 
@@ -1809,17 +1821,21 @@ export async function getFlatRecentlyAddedMedia({
       .aggregate([
         // Visibility first so the pool cap and grouping aren't biased by hidden rows
         { $match: visibleEpisodeFilter() },
-        { $sort: { mediaLastModified: -1 } },
+        { $sort: RECENTLY_ADDED_SORT },
         { $limit: poolSize * 2 }, // Get more than needed to account for grouping
         {
+          // A show ranks by its NEWEST EPISODE's add date, so a new episode (or
+          // a new season of an old show) lifts it, while an existing episode
+          // whose file was replaced by an upgrade does not.
           $group: {
             _id: '$showId',
             showId: { $first: '$showId' },
             episodeId: { $first: '$_id' },
+            initialDiscoveryDate: { $max: '$initialDiscoveryDate' },
             mediaLastModified: { $max: '$mediaLastModified' },
           },
         },
-        { $sort: { mediaLastModified: -1 } },
+        { $sort: RECENTLY_ADDED_SORT },
         { $limit: poolSize },
       ])
       .toArray()
@@ -1845,6 +1861,11 @@ export async function getFlatRecentlyAddedMedia({
           return {
             ...show,
             mediaLastModified: item.mediaLastModified,
+            // Deliberately OVERRIDES the show document's own date with its
+            // newest episode's: the show's date says when the show arrived,
+            // and ranking on that would bury every new season. Null (episodes
+            // that predate the field) falls back to mtime in getAddedDate.
+            initialDiscoveryDate: item.initialDiscoveryDate ?? null,
           }
         }
         return null
@@ -1863,7 +1884,7 @@ export async function getFlatRecentlyAddedMedia({
     ])
 
     // Arrange media by latest modification
-    const arrangedMedia = arrangeMediaByLatestModification(moviesWithUrl, tvShowsWithUrl)
+    const arrangedMedia = arrangeMediaByAddedDate(moviesWithUrl, tvShowsWithUrl)
 
     // Apply pagination to the combined and arranged result
     // This ensures we maintain consistent pagination across all pages
