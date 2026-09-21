@@ -82,6 +82,9 @@ export async function createFlatDatabaseIndexes() {
       { key: { originalTitle: 1 }, name: 'originalTitle_index', unique: true },
       { key: { 'metadata.genres.name': 1 }, name: 'genres_index' },
       { key: { 'metadata.release_date': -1 }, name: 'release_date_index' },
+      // "Recently Added" ranks on the library-add date, mtime as tiebreak.
+      // Mirrors MovieRepository.createIndexes() — keep the two in step.
+      { key: { initialDiscoveryDate: -1, mediaLastModified: -1 }, name: 'recently_added_index' },
       { key: { 'metadata.vote_average': -1 }, name: 'rating_index' },
       { key: { type: 1 }, name: 'type_index' },
       { key: { videoURL: 1 }, name: 'videoURL_index' },
@@ -203,6 +206,9 @@ export async function createFlatDatabaseIndexes() {
       // This enables the aggregation pipeline to efficiently sort and group episodes by modification time
       // Used by: recently modified episodes queries, sync aggregation pipeline
       { key: { mediaLastModified: -1 }, name: 'mediaLastModified_index' },
+      // "Recently Added" sorts episodes by library-add date, then mtime, and
+      // groups by showId. Mirrors EpisodeRepository.createIndexes().
+      { key: { initialDiscoveryDate: -1, mediaLastModified: -1, showId: 1 }, name: 'recently_added_index' },
       
       // CRITICAL: Covered query index for validation scans (fixes COLLSCAN in watchHistoryValidation)
       // Enables index-only lookups without reading documents from disk

@@ -93,6 +93,43 @@ export const arrangeMediaByLatestModification = (moviesWithUrl, tvShowsWithUrl) 
 }
 
 /**
+ * When a card's content entered the library, in ms — what "Recently Added"
+ * ranks on and what the card's "Added" date shows.
+ *
+ * `initialDiscoveryDate` is seeded once by the sync and never moved by anything
+ * that later happens to the file (src/utils/sync/core/discovery.ts). File mtime
+ * (`mediaLastModified`) is only the fallback for a record that predates the
+ * field: a quality upgrade bumps it and a preserved download mtime buries it,
+ * which is exactly the misranking this replaced.
+ *
+ * For a TV show the caller passes the NEWEST EPISODE's date, not the show's.
+ */
+export function getAddedDate(media) {
+  const raw =
+    media?.initialDiscoveryDate ??
+    media?.mediaLastModified ??
+    media?.episode?.initialDiscoveryDate ??
+    media?.episode?.mediaLastModified ??
+    null
+  if (!raw) return 0
+  const time = new Date(raw).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
+/**
+ * Merge movies and TV shows for the "Recently Added" rail: library-add date
+ * descending, file mtime as the tiebreak. The tiebreak matters — one-off
+ * migrations put hundreds of titles on the same discovery date, and inside such
+ * a cohort mtime is the only ordering signal left.
+ */
+export const arrangeMediaByAddedDate = (moviesWithUrl, tvShowsWithUrl) =>
+  [...moviesWithUrl, ...tvShowsWithUrl].sort((a, b) => {
+    const byAdded = getAddedDate(b) - getAddedDate(a)
+    if (byAdded !== 0) return byAdded
+    return getModifiedDate(b) - getModifiedDate(a)
+  })
+
+/**
  * Extract detailed TV show information using the TV details.
  *
  * @param {Object} tvDetails - The pre-fetched TV show details.
@@ -449,10 +486,10 @@ export async function sanitizeRecord(record, type, context = {}) {
     
     // Added date - for recently added media
     if (context.dateContext === 'recentlyAdded' || context.dateTypes?.includes('added')) {
-      if (record.mediaLastModified) {
-        dateValues.addedDate = formatDateToEST(record.mediaLastModified);
-      } else if (record?.episode?.mediaLastModified) {
-        dateValues.addedDate = formatDateToEST(record.episode.mediaLastModified);
+      // The library-add date, not the file mtime — see getAddedDate.
+      const addedAt = getAddedDate(record);
+      if (addedAt) {
+        dateValues.addedDate = formatDateToEST(new Date(addedAt));
       }
     }
     
@@ -473,8 +510,8 @@ export async function sanitizeRecord(record, type, context = {}) {
         dateValues.lastWatchedTimestamp = context.lastWatchedVideo.lastUpdated;
       }
       // For recently added
-      else if (record.mediaLastModified || record?.episode?.mediaLastModified) {
-        dateValues.addedDate = formatDateToEST(record.mediaLastModified || record?.episode?.mediaLastModified);
+      else if (getAddedDate(record)) {
+        dateValues.addedDate = formatDateToEST(new Date(getAddedDate(record)));
       }
       // For everything else
       else if (record.metadata?.release_date || (type === 'tv' && record.metadata?.first_air_date)) {

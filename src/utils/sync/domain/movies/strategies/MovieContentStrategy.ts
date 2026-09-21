@@ -13,6 +13,8 @@ import {
   BaseMediaEntity,
   MovieEntity,
   resolveMediaId,
+  resolveFirstSeen,
+  pickEarlierDiscovery,
   resolveDeliveryFacts,
   resolveEffectiveVideoUrl,
   VideoInfo,
@@ -640,6 +642,21 @@ export class MovieContentStrategy implements SyncStrategy {
       if (currentMovie.mediaId !== incomingMediaId) {
         updates.mediaId = incomingMediaId
       }
+    }
+
+    // --- Library-add date (earlier-wins, never later) ---
+    // The backend's first-seen date lives in the identity sidecar on the media
+    // volume, so it survives this document being deleted and re-created. Adopt
+    // it ONLY when it predates what we hold: a sidecar written at the identity
+    // rollout carries the rollout date for a title that was already here, and
+    // that must not re-date the title. See core/discovery.ts.
+    const earlierDiscovery = pickEarlierDiscovery(
+      currentMovie.initialDiscoveryDate,
+      resolveFirstSeen(fileServerData.mediaIdentity)
+    )
+    if (earlierDiscovery) {
+      updates.initialDiscoveryDate = earlierDiscovery
+      updates.initialDiscoveryServer = context.serverConfig.id
     }
 
     // --- Delivery facts (mirrored) ---

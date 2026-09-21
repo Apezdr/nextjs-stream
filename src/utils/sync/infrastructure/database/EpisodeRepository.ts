@@ -114,6 +114,14 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         // walks only the most recent entries. Mirrors mediaLastModified_index in
         // flatSync/initializeDatabase.js, which the new-arch sync path never runs.
         this.createIndexSafely({ mediaLastModified: -1, showId: 1 }),
+        // "Recently Added" now sorts episodes by library-add date, then mtime,
+        // and groups by showId — same covered shape as the index above, keyed on
+        // the date that a replaced file cannot move. Mirrored in
+        // flatSync/initializeDatabase.js, which the new-arch path never runs.
+        this.createIndexSafely(
+          { initialDiscoveryDate: -1, mediaLastModified: -1, showId: 1 },
+          { name: 'recently_added_index' }
+        ),
 
         // Sparse indexes for optional fields
         this.createIndexSafely({ 'videoInfo.duration': 1 }, { sparse: true }),

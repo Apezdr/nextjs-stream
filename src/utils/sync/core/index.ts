@@ -24,6 +24,9 @@ export * from './fieldPaths'
 // Identity + delivery-fact resolution (shared by movie and TV ingestion)
 export * from './deliveryFacts'
 
+// When content entered the library — the one rule behind "Recently Added"
+export * from './discovery'
+
 // Which URL a document's normalizedVideoId must be derived from
 export * from './videoIdentityWrite'
 

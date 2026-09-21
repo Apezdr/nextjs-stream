@@ -16,6 +16,7 @@ import {
   syncEventBus,
   validateEntityOrThrow,
   planFieldCleanup,
+  seedDiscovery,
   type CleanableField,
   type CleanupPlan
 } from '../../core'
@@ -469,16 +470,12 @@ export class MovieSyncService {
       healedFields.push('createdAt')
     }
     
-    if (!normalizedMovie.initialDiscoveryDate) {
-      normalizedMovie.initialDiscoveryDate = normalizedMovie.createdAt || new Date()
-      healedFields.push('initialDiscoveryDate')
-    }
-    
-    if (!normalizedMovie.initialDiscoveryServer) {
-      normalizedMovie.initialDiscoveryServer = context.serverConfig.id
-      healedFields.push('initialDiscoveryServer')
-    }
-    
+    // One rule for movies and TV (core/discovery.ts): a document that predates
+    // the field is healed from its createdAt; a date already held never moves.
+    healedFields.push(
+      ...seedDiscovery(normalizedMovie, existingMovie, context.serverConfig.id, new Date())
+    )
+
     // Ensure source tracking for critical fields
     if (!normalizedMovie.titleSource) {
       normalizedMovie.titleSource = context.serverConfig.id

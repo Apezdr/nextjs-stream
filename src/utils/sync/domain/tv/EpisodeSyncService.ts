@@ -36,6 +36,7 @@ import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash }
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { warnOnJitIdentityFork } from '@src/utils/sync/core/jitIdentityParity'
+import { seedDiscovery, applyFirstSeen } from '@src/utils/sync/core/discovery'
 import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Episode')
@@ -375,6 +376,11 @@ export class EpisodeSyncService {
     // Heal structural fields
     if (!entity.type) entity.type = 'episode'
     if (!entity.createdAt) entity.createdAt = now
+    // Library-add date: seeded once, never moved later (core/discovery.ts).
+    // This is the grain "Recently Added" ranks TV on — a show rises when a NEW
+    // episode coordinate arrives, not when an existing episode's file is
+    // replaced by a quality upgrade.
+    seedDiscovery(entity, existing, context.serverConfig.id, now)
     if (showId) entity.showId = showId
     if (seasonId) entity.seasonId = seasonId
     // Use display title as showTitle (matches legacy document shape)
@@ -445,6 +451,14 @@ export class EpisodeSyncService {
         }
         entity.mediaId = incomingMediaId
       }
+
+      // Library-add date, earlier-wins (core/discovery.ts). The backend keeps a
+      // per-episode first-seen map in the show's identity sidecar, keyed by
+      // S/E coordinate, so it survives this document being deleted and
+      // re-created (the orphan add/delete cycle) — the one thing our own
+      // seeded date cannot. Adopted only when it PREDATES ours: the map was
+      // seeded at its rollout for every episode that was already here.
+      applyFirstSeen(entity, fileData.mediaIdentity, context.serverConfig.id, now)
 
       // Episodes carry these flat; source urls go through the same
       // createFullUrl transform as videoURL above.

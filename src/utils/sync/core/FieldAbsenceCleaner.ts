@@ -79,6 +79,10 @@ const REQUIRED_FIELD_DENYLIST = new Set<string>([
   // sidecar not yet written) must never clear it — losing it orphans a
   // title's history.
   'mediaId',
+  // When the content entered the library (core/discovery.ts). Seeded once and
+  // never reported as a file-server field, so "no server reports it" is its
+  // permanent state, not a signal — clearing it would re-date the title.
+  'initialDiscoveryDate', 'initialDiscoveryServer',
 ])
 
 const DEFAULT_MAX_FIELDS_PER_ENTITY = 5

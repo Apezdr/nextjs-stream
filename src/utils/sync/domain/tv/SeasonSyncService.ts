@@ -22,6 +22,7 @@ import {
 } from '../../core'
 
 import { SeasonRepository, TVShowRepository } from '../../infrastructure'
+import { seedDiscovery } from '../../core/discovery'
 import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { createLogger } from '@src/lib/logger'
@@ -200,6 +201,8 @@ export class SeasonSyncService {
     // Heal structural fields
     if (!entity.type) entity.type = 'season'
     if (!entity.createdAt) entity.createdAt = now
+    // Library-add date: seeded once, never moved later (core/discovery.ts)
+    seedDiscovery(entity, existing, context.serverConfig.id, now)
     if (showId) entity.showId = showId
     // Use display title as showTitle (matches legacy document shape)
     entity.showTitle = displayTitle

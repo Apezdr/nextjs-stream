@@ -36,6 +36,15 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
         // Without this the sort COLLSCANs FlatMovies (same gap as FlatEpisodes);
         // the index lets it walk the most recent entries directly.
         this.createIndexSafely({ mediaLastModified: -1 }),
+        // "Recently Added" now ranks on the library-add date, with file mtime
+        // as the tiebreak only (mtime is bumped by quality upgrades and buried
+        // by preserved download mtimes). The tiebreak is part of the key because
+        // migration cohorts put hundreds of movies on one discovery date.
+        // Mirrored in flatSync/initializeDatabase.js, which this path never runs.
+        this.createIndexSafely(
+          { initialDiscoveryDate: -1, mediaLastModified: -1 },
+          { name: 'recently_added_index' }
+        ),
         
         // Asset availability indexes
         this.createIndexSafely({ videoURL: 1 }),

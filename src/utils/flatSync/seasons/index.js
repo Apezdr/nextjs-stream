@@ -28,7 +28,10 @@ export function buildNewSeasonObject(show, season) {
     showTitle: show.title,
     seasonNumber: season.seasonNumber,
     type: 'season',
-    createdAt: new Date()
+    createdAt: new Date(),
+    // Library-add date, seeded once (sync/core/discovery.ts). This builder has
+    // no server in scope; the new-architecture path heals the server id.
+    initialDiscoveryDate: new Date()
   };
 }
 

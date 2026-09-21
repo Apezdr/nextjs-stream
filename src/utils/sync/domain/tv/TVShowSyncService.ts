@@ -30,6 +30,8 @@ import { EpisodeSyncService } from './EpisodeSyncService'
 import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { syncLogger } from '../../core/logger'
+import { seedDiscovery, applyFirstSeen } from '../../core/discovery'
+import { resolveMediaId } from '../../core/deliveryFacts'
 import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Show')
@@ -296,6 +298,10 @@ export class TVShowSyncService {
     if (!entity.type) entity.type = 'tvShow'
     if (!entity.createdAt) entity.createdAt = now
     if (!entity.originalTitle) entity.originalTitle = showTitle
+    // Library-add date: seeded once, never moved later (core/discovery.ts).
+    // The show's own date is for detail pages; "Recently Added" ranks a show by
+    // its newest EPISODE, so a new season of an old show still surfaces.
+    seedDiscovery(entity, existing, context.serverConfig.id, now)
 
     if (!fileData) return entity
 
@@ -349,6 +355,18 @@ export class TVShowSyncService {
         if (showMetadata.genres) entity.genres = showMetadata.genres
         if (showMetadata.networks) entity.networks = showMetadata.networks
       }
+    }
+
+    // --- Show identity + library-add date (follow metadata priority) ---
+    // A show has no video of its own, so the metadata owner — the show-level
+    // ownership signal this builder already has — publishes these. mediaId is
+    // SET-ONLY: a payload that cannot resolve it sends null, which must never
+    // clear what we hold. The date is earlier-wins (core/discovery.ts): the
+    // backend's sidecar date is adopted only when it predates ours.
+    if (canUpdateMetadata) {
+      const incomingShowMediaId = resolveMediaId(fileData.mediaIdentity)
+      if (incomingShowMediaId) entity.mediaId = incomingShowMediaId
+      applyFirstSeen(entity, fileData.mediaIdentity, context.serverConfig.id, now)
     }
 
     // --- Poster (priority-gated) ---
