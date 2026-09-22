@@ -24,6 +24,7 @@
 
 import { getSession } from '@src/lib/cachedAuth'
 import { adminUserEmails } from '@src/utils/config'
+import { sanitizeIdentitySource } from '@src/utils/admin/identitySource'
 
 const BACKEND_URL =
   process.env.NODE_SERVER_INTERNAL_URL || process.env.NODE_SERVER_URL || 'http://localhost:3000'
@@ -106,6 +107,15 @@ export async function saveTmdbConfigAction(_prevState, payload = {}) {
     if (Number.isInteger(n) && n > 0) clean.tmdb_id = n
     else return fail('TMDB ID must be a positive integer.')
   }
+
+  // tmdb_id_source: who pinned the id (see identitySource.js). Only meaningful
+  // beside an id. The backend settles it anyway — an id that changed is stamped
+  // 'manual' regardless, an unchanged id keeps its stored source when this is
+  // absent — so the one thing that must survive here is an explicit 'auto',
+  // which is how an operator hands a pin back to Radarr/Sonarr.
+  const source = sanitizeIdentitySource(clean.tmdb_id_source)
+  if (clean.tmdb_id && source) clean.tmdb_id_source = source
+  else delete clean.tmdb_id_source
 
   // update_metadata: coerce to boolean (default true)
   clean.update_metadata = clean.update_metadata !== false

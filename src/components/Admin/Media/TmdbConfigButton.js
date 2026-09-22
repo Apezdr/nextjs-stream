@@ -12,6 +12,7 @@ import {
 } from '@heroicons/react/24/outline'
 import { buildURL } from '@src/utils'
 import { getTmdbConfigAction, saveTmdbConfigAction } from '@src/utils/admin/tmdbConfigActions'
+import { describeIdentitySource, IDENTITY_SOURCE_AUTO, IDENTITY_SOURCE_MANUAL } from '@src/utils/admin/identitySource'
 import TmdbImagePicker from './TmdbImagePicker'
 
 const inputClass =
@@ -86,6 +87,11 @@ export default function TmdbConfigButton({
   // are preserved on save instead of being wiped.
   const [baseConfig, setBaseConfig] = useState({})
   const [tmdbId, setTmdbId] = useState('')
+  // Provenance of the loaded pin (tmdb_id_source) and the id it was loaded
+  // with, so the caption can say what saving will do: a changed id becomes a
+  // hand pin on the backend regardless of what we send.
+  const [tmdbIdSource, setTmdbIdSource] = useState('')
+  const [loadedTmdbId, setLoadedTmdbId] = useState('')
   const [updateMetadata, setUpdateMetadata] = useState(true)
   const [backdropFocal, setBackdropFocal] = useState('')
   const [overridePoster, setOverridePoster] = useState('')
@@ -194,6 +200,8 @@ export default function TmdbConfigButton({
 
   function populate(config = {}) {
     setTmdbId(config.tmdb_id != null ? String(config.tmdb_id) : '')
+    setLoadedTmdbId(config.tmdb_id != null ? String(config.tmdb_id) : '')
+    setTmdbIdSource(typeof config.tmdb_id_source === 'string' ? config.tmdb_id_source : '')
     setUpdateMetadata(config.update_metadata !== false)
     setBackdropFocal(config.backdrop_focal ?? '')
     setOverridePoster(config.override_poster ?? '')
@@ -337,6 +345,9 @@ export default function TmdbConfigButton({
     const config = {
       ...baseConfig, // preserve fields the dialog doesn't manage
       tmdb_id: tmdbId,
+      // Sent only when we hold one; absent lets the backend keep the stored
+      // source for an unchanged id. 'auto' is the hand-back signal.
+      ...(tmdbIdSource ? { tmdb_id_source: tmdbIdSource } : {}),
       update_metadata: updateMetadata,
       backdrop_focal: backdropFocal || null,
       override_poster: overridePoster,
@@ -539,6 +550,40 @@ export default function TmdbConfigButton({
                         placeholder="e.g. 700391"
                         className={inputClass}
                       />
+                      {(() => {
+                        const idNow = tmdbId.trim()
+                        const idChanged = idNow !== loadedTmdbId
+                        const info = describeIdentitySource(idChanged && idNow ? IDENTITY_SOURCE_MANUAL : tmdbIdSource, {
+                          hasId: idNow !== '',
+                        })
+                        const canHandBack =
+                          !idChanged && idNow !== '' && (info.kind === 'manual' || info.kind === 'unrecorded' || info.kind === 'provider')
+                        return (
+                          <div className="mt-1 text-xs text-gray-500" data-testid="cfg-tmdb-id-source">
+                            <span className="font-medium text-gray-700">{info.label}</span>
+                            {idChanged && idNow ? (
+                              <span> — saving records this as a hand pin.</span>
+                            ) : (
+                              <span> — {info.detail}</span>
+                            )}
+                            {canHandBack ? (
+                              <>
+                                {' '}
+                                <button
+                                  type="button"
+                                  onClick={() => setTmdbIdSource(IDENTITY_SOURCE_AUTO)}
+                                  className="text-indigo-600 hover:text-indigo-500 underline"
+                                >
+                                  Hand back to provider
+                                </button>
+                              </>
+                            ) : null}
+                            {!idChanged && tmdbIdSource === IDENTITY_SOURCE_AUTO && info.kind === 'auto' ? (
+                              <span> Applies on save; the next scan will re-pin or repair it.</span>
+                            ) : null}
+                          </div>
+                        )
+                      })()}
                     </div>
                     <div>
                       <label htmlFor="cfg-focal" className="block text-sm font-medium text-gray-700">
