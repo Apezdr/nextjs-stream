@@ -63,7 +63,10 @@ const MetricCard = ({
     >
       <MaterialCardContent>
         <div className="flex items-start justify-between">
-          <div className="flex-1">
+          {/* min-w-0 lets a long title truncate instead of pushing the badge
+              out of the card — a flex child cannot shrink below its content
+              width without it. */}
+          <div className="flex-1 min-w-0">
             <div className="flex items-center space-x-2 mb-2">
               {icon && (
                 <div className={classNames('flex-shrink-0', statusColors[status])}>
