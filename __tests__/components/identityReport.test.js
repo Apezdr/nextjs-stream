@@ -184,6 +184,59 @@ describe('IdentityReport', () => {
     expect(screen.getByText(/Not downloaded yet — Sonarr is watching for it/)).not.toHaveAttribute('title')
   })
 
+  it('lists a managed title with no TMDB id as its own case, with links to chase the mapping', () => {
+    // Sonarr manages The Wayfinders but has no TMDB id for it (TVDB→TMDB mapping
+    // missing upstream), and TMDB's own lookup found none. It is not unmanaged,
+    // and its local pin came from the name search, so it deserves the same
+    // "check this" treatment with a different explanation.
+    const data = renamedReport(null)
+    data.providerOnly = {
+      items: [
+        { libraryRelativePath: 'tv/Never Mapped', tmdbId: null, source: 'sonarr', hasFile: false, providerPath: '/t/Never Mapped', externalIds: { tvdb: 999, imdb: 'tt0000001' } },
+      ],
+      total: 1,
+      truncated: 0,
+    }
+    data.unmanaged = { items: ['movies/Big Buck Bunny'], total: 1, truncated: 0 }
+    data.totals = { claimed: 2, managedUnidentified: 1 }
+    data.managedUnidentified = {
+      items: [
+        {
+          libraryRelativePath: 'tv/The Wayfinders',
+          source: 'sonarr',
+          title: 'The Wayfinders',
+          year: 2025,
+          externalIds: { tvdb: 470313, imdb: 'tt29712397' },
+          hasFile: true,
+          providerPath: '/processed_tv/The Wayfinders',
+          localPin: { tmdbId: 123456, source: 'auto' },
+        },
+      ],
+      total: 1,
+      truncated: 0,
+    }
+    swrStates({
+      report: { ...idle, data },
+      status: { ...idle, data: { providers: [{ name: 'sonarr', lastFetch: { at: '2026-09-22T05:21:00.028Z', claims: 225, unidentified: 1 } }] } },
+    })
+
+    render(<IdentityReport />)
+
+    expect(screen.getByText('Managed, but no TMDB id')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'The Wayfinders' })).toHaveAttribute('href', '/admin/media/tv?q=The%20Wayfinders')
+    expect(screen.getByRole('link', { name: 'TVDB 470313' })).toHaveAttribute('href', 'https://www.thetvdb.com/dereferrer/series/470313')
+    expect(screen.getByRole('link', { name: 'IMDb tt29712397' })).toHaveAttribute('href', 'https://www.imdb.com/title/tt29712397/')
+    expect(screen.getByRole('link', { name: '123456' })).toHaveAttribute('href', 'https://www.themoviedb.org/tv/123456')
+    expect(screen.getByText(/Neither Sonarr nor TMDB can confirm this match/)).toBeInTheDocument()
+    // It counts toward the headline, and the unmanaged wording stays for the hand-added folder.
+    expect(screen.getByText(/1 item needs attention/)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Big Buck Bunny' })).toBeInTheDocument()
+    // A provider-only row without a TMDB id shows the other ids instead of a dash.
+    expect(screen.getByRole('link', { name: 'TVDB 999' })).toHaveAttribute('href', 'https://www.thetvdb.com/dereferrer/series/999')
+    // The managers panel says how many titles lack an id.
+    expect(screen.getByText(/knows 225 titles, 1 without a TMDB id/)).toBeInTheDocument()
+  })
+
   it('falls back to a spelling match when the catalog has no id for the folder', () => {
     swrStates({ report: { ...idle, data: renamedReport(null) } })
 

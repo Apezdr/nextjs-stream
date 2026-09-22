@@ -360,6 +360,87 @@ function WrittenSection({ list, managers }) {
   )
 }
 
+/** Links for the ids a manager holds besides TMDB, so an operator can chase a missing mapping upstream. */
+function ExternalIdLinks({ externalIds, mediaType }) {
+  const ids = externalIds && typeof externalIds === 'object' ? externalIds : {}
+  const parts = []
+  if (ids.imdb) {
+    parts.push(
+      <a key="imdb" href={`https://www.imdb.com/title/${ids.imdb}/`} target="_blank" rel="noreferrer" className="underline decoration-dotted hover:text-blue-600">
+        IMDb {ids.imdb}
+      </a>
+    )
+  }
+  if (ids.tvdb) {
+    const kind = mediaType === 'tv' ? 'series' : 'movie'
+    parts.push(
+      <a key="tvdb" href={`https://www.thetvdb.com/dereferrer/${kind}/${ids.tvdb}`} target="_blank" rel="noreferrer" className="underline decoration-dotted hover:text-blue-600">
+        TVDB {ids.tvdb}
+      </a>
+    )
+  }
+  if (!parts.length) return <span className="text-gray-400">no other ids</span>
+  return parts.reduce((acc, el, i) => (i === 0 ? [el] : [...acc, ' · ', el]), [])
+}
+
+/**
+ * Titles a manager tracks but cannot name on TMDB: Sonarr's source is TheTVDB
+ * and its TVDB-to-TMDB mapping is sometimes missing for a new show. The
+ * processor tries TMDB's own external-id lookup first; what is still
+ * unresolved lands here. These folders are NOT unmanaged, and the local pin,
+ * if any, came from the name search, so it carries the same risk as an
+ * unmanaged folder's with a different explanation.
+ */
+function ManagedUnidentifiedSection({ list, managers }) {
+  const items = list?.items || []
+  if (!items.length) return null
+  const rows = items.map((u) => {
+    const { mediaType } = splitPath(u.libraryRelativePath)
+    const manager = providerLabel(u.source)
+    const pin = u.localPin
+    const pinInfo = pin?.tmdbId ? describeIdentitySource(pin.source) : null
+    return (
+      <tr key={u.libraryRelativePath}>
+        <td className={cellClass}>
+          <FolderLink libraryRelativePath={u.libraryRelativePath} />
+          {u.title ? <div className="text-xs text-gray-500">{u.title}{u.year ? ` (${u.year})` : ''}</div> : null}
+        </td>
+        <td className={cellClass}>
+          <div>{manager}</div>
+          <div className="text-xs text-gray-500">
+            <ExternalIdLinks externalIds={u.externalIds} mediaType={mediaType} />
+          </div>
+        </td>
+        <td className={cellClass}>
+          {pin?.tmdbId ? (
+            <>
+              <TmdbLink mediaType={mediaType} id={pin.tmdbId} />
+              <div className="text-xs text-gray-500">{pinInfo.label}</div>
+            </>
+          ) : (
+            <span className="text-gray-400">no pin yet</span>
+          )}
+        </td>
+        <td className={`${cellClass} text-orange-700`}>
+          {pin?.tmdbId
+            ? `Neither ${manager} nor TMDB can confirm this match. Check it, then pin it by hand if it is right.`
+            : `Neither ${manager} nor TMDB has a TMDB entry for it. The title will be matched by name on the next scan.`}
+        </td>
+      </tr>
+    )
+  })
+  return (
+    <Section
+      title="Managed, but no TMDB id"
+      subtitle={`${managers} track these titles but have no TMDB entry for them, and TMDB's own id lookup found none either. The library's match cannot be checked against the manager, so it is worth a look.`}
+      icon={<QuestionMarkCircleIcon className="h-6 w-6" />}
+      list={{ ...list, __tone: 'warning' }}
+    >
+      <Table columns={['Folder', 'Manager · other ids', 'Library is using', 'What it means']} rows={rows} empty="" />
+    </Section>
+  )
+}
+
 function ProviderOnlySection({ list, diskFor, managers }) {
   const rows = (list?.items || []).map((p) => {
     const { mediaType } = splitPath(p.libraryRelativePath)
@@ -403,7 +484,14 @@ function ProviderOnlySection({ list, diskFor, managers }) {
           {p.providerPath ? <div className="text-xs text-gray-500">{p.providerPath}</div> : null}
         </td>
         <td className={cellClass}>
-          {manager} · <TmdbLink mediaType={mediaType} id={p.tmdbId} />
+          {manager} ·{' '}
+          {p.tmdbId ? (
+            <TmdbLink mediaType={mediaType} id={p.tmdbId} />
+          ) : (
+            <span className="text-xs text-gray-500">
+              no TMDB id · <ExternalIdLinks externalIds={p.externalIds} mediaType={mediaType} />
+            </span>
+          )}
         </td>
         <td className={`${cellClass} ${tone}`} title={p.arrStatus ? `${manager} status: ${p.arrStatus}` : undefined}>
           {state}
@@ -532,7 +620,10 @@ function ManagersPanel({ status }) {
                   {failed ? (
                     <span className="text-red-700">· {p.lastFetch.error}</span>
                   ) : p.lastFetch?.claims != null ? (
-                    <span className="text-gray-500">· knows {p.lastFetch.claims} titles</span>
+                    <span className="text-gray-500">
+                      · knows {p.lastFetch.claims} titles
+                      {p.lastFetch.unidentified ? `, ${p.lastFetch.unidentified} without a TMDB id` : ''}
+                    </span>
                   ) : null}
                 </li>
               )
@@ -810,7 +901,8 @@ export default function IdentityReport() {
   const skipped = data.skipped
   const renamed = pairRenamed(data.providerOnly, data.unmanaged)
   const lostCount = renamed.diskFor.size
-  const attention = (totals.conflict ?? 0) + lostCount
+  const unidentifiedCount = totals.managedUnidentified ?? data.managedUnidentified?.total ?? 0
+  const attention = (totals.conflict ?? 0) + lostCount + unidentifiedCount
   const headline =
     attention > 0 ? (
       <StatusBadge status="warning" variant="soft" icon={<ExclamationTriangleIcon />}>
@@ -949,6 +1041,7 @@ export default function IdentityReport() {
       {tiles}
       <HowThisWorks managers={managers} />
       <ConflictsSection list={data.conflicts} managers={managers} />
+      <ManagedUnidentifiedSection list={data.managedUnidentified} managers={managers} />
       <ProviderOnlySection list={data.providerOnly} diskFor={renamed.diskFor} managers={managers} />
       <WrittenSection list={data.written} managers={managers} />
       <UnmanagedSection list={data.unmanaged} arrFor={renamed.arrFor} managers={managers} />
