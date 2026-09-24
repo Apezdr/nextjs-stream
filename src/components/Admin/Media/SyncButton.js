@@ -22,14 +22,12 @@ export default function SyncButton() {
       >
         <ArrowPathIcon className="h-5 w-5" /> Sync with Fileserver
       </button>
-      {open && (
-        <SyncMediaPopup
-          isOpen={open}
-          setIsOpen={setOpen}
-          updateProcessedData={() => router.refresh()}
-          setLastSync={() => router.refresh()}
-        />
-      )}
+      <SyncMediaPopup
+        isOpen={open}
+        setIsOpen={setOpen}
+        updateProcessedData={() => router.refresh()}
+        setLastSync={() => router.refresh()}
+      />
     </>
   )
 }

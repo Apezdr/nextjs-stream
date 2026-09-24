@@ -158,15 +158,13 @@ export default function AdminOverviewPage({
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         {/* Modals */}
-        {isSyncOpen && (
-          <SyncMediaPopup
-            isOpen={isSyncOpen}
-            setIsOpen={(val) => { setIsSyncOpen(val); if (!val) setSyncAutoConnect(false) }}
-            updateProcessedData={updateProcessedData}
-            setLastSync={() => mutateLastSync()}
-            autoConnect={syncAutoConnect}
-          />
-        )}
+        <SyncMediaPopup
+          isOpen={isSyncOpen}
+          setIsOpen={(val) => { setIsSyncOpen(val); if (!val) setSyncAutoConnect(false) }}
+          updateProcessedData={updateProcessedData}
+          setLastSync={() => mutateLastSync()}
+          autoConnect={syncAutoConnect}
+        />
         {/* Dashboard Header */}
         <DashboardHeader
           onSyncClick={() => setIsSyncOpen(true)}
