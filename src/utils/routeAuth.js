@@ -41,6 +41,19 @@ export async function isAdmin(req = false) {
 }
 
 /**
+ * Require an admin inside a Server Action. A page or layout check does not
+ * cover the actions it renders: every exported 'use server' function is its
+ * own POST endpoint, so each one must check its caller. Throws, unlike
+ * isAdmin(), so a caller that ignores the result cannot fall through to the
+ * mutation.
+ */
+export async function requireAdminAction() {
+  const user = await isAdmin()
+  if (user instanceof Response) throw new Error('Admin access required.')
+  return user
+}
+
+/**
  * Authenticate as admin OR via valid webhook ID.
  */
 export async function isAdminOrWebhook(req) {

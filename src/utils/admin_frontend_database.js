@@ -1,7 +1,8 @@
-'use server'
+// Server-side helpers for the sync pipeline. Deliberately not 'use server':
+// nothing here should be callable from a browser. The Users page's actions
+// live in src/utils/actions/admin_users.js.
 
 import clientPromise from '@src/lib/mongodb'
-import { userQueries } from '@src/lib/userQueries'
 
 /**
  * Updates the MediaUpdates collection with the last updated timestamp for a given media title.
@@ -31,20 +32,4 @@ export async function deleteMediaUpdates(title, type) {
   const client = await clientPromise
   const collectionName = type === 'movie' ? 'MediaUpdatesMovie' : 'MediaUpdatesTV'
   await client.db('Media').collection(collectionName).deleteOne({ title })
-}
-
-export async function updateUserLimitedAccessFlag({ limitedAccess = false, userID }) {
-  if (userID) {
-    const users = await userQueries.updateById(userID, { limitedAccess })
-    return users
-  }
-  return false
-}
-
-export async function updateUserApprovedFlag({ approved = false, userID }) {
-  if (userID) {
-    const users = await userQueries.updateById(userID, { approved })
-    return users
-  }
-  return false
 }

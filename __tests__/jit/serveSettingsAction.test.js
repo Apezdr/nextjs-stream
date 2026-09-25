@@ -21,6 +21,11 @@ jest.mock('@src/utils/jit/health', () => ({
   invalidateTranscoderHealthCache: jest.fn(),
 }))
 
+// The caller is an admin here; adminActionAuthorization.test.js covers refusals.
+jest.mock('@src/utils/routeAuth', () => ({
+  requireAdminAction: jest.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+}))
+
 import { revalidatePath } from 'next/cache'
 import { __mockSetJitServeSettings as mockSetJitServeSettings } from '@src/utils/admin_database'
 import { invalidateCachedJitServeSettings } from '@src/utils/jit/serveSettings'

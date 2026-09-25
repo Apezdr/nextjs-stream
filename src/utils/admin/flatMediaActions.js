@@ -35,6 +35,7 @@
 import { ObjectId } from 'mongodb'
 import { revalidatePath } from 'next/cache'
 import clientPromise from '@src/lib/mongodb'
+import { isAdmin } from '@src/utils/routeAuth'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import {
   invalidateMovieDetailsCache,
@@ -48,6 +49,14 @@ const DB_NAME = 'Media'
 // ─── Result helpers ──────────────────────────────────────────────────────────
 const ok = (extra = {}) => ({ status: 'success', message: 'Saved.', ...extra })
 const fail = (message) => ({ status: 'error', message })
+
+// Each action is its own POST endpoint, so each re-checks the caller; the
+// admin page's check does not cover it. The refusal is returned, not thrown,
+// so the editors show it through useActionState like any other error.
+async function refuseNonAdmin() {
+  const user = await isAdmin()
+  return user instanceof Response ? fail('Admin access required.') : null
+}
 
 // ─── Small utilities ─────────────────────────────────────────────────────────
 function toObjectId(id) {
@@ -180,6 +189,8 @@ const EPISODE_MANUAL_TRACKED_FIELDS = ['videoURL', 'thumbnail', 'thumbnailBlurha
 // ─── Movies ──────────────────────────────────────────────────────────────────
 
 export async function createMovieAction(_prevState, payload = {}) {
+  const refused = await refuseNonAdmin()
+  if (refused) return refused
   const title = trimOrNull(payload.title)
   const videoURL = trimOrNull(payload.videoURL)
   if (!title) return fail('Title is required.')
@@ -235,6 +246,8 @@ export async function createMovieAction(_prevState, payload = {}) {
 }
 
 export async function saveMovieAction(_prevState, payload = {}) {
+  const refused = await refuseNonAdmin()
+  if (refused) return refused
   const _id = toObjectId(payload.id)
   if (!_id) return fail('A valid movie id is required.')
 
@@ -277,6 +290,8 @@ export async function saveMovieAction(_prevState, payload = {}) {
 }
 
 export async function deleteMovieAction(_prevState, payload = {}) {
+  const refused = await refuseNonAdmin()
+  if (refused) return refused
   const _id = toObjectId(payload.id)
   if (!_id) return fail('A valid movie id is required.')
 
@@ -295,6 +310,8 @@ export async function deleteMovieAction(_prevState, payload = {}) {
 // ─── TV Shows ────────────────────────────────────────────────────────────────
 
 export async function createTVShowAction(_prevState, payload = {}) {
+  const refused = await refuseNonAdmin()
+  if (refused) return refused
   const title = trimOrNull(payload.title)
   if (!title) return fail('Title is required.')
 
@@ -340,6 +357,8 @@ export async function createTVShowAction(_prevState, payload = {}) {
 }
 
 export async function saveTVShowAction(_prevState, payload = {}) {
+  const refused = await refuseNonAdmin()
+  if (refused) return refused
   const _id = toObjectId(payload.id)
   if (!_id) return fail('A valid show id is required.')
 
@@ -388,6 +407,8 @@ export async function saveTVShowAction(_prevState, payload = {}) {
 }
 
 export async function deleteTVShowAction(_prevState, payload = {}) {
+  const refused = await refuseNonAdmin()
+  if (refused) return refused
   const _id = toObjectId(payload.id)
   if (!_id) return fail('A valid show id is required.')
 
@@ -410,6 +431,8 @@ export async function deleteTVShowAction(_prevState, payload = {}) {
 // ─── Seasons ─────────────────────────────────────────────────────────────────
 
 export async function saveSeasonAction(_prevState, payload = {}) {
+  const refused = await refuseNonAdmin()
+  if (refused) return refused
   const showId = toObjectId(payload.showId)
   const seasonNumber = parseIntStrict(payload.seasonNumber)
   if (!showId) return fail('A valid showId is required.')
@@ -468,6 +491,8 @@ export async function saveSeasonAction(_prevState, payload = {}) {
 }
 
 export async function deleteSeasonAction(_prevState, payload = {}) {
+  const refused = await refuseNonAdmin()
+  if (refused) return refused
   const showId = toObjectId(payload.showId)
   const seasonNumber = parseIntStrict(payload.seasonNumber)
   if (!showId) return fail('A valid showId is required.')
@@ -491,6 +516,8 @@ export async function deleteSeasonAction(_prevState, payload = {}) {
 // ─── Episodes ────────────────────────────────────────────────────────────────
 
 export async function saveEpisodeAction(_prevState, payload = {}) {
+  const refused = await refuseNonAdmin()
+  if (refused) return refused
   const showId = toObjectId(payload.showId)
   const seasonNumber = parseIntStrict(payload.seasonNumber)
   const episodeNumber = parseIntStrict(payload.episodeNumber)
@@ -560,6 +587,8 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
 }
 
 export async function deleteEpisodeAction(_prevState, payload = {}) {
+  const refused = await refuseNonAdmin()
+  if (refused) return refused
   const _id = toObjectId(payload.episodeId || payload.id)
   if (!_id) return fail('A valid episode id is required.')
 

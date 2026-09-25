@@ -10,6 +10,7 @@ import {
 } from '@src/utils/admin_database'
 import { invalidateCachedJitServeSettings } from '@src/utils/jit/serveSettings'
 import { invalidateTranscoderHealthCache } from '@src/utils/jit/health'
+import { requireAdminAction } from '@src/utils/routeAuth'
 
 const autoSyncManager = new AutoSyncManager()
 const syncAgressivenessManager = new SyncAggressivenessManager()
@@ -23,6 +24,7 @@ const ALLOWED_LANG_CODES = new Set([
 
 export async function updateSyncAggressiveness(formData) {
   'use server'
+  await requireAdminAction()
 
   const syncAggressiveness = formData.get('syncAggressiveness')
 
@@ -39,6 +41,7 @@ export async function updateSyncAggressiveness(formData) {
 
 export async function updateAutomaticSync(formData) {
   'use server'
+  await requireAdminAction()
 
   const automaticSyncEnabled = formData.get('automaticSyncEnabled') === 'true'
 
@@ -50,6 +53,7 @@ export async function updateAutomaticSync(formData) {
 
 export async function updateJitServeSettings(formData) {
   'use server'
+  await requireAdminAction()
 
   // 'env' clears the runtime override (serve layer falls back to the
   // JIT_SERVE_MODE env var); the three concrete modes set it.
@@ -85,6 +89,7 @@ export async function updateJitServeSettings(formData) {
 
 export async function updateAutoCaptions(formData) {
   'use server'
+  await requireAdminAction()
 
   const enabled = formData.get('enabled') === 'true'
   const rawLanguages = formData.getAll('languages')

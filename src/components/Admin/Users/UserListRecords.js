@@ -9,7 +9,7 @@ import {
 import {
   updateUserApprovedFlag,
   updateUserLimitedAccessFlag,
-} from '@src/utils/admin_frontend_database'
+} from '@src/utils/actions/admin_users'
 import { memo, useMemo, useState } from 'react'
 
 function cn(...classes) {
