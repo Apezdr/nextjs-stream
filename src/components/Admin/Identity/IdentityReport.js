@@ -21,6 +21,7 @@
 import { useEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
 import Link from 'next/link'
+import Image from 'next/image'
 import {
   ArrowPathIcon,
   CheckCircleIcon,
@@ -441,6 +442,55 @@ function ManagedUnidentifiedSection({ list, managers }) {
   )
 }
 
+/**
+ * Faint artwork behind a row's title cell. The rows in this list are titles
+ * that are NOT in the library, so there is no local poster; the manager's own
+ * remote art (TMDB for Radarr, TheTVDB for Sonarr) rides on the row as `art`
+ * when the processor forwards it. Kept very light and masked toward the text
+ * so the cell stays readable; nothing renders when the row has no art.
+ */
+function ArtCell({ art, children }) {
+  const src = art?.backdrop || art?.poster || null
+  return (
+    <td className={`${cellClass} relative overflow-hidden`}>
+      {src ? (
+        <>
+          {/* next/image so the bytes come through the app's own image
+              pipeline (/_next/image → imgproxy when configured, with its
+              cache) rather than straight from TMDB or TheTVDB, and arrive
+              resized to the cell instead of at "original" size. */}
+          <Image
+            src={src}
+            alt=""
+            aria-hidden="true"
+            fill
+            sizes="(min-width: 1024px) 40vw, 100vw"
+            quality={75}
+            loading="lazy"
+            data-testid="row-art"
+            className="pointer-events-none object-cover opacity-[0.14]"
+          />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white/90 via-white/60 to-white/20" aria-hidden="true" />
+        </>
+      ) : null}
+      <div className="relative">{children}</div>
+    </td>
+  )
+}
+
+/**
+ * One line of colour per reason a tracked title is not here, so the column
+ * scans at a glance: blue = waiting on a release, orange = needs a look,
+ * grey = nothing will happen.
+ */
+function ReasonBadge({ status, children }) {
+  return (
+    <StatusBadge status={status} variant="soft" size="small" className="mr-2 whitespace-nowrap align-middle">
+      {children}
+    </StatusBadge>
+  )
+}
+
 function ProviderOnlySection({ list, diskFor, managers }) {
   const rows = (list?.items || []).map((p) => {
     const { mediaType } = splitPath(p.libraryRelativePath)
@@ -450,14 +500,26 @@ function ProviderOnlySection({ list, diskFor, managers }) {
     // `released` (the manager considers it obtainable now), `monitored` (it is
     // actively looking) and `arrStatus` (its lifecycle word, for the tooltip).
     // Without them the row can only say the title has not been obtained.
-    let state = `Not downloaded yet — ${manager} is watching for it`
-    if (p.monitored === false) state = `Not monitored in ${manager}, so it will not be downloaded`
-    else if (p.released === false) state = `Not released yet — ${manager} will download it when it is`
-    else if (p.released === true) state = `Released, not downloaded yet — ${manager} is looking for it`
-    let tone = 'text-gray-500'
+    let badge = { status: 'neutral', label: 'Not downloaded' }
+    let text = `Not downloaded yet — ${manager} is watching for it`
+    let tone = 'text-gray-600'
+    if (p.monitored === false) {
+      badge = { status: 'neutral', label: 'Not monitored' }
+      text = `Not monitored in ${manager}, so it will not be downloaded`
+      tone = 'text-gray-500'
+    } else if (p.released === false) {
+      badge = { status: 'info', label: 'Not released' }
+      text = `Not released yet — ${manager} will download it when it is`
+      tone = 'text-blue-800'
+    } else if (p.released === true) {
+      badge = { status: 'warning', label: 'Released' }
+      text = `Released, not downloaded yet — ${manager} is looking for it`
+      tone = 'text-orange-800'
+    }
     if (paired) {
       const certain = paired.by === 'tmdbId'
-      state = (
+      badge = certain ? { status: 'error', label: 'Lost' } : { status: 'warning', label: 'Renamed?' }
+      text = (
         <>
           <span className="font-medium">
             {certain ? `${manager} lost track of it` : 'Probably renamed'}: on disk as{' '}
@@ -469,20 +531,22 @@ function ProviderOnlySection({ list, diskFor, managers }) {
           </div>
         </>
       )
-      tone = 'text-orange-700'
+      tone = certain ? 'text-red-800' : 'text-orange-800'
     } else if (p.nested) {
-      state = 'Folder is nested too deep for the media server to see'
-      tone = 'text-orange-700'
+      badge = { status: 'warning', label: 'Hidden' }
+      text = 'Folder is nested too deep for the media server to see'
+      tone = 'text-orange-800'
     } else if (p.hasFile) {
-      state = `${manager} has a file, but no folder by this name is in the library. Renamed?`
-      tone = 'text-orange-700'
+      badge = { status: 'warning', label: 'Renamed?' }
+      text = `${manager} has a file, but no folder by this name is in the library. Renamed?`
+      tone = 'text-orange-800'
     }
     return (
       <tr key={`${p.source}:${p.providerPath || p.libraryRelativePath}`}>
-        <td className={cellClass}>
+        <ArtCell art={p.art}>
           <div>{splitPath(p.libraryRelativePath).folder}</div>
           {p.providerPath ? <div className="text-xs text-gray-500">{p.providerPath}</div> : null}
-        </td>
+        </ArtCell>
         <td className={cellClass}>
           {manager} ·{' '}
           {p.tmdbId ? (
@@ -493,8 +557,11 @@ function ProviderOnlySection({ list, diskFor, managers }) {
             </span>
           )}
         </td>
-        <td className={`${cellClass} ${tone}`} title={p.arrStatus ? `${manager} status: ${p.arrStatus}` : undefined}>
-          {state}
+        <td className={`${cellClass} ${tone}`}>
+          <div className="flex items-start">
+            <ReasonBadge status={badge.status}>{badge.label}</ReasonBadge>
+            <span title={p.arrStatus ? `${manager} status: ${p.arrStatus}` : undefined}>{text}</span>
+          </div>
         </td>
       </tr>
     )
@@ -514,7 +581,6 @@ function ProviderOnlySection({ list, diskFor, managers }) {
     </Section>
   )
 }
-
 function UnmanagedSection({ list, arrFor, managers }) {
   const items = list?.items || []
   return (

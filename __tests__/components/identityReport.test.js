@@ -182,6 +182,42 @@ describe('IdentityReport', () => {
     expect(screen.getByText(/Not monitored in Radarr, so it will not be downloaded/)).toBeInTheDocument()
     // A row without the fields keeps the generic line and no tooltip.
     expect(screen.getByText(/Not downloaded yet — Sonarr is watching for it/)).not.toHaveAttribute('title')
+    // Each reason carries a short colour-coded label so the column scans.
+    expect(screen.getByText('Not released')).toBeInTheDocument()
+    expect(screen.getByText('Released')).toBeInTheDocument()
+    expect(screen.getByText('Not monitored')).toBeInTheDocument()
+    expect(screen.getByText('Not downloaded')).toBeInTheDocument()
+  })
+
+  it('shows the manager’s artwork faintly behind the title cell when the processor forwards it', () => {
+    const data = renamedReport(null)
+    data.providerOnly = {
+      items: [
+        {
+          libraryRelativePath: 'movies/With Art', tmdbId: 5, source: 'radarr', hasFile: false, providerPath: '/p/With Art', released: false,
+          art: { poster: 'https://image.tmdb.org/t/p/original/poster.jpg', backdrop: 'https://image.tmdb.org/t/p/original/fanart.jpg' },
+        },
+        { libraryRelativePath: 'movies/No Art', tmdbId: 6, source: 'radarr', hasFile: false, providerPath: '/p/No Art', released: false },
+      ],
+      total: 2,
+      truncated: 0,
+    }
+    data.unmanaged = { items: [], total: 0, truncated: 0 }
+    swrStates({ report: { ...idle, data } })
+
+    render(<IdentityReport />)
+
+    const art = screen.getAllByTestId('row-art')
+    expect(art).toHaveLength(1)
+    // Through the app's own image pipeline (/_next/image → imgproxy + cache
+    // when configured), never straight from TMDB or TheTVDB.
+    const src = art[0].getAttribute('src')
+    expect(src).toMatch(/^\/_next\/image\?/)
+    expect(new URL(src, 'http://test').searchParams.get('url')).toBe('https://image.tmdb.org/t/p/original/fanart.jpg')
+    expect(new URL(src, 'http://test').searchParams.get('q')).toBe('75')
+    expect(art[0]).toHaveAttribute('loading', 'lazy')
+    expect(art[0]).toHaveAttribute('aria-hidden', 'true')
+    expect(art[0].className).toMatch(/opacity-\[0\.14\]/)
   })
 
   it('lists a managed title with no TMDB id as its own case, with links to chase the mapping', () => {
