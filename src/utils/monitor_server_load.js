@@ -1,6 +1,37 @@
 const os = require('os');
 const fs = require('fs');
 const { execFile } = require('child_process');
+const { metrics } = require('@opentelemetry/api');
+
+// ── Sampler cost metric ──────────────────────────────────────────────────────
+// Records how long each sampler job blocks the event loop, as the histogram
+// admin_telemetry.sampler.duration (ms, attribute `job`). This process serves
+// every request, so SigNoz compares sampler versions on this directly: the
+// runtime event-loop metrics sample every 10 ms and cannot resolve a
+// sub-millisecond tick. Only synchronous work is timed; `df` runs in a child
+// process, so its jobs cover the spawn call and the parsing of its output.
+const SAMPLER_DURATION_BUCKETS_MS = [0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 7.5, 10, 25, 50, 100];
+let samplerDurationHistogram = null;
+let samplerDurationProvider = null;
+
+function recordSamplerDuration(job, startedAt) {
+  const elapsedMs = performance.now() - startedAt;
+  // Metrics have no proxy provider: an instrument created before
+  // instrumentation.ts registers the SDK provider stays a no-op for good, and
+  // this module can load first. Re-resolve whenever the global provider changes.
+  const provider = metrics.getMeterProvider();
+  if (provider !== samplerDurationProvider) {
+    samplerDurationProvider = provider;
+    samplerDurationHistogram = provider
+      .getMeter('nextjs-stream/admin-telemetry')
+      .createHistogram('admin_telemetry.sampler.duration', {
+        description: 'Time one server-load sampler job blocks the event loop',
+        unit: 'ms',
+        advice: { explicitBucketBoundaries: SAMPLER_DURATION_BUCKETS_MS },
+      });
+  }
+  samplerDurationHistogram.record(elapsedMs, { job });
+}
 
 // On Linux, os.freemem() returns MemFree, which excludes reclaimable page
 // cache and buffers — on a server warming a disk cache this routinely shows
@@ -121,11 +152,13 @@ function sampleDisk() {
     args.push(...DISK_HEALTH_PATHS);
   }
 
+  const spawnStartedAt = performance.now();
   execFile(
     'df',
     args,
     { timeout: 5000, killSignal: 'SIGKILL', encoding: 'utf8' },
     (error, stdout) => {
+      const parseStartedAt = performance.now();
       diskSampleInProgress = false;
 
       if (error || !stdout) {
@@ -157,12 +190,15 @@ function sampleDisk() {
       } catch {
         // Parse failure — keep last-known stats
       }
+      recordSamplerDuration('disk_parse', parseStartedAt);
     }
   );
+  recordSamplerDuration('disk_spawn', spawnStartedAt);
 }
 
 // Sampling function to calculate CPU and Memory usage
 function sample() {
+  const startedAt = performance.now();
   const { idle, total } = getCpuTimes();
 
   if (initialized) {
@@ -189,6 +225,8 @@ function sample() {
   // Convert Memory usage from bytes to gigabytes (GB)
   memoryTotal = (totalMemBytes / (1024 ** 3)).toFixed(2); // Total memory in GB
   memoryUsed = (usedMemBytes / (1024 ** 3)).toFixed(2); // Used memory in GB
+
+  recordSamplerDuration('tick', startedAt);
 }
 
 // Start sampling at regular intervals (every 3 seconds)
