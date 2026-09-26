@@ -125,6 +125,12 @@ test('uses a millisecond histogram with sub-millisecond buckets', () => {
   expect(boundaries[0]).toBeLessThan(0.1)
   expect(boundaries).toEqual([...boundaries].sort((a, b) => a - b))
   expect(boundaries.filter((boundary) => boundary < 1).length).toBeGreaterThanOrEqual(4)
+  // Production measured the tick at 3-6 ms and the df spawn at 9-13 ms:
+  // percentiles there need buckets no wider than 5 ms up to 30 ms.
+  const gapsUpTo30 = boundaries
+    .filter((boundary) => boundary <= 30)
+    .map((boundary, i, list) => (i === 0 ? 0 : boundary - list[i - 1]))
+  expect(Math.max(...gapsUpTo30)).toBeLessThanOrEqual(5)
 })
 
 test('moves to the real provider when instrumentation registers after the module loads', () => {

@@ -10,7 +10,12 @@ const { metrics } = require('@opentelemetry/api');
 // runtime event-loop metrics sample every 10 ms and cannot resolve a
 // sub-millisecond tick. Only synchronous work is timed; `df` runs in a child
 // process, so its jobs cover the spawn call and the parsing of its output.
-const SAMPLER_DURATION_BUCKETS_MS = [0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 7.5, 10, 25, 50, 100];
+// Buckets are dense from 0.05 ms to 30 ms: a rework aims under 1 ms, while the
+// production host (72 CPUs) measured the tick at 3-6 ms and the df spawn at
+// 9-13 ms, and percentiles are only as precise as the bucket they land in.
+const SAMPLER_DURATION_BUCKETS_MS = [
+  0.05, 0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20, 25, 30, 40, 50, 100,
+];
 let samplerDurationHistogram = null;
 let samplerDurationProvider = null;
 
