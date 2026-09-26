@@ -2,6 +2,7 @@ import { redirect, notFound } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { getSession } from '@src/lib/cachedAuth'
 import { adminUserEmails, getAllServers, getDefaultServer } from '@src/utils/config'
+import { formatServerLabel } from '@src/utils/serverLabel'
 import { getAdminMovie } from '@src/utils/admin/flatMediaAdmin'
 import MovieEditor from '@components/Admin/Media/MovieEditor'
 
@@ -25,9 +26,10 @@ function computeMovieOwnership(record) {
   const isLocalOverride = Boolean(hostingServerId) && hostingServerId !== defaultServer.id
   return {
     isLocalOverride,
-    hostingServerLabel: hosting?.id || hostingServerId || 'unknown',
+    hostingServerLabel:
+      hosting?.displayName || (hostingServerId ? formatServerLabel(hostingServerId) : 'unknown'),
     hostingPriority: hosting?.priority ?? null,
-    writeTargetLabel: defaultServer.id,
+    writeTargetLabel: defaultServer.displayName,
     writeTargetPriority: defaultServer.priority,
     // The override only takes effect if the write target outranks (or ties) the
     // hosting server (lower priority number = higher precedence).

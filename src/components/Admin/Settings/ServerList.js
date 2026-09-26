@@ -29,7 +29,7 @@ function ServerList({ servers, organizrURL }) {
       <div className="mt-6 space-y-8 divide-y divide-gray-200">
         {/* Iterate through each server and render its settings */}
         {servers.map((server) => {
-          const serverLabel = formatServerLabel(server.id)
+          const serverLabel = server.displayName || formatServerLabel(server.id)
 
           return (
             <div key={server.id} className="pt-6">

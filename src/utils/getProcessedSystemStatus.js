@@ -1,6 +1,7 @@
 import { getAllServers, getWebhookIdForServer } from '@src/utils/config'
 import { httpGet } from '@src/lib/httpHelper'
 import { getLatestSystemStatus, getSystemStatusMessage } from '@src/utils/admin_utils'
+import { formatServerLabel } from '@src/utils/serverLabel'
 
 const SERVER_ENDPOINT = '/api/system-status'
 const DEFAULTS = {
@@ -28,7 +29,9 @@ function withTimeout(promise, ms, message) {
 function buildStatus(server, data = null, headers = {}, error = null) {
   const base = {
     serverId: server.id,
-    serverName: server.name ?? server.id,
+    // Every signed-in user sees this, so it stays the neutral id-derived label
+    // ("Server 2"), never the operator's SERVER_DISPLAY_NAME.
+    serverName: formatServerLabel(server.id),
     lastUpdated: headers['last-modified'] ?? new Date().toISOString(),
   }
 

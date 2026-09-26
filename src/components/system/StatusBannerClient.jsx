@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useReducer, useRef, useSyncExternalStore } from 'react';
 import { useSystemStatus } from '@src/contexts/SystemStatusContext';
+import { formatServerLabel } from '@src/utils/serverLabel';
 
 // Banner presentation state (dismissal, tracked level, dock/expand) transitions together,
 // so it lives in one reducer. timeAgoRefresh stays a standalone re-render tick.
@@ -387,7 +388,7 @@ export default function StatusBannerClient({ status: initialStatus }) {
                         <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
                           <path fillRule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm1 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V8zm1 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1v-2z" clipRule="evenodd" />
                         </svg>
-                        Server: {status.serverId}
+                        Server: {formatServerLabel(status.serverId)}
                       </span>
                     )}
                   </div>

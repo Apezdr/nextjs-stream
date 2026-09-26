@@ -7,6 +7,7 @@ import {
   getServerWebhookMapping,
   getWebhookIdForServer,
 } from './webhookServer'
+import { formatServerLabel, normalizeServerDisplayName } from './serverLabel'
 /**
  * @typedef {Object} SyncPaths
  * @property {string} tv - Path for TV show synchronization
@@ -25,6 +26,9 @@ import {
  * @property {string} prefixPath - Prefix path for media files
  * @property {string} syncEndpoint - Base endpoint for sync operations
  * @property {string} internalEndpoint - Internal network endpoint for server-to-server calls (defaults to syncEndpoint)
+ * @property {string} displayName - Admin-facing label: SERVER_DISPLAY_NAME[_N] when set, else derived from id.
+ *   Server-side only: client bundles never see those variables, so pass it down as data rather than
+ *   reading it from a client import of this module.
  * @property {ServerPaths} paths - Server-specific paths
  * @property {boolean} isDefault - Whether this is the default server
  */
@@ -60,18 +64,20 @@ const createServerConfig = ({
   prefixPath = '',
   syncEndpoint,
   internalEndpoint,
+  displayName,
   isDefault = false,
   priority = 1
 }) => {
   // Default internalEndpoint to syncEndpoint if not provided
   const finalInternalEndpoint = internalEndpoint || syncEndpoint
-  
+
   const config = {
     id,
     baseURL,
     prefixPath,
     syncEndpoint,
     internalEndpoint: finalInternalEndpoint,
+    displayName: normalizeServerDisplayName(displayName) || formatServerLabel(id),
     paths: {
       sync: createSyncUrls(syncEndpoint)
     },
@@ -120,6 +126,7 @@ const loadServerConfigurations = () => {
     prefixPath: process.env.FILE_SERVER_PREFIX_PATH || '',
     syncEndpoint: defaultSyncEndpoint,
     internalEndpoint: process.env.NODE_SERVER_INTERNAL_URL,
+    displayName: process.env.SERVER_DISPLAY_NAME,
     isDefault: true,
     priority: 1
   }))
@@ -133,6 +140,7 @@ const loadServerConfigurations = () => {
       prefixPath: process.env[`FILE_SERVER_PREFIX_PATH_${serverIndex}`] || '',
       syncEndpoint: process.env[`NODE_SERVER_URL_${serverIndex}`],
       internalEndpoint: process.env[`NODE_SERVER_INTERNAL_URL_${serverIndex}`],
+      displayName: process.env[`SERVER_DISPLAY_NAME_${serverIndex}`],
       isDefault: false,
       priority: serverIndex
     }))
