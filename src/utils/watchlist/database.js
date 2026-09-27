@@ -6,6 +6,7 @@ import { ObjectId } from 'mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { batchResolveMedia, getMediaByTMDBId } from './mediaResolver.js'
+import { planPlaylistMerge } from './playlistMerge.js'
 import { getSession } from '@src/lib/cachedAuth.js'
 import { userQueries } from '@src/lib/userQueries'
 import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
@@ -121,6 +122,40 @@ function isGlobalAdminUser(user) {
   )
 }
 
+// Who may do what with a playlist. Each takes a playlist that has been through
+// normalizePlaylistIdentityFields. View matches getPlaylistById's query; add
+// and edit match the canAdd / canEdit that getUserPlaylists sends the client.
+function canViewPlaylist(playlist, userObjectId, isGlobalAdmin) {
+  return Boolean(
+    playlist &&
+      (isGlobalAdmin ||
+        playlist.ownerId?.equals(userObjectId) ||
+        getCollaboratorPermission(playlist, userObjectId) ||
+        playlist.privacy === 'shared' ||
+        playlist.privacy === 'public')
+  )
+}
+
+function canAddToPlaylist(playlist, userObjectId, isGlobalAdmin) {
+  return Boolean(
+    playlist &&
+      (isGlobalAdmin ||
+        playlist.ownerId?.equals(userObjectId) ||
+        canCollaboratorAdd(getCollaboratorPermission(playlist, userObjectId)) ||
+        canCollaboratorAdd(getGlobalPermission(playlist)))
+  )
+}
+
+function canEditPlaylist(playlist, userObjectId, isGlobalAdmin) {
+  return Boolean(
+    playlist &&
+      (isGlobalAdmin ||
+        playlist.ownerId?.equals(userObjectId) ||
+        canCollaboratorEdit(getCollaboratorPermission(playlist, userObjectId)) ||
+        canCollaboratorEdit(getGlobalPermission(playlist)))
+  )
+}
+
 /**
  * Get a map of owner IDs to display names (name or email)
  * Simplified to use userQueries factory - no more manual database handling
@@ -211,22 +246,112 @@ const getPlaylistMetadata = cache(async (playlistId) => {
  * @param {string} [options.userId] - Optional user ID to skip auth() call
  * @returns {Promise<Array|number>} Watchlist items or count
  */
-// The Watchlist collection ships with no secondary indexes; ensure the one that
-// serves the hot find({playlistId}).sort({dateAdded}) path exists. Memoized per
-// process so polling requests don't pay a round trip (mirrors ensurePlaylistVisibilityIndexes).
+// The app creates the Watchlist collection's indexes itself, on first use, the
+// way the sync repositories create theirs (BaseRepository.createIndexes): each
+// build is idempotent and retried on transient drops, and success is cached
+// only once every index exists, so a failed build is re-attempted rather than
+// forgotten until the next restart.
+const WATCHLIST_INDEXES = [
+  // Serves the hot find({ playlistId }).sort({ dateAdded }) read.
+  { key: { playlistId: 1, dateAdded: -1 }, options: { name: 'by_playlist_dateAdded' } },
+  // One copy of a title per playlist, whoever added it. TMDB ids repeat across
+  // media types, so mediaType is part of the key. Adds, moves and playlist
+  // merges rely on it to turn a second copy into E11000. Items without a TMDB
+  // id have no title to be unique on, so the index leaves them out.
+  {
+    key: { playlistId: 1, mediaType: 1, tmdbId: 1 },
+    options: {
+      name: 'unique_playlist_title',
+      unique: true,
+      partialFilterExpression: { tmdbId: { $exists: true } },
+    },
+  },
+]
+
+// Every watchlist read comes through ensureWatchlistIndexes, so after a failed
+// attempt it waits before trying again rather than paying a failing build on
+// each request. The unique build fails for as long as the collection holds a
+// duplicate title, and succeeds on the first attempt after it is removed.
+const WATCHLIST_INDEX_RETRY_MS = 5 * 60 * 1000
 let watchlistIndexesEnsured = false
-async function ensureWatchlistIndexes() {
-  if (watchlistIndexesEnsured) return
+let watchlistIndexesInFlight = null
+let watchlistIndexRetryAt = 0
+
+// Same test as BaseRepository.createIndexSafely: a dropped connection, a
+// cleared pool, or a write carrying a retryable label.
+function isTransientMongoError(error) {
+  if (!error) return false
+  if (
+    typeof error.hasErrorLabel === 'function' &&
+    (error.hasErrorLabel('TransientTransactionError') || error.hasErrorLabel('RetryableWriteError'))
+  ) {
+    return true
+  }
+  return /connection .* closed|ECONNRESET|socket hang up|socket|network|pool (was )?(cleared|closed)|server is closed|MongoNetworkError/i.test(
+    error.message || ''
+  )
+}
+
+// Mirrors BaseRepository.createIndexSafely: an index that already exists is not
+// an error, and a build dropped by a transient connection close is retried.
+async function createIndexSafely(collection, key, options) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await collection.createIndex(key, options)
+      return
+    } catch (error) {
+      // Same keys or name under other options. Left as is, but said out loud:
+      // a non-unique twin would mean duplicates are not being refused.
+      if (error?.code === 85 || error?.code === 86) {
+        console.warn(`[Watchlist] Index ${options?.name} exists with other options; left as is:`, error.message)
+        return
+      }
+      if (attempt < 4 && isTransientMongoError(error)) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt))
+        continue
+      }
+      throw error
+    }
+  }
+}
+
+// Never throws: a failure is logged and scheduled for a retry.
+async function buildWatchlistIndexes() {
   try {
     const client = await clientPromise
-    await client
-      .db('Media')
-      .collection('Watchlist')
-      .createIndex({ playlistId: 1, dateAdded: -1 }, { name: 'by_playlist_dateAdded' })
-    watchlistIndexesEnsured = true
+    const collection = client.db('Media').collection('Watchlist')
+    const results = await Promise.allSettled(
+      WATCHLIST_INDEXES.map(({ key, options }) => createIndexSafely(collection, key, options))
+    )
+    const failures = results.flatMap((result, i) =>
+      result.status === 'rejected' ? [{ name: WATCHLIST_INDEXES[i].options.name, error: result.reason }] : []
+    )
+    if (failures.length === 0) {
+      watchlistIndexesEnsured = true
+      return
+    }
+    watchlistIndexRetryAt = Date.now() + WATCHLIST_INDEX_RETRY_MS
+    for (const { name, error } of failures) {
+      const hint = error?.code === 11000
+        ? ' The collection holds a duplicate title; the build succeeds once it is removed.'
+        : ''
+      console.error(`[Watchlist] Index ${name} not created, retrying in 5 minutes.${hint}`, error?.message || error)
+    }
   } catch (error) {
-    console.warn('[Watchlist] Index ensure warning:', error?.message || error)
+    watchlistIndexRetryAt = Date.now() + WATCHLIST_INDEX_RETRY_MS
+    console.error('[Watchlist] Index creation failed, retrying in 5 minutes:', error?.message || error)
   }
+}
+
+async function ensureWatchlistIndexes() {
+  if (watchlistIndexesEnsured || Date.now() < watchlistIndexRetryAt) return
+  // Concurrent callers share one attempt
+  if (!watchlistIndexesInFlight) {
+    watchlistIndexesInFlight = buildWatchlistIndexes().finally(() => {
+      watchlistIndexesInFlight = null
+    })
+  }
+  await watchlistIndexesInFlight
 }
 
 export const getUserWatchlist = cache(async function getUserWatchlist({
@@ -513,34 +638,23 @@ export async function addToWatchlist({
         throw new Error('Playlist not found')
       }
 
-      const isOwner = playlist.ownerId?.equals(userObjectId) || false
-      const collaboratorPermission = getCollaboratorPermission(playlist, userObjectId)
-      const globalPermission = getGlobalPermission(playlist)
-
-      if (!isOwner && !canCollaboratorAdd(collaboratorPermission) && !canCollaboratorAdd(globalPermission) && !isGlobalAdmin) {
+      if (!canAddToPlaylist(playlist, userObjectId, isGlobalAdmin)) {
         throw new Error('Insufficient permission to add items to this playlist')
       }
     }
 
-    // Check for duplicate using TMDB ID (primary key)
-    const existingItem = await collection.findOne({
-      userId: userObjectId,
-      playlistId: new ObjectId(actualPlaylistId),
-      tmdbId: parseInt(tmdbId),
-    })
+    await ensureWatchlistIndexes()
 
-    if (existingItem) {
-      throw new Error('Item already exists in this playlist')
-    }
+    const playlistObjectId = new ObjectId(actualPlaylistId)
+    const numericTmdbId = parseInt(tmdbId)
+    const now = new Date()
 
-    // Create minimal watchlist entry with TMDB ID as primary key
+    // Minimal watchlist entry; the playlist, TMDB ID and media type come from
+    // the upsert filter below
     const watchlistItem = {
       userId: userObjectId,
-      playlistId: new ObjectId(actualPlaylistId),
-      tmdbId: parseInt(tmdbId),
-      mediaType,
-      dateAdded: new Date(),
-      dateUpdated: new Date(),
+      dateAdded: now,
+      dateUpdated: now,
     }
 
     // Add optional user metadata
@@ -552,22 +666,49 @@ export async function addToWatchlist({
       watchlistItem.mediaId = new ObjectId(mediaId)
     }
 
-    // Fetch full media data for return value
-    const resolvedMedia = await batchResolveMedia([{ tmdbId: parseInt(tmdbId), mediaType }])
-    const fullMediaData = resolvedMedia.get(parseInt(tmdbId))
+    // Insert only if the playlist doesn't hold this title yet, in one atomic
+    // step. A check followed by a separate insert let a retry through while the
+    // first request was still busy, and the playlist got the title twice. The
+    // title belongs to the playlist, not to whoever added it, so the filter has
+    // no userId. When two upserts race, unique_playlist_title stops the second.
+    let upsertResult
+    try {
+      upsertResult = await collection.updateOne(
+        { playlistId: playlistObjectId, mediaType, tmdbId: numericTmdbId },
+        { $setOnInsert: watchlistItem },
+        { upsert: true }
+      )
+    } catch (error) {
+      if (error?.code === 11000) {
+        throw new Error('Item already exists in this playlist')
+      }
+      throw error
+    }
 
-    // Insert the item
-    const result = await collection.insertOne(watchlistItem)
+    if (!upsertResult.upsertedId) {
+      throw new Error('Item already exists in this playlist')
+    }
 
-    const mediaData = fullMediaData
+    const insertedId = upsertResult.upsertedId.toString()
+
+    // Media data is only for the response, so it is fetched after the write:
+    // the lookup can be slow, and the item must not wait on it. A failed lookup
+    // falls back to what the request carried; the item is already saved.
+    let mediaData = null
+    try {
+      const resolvedMedia = await batchResolveMedia([{ tmdbId: numericTmdbId, mediaType }])
+      mediaData = resolvedMedia.get(numericTmdbId) || null
+    } catch (error) {
+      console.error('[Watchlist] Media lookup failed after adding an item:', error?.message || error)
+    }
 
     if (mediaData) {
       return {
-        id: result.insertedId.toString(),
-        watchlistId: result.insertedId.toString(),
-        userId: watchlistItem.userId.toString(),
-        playlistId: watchlistItem.playlistId.toString(),
-        dateAdded: watchlistItem.dateAdded,
+        id: insertedId,
+        watchlistId: insertedId,
+        userId: userObjectId.toString(),
+        playlistId: playlistObjectId.toString(),
+        dateAdded: now,
         notes: watchlistItem.notes,
         rating: watchlistItem.rating,
         ...mediaData,
@@ -575,15 +716,15 @@ export async function addToWatchlist({
     } else {
       // Fallback if media resolution failed
       return {
-        id: result.insertedId.toString(),
-        watchlistId: result.insertedId.toString(),
-        userId: watchlistItem.userId.toString(),
-        playlistId: watchlistItem.playlistId.toString(),
-        tmdbId: parseInt(tmdbId),
+        id: insertedId,
+        watchlistId: insertedId,
+        userId: userObjectId.toString(),
+        playlistId: playlistObjectId.toString(),
+        tmdbId: numericTmdbId,
         mediaType,
         title: title || 'Unknown Title',
         posterURL: posterURL || '/sorry-image-not-available.jpg',
-        dateAdded: watchlistItem.dateAdded,
+        dateAdded: now,
         notes: watchlistItem.notes,
         rating: watchlistItem.rating,
         isInternal: false,
@@ -617,20 +758,62 @@ export async function removeFromWatchlist(watchlistId) {
 
   try {
     const client = await clientPromise
-    const db = client.db('Media')
-    const collection = db.collection('Watchlist')
-    const userObjectId = new ObjectId(session.user.id)
-
-    const result = await collection.deleteOne({
-      _id: new ObjectId(watchlistId),
-      userId: userObjectId,
-    })
-
-    return result.deletedCount > 0
+    const deletedCount = await deleteRemovableItems(client.db('Media'), [new ObjectId(watchlistId)], session.user)
+    return deletedCount > 0
   } catch (error) {
     console.error('Error removing from watchlist:', error)
     throw new Error('Failed to remove item from watchlist')
   }
+}
+
+/**
+ * The items among `itemObjectIds` that `user` may take out of their playlist:
+ * the ones they added, and any in a playlist they can edit (owner, editors,
+ * global admins; the watchlist page offers Remove and Move on those terms).
+ * It used to be only the person who added an item, so a playlist's owner could
+ * not remove what an admin or collaborator had put in it.
+ * @returns {Promise<Array<Object>>} Full item documents
+ */
+async function findRemovableItems(db, itemObjectIds, user) {
+  const userObjectId = new ObjectId(user.id)
+  const items = await db.collection('Watchlist').find({ _id: { $in: itemObjectIds } }).toArray()
+
+  const otherAddersPlaylistIds = [
+    ...new Set(
+      items
+        .filter((item) => !item.userId?.equals(userObjectId))
+        .map((item) => item.playlistId?.toString())
+        .filter(Boolean)
+    ),
+  ]
+  if (otherAddersPlaylistIds.length === 0) return items
+
+  const isGlobalAdmin = isGlobalAdminUser(user)
+  const playlists = await db
+    .collection('Playlists')
+    .find({ _id: { $in: otherAddersPlaylistIds.map((id) => new ObjectId(id)) } })
+    .toArray()
+  const editablePlaylistIds = new Set(
+    playlists
+      .map(normalizePlaylistIdentityFields)
+      .filter((playlist) => canEditPlaylist(playlist, userObjectId, isGlobalAdmin))
+      .map((playlist) => playlist._id.toString())
+  )
+
+  return items.filter(
+    (item) => item.userId?.equals(userObjectId) || editablePlaylistIds.has(item.playlistId?.toString())
+  )
+}
+
+/**
+ * Delete the items among `itemObjectIds` that `user` may remove (findRemovableItems).
+ * @returns {Promise<number>} How many were deleted
+ */
+async function deleteRemovableItems(db, itemObjectIds, user) {
+  const removable = await findRemovableItems(db, itemObjectIds, user)
+  if (removable.length === 0) return 0
+  const result = await db.collection('Watchlist').deleteMany({ _id: { $in: removable.map((item) => item._id) } })
+  return result.deletedCount
 }
 
 /**
@@ -642,8 +825,9 @@ export async function removeFromWatchlist(watchlistId) {
  */
 export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
   mediaId = null,
-  tmdbId = null, 
-  playlistId = null
+  tmdbId = null,
+  playlistId = null,
+  mediaType = null
 ) {
   const session = await getSession()
 
@@ -662,16 +846,31 @@ export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
     if (!playlistId || playlistId === 'default') {
       const defaultPlaylist = await ensureDefaultPlaylist(session.user.id)
       actualPlaylistId = defaultPlaylist.id
+    } else {
+      // The answer now covers everyone's additions, so give it only for a
+      // playlist the caller can see
+      const playlist = normalizePlaylistIdentityFields(
+        await db.collection('Playlists').findOne({ _id: new ObjectId(playlistId) })
+      )
+      if (!canViewPlaylist(playlist, userObjectId, isGlobalAdminUser(session.user))) {
+        return null
+      }
     }
 
+    // A playlist holds a title whoever added it, so no userId filter. With one,
+    // a title an admin had added to your list showed as missing, and adding it
+    // "again" made a second copy.
     const query = {
-      userId: userObjectId,
       playlistId: new ObjectId(actualPlaylistId),
     }
 
     // Prioritize TMDB ID as primary key, fall back to mediaId if needed
     if (tmdbId) {
       query.tmdbId = parseInt(tmdbId)
+      // TMDB ids repeat across media types; narrow when the caller says which
+      if (mediaType === 'movie' || mediaType === 'tv') {
+        query.mediaType = mediaType
+      }
     } else if (mediaId && isValidObjectId(mediaId)) {
       query.mediaId = new ObjectId(mediaId)
     } else {
@@ -856,16 +1055,11 @@ export async function bulkRemoveFromWatchlist(watchlistIds) {
 
   try {
     const client = await clientPromise
-    const db = client.db('Media')
-    const collection = db.collection('Watchlist')
-    const userObjectId = new ObjectId(session.user.id)
-
-    const result = await collection.deleteMany({
-      _id: { $in: watchlistIds.map((id) => new ObjectId(id)) },
-      userId: userObjectId,
-    })
-
-    return result.deletedCount
+    return await deleteRemovableItems(
+      client.db('Media'),
+      watchlistIds.map((id) => new ObjectId(id)),
+      session.user
+    )
   } catch (error) {
     console.error('Error bulk removing from watchlist:', error)
     throw new Error('Failed to bulk remove from watchlist')
@@ -899,79 +1093,101 @@ export async function moveItemsToPlaylist(itemIds, targetPlaylistId) {
     if (!targetPlaylistId || targetPlaylistId === 'default') {
       const defaultPlaylist = await ensureDefaultPlaylist(session.user.id)
       actualTargetPlaylistId = defaultPlaylist.id
+    } else {
+      // Same rule as adding to it. The target used to go unchecked, so items
+      // could be moved into any playlist whose id was known.
+      const target = normalizePlaylistIdentityFields(
+        await db.collection('Playlists').findOne({ _id: new ObjectId(targetPlaylistId) })
+      )
+      if (!target) {
+        throw new Error('Playlist not found')
+      }
+      if (!canAddToPlaylist(target, userObjectId, isGlobalAdminUser(session.user))) {
+        throw new Error('Insufficient permission to add items to this playlist')
+      }
     }
+    const targetPlaylistObjectId = new ObjectId(actualTargetPlaylistId)
 
-    // Get the items to be moved to check their current playlist and get their data
-    const itemsToMove = await collection
-      .find({
-        _id: { $in: itemIds.map((id) => new ObjectId(id)) },
-        userId: userObjectId,
-      })
-      .toArray()
+    // Items the caller may take out of their current playlist, minus any
+    // already in the target
+    const itemsToMove = (
+      await findRemovableItems(db, itemIds.map((id) => new ObjectId(id)), session.user)
+    ).filter((item) => !item.playlistId?.equals(targetPlaylistObjectId))
 
     if (itemsToMove.length === 0) {
       return 0
     }
 
-    let movedCount = 0
-
-    // Process each item individually to handle the move logic
-    for (const item of itemsToMove) {
-      const sourcePlaylistId = item.playlistId
-      const targetPlaylistObjectId = new ObjectId(actualTargetPlaylistId)
-
-      // If moving to the same playlist, skip
-      if (sourcePlaylistId && sourcePlaylistId.equals(targetPlaylistObjectId)) {
-        continue
-      }
-
-      // Check if item already exists in target playlist
-      // Prioritize TMDB ID as primary key
-      let targetQuery = {
-        userId: userObjectId,
-        playlistId: targetPlaylistObjectId,
-      }
-
-      if (item.tmdbId) {
-        // Primary check by TMDB ID
-        targetQuery.tmdbId = item.tmdbId
-      } else if (item.mediaId) {
-        // Fallback to mediaId if no TMDB ID
-        targetQuery.mediaId = item.mediaId
-      } else {
-        // Skip items with no identifiers
-        continue
-      }
-
-      const existingInTarget = await collection.findOne(targetQuery)
-
-      if (existingInTarget) {
-        // Item already exists in target playlist, just remove from source
-        await collection.deleteOne({ _id: item._id })
-        movedCount++
-      } else {
-        // Create new item in target playlist
-        const newItem = {
-          ...item,
-          playlistId: targetPlaylistObjectId,
-          dateAdded: new Date(), // Update date when moved to new playlist
-          dateUpdated: new Date(),
-        }
-        delete newItem._id // Let MongoDB generate the ID
-
-        await collection.insertOne(newItem)
-
-        // Remove from source playlist
-        await collection.deleteOne({ _id: item._id })
-        movedCount++
-      }
-    }
-
-    return movedCount
+    // A title the target already holds leaves its old playlist without being
+    // moved in as a second copy; moved items count as added now
+    return await mergeItemsIntoPlaylist(
+      collection,
+      { _id: { $in: itemsToMove.map((item) => item._id) } },
+      targetPlaylistObjectId,
+      { stampDateAdded: true }
+    )
   } catch (error) {
     console.error('Error moving items to playlist:', error)
+    if (
+      error.message === 'Playlist not found' ||
+      error.message === 'Insufficient permission to add items to this playlist'
+    ) {
+      throw error
+    }
     throw new Error('Failed to move items to playlist')
   }
+}
+
+/**
+ * Move the items matching `filter` into another playlist without giving it a
+ * second copy of any title: a title the target already holds, or a repeat among
+ * the items themselves, is deleted instead of moved (planPlaylistMerge; the
+ * earliest-added copy is the one kept). Moving items, deleting a playlist and
+ * merging duplicate default playlists all use it; each used to repoint items
+ * with no duplicate check.
+ * @returns {Promise<number>} How many items were moved or dropped
+ */
+async function mergeItemsIntoPlaylist(collection, filter, targetPlaylistId, { stampDateAdded = false } = {}) {
+  await ensureWatchlistIndexes()
+
+  const [items, targetItems] = await Promise.all([
+    collection.find(filter, { projection: { mediaType: 1, tmdbId: 1 } }).sort({ dateAdded: 1, _id: 1 }).toArray(),
+    collection.find({ playlistId: targetPlaylistId }, { projection: { mediaType: 1, tmdbId: 1 } }).toArray(),
+  ])
+  if (items.length === 0) {
+    return 0
+  }
+
+  const { moveIds, dropIds } = planPlaylistMerge(items, targetItems)
+  const now = new Date()
+  const $set = stampDateAdded
+    ? { playlistId: targetPlaylistId, dateAdded: now, dateUpdated: now }
+    : { playlistId: targetPlaylistId, dateUpdated: now }
+
+  if (dropIds.length > 0) {
+    await collection.deleteMany({ _id: { $in: dropIds } })
+  }
+
+  if (moveIds.length > 0) {
+    try {
+      await collection.updateMany({ _id: { $in: moveIds } }, { $set })
+    } catch (error) {
+      if (error?.code !== 11000) throw error
+      // The same title reached the target between the read above and this
+      // write, and updateMany stopped part way. Finish one item at a time,
+      // skipping those already moved and dropping any that collide.
+      for (const _id of moveIds) {
+        try {
+          await collection.updateOne({ _id, playlistId: { $ne: targetPlaylistId } }, { $set })
+        } catch (itemError) {
+          if (itemError?.code !== 11000) throw itemError
+          await collection.deleteOne({ _id })
+        }
+      }
+    }
+  }
+
+  return items.length
 }
 
 // ===== PLAYLIST OPERATIONS =====
@@ -1020,10 +1236,11 @@ export async function ensureDefaultPlaylist(userId) {
         .map((p) => p._id)
 
       if (duplicateIds.length > 0) {
-        // Repoint items from duplicates to keeper
-        await watchlistCollection.updateMany(
+        // Repoint items from duplicates to keeper, minus titles it already holds
+        await mergeItemsIntoPlaylist(
+          watchlistCollection,
           { userId: ownerObjectId, playlistId: { $in: duplicateIds } },
-          { $set: { playlistId: keeper._id, dateUpdated: now } }
+          keeper._id
         )
         // Remove duplicates
         await collection.deleteMany({ _id: { $in: duplicateIds } })
@@ -1530,20 +1747,17 @@ export async function deletePlaylist(playlistId) {
     )
 
     if (playlistResult.deletedCount > 0) {
-      // Move all items in this playlist to the owner's default playlist
+      // Move all items in this playlist to the owner's default playlist, minus
+      // titles it already holds (a film in both used to end up there twice)
       const playlistOwnerId = playlistDoc.ownerId?.toString()
       const defaultPlaylist = await ensureDefaultPlaylist(playlistOwnerId)
-      await db.collection('Watchlist').updateMany(
+      await mergeItemsIntoPlaylist(
+        db.collection('Watchlist'),
         {
           userId: playlistDoc.ownerId,
           playlistId: new ObjectId(playlistId),
         },
-        {
-          $set: {
-            playlistId: new ObjectId(defaultPlaylist.id),
-            dateUpdated: new Date(),
-          },
-        }
+        new ObjectId(defaultPlaylist.id)
       )
     }
 

@@ -622,8 +622,9 @@ async function handleCheckWatchlistStatus(req, user) {
     const mediaId = url.searchParams.get('mediaId')
     const tmdbId = url.searchParams.get('tmdbId')
     const playlistId = url.searchParams.get('playlistId')
+    const mediaType = url.searchParams.get('mediaType')
 
-    debugLog('Status check params:', { mediaId, tmdbId, playlistId })
+    debugLog('Status check params:', { mediaId, tmdbId, playlistId, mediaType })
 
     // Validate that at least one ID is provided
     if (!mediaId && !tmdbId) {
@@ -634,7 +635,8 @@ async function handleCheckWatchlistStatus(req, user) {
     const item = await checkWatchlistStatus(
       mediaId,
       tmdbId ? parseInt(tmdbId) : undefined,
-      playlistId === 'default' ? null : playlistId
+      playlistId === 'default' ? null : playlistId,
+      mediaType
     )
     
     // Build response data
@@ -691,8 +693,9 @@ async function handleRemoveFromWatchlist(req, user) {
     const mediaId = url.searchParams.get('mediaId')
     const tmdbId = url.searchParams.get('tmdbId')
     const playlistId = url.searchParams.get('playlistId')
+    const mediaType = url.searchParams.get('mediaType')
 
-    debugLog('Remove params:', { itemId, mediaId, tmdbId, playlistId })
+    debugLog('Remove params:', { itemId, mediaId, tmdbId, playlistId, mediaType })
 
     let success = false
 
@@ -704,7 +707,7 @@ async function handleRemoveFromWatchlist(req, user) {
       success = await removeFromWatchlist(itemId)
     } else if (mediaId || tmdbId) {
       // Find item by media/TMDB ID and remove (with playlist context)
-      const item = await checkWatchlistStatus(mediaId, tmdbId ? parseInt(tmdbId) : undefined, playlistId)
+      const item = await checkWatchlistStatus(mediaId, tmdbId ? parseInt(tmdbId) : undefined, playlistId, mediaType)
       if (item) {
         success = await removeFromWatchlist(item.id)
       } else {
@@ -1329,12 +1332,20 @@ async function handleMoveItemsToPlaylist(req, body, user) {
 
   } catch (error) {
     debugLog('Move items to playlist error:', error)
-    
+
     if (error instanceof WatchlistValidationError) {
       const validationError = getValidationErrorResponse(error)
       return createErrorResponse(validationError.message, validationError.status)
     }
-    
+
+    if (error.message?.includes('Insufficient permission')) {
+      return createErrorResponse('You do not have permission to add items to this playlist', 403, null, 'Forbidden', 'INSUFFICIENT_PERMISSION')
+    }
+
+    if (error.message?.includes('Playlist not found')) {
+      return createErrorResponse('Playlist not found or not accessible', 404, null, 'Not Found', 'PLAYLIST_NOT_FOUND')
+    }
+
     return createErrorResponse('Failed to move items to playlist', 500, error.message)
   }
 }

@@ -85,9 +85,10 @@ export default function WatchlistButton({
 }) {
   const { data: session, isPending } = authClient.useSession()
 
-  // Build the SWR key - all instances with same mediaId/tmdbId share this cache entry
-  const statusKey = session 
-    ? `/api/authenticated/watchlist?action=status&mediaId=${mediaId}&tmdbId=${tmdbId}`
+  // Build the SWR key - all instances with same mediaId/tmdbId share this cache entry.
+  // mediaType too: TMDB ids repeat across movies and TV, and the toggle keys on both.
+  const statusKey = session
+    ? `/api/authenticated/watchlist?action=status&mediaId=${mediaId}&tmdbId=${tmdbId}${mediaType ? `&mediaType=${mediaType}` : ''}`
     : null
 
   // Fetch watchlist status - shared across all instances
