@@ -211,7 +211,7 @@ export default function ShowInAppUserModal({ isOpen, onClose, api }) {
                                 min={0}
                                 value={draft.appOrder}
                                 onChange={(e) => handleOrderChange(pid, e.target.value)}
-                                className="w-20 px-2 py-1 bg-gray-800 border border-gray-600 rounded-md text-white text-sm"
+                                className="w-20 px-2 py-1 bg-gray-800 border border-gray-600 rounded-md text-white text-base sm:text-sm"
                               />
                             </div>
                             <div className="flex items-center gap-2">
@@ -222,7 +222,7 @@ export default function ShowInAppUserModal({ isOpen, onClose, api }) {
                                 onChange={(e) => handleTitleChange(pid, e.target.value)}
                                 placeholder="Optional"
                                 maxLength={100}
-                                className="flex-1 px-2 py-1 bg-gray-800 border border-gray-600 rounded-md text-white text-sm"
+                                className="flex-1 min-w-0 px-2 py-1 bg-gray-800 border border-gray-600 rounded-md text-white text-base sm:text-sm"
                               />
                             </div>
                           </div>
