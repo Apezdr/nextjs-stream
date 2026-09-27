@@ -1,46 +1,31 @@
-import { Suspense } from 'react'
-import clientPromise from '@src/lib/mongodb'
 import { fetchFlatBannerMedia } from '@src/utils/flatDatabaseUtils'
+import { generateETag } from '@src/utils/cache/etagHelpers'
 import BannerWithVideoContainer from './BannerWithVideoContainer'
-import BannerSkeleton from './BannerSkeleton'
 
-// Server component that pre-fetches banner data
-async function BannerDataFetcher() {
-  // Fetch banner data server-side
+/**
+ * Server half of the /list banner: one query, rendered straight away, and
+ * handed to the client with the ETag /api/authenticated/banner gives the same
+ * data, so the client's first revalidation is a 304 instead of a second
+ * download of the banner. The layout's Suspense boundary shows the
+ * placeholder while this loads.
+ *
+ * It used to query twice (the first only to size a skeleton the second then
+ * replaced) and hand over no ETag.
+ */
+export default async function BannerWithVideoWrapper() {
   let bannerMediaList = []
+  let bannerETag = null
   try {
     const mediaResult = await fetchFlatBannerMedia()
     if (!mediaResult.error && Array.isArray(mediaResult)) {
       bannerMediaList = mediaResult
+      // The banner route hashes exactly this for a web request
+      bannerETag = generateETag(JSON.stringify(mediaResult))
     }
   } catch (error) {
     console.error('Error fetching banner data server-side:', error)
   }
 
-  // Pass initial data to client component
   // Client component will continue polling with SWR
-  return <BannerWithVideoContainer initialData={bannerMediaList} />
-}
-
-// Main wrapper with Suspense boundary for PPR
-// Derive banner count from fetched data length (eliminates redundant count query)
-export default async function BannerWithVideoWrapper() {
-  // Default bannerCount for skeleton - will be refined after data fetch
-  let bannerCount = 3 // Default fallback
-  
-  try {
-    const mediaResult = await fetchFlatBannerMedia()
-    // Derive count from actual data instead of separate count query (eliminates waterfall)
-    if (!mediaResult.error && Array.isArray(mediaResult)) {
-      bannerCount = Math.min(mediaResult.length, 8)
-    }
-  } catch (error) {
-    console.error('Error fetching banner count:', error)
-  }
-
-  return (
-    <Suspense fallback={<BannerSkeleton bannerCount={bannerCount} />}>
-      <BannerDataFetcher />
-    </Suspense>
-  )
+  return <BannerWithVideoContainer initialData={bannerMediaList} initialETag={bannerETag} />
 }

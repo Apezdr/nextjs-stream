@@ -1921,6 +1921,43 @@ export async function getFlatRecentlyAddedMedia({
 }
 
 /**
+ * The fields the banner sends, and nothing else. Whole FlatMovies documents
+ * used to go out (45 fields, ~142 KB for 8 movies), sync bookkeeping included:
+ * pre-tag re-stamps syncRunId on every movie on every run (every 3 minutes),
+ * which changed the banner's ETag while nothing on screen changed.
+ *
+ * Readers: the web banner (Landing/BannerContent: title, originalTitle for its
+ * links, backdrop with blurhash and focal point, logo, metadata.logo_path,
+ * trailer_url and id) and the TV app's BannerItem (type, title, backdrop,
+ * backdropBlurhash, logo, and metadata overview, genres, vote_average,
+ * release_date and trailer_url), plus the clipVideoURL the banner route
+ * derives from videoURL, duration and the video source. A banner reader that
+ * needs another field adds it here.
+ */
+const BANNER_FIELDS = {
+  title: 1,
+  originalTitle: 1,
+  type: 1,
+  backdrop: 1,
+  backdropBlurhash: 1,
+  backdropFocal: 1,
+  backdropFocalSuggested: 1,
+  logo: 1,
+  videoURL: 1,
+  duration: 1,
+  videoSource: 1,
+  videoInfoSource: 1,
+  'metadata.id': 1,
+  'metadata.trailer_url': 1,
+  'metadata.logo_path': 1,
+  'metadata.backdrop_path': 1,
+  'metadata.overview': 1,
+  'metadata.genres': 1,
+  'metadata.vote_average': 1,
+  'metadata.release_date': 1,
+}
+
+/**
  * Fetch the latest movies for the banner from the flat database structure.
  *
  * @returns {Promise<Array|Object>} An array of the latest 8 movie objects or an error object.
@@ -1932,7 +1969,7 @@ export const fetchFlatBannerMedia = async () => {
 
     const media = await db
       .collection('FlatMovies') // Use FlatMovies collection
-      .find(visibleMovieFilter())
+      .find(visibleMovieFilter(), { projection: BANNER_FIELDS })
       .sort({ 'metadata.release_date': -1 }) // Sort by release date descending
       .limit(8) // Limit to 8 movies
       .toArray()

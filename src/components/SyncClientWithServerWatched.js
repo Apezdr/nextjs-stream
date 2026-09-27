@@ -1,7 +1,7 @@
 'use client'
 
-import { useRef } from 'react'
 import useSWR from 'swr'
+import { fetchWithETag } from '@src/utils/conditionalFetch'
 
 const MAX_CACHED_VIDEOS = 200 // Keep at most 200 videos in localStorage
 const RETENTION_DAYS = 30 // Only sync videos updated in last 30 days
@@ -73,59 +73,27 @@ function processSyncData(serverData) {
   }
 }
 
-export default function SyncClientWithServerWatched({ once = false }) {
-  // Track ETags per sync URL for efficient conditional requests
-  const etagCacheRef = useRef(new Map())
-  // Track the last known server data for 304 responses
-  const lastServerDataRef = useRef(null)
+// Fetch and process video watch data, with the localStorage sync as a side
+// effect. Revalidation goes through the shared ETag cache: a 304 hands back
+// the kept copy, which is processed again (writeIfNewer skips current rows).
+async function fetchAndProcessData(syncUrl) {
+  try {
+    const { response, data } = await fetchWithETag(syncUrl)
 
-  // Fetch and process video watch data; preserves ETag/304 conditional-request
-  // behavior and performs the localStorage sync as a side effect.
-  const fetchAndProcessData = async (syncUrl) => {
-    try {
-      // Build headers with ETag support for conditional requests
-      const headers = {}
-      const cachedEtag = etagCacheRef.current.get(syncUrl)
-      if (cachedEtag) {
-        headers['If-None-Match'] = cachedEtag
-      }
-
-      const response = await fetch(syncUrl, { headers })
-
-      // Handle 304 Not Modified - use cached data
-      if (response.status === 304) {
-        const serverData = lastServerDataRef.current
-        if (serverData && serverData.length > 0) {
-          // Process the cached data (timestamps haven't changed)
-          processSyncData(serverData)
-        }
-        return null
-      }
-
-      // Handle error responses
-      if (!response.ok) {
-        console.log(`Error Pulling Playback: ${response.status}`)
-        return null
-      }
-
-      // Handle 200 OK response - cache the ETag for next request
-      const etag = response.headers.get('ETag')
-      if (etag && etagCacheRef?.current) {
-        etagCacheRef.current?.set(syncUrl, etag)
-      }
-
-      const serverData = await response.json()
-
-      // Cache the data for 304 responses
-      lastServerDataRef.current = serverData
-
-      processSyncData(serverData)
-    } catch (error) {
-      console.error('Failed to fetch videos watched:', error)
+    // Handle error responses
+    if (!response.ok && response.status !== 304) {
+      console.log(`Error Pulling Playback: ${response.status}`)
+      return null
     }
-    return null
-  }
 
+    processSyncData(data)
+  } catch (error) {
+    console.error('Failed to fetch videos watched:', error)
+  }
+  return null
+}
+
+export default function SyncClientWithServerWatched({ once = false }) {
   // SWR fetches immediately on mount and polls every SYNC_INTERVAL_MS.
   // When `once` is true, polling is disabled (refreshInterval: 0).
   useSWR(

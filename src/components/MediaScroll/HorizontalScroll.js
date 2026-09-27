@@ -25,16 +25,48 @@ import { useLandingPagePopup } from '@src/contexts/LandingPagePopupContext'
 // Define Peek Width
 const PEEK_WIDTH = 50 // Adjust based on design
 
+const subscribeNever = () => () => {}
+
+// False on the server and in the hydration render, true from the render after
+const useIsHydrated = () => useSyncExternalStore(subscribeNever, () => true, () => false)
+
+const RAIL_SWR_OPTIONS = {
+  refreshInterval: 10000, // OPTIMIZATION: Reduced from 10s to 30s to prevent excessive requests
+  errorRetryCount: 3,     // OPTIMIZATION: Reduced from 4 to 3 retries
+  errorRetryInterval: 3000, // OPTIMIZATION: Increased retry interval
+  revalidateOnFocus: true, // Refetch when the tab regains focus so a returning user
+                           // promptly picks up sync/admin cache busts (ETag → 304 when
+                           // unchanged, so this is cheap; deduped within dedupingInterval).
+  revalidateOnReconnect: false,
+  dedupingInterval: 10000, // OPTIMIZATION: Increased from 5s to 10s for better deduplication
+  revalidateIfStale: false, // OPTIMIZATION: Don't revalidate if data exists and is fresh
+}
+
+/**
+ * One page of a rail, fetched once the real page size is known. Until the
+ * hydration render is over, useItemsPerPage reports its server fallback (2),
+ * so a fetch would be for a page size about to change: every rail used to
+ * request limit=2, plus a limit=2 page-1 prefetch, and throw both away.
+ */
+function useRailPage(apiEndpoint) {
+  const isHydrated = useIsHydrated()
+  const { data, error, isLoading } = useSWR(isHydrated ? apiEndpoint : null, fetcher, RAIL_SWR_OPTIONS)
+  return {
+    data,
+    isHydrated,
+    // Skeleton while loading, and before the first fetch is allowed, so the
+    // hydration render matches the server's
+    isPending: !data && (isLoading || !isHydrated),
+    failed: Boolean(error) && !data,
+  }
+}
+
 // PaginationIndicators Component
 const PaginationIndicators = memo(
   ({ totalPages, currentPage, goToPage, isAnimating, prefetchPageData }) => {
-    // Use useSyncExternalStore for SSR-safe client detection
-    const isClient = useSyncExternalStore(
-      () => () => {},
-      () => true,
-      () => false
-    )
-    
+    // SSR-safe client detection
+    const isClient = useIsHydrated()
+
     return (
       isClient ?
       <div className="flex justify-center mt-4 space-x-2">
@@ -128,17 +160,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   // ex. /api/authenticated/horizontal-list?type=movie&sort=id&limit=6&sortOrder=desc&page=0
   const apiEndpoint = buildPrefetchURL(currentPage)
 
-  const { data, error, isLoading } = useSWR(apiEndpoint, fetcher, {
-    refreshInterval: 10000, // OPTIMIZATION: Reduced from 10s to 30s to prevent excessive requests
-    errorRetryCount: 3,     // OPTIMIZATION: Reduced from 4 to 3 retries
-    errorRetryInterval: 3000, // OPTIMIZATION: Increased retry interval
-    revalidateOnFocus: true, // Refetch when the tab regains focus so a returning user
-                             // promptly picks up sync/admin cache busts (ETag → 304 when
-                             // unchanged, so this is cheap; deduped within dedupingInterval).
-    revalidateOnReconnect: false,
-    dedupingInterval: 10000, // OPTIMIZATION: Increased from 5s to 10s for better deduplication
-    revalidateIfStale: false, // OPTIMIZATION: Don't revalidate if data exists and is fresh
-  })
+  const { data, isHydrated, isPending, failed } = useRailPage(apiEndpoint)
 
   const ongoingPrefetches = useRef(new Set())
 
@@ -204,8 +226,8 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   }, [])
 
   useEffect(() => {
-    // Only prefetch if we have valid pages
-    if (totalPages > 0) {
+    // Only prefetch once the real page size is known, and if we have valid pages
+    if (isHydrated && totalPages > 0) {
       // Prefetch previous page (if exists)
       if (currentPage > 0) {
         prefetchPageData(currentPage - 1)
@@ -215,7 +237,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
         prefetchPageData(currentPage + 1)
       }
     }
-  }, [currentPage, prefetchPageData, totalPages])
+  }, [currentPage, prefetchPageData, totalPages, isHydrated])
   // Prepare items including previous and next peek items
   const itemsToRender = useMemo(() => {
     if (!data) return []
@@ -302,7 +324,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   })
 
   // Handle error state
-  if (error && !data) {
+  if (failed) {
     return (
       <div className="py-12 flex flex-col gap-2 text-center">
         <span className="text-2xl">⚠️</span>
@@ -361,7 +383,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
               style={{ willChange: 'transform, opacity' }}
               onAnimationComplete={() => setIsAnimating(false)}
             >
-              {!data && isLoading ? (
+              {isPending ? (
                 // Render SkeletonCards during loading
                 <SkeletonList numberOfItems={numberOfItems} itemsPerPage={itemsPerPage} numberOfPeeks={numberOfPeeks} />
               ) : (

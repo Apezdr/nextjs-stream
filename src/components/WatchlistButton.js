@@ -8,6 +8,7 @@ import { HeartIcon as HeartIconSolid, CheckIcon } from '@heroicons/react/24/soli
 import { toast } from 'react-toastify'
 import { authClient } from '@src/lib/auth-client'
 import { LoadingDots } from '@src/app/loading'
+import { fetchWithETag } from '@src/utils/conditionalFetch'
 import { AnimatePresence, motion } from 'framer-motion'
 
 // Hoist static animation variants outside component to avoid recreating on each render
@@ -37,15 +38,14 @@ const iconVariants = {
   }
 }
 
-// SWR fetcher with ETag support
+// SWR fetcher: revalidates through the shared ETag cache, throws on errors
 const statusFetcher = async (url) => {
-  const res = await fetch(url, {
-    method: 'GET',
+  const { response, data, notModified } = await fetchWithETag(url, {
     credentials: 'include',
     headers: { Accept: 'application/json' }
   })
-  if (!res.ok) throw new Error(`Status ${res.status}`)
-  return res.json()
+  if (!notModified && !response.ok) throw new Error(`Status ${response.status}`)
+  return data
 }
 
 // Toggle mutation fetcher
