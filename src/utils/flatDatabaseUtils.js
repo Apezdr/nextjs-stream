@@ -1958,44 +1958,35 @@ const BANNER_FIELDS = {
 }
 
 /**
- * Fetch the latest movies for the banner from the flat database structure.
+ * The banner's movies straight from the database: the 8 newest releases among
+ * visible movies, with string ids and a backdrop filled in from TMDB when the
+ * movie has none. Throws when the query fails. Callers go through the cached
+ * fetchFlatBannerMedia (src/utils/cache/bannerData.js), not this.
  *
- * @returns {Promise<Array|Object>} An array of the latest 8 movie objects or an error object.
+ * @returns {Promise<Array<Object>>}
  */
-export const fetchFlatBannerMedia = async () => {
-  try {
-    const client = await clientPromise
-    const db = client.db('Media')
+export async function queryBannerMovies() {
+  const client = await clientPromise
+  const media = await client
+    .db('Media')
+    .collection('FlatMovies') // Use FlatMovies collection
+    .find(visibleMovieFilter(), { projection: BANNER_FIELDS })
+    .sort({ 'metadata.release_date': -1 }) // Sort by release date descending
+    .limit(8) // Limit to 8 movies
+    .toArray()
 
-    const media = await db
-      .collection('FlatMovies') // Use FlatMovies collection
-      .find(visibleMovieFilter(), { projection: BANNER_FIELDS })
-      .sort({ 'metadata.release_date': -1 }) // Sort by release date descending
-      .limit(8) // Limit to 8 movies
-      .toArray()
-
-    if (!media || media.length === 0) {
-      return { error: 'No media found for banner', status: 404 }
+  // Process items: ensure backdrop URL and remove _id
+  return media.map((item) => {
+    const processedItem = { ...item } // Clone item
+    if (!processedItem.backdrop && processedItem.metadata?.backdrop_path) {
+      processedItem.backdrop = getFullImageUrl(processedItem.metadata.backdrop_path, 'original')
     }
-
-    // Process items: ensure backdrop URL and remove _id
-    const processedMedia = media.map((item) => {
-      const processedItem = { ...item } // Clone item
-      if (processedItem && !processedItem.backdrop && processedItem.metadata?.backdrop_path) {
-        processedItem.backdrop = getFullImageUrl(processedItem.metadata.backdrop_path, 'original')
-      }
-      if (processedItem && processedItem._id) {
-        processedItem.id = processedItem._id.toString() // Add string id
-        delete processedItem._id // Remove ObjectId
-      }
-      return processedItem
-    })
-
-    return processedMedia // Return the array of processed media objects
-  } catch (error) {
-    console.error(`Error in fetchFlatBannerMedia: ${error.message}`)
-    return { error: 'Failed to fetch banner media', details: error.message, status: 500 }
-  }
+    if (processedItem._id) {
+      processedItem.id = processedItem._id.toString() // Add string id
+      delete processedItem._id // Remove ObjectId
+    }
+    return processedItem
+  })
 }
 
 /**

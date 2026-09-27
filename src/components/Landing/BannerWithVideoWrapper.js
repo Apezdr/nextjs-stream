@@ -1,4 +1,4 @@
-import { fetchFlatBannerMedia } from '@src/utils/flatDatabaseUtils'
+import { fetchFlatBannerMedia } from '@src/utils/cache/bannerData'
 import { generateETag } from '@src/utils/cache/etagHelpers'
 import BannerWithVideoContainer from './BannerWithVideoContainer'
 

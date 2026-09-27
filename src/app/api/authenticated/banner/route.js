@@ -1,5 +1,5 @@
 import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
-import { fetchFlatBannerMedia } from '@src/utils/flatDatabaseUtils'
+import { fetchFlatBannerMedia } from '@src/utils/cache/bannerData'
 import { generateClipVideoURL } from '@src/utils/auth_utils'
 // ETag support for HTTP caching
 import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'

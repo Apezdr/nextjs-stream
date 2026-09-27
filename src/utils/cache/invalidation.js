@@ -1,4 +1,5 @@
 import { revalidateTag, updateTag } from 'next/cache'
+import { MEDIA_CACHE_TAGS } from './mediaPagesTags'
 
 // Enhanced cache invalidation utilities with SWR support for landing page lists
 
@@ -139,11 +140,32 @@ export async function invalidateMovieDetailsCache(movieTitle) {
     for (const tag of tags) {
       revalidateTag(tag, 'max')
     }
-    
+    // Any movie edit can change the banner (its artwork, visibility, or which
+    // movies are the newest releases)
+    expireBannerCache()
+
     console.log(`[Cache SWR] Invalidated movie details cache for: ${movieTitle}`)
     return true
   } catch (error) {
     console.error('[Cache SWR] Failed to invalidate movie details cache:', error)
+    return false
+  }
+}
+
+/**
+ * Drop the cached /list banner (fetchFlatBannerMedia) so the next request
+ * reads the database. `expire: 0` rather than 'max': the banner is polled
+ * every 4 s, and a 'max' revalidation would hand one more poll the old list.
+ * Call it wherever movies change. Like any revalidateTag it only commits
+ * inside a request (a route handler or server action), which is why the
+ * background sync goes through /admin/revalidate-media instead.
+ */
+export function expireBannerCache() {
+  try {
+    revalidateTag(MEDIA_CACHE_TAGS.BANNER, { expire: 0 })
+    return true
+  } catch (error) {
+    console.error('[Cache] Failed to expire the banner cache:', error)
     return false
   }
 }

@@ -12,7 +12,7 @@ jest.mock('@src/utils/routeAuth', () => ({
 }))
 
 const mockFetchFlatBannerMedia = jest.fn()
-jest.mock('@src/utils/flatDatabaseUtils', () => ({
+jest.mock('@src/utils/cache/bannerData', () => ({
   fetchFlatBannerMedia: (...args) => mockFetchFlatBannerMedia(...args),
 }))
 
