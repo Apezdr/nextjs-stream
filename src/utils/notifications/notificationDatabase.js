@@ -359,36 +359,3 @@ export async function getNotificationById(notificationId, userId) {
     userId: new ObjectId(userId)
   });
 }
-
-/**
- * Update notification ETag hash for caching
- * @param {ObjectId|string} userId - The user ID
- * @returns {Promise<string>} ETag hash
- */
-export async function generateNotificationETag(userId) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
-
-  const userObjectId = new ObjectId(userId);
-
-  // Get latest notification timestamp and unread count
-  const [latestNotification, unreadCount] = await Promise.all([
-    collection
-      .findOne({ userId: userObjectId }, { sort: { updatedAt: -1 } }),
-    collection.countDocuments({ userId: userObjectId, read: false })
-  ]);
-
-  const lastModified = latestNotification?.updatedAt?.getTime() || 0;
-  const etagData = `${userObjectId.toString()}-${lastModified}-${unreadCount}`;
-  
-  // Simple hash function for ETag
-  let hash = 0;
-  for (let i = 0; i < etagData.length; i++) {
-    const char = etagData.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
-  }
-  
-  return Math.abs(hash).toString(36);
-}
