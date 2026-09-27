@@ -91,8 +91,11 @@ export function register() {
     instrumentations: [
       'fetch',
       new MongoDBInstrumentation({
-        // keep it conservative; you can tune later
-        enhancedDatabaseReporting: true,
+        // Record query shapes, not values: with this on, db.statement carried
+        // every value verbatim, including the better-auth session token of each
+        // session lookup, so SigNoz held live credentials. Off, every value is
+        // '?' while keys and operators stay readable.
+        enhancedDatabaseReporting: false,
       }),
     ],
   })

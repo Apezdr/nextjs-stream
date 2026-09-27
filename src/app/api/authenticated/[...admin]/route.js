@@ -40,6 +40,8 @@ import {
   getAllSeasonCacheTags,
   getAllEpisodeCacheTags,
 } from '@src/utils/cache/mediaPagesTags'
+import { expireBannerCache } from '@src/utils/cache/invalidation'
+import { countChangedMedia, requestMediaRevalidation } from '@src/utils/cache/postSyncRevalidation'
 import { createLogger } from '@src/lib/logger'
 
 /**
@@ -699,6 +701,10 @@ async function handleRevalidateMedia(request) {
     revalidateTag(tag, 'max')
   }
 
+  // The banner is a list of movies, polled every 4 s: expire it outright
+  // rather than serving one more poll the old list (see expireBannerCache)
+  const bannerExpired = movies.length > 0 && expireBannerCache()
+
   // Over-invalidation observability: structured so SigNoz can alert when the
   // unique-tag count (or any entity bucket) spikes far beyond what a normal sync
   // touches. "completed" entities are not a guaranteed field-level diff (the
@@ -713,6 +719,7 @@ async function handleRevalidateMedia(request) {
         episodes: episodes.length,
       },
       uniqueTags: tags.size,
+      bannerExpired,
     },
     'Post-sync media cache revalidation completed'
   )
@@ -727,6 +734,7 @@ async function handleRevalidateMedia(request) {
         episodes: episodes.length,
       },
       uniqueTags: tags.size,
+      bannerExpired,
     }),
     {
       status: 200,
@@ -863,15 +871,12 @@ export async function POST(request, props) {
 
 /**
  * Fire the post-sync cache revalidation by POSTing the changed entities to the
- * /admin/revalidate-media route. That route runs in its own request scope — the
- * only place revalidateTag actually commits for this fire-and-forget sync.
+ * /admin/revalidate-media route (see requestMediaRevalidation). That route runs
+ * in its own request scope — the only place revalidateTag actually commits for
+ * this fire-and-forget sync. Never throws — a revalidation miss must never fail
+ * a sync.
  *
- * Self-authenticates: forwards the incoming webhook id when present (webhook-
- * triggered sync), otherwise falls back to WEBHOOK_ID from env (admin-UI-
- * triggered sync, which carries a session, not a webhook id). Never throws — the
- * caller wraps it, and a revalidation miss must never fail a sync.
- *
- * @param {Request} request - the original sync request (used for the self origin)
+ * @param {Request} request - the original sync request (its port is the fallback)
  * @param {string|null} webhookId - incoming webhook id, if any
  * @param {Object|undefined} changedMedia - { movies, shows, seasons, episodes }
  */
@@ -881,55 +886,15 @@ async function triggerPostSyncRevalidation(request, webhookId, changedMedia) {
     return
   }
 
-  const totalChanged =
-    (changedMedia.movies?.length || 0) +
-    (changedMedia.shows?.length || 0) +
-    (changedMedia.seasons?.length || 0) +
-    (changedMedia.episodes?.length || 0)
-
-  if (totalChanged === 0) {
+  if (countChangedMedia(changedMedia) === 0) {
     console.log('[Cache SWR] Nothing changed this sync — skipping post-sync revalidation')
     return
   }
 
-  const internalWebhookId = webhookId || process.env.WEBHOOK_ID
-  if (!internalWebhookId) {
-    console.error('[Cache SWR] No webhook id available for internal revalidation call — skipping')
-    return
-  }
-
-  // Target loopback, NOT request.url's origin. The sync is usually webhook-
-  // triggered, so request.url carries the EXTERNAL host, which the container
-  // cannot reach from inside (hairpin NAT, and TLS terminates at the proxy) —
-  // that produced a "fetch failed" and the revalidation silently never ran.
-  // The standalone server always listens on 127.0.0.1:PORT. Prefer PORT (set in
-  // the Docker image), fall back to the incoming request's port (covers
-  // `next dev -p 3232`), then the Next default.
-  const port = process.env.PORT || new URL(request.url).port || '3000'
-  const revalidateUrl = `http://127.0.0.1:${port}/api/authenticated/admin/revalidate-media`
-
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 15000)
-  try {
-    const response = await fetch(revalidateUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Webhook-ID': internalWebhookId,
-      },
-      body: JSON.stringify(changedMedia),
-      signal: controller.signal,
-    })
-    clearTimeout(timeoutId)
-    if (!response.ok) {
-      console.error(`[Cache SWR] revalidate-media responded ${response.status}`)
-    } else {
-      console.log(`[Cache SWR] Post-sync revalidation triggered for ${totalChanged} changed entities`)
-    }
-  } catch (fetchError) {
-    clearTimeout(timeoutId)
-    console.error(`[Cache SWR] revalidate-media request failed: ${fetchError.message}`)
-  }
+  await requestMediaRevalidation(changedMedia, {
+    webhookId,
+    port: process.env.PORT || new URL(request.url).port || '3000',
+  })
 }
 
 /**

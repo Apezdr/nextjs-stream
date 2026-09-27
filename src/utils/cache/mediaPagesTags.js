@@ -21,6 +21,10 @@ export const MEDIA_CACHE_TAGS = {
   TV_DETAILS: 'tv-details',
   EPISODE_DETAILS: 'episode-details',
   SEASON_DETAILS: 'season-details',
+
+  // The /list banner query (fetchFlatBannerMedia). Expired, not marked stale,
+  // whenever movies change: see expireBannerCache in invalidation.js.
+  BANNER: 'banner',
 }
 
 /**

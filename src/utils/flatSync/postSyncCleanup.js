@@ -24,6 +24,7 @@ import { migratePlaybackStatusIfNeeded } from '../watchHistory/migrate'
 import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation'
 import { getCurrentSyncRunId, getSyncLockHolder } from './syncContext'
 import { isCollectionFullyCovered } from './preTagSyncRunId'
+import { requestMediaRevalidation } from '@src/utils/cache/postSyncRevalidation'
 
 // Module-scoped lock — fail-fast on concurrent invocations within one process.
 // Multi-process deployments later: swap for a Redis lock.
@@ -439,6 +440,19 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
         || removed.tvSeasons.length || removed.tvEpisodes.length
       ) {
         cacheResults = await clearCacheEntries(removed)
+      }
+
+      // Deleted movies and shows would otherwise live on in the page caches
+      // and the /list banner until those expire. Cleanup runs detached from
+      // any request, where revalidateTag is a no-op, so it asks the
+      // revalidation route instead. Season and episode entries are display
+      // strings, not the {title, season} keys that route takes, so they wait
+      // for their caches to expire as before. Never throws.
+      if (removed.movies.length || removed.tvShows.length) {
+        await requestMediaRevalidation(
+          { movies: removed.movies, shows: removed.tvShows, seasons: [], episodes: [] },
+          { label: 'Post-cleanup' }
+        )
       }
 
       // ─── Phase 7: WatchHistory migration (unchanged) ────────────────────────

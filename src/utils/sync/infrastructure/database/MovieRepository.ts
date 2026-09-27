@@ -45,7 +45,14 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
           { initialDiscoveryDate: -1, mediaLastModified: -1 },
           { name: 'recently_added_index' }
         ),
-        
+        // The /list banner takes the 8 newest releases among visible movies.
+        // Without this index every banner query scanned and sorted all of
+        // FlatMovies (16.5 ms of a 40 ms request in production); with it Mongo
+        // walks the newest releases and stops at 8. Declared until now only in
+        // flatSync/initializeDatabase.js, which this path never runs; the name
+        // matches it.
+        this.createIndexSafely({ 'metadata.release_date': -1 }, { name: 'release_date_index' }),
+
         // Asset availability indexes
         this.createIndexSafely({ videoURL: 1 }),
         this.createIndexSafely({ posterURL: 1 }),

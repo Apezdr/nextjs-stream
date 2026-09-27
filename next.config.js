@@ -75,6 +75,14 @@ const nextConfig = {
       revalidate: 60,   // 1 minute server revalidation
       expire: 300,      // 5 minutes max before forced refresh
     },
+    // The /list banner query. Movie writes expire its tag at once
+    // (expireBannerCache), so these only bound how far behind it can fall
+    // after a write that doesn't: at most 30 s, then a background refresh.
+    banner: {
+      stale: 30,        // 30 seconds client cache (the router's minimum)
+      revalidate: 30,   // refresh in the background after 30 seconds
+      expire: 300,      // 5 minutes idle before a request waits for fresh data
+    },
     // Navigation and UI components - rarely change
     navigation: {
       stale: 300,       // 5 minutes client cache
