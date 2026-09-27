@@ -2,10 +2,21 @@
 
 import { useState, useCallback, useReducer, useRef, useEffect, useOptimistic, useTransition } from 'react'
 import { toast } from 'react-toastify'
+import { Radio, RadioGroup } from '@headlessui/react'
+import { ArrowsUpDownIcon } from '@heroicons/react/24/outline'
 import { classNames } from '@src/utils'
 import { formatForWatchlistWithInternalCheck } from '@src/utils/tmdb/client'
 import MoveToPlaylistModal from './MoveToPlaylistModal'
+import MobileSortSheet, { SORT_OPTIONS, sortLabel } from './MobileSortSheet'
+import MobileSelectionBar from './MobileSelectionBar'
+import useOverlayState from './useOverlayState'
 import Image from 'next/image'
+
+const FILTER_OPTIONS = [
+  { value: 'all', label: 'All' },
+  { value: 'movie', label: 'Movies' },
+  { value: 'tv', label: 'TV' },
+]
 
 const initialMenus = {
   showSearchResults: false,
@@ -53,11 +64,17 @@ export default function PlaylistControls({
   sortLocked,
   canAddPlaylist,
   canEditPlaylist,
-  onToggleSortLock
+  onToggleSortLock,
+  selectionMode,
+  onSelectionModeChange
 }) {
   const [menus, setMenus] = useReducer(menusReducer, initialMenus)
   const { showSearchResults, showBulkActions, showMoveMenu, showCopyMenu } = menus
   const [bulkLoading, setBulkLoading] = useState(false)
+  const sortSheet = useOverlayState()
+  // Phones select through an explicit mode (the "Select" button) or by picking
+  // "Select" on a card; either way the bottom selection bar takes over.
+  const selectionActive = selectionMode || selectedItems.size > 0
   const searchRef = useRef(null)
   const searchTimeout = useRef(null)
   
@@ -467,7 +484,7 @@ export default function PlaylistControls({
   }, [selectedItems, playlists, onClearSelection, api, currentItems, onRefresh])
 
   return (
-    <div className="bg-gray-800 border-b border-gray-700 px-6 py-4">
+    <div className="bg-gray-800 border-b border-gray-700 px-4 py-3 lg:px-6 lg:py-4">
       {/* Add Error Display */}
       {addError && (
         <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-3 mb-4">
@@ -488,9 +505,9 @@ export default function PlaylistControls({
         </div>
       )}
       
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-3 md:space-y-4 lg:space-y-0">
         {/* Search */}
-        <div className="relative flex-1 max-w-md" ref={searchRef}>
+        <div className="relative flex-1 md:max-w-md" ref={searchRef}>
           <div className="relative">
             <input
               type="text"
@@ -521,7 +538,7 @@ export default function PlaylistControls({
           {showSearchResults && canAddPlaylist && (searchResults?.watchlist?.length > 0 || searchResults?.tmdbInternal?.length > 0 || searchResults?.tmdbExternal?.length > 0) && (
             <div
               onScroll={handleResultsScroll}
-              className="absolute top-full left-0 right-0 mt-1 bg-gray-700 border border-gray-600 rounded-md shadow-lg z-20 max-h-96 overflow-y-auto"
+              className="absolute top-full left-0 right-0 mt-1 bg-gray-700 border border-gray-600 rounded-md shadow-lg z-20 max-h-[60vh] sm:max-h-96 overflow-y-auto overscroll-contain"
             >
               {/* Watchlist Results */}
               {searchResults.watchlist?.length > 0 && (
@@ -663,8 +680,46 @@ export default function PlaylistControls({
           )}
         </div>
 
+        {/* Mobile controls - the desktop row below doesn't fit beside a phone's search box */}
+        <div className="flex items-center gap-2 md:hidden">
+          <RadioGroup
+            value={filterType}
+            onChange={onFilterTypeChange}
+            aria-label="Filter by media type"
+            className="flex min-w-0 flex-1 rounded-lg bg-gray-700 p-1"
+          >
+            {FILTER_OPTIONS.map((option) => (
+              <Radio
+                key={option.value}
+                value={option.value}
+                className="flex-1 cursor-pointer rounded-md px-2 py-1.5 text-center text-sm font-medium text-gray-300 transition-colors focus:outline-none data-[focus]:ring-2 data-[focus]:ring-indigo-500 data-[checked]:bg-indigo-600 data-[checked]:text-white"
+              >
+                {option.label}
+              </Radio>
+            ))}
+          </RadioGroup>
+          <button
+            type="button"
+            onClick={sortSheet.show}
+            className="shrink-0 rounded-lg bg-gray-700 p-2.5 text-gray-200 active:bg-gray-600"
+            aria-label={`Sort and view: ${sortLabel(sortBy, sortOrder)}`}
+          >
+            <ArrowsUpDownIcon className="h-5 w-5" aria-hidden="true" />
+          </button>
+          <button
+            type="button"
+            onClick={() => (selectionActive ? onClearSelection() : onSelectionModeChange(true))}
+            className={classNames(
+              'shrink-0 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
+              selectionActive ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-200 active:bg-gray-600'
+            )}
+          >
+            {selectionActive ? 'Cancel' : 'Select'}
+          </button>
+        </div>
+
         {/* Controls */}
-        <div className="flex items-center space-x-4">
+        <div className="hidden md:flex items-center space-x-4">
           {/* Bulk Actions */}
           {selectedItems.size > 0 && (
             <div className="relative">
@@ -805,13 +860,9 @@ export default function PlaylistControls({
             )}
             aria-label="Sort playlist items"
           >
-            <option value="dateAdded-desc">Recently Added</option>
-            <option value="dateAdded-asc">Oldest First</option>
-            <option value="title-asc">Title A-Z</option>
-            <option value="title-desc">Title Z-A</option>
-            <option value="releaseDate-desc">Newest Releases First</option>
-            <option value="releaseDate-asc">Oldest Releases First</option>
-            <option value="custom-asc">Custom Order</option>
+            {SORT_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
           </select>
 
           {/* View Mode */}
@@ -870,6 +921,35 @@ export default function PlaylistControls({
         selectedPlaylistId={currentPlaylist?.id}
         isCopyMode={true}
       />
+
+      {/* Mobile: sort, lock and view mode */}
+      <MobileSortSheet
+        open={sortSheet.open}
+        onClose={sortSheet.close}
+        sortBy={sortBy}
+        sortOrder={sortOrder}
+        onSortChange={onSortChange}
+        sortLocked={sortLocked}
+        canEditPlaylist={canEditPlaylist}
+        onToggleSortLock={onToggleSortLock}
+        viewMode={viewMode}
+        onViewModeChange={onViewModeChange}
+      />
+
+      {/* Mobile: bulk actions for the current selection */}
+      {selectionActive && (
+        <MobileSelectionBar
+          count={selectedItems.size}
+          total={currentItems.length}
+          canEditPlaylist={canEditPlaylist}
+          busy={bulkLoading}
+          onSelectAll={onSelectAll}
+          onExit={onClearSelection}
+          onCopy={() => setMenus({ showCopyMenu: true })}
+          onMove={() => setMenus({ showMoveMenu: true })}
+          onRemove={handleBulkRemove}
+        />
+      )}
     </div>
   )
 }

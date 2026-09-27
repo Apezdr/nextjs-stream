@@ -3,7 +3,7 @@
 import { useState, useCallback, useTransition } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import WatchlistCard from './WatchlistCard'
-import SkeletonCard from '@components/SkeletonCard'
+import { GridItemSkeleton, WATCHLIST_GRID_CLASSES } from './WatchlistSkeletons'
 import { classNames } from '@src/utils'
 import { useNavigation } from '@src/contexts/NavigationContext'
 
@@ -21,11 +21,13 @@ export default function PlaylistGrid({
   currentPlaylist,
   playlists,
   onCustomReorder,
+  isReordering = false,
   api,
   sortBy,
   sortLocked,
   canEditPlaylist,
-  user
+  user,
+  selectionActive = false
 }) {
   const [draggedItem, setDraggedItem] = useState(null)
   const [draggedIndex, setDraggedIndex] = useState(null)
@@ -65,41 +67,55 @@ export default function PlaylistGrid({
     }
   }, [])
 
-  const handleDrop = useCallback(async (e, targetIndex) => {
-    e.preventDefault()
-    setDragOverIndex(null)
-    
-    if (!draggedItem || !onCustomReorder || draggedIndex === null) {
-      setDraggedItem(null)
-      setDraggedIndex(null)
-      return
-    }
-
-    // If the item is being dropped in the same position, do nothing
-    if (draggedIndex === targetIndex) {
-      setDraggedItem(null)
-      setDraggedIndex(null)
-      return
-    }
-
-    // Store the indices for the reorder operation
-    const fromIndex = draggedIndex
-    const toIndex = targetIndex
-
-    // Clean up drag state immediately for smooth UX
-    setDraggedItem(null)
-    setDraggedIndex(null)
-
-    // Call the parent's reorder handler with the indices
-    // The parent (WatchlistPage) will handle the optimistic update
+  // Move `item` into `target`'s place: what a drop does, and what the touch
+  // Top/Up/Down/Bottom actions do in place of dragging. The parent takes item
+  // ids because `items` may be filtered, so its indices aren't the playlist's.
+  // The parent (WatchlistPage) handles the optimistic update.
+  const reorderTo = useCallback(async (item, target) => {
+    if (!onCustomReorder || !item || !target || item.id === target.id) return
     try {
-      await onCustomReorder(fromIndex, toIndex)
+      await onCustomReorder(item.id, target.id)
       setReorderError(null)
     } catch (error) {
       console.error('Failed to reorder items:', error)
       setReorderError(error.message)
     }
-  }, [draggedItem, draggedIndex, onCustomReorder])
+  }, [onCustomReorder])
+
+  const handleDrop = useCallback(async (e, targetIndex) => {
+    e.preventDefault()
+    setDragOverIndex(null)
+
+    const movedItem = draggedIndex === null ? null : draggedItem
+
+    // Clean up drag state immediately for smooth UX
+    setDraggedItem(null)
+    setDraggedIndex(null)
+
+    // Nothing to do without a drag in progress, or when dropped where it began
+    if (!movedItem || draggedIndex === targetIndex) return
+
+    await reorderTo(movedItem, items[targetIndex])
+  }, [draggedItem, draggedIndex, items, reorderTo])
+
+  // The touch stand-in for drag-and-drop, offered where dragging would be
+  // allowed: an editor, with the sort unlocked. Positions are within `items`,
+  // the list the user can see.
+  const canReorder = canEditPlaylist && !sortLocked
+  const reorderFor = (item, index) => {
+    if (!canReorder) return null
+    const first = items[0]
+    const last = items[items.length - 1]
+    return {
+      position: index + 1,
+      total: items.length,
+      busy: isReordering,
+      moveToTop: index > 0 ? () => reorderTo(item, first) : null,
+      moveUp: index > 0 ? () => reorderTo(item, items[index - 1]) : null,
+      moveDown: index < items.length - 1 ? () => reorderTo(item, items[index + 1]) : null,
+      moveToBottom: index < items.length - 1 ? () => reorderTo(item, last) : null,
+    }
+  }
 
   const handleDragEnd = useCallback(() => {
     setDraggedItem(null)
@@ -158,12 +174,9 @@ export default function PlaylistGrid({
     }
     
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+      <div className={WATCHLIST_GRID_CLASSES}>
         {Array.from({ length: 12 }, (_, i) => (
-          <SkeletonCard
-            key={i}
-            heightClass="h-[400px]"
-          />
+          <GridItemSkeleton key={i} />
         ))}
       </div>
     )
@@ -202,7 +215,7 @@ export default function PlaylistGrid({
 
   if (viewMode === 'list') {
     return (
-      <div className="space-y-4">
+      <div className="space-y-3 sm:space-y-4">
         {/* Error display - only shown if optimistic update fails */}
         {reorderError && (
           <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-3 mb-4">
@@ -296,6 +309,8 @@ export default function PlaylistGrid({
                 api={api}
                 canEditPlaylist={canEditPlaylist}
                 user={user}
+                selectionActive={selectionActive}
+                reorder={reorderFor(item, index)}
               />
           </motion.div>
         )})}
@@ -305,7 +320,7 @@ export default function PlaylistGrid({
   }
 
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+    <div className={WATCHLIST_GRID_CLASSES}>
       {/* Error display - only shown if optimistic update fails */}
       {reorderError && (
         <div className="col-span-full bg-red-900/20 border border-red-500/50 rounded-lg p-3 mb-4">
@@ -398,6 +413,8 @@ export default function PlaylistGrid({
               api={api}
               canEditPlaylist={canEditPlaylist}
               user={user}
+              selectionActive={selectionActive}
+              reorder={reorderFor(item, index)}
             />
             </motion.div>
           )

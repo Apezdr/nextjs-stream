@@ -85,16 +85,18 @@ function PlaylistItem({
           </div>
         </div>
 
-        {/* Playlist Actions - show for owner or global admin */}
+        {/* Playlist Actions - show for owner or global admin. Revealed on hover
+            where there is one; always shown on touch, which has no hover. */}
         {(playlist.isOwner || isAdmin) && onSharePlaylist && onEditStart && onDeleteClick && (
-          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="flex items-center space-x-1 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover:opacity-100 [@media(hover:hover)]:has-[:focus-visible]:opacity-100">
             <button
               onClick={(e) => {
                 e.stopPropagation()
                 onSharePlaylist(playlist.id)
               }}
-              className="p-1 rounded hover:bg-gray-600"
+              className="p-2 lg:p-1 rounded hover:bg-gray-600"
               title="Share playlist"
+              aria-label={`Share ${playlist.name}`}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8.684 13.342C8.886 12.938 9 12.482 9 12c0-.482-.114-.938-.316-1.342m0 2.684a3 3 0 110-2.684m0 2.684l6.632 3.316m-6.632-6l6.632-3.316m0 0a3 3 0 105.367-2.684 3 3 0 00-5.367 2.684zm0 9.316a3 3 0 105.367 2.684 3 3 0 00-5.367-2.684z" />
@@ -105,8 +107,9 @@ function PlaylistItem({
                 e.stopPropagation()
                 onEditStart(playlist)
               }}
-              className="p-1 rounded hover:bg-gray-600"
+              className="p-2 lg:p-1 rounded hover:bg-gray-600"
               title="Edit playlist"
+              aria-label={`Edit ${playlist.name}`}
             >
               <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
@@ -117,8 +120,9 @@ function PlaylistItem({
                 e.stopPropagation()
                 onDeleteClick(playlist)
               }}
-              className="p-1 rounded hover:bg-red-600"
+              className="p-2 lg:p-1 rounded hover:bg-red-600"
               title={playlist.isDefault ? "Clear all items" : "Delete playlist"}
+              aria-label={playlist.isDefault ? `Clear all items from ${playlist.name}` : `Delete ${playlist.name}`}
             >
               {playlist.isDefault ? (
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -152,8 +156,13 @@ export default function PlaylistSidebar({
   currentPlaylist,
   isAdmin = false,
   onListUsers,
-  onOpenManageRows // optional: open user modal to manage Show in App rows
+  onOpenManageRows, // optional: open user modal to manage Show in App rows
+  // 'sidebar' is the desktop column (lg and up); 'drawer' fills the panel of
+  // the mobile playlist drawer, which supplies onClose.
+  variant = 'sidebar',
+  onClose
 }) {
+  const isDrawer = variant === 'drawer'
   const [showCreateForm, setShowCreateForm] = useState(false)
   const [editingPlaylist, setEditingPlaylist] = useState(null)
   const [createForm, setCreateForm] = useState({
@@ -397,11 +406,30 @@ export default function PlaylistSidebar({
   const adminOtherOwnerGroups = isAdmin ? groupPlaylistsByOwner(adminOtherPlaylists) : []
 
   return (
-    <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
+    <div
+      className={classNames(
+        'bg-gray-800 flex-col',
+        isDrawer ? 'flex h-full w-full' : 'hidden lg:flex w-80 shrink-0 border-r border-gray-700'
+      )}
+    >
       {/* Header */}
-      <div className="p-6 border-b border-gray-700">
-        <h2 className="text-xl font-semibold text-white mb-4">Playlists</h2>
-        
+      <div className={classNames('border-b border-gray-700', isDrawer ? 'p-4' : 'p-6')}>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-xl font-semibold text-white">Playlists</h2>
+          {isDrawer && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="-mr-2 p-2 rounded-md text-gray-400 hover:text-white hover:bg-gray-700"
+              aria-label="Close playlists"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          )}
+        </div>
+
         {/* Summary Stats */}
         {summaryLoading ? (
           <SummaryStatsSkeleton />
@@ -457,7 +485,7 @@ export default function PlaylistSidebar({
       </div>
 
       {/* Playlist List */}
-      <div className="flex-1 overflow-y-auto">
+      <div className={classNames('flex-1 overflow-y-auto', isDrawer && 'overscroll-contain pb-[env(safe-area-inset-bottom)]')}>
         {playlistsLoading ? (
           <PlaylistListSkeleton count={4} />
         ) : (
@@ -721,8 +749,8 @@ export default function PlaylistSidebar({
 
       {/* Create Playlist Modal */}
       {showCreateForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-lg p-6 w-96 max-w-full mx-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 rounded-lg p-6 w-96 max-w-full max-h-full overflow-y-auto">
             <h3 className="text-lg font-semibold text-white mb-4">Create New Playlist</h3>
             <form onSubmit={handleCreateSubmit} className="space-y-4">
               <div>
@@ -791,8 +819,8 @@ export default function PlaylistSidebar({
 
       {/* Edit Playlist Modal */}
       {editingPlaylist && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-lg p-6 w-96 max-w-full mx-4">
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-gray-800 rounded-lg p-6 w-96 max-w-full max-h-full overflow-y-auto">
             <h3 className="text-lg font-semibold text-white mb-4">Edit Playlist</h3>
             <form onSubmit={handleEditSubmit} className="space-y-4">
               <div>

@@ -8,6 +8,9 @@ import Image from 'next/image'
 import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
 import { useNavigation } from '@src/contexts/NavigationContext'
+import ItemActionSheet from './ItemActionSheet'
+import { prefersSheet } from './BottomSheet'
+import useOverlayState from './useOverlayState'
 
 export default function WatchlistCard({
   item,
@@ -23,9 +26,18 @@ export default function WatchlistCard({
   playlists,
   api,
   canEditPlaylist = true,
-  user = null
+  user = null,
+  selectionActive = false,
+  reorder = null
 }) {
   const [showActions, setShowActions] = useState(false)
+  const {
+    open: sheetOpen,
+    show: showSheet,
+    close: closeSheet,
+    closeThen: closeSheetThen,
+    afterLeave: afterSheetLeave,
+  } = useOverlayState()
   const [loading, setLoading] = useState(false)
   const [showComingSoonModal, setShowComingSoonModal] = useState(false)
   const [comingSoonForm, setComingSoonForm] = useState({
@@ -167,6 +179,142 @@ export default function WatchlistCard({
     }
   }, [item.tmdbId, item.mediaType, item.title, onRefresh])
 
+  // "…" opens a bottom sheet on phones and touch screens; the dropdown is wider
+  // than a phone-sized card and anchors inside it.
+  const handleOpenActions = useCallback(() => {
+    if (prefersSheet()) {
+      showSheet()
+    } else {
+      setShowActions(prev => !prev)
+    }
+  }, [showSheet])
+
+  // Touch screens get no hover overlay, so the card itself is the tap target:
+  // in selection mode it toggles the card, otherwise it opens the title, or its
+  // actions when the title isn't in the library to open.
+  const handleCardTap = useCallback(() => {
+    if (selectionActive) {
+      onSelect(!selected)
+    } else if (item.url) {
+      handleNavigationClick(item.url)
+    } else {
+      showSheet()
+    }
+  }, [selectionActive, onSelect, selected, item.url, handleNavigationClick, showSheet])
+
+  // Sheet actions that open another modal, or a confirm(), wait for the sheet
+  // to finish closing (see useOverlayState).
+  const actionSheet = (
+    <ItemActionSheet
+      open={sheetOpen}
+      onClose={closeSheet}
+      afterLeave={afterSheetLeave}
+      item={item}
+      selected={selected}
+      canEditPlaylist={canEditPlaylist}
+      isAdmin={isAdmin}
+      reorder={reorder}
+      onView={() => {
+        closeSheet()
+        handleNavigationClick(item.url)
+      }}
+      onToggleSelect={() => {
+        closeSheet()
+        onSelect(!selected)
+      }}
+      onCopy={() => closeSheetThen(() => onShowCopyModal?.(item))}
+      onMove={() => closeSheetThen(() => onShowMoveModal?.(item))}
+      onRemove={() => closeSheetThen(handleRemove)}
+      onMarkComingSoon={() => closeSheetThen(() => setShowComingSoonModal(true))}
+      onRemoveComingSoon={() => closeSheetThen(handleRemoveComingSoon)}
+    />
+  )
+
+  // Coming Soon Modal (Admin only) - Render using portal to escape card container.
+  // Both views render it; list view used to have no copy, so its menu item did nothing.
+  const comingSoonModal = showComingSoonModal && typeof document !== 'undefined' && createPortal(
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) {
+          setShowComingSoonModal(false)
+          setComingSoonForm({ comingSoonDate: '', notes: '' })
+        }
+      }}
+    >
+      <div
+        className="bg-gray-800 rounded-lg p-6 w-96 max-w-full max-h-full overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-lg font-semibold text-white mb-4">
+          Mark "{item.title}" as Coming Soon
+        </h3>
+        
+        <div className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Expected Date (Optional)
+            </label>
+            <input
+              type="date"
+              value={comingSoonForm.comingSoonDate}
+              onChange={(e) => setComingSoonForm(prev => ({ ...prev, comingSoonDate: e.target.value }))}
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            />
+            <p className="text-xs text-gray-400 mt-1">
+              When do you expect this content to be available?
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-300 mb-1">
+              Notes (Optional)
+            </label>
+            <textarea
+              value={comingSoonForm.notes}
+              onChange={(e) => setComingSoonForm(prev => ({ ...prev, notes: e.target.value }))}
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              placeholder="E.g., Scheduled via Radarr, Coming to Netflix..."
+              rows={3}
+              maxLength={500}
+            />
+          </div>
+
+          <div className="flex space-x-3 pt-4">
+            <button
+              onClick={handleSetComingSoon}
+              className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
+            >
+              Mark as Coming Soon
+            </button>
+            <button
+              onClick={() => {
+                setShowComingSoonModal(false)
+                setComingSoonForm({ comingSoonDate: '', notes: '' })
+              }}
+              className="flex-1 bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 p-3 bg-blue-900 bg-opacity-50 border border-blue-600 rounded-lg">
+          <div className="flex items-start space-x-2">
+            <svg className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <div className="text-sm text-blue-200">
+              <p className="font-medium mb-1">Server-wide Setting</p>
+              <p>This will mark the item as "Coming Soon" for ALL users who have it in their watchlists.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>,
+    document.body
+  )
+
   // Loading overlay component
   const LoadingOverlay = () => (
     <div className="absolute inset-0 bg-black/20 backdrop-blur-sm rounded-lg z-20 flex items-center justify-center">
@@ -182,7 +330,7 @@ export default function WatchlistCard({
   if (viewMode === 'list') {
     return (
       <motion.div className={classNames(
-        'bg-gray-800 rounded-lg p-4 flex items-center space-x-4 transition-all duration-200 relative',
+        'bg-gray-800 rounded-lg p-3 sm:p-4 flex items-center gap-3 sm:gap-4 transition-all duration-200 relative',
         selected && 'ring-2 ring-indigo-500',
         loading && 'opacity-50 pointer-events-none',
         cardIsNavigating && 'ring-2 ring-indigo-400 ring-opacity-75 shadow-lg shadow-indigo-400/25'
@@ -196,12 +344,22 @@ export default function WatchlistCard({
       >
         {/* Loading overlay for navigating card */}
         {cardIsNavigating && <LoadingOverlay />}
-        {/* Checkbox */}
-        <div className="flex-shrink-0">
+        {/* Touch: the whole row is the tap target. The checkbox and "…" sit
+            above it; the title link underneath does what the row does anyway. */}
+        <button
+          type="button"
+          onClick={handleCardTap}
+          aria-label={item.title}
+          aria-pressed={selectionActive ? selected : undefined}
+          className="absolute inset-0 rounded-lg [@media(hover:hover)]:hidden"
+        />
+        {/* Checkbox - on touch, only while selecting */}
+        <div className={classNames('relative flex-shrink-0', !selectionActive && '[@media(hover:none)]:hidden')}>
           <input
             type="checkbox"
             checked={selected}
             onChange={(e) => onSelect(e.target.checked)}
+            aria-label={`Select ${item.title}`}
             className="w-4 h-4 text-indigo-600 bg-gray-700 border-gray-600 rounded focus:ring-indigo-500"
           />
         </div>
@@ -226,7 +384,7 @@ export default function WatchlistCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start justify-between">
             <div className="flex-1 min-w-0">
-              <h3 className="text-lg font-semibold text-white truncate">
+              <h3 className="text-base sm:text-lg font-semibold text-white truncate">
                 {item.url ? (
                   <button
                     onClick={() => handleNavigationClick(item.url)}
@@ -239,8 +397,8 @@ export default function WatchlistCard({
                   item.title
                 )}
               </h3>
-              
-              <div className="flex items-center space-x-4 mt-1 text-sm text-gray-400">
+
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 mt-1 text-xs sm:text-sm text-gray-400">
                 {item.releaseDate && (
                   <span>{formatDate(item.releaseDate)}</span>
                 )}
@@ -274,11 +432,12 @@ export default function WatchlistCard({
             </div>
 
             {/* Actions */}
-            <div className="flex-shrink-0 ml-4">
+            <div className="flex-shrink-0 ml-2 sm:ml-4">
               <div className="relative">
                 <button
-                  onClick={() => setShowActions(!showActions)}
+                  onClick={handleOpenActions}
                   className="p-2 text-gray-400 hover:text-white rounded-md hover:bg-gray-700"
+                  aria-label={`More actions for ${item.title}`}
                 >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
@@ -350,6 +509,8 @@ export default function WatchlistCard({
           </div>
         </div>
 
+        {comingSoonModal}
+        {actionSheet}
       </motion.div>
     )
   }
@@ -357,7 +518,9 @@ export default function WatchlistCard({
   // Grid view
   return (
     <motion.div className={classNames(
-      'group bg-gray-800 rounded-lg overflow-hidden transition-all duration-200 hover:scale-105 hover:shadow-xl relative',
+      // Hover growth only where there is hover: on touch it sticks after a tap
+      // and overlaps the neighbouring card
+      'group bg-gray-800 rounded-lg overflow-hidden transition-all duration-200 [@media(hover:hover)]:hover:scale-105 [@media(hover:hover)]:hover:shadow-xl relative',
       selected && 'ring-2 ring-indigo-500',
       loading && 'opacity-50 pointer-events-none',
       cardIsNavigating && 'ring-2 ring-indigo-400 ring-opacity-75 shadow-lg shadow-indigo-400/25'
@@ -380,11 +543,19 @@ export default function WatchlistCard({
           className={classNames("object-cover group-hover:opacity-100 group-focus:opacity-100 transition-opacity duration-700",
             !item.url ? "opacity-25" : "",
           )}
-          sizes="(max-width: 640px) 100vw, (max-width: 768px) 50vw, (max-width: 1024px) 33vw, (max-width: 1280px) 25vw, 20vw"
+          sizes="(max-width: 640px) 50vw, (max-width: 768px) 33vw, (max-width: 1280px) 25vw, 20vw"
         />
-        
-        {/* Overlay */}
-        <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-75 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100">
+
+        {/* Touch: the poster is the tap target (handleCardTap) */}
+        <button
+          type="button"
+          onClick={handleCardTap}
+          aria-label={item.url ? `View ${item.title}` : `Actions for ${item.title}`}
+          className="absolute inset-0 [@media(hover:hover)]:hidden"
+        />
+
+        {/* Overlay - hover only; on touch its buttons would be invisible tap targets */}
+        <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-75 transition-all duration-200 flex items-center justify-center opacity-0 hover:opacity-100 [@media(hover:none)]:hidden">
           <div className="flex space-x-2">
             <button
               onClick={() => onSelect(!selected)}
@@ -412,7 +583,7 @@ export default function WatchlistCard({
               </button>
             )}
             <button
-              onClick={() => setShowActions(!showActions)}
+              onClick={handleOpenActions}
               className="p-2 bg-gray-700 text-gray-300 rounded-full hover:bg-gray-600 transition-colors"
               title="More actions"
             >
@@ -425,21 +596,53 @@ export default function WatchlistCard({
 
         {/* Media type badge */}
         {item.mediaType && (
-          <div className="absolute top-2 right-2 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded">
+          <div className="pointer-events-none absolute top-2 right-2 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded">
             {item.mediaType === 'movie' ? 'Movie' : 'TV Show'}
           </div>
         )}
 
         {/* External content indicator */}
         {item.isExternal && (
-          <div className="absolute bottom-2 left-2 bg-yellow-600 text-white text-xs px-2 py-1 rounded">
+          <div className="pointer-events-none absolute bottom-2 left-2 bg-yellow-600 text-white text-xs px-2 py-1 rounded">
             EXTERNAL
           </div>
         )}
 
+        {/* Touch: selection check (in the rating's corner) while selecting,
+            otherwise a "…" button, since there is no hover overlay to hold it */}
+        {selectionActive ? (
+          <div
+            className={classNames(
+              'pointer-events-none absolute top-2 left-2 flex h-7 w-7 items-center justify-center rounded-full border-2 [@media(hover:hover)]:hidden',
+              selected ? 'border-indigo-500 bg-indigo-600 text-white' : 'border-white/80 bg-black/40'
+            )}
+            aria-hidden="true"
+          >
+            {selected && (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+              </svg>
+            )}
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={handleOpenActions}
+            className="absolute bottom-1.5 right-1.5 p-2 rounded-full bg-black/70 text-white [@media(hover:hover)]:hidden"
+            aria-label={`More actions for ${item.title}`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+            </svg>
+          </button>
+        )}
+
         {/* Rating */}
         {item.voteAverage ? (
-          <div className="absolute top-2 left-2 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded flex items-center">
+          <div className={classNames(
+            'pointer-events-none absolute top-2 left-2 bg-black bg-opacity-75 text-white text-xs px-2 py-1 rounded flex items-center',
+            selectionActive && '[@media(hover:none)]:hidden'
+          )}>
             <svg className="w-3 h-3 mr-1 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
               <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" />
             </svg>
@@ -449,7 +652,7 @@ export default function WatchlistCard({
       </div>
 
       {/* Content */}
-      <div className="p-4">
+      <div className="p-3 sm:p-4">
         <h3 className="font-semibold text-white text-sm line-clamp-2 mb-2">
           {item.url ? (
             <button
@@ -492,6 +695,18 @@ export default function WatchlistCard({
           )}
         </div>
       </div>
+
+      {/* Touch, while selecting: a tap anywhere on the card toggles it, the
+          title included, rather than navigating away mid-selection */}
+      {selectionActive && (
+        <button
+          type="button"
+          onClick={handleCardTap}
+          aria-label={item.title}
+          aria-pressed={selected}
+          className="absolute inset-0 z-10 rounded-lg [@media(hover:hover)]:hidden"
+        />
+      )}
 
       {/* Actions Menu */}
       {showActions && (
@@ -555,90 +770,9 @@ export default function WatchlistCard({
         </div>
       )}
 
-      {/* Coming Soon Modal (Admin only) - Render using portal to escape card container */}
-      {showComingSoonModal && typeof document !== 'undefined' && createPortal(
-        <div
-          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              setShowComingSoonModal(false)
-              setComingSoonForm({ comingSoonDate: '', notes: '' })
-            }
-          }}
-        >
-          <div
-            className="bg-gray-800 rounded-lg p-6 w-96 max-w-full mx-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="text-lg font-semibold text-white mb-4">
-              Mark "{item.title}" as Coming Soon
-            </h3>
-            
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
-                  Expected Date (Optional)
-                </label>
-                <input
-                  type="date"
-                  value={comingSoonForm.comingSoonDate}
-                  onChange={(e) => setComingSoonForm(prev => ({ ...prev, comingSoonDate: e.target.value }))}
-                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <p className="text-xs text-gray-400 mt-1">
-                  When do you expect this content to be available?
-                </p>
-              </div>
+      {comingSoonModal}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-1">
-                  Notes (Optional)
-                </label>
-                <textarea
-                  value={comingSoonForm.notes}
-                  onChange={(e) => setComingSoonForm(prev => ({ ...prev, notes: e.target.value }))}
-                  className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  placeholder="E.g., Scheduled via Radarr, Coming to Netflix..."
-                  rows={3}
-                  maxLength={500}
-                />
-              </div>
-
-              <div className="flex space-x-3 pt-4">
-                <button
-                  onClick={handleSetComingSoon}
-                  className="flex-1 bg-blue-600 text-white py-2 px-4 rounded-md hover:bg-blue-700 transition-colors"
-                >
-                  Mark as Coming Soon
-                </button>
-                <button
-                  onClick={() => {
-                    setShowComingSoonModal(false)
-                    setComingSoonForm({ comingSoonDate: '', notes: '' })
-                  }}
-                  className="flex-1 bg-gray-600 text-white py-2 px-4 rounded-md hover:bg-gray-700 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-4 p-3 bg-blue-900 bg-opacity-50 border border-blue-600 rounded-lg">
-              <div className="flex items-start space-x-2">
-                <svg className="w-5 h-5 text-blue-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <div className="text-sm text-blue-200">
-                  <p className="font-medium mb-1">Server-wide Setting</p>
-                  <p>This will mark the item as "Coming Soon" for ALL users who have it in their watchlists.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>,
-        document.body
-      )}
-
+      {actionSheet}
     </motion.div>
   )
 }

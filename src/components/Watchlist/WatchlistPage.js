@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { toast } from 'react-toastify'
 import { motion, AnimatePresence } from 'framer-motion'
 import { debounce } from 'lodash'
+import { Dialog, DialogBackdrop, DialogPanel, Menu, MenuButton, MenuItem, MenuItems, Transition } from '@headlessui/react'
 import PlaylistSidebar from './PlaylistSidebar'
 import PlaylistGrid from './PlaylistGrid'
 import PlaylistControls from './PlaylistControls'
@@ -14,6 +15,8 @@ import MoveToPlaylistModal from './MoveToPlaylistModal'
 import { ControlsSkeleton } from './WatchlistSkeletons'
 import ShowInAppUserModal from './ShowInAppUserModal'
 import ShowInAppAdminModal from './ShowInAppAdminModal'
+import useOverlayState from './useOverlayState'
+import { moveItemToPosition } from './reorder'
 import { searchMedia } from '@src/utils/tmdb/client'
 import { classNames, formatDate } from '@src/utils'
 
@@ -420,6 +423,32 @@ export default function WatchlistPage({ user }) {
 
   // selectedItems is independent selection state
   const [selectedItems, setSelectedItems] = useState(new Set())
+  // Mobile "Select" mode: taps on cards toggle selection instead of opening
+  // them, and the bottom selection bar stays up even with nothing selected.
+  const [selectionMode, setSelectionMode] = useState(false)
+  const selectionActive = selectionMode || selectedItems.size > 0
+
+  // Below `lg` the playlist sidebar lives in a slide-in drawer.
+  const {
+    open: drawerOpen,
+    show: openDrawer,
+    close: closeDrawer,
+    closeThen: closeDrawerThen,
+    afterLeave: afterDrawerLeave,
+  } = useOverlayState()
+
+  // At `lg` the sidebar is back in the page and the drawer is display:none, but
+  // an open Dialog would still hold the page inert. Close it when the viewport
+  // grows past the breakpoint (a rotated tablet, a resized window).
+  useEffect(() => {
+    if (!drawerOpen) return
+    const desktop = window.matchMedia('(min-width: 1024px)')
+    const handleChange = (event) => {
+      if (event.matches) closeDrawer()
+    }
+    desktop.addEventListener('change', handleChange)
+    return () => desktop.removeEventListener('change', handleChange)
+  }, [drawerOpen, closeDrawer])
 
   // --- Modal/dialog cluster (reducer-backed) ---
   const [modalState, dispatchModal] = useReducer(modalReducer, initialModalState)
@@ -747,6 +776,11 @@ export default function WatchlistPage({ user }) {
 
   // Simple handler for playlist selection - only updates URL
   const handlePlaylistSelect = useCallback((playlistId) => {
+    // A selection belongs to the playlist it was made in; carried over, the
+    // bulk actions would act on items the new playlist doesn't show.
+    setSelectedItems(new Set())
+    setSelectionMode(false)
+
     // Check if this is the default playlist
     const defaultPlaylist = ownerDefaultPlaylist
     const isDefaultPlaylist = defaultPlaylist && playlistId === defaultPlaylist.id
@@ -1240,11 +1274,25 @@ export default function WatchlistPage({ user }) {
 
   const handleClearSelection = useCallback(() => {
     setSelectedItems(new Set())
+    setSelectionMode(false)
   }, [])
 
   const handleSharePlaylist = useCallback((playlistId) => {
     dispatchModal({ type: 'OPEN_SHARE', value: playlistId })
   }, [])
+
+  // The drawer's copy of the sidebar. Picking a playlist closes the drawer.
+  // Share waits for it to finish closing: the share modal renders outside the
+  // drawer's Dialog, so opened any sooner it would be inert (useOverlayState).
+  // New/Edit playlist need no such care; their modals render inside the drawer.
+  const handleDrawerPlaylistSelect = useCallback((playlistId) => {
+    handlePlaylistSelect(playlistId)
+    closeDrawer()
+  }, [handlePlaylistSelect, closeDrawer])
+
+  const handleDrawerSharePlaylist = useCallback((playlistId) => {
+    closeDrawerThen(() => handleSharePlaylist(playlistId))
+  }, [closeDrawerThen, handleSharePlaylist])
 
   const handleRefresh = useCallback(async () => {
     await loadPlaylists()
@@ -1385,6 +1433,7 @@ export default function WatchlistPage({ user }) {
     
     // Clear selection
     setSelectedItems(new Set())
+    setSelectionMode(false)
   }, [currentItems, selectedPlaylistId, matchesPlaylistId, setCurrentItems, setPlaylists, setSummary])
 
   // Optimistic item move handler (removes from current playlist)
@@ -1471,6 +1520,7 @@ export default function WatchlistPage({ user }) {
     
     // Clear selection
     setSelectedItems(new Set())
+    setSelectionMode(false)
   }, [currentItems, selectedPlaylistId, matchesPlaylistId, setCurrentItems, setPlaylists, setSummary])
 
   // Handler to show move modal for a specific item
@@ -1686,7 +1736,9 @@ export default function WatchlistPage({ user }) {
     }, 500) // 500ms debounce
   }, [currentPlaylist, canEditPlaylist, api, loadPlaylistItems, selectedPlaylistId, sortBy, currentItems, sortItemsLocally, sortLocked, setCurrentItems, setCurrentPlaylist, setSortBy, setSortError, setSortOrder])
 
-  const handleCustomReorder = useCallback(async (draggedIndex, targetIndex) => {
+  // Moves an item into another item's place. Both are ids, not indices: the grid
+  // shows the filtered list, and its indices don't line up with currentItems.
+  const handleCustomReorder = useCallback(async (movedItemId, targetItemId) => {
     // Check if sort is locked - even admins/editors need to unlock first
     if (sortLocked) {
       toast.error('Sort settings are locked. Click the unlock button to reorder items.')
@@ -1699,15 +1751,13 @@ export default function WatchlistPage({ user }) {
     
     // Prevent multiple reorders at once
     if (isReordering) return
-    
+
+    const newOrder = moveItemToPosition(currentItems, movedItemId, targetItemId)
+    if (!newOrder) return
+
     setIsReordering(true)
-    
+
     try {
-      // Create the new order
-      const newOrder = [...currentItems]
-      const [movedItem] = newOrder.splice(draggedIndex, 1)
-      newOrder.splice(targetIndex, 0, movedItem)
-      
       // Update state immediately for instant feedback
       setCurrentItems(newOrder)
       setSortBy('custom')
@@ -1756,61 +1806,118 @@ export default function WatchlistPage({ user }) {
         onListUsers={isAdmin ? api.listUsersForVisibility : undefined}
       />
 
+      {/* Mobile playlist drawer - the same sidebar, sliding in from the left.
+          The panel carries no transform once open, so the sidebar's own
+          fixed-position New/Edit playlist modals still cover the screen. */}
+      <Transition show={drawerOpen} afterLeave={afterDrawerLeave}>
+        <Dialog onClose={closeDrawer} className="relative z-50 lg:hidden">
+          <DialogBackdrop
+            transition
+            className="fixed inset-0 bg-black/60 transition-opacity duration-300 ease-out data-[closed]:opacity-0"
+          />
+          <div className="fixed inset-0 flex">
+            <DialogPanel
+              transition
+              aria-label="Playlists"
+              className="flex w-[22rem] max-w-[85vw] shadow-2xl transition-transform duration-300 ease-out data-[closed]:-translate-x-full"
+            >
+              <PlaylistSidebar
+                variant="drawer"
+                onClose={closeDrawer}
+                playlists={playlists}
+                playlistsLoading={playlistsLoading}
+                selectedPlaylistId={resolvedSelectedPlaylistId}
+                onPlaylistSelect={handleDrawerPlaylistSelect}
+                onCreatePlaylist={handleCreatePlaylist}
+                onUpdatePlaylist={handleUpdatePlaylist}
+                onDeletePlaylist={handleDeletePlaylist}
+                onClearPlaylist={handleClearPlaylist}
+                onSharePlaylist={handleDrawerSharePlaylist}
+                summary={summary}
+                summaryLoading={summaryLoading}
+                currentPlaylist={currentPlaylist}
+                isAdmin={isAdmin}
+                onListUsers={isAdmin ? api.listUsersForVisibility : undefined}
+              />
+            </DialogPanel>
+          </div>
+        </Dialog>
+      </Transition>
+
       {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Header */}
-        <div className="bg-gray-800 border-b border-gray-700 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-4">
+      <div className="flex-1 min-w-0 flex flex-col">
+        {/* Header - pinned on mobile, where it holds the playlist switcher */}
+        <div className="sticky top-0 z-30 bg-gray-800 border-b border-gray-700 px-4 py-3 lg:static lg:px-6 lg:py-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-3 lg:gap-4">
               {/* Back button - always visible */}
-              <Link href="/list" className="text-gray-400 hover:text-white">
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <Link href="/list" className="-m-2 shrink-0 p-2 text-gray-400 hover:text-white lg:m-0 lg:p-0" aria-label="Back to library">
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
                 </svg>
               </Link>
-              
+
               {/* Playlist title and description - show skeleton during initialization */}
               {initializing ? (
                 <div className="flex items-center space-x-4">
-                  <div className="h-8 bg-gray-700 rounded w-48 animate-pulse"></div>
-                  <div className="h-4 bg-gray-700 rounded w-32 animate-pulse"></div>
+                  <div className="h-7 lg:h-8 bg-gray-700 rounded w-40 lg:w-48 animate-pulse"></div>
+                  <div className="hidden lg:block h-4 bg-gray-700 rounded w-32 animate-pulse"></div>
                 </div>
               ) : (
                 <>
-                  <h1 className="text-2xl font-bold text-white">
+                  {/* Mobile: the title is the playlist switcher */}
+                  <div className="min-w-0 lg:hidden">
+                    <h1 className="min-w-0">
+                      <button
+                        type="button"
+                        onClick={openDrawer}
+                        aria-haspopup="dialog"
+                        className="flex max-w-full items-center gap-1 text-left text-lg font-bold leading-tight text-white"
+                      >
+                        <span className="truncate">{currentPlaylist?.name || 'My Watchlist'}</span>
+                        <svg className="w-5 h-5 shrink-0 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                        <span className="sr-only">(switch playlist)</span>
+                      </button>
+                    </h1>
+                    <p className="text-xs text-gray-400">{filteredItems.length} items</p>
+                  </div>
+                  <h1 className="hidden lg:block text-2xl font-bold text-white">
                     {currentPlaylist?.name || 'My Watchlist'}
                   </h1>
                   {currentPlaylist?.description && (
-                    <p className="text-gray-400 text-sm">{currentPlaylist.description}</p>
+                    <p className="hidden lg:block text-gray-400 text-sm">{currentPlaylist.description}</p>
                   )}
                 </>
               )}
             </div>
-            
-            <div className="flex items-center space-x-2">
+
+            <div className="flex shrink-0 items-center space-x-1 lg:space-x-2">
               {/* Item count and refresh button - show skeleton during initialization */}
               {initializing ? (
                 <div className="flex items-center space-x-2">
-                  <div className="h-5 bg-gray-700 rounded w-16 animate-pulse"></div>
+                  <div className="hidden lg:block h-5 bg-gray-700 rounded w-16 animate-pulse"></div>
                   <div className="h-8 w-8 bg-gray-700 rounded animate-pulse"></div>
                 </div>
               ) : (
                 <>
-                  <span className="text-sm text-gray-400">
+                  <span className="hidden lg:inline text-sm text-gray-400">
                     {filteredItems.length} items
                   </span>
                   <button
                     onClick={handleRefresh}
                     className="p-2 text-gray-400 hover:text-white rounded-md hover:bg-gray-700"
                     title="Refresh"
+                    aria-label="Refresh"
                   >
-                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
                     </svg>
                   </button>
                   <button
                     onClick={() => dispatchModal({ type: 'SET_SHOW_MANAGE_ROWS', value: true })}
-                    className="ml-2 px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
+                    className="hidden lg:inline-block ml-2 px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
                     title="Manage Your App Rows"
                   >
                     Manage App Rows
@@ -1818,12 +1925,47 @@ export default function WatchlistPage({ user }) {
                   {isAdmin && (
                     <button
                       onClick={() => dispatchModal({ type: 'SET_SHOW_ADMIN_ROWS', value: true })}
-                      className="ml-2 px-3 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors"
+                      className="hidden lg:inline-block ml-2 px-3 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors"
                       title="Admin: Manage App Rows for Users"
                     >
                       Manage App Rows (Admin)
                     </button>
                   )}
+
+                  {/* Mobile: the App Rows buttons, folded into a menu */}
+                  <Menu as="div" className="relative lg:hidden">
+                    <MenuButton className="p-2 text-gray-400 hover:text-white rounded-md hover:bg-gray-700" aria-label="More options">
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
+                      </svg>
+                    </MenuButton>
+                    <MenuItems
+                      anchor="bottom end"
+                      modal={false}
+                      className="z-40 w-60 rounded-md bg-gray-700 py-1 shadow-lg ring-1 ring-black/20 focus:outline-none [--anchor-gap:0.25rem]"
+                    >
+                      <MenuItem>
+                        <button
+                          type="button"
+                          onClick={() => dispatchModal({ type: 'SET_SHOW_MANAGE_ROWS', value: true })}
+                          className="block w-full px-4 py-3 text-left text-sm text-gray-200 data-[focus]:bg-gray-600"
+                        >
+                          Manage App Rows
+                        </button>
+                      </MenuItem>
+                      {isAdmin && (
+                        <MenuItem>
+                          <button
+                            type="button"
+                            onClick={() => dispatchModal({ type: 'SET_SHOW_ADMIN_ROWS', value: true })}
+                            className="block w-full px-4 py-3 text-left text-sm text-yellow-400 data-[focus]:bg-gray-600"
+                          >
+                            Manage App Rows (Admin)
+                          </button>
+                        </MenuItem>
+                      )}
+                    </MenuItems>
+                  </Menu>
                 </>
               )}
             </div>
@@ -1870,11 +2012,13 @@ export default function WatchlistPage({ user }) {
             canAddPlaylist={canAddPlaylist}
             canEditPlaylist={canEditPlaylist}
             onToggleSortLock={handleToggleSortLock}
+            selectionMode={selectionMode}
+            onSelectionModeChange={setSelectionMode}
           />
         )}
 
         {/* Content */}
-        <div className="flex-1 p-6">
+        <div className="flex-1 p-4 lg:p-6">
           {/* Sort Error Display */}
           {sortError && (
             <div className="bg-red-900/20 border border-red-500/50 rounded-lg p-3 mb-4">
@@ -1920,14 +2064,19 @@ export default function WatchlistPage({ user }) {
                 currentPlaylist={currentPlaylist}
                 playlists={playlists}
                 onCustomReorder={handleCustomReorder}
+                isReordering={isReordering}
                 api={api}
                 sortBy={sortBy}
                 sortLocked={sortLocked}
                 canEditPlaylist={canEditPlaylist}
                 user={user}
+                selectionActive={selectionActive}
               />
             </motion.div>
           </AnimatePresence>
+
+          {/* Room for the mobile selection bar, so it never hides the last row */}
+          {selectionActive && <div className="h-28 md:hidden" aria-hidden="true" />}
         </div>
       </div>
 

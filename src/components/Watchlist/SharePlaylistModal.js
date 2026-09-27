@@ -142,15 +142,16 @@ export default function SharePlaylistModal({
   ]
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold text-white">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-gray-800 rounded-lg p-4 sm:p-6 w-full max-w-2xl max-h-full overflow-y-auto">
+        <div className="flex items-center justify-between gap-3 mb-6">
+          <h2 className="min-w-0 break-words text-xl font-semibold text-white">
             Share "{playlist?.name}"
           </h2>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-white"
+            className="-m-2 shrink-0 p-2 text-gray-400 hover:text-white"
+            aria-label="Close"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -173,7 +174,7 @@ export default function SharePlaylistModal({
         {/* Share Link */}
         <div className="mb-6">
           <h3 className="text-lg font-medium text-white mb-3">Share Link</h3>
-          <div className="flex space-x-2">
+          <div className="flex flex-col gap-2 sm:flex-row">
             <input
               type="text"
               value={shareLink}
@@ -230,7 +231,7 @@ export default function SharePlaylistModal({
 
           <h3 className="text-lg font-medium text-white mb-3">Invite Collaborators</h3>
           
-          <div className="flex space-x-2 mb-4">
+          <div className="flex flex-col gap-2 sm:flex-row mb-4">
             <input
               type="email"
               value={newCollaborator.email}
@@ -285,8 +286,8 @@ export default function SharePlaylistModal({
                   key={index}
                   className="flex items-center justify-between bg-gray-700 rounded-lg p-3"
                 >
-                  <div className="flex-1">
-                    <div className="text-white">{collaborator.email}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-white break-all">{collaborator.email}</div>
                     <div className="text-sm text-gray-400 capitalize">
                       {permissionOptions.find(p => p.value === collaborator.permission)?.label}
                     </div>
@@ -325,8 +326,8 @@ export default function SharePlaylistModal({
                       : 'bg-gray-700'
                   )}
                 >
-                  <div className="flex-1">
-                    <div className={classNames('text-white', markedForRemoval && 'line-through opacity-70')}>
+                  <div className="flex-1 min-w-0">
+                    <div className={classNames('text-white break-all', markedForRemoval && 'line-through opacity-70')}>
                       {collaborator.email}
                     </div>
                     <div className={classNames('text-sm capitalize', markedForRemoval ? 'text-red-300' : 'text-gray-400')}>
@@ -335,8 +336,8 @@ export default function SharePlaylistModal({
                         : permissionOptions.find(p => p.value === collaborator.permission)?.label}
                     </div>
                   </div>
-                  <div className="flex items-center space-x-3">
-                    <div className="text-sm text-gray-400">
+                  <div className="flex shrink-0 items-center space-x-3 ml-3">
+                    <div className="hidden sm:block text-sm text-gray-400">
                       Added {new Date(collaborator.dateAdded).toLocaleDateString()}
                     </div>
                     <button

@@ -1,3 +1,23 @@
+// Grid columns shared by the watchlist grid and its skeletons: two posters
+// across on a phone. From `lg` the 20rem sidebar is back, which is why `lg`
+// holds at four columns.
+export const WATCHLIST_GRID_CLASSES =
+  'grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 lg:gap-6'
+
+// Skeleton for one grid card: poster-shaped, so it holds the card's size at
+// any column width
+export function GridItemSkeleton() {
+  return (
+    <div className="bg-gray-800 rounded-lg overflow-hidden animate-pulse">
+      <div className="aspect-[2/3] bg-gray-700"></div>
+      <div className="p-3 sm:p-4">
+        <div className="h-4 bg-gray-700 rounded w-3/4 mb-2"></div>
+        <div className="h-3 bg-gray-700 rounded w-1/2"></div>
+      </div>
+    </div>
+  )
+}
+
 // Skeleton for the sidebar summary stats section
 export function SummaryStatsSkeleton() {
   return (
@@ -58,15 +78,22 @@ export function PlaylistListSkeleton({ count = 3 }) {
 // Skeleton for the controls section (search, filters, etc.)
 export function ControlsSkeleton() {
   return (
-    <div className="bg-gray-800 border-b border-gray-700 px-6 py-4 animate-pulse">
-      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+    <div className="bg-gray-800 border-b border-gray-700 px-4 py-3 lg:px-6 lg:py-4 animate-pulse">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-3 md:space-y-4 lg:space-y-0">
         {/* Search skeleton */}
-        <div className="flex-1 max-w-md">
+        <div className="flex-1 md:max-w-md">
           <div className="h-10 bg-gray-700 rounded-md"></div>
         </div>
 
+        {/* Mobile controls skeleton: type filter, sort, select */}
+        <div className="flex items-center gap-2 md:hidden">
+          <div className="h-10 flex-1 bg-gray-700 rounded-lg"></div>
+          <div className="h-10 w-10 bg-gray-700 rounded-lg"></div>
+          <div className="h-10 w-16 bg-gray-700 rounded-lg"></div>
+        </div>
+
         {/* Controls skeleton */}
-        <div className="flex items-center space-x-4">
+        <div className="hidden md:flex items-center space-x-4">
           {/* Select all button skeleton */}
           <div className="w-9 h-9 bg-gray-700 rounded-md"></div>
           
@@ -89,11 +116,11 @@ export function ControlsSkeleton() {
 // Skeleton for the header section
 export function HeaderSkeleton() {
   return (
-    <div className="bg-gray-800 border-b border-gray-700 px-6 py-4 animate-pulse">
+    <div className="bg-gray-800 border-b border-gray-700 px-4 py-3 lg:px-6 lg:py-4 animate-pulse">
       <div className="flex items-center justify-between">
-        <div className="h-8 bg-gray-700 rounded w-48"></div>
+        <div className="h-7 lg:h-8 bg-gray-700 rounded w-40 lg:w-48"></div>
         <div className="flex items-center space-x-3">
-          <div className="h-9 w-24 bg-gray-700 rounded"></div>
+          <div className="hidden lg:block h-9 w-24 bg-gray-700 rounded"></div>
           <div className="h-9 w-9 bg-gray-700 rounded"></div>
         </div>
       </div>
@@ -106,8 +133,8 @@ export function HeaderSkeleton() {
 export function WatchlistPageSkeleton() {
   return (
     <div className="flex min-h-screen bg-gray-900">
-      {/* Sidebar Skeleton */}
-      <div className="w-80 bg-gray-800 border-r border-gray-700 flex flex-col">
+      {/* Sidebar Skeleton - desktop only; phones get the playlist drawer */}
+      <div className="hidden lg:flex w-80 shrink-0 bg-gray-800 border-r border-gray-700 flex-col">
         {/* Header */}
         <div className="p-6 border-b border-gray-700 animate-pulse">
           <div className="h-6 bg-gray-700 rounded w-20 mb-4"></div>
@@ -126,7 +153,7 @@ export function WatchlistPageSkeleton() {
       </div>
 
       {/* Main Content Skeleton */}
-      <div className="flex-1 flex flex-col">
+      <div className="flex-1 min-w-0 flex flex-col">
         {/* Header Skeleton */}
         <HeaderSkeleton />
 
@@ -134,17 +161,10 @@ export function WatchlistPageSkeleton() {
         <ControlsSkeleton />
 
         {/* Content Skeleton */}
-        <div className="flex-1 p-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6">
+        <div className="flex-1 p-4 lg:p-6">
+          <div className={WATCHLIST_GRID_CLASSES}>
             {Array.from({ length: 12 }, (_, i) => (
-              <div
-                key={`content-skeleton-${i}`}
-                className="bg-gray-800 rounded-lg p-4 animate-pulse"
-              >
-                <div className="w-full h-64 bg-gray-700 rounded mb-4"></div>
-                <div className="h-4 bg-gray-700 rounded w-3/4 mb-2"></div>
-                <div className="h-3 bg-gray-700 rounded w-1/2"></div>
-              </div>
+              <GridItemSkeleton key={`content-skeleton-${i}`} />
             ))}
           </div>
         </div>
