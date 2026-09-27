@@ -97,8 +97,8 @@ import { VALID_MEDIA_TYPES, validateWatchlistItem } from './validation.js'
 export async function toggleWatchlist(item) {
   try {
     // Check if item already exists in the specific playlist
-    const existingItem = await checkWatchlistStatus(item.mediaId, item.tmdbId, item.playlistId)
-    
+    const existingItem = await checkWatchlistStatus(item.mediaId, item.tmdbId, item.playlistId, item.mediaType)
+
     if (existingItem) {
       // Remove from watchlist
       const removed = await removeFromWatchlist(existingItem.id)
@@ -107,13 +107,25 @@ export async function toggleWatchlist(item) {
         success: removed,
         item: existingItem
       }
-    } else {
-      // Add to watchlist
+    }
+
+    // Add to watchlist
+    try {
       const addedItem = await addToWatchlist(item)
       return {
         action: 'added',
         success: true,
         item: addedItem
+      }
+    } catch (error) {
+      // Another request added the title between the check above and this add:
+      // it is in the playlist, which is what this toggle asked for. No item
+      // is returned; the next status check fetches it.
+      if (error?.message !== 'Item already exists in this playlist') throw error
+      return {
+        action: 'added',
+        success: true,
+        item: null
       }
     }
   } catch (error) {
