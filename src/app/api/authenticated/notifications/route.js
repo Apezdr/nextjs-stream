@@ -1,14 +1,13 @@
 import { isAuthenticatedAndApproved } from '@src/utils/routeAuth';
-import { 
-  getUserNotifications, 
-  generateNotificationETag,
-  getUnreadNotificationCount 
+import {
+  getUserNotifications,
+  getUnreadNotificationCount
 } from '@src/utils/notifications/notificationDatabase.js';
 import { MediaDataEnricher } from '@src/utils/notifications/utils/MediaDataEnricher.js';
 import { NextResponse } from 'next/server';
 import { getSession } from '@src/lib/cachedAuth';
 // Use shared ETag helpers for consistency across all endpoints
-import { hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers';
+import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers';
 
 /**
  * GET /api/authenticated/notifications
@@ -30,16 +29,6 @@ export async function GET(request) {
     const priority = searchParams.get('priority') || null;
     const enrich = searchParams.get('enrich') !== 'false'; // Default to true
 
-    // Generate ETag for caching
-    const etag = await generateNotificationETag(authResult.id);
-    
-    // Check if client has current version using shared helper
-    if (hasMatchingETag(request, etag)) {
-      return createNotModifiedResponse(etag, {
-        'Cache-Control': 'no-cache'
-      });
-    }
-
     // Get notifications
     const result = await getUserNotifications(authResult.id, {
       page,
@@ -59,10 +48,22 @@ export async function GET(request) {
       }
     }
 
+    // The ETag hashes the response itself, like every other polled route. It
+    // used to be built from the newest updatedAt and the unread count, which a
+    // dismiss (a hard delete) of any read notification but the newest leaves
+    // unchanged, so a 304 would have brought the dismissed one back.
+    const responseString = JSON.stringify(result);
+    const etag = generateETag(responseString);
+
+    // Check if client has current version using shared helper
+    if (hasMatchingETag(request, etag)) {
+      return createNotModifiedResponse(etag);
+    }
+
     // Return notifications with ETag header for efficient polling
-    return NextResponse.json(result, {
+    return new NextResponse(responseString, {
       headers: {
-        'Cache-Control': 'no-cache',
+        'Content-Type': 'application/json',
         ...createCacheHeaders(etag)
       }
     });
@@ -97,20 +98,20 @@ export async function HEAD(request) {
 
     if (countOnly) {
       const unreadCount = await getUnreadNotificationCount(session.user.id);
-      const etag = await generateNotificationETag(session.user.id);
-      
+      // A HEAD answer carries nothing but the count, so the count is what its
+      // ETag covers
+      const etag = generateETag(`unread:${unreadCount}`);
+
       // Check if client has current version using shared helper
       if (hasMatchingETag(request, etag)) {
         return createNotModifiedResponse(etag, {
-          'Cache-Control': 'no-cache',
           'X-Unread-Count': unreadCount.toString()
         });
       }
-      
+
       return new NextResponse(null, {
         headers: {
           'X-Unread-Count': unreadCount.toString(),
-          'Cache-Control': 'no-cache',
           ...createCacheHeaders(etag)
         }
       });
