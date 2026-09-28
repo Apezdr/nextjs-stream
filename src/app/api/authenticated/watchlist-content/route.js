@@ -248,7 +248,7 @@ export const GET = async (req) => {
          * 
          * 1. Parallelized pagination preview queries (previous/next items run in parallel)
          * 2. Minimal item fetching: Only fetch 1 item for pagination previews instead of full pages
-         * 3. Smart sorting: Previous item uses reversed sort order to get last item efficiently
+         * 3. Previous/next items are read by offset, in the playlist's own order
          * 4. React cache(): Deduplicates watchlist queries within the same request
          * 5. Batched watch history: Single MongoDB query for all items instead of 3 separate queries
          * 6. Minimized payload: Only essential fields for UX
@@ -333,33 +333,28 @@ export const GET = async (req) => {
         const totalPages = Math.ceil(totalResults / limit)
         const currentPage = page
 
-        // Optimize: for previous page, we want the LAST item, so reverse sort order
-        // This avoids fetching full page just to get last item
-        const sortOrder = playlistInfo?.sortOrder || 'desc'
-        const reverseSortOrder = sortOrder === 'asc' ? 'desc' : 'asc'
-        
-        // Parallelize pagination preview queries (only fetch 1 item each)
+        // The item either side of this page, one each, in the playlist's own
+        // order: the last of the previous page and the first of the next. They
+        // used to be asked for as `page: currentPage ± 1, limit: 1`, which
+        // skips currentPage ± 1 items, not whole pages, so both were the wrong
+        // item (the previous one counted from the end of a reversed sort).
         const [prevPageResult, nextPageResult] = await Promise.all([
-          // Previous page last item: reverse sort order and fetch first item (which is the last in normal order)
           currentPage > 0
             ? getCachedWatchlistContent({
                 playlistId,
-                page: currentPage - 1,
-                limit: 1, // Only fetch 1 item
+                offset: currentPage * limit - 1,
+                limit: 1,
                 mediaType,
-                sortOrder: reverseSortOrder, // Reverse to get last item
                 userId: authResult?.id,
                 internalOnly: shouldHideUnavailable
               })
             : Promise.resolve(null),
-          // Next page first item: normal sort order, limit 1
           currentPage < totalPages - 1
             ? getCachedWatchlistContent({
                 playlistId,
-                page: currentPage + 1,
-                limit: 1, // Only fetch 1 item
+                offset: (currentPage + 1) * limit,
+                limit: 1,
                 mediaType,
-                sortOrder,
                 userId: authResult?.id,
                 internalOnly: shouldHideUnavailable
               })

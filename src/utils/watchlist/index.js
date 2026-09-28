@@ -177,6 +177,8 @@ export function formatWatchlistItem(item) {
     voteAverage: item.voteAverage,
     voteCount: item.voteCount,
     originalLanguage: item.originalLanguage,
+    // Present (true) only for a title TMDB no longer has; see tmdbMissing.js
+    tmdbNotFound: item.tmdbNotFound || undefined,
     playlistId: item.playlistId
   }
 }
@@ -254,6 +256,11 @@ export async function getRecentWatchlistAdditions(limit = 10, playlistId = null)
       page: 0,
       limit,
       playlistId,
+      // Newest first whatever the playlist's own sort: the database now sorts
+      // before it pages, so without this a title-sorted playlist would give
+      // its first titles, not its latest additions
+      sortBy: 'dateAdded',
+      sortOrder: 'desc',
       countOnly: false
     })
   } catch (error) {

@@ -1,6 +1,11 @@
 import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
-import { fetchTmdbFromBackend, unwrapCachedEnvelope } from '@src/utils/tmdb/backendClient'
+import {
+  backendErrorResponse,
+  fetchTmdbFromBackend,
+  isRetryableBackendError,
+  unwrapCachedEnvelope,
+} from '@src/utils/tmdb/backendClient'
 import { hasMatchingETag, createNotModifiedResponse } from '@src/utils/cache/etagHelpers'
 
 /**
@@ -65,6 +70,15 @@ export async function GET(request, { params }) {
         : undefined
     )
   } catch (error) {
+    // The backend's own verdict (status, message, code) goes through as is, so
+    // clients can tell a title TMDB doesn't have from an outage. Only a failure
+    // with no status of its own becomes a 500.
+    const passthrough = backendErrorResponse(error, endpoint?.join('/') || 'unknown')
+    if (passthrough) {
+      if (passthrough.status >= 500) console.error('TMDB proxy error:', error)
+      return passthrough
+    }
+
     console.error('TMDB proxy error:', error)
 
     return Response.json(
@@ -82,13 +96,14 @@ export async function GET(request, { params }) {
  * Handle POST requests for endpoints that require them
  */
 export async function POST(request, { params }) {
+  const { endpoint } = await params
+
   try {
     // Check authentication
     const authResult = await isAuthenticatedAndApproved(request)
     if (authResult instanceof Response) {
       return authResult
     }
-    const { endpoint } = await params
     const body = await request.text()
 
     // Validate endpoint array
@@ -131,25 +146,32 @@ export async function POST(request, { params }) {
 
         if (!response.ok) {
           const errorText = await response.text()
-          const error = new Error(`Backend responded with ${response.status}: ${errorText}`)
-
-          // Only retry on server errors or timeout
-          if (response.status >= 500 || response.status === 429) {
-            lastError = error
-            if (attempt < maxRetries) {
-              const delay = Math.min(1000 * Math.pow(2, attempt), 5000)
-              await new Promise((resolve) => setTimeout(resolve, delay))
-              continue
-            }
+          // Status and body on the error, as httpGet's errors carry them, so the
+          // retry rule and the answer below read the backend's verdict. Thrown
+          // bare, a 4xx used to reach the catch below looking like a network
+          // error and be retried.
+          lastError = Object.assign(new Error(`Backend responded with ${response.status}: ${errorText}`), {
+            statusCode: response.status,
+            response: {
+              status: response.status,
+              headers: { 'retry-after': response.headers.get('retry-after') },
+              body: errorText,
+            },
+          })
+          if (attempt < maxRetries && isRetryableBackendError(lastError)) {
+            const delay = Math.min(1000 * Math.pow(2, attempt), 5000)
+            await new Promise((resolve) => setTimeout(resolve, delay))
+            continue
           }
-          throw error
+          break
         }
 
         const data = await response.json()
         return Response.json(unwrapCachedEnvelope(data))
       } catch (error) {
+        // No status to judge: the backend unreachable, a timeout, a bad JSON body
         lastError = error
-        if (attempt < maxRetries && (!error.response || error.response.status >= 500)) {
+        if (attempt < maxRetries && isRetryableBackendError(error)) {
           const delay = Math.min(1000 * Math.pow(2, attempt), 5000)
           await new Promise((resolve) => setTimeout(resolve, delay))
           continue
@@ -160,12 +182,19 @@ export async function POST(request, { params }) {
 
     throw lastError
   } catch (error) {
+    const endpointPath = endpoint?.join('/') || 'unknown'
+    const passthrough = backendErrorResponse(error, endpointPath)
+    if (passthrough) {
+      if (passthrough.status >= 500) console.error('TMDB proxy POST error:', error)
+      return passthrough
+    }
+
     console.error('TMDB proxy POST error:', error)
 
     return Response.json(
       {
         error: `TMDB POST request failed: ${error.message}`,
-        endpoint: params.endpoint?.join('/') || 'unknown',
+        endpoint: endpointPath,
       },
       { status: 500 }
     )

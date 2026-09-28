@@ -625,9 +625,11 @@ export default function WatchlistPage({ user }) {
         })
         break
       case 'releaseDate':
+        // An unknown date counts as not yet released, as the server sorts it
+        // (listOrder.js); treated as 1970, such items moved on the next load
         sortedItems.sort((a, b) => {
-          const dateA = new Date(a.releaseDate || 0)
-          const dateB = new Date(b.releaseDate || 0)
+          const dateA = new Date(a.releaseDate || '9999-12-31')
+          const dateB = new Date(b.releaseDate || '9999-12-31')
           return sortOrder === 'asc' ? dateA - dateB : dateB - dateA
         })
         break
@@ -807,11 +809,22 @@ export default function WatchlistPage({ user }) {
     }
   }, [api, setPlaylists, setPlaylistsLoading])
 
+  // Playlist loads can finish out of order: an empty playlist answers at once,
+  // while one with items waits on media resolution, which takes seconds in
+  // production. Only the latest request may update the page; otherwise a slow
+  // earlier load lands last and shows its items under the playlist the URL now
+  // names (the same guard as searchRequestIdRef).
+  const itemsRequestIdRef = useRef(0)
+  const summaryRequestIdRef = useRef(0)
+
   const loadPlaylistItems = useCallback(async (playlistId) => {
+    const requestId = ++itemsRequestIdRef.current
+    const isLatest = () => requestId === itemsRequestIdRef.current
     setItemsLoading(true)
     try {
       const data = await api.getPlaylistItems(playlistId, { limit: 100 })
-      
+      if (!isLatest()) return null
+
       // Use playlist info returned by API
       if (data.playlist) {
         const playlistFromList = playlists.find(p => p.id === (data.playlist.id || playlistId))
@@ -844,8 +857,9 @@ export default function WatchlistPage({ user }) {
           } catch (error) {
             console.error('Error fetching playlist by ID:', error)
           }
+          if (!isLatest()) return null
         }
-        
+
         if (playlist) {
           const playlistInfo = {
             ...playlist,
@@ -862,6 +876,8 @@ export default function WatchlistPage({ user }) {
       return data
     } catch (error) {
       console.error('Error loading playlist items:', error)
+      // A failed load for a playlist the user has since left changes nothing
+      if (!isLatest()) return null
 
       const accessLost =
         error?.status === 403 ||
@@ -883,20 +899,23 @@ export default function WatchlistPage({ user }) {
       toast.error(error?.message || 'Failed to load playlist items')
       return null
     } finally {
-      setItemsLoading(false)
+      // The latest request owns the spinner; a stale one leaves it running
+      if (isLatest()) setItemsLoading(false)
     }
   }, [api, playlists, router, setCurrentItems, setCurrentPlaylist, setItemsLoading, setSortBy, setSortOrder])
 
 
   const loadSummary = useCallback(async (playlistId = selectedPlaylistId) => {
+    // Same ordering guard as loadPlaylistItems
+    const requestId = ++summaryRequestIdRef.current
     setSummaryLoading(true)
     try {
       const summaryData = await api.getWatchlistSummary(playlistId)
-      setSummary(summaryData)
+      if (requestId === summaryRequestIdRef.current) setSummary(summaryData)
     } catch (error) {
       console.error('Error loading summary:', error)
     } finally {
-      setSummaryLoading(false)
+      if (requestId === summaryRequestIdRef.current) setSummaryLoading(false)
     }
   }, [api, selectedPlaylistId, setSummary, setSummaryLoading])
 

@@ -2,6 +2,7 @@ import { tmdbNodeServerURL } from '@src/utils/config'
 import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { httpGet } from '@src/lib/httpHelper'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
+import { backendErrorResponse, isRetryableBackendError } from '@src/utils/tmdb/backendClient'
 
 /**
  * GET /api/authenticated/tmdb/search
@@ -68,12 +69,7 @@ export async function GET(request) {
           limit: 3,
           baseDelay: 1000,
           maxDelay: 5000,
-          shouldRetry: (error, attemptCount) => {
-            // Retry on network errors and 5xx/429 status codes
-            if (!error.response) return true
-            const statusCode = error.response.statusCode
-            return statusCode >= 500 || statusCode === 429
-          },
+          shouldRetry: isRetryableBackendError,
         },
       },
       true
@@ -81,6 +77,14 @@ export async function GET(request) {
 
     return Response.json(response.data)
   } catch (error) {
+    // The backend's status and code go through (a 404 for a title TMDB
+    // doesn't have); only a failure with no status becomes a 500
+    const passthrough = backendErrorResponse(error)
+    if (passthrough) {
+      if (passthrough.status >= 500) console.error('TMDB search error:', error)
+      return passthrough
+    }
+
     console.error('TMDB search error:', error)
 
     return Response.json(
