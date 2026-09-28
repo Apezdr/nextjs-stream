@@ -625,9 +625,11 @@ export default function WatchlistPage({ user }) {
         })
         break
       case 'releaseDate':
+        // An unknown date counts as not yet released, as the server sorts it
+        // (listOrder.js); treated as 1970, such items moved on the next load
         sortedItems.sort((a, b) => {
-          const dateA = new Date(a.releaseDate || 0)
-          const dateB = new Date(b.releaseDate || 0)
+          const dateA = new Date(a.releaseDate || '9999-12-31')
+          const dateB = new Date(b.releaseDate || '9999-12-31')
           return sortOrder === 'asc' ? dateA - dateB : dateB - dateA
         })
         break

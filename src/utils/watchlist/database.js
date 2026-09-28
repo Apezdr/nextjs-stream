@@ -7,6 +7,12 @@ import { getFullImageUrl } from '@src/utils'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { batchResolveMedia, getMediaByTMDBId } from './mediaResolver.js'
 import { asResolvedMedia, untitledLabel } from './tmdbMissing.js'
+import {
+  DETAILS_RESOLVED_AT,
+  SORTS_NEEDING_DETAILS,
+  sortDetailUpdates,
+  watchlistOrderStages,
+} from './listOrder.js'
 import { planPlaylistMerge } from './playlistMerge.js'
 import { getSession } from '@src/lib/cachedAuth.js'
 import { userQueries } from '@src/lib/userQueries'
@@ -355,6 +361,37 @@ async function ensureWatchlistIndexes() {
   await watchlistIndexesInFlight
 }
 
+// Writes what items resolved to into their stored details (listOrder.js).
+// Never throws: stale details only cost sort order, never the read.
+async function storeSortDetails(collection, items, resolvedMedia) {
+  const updates = sortDetailUpdates(items, resolvedMedia)
+  if (updates.length === 0) return
+  try {
+    await collection.bulkWrite(updates, { ordered: false })
+  } catch (error) {
+    console.error('[Watchlist] Failed to store sort details:', error?.message || error)
+  }
+}
+
+// Looks up the items matching `filter` that have never had their details
+// resolved, so the database can sort them by title or release date. Each item
+// needs this once: new ones are resolved when added, and a lookup that fails
+// is tried again on the next load.
+async function backfillSortDetails(collection, filter) {
+  const unresolved = await collection
+    .find(
+      { ...filter, [DETAILS_RESOLVED_AT]: { $exists: false } },
+      { projection: { tmdbId: 1, mediaType: 1, title: 1, releaseDate: 1 } }
+    )
+    .toArray()
+  if (unresolved.length === 0) return
+
+  const resolvedMedia = await batchResolveMedia(
+    unresolved.map((item) => ({ tmdbId: item.tmdbId, mediaType: item.mediaType }))
+  )
+  await storeSortDetails(collection, unresolved, resolvedMedia)
+}
+
 export const getUserWatchlist = cache(async function getUserWatchlist({
   page = 0,
   limit = 20,
@@ -407,6 +444,11 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
 
     if (mediaType) filter.mediaType = mediaType
 
+    // Declared out here because batchResolveMedia reads it below. Declared
+    // inside the block, it threw a ReferenceError for any internalOnly list
+    // with something to show.
+    let availableTmdbIds = null
+
     // For internalOnly mode, we need to check library availability via TMDB ID
     // This requires a more complex query using aggregation
     if (internalOnly) {
@@ -445,7 +487,7 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
       ])
       
       // Get available TMDB IDs
-      const availableTmdbIds = new Set([
+      availableTmdbIds = new Set([
         ...movieMatches.map(m => m.metadata?.id).filter(Boolean),
         ...tvMatches.map(t => t.metadata?.id).filter(Boolean)
       ])
@@ -472,21 +514,25 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
     const finalSortBy = sortBy || playlist?.sortBy || 'dateAdded'
     const finalSortOrder = sortOrder || playlist?.sortOrder || 'desc'
 
-    // Build sort - only sort by dateAdded at query time
-    // Title and releaseDate sorting will be done in-memory after resolving media data
-    const sortObj = {}
-    if (finalSortBy !== 'custom' && finalSortBy === 'dateAdded') {
-      sortObj.dateAdded = finalSortOrder === 'asc' ? 1 : -1
-    } else {
-      sortObj.dateAdded = -1 // Default sort for custom or other sorts
+    // The database sorts the whole playlist, then pages it (listOrder.js).
+    // Title and release-date order read details stored on each item; items
+    // saved before they were stored get them here, the first time it matters.
+    if (SORTS_NEEDING_DETAILS.has(finalSortBy)) {
+      await backfillSortDetails(collection, filter)
     }
 
-    // Query watchlist items (absolute offset overrides page-based skip for windowed fetches)
+    const { stages, collation } = watchlistOrderStages({
+      sortBy: finalSortBy,
+      sortOrder: finalSortOrder,
+      customOrder: playlist?.customOrder,
+    })
+
+    // Absolute offset overrides page-based skip for windowed fetches
     const watchlistItems = await collection
-      .find(filter)
-      .sort(sortObj)
-      .skip(offset ?? page * limit)
-      .limit(limit)
+      .aggregate(
+        [{ $match: filter }, ...stages, { $skip: offset ?? page * limit }, { $limit: limit }],
+        collation ? { collation } : {}
+      )
       .toArray()
 
     if (watchlistItems.length === 0) {
@@ -548,34 +594,10 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
       }
     }).filter(Boolean) // Remove null entries
 
-    // Apply sorting after resolving media data
-    if (finalSortBy === 'custom' && playlist?.customOrder?.length > 0) {
-      const orderMap = new Map(playlist.customOrder.map((id, index) => [id, index]))
-      enhancedItems.sort((a, b) => {
-        const aOrder = orderMap.get(a.id) ?? Number.MAX_SAFE_INTEGER
-        const bOrder = orderMap.get(b.id) ?? Number.MAX_SAFE_INTEGER
-        return aOrder - bOrder
-      })
-    } else if (finalSortBy === 'title') {
-      // Sort by title after resolution
-      enhancedItems.sort((a, b) => {
-        const titleA = (a.title || '').toLowerCase()
-        const titleB = (b.title || '').toLowerCase()
-        const comparison = titleA.localeCompare(titleB)
-        return finalSortOrder === 'asc' ? comparison : -comparison
-      })
-    } else if (finalSortBy === 'releaseDate') {
-      // Sort by release date after resolution
-      enhancedItems.sort((a, b) => {
-        const dateA = a.releaseDate ? new Date(a.releaseDate) : new Date('9999-12-31')
-        const dateB = b.releaseDate ? new Date(b.releaseDate) : new Date('9999-12-31')
-        const comparison = dateA - dateB
-        return finalSortOrder === 'asc' ? comparison : -comparison
-      })
-    }
-    // dateAdded sorting already applied at query time
-
-    // Background updates removed in simplified version - data is always fresh
+    // The database's order stands; re-sorting a page here would disagree with
+    // the pages either side of it. What the items resolved to refreshes their
+    // stored details, so a renamed title moves on the next load.
+    await storeSortDetails(collection, watchlistItems, resolvedMedia)
 
     console.log(`[getUserWatchlist EXIT] callId=${callId}, returned ${enhancedItems.length} items for playlistId=${actualPlaylistId}`)
     return enhancedItems
@@ -660,6 +682,10 @@ export async function addToWatchlist({
       dateUpdated: now,
     }
 
+    // The title the request carried, until the lookup below stores the one the
+    // title resolves to: title sorting reads it (listOrder.js)
+    if (typeof title === 'string' && title.trim()) watchlistItem.title = title.trim()
+
     // Add optional user metadata
     if (notes) watchlistItem.notes = notes
     if (rating) watchlistItem.rating = rating
@@ -701,6 +727,11 @@ export async function addToWatchlist({
     try {
       const resolvedMedia = await batchResolveMedia([{ tmdbId: numericTmdbId, mediaType }])
       mediaData = asResolvedMedia(resolvedMedia.get(numericTmdbId))
+      await storeSortDetails(
+        collection,
+        [{ _id: upsertResult.upsertedId, tmdbId: numericTmdbId, mediaType, title: watchlistItem.title }],
+        resolvedMedia
+      )
     } catch (error) {
       console.error('[Watchlist] Media lookup failed after adding an item:', error?.message || error)
     }
