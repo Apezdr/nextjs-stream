@@ -1,4 +1,5 @@
 import { httpGet } from '@src/lib/httpHelper'
+import { isRetryableTmdbStatus } from './retryPolicy'
 
 /**
  * Direct server-to-backend TMDB transport.
@@ -16,6 +17,56 @@ function backendBaseURL() {
   // NODE_SERVER_INTERNAL_URL for server-to-server requests; fallback chain
   // matches the proxy route's historical behavior
   return process.env.NODE_SERVER_INTERNAL_URL || process.env.NODE_SERVER_URL || 'http://localhost:3000'
+}
+
+/**
+ * Whether a failed backend request is worth another try (retryPolicy.js).
+ * Reads the status httpGet puts on error.response, or fetch's `status` for
+ * callers that build their own errors.
+ * @param {Error} error
+ * @returns {boolean}
+ */
+export function isRetryableBackendError(error) {
+  return isRetryableTmdbStatus(error?.response?.statusCode ?? error?.response?.status)
+}
+
+/**
+ * The client-facing answer for a failed backend request, or null when the
+ * error carries no HTTP status (a network failure the caller answers itself).
+ *
+ * The media processor's status and body are its verdict: a 404 with code
+ * TMDB_NOT_FOUND for a title TMDB doesn't have, a 400 for bad input, a 429
+ * with Retry-After, a 502 when TMDB is down. Passing them on lets the web
+ * clients tell "not on TMDB" from an outage, which a blanket 500 hid.
+ * @param {Error} error - From httpGet (statusCode + response.body)
+ * @param {string} [endpointPath] - Echoed in the body when given, e.g. 'comprehensive/tv'
+ * @returns {Response|null}
+ */
+export function backendErrorResponse(error, endpointPath) {
+  const status = error?.statusCode ?? error?.response?.status
+  if (!Number.isInteger(status) || status < 400 || status > 599) return null
+
+  let body = null
+  try {
+    body = JSON.parse(error.response?.body ?? '')
+  } catch {
+    // Not JSON (an HTML error page, an empty body): answer with our own words
+  }
+
+  // A 401 or 403 is the media processor refusing this server's credentials.
+  // The proxy checked the caller's session before asking, so passing it on
+  // would tell a signed-in user they aren't. To them it's a bad gateway.
+  const refused = status === 401 || status === 403
+  const payload = {
+    error: typeof body?.error === 'string' ? body.error : `TMDB request failed with status ${status}`,
+    ...(typeof body?.code === 'string' ? { code: body.code } : {}),
+    ...(refused ? { upstreamStatus: status } : {}),
+    ...(endpointPath ? { endpoint: endpointPath } : {}),
+  }
+  const init = { status: refused ? 502 : status }
+  const retryAfter = error.response?.headers?.['retry-after']
+  if (retryAfter) init.headers = { 'Retry-After': String(retryAfter) }
+  return Response.json(payload, init)
 }
 
 /**
@@ -90,12 +141,7 @@ export async function fetchTmdbFromBackend(endpointPath, params = {}, options = 
         limit: 3,
         baseDelay: 1000,
         maxDelay: 5000,
-        shouldRetry: (error, attemptCount) => {
-          // Retry on network errors and 5xx/429 status codes
-          if (!error.response) return true
-          const statusCode = error.response.statusCode
-          return statusCode >= 500 || statusCode === 429
-        },
+        shouldRetry: isRetryableBackendError,
       },
     },
     // Always serve the Redis-cached body on a 304. This must be unconditional:

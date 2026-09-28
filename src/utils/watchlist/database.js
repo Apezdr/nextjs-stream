@@ -6,6 +6,7 @@ import { ObjectId } from 'mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { batchResolveMedia, getMediaByTMDBId } from './mediaResolver.js'
+import { asResolvedMedia, untitledLabel } from './tmdbMissing.js'
 import { planPlaylistMerge } from './playlistMerge.js'
 import { getSession } from '@src/lib/cachedAuth.js'
 import { userQueries } from '@src/lib/userQueries'
@@ -505,7 +506,8 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
 
     // Combine watchlist items with resolved media data
     const enhancedItems = watchlistItems.map((item) => {
-      const mediaData = resolvedMedia.get(parseInt(item.tmdbId))
+      const resolved = resolvedMedia.get(parseInt(item.tmdbId))
+      const mediaData = asResolvedMedia(resolved)
 
       if (mediaData) {
         return {
@@ -528,7 +530,8 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
           playlistId: item.playlistId.toString(),
           tmdbId: parseInt(item.tmdbId),
           mediaType: item.mediaType,
-          title: item.title || 'Unknown Title',
+          title: item.title || untitledLabel(resolved),
+          tmdbNotFound: resolved?.tmdbNotFound || undefined,
           dateAdded: item.dateAdded,
           notes: item.notes,
           rating: item.rating,
@@ -697,7 +700,7 @@ export async function addToWatchlist({
     let mediaData = null
     try {
       const resolvedMedia = await batchResolveMedia([{ tmdbId: numericTmdbId, mediaType }])
-      mediaData = resolvedMedia.get(numericTmdbId) || null
+      mediaData = asResolvedMedia(resolvedMedia.get(numericTmdbId))
     } catch (error) {
       console.error('[Watchlist] Media lookup failed after adding an item:', error?.message || error)
     }
@@ -2840,10 +2843,11 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
         }
       } else if (includeUnavailable) {
         // Item is NOT in library - fetch TMDB data or use fallback
-        const tmdbData = externalTmdbData.get(tmdbId)
-        
+        const resolved = externalTmdbData.get(tmdbId)
+        const tmdbData = asResolvedMedia(resolved)
+
         // Use TMDB data if available, otherwise fall back to cached watchlist data
-        const title = tmdbData?.title || watchlistItem.title || 'Unknown Title'
+        const title = tmdbData?.title || watchlistItem.title || untitledLabel(resolved)
         const posterURL = tmdbData?.posterURL || watchlistItem.posterURL || '/sorry-image-not-available.jpg'
         const backdropURL = tmdbData?.backdrop || watchlistItem.backdrop || watchlistItem.backdropURL || null
         const posterBlurhash = tmdbData?.posterBlurhash || watchlistItem.posterBlurhash || null
@@ -3086,8 +3090,9 @@ export async function getFullMediaDocumentsForPlaylist(watchlistItems, includeVi
       const tmdbId = parseInt(watchlistItem.tmdbId)
       const availableMedia = availableMediaMap.get(tmdbId)
       const comingSoonData = comingSoonMap.get(tmdbId)
-      const resolvedTmdbMedia = resolvedTmdbData.get(tmdbId)
-      
+      const resolved = resolvedTmdbData.get(tmdbId)
+      const resolvedTmdbMedia = asResolvedMedia(resolved)
+
       if (availableMedia) {
         // Item is available in library - return full media document
         return {
@@ -3177,7 +3182,7 @@ export async function getFullMediaDocumentsForPlaylist(watchlistItems, includeVi
         
         // Fallback to existing watchlist item data (should have been resolved)
         // Use watchlist item properties directly
-        const title = watchlistItem.title || 'Unknown Title'
+        const title = watchlistItem.title || untitledLabel(resolved)
         const posterURL = watchlistItem.posterURL || '/sorry-image-not-available.jpg'
         const overview = watchlistItem.overview || ''
         const releaseDate = watchlistItem.releaseDate || null

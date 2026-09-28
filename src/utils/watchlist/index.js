@@ -177,6 +177,8 @@ export function formatWatchlistItem(item) {
     voteAverage: item.voteAverage,
     voteCount: item.voteCount,
     originalLanguage: item.originalLanguage,
+    // Present (true) only for a title TMDB no longer has; see tmdbMissing.js
+    tmdbNotFound: item.tmdbNotFound || undefined,
     playlistId: item.playlistId
   }
 }

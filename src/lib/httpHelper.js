@@ -25,6 +25,27 @@ const calculateBackoff = (retry, baseDelay = 1000, maxDelay = 10000) => {
 };
 
 /**
+ * The error httpGet throws for a non-2xx response. It carries the status the
+ * way got's own HTTPError does (error.response.statusCode), so retry rules can
+ * tell a 404, which will not change, from a dropped connection, which might.
+ * A bare Error had no status, and every retry rule read that as a network
+ * failure, so permanent 4xx answers were retried with full backoff.
+ * The body rides along too, so a proxy can pass the upstream's own message and
+ * code on to its clients (the TMDB proxy does).
+ * @param {number} statusCode - Response status
+ * @param {string} url - Requested URL
+ * @param {Object} headers - Response headers
+ * @param {string} [body] - Response body, capped
+ * @returns {Error}
+ */
+function httpStatusError(statusCode, url, headers, body) {
+  const error = new Error(`HTTP Error: ${statusCode} for URL: ${url}`);
+  error.statusCode = statusCode;
+  error.response = { statusCode, headers, body };
+  return error;
+}
+
+/**
  * Ensures a value is a proper Buffer object, handling various serialized forms
  * @param {any} data - The data to convert to Buffer
  * @param {boolean} [logErrors=false] - Whether to log conversion errors
@@ -187,7 +208,9 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
 
   let lastError;
   let response = null;
+  let attemptsMade = 0;
   for (let attempt = 0; attempt <= limit; attempt++) {
+    attemptsMade = attempt + 1;
     try {
       // Store the response in the outer variable so it can be cleaned up in case of errors
       response = await got(url, requestOptions);
@@ -215,7 +238,11 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
               } else {
                 // If we couldn't convert to Buffer, log it and treat as cache miss
                 cacheLog.miss(url, 'invalid buffer format in cache');
-                // Continue with the next attempt to get fresh data
+                // Continue with the next attempt to get fresh data, asked for
+                // without the conditional headers: with them the server answers
+                // 304 again and every remaining attempt ends up back here
+                delete headers['If-None-Match'];
+                delete headers['If-Modified-Since'];
                 continue;
               }
             }
@@ -241,9 +268,18 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
             return { data: null, headers: responseHeaders };
           }
         }
+
+        // Not modified, and nothing cached here to serve: the conditional
+        // headers were the caller's own (admin_utils and sync metadata keep a
+        // cached copy of their own and expect data: null, as above)
+        cleanupResponse(response);
+        return { data: null, headers: responseHeaders };
       }
 
-      if (statusCode >= 200 && statusCode < 300 || !cachedEntry) {
+      // Only a 2xx is a result. This used to read `2xx || !cachedEntry`, so with
+      // nothing cached yet any status passed: an error body was cached for an
+      // hour and handed back as though it were the payload.
+      if (statusCode >= 200 && statusCode < 300) {
         let responseData;
 
         try {
@@ -345,10 +381,13 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
           throw processingError;
         }
       } else {
+        // Keep the body before cleaning up (capped: an HTML error page can be large)
+        const errorBody = typeof response.body === 'string' ? response.body.slice(0, 4096) : undefined;
+
         // Clean up response for unsuccessful status codes
         cleanupResponse(response);
-        
-        throw new Error(`HTTP Error: ${statusCode} for URL: ${url}`);
+
+        throw httpStatusError(statusCode, url, responseHeaders, errorBody);
       }
     } catch (error) {
       // If we have a response object, clean it up to prevent memory leaks
@@ -381,7 +420,11 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
         }
       }
 
-      if (shouldRetry(error, attempt)) {
+      // The loop allows `limit` retries, and never sleeps after the last
+      // attempt. Custom rules (backendClient's) ignore attemptCount, so the
+      // bound lives here; without it a final, wasted backoff ran after the
+      // last request (logged as "attempt 4/3").
+      if (attempt < limit && shouldRetry(error, attempt)) {
         const delay = calculateBackoff(attempt, baseDelay, maxDelay);
         console.warn(
           `Retrying request to ${url} (attempt ${attempt + 1}/${limit}) after ${Math.round(
@@ -411,7 +454,16 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
     cleanupResponse(response);
   }
 
-  console.error(`Failed to fetch ${url} after ${limit} attempts:`, lastError);
+  // A 404 is an answer the caller handles (a title TMDB doesn't have, an
+  // optional file that isn't there), not a failure worth a stack trace
+  if (lastError?.statusCode === 404) {
+    console.warn(`Not found (404): ${url}`);
+  } else {
+    console.error(
+      `Failed to fetch ${url} after ${attemptsMade} attempt${attemptsMade === 1 ? '' : 's'}:`,
+      lastError
+    );
+  }
   throw lastError;
 }
 

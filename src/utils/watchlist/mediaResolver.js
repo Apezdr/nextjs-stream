@@ -10,6 +10,7 @@
 import { cache } from 'react'
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
+import { asResolvedMedia, isTmdbNotFound, missingFromTmdbMedia } from './tmdbMissing.js'
 import { fetchTmdbFromBackend } from '@src/utils/tmdb/backendClient'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
@@ -344,6 +345,11 @@ async function batchResolveMediaInternal(items, options = {}) {
         }
         
         results.set(tmdbId, mediaData)
+      } else if (result.status === 'rejected' && isTmdbNotFound(result.reason)) {
+        // TMDB has no such title (the media processor's 404): label it rather
+        // than leave it unresolved, where it showed as "Unknown Title"
+        console.warn(`[batchResolveMediaInternal] ${item.mediaType} ${item.tmdbId} is no longer on TMDB`)
+        results.set(tmdbId, missingFromTmdbMedia(tmdbId, item.mediaType))
       } else {
         console.error(`Failed to fetch TMDB data for ${item.mediaType} ${item.tmdbId}:`, result.reason)
       }
@@ -384,7 +390,10 @@ const getCachedTMDBDetails = cache(async function getCachedTMDBDetails(tmdbId, m
     
     return tmdbData
   } catch (error) {
-    console.error(`[getCachedTMDBDetails] Error fetching TMDB data for ${mediaType} ${tmdbId}:`, error)
+    // A title TMDB doesn't have is labeled by the caller, not an error
+    if (!isTmdbNotFound(error)) {
+      console.error(`[getCachedTMDBDetails] Error fetching TMDB data for ${mediaType} ${tmdbId}:`, error)
+    }
     throw error
   }
 })
@@ -432,7 +441,7 @@ export async function batchResolveMedia(items, options = {}) {
  */
 export async function getMediaByTMDBId(tmdbId, mediaType) {
   const results = await batchResolveMedia([{ tmdbId, mediaType }])
-  return results.get(parseInt(tmdbId)) || null
+  return asResolvedMedia(results.get(parseInt(tmdbId)))
 }
 
 /**

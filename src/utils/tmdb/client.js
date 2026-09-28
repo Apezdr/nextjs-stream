@@ -5,6 +5,7 @@
  */
 
 import { buildURL } from ".."
+import { isRetryableTmdbStatus } from './retryPolicy'
 
 // For client-side requests, use relative URLs to the current origin
 // The Next.js API routes will handle the server-side proxy logic
@@ -115,8 +116,10 @@ async function makeRequest(endpoint, options = {}) {
         console.error(`TMDB API Error ${response.status} for URL: ${url.toString()}`)
         console.error('Error details:', errorData)
         
-        // Don't retry on client errors (4xx)
-        if (response.status >= 400 && response.status < 500) {
+        // Only a status another try can fix is retried (retryPolicy.js): a
+        // title TMDB doesn't have, bad input or a backend bug answers the same
+        // way every time
+        if (!isRetryableTmdbStatus(response.status)) {
           throw error
         }
         
@@ -130,6 +133,11 @@ async function makeRequest(endpoint, options = {}) {
 
       return await response.json()
     } catch (error) {
+      // An answer the rule above won't retry goes straight out. Thrown there,
+      // it used to land here and be retried anyway
+      if (error instanceof TMDBError && !isRetryableTmdbStatus(error.status)) {
+        throw error
+      }
       if (error.name === 'AbortError') {
         lastError = new TMDBError(`Request timeout after ${timeout}ms`)
       } else if (error instanceof TMDBError) {
