@@ -156,7 +156,6 @@ export default function PlaylistSidebar({
   currentPlaylist,
   isAdmin = false,
   onListUsers,
-  onOpenManageRows, // optional: open user modal to manage Show in App rows
   // 'sidebar' is the desktop column (lg and up); 'drawer' fills the panel of
   // the mobile playlist drawer, which supplies onClose.
   variant = 'sidebar',
@@ -468,20 +467,6 @@ export default function PlaylistSidebar({
           </svg>
           New Playlist
         </button>
-
-        {/* Manage App Rows button (per-user visibility) */}
-        {typeof onOpenManageRows === 'function' && (
-          <button
-            onClick={onOpenManageRows}
-            className="mt-2 w-full flex items-center justify-center px-4 py-2 bg-gray-700 text-white rounded-md hover:bg-gray-600 transition-colors"
-            title="Choose which playlists appear as rows on your home screen"
-          >
-            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-            </svg>
-            Manage App Rows
-          </button>
-        )}
       </div>
 
       {/* Playlist List */}

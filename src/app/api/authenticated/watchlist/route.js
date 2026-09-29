@@ -1,6 +1,5 @@
 import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { checkRateLimit, createRateLimitHeaders, RATE_LIMITS } from '@src/utils/rateLimiter'
-import { revalidateTag } from 'next/cache'
 // ETag support for HTTP caching
 import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
 import {
@@ -20,7 +19,6 @@ import {
   validateWatchlistItem,
   validateWatchlistQuery,
   validatePlaylistData,
-  validatePlaylistVisibilityPayload,
   validateComingSoonPayload,
   validateCollaborators,
   validateObjectId,
@@ -32,12 +30,7 @@ import {
   updatePlaylistCustomOrder,
   WATCHLIST_CONSTANTS,
   findTMDBIdByMediaId,
-  // Per-user playlist visibility
-  listVisiblePlaylists,
-  getPlaylistVisibility,
-  setPlaylistVisibility,
-  bulkSetPlaylistVisibility,
-  resetVisibilityForPlaylist,
+  // Admin user list (the share dialog's picker)
   findUsersForAdmin,
   // Coming Soon management
   getComingSoonStatus,
@@ -215,8 +208,6 @@ export async function POST(req) {
         return await handleBulkUpdateWatchlist(req, body, authResult)
       case 'move-items':
         return await handleMoveItemsToPlaylist(req, body, authResult)
-      case 'playlist-visibility-reset-all':
-        return await handleResetVisibilityForPlaylist(req, body, authResult)
       case 'set-coming-soon':
         return await handleSetComingSoon(req, body, authResult)
       default:
@@ -266,8 +257,6 @@ export async function GET(req) {
         return await handleGetPlaylistById(req, authResult)
       case 'playlist-items':
         return await handleGetPlaylistItems(req, authResult)
-      case 'playlist-visibility':
-        return await handleGetPlaylistVisibility(req, authResult)
       case 'playlist-visibility-list-users':
         return await handleListUsersForVisibility(req, authResult)
       case 'coming-soon-status':
@@ -317,8 +306,6 @@ export async function PUT(req) {
         return await handleUpdatePlaylistSorting(req, body, authResult)
       case 'update-playlist-order':
         return await handleUpdatePlaylistOrder(req, body, authResult)
-      case 'playlist-visibility':
-        return await handleSetPlaylistVisibility(req, body, authResult)
       default:
         return createErrorResponse(`Invalid action: ${action}`, 400)
     }
@@ -840,49 +827,14 @@ async function handleGetPlaylists(req, user) {
     // Parse query parameters
     const url = new URL(req.url)
     const includeShared = url.searchParams.get('includeShared') !== 'false'
-    const showInAppOnly = url.searchParams.get('showInAppOnly') === 'true'
 
     // Get all accessible playlists for this user
     const allPlaylists = await getUserPlaylists(user.id, includeShared, true)
 
-    if (!showInAppOnly) {
-      // Return all as before
-      return createSuccessResponse({
-        success: true,
-        playlists: allPlaylists.map(formatPlaylist)
-      }, 200, rateLimitResult.headers)
-    }
-
-    // When showInAppOnly=true: filter by user visibility preferences and sort by appOrder
-    const visible = await listVisiblePlaylists(user.id) // [{ playlistId, appOrder, appTitle }]
-    const visibleMap = new Map(visible.map(v => [v.playlistId, v]))
-
-    // Filter to those visible and accessible
-    const filtered = allPlaylists
-      .filter(p => visibleMap.has(p._id ? p._id.toString() : p.id))
-      .map(p => {
-        const pid = p._id ? p._id.toString() : p.id
-        const vis = visibleMap.get(pid)
-        const formatted = formatPlaylist(p)
-        // Apply title override if present
-        if (vis?.appTitle) {
-          formatted.name = vis.appTitle
-        }
-        // Attach appOrder for client sorting if needed
-        formatted.appOrder = typeof vis?.appOrder === 'number' ? vis.appOrder : 0
-        return formatted
-      })
-      .sort((a, b) => {
-        const ao = typeof a.appOrder === 'number' ? a.appOrder : 0
-        const bo = typeof b.appOrder === 'number' ? b.appOrder : 0
-        return ao - bo
-      })
-
     return createSuccessResponse({
       success: true,
-      playlists: filtered
+      playlists: allPlaylists.map(formatPlaylist)
     }, 200, rateLimitResult.headers)
-
   } catch (error) {
     debugLog('Get playlists error:', error)
     return createErrorResponse('Failed to get playlists', 500, error.message)
@@ -1469,156 +1421,12 @@ async function handleUpdatePlaylistOrder(req, body, user) {
   }
 }
 
-// ===== PLAYLIST VISIBILITY HANDLERS (PER-USER) =====
+// ===== ADMIN: USER LIST =====
 
 function isAdminUser(user) {
   return user?.role === 'admin'
     || user?.role === 'Admin'
     || Array.isArray(user?.permissions) && user.permissions.includes('Admin')
-}
-
-/**
- * GET handler: playlist-visibility
- * - For regular users:
- *    - ?playlistId=... -> returns single visibility doc for self
- *    - otherwise -> returns listVisiblePlaylists for self
- * - For admins:
- *    - ?userId=... (and optional playlistId) -> fetch for target user
- */
-async function handleGetPlaylistVisibility(req, user) {
-  // Rate limit as 'list'
-  const rateLimitResult = applyRateLimit(req, 'list')
-  if (rateLimitResult instanceof Response) {
-    return rateLimitResult
-  }
-
-  try {
-    const url = new URL(req.url)
-    const targetUserId = url.searchParams.get('userId') // admin only
-    const playlistId = url.searchParams.get('playlistId')
-
-    const admin = isAdminUser(user)
-    const effectiveUserId = admin && targetUserId ? targetUserId : user.id
-
-    if (playlistId) {
-      // Single visibility for playlist
-      try {
-        validateObjectId(playlistId, 'playlistId')
-      } catch (e) {
-        return createErrorResponse('Invalid playlistId', 400, null, 'Validation Error', 'INVALID_PLAYLIST_ID')
-      }
-      const vis = await getPlaylistVisibility(effectiveUserId, playlistId)
-      return createSuccessResponse({
-        success: true,
-        visibility: vis
-      }, 200, rateLimitResult.headers)
-    }
-
-    // List visible playlists for the user
-    const list = await listVisiblePlaylists(effectiveUserId)
-    return createSuccessResponse({
-      success: true,
-      visibility: list
-    }, 200, rateLimitResult.headers)
-  } catch (error) {
-    debugLog('Get playlist visibility error:', error)
-    return createErrorResponse('Failed to fetch playlist visibility', 500, error.message)
-  }
-}
-
-/**
- * PUT handler: playlist-visibility
- * - Regular users: set for themselves (requires playlistId)
- * - Admins: may target userId or usersById[]
- * Payload: { playlistId, showInApp?, appOrder?, appTitle?, userId?, usersById? }
- */
-async function handleSetPlaylistVisibility(req, body, user) {
-  // Rate limit as 'updatePlaylist'
-  const rateLimitResult = applyRateLimit(req, 'updatePlaylist')
-  if (rateLimitResult instanceof Response) {
-    return rateLimitResult
-  }
-
-  try {
-    const { playlistId, userId: targetUserId, usersById } = body || {}
-
-    if (!playlistId) {
-      return createErrorResponse('playlistId is required', 400)
-    }
-
-    try {
-      validateObjectId(playlistId, 'playlistId')
-    } catch (e) {
-      return createErrorResponse('Invalid playlistId', 400, null, 'Validation Error', 'INVALID_PLAYLIST_ID')
-    }
-
-    // Validate payload fields
-    let validatedPayload
-    try {
-      validatedPayload = validatePlaylistVisibilityPayload(body || {})
-    } catch (e) {
-      const ve = getValidationErrorResponse(e)
-      return createErrorResponse(ve.message, ve.status, null, 'Validation Error', 'VALIDATION_ERROR', ve.field)
-    }
-
-    const admin = isAdminUser(user)
-
-    // Admin bulk targeting
-    if (admin && (Array.isArray(usersById) || typeof targetUserId === 'string')) {
-      const targets = []
-      if (Array.isArray(usersById)) {
-        for (const id of usersById) {
-          try {
-            validateObjectId(id, 'userId')
-            targets.push(id)
-          } catch (_e) {
-            // skip invalid ids
-          }
-        }
-      }
-      if (typeof targetUserId === 'string') {
-        try {
-          validateObjectId(targetUserId, 'userId')
-          targets.push(targetUserId)
-        } catch (_e) {
-          // ignore invalid
-        }
-      }
-
-      if (targets.length === 0) {
-        return createErrorResponse('No valid user targets provided', 400)
-      }
-
-      const result = await bulkSetPlaylistVisibility(playlistId, targets, validatedPayload)
-
-      // Invalidate cache for all affected users
-      for (const userId of targets) {
-        revalidateTag(`user-playlists-${userId}`)
-        revalidateTag(`user-data-${userId}`)
-      }
-
-      return createSuccessResponse({
-        success: true,
-        message: 'Visibility updated for target users',
-        result
-      }, 200, rateLimitResult.headers)
-    }
-
-    // Self-service (regular user)
-    await setPlaylistVisibility(user.id, playlistId, validatedPayload)
-
-    // Invalidate user-specific cache to reflect changes immediately
-    revalidateTag(`user-playlists-${user.id}`)
-    revalidateTag(`user-data-${user.id}`)
-
-    return createSuccessResponse({
-      success: true,
-      message: 'Visibility updated'
-    }, 200, rateLimitResult.headers)
-  } catch (error) {
-    debugLog('Set playlist visibility error:', error)
-    return createErrorResponse('Failed to update playlist visibility', 500, error.message)
-  }
 }
 
 /**
@@ -1650,43 +1458,6 @@ async function handleListUsersForVisibility(req, user) {
   } catch (error) {
     debugLog('List users for visibility error:', error)
     return createErrorResponse('Failed to list users', 500, error.message)
-  }
-}
-
-/**
- * POST handler: playlist-visibility-reset-all (admin only)
- * Body: { playlistId }
- */
-async function handleResetVisibilityForPlaylist(req, body, user) {
-  const rateLimitResult = applyRateLimit(req, 'updatePlaylist')
-  if (rateLimitResult instanceof Response) {
-    return rateLimitResult
-  }
-
-  try {
-    if (!isAdminUser(user)) {
-      return createErrorResponse('Forbidden', 403, null, 'Forbidden', 'FORBIDDEN')
-    }
-
-    const { playlistId } = body || {}
-    if (!playlistId) {
-      return createErrorResponse('playlistId is required', 400)
-    }
-    try {
-      validateObjectId(playlistId, 'playlistId')
-    } catch (e) {
-      return createErrorResponse('Invalid playlistId', 400, null, 'Validation Error', 'INVALID_PLAYLIST_ID')
-    }
-
-    const result = await resetVisibilityForPlaylist(playlistId)
-    return createSuccessResponse({
-      success: true,
-      message: 'Visibility reset for all users',
-      result
-    }, 200, rateLimitResult.headers)
-  } catch (error) {
-    debugLog('Reset visibility for playlist error:', error)
-    return createErrorResponse('Failed to reset playlist visibility', 500, error.message)
   }
 }
 

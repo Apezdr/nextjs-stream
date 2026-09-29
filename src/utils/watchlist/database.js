@@ -2023,32 +2023,7 @@ export async function updatePlaylistCustomOrder(playlistId, itemIds) {
 }
 
 // ===== PLAYLIST VISIBILITY (PER-USER) =====
-
-/**
- * Validate and coerce playlist visibility payload with defaults
- */
-function normalizeVisibilityPayload(payload = {}) {
-  const normalized = {}
-  if (typeof payload.showInApp === 'boolean') {
-    normalized.showInApp = payload.showInApp
-  }
-  if (payload.appOrder !== undefined) {
-    const n = parseInt(payload.appOrder)
-    if (!Number.isNaN(n) && n >= 0) normalized.appOrder = n
-  }
-  if (payload.appTitle === null || payload.appTitle === undefined) {
-    // explicit null clears the title
-    if (payload.appTitle === null) normalized.appTitle = null
-  } else if (typeof payload.appTitle === 'string') {
-    const trimmed = payload.appTitle.trim()
-    if (trimmed.length <= 100) normalized.appTitle = trimmed
-  }
-  // Support for hiding unavailable content
-  if (typeof payload.hideUnavailable === 'boolean') {
-    normalized.hideUnavailable = payload.hideUnavailable
-  }
-  return normalized
-}
+// Reads only. Home screen rows are written by homeRows.js.
 
 /**
  * Get a single visibility preference for a user+playlist
@@ -2081,55 +2056,6 @@ export async function getPlaylistVisibility(userId, playlistId) {
     dateCreated: doc.dateCreated,
     dateUpdated: doc.dateUpdated,
   }
-}
-
-/**
- * Upsert visibility for a single user+playlist
- * Defaults: showInApp=false, appOrder=0, appTitle=null
- */
-export async function setPlaylistVisibility(userId, playlistId, payload = {}) {
-  if (!isValidObjectId(userId) || !isValidObjectId(playlistId)) {
-    throw new Error('Invalid userId or playlistId')
-  }
-
-  await ensurePlaylistVisibilityIndexes()
-
-  const client = await clientPromise
-  const usersDb = client.db('Users')
-  const coll = usersDb.collection('PlaylistVisibility')
-
-  const now = new Date()
-  const normalized = normalizeVisibilityPayload(payload)
-
-  // Build $set and $setOnInsert with defaults
-  // Avoid setting the same field in both $set and $setOnInsert to prevent Mongo conflict
-  const setOnInsert = {
-    userId: new ObjectId(userId),
-    playlistId: new ObjectId(playlistId),
-    dateCreated: now,
-    ...(!('showInApp' in normalized) ? { showInApp: false } : {}),
-    ...(!('appOrder' in normalized) ? { appOrder: 0 } : {}),
-    ...(!('appTitle' in normalized) ? { appTitle: null } : {}),
-    ...(!('hideUnavailable' in normalized) ? { hideUnavailable: false } : {}),
-  }
-  const setUpdate = {
-    dateUpdated: now,
-  }
-  if ('showInApp' in normalized) setUpdate.showInApp = normalized.showInApp
-  if ('appOrder' in normalized) setUpdate.appOrder = normalized.appOrder
-  if ('appTitle' in normalized) setUpdate.appTitle = normalized.appTitle
-  if ('hideUnavailable' in normalized) setUpdate.hideUnavailable = normalized.hideUnavailable
-
-  const result = await coll.updateOne(
-    { userId: new ObjectId(userId), playlistId: new ObjectId(playlistId) },
-    {
-      $setOnInsert: setOnInsert,
-      $set: setUpdate,
-    },
-    { upsert: true }
-  )
-
-  return { matchedCount: result.matchedCount, upsertedId: result.upsertedId }
 }
 
 /**
@@ -2166,84 +2092,6 @@ export const listVisiblePlaylists = cache(async function listVisiblePlaylists(us
     dateUpdated: doc.dateUpdated,
   }))
 })
-
-/**
- * Admin helper: bulk set visibility for a playlist across many users
- * targets: array of userId strings
- * payload: { showInApp?, appOrder?, appTitle? }
- */
-export async function bulkSetPlaylistVisibility(playlistId, targets = [], payload = {}) {
-  if (!isValidObjectId(playlistId)) {
-    throw new Error('Invalid playlistId')
-  }
-
-  await ensurePlaylistVisibilityIndexes()
-
-  const client = await clientPromise
-  const usersDb = client.db('Users')
-  const coll = usersDb.collection('PlaylistVisibility')
-
-  const now = new Date()
-  const normalized = normalizeVisibilityPayload(payload)
-
-  const bulkOps = []
-  for (const uid of targets) {
-    if (!isValidObjectId(uid)) continue
-    const filter = { userId: new ObjectId(uid), playlistId: new ObjectId(playlistId) }
-    // Avoid setting same field in both $set and $setOnInsert
-    const setOnInsert = {
-      userId: new ObjectId(uid),
-      playlistId: new ObjectId(playlistId),
-      dateCreated: now,
-      ...(!('showInApp' in normalized) ? { showInApp: false } : {}),
-      ...(!('appOrder' in normalized) ? { appOrder: 0 } : {}),
-      ...(!('appTitle' in normalized) ? { appTitle: null } : {}),
-      ...(!('hideUnavailable' in normalized) ? { hideUnavailable: false } : {}),
-    }
-    const setUpdate = { dateUpdated: now }
-    if ('showInApp' in normalized) setUpdate.showInApp = normalized.showInApp
-    if ('appOrder' in normalized) setUpdate.appOrder = normalized.appOrder
-    if ('appTitle' in normalized) setUpdate.appTitle = normalized.appTitle
-    if ('hideUnavailable' in normalized) setUpdate.hideUnavailable = normalized.hideUnavailable
-
-    bulkOps.push({
-      updateOne: {
-        filter,
-        update: { $setOnInsert: setOnInsert, $set: setUpdate },
-        upsert: true,
-      },
-    })
-  }
-
-  if (bulkOps.length === 0) {
-    return { matchedCount: 0, upsertedCount: 0, modifiedCount: 0 }
-  }
-
-  const result = await coll.bulkWrite(bulkOps, { ordered: false })
-  return {
-    matchedCount: result.matchedCount || 0,
-    upsertedCount: result.upsertedCount || 0,
-    modifiedCount: result.modifiedCount || 0,
-  }
-}
-
-/**
- * Admin helper: disable a playlist for all users (remove all visibility docs for playlistId)
- */
-export async function resetVisibilityForPlaylist(playlistId) {
-  if (!isValidObjectId(playlistId)) {
-    throw new Error('Invalid playlistId')
-  }
-
-  await ensurePlaylistVisibilityIndexes()
-
-  const client = await clientPromise
-  const usersDb = client.db('Users')
-  const coll = usersDb.collection('PlaylistVisibility')
-
-  const result = await coll.deleteMany({ playlistId: new ObjectId(playlistId) })
-  return { deletedCount: result.deletedCount || 0 }
-}
 
 /**
  * Admin helper: list users with optional search/pagination

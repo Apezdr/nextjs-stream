@@ -25,12 +25,9 @@
    findTMDBIdByMediaId,
    getFullMediaDocumentsForPlaylist,
    getMinimalCardDataForPlaylist,
-   // Per-user playlist visibility (Show in App)
+   // Per-user playlist visibility, read by the home page and TV content (written by homeRows.js)
    getPlaylistVisibility,
-   setPlaylistVisibility,
    listVisiblePlaylists,
-   bulkSetPlaylistVisibility,
-   resetVisibilityForPlaylist,
    findUsersForAdmin,
    // Coming Soon management (global server-level)
    getComingSoonStatus,
@@ -46,7 +43,6 @@ export {
   validateWatchlistItem,
   validateWatchlistQuery,
   validatePlaylistData,
-  validatePlaylistVisibilityPayload,
   validateComingSoonPayload,
   validateCollaborators,
   validateObjectId,

@@ -476,56 +476,6 @@ export function getValidationErrorResponse(error) {
 }
 
 /**
- * Validate per-user playlist visibility payload
- * Fields:
- *  - showInApp: boolean (optional)
- *  - appOrder: integer >= 0 (optional)
- *  - appTitle: string length <= 100 or null (optional)
- */
-export function validatePlaylistVisibilityPayload(payload = {}) {
-  const validated = {}
-
-  if (payload.showInApp !== undefined) {
-    if (typeof payload.showInApp !== 'boolean') {
-      throw new WatchlistValidationError('showInApp must be a boolean', 'showInApp')
-    }
-    validated.showInApp = payload.showInApp
-  }
-
-  if (payload.appOrder !== undefined) {
-    const n = parseInt(payload.appOrder)
-    if (Number.isNaN(n) || n < 0) {
-      throw new WatchlistValidationError('appOrder must be a non-negative integer', 'appOrder')
-    }
-    validated.appOrder = n
-  }
-
-  if (payload.appTitle !== undefined) {
-    if (payload.appTitle === null) {
-      validated.appTitle = null
-    } else if (typeof payload.appTitle !== 'string') {
-      throw new WatchlistValidationError('appTitle must be a string or null', 'appTitle')
-    } else {
-      const trimmed = payload.appTitle.trim()
-      if (trimmed.length > 100) {
-        throw new WatchlistValidationError('appTitle must be 100 characters or less', 'appTitle')
-      }
-      validated.appTitle = trimmed
-    }
-  }
-
-  // Validate hideUnavailable flag (optional, defaults to false = show all)
-  if (payload.hideUnavailable !== undefined) {
-    if (typeof payload.hideUnavailable !== 'boolean') {
-      throw new WatchlistValidationError('hideUnavailable must be a boolean', 'hideUnavailable')
-    }
-    validated.hideUnavailable = payload.hideUnavailable
-  }
-
-  return validated
-}
-
-/**
  * Validate ComingSoon payload for admin operations
  * @param {Object} payload - Coming soon data
  * @param {number} payload.tmdbId - TMDB ID
