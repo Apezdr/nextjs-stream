@@ -18,7 +18,6 @@ jest.mock('@src/lib/userQueries', () => ({ userQueries: {} }))
 const mockBatchResolveMedia = jest.fn()
 jest.mock('@src/utils/watchlist/mediaResolver.js', () => ({
   batchResolveMedia: (...args) => mockBatchResolveMedia(...args),
-  getMediaByTMDBId: jest.fn(),
 }))
 
 const { getMinimalCardDataForPlaylist } = require('@src/utils/watchlist/database')

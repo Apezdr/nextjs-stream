@@ -10,7 +10,7 @@
 import { cache } from 'react'
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
-import { asResolvedMedia, isTmdbNotFound, missingFromTmdbMedia } from './tmdbMissing.js'
+import { isTmdbNotFound, missingFromTmdbMedia } from './tmdbMissing.js'
 import { fetchTmdbFromBackend } from '@src/utils/tmdb/backendClient'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
@@ -431,31 +431,4 @@ export async function batchResolveMedia(items, options = {}) {
   }
   
   return result
-}
-
-/**
- * Get a single media item by TMDB ID
- * @param {number} tmdbId - TMDB ID
- * @param {string} mediaType - Media type
- * @returns {Promise<Object|null>} Media data
- */
-export async function getMediaByTMDBId(tmdbId, mediaType) {
-  const results = await batchResolveMedia([{ tmdbId, mediaType }])
-  return asResolvedMedia(results.get(parseInt(tmdbId)))
-}
-
-/**
- * Clear the media cache (no-op in React cache version)
- */
-export async function clearMediaCache() {
-  // React cache() is automatically cleared per request, no manual clearing needed
-  return { success: true, message: 'React cache cleared per request automatically' }
-}
-
-/**
- * No-op function for background updates (removed in simplified version)
- */
-export async function scheduleBackgroundUpdate(watchlistItems, resolvedMedia) {
-  // No background updates in simplified version
-  return { success: true, message: 'Background updates disabled in simplified version' }
 }
