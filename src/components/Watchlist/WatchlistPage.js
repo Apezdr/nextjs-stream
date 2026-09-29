@@ -13,8 +13,8 @@ import PlaylistControls from './PlaylistControls'
 import SharePlaylistModal from './SharePlaylistModal'
 import MoveToPlaylistModal from './MoveToPlaylistModal'
 import { ControlsSkeleton } from './WatchlistSkeletons'
-import ShowInAppUserModal from './ShowInAppUserModal'
-import ShowInAppAdminModal from './ShowInAppAdminModal'
+import HomeRowsDialog from './HomeRowsDialog'
+import HomeRowsAdminDialog from './HomeRowsAdminDialog'
 import useOverlayState from './useOverlayState'
 import { moveItemToPosition } from './reorder'
 import { searchMedia } from '@src/utils/tmdb/client'
@@ -167,31 +167,10 @@ function useWatchlistAPI() {
         body: { playlistId, itemIds }
       }), [apiCall]),
 
-    // Per-user playlist visibility (Show in App)
-    getPlaylistVisibility: useCallback((options = {}) =>
-      apiCall('', {
-        params: { action: 'playlist-visibility', ...options }
-      }), [apiCall]),
-
-    setPlaylistVisibility: useCallback((payload) =>
-      apiCall('', {
-        method: 'PUT',
-        params: { action: 'playlist-visibility' },
-        body: payload
-      }), [apiCall]),
-
-    // Admin: list users for visibility management
+    // Admin: list users (the share dialog's user picker)
     listUsersForVisibility: useCallback((options = {}) =>
       apiCall('', {
         params: { action: 'playlist-visibility-list-users', ...options }
-      }), [apiCall]),
-
-    // Admin: reset visibility for all users for a playlist
-    resetPlaylistVisibilityAll: useCallback((playlistId) =>
-      apiCall('', {
-        method: 'POST',
-        params: { action: 'playlist-visibility-reset-all' },
-        body: { playlistId }
       }), [apiCall])
   }
 }
@@ -1937,21 +1916,21 @@ export default function WatchlistPage({ user }) {
                   <button
                     onClick={() => dispatchModal({ type: 'SET_SHOW_MANAGE_ROWS', value: true })}
                     className="hidden lg:inline-block ml-2 px-3 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors"
-                    title="Manage Your App Rows"
+                    title="Choose the playlists that show as rows on your home screen"
                   >
-                    Manage App Rows
+                    Home screen rows
                   </button>
                   {isAdmin && (
                     <button
                       onClick={() => dispatchModal({ type: 'SET_SHOW_ADMIN_ROWS', value: true })}
                       className="hidden lg:inline-block ml-2 px-3 py-2 bg-yellow-600 text-white rounded-md hover:bg-yellow-700 transition-colors"
-                      title="Admin: Manage App Rows for Users"
+                      title="Admin: home screen rows for people"
                     >
-                      Manage App Rows (Admin)
+                      Rows for people
                     </button>
                   )}
 
-                  {/* Mobile: the App Rows buttons, folded into a menu */}
+                  {/* Mobile: the home screen rows buttons, folded into a menu */}
                   <Menu as="div" className="relative lg:hidden">
                     <MenuButton className="p-2 text-gray-400 hover:text-white rounded-md hover:bg-gray-700" aria-label="More options">
                       <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -1969,7 +1948,7 @@ export default function WatchlistPage({ user }) {
                           onClick={() => dispatchModal({ type: 'SET_SHOW_MANAGE_ROWS', value: true })}
                           className="block w-full px-4 py-3 text-left text-sm text-gray-200 data-[focus]:bg-gray-600"
                         >
-                          Manage App Rows
+                          Home screen rows
                         </button>
                       </MenuItem>
                       {isAdmin && (
@@ -1979,7 +1958,7 @@ export default function WatchlistPage({ user }) {
                             onClick={() => dispatchModal({ type: 'SET_SHOW_ADMIN_ROWS', value: true })}
                             className="block w-full px-4 py-3 text-left text-sm text-yellow-400 data-[focus]:bg-gray-600"
                           >
-                            Manage App Rows (Admin)
+                            Rows for people
                           </button>
                         </MenuItem>
                       )}
@@ -2138,29 +2117,18 @@ export default function WatchlistPage({ user }) {
         isCopyMode={true}
       />
 
-      {/* Manage Your App Rows (per-user visibility) */}
-      <ShowInAppUserModal
-        isOpen={showManageRows}
+      {/* Home screen rows: yours, and for admins everyone's */}
+      <HomeRowsDialog
+        open={showManageRows}
         onClose={() => dispatchModal({ type: 'SET_SHOW_MANAGE_ROWS', value: false })}
-        api={{
-          // Thin wrapper to conform to modal's expectations
-          getPlaylists: async (includeShared = true) => api.getPlaylists(includeShared),
-          getPlaylistVisibility: async (options = {}) => api.getPlaylistVisibility(options),
-          setPlaylistVisibility: async (payload) => api.setPlaylistVisibility(payload)
-        }}
       />
-
-      {/* Admin: Manage App Rows for users */}
-      <ShowInAppAdminModal
-        isOpen={showAdminRows}
-        onClose={() => dispatchModal({ type: 'SET_SHOW_ADMIN_ROWS', value: false })}
-        api={{
-          getPlaylists: async (includeShared = true) => api.getPlaylists(includeShared),
-          listUsers: async (options = {}) => api.listUsersForVisibility(options),
-          setVisibilityBulk: async (payload) => api.setPlaylistVisibility(payload),
-          resetVisibilityAll: async (playlistId) => api.resetPlaylistVisibilityAll(playlistId)
-        }}
-      />
+      {isAdmin && (
+        <HomeRowsAdminDialog
+          open={showAdminRows}
+          onClose={() => dispatchModal({ type: 'SET_SHOW_ADMIN_ROWS', value: false })}
+          playlists={playlists}
+        />
+      )}
     </div>
   )
 }

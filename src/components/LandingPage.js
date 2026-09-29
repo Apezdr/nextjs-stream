@@ -86,7 +86,7 @@ async function UserSpecificSections({ userId }) {
   "use cache: private"
   cacheLife('userContent') // Per-user cache: 1min client, 15min server, 1hr expire
 
-  // Load per-user "Show in App" playlist rows using private cache
+  // Load the person's home screen rows (their chosen playlists) using private cache
   let appRows = []
   try {
     if (userId) {
@@ -117,7 +117,7 @@ async function UserSpecificSections({ userId }) {
 
   return (
     <>
-      {/* User-configured App Rows (per-user Show in App playlists) with Private Cache */}
+      {/* The person's home screen rows (playlists they chose), with private cache */}
       {appRows.length > 0 ? appRows.map((p) => (
         <div key={p.id}>
           <h2 className="text-xl font-bold text-left mt-4 ml-4">{p.name}</h2>
