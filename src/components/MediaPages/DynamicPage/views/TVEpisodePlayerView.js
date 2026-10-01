@@ -48,7 +48,7 @@ export default async function TVEpisodePlayerView({ media, session, searchParams
   return (
     <PlaybackCoordinatorProvider>
       <>
-        <div className="flex flex-col items-center justify-center min-h-screen">
+        <div className="flex flex-col items-center justify-center min-h-dvh">
           <SyncClientWithServerWatched once={true} />
           <Suspense fallback={<Loading />}>
             <MediaPlayerComponent

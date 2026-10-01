@@ -6,7 +6,7 @@
  * nothing of these routes could be prefetched, so the old page just sat there.
  *
  * It mirrors the frame in MoviePlayerView / TVEpisodePlayerView (the centred
- * min-h-screen column) and the player's own container in MainVideoPlayer
+ * min-h-dvh column) and the player's own container in MainVideoPlayer
  * (full width, 16:9, never taller than the screen). Change them together.
  *
  * Server-safe; no data, no hooks.
@@ -17,9 +17,9 @@ export default function PlayerPageSkeleton() {
       role="status"
       aria-busy="true"
       aria-label="Loading player"
-      className="flex flex-col items-center justify-center min-h-screen"
+      className="flex flex-col items-center justify-center min-h-dvh"
     >
-      <div className="relative z-10 flex aspect-[16/9] max-h-screen w-full items-center justify-center bg-black">
+      <div className="relative z-10 flex aspect-[16/9] max-h-dvh w-full items-center justify-center bg-black">
         <span className="size-10 rounded-full border-2 border-white/20 border-t-white/70 motion-safe:animate-spin" />
         <span className="sr-only">Loading player…</span>
       </div>

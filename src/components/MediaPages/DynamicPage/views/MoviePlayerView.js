@@ -42,7 +42,7 @@ export default async function MoviePlayerView({ media, session, searchParams, pa
       <SyncClientWithServerWatched once={true} />
       <Suspense fallback={<Loading />}>
         <PlaybackCoordinatorProvider>
-          <div className="flex flex-col items-center justify-center min-h-screen">
+          <div className="flex flex-col items-center justify-center min-h-dvh">
             <MediaPlayerComponent
               media={media}
               mediaTitle={parsedParams.mediaTitle}

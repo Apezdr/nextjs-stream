@@ -315,7 +315,7 @@ export default function PlayerMedia({
     playsInline: true,
     preload: 'auto',
     onEnded,
-    className: `h-screen min-h-screen w-full transition-opacity duration-700 ease-out ${
+    className: `h-dvh min-h-dvh w-full transition-opacity duration-700 ease-out ${
       isCasting ? 'opacity-0' : 'opacity-100'
     }`,
   }

@@ -65,7 +65,7 @@ function PlayerPlaceholder() {
   return (
     <div
       aria-hidden="true"
-      className="player-container relative z-10 aspect-video max-h-screen w-full bg-transparent dark"
+      className="player-container relative z-10 aspect-video max-h-dvh w-full bg-transparent dark"
     />
   )
 }
@@ -233,7 +233,7 @@ function ActivePlayerBody({
             fills the container, so the letterbox bars stay black and only
             disappear when the picture itself fades out. */}
         <Player.Container
-          className="player-container relative z-10 aspect-video max-h-screen w-full bg-transparent dark"
+          className="player-container relative z-10 aspect-video max-h-dvh w-full bg-transparent dark"
           data-playback-source={delivery?.source}
           data-jit-skip-reason={delivery?.skipReason ?? undefined}
           data-jit-skip-detail={delivery?.skipDetail ? JSON.stringify(delivery.skipDetail) : undefined}
