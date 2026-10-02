@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect } from 'react'
+import { useCallback, useEffect, useSyncExternalStore } from 'react'
 import { Player } from './videojs'
 import { readFinalRemotePosition, castMatchesSource } from '@components/Cast/castSdk'
 
@@ -25,16 +25,32 @@ const RESTORE_WINDOW_MS = 4000
  * with no isMediaLoaded condition — so the element is dragged to the start,
  * force-played there, and possibly unmuted.
  *
- * This listens on the media host's `remote`, whose 'disconnect' event the
+ * This listens on the store media's `remote`, whose 'disconnect' event the
  * provider dispatches SYNCHRONOUSLY one line after those writes: earlier than
  * the store's microtask flush, than React, and than the element's own seeking
  * task. The element is therefore read and repaired in the same stack as the
  * damage. An earlier version of this guard watched the store's
  * remotePlaybackState and seeked via the store on a setTimeout — it always ran
  * too late and read a mirror that hadn't been updated yet.
+ *
+ * Since 10.0.0 the Cast extension's members (`remote`, and `currentTime` while
+ * connected) exist only on the store's media FACADE, `store.target.media`.
+ * `Player.useMedia()` is the bare adapter: its `remote` is the browser's own
+ * RemotePlayback, which never reports a Cast session — reading it would leave
+ * this guard silently listening to nothing.
  */
+function useStoreMedia() {
+  const store = Player.usePlayer()
+  // The facade appears when an overriding extension registers (the store is
+  // re-attached then), so re-read it on every store change; reading
+  // `store.target` is safe before attach.
+  const subscribe = useCallback((onChange) => store.subscribe(onChange), [store])
+  const getSnapshot = useCallback(() => store.target?.media ?? null, [store])
+  return useSyncExternalStore(subscribe, getSnapshot, () => null)
+}
+
 export default function CastResumeGuard({ videoURL = null }) {
-  const media = Player.useMedia()
+  const media = useStoreMedia()
 
   useEffect(() => {
     const remote = media?.remote
@@ -148,8 +164,9 @@ export default function CastResumeGuard({ videoURL = null }) {
     }
 
     // The provider dispatches its synthetic media events on the raw element,
-    // while ordinary playback events surface on both it and the host. Listen
-    // on each (handlers are idempotent) so neither source can be missed.
+    // while ordinary playback events surface on both it and the adapter (the
+    // facade binds listeners to the adapter). Listen on each (handlers are
+    // idempotent) so neither source can be missed.
     const mediaTargets = [media, media.target].filter(
       (t, i, all) => t && typeof t.addEventListener === 'function' && all.indexOf(t) === i
     )
