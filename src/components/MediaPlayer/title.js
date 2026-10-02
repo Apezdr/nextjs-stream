@@ -19,26 +19,37 @@ function useCurrentChapterTitle() {
   return cues.find((cue) => currentTime >= cue.startTime && currentTime < cue.endTime)?.text ?? ''
 }
 
-export function Title({ titleLabel }) {
+function TitleLines({ titleLabel }) {
   const chapterTitle = useCurrentChapterTitle()
   return (
-    <span
-      className={classNames(
-        'z-20 w-h-full sm:w-auto absolute sm:relative inline-block flex-1 overflow-visible sm:overflow-hidden text-ellipsis whitespace-nowrap text-sm font-medium text-white/70 text-center',
-        'left-1/2 sm:left-0 -translate-x-1/2 sm:translate-x-0 mt-[9%] sm:mt-0 p-0'
-      )}
-    >
-      <div
-        className={classNames(
-          'flex flex-col items-center justify-normal sm:min-h-0 sm:px-0 sm:pb-0 sm:bg-inherit sm:relative sm:translate-x-0 sm:left-0',
-          'bg-opacity-80 sm:transition-none transition-colors duration-1000 absolute left-1/2 -translate-x-1/2 rounded-b-lg px-4 pt-3 sm:pt-0 pb-2 sm:pb-0 min-h-14 justify-center',
-          'max-w-[98vw] w-[90vw] sm:w-auto sm:max-w-none'
-        )}
-      >
-        <span className="text-pretty">{titleLabel}</span>
-        {chapterTitle ? <span className="text-pretty">{chapterTitle}</span> : null}
+    <>
+      <span className="text-pretty">{titleLabel}</span>
+      {chapterTitle ? <span className="text-pretty">{chapterTitle}</span> : null}
+    </>
+  )
+}
+
+/** The title inside the control bar, from `sm` up. Phones get MobileTitle. */
+export function Title({ titleLabel }) {
+  return (
+    <span className="relative z-20 hidden flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-center text-sm font-medium text-white/70 sm:inline-block">
+      <div className="flex flex-col items-center justify-center">
+        <TitleLines titleLabel={titleLabel} />
       </div>
     </span>
+  )
+}
+
+/**
+ * Phones: the control bar has no room left, so the title takes its own row
+ * above the seek bar. It used to hang below the player instead, on top of
+ * whatever the page rendered there (the TV episode list).
+ */
+export function MobileTitle({ titleLabel }) {
+  return (
+    <div className="flex flex-col items-center px-4 pb-1 text-center text-sm font-medium text-white/70 sm:hidden">
+      <TitleLines titleLabel={titleLabel} />
+    </div>
   )
 }
 

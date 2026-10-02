@@ -8,7 +8,7 @@ import SubtitleEditorButton from './buttons/SubtitleEditorButton'
 import * as Menus from './menus'
 import * as Sliders from './sliders'
 import { TimeGroup } from './time-group'
-import { Title, VideoMetadata } from './title'
+import { MobileTitle, Title, VideoMetadata } from './title'
 import NextUpCard from './NextUpCard'
 import CastingOverlay from './CastingOverlay'
 import useIsCasting from './useIsCasting'
@@ -151,6 +151,7 @@ export function VideoLayout({
           />
         </Controls.Group>
         <div className="flex-1" />
+        <MobileTitle titleLabel={titleLabel} />
         <Controls.Group className="pointer-events-auto flex w-full items-center px-2">
           {nextUpCard && nextUpCard?.hasNextEpisode && (
             <div className="relative -bottom-4 left-full">
