@@ -18,8 +18,13 @@ import { classNames } from '@src/utils'
 import { useAutoCaptionsProgress } from './AutoCaptionsProgressContext'
 import ChaptersMenu from './chapter/chapters'
 
+// On Menu.Popup, the positioned surface (it carries data-open for the fade).
+// A submenu's Content is portaled into the popup after the root Content, so an
+// open submenu expands below the root rows, as it did before 10.0.0.
 export const menuClass =
   'z-30 flex max-h-[60vh] min-w-[260px] flex-col overflow-y-auto overscroll-y-contain rounded-md border border-white/10 bg-black/95 p-2.5 font-sans text-[15px] font-medium text-white outline-none backdrop-blur-sm opacity-0 transition-opacity duration-150 data-[open]:opacity-100'
+
+const rootContentClass = 'flex w-full flex-col outline-none'
 
 const submenuTriggerClass =
   'z-10 flex w-full cursor-pointer select-none items-center justify-start rounded-sm bg-black/60 p-2.5 outline-none ring-inset ring-blue-400 hover:bg-white/10 focus-visible:ring-[3px]'
@@ -47,13 +52,13 @@ export function Settings({ side = 'top', align = 'end', tooltipSide = 'top', has
           <GearIcon className="h-8 w-8 transform transition-transform duration-200 ease-out group-data-[open]:rotate-90" />
         </Menu.Trigger>
       </ButtonTooltip>
-      <Menu.Content className={menuClass}>
-        <Menu.View>
+      <Menu.Popup className={menuClass}>
+        <Menu.Content className={rootContentClass}>
           {hasCaptions && <CaptionSubmenu />}
           <AudioSubmenu />
           <QualitySubmenu />
-        </Menu.View>
-      </Menu.Content>
+        </Menu.Content>
+      </Menu.Popup>
     </Menu.Root>
   )
 }
@@ -74,9 +79,11 @@ export function Chapters({ side = 'top', align = 'end', tooltipSide = 'top', cha
           <ChaptersIcon className="h-8 w-8" />
         </Menu.Trigger>
       </ButtonTooltip>
-      <Menu.Content className={classNames(menuClass, 'max-w-[91vw]')}>
-        <ChaptersMenu chapterThumbnailURL={chapterThumbnailURL} />
-      </Menu.Content>
+      <Menu.Popup className={classNames(menuClass, 'max-w-[91vw]')}>
+        <Menu.Content className={rootContentClass}>
+          <ChaptersMenu chapterThumbnailURL={chapterThumbnailURL} />
+        </Menu.Content>
+      </Menu.Popup>
     </Menu.Root>
   )
 }
@@ -278,10 +285,13 @@ function Submenu({ label, hint, hintPrefix = '', icon: Icon, disabled, children 
         <ChevronIcon className="ml-0.5 h-[18px] w-[18px] -rotate-90 text-white/50" />
       </Menu.Trigger>
       <Menu.Content className="w-full outline-none">
-        <Menu.Back className={classNames(submenuTriggerClass, 'mb-1.5')}>
+        {/* The back row is an ordinary item: selecting an item closes its own
+            menu, which for a submenu returns to the root rows (Escape and
+            ArrowLeft do the same). */}
+        <Menu.Item className={classNames(submenuTriggerClass, 'mb-1.5')}>
           <ChevronIcon className="mr-1.5 h-[18px] w-[18px] rotate-90" />
           <span>{label}</span>
-        </Menu.Back>
+        </Menu.Item>
         {children}
       </Menu.Content>
     </Menu.Root>
