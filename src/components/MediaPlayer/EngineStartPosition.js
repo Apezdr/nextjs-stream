@@ -7,7 +7,9 @@ import { isManifestSource } from './PlayerMedia'
 /**
  * Make hls.js actually start at the resume point.
  *
- * `config.startPosition` is not enough under @videojs/media. Observed live
+ * `startPosition` in the hls.js config (`source.engine.hlsJs`) is not enough
+ * under Video.js 10 (still true in 10.0.0: the adapter sets `autoStartLoad:
+ * false`). Observed live
  * (three of three reloads, via a wrapped `engine.startLoad`): the framework's
  * preload mixin issues a bare `startLoad()` from an Hls event handler AFTER
  * the manifest has parsed. On that path hls.js resolves the position to -1

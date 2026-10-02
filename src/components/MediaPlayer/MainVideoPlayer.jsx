@@ -3,7 +3,7 @@
 import './player.css'
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react'
-import { Player, GoogleCast } from './videojs'
+import { Player, Container, GoogleCast } from './videojs'
 import PlayerMedia, { castContentType, isManifestSource } from './PlayerMedia'
 import { VideoLayout } from './VideoLayout'
 import MediaPoster from './MediaPoster'
@@ -35,8 +35,8 @@ import { parseExplicitStart } from './resumePosition'
  * segment cache. Navigating away parks the page in `<Activity mode="hidden">`
  * — DOM and state stay alive — which keeps a video playing behind the page
  * you are actually looking at, holds an hls.js engine open, and (because of
- * an upstream `useDestroy` bug in @videojs/react 10 beta, where a fired
- * deferred destroy never clears its pending handle) permanently skips the
+ * an upstream `useDestroy` bug in @videojs/react 10, still present in 10.0.0,
+ * where a fired deferred destroy never clears its pending handle) permanently skips the
  * framework's setup paths on re-show. That leaves the store detached from the
  * media element: a frozen seek bar, a frozen time display, and an uncropped
  * sprite sheet in the scrub preview until a manual reload.
@@ -224,7 +224,7 @@ function ActivePlayerBody({
   }, [videoRef])
 
   return (
-    <Player.Provider>
+    <Player.Player>
       <AutoCaptionsProgressProvider>
         {/* Transparent, not black: while casting the video fades to nothing and
             the page backdrop shows through the translucent overlay instead of a
@@ -232,7 +232,7 @@ function ActivePlayerBody({
             media element carries its own `background: #000` (player.css) and
             fills the container, so the letterbox bars stay black and only
             disappear when the picture itself fades out. */}
-        <Player.Container
+        <Container
           className="player-container relative z-10 aspect-video max-h-dvh w-full bg-transparent dark"
           data-playback-source={delivery?.source}
           data-jit-skip-reason={delivery?.skipReason ?? undefined}
@@ -258,14 +258,16 @@ function ActivePlayerBody({
             contentType={castContentType(videoURL)}
             customData={castCustomData}
           />
-          {/* AFTER <GoogleCast>: the framework's component is consulted first
-              for media ownership, so a genuinely connected provider always wins
-              and this only takes over a session it did not start. */}
+          {/* AFTER <GoogleCast>: extensions register with the player in render
+              order and the first one overriding a media member wins, so a
+              genuinely connected provider always wins and this only takes over
+              a session it did not start. */}
           <CastTransportBridge videoURL={videoURL} />
           <VolumeRegulator />
           <CastResumeGuard videoURL={videoURL} />
-          {/* Owns where hls.js starts — config.startPosition alone is discarded
-              by the framework's bare startLoad(); see EngineStartPosition. */}
+          {/* Owns where hls.js starts — the startPosition in source.engine.hlsJs
+              alone is discarded by the framework's bare startLoad(); see
+              EngineStartPosition. */}
           <EngineStartPosition resumeAt={engineOwnsResume ? resumeAt : null} videoURL={videoURL} />
           {videoURL ? (
             <WithPlaybackTracker
@@ -305,8 +307,8 @@ function ActivePlayerBody({
             isAdmin={isAdmin}
             adminProps={adminProps}
           />
-        </Player.Container>
+        </Container>
       </AutoCaptionsProgressProvider>
-    </Player.Provider>
+    </Player.Player>
   )
 }

@@ -1,10 +1,13 @@
 'use client'
 
 /**
- * Beta-drift firewall: this is the ONLY module in the app allowed to import
- * from `@videojs/react` (pinned exact while v10 is in beta). All player code
- * imports primitives/hooks from here so an upstream API rename is absorbed in
- * this single file.
+ * Upgrade firewall: this is the ONLY module in the app allowed to import from
+ * `@videojs/react`. All player code imports primitives/hooks from here so an
+ * upstream API change is absorbed in this single file.
+ *
+ * Pinned exact even though v10 is stable (semver since 10.0.0): the Cast
+ * transport bridge registers through `usePlayerContext().registerExtension`,
+ * which upstream marks @internal, and semver does not cover internals.
  */
 import {
   createPlayer,
@@ -26,9 +29,10 @@ import {
 } from '@videojs/react'
 
 /**
- * The main watch-page player. One store per Provider instance; the feature
- * list is explicit so the store shape is deliberate (no playbackRateFeature —
- * the player has never had a speed menu).
+ * The main watch-page player: `{ Player, usePlayer, useMedia }`, so the
+ * provider component is `<Player.Player>`. One store per provider instance;
+ * the feature list is explicit so the store shape is deliberate (no
+ * playbackRateFeature — the player has never had a speed menu).
  */
 export const Player = createPlayer({
   displayName: 'MainVideoPlayer',
@@ -53,6 +57,7 @@ export const Player = createPlayer({
 
 // UI primitives
 export {
+  Container,
   Controls,
   Menu,
   Tooltip,
@@ -90,17 +95,19 @@ export {
   selectRemotePlayback,
 } from '@videojs/react'
 
-// Media elements.
-//
-// Both are media HOSTS (HTMLVideoElementHost), which is a hard requirement for
-// Google Cast: useMediaComponent ignores anything that isn't a host, so with a
-// plain <Video> (a raw <video> element) the <GoogleCast> component silently
-// no-ops and the cast button falls through to the browser's native Remote
-// Playback API — Chrome's default receiver, without our receiver app,
-// subtitles or metadata.
+// @internal upstream ("not a stable authoring API"). Re-exported for exactly
+// one caller, CastTransportBridge, whose `registerExtension` is the only way to
+// put a media override in front of the store since 10.0.0. Keep it that way.
+export { usePlayerContext } from '@videojs/react'
+
+// Media elements (playback adapters). HlsJsVideo needs @videojs/hlsjs-video
+// and GoogleCast needs @videojs/google-cast installed: both are optional peer
+// dependencies of @videojs/react, and nothing else imports them directly.
+// NativeHlsVideo plays direct files too (it just sets target.src); it predates
+// 10.0.0's player-level Google Cast, which would also accept a plain <Video>.
 export { HlsJsVideo } from '@videojs/react/media/hlsjs-video'
 export { NativeHlsVideo } from '@videojs/react/media/native-hls-video'
-export { GoogleCast } from '@videojs/react/media/google-cast'
+export { GoogleCast } from '@videojs/react/extensions/google-cast'
 
 // Icons
 export {

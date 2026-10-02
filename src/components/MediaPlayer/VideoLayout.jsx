@@ -124,75 +124,77 @@ export function VideoLayout({
           is. Hidden while casting: the casting banner shares this centre and
           the television draws its own spinner. */}
       <PlaybackStatusOverlay ref={spinnerRef} videoURL={videoURL} hidden={isCasting} />
-      <Controls.Root className="player-controls absolute inset-0 z-10 flex h-full w-full flex-col bg-gradient-to-t from-black/10 to-transparent opacity-0 transition-opacity pointer-events-none data-[visible]:opacity-100">
-        {/* Bottom gradient shown only while hovering the seek bar (rises to
-            ~mid-thumbnail height); toggled via :has() in player.css. */}
-        <div className="seek-hover-gradient pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 transition-opacity duration-300" />
-        {/* Top Bar */}
-        <Controls.Group className="pointer-events-auto relative left-1 top-4 flex h-12 w-16 items-center px-2">
-          <Buttons.GoBack goBack={goBack} />
-        </Controls.Group>
-        {/* End Top Bar */}
-        <div className="flex-1" />
-        {/* `group` so the decode chip can take the pointer only while the
-            controls are up — Controls.Root carries data-interactive and the tap
-            gesture bails on closest('[data-interactive]'), so a permanently
-            clickable badge would kill tap-to-pause in the top-right corner even
-            at opacity 0. ControlsGroup receives the same state attrs as the
-            root, so data-visible is stamped here too. */}
-        <Controls.Group className="group flex !h-auto max-w-sm flex-col justify-end !pointer-events-none sm:max-w-lg xl:max-w-3xl">
-          <VideoMetadata
-            dims={dimsVal}
-            hdr={hdrVal}
-            mediaMetadata={mediaMetadata}
-            logo={logo}
-            decodeHealth={decodeHealth}
-            onOpenDecodeHealth={() => setDecodeNoticeReopened(true)}
-          />
-        </Controls.Group>
-        <div className="flex-1" />
-        <MobileTitle titleLabel={titleLabel} />
-        <Controls.Group className="pointer-events-auto flex w-full items-center px-2">
-          {nextUpCard && nextUpCard?.hasNextEpisode && (
-            <div className="relative -bottom-4 left-full">
-              <NextUpCard
-                mediaTitle={nextUpCard?.mediaTitle}
-                season_number={nextUpCard?.season_number}
-                nextEpisodeNumber={nextUpCard?.nextEpisodeNumber}
-                nextEpisodeThumbnail={nextUpCard?.nextEpisodeThumbnail}
-                nextEpisodeThumbnailBlurhash={nextUpCard?.nextEpisodeThumbnailBlurhash}
-                nextEpisodeTitle={nextUpCard?.nextEpisodeTitle}
-                hasNextEpisode={nextUpCard?.hasNextEpisode}
-                mediaLength={nextUpCard?.mediaLength}
-              />
-            </div>
-          )}
-          <Sliders.Time hasThumbnails={hasThumbnails} />
-          <TimeGroup />
-        </Controls.Group>
-        <Controls.Group className="pointer-events-auto -mt-0.5 relative flex w-full items-center px-2 pb-2">
-          <Buttons.Play />
-          <Buttons.SeekBackward align="start" />
-          <Buttons.SeekForward />
-          <Buttons.Mute />
-          <Sliders.Volume />
-          <Title titleLabel={titleLabel} />
-          {isAdmin && adminProps && (
-            <SubtitleEditorButton onEditSubtitles={() => setIsSubtitleEditorOpen(true)} />
-          )}
-          {hasChapters && <Menus.Chapters chapterThumbnailURL={chapterThumbnailURL} />}
-          <Menus.Settings hasCaptions={hasCaptions} />
-          <Buttons.PIP />
-          <Buttons.Chromecast />
-          <Buttons.AirPlay />
-          <Buttons.Fullscreen align="end" />
-        </Controls.Group>
+      <Controls.Root>
+        <Controls.Content className="player-controls absolute inset-0 z-10 flex h-full w-full flex-col bg-gradient-to-t from-black/10 to-transparent opacity-0 transition-opacity pointer-events-none data-[visible]:opacity-100">
+          {/* Bottom gradient shown only while hovering the seek bar (rises to
+              ~mid-thumbnail height); toggled via :has() in player.css. */}
+          <div className="seek-hover-gradient pointer-events-none absolute inset-x-0 bottom-0 h-48 bg-gradient-to-t from-black/80 via-black/40 to-transparent opacity-0 transition-opacity duration-300" />
+          {/* Top Bar */}
+          <Controls.Group className="pointer-events-auto relative left-1 top-4 flex h-12 w-16 items-center px-2">
+            <Buttons.GoBack goBack={goBack} />
+          </Controls.Group>
+          {/* End Top Bar */}
+          <div className="flex-1" />
+          {/* `group` so the decode chip can take the pointer only while the
+              controls are up — Controls.Content carries data-interactive and the
+              tap gesture bails on closest('[data-interactive]'), so a permanently
+              clickable badge would kill tap-to-pause in the top-right corner even
+              at opacity 0. ControlsGroup receives the same state attrs as the
+              content, so data-visible is stamped here too. */}
+          <Controls.Group className="group flex !h-auto max-w-sm flex-col justify-end !pointer-events-none sm:max-w-lg xl:max-w-3xl">
+            <VideoMetadata
+              dims={dimsVal}
+              hdr={hdrVal}
+              mediaMetadata={mediaMetadata}
+              logo={logo}
+              decodeHealth={decodeHealth}
+              onOpenDecodeHealth={() => setDecodeNoticeReopened(true)}
+            />
+          </Controls.Group>
+          <div className="flex-1" />
+          <MobileTitle titleLabel={titleLabel} />
+          <Controls.Group className="pointer-events-auto flex w-full items-center px-2">
+            {nextUpCard && nextUpCard?.hasNextEpisode && (
+              <div className="relative -bottom-4 left-full">
+                <NextUpCard
+                  mediaTitle={nextUpCard?.mediaTitle}
+                  season_number={nextUpCard?.season_number}
+                  nextEpisodeNumber={nextUpCard?.nextEpisodeNumber}
+                  nextEpisodeThumbnail={nextUpCard?.nextEpisodeThumbnail}
+                  nextEpisodeThumbnailBlurhash={nextUpCard?.nextEpisodeThumbnailBlurhash}
+                  nextEpisodeTitle={nextUpCard?.nextEpisodeTitle}
+                  hasNextEpisode={nextUpCard?.hasNextEpisode}
+                  mediaLength={nextUpCard?.mediaLength}
+                />
+              </div>
+            )}
+            <Sliders.Time hasThumbnails={hasThumbnails} />
+            <TimeGroup />
+          </Controls.Group>
+          <Controls.Group className="pointer-events-auto -mt-0.5 relative flex w-full items-center px-2 pb-2">
+            <Buttons.Play />
+            <Buttons.SeekBackward align="start" />
+            <Buttons.SeekForward />
+            <Buttons.Mute />
+            <Sliders.Volume />
+            <Title titleLabel={titleLabel} />
+            {isAdmin && adminProps && (
+              <SubtitleEditorButton onEditSubtitles={() => setIsSubtitleEditorOpen(true)} />
+            )}
+            {hasChapters && <Menus.Chapters chapterThumbnailURL={chapterThumbnailURL} />}
+            <Menus.Settings hasCaptions={hasCaptions} />
+            <Buttons.PIP />
+            <Buttons.Chromecast />
+            <Buttons.AirPlay />
+            <Buttons.Fullscreen align="end" />
+          </Controls.Group>
+        </Controls.Content>
       </Controls.Root>
 
-      {/* Sibling of Controls.Root, not a child: inside it the modal would
+      {/* Sibling of the controls, not a child: inside them the modal would
           inherit both pointer-events-none and the data-[visible] fade, so it
           would dissolve after two seconds of stillness — the exact behaviour a
-          read-and-dismiss dialog must not have. Inside Player.Container though,
+          read-and-dismiss dialog must not have. Inside the player Container though,
           because fullscreen is requested on the container and anything outside
           it disappears the moment the viewer goes fullscreen. */}
       <DecodeHealthModal

@@ -2,7 +2,7 @@
 
 import { HlsJsVideo, NativeHlsVideo } from './videojs'
 import useIsCasting from './useIsCasting'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { buildHlsPlaybackConfig } from './hlsPlaybackConfig'
 import {
   nextRetryDelay,
@@ -66,9 +66,15 @@ export default function PlayerMedia({
   resumeAt = null,
 }) {
   const isManifest = isManifestSource(videoURL)
-  // Once per mount: the engine is rebuilt on any config identity change, and
-  // startPosition only matters at first load anyway.
+  // Once per mount: startPosition only matters at first load anyway. Its shape,
+  // `{ hlsJs: {...} }`, is exactly `source.engine`.
   const [hlsConfig] = useState(() => buildHlsPlaybackConfig({ startPosition: resumeAt }))
+  // ONE structured prop, never `src` beside it: props are applied in JSX order
+  // and assigning a `source` without `src` blanks the URL, so passing both makes
+  // every render flip the source empty and back. Memoized so re-renders do not
+  // even re-assign it (the adapter compares sources structurally, but still
+  // announces each assignment).
+  const source = useMemo(() => ({ src: videoURL, engine: hlsConfig }), [videoURL, hlsConfig])
 
   // While the receiver has this title, the local picture is not what anyone is
   // watching, so it dissolves out under the casting overlay instead of sitting
@@ -321,19 +327,15 @@ export default function PlayerMedia({
   }
 
   return isManifest ? (
-    <HlsJsVideo
-      ref={videoRef}
-      src={videoURL}
-      config={hlsConfig}
-      streamType="on-demand"
-      {...commonProps}
-    >
+    <HlsJsVideo ref={videoRef} source={source} streamType="on-demand" {...commonProps}>
       {trackEls}
     </HlsJsVideo>
   ) : (
-    // NativeHlsVideo, not a plain <Video>: for a non-manifest source it is just
-    // `target.src = src` with no hls.js engine, but it IS a media host, which
-    // is what lets <GoogleCast> register and cast to our own receiver.
+    // NativeHlsVideo for direct files too: for a non-manifest source it is just
+    // `target.src = src` with no hls.js engine. It was required for Google Cast
+    // before 10.0.0 (the extension only attached to media hosts); since 10.0.0
+    // Cast attaches at the player, so this is kept only to leave the direct-file
+    // path exactly as it was.
     <NativeHlsVideo ref={videoRef} src={videoURL} streamType="on-demand" {...commonProps}>
       {trackEls}
     </NativeHlsVideo>

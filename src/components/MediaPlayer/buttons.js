@@ -87,7 +87,7 @@ export function Mute({ side = 'top', align = 'center' }) {
 }
 
 export function PIP({ side = 'top', align = 'center' }) {
-  const isActive = Player.usePlayer((s) => s.pip)
+  const isActive = Player.usePlayer((s) => s.isPictureInPicture)
   return (
     <ButtonTooltip label={isActive ? 'Exit PIP' : 'Enter PIP'} side={side} align={align}>
       <PiPButton className={buttonClass}>
@@ -98,7 +98,7 @@ export function PIP({ side = 'top', align = 'center' }) {
 }
 
 export function Fullscreen({ side = 'top', align = 'center' }) {
-  const isActive = Player.usePlayer((s) => s.fullscreen)
+  const isActive = Player.usePlayer((s) => s.isFullscreen)
   return (
     <ButtonTooltip
       label={isActive ? 'Exit Fullscreen' : 'Enter Fullscreen'}
