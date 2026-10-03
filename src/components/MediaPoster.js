@@ -1,6 +1,6 @@
 'use client'
 import { cache, useSyncExternalStore, ViewTransition } from 'react'
-import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '../utils'
+import { classNames, generateColors, getFullImageUrl, getResolutionLabel, isHdr10Label } from '../utils'
 import HD4kBanner from '../../public/4kBanner.png'
 import hdr10PlusLogo from '../../public/HDR10+_Logo_light.svg'
 import useWatchedWidth, { isWatchedComplete } from './useWatchedWidth'
@@ -153,8 +153,8 @@ function MediaPoster({
           </div>
           {hdr ? (
             <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
-            {hdr === 'HDR10' ? (
-            <RetryImage src={hdr10PlusLogo} alt={'HDR10 Logo'} className="h-4 w-auto" loading="lazy" />  
+            {isHdr10Label(hdr) ? (
+            <RetryImage src={hdr10PlusLogo} alt={`${hdr} Logo`} className="h-4 w-auto" loading="lazy" />
             ) : (
             <>{hdr}</>
             )}

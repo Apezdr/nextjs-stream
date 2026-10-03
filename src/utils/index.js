@@ -263,6 +263,17 @@ export const getResolutionLabel = cache((dims) => {
 })
 
 /**
+ * Whether a media `hdr` label earns the HDR10 logo: exactly "HDR10" or
+ * "HDR10+" (the media processor's label for SMPTE ST 2094 App 4). Combined
+ * labels such as "Dolby Vision, HDR10" and the SDR labels stay as text.
+ * @param {string|false|null|undefined} hdr
+ * @returns {boolean}
+ */
+export function isHdr10Label(hdr) {
+  return hdr === 'HDR10' || hdr === 'HDR10+'
+}
+
+/**
  * Builds a Next.js optimized image URL for preloading.
  *
  * Replicates the default loader's shape: /_next/image?url={src}&w={width}&q={quality}.
