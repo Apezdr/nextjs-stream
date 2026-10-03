@@ -4,6 +4,7 @@ import { Dialog, Transition } from '@headlessui/react'
 import { Fragment, useRef, useState, useMemo } from 'react'
 import useSWR from 'swr'
 import { buildURL, fetcher } from '@src/utils'
+import { getProcessStatusBadge } from '@src/utils/processStatus'
 import { StatusBadge } from '../BaseComponents'
 
 export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClick }) {
@@ -65,16 +66,6 @@ export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClic
   const handlePageChange = (newPage) => {
     setCurrentPage(Math.max(1, Math.min(newPage, totalPages)));
   };
-
-  const getStatusBadge = (status) => {
-    switch (status) {
-      case 'completed': return { status: 'success', text: 'Completed' }
-      case 'running': return { status: 'info', text: 'Running' }
-      case 'pending': return { status: 'warning', text: 'Pending' }
-      case 'error': return { status: 'error', text: 'Error' }
-      default: return { status: 'neutral', text: status || 'Unknown' }
-    }
-  }
 
   return (
     <Transition.Root show={isOpen} as={Fragment}>
@@ -218,13 +209,14 @@ export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClic
                               <th className="px-4 py-3 text-sm font-medium text-gray-900">File Key</th>
                               <th className="px-4 py-3 text-sm font-medium text-gray-900">Type</th>
                               <th className="px-4 py-3 text-sm font-medium text-gray-900">Status</th>
+                              <th className="px-4 py-3 text-sm font-medium text-gray-900">Details</th>
                               <th className="px-4 py-3 text-sm font-medium text-gray-900">Last Updated</th>
                             </tr>
                           </thead>
                           <tbody>
                             {currentProcesses.length > 0 ? (
                               currentProcesses.map((process) => {
-                                const statusInfo = getStatusBadge(process.status)
+                                const statusInfo = getProcessStatusBadge(process.status)
                                 return (
                                   <tr
                                     key={`${process.serverName}-${process.id}`}
@@ -251,6 +243,18 @@ export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClic
                                         {statusInfo.text}
                                       </StatusBadge>
                                     </td>
+                                    <td className="px-4 py-3 text-sm text-gray-600 max-w-sm">
+                                      {process.message && (
+                                        <div className="truncate" title={process.message}>
+                                          {process.message}
+                                        </div>
+                                      )}
+                                      {process.total_steps > 0 && (
+                                        <div className="text-xs text-gray-400">
+                                          Step {process.current_step} of {process.total_steps}
+                                        </div>
+                                      )}
+                                    </td>
                                     <td className="px-4 py-3 text-sm text-gray-600">
                                       {new Date(process.last_updated).toLocaleString()}
                                     </td>
@@ -259,7 +263,7 @@ export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClic
                               })
                             ) : (
                               <tr>
-                                <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
+                                <td colSpan={7} className="px-4 py-8 text-center text-gray-500">
                                   No processes found
                                 </td>
                               </tr>

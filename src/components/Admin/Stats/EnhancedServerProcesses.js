@@ -3,12 +3,43 @@
 import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { buildURL, fetcher } from '@src/utils'
+import { getProcessPercent, getProcessStatusBadge, isActiveProcess } from '@src/utils/processStatus'
 import { StatusBadge, MaterialButton } from '../BaseComponents'
 import ServerProcessesModal from './ServerProcessesModal'
 
+// A queue of sprite jobs can be long; the card shows the first few.
+const MAX_DETAILS_PER_TYPE = 3
+
+function ProcessDetail({ process }) {
+    const percent = getProcessPercent(process)
+    if (!process.message && percent === null) return null
+
+    return (
+        <div className="pl-4">
+            {process.message && (
+                <div className="text-xs text-gray-600 truncate" title={process.message}>
+                    {process.message}
+                </div>
+            )}
+            {percent !== null && (
+                <div
+                    className="mt-1 h-1 rounded-full bg-gray-200"
+                    role="progressbar"
+                    aria-valuenow={percent}
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-label={`${process.process_type || 'Process'} progress`}
+                >
+                    <div className="h-1 rounded-full bg-blue-400" style={{ width: `${percent}%` }} />
+                </div>
+            )}
+        </div>
+    )
+}
+
 function ProcessCard({ serverName, processes }) {
-    const activeProcesses = processes.filter(proc => proc.status !== 'completed')
-    
+    const activeProcesses = processes.filter(isActiveProcess)
+
     if (activeProcesses.length === 0) return null
 
     // Group processes by type for better display
@@ -18,16 +49,6 @@ function ProcessCard({ serverName, processes }) {
         acc[key].push(proc)
         return acc
     }, {})
-
-    const getStatusColor = (status) => {
-        switch (status) {
-            case 'running': return 'success'
-            case 'pending': return 'warning'
-            case 'error': return 'error'
-            case 'completed': return 'success'
-            default: return 'neutral'
-        }
-    }
 
     return (
         <div className="bg-gray-50 rounded-lg p-4 space-y-3">
@@ -53,24 +74,37 @@ function ProcessCard({ serverName, processes }) {
             </div>
 
             <div className="space-y-2">
-                {Object.entries(groupedProcesses).map(([processType, procs]) => (
-                    <div key={processType} className="flex items-center justify-between text-xs">
-                        <div className="flex items-center space-x-2">
-                            <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                            <span className="font-medium text-gray-700">{processType}</span>
+                {Object.entries(groupedProcesses).map(([processType, procs]) => {
+                    const badge = getProcessStatusBadge(procs[0]?.status)
+                    return (
+                        <div key={processType} className="space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                                <div className="flex items-center space-x-2">
+                                    <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
+                                    <span className="font-medium text-gray-700">{processType}</span>
+                                </div>
+                                <div className="flex items-center space-x-2">
+                                    <span className="text-gray-600">{procs.length}×</span>
+                                    <StatusBadge
+                                        status={badge.status}
+                                        variant="soft"
+                                        size="small"
+                                    >
+                                        {badge.text}
+                                    </StatusBadge>
+                                </div>
+                            </div>
+                            {procs.slice(0, MAX_DETAILS_PER_TYPE).map((proc) => (
+                                <ProcessDetail key={proc.id ?? proc.file_key} process={proc} />
+                            ))}
+                            {procs.length > MAX_DETAILS_PER_TYPE && (
+                                <div className="pl-4 text-xs text-gray-400">
+                                    +{procs.length - MAX_DETAILS_PER_TYPE} more
+                                </div>
+                            )}
                         </div>
-                        <div className="flex items-center space-x-2">
-                            <span className="text-gray-600">{procs.length}×</span>
-                            <StatusBadge 
-                                status={getStatusColor(procs[0]?.status)} 
-                                variant="soft" 
-                                size="tiny"
-                            >
-                                {procs[0]?.status || 'unknown'}
-                            </StatusBadge>
-                        </div>
-                    </div>
-                ))}
+                    )
+                })}
             </div>
         </div>
     )
@@ -135,7 +169,8 @@ function SyncProcessCard({ startTime, onViewClick }) {
  */
 const EnhancedServerProcesses = ({ onSyncViewClick }) => {
     const [isModalOpen, setIsModalOpen] = useState(false)
-    const { data, error } = useSWR(buildURL('/api/authenticated/admin/server-processes'), fetcher, {
+    // Only running and queued rows; the modal fetches the full history itself.
+    const { data, error } = useSWR(buildURL('/api/authenticated/admin/server-processes?active=true'), fetcher, {
         refreshInterval: 5000,
     })
 
@@ -177,13 +212,15 @@ const EnhancedServerProcesses = ({ onSyncViewClick }) => {
 
     const isSyncActive = syncStatus?.active === true
 
+    // Filtered here as well as on the server: a processor that predates
+    // ?active=true still returns every row.
     const activeServers = serverProcesses.filter(server =>
         server.processes &&
-        server.processes.some(proc => proc.status !== 'completed')
+        server.processes.some(isActiveProcess)
     )
 
     const totalActiveProcesses = activeServers.reduce((total, server) => {
-        return total + server.processes.filter(proc => proc.status !== 'completed').length
+        return total + server.processes.filter(isActiveProcess).length
     }, 0) + (isSyncActive ? 1 : 0)
 
     if (activeServers.length === 0 && !isSyncActive) {
@@ -198,6 +235,21 @@ const EnhancedServerProcesses = ({ onSyncViewClick }) => {
                     </div>
                     <div className="text-xs text-emerald-600 mt-1">All systems are idle</div>
                 </div>
+                {/* History stays reachable when nothing is running. */}
+                <MaterialButton
+                    variant="text"
+                    size="small"
+                    color="primary"
+                    className="mt-3"
+                    onClick={() => setIsModalOpen(true)}
+                >
+                    View history
+                </MaterialButton>
+                <ServerProcessesModal
+                    isOpen={isModalOpen}
+                    setIsOpen={setIsModalOpen}
+                    onSyncViewClick={onSyncViewClick}
+                />
             </div>
         )
     }
