@@ -1,7 +1,7 @@
 import MediaPoster from '@components/MediaPoster'
 import HD4kBanner from '../../../public/4kBanner.png'
 import hdr10PlusLogo from '../../../public/HDR10+_Logo_light.svg'
-import { classNames, generateColors, getFullImageUrl, getResolutionLabel } from '@src/utils'
+import { classNames, generateColors, getFullImageUrl, getResolutionLabel, isHdr10Label } from '@src/utils'
 import RetryImage from '@components/RetryImage'
 import WatchlistButton from '@components/WatchlistButton'
 import { cache } from 'react'
@@ -43,7 +43,7 @@ function Detailed({
     )
 
     hasHDR10 = seasons.some((season) =>
-      season.episodes.every((episode) => episode?.hdr === 'HDR10')
+      season.episodes.every((episode) => isHdr10Label(episode?.hdr))
     )
   }
   return (
