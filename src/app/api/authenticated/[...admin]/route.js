@@ -406,7 +406,9 @@ export async function GET(request, props) {
 
       case 'server-processes':
         {
-          const processes = await fetchProcesses()
+          // ?active=true: running and queued rows only, for the always-on panel.
+          const activeOnly = new URL(request.url).searchParams.get('active') === 'true'
+          const processes = await fetchProcesses({ activeOnly })
           responseData = processes
         }
         break
