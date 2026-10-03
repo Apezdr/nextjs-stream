@@ -2,10 +2,16 @@
  * JIT transcoder liveness/capacity check for serve-time delivery decisions.
  *
  * The transcoder's GET /health returns
- *   { status, active_encoders, audio_encoders, queued, active_sessions, version }
+ *   { status, active_encoders, audio_encoders, queued, active_sessions, version, features }
  * (jit-transcoder src/server/routes/health.rs). "Healthy" here means: it
  * answered 200 within the timeout, and — when a queue ceiling is configured —
  * its encode queue is not backed up.
+ *
+ * `features` is the transcoder's capability list (e.g.
+ * "master-video-range-filter-v1"). It rides on the same probe and the same
+ * cache entry as the verdict, so a transcoder rollback stops being advertised
+ * within one healthy TTL. Clients receive it as `streamFeatures` on a JIT
+ * swap (preference.js) — they cannot learn it from the stream host itself.
  *
  * What this check deliberately CANNOT see: the one-time keyframe scan that a
  * first master request for a large direct-play-eligible source blocks on
@@ -27,8 +33,17 @@ const HEALTHY_TTL_MS = 30_000
 const UNHEALTHY_TTL_MS = 10_000
 const PROBE_TIMEOUT_MS = 1_500
 
-/** origin -> { healthy: boolean, expiresAt: number } */
+/** origin -> { healthy: boolean, features: string[]|null, expiresAt: number } */
 const cache = new Map()
+
+/**
+ * The body's `features` array, strings only; null when the transcoder does
+ * not advertise one (an older build) or the body was unreadable.
+ */
+function parseFeatures(body) {
+  if (!Array.isArray(body?.features)) return null
+  return Object.freeze(body.features.filter((f) => typeof f === 'string'))
+}
 
 /**
  * origin -> what the LAST real probe saw. Serve decisions are fail-closed on
@@ -75,6 +90,7 @@ export async function isTranscoderHealthy(origin) {
   if (cached && cached.expiresAt > Date.now()) return cached.healthy
 
   let healthy = false
+  let features = null
   const started = Date.now()
   const probe = { at: started, ms: 0, ok: false }
   // Only OUR timer may turn an abort into a verdict. Caught live: Next's
@@ -99,11 +115,14 @@ export async function isTranscoderHealthy(origin) {
       })
       probe.status = res.status
       if (res.ok) {
+        // One body read serves both the capability list and the queue
+        // ceiling. An unreadable body still leaves liveness to the status.
+        const body = await res.json().catch(() => null)
+        features = parseFeatures(body)
         const ceiling = await maxQueued()
         if (ceiling === null) {
           healthy = true
         } else {
-          const body = await res.json().catch(() => null)
           probe.queued = body ? Number(body.queued ?? 0) : undefined
           healthy = body ? Number(body.queued ?? 0) <= ceiling : true
         }
@@ -141,9 +160,25 @@ export async function isTranscoderHealthy(origin) {
 
   cache.set(origin, {
     healthy,
+    // A shed transcoder is not served, so its list is never read.
+    features: healthy ? features : null,
     expiresAt: Date.now() + (healthy ? HEALTHY_TTL_MS : UNHEALTHY_TTL_MS),
   })
   return healthy
+}
+
+/**
+ * The capability list from the cached verdict for `origin`, without
+ * probing. Read it right after `isTranscoderHealthy(origin)` returned true;
+ * null when that verdict carried no list or is no longer cached.
+ *
+ * @param {string} origin
+ * @returns {readonly string[]|null}
+ */
+export function getTranscoderFeatures(origin) {
+  const cached = cache.get(origin)
+  if (!cached || cached.expiresAt <= Date.now() || !cached.healthy) return null
+  return cached.features
 }
 
 /** Drop cached liveness/capacity decisions after the queue policy changes. */

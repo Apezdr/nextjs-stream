@@ -8,6 +8,7 @@ import {
 import { applyJitPreference, getJitServeMode, getEffectiveJitServeMode } from '@src/utils/jit/preference'
 import {
   isTranscoderHealthy,
+  getTranscoderFeatures,
   invalidateTranscoderHealthCache,
   _resetHealthCacheForTests,
 } from '@src/utils/jit/health'
@@ -172,6 +173,60 @@ describe('applyJitPreference', () => {
     const m = await applyJitPreference({ videoURL: 'https://h/x.mkv', jitUrl: null })
     expect(m.videoURL).toBe('https://h/x.mkv')
     expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  test('a swap carries the transcoder feature list verbatim as streamFeatures', async () => {
+    // The TV app asks for ?range=pq only when this lists the filter: an old
+    // transcoder ignores the selector with a 200, so the status proves nothing.
+    process.env.JIT_SERVE_MODE = 'prefer'
+    const features = ['multi-language-audio', 'master-video-range-filter-v1']
+    global.fetch = mockFetchOk({ status: 'healthy', queued: 0, features })
+    const a = await applyJitPreference(mkvMedia())
+    const b = await applyJitPreference(mkvMedia())
+    expect(a.playbackSource).toBe('jit')
+    expect(a.streamFeatures).toEqual(features)
+    // Each payload owns its copy; the cached list stays intact.
+    a.streamFeatures.push('mutated')
+    expect(b.streamFeatures).toEqual(features)
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  test('a transcoder that advertises no list leaves streamFeatures absent', async () => {
+    process.env.JIT_SERVE_MODE = 'prefer'
+    global.fetch = mockFetchOk() // older build: no `features` key
+    const m = await applyJitPreference(mkvMedia())
+    expect(m.playbackSource).toBe('jit')
+    expect('streamFeatures' in m).toBe(false)
+  })
+
+  test('raw exits never carry streamFeatures', async () => {
+    process.env.JIT_SERVE_MODE = 'rescue'
+    global.fetch = mockFetchOk({ status: 'healthy', features: ['master-video-range-filter-v1'] })
+    const playable = await applyJitPreference({ ...mp4Media(), streamFeatures: ['stale'] })
+    expect(playable.playbackSource).toBe('raw')
+    expect('streamFeatures' in playable).toBe(false)
+
+    process.env.JIT_SERVE_MODE = 'prefer'
+    global.fetch = jest.fn().mockResolvedValue({ ok: false })
+    const unhealthy = await applyJitPreference(mkvMedia())
+    expect(unhealthy.playbackSource).toBe('raw')
+    expect('streamFeatures' in unhealthy).toBe(false)
+  })
+
+  test('each item carries the list of the transcoder behind its own jitUrl', async () => {
+    process.env.JIT_SERVE_MODE = 'prefer'
+    const OTHER = 'https://transcoder-b.example.com/stream/bW92aWVzL1kvWS5ta3Y/master.m3u8'
+    global.fetch = jest.fn(async (url) => ({
+      ok: true,
+      json: async () =>
+        url.startsWith('https://transcoder-b.example.com')
+          ? { status: 'healthy', features: [] }
+          : { status: 'healthy', features: ['master-video-range-filter-v1'] },
+    }))
+    const a = await applyJitPreference(mkvMedia())
+    const b = await applyJitPreference({ videoURL: 'https://h/movies/Y/y.mkv', jitUrl: OTHER, jitEligible: true })
+    expect(a.streamFeatures).toEqual(['master-video-range-filter-v1'])
+    expect(b.streamFeatures).toEqual([])
   })
 
   test('default mode is rescue; unrecognized fails closed to off', async () => {
@@ -379,5 +434,35 @@ describe('isTranscoderHealthy', () => {
     global.fetch = mockFetchOk()
     expect(await isTranscoderHealthy('')).toBe(false)
     expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  test('the feature list is cached with a healthy verdict, read without probing', async () => {
+    delete process.env.JIT_SERVE_MAX_QUEUED // liveness-only still reads the body
+    global.fetch = mockFetchOk({ status: 'healthy', features: ['multi-language-audio', 7, null] })
+    expect(getTranscoderFeatures('https://t4.example')).toBeNull() // nothing cached yet
+    expect(await isTranscoderHealthy('https://t4.example')).toBe(true)
+    expect(getTranscoderFeatures('https://t4.example')).toEqual(['multi-language-audio'])
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+  })
+
+  test('failed, shed or unreadable probes carry no feature list', async () => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: false })
+    expect(await isTranscoderHealthy('https://t5.example')).toBe(false)
+    expect(getTranscoderFeatures('https://t5.example')).toBeNull()
+
+    process.env.JIT_SERVE_MAX_QUEUED = '2'
+    global.fetch = mockFetchOk({ status: 'healthy', queued: 5, features: ['multi-language-audio'] })
+    expect(await isTranscoderHealthy('https://t6.example')).toBe(false)
+    expect(getTranscoderFeatures('https://t6.example')).toBeNull()
+
+    delete process.env.JIT_SERVE_MAX_QUEUED
+    global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => {
+        throw new SyntaxError('Unexpected token')
+      },
+    })
+    expect(await isTranscoderHealthy('https://t7.example')).toBe(true) // liveness unaffected
+    expect(getTranscoderFeatures('https://t7.example')).toBeNull()
   })
 })
