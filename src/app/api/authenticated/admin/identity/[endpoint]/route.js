@@ -3,6 +3,7 @@
  *
  *   GET  /api/authenticated/admin/identity/status     → GET  <processor>/api/identity/status
  *   GET  /api/authenticated/admin/identity/report     → GET  <processor>/api/identity/report
+ *   GET  /api/authenticated/admin/identity/leftovers  → GET  <processor>/api/identity/leftovers
  *   POST /api/authenticated/admin/identity/reconcile  → POST <processor>/api/identity/reconcile
  *
  * The processor keeps the reconcile report in memory only, so a 202 from it
@@ -21,7 +22,7 @@ const BACKEND_URL =
   process.env.NODE_SERVER_INTERNAL_URL || process.env.NODE_SERVER_URL || 'http://localhost:3000'
 
 const ENDPOINTS = {
-  GET: new Set(['status', 'report']),
+  GET: new Set(['status', 'report', 'leftovers']),
   POST: new Set(['reconcile']),
 }
 

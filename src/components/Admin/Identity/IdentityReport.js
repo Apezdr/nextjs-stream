@@ -25,6 +25,7 @@ import Image from 'next/image'
 import {
   ArrowPathIcon,
   CheckCircleIcon,
+  DocumentDuplicateIcon,
   ExclamationTriangleIcon,
   FingerPrintIcon,
   FolderMinusIcon,
@@ -42,6 +43,11 @@ import { describeIdentitySource, providerLabel } from '@src/utils/admin/identity
 const REFRESH_INTERVAL_MS = 60_000
 const reportKey = buildURL('/api/authenticated/admin/identity/report')
 const statusKey = buildURL('/api/authenticated/admin/identity/status')
+const leftoversKey = buildURL('/api/authenticated/admin/identity/leftovers')
+
+// Leftovers change only when files do. A processor without the endpoint (404)
+// simply shows no section, so nothing retries.
+const leftoversSwrOptions = { refreshInterval: 5 * 60_000, revalidateOnFocus: false, shouldRetryOnError: false }
 
 /**
  * The shared fetcher throws on any non-OK answer with only the status text, so
@@ -617,6 +623,68 @@ function UnmanagedSection({ list, arrFor, managers }) {
   )
 }
 
+/** "4.3 GB", "850 MB": decimal units, as file managers show them. */
+export function formatBytes(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '—'
+  if (bytes >= 1e9) return `${(bytes / 1e9).toFixed(1)} GB`
+  return `${Math.max(1, Math.round(bytes / 1e6))} MB`
+}
+
+export function LeftoversSection({ data, managers }) {
+  // A processor without the endpoint, or with no managers: nothing to show.
+  if (!data || data.enabled === false || data.error || !Array.isArray(data.leftovers)) return null
+  const items = data.leftovers
+  const unverified = data.unverified || 0
+  const list = { items, total: items.length, __tone: items.length ? 'warning' : 'neutral' }
+  return (
+    <Section
+      title="Leftover copies"
+      subtitle={`Files an upgrade replaced but left on disk. ${managers} track the other copy, and that is the one that plays, so these only take space.`}
+      icon={<DocumentDuplicateIcon className="h-6 w-6" />}
+      list={list}
+    >
+      <Table
+        columns={['Title', 'Leftover file', 'Size', 'Kept copy']}
+        empty="No leftover copies."
+        rows={items.map((item) => {
+          const manager = item.mediaType === 'tv' ? 'Sonarr' : 'Radarr'
+          return (
+            <tr key={`${item.libraryRelativePath}/${item.file}`}>
+              <td className={cellClass}>
+                <FolderLink libraryRelativePath={item.libraryRelativePath} />
+                {item.episode ? <span className="ml-1 text-xs text-gray-500">{item.episode}</span> : null}
+              </td>
+              <td className={`${cellClass} break-all`}>
+                {item.file}
+                {item.betterThanKept ? (
+                  <p className="mt-1 text-xs text-orange-700">
+                    This copy is better than the one {manager} keeps (HDR or a higher resolution). Change the quality
+                    settings in {manager} rather than deleting it.
+                  </p>
+                ) : item.isPrimary ? (
+                  <p className="mt-1 text-xs text-gray-500">Still the copy that plays, until the next library scan.</p>
+                ) : null}
+              </td>
+              <td className={`${cellClass} whitespace-nowrap`}>{formatBytes(item.size)}</td>
+              <td className={`${cellClass} break-all text-gray-500`}>{item.keep}</td>
+            </tr>
+          )
+        })}
+      />
+      {data.reclaimableBytes > 0 || unverified > 0 ? (
+        <p className="mt-3 text-sm text-gray-600">
+          {data.reclaimableBytes > 0
+            ? `Deleting the unmarked leftovers frees ${formatBytes(data.reclaimableBytes)}. `
+            : ''}
+          {unverified > 0
+            ? `${unverified} more ${unverified === 1 ? 'title has' : 'titles have'} several files that no manager tracks, so there is no kept copy to compare against.`
+            : ''}
+        </p>
+      ) : null}
+    </Section>
+  )
+}
+
 function ProviderConflictsSection({ list }) {
   const items = list?.items || []
   if (!items.length) return null
@@ -795,6 +863,7 @@ export default function IdentityReport() {
   const autoRanFor = useRef(null)
   const report = useSWR(reportKey, fetcher, swrOptions)
   const status = useSWR(statusKey, fetcher, swrOptions)
+  const leftovers = useSWR(leftoversKey, fetcher, leftoversSwrOptions)
   const managers = managerNames(status.data)
 
   // Re-render every 30 s so the report's age keeps counting while nothing
@@ -817,7 +886,7 @@ export default function IdentityReport() {
           `Reconciled ${body?.totals?.claimed ?? 0} claims: ${body?.totals?.write ?? 0} written, ${body?.totals?.conflict ?? 0} conflicts`
         )
       }
-      await Promise.all([report.mutate(body, { revalidate: false }), status.mutate()])
+      await Promise.all([report.mutate(body, { revalidate: false }), status.mutate(), leftovers.mutate()])
       setNow(Date.now())
     } catch (err) {
       if (auto) setAutoRefreshed(null)
@@ -1107,6 +1176,7 @@ export default function IdentityReport() {
       {tiles}
       <HowThisWorks managers={managers} />
       <ConflictsSection list={data.conflicts} managers={managers} />
+      <LeftoversSection data={leftovers.data} managers={managers} />
       <ManagedUnidentifiedSection list={data.managedUnidentified} managers={managers} />
       <ProviderOnlySection list={data.providerOnly} diskFor={renamed.diskFor} managers={managers} />
       <WrittenSection list={data.written} managers={managers} />
