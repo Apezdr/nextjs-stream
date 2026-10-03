@@ -26,7 +26,7 @@
  */
 
 import { isBrowserPlayableUrl } from '@src/utils/mediaVisibility'
-import { isTranscoderHealthy, getLastHealthProbe } from './health'
+import { isTranscoderHealthy, getLastHealthProbe, getTranscoderFeatures } from './health'
 import { getCachedJitServeSettings } from './serveSettings'
 import { resolveJitOverride } from './overrides'
 
@@ -59,6 +59,10 @@ export async function getEffectiveJitServeMode() {
  * On swap: `videoURL` becomes the manifest URL (both web and RN read this
  * field as "the stream URL" per contract), the original moves to
  * `rawVideoURL`, and `playbackSource: 'jit'` is stamped for observability.
+ * `streamFeatures` carries that transcoder's /health `features` list,
+ * verbatim, so a client learns what the master URL honors (e.g.
+ * `?range=pq|sdr`) before it builds the player. It is absent on every raw
+ * exit and when the transcoder advertises no list.
  *
  * @param {object|null|undefined} media
  * @returns {Promise<object|null|undefined>} the same object
@@ -80,6 +84,7 @@ export async function applyJitPreference(media) {
     media.jitSkipReason = reason
     if (detail) media.jitSkipDetail = detail
     media.playbackSource = 'raw'
+    delete media.streamFeatures // describes a transcoder this payload does not use
     return media
   }
 
@@ -113,10 +118,16 @@ export async function applyJitPreference(media) {
     return skip('transcoder-unhealthy', getLastHealthProbe(origin))
   }
 
+  // Read from the verdict just returned, so the list always describes the
+  // host of this jitUrl (origins can differ per item in a mixed fleet).
+  const features = getTranscoderFeatures(origin)
+
   delete media.jitSkipReason
   delete media.jitSkipDetail
   media.rawVideoURL = media.videoURL
   media.videoURL = media.jitUrl
   media.playbackSource = 'jit'
+  if (features) media.streamFeatures = [...features]
+  else delete media.streamFeatures
   return media
 }
