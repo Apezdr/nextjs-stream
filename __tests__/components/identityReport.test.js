@@ -30,8 +30,13 @@ const IdentityReport = require('@components/Admin/Identity/IdentityReport').defa
 
 const idle = { data: undefined, error: undefined, isLoading: false, mutate: jest.fn() }
 
-function swrStates({ report, status = idle }) {
-  mockUseSWR.mockImplementation((key) => (String(key).includes('/report') ? report : status))
+function swrStates({ report, status = idle, leftovers = idle }) {
+  mockUseSWR.mockImplementation((key) => {
+    const k = String(key)
+    if (k.includes('/report')) return report
+    if (k.includes('/leftovers')) return leftovers
+    return status
+  })
 }
 
 beforeEach(() => {
@@ -508,5 +513,72 @@ describe('polling while the processor is not ready', () => {
     } finally {
       jest.useRealTimers()
     }
+  })
+})
+
+describe('leftover copies', () => {
+  const { LeftoversSection, formatBytes } = require('@components/Admin/Identity/IdentityReport')
+
+  // Production's cases: Radarr tracks Nobody's remux, so the 1080p copy only
+  // takes space; Radarr swapped Elio's Dolby Vision release for an SDR one,
+  // so its "leftover" is the better copy.
+  const data = {
+    enabled: true,
+    leftovers: [
+      {
+        mediaType: 'movie', libraryRelativePath: 'movies/Elio', title: 'Elio', episode: null,
+        file: 'Elio.2025.Hybrid.2160p.WEB-DL.DV.HDR.mp4', size: 18606230244, isPrimary: false,
+        keep: 'Elio.2025.2160p.SDR.WEB-DL.mp4', betterThanKept: true,
+      },
+      {
+        mediaType: 'movie', libraryRelativePath: 'movies/Nobody', title: 'Nobody', episode: null,
+        file: 'Nobody.2021.1080p.BluRay.iVy.mp4', size: 4322151904, isPrimary: true,
+        keep: 'Nobody.2021.2160p.Remux.mkv', betterThanKept: false,
+      },
+      {
+        mediaType: 'tv', libraryRelativePath: 'tv/Alien - Earth', title: 'Alien - Earth', episode: 'S01E01',
+        file: 'Alien - Earth - S01E01 - Neverland WEBDL-1080p.mp4', size: 2605644608, isPrimary: false,
+        keep: 'Alien - Earth - S01E01 - Neverland WEBDL-2160p Proper.mp4', betterThanKept: false,
+      },
+    ],
+    reclaimableBytes: 4322151904 + 2605644608,
+    unverified: 2,
+  }
+
+  it('lists each leftover with its size and the copy that is kept', () => {
+    render(<LeftoversSection data={data} managers="Radarr and Sonarr" />)
+    expect(screen.getByText('Leftover copies')).toBeInTheDocument()
+    expect(screen.getByText('Nobody.2021.1080p.BluRay.iVy.mp4')).toBeInTheDocument()
+    expect(screen.getByText('Nobody.2021.2160p.Remux.mkv')).toBeInTheDocument()
+    expect(screen.getByText('4.3 GB')).toBeInTheDocument()
+    expect(screen.getByText('S01E01')).toBeInTheDocument()
+    expect(screen.getByText(/still the copy that plays/i)).toBeInTheDocument()
+  })
+
+  it('warns instead of inviting a delete when the leftover is the better copy', () => {
+    render(<LeftoversSection data={data} managers="Radarr and Sonarr" />)
+    expect(screen.getByText(/better than the one Radarr keeps/i)).toBeInTheDocument()
+    // Elio's 18.6 GB is not counted as space to reclaim.
+    expect(screen.getByText(/frees 6\.9 GB/)).toBeInTheDocument()
+    expect(screen.getByText(/2 more titles have several files that no manager tracks/)).toBeInTheDocument()
+  })
+
+  it('shows nothing for a processor without the endpoint or with no managers', () => {
+    const { container } = render(<LeftoversSection data={undefined} managers="Radarr" />)
+    expect(container).toBeEmptyDOMElement()
+    render(<LeftoversSection data={{ enabled: false }} managers="Radarr" />)
+    expect(screen.queryByText('Leftover copies')).not.toBeInTheDocument()
+  })
+
+  it('the page asks the processor for its leftovers', () => {
+    swrStates({ report: { ...idle, data: { enabled: false } } })
+    render(<IdentityReport />)
+    expect(mockUseSWR.mock.calls.map(([key]) => String(key))).toContain('/api/authenticated/admin/identity/leftovers')
+  })
+
+  it('formats sizes in decimal units', () => {
+    expect(formatBytes(45069992695)).toBe('45.1 GB')
+    expect(formatBytes(850_000_000)).toBe('850 MB')
+    expect(formatBytes(null)).toBe('—')
   })
 })

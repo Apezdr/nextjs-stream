@@ -25,6 +25,7 @@ import { exec } from 'child_process'
 import clientPromise from '@src/lib/mongodb'
 import { getCpuUsage, getMemoryTotal, getMemoryUsage, getMemoryUsed, getDiskStats, monitorConfig } from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
+import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import { syncAllServers } from '@src/utils/sync'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { SyncEventType } from '@src/utils/sync/core/types'
@@ -408,7 +409,7 @@ export async function GET(request, props) {
         {
           // ?active=true: running and queued rows only, for the always-on panel.
           const activeOnly = new URL(request.url).searchParams.get('active') === 'true'
-          const processes = await fetchProcesses({ activeOnly })
+          const processes = await fetchProcesses({ activeOnly, headers: await getBackendAuthHeaders(request) })
           responseData = processes
         }
         break
