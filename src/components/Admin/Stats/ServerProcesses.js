@@ -2,6 +2,7 @@
 
 import useSWR from 'swr';
 import { buildURL, fetcher } from '@src/utils';
+import { isActiveProcess } from '@src/utils/processStatus';
 import Loading from '@src/app/loading';
 import { useMemo, useState } from 'react';
 
@@ -257,12 +258,14 @@ export function ServerProcesses() {
 }
 
 /**
- * Renders a minimalized view of server processes, showing only active processes.
- * This component fetches server process data from the API and displays a summary
- * of the active processes, grouped by process type and message.
+ * Renders a minimalized view of server processes, showing only running and
+ * queued ones (isActiveProcess). This component fetches server process data
+ * from the API and displays a summary of the active processes, grouped by
+ * process type and message.
  */
 export function MinimalizedServerProcesses() {
-  const { data, error } = useSWR(buildURL('/api/authenticated/admin/server-processes'), fetcher, {
+  // The same key as the dashboard's header and card, so all three share one poll.
+  const { data, error } = useSWR(buildURL('/api/authenticated/admin/server-processes?active=true'), fetcher, {
     refreshInterval: 5000,
   });
 
@@ -287,9 +290,10 @@ export function MinimalizedServerProcesses() {
     );
   }
 
-  // Filter out servers that have no active processes
+  // Filter out servers that have no active processes. Filtered here as well as
+  // on the server: a processor without ?active=true returns every row.
   const activeServers = serverProcesses.filter((server) =>
-    server.processes && server.processes.some((proc) => proc.status !== 'completed')
+    server.processes && server.processes.some(isActiveProcess)
   );
 
   // If no servers have active processes, render a simple message
@@ -304,10 +308,8 @@ export function MinimalizedServerProcesses() {
   return (
     <div className="w-full space-y-2">
       {activeServers.map((server) => {
-        // Only look at processes that are not completed
-        const activeProcesses = server.processes ? server.processes.filter(
-          (proc) => proc.status !== 'completed'
-        ) : [];
+        // Only running and queued processes; errors and interrupted runs are history
+        const activeProcesses = server.processes ? server.processes.filter(isActiveProcess) : [];
 
         // Group processes by (process_type + message) so identical tasks are collapsed
         const processGroups = groupProcesses(activeProcesses);

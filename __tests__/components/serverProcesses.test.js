@@ -5,7 +5,7 @@
  * permanently "active", and library scans need their progress shown.
  */
 
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 
 const mockUseSWR = jest.fn()
 jest.mock('swr', () => ({ __esModule: true, default: (...args) => mockUseSWR(...args) }))
@@ -97,5 +97,65 @@ describe('EnhancedServerProcesses', () => {
     expect(screen.getByText('Movie 2')).toBeInTheDocument()
     expect(screen.queryByText('Movie 3')).not.toBeInTheDocument()
     expect(screen.getByText('+2 more')).toBeInTheDocument()
+  })
+})
+
+// The header tiles and the admin sidebar read the same rows. Before they
+// shared the active filter, production showed "Active Processes 50" and a
+// Warning status: one library scan plus 49 old error and interrupted rows.
+describe('every consumer counts only running and queued rows', () => {
+  jest.mock('@src/app/(styled)/admin/WipeDBButton', () => ({
+    __esModule: true,
+    default: () => null,
+  }))
+  jest.mock('@src/app/loading', () => ({ __esModule: true, default: () => null }))
+
+  const { MinimalizedServerProcesses } = require('@components/Admin/Stats/ServerProcesses')
+  const DashboardHeader = require('@components/Admin/DashboardHeader').default
+
+  const scan = {
+    id: 1276, file_key: 'library_scan_movies', process_type: 'library-scan', status: 'in-progress',
+    message: 'Animal Farm (44 of 838 movies)', current_step: 43, total_steps: 838,
+  }
+  const history = [
+    ...Array.from({ length: 17 }, (_, i) => ({
+      id: 100 + i, file_key: `x_${i}_spritesheet`, process_type: 'spritesheet', status: 'error',
+      message: 'Failed to parse video duration.', current_step: 3, total_steps: 3,
+    })),
+    ...Array.from({ length: 6 }, (_, i) => ({
+      id: 200 + i, file_key: `y_${i}_vtt`, process_type: 'vtt', status: 'interrupted',
+      message: 'Process was interrupted due to application restart.', current_step: 1, total_steps: 2,
+    })),
+  ]
+
+  it('the sidebar lists the running scan and none of the history', () => {
+    swrStates({ processes: [scan, ...history] })
+    render(<MinimalizedServerProcesses />)
+
+    expect(screen.getByText(/1 × library-scan/)).toBeInTheDocument()
+    expect(screen.getByText(/Animal Farm \(44 of 838 movies\)/)).toBeInTheDocument()
+    expect(screen.queryByText(/spritesheet/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/interrupted/)).not.toBeInTheDocument()
+    expect(mockUseSWR.mock.calls.map(([key]) => String(key)))
+      .toContain('/api/authenticated/admin/server-processes?active=true')
+  })
+
+  it('the sidebar is idle when only history is left', () => {
+    swrStates({ processes: history })
+    render(<MinimalizedServerProcesses />)
+    expect(screen.getByText('No active processes.')).toBeInTheDocument()
+  })
+
+  it('the header counts the running scan, and old failures do not make the system "Warning"', () => {
+    swrStates({ processes: [scan, ...history] })
+    render(<DashboardHeader lastSyncTime={new Date().toISOString()} totalUsers={50} />)
+
+    const tile = screen.getByText('Active Processes').closest('div').parentElement.parentElement
+    expect(within(tile).getByText('1')).toBeInTheDocument()
+    expect(screen.queryByText('Warning')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Healthy').length).toBeGreaterThan(0)
+    // One shared poll: the same key as the card and the sidebar.
+    expect(mockUseSWR.mock.calls.map(([key]) => String(key)))
+      .toContain('/api/authenticated/admin/server-processes?active=true')
   })
 })
