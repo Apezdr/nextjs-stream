@@ -2,6 +2,7 @@
 
 import useSWR from 'swr';
 import { buildURL, fetcher } from '@src/utils';
+import { getProcessTypeLabel, isActiveProcess } from '@src/utils/processStatus';
 import Loading from '@src/app/loading';
 import { useMemo, useState } from 'react';
 
@@ -257,12 +258,13 @@ export function ServerProcesses() {
 }
 
 /**
- * Renders a minimalized view of server processes, showing only active processes.
- * This component fetches server process data from the API and displays a summary
- * of the active processes, grouped by process type and message.
+ * Renders a minimalized view of server processes, showing only running and
+ * queued ones (isActiveProcess) as a count per process type. The dashboard's
+ * Active Processes card has the titles and progress.
  */
 export function MinimalizedServerProcesses() {
-  const { data, error } = useSWR(buildURL('/api/authenticated/admin/server-processes'), fetcher, {
+  // The same key as the dashboard's header and card, so all three share one poll.
+  const { data, error } = useSWR(buildURL('/api/authenticated/admin/server-processes?active=true'), fetcher, {
     refreshInterval: 5000,
   });
 
@@ -287,9 +289,10 @@ export function MinimalizedServerProcesses() {
     );
   }
 
-  // Filter out servers that have no active processes
+  // Filter out servers that have no active processes. Filtered here as well as
+  // on the server: a processor without ?active=true returns every row.
   const activeServers = serverProcesses.filter((server) =>
-    server.processes && server.processes.some((proc) => proc.status !== 'completed')
+    server.processes && server.processes.some(isActiveProcess)
   );
 
   // If no servers have active processes, render a simple message
@@ -304,12 +307,10 @@ export function MinimalizedServerProcesses() {
   return (
     <div className="w-full space-y-2">
       {activeServers.map((server) => {
-        // Only look at processes that are not completed
-        const activeProcesses = server.processes ? server.processes.filter(
-          (proc) => proc.status !== 'completed'
-        ) : [];
+        // Only running and queued processes; errors and interrupted runs are history
+        const activeProcesses = server.processes ? server.processes.filter(isActiveProcess) : [];
 
-        // Group processes by (process_type + message) so identical tasks are collapsed
+        // A count per type; the dashboard card has the titles and progress.
         const processGroups = groupProcesses(activeProcesses);
 
         return (
@@ -318,12 +319,14 @@ export function MinimalizedServerProcesses() {
               {server.server}
             </div>
             <ul className="space-y-1">
-              {processGroups.map((group, index) => (
-                <li key={index} className="text-gray-400 text-xs">
-                  <strong className="text-gray-200">
-                    {group.count} × {group.process_type}
-                  </strong>
-                  : {group.message}
+              {processGroups.map((group) => (
+                <li
+                  key={group.process_type}
+                  className="flex items-center justify-between text-xs text-gray-300"
+                  title={group.process_type}
+                >
+                  <span>{getProcessTypeLabel(group.process_type)}</span>
+                  <span className="font-semibold text-gray-100">{group.count}</span>
                 </li>
               ))}
             </ul>
@@ -335,24 +338,15 @@ export function MinimalizedServerProcesses() {
 }
 
 /**
- * Helper function to group processes by both 'process_type' and 'message'.
- * Returns an array of objects like:
- *   { process_type: string, message: string, count: number }
+ * Count processes per 'process_type', in first-seen order. Returns an array of
+ * objects like:
+ *   { process_type: string, count: number }
  */
 function groupProcesses(processes) {
-  const groups = {};
-
+  const counts = new Map();
   processes.forEach((p) => {
-    const key = `${p.process_type}|||${p.message}`;
-    if (!groups[key]) {
-      groups[key] = {
-        process_type: p.process_type,
-        message: p.message,
-        count: 0,
-      };
-    }
-    groups[key].count += 1;
+    const type = p.process_type || 'Unknown';
+    counts.set(type, (counts.get(type) || 0) + 1);
   });
-
-  return Object.values(groups);
+  return [...counts].map(([process_type, count]) => ({ process_type, count }));
 }

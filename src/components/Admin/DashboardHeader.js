@@ -4,6 +4,7 @@ import { memo, useEffect, useState } from 'react'
 import useSWR from 'swr'
 import { MaterialButton, StatusBadge, MetricCard } from './BaseComponents'
 import { buildURL, fetcher } from '@src/utils'
+import { isActiveProcess } from '@src/utils/processStatus'
 import WipeDbButton from '@src/app/(styled)/admin/WipeDBButton'
 
 // --- Module-level helpers (stable, not recreated on render) ---
@@ -139,7 +140,7 @@ const DashboardHeader = ({
 }) => {
   // Shares the same SWR cache key as EnhancedServerProcesses — zero duplicate requests
   const { data: processesData } = useSWR(
-    buildURL('/api/authenticated/admin/server-processes'),
+    buildURL('/api/authenticated/admin/server-processes?active=true'),
     fetcher,
     { refreshInterval: 5000 }
   )
@@ -163,9 +164,11 @@ const DashboardHeader = ({
   // Derived during render — no useState/useEffect needed
   const isLoading = !processesData
   const isSyncActive = syncStatus?.active === true
+  // Filtered here too: a processor that predates ?active=true returns every row,
+  // and its old error and interrupted rows are history, not running tasks.
   const activeProcessCount = (serverProcesses.reduce((total, server) => {
     const processes = Array.isArray(server?.processes) ? server.processes : []
-    return total + processes.filter(p => p.status !== 'completed').length
+    return total + processes.filter(isActiveProcess).length
   }, 0) ?? 0) + (isSyncActive ? 1 : 0)
 
   const systemHealth =
