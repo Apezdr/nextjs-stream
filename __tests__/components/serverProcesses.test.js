@@ -35,6 +35,7 @@ const tvScan = {
   process_type: 'library-scan',
   status: 'in-progress',
   message: 'Futurama (65 of 230 shows)',
+  subject: 'TV shows',
   current_step: 64,
   total_steps: 230,
 }
@@ -72,12 +73,31 @@ describe('EnhancedServerProcesses', () => {
     render(<EnhancedServerProcesses />)
 
     expect(screen.getByText('1 active processes')).toBeInTheDocument()
-    expect(screen.getByText('library-scan')).toBeInTheDocument()
+    expect(screen.getByText('Library scan')).toBeInTheDocument()
+    expect(screen.getByText('TV shows')).toBeInTheDocument()
     expect(screen.getByText('In progress')).toBeInTheDocument()
     expect(screen.getByText('Futurama (65 of 230 shows)')).toBeInTheDocument()
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '28')
-    expect(screen.queryByText('spritesheet')).not.toBeInTheDocument()
+    expect(screen.queryByText('Seek preview images')).not.toBeInTheDocument()
     expect(screen.queryByText('ffmpeg exited 1')).not.toBeInTheDocument()
+  })
+
+  it('says what each job is and which title it is for', () => {
+    swrStates({
+      processes: [
+        { id: 20, file_key: 'tv_For All Mankind_1_1_spritesheet', process_type: 'spritesheet', status: 'in-progress',
+          subject: 'For All Mankind S01E01', message: 'Extracting frames 33%', current_step: 2, total_steps: 3 },
+        { id: 21, file_key: 'movie_Logan_en_caption', process_type: 'caption', status: 'in-progress',
+          subject: 'Logan (en)', message: 'Transcribing (base.en)', current_step: 3, total_steps: 5 },
+      ],
+    })
+    render(<EnhancedServerProcesses />)
+
+    expect(screen.getByText('Seek preview images')).toBeInTheDocument()
+    expect(screen.getByText('For All Mankind S01E01')).toBeInTheDocument()
+    expect(screen.getByText('Extracting frames 33%')).toBeInTheDocument()
+    expect(screen.getByText('Auto captions')).toBeInTheDocument()
+    expect(screen.getByText('Logan (en)')).toBeInTheDocument()
   })
 
   it('lists the first three of a long queue and counts the rest', () => {
@@ -128,13 +148,30 @@ describe('every consumer counts only running and queued rows', () => {
     })),
   ]
 
-  it('the sidebar lists the running scan and none of the history', () => {
-    swrStates({ processes: [scan, ...history] })
+  it('the sidebar counts the running jobs per type, and none of the history', () => {
+    const running = (id, process_type, subject) => ({
+      id, file_key: `k_${id}`, process_type, status: 'in-progress', subject, message: 'working', current_step: 1, total_steps: 3,
+    })
+    swrStates({
+      processes: [
+        scan,
+        running(1, 'spritesheet', 'For All Mankind S01E01'),
+        running(2, 'spritesheet', 'Logan'),
+        running(3, 'vtt', 'Logan'),
+        running(4, 'caption', 'Logan (en)'),
+        ...history,
+      ],
+    })
     render(<MinimalizedServerProcesses />)
 
-    expect(screen.getByText(/1 × library-scan/)).toBeInTheDocument()
-    expect(screen.getByText(/Animal Farm \(44 of 838 movies\)/)).toBeInTheDocument()
-    expect(screen.queryByText(/spritesheet/)).not.toBeInTheDocument()
+    const countOf = (label) => within(screen.getByText(label).closest('li')).getByText(/^\d+$/).textContent
+    expect(countOf('Library scan')).toBe('1')
+    expect(countOf('Seek preview images')).toBe('2')
+    expect(countOf('Seek preview index')).toBe('1')
+    expect(countOf('Auto captions')).toBe('1')
+    // Counts only: no titles, no step messages, no history.
+    expect(screen.queryByText(/Animal Farm/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Logan/)).not.toBeInTheDocument()
     expect(screen.queryByText(/interrupted/)).not.toBeInTheDocument()
     expect(mockUseSWR.mock.calls.map(([key]) => String(key)))
       .toContain('/api/authenticated/admin/server-processes?active=true')

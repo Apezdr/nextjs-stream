@@ -6,6 +6,23 @@
 /** Statuses that mean a process is running or waiting to run. */
 export const ACTIVE_PROCESS_STATUSES = ['in-progress', 'queued']
 
+// What each process_type is for, in words.
+const PROCESS_TYPE_LABELS = {
+  'library-scan': 'Library scan',
+  spritesheet: 'Seek preview images',
+  vtt: 'Seek preview index',
+  caption: 'Auto captions',
+}
+
+/**
+ * A process type in words; an unknown type is shown as itself.
+ * @param {string} type
+ * @returns {string}
+ */
+export function getProcessTypeLabel(type) {
+  return PROCESS_TYPE_LABELS[type] ?? type ?? 'Unknown'
+}
+
 /**
  * Whether a process row is current activity. 'error' and 'interrupted' rows
  * are history: counting them kept failures from weeks ago in Active Processes.

@@ -53,3 +53,14 @@ describe('getProcessPercent', () => {
     expect(getProcessPercent({ current_step: 5, total_steps: 3 })).toBe(100)
   })
 })
+
+describe('getProcessTypeLabel', () => {
+  it('says what each process type is for', () => {
+    const { getProcessTypeLabel } = require('@src/utils/processStatus')
+    expect(getProcessTypeLabel('library-scan')).toBe('Library scan')
+    expect(getProcessTypeLabel('spritesheet')).toBe('Seek preview images')
+    expect(getProcessTypeLabel('vtt')).toBe('Seek preview index')
+    expect(getProcessTypeLabel('caption')).toBe('Auto captions')
+    expect(getProcessTypeLabel('something-new')).toBe('something-new')
+  })
+})

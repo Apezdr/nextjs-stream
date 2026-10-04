@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import useSWR from 'swr'
 import { buildURL, fetcher } from '@src/utils'
-import { getProcessPercent, getProcessStatusBadge, isActiveProcess } from '@src/utils/processStatus'
+import { getProcessPercent, getProcessStatusBadge, getProcessTypeLabel, isActiveProcess } from '@src/utils/processStatus'
 import { StatusBadge, MaterialButton } from '../BaseComponents'
 import ServerProcessesModal from './ServerProcessesModal'
 
@@ -12,10 +12,16 @@ const MAX_DETAILS_PER_TYPE = 3
 
 function ProcessDetail({ process }) {
     const percent = getProcessPercent(process)
-    if (!process.message && percent === null) return null
+    if (!process.subject && !process.message && percent === null) return null
 
     return (
         <div className="pl-4">
+            {/* Who the job is for; rows from older processors have none. */}
+            {process.subject && (
+                <div className="text-xs font-medium text-gray-800 truncate" title={process.subject}>
+                    {process.subject}
+                </div>
+            )}
             {process.message && (
                 <div className="text-xs text-gray-600 truncate" title={process.message}>
                     {process.message}
@@ -81,7 +87,9 @@ function ProcessCard({ serverName, processes }) {
                             <div className="flex items-center justify-between text-xs">
                                 <div className="flex items-center space-x-2">
                                     <div className="w-2 h-2 bg-blue-400 rounded-full"></div>
-                                    <span className="font-medium text-gray-700">{processType}</span>
+                                    <span className="font-medium text-gray-700" title={processType}>
+                                        {getProcessTypeLabel(processType)}
+                                    </span>
                                 </div>
                                 <div className="flex items-center space-x-2">
                                     <span className="text-gray-600">{procs.length}×</span>

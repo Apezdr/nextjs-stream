@@ -4,7 +4,7 @@ import { Dialog, Transition } from '@headlessui/react'
 import { Fragment, useRef, useState, useMemo } from 'react'
 import useSWR from 'swr'
 import { buildURL, fetcher } from '@src/utils'
-import { getProcessStatusBadge } from '@src/utils/processStatus'
+import { getProcessStatusBadge, getProcessTypeLabel } from '@src/utils/processStatus'
 import { StatusBadge } from '../BaseComponents'
 
 export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClick }) {
@@ -232,7 +232,8 @@ export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClic
                                       {process.file_key}
                                     </td>
                                     <td className="px-4 py-3 text-sm text-gray-600">
-                                      {process.process_type}
+                                      {getProcessTypeLabel(process.process_type)}
+                                      <div className="text-xs text-gray-400">{process.process_type}</div>
                                     </td>
                                     <td className="px-4 py-3">
                                       <StatusBadge 
@@ -244,6 +245,11 @@ export default function ServerProcessesModal({ isOpen, setIsOpen, onSyncViewClic
                                       </StatusBadge>
                                     </td>
                                     <td className="px-4 py-3 text-sm text-gray-600 max-w-sm">
+                                      {process.subject && (
+                                        <div className="truncate font-medium text-gray-900" title={process.subject}>
+                                          {process.subject}
+                                        </div>
+                                      )}
                                       {process.message && (
                                         <div className="truncate" title={process.message}>
                                           {process.message}
