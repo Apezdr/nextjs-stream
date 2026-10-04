@@ -33,7 +33,7 @@ import { siteTitle } from '@src/utils/config'
 import { useRouter } from 'next/navigation'
 import { hardNavigate } from '@src/utils/hardNavigate'
 import Logo from '../../logo'
-import { MinimalServerStats } from '@components/Admin/Stats/ServerStats'
+import MinimalServerStats from '@components/Admin/Stats/MinimalServerStats'
 import { MinimalizedServerProcesses } from '@components/Admin/Stats/ServerProcesses'
 
 const navigation = [

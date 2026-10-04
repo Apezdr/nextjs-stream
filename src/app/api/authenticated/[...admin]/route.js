@@ -23,7 +23,7 @@ import { getFileServerImportSettings } from '@src/utils/sync_db'
 import { getAllServers } from '@src/utils/config'
 import { exec } from 'child_process'
 import clientPromise from '@src/lib/mongodb'
-import { getCpuUsage, getMemoryTotal, getMemoryUsage, getMemoryUsed, getDiskStats, monitorConfig } from '@src/utils/monitor_server_load'
+import { getServerLoadSnapshot, noteServerLoadDemand } from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import { syncAllServers } from '@src/utils/sync'
@@ -394,15 +394,10 @@ export async function GET(request, props) {
         break
 
       case 'server-load':
-        {
-          const { cpuEnabled, memoryEnabled, diskEnabled } = monitorConfig
-          responseData = {
-            ...(cpuEnabled    ? { cpu: getCpuUsage() }                                                              : {}),
-            ...(memoryEnabled ? { memoryUsed: getMemoryUsed(), memoryTotal: getMemoryTotal(), memoryUsage: getMemoryUsage() } : {}),
-            ...(diskEnabled   ? { drives: getDiskStats() }                                                          : { drives: [] }),
-            config: monitorConfig,
-          }
-        }
+        // Each dashboard poll keeps on-demand disk activity sampling running;
+        // it stops a minute after the last poll.
+        noteServerLoadDemand()
+        responseData = getServerLoadSnapshot()
         break
 
       case 'server-processes':

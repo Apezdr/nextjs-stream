@@ -1,246 +1,251 @@
 'use client'
 
 import useSWR from 'swr'
+import { ArrowsUpDownIcon, CircleStackIcon, CpuChipIcon, Square3Stack3DIcon } from '@heroicons/react/24/outline'
 import { fetcher } from '@src/utils'
+import { useSystemStatus } from '@src/contexts/SystemStatusContext'
 import { StatusBadge } from '../BaseComponents'
+import TelemetrySparkline from './TelemetrySparkline'
+import { LEVELS, formatBytes, levelFor, storageFromSystemStatus, worstLevel } from './serverLoadDisplay'
+
+const SUMMARY = {
+  normal: { box: 'bg-emerald-50 border-emerald-200', icon: 'text-emerald-600', text: 'text-emerald-800', message: 'System running optimally' },
+  high: { box: 'bg-amber-50 border-amber-200', icon: 'text-amber-600', text: 'text-amber-800', message: 'System under moderate load' },
+  critical: { box: 'bg-red-50 border-red-200', icon: 'text-red-600', text: 'text-red-800', message: 'System under heavy load' },
+}
+
+function Bar({ percent, className, height = 'h-2' }) {
+  return (
+    <div className={`w-full bg-gray-200 rounded-full ${height} overflow-hidden`}>
+      <div
+        className={`h-full ${className} transition-all duration-300 ease-out`}
+        style={{ width: `${Math.min(100, Math.max(0, percent))}%` }}
+      />
+    </div>
+  )
+}
+
+function SectionHeader({ icon: Icon, iconTone, title, subtitle, children }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className={`p-2 rounded-lg ${iconTone}`}>
+          <Icon className="w-5 h-5" aria-hidden="true" />
+        </div>
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-gray-900">{title}</div>
+          {subtitle && <div className="text-xs text-gray-500 truncate">{subtitle}</div>}
+        </div>
+      </div>
+      {children && <div className="text-right shrink-0">{children}</div>}
+    </div>
+  )
+}
+
+function LevelValue({ percent, level }) {
+  const style = LEVELS[level]
+  return (
+    <>
+      <div className="text-lg font-bold text-gray-900">{percent.toFixed(1)}%</div>
+      <StatusBadge status={style.badge} variant="soft" size="small">
+        {style.label}
+      </StatusBadge>
+    </>
+  )
+}
+
+function UsageSection({ icon, iconTone, title, subtitle, percent, level, history, sparkTone }) {
+  return (
+    <div className="space-y-3">
+      <SectionHeader icon={icon} iconTone={iconTone} title={title} subtitle={subtitle}>
+        <LevelValue percent={percent} level={level} />
+      </SectionHeader>
+      <Bar percent={percent} className={LEVELS[level].bar} />
+      <TelemetrySparkline values={history} label={`${title} usage over the last 60 seconds`} className={sparkTone} />
+    </div>
+  )
+}
+
+function StorageSection({ storage, thresholds }) {
+  const { servers, worst, level } = storage
+  return (
+    <div className="space-y-3">
+      <SectionHeader
+        icon={CircleStackIcon}
+        iconTone="bg-orange-100 text-orange-600"
+        title="Storage"
+        subtitle={worst ? `Fullest: ${worst.mount} on ${worst.serverLabel}` : 'Reported by the file servers'}
+      >
+        {worst && <LevelValue percent={worst.percent} level={level} />}
+      </SectionHeader>
+      {!worst && (
+        <p className="text-xs text-gray-500">
+          No drive report from the file servers yet. It refreshes every 30 seconds.
+        </p>
+      )}
+      {servers.map((server) => (
+        <div key={server.serverId} className="space-y-2">
+          {servers.length > 1 && <div className="text-xs font-semibold text-gray-600">{server.label}</div>}
+          {server.drives.map((drive) => (
+            <div key={drive.mount} className="space-y-1">
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="text-gray-700 font-medium truncate">{drive.mount}</span>
+                <span className="text-gray-500 shrink-0">
+                  {drive.available} free of {drive.size} · {drive.percent.toFixed(1)}%
+                </span>
+              </div>
+              <Bar percent={drive.percent} className={LEVELS[levelFor(drive.percent, thresholds)].bar} height="h-1.5" />
+            </div>
+          ))}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function DiskActivitySection({ diskIo, history }) {
+  const disks = diskIo.state === 'active' ? diskIo.disks : []
+  const busiest = disks.reduce((top, disk) => (!top || disk.busyPercent > top.busyPercent ? disk : top), null)
+  const totalRead = disks.reduce((sum, disk) => sum + disk.readBytesPerSec, 0)
+  const totalWrite = disks.reduce((sum, disk) => sum + disk.writeBytesPerSec, 0)
+
+  return (
+    <div className="space-y-3">
+      <SectionHeader
+        icon={ArrowsUpDownIcon}
+        iconTone="bg-teal-100 text-teal-600"
+        title="Disk activity"
+        subtitle="Measured every 3 seconds while this page is open"
+      >
+        {busiest && (
+          <>
+            <div className="text-lg font-bold text-gray-900">{busiest.busyPercent.toFixed(1)}%</div>
+            <div className="text-xs text-gray-500">busy, {busiest.device}</div>
+          </>
+        )}
+      </SectionHeader>
+      {diskIo.state === 'starting' && <p className="text-xs text-gray-500">Measuring…</p>}
+      {diskIo.state === 'active' && (
+        <>
+          <div className="flex justify-between text-xs text-gray-600">
+            <span>Read {formatBytes(totalRead)}/s</span>
+            <span>Write {formatBytes(totalWrite)}/s</span>
+          </div>
+          <TelemetrySparkline
+            values={history.map((point) => point.diskBusy)}
+            label="Busiest disk, percent of time busy, over the last 60 seconds"
+            className="text-teal-500"
+          />
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-500">
+                <th scope="col" className="text-left font-medium">Disk</th>
+                <th scope="col" className="text-right font-medium">Read</th>
+                <th scope="col" className="text-right font-medium">Write</th>
+                <th scope="col" className="text-right font-medium">Busy</th>
+              </tr>
+            </thead>
+            <tbody className="text-gray-700 tabular-nums">
+              {disks.map((disk) => (
+                <tr key={disk.device}>
+                  <td className="text-left font-medium">{disk.device}</td>
+                  <td className="text-right">{formatBytes(disk.readBytesPerSec)}/s</td>
+                  <td className="text-right">{formatBytes(disk.writeBytesPerSec)}/s</td>
+                  <td className="text-right">{disk.busyPercent.toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </div>
+  )
+}
 
 /**
- * Material Design server statistics component with clean, modern styling
+ * Server load on the admin overview: CPU and memory of the app's host, storage
+ * as the file servers report it, and disk activity while the page is open.
  */
 const EnhancedServerStats = () => {
-    const { data, error } = useSWR('/api/authenticated/admin/server-load', fetcher, {
-        refreshInterval: 3000,
-    })
+  const { data, error } = useSWR('/api/authenticated/admin/server-load', fetcher, {
+    refreshInterval: 3000,
+  })
+  const { status } = useSystemStatus()
 
-    if (error) {
-        return (
-            <div className="p-6 text-center">
-                <div className="text-red-600 text-sm">Failed to load server statistics</div>
-            </div>
-        )
-    }
-
-    if (!data) {
-        return (
-            <div className="p-6 text-center">
-                <div className="animate-pulse">
-                    <div className="space-y-4">
-                        <div className="h-4 bg-gray-200 rounded w-3/4 mx-auto"></div>
-                        <div className="h-20 bg-gray-200 rounded"></div>
-                        <div className="h-4 bg-gray-200 rounded w-1/2 mx-auto"></div>
-                    </div>
-                </div>
-            </div>
-        )
-    }
-
-    const {
-        cpu,
-        memoryUsed,
-        memoryTotal,
-        drives = [],
-        config: {
-            cpuEnabled    = true,
-            memoryEnabled = true,
-            diskEnabled   = true,
-            // Global fallback thresholds
-            warnThreshold     = 50,
-            criticalThreshold = 80,
-            // Per-metric thresholds (fall back to global when not individually set)
-            cpu:    cpuConfig    = {},
-            memory: memoryConfig = {},
-            disk:   diskConfig   = {},
-        } = {},
-    } = data
-    const memoryUsage = ((memoryUsed / memoryTotal) * 100)
-
-    // Resolved per-metric thresholds
-    const cpuWarn        = cpuConfig.warnThreshold     ?? warnThreshold
-    const cpuCrit        = cpuConfig.criticalThreshold ?? criticalThreshold
-    const memoryWarn     = memoryConfig.warnThreshold     ?? warnThreshold
-    const memoryCrit     = memoryConfig.criticalThreshold ?? criticalThreshold
-    const diskWarn       = diskConfig.warnThreshold     ?? warnThreshold
-    const diskCrit       = diskConfig.criticalThreshold ?? criticalThreshold
-
-    // Only health drives (non-system mounts) factor into the overall status
-    const healthDrives = drives.filter(d => d.isHealthDrive)
-    const worstDrive = healthDrives.reduce((w, d) => (d.percent > (w?.percent ?? 0) ? d : w), null)
-
-    // Per-metric helpers
-    const getCpuStatus    = (v) => v < cpuWarn    ? 'success' : v < cpuCrit    ? 'warning' : 'error'
-    const getMemoryStatus = (v) => v < memoryWarn ? 'success' : v < memoryCrit ? 'warning' : 'error'
-    const getDiskStatus   = (v) => v < diskWarn   ? 'success' : v < diskCrit   ? 'warning' : 'error'
-    const getCpuColor     = (v) => v < cpuWarn    ? 'bg-emerald-500' : v < cpuCrit    ? 'bg-amber-500' : 'bg-red-500'
-    const getMemoryColor  = (v) => v < memoryWarn ? 'bg-emerald-500' : v < memoryCrit ? 'bg-amber-500' : 'bg-red-500'
-    const getDiskColor    = (v) => v < diskWarn   ? 'bg-emerald-500' : v < diskCrit   ? 'bg-amber-500' : 'bg-red-500'
-    const getCpuLabel     = (v) => v < cpuWarn    ? 'Normal' : v < cpuCrit    ? 'High' : 'Critical'
-    const getMemoryLabel  = (v) => v < memoryWarn ? 'Normal' : v < memoryCrit ? 'High' : 'Critical'
-    const getDiskLabel    = (v) => v < diskWarn   ? 'Normal' : v < diskCrit   ? 'High' : 'Critical'
-
-    // Collect only the enabled metrics for the overall health summary.
-    // Compare each metric against its own thresholds so the summary reflects
-    // what a human would actually consider "healthy" per metric.
-    const enabledNormalized = [
-        ...(cpuEnabled    ? [cpu        >= cpuCrit    ? 100 : cpu        >= cpuWarn    ? 60 : 0] : []),
-        ...(memoryEnabled ? [memoryUsage >= memoryCrit ? 100 : memoryUsage >= memoryWarn ? 60 : 0] : []),
-        ...(diskEnabled   ? [(worstDrive?.percent ?? 0) >= diskCrit ? 100 : (worstDrive?.percent ?? 0) >= diskWarn ? 60 : 0] : []),
-    ]
-    const worstMetric = enabledNormalized.length > 0 ? Math.max(...enabledNormalized) : 0
-    // worstMetric: 0 = optimal, 60 = moderate, 100 = heavy
-
+  if (error) {
     return (
-        <div className="p-6 space-y-6">
-            {/* CPU Usage — hidden when SERVER_LOAD_CPU_ENABLED=false */}
-            {cpuEnabled && (
-            <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                        <div className="p-2 bg-blue-100 rounded-lg">
-                            <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
-                            </svg>
-                        </div>
-                        <div>
-                            <div className="text-sm font-medium text-gray-900">CPU Usage</div>
-                            <div className="text-xs text-gray-500">OS CPU utilization</div>
-                        </div>
-                    </div>
-                    <div className="text-right">
-                        <div className="text-lg font-bold text-gray-900">{cpu}%</div>
-                        <StatusBadge status={getCpuStatus(cpu)} variant="soft" size="small">
-                            {getCpuLabel(cpu)}
-                        </StatusBadge>
-                    </div>
-                </div>
-                <div className="space-y-2">
-                    <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                        <div
-                            className={`h-full ${getCpuColor(cpu)} transition-all duration-300 ease-out`}
-                            style={{ width: `${cpu}%` }}
-                        />
-                    </div>
-                    <div className="flex justify-between text-xs text-gray-500">
-                        <span>0%</span>
-                        <span>{cpuWarn}%</span>
-                        <span>100%</span>
-                    </div>
-                </div>
-            </div>
-            )}
-
-            {/* Memory Usage — hidden when SERVER_LOAD_MEMORY_ENABLED=false */}
-            {memoryEnabled && (
-            <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center space-x-3">
-                        <div className="p-2 bg-purple-100 rounded-lg">
-                            <svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.58 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.58 4 8 4s8-1.79 8-4M4 7c0-2.21 3.58-4 8-4s8 1.79 8 4" />
-                            </svg>
-                        </div>
-                        <div>
-                            <div className="text-sm font-medium text-gray-900">Memory Usage</div>
-                            <div className="text-xs text-gray-500">OS memory utilization</div>
-                        </div>
-                    </div>
-                    <div className="text-right">
-                        <div className="text-lg font-bold text-gray-900">{memoryUsage.toFixed(1)}%</div>
-                        <StatusBadge status={getMemoryStatus(memoryUsage)} variant="soft" size="small">
-                            {getMemoryLabel(memoryUsage)}
-                        </StatusBadge>
-                    </div>
-                </div>
-                <div className="space-y-2">
-                    <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
-                        <div
-                            className={`h-full ${getMemoryColor(memoryUsage)} transition-all duration-300 ease-out`}
-                            style={{ width: `${memoryUsage}%` }}
-                        />
-                    </div>
-                    <div className="flex justify-between text-xs text-gray-500">
-                        <span>0 GB</span>
-                        <span>{(memoryTotal / 2).toFixed(1)} GB</span>
-                        <span>{memoryTotal} GB</span>
-                    </div>
-                </div>
-                <div className="flex justify-between text-xs text-gray-600">
-                    <span>Used: {memoryUsed} GB</span>
-                    <span>Available: {(memoryTotal - memoryUsed).toFixed(1)} GB</span>
-                </div>
-            </div>
-            )}
-
-            {/* Disk Usage — hidden when SERVER_LOAD_DISK_ENABLED=false */}
-            {diskEnabled && drives.length > 0 && (
-                <div className="space-y-3">
-                    <div className="flex items-center space-x-3">
-                        <div className="p-2 bg-orange-100 rounded-lg">
-                            <svg className="w-5 h-5 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2" />
-                            </svg>
-                        </div>
-                        <div className="text-sm font-medium text-gray-900">Disk Usage</div>
-                    </div>
-                    <div className="space-y-3">
-                        {drives.map(drive => (
-                            <div key={drive.mountpoint} className="space-y-1">
-                                <div className="flex items-center justify-between text-xs">
-                                    <span className="text-gray-700 font-medium truncate max-w-[60%]">{drive.mountpoint}</span>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-gray-500">{drive.avail} GB free</span>
-                                        <StatusBadge
-                                            status={drive.isHealthDrive ? getDiskStatus(drive.percent) : 'success'}
-                                            variant="soft"
-                                            size="small"
-                                        >
-                                            {drive.percent}%
-                                        </StatusBadge>
-                                        {!drive.isHealthDrive && (
-                                            <span className="text-gray-400 text-[10px]">OS</span>
-                                        )}
-                                    </div>
-                                </div>
-                                <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-                                    <div
-                                        className={`h-full ${drive.isHealthDrive ? getDiskColor(drive.percent) : 'bg-emerald-500'} transition-all duration-300 ease-out`}
-                                        style={{ width: `${drive.percent}%` }}
-                                    />
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            )}
-
-            {/* System Health Summary — only considers enabled metrics */}
-            {enabledNormalized.length > 0 && (
-            <div className={`p-4 rounded-lg border ${
-                worstMetric === 0   ? 'bg-emerald-50 border-emerald-200' :
-                worstMetric < 100   ? 'bg-amber-50 border-amber-200' :
-                'bg-red-50 border-red-200'
-            }`}>
-                <div className="flex items-center space-x-2">
-                    <svg className={`w-4 h-4 ${
-                        worstMetric === 0 ? 'text-emerald-600' :
-                        worstMetric < 100 ? 'text-amber-600'  :
-                        'text-red-600'
-                    }`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                    </svg>
-                    <span className={`text-sm font-medium ${
-                        worstMetric === 0 ? 'text-emerald-800' :
-                        worstMetric < 100 ? 'text-amber-800'  :
-                        'text-red-800'
-                    }`}>
-                        {worstMetric === 0   ? 'System running optimally' :
-                         worstMetric < 100   ? 'System under moderate load' :
-                         'System under heavy load'}
-                    </span>
-                </div>
-            </div>
-            )}
-        </div>
+      <div className="p-6 text-center">
+        <div className="text-red-600 text-sm">Failed to load server statistics</div>
+      </div>
     )
+  }
+
+  if (!data) {
+    return (
+      <div className="p-6 text-center">
+        <div className="animate-pulse">
+          <div className="space-y-4">
+            <div className="h-4 bg-gray-200 rounded w-3/4 mx-auto"></div>
+            <div className="h-20 bg-gray-200 rounded"></div>
+            <div className="h-4 bg-gray-200 rounded w-1/2 mx-auto"></div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const { cpu, memory, diskIo, history = [], config } = data
+  const { thresholds } = config
+  const storage = config.diskEnabled ? storageFromSystemStatus(status, thresholds.disk) : null
+  const cpuLevel = cpu && levelFor(cpu.percent, thresholds.cpu)
+  const memoryLevel = memory && levelFor(memory.percent, thresholds.memory)
+  const overall = worstLevel([cpuLevel, memoryLevel, storage?.level])
+  const summary = overall && SUMMARY[overall]
+
+  return (
+    <div className="p-6 space-y-6">
+      {cpu && (
+        <UsageSection
+          icon={CpuChipIcon}
+          iconTone="bg-blue-100 text-blue-600"
+          title="CPU"
+          subtitle={[`${cpu.logicalCpus} logical CPUs`, cpu.model].filter(Boolean).join(' · ')}
+          percent={cpu.percent}
+          level={cpuLevel}
+          history={history.map((point) => point.cpu)}
+          sparkTone="text-blue-500"
+        />
+      )}
+
+      {memory && (
+        <UsageSection
+          icon={Square3Stack3DIcon}
+          iconTone="bg-purple-100 text-purple-600"
+          title="Memory"
+          subtitle={`${formatBytes(memory.usedBytes)} of ${formatBytes(memory.totalBytes)} in use`}
+          percent={memory.percent}
+          level={memoryLevel}
+          history={history.map((point) => point.memory)}
+          sparkTone="text-purple-500"
+        />
+      )}
+
+      {storage && <StorageSection storage={storage} thresholds={thresholds.disk} />}
+
+      {diskIo && diskIo.state !== 'unavailable' && <DiskActivitySection diskIo={diskIo} history={history} />}
+
+      {summary && (
+        <div className={`p-4 rounded-lg border ${summary.box}`}>
+          <div className="flex items-center space-x-2">
+            <svg className={`w-4 h-4 ${summary.icon}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span className={`text-sm font-medium ${summary.text}`}>{summary.message}</span>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 export default EnhancedServerStats
