@@ -867,13 +867,20 @@ export function sanitizeCardData(item, popup = false, context = {}) {
  * @param {string} type - The type of media.
  * @param {string} title - The title of the media (use the originalTitle)
  * @param {boolean} useOriginalVideo - Whether to preserve original video quality
- * @returns {string|null} - The generated clip video URL or null if videoURL is missing.
+ * @returns {string|null} - The generated clip video URL, or null when there is no
+ *   clip to ask for: no videoURL, no title, no known duration, or a TV item
+ *   without its season and episode.
  */
 export const generateClipVideoURL = cache((item, type, title, useOriginalVideo = false) => {
   if (!item?.videoURL) return null
+  if (!title) return null
 
     const maxDuration = 50 // 50 seconds
     const videoLength = Math.floor(item['duration'] / 1000) // Convert ms to seconds
+    // The range is picked from the length. Without one there is nothing to pick
+    // from: a missing duration used to ask for 3200-3250 whatever the video, and
+    // a zero one for start=0&end=0, which the processor refuses every time.
+    if (!Number.isFinite(videoLength) || videoLength <= 0) return null
     let start = 3200 // Default start time
     let end = start + maxDuration // Default end time
 
@@ -903,16 +910,20 @@ export const generateClipVideoURL = cache((item, type, title, useOriginalVideo =
     let seasonEpisodePath = ''
     if (type === 'tv') {
       // Check for season/episode data at top level (from horizontal-list API)
-      const seasonNumber = item?.seasonNumber || item?.metadata?.season_number
-      const episodeNumber = item?.episodeNumber || item?.episode?.episodeNumber
-      
-      if (seasonNumber && episodeNumber) {
-        seasonEpisodePath = `/${seasonNumber}/${episodeNumber}`
-      }
+      // `??`, not `||`: season 0 (specials) is a season.
+      const seasonNumber = item?.seasonNumber ?? item?.metadata?.season_number
+      const episodeNumber = item?.episodeNumber ?? item?.episode?.episodeNumber
+
+      // The processor has no clip route for a show without its episode.
+      if (seasonNumber == null || episodeNumber == null) return null
+      seasonEpisodePath = `/${encodeURIComponent(seasonNumber)}/${encodeURIComponent(episodeNumber)}`
     }
-    
-    // Build the base URL with start and end parameters
-    let clipURL = `${nodeJSURL}/videoClip/${type}/${title}${seasonEpisodePath}?start=${start}&end=${end}`
+
+    // Build the base URL with start and end parameters. The title is a folder
+    // name and can hold anything: written into the path as it is, a `?` or `#`
+    // in it ("The End?") ends the path there and the start and end are lost,
+    // and a `%` is read as an escape.
+    let clipURL = `${nodeJSURL}/videoClip/${type}/${encodeURIComponent(title)}${seasonEpisodePath}?start=${start}&end=${end}`
     
     // Add useOriginalVideo parameter if requested
     if (useOriginalVideo) {
