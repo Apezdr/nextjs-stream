@@ -3,6 +3,7 @@
 import { useEffect, useReducer, useRef, useState, useTransition, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Image from 'next/image'
+import { QRCodeSVG } from 'qrcode.react'
 
 // UI state machine for the notification: open -> bgExiting -> modalExiting -> closed
 const initialUIState = { phase: 'open', copied: false, step: 0 }
@@ -311,17 +312,20 @@ export default function TVAppsNotificationClient() {
                 </div>
               </div>
 
-              {/* Optional QR (no deps) */}
+              {/* Optional QR */}
               {origin && (
                 <div className="mt-6 flex items-center justify-center">
                   <div className="flex items-center gap-3 rounded-2xl border border-white/15 bg-white/10 p-3">
-                    <Image
-                      alt="QR code to access site"
+                    {/* Drawn in the browser as an inline SVG, so it needs no
+                        network request: the QR service this used to load from
+                        was refused as a source by an imgproxy deployment and
+                        the code showed as a broken image. */}
+                    <QRCodeSVG
+                      value={`https://${origin}`}
+                      title="QR code to access site"
                       className="h-16 w-16 sm:h-20 sm:w-20 rounded-md bg-white"
-                      width={160}
-                      height={160}
-                      // lightweight QR service; replace with your own if needed
-                      src={`https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent('https://' + origin)}`}
+                      size={160}
+                      marginSize={2}
                     />
                     <div className="text-left">
                       <div className="text-sm text-white/80">Quick pair with your phone</div>
