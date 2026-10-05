@@ -37,6 +37,7 @@ import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { warnOnJitIdentityFork } from '@src/utils/sync/core/jitIdentityParity'
 import { seedDiscovery, applyFirstSeen } from '@src/utils/sync/core/discovery'
+import { dropStaleAutoCaptions } from '@src/utils/sync/core/staleAutoCaptions'
 import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Episode')
@@ -564,13 +565,25 @@ export class EpisodeSyncService {
     // --- Captions (priority-gated) ---
     // Legacy field: captionURLs (object keyed by language), NOT captions (array)
     // File server data key: "subtitles" (not "captions")
-    if (fileData?.subtitles && typeof fileData.subtitles === 'object') {
-      const processed = UrlBuilder.processCaptionURLs(fileData.subtitles, context.serverConfig)
+    if (fileData) {
+      const processed =
+        fileData.subtitles && typeof fileData.subtitles === 'object'
+          ? UrlBuilder.processCaptionURLs(fileData.subtitles, context.serverConfig)
+          : null
+      // An auto-generated caption this server offered before and no longer
+      // lists (the episode has no audio in that language, or a caption made
+      // from the wrong audio was removed) goes; the merge below only adds.
+      const { captions: kept, removed } = dropStaleAutoCaptions(
+        existing?.captionURLs,
+        fileData.subtitles,
+        context.serverConfig.id
+      )
       if (processed && Object.keys(processed).length > 0) {
         // Merge with existing captionURLs (preserve captions from other servers)
-        const merged = { ...(existing?.captionURLs || {}), ...processed }
-        entity.captionURLs = merged
+        entity.captionURLs = { ...kept, ...processed }
         entity.captionSource = context.serverConfig.id
+      } else if (removed.length > 0) {
+        entity.captionURLs = kept
       }
     }
 

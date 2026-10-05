@@ -5,10 +5,25 @@ import { classNames } from '@src/utils'
 import useYouTubePlayer from '@components/VideoPreview/useYouTubePlayer'
 import useVideoElementTeardown from '@components/VideoPreview/useVideoElementTeardown'
 import { extractYouTubeId } from '@components/VideoPreview/youtubeUrl'
+import {
+  AV1_CLIP_SOURCE_TYPE,
+  canOfferAv1Clips,
+  deriveAv1ClipUrl,
+  isAv1ClipSource,
+  markAv1PlaybackFailed,
+  startAv1DecodeCheck,
+} from '@components/VideoPreview/av1Clip'
 import '@components/VideoPreview/preview.css'
 
 const VOLUME_KEY = 'videoVolumeCard'
 const MUTED_KEY = 'videoMutedCard'
+
+// <Av1DecodeCheck> in ClientProviders starts this at page load, so the answer
+// is in before this module, which the hover card loads lazily, mounts its
+// first preview. Starting it here as well (it only ever runs once) keeps the
+// player from depending on that component: without it, a preview that mounts
+// before the answer plays H.264 and the ones after it get AV1.
+startAv1DecodeCheck()
 
 // The `muted` prop only forces mute when strictly true â€” otherwise the stored
 // preference wins (long-standing contract; EpisodeThumbnail passes false and
@@ -97,6 +112,19 @@ function FilePreview({
   const readyNotifiedRef = useRef(false)
   const [instanceKey, setInstanceKey] = useState(0)
 
+  // Whether to list the AV1 clip ahead of the plain one. Read once, when the
+  // preview mounts, and never raised afterwards: a <video> keeps the source
+  // list it was created with, so an answer that arrives later waits for the
+  // next preview instead of restarting this one. It only ever drops to false,
+  // and only together with a remount (the two error handlers below).
+  const [offerAv1, setOfferAv1] = useState(canOfferAv1Clips)
+  const av1URL = offerAv1 ? deriveAv1ClipUrl(videoURL) : null
+  // A <video> reads its <source> children once, when it is created; changing
+  // them later loads nothing. So with sources a new URL needs a new element.
+  // With the `src` attribute React's update reloads the element in place, as
+  // it always has.
+  const elementKey = av1URL ? `${instanceKey}:${videoURL}` : instanceKey
+
   // Stop when the surrounding page is hidden by Next's segment cache (or
   // unmounted). Layout-effect cleanup is the prescribed hook for that, and
   // `hidden` also gates the onPause auto-resume below, which would otherwise
@@ -134,7 +162,7 @@ function FilePreview({
     } else if (!video.paused) {
       video.pause()
     }
-  }, [shouldPlay, instanceKey, videoRef])
+  }, [shouldPlay, elementKey, videoRef])
 
   // Mirror mute/volume.
   useEffect(() => {
@@ -142,7 +170,7 @@ function FilePreview({
     if (!video) return
     video.muted = muted
     video.volume = volume
-  }, [muted, volume, instanceKey, videoRef])
+  }, [muted, volume, elementKey, videoRef])
 
   // Resume when the tab becomes visible again while we still should play.
   useEffect(() => {
@@ -161,20 +189,43 @@ function FilePreview({
     return () => document.removeEventListener('visibilitychange', handleVisibility)
   }, [videoRef])
 
-  const handleError = useCallback(() => {
+  const handleError = useCallback((event) => {
+    // React hands a <source>'s `error` to its parent's onError too, although
+    // the DOM event does not bubble. Those are load failures the browser is
+    // already handling by moving to the next source; only the element's own
+    // error is one to act on.
+    if (event.target !== event.currentTarget) return
     const video = videoRef.current
     const error = video?.error
     console.error('Card video player error:', error)
+    // The browser took the AV1 clip and then could not play it. Give up on AV1
+    // for this page load rather than fail the same way on every preview.
+    if (isAv1ClipSource(video?.currentSrc)) {
+      markAv1PlaybackFailed()
+      setOfferAv1(false)
+    }
     // "416 Range Not Satisfiable" leaves the element wedged; a full remount is
     // the reliable cure (long-standing workaround carried over from vidstack).
     setInstanceKey((key) => key + 1)
   }, [videoRef])
 
+  // An AV1 URL that fails to load (400 from a processor that cannot make AV1)
+  // needs nothing from us: the browser moves on to the next <source>. When the
+  // LAST one fails too, the <video> itself raises no `error`, only the
+  // <source> does, and the preview would sit there dead. Hand the URL back to
+  // the `src` attribute, where a failing URL gets what it has always got
+  // (handleError's remount, again on each failure), instead of a second retry
+  // policy here.
+  const handleLastSourceError = useCallback(() => {
+    setOfferAv1(false)
+    setInstanceKey((key) => key + 1)
+  }, [])
+
   return (
     <video
-      key={instanceKey}
+      key={elementKey}
       ref={videoRef}
-      src={videoURL}
+      src={av1URL ? undefined : videoURL}
       playsInline
       preload="auto"
       className="absolute inset-0 h-full w-full object-cover"
@@ -210,7 +261,16 @@ function FilePreview({
         if (notify) notify(videoRef.current)
       }}
       onError={handleError}
-    />
+    >
+      {av1URL && (
+        <>
+          <source src={av1URL} type={AV1_CLIP_SOURCE_TYPE} />
+          {/* No `type`: what the plain URL returns is the processor's choice
+              (WebM before it moved to H.264), so let the response say. */}
+          <source src={videoURL} onError={handleLastSourceError} />
+        </>
+      )}
+    </video>
   )
 }
 
