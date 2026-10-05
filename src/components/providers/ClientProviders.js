@@ -6,6 +6,7 @@ import { SystemStatusProvider } from '@src/contexts/SystemStatusContext'
 import { NavigationProvider } from '@src/contexts/NavigationContext'
 import CastSessionBar from '@components/Cast/CastSessionBar'
 import CastPositionMirror from '@components/Cast/CastPositionMirror'
+import Av1DecodeCheck from '@components/VideoPreview/Av1DecodeCheck'
 
 /**
  * Client-side provider wrapper component
@@ -30,6 +31,11 @@ export default function ClientProviders({ children, castBootstrap = null }) {
               here rather than the watch page, because the session outlives any
               page and so must its reporter. */}
           <CastPositionMirror />
+          {/* Asks the browser whether it plays AV1, once per page load. Here
+              because this wrapper is on every page that shows hover previews
+              and is loaded with the page; the preview player is not, and its
+              first preview needs the answer before it mounts. */}
+          <Av1DecodeCheck />
           {/* Its own boundary: the bar reads the pathname, which suspends during
               prerender on any route with URL params. Unwrapped, that one read
               suspended this whole provider tree and left those routes with an

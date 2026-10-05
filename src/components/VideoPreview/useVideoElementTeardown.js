@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useRef } from 'react'
+import { useMemo } from 'react'
 
 /**
  * Stops playback when a <video> stops being managed, and releases the media
@@ -18,20 +18,16 @@ import { useMemo, useRef } from 'react'
  * churn from a re-render (detach immediately followed by re-attach of the
  * same node) doesn't interrupt playback.
  *
+ * A keyed replacement (detach, then a DIFFERENT node attaches) is an unmount
+ * of the old node and is torn down like one: the new node attaching must not
+ * call the old one's teardown off.
+ *
  * @returns {Function & { current: HTMLVideoElement|null }} callback ref
  */
 export default function useVideoElementTeardown() {
-  // Mutable timer handle lives in a ref (not a closure variable) so the
-  // React Compiler can reason about this hook.
-  const pendingRef = useRef(null)
-
   return useMemo(() => {
     const refFn = (element) => {
       if (element) {
-        if (pendingRef.current) {
-          clearTimeout(pendingRef.current)
-          pendingRef.current = null
-        }
         refFn.current = element
         return
       }
@@ -40,8 +36,7 @@ export default function useVideoElementTeardown() {
       refFn.current = null
       if (!detached) return
 
-      pendingRef.current = setTimeout(() => {
-        pendingRef.current = null
+      setTimeout(() => {
         if (refFn.current === detached) return // re-attached: it was ref churn
         try {
           detached.pause()
@@ -51,6 +46,9 @@ export default function useVideoElementTeardown() {
         if (!detached.isConnected) {
           try {
             detached.removeAttribute('src')
+            // load() picks a source again from any <source> children left
+            // behind, which would restart the download in a discarded element.
+            for (const source of detached.querySelectorAll('source')) source.remove()
             detached.load() // aborts the fetch/decode pipeline and detaches MSE
           } catch {
             /* already torn down */
@@ -60,5 +58,5 @@ export default function useVideoElementTeardown() {
     }
     refFn.current = null
     return refFn
-  }, [pendingRef])
+  }, [])
 }
