@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import Image from 'next/image'
 import { Menu } from './../videojs'
 import { classNames } from '@src/utils'
@@ -33,6 +34,15 @@ const RenderChapter = ({
   onSelect,
   chapterThumbnailURL,
 }) => {
+  // The frame goes through the image optimizer like every other image
+  // (/_next/image → imgproxy when configured). The optimizer only waits a few
+  // seconds for its source, and a frame nobody has asked for before is cut
+  // from the video on request, which took 2–3.5 s for a single frame in
+  // production and takes longer when a menu of them is opened at once. So a
+  // failed optimizer request falls back to the frame's own URL, which waits
+  // for as long as the cut takes.
+  const [useSourceURL, setUseSourceURL] = useState(false)
+
   return (
     <Menu.Item
       onClick={onSelect}
@@ -43,12 +53,17 @@ const RenderChapter = ({
     >
       {chapterThumbnailURL && (
         <Image
+          // Remounted on the switch so the failed load's state is not carried over.
+          key={useSourceURL ? 'source' : 'optimized'}
           className="h-[52px] w-[92px] shrink-0 rounded-sm border border-white/20 object-cover"
           src={`${chapterThumbnailURL}${convertTimeFormat(startTimeText)}`}
           alt="Chapter Thumbnail"
-          width={160}
-          height={90}
-          unoptimized
+          // The rendered box, so the optimizer is asked for 96 px (1x) and
+          // 256 px (2x) rather than a size nothing displays.
+          width={92}
+          height={52}
+          unoptimized={useSourceURL}
+          onError={() => setUseSourceURL(true)}
         />
       )}
       <div className="flex min-w-0 flex-col text-left">
