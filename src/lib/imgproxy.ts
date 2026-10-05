@@ -106,8 +106,9 @@ export function buildImgproxyTarget(searchParams: URLSearchParams): ImgproxyTarg
   // rs:fit keeps aspect ratio and never upscales — the same contract as the
   // built-in optimizer. The source URL is base64url-encoded to survive query
   // strings and special characters. Output format is left to imgproxy's
-  // Accept-header detection (enable IMGPROXY_ENABLE_WEBP_DETECTION /
-  // IMGPROXY_ENABLE_AVIF_DETECTION on the imgproxy container).
+  // Accept-header detection (enable IMGPROXY_AUTO_WEBP / IMGPROXY_AUTO_AVIF
+  // on the imgproxy container; imgproxy 4 ignores the older
+  // IMGPROXY_ENABLE_*_DETECTION names and answers with JPEG).
   const path = `/rs:fit:${width}:0/q:${Number(rawQuality)}/${Buffer.from(src).toString('base64url')}`
   const signature =
     config.key && config.salt ? signImgproxyPath(path, config.key, config.salt) : 'insecure'
