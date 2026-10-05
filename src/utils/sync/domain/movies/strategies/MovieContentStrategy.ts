@@ -34,6 +34,10 @@ import { MovieRepository, UrlBuilder, isTopLevelFieldLocked } from '../../../inf
 
 import { FileServerAdapter } from '../../../core'
 import { dropStaleAutoCaptions } from '../../../core/staleAutoCaptions'
+import {
+  preferReportedViewingExperience,
+  sameViewingExperience,
+} from '../../../core/viewingExperience'
 
 import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
 import { syncLogger } from '../../../core/logger'
@@ -1080,25 +1084,30 @@ export class MovieContentStrategy implements SyncStrategy {
     // Add isHDR field (legacy format)
     quality.isHDR = hasHDR
 
-    // Add viewingExperience object (legacy format) instead of simple enhancedViewing boolean
-    quality.viewingExperience = {
-      enhancedColor:
-        metadata.enhanced_viewing ||
-        metadata.enhancedViewing ||
-        (quality.bitDepth !== undefined && quality.bitDepth >= 10) ||
-        false,
-      highDynamicRange: hasHDR,
-      dolbyVision: !!(metadata.hdr_format || metadata.hdrFormat || '')
-        .toLowerCase()
-        .includes('dolby'),
-      hdr10Plus: !!(metadata.hdr_format || metadata.hdrFormat || '')
-        .toLowerCase()
-        .includes('hdr10+'),
-      standardHDR:
-        hasHDR &&
-        !(metadata.hdr_format || metadata.hdrFormat || '').toLowerCase().includes('dolby') &&
-        !(metadata.hdr_format || metadata.hdrFormat || '').toLowerCase().includes('hdr10+'),
-    }
+    // Add viewingExperience object (legacy format) instead of simple enhancedViewing boolean.
+    // The flags the file server reports win; the rebuilt ones only fill in for a
+    // payload that carries none (see preferReportedViewingExperience).
+    quality.viewingExperience = preferReportedViewingExperience(
+      {
+        enhancedColor:
+          metadata.enhanced_viewing ||
+          metadata.enhancedViewing ||
+          (quality.bitDepth !== undefined && quality.bitDepth >= 10) ||
+          false,
+        highDynamicRange: hasHDR,
+        dolbyVision: !!(metadata.hdr_format || metadata.hdrFormat || '')
+          .toLowerCase()
+          .includes('dolby'),
+        hdr10Plus: !!(metadata.hdr_format || metadata.hdrFormat || '')
+          .toLowerCase()
+          .includes('hdr10+'),
+        standardHDR:
+          hasHDR &&
+          !(metadata.hdr_format || metadata.hdrFormat || '').toLowerCase().includes('dolby') &&
+          !(metadata.hdr_format || metadata.hdrFormat || '').toLowerCase().includes('hdr10+'),
+      },
+      metadata.viewingExperience
+    )
 
     return quality
   }
@@ -1244,6 +1253,14 @@ export class MovieContentStrategy implements SyncStrategy {
       current.enhancedViewing,
       incoming.enhancedViewing
     )
+    // The legacy fields are what the stored documents carry. Leaving them out of
+    // the comparison meant a changed flag (a file re-encoded to Dolby Vision, a
+    // corrected dolbyVision value) was reported "unchanged" and never written.
+    const isHDREqual = this.areValuesEqual(current.isHDR, incoming.isHDR)
+    const viewingExperienceEqual = sameViewingExperience(
+      current.viewingExperience,
+      incoming.viewingExperience
+    )
 
     // Log only if there are differences (reduced to key fields only, no full objects)
     const allEqual =
@@ -1252,11 +1269,13 @@ export class MovieContentStrategy implements SyncStrategy {
       colorSpaceEqual &&
       transferCharEqual &&
       hdrFormatEqual &&
-      enhancedViewingEqual
+      enhancedViewingEqual &&
+      isHDREqual &&
+      viewingExperienceEqual
 
     if (!allEqual) {
       syncLogger.debug(
-        `🔍 MediaQuality differs: format=${!formatEqual}, bitDepth=${!bitDepthEqual}, colorSpace=${!colorSpaceEqual}, transfer=${!transferCharEqual}, hdr=${!hdrFormatEqual}, viewing=${!enhancedViewingEqual}`
+        `🔍 MediaQuality differs: format=${!formatEqual}, bitDepth=${!bitDepthEqual}, colorSpace=${!colorSpaceEqual}, transfer=${!transferCharEqual}, hdr=${!hdrFormatEqual}, viewing=${!enhancedViewingEqual}, isHDR=${!isHDREqual}, viewingExperience=${!viewingExperienceEqual}`
       )
     }
 
