@@ -59,8 +59,17 @@ describe('deriveAv1ClipUrl', () => {
     )
   })
 
+  it('keeps an encoded title as it is written', () => {
+    // generateClipVideoURL percent-encodes the folder name ("The End?")
+    const plain = 'https://media.example.com/videoClip/movie/The%20End%3F?start=3200&end=3250'
+    const av1 = deriveAv1ClipUrl(plain)
+    expect(av1).toBe('https://media.example.com/videoClip/movie/The%20End%3F?start=3200&end=3250&codec=av1')
+    expect(new URL(av1).pathname).toBe(new URL(plain).pathname)
+  })
+
   it('requests the same title the plain URL does when the title is not percent-encoded', () => {
-    // generateClipVideoURL writes the folder name into the path as it is
+    // What generateClipVideoURL wrote before it encoded the title; an API
+    // response cached from then can still carry one
     const plain = 'https://media.example.com/videoClip/movie/The Matrix (1999)?start=3200&end=3250'
     const av1 = deriveAv1ClipUrl(plain)
     expect(av1).toBe('https://media.example.com/videoClip/movie/The%20Matrix%20(1999)?start=3200&end=3250&codec=av1')
