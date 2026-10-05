@@ -5,10 +5,54 @@ import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { findPlaybackForUser, updateValidationStatus } from '@src/utils/watchHistory/database'
 
 /**
+ * Whether a catalog document can vouch for a WatchHistory record.
+ *
+ * Only a title that still has a video can. A title's document outlives its
+ * video: when a file is deleted but its folder is still reported by the file
+ * server (artwork, metadata, identity sidecar), the sync clears `videoURL` and
+ * keeps the document — and with it the durable `mediaId`, which is set-only by
+ * design (MovieContentStrategy.applyIdentityAndDeliveryUpdates), and the last
+ * `normalizedVideoId`. Reading identifiers from such a document kept the record
+ * for the deleted file valid against a title that cannot play; the record then
+ * took a slot in a paged recently-watched list and hydrated to nothing.
+ *
+ * The per-record implementation this replaced read identifiers only from
+ * documents with a `videoURL` (see the legacy body below). The bulk rewrite
+ * dropped that condition; this puts it back, and extends it to `mediaId`.
+ *
+ * @param {{videoURL?: string|null}|null|undefined} doc - FlatMovies or FlatEpisodes document
+ * @returns {boolean}
+ */
+export function catalogDocHasVideo(doc) {
+  return typeof doc?.videoURL === 'string' && doc.videoURL !== '';
+}
+
+/**
+ * Add the identifiers of every document that has a video to the valid sets.
+ *
+ * @returns {Promise<number>} how many documents were left out for having no video
+ */
+async function collectValidIdentifiers(cursor, validIds, validMediaIds) {
+  let withoutVideo = 0;
+  for await (const d of cursor) {
+    if (!catalogDocHasVideo(d)) {
+      withoutVideo++;
+      continue;
+    }
+    validIds.add(d.videoURL);
+    if (d.normalizedVideoId) validIds.add(d.normalizedVideoId);
+    if (d.mediaId)           validMediaIds.add(d.mediaId);
+  }
+  return withoutVideo;
+}
+
+/**
  * Validates all WatchHistory records against the current state of the database
  * after sync and availability checks have completed. Marks records' `isValid`
- * flag based on whether their normalizedVideoId still exists in FlatMovies or
- * FlatEpisodes.
+ * flag based on whether their normalizedVideoId or mediaId still belongs to a
+ * FlatMovies or FlatEpisodes document that has a video (`catalogDocHasVideo`).
+ * A record whose title lost its video is marked invalid, and marked valid again
+ * if a video returns under the same identity.
  *
  * Rewritten 2026-05-08: replaced ~3.5k per-record `updateOne` calls with two
  * `updateMany` operations + a small remediation pass for records missing
@@ -44,29 +88,28 @@ export async function validateWatchHistoryAgainstDatabase() {
     const flatEpisodesCollection = db.collection('FlatEpisodes');
 
     // Build the union of valid identifiers — videoURLs and normalizedVideoIds
-    // — plus the durable mediaIds (P5 cutover), from FlatMovies and
-    // FlatEpisodes. No longer a covered read (mediaId forces a FETCH), but
-    // still two streamed full scans per cycle.
+    // — plus the durable mediaIds (P5 cutover), from the FlatMovies and
+    // FlatEpisodes documents that have a video. No longer a covered read
+    // (mediaId forces a FETCH), but still two streamed full scans per cycle.
     const validIds = new Set();
     const validMediaIds = new Set();
     const proj = { projection: { _id: 0, videoURL: 1, normalizedVideoId: 1, mediaId: 1 } };
-    const movieCursor = flatMoviesCollection.find({}, proj);
-    for await (const d of movieCursor) {
-      if (d.videoURL)          validIds.add(d.videoURL);
-      if (d.normalizedVideoId) validIds.add(d.normalizedVideoId);
-      if (d.mediaId)           validMediaIds.add(d.mediaId);
-    }
-    const episodeCursor = flatEpisodesCollection.find({}, proj);
-    for await (const d of episodeCursor) {
-      if (d.videoURL)          validIds.add(d.videoURL);
-      if (d.normalizedVideoId) validIds.add(d.normalizedVideoId);
-      if (d.mediaId)           validMediaIds.add(d.mediaId);
-    }
+    const moviesWithoutVideo = await collectValidIdentifiers(
+      flatMoviesCollection.find({}, proj), validIds, validMediaIds
+    );
+    const episodesWithoutVideo = await collectValidIdentifiers(
+      flatEpisodesCollection.find({}, proj), validIds, validMediaIds
+    );
     const validArr = [...validIds];
     const validMediaIdArr = [...validMediaIds];
     const now = new Date().toISOString();
     log.info(
-      { validIdCount: validArr.length, validMediaIdCount: validMediaIdArr.length },
+      {
+        validIdCount: validArr.length,
+        validMediaIdCount: validMediaIdArr.length,
+        moviesWithoutVideo,
+        episodesWithoutVideo,
+      },
       'Built validation lookup set'
     );
 
