@@ -33,6 +33,7 @@ import {
 import { MovieRepository, UrlBuilder, isTopLevelFieldLocked } from '../../../infrastructure'
 
 import { FileServerAdapter } from '../../../core'
+import { dropStaleAutoCaptions } from '../../../core/staleAutoCaptions'
 
 import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
 import { syncLogger } from '../../../core/logger'
@@ -561,6 +562,25 @@ export class MovieContentStrategy implements SyncStrategy {
         } else {
           console.log(
             `⚠️ Server ${context.serverConfig.id} has no priority for any caption fields, skipping caption update`
+          )
+        }
+      }
+
+      // An auto-generated caption this server offered before and no longer
+      // lists (the film has no audio in that language, or a caption made from
+      // the wrong audio was removed) goes. The update above replaces the list
+      // and so drops it already; this covers the film left with no captions at
+      // all, where there is no list to replace it with.
+      if (!('captionURLs' in updates)) {
+        const { captions, removed } = dropStaleAutoCaptions(
+          currentMovie?.captionURLs,
+          (fileServerMovieData as any).urls?.subtitles,
+          context.serverConfig.id
+        )
+        if (removed.length > 0) {
+          updates.captionURLs = captions
+          syncLogger.debug(
+            `✅ Removing auto-generated caption(s) server ${context.serverConfig.id} no longer lists: ${removed.join(', ')}`
           )
         }
       }
