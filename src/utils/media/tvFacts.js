@@ -167,6 +167,30 @@ function tmdbPoster(path) {
  */
 
 /**
+ * The seasons a client can actually open: those with at least one visible
+ * episode, in ascending order, each with its `visibleEpisodeCount` attached.
+ * This is the API-side twin of `mergeSeasons`'s `available` rule, for the
+ * RN app's `availableSeasons` / `totalSeasons` — a season whose files are all
+ * hidden (an `.avi` season beside `.mkv` ones, say) would otherwise be listed
+ * by the picker and then come up empty, while the web greys its tile out.
+ *
+ * `FlatSeasons.episodeCount` counts hidden files too, so it is never the
+ * signal; a season missing from `visibleCountBySeason` counts as 0.
+ *
+ * @param {Array<{ seasonNumber: number }>} seasons - the show's FlatSeasons docs
+ * @param {Map<number, number>} visibleCountBySeason - seasonNumber → visible episodes
+ * @returns {Array<Object>} the playable seasons, with `visibleEpisodeCount`
+ */
+export function playableSeasons(seasons, visibleCountBySeason) {
+  const counts = visibleCountBySeason instanceof Map ? visibleCountBySeason : new Map()
+  return (Array.isArray(seasons) ? seasons : [])
+    .filter((s) => isFiniteNumber(s?.seasonNumber))
+    .map((s) => ({ ...s, visibleEpisodeCount: counts.get(s.seasonNumber) ?? 0 }))
+    .filter((s) => s.visibleEpisodeCount > 0)
+    .sort((a, b) => a.seasonNumber - b.seasonNumber)
+}
+
+/**
  * The seasons grid: TMDB's season list ∪ the library's, one tile per
  * number in ascending order. TMDB's "Specials" (season 0) only appears
  * when the library has it. A season is available when the library has a

@@ -1,6 +1,11 @@
 import { sanitizeCardData, sanitizeTVData } from '@src/utils/auth_utils'
 import isAuthenticated, { isAuthenticatedAndApproved } from '../../../../utils/routeAuth'
-import { getFlatRequestedMedia, getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils'
+import {
+  getFlatRequestedMedia,
+  getFlatTVSeasonWithEpisodes,
+  getVisibleEpisodeCountBySeason,
+} from '@src/utils/flatDatabaseUtils'
+import { playableSeasons } from '@src/utils/media/tvFacts'
 import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
 import { applyJitPreference } from '@src/utils/jit/preference'
 
@@ -137,11 +142,28 @@ export async function GET(req) {
             }
             
             fullShowData = await getFlatRequestedMedia(fullShowRequest)
-            
+
             if (Boolean(process.env.DEBUG) == true) {
               console.log(`TV Device: Fetched full show data with ${fullShowData?.seasons?.length || 0} seasons`);
             }
-            
+
+            // The seasons the app may open: FlatSeasons lists every season the
+            // library has a folder for, but a season whose files are all hidden
+            // (no browser container, no JIT URL) has nothing to play — the web
+            // greys that tile out, and the picker here must not offer it.
+            // `seasons` keeps every doc (each now carrying visibleEpisodeCount);
+            // `availableSeasons` / `totalSeasons` count only playable ones.
+            const visibleCountBySeason = fullShowData?._id
+              ? await getVisibleEpisodeCountBySeason(fullShowData._id)
+              : new Map()
+            const seasonsWithCounts = (fullShowData?.seasons || media.seasons || []).map((season) => ({
+              ...season,
+              visibleEpisodeCount: visibleCountBySeason.get(season.seasonNumber) ?? 0,
+            }))
+            const availableSeasons = playableSeasons(seasonsWithCounts, visibleCountBySeason).map(
+              (season) => season.seasonNumber
+            )
+
               // For season requests, also fetch episode list
               if (mediaSeason && !mediaEpisode) {
                 const seasonWithEpisodes = await getFlatTVSeasonWithEpisodes({
@@ -169,20 +191,13 @@ export async function GET(req) {
                     }
                   }
 
-                  // Extract available season numbers from full show data
-                  const availableSeasons = fullShowData?.seasons
-                    ? fullShowData.seasons.map((season, index) => {
-                        return season.seasonNumber
-                      }).filter(num => num !== null && num !== undefined).sort((a, b) => a - b)
-                    : []
-
                   // Merge the episode data and full show context
                   enhancedMedia = {
                     ...media, // Keep the current season/episode specific data
                     episodes: episodesWithHistory, // Add episode list with watch history
-                    seasons: fullShowData?.seasons || media.seasons, // Ensure we have all seasons
-                    totalSeasons: fullShowData?.seasons?.length || 0, // Add total seasons count
-                    availableSeasons: availableSeasons, // Array of actual season numbers available
+                    seasons: seasonsWithCounts, // Every season doc, with its visibleEpisodeCount
+                    totalSeasons: availableSeasons.length, // Seasons with something to play
+                    availableSeasons: availableSeasons, // Season numbers the app may open
                     logo: fullShowData?.logo || media.logo, // Preserve show logo
                     // Preserve backdrop data from full show data (fix for TV device backdrop issue)
                     backdrop: fullShowData?.backdrop || media.backdrop || null,
@@ -200,19 +215,12 @@ export async function GET(req) {
                 }
               }
             } else {
-                // Extract available season numbers from full show data
-                const availableSeasons = fullShowData?.seasons
-                  ? fullShowData.seasons.map((season, index) => {
-                      return season.seasonNumber
-                    }).filter(num => num !== null && num !== undefined).sort((a, b) => a - b)
-                  : []
-
                 // For episode requests or show-level requests, merge full show data
                 enhancedMedia = {
                   ...media, // Keep all original data
-                  seasons: fullShowData?.seasons || media.seasons,
-                  totalSeasons: fullShowData?.seasons?.length || 0,
-                  availableSeasons: availableSeasons, // Array of actual season numbers available
+                  seasons: seasonsWithCounts, // Every season doc, with its visibleEpisodeCount
+                  totalSeasons: availableSeasons.length, // Seasons with something to play
+                  availableSeasons: availableSeasons, // Season numbers the app may open
                   logo: fullShowData?.logo || media.logo || null, // Preserve show logo
                   // Preserve backdrop data from full show data (fix for TV device backdrop issue)
                   backdrop: fullShowData?.backdrop || media.backdrop || null,
