@@ -15,6 +15,7 @@ const {
   tvHrefs,
   seasonLabel,
   mergeSeasons,
+  playableSeasons,
   seasonsSummary,
   seasonTileStatus,
   pickNextUp,
@@ -315,6 +316,53 @@ describe('mergeSeasons', () => {
   it('copes with a show with no seasons at all', () => {
     expect(mergeSeasons({ title: 'Empty', originalTitle: 'Empty' })).toEqual([])
     expect(mergeSeasons(null)).toEqual([])
+  })
+})
+
+describe('playableSeasons', () => {
+  // The PJs on prod, 2026-10-06: seasons 1-2 are .mkv (JIT), season 3 is
+  // twelve .avi files the transcoder does not address, so every season-3
+  // episode is hidden and FlatSeasons still says episodeCount: 12.
+  const seasons = [
+    { seasonNumber: 3, title: 'Season 3', episodeCount: 12 },
+    { seasonNumber: 1, title: 'Season 1', episodeCount: 14 },
+    { seasonNumber: 2, title: 'Season 2', episodeCount: 17 },
+  ]
+  const counts = new Map([
+    [1, 14],
+    [2, 17],
+  ])
+
+  it('keeps only seasons with a visible episode, ascending, each with its count', () => {
+    expect(playableSeasons(seasons, counts)).toEqual([
+      { seasonNumber: 1, title: 'Season 1', episodeCount: 14, visibleEpisodeCount: 14 },
+      { seasonNumber: 2, title: 'Season 2', episodeCount: 17, visibleEpisodeCount: 17 },
+    ])
+  })
+
+  it('never trusts FlatSeasons.episodeCount: a season absent from the counts is not playable', () => {
+    expect(playableSeasons(seasons, new Map()).map((s) => s.seasonNumber)).toEqual([])
+    expect(playableSeasons(seasons, new Map([[3, 1]])).map((s) => s.seasonNumber)).toEqual([3])
+  })
+
+  it('agrees with the web tile rule in mergeSeasons for the same show', () => {
+    const show = { seasons, metadata: { seasons: [] } }
+    const episodes = [
+      { seasonNumber: 1, episodeNumber: 1 },
+      { seasonNumber: 2, episodeNumber: 1 },
+    ]
+    const webAvailable = mergeSeasons(show, episodes)
+      .filter((t) => t.available)
+      .map((t) => t.seasonNumber)
+    expect(playableSeasons(seasons, new Map([[1, 1], [2, 1]])).map((s) => s.seasonNumber)).toEqual(webAvailable)
+  })
+
+  it('tolerates missing or malformed input', () => {
+    expect(playableSeasons(undefined, counts)).toEqual([])
+    expect(playableSeasons([{ seasonNumber: 'x' }, null, { seasonNumber: 1 }], counts)).toEqual([
+      { seasonNumber: 1, visibleEpisodeCount: 14 },
+    ])
+    expect(playableSeasons(seasons, undefined)).toEqual([])
   })
 })
 

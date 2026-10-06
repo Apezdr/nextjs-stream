@@ -2921,6 +2921,28 @@ export async function getFlatTVShowsLastUpdatedTimestamp() {
 }
 
 /**
+ * How many web-visible episodes each season of a show has. One index scan on
+ * the showId prefix; a season with none is absent from the map, so read it
+ * with `?? 0`. Same filter as the episode lists, so a hidden file is never
+ * counted (`mediaVisibility.js`).
+ *
+ * @param {string|ObjectId} showId - the FlatTVShows _id
+ * @returns {Promise<Map<number, number>>} seasonNumber → visible episode count
+ */
+export async function getVisibleEpisodeCountBySeason(showId) {
+  const client = await clientPromise
+  const db = client.db('Media')
+  const rows = await db
+    .collection('FlatEpisodes')
+    .aggregate([
+      { $match: { showId: new ObjectId(showId), ...visibleEpisodeFilter() } },
+      { $group: { _id: '$seasonNumber', n: { $sum: 1 } } },
+    ])
+    .toArray()
+  return new Map(rows.map((row) => [row._id, row.n]))
+}
+
+/**
  * Get TV season details with its episodes from the flat database structure.
  * This function is specifically designed for the TVEpisodesListComponent.
  *
@@ -2980,7 +3002,7 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
     // Fetch episodes for this season from the flat database, and count the
     // show's visible episodes per season in the same round trip (the season
     // selector hides seasons with nothing to play).
-    const [episodes, seasonCounts] = await Promise.all([
+    const [episodes, visibleCountBySeason] = await Promise.all([
       db
         .collection('FlatEpisodes')
         .find({
@@ -2989,15 +3011,8 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
         })
         .sort({ episodeNumber: 1 })
         .toArray(),
-      db
-        .collection('FlatEpisodes')
-        .aggregate([
-          { $match: { showId: new ObjectId(tvShow._id), ...visibleEpisodeFilter() } },
-          { $group: { _id: '$seasonNumber', n: { $sum: 1 } } },
-        ])
-        .toArray(),
+      getVisibleEpisodeCountBySeason(tvShow._id),
     ])
-    const visibleCountBySeason = new Map(seasonCounts.map((row) => [row._id, row.n]))
 
     if (Boolean(process.env.DEBUG) == true) {
       console.log(
