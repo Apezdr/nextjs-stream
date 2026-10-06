@@ -322,7 +322,7 @@ const displayName = movie.title // UI components only
 http://localhost:3232/api/authenticated/admin/sync\
 \
 Headers:\
-X-Webhook-ID:507f131e4591274d9b8c1691bbd76c9c
+X-Webhook-ID: the WEBHOOK_ID value from .env.local (never paste the value into a committed file)
 - Avoid defaulting values to proceed when errors arise in the new architecture flatsync process. It is crucial that we build a resiliant and bulletproof sync structure that relies on data that is properly passed within the functions.
 
 ## ⚠️ Knip Dead-Code Analysis — CRITICAL SAFETY RULES

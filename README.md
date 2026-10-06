@@ -58,8 +58,8 @@ To implement the NextJS-Stream app, follow these steps:
    NEXT_PUBLIC_BASE_URL=https://cinema.your-domain.com
 
    # Webhook Configuration
-   WEBHOOK_ID=322fb39e4591514d2b8c1697sbc72c9c
-   WEBHOOK_ID_2=521ebe9e6211514d2b8c1697sbc72c98
+   WEBHOOK_ID=your_webhook_id
+   WEBHOOK_ID_2=your_second_webhook_id
 
    # Radarr Configuration (Optional)
    # Only needed if you are using Radarr integration

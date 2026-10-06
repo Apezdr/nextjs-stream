@@ -194,6 +194,16 @@ export async function fetchMetadataMultiServer(
 
 // End of utilities for syncing media
 
+/**
+ * Why a queue request failed, safe to log. These URLs carry the service's API
+ * key, and an axios error holds the request config (URL included), so neither
+ * the error object nor the URL may be logged.
+ */
+function describeRequestFailure(error) {
+  if (error?.response?.status) return `HTTP ${error.response.status}`
+  return error?.code || error?.message || 'unknown error'
+}
+
 export async function fetchRadarrQueue() {
   if (!radarrURL || !radarrAPIKey) {
     throw new Error('Radarr URL or API key not configured')
@@ -202,11 +212,7 @@ export async function fetchRadarrQueue() {
     const radarrQueue = await axios.get(`${radarrURL}/api/v3/queue?apikey=${radarrAPIKey}`)
     return radarrQueue.data
   } catch (error) {
-    console.error(
-      'Failed to fetch Radarr queue:',
-      `${radarrURL}/api/v3/queue?apikey=${radarrAPIKey}`,
-      error
-    )
+    console.error('Failed to fetch Radarr queue:', describeRequestFailure(error))
     throw new Error('Failed to fetch Radarr queue')
   }
 }
@@ -219,7 +225,7 @@ export async function fetchSonarrQueue() {
     const sonarrQueue = await axios.get(`${sonarrURL}/api/v3/queue?apikey=${sonarrAPIKey}`)
     return sonarrQueue.data
   } catch (error) {
-    console.error('Failed to fetch Sonarr queue:', error)
+    console.error('Failed to fetch Sonarr queue:', describeRequestFailure(error))
     throw new Error('Failed to fetch Sonarr queue')
   }
 }
@@ -232,7 +238,7 @@ export async function fetchTdarrQueue() {
     const tdarrQueue = await axios.get(`${tdarrURL}/api/v2/get-nodes?apikey=${tdarrAPIKey}`)
     return tdarrQueue.data
   } catch (error) {
-    console.error('Failed to fetch Tdarr queue:', error)
+    console.error('Failed to fetch Tdarr queue:', describeRequestFailure(error))
     throw new Error('Failed to fetch Tdarr queue')
   }
 }
@@ -245,7 +251,7 @@ export async function fetchSABNZBDQueue() {
     const sabnzbdQueue = await axios.get(`${sabnzbdURL}/api?mode=queue&apikey=${sabnzbdAPIKey}`)
     return sabnzbdQueue.data
   } catch (error) {
-    console.error('Failed to fetch SABNZBD queue:', error)
+    console.error('Failed to fetch SABNZBD queue:', describeRequestFailure(error))
     throw new Error('Failed to fetch SABNZBD queue')
   }
 }
