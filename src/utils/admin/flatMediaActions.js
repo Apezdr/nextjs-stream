@@ -12,8 +12,11 @@
  *    create) + the postSyncCleanup exclusion, NOT by the run-id marker.
  *  - Any admin-edited asset/metadata field is flagged in `manualFields`
  *    ({ posterURL: true, metadata: true }, same nested shape as `lockedFields`)
- *    so the admin UI can show it was set by a human. This is informational
- *    only — it does NOT gate sync writes (`lockedFields` does that); a sync
+ *    so the admin UI can show it was set by a human. Only a value that differs
+ *    from the stored one is flagged: the editors post the whole form, and a
+ *    flag on an untouched server value would stop FieldAbsenceCleaner from
+ *    removing it once the server drops it. The flag does NOT gate sync writes
+ *    (`lockedFields` does that); a sync
  *    that legitimately overwrites a flagged field also clears its
  *    `manualFields` entry (see BaseRepository.manualFieldsToClear) so the flag
  *    doesn't go stale. `<field>Source` (e.g. `videoSource`) is left untouched
@@ -33,6 +36,7 @@
  */
 
 import { ObjectId } from 'mongodb'
+import isEqual from 'lodash/isEqual'
 import { revalidatePath } from 'next/cache'
 import clientPromise from '@src/lib/mongodb'
 import { isAdmin } from '@src/utils/routeAuth'
@@ -88,12 +92,13 @@ function revalidateMedia() {
 
 /**
  * Build $set / $unset from a whitelist of scalar fields.
- * - non-empty value  → $set field (+ `manualFields.<field>: true` if mapped)
+ * - non-empty value  → $set field (+ `manualFields.<field>: true` if mapped and
+ *   the value differs from `existing`, or on create)
  * - empty string/null → $unset field (update only; skipped on create), also
  *   clearing `manualFields.<field>` since there's no longer a manual value
  * @returns {{ set: Object, unset: Object }}
  */
-function applyScalarFields(payload, fields, manualTrackedFields, { isCreate }) {
+function applyScalarFields(payload, fields, manualTrackedFields, { isCreate, existing = null }) {
   const set = {}
   const unset = {}
   for (const field of fields) {
@@ -121,22 +126,46 @@ function applyScalarFields(payload, fields, manualTrackedFields, { isCreate }) {
     }
 
     set[field] = value
-    if (manualTrackedFields.includes(field)) set[`manualFields.${field}`] = true
+    const changed = isCreate || !isEqual(existing?.[field], value)
+    if (changed && manualTrackedFields.includes(field)) set[`manualFields.${field}`] = true
     if (field === 'videoURL') set.normalizedVideoId = generateNormalizedVideoId(value)
   }
   return { set, unset }
 }
 
-/** Merge metadata partial as dot-paths so existing metadata keys survive. */
-function applyMetadata(payload, set) {
+/**
+ * Merge metadata partial as dot-paths so existing metadata keys survive.
+ * `manualFields.metadata` is set only when a key differs from `existing`.
+ */
+function applyMetadata(payload, set, { isCreate, existing = null }) {
   if (!payload.metadata || typeof payload.metadata !== 'object') return
   let touched = false
   for (const [key, value] of Object.entries(payload.metadata)) {
     if (value === undefined) continue
     set[`metadata.${key}`] = value
-    touched = true
+    if (isCreate || !isEqual(existing?.metadata?.[key], value)) touched = true
   }
   if (touched) set['manualFields.metadata'] = true
+}
+
+/**
+ * Turn the update-style dot-paths in a `$set` map (`metadata.id`,
+ * `manualFields.posterURL`) into nested objects for an insert. `insertOne`
+ * stores a dotted key as a literal field name, so without this a created
+ * title's `metadata.id` never reaches `metadata.id`.
+ */
+function materializeDottedFields(fields) {
+  const result = {}
+  for (const [path, value] of Object.entries(fields)) {
+    const parts = path.split('.')
+    let current = result
+    for (const part of parts.slice(0, -1)) {
+      if (!current[part] || typeof current[part] !== 'object') current[part] = {}
+      current = current[part]
+    }
+    current[parts.at(-1)] = value
+  }
+  return result
 }
 
 /** Decide captionURLs $set vs $unset from the provided object. */
@@ -223,7 +252,7 @@ export async function createMovieAction(_prevState, payload = {}) {
 
   const now = new Date()
   const { set } = applyScalarFields({ ...payload, title, originalTitle, videoURL }, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: true })
-  applyMetadata(payload, set)
+  applyMetadata(payload, set, { isCreate: true })
   applyCaptionURLs(payload, set, {})
   applyLockedFields(payload, set, {})
 
@@ -231,7 +260,7 @@ export async function createMovieAction(_prevState, payload = {}) {
     _id: new ObjectId(),
     type: 'movie',
     manualEntry: true,
-    ...set,
+    ...materializeDottedFields(set),
     title,
     originalTitle,
     videoURL,
@@ -271,8 +300,8 @@ export async function saveMovieAction(_prevState, payload = {}) {
   const existing = await col.findOne({ _id })
   if (!existing) return fail('Movie not found.')
 
-  const { set, unset } = applyScalarFields(payload, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: false })
-  applyMetadata(payload, set)
+  const { set, unset } = applyScalarFields(payload, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: false, existing })
+  applyMetadata(payload, set, { isCreate: false, existing })
   applyCaptionURLs(payload, set, unset)
   applyLockedFields(payload, set, unset)
 
@@ -344,14 +373,14 @@ export async function createTVShowAction(_prevState, payload = {}) {
 
   const now = new Date()
   const { set } = applyScalarFields({ ...payload, title, originalTitle }, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: true })
-  applyMetadata(payload, set)
+  applyMetadata(payload, set, { isCreate: true })
   applyLockedFields(payload, set, {})
 
   const doc = {
     _id: new ObjectId(),
     type: 'tvShow',
     manualEntry: true,
-    ...set,
+    ...materializeDottedFields(set),
     title,
     originalTitle,
     createdAt: now,
@@ -385,8 +414,8 @@ export async function saveTVShowAction(_prevState, payload = {}) {
   const existing = await col.findOne({ _id })
   if (!existing) return fail('TV show not found.')
 
-  const { set, unset } = applyScalarFields(payload, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: false })
-  applyMetadata(payload, set)
+  const { set, unset } = applyScalarFields(payload, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: false, existing })
+  applyMetadata(payload, set, { isCreate: false, existing })
   applyLockedFields(payload, set, unset)
   set.updatedAt = new Date()
   // The document is no longer the one the sync last saw (see reopenSyncGates).
@@ -468,8 +497,8 @@ export async function saveSeasonAction(_prevState, payload = {}) {
     ? await seasonsCol.findOne({ _id: seasonObjId })
     : await seasonsCol.findOne({ showId, seasonNumber })
 
-  const { set, unset } = applyScalarFields(payload, SEASON_FIELDS, SEASON_MANUAL_TRACKED_FIELDS, { isCreate: !existing })
-  applyMetadata(payload, set)
+  const { set, unset } = applyScalarFields(payload, SEASON_FIELDS, SEASON_MANUAL_TRACKED_FIELDS, { isCreate: !existing, existing })
+  applyMetadata(payload, set, { isCreate: !existing, existing })
   applyLockedFields(payload, set, unset)
   set.showTitle = show.title
   set.showId = showId
@@ -492,7 +521,7 @@ export async function saveSeasonAction(_prevState, payload = {}) {
     _id: new ObjectId(),
     type: 'season',
     manualEntry: true,
-    ...set,
+    ...materializeDottedFields(set),
     createdAt: new Date(),
     initialDiscoveryDate: new Date(),
     initialDiscoveryServer: 'manual',
@@ -565,8 +594,8 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
     ? await episodesCol.findOne({ _id: episodeObjId })
     : await episodesCol.findOne({ showId, seasonId: season._id, episodeNumber })
 
-  const { set, unset } = applyScalarFields(payload, EPISODE_FIELDS, EPISODE_MANUAL_TRACKED_FIELDS, { isCreate: !existing })
-  applyMetadata(payload, set)
+  const { set, unset } = applyScalarFields(payload, EPISODE_FIELDS, EPISODE_MANUAL_TRACKED_FIELDS, { isCreate: !existing, existing })
+  applyMetadata(payload, set, { isCreate: !existing, existing })
   applyLockedFields(payload, set, unset)
   set.showId = showId
   set.seasonId = season._id
@@ -591,7 +620,7 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
     _id: new ObjectId(),
     type: 'episode',
     manualEntry: true,
-    ...set,
+    ...materializeDottedFields(set),
     createdAt: new Date(),
     // The grain "Recently Added" ranks TV on: a manually added episode lifts
     // its show exactly as a synced one does.
