@@ -12,6 +12,7 @@ import {
   pickEarlierDiscovery,
   applyFirstSeen,
   resolveFirstSeen,
+  claimDiscovery,
 } from '@src/utils/sync/core/discovery'
 
 const NOW = new Date('2026-09-21T12:00:00.000Z')
@@ -147,5 +148,47 @@ describe('applyFirstSeen', () => {
     expect(moved).toBe(false)
     expect(entity.initialDiscoveryDate).toEqual(held)
     expect(entity.initialDiscoveryServer).toBe('server-b')
+  })
+})
+
+// Several file servers can hold the same content, each with its own first-seen
+// date. Each is heard in turn; the result must not depend on the order.
+describe('claimDiscovery', () => {
+  const EARLY = new Date('2023-03-01T00:00:00.000Z')
+  const LATE = new Date('2025-06-01T00:00:00.000Z')
+  const never = () => false
+  const always = () => true
+
+  it('claims the date when it is earlier than the one held, or none is held', () => {
+    expect(claimDiscovery(LATE, 'server-b', EARLY, SERVER, never)).toBe('date')
+    expect(claimDiscovery(undefined, undefined, EARLY, SERVER, never)).toBe('date')
+  })
+
+  it('claims nothing with a later date, or with no date at all', () => {
+    expect(claimDiscovery(EARLY, 'server-b', LATE, SERVER, always)).toBeNull()
+    expect(claimDiscovery(EARLY, 'server-b', null, SERVER, always)).toBeNull()
+  })
+
+  it('claims only the server for the same date, and only when it outranks the one on record', () => {
+    expect(claimDiscovery(EARLY, 'server-b', new Date(EARLY), SERVER, always)).toBe('server')
+    expect(claimDiscovery(EARLY, 'server-b', new Date(EARLY), SERVER, never)).toBeNull()
+    expect(claimDiscovery(EARLY, SERVER, new Date(EARLY), SERVER, always)).toBeNull()
+  })
+
+  it('ends on the earliest date and the higher-ranked holder of it, in either order', () => {
+    // server-a outranks server-b; both hold EARLY, server-c holds LATE.
+    const held = { 'server-a': EARLY, 'server-b': EARLY, 'server-c': LATE }
+    const rank = { 'server-a': 1, 'server-b': 2, 'server-c': 3 }
+    const settle = (order) => {
+      const entity = {}
+      for (const serverId of order) {
+        applyFirstSeen(entity, { firstSeen: held[serverId].toISOString() }, serverId, NOW, (other) => rank[serverId] < rank[other])
+      }
+      return entity
+    }
+
+    for (const order of [['server-a', 'server-b', 'server-c'], ['server-c', 'server-b', 'server-a'], ['server-b', 'server-c', 'server-a']]) {
+      expect(settle(order)).toEqual({ initialDiscoveryDate: EARLY, initialDiscoveryServer: 'server-a' })
+    }
   })
 })

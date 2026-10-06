@@ -99,18 +99,49 @@ export function pickEarlierDiscovery(current: unknown, incoming: Date | null): D
 }
 
 /**
+ * Rule 3 with several file servers. Each server that has the content is heard
+ * in turn, and the result must not depend on the order:
+ *
+ *  - an EARLIER date is adopted, with the server that holds it ('date');
+ *  - the SAME date from a server that outranks the one on record moves only
+ *    the server ('server'), so two servers holding the same date always end
+ *    on the higher-priority one rather than on whichever synced first.
+ *
+ * Returns null when `incoming` makes no claim or changes nothing.
+ *
+ * @param outranksHeld whether the syncing server outranks the server on record
+ */
+export function claimDiscovery(
+  current: unknown,
+  heldServer: string | undefined,
+  incoming: Date | null,
+  serverId: string,
+  outranksHeld: (heldServerId: string) => boolean
+): 'date' | 'server' | null {
+  if (!incoming) return null
+  const held = toValidDate(current)
+  if (!held || held.getTime() > incoming.getTime()) return 'date'
+  if (held.getTime() === incoming.getTime() && heldServer && heldServer !== serverId && outranksHeld(heldServer)) {
+    return 'server'
+  }
+  return null
+}
+
+/**
  * Rule 3 applied to an entity that is built by mutation (the TV services).
- * Returns whether the date moved.
+ * Returns whether the date or its server moved.
  */
 export function applyFirstSeen<T extends DiscoveryFields>(
   entity: T,
   mediaIdentity: unknown,
   serverId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  outranksHeld: (heldServerId: string) => boolean = () => false
 ): boolean {
-  const earlier = pickEarlierDiscovery(entity.initialDiscoveryDate, resolveFirstSeen(mediaIdentity, now))
-  if (!earlier) return false
-  entity.initialDiscoveryDate = earlier
+  const incoming = resolveFirstSeen(mediaIdentity, now)
+  const claim = claimDiscovery(entity.initialDiscoveryDate, entity.initialDiscoveryServer, incoming, serverId, outranksHeld)
+  if (!claim) return false
+  if (claim === 'date') entity.initialDiscoveryDate = incoming!
   entity.initialDiscoveryServer = serverId
   return true
 }

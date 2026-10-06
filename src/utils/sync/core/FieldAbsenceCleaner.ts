@@ -31,6 +31,13 @@ export interface CleanableField {
   entityField: string
   /** fieldAvailability lookup path (e.g. 'seasons.Season 2.episodes.S02E05.thumbnail'). */
   fieldPath: string
+  /**
+   * Other paths the same field can be reported under. Two servers can name one
+   * season's folder differently ("Season 2" and "Season 02"), which gives the
+   * same episode two paths; the field is absent only when no server reports it
+   * under any of them.
+   */
+  alsoReportedAs?: string[]
   /** Companion fields cleared alongside the primary (e.g. 'thumbnailSource'). */
   companions?: string[]
 }
@@ -119,6 +126,7 @@ export function detectAbsentFields(input: AbsenceCleanupInput): AbsenceCleanupRe
   if (!input.entity || !input.fields?.length) return empty
 
   const lockedFields = (input.entity as any)?.lockedFields
+  const manualFields = (input.entity as any)?.manualFields
   const serverBucket = input.fieldAvailability?.[input.mediaType]?.[input.availabilityKey] || {}
   const cap = input.maxFieldsPerEntity ?? DEFAULT_MAX_FIELDS_PER_ENTITY
 
@@ -134,7 +142,9 @@ export function detectAbsentFields(input: AbsenceCleanupInput): AbsenceCleanupRe
       )
     }
 
-    const serversWithData = serverBucket[field.fieldPath] ?? []
+    const serversWithData = [field.fieldPath, ...(field.alsoReportedAs ?? [])].flatMap(
+      (path) => serverBucket[path] ?? []
+    )
     // Some server still reports it → keep. This is the empty-array branch that
     // isCurrentServerHighestPriorityForField returns true for, but here we read
     // it directly because we want the "nobody has it" signal, not priority.
@@ -146,6 +156,13 @@ export function detectAbsentFields(input: AbsenceCleanupInput): AbsenceCleanupRe
     // Admin-locked → keep (never lose a manually-set value).
     if (isTopLevelFieldLocked(lockedFields, field.entityField)) continue
 
+    // Entered by an admin (flagged in `manualFields`, same shape as
+    // `lockedFields`) → keep. It did not come from a file server, so no file
+    // server reporting it says nothing about it. A sync that later writes the
+    // field clears the flag (BaseRepository.manualFieldsToClear), and from then
+    // on it is a file server's value again.
+    if (isTopLevelFieldLocked(manualFields, field.entityField)) continue
+
     primaryCount++
     toUnset.push(field.entityField)
     changes.push(`Cleared ${field.entityField} (absent on all servers)`)
@@ -154,6 +171,7 @@ export function detectAbsentFields(input: AbsenceCleanupInput): AbsenceCleanupRe
     for (const companion of field.companions ?? []) {
       if (REQUIRED_FIELD_DENYLIST.has(companion)) continue
       if (isTopLevelFieldLocked(lockedFields, companion)) continue
+      if (isTopLevelFieldLocked(manualFields, companion)) continue
       if (!hasClearableValue(input.entity[companion])) continue
       toUnset.push(companion)
     }
@@ -212,6 +230,13 @@ export interface CleanupPlan {
   unset?: string[]
   /** Diagnostics to fold into SyncResult.changes (both modes). */
   changes: string[]
+  /**
+   * True when fields look absent on every server that answered, and were left
+   * alone only because not every enabled server answered this run. The caller
+   * must not mark its pass complete: the same check has to run again on a run
+   * where they all answer, and a skipped pass would never make it.
+   */
+  withheld?: boolean
 }
 
 /**
@@ -236,6 +261,21 @@ export function planFieldCleanup(params: {
 }): CleanupPlan {
   const { cleanup } = params
   if (!cleanup?.enabled || !params.entity) return { changes: [] }
+
+  if (!cleanup.allEnabledServersProbed) {
+    // The detector is a no-op on a partial run. Ask it what it WOULD clear, so
+    // the caller knows a removal is pending.
+    const pending = detectAbsentFields({
+      mediaType: params.mediaType,
+      availabilityKey: params.availabilityKey,
+      entity: params.entity,
+      fieldAvailability: params.fieldAvailability,
+      fields: params.fields,
+      allEnabledServersProbed: true,
+      maxFieldsPerEntity: cleanup.maxFieldsPerEntity,
+    })
+    return { changes: [], withheld: cleanup.mode === 'enforce' && pending.fieldsToUnset.length > 0 }
+  }
 
   const result = detectAbsentFields({
     mediaType: params.mediaType,
