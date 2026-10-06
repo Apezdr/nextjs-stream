@@ -21,7 +21,6 @@ import axios from 'axios'
 import chalk from 'chalk'
 import { getFileServerImportSettings } from '@src/utils/sync_db'
 import { getAllServers } from '@src/utils/config'
-import { exec } from 'child_process'
 import clientPromise from '@src/lib/mongodb'
 import { getServerLoadSnapshot, noteServerLoadDemand } from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
@@ -80,35 +79,6 @@ const getDockerHubDigest = async (repo) => {
   } catch (error) {
     throw new Error(`Failed to fetch Docker Hub digest for ${repo}: ${error.message}`)
   }
-}
-
-/**
- * Fetches the current image digest from the server.
- * @param {string} repo - The Docker repository name
- * @returns {Promise<string>} Image digest
- */
-const getServerImageDigest = (repo) => {
-  return new Promise((resolve, reject) => {
-    const command = `docker inspect --format="{{index .RepoDigests 0}}" ${repo}:latest`
-
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        return reject(new Error(`Failed to fetch server image digest for ${repo}: ${stderr || error.message}`))
-      }
-
-      const fullDigest = stdout.trim()
-      if (!fullDigest) {
-        return reject(new Error(`No digest found for image ${repo}:latest`))
-      }
-
-      const digestMatch = fullDigest.match(/@(.+)/)
-      if (!digestMatch || !digestMatch[1]) {
-        return reject(new Error(`Invalid digest format for image ${repo}:latest`))
-      }
-
-      resolve(digestMatch[1])
-    })
-  })
 }
 
 export async function GET(request, props) {
@@ -350,47 +320,24 @@ export async function GET(request, props) {
       
       case 'dockerhub-lastupdated':
         {
+          // Docker Hub's view only. The app no longer has Docker access (no
+          // socket, no CLI), so it cannot say whether the running image is the
+          // latest one — only when `latest` was last pushed.
           const repos = [
             "membersolo/nextjs-stream-media-processor",
             "membersolo/nextjs-stream",
-          ]      
-          const results = await Promise.all(
+          ]
+          responseData = await Promise.all(
             repos.map(async (repo) => {
-              let dockerHubDigest = null
-              let serverDigest = null
-              let errors = []
-              
               try {
-                dockerHubDigest = await getDockerHubDigest(repo)
+                const { last_updated } = await getDockerHubDigest(repo)
+                return { repo, last_updated: last_updated || null }
               } catch (err) {
-                console.error(`Error fetching Docker Hub digest for ${repo}:`, err)
-                errors.push(`Docker Hub: ${err.message}`)
+                console.error(`Error fetching Docker Hub digest for ${repo}:`, err.message)
+                return { repo, last_updated: null, error: err.message }
               }
-
-              try {
-                serverDigest = await getServerImageDigest(repo)
-              } catch (err) {
-                console.error(`Error fetching Server digest for ${repo}:`, err)
-                errors.push(`Server: ${err.message}`)
-              }
-
-              const isUpToDate = dockerHubDigest?.digest === serverDigest
-              const returnData = { 
-                repo,
-                dockerHubDigest: dockerHubDigest || null, 
-                serverDigest: serverDigest || null, 
-                isUpToDate,
-                last_updated: dockerHubDigest?.last_updated || null
-              }
-
-              if (errors.length > 0) {
-                returnData.errors = errors
-              }
-
-              return returnData
             })
           )
-          responseData = results
         }
         break
 
