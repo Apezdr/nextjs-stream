@@ -28,6 +28,7 @@ import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation';
 import { MediaNotificationOrchestrator } from '../notifications/MediaNotificationOrchestrator';
 // Import feature flag utilities and new architecture adapter
 import { shouldUseNewArchitecture, logFeatureFlagDecision } from '../sync/featureFlags';
+import { clearSyncGates } from '../sync/core/syncGate';
 import { syncWithNewArchitecture, validateNewArchitectureCompatibility } from './newArchitectureAdapter';
 // Import new MongoDB-native post-sync orchestrator (replaces checkAvailabilityAcrossAllServers).
 import { runPostSyncCleanup } from './postSyncCleanup';
@@ -125,6 +126,19 @@ export async function syncToFlatStructure(fileServer, serverConfig, fieldAvailab
       logFeatureFlagDecision('syncToFlatStructure', false, 'error fallback');
       // Continue with old architecture below
     }
+  }
+
+  // The legacy path below writes each field with its own update and knows
+  // nothing about the skip gates the new architecture keeps on every document
+  // (sync/core/syncGate). A gate says "this server's last complete pass saw this
+  // document"; after a legacy run that is no longer true, and a gate left in
+  // place would let the next new-architecture run skip a title the legacy rules
+  // have just rewritten. Drop them all, so that run looks at everything again.
+  // Not caught: a legacy run that could not remove the gates must not write.
+  const gateClient = await clientPromise;
+  const gatesCleared = await clearSyncGates(gateClient.db('Media'));
+  if (gatesCleared > 0) {
+    log.warn({ serverId: serverConfig.id, gatesCleared }, 'Removed the skip gates before a legacy flat sync run');
   }
 
   // Continue with original flat sync implementation

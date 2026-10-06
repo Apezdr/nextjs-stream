@@ -29,8 +29,11 @@ import {
   syncEventBus,
 } from '../../core'
 
-import { MovieRepository, SeasonRepository, TVShowRepository } from '../../infrastructure'
-import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
+import { MovieRepository, SeasonRepository, TVShowRepository, isTopLevelFieldLocked } from '../../infrastructure'
+import {
+  isCurrentServerHighestPriorityForField,
+  isCurrentServerHighestPriorityForReportedField,
+} from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -215,12 +218,19 @@ export class BlurhashStrategy implements SyncStrategy {
       return changes
     }
 
+    // An image an admin locked is not the file server's image, and a blurhash
+    // an admin locked is not ours to write: the same rule as the asset
+    // strategy's first attempt, which this is the second attempt of.
+    const lockedFields = (entity as any).lockedFields
+    const locked = (field: string) => isTopLevelFieldLocked(lockedFields, field)
+
     // ── Poster blurhash ──────────────────────────────────────────────────────
-    const posterChange = await this.processBlurhashField({
+    const posterChange = locked('posterURL') || locked('posterBlurhash') ? null : await this.processBlurhashField({
       label: 'posterBlurhash',
       currentValue: entity.posterBlurhash,
       blurhashRelativePath: fileServerMovieData.urls.posterBlurhash,
       fieldPath: MOVIE_POSTER_BLURHASH_FIELD,
+      imageFieldPath: 'urls.poster',
       mediaCategory: 'movies',
       originalTitle,
       context,
@@ -246,11 +256,12 @@ export class BlurhashStrategy implements SyncStrategy {
     if (posterChange) changes.push(posterChange)
 
     // ── Backdrop blurhash ────────────────────────────────────────────────────
-    const backdropChange = await this.processBlurhashField({
+    const backdropChange = locked('backdrop') || locked('backdropBlurhash') ? null : await this.processBlurhashField({
       label: 'backdropBlurhash',
       currentValue: entity.backdropBlurhash,
       blurhashRelativePath: fileServerMovieData.urls.backdropBlurhash,
       fieldPath: MOVIE_BACKDROP_BLURHASH_FIELD,
+      imageFieldPath: 'urls.backdrop',
       mediaCategory: 'movies',
       originalTitle,
       context,
@@ -410,6 +421,11 @@ export class BlurhashStrategy implements SyncStrategy {
     currentValue: string | undefined
     blurhashRelativePath: string | undefined
     fieldPath: string
+    /**
+     * Availability path of the image this blurhash is of. When given, only the
+     * server that owns the image may supply its blurhash.
+     */
+    imageFieldPath?: string
     mediaCategory: 'movies' | 'tv'
     originalTitle: string
     context: SyncContext
@@ -420,6 +436,7 @@ export class BlurhashStrategy implements SyncStrategy {
       currentValue,
       blurhashRelativePath,
       fieldPath,
+      imageFieldPath,
       mediaCategory,
       originalTitle,
       context,
@@ -439,13 +456,23 @@ export class BlurhashStrategy implements SyncStrategy {
     }
 
     // ── 3. Server priority gate ──────────────────────────────────────────────
-    const isHighestPriority = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability,
-      mediaCategory,
-      originalTitle,
-      fieldPath,
-      context.serverConfig
-    )
+    // A blurhash is of one image, so it comes from the server that owns that
+    // image: ranked on its own it could be another server's, of another file.
+    const isHighestPriority = imageFieldPath
+      ? isCurrentServerHighestPriorityForReportedField(
+          context.fieldAvailability,
+          mediaCategory,
+          originalTitle,
+          imageFieldPath,
+          context.serverConfig
+        )
+      : isCurrentServerHighestPriorityForField(
+          context.fieldAvailability,
+          mediaCategory,
+          originalTitle,
+          fieldPath,
+          context.serverConfig
+        )
 
     if (!isHighestPriority) {
       console.log(
@@ -481,6 +508,18 @@ export class BlurhashStrategy implements SyncStrategy {
     const blurhash = context.resourceManager
       ? await context.resourceManager.throttleHttp(doFetch)
       : await doFetch()
+
+    // The file server publishes this blurhash, and it is still missing after
+    // this attempt (or was fetched after all). MovieSyncService reads the set:
+    // while anything is in it the pass is not marked complete, so the title is
+    // not skipped from now on with the blurhash missing.
+    const failures = mediaCategory === 'movies' ? context.pendingMovieFetchFailures : undefined
+    if (failures) {
+      const forTitle = failures.get(originalTitle) ?? new Set<string>()
+      if (typeof blurhash === 'string' && blurhash) forTitle.delete(label)
+      else forTitle.add(label)
+      failures.set(originalTitle, forTitle)
+    }
 
     if (!blurhash) {
       console.log(`⏭️ BlurhashStrategy: "${label}" fetch returned empty/null for "${originalTitle}"`)

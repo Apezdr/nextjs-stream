@@ -470,7 +470,14 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       const finalAvailabilityResults = await runPostSyncCleanup(
         fileServers,
         fieldAvailability,
-        { syncRunId, preTagCoverage: preTagResult, runStartedAt: startTime }
+        {
+          syncRunId,
+          preTagCoverage: preTagResult,
+          runStartedAt: startTime,
+          // Whether every enabled server answered. Cleanup deletes nothing on a
+          // run where one did not (see the every-server gate there).
+          allEnabledServersProbed: options.allEnabledServersProbed === true,
+        }
       )
       results.finalAvailabilityResults = finalAvailabilityResults
       console.log(chalk.bold.yellow('Post-sync cleanup complete'))

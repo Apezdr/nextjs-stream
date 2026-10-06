@@ -21,9 +21,15 @@ import {
   planFieldCleanup
 } from '../../core'
 
-import { SeasonRepository, TVShowRepository } from '../../infrastructure'
+import { SeasonRepository, TVShowRepository, isTopLevelFieldLocked } from '../../infrastructure'
 import { seedDiscovery } from '../../core/discovery'
-import { isCurrentServerHighestPriorityForField, createFullUrl, extractUrlHash } from '@src/utils/sync/utils'
+import {
+  getServersReportingField,
+  isHighestPriorityAmongServers,
+  seasonsAcrossServers,
+  createFullUrl,
+} from '@src/utils/sync/utils'
+import { changesDocument } from '@src/utils/sync/core/syncGate'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { createLogger } from '@src/lib/logger'
 
@@ -80,6 +86,10 @@ export class SeasonSyncService {
         merged: SeasonEntity
         unset?: string[]
         cleanupChanges?: string[]
+        /** The pass changed the season's data (not just sync bookkeeping). */
+        documentChanged: boolean
+        /** A removal was held back because not every enabled server answered. */
+        removalWithheld: boolean
       }> = []
 
       for (const [key, fileData] of Object.entries(showFileData.seasons)) {
@@ -93,7 +103,7 @@ export class SeasonSyncService {
         }
 
         const existing = existingByNumber.get(seasonNumber) || null
-        const merged = await this.buildSeasonEntity(showTitle, displayTitle, seasonNumber, fileData, context, existing, showId, parentShow)
+        const { entity: merged, incomplete, unset: builtUnset } = await this.buildSeasonEntity(showTitle, displayTitle, seasonNumber, fileData, context, existing, showId, parentShow, key)
 
         // Filter shape mirrors bulkUpsertShow: prefer showId for stability
         const filter = (merged as any).showId
@@ -113,6 +123,10 @@ export class SeasonSyncService {
             {
               entityField: 'posterURL',
               fieldPath: `seasons.${key}.season_poster`,
+              // The same season under another server's folder name.
+              alsoReportedAs: this.seasonKeysAcrossServers(showTitle, seasonNumber, key, context)
+                .filter((other) => other !== key)
+                .map((other) => `seasons.${other}.season_poster`),
               companions: ['posterSource', 'posterBlurhash', 'posterBlurhashSource'],
             },
           ],
@@ -120,7 +134,18 @@ export class SeasonSyncService {
           logContext: { show: displayTitle, originalTitle: showTitle, season: seasonNumber },
         })
 
-        seasonOps.push({ filter, existing, merged, unset: plan.unset, cleanupChanges: plan.changes })
+        const unset = [...new Set([...(plan.unset ?? []), ...builtUnset])]
+        seasonOps.push({
+          filter,
+          existing,
+          merged,
+          unset,
+          cleanupChanges: plan.changes,
+          documentChanged: changesDocument(existing as any, merged as any, unset),
+          // Either way the pass has to run again: a removal held back because
+          // not every server answered, or a count or blurhash it could not settle.
+          removalWithheld: plan.withheld === true || incomplete,
+        })
       }
 
       // ---- Single smart bulk write — skips unchanged, $sets changed, inserts new ----
@@ -128,12 +153,18 @@ export class SeasonSyncService {
         await this.seasonRepository.smartBulkUpsert(seasonOps)
       }
 
-      for (const { merged: entity, cleanupChanges } of seasonOps) {
+      for (const { merged: entity, cleanupChanges, documentChanged, removalWithheld } of seasonOps) {
         results.push(this.makeResult(
           `${showTitle} S${entity.seasonNumber}`, context,
           SyncStatus.Completed,
           [`Upserted season ${entity.seasonNumber}`, ...(cleanupChanges || [])], [],
-          { displayTitle: entity.showTitle, seasonNumber: entity.seasonNumber }
+          {
+            displayTitle: entity.showTitle,
+            seasonNumber: entity.seasonNumber,
+            // Read by TVShowSyncService when it decides the show's own gate.
+            ...(documentChanged ? { documentChanged: true } : {}),
+            ...(removalWithheld ? { gateLeftOpen: true } : {}),
+          }
         ))
       }
 
@@ -152,7 +183,9 @@ export class SeasonSyncService {
         { showTitle, serverId: context.serverConfig.id, err: msg, stack },
         `Season sync failed for show: ${showTitle}`
       )
-      results.push(this.makeResult(showTitle, context, SyncStatus.Failed, [], [msg]))
+      // An unordered bulk write can apply some of its operations before it
+      // fails. What landed is unknown, so the show is reported as changed.
+      results.push(this.makeResult(showTitle, context, SyncStatus.Failed, [], [msg], { documentChanged: true }))
     }
 
     return results
@@ -181,9 +214,53 @@ export class SeasonSyncService {
     context: SyncContext,
     existing: SeasonEntity | null,
     showId: any,
-    parentShow: any
-  ): Promise<SeasonEntity> {
+    parentShow: any,
+    /** The season's LITERAL key in the file-server data, e.g. "Season 01". */
+    seasonKey: string
+  ): Promise<{
+    entity: SeasonEntity
+    /**
+     * Something could not be settled this pass and must be retried: a blurhash
+     * fetch failed, or the episode count was held because a server did not answer.
+     */
+    incomplete: boolean
+    /** Fields to remove from the stored season: their data is gone, not changed. */
+    unset: string[]
+  }> {
     const now = new Date()
+    let incomplete = false
+    const unset: string[] = []
+    const locked = (field: string) => isTopLevelFieldLocked((existing as any)?.lockedFields, field)
+    // Remove a field whose data is gone. An admin lock keeps it.
+    const clearField = (field: string) => {
+      if (locked(field)) return
+      delete (entity as any)[field]
+      if (existing && (existing as any)[field] !== undefined) unset.push(field)
+    }
+    // A season field belongs to the highest-priority server that has a value
+    // for it. The paths below use the literal season keys the servers sent:
+    // the old `seasons.Season ${n}.…` guess missed every folder not named
+    // exactly that ("Season 01"), a missed path counts as "nobody reports it",
+    // and the priority helper then let every server write — last one synced
+    // won. Two servers need not agree on the folder's name either, so the
+    // reporters are gathered under every key in use for this season number.
+    const seasonKeys = this.seasonKeysAcrossServers(showOriginalTitle, seasonNumber, seasonKey, context)
+    const owns = (field: string, hasValue: boolean) => {
+      if (!hasValue) return false
+      const reporters = [
+        ...new Set(
+          seasonKeys.flatMap((key) =>
+            getServersReportingField(
+              context.fieldAvailability, 'tv', showOriginalTitle, `seasons.${key}.${field}`
+            )
+          )
+        ),
+      ]
+      return isHighestPriorityAmongServers(
+        reporters.includes(context.serverConfig.id) ? reporters : [...reporters, context.serverConfig.id],
+        context.serverConfig
+      )
+    }
 
     // Start from existing doc (preserving ALL fields) or create new
     const entity: SeasonEntity = existing
@@ -207,46 +284,56 @@ export class SeasonSyncService {
     // Use display title as showTitle (matches legacy document shape)
     entity.showTitle = displayTitle
 
-    // --- Metadata from parent show (priority-gated) ---
-    // Season metadata is stored in the parent TV show's metadata.seasons[] array,
-    // NOT in the season's own file-server data.
-    const canUpdateMetadata = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability, 'tv', showOriginalTitle, 'metadata', context.serverConfig
-    )
+    // --- Metadata from the parent show ---
+    // A season's metadata is not in its own file-server data: it is the entry
+    // for this season in the STORED show's metadata.seasons[]. It is derived
+    // data, the same whichever server's pass copies it, so every pass does.
+    // It used to be left to the server that owns the show's metadata, and a
+    // season that server does not hold (the main server has the show folder
+    // with artwork only; the episodes are on another) never got a title, an
+    // air date or an episode count.
+    const showSeasons = parentShow?.metadata?.seasons
+    const seasonMetadata = Array.isArray(showSeasons)
+      ? showSeasons.find((s: any) => s.season_number === seasonNumber)
+      : undefined
+    if (locked('metadata')) {
+      // Metadata an admin locked stays as stored, and so do the fields taken
+      // from it (the title, the episode count below): the show's copy would be
+      // dropped on the way to the database, and must not name the season.
+    } else if (seasonMetadata) {
+      // Clean metadata: remove episodes array (stored separately)
+      const cleanedMetadata = { ...seasonMetadata }
+      delete cleanedMetadata.episodes
 
-    if (canUpdateMetadata) {
-      // Season metadata lives in the parent TV show's metadata.seasons[] array
-      // Use the DB entity's metadata (already synced by TVShowSyncService) as primary source
-      const showMetadata = parentShow?.metadata
-      const seasonMetadata = showMetadata?.seasons?.find(
-        (s: any) => s.season_number === seasonNumber
-      )
+      entity.metadata = cleanedMetadata
+      // The source is the show's metadata source, not whoever copied it.
+      if (parentShow?.metadataSource) entity.metadataSource = parentShow.metadataSource
 
-      if (seasonMetadata) {
-        // Clean metadata: remove episodes array (stored separately)
-        const cleanedMetadata = { ...seasonMetadata }
-        delete cleanedMetadata.episodes
-
-        entity.metadata = cleanedMetadata
-        entity.metadataSource = context.serverConfig.id
-
-        // Extract queryable fields from metadata (matching legacy document shape)
-        if (seasonMetadata.name) entity.title = seasonMetadata.name
-        if (seasonMetadata.air_date) entity.airDate = new Date(seasonMetadata.air_date)
-        if (seasonMetadata.overview) entity.overview = seasonMetadata.overview
-        if (seasonMetadata.poster_path) entity.posterPath = seasonMetadata.poster_path
-        if (seasonMetadata.vote_average != null) entity.rating = seasonMetadata.vote_average
-        if (seasonMetadata.episode_count != null) entity.episodeCount = seasonMetadata.episode_count
+      // Extract queryable fields from metadata (matching legacy document shape)
+      if (seasonMetadata.name) entity.title = seasonMetadata.name
+      if (seasonMetadata.air_date) entity.airDate = new Date(seasonMetadata.air_date)
+      if (seasonMetadata.overview) entity.overview = seasonMetadata.overview
+      if (seasonMetadata.poster_path) entity.posterPath = seasonMetadata.poster_path
+      if (seasonMetadata.vote_average != null) entity.rating = seasonMetadata.vote_average
+      if (seasonMetadata.episode_count != null) entity.episodeCount = seasonMetadata.episode_count
+    } else if (Array.isArray(showSeasons) && existing?.metadata) {
+      // The show's metadata no longer lists this season. What was copied from
+      // it goes, so the season ends as a first sync against the same metadata
+      // would leave it. (A show with no metadata at all is not this case: its
+      // metadata may simply not have been synced yet.)
+      for (const field of ['metadata', 'metadataSource', 'airDate', 'overview', 'posterPath', 'rating']) {
+        clearField(field)
       }
+      if (!locked('title')) entity.title = `Season ${seasonNumber}`
+      // The count came from the metadata too. It is worked out again below
+      // from the episodes the servers hold.
+      if (!locked('episodeCount')) delete (entity as any).episodeCount
     }
 
     // --- Poster (priority-gated) ---
     // File-server key for season poster is "season_poster", not "poster"
-    const posterFieldPath = `seasons.Season ${seasonNumber}.season_poster`
-    const canUpdatePoster = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability, 'tv', showOriginalTitle, posterFieldPath, context.serverConfig
-    )
-    if (canUpdatePoster && (fileData as any)?.season_poster) {
+    const canUpdatePoster = owns('season_poster', Boolean((fileData as any)?.season_poster))
+    if (canUpdatePoster) {
       entity.posterURL = createFullUrl(
         (fileData as any).season_poster,
         context.serverConfig
@@ -254,45 +341,99 @@ export class SeasonSyncService {
       entity.posterSource = context.serverConfig.id
     }
 
-    // Episode count from file-server (fallback if metadata didn't provide it)
-    if (entity.episodeCount == null) {
-      if (typeof (fileData as any)?.episodeCount === 'number') {
+    // Episode count: the season's metadata when it has one, otherwise the
+    // episodes the servers hold between them, counted once each. The fallback
+    // used to be the first syncing server's own count, kept from then on.
+    const metadataEpisodeCount = (entity.metadata as any)?.episode_count
+    if (metadataEpisodeCount != null) {
+      entity.episodeCount = metadataEpisodeCount
+    } else {
+      const acrossServers = seasonsAcrossServers(context.fieldAvailability, showOriginalTitle)
+        .get(seasonNumber)?.episodes.size
+      if (acrossServers) {
+        // With a server missing, its episodes are missing from the count. Do
+        // not let it drop on such a run; say so, so the lower count is applied
+        // on the next run where every server answers.
+        const everyServerAnswered =
+          (context.allEnabledServersProbed ?? context.cleanup?.allEnabledServersProbed) === true
+        const stored = (existing as any)?.episodeCount
+        if (!everyServerAnswered && typeof stored === 'number' && stored > acrossServers) {
+          entity.episodeCount = stored
+          incomplete = true
+        } else {
+          entity.episodeCount = acrossServers
+        }
+      } else if (typeof (fileData as any)?.episodeCount === 'number') {
         entity.episodeCount = (fileData as any).episodeCount
       } else if ((fileData as any)?.episodes && typeof (fileData as any).episodes === 'object') {
         entity.episodeCount = Object.keys((fileData as any).episodes).length
       }
     }
 
-    // --- Season Poster Blurhash (priority-gated, fetch actual string) ---
-    // Legacy pattern: fetchMetadataMultiServer(id, url, 'blurhash', 'tv', originalTitle)
-    // Field path: "seasons.Season N.seasonPosterBlurhash"
-    const blurhashFieldPath = `seasons.Season ${seasonNumber}.seasonPosterBlurhash`
-    const canUpdateBlurhash = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability, 'tv', showOriginalTitle, blurhashFieldPath, context.serverConfig
-    )
-    if (canUpdateBlurhash && (fileData as any)?.seasonPosterBlurhash) {
-      // Skip fetch if the season poster image file hasn't changed (?hash= param comparison)
-      const newPosterUrl = (fileData as any)?.season_poster
-        ? createFullUrl((fileData as any).season_poster, context.serverConfig) : null
-      const posterImageChanged = extractUrlHash(newPosterUrl ?? '') !== extractUrlHash(existing?.posterURL ?? '')
-      if (posterImageChanged || !existing?.posterBlurhash) {
+    // --- Season poster blurhash ---
+    // A stored blurhash is good only while it is OF THE STORED POSTER: taken
+    // from the server that owns the poster, and not older than it. One that is
+    // not is replaced, and when this pass has nothing to replace it with (no
+    // blurhash published for the poster, or the fetch failed) it is removed.
+    // A failed fetch is reported, so the show is not skipped without it.
+    if (canUpdatePoster && !locked('posterURL') && !locked('posterBlurhash')) {
+      const stored = existing?.posterBlurhash
+      const notOfThisImage =
+        Boolean(stored) &&
+        (entity.posterURL !== existing?.posterURL ||
+          (existing as any)?.posterBlurhashSource !== context.serverConfig.id)
+
+      let blurhash: unknown = null
+      if ((fileData as any)?.seasonPosterBlurhash && (!stored || notOfThisImage)) {
         try {
-          const blurhashUrl = createFullUrl((fileData as any).seasonPosterBlurhash, context.serverConfig)
-          const blurhash = await fetchMetadataMultiServer(
-            context.serverConfig.id, blurhashUrl, 'blurhash', 'tv', showOriginalTitle
+          blurhash = await fetchMetadataMultiServer(
+            context.serverConfig.id,
+            createFullUrl((fileData as any).seasonPosterBlurhash, context.serverConfig),
+            'blurhash',
+            'tv',
+            showOriginalTitle
           )
-          if (blurhash && typeof blurhash === 'string' && !(blurhash as any).error) {
-            entity.posterBlurhash = blurhash
-            entity.posterBlurhashSource = context.serverConfig.id
-          }
         } catch {
-          // Blurhash fetch failed — preserve existing value from spread
+          // Reported below.
+        }
+        if (!(blurhash && typeof blurhash === 'string')) {
+          blurhash = null
+          incomplete = true
         }
       }
-      // else: season poster image unchanged, existing posterBlurhash preserved by spread
+
+      if (blurhash) {
+        entity.posterBlurhash = blurhash as string
+        entity.posterBlurhashSource = context.serverConfig.id
+      } else if (notOfThisImage) {
+        clearField('posterBlurhash')
+        clearField('posterBlurhashSource')
+      }
     }
 
-    return entity
+    // A count that could not be worked out again is removed with the metadata
+    // it came from.
+    if (existing && (existing as any).episodeCount !== undefined && (entity as any).episodeCount === undefined) {
+      unset.push('episodeCount')
+    }
+
+    // A field is either written or removed, never both.
+    return { entity, incomplete, unset: [...new Set(unset)].filter((field) => (entity as any)[field] === undefined) }
+  }
+
+  /**
+   * Every literal key in use for one season number across the servers that
+   * answered, this server's own key first.
+   */
+  private seasonKeysAcrossServers(
+    showOriginalTitle: string,
+    seasonNumber: number,
+    ownKey: string,
+    context: SyncContext
+  ): string[] {
+    const others =
+      seasonsAcrossServers(context.fieldAvailability, showOriginalTitle).get(seasonNumber)?.keys ?? []
+    return [...new Set([ownKey, ...others])]
   }
 
   private parseSeasonNumber(key: string): number | null {

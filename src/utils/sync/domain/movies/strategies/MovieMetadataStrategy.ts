@@ -29,7 +29,10 @@ import {
   FileServerAdapter
 } from '../../../core'
 
-import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
+import {
+  isCurrentServerHighestPriorityForField,
+  isCurrentServerHighestPriorityForReportedField,
+} from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
 export class MovieMetadataStrategy implements SyncStrategy {
@@ -116,7 +119,19 @@ export class MovieMetadataStrategy implements SyncStrategy {
       
       // 🚀 CRITICAL FIX: Check priority FIRST before doing any work
       // This prevents lower-priority servers from wasting API calls
-      const canUpdateMetadata = this.shouldUpdateField(getFieldPath('metadata'), originalTitle, context)
+      //
+      // Metadata belongs to the highest-priority server that HAS a metadata file
+      // for the title. The check used to be "no server with one outranks me",
+      // which a server without one passes whenever its priority number is
+      // lower: its fetch then came back empty, and that emptiness replaced the
+      // metadata another server had supplied, on every run.
+      const canUpdateMetadata = isCurrentServerHighestPriorityForReportedField(
+        context.fieldAvailability,
+        'movies',
+        originalTitle,
+        getFieldPath('metadata'),
+        context.serverConfig
+      )
       
       if (!canUpdateMetadata) {
         syncLogger.debug(`⏭️ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does not have priority for metadata, skipping`)
@@ -148,8 +163,16 @@ export class MovieMetadataStrategy implements SyncStrategy {
         && Object.keys(movie.metadata).length > 0
         && movie.metadata.hasExternalMetadata !== false
 
+      // The stored hash is the hash of ONE server's copy: the one the stored
+      // metadata was fetched from. It says nothing about this server's copy
+      // unless this server is that one. Without this, a metadata owner that was
+      // down when the title was first synced never took the metadata back once
+      // its copy hashed the same, and the title kept naming the other server
+      // as its metadata source.
+      const storedMetadataIsFromThisServer = (movie as any)?.metadataSource === context.serverConfig.id
+
       // If we have both hashes and they match, skip metadata fetch (optimization)
-      if (metadataHashInfo?.hash && currentMetadataHash && metadataHashInfo.hash === currentMetadataHash && metadataIsPopulated) {
+      if (metadataHashInfo?.hash && currentMetadataHash && metadataHashInfo.hash === currentMetadataHash && metadataIsPopulated && storedMetadataIsFromThisServer) {
         syncLogger.debug(`📝 Metadata hash unchanged for "${originalTitle}" (${metadataHashInfo.hash}), skipping fetch`)
         
         // Still return success but with no changes
@@ -234,7 +257,15 @@ export class MovieMetadataStrategy implements SyncStrategy {
       
       // For version upgrades, apply normalization but still check if values actually changed
       // This ensures old data gets migrated to new schema (e.g., string → Date conversion)
-      const metadataChanged = !this.isMetadataEqual(movie?.metadata, normalizedMetadata)
+      //
+      // Metadata stored from ANOTHER server is replaced by the owner's copy even
+      // when the comparison calls the two equal (it tolerates keys only the
+      // stored copy has): the document must hold what its metadataSource says
+      // it holds, whichever server happened to supply it first.
+      const storedFromAnotherServer =
+        !metadataFetchFailed && (movie as any)?.metadataSource !== context.serverConfig.id
+      const metadataChanged =
+        storedFromAnotherServer || !this.isMetadataEqual(movie?.metadata, normalizedMetadata)
       
       if (needsVersionUpgrade || metadataChanged) {
         movieToSave.metadata = normalizedMetadata
@@ -274,6 +305,9 @@ export class MovieMetadataStrategy implements SyncStrategy {
       // The fileserver key IS the originalTitle (filesystem key)
       
       // If metadata fetch succeeded and contains a title, use it
+      // (The title's source is decided by MovieSyncService with the title
+      // itself; what is stamped here only stands in when this strategy runs on
+      // its own.)
       if (metadata?.title && metadata.title !== movie?.title) {
         movieToSave.title = metadata.title
         movieToSave.titleSource = context.serverConfig.id

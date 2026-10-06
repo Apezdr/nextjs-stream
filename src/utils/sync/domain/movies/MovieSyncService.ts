@@ -22,7 +22,8 @@ import {
 } from '../../core'
 
 import {
-  MovieRepository
+  MovieRepository,
+  isTopLevelFieldLocked
 } from '../../infrastructure'
 
 import {
@@ -30,6 +31,14 @@ import {
 } from '../../core'
 
 import { createLogger } from '@src/lib/logger'
+import {
+  availabilityFingerprint,
+  payloadFingerprint,
+  isHighestPriorityAmongServers,
+  getServersReportingTitle,
+} from '@src/utils/sync/utils'
+import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates } from '../../core/syncGate'
+import isEqual from 'lodash/isEqual'
 
 const pinoLog = createLogger('Sync.Movie')
 
@@ -42,6 +51,23 @@ const MOVIE_CLEANABLE_FIELDS: CleanableField[] = [
   { entityField: 'logo', fieldPath: 'urls.logo', companions: ['logoSource', 'logoBlurhash'] },
   { entityField: 'chapterURL', fieldPath: 'urls.chapters', companions: ['chapterSource'] },
 ]
+
+/**
+ * The value a movie's skip gate must hold, for one server, for that server's
+ * pass to be skipped: a fingerprint of the payload being applied and a
+ * fingerprint of which servers have which fields for the title. See
+ * core/syncGate for the whole rule.
+ */
+export function movieSyncGate(
+  payload: unknown,
+  fieldAvailability: SyncContext['fieldAvailability'],
+  originalTitle: string
+): string {
+  return buildSyncGate(
+    payloadFingerprint(payload),
+    availabilityFingerprint(fieldAvailability, 'movies', originalTitle)
+  )
+}
 
 export class MovieSyncService {
   private repository: MovieRepository
@@ -96,40 +122,42 @@ export class MovieSyncService {
       // For display title, use the originalTitle as fallback since that's what we have
       const effectiveTitle = originalTitle ? originalTitle : title
 
-      // Whole-movie early-skip: if hash unchanged, bypass entity normalisation and all strategies.
-      // Mirrors TVShowSyncService.syncTVShow() show-level skip pattern.
-      if (!context.forceSync && context.metadataHashesCache) {
-        const incomingHash = context.metadataHashesCache.titles?.[effectiveOriginalTitle]?.hash
-        if (incomingHash) {
-          // Prefer pre-fetched cache — avoids extra DB read when movieCache is populated
-          const cached = context.movieCache?.get(effectiveOriginalTitle)
-                      ?? await this.repository.findByOriginalTitle(effectiveOriginalTitle)
+      // Whole-movie early-skip: bypass entity normalisation and all strategies
+      // when neither this server's payload nor the who-has-what picture for the
+      // title has changed since this server's last complete pass, and no other
+      // server has changed the document since (movieSyncGate).
+      //
+      // The gate is only ever stamped by a pass in which no strategy failed, so
+      // a matching gate is by itself the evidence the earlier checks here used
+      // to look for in the stored metadata.
+      const incomingHash = context.metadataHashesCache?.titles?.[effectiveOriginalTitle]?.hash
+      const syncGate = movieSyncGate(
+        context.fileServerData?.movies?.[effectiveOriginalTitle],
+        context.fieldAvailability,
+        effectiveOriginalTitle
+      )
 
-          // Defence-in-depth: only skip when entity has populated metadata. Mirrors the
-          // metadataIsPopulated guard in MovieMetadataStrategy that repairs movies left
-          // with metadata: {} by the earlier strategy-spread bug.
-          const metadataIsPopulated = cached?.metadata
-            && typeof cached.metadata === 'object'
-            && Object.keys(cached.metadata).length > 0
-            && (cached.metadata as any).hasExternalMetadata !== false
+      if (!context.forceSync) {
+        // Prefer pre-fetched cache — avoids extra DB read when movieCache is populated
+        const cached = context.movieCache?.get(effectiveOriginalTitle)
+                    ?? await this.repository.findByOriginalTitle(effectiveOriginalTitle)
 
-          if (cached?.syncHash && cached.syncHash === incomingHash && metadataIsPopulated) {
-            syncEventBus.emitComplete(title, MediaType.Movie, context.serverConfig.id, undefined, {
-              totalOperations: 0,
-              successful: 0,
-              failed: 0
-            })
-            return [{
-              status: SyncStatus.Skipped,
-              entityId: title,
-              mediaType: MediaType.Movie,
-              operation: SyncOperation.Metadata,
-              serverId: context.serverConfig.id,
-              timestamp: new Date(),
-              changes: [],
-              errors: []
-            }]
-          }
+        if (readSyncGate(cached as any, context.serverConfig.id) === syncGate) {
+          syncEventBus.emitComplete(title, MediaType.Movie, context.serverConfig.id, undefined, {
+            totalOperations: 0,
+            successful: 0,
+            failed: 0
+          })
+          return [{
+            status: SyncStatus.Skipped,
+            entityId: title,
+            mediaType: MediaType.Movie,
+            operation: SyncOperation.Metadata,
+            serverId: context.serverConfig.id,
+            timestamp: new Date(),
+            changes: [],
+            errors: []
+          }]
         }
       }
 
@@ -143,6 +171,14 @@ export class MovieSyncService {
       // strategies complete, writing only what changed (or nothing if unchanged).
       if (!context.pendingMovieUpdates) context.pendingMovieUpdates = new Map()
       context.pendingMovieUpdates.set(effectiveOriginalTitle, {})
+      if (!context.pendingMovieUnsets) context.pendingMovieUnsets = new Map()
+      context.pendingMovieUnsets.set(effectiveOriginalTitle, new Set())
+      // Created here, not by the strategy that needs it: each strategy is handed
+      // a copy of the context, so a set it created would never be seen again.
+      if (!context.pendingMovieDeferrals) context.pendingMovieDeferrals = new Set()
+      context.pendingMovieDeferrals.delete(effectiveOriginalTitle)
+      if (!context.pendingMovieFetchFailures) context.pendingMovieFetchFailures = new Map()
+      context.pendingMovieFetchFailures.set(effectiveOriginalTitle, new Set())
 
       for (const operation of operations) {
         try {
@@ -182,7 +218,64 @@ export class MovieSyncService {
       }
 
       // ---- Consolidated write — single smartUpsert after all strategies ----
-      const pending = context.pendingMovieUpdates.get(effectiveOriginalTitle) || {}
+      const pending: any = context.pendingMovieUpdates.get(effectiveOriginalTitle) || {}
+
+      // Fields a strategy asked to remove (their data is gone). An admin lock
+      // keeps a field, here as everywhere else. A field being removed must not
+      // also be written, so it is taken out of the pending set.
+      const strategyUnset = [...(context.pendingMovieUnsets.get(effectiveOriginalTitle) ?? [])].filter(
+        (field) => !isTopLevelFieldLocked((existingMovie as any)?.lockedFields, field)
+      )
+      for (const field of strategyUnset) delete pending[field]
+
+      // The display title is derived here, once, from the metadata the document
+      // ends up with: its TMDB title when it has one, the folder name otherwise.
+      // Each strategy used to write a title of its own (the metadata strategy
+      // the TMDB one, the asset and content strategies the folder name), so the
+      // stored title depended on which of them last had something to change.
+      // (A locked `metadata` keeps what is stored: the strategy's copy will be
+      // dropped on the way to the database, so it must not name the title.)
+      const metadataLocked = isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'metadata')
+      const storedMetadata: any = metadataLocked
+        ? existingMovie?.metadata
+        : pending.metadata ?? existingMovie?.metadata
+      // (The stub the metadata strategy writes after a failed first fetch
+      // carries the folder name as its title and `hasExternalMetadata: false`;
+      // that is not a metadata title.)
+      const metadataTitle =
+        typeof storedMetadata?.title === 'string' && storedMetadata.hasExternalMetadata !== false
+          ? storedMetadata.title.trim()
+          : ''
+      const displayTitle = metadataTitle || effectiveOriginalTitle
+      if (existingMovie ? existingMovie.title !== displayTitle : true) {
+        pending.title = displayTitle
+      } else {
+        // Unchanged: make sure a strategy's stale copy cannot override it.
+        delete pending.title
+      }
+
+      // The title's source goes with it: the metadata's owner when the title
+      // is the metadata's, otherwise the highest-priority server that has the
+      // folder. (The folder name is the same on every server, so for a title
+      // with no metadata anywhere the source used to be whichever server had
+      // created the document.)
+      const titleSource = metadataTitle
+        ? (metadataLocked ? existingMovie?.metadataSource : pending.metadataSource ?? existingMovie?.metadataSource)
+        : isHighestPriorityAmongServers(
+            getServersReportingTitle(context.fieldAvailability, 'movies', effectiveOriginalTitle),
+            context.serverConfig
+          )
+          ? context.serverConfig.id
+          : undefined
+      delete pending.titleSource
+      if (
+        titleSource &&
+        !isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'title') &&
+        (existingMovie as any)?.titleSource !== titleSource
+      ) {
+        pending.titleSource = titleSource
+      }
+      context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
 
       // A failed metadata fetch must not advance the metadata gate. If the
       // metadata strategy reported Failed (fetch error, or it preserved existing
@@ -194,6 +287,9 @@ export class MovieSyncService {
       const metadataFetchFailed = results.some(
         r => r.operation === SyncOperation.Metadata && r.status === SyncStatus.Failed
       )
+      // The same holds for any other strategy that failed: its work was not
+      // done, so the gate must stay open for the next run to retry it.
+      const anyStrategyFailed = results.some(r => r.status === SyncStatus.Failed)
 
       // Field-absence cleanup: drop asset fields no enabled server reports anymore
       // (only meaningful for an existing doc). planFieldCleanup logs (both modes)
@@ -209,33 +305,50 @@ export class MovieSyncService {
         log: (obj, msg) => pinoLog.info(obj, msg),
         logContext: { title: (movie as any)?.title || effectiveTitle, originalTitle: effectiveOriginalTitle },
       })
-      const hasUnset = !!cleanupPlan.unset?.length
+      const unsetFields = [...new Set([...(cleanupPlan.unset ?? []), ...strategyUnset])]
+      const hasUnset = unsetFields.length > 0
 
-      // Stamp syncHash so the next sync can early-skip via the Phase 2 check.
-      // Only stamped when at least one strategy made changes AND the metadata
-      // fetch did not fail — if the sync was a no-op, leave any existing syncHash
-      // alone (consistent with smart-upsert philosophy).
-      if (Object.keys(pending).length > 0) {
-        const incomingHash = context.metadataHashesCache?.titles?.[effectiveOriginalTitle]?.hash
-        if (incomingHash && !metadataFetchFailed) {
-          pending.syncHash = incomingHash
-          context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
-        }
-      }
+      // The skip gate (core/syncGate). This server's entry is stamped when the
+      // pass ran to the end with nothing failed and nothing deferred — including
+      // a pass that found nothing to change, which would otherwise be repeated
+      // in full on every run. It is left out when a strategy failed, or when a
+      // removal was held back because not every server answered, so the next
+      // run does the work again. A pass that changed the document drops the
+      // other servers' entries.
+      // `syncHash` (the file server's hash for the title) is still recorded when
+      // the document changes, for anyone inspecting it; nothing decides on it.
+      const removalDeferred =
+        context.pendingMovieDeferrals?.has(effectiveOriginalTitle) === true || cleanupPlan.withheld === true
+      const documentChanged = changesDocument(existingMovie as any, pending, unsetFields)
+      // A file the server publishes (a blurhash) that could not be fetched is
+      // work left undone as well.
+      const fetchFailed = (context.pendingMovieFetchFailures?.get(effectiveOriginalTitle)?.size ?? 0) > 0
+      const gateToStamp =
+        !metadataFetchFailed && !anyStrategyFailed && !removalDeferred && !fetchFailed ? syncGate : null
+      const storedGates = ((existingMovie as any)?.syncGates ?? {}) as Record<string, string>
+      const gates = nextSyncGates(storedGates, context.serverConfig.id, gateToStamp, documentChanged)
+      if (!isEqual(gates, storedGates)) pending.syncGates = gates
+      if (gateToStamp && incomingHash && documentChanged) pending.syncHash = incomingHash
+      context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
 
       // Write when strategies changed something OR there are fields to clear. A
       // pure field-absence pass (empty pending + unset) must still write.
       if (Object.keys(pending).length > 0 || hasUnset) {
         if (!existingMovie) {
-          // New document — full insert from the accumulated pending fields (no unset)
-          await this.repository.upsert({ ...movie, ...pending } as any)
+          // New document — full insert from the accumulated pending fields.
+          // There is nothing stored to remove; a field a strategy wanted gone
+          // is simply left out.
+          const toInsert: any = { ...movie, ...pending }
+          for (const field of strategyUnset) delete toInsert[field]
+          await this.repository.upsert(toInsert)
         } else {
           // Existing document — diff against the pre-loop snapshot, write only changes,
-          // and $unset any fields that vanished from every server.
+          // and $unset the fields whose data is gone (absent on every server, or
+          // removed by a strategy).
           await this.repository.smartUpsert(
             { ...existingMovie, ...pending } as any,
             existingMovie as any,
-            { unset: cleanupPlan.unset }
+            { unset: unsetFields }
           )
         }
       }
@@ -244,7 +357,25 @@ export class MovieSyncService {
       // cache invalidation can build the correct `movie-details-<displayTitle>`
       // tag. `movie.title` reflects metadata-strategy updates (line ~141 spread);
       // fall back to the filesystem key only when no display title is available.
-      const movieDisplayTitle = (movie as any)?.title || effectiveTitle
+      const movieDisplayTitle = displayTitle
+      // A corrected display title is a change in its own right, and the page
+      // caches are keyed on it. When no strategy had anything else to write
+      // there is no completed result to carry it to the cache invalidation, so
+      // add one.
+      const titleChanged = Boolean(existingMovie) && existingMovie!.title !== displayTitle &&
+        !isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'title')
+      if (titleChanged && !results.some(r => r.status === SyncStatus.Completed)) {
+        results.push({
+          status: SyncStatus.Completed,
+          entityId: title,
+          mediaType: MediaType.Movie,
+          operation: SyncOperation.Metadata,
+          serverId: context.serverConfig.id,
+          timestamp: new Date(),
+          changes: [`Updated display title: "${displayTitle}"`],
+          errors: []
+        })
+      }
       for (const r of results) {
         if (r.status === SyncStatus.Completed) {
           r.metadata = { ...r.metadata, displayTitle: movieDisplayTitle }

@@ -130,6 +130,51 @@ describe('detectAbsentFields', () => {
   })
 })
 
+describe('a value an admin entered', () => {
+  // `manualFields` flags a field the admin editor wrote. It did not come from a
+  // file server, so no file server reporting it is not a reason to remove it.
+  it('is kept, locked or not', () => {
+    const res = detectAbsentFields(
+      baseInput({ entity: { thumbnail: 'https://cdn.example/custom.jpg', manualFields: { thumbnail: true } } })
+    )
+    expect(res.fieldsToUnset).toEqual([])
+    expect(res.changes).toEqual([])
+  })
+
+  it('is kept as a companion of a field that is cleared', () => {
+    const res = detectAbsentFields(
+      baseInput({
+        entity: { thumbnail: 'http://x/05.jpg', thumbnailSource: 'default', manualFields: { thumbnailSource: true } },
+      })
+    )
+    expect(res.fieldsToUnset).toEqual(['thumbnail'])
+  })
+
+  it('does not protect the other fields of the same document', () => {
+    const res = detectAbsentFields(
+      baseInput({ entity: { thumbnail: 'http://x/05.jpg', manualFields: { chapterURL: true } } })
+    )
+    expect(res.fieldsToUnset).toEqual(['thumbnail'])
+  })
+})
+
+describe('a field reported under more than one path', () => {
+  // Two servers can name the same season folder differently, so one episode's
+  // thumbnail is reported under two paths.
+  const OTHER_PATH = 'seasons.Season 02.episodes.S02E05.thumbnail'
+  const fields = [{ entityField: 'thumbnail', fieldPath: THUMB_PATH, alsoReportedAs: [OTHER_PATH], companions: ['thumbnailSource'] }]
+
+  it('is kept while a server reports it under the other path', () => {
+    const res = detectAbsentFields(baseInput({ fields, fieldAvailability: fa({ [OTHER_PATH]: ['second'] }) }))
+    expect(res.fieldsToUnset).toEqual([])
+  })
+
+  it('is cleared when no server reports it under any of them', () => {
+    const res = detectAbsentFields(baseInput({ fields }))
+    expect(res.fieldsToUnset).toEqual(expect.arrayContaining(['thumbnail', 'thumbnailSource']))
+  })
+})
+
 describe('planFieldCleanup', () => {
   const planArgs = (overrides = {}) => ({
     cleanup: { enabled: true, mode: 'enforce', maxFieldsPerEntity: 5, allEnabledServersProbed: true },
@@ -168,6 +213,28 @@ describe('planFieldCleanup', () => {
     expect(plan.changes.length).toBeGreaterThan(0)
     expect(log).toHaveBeenCalledTimes(1)
     expect(log.mock.calls[0][1]).toBe('field-absence cleanup (dry-run)')
+  })
+
+  describe('on a run where a server did not answer', () => {
+    const partial = (mode = 'enforce') => ({ enabled: true, mode, maxFieldsPerEntity: 5, allEnabledServersProbed: false })
+
+    it('clears nothing, and says a removal is being held back', () => {
+      const log = jest.fn()
+      const plan = planFieldCleanup(planArgs({ cleanup: partial(), log }))
+      expect(plan).toEqual({ changes: [], withheld: true })
+      expect(log).not.toHaveBeenCalled()
+    })
+
+    it('holds nothing back when there is nothing it would clear', () => {
+      const plan = planFieldCleanup(
+        planArgs({ cleanup: partial(), fieldAvailability: fa({ [THUMB_PATH]: ['default'] }) })
+      )
+      expect(plan).toEqual({ changes: [], withheld: false })
+    })
+
+    it('holds nothing back in dry-run, which would not clear on a full run either', () => {
+      expect(planFieldCleanup(planArgs({ cleanup: partial('dry-run') })).withheld).toBe(false)
+    })
   })
 
   it('no candidates → empty plan, no log', () => {

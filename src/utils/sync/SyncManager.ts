@@ -244,6 +244,9 @@ export class SyncManager {
       // Field-absence cleanup (was previously TV-only — movies were silently
       // skipped because this context never carried the config). Same builder as TV.
       cleanup: resolveCleanupConfig(options.allEnabledServersProbed === true),
+      // The same signal, for the sync's own clearing decisions; present whether
+      // or not field-absence cleanup is switched on.
+      allEnabledServersProbed: options.allEnabledServersProbed === true,
     }
     
     // Log optimization statistics
@@ -419,6 +422,7 @@ export class SyncManager {
       tvShowHashesCache: tvShowHashes || undefined,
       tvEpisodeHashesCache: new Map(),  // Populated lazily per season in EpisodeSyncService
       cleanup,
+      allEnabledServersProbed: options.allEnabledServersProbed === true,
     }
 
     syncLogger.info(`Starting TV sync for ${showTitles.length} shows`)

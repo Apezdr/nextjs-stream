@@ -14,7 +14,7 @@ import {
   MovieEntity,
   resolveMediaId,
   resolveFirstSeen,
-  pickEarlierDiscovery,
+  claimDiscovery,
   resolveDeliveryFacts,
   resolveEffectiveVideoUrl,
   VideoInfo,
@@ -24,7 +24,6 @@ import {
   MediaTypesFieldAvailability,
   getFieldPath,
   getCaptionFieldPath,
-  filterCaptionsByFieldAvailability,
   MovieFieldPathMap,
   sanitizeForLog,
   safeStringify,
@@ -33,13 +32,18 @@ import {
 import { MovieRepository, UrlBuilder, isTopLevelFieldLocked } from '../../../infrastructure'
 
 import { FileServerAdapter } from '../../../core'
-import { dropStaleAutoCaptions } from '../../../core/staleAutoCaptions'
+import { reconcileCaptions } from '../../../core/captionReconcile'
 import {
   preferReportedViewingExperience,
   sameViewingExperience,
 } from '../../../core/viewingExperience'
 
-import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
+import {
+  isCurrentServerHighestPriorityForField,
+  getServersReportingField,
+  isHighestPriorityAmongServers,
+  serverOutranks,
+} from '@src/utils/sync/utils'
 import { syncLogger } from '../../../core/logger'
 import { warnOnJitIdentityFork } from '../../../core/jitIdentityParity'
 import isEqual from 'lodash/isEqual'
@@ -67,6 +71,20 @@ export class MovieContentStrategy implements SyncStrategy {
 
   // Common video filenames to check (in priority order)
   private readonly VIDEO_FILENAMES = ['video', 'movie', 'film', 'main', 'feature']
+
+  // Everything on the document that describes the primary video FILE. These
+  // follow the file: written from the payload of the server that owns the
+  // video, and cleared with it. mediaId is not here on purpose — it is the
+  // folder's durable identity and is set-only (see
+  // applyIdentityAndDeliveryUpdates).
+  private readonly VIDEO_FILE_FACT_FIELDS = [
+    'duration',
+    'dimensions',
+    'size',
+    'hdr',
+    'mediaQuality',
+    'mediaLastModified',
+  ] as const
 
   constructor(
     private repository: MovieRepository,
@@ -134,14 +152,29 @@ export class MovieContentStrategy implements SyncStrategy {
       }
 
       const changes: string[] = []
-      const contentUpdates = await this.syncVideoContent(originalTitle, context, movie)
+      const {
+        updates: contentUpdates,
+        unset: contentUnset,
+        deferred,
+      } = await this.syncVideoContent(originalTitle, context, movie)
 
-      if (Object.keys(contentUpdates).length > 0) {
-        // Use upsert to handle both new and existing movies
-        const movieToSave = {
+      // A removal held back for lack of a full probe: tell MovieSyncService not
+      // to mark this pass complete, or it would be skipped from now on and the
+      // removal never retried.
+      if (deferred) {
+        if (!context.pendingMovieDeferrals) context.pendingMovieDeferrals = new Set()
+        context.pendingMovieDeferrals.add(originalTitle)
+      }
+
+      if (Object.keys(contentUpdates).length > 0 || contentUnset.length > 0) {
+        // The display title is not this strategy's to write: MovieSyncService
+        // derives it once, from the stored metadata, at the consolidated write.
+        // Forcing the folder name in here is what made a title flip between
+        // "The Matrix" and "The Matrix (1999)" depending on which strategy had
+        // something to change.
+        const movieToSave: any = {
           ...movie,
           ...contentUpdates,
-          title, // Ensure title is always set
           originalTitle, // Ensure originalTitle is always set
           lastSynced: new Date(),
         }
@@ -170,16 +203,45 @@ export class MovieContentStrategy implements SyncStrategy {
             // All video metadata fields use videoInfoSource
             movieToSave.videoInfoSource = context.serverConfig.id
           } else if (field === 'captionURLs') {
-            movieToSave.captionSource = context.serverConfig.id
+            // The map can hold entries from several servers. Name the source
+            // from the map itself (its first language, alphabetically) so the
+            // value does not depend on which server's pass ran last.
+            const captions = contentUpdates.captionURLs as Record<string, any>
+            const firstLanguage = Object.keys(captions).sort()[0]
+            movieToSave.captionSource =
+              captions[firstLanguage]?.sourceServerId ?? context.serverConfig.id
           } else if (field === 'chapterURL') {
             movieToSave.chapterSource = context.serverConfig.id
           }
         })
 
+        // A title that ends this pass with no video has no video source. The
+        // loop above stamps one whenever a video-block field changed, which
+        // includes clearing the URL and setting the folder's mediaId on a
+        // title that never had a video; put back whatever was stored.
+        const videoUrlAfter =
+          'videoURL' in contentUpdates ? contentUpdates.videoURL : (movie as any).videoURL
+        if (videoUrlAfter == null) {
+          if ((movie as any).videoSource === undefined) delete movieToSave.videoSource
+          else movieToSave.videoSource = (movie as any).videoSource
+        }
+
+        // A field being cleared must not also ride along as a value (the
+        // spread above carries the document's old one, and a source stamp may
+        // have just been set for a field whose data is going).
+        for (const field of contentUnset) delete movieToSave[field]
+
         // Accumulate changes for consolidated write in MovieSyncService
         if (context.pendingMovieUpdates) {
-          const prev = context.pendingMovieUpdates.get(originalTitle) || {}
+          const prev: any = { ...(context.pendingMovieUpdates.get(originalTitle) || {}) }
+          for (const field of contentUnset) delete prev[field]
           context.pendingMovieUpdates.set(originalTitle, { ...prev, ...movieToSave })
+          if (contentUnset.length > 0) {
+            if (!context.pendingMovieUnsets) context.pendingMovieUnsets = new Map()
+            const pendingUnset = context.pendingMovieUnsets.get(originalTitle) ?? new Set<string>()
+            for (const field of contentUnset) pendingUnset.add(field)
+            context.pendingMovieUnsets.set(originalTitle, pendingUnset)
+          }
         } else {
           await this.repository.upsert(movieToSave)
         }
@@ -187,6 +249,9 @@ export class MovieContentStrategy implements SyncStrategy {
         // Add specific changes for each updated field
         Object.keys(contentUpdates).forEach((key) => {
           changes.push(`Updated ${key}`)
+        })
+        contentUnset.forEach((key) => {
+          changes.push(`Cleared ${key}`)
         })
 
         syncEventBus.emitProgress(
@@ -197,7 +262,7 @@ export class MovieContentStrategy implements SyncStrategy {
           {
             stage: 'completed',
             progress: 100,
-            updatedFields: Object.keys(contentUpdates),
+            updatedFields: [...Object.keys(contentUpdates), ...contentUnset],
           }
         )
       } else {
@@ -218,7 +283,7 @@ export class MovieContentStrategy implements SyncStrategy {
         [],
         {
           processingTime: Date.now() - startTime,
-          contentProcessed: Object.keys(contentUpdates),
+          contentProcessed: [...Object.keys(contentUpdates), ...contentUnset],
         }
       )
     } catch (error) {
@@ -249,25 +314,35 @@ export class MovieContentStrategy implements SyncStrategy {
     context: SyncContext,
     currentMovie: MovieEntity
   ): Promise<{
-    videoURL?: string
-    duration?: number
-    dimensions?: string
-    hdr?: string
-    mediaQuality?: MediaQuality
-    mediaLastModified?: Date
-    normalizedVideoId?: string
-    captionURLs?: Record<
-      string,
-      {
-        srcLang: string
-        url: string
-        lastModified?: string
-        sourceServerId?: string
-      }
-    >
-    chapterURL?: string
+    /** Fields to write. */
+    updates: {
+      videoURL?: string | null
+      duration?: number
+      dimensions?: string
+      hdr?: string
+      mediaQuality?: MediaQuality
+      mediaLastModified?: Date
+      normalizedVideoId?: string
+      captionURLs?: Record<
+        string,
+        {
+          srcLang: string
+          url: string
+          lastModified?: string
+          sourceServerId?: string
+        }
+      >
+      chapterURL?: string
+    }
+    /** Fields to remove from the document: their data is gone, not changed. */
+    unset: string[]
+    /** A removal was held back because not every enabled server answered. */
+    deferred: boolean
   }> {
     const updates: any = {}
+    const unset: string[] = []
+    let deferred = false
+    const hasStoredValue = (value: unknown) => value !== undefined && value !== null
 
     syncLogger.debug(`Syncing video content for: "${originalTitle}"`)
 
@@ -290,31 +365,127 @@ export class MovieContentStrategy implements SyncStrategy {
       videoUrl = await this.findVideoFileByProbing(originalTitle, context)
     }
 
-    // Enhanced logging to debug the video URL check
-    syncLogger.debug(
-      `🔍 Debug - videoUrl: ${videoUrl ? 'exists' : 'missing'}, currentUrl: ${currentMovie.videoURL ? 'exists' : 'missing'}`
-    )
+    // Who may write the video block, and who may clear it.
+    //
+    // WRITE: only the highest-priority server that HAS a video for this title.
+    // The check used to be "no server with the field outranks me", which a
+    // server without the field passes whenever its priority number is lower.
+    // So a folder with no video on the main server (an override placeholder,
+    // or a folder whose file was deleted) set videoURL, sources and jitUrl to
+    // null on every run, and the server that does have the video put them
+    // back — which of the two the run ended on depended on server order.
+    //
+    // CLEAR: only when NO server has a video for it, and only on the say-so of
+    // the server the stored video came from, or on a run in which every enabled
+    // server answered. A server that is down has not deleted its files.
+    const videoPath = getFieldPath('videoURL')
+    const isVideoUrlLocked = isTopLevelFieldLocked((currentMovie as any)?.lockedFields, 'videoURL')
+    let ownsVideo: boolean
+    let videoGone: boolean
+    if (fileServerMovieData) {
+      const reporters = getServersReportingField(
+        context.fieldAvailability,
+        'movies',
+        originalTitle,
+        videoPath
+      )
+      // A URL found through the fileNames fallback has no urls.mp4 leaf, so
+      // the server is not among the reporters. It counts as having the video
+      // only when nobody reports one: ranked alongside real reporters it would
+      // be an owner in its own pass and absent from everyone else's, and two
+      // servers would each conclude they own the video.
+      const serversWithVideo =
+        reporters.length > 0 ? reporters : videoUrl != null ? [context.serverConfig.id] : []
+      ownsVideo = videoUrl != null && isHighestPriorityAmongServers(serversWithVideo, context.serverConfig)
+      const noServerHasVideo = videoUrl == null && reporters.length === 0
+      videoGone = noServerHasVideo && this.mayDeclareVideoGone(currentMovie, context)
+      if (noServerHasVideo && !videoGone && currentMovie.videoURL) {
+        // There is a video to clear and this pass may not clear it.
+        deferred = true
+      }
+    } else {
+      // No payload for this title: the URL, if any, came from probing, and
+      // there is no availability to rank against. A probe that finds nothing
+      // (or fails) is not evidence the video is gone, so this path never clears.
+      ownsVideo =
+        videoUrl != null &&
+        (this.shouldUpdateField(videoPath, originalTitle, context) || !currentMovie.videoURL)
+      videoGone = false
+    }
 
-    const shouldUpdate = this.shouldUpdateField(getFieldPath('videoURL'), originalTitle, context)
-    syncLogger.debug(`🔍 Debug - shouldUpdateField for videoURL: ${shouldUpdate}`)
-
-    // Adjusted to also process content when existing video URL exists in currentMovie
-    if ((videoUrl || currentMovie.videoURL) && (shouldUpdate || !currentMovie.videoURL)) {
-      const currentUrl = currentMovie.videoURL
-      if (currentUrl !== videoUrl) {
+    if (ownsVideo) {
+      if (currentMovie.videoURL !== videoUrl) {
         updates.videoURL = videoUrl
         syncLogger.debug(
-          `✅ Updating videoURL from server ${context.serverConfig.id}: "${currentUrl}" → "${videoUrl}"`
+          `✅ Updating videoURL from server ${context.serverConfig.id}: "${currentMovie.videoURL}" → "${videoUrl}"`
         )
-      } else {
-        syncLogger.debug(
-          `📝 VideoURL unchanged: "${videoUrl}" (server ${context.serverConfig.id} has priority but value identical)`
-        )
+      }
+    } else if (videoGone && currentMovie.videoURL) {
+      updates.videoURL = null
+      syncLogger.debug(
+        `✅ Clearing videoURL: no server has a video for "${originalTitle}" (was "${currentMovie.videoURL}")`
+      )
+    }
+
+    // The owner's id is the video's source, whether or not the URL itself moved
+    // (a hand-over between two servers serving the same path leaves the URL as
+    // it was). Stamped here rather than left to "a field changed", so the value
+    // does not depend on the title's history.
+    if (ownsVideo && fileServerMovieData) {
+      if ((currentMovie as any).videoSource !== context.serverConfig.id) {
+        updates.videoSource = context.serverConfig.id
+      }
+      if ((currentMovie as any).videoInfoSource !== context.serverConfig.id) {
+        updates.videoInfoSource = context.serverConfig.id
       }
     }
 
-    // Step 2: Extract video metadata from file server data
-    if (videoUrl || currentMovie.videoURL) {
+    // The URL this write leaves in the document (a locked URL stays whatever
+    // lands in `updates`). Everything derived from the file keys off this.
+    const effectiveVideoUrl = resolveEffectiveVideoUrl({
+      currentVideoUrl: currentMovie.videoURL,
+      updates,
+      isVideoUrlLocked,
+    })
+
+    // Step 2: Facts about the video file (duration, dimensions, size, hdr,
+    // mediaQuality, mediaLastModified).
+    //
+    // These describe the file videoURL points at, so they come from the server
+    // that owns the video and from nowhere else: a value in its payload is
+    // written, and a value its probe did not report is cleared. They used to
+    // be set-if-present under their own per-field priority, which left an
+    // "HDR10" label on a title whose file had been replaced by an SDR one (the
+    // payload says hdr: null), left the whole block behind when the file was
+    // deleted, and let a server with no video own `hdr` and `mediaQuality`
+    // merely by reporting them as null.
+    if (fileServerMovieData) {
+      if (ownsVideo) {
+        const videoFacts = this.extractVideoMetadataFromFileServerData(
+          originalTitle,
+          fileServerMovieData
+        )
+        // null means the payload could not be read. Change nothing rather than
+        // clear on an error.
+        if (videoFacts) {
+          // The stored facts describe the stored URL. When this pass points the
+          // title at another file (another server's, or a replacement under a
+          // new name) they are not that file's, probed or not.
+          const differentFile = !isVideoUrlLocked && currentMovie.videoURL !== videoUrl
+          this.mirrorVideoFileFacts(updates, unset, currentMovie, videoFacts, originalTitle, differentFile)
+        }
+      } else if (videoGone && !effectiveVideoUrl) {
+        for (const field of [
+          ...this.VIDEO_FILE_FACT_FIELDS,
+          'normalizedVideoId',
+          'videoSource',
+          'videoInfoSource',
+        ]) {
+          if (hasStoredValue((currentMovie as any)[field])) unset.push(field)
+        }
+      }
+    } else if (videoUrl || currentMovie.videoURL) {
+      // No payload for this title: the per-file probe below is all there is.
       let videoMetadata: {
         duration?: number
         dimensions?: string
@@ -328,19 +499,12 @@ export class MovieContentStrategy implements SyncStrategy {
         fileSize?: number
         mediaQuality?: MediaQuality
       } | null = null
-      if (fileServerMovieData) {
-        videoMetadata = this.extractVideoMetadataFromFileServerData(
-          originalTitle,
-          fileServerMovieData
-        )
-      } else {
-        syncLogger.debug(`No file server data for "${originalTitle}" metadata, falling back to legacy method`)
-        videoMetadata = await this.extractVideoMetadata(
-          videoUrl || currentMovie.videoURL!,
-          originalTitle,
-          context
-        )
-      }
+      syncLogger.debug(`No file server data for "${originalTitle}" metadata, falling back to legacy method`)
+      videoMetadata = await this.extractVideoMetadata(
+        videoUrl || currentMovie.videoURL!,
+        originalTitle,
+        context
+      )
 
       if (videoMetadata) {
         // LEGACY STRUCTURE: Store fields FLAT at root level (NO nested videoInfo object)
@@ -461,7 +625,7 @@ export class MovieContentStrategy implements SyncStrategy {
     //
     //   1. An admin lock, which computeDiff drops on the way to Mongo.
     //   2. Field PRIORITY. A server that does not own videoURL never gets its
-    //      URL written (the block above is gated on `shouldUpdate`), but this
+    //      URL written (the block above is gated on `ownsVideo`), but this
     //      step used to hash that URL anyway — so on a title present on two
     //      servers, the non-owner's pass silently re-keyed the doc to its own
     //      path shape while videoURL kept the owner's. Every
@@ -480,11 +644,9 @@ export class MovieContentStrategy implements SyncStrategy {
     // produce the same id. Must agree with
     // flatDatabaseUtils.generateNormalizedVideoId so WatchHistory joins work.
     // Not tracked in fieldAvailability (it's derivable, not authoritative).
-    const effectiveVideoUrl = resolveEffectiveVideoUrl({
-      currentVideoUrl: currentMovie.videoURL,
-      updates,
-      isVideoUrlLocked: isTopLevelFieldLocked((currentMovie as any)?.lockedFields, 'videoURL'),
-    })
+    // (effectiveVideoUrl is resolved above, right after the videoURL decision.
+    // With no URL left there is no id to derive; a stale one is cleared with
+    // the rest of the file's facts in step 2.)
     if (effectiveVideoUrl) {
       const normalizedId = this.generateNormalizedVideoId(
         effectiveVideoUrl,
@@ -518,8 +680,9 @@ export class MovieContentStrategy implements SyncStrategy {
     // These ride the video block's ownership (see the source-stamp mapping in
     // sync()) rather than claiming their own fieldAvailability leaves: they
     // describe the primary source that videoURL points at, so a server that
-    // does not own videoURL must not be able to publish them.
-    if (fileServerMovieData && shouldUpdate) {
+    // does not own videoURL must not be able to publish them. The server that
+    // may declare the video gone mirrors them too: that is what clears them.
+    if (fileServerMovieData && (ownsVideo || videoGone)) {
       this.applyIdentityAndDeliveryUpdates(
         updates,
         currentMovie,
@@ -529,62 +692,88 @@ export class MovieContentStrategy implements SyncStrategy {
       )
     }
 
-    // Step 4: Process captions from file server data
-    if (fileServerMovieData) {
-      const allCaptions = this.extractCaptionsFromFileServerData(
-        originalTitle,
-        fileServerMovieData,
-        context
+    // Step 3c: Library-add date (earlier-wins, never later; core/discovery.ts).
+    // The backend's first-seen date lives in the identity sidecar on the media
+    // volume, so it survives this document being deleted and re-created. It is
+    // adopted ONLY when it predates what we hold: a sidecar written at the
+    // identity rollout carries the rollout date for a title that was already
+    // here, and that must not re-date the title.
+    //
+    // Every server that has the title's video is heard, not just the video's
+    // owner: the earliest date any of them holds is when the title entered the
+    // library. Heard from the owner alone, the stored date depended on which
+    // server happened to be down when the title was first synced.
+    if (fileServerMovieData && (videoUrl != null || videoGone)) {
+      const firstSeen = resolveFirstSeen((fileServerMovieData as any).mediaIdentity)
+      const claim = claimDiscovery(
+        currentMovie.initialDiscoveryDate,
+        currentMovie.initialDiscoveryServer,
+        firstSeen,
+        context.serverConfig.id,
+        (heldServerId) => serverOutranks(context.serverConfig, heldServerId)
       )
+      if (claim === 'date') updates.initialDiscoveryDate = firstSeen
+      if (claim) updates.initialDiscoveryServer = context.serverConfig.id
+    }
 
-      if (allCaptions) {
-        // Filter captions based on individual field priority (not root captionURLs field)
-        const filteredCaptions = filterCaptionsByFieldAvailability(
-          allCaptions,
-          originalTitle,
-          context.fieldAvailability,
-          context.serverConfig,
-          (fieldPath: string, title: string) => this.shouldUpdateField(fieldPath, title, context)
+    // Step 4: Captions. One language belongs to the highest-priority server
+    // that lists it; this pass edits the stored map entry by entry (see
+    // core/captionReconcile). It used to replace the whole map with the
+    // languages this server owns and to do nothing when it listed none, so two
+    // servers overwrote each other every run and a removed subtitle stayed
+    // once it was the last.
+    if (fileServerMovieData) {
+      let listedCaptions: Record<string, any> | null = null
+      let captionsReadable = true
+      try {
+        listedCaptions = UrlBuilder.processCaptionURLs(
+          (fileServerMovieData as any)?.urls?.subtitles,
+          context.serverConfig
         )
-
-        if (Object.keys(filteredCaptions).length > 0) {
-          // Check if filtered captions have changed
-          if (!this.areCaptionsEqual(currentMovie.captionURLs, filteredCaptions)) {
-            updates.captionURLs = filteredCaptions
-            syncLogger.debug(`✅ Updating captionURLs from server ${context.serverConfig.id}`)
-            syncLogger.debug(
-              `   Found ${Object.keys(filteredCaptions).length} caption(s): ${Object.keys(filteredCaptions).join(', ')}`
-            )
-            syncLogger.debug(
-              `   Filtered from ${Object.keys(allCaptions).length} available caption(s) based on field availability`
-            )
-          } else {
-            syncLogger.debug(
-              `📝 CaptionURLs unchanged (server ${context.serverConfig.id} has priority for some fields but values identical)`
-            )
-          }
-        } else {
-          console.log(
-            `⚠️ Server ${context.serverConfig.id} has no priority for any caption fields, skipping caption update`
-          )
-        }
+      } catch (error) {
+        // Not being able to read the list is not the same as an empty list:
+        // leave the stored captions alone.
+        captionsReadable = false
+        syncLogger.error(`Failed to read captions for ${originalTitle}:`, error)
       }
 
-      // An auto-generated caption this server offered before and no longer
-      // lists (the film has no audio in that language, or a caption made from
-      // the wrong audio was removed) goes. The update above replaces the list
-      // and so drops it already; this covers the film left with no captions at
-      // all, where there is no list to replace it with.
-      if (!('captionURLs' in updates)) {
-        const { captions, removed } = dropStaleAutoCaptions(
-          currentMovie?.captionURLs,
-          (fileServerMovieData as any).urls?.subtitles,
-          context.serverConfig.id
-        )
-        if (removed.length > 0) {
-          updates.captionURLs = captions
+      if (captionsReadable) {
+        const serversListing = (language: string) =>
+          getServersReportingField(
+            context.fieldAvailability,
+            'movies',
+            originalTitle,
+            getCaptionFieldPath(language, 'url')
+          )
+        const result = reconcileCaptions({
+          existing: currentMovie.captionURLs as Record<string, any> | undefined,
+          listed: listedCaptions,
+          serverId: context.serverConfig.id,
+          ownsLanguage: (language) => {
+            const servers = serversListing(language)
+            return isHighestPriorityAmongServers(
+              servers.includes(context.serverConfig.id)
+                ? servers
+                : [...servers, context.serverConfig.id],
+              context.serverConfig
+            )
+          },
+          listedByAnyServer: (language) => serversListing(language).length > 0,
+          allEnabledServersProbed: this.allEnabledServersProbed(context),
+        })
+
+        if (result.withheld.length > 0) deferred = true
+
+        if (result.changed) {
+          if (Object.keys(result.captions).length > 0) {
+            updates.captionURLs = result.captions
+          } else {
+            // No captions left: drop the field rather than store an empty map.
+            unset.push('captionURLs', 'captionSource')
+          }
           syncLogger.debug(
-            `✅ Removing auto-generated caption(s) server ${context.serverConfig.id} no longer lists: ${removed.join(', ')}`
+            `✅ Captions for "${originalTitle}" from server ${context.serverConfig.id}: ` +
+              `wrote [${result.written.join(', ')}], removed [${result.removed.join(', ')}]`
           )
         }
       }
@@ -615,7 +804,97 @@ export class MovieContentStrategy implements SyncStrategy {
       }
     }
 
-    return updates
+    return { updates, unset, deferred }
+  }
+
+  /**
+   * Whether every enabled server answered this run. Only then does "no server
+   * reports it" mean the data is gone rather than that a server is down.
+   */
+  private allEnabledServersProbed(context: SyncContext): boolean {
+    return (
+      (context.allEnabledServersProbed ?? context.cleanup?.allEnabledServersProbed) === true
+    )
+  }
+
+  /**
+   * Whether this pass may treat "no server has a video for this title" as the
+   * video being gone. The server the stored video came from can always say so.
+   * Any other server can only on a run in which every enabled server answered:
+   * otherwise the owner may simply be down.
+   */
+  private mayDeclareVideoGone(currentMovie: MovieEntity, context: SyncContext): boolean {
+    const storedOwner = (currentMovie as any)?.videoSource
+    return (
+      !storedOwner ||
+      storedOwner === context.serverConfig.id ||
+      this.allEnabledServersProbed(context)
+    )
+  }
+
+  /**
+   * Make the document's facts about the video file match the owning server's
+   * payload: a value it reports is written, and a value its probe did not
+   * report is cleared.
+   *
+   * Clearing needs evidence that the probe ran. A file server that cannot
+   * probe a file still publishes it, with every fact null and an empty
+   * `additional_metadata` (a file mid-copy, a sidecar being regenerated). That
+   * is not "these facts are gone" — the file is there and its facts are simply
+   * unknown this scan — and the stored ones are left alone. A probed video
+   * always has a duration, so a duration in the payload is the evidence: with
+   * one, `hdr: null` means the file is SDR; without one, it means nothing.
+   *
+   * That holds while the document still points at the same file. Facts stored
+   * for ANOTHER file (the video was handed to this server, or replaced under a
+   * new name) are removed whether or not the new file has been probed: an
+   * unknown is better than the previous file's HDR label.
+   */
+  private mirrorVideoFileFacts(
+    updates: any,
+    unset: string[],
+    currentMovie: MovieEntity,
+    facts: {
+      duration?: number
+      dimensions?: string
+      hdr?: string
+      mediaLastModified?: Date
+      fileSize?: number
+      mediaQuality?: MediaQuality
+    },
+    originalTitle: string,
+    /** The stored facts are of another file than the one the payload describes. */
+    differentFile: boolean
+  ): void {
+    const current = currentMovie as any
+    const probed = facts.duration !== undefined && facts.duration !== null
+    const mirror = (field: string, incoming: unknown, same: (a: any, b: any) => boolean) => {
+      if (incoming === undefined || incoming === null || incoming === '') {
+        if ((probed || differentFile) && current[field] !== undefined && current[field] !== null) unset.push(field)
+      } else if (!same(current[field], incoming)) {
+        updates[field] = incoming
+      }
+    }
+    const strictlyEqual = (a: any, b: any) => a === b
+
+    mirror('duration', facts.duration, strictlyEqual)
+    mirror('dimensions', facts.dimensions, strictlyEqual)
+    mirror('size', facts.fileSize, strictlyEqual)
+    mirror('hdr', facts.hdr, strictlyEqual)
+    mirror('mediaQuality', facts.mediaQuality, (a, b) => this.isMediaQualityEqual(a, b))
+
+    // The file's modified time is set when the payload has one and otherwise
+    // left alone: a file that exists has one, so its absence is a failed stat,
+    // not a fact.
+    const modified = facts.mediaLastModified
+    if (modified instanceof Date && Number.isNaN(modified.getTime())) {
+      syncLogger.warn(`⚠️ Unreadable mediaLastModified in the payload for "${originalTitle}", keeping the stored value`)
+    } else if (modified instanceof Date) {
+      const stored = current.mediaLastModified
+      if (!(stored instanceof Date) || stored.getTime() !== modified.getTime()) {
+        updates.mediaLastModified = modified
+      }
+    }
   }
 
   /**
@@ -666,21 +945,6 @@ export class MovieContentStrategy implements SyncStrategy {
       if (currentMovie.mediaId !== incomingMediaId) {
         updates.mediaId = incomingMediaId
       }
-    }
-
-    // --- Library-add date (earlier-wins, never later) ---
-    // The backend's first-seen date lives in the identity sidecar on the media
-    // volume, so it survives this document being deleted and re-created. Adopt
-    // it ONLY when it predates what we hold: a sidecar written at the identity
-    // rollout carries the rollout date for a title that was already here, and
-    // that must not re-date the title. See core/discovery.ts.
-    const earlierDiscovery = pickEarlierDiscovery(
-      currentMovie.initialDiscoveryDate,
-      resolveFirstSeen(fileServerData.mediaIdentity)
-    )
-    if (earlierDiscovery) {
-      updates.initialDiscoveryDate = earlierDiscovery
-      updates.initialDiscoveryServer = context.serverConfig.id
     }
 
     // --- Delivery facts (mirrored) ---
@@ -1515,99 +1779,6 @@ export class MovieContentStrategy implements SyncStrategy {
     }
 
     return hasHighestPriority
-  }
-
-  /**
-   * Compare caption objects for equality
-   */
-  private areCaptionsEqual(
-    current:
-      | Record<
-          string,
-          {
-            srcLang: string
-            url: string
-            lastModified?: string
-            sourceServerId?: string
-            autoGenerated?: boolean
-            pending?: boolean
-          }
-        >
-      | null
-      | undefined,
-    incoming:
-      | Record<
-          string,
-          {
-            srcLang: string
-            url: string
-            lastModified?: string
-            sourceServerId?: string
-            autoGenerated?: boolean
-            pending?: boolean
-          }
-        >
-      | null
-      | undefined
-  ): boolean {
-    if (!current && !incoming) return true
-    if (!current || !incoming) return false
-
-    syncLogger.debug(`🔍 Comparing caption objects:
-Current: ${JSON.stringify(current)}
-Incoming: ${JSON.stringify(incoming)}`)
-
-    const currentKeys = Object.keys(current).sort()
-    const incomingKeys = Object.keys(incoming).sort()
-
-    if (currentKeys.length !== incomingKeys.length) {
-      {
-        syncLogger.debug(
-          `⚠️ Caption key count differs: ${currentKeys.length} vs ${incomingKeys.length}`
-        )
-        syncLogger.debug(`Current keys: ${currentKeys.join(', ')}`)
-        syncLogger.debug(`Incoming keys: ${incomingKeys.join(', ')}`)
-      }
-      return false
-    }
-
-    for (let i = 0; i < currentKeys.length; i++) {
-      const key = currentKeys[i]
-      if (key !== incomingKeys[i]) {
-        syncLogger.debug(`⚠️ Caption key order differs: ${key} vs ${incomingKeys[i]}`)
-        return false
-      }
-
-      // Compare URL and srcLang fields using the areValuesEqual helper for consistent null/undefined handling
-      const urlEqual = this.areValuesEqual(current[key].url, incoming[key].url)
-      const srcLangEqual = this.areValuesEqual(current[key].srcLang, incoming[key].srcLang)
-      const autoGeneratedEqual = Boolean(current[key].autoGenerated) === Boolean(incoming[key].autoGenerated)
-      const pendingEqual = Boolean(current[key].pending) === Boolean(incoming[key].pending)
-
-      if (!urlEqual || !srcLangEqual || !autoGeneratedEqual || !pendingEqual) {
-        {
-          if (!urlEqual)
-            syncLogger.debug(
-              `⚠️ Caption URL differs for ${key}: ${current[key].url} vs ${incoming[key].url}`
-            )
-          if (!srcLangEqual)
-            syncLogger.debug(
-              `⚠️ Caption srcLang differs for ${key}: ${current[key].srcLang} vs ${incoming[key].srcLang}`
-            )
-          if (!autoGeneratedEqual)
-            syncLogger.debug(
-              `⚠️ Caption autoGenerated differs for ${key}: ${current[key].autoGenerated} vs ${incoming[key].autoGenerated}`
-            )
-          if (!pendingEqual)
-            syncLogger.debug(
-              `⚠️ Caption pending differs for ${key}: ${current[key].pending} vs ${incoming[key].pending}`
-            )
-        }
-        return false
-      }
-    }
-
-    return true
   }
 
   /**

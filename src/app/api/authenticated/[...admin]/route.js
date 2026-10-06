@@ -27,6 +27,7 @@ import { getServerLoadSnapshot, noteServerLoadDemand } from '@src/utils/monitor_
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import { syncAllServers } from '@src/utils/sync'
+import { collectFieldAvailability } from '@src/utils/sync/fieldAvailability'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { SyncEventType } from '@src/utils/sync/core/types'
 import { createDatabaseAdapter } from '@src/utils/sync/infrastructure'
@@ -1060,51 +1061,6 @@ async function handleSync(webhookId, request, syncOptions = {}) {
   } finally {
     // Ensure the flag is always updated in case of any errors
     syncInProgress = false;
-  }
-}
-
-/**
- * Collects field availability information.
- * @param {Object} mediaData - Media data
- * @param {string} currentPath - Current field path
- * @param {string} serverId - Server ID
- * @param {Object} availabilityMap - Field availability map
- */
-function collectFieldAvailability(mediaData, currentPath, serverId, availabilityMap) {
-  for (const key in mediaData) {
-    if (!Object.prototype.hasOwnProperty.call(mediaData, key)) continue
-
-    const value = mediaData[key]
-    let newPath = currentPath ? `${currentPath}.${key}` : key
-
-    if (Array.isArray(value)) {
-      if (key === 'fileNames') {
-        continue
-      } else if (key === 'audio' || key === 'video') {
-        value.forEach((item, index) => {
-          const trackType = item.codec || index
-          const arrayPath = `${newPath}.${trackType}`
-          collectFieldAvailability(item, arrayPath, serverId, availabilityMap)
-        })
-      } else {
-        value.forEach((item, index) => {
-          if (item && typeof item === 'object') {
-            let identifier = item.name || item.id || index
-            const arrayPath = `${newPath}.${identifier}`
-            collectFieldAvailability(item, arrayPath, serverId, availabilityMap)
-          }
-        })
-      }
-    } else if (typeof value === 'object' && value !== null) {
-      collectFieldAvailability(value, newPath, serverId, availabilityMap)
-    } else {
-      if (!availabilityMap[newPath]) {
-        availabilityMap[newPath] = []
-      }
-      if (!availabilityMap[newPath].includes(serverId)) {
-        availabilityMap[newPath].push(serverId)
-      }
-    }
   }
 }
 

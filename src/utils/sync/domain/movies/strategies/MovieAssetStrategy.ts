@@ -20,16 +20,24 @@ import {
 
 import { 
   MovieRepository,
-  UrlBuilder 
+  UrlBuilder,
+  isTopLevelFieldLocked
 } from '../../../infrastructure'
 
 import {
   FileServerAdapter
 } from '../../../core'
 
-import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
+import {
+  isCurrentServerHighestPriorityForReportedField,
+  getServersReportingField,
+} from '@src/utils/sync/utils'
 import { httpGet } from '@src/lib/httpHelper'
 import { syncLogger } from '../../../core/logger'
+
+// Carries the names of removed fields out of syncAssets without making them
+// look like a field to write.
+const CLEARED_FIELDS = Symbol('clearedFields')
 
 export class MovieAssetStrategy implements SyncStrategy {
   readonly name = 'MovieAssetStrategy'
@@ -88,6 +96,8 @@ export class MovieAssetStrategy implements SyncStrategy {
 
       const changes: string[] = []
       const assetUpdates = await this.syncAssets(originalTitle, context, movie)
+      const clearedFields: string[] = (assetUpdates as any)[CLEARED_FIELDS] ?? []
+      changes.push(...clearedFields.map(key => `Cleared ${key}`))
 
       if (Object.keys(assetUpdates).length > 0) {
         // Use upsert to handle both new and existing movies with field-level source tracking
@@ -108,10 +118,6 @@ export class MovieAssetStrategy implements SyncStrategy {
             movieToSave.backdropSource = context.serverConfig.id
           } else if (field === 'logo') {
             movieToSave.logoSource = context.serverConfig.id
-          } else if (field === 'posterBlurhash') {
-            movieToSave.posterBlurhashSource = context.serverConfig.id
-          } else if (field === 'backdropBlurhash') {
-            movieToSave.backdropBlurhashSource = context.serverConfig.id
           } else if (field === 'backdropFocal') {
             movieToSave.backdropFocalSource = context.serverConfig.id
           } else if (field === 'backdropFocalSuggested') {
@@ -200,6 +206,9 @@ export class MovieAssetStrategy implements SyncStrategy {
     backdropFocalSuggested?: BackdropFocal
   }> {
     const updates: any = {}
+    // Fields this pass asked to have removed (see requestUnset).
+    const cleared: string[] = []
+    Object.defineProperty(updates, CLEARED_FIELDS, { value: cleared, enumerable: false })
     
     // Get file server data for this movie
     const fileServerData = context.fileServerData?.movies?.[originalTitle]
@@ -225,23 +234,27 @@ export class MovieAssetStrategy implements SyncStrategy {
         continue
       }
       
-      // Check if current server has highest priority for this asset field
+      // The asset belongs to the highest-priority server that HAS it.
       // CRITICAL: Use type-safe field path mapping (e.g., posterURL → "urls.poster")
       const fieldPath = getFieldPath(urlField as keyof typeof MovieFieldPathMap)
-      if (!this.shouldUpdateField(fieldPath, originalTitle, context)) {
+      if (!this.ownsReportedField(fieldPath, originalTitle, context)) {
         syncLogger.debug(`⏭️ Skipping ${urlField} - server ${context.serverConfig.id} does not have highest priority for ${fieldPath}`)
         continue
       }
-      
+
       // Build full URL: fileServerData paths already include prefix, so pass empty prefix
       const newAssetUrl = UrlBuilder.createFullUrl(assetRelativePath, { ...context.serverConfig, prefix: '' })
       const currentUrl = currentMovie[urlField as keyof MovieEntity] as string
-      
-      // Extract hash from URLs to compare (hash indicates if image changed)
+
+      // The stored URL must be the owner's URL. The two used to be compared by
+      // their ?hash= alone, which is the image file's modified time: a copy of
+      // the same file on another server has the same one. So when a title
+      // moved to another server, or the owner was down when the title was
+      // first synced, the stored URL kept pointing at the other server for good.
       const newHash = this.extractHashFromUrl(newAssetUrl)
       const currentHash = currentUrl ? this.extractHashFromUrl(currentUrl) : null
-      const assetChanged = newHash !== currentHash
-      
+      const assetChanged = newAssetUrl !== currentUrl
+
       syncLogger.debug(`🔍 Asset comparison for ${type}:`, {
         newHash,
         currentHash,
@@ -254,51 +267,71 @@ export class MovieAssetStrategy implements SyncStrategy {
         syncLogger.debug(`✅ Updating ${urlField} from server ${context.serverConfig.id} (hash changed: ${currentHash} → ${newHash})`)
       }
       
-      // Handle blurhash for poster and backdrop
-      // Fetch blurhash if:
-      // 1. Asset hash changed (new/modified image = new blurhash needed), OR
-      // 2. Blurhash doesn't exist yet (missing data)
+      // Blurhash for poster and backdrop.
+      //
+      // A stored blurhash is good only while it is OF THE STORED IMAGE: taken
+      // from this server (the image's owner, checked above) and not older than
+      // the image. One that is not is replaced, and when this pass has nothing
+      // to replace it with (the file server publishes no blurhash for the new
+      // image yet, or the fetch failed) it is removed: no blurhash is right,
+      // another picture's is not. A failed fetch is also recorded, so the pass
+      // is not marked complete and the next run tries again.
+      //
+      // It used to be fetched "when the image changed or none is stored" and
+      // otherwise left alone, so one failed fetch after an image was replaced
+      // left the old image's blurhash for good: next run the image no longer
+      // looked changed and a blurhash was there.
       if (type === 'poster' || type === 'backdrop') {
         const blurhashField = type === 'poster' ? 'posterBlurhash' : 'backdropBlurhash'
         const blurhashSourceField = type === 'poster' ? 'posterBlurhashSource' : 'backdropBlurhashSource'
+        const lockedFields = (currentMovie as any).lockedFields
+        // An image an admin locked is not the file server's image, and a
+        // blurhash an admin locked is not ours to change.
+        if (isTopLevelFieldLocked(lockedFields, urlField) || isTopLevelFieldLocked(lockedFields, blurhashField)) {
+          continue
+        }
+
         const currentBlurhash = currentMovie[blurhashField as keyof MovieEntity]
-        
-        // Determine if we should fetch blurhash based on image hash change or missing data
-        const shouldFetchBlurhash = assetChanged || !currentBlurhash
-        
-        if (shouldFetchBlurhash) {
-          // Check if current server has highest priority for blurhash field
-          // CRITICAL: Use type-safe field path mapping (e.g., posterBlurhash → "urls.posterBlurhash")
-          const blurhashFieldPath = getFieldPath(blurhashField as keyof typeof MovieFieldPathMap)
-          
-          if (!this.shouldUpdateField(blurhashFieldPath, originalTitle, context)) {
-            syncLogger.debug(`⏭️ Skipping ${blurhashField} - server ${context.serverConfig.id} does not have highest priority for ${blurhashFieldPath}`)
-            continue
-          }
-          
+        const notOfThisImage =
+          Boolean(currentBlurhash) &&
+          (assetChanged || (currentMovie as any)[blurhashSourceField] !== context.serverConfig.id)
+
+        let fetched: string | null = null
+        if (!currentBlurhash || notOfThisImage) {
           const blurhashUrl = await this.findBlurhashUrl(originalTitle, type as 'poster' | 'backdrop', context)
           if (blurhashUrl) {
-            const blurhashData = await this.fetchBlurhashData(blurhashUrl, context)
-            // Only add blurhash fields if data was successfully fetched
-            // If blurhashData is null, fields are OMITTED (not set to null in database)
-            if (blurhashData) {
-              updates[blurhashField] = blurhashData
-              updates[blurhashSourceField] = context.serverConfig.id
-              const reason = assetChanged ? `image hash changed (${currentHash} → ${newHash})` : 'blurhash missing'
-              syncLogger.debug(`✅ Fetched ${blurhashField} from file server (${reason})`)
+            fetched = await this.fetchBlurhashData(blurhashUrl, context)
+            if (fetched) {
+              context.pendingMovieFetchFailures?.get(originalTitle)?.delete(blurhashField)
             } else {
-              syncLogger.debug(`⏭️ Skipping ${blurhashField} - fetch returned null (field will be omitted)`)
+              this.noteFetchFailure(originalTitle, blurhashField, context)
             }
           }
-        } else {
-          syncLogger.debug(`⏭️ Skipping ${blurhashField} - image hash unchanged and blurhash exists`)
+        }
+
+        if (fetched) {
+          if (currentBlurhash !== fetched) updates[blurhashField] = fetched
+          if ((currentMovie as any)[blurhashSourceField] !== context.serverConfig.id) {
+            updates[blurhashSourceField] = context.serverConfig.id
+          }
+        } else if (notOfThisImage) {
+          this.requestUnset(originalTitle, [blurhashField, blurhashSourceField], context)
+          cleared.push(blurhashField)
         }
       }
     }
 
-    // Backdrop focal-point hints — top-level scalars in fileServerData, plain string enum (not URL/hash).
-    // `undefined` means the server doesn't supply this field — skip entirely. An explicit `null` is a
-    // legitimate "no hint" value and is written through to clear stale values.
+    // Backdrop focal-point hints — top-level scalars in fileServerData, plain
+    // string enum (not URL/hash). The file server always publishes both keys,
+    // null when it has no hint.
+    //
+    // A hint belongs to the highest-priority server that HAS one. A server
+    // without one used to write its null whenever no higher-priority server
+    // was listed for the field, and the server with the hint wrote it back:
+    // the stored value flipped on every run and neither server was ever
+    // skipped. The hint is removed only when no server has one, and then only
+    // on a run where every server answered.
+    // `undefined` means the server doesn't supply the field at all — skip.
     for (const focalField of ['backdropFocal', 'backdropFocalSuggested'] as const) {
       const incoming = fileServerData[focalField]
       if (incoming === undefined) {
@@ -307,16 +340,39 @@ export class MovieAssetStrategy implements SyncStrategy {
       }
 
       const fieldPath = getFieldPath(focalField)
-      if (!this.shouldUpdateField(fieldPath, originalTitle, context)) {
-        syncLogger.debug(`⏭️ Skipping ${focalField} - server ${context.serverConfig.id} does not have highest priority for ${fieldPath}`)
+      const current = currentMovie[focalField] ?? null
+
+      if (incoming !== null && incoming !== '') {
+        if (!this.ownsReportedField(fieldPath, originalTitle, context)) {
+          syncLogger.debug(`⏭️ Skipping ${focalField} - server ${context.serverConfig.id} does not have highest priority for ${fieldPath}`)
+          continue
+        }
+        // The owner's id is the hint's source whether or not the value moved.
+        if ((currentMovie as any)[`${focalField}Source`] !== context.serverConfig.id) {
+          updates[`${focalField}Source`] = context.serverConfig.id
+        }
+        if (incoming !== current) {
+          updates[focalField] = incoming as BackdropFocal
+          syncLogger.debug(`✅ Updating ${focalField} from server ${context.serverConfig.id} ("${current}" → "${incoming}")`)
+        }
         continue
       }
 
-      const current = currentMovie[focalField] ?? null
-      const normalized: BackdropFocal = (incoming === null ? null : incoming) as BackdropFocal
-      if (normalized !== current) {
-        updates[focalField] = normalized
-        syncLogger.debug(`✅ Updating ${focalField} from server ${context.serverConfig.id} ("${current}" → "${normalized}")`)
+      // This server has no hint. Nothing to do unless one is stored and no
+      // server has one any more.
+      if (current === null) continue
+      // A hint an admin locked stays, whatever the servers say.
+      if (isTopLevelFieldLocked((currentMovie as any).lockedFields, focalField)) continue
+      const serversWithHint = getServersReportingField(
+        context.fieldAvailability, 'movies', originalTitle, fieldPath
+      )
+      if (serversWithHint.length > 0) continue
+      if ((context.allEnabledServersProbed ?? context.cleanup?.allEnabledServersProbed) === true) {
+        this.requestUnset(originalTitle, [focalField, `${focalField}Source`], context)
+        cleared.push(focalField)
+      } else {
+        // Its server may simply be down. Retry on a run where they all answer.
+        context.pendingMovieDeferrals?.add(originalTitle)
       }
     }
 
@@ -465,45 +521,39 @@ export class MovieAssetStrategy implements SyncStrategy {
   }
 
   /**
-   * Check if current server should update a field using existing priority system
-   * CRITICAL: Always use originalTitle (filesystem key) for fieldAvailability lookups
+   * Whether this server is the highest-priority server that HAS a value at
+   * `fieldPath` for the title. Fails closed: a server that does not report the
+   * field never owns it, and neither does anyone when the availability map is
+   * missing.
    */
-  private shouldUpdateField(fieldPath: string, originalTitle: string, context: SyncContext): boolean {
-    syncLogger.debug(`🔍 Priority check: field="${fieldPath}", originalTitle="${originalTitle}", server=${context.serverConfig.id}`)
-    
-    // Check if fieldAvailability exists
-    if (!context.fieldAvailability) {
-      syncLogger.debug(`⚠️ No fieldAvailability in context, defaulting to true for ${fieldPath}`)
-      return true
-    }
-    
-    // Check if movie exists in fieldAvailability (using originalTitle as key)
-    const movieFields = context.fieldAvailability?.movies?.[originalTitle]
-    if (!movieFields) {
-      syncLogger.debug(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true`)
-      return true
-    }
-    
-    // Get servers that have this field
-    const serversWithField = movieFields[fieldPath] || []
-    syncLogger.debug(`📊 Servers with ${fieldPath}: ${JSON.stringify(serversWithField)} (${serversWithField.length} total)`)
-    
-    // Check priority
-    const hasHighestPriority = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability,
-      'movies',
-      originalTitle,  // ← CRITICAL: Always use originalTitle for consistency
-      fieldPath,
-      context.serverConfig
+  private ownsReportedField(fieldPath: string, originalTitle: string, context: SyncContext): boolean {
+    return isCurrentServerHighestPriorityForReportedField(
+      context.fieldAvailability, 'movies', originalTitle, fieldPath, context.serverConfig
     )
-    
-    if (hasHighestPriority) {
-      syncLogger.debug(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has highest priority for ${fieldPath}`)
-    } else {
-      syncLogger.debug(`❌ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does NOT have highest priority for ${fieldPath}`)
+  }
+
+  /**
+   * Ask MovieSyncService to remove fields in its consolidated write. The map
+   * is created by the service: this strategy only ever sees a copy of the
+   * context, so a map created here would be lost.
+   */
+  private requestUnset(originalTitle: string, fields: string[], context: SyncContext): void {
+    const pending = context.pendingMovieUnsets?.get(originalTitle)
+    if (!pending) {
+      throw new Error(`MovieAssetStrategy: no pending-unset set for "${originalTitle}"; cannot remove ${fields.join(', ')}`)
     }
-    
-    return hasHighestPriority
+    for (const field of fields) pending.add(field)
+    const updates: any = context.pendingMovieUpdates?.get(originalTitle)
+    if (updates) for (const field of fields) delete updates[field]
+  }
+
+  /** Record that a file the server publishes could not be fetched this pass. */
+  private noteFetchFailure(originalTitle: string, what: string, context: SyncContext): void {
+    const failures = context.pendingMovieFetchFailures
+    if (!failures) return
+    const forTitle = failures.get(originalTitle) ?? new Set<string>()
+    forTitle.add(what)
+    failures.set(originalTitle, forTitle)
   }
 
   async validate?(entity: BaseMediaEntity, context: SyncContext): Promise<boolean> {

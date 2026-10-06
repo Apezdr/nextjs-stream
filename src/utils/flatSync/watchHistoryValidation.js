@@ -3,12 +3,52 @@ import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { findPlaybackForUser, updateValidationStatus } from '@src/utils/watchHistory/database'
+import { visibleMovieFilter, visibleEpisodeFilter } from '@src/utils/mediaVisibility'
+
+/**
+ * Which catalog documents can vouch for a WatchHistory record: the ones a list
+ * can actually show.
+ *
+ * A record is valid when the title it points at can be put on screen. The
+ * recently-watched list pages over valid records and then looks each one up
+ * among the documents that pass the visibility rule (mediaVisibility.js); a
+ * valid record whose title fails that rule takes a slot in the page and renders
+ * nothing — a page of 8 comes back with 7. So the two must be the same rule,
+ * and these are the same filter fragments the list's own lookup uses:
+ *
+ *  - A title's document outlives its video. When a file is deleted but its
+ *    folder is still reported by the file server (artwork, metadata, identity
+ *    sidecar), the sync clears the video fields and keeps the document, with
+ *    its durable `mediaId` (set-only by design) — it has no video to show.
+ *  - A title can have a video and still not be showable: a container browsers
+ *    cannot play, with the transcoder switched off at its host.
+ *
+ * The per-record implementation this replaced read identifiers only from
+ * documents with a `videoURL` (see the legacy body below). The bulk rewrite
+ * dropped that condition, and the `mediaId` arm added later let a video-less
+ * document vouch on identity alone.
+ */
+export const VOUCHING_FILTERS = Object.freeze({
+  FlatMovies: visibleMovieFilter,
+  FlatEpisodes: visibleEpisodeFilter,
+});
+
+/** Add every document's identifiers to the valid sets. */
+async function collectValidIdentifiers(cursor, validIds, validMediaIds) {
+  for await (const d of cursor) {
+    if (d.videoURL)          validIds.add(d.videoURL);
+    if (d.normalizedVideoId) validIds.add(d.normalizedVideoId);
+    if (d.mediaId)           validMediaIds.add(d.mediaId);
+  }
+}
 
 /**
  * Validates all WatchHistory records against the current state of the database
  * after sync and availability checks have completed. Marks records' `isValid`
- * flag based on whether their normalizedVideoId still exists in FlatMovies or
- * FlatEpisodes.
+ * flag based on whether their normalizedVideoId or mediaId still belongs to a
+ * FlatMovies or FlatEpisodes document a list can show (`VOUCHING_FILTERS`).
+ * A record whose title lost its video, or stopped being playable, is marked
+ * invalid, and marked valid again when that is no longer so.
  *
  * Rewritten 2026-05-08: replaced ~3.5k per-record `updateOne` calls with two
  * `updateMany` operations + a small remediation pass for records missing
@@ -44,29 +84,33 @@ export async function validateWatchHistoryAgainstDatabase() {
     const flatEpisodesCollection = db.collection('FlatEpisodes');
 
     // Build the union of valid identifiers — videoURLs and normalizedVideoIds
-    // — plus the durable mediaIds (P5 cutover), from FlatMovies and
-    // FlatEpisodes. No longer a covered read (mediaId forces a FETCH), but
-    // still two streamed full scans per cycle.
+    // — plus the durable mediaIds (P5 cutover), from the FlatMovies and
+    // FlatEpisodes documents a list can show. Two streamed scans per cycle.
     const validIds = new Set();
     const validMediaIds = new Set();
     const proj = { projection: { _id: 0, videoURL: 1, normalizedVideoId: 1, mediaId: 1 } };
-    const movieCursor = flatMoviesCollection.find({}, proj);
-    for await (const d of movieCursor) {
-      if (d.videoURL)          validIds.add(d.videoURL);
-      if (d.normalizedVideoId) validIds.add(d.normalizedVideoId);
-      if (d.mediaId)           validMediaIds.add(d.mediaId);
-    }
-    const episodeCursor = flatEpisodesCollection.find({}, proj);
-    for await (const d of episodeCursor) {
-      if (d.videoURL)          validIds.add(d.videoURL);
-      if (d.normalizedVideoId) validIds.add(d.normalizedVideoId);
-      if (d.mediaId)           validMediaIds.add(d.mediaId);
-    }
+    await collectValidIdentifiers(
+      flatMoviesCollection.find(VOUCHING_FILTERS.FlatMovies(), proj), validIds, validMediaIds
+    );
+    await collectValidIdentifiers(
+      flatEpisodesCollection.find(VOUCHING_FILTERS.FlatEpisodes(), proj), validIds, validMediaIds
+    );
+    // How many documents could not vouch, for the log: a jump here explains a
+    // jump in records marked invalid.
+    const [moviesNotShowable, episodesNotShowable] = await Promise.all([
+      flatMoviesCollection.countDocuments({ $nor: [VOUCHING_FILTERS.FlatMovies()] }),
+      flatEpisodesCollection.countDocuments({ $nor: [VOUCHING_FILTERS.FlatEpisodes()] }),
+    ]);
     const validArr = [...validIds];
     const validMediaIdArr = [...validMediaIds];
     const now = new Date().toISOString();
     log.info(
-      { validIdCount: validArr.length, validMediaIdCount: validMediaIdArr.length },
+      {
+        validIdCount: validArr.length,
+        validMediaIdCount: validMediaIdArr.length,
+        moviesNotShowable,
+        episodesNotShowable,
+      },
       'Built validation lookup set'
     );
 

@@ -25,6 +25,7 @@ import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation'
 import { getCurrentSyncRunId, getSyncLockHolder } from './syncContext'
 import { isCollectionFullyCovered } from './preTagSyncRunId'
 import { requestMediaRevalidation } from '@src/utils/cache/postSyncRevalidation'
+import { visibleEpisodeFilter } from '@src/utils/mediaVisibility'
 
 // Module-scoped lock — fail-fast on concurrent invocations within one process.
 // Multi-process deployments later: swap for a Redis lock.
@@ -109,6 +110,50 @@ async function cascadeDeleteChildrenOfShows(db, showIds) {
   return { seasons, episodes }
 }
 
+/**
+ * Recount `FlatTVShows.visibleEpisodeCount` for shows that just lost episodes.
+ *
+ * The show sync counts a show's web-visible episodes at the end of its own
+ * pass. Episodes that left the file server are still in the database at that
+ * moment — this cleanup is what deletes them — so the count it stored includes
+ * them, and nothing recounted afterwards: later runs skip the unchanged show.
+ * A show whose every episode was removed therefore stayed listed with a count
+ * that said it had some.
+ *
+ * Keyed on the show ids of the episodes actually deleted, so it touches only
+ * shows this run changed. Writes nothing when the stored count is already
+ * right.
+ *
+ * @param {import('mongodb').Db} db
+ * @param {Array} showIds - `showId` of each deleted episode (duplicates fine)
+ * @returns {Promise<number>} how many shows had their count corrected
+ */
+export async function recountVisibleEpisodes(db, showIds) {
+  const distinct = new Map()
+  for (const id of showIds || []) {
+    if (id != null) distinct.set(String(id), id)
+  }
+
+  let corrected = 0
+  for (const showId of distinct.values()) {
+    const show = await db
+      .collection('FlatTVShows')
+      .findOne({ _id: showId }, { projection: { _id: 1, visibleEpisodeCount: 1 } })
+    if (!show) continue // the show itself was deleted (and its children cascaded)
+
+    const count = await db
+      .collection('FlatEpisodes')
+      .countDocuments({ showId, ...visibleEpisodeFilter() })
+    if (show.visibleEpisodeCount === count) continue
+
+    await db
+      .collection('FlatTVShows')
+      .updateOne({ _id: showId }, { $set: { visibleEpisodeCount: count } })
+    corrected++
+  }
+  return corrected
+}
+
 const EMPTY_RESULT = Object.freeze({
   removed: { movies: [], tvShows: [], tvSeasons: [], tvEpisodes: [] },
   errors: { movies: [], tvShows: [], tvSeasons: [], tvEpisodes: [] },
@@ -139,7 +184,7 @@ const EMPTY_RESULT = Object.freeze({
  
 export async function runPostSyncCleanup(allFileServers, _fieldAvailability, options = {}) {
   const log = createLogger('FlatSync.PostSyncCleanup')
-  const { syncRunId, preTagCoverage, runStartedAt } = options
+  const { syncRunId, preTagCoverage, runStartedAt, allEnabledServersProbed } = options
 
   if (inFlight) {
     log.warn('runPostSyncCleanup already in progress; skipping concurrent invocation')
@@ -239,6 +284,27 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
         span.setAttribute('cleanup.coverage_incomplete', true)
       }
 
+      // ─── Every-server gate (fail-closed) ────────────────────────────────────
+      // Deleting a record says "no file server has this any more". That is only
+      // known when every enabled server answered. A server that failed to
+      // respond is simply missing from `allFileServers`, so pre-tag did not
+      // stamp the titles only it holds, and they would be deleted here as
+      // orphans — with the orphan-fraction breaker below as the only thing in
+      // the way — then re-created, with new ids, when the server came back.
+      // Fail-closed: anything other than an explicit `true` from the caller is
+      // treated as "not known to be complete".
+      if (allEnabledServersProbed !== true) {
+        log.error(
+          { syncRunId, serverCount },
+          'Not every enabled file server answered this run — refusing all deletes (a server that is down has not removed its titles)'
+        )
+        span.setAttribute('cleanup.skipped_deletes', 'partial_probe')
+        deleteEligible.movies = false
+        deleteEligible.tvShows = false
+        deleteEligible.tvSeasons = false
+        deleteEligible.tvEpisodes = false
+      }
+
       // ─── Phase A: Find orphan docs (indexed scan, projection-only) ──────────
       // The query plans as IXSCAN on `sync_run_id_index` and returns only
       // records that need deleting (typically 0–N orphans, not 16k records).
@@ -286,7 +352,7 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
         deleteEligible.tvEpisodes
           ? db.collection('FlatEpisodes')
               .find(orphanFilter, {
-                projection: { _id: 1, showTitle: 1, seasonNumber: 1, episodeNumber: 1, syncRunId: 1 },
+                projection: { _id: 1, showId: 1, showTitle: 1, seasonNumber: 1, episodeNumber: 1, syncRunId: 1 },
               }).toArray()
           : Promise.resolve([]),
       ])
@@ -415,6 +481,21 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
             { syncRunId, deletedShows: deletedShowIds.length, ...cascadeRemoved },
             'Cascade-deleted children of removed shows'
           )
+        }
+      }
+
+      // ─── Phase E.3: Recount episodes for shows that lost some ───────────────
+      // See recountVisibleEpisodes. Runs after the deletes it corrects for.
+      // Best-effort: a failure here leaves a count one run stale, which is
+      // where things stood before, and must not fail the cleanup.
+      if (deleteEligible.tvEpisodes && episodeOrphans.length > 0) {
+        try {
+          const corrected = await recountVisibleEpisodes(db, episodeOrphans.map((e) => e.showId))
+          if (corrected > 0) {
+            log.info({ syncRunId, shows: corrected }, 'Recounted visible episodes for shows that lost episodes')
+          }
+        } catch (error) {
+          log.warn({ syncRunId, error: error.message }, 'Recounting visible episodes after cleanup failed')
         }
       }
 

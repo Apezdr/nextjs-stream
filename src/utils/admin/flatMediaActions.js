@@ -147,6 +147,21 @@ function applyCaptionURLs(payload, set, unset) {
   else unset.captionURLs = ''
 }
 
+/**
+ * Reopen a show's skip gate after an admin added, changed or deleted one of
+ * its seasons or episodes.
+ *
+ * The sync skips a title while `syncGates` says the document is the one its
+ * last complete pass left (sync/core/syncGate). An admin edit breaks that: a
+ * field that was unlocked, for one, is the sync's to write again, and a
+ * skipped pass would never write it. Every edit here removes `syncGates` from
+ * the document it changes; a whole show is skipped on the SHOW's gate, so an
+ * edit to a season or an episode has to reopen that one too.
+ */
+async function reopenSyncGates(db, showId) {
+  await db.collection('FlatTVShows').updateOne({ _id: showId }, { $unset: { syncGates: '' } })
+}
+
 /** Decide lockedFields $set vs $unset from the provided nested object. */
 function applyLockedFields(payload, set, unset) {
   if (!('lockedFields' in payload)) return
@@ -263,6 +278,8 @@ export async function saveMovieAction(_prevState, payload = {}) {
 
   if ('videoURL' in set && set.videoURL !== existing.videoURL) set.mediaLastModified = new Date()
   set.updatedAt = new Date()
+  // The document is no longer the one the sync last saw (see reopenSyncGates).
+  unset.syncGates = ''
 
   const update = {}
   if (Object.keys(set).length) update.$set = set
@@ -372,6 +389,8 @@ export async function saveTVShowAction(_prevState, payload = {}) {
   applyMetadata(payload, set)
   applyLockedFields(payload, set, unset)
   set.updatedAt = new Date()
+  // The document is no longer the one the sync last saw (see reopenSyncGates).
+  unset.syncGates = ''
 
   const update = {}
   if (Object.keys(set).length) update.$set = set
@@ -461,6 +480,7 @@ export async function saveSeasonAction(_prevState, payload = {}) {
     const update = { $set: set }
     if (Object.keys(unset).length) update.$unset = unset
     await seasonsCol.updateOne({ _id: existing._id }, update)
+    await reopenSyncGates(db, showId)
     revalidateMedia()
     revalidatePath(`/admin/media/tv/${showId.toString()}`)
     // Bust public season + parent-show detail pages and landing lists.
@@ -483,6 +503,7 @@ export async function saveSeasonAction(_prevState, payload = {}) {
     if (isDuplicateKeyError(error)) return fail(`Season ${seasonNumber} already exists for this show.`)
     throw error
   }
+  await reopenSyncGates(db, showId)
 
   revalidateMedia()
   revalidatePath(`/admin/media/tv/${showId.toString()}`)
@@ -505,6 +526,9 @@ export async function deleteSeasonAction(_prevState, payload = {}) {
   await db.collection('FlatEpisodes').deleteMany({ showId, seasonNumber })
   const result = await db.collection('FlatSeasons').deleteOne({ showId, seasonNumber })
   if (result.deletedCount === 0) return fail('Season not found.')
+  // If a file server still has the season, the next sync puts it back; it can
+  // only do that if the show is not skipped.
+  await reopenSyncGates(db, showId)
 
   revalidateMedia()
   revalidatePath(`/admin/media/tv/${showId.toString()}`)
@@ -552,9 +576,10 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
   set.updatedAt = new Date()
 
   if (existing) {
-    const update = { $set: set }
-    if (Object.keys(unset).length) update.$unset = unset
+    unset.syncGates = ''
+    const update = { $set: set, $unset: unset }
     await episodesCol.updateOne({ _id: existing._id }, update)
+    await reopenSyncGates(db, showId)
     revalidateMedia()
     revalidatePath(`/admin/media/tv/${showId.toString()}`)
     // Bust public episode/season/show detail pages + landing lists.
@@ -579,6 +604,7 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
     if (isDuplicateKeyError(error)) return fail(`Episode ${episodeNumber} already exists in season ${seasonNumber}.`)
     throw error
   }
+  await reopenSyncGates(db, showId)
 
   revalidateMedia()
   revalidatePath(`/admin/media/tv/${showId.toString()}`)
@@ -601,6 +627,9 @@ export async function deleteEpisodeAction(_prevState, payload = {}) {
   )
   const result = await col.deleteOne({ _id })
   if (result.deletedCount === 0) return fail('Episode not found.')
+  // If a file server still has the episode, the next sync puts it back; it can
+  // only do that if the show is not skipped.
+  if (existing?.showId) await reopenSyncGates(db, existing.showId)
 
   revalidateMedia()
   if (payload.showId) revalidatePath(`/admin/media/tv/${payload.showId}`)

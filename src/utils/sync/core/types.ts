@@ -90,11 +90,8 @@ export interface SyncContext {
   }
   
   // TV show-level hashes (fetched once per server from /api/metadata-hashes/tv).
-  // Enables whole-show skip: if titles[showTitle].hash === TVShowEntity.syncHash
-  // AND titles[showTitle].contentHash === TVShowEntity.contentHash, syncTVShow()
-  // returns Skipped immediately without processing seasons or episodes.
-  // contentHash is optional — absent/null means the backend predates that signal
-  // and the frontend falls back to hash-only.
+  // Recorded on the show (syncHash / contentHash) for inspection. They no longer
+  // decide whether a show is skipped — `syncGates` does (core/syncGate).
   tvShowHashesCache?: {
     hash: string  // Overall hash across all TV shows on this server
     titles: Record<string, {
@@ -106,9 +103,8 @@ export interface SyncContext {
   }
 
   // Per-season episode hashes — keyed by showTitle → seasonNumber.
-  // Populated lazily at the start of each EpisodeSyncService.syncSeason() call
-  // via GET /api/metadata-hashes/tv/{title}/{seasonNumber}.
-  // One HTTP call per season replaces N×2 fetchMetadataMultiServer calls for unchanged episodes.
+  // No longer populated: the episode skip is decided from the payload itself
+  // (`syncGates`, core/syncGate), which needs no extra request per season.
   tvEpisodeHashesCache?: Map<string, Map<number, {
     hash: string  // Season-level aggregate hash
     episodes: Record<string, {  // key = S01E01 format
@@ -131,6 +127,31 @@ export interface SyncContext {
   // directly. MovieSyncService performs a single consolidated write after all
   // strategies complete, using smartUpsert to write only changed fields.
   pendingMovieUpdates?: Map<string, Partial<MovieEntity>>
+
+  // Fields a movie strategy wants REMOVED from the document, keyed like
+  // pendingMovieUpdates. The data they held is gone (the file was deleted, the
+  // last subtitle was removed), which `$set` alone cannot express.
+  // MovieSyncService folds them into the same consolidated write, after
+  // dropping any that an admin has locked.
+  pendingMovieUnsets?: Map<string, Set<string>>
+
+  // Movies (by originalTitle) for which a strategy held a removal back this
+  // pass because not every enabled server answered. MovieSyncService leaves
+  // such a movie's skip gate open so the removal is retried.
+  pendingMovieDeferrals?: Set<string>
+  // Files a server publishes that could not be fetched this pass, per movie
+  // (keyed by originalTitle → what failed, e.g. 'posterBlurhash'). A later
+  // strategy that fetches the same file successfully removes its entry. While
+  // any remain, the pass is not marked complete. Created by MovieSyncService,
+  // for the same reason as the two above: strategies see a copy of the context.
+  pendingMovieFetchFailures?: Map<string, Set<string>>
+
+  // True only when every enabled file server answered this run. "No server
+  // reports this" means the data is gone only then; on a run with a server
+  // missing it may just mean that server is down. Set by the sync route for
+  // every run, whether or not field-absence cleanup is switched on (the copy
+  // inside `cleanup` below exists only when it is).
+  allEnabledServersProbed?: boolean
 
   // Field-absence cleanup (drops stale optional fields that NO enabled server
   // reports anymore — see core/FieldAbsenceCleaner + FIELD_ABSENCE_CLEANUP_DESIGN.md).
@@ -343,12 +364,15 @@ export interface MovieEntity extends BaseMediaEntity {
   backdropFocalSuggested?: BackdropFocal
   backdropFocalSuggestedSource?: string
 
-  // Content hash from media processor — stored after each successful sync to enable
-  // whole-movie skip. If this matches the incoming hash from /api/metadata-hashes/movies,
-  // syncMovie() returns Skipped immediately without normalising or running any strategies.
-  // Distinct from `metadataHash` (which only covers TMDB metadata) — `syncHash` is the
-  // authoritative whole-movie change-detection signal.
+  // The file server's hash for the movie as of the last pass that changed the
+  // document. Informational: the skip decision reads `syncGates` below. (The
+  // metadata strategy's own refetch gate is `metadataHash`, a separate field.)
   syncHash?: string
+
+  // Per-server skip gates: { <serverId>: "g<version>:<payload>#<availability>" }.
+  // A server's pass over this document is skipped when its entry matches the
+  // gate computed for the current run. See core/syncGate for the whole rule.
+  syncGates?: Record<string, string>
 
   // Server identification
   serverId?: string
@@ -403,10 +427,14 @@ export interface EpisodeEntity extends BaseMediaEntity {
   mediaQuality?: MediaQuality
   mediaLastModified?: Date
 
-  // Content hash from media processor — stored after each sync to enable whole-episode skip.
-  // If this matches the incoming episode hash from /api/metadata-hashes/tv/{title}/{season},
-  // buildEpisodeEntity() is bypassed entirely (no HTTP fetches, no entity build, no write).
+  // Left by earlier versions of the sync, which skipped an episode on it. No
+  // longer written or read; the skip decision reads `syncGates`.
   syncHash?: string
+
+  // Per-server skip gates: { <serverId>: "g<version>:<payload>#<availability>" }.
+  // A server's pass over this document is skipped when its entry matches the
+  // gate computed for the current run. See core/syncGate for the whole rule.
+  syncGates?: Record<string, string>
 }
 
 export interface SeasonEntity extends BaseMediaEntity {
@@ -479,17 +507,16 @@ export interface TVShowEntity extends BaseMediaEntity {
   genres?: any[]
   networks?: any[]
 
-  // Content hash from media processor — stored after each sync to enable whole-show skip.
-  // If this matches the incoming hash from /api/metadata-hashes/tv, syncTVShow() returns
-  // Skipped immediately without processing any seasons or episodes.
+  // The file server's show hash and content hash (the aggregate of its episode
+  // and season hashes) as of the last complete pass. Informational: the skip
+  // decision reads `syncGates` below.
   syncHash?: string
-
-  // Aggregate hash of all per-episode hashes for this show, from the backend's
-  // contentHash field on /api/metadata-hashes/tv. Distinct from syncHash (which
-  // only covers show-level TMDB metadata). A video-file change invalidates this
-  // signal via the per-episode hash's mediaLastModified input, so the show-level
-  // skip only fires when BOTH syncHash AND contentHash match.
   contentHash?: string
+
+  // Per-server skip gates: { <serverId>: "g<version>:<payload>#<availability>" }.
+  // A server's pass over this document is skipped when its entry matches the
+  // gate computed for the current run. See core/syncGate for the whole rule.
+  syncGates?: Record<string, string>
 }
 
 // ==========================================
