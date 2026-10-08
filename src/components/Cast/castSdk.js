@@ -511,6 +511,78 @@ export function subscribeCast(onChange) {
   }
 }
 
+function currentMediaSession() {
+  try {
+    return getContext()?.getCurrentSession?.()?.getMediaSession?.() ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * What the receiver says it is playing: `{ width, height, hdr, bandwidth }`,
+ * or null until it says. Published by our receiver
+ * (public/receiver/js/now-playing.js) on every media status, as the standard
+ * videoInfo plus customData.nowPlaying for the bitrate and the rung's own
+ * VIDEO-RANGE. The receiver adapts on its own, so this, not the sender's
+ * quality choice, is what the TV shows.
+ */
+export function readCastNowPlaying() {
+  const media = currentMediaSession()
+  const custom = media?.customData?.nowPlaying ?? null
+  const info = getRemote()?.player?.videoInfo ?? media?.videoInfo ?? null
+  const width = custom?.width || info?.width || 0
+  const height = custom?.height || info?.height || 0
+  if (!width || !height) return null
+  const hdr = custom?.videoRange
+    ? custom.videoRange !== 'SDR'
+    : info?.hdrType === 'hdr' || info?.hdrType === 'dv'
+  return { width, height, hdr, bandwidth: custom?.bandwidth ?? null }
+}
+
+/**
+ * Calls `onChange` when what the receiver plays may have changed: the standard
+ * VIDEO_INFO_CHANGED, plus the media session's own status updates (a bitrate
+ * change between two rungs of one size changes no videoInfo). Separate from
+ * subscribeCast, which deliberately skips frequent events; consumers should
+ * read a primitive snapshot so a repeat status is not a re-render.
+ */
+export function subscribeCastNowPlaying(onChange) {
+  const framework = getFramework()
+  const remote = getRemote()
+  let media = null
+  const onMediaUpdate = () => onChange()
+  const rebind = () => {
+    const next = currentMediaSession()
+    if (next === media) return
+    try {
+      media?.removeUpdateListener?.(onMediaUpdate)
+      next?.addUpdateListener?.(onMediaUpdate)
+    } catch {
+      /* session torn down mid-swap */
+    }
+    media = next
+  }
+  const onRemote = () => {
+    rebind()
+    onChange()
+  }
+  const E = framework?.RemotePlayerEventType ?? {}
+  const types = [E.VIDEO_INFO_CHANGED, E.MEDIA_INFO_CHANGED, E.IS_MEDIA_LOADED_CHANGED].filter(
+    Boolean
+  )
+  for (const type of types) remote?.controller?.addEventListener(type, onRemote)
+  rebind()
+  return () => {
+    for (const type of types) remote?.controller?.removeEventListener(type, onRemote)
+    try {
+      media?.removeUpdateListener?.(onMediaUpdate)
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
 /**
  * Stop casting: halt playback on the receiver and end the session.
  *

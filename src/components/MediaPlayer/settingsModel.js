@@ -23,6 +23,34 @@ export function qualityName(label) {
   return `${size}p`
 }
 
+const STANDARD_SIZES = [4320, 2160, 1440, 1080, 720, 480, 360, 240, 144]
+
+/**
+ * A picture's nominal size from its dimensions, as the player computes it for
+ * its own renditions: a scope film's 1920×800 is 1080p, by its width.
+ */
+export function sizeFromDimensions(width, height) {
+  if (width && height && width > height && width * 9 > height * 16) {
+    const widescreen = Math.round((width * 9) / 16)
+    if (STANDARD_SIZES.includes(widescreen)) return widescreen
+  }
+  const known = [width, height].filter((v) => v > 0)
+  return known.length ? Math.min(...known) : 0
+}
+
+/**
+ * What the TV is playing, for the casting overlay: "1080p · HDR · 7.8 Mbps".
+ * `nowPlaying` is readCastNowPlaying()'s shape; null when the receiver hasn't
+ * said, so the overlay shows nothing rather than a guess.
+ */
+export function castNowPlayingLabel(nowPlaying) {
+  if (!nowPlaying?.width || !nowPlaying?.height) return null
+  const size = sizeFromDimensions(nowPlaying.width, nowPlaying.height)
+  return [qualityName(`${size}p`), nowPlaying.hdr && 'HDR', formatMbps(nowPlaying.bandwidth)]
+    .filter(Boolean)
+    .join(' · ')
+}
+
 export function formatMbps(bitrate) {
   if (!bitrate) return null
   const mbps = bitrate / 1_000_000

@@ -20,6 +20,7 @@ import { CastQueue } from './queuing.js'
 import { MediaFetcher } from './media_fetcher.js'
 import { AdsTracker, SenderTracker, ContentTracker } from './cast_analytics.js'
 import { startPlaybackReporter, redactLoadRequest } from './playback-reporter.js'
+import { startNowPlayingReporter } from './now-playing.js'
 
 /**
  * @fileoverview This sample demonstrates how to build your own Web Receiver for
@@ -309,5 +310,12 @@ startPlaybackReporter({
   castDebugLogger,
   logTag: LOG_RECEIVER_TAG,
 })
+
+/*
+ * Tell senders what the TV is actually playing (resolution, bitrate, HDR).
+ * The receiver adapts on its own, so the sender's casting overlay shows this
+ * rather than the sender's quality choice. See now-playing.js.
+ */
+startNowPlayingReporter({ playerManager, castDebugLogger, logTag: LOG_RECEIVER_TAG })
 
 context.start(castReceiverOptions)
