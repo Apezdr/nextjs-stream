@@ -24,7 +24,7 @@ jest.mock('@components/Cast/castSdk', () => ({
   getRemote: () => ({ player: mockRemotePlayer }),
 }))
 
-import { CastVolumeQueue } from '@src/components/MediaPlayer/CastVolume'
+import { CastVolumeQueue, meterSegments, stepLevel } from '@src/components/MediaPlayer/CastVolume'
 
 function makeReceiver({ step = 1 / 15 } = {}) {
   const sent = []
@@ -242,5 +242,24 @@ describe('the queue', () => {
     await rx.ack()
     await tick(5000)
     expect(rx.sent).toHaveLength(1)
+  })
+})
+
+describe('step controls', () => {
+  const step = 1 / 15
+
+  it('moves exactly one receiver step, from wherever the level is, within 0..1', () => {
+    expect(Math.round(stepLevel(7 / 15, step, 1) * 15)).toBe(8)
+    expect(Math.round(stepLevel(7 / 15, step, -1) * 15)).toBe(6)
+    expect(Math.round(stepLevel(0.21, step, 1) * 15)).toBe(4) // off-grid snaps first: 0.21 ≈ 3/15
+    expect(stepLevel(1, step, 1)).toBe(1)
+    expect(stepLevel(0, step, -1)).toBe(0)
+  })
+
+  it('lights one meter segment per step', () => {
+    expect(meterSegments(0.2, step)).toEqual({ count: 15, lit: 3 })
+    expect(meterSegments(1, step)).toEqual({ count: 15, lit: 15 })
+    expect(meterSegments(0, 0.05)).toEqual({ count: 20, lit: 0 })
+    expect(meterSegments(NaN, step)).toEqual({ count: 15, lit: 0 })
   })
 })

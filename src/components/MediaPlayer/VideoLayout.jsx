@@ -7,6 +7,8 @@ import * as Buttons from './buttons'
 import SubtitleEditorButton from './buttons/SubtitleEditorButton'
 import * as Menus from './menus'
 import { Settings } from './settings'
+import { CastVolumeControl } from './CastVolumeControl'
+import { castVolumeStep, useCastOwnsVolume } from './CastVolume'
 import * as Sliders from './sliders'
 import { TimeGroup } from './time-group'
 import { MobileTitle, Title, VideoMetadata } from './title'
@@ -36,17 +38,18 @@ function Gestures() {
 
 /**
  * Keyboard shortcuts. Vidstack shipped these for free; the framework makes
- * them declarative instead.
+ * them declarative instead. `volumeStep` is one receiver step while casting,
+ * so the arrow keys move the TV exactly like the − / + buttons.
  */
-function Hotkeys() {
+function Hotkeys({ volumeStep = 0.1 }) {
   return (
     <>
       <Hotkey keys="Space" action="togglePaused" />
       <Hotkey keys="k" action="togglePaused" />
       <Hotkey keys="ArrowLeft" action="seekStep" value={-10} />
       <Hotkey keys="ArrowRight" action="seekStep" value={10} />
-      <Hotkey keys="ArrowUp" action="volumeStep" value={0.1} />
-      <Hotkey keys="ArrowDown" action="volumeStep" value={-0.1} />
+      <Hotkey keys="ArrowUp" action="volumeStep" value={volumeStep} />
+      <Hotkey keys="ArrowDown" action="volumeStep" value={-volumeStep} />
       <Hotkey keys="m" action="toggleMuted" />
       <Hotkey keys="f" action="toggleFullscreen" />
       <Hotkey keys="c" action="toggleSubtitles" />
@@ -73,6 +76,9 @@ export function VideoLayout({
 }) {
   const [isSubtitleEditorOpen, setIsSubtitleEditorOpen] = useState(false)
   const { isCasting } = useIsCasting(videoURL)
+  // While a Cast receiver owns the volume, it moves in the receiver's steps:
+  // − / + buttons and a step meter instead of the slider (CastVolumeControl).
+  const castOwnsVolume = useCastOwnsVolume(videoURL)
   const store = Player.usePlayer()
   const media = Player.useMedia()
 
@@ -116,7 +122,7 @@ export function VideoLayout({
   return (
     <>
       <Gestures />
-      <Hotkeys />
+      <Hotkeys volumeStep={castOwnsVolume ? castVolumeStep() : 0.1} />
       <CastingOverlay titleLabel={titleLabel} videoURL={videoURL} />
       {/* One status surface for cold start, deferred play, mid-stream
           buffering and errors, read off the element — the framework's
@@ -177,7 +183,7 @@ export function VideoLayout({
             <Buttons.SeekBackward align="start" />
             <Buttons.SeekForward />
             <Buttons.Mute />
-            <Sliders.Volume />
+            {castOwnsVolume ? <CastVolumeControl /> : <Sliders.Volume />}
             <Title titleLabel={titleLabel} />
             {isAdmin && adminProps && (
               <SubtitleEditorButton onEditSubtitles={() => setIsSubtitleEditorOpen(true)} />

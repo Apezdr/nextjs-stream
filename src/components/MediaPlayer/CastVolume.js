@@ -107,6 +107,27 @@ function snapToStep(level) {
   return Math.min(1, Math.max(0, Math.round(level / step) * step))
 }
 
+/**
+ * The step the cast volume controls move by: the receiver's own (one press of
+ * its volume buttons), or 1/20 when it reports none. Constant for a session.
+ */
+export function castVolumeStep() {
+  return receiverStep() ?? 0.05
+}
+
+/** One step up (+1) or down (-1) from `level`, on the step grid, clamped. */
+export function stepLevel(level, step, direction) {
+  const index = Math.round((Number.isFinite(level) ? level : 0) / step) + direction
+  return Math.min(1, Math.max(0, index * step))
+}
+
+/** The step meter: one segment per receiver step, `lit` of them at `level`. */
+export function meterSegments(level, step) {
+  const count = Math.max(1, Math.round(1 / step))
+  const lit = Math.min(count, Math.max(0, Math.round((Number.isFinite(level) ? level : 0) / step)))
+  return { count, lit }
+}
+
 function sendVolume(level) {
   let request
   try {
