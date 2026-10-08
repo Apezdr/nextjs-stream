@@ -1,9 +1,15 @@
 'use client'
 
+import { useSyncExternalStore } from 'react'
 import Link from 'next/link'
 import { PencilSquareIcon } from '@heroicons/react/20/solid'
 import { authClient } from '@src/lib/auth-client'
 import { classNames } from '@src/utils'
+
+// Client-only mount flag, the same pattern GeneralLayout uses: the server
+// snapshot is `false`, so SSR and the hydration render agree on "nothing".
+const subscribeNever = () => () => {}
+const useHydrated = () => useSyncExternalStore(subscribeNever, () => true, () => false)
 
 /**
  * Admin-only "Edit in Admin" button shown on media detail pages.
@@ -14,6 +20,11 @@ import { classNames } from '@src/utils'
  * HTML is identical for everyone, and the session/role check runs client-side
  * after hydration, rendering the link only for admins.
  *
+ * The hydration gate is load-bearing: `useSession()` reads a global store, and
+ * these pages stream in behind Suspense, so by the time this boundary hydrates
+ * the nav has usually resolved the session already. Without the gate the first
+ * client render shows the link while the server HTML has nothing.
+ *
  * @param {Object} props
  * @param {string} props.href - Admin editor URL (e.g. `/admin/media/movies/<id>`).
  * @param {string} [props.label] - Visible button label.
@@ -23,8 +34,9 @@ import { classNames } from '@src/utils'
  */
 export default function AdminEditButton({ href, label = 'Edit in Admin', variant = 'button', className = '' }) {
   const { data: session } = authClient.useSession()
+  const hydrated = useHydrated()
 
-  if (!href || session?.user?.role !== 'admin') return null
+  if (!hydrated || !href || session?.user?.role !== 'admin') return null
 
   if (variant === 'subtle') {
     return (
