@@ -1,0 +1,27 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // The `dev` script with the inspector on. Runs node directly rather than
+      // `npm run dev -- --inspect`: in PowerShell npm resolves to npm.ps1, which
+      // swallows the `--`, so --inspect would reach npm instead of next.
+      "label": "next dev --inspect",
+      "type": "process",
+      "command": "node",
+      "args": ["${workspaceFolder}/node_modules/next/dist/bin/next", "dev", "-p", "3232", "--inspect"],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "next-dev",
+        // Never matches: the matcher exists only for the background markers,
+        // which tell a debug launch when the server is ready to attach to.
+        "pattern": { "regexp": "^\\b\\B$" },
+        "background": {
+          "activeBegins": true,
+          "beginsPattern": "Next\\.js \\d",
+          "endsPattern": "Ready in"
+        }
+      },
+      "presentation": { "reveal": "always", "panel": "dedicated" }
+    }
+  ]
+}

@@ -2,24 +2,57 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Next.js: debug server-side",
+      // Breakpoints in src/ for API route handlers, proxy.ts, instrumentation
+      // and the utils/lib code they run. NOT for pages, layouts or server
+      // components: use "no source maps" below, or Chrome DevTools via
+      // chrome://inspect (the preLaunchTask's server already has --inspect).
+      //
+      // Why the split. The debugger runs inside the VS Code extension host and
+      // has taken it down three ways (2026-10-07):
+      // 1. A *launched* session hands NODE_OPTIONS to every child, and `next
+      //    dev` starts ~26 Turbopack loader/PostCSS workers, so it attached to
+      //    all of them. Hence attach-only: the preLaunchTask runs `next dev
+      //    --inspect`, Next puts the inspector on its server process (9229), and
+      //    the workers' attempts fail harmlessly ("address already in use").
+      // 2. In dev, React's Flight client evals a small stub script per server
+      //    component stack frame, each pointing at its whole chunk's source map,
+      //    and js-debug re-parses that map for every stub (its cache is keyed by
+      //    script hash). Ten page loads = ~1,900 stubs = ~1.5 GB of map parsing,
+      //    all against maps in .next/dev/server/chunks/ssr/, where pages and
+      //    server components live. Route handlers, proxy and instrumentation
+      //    live one level up in chunks/ (~12 MB for the same ten loads).
+      // 3. One glob on purpose: js-debug recompiles every pattern for each
+      //    source of each map it loads. `*` stops at the ssr/ folder, and
+      //    library-only chunks are named after their node_modules path.
+      "name": "Next.js: debug server (API routes, proxy)",
       "type": "node",
-      "request": "launch",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
-      "console": "integratedTerminal",
-      // Source maps for our own code only. The debugger runs inside the VS Code
-      // extension host and parses every source map it is allowed to, and with
-      // the defaults that took the host down. Next's runtime and the externalized
-      // packages run from node_modules; everything else is bundled into .next,
-      // where Turbopack names each library-only chunk after its node_modules path
-      // (measured: of ~2,000 dev maps, all 708 with node_modules in the name hold
-      // library code only, ~260 MB, and none holds a line of src/).
-      "resolveSourceMapLocations": [
-        "${workspaceFolder}/**",
-        "!**/node_modules/**",
+      "request": "attach",
+      "port": 9229,
+      "restart": true,
+      "preLaunchTask": "next dev --inspect",
+      "resolveSourceMapLocations": ["${workspaceFolder}/.next/dev/server/chunks/!(*node_modules*)"],
+      "outFiles": [
+        "${workspaceFolder}/.next/dev/server/chunks/*.js",
         "!${workspaceFolder}/.next/**/*node_modules*"
       ],
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**",
+        "${workspaceFolder}/.next/**/*node_modules*"
+      ]
+    },
+    {
+      // Anything on the server, pages and server components included, without
+      // source maps: breakpoints and `debugger;` statements land in the
+      // compiled chunks under .next/dev/server, which Turbopack leaves readable
+      // in dev. Safe at any page count.
+      "name": "Next.js: debug server (no source maps)",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": true,
+      "preLaunchTask": "next dev --inspect",
+      "sourceMaps": false,
       "skipFiles": [
         "<node_internals>/**",
         "**/node_modules/**",
@@ -45,32 +78,16 @@
           "path": "${workspaceFolder}"
         }
       ]
-    },
+    }
+  ],
+  "compounds": [
     {
+      // Server attach + browser. The task finishes starting the server before
+      // either session begins, so the browser never opens on a dead port.
       "name": "Next.js: debug full stack",
-      "type": "node",
-      "request": "launch",
-      "program": "${workspaceFolder}/node_modules/next/dist/bin/next",
-      "args": ["dev", "-p", "3232"],
-      "runtimeArgs": ["--inspect"],
-      // Same narrowing as "debug server-side"; see there.
-      "resolveSourceMapLocations": [
-        "${workspaceFolder}/**",
-        "!**/node_modules/**",
-        "!${workspaceFolder}/.next/**/*node_modules*"
-      ],
-      "skipFiles": [
-        "<node_internals>/**",
-        "**/node_modules/**",
-        "${workspaceFolder}/.next/**/*node_modules*"
-      ],
-      "serverReadyAction": {
-        "action": "debugWithEdge",
-        "killOnServerStop": true,
-        "pattern": "- Local:.+(https?://.+)",
-        "uriFormat": "%s",
-        "webRoot": "${workspaceFolder}"
-      }
+      "configurations": ["Next.js: debug server (API routes, proxy)", "Next.js: debug client-side"],
+      "preLaunchTask": "next dev --inspect",
+      "stopAll": true
     }
   ]
 }
