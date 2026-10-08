@@ -2,25 +2,42 @@
   "version": "0.2.0",
   "configurations": [
     {
-  "name": "Next.js: debug server-side",
-  "type": "node",
-  "request": "launch",
-  "runtimeExecutable": "npm",
-  "runtimeArgs": ["run", "dev"],
-  "skipFiles": ["<node_internals>/**"],
-  "console": "integratedTerminal"
-},
+      "name": "Next.js: debug server-side",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "console": "integratedTerminal",
+      // Source maps for our own code only. The debugger runs inside the VS Code
+      // extension host and parses every source map it is allowed to, and with
+      // the defaults that took the host down. Next's runtime and the externalized
+      // packages run from node_modules; everything else is bundled into .next,
+      // where Turbopack names each library-only chunk after its node_modules path
+      // (measured: of ~2,000 dev maps, all 708 with node_modules in the name hold
+      // library code only, ~260 MB, and none holds a line of src/).
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**",
+        "!${workspaceFolder}/.next/**/*node_modules*"
+      ],
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**",
+        "${workspaceFolder}/.next/**/*node_modules*"
+      ]
+    },
     {
       "name": "Next.js: debug client-side",
       "type": "chrome",
       "request": "launch",
-      "url": "http://localhost:3000"
+      "url": "http://localhost:3232",
+      "skipFiles": ["**/node_modules/**"]
     },
     {
       "name": "Next.js: debug client-side (Firefox)",
       "type": "firefox",
       "request": "launch",
-      "url": "http://localhost:3000",
+      "url": "http://localhost:3232",
       "reAttach": true,
       "pathMappings": [
         {
@@ -34,8 +51,19 @@
       "type": "node",
       "request": "launch",
       "program": "${workspaceFolder}/node_modules/next/dist/bin/next",
+      "args": ["dev", "-p", "3232"],
       "runtimeArgs": ["--inspect"],
-      "skipFiles": ["<node_internals>/**"],
+      // Same narrowing as "debug server-side"; see there.
+      "resolveSourceMapLocations": [
+        "${workspaceFolder}/**",
+        "!**/node_modules/**",
+        "!${workspaceFolder}/.next/**/*node_modules*"
+      ],
+      "skipFiles": [
+        "<node_internals>/**",
+        "**/node_modules/**",
+        "${workspaceFolder}/.next/**/*node_modules*"
+      ],
       "serverReadyAction": {
         "action": "debugWithEdge",
         "killOnServerStop": true,
