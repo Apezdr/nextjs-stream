@@ -133,24 +133,46 @@ test('speed is capped at 1.5× and 1× reads Normal', () => {
 })
 
 describe('captions', () => {
-  test('auto-generated tracks lose the suffix and say so; progress shows', () => {
+  test('auto-generated tracks lose the suffix and are marked; progress shows', () => {
     expect(captionRow('English - Auto Generated')).toEqual({
       title: 'English',
-      detail: 'Auto-generated',
+      auto: true,
+      detail: null,
       generating: false,
+      failed: false,
     })
     expect(
       captionRow('English - Auto Generated', { status: 'running', progressPct: 0.42 })
     ).toEqual({
       title: 'English',
-      detail: 'Auto-generated · Generating… 42%',
+      auto: true,
+      detail: 'Generating… 42%',
       generating: true,
+      failed: false,
     })
     expect(captionRow('English Hearing Impaired')).toEqual({
       title: 'English Hearing Impaired',
+      auto: false,
       detail: null,
       generating: false,
+      failed: false,
     })
+  })
+
+  test('a generation that could not start says why, instead of an empty track', () => {
+    expect(captionRow('English - Auto Generated', { status: 'failed', httpStatus: 401 })).toEqual({
+      title: 'English',
+      auto: true,
+      detail: "Couldn't generate: not authorized",
+      generating: false,
+      failed: true,
+    })
+    expect(
+      captionRow('English - Auto Generated', { status: 'failed', httpStatus: 429 }).detail
+    ).toBe("Couldn't generate: too many requests, try again later")
+    expect(
+      captionRow('English - Auto Generated', { status: 'failed', httpStatus: null }).detail
+    ).toBe("Couldn't generate: try again later")
   })
 
   test('Off, then auto-generated, then human tracks', () => {

@@ -152,7 +152,7 @@ function Category({ label, value, icon: Icon, children }) {
   )
 }
 
-function OptionRow({ value, title, pills, detail }) {
+function OptionRow({ value, title, pills, detail, detailTone }) {
   return (
     <Menu.RadioItem
       value={value}
@@ -166,7 +166,16 @@ function OptionRow({ value, title, pills, detail }) {
           <span className="truncate">{title}</span>
           {pills}
         </span>
-        {detail ? <span className="truncate text-[13px] text-white/60">{detail}</span> : null}
+        {detail ? (
+          <span
+            className={classNames(
+              'truncate text-[13px]',
+              detailTone === 'warning' ? 'text-amber-300/90' : 'text-white/60'
+            )}
+          >
+            {detail}
+          </span>
+        ) : null}
       </span>
     </Menu.RadioItem>
   )
@@ -257,8 +266,14 @@ function CaptionsPage() {
   const selectedRow = selectedLabel ? captionRow(selectedLabel, progress[selectedLabel]) : null
   const value = selectedRow ? (
     <>
-      <span className="truncate">{selectedRow.title}</span>
+      <span className="truncate">
+        {selectedRow.title}
+        {selectedRow.auto && <AutoMark />}
+      </span>
       {selectedRow.generating && <CaptionsSpinner />}
+      {selectedRow.failed && (
+        <span className="shrink-0 text-amber-300/90">· Couldn't generate</span>
+      )}
     </>
   ) : (
     'Off'
@@ -278,8 +293,14 @@ function CaptionsPage() {
             <OptionRow
               key={option.value}
               value={option.value}
-              title={row.title}
+              title={
+                <>
+                  {row.title}
+                  {row.auto && <AutoMark />}
+                </>
+              }
               detail={row.detail}
+              detailTone={row.failed ? 'warning' : undefined}
             />
           )
         })}
@@ -304,6 +325,25 @@ function SpeedPage() {
         ))}
       </Menu.RadioGroup>
     </Category>
+  )
+}
+
+/**
+ * Marks an auto-generated caption track: a small superscript beside its name,
+ * so "English" and "English (auto)" are told apart at a glance. Screen readers
+ * hear "(auto-generated)" instead of the abbreviation.
+ */
+function AutoMark() {
+  return (
+    <>
+      <sup
+        aria-hidden="true"
+        className="ml-0.5 text-[9px] font-bold uppercase tracking-wider text-white/55"
+      >
+        Auto
+      </sup>
+      <span className="sr-only"> (auto-generated)</span>
+    </>
   )
 }
 

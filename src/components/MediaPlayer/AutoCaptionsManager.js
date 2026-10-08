@@ -77,13 +77,21 @@ export default function AutoCaptionsManager({ captions, onNonce }) {
 
   async function handleTrackSelected(label, entry) {
     inFlight.current.add(label)
-    const { updateProgress: update, clearProgress: clear, onNonce: bumpNonce } = callbacksRef.current
+    const {
+      updateProgress: update,
+      clearProgress: clear,
+      onNonce: bumpNonce,
+    } = callbacksRef.current
 
     // Surface "Generating…" on the row immediately so the user gets visual
     // confirmation on click — before the trigger fetch round-trips. For
     // already-ready tracks (200 path) the finally block clears it ~1 s later;
     // brief flicker is acceptable.
     update(label, { status: 'running', progressPct: null })
+    // Set when generation could not start or did not finish. The row then
+    // says why (settingsModel.captionRow) instead of silently going back to
+    // an empty track; selecting the track again retries.
+    let failure = null
 
     try {
       const triggerRes = await fetch(entry.url)
@@ -98,8 +106,10 @@ export default function AutoCaptionsManager({ captions, onNonce }) {
       }
 
       if (triggerRes.status !== 202) {
-        // 401/429/503/etc. — silently dropped. Track stays as-is, user can retry.
+        // 401 (the processor couldn't identify a user to generate for), 429,
+        // 503... Selecting the track again retries.
         console.warn(`Auto-caption trigger returned HTTP ${triggerRes.status}`)
+        failure = { httpStatus: triggerRes.status }
         return
       }
 
@@ -107,6 +117,7 @@ export default function AutoCaptionsManager({ captions, onNonce }) {
       const jobId = triggerBody?.jobId
       if (!jobId) {
         console.warn('Auto-caption trigger accepted but no jobId returned')
+        failure = { httpStatus: null }
         return
       }
 
@@ -130,14 +141,17 @@ export default function AutoCaptionsManager({ captions, onNonce }) {
         bumpNonce(label, String(Date.now()))
       } else {
         console.warn(`Auto-caption job failed: ${result.error || 'unknown error'}`)
+        failure = { httpStatus: null }
       }
     } catch (err) {
       console.warn(`Auto-caption trigger error: ${err.message}`)
+      failure = { httpStatus: null }
     } finally {
       inFlight.current.delete(label)
-      // Drop the "Generating…" suffix on every code path — success leaves the
-      // track loaded with cues; failures revert to the plain label.
-      clear(label)
+      // Success leaves the track loaded with cues, so its "Generating…" state
+      // clears; a failure stays on the row, with its reason.
+      if (failure) update(label, { status: 'failed', ...failure })
+      else clear(label)
     }
   }
 

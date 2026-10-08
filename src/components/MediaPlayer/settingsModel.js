@@ -149,25 +149,38 @@ export function sortCaptionOptions(options) {
 }
 
 /**
- * A caption track's row: its name without the auto suffix, and a detail line
- * for auto-generated tracks and generation progress.
+ * A caption track's row: its name without the auto suffix (`auto` says to
+ * mark it), and a detail line for generation progress, or for why generation
+ * could not start: a failed request used to leave the track silently empty.
  *
  * @param {string} label - the track label
- * @param {{status?: string, progressPct?: number}} [progress] - from useAutoCaptionsProgress
+ * @param {{status?: string, progressPct?: number, httpStatus?: number}} [progress]
+ *   from useAutoCaptionsProgress
  */
 export function captionRow(label, progress) {
   const auto = AUTO_LABEL_RE.test(label)
-  const generating =
-    progress?.status === 'running'
-      ? typeof progress.progressPct === 'number'
+  let detail = null
+  if (progress?.status === 'running') {
+    detail =
+      typeof progress.progressPct === 'number'
         ? `Generating… ${Math.round(progress.progressPct * 100)}%`
         : 'Generating…'
-      : null
+  } else if (progress?.status === 'failed') {
+    detail = `Couldn't generate: ${captionFailureReason(progress.httpStatus)}`
+  }
   return {
     title: label.replace(AUTO_LABEL_RE, ''),
-    detail: [auto && 'Auto-generated', generating].filter(Boolean).join(' · ') || null,
-    generating: Boolean(generating),
+    auto,
+    detail,
+    generating: progress?.status === 'running',
+    failed: progress?.status === 'failed',
   }
+}
+
+function captionFailureReason(httpStatus) {
+  if (httpStatus === 401 || httpStatus === 403) return 'not authorized'
+  if (httpStatus === 429) return 'too many requests, try again later'
+  return 'try again later'
 }
 
 /**
