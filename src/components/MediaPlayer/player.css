@@ -29,6 +29,56 @@
   opacity: 1;
 }
 
+/* The player drawer (Settings and Chapters, drawer.js) is a top-layer popover,
+ * so `fixed` means the viewport. The menu positions it next to its button with
+ * inline styles (position-anchor, inset, translate); these !important rules
+ * dock it instead. Phones in portrait get a bottom sheet; from sm up it is a
+ * full-height drawer on the player's right edge, at the offsets drawer.js
+ * measures from the player container. `height: auto` undoes the popover UA's
+ * fit-content so top + bottom stretch it. */
+.player-drawer {
+  position: fixed !important;
+  inset: auto 0 0 0 !important;
+  margin: 0 !important;
+  translate: none !important;
+}
+@media (min-width: 640px) {
+  .player-drawer {
+    inset: var(--dock-top, 0) var(--dock-right, 0) var(--dock-bottom, 0) auto !important;
+    height: auto;
+  }
+}
+
+/* Drawer rows ease up into place on a 20 ms stagger as their page appears:
+ * the root rows when the drawer opens, an option list when its page slides in.
+ * Delays by position rather than a per-row prop; past the 12th row they all
+ * share the last delay. */
+@keyframes drawer-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.drawer-stagger > * {
+  animation: drawer-row-in 260ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+.drawer-stagger > :nth-child(2) { animation-delay: 20ms; }
+.drawer-stagger > :nth-child(3) { animation-delay: 40ms; }
+.drawer-stagger > :nth-child(4) { animation-delay: 60ms; }
+.drawer-stagger > :nth-child(5) { animation-delay: 80ms; }
+.drawer-stagger > :nth-child(6) { animation-delay: 100ms; }
+.drawer-stagger > :nth-child(7) { animation-delay: 120ms; }
+.drawer-stagger > :nth-child(8) { animation-delay: 140ms; }
+.drawer-stagger > :nth-child(9) { animation-delay: 160ms; }
+.drawer-stagger > :nth-child(10) { animation-delay: 180ms; }
+.drawer-stagger > :nth-child(11) { animation-delay: 200ms; }
+.drawer-stagger > :nth-child(n + 12) { animation-delay: 220ms; }
+@media (prefers-reduced-motion: reduce) {
+  .drawer-stagger > * {
+    animation: none;
+  }
+}
+
 /* The media element fills the container. dvh, not vh: on mobile 100vh is the
  * height with the browser toolbar retracted, so while the toolbar is showing
  * the video (and the control bar pinned to its bottom) ran off the screen.

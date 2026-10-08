@@ -10,7 +10,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 
 jest.mock('@components/MediaPlayer/videojs', () => ({
   __esModule: true,
-  Menu: { Item: ({ children, onClick }) => <button onClick={onClick}>{children}</button> },
+  Menu: { RadioItem: ({ children, onClick }) => <button onClick={onClick}>{children}</button> },
 }))
 
 import RenderChapter from '@components/MediaPlayer/chapter/renderChapter'

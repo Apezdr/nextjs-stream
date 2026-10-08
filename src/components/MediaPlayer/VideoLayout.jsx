@@ -6,6 +6,7 @@ import { Player, Controls, Gesture, Hotkey } from './videojs'
 import * as Buttons from './buttons'
 import SubtitleEditorButton from './buttons/SubtitleEditorButton'
 import * as Menus from './menus'
+import { Settings } from './settings'
 import * as Sliders from './sliders'
 import { TimeGroup } from './time-group'
 import { MobileTitle, Title, VideoMetadata } from './title'
@@ -182,7 +183,7 @@ export function VideoLayout({
               <SubtitleEditorButton onEditSubtitles={() => setIsSubtitleEditorOpen(true)} />
             )}
             {hasChapters && <Menus.Chapters chapterThumbnailURL={chapterThumbnailURL} />}
-            <Menus.Settings hasCaptions={hasCaptions} />
+            <Settings hasCaptions={hasCaptions} isCasting={isCasting} />
             <Buttons.PIP />
             <Buttons.Chromecast />
             <Buttons.AirPlay />

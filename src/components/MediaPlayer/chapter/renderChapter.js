@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Image from 'next/image'
 import { Menu } from './../videojs'
 import { classNames } from '@src/utils'
+import { Pill, rowClass } from '../drawer'
 
 // The frame endpoint expects a zero-padded HH:MM:SS path segment.
 function convertTimeFormat(startTimeText) {
@@ -26,12 +27,16 @@ function convertTimeFormat(startTimeText) {
   return `${hours}:${minutes}:${seconds}`
 }
 
+/** One chapter row in the drawer: its frame, name, and start · duration. */
 const RenderChapter = ({
+  value,
   label,
   startTimeText,
   durationText,
   isActive,
-  onSelect,
+  progress = 0,
+  onRestart,
+  rowRef,
   chapterThumbnailURL,
 }) => {
   // The frame goes through the image optimizer like every other image
@@ -44,34 +49,49 @@ const RenderChapter = ({
   const [useSourceURL, setUseSourceURL] = useState(false)
 
   return (
-    <Menu.Item
-      onClick={onSelect}
-      className={classNames(
-        'flex w-full max-w-[91vw] cursor-pointer select-none items-center gap-3 rounded-sm p-2 outline-none ring-blue-400 hover:bg-white/10 focus-visible:ring-[3px] data-[highlighted]:bg-white/10',
-        isActive ? 'bg-white/15' : ''
-      )}
+    <Menu.RadioItem
+      ref={rowRef}
+      value={value}
+      onClick={onRestart}
+      className={classNames(rowClass, 'aria-[checked=true]:bg-white/[0.06]')}
     >
       {chapterThumbnailURL && (
-        <Image
-          // Remounted on the switch so the failed load's state is not carried over.
-          key={useSourceURL ? 'source' : 'optimized'}
-          className="h-[52px] w-[92px] shrink-0 rounded-sm border border-white/20 object-cover"
-          src={`${chapterThumbnailURL}${convertTimeFormat(startTimeText)}`}
-          alt="Chapter Thumbnail"
-          // The rendered box, so the optimizer is asked for 96 px (1x) and
-          // 256 px (2x) rather than a size nothing displays.
-          width={92}
-          height={52}
-          unoptimized={useSourceURL}
-          onError={() => setUseSourceURL(true)}
-        />
+        <span className="relative shrink-0 overflow-hidden rounded-lg border border-white/15">
+          <Image
+            // Remounted on the switch so the failed load's state is not carried over.
+            key={useSourceURL ? 'source' : 'optimized'}
+            className="block h-[52px] w-[92px] object-cover"
+            src={`${chapterThumbnailURL}${convertTimeFormat(startTimeText)}`}
+            alt="Chapter Thumbnail"
+            // The rendered box, so the optimizer is asked for 96 px (1x) and
+            // 256 px (2x) rather than a size nothing displays.
+            width={92}
+            height={52}
+            unoptimized={useSourceURL}
+            onError={() => setUseSourceURL(true)}
+          />
+          {/* How far into the playing chapter, along the frame's bottom edge. */}
+          {isActive && (
+            <span className="absolute inset-x-0 bottom-0 h-[3px] bg-black/50">
+              <span
+                className="block h-full bg-red-500"
+                style={{ width: `${Math.min(100, Math.max(0, progress * 100))}%` }}
+              />
+            </span>
+          )}
+        </span>
       )}
-      <div className="flex min-w-0 flex-col text-left">
-        <span className="truncate text-sm font-medium text-white">{label}</span>
-        <span className="text-xs text-red-400">{startTimeText}</span>
-        <span className="text-xs text-white/50">{durationText}</span>
-      </div>
-    </Menu.Item>
+      <span className="flex min-w-0 flex-1 flex-col">
+        <span className="flex min-w-0 items-center gap-1.5 text-[15px] font-semibold leading-snug">
+          <span className="truncate">{label}</span>
+          {isActive && <Pill>Playing</Pill>}
+        </span>
+        <span className="text-[13px] tabular-nums text-white/60">
+          {startTimeText}
+          {durationText ? ` · ${durationText}` : null}
+        </span>
+      </span>
+    </Menu.RadioItem>
   )
 }
 

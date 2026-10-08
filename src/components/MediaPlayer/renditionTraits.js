@@ -50,6 +50,23 @@ export function traitsFromLevels(levels) {
   return traits
 }
 
+/**
+ * The key a store audio track and its hls.js track share: the video.js adapter
+ * copies hls.js's `lang` and `name` into the track's `language` and `label`.
+ */
+export function audioTrackKey({ language, label } = {}) {
+  return `${language ?? ''}|${label ?? ''}`
+}
+
+/** Keys of the hls.js audio tracks the master marks DEFAULT=YES. */
+export function audioDefaultsFromTracks(tracks) {
+  const defaults = new Set()
+  for (const track of tracks ?? []) {
+    if (track?.default) defaults.add(audioTrackKey({ language: track.lang, label: track.name }))
+  }
+  return defaults
+}
+
 /** The short tags to show for a rendition, in display order. */
 export function traitTags(traits, rendition) {
   const t = rendition ? traits?.get(renditionKey(rendition)) : undefined

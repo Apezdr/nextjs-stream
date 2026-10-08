@@ -26,13 +26,15 @@ import {
   audioTrackFeature,
   textTrackFeature,
   remotePlaybackFeature,
+  playbackRateFeature,
 } from '@videojs/react'
 
 /**
  * The main watch-page player: `{ Player, usePlayer, useMedia }`, so the
  * provider component is `<Player.Player>`. One store per provider instance;
- * the feature list is explicit so the store shape is deliberate (no
- * playbackRateFeature — the player has never had a speed menu).
+ * the feature list is explicit so the store shape is deliberate.
+ * playbackRateFeature backs the settings panel's Speed page, which offers its
+ * own capped rates (settingsModel.js) rather than the feature's 0.2–2× list.
  */
 export const Player = createPlayer({
   displayName: 'MainVideoPlayer',
@@ -52,6 +54,7 @@ export const Player = createPlayer({
     audioTrackFeature,
     textTrackFeature,
     remotePlaybackFeature,
+    playbackRateFeature,
   ],
 })
 
@@ -77,6 +80,8 @@ export {
   Thumbnail,
   Gesture,
   Hotkey,
+  // the player container element (the settings panel docks to its box)
+  useContainer,
   // option hooks for menus
   useQualityOptions,
   useAudioTrackOptions,
@@ -133,5 +138,6 @@ export {
   ChevronIcon,
   CheckIcon,
   SeekIcon,
+  SpeedIcon,
   SpinnerIcon,
 } from '@videojs/react/icons'
