@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useRef } from 'react'
 import { Player } from './videojs'
+import { useCastOwnsVolume } from './CastVolume'
 
 const STORAGE_KEY = 'videoVolumeMedia'
 
@@ -25,13 +26,20 @@ function readStoredVolume() {
  * right way; `store.setVolume` after `started` remains as the fallback for
  * hosts that expose no element (Cast) or platforms where the element ignores
  * writes until later.
+ *
+ * Stands down while the volume belongs to a Cast receiver (useCastOwnsVolume):
+ * the store's volume is then the TV's, so persisting it saved the TV's level
+ * as the viewer's local volume (a cast at 15% made the next local title start
+ * at 15%), and restoring would have set the TV to the local preference. The
+ * restore runs once the cast ends instead.
  */
-const VolumeRegulator = () => {
+const VolumeRegulator = ({ videoURL }) => {
   const store = Player.usePlayer()
   const media = Player.useMedia()
   const volume = Player.usePlayer((s) => s.volume)
   const started = Player.usePlayer((s) => s.started)
   const canSetVolume = Player.usePlayer((s) => s.volumeAvailability !== 'unavailable')
+  const castOwnsVolume = useCastOwnsVolume(videoURL)
   const hasMounted = useRef(false)
   const initialVolumeSet = useRef(false)
 
@@ -40,7 +48,7 @@ const VolumeRegulator = () => {
   // NO_TARGET before attach, which is the retry signal); the host's own
   // `loadstart` fires once it has both a target and a source.
   useEffect(() => {
-    if (!store || !media) return undefined
+    if (!store || !media || castOwnsVolume) return undefined
     const apply = () => {
       if (initialVolumeSet.current) return
       const stored = readStoredVolume()
@@ -59,22 +67,22 @@ const VolumeRegulator = () => {
     apply()
     media.addEventListener('loadstart', apply)
     return () => media.removeEventListener('loadstart', apply)
-  }, [store, media])
+  }, [store, media, castOwnsVolume])
 
   // Fallback restore through the store once playback has started.
   useEffect(() => {
-    if (started && canSetVolume && !initialVolumeSet.current) {
+    if (started && canSetVolume && !castOwnsVolume && !initialVolumeSet.current) {
       const stored = readStoredVolume()
       if (stored !== null && stored !== volume) {
         store.setVolume(stored)
       }
       initialVolumeSet.current = true
     }
-  }, [started, canSetVolume, store, volume])
+  }, [started, canSetVolume, castOwnsVolume, store, volume])
 
   // Persist changes made after playback started.
   useEffect(() => {
-    if (hasMounted.current && started && canSetVolume) {
+    if (hasMounted.current && started && canSetVolume && !castOwnsVolume) {
       try {
         if (String(volume) !== localStorage.getItem(STORAGE_KEY)) {
           localStorage.setItem(STORAGE_KEY, String(volume))
@@ -85,7 +93,7 @@ const VolumeRegulator = () => {
     } else if (started) {
       hasMounted.current = true
     }
-  }, [volume, canSetVolume, started])
+  }, [volume, canSetVolume, castOwnsVolume, started])
 
   return null
 }

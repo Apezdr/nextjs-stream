@@ -88,7 +88,7 @@ export function DecodeHealthChip({ verdict, isPaused, onOpen }) {
 /**
  * The one-time explanation.
  *
- * Rendered inside Player.Container rather than portalled to the body, because
+ * Rendered inside the player Container rather than portalled to the body, because
  * the fullscreen feature requests fullscreen on the CONTAINER — anything
  * outside it is invisible the moment the viewer goes fullscreen, which is when
  * a 4K title is most likely being watched.
@@ -132,7 +132,7 @@ export function DecodeHealthModal({ verdict, open, delayMs = 0, onClose }) {
 
   // A NATIVE listener on the overlay, not React's onKeyDown. React attaches its
   // own listener at the app's root container, while the hotkey coordinator
-  // attaches one directly to Player.Container — which sits between this overlay
+  // attaches one directly to the player Container — which sits between this overlay
   // and that root. The coordinator therefore sees the event first, and a
   // synthetic stopPropagation would arrive far too late to stop `f`, `m`, `c`
   // and the arrow keys from driving the player while the viewer is reading the

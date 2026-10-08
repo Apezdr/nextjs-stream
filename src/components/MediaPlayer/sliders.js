@@ -33,13 +33,15 @@ function ChapterTicks() {
   if (!cues?.length || !duration) return null
   return (
     <div className="pointer-events-none absolute inset-0 z-10">
-      {cues.slice(1).map((cue) => (
-        <div
-          key={cue.startTime}
-          className="absolute top-1/2 h-[5px] w-[2px] -translate-y-1/2 bg-black/40"
-          style={{ left: `${(cue.startTime / duration) * 100}%` }}
-        />
-      ))}
+      {cues
+        .filter((cue) => cue.startTime > 0)
+        .map((cue) => (
+          <div
+            key={cue.startTime}
+            className="absolute top-1/2 h-[5px] w-[2px] -translate-y-1/2 bg-black/40"
+            style={{ left: `${(cue.startTime / duration) * 100}%` }}
+          />
+        ))}
     </div>
   )
 }

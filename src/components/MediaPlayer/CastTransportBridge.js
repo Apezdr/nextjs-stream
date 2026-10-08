@@ -1,8 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { addMediaComponent, HTMLMediaElementHost } from '@videojs/media/dom/media-host'
-import { Player } from './videojs'
+import { Player, usePlayerContext } from './videojs'
 import { useCastAdoption } from '@components/Cast/useCastSession'
 import { getRemote, readFinalRemotePosition, castMatchesSource } from '@components/Cast/castSdk'
 
@@ -10,24 +9,30 @@ import { getRemote, readFinalRemotePosition, castMatchesSource } from '@componen
  * Makes the player's controls drive the television when the receiver is
  * already playing this title.
  *
- * Why this exists at all: the player framework routes every media property
- * through `getMediaOwner(host, prop)`, which returns the first registered
- * component whose `targetOverride` exposes that property, and otherwise the raw
- * <video>. The framework's own `GoogleCast` component only exposes `remote`
- * unless its provider considers itself connected — and for a session this page
- * did not start, it never does: adoption there is driven by a SESSION_RESUMED
- * event that a client-side navigation never produces, and the private state it
- * would have to set is unreachable from outside the package.
+ * Why this exists at all: the store reads the media through a facade that
+ * routes every member through the player's registered extensions first — the
+ * first extension whose `mediaOverride` defines that member wins — and
+ * otherwise reaches the media itself. The framework's own `GoogleCast`
+ * extension only overrides `remote` unless its provider considers itself
+ * connected — and for a session this page did not start, it never does:
+ * adoption there is driven by a SESSION_RESUMED event that a client-side
+ * navigation never produces, and the private state it would have to set is
+ * unreachable from outside the package. (Still true in 10.0.0.)
  *
  * So returning to a casting title left every control pointed at the local
  * element: pressing play started the video on the page, on top of the TV.
  *
  * Rather than reach into the framework's private state, this registers a
- * SECOND media component that owns the transport properties while, and only
+ * SECOND player extension that owns the transport members while, and only
  * while, we are adopted. Ownership is precedence-safe by construction: a
- * genuinely connected provider exposes every property and is consulted first,
- * so it always wins, and this component is additionally disabled whenever the
+ * genuinely connected provider overrides every member and registers first, so
+ * it always wins, and this extension is additionally disabled whenever the
  * store reports a real connection.
+ *
+ * Registration goes through `usePlayerContext().registerExtension`, which
+ * upstream marks @internal: since 10.0.0 it is the only way to put an
+ * override in front of the store. It is why the @videojs packages stay pinned
+ * exact; check it first on any upgrade.
  *
  * The semantics below mirror GoogleCastProvider deliberately, property for
  * property — the store was written against those, and a subtle divergence here
@@ -63,22 +68,22 @@ export class CastTransport {
     this.#override = this.#createOverride()
   }
 
-  // --- MediaComponent contract -------------------------------------------
-
-  setMedia() {
-    // The host is not needed: events are dispatched on the target, which the
-    // host forwards to itself for every type the store subscribed to.
-  }
+  // --- PlayerExtension contract -------------------------------------------
 
   /** The URL this player is for, so a final position can be identity-checked. */
   setSource(url) {
     this.#source = url || null
   }
 
+  /**
+   * The player hands over the media it resolved (the playback adapter), never
+   * the facade the store reads. Events dispatched on it reach the store's
+   * listeners, and writes to it reach the local element underneath.
+   */
   attach(target) {
-    this.#target = target
+    this.#target = target?.media ?? null
     if (!this.#enabled) return
-    // setEnabled can land before the media host has a target: on a client-side
+    // setEnabled can land before the player has media: on a client-side
     // navigation `adopted` is already true on the first render, while
     // Player.useMedia() is still null. Without syncing here the store would
     // keep showing the local element until the receiver's next tick.
@@ -96,11 +101,11 @@ export class CastTransport {
   }
 
   /**
-   * Null unless we can actually serve the transport. `getMediaOwner` treats a
-   * property as unowned when the override yields `undefined`, so returning null
+   * Null unless we can actually serve the transport. The store's media facade
+   * treats a member as unowned when no override defines it, so returning null
    * hands everything straight back to the local element.
    */
-  get targetOverride() {
+  get mediaOverride() {
     if (!this.#enabled) return null
     const player = getRemote()?.player
     if (!player?.isConnected || !player.isMediaLoaded) return null
@@ -204,7 +209,7 @@ export class CastTransport {
         this.#dispatch('timeupdate')
       },
       [E.DURATION_CHANGED]: () => this.#dispatch('durationchange'),
-      // targetOverride refuses ownership until the receiver reports media
+      // mediaOverride refuses ownership until the receiver reports media
       // loaded, so this is the moment the bridge becomes able to serve the
       // transport at all. Nothing else dispatches then, and the store only
       // re-reads properties on events — without this it would go on showing
@@ -305,12 +310,13 @@ export class CastTransport {
         return self.#seeking
       },
       /**
-       * Capped at 3 exactly as the provider does, which keeps the store's
-       * `canPlay` false for the whole adopted period. That is deliberate: three
-       * effects key off canPlay — the saved-position restore, the clip window,
-       * and the playback tracker's writes — and every one of them would act on
-       * the television. A restore in particular would yank the TV backwards to
-       * whatever this page last had saved.
+       * Capped at 3 exactly as the provider does (still true in 10.0.0). Since
+       * 10.0.0 the store's `canPlay` turns true at 3, so it is no longer false
+       * for the adopted period — which no longer matters: the saved-position
+       * restore, the clip window and the playback tracker read readiness off
+       * the local element (playbackReadiness.js) and stand down while adopted
+       * (castAdopted), because each of them would otherwise act on the
+       * television — a restore would yank the TV back to this page's position.
        */
       get readyState() {
         const PS = playerStates()
@@ -344,15 +350,8 @@ export class CastTransport {
         const p = player()
         if (p && value !== p.isMuted) p.controller?.muteOrUnmute()
       },
-      get volume() {
-        return player()?.volumeLevel ?? 1
-      },
-      set volume(value) {
-        const p = player()
-        if (!p) return
-        p.volumeLevel = +value
-        p.controller?.setVolumeLevel()
-      },
+      // No `volume`: CastVolume owns it for adopted sessions too (registered
+      // first, it wins), pacing what reaches the receiver.
       play() {
         const p = player()
         if (!p) return Promise.resolve()
@@ -374,19 +373,19 @@ export class CastTransport {
  * Registers the transport bridge for as long as the receiver is playing this
  * title and the framework's own provider is not connected.
  *
- * Render this AFTER <GoogleCast> so the framework's component is first in the
- * registry and wins the ownership walk whenever it is genuinely connected.
+ * Render this AFTER <GoogleCast>: extensions register in effect (render) order
+ * and the first override defining a member wins, so the framework's provider
+ * comes first and wins whenever it is genuinely connected.
  */
 export default function CastTransportBridge({ videoURL }) {
-  const media = Player.useMedia()
+  const { registerExtension } = usePlayerContext()
   const remoteState = Player.usePlayer((s) => s.remotePlaybackState)
   const { adopted } = useCastAdoption(videoURL)
   const [component] = useState(() => new CastTransport())
 
-  useEffect(() => {
-    if (!(media instanceof HTMLMediaElementHost)) return undefined
-    return addMediaComponent(media, component)
-  }, [media, component])
+  // The player attaches the extension to whatever media it resolves and moves
+  // it when the media changes; the returned callback releases this instance.
+  useEffect(() => registerExtension?.(component), [registerExtension, component])
 
   useEffect(() => {
     component.setSource(videoURL)

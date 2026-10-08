@@ -1,6 +1,7 @@
 /**
- * Full-player VOD policy. Keep this object stable: changing engine options
- * causes Video.js to recreate HLS.js. Preview players keep their own defaults.
+ * Full-player VOD policy, passed as `source.engine` (the `{ hlsJs }` key
+ * namespaces it to the hls.js engine). Changing any engine option recreates
+ * HLS.js. Preview players keep their own defaults.
  */
 export const HLS_PLAYBACK_CONFIG = Object.freeze({
   hlsJs: Object.freeze({
@@ -59,8 +60,9 @@ export const HLS_PLAYBACK_CONFIG = Object.freeze({
  * point and there is no cold seek at all. It also removes the abandoned
  * segment-0 fan-out the transcoder measured at ~7 s → 15 s.
  *
- * Build this ONCE per mount (useState initializer): the framework rebuilds
- * the engine whenever the config object's shallow identity changes.
+ * Build this ONCE per mount (useState initializer). Since 10.0.0 sources are
+ * compared structurally, so a new object with equal values no longer rebuilds
+ * the engine, but a changed startPosition still would.
  *
  * @param {{startPosition?: number|null}} [opts]
  */

@@ -7,7 +7,7 @@ import { getThumbnailStatus, overallProgress, subscribeThumbnailStatus } from '.
 /**
  * The seek-bar thumbnail, honest about why there is no picture yet.
  *
- * The framework's <Slider.Thumbnail> marks its node `data-hidden` (no cue at
+ * The framework's <Slider.Thumbnail.Root> marks its node `data-hidden` (no cue at
  * this time — usually "the VTT has not loaded"), `data-loading` (sprite image
  * in flight) and `data-error` (sprite image failed). Our sizing classes used
  * to draw a solid black box for all three. Now:
@@ -117,11 +117,13 @@ export default function ScrubPreview() {
     <div className="relative">
       {/* Reads the sprite VTT from the media's kind="metadata" label="thumbnails"
           track automatically (parses #xywh media fragments). */}
-      <Slider.Thumbnail
+      <Slider.Thumbnail.Root
         key={epoch}
         ref={nodeRef}
         className="block max-h-[160px] min-h-[80px] min-w-[120px] max-w-[180px] overflow-hidden border border-white bg-black/85"
-      />
+      >
+        <Slider.Thumbnail.Image />
+      </Slider.Thumbnail.Root>
       {copy ? (
         <div
           role="status"

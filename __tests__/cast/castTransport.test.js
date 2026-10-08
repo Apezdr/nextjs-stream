@@ -1,29 +1,24 @@
 /**
  * The transport bridge's ownership gate.
  *
- * This component is registered into the player framework's media registry and,
- * when it claims a property, everything the player does with that property goes
+ * This extension is registered with the player and, when it claims a media
+ * member, everything the player does with that member goes
  * to a television instead of the <video> on the page. So the interesting tests
  * are not "does casting work" — they are "does it ever claim ownership when it
  * should not", because that failure mode breaks ordinary local playback.
  *
- * getMediaOwner treats a property as unowned when the override yields
- * undefined, so a null targetOverride hands everything straight back to the
+ * The store's media facade treats a member as unowned when no override
+ * defines it, so a null mediaOverride hands everything straight back to the
  * local element.
  */
 
-// Both packages ship ESM only and jest does not transform node_modules. Neither
-// is used by the class under test — they belong to the React wrapper in the same
-// file — so stubbing the module boundary keeps the unit under test intact.
-jest.mock('@videojs/media/dom/media-host', () => ({
-  __esModule: true,
-  addMediaComponent: jest.fn(() => () => {}),
-  HTMLMediaElementHost: class HTMLMediaElementHost {},
-}))
-
+// @videojs/react ships ESM only and jest does not transform node_modules. The
+// barrel is used only by the React wrapper in the same file, not by the class
+// under test, so stubbing it keeps the unit under test intact.
 jest.mock('@src/components/MediaPlayer/videojs', () => ({
   __esModule: true,
   Player: { useMedia: () => null, usePlayer: () => 'disconnected' },
+  usePlayerContext: () => ({}),
 }))
 
 // The bridge reads the SDK through castSdk; give the test control of the
@@ -130,39 +125,39 @@ describe('CastTransport ownership gate', () => {
   it('owns nothing until it is enabled', () => {
     setupSdk()
     const t = new CastTransport()
-    expect(t.targetOverride).toBeNull()
+    expect(t.mediaOverride).toBeNull()
   })
 
   it('owns nothing when the receiver is not connected', () => {
     setupSdk({ isConnected: false })
     const t = new CastTransport()
-    t.attach(makeTarget().el)
+    t.attach({ media: makeTarget().el })
     t.setEnabled(true)
-    expect(t.targetOverride).toBeNull()
+    expect(t.mediaOverride).toBeNull()
   })
 
   it('owns nothing when the receiver has no media loaded', () => {
     setupSdk({ isMediaLoaded: false })
     const t = new CastTransport()
-    t.attach(makeTarget().el)
+    t.attach({ media: makeTarget().el })
     t.setEnabled(true)
-    expect(t.targetOverride).toBeNull()
+    expect(t.mediaOverride).toBeNull()
   })
 
   it('owns nothing when the Cast SDK is absent entirely', () => {
     const t = new CastTransport()
-    t.attach(makeTarget().el)
+    t.attach({ media: makeTarget().el })
     t.setEnabled(true)
-    expect(t.targetOverride).toBeNull()
+    expect(t.mediaOverride).toBeNull()
   })
 
   it('owns the transport only when enabled, connected and loaded', () => {
     setupSdk()
     const t = new CastTransport()
-    t.attach(makeTarget().el)
+    t.attach({ media: makeTarget().el })
     t.setEnabled(true)
 
-    const override = t.targetOverride
+    const override = t.mediaOverride
     expect(override).not.toBeNull()
     expect(override.currentTime).toBe(600)
     expect(override.duration).toBe(7200)
@@ -172,12 +167,12 @@ describe('CastTransport ownership gate', () => {
   it('never claims source or track properties, so those stay with the local element', () => {
     setupSdk()
     const t = new CastTransport()
-    t.attach(makeTarget().el)
+    t.attach({ media: makeTarget().el })
     t.setEnabled(true)
 
-    // getMediaOwner falls through on undefined — these must not be claimed.
+    // The store's facade falls through on undefined — these must not be claimed.
     for (const prop of ['src', 'currentSrc', 'load', 'textTracks', 'poster', 'buffered', 'remote']) {
-      expect(t.targetOverride[prop]).toBeUndefined()
+      expect(t.mediaOverride[prop]).toBeUndefined()
     }
   })
 })
@@ -192,30 +187,30 @@ describe('CastTransport transport semantics', () => {
     const sdk = setupSdk(options)
     const target = makeTarget()
     const t = new CastTransport()
-    t.attach(target.el)
+    t.attach({ media: target.el })
     t.setEnabled(true)
     return { t, target, ...sdk }
   }
 
   it('play() toggles the receiver only when it is paused', () => {
     const { t, calls } = enabled({ isPaused: true })
-    t.targetOverride.play()
+    t.mediaOverride.play()
     expect(calls.playOrPause).toBe(1)
   })
 
   it('play() does nothing when the receiver is already playing — the toggle would pause the film', () => {
     const { t, calls } = enabled({ isPaused: false })
-    t.targetOverride.play()
+    t.mediaOverride.play()
     expect(calls.playOrPause).toBe(0)
   })
 
   it('pause() toggles only when the receiver is playing', () => {
     const { t, calls } = enabled({ isPaused: false })
-    t.targetOverride.pause()
+    t.mediaOverride.pause()
     expect(calls.playOrPause).toBe(1)
 
     const paused = enabled({ isPaused: true })
-    paused.t.targetOverride.pause()
+    paused.t.mediaOverride.pause()
     expect(paused.calls.playOrPause).toBe(0)
   })
 
@@ -235,26 +230,26 @@ describe('CastTransport transport semantics', () => {
       calls.seek += 1
     }
 
-    t.targetOverride.currentTime = 1234
+    t.mediaOverride.currentTime = 1234
     expect(order).toEqual(['assign', 'seek'])
     expect(stored).toBe(1234)
   })
 
   it('mutes only when the requested state differs', () => {
     const { t, calls } = enabled({})
-    t.targetOverride.muted = false // already unmuted
+    t.mediaOverride.muted = false // already unmuted
     expect(calls.muteOrUnmute).toBe(0)
-    t.targetOverride.muted = true
+    t.mediaOverride.muted = true
     expect(calls.muteOrUnmute).toBe(1)
   })
 
-  it('keeps canPlay false by capping readyState below HAVE_ENOUGH_DATA', () => {
+  it('mirrors the provider readyState cap (3 while playing, 2 buffering, 0 idle)', () => {
     const { t, player } = enabled({})
-    expect(t.targetOverride.readyState).toBe(3)
+    expect(t.mediaOverride.readyState).toBe(3)
     player.playerState = PlayerState.BUFFERING
-    expect(t.targetOverride.readyState).toBe(2)
+    expect(t.mediaOverride.readyState).toBe(2)
     player.playerState = PlayerState.IDLE
-    expect(t.targetOverride.readyState).toBe(0)
+    expect(t.mediaOverride.readyState).toBe(0)
   })
 })
 
@@ -267,7 +262,7 @@ describe('CastTransport handoff and listener hygiene', () => {
   it('removes exactly the listeners it added', () => {
     const { listeners } = setupSdk()
     const t = new CastTransport()
-    t.attach(makeTarget().el)
+    t.attach({ media: makeTarget().el })
 
     t.setEnabled(true)
     const added = Object.values(listeners).flat().length
@@ -287,8 +282,8 @@ describe('CastTransport handoff and listener hygiene', () => {
     const afterEnable = Object.values(listeners).flat().length
     expect(afterEnable).toBeGreaterThan(0)
 
-    t.attach(makeTarget().el)
-    t.attach(makeTarget().el)
+    t.attach({ media: makeTarget().el })
+    t.attach({ media: makeTarget().el })
     expect(Object.values(listeners).flat().length).toBe(afterEnable)
   })
 
@@ -297,7 +292,7 @@ describe('CastTransport handoff and listener hygiene', () => {
     delete globalThis.cast.framework.RemotePlayerEventType.IS_MEDIA_LOADED_CHANGED
 
     const t = new CastTransport()
-    t.attach(makeTarget().el)
+    t.attach({ media: makeTarget().el })
     t.setEnabled(true)
 
     // Object keys stringify, so a missing name would otherwise register under
@@ -310,7 +305,7 @@ describe('CastTransport handoff and listener hygiene', () => {
     const target = makeTarget()
     target.el.paused = false
     const t = new CastTransport()
-    t.attach(target.el)
+    t.attach({ media: target.el })
     t.setEnabled(true)
     // No remote tick ever fires; the seed from #initialSync must carry it.
     t.setEnabled(false)
@@ -323,7 +318,7 @@ describe('CastTransport handoff and listener hygiene', () => {
     const target = makeTarget()
     const t = new CastTransport()
     t.setSource('https://x/film.mp4')
-    t.attach(target.el)
+    t.attach({ media: target.el })
     t.setEnabled(true)
     t.setEnabled(false)
     expect(target.el.currentTime).toBe(987)
@@ -336,7 +331,7 @@ describe('CastTransport handoff and listener hygiene', () => {
     const target = makeTarget()
     const t = new CastTransport()
     t.setSource('https://x/film.mp4')
-    t.attach(target.el)
+    t.attach({ media: target.el })
     t.setEnabled(true)
     t.setEnabled(false)
     expect(target.el.currentTime).toBe(0)
@@ -348,7 +343,7 @@ describe('CastTransport handoff and listener hygiene', () => {
     const target = makeTarget()
     target.el.paused = false
     const t = new CastTransport()
-    t.attach(target.el)
+    t.attach({ media: target.el })
     t.setEnabled(true)
 
     // The receiver ticks: this is where the bridge learns the position.

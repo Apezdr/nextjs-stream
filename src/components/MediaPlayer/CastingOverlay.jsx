@@ -1,18 +1,37 @@
 'use client'
 
+import { useSyncExternalStore } from 'react'
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion'
 import { CastEnterIcon } from './videojs'
 import useIsCasting from './useIsCasting'
+import { readCastNowPlaying, subscribeCastNowPlaying } from '@components/Cast/castSdk'
+import { castNowPlayingLabel } from './settingsModel'
+
+/**
+ * What the TV is actually playing ("1080p · HDR · 7.8 Mbps"), as the receiver
+ * reports it, or null until it does. The receiver adapts on its own, so this
+ * is the truth on screen rather than the sender's quality choice. A string
+ * snapshot, so a repeated media status is not a re-render.
+ */
+function useCastNowPlayingLabel() {
+  return useSyncExternalStore(
+    subscribeCastNowPlaying,
+    () => castNowPlayingLabel(readCastNowPlaying()),
+    () => null
+  )
+}
 
 /**
  * The banner itself. Split out so its animation only mounts when there is
- * something to say.
+ * something to say. Under the title, what the TV is actually playing, once the
+ * receiver reports it.
  */
 function CastingBanner({ connecting, deviceName, titleLabel }) {
   const reduceMotion = useReducedMotion()
+  const nowPlaying = useCastNowPlayingLabel()
 
   // The backdrop settles first (`beforeChildren`), then the contents fade up
-  // one at a time — icon, status, title — so the reveal reads in a fixed
+  // one at a time — icon, status, title, quality — so the reveal reads in a fixed
   // order rather than everything arriving at once.
   const backdrop = {
     hidden: { opacity: 0 },
@@ -57,6 +76,15 @@ function CastingBanner({ connecting, deviceName, titleLabel }) {
       {titleLabel ? (
         <motion.p variants={item} className="max-w-2xl truncate text-sm text-white/70">
           {titleLabel}
+        </motion.p>
+      ) : null}
+      {/* Arrives once the receiver reports it, and fades up like the rest. */}
+      {nowPlaying && !connecting ? (
+        <motion.p
+          variants={item}
+          className="-mt-2 text-xs font-medium tracking-wide text-white/50 tabular-nums"
+        >
+          {nowPlaying}
         </motion.p>
       ) : null}
     </motion.div>
