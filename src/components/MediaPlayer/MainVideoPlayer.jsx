@@ -24,6 +24,7 @@ import { usePathname } from 'next/navigation'
 import useActivityVisible from './useActivityVisible'
 import useLocalSilence from './useLocalSilence'
 import CastTransportBridge from './CastTransportBridge'
+import CastVolume from './CastVolume'
 import usePlayWhenReady from './usePlayWhenReady'
 import useResumePosition from './useResumePosition'
 import { parseExplicitStart } from './resumePosition'
@@ -250,6 +251,10 @@ function ActivePlayerBody({
             suppressAutoplay={castingThisTitle}
             resumeAt={engineOwnsResume ? resumeAt : null}
           />
+          {/* BEFORE <GoogleCast>: the first extension overriding a media member
+              wins, so this owns `volume` while casting and paces what
+              reaches the receiver; see CastVolume. */}
+          <CastVolume videoURL={videoURL} />
           {/* contentType is explicit: the sender only infers one for HLS, so a
               progressive file would otherwise reach the receiver with an empty
               MIME type and have to be sniffed. */}
@@ -263,7 +268,7 @@ function ActivePlayerBody({
               genuinely connected provider always wins and this only takes over
               a session it did not start. */}
           <CastTransportBridge videoURL={videoURL} />
-          <VolumeRegulator />
+          <VolumeRegulator videoURL={videoURL} />
           <CastResumeGuard videoURL={videoURL} />
           {/* Owns where hls.js starts — the startPosition in source.engine.hlsJs
               alone is discarded by the framework's bare startLoad(); see

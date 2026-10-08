@@ -101,8 +101,9 @@ export {
 } from '@videojs/react'
 
 // @internal upstream ("not a stable authoring API"). Re-exported for exactly
-// one caller, CastTransportBridge, whose `registerExtension` is the only way to
-// put a media override in front of the store since 10.0.0. Keep it that way.
+// two callers, CastTransportBridge and CastVolume, whose `registerExtension` is
+// the only way to put a media override in front of the store since 10.0.0.
+// Keep it to those.
 export { usePlayerContext } from '@videojs/react'
 
 // Media elements (playback adapters). HlsJsVideo needs @videojs/hlsjs-video

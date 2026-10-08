@@ -350,15 +350,8 @@ export class CastTransport {
         const p = player()
         if (p && value !== p.isMuted) p.controller?.muteOrUnmute()
       },
-      get volume() {
-        return player()?.volumeLevel ?? 1
-      },
-      set volume(value) {
-        const p = player()
-        if (!p) return
-        p.volumeLevel = +value
-        p.controller?.setVolumeLevel()
-      },
+      // No `volume`: CastVolume owns it for adopted sessions too (registered
+      // first, it wins), pacing what reaches the receiver.
       play() {
         const p = player()
         if (!p) return Promise.resolve()
