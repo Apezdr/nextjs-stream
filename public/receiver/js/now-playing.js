@@ -46,7 +46,8 @@ export function matchVariant(variants, bitrate) {
 }
 
 export function startNowPlayingReporter({ playerManager, castDebugLogger, logTag }) {
-  const { events, messages } = cast.framework
+  const events = cast.framework.events.EventType
+  const { messages } = cast.framework
   /** Variants of the master now loaded, keyed by its URL. */
   let variants = null
   let source = null

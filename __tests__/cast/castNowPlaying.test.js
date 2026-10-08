@@ -7,7 +7,11 @@
  * "1080p · HDR · 7.8 Mbps", or nothing at all until the receiver has said.
  */
 
-import { matchVariant, parseMasterVariants } from '../../public/receiver/js/now-playing.js'
+import {
+  matchVariant,
+  parseMasterVariants,
+  startNowPlayingReporter,
+} from '../../public/receiver/js/now-playing.js'
 import { castNowPlayingLabel, sizeFromDimensions } from '@components/MediaPlayer/settingsModel'
 
 // The shape of the transcoder's master for Blade Runner 2049, trimmed.
@@ -38,6 +42,49 @@ describe('receiver: identifying the rung', () => {
     expect(matchVariant(variants, 9000000).bandwidth).toBe(8944400)
     expect(matchVariant(variants, 0)).toBeNull()
     expect(matchVariant([], 7844400)).toBeNull()
+  })
+})
+
+describe('receiver: starting the reporter', () => {
+  // CAF's shape: event names live under events.EventType, not on events.
+  // receiver.js starts the reporter right before context.start(), so a bad
+  // name there once left the TV showing the receiver but never loading.
+  const EventType = {
+    PLAYER_LOADING: 'PLAYER_LOADING',
+    PLAYER_LOAD_COMPLETE: 'PLAYER_LOAD_COMPLETE',
+    BITRATE_CHANGED: 'BITRATE_CHANGED',
+    PLAYING: 'PLAYING',
+  }
+
+  beforeEach(() => {
+    global.cast = {
+      framework: {
+        events: { EventType },
+        messages: { MessageType: { MEDIA_STATUS: 'MEDIA_STATUS' } },
+      },
+    }
+  })
+  afterEach(() => {
+    delete global.cast
+  })
+
+  it('listens on real CAF event types and intercepts MEDIA_STATUS', () => {
+    const listened = []
+    const intercepted = []
+    const playerManager = {
+      addEventListener: (type) => {
+        if (!Object.values(EventType).includes(type)) throw new Error(`unknown event ${type}`)
+        listened.push(type)
+      },
+      setMessageInterceptor: (type) => intercepted.push(type),
+    }
+    startNowPlayingReporter({
+      playerManager,
+      castDebugLogger: { debug() {}, warn() {} },
+      logTag: 't',
+    })
+    expect(listened.sort()).toEqual(Object.values(EventType).sort())
+    expect(intercepted).toEqual(['MEDIA_STATUS'])
   })
 })
 
