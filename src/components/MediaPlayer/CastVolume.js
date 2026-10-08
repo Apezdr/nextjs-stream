@@ -22,6 +22,8 @@ import { getContext, getRemote } from '@components/Cast/castSdk'
  * follows along): a flick is ONE request, the final value. One request is in
  * flight at a time (CastSession.setVolume resolves when the receiver
  * acknowledges), and the next goes out no sooner than MIN_GAP_MS later.
+ * Levels are snapped to the receiver's own volume step (see snapToStep), and a
+ * level the receiver already reports is not sent at all.
  * SETTLE_MS after the last acknowledgement the receiver's reported level is
  * checked against the request and the final value re-sent if a receiver
  * dropped it. While anything is pending, `volume` reads back the requested
@@ -81,10 +83,28 @@ function receiverLevel() {
   return Number.isFinite(level) ? level : null
 }
 
+/** The receiver's volume step (its own buttons' increment), or null if it reports none. */
+function receiverStep() {
+  const step = currentSession()?.getSessionObj?.()?.receiver?.volume?.stepInterval
+  return Number.isFinite(step) && step > 0 && step <= 0.5 ? step : null
+}
+
 /** Half a receiver volume step: closer than that counts as arrived. */
 function tolerance() {
-  const step = currentSession()?.getSessionObj?.()?.receiver?.volume?.stepInterval
-  return Math.max(0.01, (Number.isFinite(step) ? step : 0.05) / 2)
+  return Math.max(0.01, (receiverStep() ?? 0.05) / 2)
+}
+
+/**
+ * A level on the receiver's step grid. An AVR's built-in Cast turned level
+ * changes into its own volume steps and rounded fractions of a step away:
+ * 0.2 → 0.15 is 0.75 of its 1/15 step, and it barely moved, which made small
+ * downward drags spotty. Snapped, every change is a whole number of steps. The
+ * slider then settles on the nearest step, as the device's own buttons would.
+ */
+function snapToStep(level) {
+  const step = receiverStep()
+  if (!step) return level
+  return Math.min(1, Math.max(0, Math.round(level / step) * step))
 }
 
 function sendVolume(level) {
@@ -169,7 +189,7 @@ export class CastVolumeQueue {
 
   #request(level) {
     if (!this.#enabled || !Number.isFinite(level)) return
-    const clamped = Math.min(1, Math.max(0, level))
+    const clamped = snapToStep(Math.min(1, Math.max(0, level)))
     this.#wanted = clamped
     this.#wantedSince ??= Date.now()
     this.#writes += 1
@@ -196,6 +216,18 @@ export class CastVolumeQueue {
     this.#sendTimer = null
     if (this.#inFlight || this.#wanted == null) return
     const level = this.#wanted
+    // Already there (a wiggle that snapped back, or the same level twice). A
+    // receiver reports no status for a level it already has, so the request
+    // only waited out its acknowledgement for nothing (one took a full second).
+    const current = receiverLevel()
+    if (current != null && Math.abs(current - level) < 0.001) {
+      diag('skip', { level: +level.toFixed(3), coalesced: this.#writes })
+      this.#wanted = null
+      this.#wantedSince = null
+      this.#writes = 0
+      this.#scheduleSettle()
+      return
+    }
     const epoch = this.#epoch
     const sentAt = Date.now()
     diag('send', { level: +level.toFixed(3), coalesced: this.#writes, resend: this.#resends || undefined })

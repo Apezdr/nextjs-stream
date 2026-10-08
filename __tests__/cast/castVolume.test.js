@@ -99,6 +99,8 @@ describe('the queue', () => {
     jest.advanceTimersByTime(ms)
     await flush()
   }
+  // Levels compared on the receiver's 1/15 grid, without float noise.
+  const steps = (levels) => levels.map((v) => Math.round(v * 15))
 
   it('sends a flick as ONE request, the final value, once the slider is still', async () => {
     const rx = makeReceiver()
@@ -110,8 +112,7 @@ describe('the queue', () => {
     await tick(249)
     expect(rx.sent).toEqual([])
     await tick(1)
-    expect(rx.sent).toHaveLength(1)
-    expect(rx.sent[0]).toBeCloseTo(0.15)
+    expect(steps(rx.sent)).toEqual([2]) // 15% snapped to the nearest 1/15 step
 
     await rx.ack()
     await tick(2000)
@@ -132,23 +133,49 @@ describe('the queue', () => {
     if (rx.pending.length) await rx.ack()
     expect(rx.sent.length).toBeGreaterThanOrEqual(2)
     expect(rx.sent.length).toBeLessThanOrEqual(4)
-    expect(rx.sent.at(-1)).toBeCloseTo(1 - 2450 / 5000) // ends on the final value
+    expect(steps(rx.sent).at(-1)).toBe(8) // ends on the final value, 0.51 → 8/15
   })
 
   it('keeps one request in flight and sends only the newest after it', async () => {
     const rx = makeReceiver()
     const { q } = enabledQueue()
 
-    q.mediaOverride.volume = 0.3
+    q.mediaOverride.volume = 0.32
     await tick(250)
-    expect(rx.sent).toEqual([0.3])
-    q.mediaOverride.volume = 0.5 // while 0.3 is still unacknowledged
+    expect(steps(rx.sent)).toEqual([5])
+    q.mediaOverride.volume = 0.45 // while the first is still unacknowledged
     q.mediaOverride.volume = 0.6
     await tick(1000)
-    expect(rx.sent).toEqual([0.3])
+    expect(rx.sent).toHaveLength(1)
     await rx.ack()
     await tick(250)
-    expect(rx.sent).toEqual([0.3, 0.6])
+    expect(steps(rx.sent)).toEqual([5, 9])
+  })
+
+  it('snaps to the receiver step, and leaves levels alone when it reports none', async () => {
+    const rx = makeReceiver({ step: 0.05 })
+    const { q } = enabledQueue()
+    q.mediaOverride.volume = 0.37
+    expect(q.mediaOverride.volume).toBeCloseTo(0.35) // the slider settles on the step
+    await tick(250)
+    expect(rx.sent[0]).toBeCloseTo(0.35)
+
+    const plain = makeReceiver({ step: null })
+    const { q: q2 } = enabledQueue()
+    q2.mediaOverride.volume = 0.37
+    await tick(250)
+    expect(plain.sent).toEqual([0.37])
+  })
+
+  it('does not send a level the receiver already reports', async () => {
+    const rx = makeReceiver()
+    mockRemotePlayer.volumeLevel = 0.6 // exactly 9/15
+    const { q, target } = enabledQueue()
+
+    q.mediaOverride.volume = 0.61 // snaps back to 9/15
+    await tick(250 + 600)
+    expect(rx.sent).toEqual([])
+    expect(target.seen.at(-1)).toBe('volumechange') // still settles
   })
 
   it('reads back the requested level while pending, then the receiver once settled', async () => {
@@ -157,12 +184,12 @@ describe('the queue', () => {
 
     q.mediaOverride.volume = 0.8
     mockRemotePlayer.volumeLevel = 0.2 // an echo of an older level
-    expect(q.mediaOverride.volume).toBe(0.8)
+    expect(q.mediaOverride.volume).toBeCloseTo(0.8)
 
     await tick(250)
     await rx.ack() // the receiver obeys
     await tick(600)
-    expect(q.mediaOverride.volume).toBe(0.8)
+    expect(q.mediaOverride.volume).toBeCloseTo(0.8)
     expect(target.seen.at(-1)).toBe('volumechange') // settled: the store re-reads
   })
 
@@ -177,7 +204,7 @@ describe('the queue', () => {
       mockRemotePlayer.volumeLevel = 0.4
       await tick(600 + 250)
     }
-    expect(rx.sent).toEqual([0.15, 0.15, 0.15])
+    expect(steps(rx.sent)).toEqual([2, 2, 2])
   })
 
   it('treats anything within half a receiver step as arrived', async () => {
@@ -187,33 +214,33 @@ describe('the queue', () => {
     q.mediaOverride.volume = 0.15
     await tick(250)
     await rx.ack({ apply: false })
-    mockRemotePlayer.volumeLevel = 0.17 // the receiver snapped to its own step
+    mockRemotePlayer.volumeLevel = 0.15 // within half a step of 2/15
     await tick(600 + 250)
-    expect(rx.sent).toEqual([0.15])
+    expect(rx.sent).toHaveLength(1)
   })
 
   it('does not stall on a request the receiver never answers', async () => {
     const rx = makeReceiver()
     const { q } = enabledQueue()
 
-    q.mediaOverride.volume = 0.3
+    q.mediaOverride.volume = 0.32
     await tick(250)
     q.mediaOverride.volume = 0.6
     await tick(2000) // no acknowledgement ever comes
     await tick(250)
-    expect(rx.sent).toEqual([0.3, 0.6])
+    expect(steps(rx.sent)).toEqual([5, 9])
   })
 
   it('drops pending work when casting ends, and ignores a late acknowledgement', async () => {
     const rx = makeReceiver()
     const { q } = enabledQueue()
 
-    q.mediaOverride.volume = 0.3
+    q.mediaOverride.volume = 0.32
     await tick(250)
     q.mediaOverride.volume = 0.6
     q.setEnabled(false)
     await rx.ack()
     await tick(5000)
-    expect(rx.sent).toEqual([0.3])
+    expect(rx.sent).toHaveLength(1)
   })
 })
