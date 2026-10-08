@@ -83,7 +83,9 @@ function useSheetHeight(popup) {
     const measure = () => {
       if (!sheet.matches) return setHeight(null)
       const pages = [...popup.children]
-      const arriving = pages.filter((p) => p.hasAttribute('data-submenu') && !p.hasAttribute('data-ending-style')).pop()
+      const arriving = pages
+        .filter((p) => p.hasAttribute('data-submenu') && !p.hasAttribute('data-ending-style'))
+        .pop()
       const page = arriving ?? pages.find((p) => !p.hasAttribute('data-submenu'))
       // Clamped to the sheet's own max-height, so a long list's growth ends
       // where the sheet does instead of easing toward a height it never shows.
@@ -104,7 +106,12 @@ function useSheetHeight(popup) {
       observePages()
       measure()
     })
-    mutations.observe(popup, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-ending-style'] })
+    mutations.observe(popup, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['data-ending-style'],
+    })
     observePages()
     sheet.addEventListener('change', measure)
     return () => {
@@ -261,7 +268,15 @@ export function DrawerClose({ label }) {
       aria-label={label}
       className="absolute right-3 top-3 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-white/70 outline-none ring-blue-400 hover:bg-white/10 hover:text-white focus-visible:bg-white/10 focus-visible:ring-2"
     >
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+      <svg
+        className="h-5 w-5"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        aria-hidden="true"
+      >
         <path d="M6 6l12 12M18 6L6 18" />
       </svg>
     </Menu.Item>

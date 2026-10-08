@@ -79,7 +79,11 @@ const ChaptersMenu = ({ chapterThumbnailURL }) => {
 
   if (!(cues?.length > 0)) {
     if (failed) {
-      return <p className="px-3 py-4 text-sm text-white/60">Chapters aren’t available for this title right now.</p>
+      return (
+        <p className="px-3 py-4 text-sm text-white/60">
+          Chapters aren’t available for this title right now.
+        </p>
+      )
     }
     return <Loading fullscreenClasses={''} />
   }
@@ -104,7 +108,9 @@ const ChaptersMenu = ({ chapterThumbnailURL }) => {
           startTimeText={formatTime(cue.startTime)}
           durationText={Number.isFinite(endOf(cue)) ? formatTime(endOf(cue) - cue.startTime) : null}
           isActive={cue === active}
-          progress={cue === active ? (currentTime - cue.startTime) / (endOf(cue) - cue.startTime) : 0}
+          progress={
+            cue === active ? (currentTime - cue.startTime) / (endOf(cue) - cue.startTime) : 0
+          }
           onRestart={cue === active ? () => store.seek(cue.startTime) : undefined}
           rowRef={cue === active ? centerPlaying : undefined}
           chapterThumbnailURL={chapterThumbnailURL}

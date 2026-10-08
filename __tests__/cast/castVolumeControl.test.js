@@ -26,11 +26,16 @@ jest.mock('@src/components/MediaPlayer/videojs', () => ({
   Player: { usePlayer: (selector) => (selector ? selector(mockState) : mockStore) },
   usePlayerContext: () => ({}),
 }))
-jest.mock('@components/Cast/useCastSession', () => ({ __esModule: true, useCastAdoption: () => ({ adopted: true }) }))
+jest.mock('@components/Cast/useCastSession', () => ({
+  __esModule: true,
+  useCastAdoption: () => ({ adopted: true }),
+}))
 jest.mock('@components/Cast/castSdk', () => ({
   __esModule: true,
   getContext: () => ({
-    getCurrentSession: () => ({ getSessionObj: () => ({ receiver: { volume: { stepInterval: 1 / 15 } } }) }),
+    getCurrentSession: () => ({
+      getSessionObj: () => ({ receiver: { volume: { stepInterval: 1 / 15 } } }),
+    }),
   }),
   getRemote: () => null,
 }))

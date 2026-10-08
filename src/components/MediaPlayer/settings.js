@@ -93,7 +93,13 @@ export function Settings({ tooltipSide = 'top', hasCaptions, isCasting }) {
   return (
     <>
       {scrim}
-      <Menu.Root side="top" align="end" open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}>
+      <Menu.Root
+        side="top"
+        align="end"
+        open={open}
+        onOpenChange={onOpenChange}
+        onOpenChangeComplete={onOpenChangeComplete}
+      >
         <ButtonTooltip label="Settings" side={tooltipSide}>
           <Menu.Trigger aria-label="Settings" className={classNames(buttonClass, 'group')}>
             <GearIcon className="h-8 w-8 transform transition-transform duration-200 ease-out group-data-[open]:rotate-90" />
@@ -129,7 +135,9 @@ function Category({ label, value, icon: Icon, children }) {
         <Icon className="h-6 w-6 shrink-0 text-white/80" />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="text-[15px] font-semibold leading-snug">{label}</span>
-          <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-white/60">{value}</span>
+          <span className="flex min-w-0 items-center gap-1.5 text-[13px] text-white/60">
+            {value}
+          </span>
         </span>
         <ChevronIcon className="h-5 w-5 shrink-0 text-white/50" />
       </Menu.Trigger>
@@ -146,7 +154,10 @@ function Category({ label, value, icon: Icon, children }) {
 
 function OptionRow({ value, title, pills, detail }) {
   return (
-    <Menu.RadioItem value={value} className={classNames(rowClass, 'aria-[checked=true]:bg-white/[0.06]')}>
+    <Menu.RadioItem
+      value={value}
+      className={classNames(rowClass, 'aria-[checked=true]:bg-white/[0.06]')}
+    >
       <span className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border-2 border-white/60 group-aria-[checked=true]:border-blue-400">
         <span className="hidden h-2 w-2 rounded-full bg-blue-400 group-aria-[checked=true]:block" />
       </span>
@@ -178,7 +189,11 @@ function QualityPage() {
 
   return (
     <Category label="Quality" value={value} icon={QualityIcon}>
-      <Menu.RadioGroup className={groupClass} value={options.value} onValueChange={options.setValue}>
+      <Menu.RadioGroup
+        className={groupClass}
+        value={options.value}
+        onValueChange={options.setValue}
+      >
         <OptionRow
           value="auto"
           title="Auto"
@@ -209,7 +224,11 @@ function AudioPage() {
 
   return (
     <Category label="Audio" value={value} icon={SwitchesIcon}>
-      <Menu.RadioGroup className={groupClass} value={options.value} onValueChange={options.setValue}>
+      <Menu.RadioGroup
+        className={groupClass}
+        value={options.value}
+        onValueChange={options.setValue}
+      >
         {options.options.map((option) => {
           const track = trackFor(option)
           const label = String(option.label)
@@ -247,11 +266,22 @@ function CaptionsPage() {
 
   return (
     <Category label="Captions" value={value} icon={SpeechIcon}>
-      <Menu.RadioGroup className={groupClass} value={options.value} onValueChange={options.setValue}>
+      <Menu.RadioGroup
+        className={groupClass}
+        value={options.value}
+        onValueChange={options.setValue}
+      >
         {sortCaptionOptions(options.options).map((option) => {
           if (option.value === 'off') return <OptionRow key="off" value="off" title="Off" />
           const row = captionRow(String(option.label), progress[String(option.label)])
-          return <OptionRow key={option.value} value={option.value} title={row.title} detail={row.detail} />
+          return (
+            <OptionRow
+              key={option.value}
+              value={option.value}
+              title={row.title}
+              detail={row.detail}
+            />
+          )
         })}
       </Menu.RadioGroup>
     </Category>

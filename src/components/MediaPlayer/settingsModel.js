@@ -71,7 +71,9 @@ export function qualityRows(options, renditions, traits) {
 
   rungs.sort(
     (a, b) =>
-      b.size - a.size || Number(Boolean(b.range)) - Number(Boolean(a.range)) || b.bitrate - a.bitrate
+      b.size - a.size ||
+      Number(Boolean(b.range)) - Number(Boolean(a.range)) ||
+      b.bitrate - a.bitrate
   )
   return rungs.map(({ value, title, range, original, highBitrate, bitrate }) => ({
     value,
@@ -152,6 +154,7 @@ export function languageName(code, label) {
   } catch {
     return null
   }
-  if (!name || name === code || name.toLowerCase() === String(label ?? '').toLowerCase()) return null
+  if (!name || name === code || name.toLowerCase() === String(label ?? '').toLowerCase())
+    return null
   return name
 }

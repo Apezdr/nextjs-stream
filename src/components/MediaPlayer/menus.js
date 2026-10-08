@@ -22,7 +22,13 @@ export function Chapters({ tooltipSide = 'top', chapterThumbnailURL }) {
   return (
     <>
       {scrim}
-      <Menu.Root side="top" align="end" open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}>
+      <Menu.Root
+        side="top"
+        align="end"
+        open={open}
+        onOpenChange={onOpenChange}
+        onOpenChangeComplete={onOpenChangeComplete}
+      >
         <ButtonTooltip label="Chapters" side={tooltipSide}>
           <Menu.Trigger aria-label="Chapters" className={buttonClass}>
             <ChaptersIcon className="h-8 w-8" />

@@ -63,7 +63,11 @@ function useEngineDerived(events, getSnapshot, empty) {
     [media, events]
   )
 
-  return useSyncExternalStore(subscribe, () => getSnapshot(media?.engine), () => empty)
+  return useSyncExternalStore(
+    subscribe,
+    () => getSnapshot(media?.engine),
+    () => empty
+  )
 }
 
 /** Per-rendition traits (dynamic range, Original). See renditionTraits.js. */

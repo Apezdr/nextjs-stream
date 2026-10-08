@@ -197,7 +197,9 @@ export class CastVolumeQueue {
     if (this.#enabled === next) return
     this.#enabled = next
     if (!next) this.#reset()
-    diag(next ? 'owning volume (casting)' : 'released volume (local)', { receiver: receiverLevel() })
+    diag(next ? 'owning volume (casting)' : 'released volume (local)', {
+      receiver: receiverLevel(),
+    })
     // The owner of `volume` just changed hands. Leaving a cast in particular:
     // the framework's provider restores the local element's position and mute
     // but never tells the store to re-read the volume, so without this the
@@ -251,7 +253,11 @@ export class CastVolumeQueue {
     }
     const epoch = this.#epoch
     const sentAt = Date.now()
-    diag('send', { level: +level.toFixed(3), coalesced: this.#writes, resend: this.#resends || undefined })
+    diag('send', {
+      level: +level.toFixed(3),
+      coalesced: this.#writes,
+      resend: this.#resends || undefined,
+    })
     this.#wanted = null
     this.#wantedSince = null
     this.#writes = 0
@@ -260,7 +266,11 @@ export class CastVolumeQueue {
       if (epoch !== this.#epoch) return
       this.#inFlight = false
       this.#lastAckAt = Date.now()
-      diag('ack', { level: +level.toFixed(3), ms: this.#lastAckAt - sentAt, outcome: outcome ?? 'ok' })
+      diag('ack', {
+        level: +level.toFixed(3),
+        ms: this.#lastAckAt - sentAt,
+        outcome: outcome ?? 'ok',
+      })
       if (this.#wanted != null) this.#schedule()
       else this.#scheduleSettle()
     })

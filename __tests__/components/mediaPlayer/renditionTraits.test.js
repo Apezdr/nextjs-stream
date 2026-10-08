@@ -9,7 +9,13 @@
 
 import { renditionKey, traitsFromLevels, traitTags } from '@components/MediaPlayer/renditionTraits'
 
-const level = (width, height, videoCodec, bitrate, attrs = {}) => ({ width, height, videoCodec, bitrate, attrs })
+const level = (width, height, videoCodec, bitrate, attrs = {}) => ({
+  width,
+  height,
+  videoCodec,
+  bitrate,
+  attrs,
+})
 
 // Blade Runner 2049's ladder as hls.js holds it in Chrome (E-AC-3/AC-3 levels dropped).
 const ladder = [
@@ -25,7 +31,13 @@ const ladder = [
 ]
 
 // The store's rendition: the same four fields the video.js adapter copies.
-const rendition = (l, id) => ({ id, width: l.width, height: l.height, codec: l.videoCodec, bitrate: l.bitrate })
+const rendition = (l, id) => ({
+  id,
+  width: l.width,
+  height: l.height,
+  codec: l.videoCodec,
+  bitrate: l.bitrate,
+})
 
 describe('renditionTraits', () => {
   const traits = traitsFromLevels(ladder)
@@ -41,14 +53,23 @@ describe('renditionTraits', () => {
   })
 
   test('HLG is named, and a missing VIDEO-RANGE means SDR', () => {
-    const t = traitsFromLevels([level(1920, 1080, 'hvc1.2.4.L120.90', 6e6, { 'VIDEO-RANGE': 'HLG' }), level(1280, 720, 'avc1.64001F', 4e6)])
-    expect(traitTags(t, { width: 1920, height: 1080, codec: 'hvc1.2.4.L120.90', bitrate: 6e6 })).toEqual(['HLG'])
-    expect(traitTags(t, { width: 1280, height: 720, codec: 'avc1.64001F', bitrate: 4e6 })).toEqual([])
+    const t = traitsFromLevels([
+      level(1920, 1080, 'hvc1.2.4.L120.90', 6e6, { 'VIDEO-RANGE': 'HLG' }),
+      level(1280, 720, 'avc1.64001F', 4e6),
+    ])
+    expect(
+      traitTags(t, { width: 1920, height: 1080, codec: 'hvc1.2.4.L120.90', bitrate: 6e6 })
+    ).toEqual(['HLG'])
+    expect(traitTags(t, { width: 1280, height: 720, codec: 'avc1.64001F', bitrate: 4e6 })).toEqual(
+      []
+    )
   })
 
   test('no engine, no level, or no rendition means no tags', () => {
     expect(traitTags(traitsFromLevels(undefined), rendition(ladder[3], '3'))).toEqual([])
-    expect(traitTags(traits, { width: 640, height: 360, codec: 'avc1.64001E', bitrate: 1 })).toEqual([])
+    expect(
+      traitTags(traits, { width: 640, height: 360, codec: 'avc1.64001E', bitrate: 1 })
+    ).toEqual([])
     expect(traitTags(traits, undefined)).toEqual([])
   })
 

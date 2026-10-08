@@ -18,9 +18,19 @@ import {
   rateLabel,
   sortCaptionOptions,
 } from '@components/MediaPlayer/settingsModel'
-import { audioDefaultsFromTracks, audioTrackKey, traitsFromLevels } from '@components/MediaPlayer/renditionTraits'
+import {
+  audioDefaultsFromTracks,
+  audioTrackKey,
+  traitsFromLevels,
+} from '@components/MediaPlayer/renditionTraits'
 
-const level = (width, height, videoCodec, bitrate, attrs = {}) => ({ width, height, videoCodec, bitrate, attrs })
+const level = (width, height, videoCodec, bitrate, attrs = {}) => ({
+  width,
+  height,
+  videoCodec,
+  bitrate,
+  attrs,
+})
 
 // Blade Runner 2049 as hls.js holds it in Chrome, in hls.js order (SDR rungs,
 // then PQ), with the store's ids and the player's own size labels.
@@ -33,7 +43,13 @@ const levels = [
   level(1920, 1080, 'hvc1.2.4.L123.90', 7844400, { 'VIDEO-RANGE': 'PQ' }),
   level(3840, 2160, 'hvc1.2.4.L153.90', 22144400, { 'VIDEO-RANGE': 'PQ' }),
 ]
-const renditions = levels.map((l, i) => ({ id: String(i), width: l.width, height: l.height, codec: l.videoCodec, bitrate: l.bitrate }))
+const renditions = levels.map((l, i) => ({
+  id: String(i),
+  width: l.width,
+  height: l.height,
+  codec: l.videoCodec,
+  bitrate: l.bitrate,
+}))
 const options = [
   { value: 'auto', label: 'Auto' },
   ...renditions.map((r) => ({ value: r.id, label: `${r.height}p` })),
@@ -42,7 +58,9 @@ const traits = traitsFromLevels(levels)
 
 describe('qualityRows', () => {
   test('best first, HDR before SDR at the same size, the hi-fi rung named', () => {
-    expect(qualityRows(options, renditions, traits).map((r) => [r.title, r.range, r.detail])).toEqual([
+    expect(
+      qualityRows(options, renditions, traits).map((r) => [r.title, r.range, r.detail])
+    ).toEqual([
       ['4K', 'HDR', '22.1 Mbps'],
       ['1080p', 'HDR', '7.8 Mbps'],
       ['1080p', null, 'High bitrate · 22.1 Mbps'],
@@ -59,9 +77,24 @@ describe('qualityRows', () => {
   })
 
   test('Original is the source, not a copy: labelled Original, never High bitrate', () => {
-    const withOriginal = [...levels, level(1920, 1080, 'avc1.640032', 40e6, { 'VIDEO-RANGE': 'SDR', 'STABLE-VARIANT-ID': 'original' })]
-    const r = withOriginal.map((l, i) => ({ id: String(i), width: l.width, height: l.height, codec: l.videoCodec, bitrate: l.bitrate }))
-    const o = [{ value: 'auto', label: 'Auto' }, ...r.map((x) => ({ value: x.id, label: `${x.height}p` }))]
+    const withOriginal = [
+      ...levels,
+      level(1920, 1080, 'avc1.640032', 40e6, {
+        'VIDEO-RANGE': 'SDR',
+        'STABLE-VARIANT-ID': 'original',
+      }),
+    ]
+    const r = withOriginal.map((l, i) => ({
+      id: String(i),
+      width: l.width,
+      height: l.height,
+      codec: l.videoCodec,
+      bitrate: l.bitrate,
+    }))
+    const o = [
+      { value: 'auto', label: 'Auto' },
+      ...r.map((x) => ({ value: x.id, label: `${x.height}p` })),
+    ]
     const rows = qualityRows(o, r, traitsFromLevels(withOriginal))
     expect(rows.find((x) => x.value === '7').detail).toBe('Original · 40 Mbps')
     expect(rows.filter((x) => x.detail.includes('High bitrate')).map((x) => x.value)).toEqual(['4'])
@@ -101,13 +134,23 @@ test('speed is capped at 1.5× and 1× reads Normal', () => {
 
 describe('captions', () => {
   test('auto-generated tracks lose the suffix and say so; progress shows', () => {
-    expect(captionRow('English - Auto Generated')).toEqual({ title: 'English', detail: 'Auto-generated', generating: false })
-    expect(captionRow('English - Auto Generated', { status: 'running', progressPct: 0.42 })).toEqual({
+    expect(captionRow('English - Auto Generated')).toEqual({
+      title: 'English',
+      detail: 'Auto-generated',
+      generating: false,
+    })
+    expect(
+      captionRow('English - Auto Generated', { status: 'running', progressPct: 0.42 })
+    ).toEqual({
       title: 'English',
       detail: 'Auto-generated · Generating… 42%',
       generating: true,
     })
-    expect(captionRow('English Hearing Impaired')).toEqual({ title: 'English Hearing Impaired', detail: null, generating: false })
+    expect(captionRow('English Hearing Impaired')).toEqual({
+      title: 'English Hearing Impaired',
+      detail: null,
+      generating: false,
+    })
   })
 
   test('Off, then auto-generated, then human tracks', () => {

@@ -13,7 +13,10 @@ const HOLD_REPEAT_MS = 200
 /** Past this many steps, segments would be too thin to read: draw a bar. */
 const MAX_SEGMENTS = 30
 
-const stepButtonClass = classNames(buttonClass, 'w-8 touch-none select-none disabled:cursor-default disabled:opacity-40')
+const stepButtonClass = classNames(
+  buttonClass,
+  'w-8 touch-none select-none disabled:cursor-default disabled:opacity-40'
+)
 
 /**
  * Press-and-hold stepping for a button: one step on press, then one every
@@ -54,7 +57,15 @@ function useHoldRepeat(onStep) {
 
 function StepIcon({ plus }) {
   return (
-    <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" aria-hidden="true">
+    <svg
+      className="h-5 w-5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
       <path d="M6 12h12" />
       {plus && <path d="M12 6v12" />}
     </svg>
@@ -94,7 +105,13 @@ export function CastVolumeControl() {
     <div className="flex items-center" role="group" aria-label="Cast volume">
       {/* No ButtonTooltip: it clones the button with the tooltip trigger's
           props spread last, which would override the hold handlers. */}
-      <button type="button" aria-label="Volume down" disabled={lit === 0 && !muted} className={stepButtonClass} {...down}>
+      <button
+        type="button"
+        aria-label="Volume down"
+        disabled={lit === 0 && !muted}
+        className={stepButtonClass}
+        {...down}
+      >
         <StepIcon />
       </button>
       <span
@@ -108,15 +125,30 @@ export function CastVolumeControl() {
       >
         {count > MAX_SEGMENTS ? (
           <span className="relative h-[5px] w-full rounded-sm bg-white/30">
-            <span className="absolute inset-y-0 left-0 rounded-sm bg-blue-300" style={{ width: `${(lit / count) * 100}%` }} />
+            <span
+              className="absolute inset-y-0 left-0 rounded-sm bg-blue-300"
+              style={{ width: `${(lit / count) * 100}%` }}
+            />
           </span>
         ) : (
           Array.from({ length: count }, (_, i) => (
-            <span key={i} className={classNames('h-full flex-1 rounded-[1px]', i < lit ? 'bg-blue-300' : 'bg-white/25')} />
+            <span
+              key={i}
+              className={classNames(
+                'h-full flex-1 rounded-[1px]',
+                i < lit ? 'bg-blue-300' : 'bg-white/25'
+              )}
+            />
           ))
         )}
       </span>
-      <button type="button" aria-label="Volume up" disabled={lit === count && !muted} className={stepButtonClass} {...up}>
+      <button
+        type="button"
+        aria-label="Volume up"
+        disabled={lit === count && !muted}
+        className={stepButtonClass}
+        {...up}
+      >
         <StepIcon plus />
       </button>
     </div>

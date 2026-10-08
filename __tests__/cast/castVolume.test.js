@@ -13,7 +13,10 @@ jest.mock('@src/components/MediaPlayer/videojs', () => ({
   Player: { usePlayer: () => 'disconnected' },
   usePlayerContext: () => ({}),
 }))
-jest.mock('@components/Cast/useCastSession', () => ({ __esModule: true, useCastAdoption: () => ({ adopted: false }) }))
+jest.mock('@components/Cast/useCastSession', () => ({
+  __esModule: true,
+  useCastAdoption: () => ({ adopted: false }),
+}))
 
 // A receiver whose acknowledgements the test releases by hand.
 let mockSession
