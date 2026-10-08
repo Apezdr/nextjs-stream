@@ -17,6 +17,8 @@ import { buttonClass, ButtonTooltip } from './buttons'
 import { classNames } from '@src/utils'
 import { useAutoCaptionsProgress } from './AutoCaptionsProgressContext'
 import ChaptersMenu from './chapter/chapters'
+import useRenditionTraits from './useRenditionTraits'
+import { traitTags } from './renditionTraits'
 
 // On Menu.Popup, the positioned surface (it carries data-open for the fade).
 // A submenu's Content is portaled into the popup after the root Content, so an
@@ -109,16 +111,25 @@ function formatBitrate(bitrate) {
   return Number.isInteger(mbps) ? String(mbps) : mbps.toFixed(1)
 }
 
+// "HDR"/"HLG" in amber, "Original" (the untouched source rung) neutral.
+const traitTagClass = (tag) =>
+  classNames(
+    'ml-1.5 self-center rounded-sm px-1 py-0.5 text-[10px] font-bold uppercase leading-none tracking-wide',
+    tag === 'Original' ? 'bg-white/20 text-white' : 'bg-amber-300 text-black'
+  )
+
 function QualitySubmenu() {
   const options = useQualityOptions()
   const renditions = Player.usePlayer((s) => s.videoRenditionList)
   const activeRendition = Player.usePlayer((s) => s.activeVideoRendition)
+  const traits = useRenditionTraits()
 
   if (!options || options.options.length <= 1) return null
 
   const isAuto = options.value === 'auto'
   const currentText = activeRendition?.height ? `${activeRendition.height}p` : ''
-  const currentName = qualityLabelMap[currentText] ?? currentText
+  const currentTags = traitTags(traits, activeRendition)
+  const currentName = [qualityLabelMap[currentText] ?? currentText, ...currentTags].join(' ')
   const hint = isAuto
     ? `(${currentName}${
         activeRendition?.bitrate ? `@${formatBitrate(activeRendition.bitrate)} Mbps` : ''
@@ -146,6 +157,11 @@ function QualitySubmenu() {
               <span className="text-sm font-medium text-white">
                 {qualityLabelMap[label] ?? label}
               </span>
+              {traitTags(traits, rendition).map((tag) => (
+                <span key={tag} className={traitTagClass(tag)}>
+                  {tag}
+                </span>
+              ))}
               {bitrate && (
                 <span className="absolute right-1 ml-auto inline-flex items-center overflow-hidden rounded-xl text-center font-mono shadow-lg">
                   <span className="bg-black/70 py-0.5 pl-2 pr-1 text-xs font-bold text-white drop-shadow-lg">
