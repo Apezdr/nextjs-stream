@@ -22,7 +22,7 @@ import ChaptersMenu from './chapter/chapters'
 // A submenu's Content is portaled into the popup after the root Content, so an
 // open submenu expands below the root rows, as it did before 10.0.0.
 export const menuClass =
-  'z-30 flex max-h-[60vh] min-w-[260px] flex-col overflow-y-auto overscroll-y-contain rounded-md border border-white/10 bg-black/95 p-2.5 font-sans text-[15px] font-medium text-white outline-none backdrop-blur-sm opacity-0 transition-opacity duration-150 data-[open]:opacity-100'
+  'z-30 flex max-h-[60vh] min-w-[260px] max-w-[91vw] flex-col overflow-y-auto overscroll-y-contain rounded-md border border-white/10 bg-black/95 p-2.5 font-sans text-[15px] font-medium text-white outline-none backdrop-blur-sm opacity-0 transition-opacity duration-150 data-[open]:opacity-100'
 
 const rootContentClass = 'flex w-full flex-col outline-none'
 
@@ -37,10 +37,11 @@ export function Settings({ side = 'top', align = 'end', tooltipSide = 'top', has
   const qualityOptions = useQualityOptions()
 
   // Quality options include the synthetic Auto entry, so "more than one real
-  // rendition" means more than two options total.
+  // rendition" means more than two options total. Audio needs two tracks to be
+  // a choice at all (see AudioSubmenu).
   const shouldShowSettingsButton =
     hasCaptions ||
-    (audioOptions?.options?.length ?? 0) > 0 ||
+    (audioOptions?.options?.length ?? 0) > 1 ||
     (qualityOptions?.options?.length ?? 0) > 2
 
   if (!shouldShowSettingsButton) return null
@@ -79,7 +80,7 @@ export function Chapters({ side = 'top', align = 'end', tooltipSide = 'top', cha
           <ChaptersIcon className="h-8 w-8" />
         </Menu.Trigger>
       </ButtonTooltip>
-      <Menu.Popup className={classNames(menuClass, 'max-w-[91vw]')}>
+      <Menu.Popup className={menuClass}>
         <Menu.Content className={rootContentClass}>
           <ChaptersMenu chapterThumbnailURL={chapterThumbnailURL} />
         </Menu.Content>
@@ -117,19 +118,17 @@ function QualitySubmenu() {
 
   const isAuto = options.value === 'auto'
   const currentText = activeRendition?.height ? `${activeRendition.height}p` : ''
+  const currentName = qualityLabelMap[currentText] ?? currentText
   const hint = isAuto
-    ? `(${qualityLabelMap[currentText] ?? currentText}${
+    ? `(${currentName}${
         activeRendition?.bitrate ? `@${formatBitrate(activeRendition.bitrate)} Mbps` : ''
       })`
-    : (qualityLabelMap[currentText] ?? currentText)
+    : currentName
 
-  // Bitrate badge lookup: match a rendition by its height label. JIT ladder
-  // rung heights are distinct, so height is a reliable key here.
-  const bitrateForLabel = (label) => {
-    const height = parseInt(label, 10)
-    if (Number.isNaN(height)) return null
-    return formatBitrate(renditions?.find((r) => r.height === height)?.bitrate)
-  }
+  // Each option's value is its rendition's id. Height is not a key: a ladder
+  // can hold several rungs of one height (Blade Runner 2049 has 1080p SDR at
+  // 8.9 and 22.1 Mbps and 1080p HDR at 7.8 Mbps).
+  const renditionFor = (option) => renditions?.find((r) => r.id === option.value)
 
   return (
     <Submenu label="Quality" hint={hint} hintPrefix={isAuto ? 'Auto ' : ''} icon={QualityIcon}>
@@ -140,7 +139,8 @@ function QualitySubmenu() {
       >
         {options.options.map((option) => {
           const label = String(option.label)
-          const bitrate = option.value === 'auto' ? null : bitrateForLabel(label)
+          const rendition = option.value === 'auto' ? undefined : renditionFor(option)
+          const bitrate = formatBitrate(rendition?.bitrate)
           return (
             <Radio value={option.value} key={option.value}>
               <span className="text-sm font-medium text-white">
@@ -164,7 +164,11 @@ function QualitySubmenu() {
 
 function AudioSubmenu() {
   const options = useAudioTrackOptions()
-  if (!options || options.options.length === 0) return null
+  // One track is nothing to choose. The transcoder also names a single-language
+  // source's only track "Audio" (one NAME per language, kept stable for its
+  // cache), so the lone row would just read "Audio". Multi-language sources get
+  // one track per language, named for it.
+  if (!options || options.options.length <= 1) return null
 
   const hint = String(options.options.find((o) => o.value === options.value)?.label ?? '')
 
@@ -276,13 +280,16 @@ function Submenu({ label, hint, hintPrefix = '', icon: Icon, disabled, children 
   return (
     <Menu.Root>
       <Menu.Trigger className={classNames(submenuTriggerClass, 'group')} disabled={disabled}>
-        <Icon className="h-5 w-5" />
-        <span className="ml-1.5">{label}</span>
-        <span className="ml-auto flex items-center gap-1 text-sm text-white/50">
-          {hintPrefix ? <span>{hintPrefix}</span> : null}
-          {hint}
+        <Icon className="h-5 w-5 shrink-0" />
+        <span className="ml-1.5 shrink-0">{label}</span>
+        {/* One line: a long hint ("Auto (Full HD@22.1 Mbps)", "English Hearing
+            Impaired") widens the menu up to its max width instead of wrapping
+            into the label, and truncates only past that. */}
+        <span className="ml-auto flex min-w-0 items-center gap-1 whitespace-nowrap pl-3 text-sm text-white/50">
+          {hintPrefix ? <span className="shrink-0">{hintPrefix}</span> : null}
+          <span className="truncate">{hint}</span>
         </span>
-        <ChevronIcon className="ml-0.5 h-[18px] w-[18px] -rotate-90 text-white/50" />
+        <ChevronIcon className="ml-0.5 h-[18px] w-[18px] shrink-0 -rotate-90 text-white/50" />
       </Menu.Trigger>
       <Menu.Content className="w-full outline-none">
         {/* The back row is an ordinary item: selecting an item closes its own
