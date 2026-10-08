@@ -74,7 +74,7 @@ const subPageClass = classNames(
 const groupClass = classNames(staggerClass, 'flex flex-col gap-0.5')
 
 export function Settings({ tooltipSide = 'top', hasCaptions, isCasting }) {
-  const { onOpenChange, setPopup, style } = useDrawer()
+  const { open, onOpenChange, onOpenChangeComplete, setPopup, style, scrim } = useDrawer()
 
   const audioOptions = useAudioTrackOptions()
   const qualityOptions = useQualityOptions()
@@ -91,25 +91,28 @@ export function Settings({ tooltipSide = 'top', hasCaptions, isCasting }) {
   if (!showQuality && !showAudio && !showCaptions && !showSpeed) return null
 
   return (
-    <Menu.Root side="top" align="end" onOpenChange={onOpenChange}>
-      <ButtonTooltip label="Settings" side={tooltipSide}>
-        <Menu.Trigger aria-label="Settings" className={classNames(buttonClass, 'group')}>
-          <GearIcon className="h-8 w-8 transform transition-transform duration-200 ease-out group-data-[open]:rotate-90" />
-        </Menu.Trigger>
-      </ButtonTooltip>
-      <Menu.Popup ref={setPopup} className={drawerClass} style={style}>
-        <Menu.Content className={rootPageClass}>
-          <DrawerTitle>Settings</DrawerTitle>
-          <div className={classNames(listClass, staggerClass)}>
-            {showQuality && <QualityPage />}
-            {showAudio && <AudioPage />}
-            {showCaptions && <CaptionsPage />}
-            {showSpeed && <SpeedPage />}
-          </div>
-          <DrawerClose label="Close settings" />
-        </Menu.Content>
-      </Menu.Popup>
-    </Menu.Root>
+    <>
+      {scrim}
+      <Menu.Root side="top" align="end" open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}>
+        <ButtonTooltip label="Settings" side={tooltipSide}>
+          <Menu.Trigger aria-label="Settings" className={classNames(buttonClass, 'group')}>
+            <GearIcon className="h-8 w-8 transform transition-transform duration-200 ease-out group-data-[open]:rotate-90" />
+          </Menu.Trigger>
+        </ButtonTooltip>
+        <Menu.Popup ref={setPopup} className={drawerClass} style={style}>
+          <Menu.Content className={rootPageClass}>
+            <DrawerTitle>Settings</DrawerTitle>
+            <div className={classNames(listClass, staggerClass)}>
+              {showQuality && <QualityPage />}
+              {showAudio && <AudioPage />}
+              {showCaptions && <CaptionsPage />}
+              {showSpeed && <SpeedPage />}
+            </div>
+            <DrawerClose label="Close settings" />
+          </Menu.Content>
+        </Menu.Popup>
+      </Menu.Root>
+    </>
   )
 }
 

@@ -17,24 +17,27 @@ function ChaptersIcon({ className }) {
 
 /** The Chapters drawer (drawer.js): one page, the chapter list. */
 export function Chapters({ tooltipSide = 'top', chapterThumbnailURL }) {
-  const { onOpenChange, setPopup, style } = useDrawer()
+  const { open, onOpenChange, onOpenChangeComplete, setPopup, style, scrim } = useDrawer()
 
   return (
-    <Menu.Root side="top" align="end" onOpenChange={onOpenChange}>
-      <ButtonTooltip label="Chapters" side={tooltipSide}>
-        <Menu.Trigger aria-label="Chapters" className={buttonClass}>
-          <ChaptersIcon className="h-8 w-8" />
-        </Menu.Trigger>
-      </ButtonTooltip>
-      <Menu.Popup ref={setPopup} className={drawerClass} style={style}>
-        <Menu.Content className={classNames(pageClass, 'relative')}>
-          <DrawerTitle>Chapters</DrawerTitle>
-          <div className={listClass}>
-            <ChaptersMenu chapterThumbnailURL={chapterThumbnailURL} />
-          </div>
-          <DrawerClose label="Close chapters" />
-        </Menu.Content>
-      </Menu.Popup>
-    </Menu.Root>
+    <>
+      {scrim}
+      <Menu.Root side="top" align="end" open={open} onOpenChange={onOpenChange} onOpenChangeComplete={onOpenChangeComplete}>
+        <ButtonTooltip label="Chapters" side={tooltipSide}>
+          <Menu.Trigger aria-label="Chapters" className={buttonClass}>
+            <ChaptersIcon className="h-8 w-8" />
+          </Menu.Trigger>
+        </ButtonTooltip>
+        <Menu.Popup ref={setPopup} className={drawerClass} style={style}>
+          <Menu.Content className={classNames(pageClass, 'relative')}>
+            <DrawerTitle>Chapters</DrawerTitle>
+            <div className={listClass}>
+              <ChaptersMenu chapterThumbnailURL={chapterThumbnailURL} />
+            </div>
+            <DrawerClose label="Close chapters" />
+          </Menu.Content>
+        </Menu.Popup>
+      </Menu.Root>
+    </>
   )
 }

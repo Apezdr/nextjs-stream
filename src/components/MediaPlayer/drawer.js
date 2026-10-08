@@ -119,21 +119,86 @@ function useSheetHeight(popup) {
 
 /**
  * Wires a Menu.Root + Menu.Popup up as the drawer:
- * `const { onOpenChange, setPopup, style } = useDrawer()`, then
- * `<Menu.Root onOpenChange={onOpenChange}>` and
+ * `const { open, onOpenChange, onOpenChangeComplete, setPopup, style, scrim } = useDrawer()`,
+ * then `{scrim}` beside `<Menu.Root open={open} onOpenChange={onOpenChange}
+ * onOpenChangeComplete={onOpenChangeComplete}>` and
  * `<Menu.Popup ref={setPopup} className={drawerClass} style={style}>`.
- * Destructure it: the React Compiler treats an object holding a ref as a
- * ref, so reading its other fields during render would be flagged.
+ * Destructure it: the React Compiler treats an object holding a ref as a ref,
+ * so reading its other fields during render would be flagged.
+ *
+ * Behind the drawer is a scrim over the page and every player control, so a
+ * click outside the drawer closes it instead of landing on the seek bar or a
+ * button. It is its own manual popover (`scrim`, rendered beside the
+ * Menu.Root), not the drawer's ::backdrop: the UA stylesheet gives a popover's
+ * ::backdrop `pointer-events: none !important`, so clicks went straight
+ * through it (one seeked the film, one paused it). The top layer stacks in the
+ * order popovers are shown, so the scrim is shown the moment the drawer starts
+ * to open, before the menu shows the drawer, which keeps it just beneath. It
+ * stays up until the drawer has finished closing, so a quick second click
+ * can't fall through either. The open state is held here so the scrim can
+ * close the drawer.
  */
+
+// The drawer's close transition, plus slack: the scrim's fallback hide.
+const SCRIM_HIDE_FALLBACK_MS = 450
+
 export function useDrawer() {
   const [open, setOpen] = useState(false)
   const [popup, setPopup] = useState(null)
+  const [scrim, setScrim] = useState(null)
   const dockStyle = useDockStyle(open)
   const sheetHeight = useSheetHeight(popup)
+
+  const hideScrim = () => {
+    try {
+      if (scrim?.matches(':popover-open')) scrim.hidePopover()
+    } catch {
+      /* already gone */
+    }
+  }
+  const showScrim = () => {
+    if (!scrim) return
+    scrim.removeAttribute('data-closing')
+    try {
+      if (!scrim.matches(':popover-open')) scrim.showPopover()
+    } catch {
+      /* popover API unavailable: the drawer still works, without a scrim */
+    }
+  }
+  const close = () => {
+    scrim?.setAttribute('data-closing', '')
+    setOpen(false)
+    // onOpenChangeComplete hides it once the drawer is gone; this covers a
+    // close that never reports completion, since a stuck scrim would block
+    // the whole page.
+    setTimeout(hideScrim, SCRIM_HIDE_FALLBACK_MS)
+  }
+
   return {
-    onOpenChange: (next) => setOpen(next),
+    open,
+    onOpenChange: (next) => {
+      if (!next) return close()
+      showScrim()
+      setOpen(true)
+    },
+    onOpenChangeComplete: (next) => {
+      if (!next) hideScrim()
+    },
     setPopup,
     style: sheetHeight == null ? dockStyle : { ...dockStyle, height: `${sheetHeight}px` },
+    scrim: (
+      <div
+        ref={setScrim}
+        popover="manual"
+        aria-hidden="true"
+        className="player-drawer-scrim"
+        onPointerDown={(event) => {
+          event.preventDefault()
+          event.stopPropagation()
+          close()
+        }}
+      />
+    ),
   }
 }
 
