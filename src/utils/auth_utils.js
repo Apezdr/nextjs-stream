@@ -947,26 +947,6 @@ export function sanitizeCardItems(items, context = {}, shouldExposeAdditionalDat
 }
 
 /**
- * Fetches a queue using the provided fetch function and handles any errors.
- *
- * @param {Function} fetchFunction - The function to fetch the queue data.
- * @param {string} queueName - The name of the queue for error reporting.
- * @returns {Promise<any>} The queue data if successful.
- * @throws {Error} Throws an error with statusCode 501 if fetch fails.
- */
-export async function handleQueueFetch(fetchFunction, queueName) {
-  try {
-    const queueData = await fetchFunction()
-    return queueData
-  } catch (error) {
-    console.error(`Error fetching ${queueName} queue:`, error)
-    // You can set a custom status code if needed
-    error.statusCode = 501 // Not Implemented
-    throw error
-  }
-}
-
-/**
  * Validates a URL by initiating a simple network request.
  *
  * @param {string} url - The URL to validate.
