@@ -77,3 +77,65 @@ test('a request still in flight past the window is joined, not repeated', async 
   const [a, b] = await Promise.all([first, second])
   expect(a.queues[3]).toBe(b.queues[3])
 })
+
+describe('refreshMediaQueue (a card refresh button)', () => {
+  let refreshMediaQueue
+  beforeEach(() => {
+    ;({ refreshMediaQueue } = require('@src/lib/mediaQueues/getMediaQueues'))
+  })
+
+  test('asks only that service, even inside the shared window', async () => {
+    await getMediaQueues()
+    await flush()
+    mockLoad.mockClear()
+
+    const { queues } = await refreshMediaQueue('radarr')
+
+    expect(mockLoad.mock.calls).toEqual([['radarr']])
+    expect(queues).toEqual([okResult('radarr')])
+  })
+
+  test('its answer becomes the shared one, so the next poll cannot hand back an older result', async () => {
+    await getMediaQueues()
+    await flush()
+    const fresh = { ...okResult('radarr'), health: 'active', inProgress: 1 }
+    mockLoad.mockImplementation(async (service) => (service === 'radarr' ? fresh : okResult(service)))
+
+    await refreshMediaQueue('radarr')
+    await flush()
+    mockLoad.mockClear()
+    const { queues } = await getMediaQueues()
+
+    expect(mockLoad).not.toHaveBeenCalled()
+    expect(queues[1]).toBe(fresh)
+  })
+
+  test('does not join a poll already in flight: that request started before the click', async () => {
+    let releasePoll
+    mockLoad.mockImplementationOnce(() => new Promise((resolve) => (releasePoll = () => resolve({ ...okResult('sabnzbd'), health: 'warning' }))))
+    const poll = getMediaQueues()
+
+    const refreshed = refreshMediaQueue('sabnzbd')
+    expect(mockLoad.mock.calls.filter(([service]) => service === 'sabnzbd')).toHaveLength(2)
+    await expect(refreshed).resolves.toEqual({ queues: [okResult('sabnzbd')] })
+
+    releasePoll()
+    await poll
+  })
+
+  test('joins a refresh already in flight, so repeated clicks cost one request', async () => {
+    const resolvers = {}
+    mockLoad.mockImplementation((service) => new Promise((resolve) => (resolvers[service] = () => resolve(okResult(service)))))
+
+    const first = refreshMediaQueue('tdarr')
+    const second = refreshMediaQueue('tdarr')
+    // A poll arriving meanwhile joins it too.
+    const poll = getMediaQueues()
+
+    expect(mockLoad.mock.calls.filter(([service]) => service === 'tdarr')).toHaveLength(1)
+    Object.values(resolvers).forEach((resolve) => resolve())
+    const [a, b, polled] = await Promise.all([first, second, poll])
+    expect(a.queues[0]).toBe(b.queues[0])
+    expect(polled.queues[3]).toBe(a.queues[0])
+  })
+})

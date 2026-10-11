@@ -4,7 +4,7 @@
  * queue update, and each card reports its own service's state.
  */
 
-import { render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
 const mockUseSWR = jest.fn()
 jest.mock('swr', () => ({ __esModule: true, default: (...args) => mockUseSWR(...args) }))
@@ -12,6 +12,9 @@ jest.mock('swr', () => ({ __esModule: true, default: (...args) => mockUseSWR(...
 jest.mock('@src/utils', () => ({
   classNames: (...args) => args.flat().filter(Boolean).join(' '),
 }))
+
+const mockToastError = jest.fn()
+jest.mock('react-toastify', () => ({ toast: { error: (...args) => mockToastError(...args) } }))
 
 const EnhancedQueueDashboard = require('@components/Admin/EnhancedQueueDashboard').default
 const {
@@ -22,6 +25,8 @@ const {
   formatTimeLeft,
   itemMeta,
   refreshIntervalFor,
+  refreshUrlFor,
+  withQueue,
 } = require('@components/Admin/mediaQueueDisplay')
 
 const GIB = 1024 ** 3
@@ -165,6 +170,16 @@ describe('display rules', () => {
     expect(itemMeta({ progress: 99.9, sizeBytes: null, timeLeftSeconds: 0 })).toBe('99%')
   })
 
+  test('a refresh swaps one card and leaves the others untouched', () => {
+    const current = { queues: [sabnzbd, radarr, sonarr] }
+    const fresh = { ...sonarr, reason: 'timeout', httpStatus: null }
+    const next = withQueue(current, fresh)
+    expect(next.queues).toEqual([sabnzbd, radarr, fresh])
+    expect(next.queues[0]).toBe(sabnzbd)
+    expect(withQueue(undefined, fresh)).toBeUndefined()
+    expect(refreshUrlFor('radarr')).toBe(`${MEDIA_QUEUES_URL}?refresh=radarr`)
+  })
+
   test('unreachable reasons name the setting to check', () => {
     expect(describeUnreachable({ service: 'tdarr', reason: 'refused', httpStatus: null })).toEqual({
       message: 'Refused the connection.',
@@ -178,5 +193,63 @@ describe('display rules', () => {
       message: 'Did not answer in time.',
       hint: null,
     })
+  })
+})
+
+describe('refresh button', () => {
+  const originalFetch = global.fetch
+  let mutate
+
+  beforeEach(() => {
+    mutate = jest.fn(async () => {})
+    global.fetch = jest.fn()
+    mockToastError.mockReset()
+  })
+
+  afterEach(() => {
+    global.fetch = originalFetch
+  })
+
+  test('asks for that one queue again and swaps only its card', async () => {
+    const fresh = { ...sabnzbd, health: 'active', inProgress: 1 }
+    global.fetch.mockResolvedValue({ ok: true, json: async () => ({ queues: [fresh] }) })
+    renderWith({ data: { queues: [sabnzbd, radarr] }, error: undefined, mutate })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh SABnzbd' }))
+
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1))
+    expect(global.fetch).toHaveBeenCalledWith(`${MEDIA_QUEUES_URL}?refresh=sabnzbd`)
+    const [update, options] = mutate.mock.calls[0]
+    expect(options).toEqual({ revalidate: false })
+    const next = update({ queues: [sabnzbd, radarr] })
+    expect(next.queues).toEqual([fresh, radarr])
+    expect(next.queues[1]).toBe(radarr)
+  })
+
+  test('shows it is working, and ignores repeat clicks until the answer lands', async () => {
+    let respond
+    global.fetch.mockImplementation(() => new Promise((resolve) => (respond = resolve)))
+    renderWith({ data: { queues: [radarr] }, error: undefined, mutate })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Radarr' }))
+    const busy = await screen.findByRole('button', { name: 'Refreshing Radarr' })
+    expect(busy).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(busy)
+    expect(global.fetch).toHaveBeenCalledTimes(1)
+
+    await act(async () => respond({ ok: true, json: async () => ({ queues: [radarr] }) }))
+    expect(await screen.findByRole('button', { name: 'Refresh Radarr' })).toHaveAttribute('aria-disabled', 'false')
+  })
+
+  test('a failed refresh says so and leaves the card as it was', async () => {
+    global.fetch.mockResolvedValue({ ok: false, status: 502 })
+    renderWith({ data: { queues: [sonarr] }, error: undefined, mutate })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh Sonarr' }))
+
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith("Couldn't refresh Sonarr (HTTP 502)."))
+    expect(mutate).not.toHaveBeenCalled()
+    expect(screen.getByText("Can't reach Sonarr")).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refresh Sonarr' })).toHaveAttribute('aria-disabled', 'false')
   })
 })

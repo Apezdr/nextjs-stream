@@ -1,8 +1,11 @@
 'use client'
 
+import { useTransition } from 'react'
 import useSWR from 'swr'
+import { toast } from 'react-toastify'
 import {
   ArrowDownTrayIcon,
+  ArrowPathIcon,
   CpuChipIcon,
   ExclamationTriangleIcon,
   FilmIcon,
@@ -18,6 +21,8 @@ import {
   formatCountValue,
   itemMeta,
   refreshIntervalFor,
+  refreshUrlFor,
+  withQueue,
 } from './mediaQueueDisplay'
 
 const SERVICE_ICONS = {
@@ -46,10 +51,21 @@ const SWR_OPTIONS = { refreshInterval: refreshIntervalFor }
 export default function EnhancedQueueDashboard() {
   // Read only data and error: SWR re-renders for the fields a component reads,
   // so leaving isValidating alone keeps unchanged polls from re-rendering.
-  const { data, error } = useSWR(MEDIA_QUEUES_URL, fetchMediaQueues, SWR_OPTIONS)
+  // (mutate is a stable function, not state, so taking it costs nothing.)
+  const { data, error, mutate } = useSWR(MEDIA_QUEUES_URL, fetchMediaQueues, SWR_OPTIONS)
   const queues = data?.queues ?? []
   const shown = queues.filter((queue) => queue.state !== 'not_configured')
   const notConfigured = queues.filter((queue) => queue.state === 'not_configured')
+
+  // A card's refresh button: ask the server for that one service again and
+  // swap only its card. SWR discards any poll that started before this
+  // mutation and lands after it, so an older answer cannot overwrite this one.
+  async function refreshQueue(service) {
+    const response = await fetch(refreshUrlFor(service))
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const { queues: [queue] } = await response.json()
+    await mutate((current) => withQueue(current, queue), { revalidate: false })
+  }
 
   let body
   if (data) {
@@ -57,7 +73,7 @@ export default function EnhancedQueueDashboard() {
       shown.length > 0 ? (
         <div className={GRID}>
           {shown.map((queue) => (
-            <QueueCard key={queue.service} queue={queue} />
+            <QueueCard key={queue.service} queue={queue} onRefresh={refreshQueue} />
           ))}
         </div>
       ) : (
@@ -101,30 +117,54 @@ export default function EnhancedQueueDashboard() {
   )
 }
 
-function QueueCard({ queue }) {
+function QueueCard({ queue, onRefresh }) {
   const meta = SERVICE_META[queue.service]
   const Icon = SERVICE_ICONS[queue.service]
+  const [isRefreshing, startRefresh] = useTransition()
+
+  function refresh() {
+    if (isRefreshing) return
+    startRefresh(async () => {
+      try {
+        await onRefresh(queue.service)
+      } catch (error) {
+        toast.error(`Couldn't refresh ${meta.label} (${error.message}).`)
+      }
+    })
+  }
+
   return (
     <MaterialCard elevation="low" className="flex flex-col">
-      <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
+      <div className="flex items-start justify-between gap-2 border-b border-gray-100 px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
           <Icon className="h-5 w-5 shrink-0 text-blue-600" aria-hidden="true" />
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-gray-900">
-              {meta.label}
-            </h3>
+            <h3 className="truncate text-sm font-semibold text-gray-900">{meta.label}</h3>
             <p className="truncate text-xs text-gray-500">{meta.description}</p>
           </div>
         </div>
-        {queue.state === 'ok' ? (
-          <StatusBadge status={HEALTH[queue.health].badge} size="small" variant="soft" className="shrink-0">
-            {HEALTH[queue.health].label}
-          </StatusBadge>
-        ) : (
-          <StatusBadge status="error" size="small" variant="soft" className="shrink-0">
-            Unreachable
-          </StatusBadge>
-        )}
+        <div className="flex shrink-0 items-center gap-1">
+          {queue.state === 'ok' ? (
+            <StatusBadge status={HEALTH[queue.health].badge} size="small" variant="soft">
+              {HEALTH[queue.health].label}
+            </StatusBadge>
+          ) : (
+            <StatusBadge status="error" size="small" variant="soft">
+              Unreachable
+            </StatusBadge>
+          )}
+          {/* aria-disabled rather than disabled: a disabled button drops keyboard focus mid-refresh. */}
+          <button
+            type="button"
+            onClick={refresh}
+            aria-disabled={isRefreshing}
+            aria-label={isRefreshing ? `Refreshing ${meta.label}` : `Refresh ${meta.label}`}
+            title={`Refresh ${meta.label} now`}
+            className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-blue-500 aria-disabled:cursor-wait aria-disabled:hover:bg-transparent"
+          >
+            <ArrowPathIcon className={`h-4 w-4 ${isRefreshing ? 'motion-safe:animate-spin' : ''}`} aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <div className="flex-1 px-4 py-3">
         {queue.state === 'ok' ? <QueueBody queue={queue} emptyText={meta.empty} /> : <UnreachableBody queue={queue} />}

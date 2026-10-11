@@ -18,25 +18,45 @@ interface SharedEntry {
   promise: Promise<MediaQueueResult>
   /** null while in flight. */
   settledAt: number | null
+  /** Started by a manual refresh rather than a poll. */
+  forced: boolean
 }
 
 const shared = new Map<MediaQueueService, SharedEntry>()
+
+function startLoad(service: MediaQueueService, forced: boolean): Promise<MediaQueueResult> {
+  const entry: SharedEntry = { promise: loadMediaQueue(service), settledAt: null, forced }
+  // loadMediaQueue resolves for every outcome, so this never sees a rejection.
+  entry.promise.then(() => {
+    entry.settledAt = Date.now()
+  })
+  shared.set(service, entry)
+  return entry.promise
+}
 
 function loadShared(service: MediaQueueService): Promise<MediaQueueResult> {
   const entry = shared.get(service)
   if (entry && (entry.settledAt === null || Date.now() - entry.settledAt < SHARED_RESULT_MS)) {
     return entry.promise
   }
-  const next: SharedEntry = { promise: loadMediaQueue(service), settledAt: null }
-  // loadMediaQueue resolves for every outcome, so this never sees a rejection.
-  next.promise.then(() => {
-    next.settledAt = Date.now()
-  })
-  shared.set(service, next)
-  return next.promise
+  return startLoad(service, false)
 }
 
 export async function getMediaQueues(): Promise<MediaQueuesResponse> {
   const queues = await Promise.all(MEDIA_QUEUE_SERVICES.map(loadShared))
   return { queues }
+}
+
+/**
+ * One service, asked again now (the dashboard's per-card refresh button). It
+ * skips the shared answer, and joins a request in flight only when that one is
+ * also a manual refresh: a poll already under way started before the click,
+ * so its answer may predate whatever the admin just fixed. The new answer
+ * becomes the shared one, so the next poll — from any tab — cannot hand back
+ * the older result.
+ */
+export async function refreshMediaQueue(service: MediaQueueService): Promise<MediaQueuesResponse> {
+  const entry = shared.get(service)
+  const queue = await (entry?.forced && entry.settledAt === null ? entry.promise : startLoad(service, true))
+  return { queues: [queue] }
 }

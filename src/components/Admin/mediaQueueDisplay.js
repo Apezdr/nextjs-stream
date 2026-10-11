@@ -5,6 +5,15 @@ import { formatBytes } from './Stats/serverLoadDisplay'
 
 export const MEDIA_QUEUES_URL = '/api/authenticated/admin/media-queues'
 
+/** One queue, asked again now rather than served from the shared answer. */
+export const refreshUrlFor = (service) => `${MEDIA_QUEUES_URL}?refresh=${encodeURIComponent(service)}`
+
+/** The panel's data with one service's queue swapped in; the other cards stay as they are. */
+export function withQueue(data, queue) {
+  if (!data) return data
+  return { ...data, queues: data.queues.map((current) => (current.service === queue.service ? queue : current)) }
+}
+
 /** Poll this often while anything is downloading, importing or transcoding… */
 export const ACTIVE_REFRESH_MS = 3_000
 /** …and this often otherwise, including while a service is unreachable. */
