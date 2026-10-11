@@ -1,328 +1,280 @@
 'use client'
 
-import { useState } from 'react'
-import { MaterialCard, MaterialCardHeader, MaterialCardContent, MaterialButton, StatusBadge } from './BaseComponents'
+import useSWR from 'swr'
+import {
+  ArrowDownTrayIcon,
+  CpuChipIcon,
+  ExclamationTriangleIcon,
+  FilmIcon,
+  TvIcon,
+} from '@heroicons/react/24/outline'
+import { MaterialCard, StatusBadge } from './BaseComponents'
+import {
+  HEALTH,
+  MEDIA_QUEUES_URL,
+  SERVICE_META,
+  TONE,
+  describeUnreachable,
+  formatCountValue,
+  itemMeta,
+  refreshIntervalFor,
+} from './mediaQueueDisplay'
+
+const SERVICE_ICONS = {
+  sabnzbd: ArrowDownTrayIcon,
+  radarr: FilmIcon,
+  sonarr: TvIcon,
+  tdarr: CpuChipIcon,
+}
+
+const GRID = 'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4'
+
+async function fetchMediaQueues(url) {
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  return response.json()
+}
+
+// Module-level so SWR sees the same options object on every render.
+const SWR_OPTIONS = { refreshInterval: refreshIntervalFor }
 
 /**
- * Enhanced Queue Dashboard component with Material Design styling
+ * Download and processing queues (SABnzbd, Radarr, Sonarr, Tdarr) for the admin
+ * overview. Fetched in the browser after hydration, so the page never waits on
+ * a slow service; each card reports its own service's state.
  */
-const EnhancedQueueDashboard = ({ 
-  sabnzbdQueue, 
-  radarrQueue, 
-  sonarrQueue, 
-  tdarrQueue,
-  unsupportedQueues = []
-}) => {
-  const [showDetailedTdarr, setShowDetailedTdarr] = useState(false)
+export default function EnhancedQueueDashboard() {
+  // Read only data and error: SWR re-renders for the fields a component reads,
+  // so leaving isValidating alone keeps unchanged polls from re-rendering.
+  const { data, error } = useSWR(MEDIA_QUEUES_URL, fetchMediaQueues, SWR_OPTIONS)
+  const queues = data?.queues ?? []
+  const shown = queues.filter((queue) => queue.state !== 'not_configured')
+  const notConfigured = queues.filter((queue) => queue.state === 'not_configured')
+
+  let body
+  if (data) {
+    body =
+      shown.length > 0 ? (
+        <div className={GRID}>
+          {shown.map((queue) => (
+            <QueueCard key={queue.service} queue={queue} />
+          ))}
+        </div>
+      ) : (
+        <p className="text-sm text-gray-500">No queue integrations are configured.</p>
+      )
+  } else if (error) {
+    body = (
+      <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+        Couldn&apos;t load the queues ({error.message}). Retrying automatically.
+      </div>
+    )
+  } else {
+    body = LOADING_GRID
+  }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold text-gray-900">Media Processing Queues</h2>
-        <StatusBadge status="info" size="small">
-          Live Monitoring
-        </StatusBadge>
+    <section aria-labelledby="media-queues-heading" className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 id="media-queues-heading" className="text-xl font-bold text-gray-900">
+          Media Processing Queues
+        </h2>
+        {error ? (
+          <StatusBadge status="warning" size="small">
+            Reconnecting
+          </StatusBadge>
+        ) : data ? (
+          <StatusBadge status="info" size="small">
+            Live
+          </StatusBadge>
+        ) : null}
       </div>
 
-      {/* Queue cards grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
-        {/* SABNZBD Download Status */}
-        {sabnzbdQueue && (
-          <QueueCard
-            title="Download Status"
-            icon={
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M9 19l3 3m0 0l3-3m-3 3V10" />
-              </svg>
-            }
-            status={sabnzbdQueue?.queue?.status}
-            data={sabnzbdQueue.queue}
-            type="download"
-          />
-        )}
-        
-        {/* Radarr Queue */}
-        {radarrQueue && (
-          <QueueCard
-            title="Radarr Queue"
-            icon={
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 4V2a1 1 0 011-1h8a1 1 0 011 1v2m-9 0h10l1 14H6L7 4z" />
-              </svg>
-            }
-            data={radarrQueue}
-            type="radarr"
-          />
-        )}
-        
-        {/* Sonarr Queue */}
-        {sonarrQueue && (
-          <QueueCard
-            title="Sonarr Queue"
-            icon={
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-              </svg>
-            }
-            data={sonarrQueue}
-            type="sonarr"
-          />
-        )}
-        
-        {/* Tdarr Queue */}
-        {tdarrQueue && (
-          <QueueCard
-            title="Tdarr Queue"
-            icon={
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-              </svg>
-            }
-            data={tdarrQueue}
-            type="tdarr"
-            onToggleDetailed={() => setShowDetailedTdarr(!showDetailedTdarr)}
-            showDetailed={showDetailedTdarr}
-          />
-        )}
-      </div>
+      {error && data ? (
+        <p className="text-xs text-amber-700">Couldn&apos;t refresh ({error.message}); showing the last update.</p>
+      ) : null}
 
-      {/* Detailed Tdarr view when toggled */}
-      {tdarrQueue && showDetailedTdarr && (
-        <MaterialCard elevation="medium">
-          <MaterialCardHeader
-            title="Tdarr Detailed View"
-            subtitle="Complete transcoding queue information"
-            action={
-              <MaterialButton
-                variant="outlined"
-                size="small"
-                onClick={() => setShowDetailedTdarr(false)}
-              >
-                Collapse
-              </MaterialButton>
-            }
-          />
-          <MaterialCardContent>
-            <div className="text-sm text-gray-600">
-              Detailed Tdarr information would be rendered here...
-            </div>
-          </MaterialCardContent>
-        </MaterialCard>
-      )}
-    </div>
+      {body}
+
+      {notConfigured.length > 0 ? <NotConfiguredNote queues={notConfigured} /> : null}
+    </section>
   )
 }
 
-/**
- * Individual Queue Card Component
- */
-const QueueCard = ({ title, icon, status, data, type, onToggleDetailed, showDetailed }) => {
-  const getQueueStatus = () => {
-    if (type === 'download') {
-      return data?.status?.toLowerCase() === 'paused' ? 'warning' : 'success'
-    }
-    if (type === 'radarr' || type === 'sonarr') {
-      return data?.length > 0 ? 'warning' : 'success'
-    }
-    if (type === 'tdarr') {
-      return data?.fileArr?.length > 0 ? 'info' : 'success'
-    }
-    return 'neutral'
-  }
-
-  const getQueueCount = () => {
-    if (type === 'download') {
-      return data?.jobs?.length || 0
-    }
-    if (type === 'radarr' || type === 'sonarr') {
-      return data?.length || 0
-    }
-    if (type === 'tdarr') {
-      return data?.fileArr?.length || 0
-    }
-    return 0
-  }
-
-  const queueStatus = getQueueStatus()
-  const queueCount = getQueueCount()
-
+function QueueCard({ queue }) {
+  const meta = SERVICE_META[queue.service]
+  const Icon = SERVICE_ICONS[queue.service]
   return (
-    <MaterialCard elevation="low" className="h-full">
-      <MaterialCardHeader
-        title={title}
-        icon={icon}
-        action={
-          <div className="flex items-center space-x-2">
-            <StatusBadge
-              status={queueStatus}
-              size="small"
-              variant="soft"
-            >
-              {queueCount}
-            </StatusBadge>
-            {type === 'tdarr' && onToggleDetailed && (
-              <MaterialButton
-                variant="text"
-                size="small"
-                onClick={onToggleDetailed}
-              >
-                {showDetailed ? 'Less' : 'More'}
-              </MaterialButton>
-            )}
+    <MaterialCard elevation="low" className="flex flex-col">
+      <div className="flex items-start justify-between gap-3 border-b border-gray-100 px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Icon className="h-5 w-5 shrink-0 text-blue-600" aria-hidden="true" />
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-gray-900">
+              {meta.label}
+            </h3>
+            <p className="truncate text-xs text-gray-500">{meta.description}</p>
           </div>
-        }
-      />
-      <MaterialCardContent>
-        {type === 'download' && (
-          <DownloadQueueContent data={data} />
+        </div>
+        {queue.state === 'ok' ? (
+          <StatusBadge status={HEALTH[queue.health].badge} size="small" variant="soft" className="shrink-0">
+            {HEALTH[queue.health].label}
+          </StatusBadge>
+        ) : (
+          <StatusBadge status="error" size="small" variant="soft" className="shrink-0">
+            Unreachable
+          </StatusBadge>
         )}
-        {(type === 'radarr' || type === 'sonarr') && (
-          <ArrQueueContent data={data} type={type} />
-        )}
-        {type === 'tdarr' && (
-          <TdarrQueueContent data={data} />
-        )}
-      </MaterialCardContent>
+      </div>
+      <div className="flex-1 px-4 py-3">
+        {queue.state === 'ok' ? <QueueBody queue={queue} emptyText={meta.empty} /> : <UnreachableBody queue={queue} />}
+      </div>
     </MaterialCard>
   )
 }
 
-/**
- * Download Queue Content
- */
-const DownloadQueueContent = ({ data }) => {
-  if (!data?.jobs?.length) {
-    return (
-      <div className="text-center py-4">
-        <div className="text-gray-400 text-sm">No active downloads</div>
-      </div>
-    )
-  }
+function QueueBody({ queue, emptyText }) {
+  const { items, itemsTotal, counts, notices } = queue
+  const remaining = itemsTotal - items.length
 
   return (
     <div className="space-y-3">
-      {data.jobs.slice(0, 3).map((job, index) => (
-        <div key={index} className="bg-gray-50 rounded-md p-3">
-          <div className="font-medium text-sm text-gray-900 truncate">
-            {job.filename || 'Unknown'}
-          </div>
-          <div className="flex items-center justify-between mt-1">
-            <span className="text-xs text-gray-500">
-              {job.percentage}% complete
-            </span>
-            <span className="text-xs text-gray-500">
-              {job.size}
-            </span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-1 mt-2">
-            <div 
-              className="bg-blue-500 h-1 rounded-full transition-all duration-300"
-              style={{ width: `${job.percentage || 0}%` }}
-            />
-          </div>
-        </div>
-      ))}
-      {data.jobs.length > 3 && (
-        <div className="text-center text-xs text-gray-500">
-          +{data.jobs.length - 3} more items
-        </div>
-      )}
-    </div>
-  )
-}
-
-/**
- * Arr Queue Content (Radarr/Sonarr)
- */
-const ArrQueueContent = ({ data, type }) => {
-  if (!data?.length) {
-    return (
-      <div className="text-center py-4">
-        <div className="text-gray-400 text-sm">No active downloads</div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-3">
-      {data.slice(0, 3).map((item, index) => (
-        <div key={index} className="bg-gray-50 rounded-md p-3">
-          <div className="font-medium text-sm text-gray-900 truncate">
-            {item.title || 'Unknown'}
-          </div>
-          <div className="flex items-center justify-between mt-1">
-            <span className="text-xs text-gray-500">
-              {item.status || 'Processing'}
-            </span>
-            {item.estimatedCompletionTime && (
-              <span className="text-xs text-gray-500">
-                ETA: {new Date(item.estimatedCompletionTime).toLocaleTimeString()}
-              </span>
-            )}
-          </div>
-          {item.progress !== undefined && (
-            <div className="w-full bg-gray-200 rounded-full h-1 mt-2">
-              <div 
-                className="bg-orange-500 h-1 rounded-full transition-all duration-300"
-                style={{ width: `${item.progress || 0}%` }}
-              />
+      {counts.length > 0 ? (
+        <dl className="grid grid-cols-2 gap-x-3 gap-y-2">
+          {counts.map((count) => (
+            <div key={count.label} className="min-w-0">
+              <dt className="truncate text-xs text-gray-500">{count.label}</dt>
+              <dd className={`text-sm font-semibold ${TONE[count.tone].strong}`}>{formatCountValue(count)}</dd>
             </div>
-          )}
-        </div>
-      ))}
-      {data.length > 3 && (
-        <div className="text-center text-xs text-gray-500">
-          +{data.length - 3} more items
-        </div>
+          ))}
+        </dl>
+      ) : null}
+
+      {items.length > 0 ? (
+        <ul className="space-y-2">
+          {items.map((item) => (
+            <QueueItemRow key={item.id} item={item} />
+          ))}
+        </ul>
+      ) : (
+        <p className="py-2 text-center text-sm text-gray-400">{emptyText}</p>
       )}
+
+      {remaining > 0 ? <p className="text-center text-xs text-gray-500">+{remaining.toLocaleString()} more</p> : null}
+
+      {notices.length > 0 ? (
+        <ul className="space-y-1">
+          {notices.map((notice) => (
+            <li key={notice.message} className={`flex items-start gap-1.5 text-xs ${TONE[notice.tone].text}`}>
+              <ExclamationTriangleIcon className="mt-px h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span>{notice.message}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </div>
   )
 }
 
-/**
- * Tdarr Queue Content
- */
-const TdarrQueueContent = ({ data }) => {
-  if (!data?.fileArr?.length) {
-    return (
-      <div className="text-center py-4">
-        <div className="text-gray-400 text-sm">No files in queue</div>
-      </div>
-    )
-  }
+function QueueItemRow({ item }) {
+  const tone = TONE[item.tone]
+  const meta = itemMeta(item)
 
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-4 text-sm">
-        <div>
-          <span className="text-gray-500">Files:</span>
-          <span className="ml-2 font-medium">{data.fileArr.length}</span>
-        </div>
-        <div>
-          <span className="text-gray-500">Health:</span>
-          <span className="ml-2 font-medium">{data.healthCheck || 'Good'}</span>
-        </div>
+    <li className="rounded-md bg-gray-50 p-2.5">
+      <p className="truncate text-sm font-medium text-gray-900" title={item.title}>
+        {item.title}
+      </p>
+      {/* Wraps rather than truncates: the status is the part that matters, so
+          a long meta line drops below it instead of squeezing it. */}
+      <div className="mt-1 flex flex-wrap items-center justify-between gap-x-2 gap-y-0.5 text-xs">
+        <span className={`inline-flex items-center gap-1.5 ${tone.text}`}>
+          <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${tone.dot}`} aria-hidden="true" />
+          {item.status}
+        </span>
+        {meta ? <span className="text-gray-500">{meta}</span> : null}
       </div>
-      
-      {data.fileArr.slice(0, 2).map((file, index) => (
-        <div key={index} className="bg-gray-50 rounded-md p-3">
-          <div className="font-medium text-sm text-gray-900 truncate">
-            {file.fileName || 'Unknown'}
-          </div>
-          <div className="text-xs text-gray-500 mt-1">
-            {file.container || 'Unknown format'} • {file.fileSize || 'Unknown size'}
-          </div>
-        </div>
-      ))}
-      
-      {data.fileArr.length > 2 && (
-        <div className="text-center text-xs text-gray-500">
-          +{data.fileArr.length - 2} more files
+      {item.progress === null ? null : (
+        <div
+          className="mt-2 h-1 w-full overflow-hidden rounded-full bg-gray-200"
+          role="progressbar"
+          aria-label={`${item.title} progress`}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.floor(item.progress)}
+        >
+          <div className={`h-full rounded-full ${tone.bar} transition-[width] duration-300`} style={{ width: `${item.progress}%` }} />
         </div>
       )}
+      {item.detail ? (
+        <p
+          className={`mt-1 line-clamp-2 text-xs ${item.tone === 'warning' || item.tone === 'error' ? tone.text : 'text-gray-500'}`}
+          title={item.detail}
+        >
+          {item.detail}
+        </p>
+      ) : null}
+    </li>
+  )
+}
+
+function UnreachableBody({ queue }) {
+  const { message, hint } = describeUnreachable(queue)
+  return (
+    <div className="space-y-1 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+      <p className="text-sm font-medium">Can&apos;t reach {SERVICE_META[queue.service].label}</p>
+      <p>{message}</p>
+      {hint ? <p>{hint}</p> : null}
+      <p className="text-red-700">Retrying automatically.</p>
     </div>
   )
 }
 
-export default EnhancedQueueDashboard
+function NotConfiguredNote({ queues }) {
+  return (
+    <p className="text-xs text-gray-500">
+      Not configured:{' '}
+      {queues.map((queue, index) => (
+        <span key={queue.service}>
+          {index > 0 ? '; ' : null}
+          {SERVICE_META[queue.service].label} (set{' '}
+          {queue.missing.map((name, nameIndex) => (
+            <span key={name}>
+              {nameIndex > 0 ? ' and ' : null}
+              <code className="rounded bg-gray-100 px-1 py-0.5 font-mono text-[11px] text-gray-700">{name}</code>
+            </span>
+          ))}
+          )
+        </span>
+      ))}
+    </p>
+  )
+}
+
+function SkeletonCard() {
+  return (
+    <div className="animate-pulse rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+      <div className="flex items-center justify-between">
+        <div className="h-4 w-24 rounded bg-gray-200" />
+        <div className="h-4 w-12 rounded-full bg-gray-200" />
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="h-8 rounded bg-gray-100" />
+        <div className="h-8 rounded bg-gray-100" />
+      </div>
+      <div className="mt-3 h-12 rounded bg-gray-100" />
+    </div>
+  )
+}
+
+// Static, so it is created once. One placeholder per service keeps the grid
+// from jumping when the first response lands.
+const LOADING_GRID = (
+  <div className={GRID} role="status" aria-busy="true">
+    <span className="sr-only">Loading media queues…</span>
+    <SkeletonCard />
+    <SkeletonCard />
+    <SkeletonCard />
+    <SkeletonCard />
+  </div>
+)

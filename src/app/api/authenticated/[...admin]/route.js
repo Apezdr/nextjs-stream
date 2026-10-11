@@ -9,14 +9,7 @@ import { getActivePresenceForUsers } from '@src/utils/playbackPresence/database'
 import { attachPresenceToVideos } from '@src/utils/playbackPresence/attach'
 import { ObjectId } from 'mongodb'
 import { userQueries } from '@src/lib/userQueries'
-import {
-  fetchRadarrQueue,
-  fetchSABNZBDQueue,
-  fetchSonarrQueue,
-  fetchTdarrQueue,
-  processUserData,
-  storeSystemStatus,
-} from '@src/utils/admin_utils'
+import { processUserData, storeSystemStatus } from '@src/utils/admin_utils'
 import axios from 'axios'
 import chalk from 'chalk'
 import { getFileServerImportSettings } from '@src/utils/sync_db'
@@ -31,7 +24,6 @@ import { syncEventBus } from '@src/utils/sync/core/events'
 import { SyncEventType } from '@src/utils/sync/core/types'
 import { createDatabaseAdapter } from '@src/utils/sync/infrastructure'
 import { getSyncVerificationReport } from '@src/utils/sync_verification'
-import { handleQueueFetch } from '@src/utils/auth_utils'
 import { NotificationManager } from '@src/utils/notifications/NotificationManager.js'
 import { getFileServerData } from '@src/utils/fileServerDataService'
 import { revalidateTag } from 'next/cache'
@@ -284,34 +276,6 @@ export async function GET(request, props) {
         }
         break
 
-      case 'sabnzbd':
-        {
-          const sabnzbdQueue = await handleQueueFetch(fetchSABNZBDQueue, 'SABNZBD')
-          responseData = sabnzbdQueue
-        }
-        break
-
-      case 'radarr':
-        {
-          const radarrQueue = await handleQueueFetch(fetchRadarrQueue, 'Radarr')
-          responseData = radarrQueue
-        }
-        break
-
-      case 'sonarr':
-        {
-          const sonarrQueue = await handleQueueFetch(fetchSonarrQueue, 'Sonarr')
-          responseData = sonarrQueue
-        }
-        break
-
-      case 'tdarr':
-        {
-          const tdarrQueue = await handleQueueFetch(fetchTdarrQueue, 'Tdarr')
-          responseData = tdarrQueue
-        }
-        break
-        
       case 'servers':
         {
           responseData = extractServerEndpoints()

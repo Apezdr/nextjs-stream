@@ -16,18 +16,6 @@ import EnhancedTMDBStatus from './EnhancedTMDBStatus'
 import DashboardHeader from './DashboardHeader'
 import { MaterialCard, MaterialCardHeader, MaterialCardContent, MaterialButton } from './BaseComponents'
 
-// Module-level: stable reference, not recreated on each render
-async function queueFetcher(url) {
-  const response = await fetch(url)
-  if (response.status === 501) {
-    return { __unsupported: true }
-  }
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`)
-  }
-  return response.json()
-}
-
 function processLastSyncTimeData(lastSyncTimeData) {
   const lastSyncTime =
     typeof lastSyncTimeData === 'object'
@@ -73,19 +61,9 @@ export default function AdminOverviewPage({
 
   const [_processedUserData, setProcessedUserData] = useState(() => processedUserData)
 
-  // Single Set tracking which queues returned 501 (not supported)
-  const [unsupportedQueues, setUnsupportedQueues] = useState(() => new Set())
-
-  function markUnsupported(name) {
-    setUnsupportedQueues(prev => {
-      if (prev.has(name)) return prev // already tracked, skip re-render
-      const next = new Set(prev)
-      next.add(name)
-      return next
-    })
-  }
-
-  // SWR hooks — data used directly, no intermediate state or effects
+  // SWR hooks — data used directly, no intermediate state or effects.
+  // The media queues poll inside EnhancedQueueDashboard, so their updates
+  // re-render that panel rather than this whole page.
   const { data: lastSyncData, mutate: mutateLastSync } = useSWR(
     buildURL('/api/authenticated/admin/lastSynced'),
     fetcher,
@@ -98,36 +76,8 @@ export default function AdminOverviewPage({
     { refreshInterval: 2000 }
   )
 
-  const { data: sabnzbdData } = useSWR(
-    unsupportedQueues.has('sabnzbd') ? null : buildURL('/api/authenticated/admin/sabnzbd'),
-    queueFetcher,
-    { refreshInterval: 2000, onSuccess: (d) => { if (d?.__unsupported) markUnsupported('sabnzbd') } }
-  )
-
-  const { data: radarrData } = useSWR(
-    unsupportedQueues.has('radarr') ? null : buildURL('/api/authenticated/admin/radarr'),
-    queueFetcher,
-    { refreshInterval: 2000, onSuccess: (d) => { if (d?.__unsupported) markUnsupported('radarr') } }
-  )
-
-  const { data: sonarrData } = useSWR(
-    unsupportedQueues.has('sonarr') ? null : buildURL('/api/authenticated/admin/sonarr'),
-    queueFetcher,
-    { refreshInterval: 2000, onSuccess: (d) => { if (d?.__unsupported) markUnsupported('sonarr') } }
-  )
-
-  const { data: tdarrData } = useSWR(
-    unsupportedQueues.has('tdarr') ? null : buildURL('/api/authenticated/admin/tdarr'),
-    queueFetcher,
-    { refreshInterval: 2000, onSuccess: (d) => { if (d?.__unsupported) markUnsupported('tdarr') } }
-  )
-
   // Derived during render — no useState/useEffect needed
   const lastSyncTime = processLastSyncTimeData(lastSyncData ?? _lastSyncTime)
-  const sabnzbdQueue = sabnzbdData?.__unsupported ? null : sabnzbdData
-  const radarrQueue = radarrData?.__unsupported ? null : radarrData
-  const sonarrQueue = sonarrData?.__unsupported ? null : sonarrData
-  const tdarrQueue = tdarrData?.__unsupported ? null : tdarrData
 
   // Refreshes the user-management table after approve/limit actions.
   // (Media data is now managed under /admin/media, not on the dashboard.)
@@ -220,39 +170,9 @@ export default function AdminOverviewPage({
             {/* Media Processing Queues */}
             <MaterialCard elevation="medium">
               <MaterialCardContent>
-                <EnhancedQueueDashboard
-                  sabnzbdQueue={sabnzbdQueue}
-                  radarrQueue={radarrQueue}
-                  sonarrQueue={sonarrQueue}
-                  tdarrQueue={tdarrQueue}
-                  unsupportedQueues={[...unsupportedQueues]}
-                />
+                <EnhancedQueueDashboard />
               </MaterialCardContent>
             </MaterialCard>
-
-            {/* Unsupported Queues Warning */}
-            {unsupportedQueues.size > 0 && (
-              <MaterialCard variant="outlined" elevation="low">
-                <MaterialCardHeader
-                  title="Unsupported Integrations"
-                  icon={
-                    <svg className="w-6 h-6 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.998-.833-2.768 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
-                    </svg>
-                  }
-                />
-                <MaterialCardContent>
-                  <ul className="space-y-1 text-sm text-orange-700">
-                    {[...unsupportedQueues].map((queue) => (
-                      <li key={queue} className="flex items-center space-x-2">
-                        <span className="w-2 h-2 bg-orange-400 rounded-full"></span>
-                        <span>{queue} is not supported</span>
-                      </li>
-                    ))}
-                  </ul>
-                </MaterialCardContent>
-              </MaterialCard>
-            )}
           </div>
 
           {/* Activity & Management Section */}
