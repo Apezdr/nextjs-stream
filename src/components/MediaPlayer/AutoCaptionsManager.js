@@ -6,6 +6,7 @@ import { useAutoCaptionsProgress } from './AutoCaptionsProgressContext'
 
 const POLL_INTERVAL_MS = 3000
 const POLL_TIMEOUT_MS = 15 * 60 * 1000
+const REASSERT_WINDOW_MS = 2000
 
 /**
  * JIT auto-caption generation manager (port of the vidstack AutoCaptionTracks
@@ -32,6 +33,9 @@ export default function AutoCaptionsManager({ captions, onNonce }) {
   // Last label the user selected — used to re-assert selection if the
   // src-refresh knocks the track back to disabled.
   const desiredLabelRef = useRef(null)
+  // Deadline for the re-assert, armed only by the nonce bump (the one place
+  // the track src changes). Outside it, Off is the user's choice.
+  const reassertUntilRef = useRef(0)
 
   const selectedValue = captionsOptions?.value
   const selectedOption = captionsOptions?.options?.find((o) => o.value === selectedValue)
@@ -39,7 +43,7 @@ export default function AutoCaptionsManager({ captions, onNonce }) {
     selectedOption && selectedOption.value !== 'off' ? String(selectedOption.label) : null
 
   const callbacksRef = useRef({})
-  callbacksRef.current = { updateProgress, clearProgress, onNonce, captions }
+  callbacksRef.current = { updateProgress, clearProgress, onNonce, captions, selectedLabel }
 
   // Trigger generation when an auto-generated track is selected.
   useEffect(() => {
@@ -60,17 +64,19 @@ export default function AutoCaptionsManager({ captions, onNonce }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedLabel, captions])
 
-  // Belt-and-braces re-assert: if the selection snapped to Off while the
-  // user's chosen (already processed) track is still available — e.g. the
-  // engine reset the track mode when its src changed — re-select it.
+  // Belt-and-braces re-assert: if the selection snapped to Off right after
+  // the src refresh — the engine reset the track mode when its src changed —
+  // re-select it once. Any other Off came from the user and is respected.
   useEffect(() => {
     if (!captionsOptions) return
+    if (Date.now() > reassertUntilRef.current) return
     const desired = desiredLabelRef.current
     if (!desired || !processedLabels.current.has(desired)) return
     if (captionsOptions.value !== 'off') return
     const option = captionsOptions.options.find((o) => String(o.label) === desired)
     if (option) {
       console.log('[AutoCaptionsManager] re-asserting selection for', desired)
+      reassertUntilRef.current = 0
       captionsOptions.setValue(option.value)
     }
   }, [captionsOptions])
@@ -136,6 +142,11 @@ export default function AutoCaptionsManager({ captions, onNonce }) {
         // Mark processed BEFORE bumping the nonce so any selection churn from
         // the src refresh short-circuits in the trigger gate.
         processedLabels.current.add(label)
+        // Arm the re-assert only if the track is still selected: an Off picked
+        // while generation ran is the user's choice and must survive the bump.
+        if (callbacksRef.current.selectedLabel === label) {
+          reassertUntilRef.current = Date.now() + REASSERT_WINDOW_MS
+        }
         // Bump the nonce → PlayerMedia updates the <track> src → the browser
         // refetches the URL → now returns 200 VTT → cues populate.
         bumpNonce(label, String(Date.now()))
