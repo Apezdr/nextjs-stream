@@ -36,8 +36,10 @@ export async function GET(request) {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': DEFAULTS.CACHE_CONTROL,
+        // After the spread: createCacheHeaders also sets Cache-Control
+        // ('no-cache'), which used to overwrite this route's own max-age.
         ...createCacheHeaders(etag),
+        'Cache-Control': DEFAULTS.CACHE_CONTROL,
       },
     })
   } catch (err) {
@@ -62,8 +64,8 @@ export async function GET(request) {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'private, must-revalidate, max-age=10',
         ...createCacheHeaders(etag),
+        'Cache-Control': 'private, must-revalidate, max-age=10',
         'X-Status': 'error',
       },
     })
