@@ -12,7 +12,20 @@ const DEFAULTS = {
     http2: true,
     retry: { limit: 2, baseDelay: 200 },
   },
+  // The result is the same for every user, and each computation probes every
+  // file server and reads Mongo. Every signed-in tab polls system-status
+  // every 30 s and the (styled) layout's banner calls this on every render,
+  // so one computation serves all of them for this long.
+  CACHE_TTL: 15_000, // ms
 }
+
+/**
+ * Worst-level ranking. `unknown` (a file server that did not answer) sits
+ * above `normal` but below every load level, which is how StatusBannerClient
+ * already ranks it: a load level on any server names that server, and only
+ * when there is none does `unknown` become the overall level.
+ */
+const LEVELS = ['normal', 'unknown', 'elevated', 'heavy', 'critical']
 
 /** Wrap any promise to reject after ms with the given message */
 function withTimeout(promise, ms, message) {
@@ -51,9 +64,13 @@ async function fetchAllStatuses(servers) {
     withTimeout(fetchOneStatus(server), DEFAULTS.SERVER_TIMEOUT, 'Server timeout')
   )
   const settled = await Promise.allSettled(tasks)
-  return settled.map((r, i) =>
-    r.status === 'fulfilled' ? r.value : buildStatus(servers[i], null, {}, r.reason.message)
-  )
+  return settled.map((r, i) => {
+    if (r.status === 'fulfilled') return r.value
+    // Every signed-in user receives this list, and a transport error can name
+    // the internal endpoint (host and port). The reason stays in the log.
+    console.warn(`System status: ${servers[i].id} did not answer:`, r.reason?.message)
+    return buildStatus(servers[i], null, {}, 'Server unreachable')
+  })
 }
 
 async function fetchOneStatus(server) {
@@ -75,12 +92,32 @@ async function fetchOneStatus(server) {
   return buildStatus(server, responseData, resp)
 }
 
+let cachedStatus = null // { value, expiresAt }
+let inFlight = null
+
 /**
  * Gets processed system status with proper incident handling
- * This function encapsulates the logic from the API route for reuse
+ * This function encapsulates the logic from the API route for reuse.
+ * Cached for DEFAULTS.CACHE_TTL; callers arriving while it is computed share
+ * that computation.
  * @returns {Promise<Object>} Processed system status data
  */
 export async function getProcessedSystemStatus() {
+  if (cachedStatus && Date.now() < cachedStatus.expiresAt) return cachedStatus.value
+  if (!inFlight) {
+    inFlight = computeProcessedSystemStatus()
+      .then((value) => {
+        cachedStatus = { value, expiresAt: Date.now() + DEFAULTS.CACHE_TTL }
+        return value
+      })
+      .finally(() => {
+        inFlight = null
+      })
+  }
+  return inFlight
+}
+
+async function computeProcessedSystemStatus() {
   const servers = getAllServers()
 
   const normalizeServerStatusList = (serversValue) => {
@@ -122,10 +159,12 @@ export async function getProcessedSystemStatus() {
           minDisplayUntil: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // 10 minutes from now
         }
       } else {
-        // No active incident, use normal server status
+        // No active incident: the file server's own status. A server that did
+        // not answer has no status, and buildStatus already marked it
+        // 'unknown' — keep that rather than reporting it as healthy.
         processedServer = {
           ...processedServer,
-          level: serverStatus.status || 'normal',
+          level: serverStatus.status || serverStatus.level || 'unknown',
           isIncidentActive: false,
         }
       }
@@ -166,10 +205,9 @@ export async function getProcessedSystemStatus() {
       return serverStatus
     })
 
-    // Pick the worst level - include all possible status levels
-    const levels = ['normal', 'elevated', 'heavy', 'critical']
+    // Pick the worst level (see LEVELS for where 'unknown' ranks)
     const worst = merged.reduce(
-      (w, s) => (levels.indexOf(s.level || 'normal') > levels.indexOf(w) ? s.level : w),
+      (w, s) => (LEVELS.indexOf(s.level || 'normal') > LEVELS.indexOf(w) ? s.level : w),
       'normal'
     )
     

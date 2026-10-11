@@ -467,6 +467,14 @@ export function getSystemStatusMessage(level, statuses) {
   if (level === 'heavy') {
     return 'System is experiencing heavy load. Performance may be affected.';
   }
-  
+
+  if (level === 'unknown') {
+    const unreachableServers = statuses
+      .filter(s => s.level === 'unknown')
+      .map(s => s.serverName)
+      .join(', ');
+    return `Can't reach ${unreachableServers}. Titles stored there may not play right now.`;
+  }
+
   return 'All systems operational.';
 }
