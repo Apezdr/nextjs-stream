@@ -66,7 +66,7 @@ ENV OTEL_TRACES_SAMPLER="always_on"
 ENV NEXT_OTEL_VERBOSE="0"
 # ============================================================================
 
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat tini
 RUN apk add --no-cache wget tar && \
     wget -O /tmp/dotenvx.tar.gz https://github.com/dotenvx/dotenvx/releases/download/v1.52.0/dotenvx-1.52.0-linux-x86_64.tar.gz && \
     tar -xzf /tmp/dotenvx.tar.gz -C /usr/local/bin/ && \
@@ -99,6 +99,18 @@ RUN dotenvx ext prebuild
 EXPOSE 3000
 
 ENV PORT=3000
+
+# Liveness only: better-auth's /ok touches no database. /api/status would turn
+# a Mongo outage into an "unhealthy" app. Docker reports the state (docker ps,
+# compose depends_on); with restart: always it does not restart on it.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+  CMD wget -q -O /dev/null "http://127.0.0.1:${PORT:-3000}/api/auth/ok" || exit 1
+
+# tini as PID 1, signalling the whole process group (-g). Without it
+# dotenvx is PID 1, `docker stop`'s SIGTERM may never reach node, and every
+# stop waits out the 10 s grace period for SIGKILL. Next's standalone server
+# exits on SIGTERM by itself once it receives one.
+ENTRYPOINT ["/sbin/tini", "-g", "--"]
 
 # server.js is created by next build from the standalone output
 # https://nextjs.org/docs/pages/api-reference/config/next-config-js/output
