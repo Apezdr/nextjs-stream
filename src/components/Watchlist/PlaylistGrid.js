@@ -6,6 +6,8 @@ import WatchlistCard from './WatchlistCard'
 import { GridItemSkeleton, WATCHLIST_GRID_CLASSES } from './WatchlistSkeletons'
 import { classNames } from '@src/utils'
 import { useNavigation } from '@src/contexts/NavigationContext'
+import useArrStatus from '@components/Arr/useArrStatus'
+import { arrKey } from '@components/Arr/arrApi'
 
 export default function PlaylistGrid({
   items,
@@ -37,6 +39,10 @@ export default function PlaylistGrid({
   
   // Get navigation state for grid coordination
   const { isNavigating: globalIsNavigating, targetUrl } = useNavigation()
+
+  // Admins: where each title stands in Radarr/Sonarr, one request per page
+  const isAdmin = user?.role === 'admin' || user?.permissions?.includes('Admin')
+  const { statuses: arrStatuses, services: arrServices, refresh: refreshArrStatus } = useArrStatus(items, isAdmin)
 
   const handleDragStart = useCallback((e, item, index) => {
     setDraggedItem(item)
@@ -311,6 +317,9 @@ export default function PlaylistGrid({
                 user={user}
                 selectionActive={selectionActive}
                 reorder={reorderFor(item, index)}
+                arrStatus={arrStatuses?.[arrKey(item)] ?? null}
+                arrServices={arrServices}
+                onArrChanged={refreshArrStatus}
               />
           </motion.div>
         )})}
@@ -415,6 +424,9 @@ export default function PlaylistGrid({
               user={user}
               selectionActive={selectionActive}
               reorder={reorderFor(item, index)}
+              arrStatus={arrStatuses?.[arrKey(item)] ?? null}
+              arrServices={arrServices}
+              onArrChanged={refreshArrStatus}
             />
             </motion.div>
           )

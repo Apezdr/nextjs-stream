@@ -11,6 +11,9 @@ import { useNavigation } from '@src/contexts/NavigationContext'
 import ItemActionSheet from './ItemActionSheet'
 import { prefersSheet } from './BottomSheet'
 import useOverlayState from './useOverlayState'
+import ArrDialog from '@components/Arr/ArrDialog'
+import ArrStatusChip, { describeArrStatus } from '@components/Arr/ArrStatusChip'
+import { arrServiceName, isArrMediaType } from '@components/Arr/arrApi'
 
 export default function WatchlistCard({
   item,
@@ -28,7 +31,10 @@ export default function WatchlistCard({
   canEditPlaylist = true,
   user = null,
   selectionActive = false,
-  reorder = null
+  reorder = null,
+  arrStatus = null,
+  arrServices = null,
+  onArrChanged
 }) {
   const [showActions, setShowActions] = useState(false)
   const {
@@ -50,6 +56,21 @@ export default function WatchlistCard({
   
   // Check if user is admin
   const isAdmin = user?.role === 'admin' || user?.permissions?.includes('Admin')
+
+  // Admin: send the title to Radarr (movies) or Sonarr (shows), or manage it
+  // there. Hidden once the status check says the service isn't set up; before
+  // that answer arrives, the dialog explains instead.
+  const [showArrDialog, setShowArrDialog] = useState(false)
+  const arrService = isArrMediaType(item.mediaType) && item.tmdbId ? arrServiceName(item.mediaType) : null
+  const canUseArr =
+    isAdmin && arrService !== null && arrServices?.[item.mediaType === 'movie' ? 'radarr' : 'sonarr'] !== 'not_configured'
+  const arrMenuLabel =
+    arrStatus && arrStatus.state !== 'absent' ? `Manage in ${arrService}…` : `Send to ${arrService}…`
+  const handleArrChanged = useCallback(() => {
+    onArrChanged?.()
+    // The add marks the title Coming Soon, which comes with the list.
+    onRefresh?.()
+  }, [onArrChanged, onRefresh])
 
   // Enhanced navigation handler using navigation context
   const handleNavigationClick = useCallback((url) => {
@@ -227,7 +248,17 @@ export default function WatchlistCard({
       onRemove={() => closeSheetThen(handleRemove)}
       onMarkComingSoon={() => closeSheetThen(() => setShowComingSoonModal(true))}
       onRemoveComingSoon={() => closeSheetThen(handleRemoveComingSoon)}
+      arrActionLabel={canUseArr ? arrMenuLabel : null}
+      onOpenArr={() => closeSheetThen(() => setShowArrDialog(true))}
     />
+  )
+
+  const arrDialog = showArrDialog && (
+    <ArrDialog item={item} onClose={() => setShowArrDialog(false)} onChanged={handleArrChanged} />
+  )
+
+  const arrChip = isAdmin && describeArrStatus(arrStatus, { isAvailable: Boolean(item.url) }) && (
+    <ArrStatusChip status={arrStatus} mediaType={item.mediaType} isAvailable={Boolean(item.url)} />
   )
 
   // Coming Soon Modal (Admin only) - Render using portal to escape card container.
@@ -416,6 +447,7 @@ export default function WatchlistCard({
                     External
                   </span>
                 )}
+                {arrChip}
               </div>
 
               {item.overview && (
@@ -474,6 +506,21 @@ export default function WatchlistCard({
                           </button>
                         </>
                       )}
+                      {/* Admin-only: Radarr/Sonarr */}
+                      {canUseArr && (
+                        <>
+                          <div className="border-t border-gray-600 my-1"></div>
+                          <button
+                            onClick={() => {
+                              setShowArrDialog(true)
+                              setShowActions(false)
+                            }}
+                            className="block w-full text-left px-4 py-2 text-sm text-indigo-300 hover:bg-gray-600"
+                          >
+                            {arrMenuLabel}
+                          </button>
+                        </>
+                      )}
                       {/* Admin-only Coming Soon controls - only for unavailable items */}
                       {isAdmin && !item.isAvailable && (
                         <>
@@ -510,6 +557,7 @@ export default function WatchlistCard({
         </div>
 
         {comingSoonModal}
+        {arrDialog}
         {actionSheet}
       </motion.div>
     )
@@ -694,6 +742,7 @@ export default function WatchlistCard({
             </div>
           )}
         </div>
+        {arrChip && <div className="mt-2">{arrChip}</div>}
       </div>
 
       {/* Touch, while selecting: a tap anywhere on the card toggles it, the
@@ -739,6 +788,21 @@ export default function WatchlistCard({
                 </button>
               </>
             )}
+            {/* Admin-only: Radarr/Sonarr */}
+            {canUseArr && (
+              <>
+                <div className="border-t border-gray-600 my-1"></div>
+                <button
+                  onClick={() => {
+                    setShowArrDialog(true)
+                    setShowActions(false)
+                  }}
+                  className="block w-full text-left px-4 py-2 text-sm text-indigo-300 hover:bg-gray-600"
+                >
+                  {arrMenuLabel}
+                </button>
+              </>
+            )}
             {/* Admin-only Coming Soon controls - only for unavailable items */}
             {isAdmin && !item.isAvailable && (
               <>
@@ -771,6 +835,7 @@ export default function WatchlistCard({
       )}
 
       {comingSoonModal}
+      {arrDialog}
 
       {actionSheet}
     </motion.div>
