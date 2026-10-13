@@ -296,15 +296,15 @@ export async function refreshPending(config: ArrConfig, seriesId: number): Promi
 }
 
 /**
- * Monitors a scope of a show Sonarr has, then searches it now. Monitoring is
- * only ever added, never taken away, and comes first so RSS keeps looking for
- * whatever the search doesn't find.
+ * Monitors a scope of a show Sonarr has (the series too), and says which
+ * episodes and seasons it covers. Monitoring is only ever added, never taken
+ * away. Refuses a scope with no episodes Sonarr knows.
  */
-export async function monitorAndSearch(
+export async function applyMonitoring(
   config: ArrConfig,
   seriesId: number,
   scope: EpisodeScope
-): Promise<{ episodes: number }> {
+): Promise<{ wanted: EpisodeSummary[]; seasonNumbers: number[] }> {
   const [series, episodes] = await Promise.all([getSeries(config, seriesId), listEpisodes(config, seriesId)])
   const seasons = toSeasons(series.seasons)
 
@@ -340,7 +340,19 @@ export async function monitorAndSearch(
   if (unmonitored.length > 0) {
     await arrRequest(config, 'PUT', '/api/v3/episode/monitor', { data: { episodeIds: unmonitored, monitored: true } })
   }
+  return { wanted, seasonNumbers }
+}
 
+/**
+ * Monitors a scope of a show Sonarr has, then searches it now. Monitoring
+ * comes first, so RSS keeps looking for whatever the search doesn't find.
+ */
+export async function monitorAndSearch(
+  config: ArrConfig,
+  seriesId: number,
+  scope: EpisodeScope
+): Promise<{ episodes: number }> {
+  const { wanted, seasonNumbers } = await applyMonitoring(config, seriesId, scope)
   const commands =
     scope.type === 'all'
       ? [{ name: 'SeriesSearch', seriesId }]

@@ -133,20 +133,35 @@ export async function addMovie(config: ArrConfig, movie: ArrRecord, request: Add
   return added
 }
 
-/** Changes fields on a library movie: Radarr's PUT takes the whole resource back. */
-export async function updateMovie(
-  config: ArrConfig,
-  movieId: number,
-  changes: { qualityProfileId?: number; monitored?: boolean }
-) {
+async function getMovie(config: ArrConfig, movieId: number) {
   const movie = await arrRequest<unknown>(config, 'GET', `/api/v3/movie/${movieId}`)
   if (!isRecord(movie) || !hasId(movie)) throw new ArrError('invalid_response')
-  const updated = await arrRequest<unknown>(config, 'PUT', `/api/v3/movie/${movieId}`, {
+  return movie
+}
+
+/** Radarr's PUT takes the whole resource back; files never move. */
+async function putMovie(config: ArrConfig, movie: ArrRecord & { id: number }, changes: ArrRecord) {
+  const updated = await arrRequest<unknown>(config, 'PUT', `/api/v3/movie/${movie.id}`, {
     params: { moveFiles: false },
     data: { ...movie, ...changes },
   })
   forgetMovie(config, movie.tmdbId)
   return isRecord(updated) && hasId(updated) ? updated : { ...movie, ...changes }
+}
+
+/** Changes fields on a library movie. */
+export async function updateMovie(
+  config: ArrConfig,
+  movieId: number,
+  changes: { qualityProfileId?: number; monitored?: boolean }
+) {
+  return putMovie(config, await getMovie(config, movieId), changes)
+}
+
+/** Monitors a library movie, unless it already is. */
+export async function ensureMovieMonitored(config: ArrConfig, movieId: number) {
+  const movie = await getMovie(config, movieId)
+  if (movie.monitored !== true) await putMovie(config, movie, { monitored: true })
 }
 
 /** Queues Radarr's automatic search: it grabs the best release its profile allows. */

@@ -8,6 +8,7 @@ import { classNames } from '@src/utils'
 import { folderNameProblem } from '@src/lib/arr/folders'
 import { addArrTitle, arrServiceName, fetchArrTitle, searchArrTitle, updateArrTitle } from './arrApi'
 import EpisodePicker, { bySeasonOrder, seasonLabel } from './EpisodePicker'
+import ReleaseStep from './ReleaseStep'
 
 const REASON_TEXT = {
   timeout: 'it timed out',
@@ -198,7 +199,7 @@ function AddForm({ data, item, onAdded, onCancel }) {
   const [availability, setAvailability] = useState('released')
   const [scopeType, setScopeType] = useState('all')
   const [seasons, setSeasons] = useState(() => new Set())
-  const [search, setSearch] = useState(true)
+  const [after, setAfter] = useState('auto')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
 
@@ -210,7 +211,8 @@ function AddForm({ data, item, onAdded, onCancel }) {
       : null
   const canSubmit =
     profileId !== null && !folderProblem && !folderTaken && (scopeType !== 'seasons' || seasons.size > 0) && !submitting
-  const searchNow = scopeType !== 'episodes' && search
+  // Episodes are picked before anything is searched for them.
+  const searchNow = after === 'auto' && scopeType !== 'episodes'
   const freeSpace = formatFreeSpace(options.rootFolders.find((root) => root.path === rootFolderPath)?.freeSpaceBytes)
 
   const submit = async (event) => {
@@ -234,7 +236,11 @@ function AddForm({ data, item, onAdded, onCancel }) {
     try {
       const result = await addArrTitle(item, body)
       rememberProfile(service, profileId)
-      onAdded(result, { search: searchNow })
+      onAdded(result, {
+        after,
+        search: searchNow,
+        defaultSeason: scopeType === 'seasons' && seasons.size > 0 ? Math.min(...seasons) : undefined,
+      })
     } catch (failure) {
       setError(failure.message)
       setSubmitting(false)
@@ -335,22 +341,40 @@ function AddForm({ data, item, onAdded, onCancel }) {
         />
       )}
 
-      {scopeType !== 'episodes' && (
-        <label className="flex cursor-pointer items-start gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={search}
-            onChange={(event) => setSearch(event.target.checked)}
-            className={classNames(checkboxClass, 'mt-0.5')}
-          />
-          <span>
-            <span className="font-medium text-gray-100">Search now</span>
-            <span className="block text-xs text-gray-400">
-              Otherwise {name} waits for new releases to turn up.
+      <fieldset className="space-y-2">
+        <legend className="mb-1 text-sm font-medium text-gray-200">After adding</legend>
+        {[
+          {
+            value: 'auto',
+            label: 'Search automatically',
+            hint:
+              scopeType === 'episodes'
+                ? 'Pick the episodes next; Sonarr then grabs the best release for each.'
+                : `${name} grabs the best release its quality profile allows.`,
+          },
+          {
+            value: 'manual',
+            label: 'Pick a release myself',
+            hint: `Search ${name}’s indexers now and choose from what they find.`,
+          },
+          { value: 'later', label: 'Don’t search yet', hint: `${name} waits for new releases to turn up.` },
+        ].map((choice) => (
+          <label key={choice.value} className="flex cursor-pointer items-start gap-2 text-sm">
+            <input
+              type="radio"
+              name="arr-after"
+              value={choice.value}
+              checked={after === choice.value}
+              onChange={() => setAfter(choice.value)}
+              className={classNames(radioClass, 'mt-0.5')}
+            />
+            <span>
+              <span className="font-medium text-gray-100">{choice.label}</span>
+              <span className="block text-xs text-gray-400">{choice.hint}</span>
             </span>
-          </span>
-        </label>
-      )}
+          </label>
+        ))}
+      </fieldset>
 
       {!catalog.inLibrary && (
         <p className="text-xs text-gray-400">Everyone with this on a watchlist will see it as Coming Soon.</p>
@@ -367,7 +391,13 @@ function AddForm({ data, item, onAdded, onCancel }) {
           Cancel
         </button>
         <button type="submit" disabled={!canSubmit} className={primaryButton}>
-          {submitting ? 'Adding…' : scopeType === 'episodes' ? 'Add, then pick episodes' : `Add to ${name}`}
+          {submitting
+            ? 'Adding…'
+            : after === 'manual'
+              ? 'Add, then pick a release'
+              : after === 'auto' && scopeType === 'episodes'
+                ? 'Add, then pick episodes'
+                : `Add to ${name}`}
         </button>
       </div>
     </form>
@@ -389,7 +419,10 @@ function entrySummary(entry, download, service) {
   return entry.monitored ? `${onDisk}.` : `Not monitored. ${onDisk}.`
 }
 
-function ManagePanel({ data, item, onChanged, onClose }) {
+const pickButton =
+  'rounded-md px-4 py-2 text-sm font-medium text-indigo-200 ring-1 ring-inset ring-indigo-400/50 hover:bg-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-50'
+
+function ManagePanel({ data, item, onChanged, onClose, onPickRelease }) {
   const { service, entry, options, download } = data
   const name = arrServiceName(item.mediaType)
   const [savedProfileId, setSavedProfileId] = useState(entry.qualityProfileId)
@@ -469,9 +502,12 @@ function ManagePanel({ data, item, onChanged, onClose }) {
       </Field>
 
       {service === 'radarr' ? (
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-wrap justify-end gap-2">
           <button type="button" onClick={onClose} className={secondaryButton}>
             Close
+          </button>
+          <button type="button" onClick={() => onPickRelease()} disabled={busy !== null} className={pickButton}>
+            Pick a release…
           </button>
           <button type="button" onClick={() => search({ type: 'all' })} disabled={busy !== null} className={primaryButton}>
             {busy === 'search' ? 'Starting search…' : entry.hasFile ? 'Search for an upgrade' : 'Search now'}
@@ -495,9 +531,17 @@ function ManagePanel({ data, item, onChanged, onClose }) {
               onSubmit={(episodeIds) => search({ type: 'episodes', episodeIds })}
             />
           ) : (
-            <div className="flex justify-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
               <button type="button" onClick={onClose} className={secondaryButton}>
                 Close
+              </button>
+              <button
+                type="button"
+                onClick={() => onPickRelease(scopeType === 'seasons' && seasons.size > 0 ? Math.min(...seasons) : undefined)}
+                disabled={busy !== null}
+                className={pickButton}
+              >
+                Pick a release…
               </button>
               <button
                 type="button"
@@ -542,7 +586,9 @@ export default function ArrDialog({ item, onClose, onChanged }) {
   const name = arrServiceName(ref.mediaType)
   const [title, setTitle] = useState({ status: 'loading' })
   const [attempt, setAttempt] = useState(0)
-  const [pickingEpisodes, setPickingEpisodes] = useState(false)
+  // null, { kind: 'episodes' } after a show's episodes-only add, or
+  // { kind: 'releases', defaultSeason } to pick a release by hand.
+  const [step, setStep] = useState(null)
   const [searching, setSearching] = useState(false)
 
   useEffect(() => {
@@ -563,10 +609,14 @@ export default function ArrDialog({ item, onClose, onChanged }) {
 
   const changed = () => onChanged?.()
 
-  const handleAdded = (result, { search }) => {
+  const handleAdded = (result, { after, search, defaultSeason }) => {
     changed()
-    if (result.next === 'choose_episodes') {
-      setPickingEpisodes(true)
+    if (after === 'manual') {
+      setStep({ kind: 'releases', defaultSeason })
+      return
+    }
+    if (after === 'auto' && result.next === 'choose_episodes') {
+      setStep({ kind: 'episodes' })
       return
     }
     toast.success(search ? `Added to ${name}. Searching now.` : `Added to ${name}.`)
@@ -590,7 +640,9 @@ export default function ArrDialog({ item, onClose, onChanged }) {
   const year = data?.state === 'absent' ? data.candidate.year : null
 
   let body
-  if (pickingEpisodes) {
+  if (step?.kind === 'releases') {
+    body = <ReleaseStep item={ref} defaultSeason={step.defaultSeason} onGrabbed={changed} onDone={onClose} />
+  } else if (step?.kind === 'episodes') {
     body = (
       <div className="space-y-3">
         <p className="text-sm text-gray-300">Added to Sonarr with nothing monitored. Pick the episodes to get.</p>
@@ -630,8 +682,17 @@ export default function ArrDialog({ item, onClose, onChanged }) {
   } else if (data.state === 'absent') {
     body = <AddForm data={data} item={ref} onAdded={handleAdded} onCancel={onClose} />
   } else {
-    body = <ManagePanel data={data} item={ref} onChanged={changed} onClose={onClose} />
+    body = (
+      <ManagePanel
+        data={data}
+        item={ref}
+        onChanged={changed}
+        onClose={onClose}
+        onPickRelease={(defaultSeason) => setStep({ kind: 'releases', defaultSeason })}
+      />
+    )
   }
+  const picking = step?.kind === 'releases'
 
   return (
     <Dialog open onClose={onClose} className="relative z-50">
@@ -644,7 +705,9 @@ export default function ArrDialog({ item, onClose, onChanged }) {
           <DialogPanel
             transition
             className={classNames(
-              'w-full max-w-lg rounded-t-2xl bg-gray-800 text-gray-100 shadow-2xl ring-1 ring-white/10 sm:rounded-xl',
+              'w-full rounded-t-2xl bg-gray-800 text-gray-100 shadow-2xl ring-1 ring-white/10 sm:rounded-xl',
+              // Release titles are long: the picker gets the room.
+              picking ? 'max-w-3xl' : 'max-w-lg',
               'pb-[max(0.5rem,env(safe-area-inset-bottom))]',
               'transition duration-200 ease-out data-[closed]:translate-y-6 data-[closed]:opacity-0'
             )}
@@ -653,7 +716,7 @@ export default function ArrDialog({ item, onClose, onChanged }) {
               <div className="min-w-0 flex-1">
                 <DialogTitle className="truncate text-base font-semibold text-white">{item.title}</DialogTitle>
                 <p className="text-sm text-gray-400">
-                  {data?.state === 'present' ? `In ${name}` : `Send to ${name}`}
+                  {picking ? `Pick a release · ${name}` : data?.state === 'present' ? `In ${name}` : `Send to ${name}`}
                   {year ? ` · ${year}` : ''}
                 </p>
               </div>

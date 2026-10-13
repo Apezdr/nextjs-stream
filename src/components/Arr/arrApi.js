@@ -54,6 +54,15 @@ export const searchArrTitle = (item, scope) =>
 
 export const fetchArrEpisodes = (item) => request(titleUrl(item, '/episodes'))
 
+/** Starts the service's interactive search: a movie (target null), or a show's { seasonNumber } or { episodeId }. */
+export const startReleaseSearch = (item, target) =>
+  request(titleUrl(item, '/releases'), { method: 'POST', body: JSON.stringify(target ?? {}) })
+
+export const fetchReleaseSearch = (searchId) => request(`${BASE}/releases/${searchId}`)
+
+export const grabRelease = (searchId, releaseId) =>
+  request(`${BASE}/releases/${searchId}/grab`, { method: 'POST', body: JSON.stringify({ releaseId }) })
+
 /** Matches the route's MAX_STATUS_ITEMS. */
 const MAX_STATUS_ITEMS = 200
 

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ChevronRightIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 import { fetchArrEpisodes } from './arrApi'
@@ -14,19 +14,29 @@ export const seasonLabel = (seasonNumber) => (seasonNumber === 0 ? 'Specials' : 
 /** Regular seasons in order, specials last: they're rarely what someone is after. */
 export const bySeasonOrder = (a, b) => (a === 0) - (b === 0) || a - b
 
-const pad = (number) => String(number).padStart(2, '0')
+export const episodeCode = (episode) =>
+  `S${String(episode.seasonNumber).padStart(2, '0')}E${String(episode.episodeNumber).padStart(2, '0')}`
+
+/** [seasonNumber, episodes][] in season order. */
+export function groupBySeason(episodes) {
+  const groups = new Map()
+  for (const episode of episodes) {
+    const group = groups.get(episode.seasonNumber)
+    if (group) group.push(episode)
+    else groups.set(episode.seasonNumber, [episode])
+  }
+  return [...groups.entries()].sort(([a], [b]) => bySeasonOrder(a, b))
+}
 
 /**
- * Pick episodes from Sonarr's own list for a show (TMDB numbers some shows
- * differently). A show Sonarr has just added can't be picked from until its
- * first refresh is over: that refresh applies the add's monitoring, which
- * would undo an earlier pick. So this waits for the list to be `ready`.
+ * Sonarr's episode list for a show (TMDB numbers some shows differently). A
+ * show Sonarr has just added isn't ready until its first refresh is over: that
+ * refresh applies the add's monitoring, which would undo anything done to its
+ * episodes before. So this asks again until the list is `ready`.
  */
-export default function EpisodePicker({ item, submitting = false, onSubmit }) {
+export function useSonarrEpisodes(item) {
   const [load, setLoad] = useState({ status: 'loading', episodes: [], message: null })
   const [attempt, setAttempt] = useState(0)
-  const [selected, setSelected] = useState(() => new Set())
-  const [expanded, setExpanded] = useState(() => new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -55,15 +65,54 @@ export default function EpisodePicker({ item, submitting = false, onSubmit }) {
     }
   }, [item, attempt])
 
-  const seasons = useMemo(() => {
-    const groups = new Map()
-    for (const episode of load.episodes) {
-      const group = groups.get(episode.seasonNumber)
-      if (group) group.push(episode)
-      else groups.set(episode.seasonNumber, [episode])
-    }
-    return [...groups.entries()].sort(([a], [b]) => bySeasonOrder(a, b))
-  }, [load.episodes])
+  const retry = useCallback(() => {
+    setLoad({ status: 'loading', episodes: [], message: null })
+    setAttempt((count) => count + 1)
+  }, [])
+
+  return { ...load, retry }
+}
+
+/** What to show while useSonarrEpisodes isn't ready; null once it is. */
+export function EpisodeLoadState({ load }) {
+  if (load.status === 'loading' || load.status === 'waiting') {
+    return (
+      <p role="status" className="flex items-center gap-2 py-6 text-sm text-gray-300">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-gray-500 border-t-indigo-400" aria-hidden="true" />
+        {load.status === 'waiting' ? 'Sonarr is still loading this show’s episodes…' : 'Loading episodes…'}
+      </p>
+    )
+  }
+  if (load.status === 'slow' || load.status === 'error') {
+    return (
+      <div className="space-y-3 py-4 text-sm">
+        <p className={load.status === 'error' ? 'text-red-400' : 'text-gray-300'} role="alert">
+          {load.status === 'error'
+            ? load.message
+            : 'Sonarr is taking longer than usual to load the episodes. The show is added; try again in a minute.'}
+        </p>
+        <button
+          type="button"
+          onClick={load.retry}
+          className="rounded-md bg-gray-700 px-3 py-1.5 font-medium text-gray-100 hover:bg-gray-600"
+        >
+          Try again
+        </button>
+      </div>
+    )
+  }
+  if (load.episodes.length === 0) {
+    return <p className="py-4 text-sm text-gray-300">Sonarr doesn’t list any episodes for this show yet.</p>
+  }
+  return null
+}
+
+/** Pick episodes from Sonarr's own list for a show, then submit them. */
+export default function EpisodePicker({ item, submitting = false, onSubmit }) {
+  const load = useSonarrEpisodes(item)
+  const [selected, setSelected] = useState(() => new Set())
+  const [expanded, setExpanded] = useState(() => new Set())
+  const seasons = useMemo(() => groupBySeason(load.episodes), [load.episodes])
 
   const toggleEpisode = (id) =>
     setSelected((previous) => {
@@ -92,40 +141,8 @@ export default function EpisodePicker({ item, submitting = false, onSubmit }) {
       return next
     })
 
-  if (load.status === 'loading' || load.status === 'waiting') {
-    return (
-      <p role="status" className="flex items-center gap-2 py-6 text-sm text-gray-300">
-        <span className="h-4 w-4 animate-spin rounded-full border-2 border-gray-500 border-t-indigo-400" aria-hidden="true" />
-        {load.status === 'waiting' ? 'Sonarr is still loading this show’s episodes…' : 'Loading episodes…'}
-      </p>
-    )
-  }
-
-  if (load.status === 'slow' || load.status === 'error') {
-    return (
-      <div className="space-y-3 py-4 text-sm">
-        <p className={load.status === 'error' ? 'text-red-400' : 'text-gray-300'} role="alert">
-          {load.status === 'error'
-            ? load.message
-            : 'Sonarr is taking longer than usual to load the episodes. The show is added; try again in a minute.'}
-        </p>
-        <button
-          type="button"
-          onClick={() => {
-            setLoad({ status: 'loading', episodes: [], message: null })
-            setAttempt((count) => count + 1)
-          }}
-          className="rounded-md bg-gray-700 px-3 py-1.5 font-medium text-gray-100 hover:bg-gray-600"
-        >
-          Try again
-        </button>
-      </div>
-    )
-  }
-
-  if (seasons.length === 0) {
-    return <p className="py-4 text-sm text-gray-300">Sonarr doesn’t list any episodes for this show yet.</p>
-  }
+  const notReady = <EpisodeLoadState load={load} />
+  if (load.status !== 'ready' || seasons.length === 0) return notReady
 
   return (
     <div className="space-y-3">
@@ -172,7 +189,9 @@ export default function EpisodePicker({ item, submitting = false, onSubmit }) {
                           onChange={() => toggleEpisode(episode.id)}
                           className="h-4 w-4 rounded border-gray-600 bg-gray-700 text-indigo-600 focus:ring-indigo-500"
                         />
-                        <span className="w-10 shrink-0 tabular-nums text-gray-400">E{pad(episode.episodeNumber)}</span>
+                        <span className="w-10 shrink-0 tabular-nums text-gray-400">
+                          E{String(episode.episodeNumber).padStart(2, '0')}
+                        </span>
                         <span className="min-w-0 flex-1 truncate text-gray-100">{episode.title || 'TBA'}</span>
                         {episode.hasFile ? (
                           <span className="shrink-0 text-xs text-green-400">On disk</span>

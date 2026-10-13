@@ -44,13 +44,13 @@ export class ArrRequestError extends Error {
   }
 }
 
-const invalid = (message: string) => new ArrRequestError(400, 'invalid_request', message)
+export const invalid = (message: string) => new ArrRequestError(400, 'invalid_request', message)
 
-const isPositiveInteger = (value: unknown): value is number =>
+export const isPositiveInteger = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value > 0
 
 // Season 0 is specials.
-const isSeasonNumber = (value: unknown): value is number =>
+export const isSeasonNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0
 
 // ---- Input ----------------------------------------------------------------
@@ -130,7 +130,7 @@ export function parseProfileChange(body: unknown): { qualityProfileId: number } 
 
 // ---- Shared checks ----------------------------------------------------------
 
-function configFor(service: ArrService): ArrConfig {
+export function configFor(service: ArrService): ArrConfig {
   const resolved = readArrConfig(service)
   if ('missing' in resolved) {
     throw new ArrRequestError(503, 'not_configured', `${SERVICE_NAMES[service]} isn’t set up on this server.`, {
@@ -185,7 +185,7 @@ async function checkFolder(mediaType: ArrMediaType, tmdbId: number, folder: stri
   return catalog
 }
 
-const notAdded = (service: ArrService) =>
+export const notAdded = (service: ArrService) =>
   new ArrRequestError(404, 'not_added', `${SERVICE_NAMES[service]} doesn’t have this title.`)
 
 // ---- Reads ------------------------------------------------------------------
@@ -387,7 +387,7 @@ export async function searchArrTitle(
 
 // ---- Responses --------------------------------------------------------------
 
-const REASON_TEXT: Record<ArrFailureReason, string> = {
+export const REASON_TEXT: Record<ArrFailureReason, string> = {
   timeout: 'it timed out',
   unauthorized: 'its API key was refused',
   refused: 'the connection was refused',
