@@ -108,6 +108,11 @@ export function reasonToUserCopy(reason) {
       return "This file's structure exceeds browser streaming limits."
     case 'unscannable':
       return 'The original stream could not be analyzed.'
+    // `codec-unsupported`: the copy rung cannot carry this video codec at all
+    // (AV1, VP9, MPEG-2, …). Split out of `ineligible-source`, which now means a
+    // carried codec (H.264/HEVC) that failed another axis.
+    case 'codec-unsupported':
+      return "This file's video codec can't be streamed unmodified."
     // `unmappable-codec`: the offer stood but no RFC 6381 string can express
     // this source's profile/level/tier, so the ladder withheld the rung rather
     // than mis-declare it. Indistinguishable from an ineligible source to a
