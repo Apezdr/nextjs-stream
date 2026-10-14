@@ -13,7 +13,7 @@ import { prefersSheet } from './BottomSheet'
 import useOverlayState from './useOverlayState'
 import ArrDialog from '@components/Arr/ArrDialog'
 import ArrStatusChip, { describeArrStatus } from '@components/Arr/ArrStatusChip'
-import { arrServiceName, isArrMediaType } from '@components/Arr/arrApi'
+import { arrServiceName, canUseArr, isArrMediaType } from '@components/Arr/arrApi'
 
 export default function WatchlistCard({
   item,
@@ -62,8 +62,10 @@ export default function WatchlistCard({
   // that answer arrives, the dialog explains instead.
   const [showArrDialog, setShowArrDialog] = useState(false)
   const arrService = isArrMediaType(item.mediaType) && item.tmdbId ? arrServiceName(item.mediaType) : null
-  const canUseArr =
-    isAdmin && arrService !== null && arrServices?.[item.mediaType === 'movie' ? 'radarr' : 'sonarr'] !== 'not_configured'
+  const showArrAction =
+    canUseArr(user) &&
+    arrService !== null &&
+    arrServices?.[item.mediaType === 'movie' ? 'radarr' : 'sonarr'] !== 'not_configured'
   const arrMenuLabel =
     arrStatus && arrStatus.state !== 'absent' ? `Manage in ${arrService}…` : `Send to ${arrService}…`
   const handleArrChanged = useCallback(() => {
@@ -248,7 +250,7 @@ export default function WatchlistCard({
       onRemove={() => closeSheetThen(handleRemove)}
       onMarkComingSoon={() => closeSheetThen(() => setShowComingSoonModal(true))}
       onRemoveComingSoon={() => closeSheetThen(handleRemoveComingSoon)}
-      arrActionLabel={canUseArr ? arrMenuLabel : null}
+      arrActionLabel={showArrAction ? arrMenuLabel : null}
       onOpenArr={() => closeSheetThen(() => setShowArrDialog(true))}
     />
   )
@@ -257,7 +259,7 @@ export default function WatchlistCard({
     <ArrDialog item={item} onClose={() => setShowArrDialog(false)} onChanged={handleArrChanged} />
   )
 
-  const arrChip = isAdmin && describeArrStatus(arrStatus, { isAvailable: Boolean(item.url) }) && (
+  const arrChip = canUseArr(user) && describeArrStatus(arrStatus, { isAvailable: Boolean(item.url) }) && (
     <ArrStatusChip status={arrStatus} mediaType={item.mediaType} isAvailable={Boolean(item.url)} />
   )
 
@@ -507,7 +509,7 @@ export default function WatchlistCard({
                         </>
                       )}
                       {/* Admin-only: Radarr/Sonarr */}
-                      {canUseArr && (
+                      {showArrAction && (
                         <>
                           <div className="border-t border-gray-600 my-1"></div>
                           <button
@@ -789,7 +791,7 @@ export default function WatchlistCard({
               </>
             )}
             {/* Admin-only: Radarr/Sonarr */}
-            {canUseArr && (
+            {showArrAction && (
               <>
                 <div className="border-t border-gray-600 my-1"></div>
                 <button

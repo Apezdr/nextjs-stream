@@ -53,6 +53,7 @@ const PopupCard = (props) => {
     watchHistory: railWatchHistory = null,
     duration: railDuration = null,
     durableMediaId = null,
+    onOpenArr = null,
   } = props
 
   // 1. Data Fetching - Build endpoint and fetch data
@@ -256,6 +257,7 @@ const PopupCard = (props) => {
           watchHistory={data?.watchHistory ?? railWatchHistory}
           duration={data?.duration ?? railDuration}
           durableMediaId={data?.mediaId ?? durableMediaId}
+          onOpenArr={onOpenArr}
         />
 
         {/* SECTION 3: Cast */}

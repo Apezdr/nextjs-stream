@@ -33,6 +33,13 @@ export const fetchJson = (url) => request(url)
 
 export const arrServiceName = (mediaType) => (mediaType === 'movie' ? 'Radarr' : 'Sonarr')
 
+/**
+ * Whether to offer this user the Radarr/Sonarr actions: admins only for now,
+ * as the server's requireArrAccess() decides. The planned requester role
+ * changes both together.
+ */
+export const canUseArr = (user) => user?.role === 'admin'
+
 export const isArrMediaType = (mediaType) => mediaType === 'movie' || mediaType === 'tv'
 
 export const arrKey = (item) => `${item.mediaType}:${item.tmdbId}`

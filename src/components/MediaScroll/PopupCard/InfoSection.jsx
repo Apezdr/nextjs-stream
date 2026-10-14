@@ -14,6 +14,11 @@ const WatchlistButton = dynamic(() => import('@components/WatchlistButton'), {
   ssr: false,
 })
 
+// Renders nothing for anyone who can't use Radarr/Sonarr.
+const ArrPopupButton = dynamic(() => import('@components/Arr/ArrPopupButton'), {
+  ssr: false,
+})
+
 /**
  * InfoSection Component
  * 
@@ -41,6 +46,7 @@ const WatchlistButton = dynamic(() => import('@components/WatchlistButton'), {
  * @param {boolean} props.hasVideo - Whether video is available
  * @param {string} props.videoURL - Video URL if available
  * @param {Function} props.handleNavigationWithLoading - Shows the loading overlay and collapses the card; the link itself navigates
+ * @param {Function} [props.onOpenArr] - Opens the Radarr/Sonarr dialog for { mediaType, tmdbId, title }
  */
 const InfoSection = ({
   data,
@@ -62,8 +68,12 @@ const InfoSection = ({
   watchHistory = null,
   duration = null,
   durableMediaId = null,
+  onOpenArr = null,
 }) => {
   const isTrailer = !data?.clipVideoURL && data?.trailer_url
+  // The title as the watchlist and Radarr/Sonarr know it: the show, for an episode's card.
+  const tmdbId = showTmdbId ?? data?.metadata?.id ?? metadata?.id
+  const listTitle = episodeNumber ? title : (data?.title ?? title)
 
   // Where the viewer is in this title. Movies and specific episodes only; a
   // show-level card has no single position. Live: the newer of the fetched
@@ -272,11 +282,22 @@ const InfoSection = ({
         {(type === 'movie' || type === 'tv') && (mediaId || showId || showTmdbId || metadata?.id) && (
           <WatchlistButton
             mediaId={showId ?? mediaId}
-            tmdbId={showTmdbId ?? data?.metadata?.id ?? metadata?.id}
+            tmdbId={tmdbId}
             mediaType={type}
-            title={episodeNumber ? title : (data?.title ?? title)}
+            title={listTitle}
             posterURL={data?.poster_path ? getFullImageUrl(data?.poster_path, 'w500') : data?.posterURL}
             className="h-12 mt-4 px-4 py-2 rounded-full"
+          />
+        )}
+
+        {/* Radarr/Sonarr, for those allowed: send the title there, or manage it */}
+        {onOpenArr && tmdbId && (
+          <ArrPopupButton
+            mediaType={type}
+            tmdbId={tmdbId}
+            title={listTitle}
+            onOpen={onOpenArr}
+            className="h-12 mt-4 px-4 py-2"
           />
         )}
       </div>
