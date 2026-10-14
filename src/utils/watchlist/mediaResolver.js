@@ -14,6 +14,11 @@ import { isTmdbNotFound, missingFromTmdbMedia } from './tmdbMissing.js'
 import { fetchTmdbFromBackend } from '@src/utils/tmdb/backendClient'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
+import { titleKey } from './playlistMerge.js'
+
+// A title's key in every map and set here: TMDB ids repeat across media types
+// (movie 1399 and show 1399 are different titles), so the type is part of it.
+const keyOf = (mediaType, tmdbId) => titleKey({ mediaType, tmdbId })
 
 /**
  * Internal implementation (not cached) - does the actual work
@@ -33,7 +38,7 @@ async function batchResolveMediaInternal(items, options = {}) {
   
   // Deduplicate items
   for (const item of items) {
-    const key = `${item.mediaType}-${item.tmdbId}`
+    const key = keyOf(item.mediaType, item.tmdbId)
     if (!uniqueItems.has(key)) {
       uniqueItems.set(key, item)
     }
@@ -56,8 +61,8 @@ async function batchResolveMediaInternal(items, options = {}) {
   // Use pre-computed availability if provided (optimization to avoid duplicate queries)
   if (precomputedAvailability) {
     // Filter to only query items we know are available
-    const availableMovieIds = movieTmdbIds.filter(id => precomputedAvailability.has(id))
-    const availableTvIds = tvTmdbIds.filter(id => precomputedAvailability.has(id))
+    const availableMovieIds = movieTmdbIds.filter(id => precomputedAvailability.has(keyOf('movie', id)))
+    const availableTvIds = tvTmdbIds.filter(id => precomputedAvailability.has(keyOf('tv', id)))
     
     if (availableMovieIds.length === 0 && availableTvIds.length === 0) {
       // No items are available in library, skip DB queries entirely
@@ -177,13 +182,13 @@ async function batchResolveMediaInternal(items, options = {}) {
   }
 
   // Process internal media (available in our library)
-  const foundTmdbIds = new Set()
+  const foundKeys = new Set()
   
   for (const movie of movies) {
     const tmdbId = movie.metadata?.id
     if (tmdbId) {
-      foundTmdbIds.add(tmdbId)
-      results.set(tmdbId, {
+      foundKeys.add(keyOf('movie', tmdbId))
+      results.set(keyOf('movie', tmdbId), {
         tmdbId,
         mediaType: 'movie',
         currentMediaId: movie._id.toString(),
@@ -211,8 +216,8 @@ async function batchResolveMediaInternal(items, options = {}) {
   for (const show of tvShows) {
     const tmdbId = show.metadata?.id
     if (tmdbId) {
-      foundTmdbIds.add(tmdbId)
-      results.set(tmdbId, {
+      foundKeys.add(keyOf('tv', tmdbId))
+      results.set(keyOf('tv', tmdbId), {
         tmdbId,
         mediaType: 'tv',
         currentMediaId: show._id.toString(),
@@ -238,7 +243,7 @@ async function batchResolveMediaInternal(items, options = {}) {
   }
 
   // For items not found in our library, fetch directly from TMDB
-  const externalItems = itemsArray.filter(item => !foundTmdbIds.has(parseInt(item.tmdbId)))
+  const externalItems = itemsArray.filter(item => !foundKeys.has(keyOf(item.mediaType, item.tmdbId)))
   
   if (externalItems.length > 0) {
     console.log(`[batchResolveMediaInternal] Fetching ${externalItems.length} external items from TMDB API`)
@@ -344,12 +349,12 @@ async function batchResolveMediaInternal(items, options = {}) {
           }
         }
         
-        results.set(tmdbId, mediaData)
+        results.set(keyOf(item.mediaType, tmdbId), mediaData)
       } else if (result.status === 'rejected' && isTmdbNotFound(result.reason)) {
         // TMDB has no such title (the media processor's 404): label it rather
         // than leave it unresolved, where it showed as "Unknown Title"
         console.warn(`[batchResolveMediaInternal] ${item.mediaType} ${item.tmdbId} is no longer on TMDB`)
-        results.set(tmdbId, missingFromTmdbMedia(tmdbId, item.mediaType))
+        results.set(keyOf(item.mediaType, tmdbId), missingFromTmdbMedia(tmdbId, item.mediaType))
       } else {
         console.error(`Failed to fetch TMDB data for ${item.mediaType} ${item.tmdbId}:`, result.reason)
       }
@@ -410,8 +415,8 @@ const batchResolveMediaCached = cache(async function batchResolveMediaCached(ite
 /**
  * Public API - convenience wrapper that handles JSON serialization
  * @param {Array} items - Array of {tmdbId, mediaType} objects  
- * @param {Object} options - Optional parameters
- * @returns {Promise<Map>} Map of tmdbId -> media data
+ * @param {Object} options - Optional parameters; `precomputedAvailability` is a Set of titleKey()s ("movie:603") known to be in the library
+ * @returns {Promise<Map>} Map of titleKey ("movie:603", "tv:1399") -> media data. Keyed by type too: TMDB ids repeat across media types
  */
 export async function batchResolveMedia(items, options = {}) {
   // Convert Set to Array for JSON serialization

@@ -65,7 +65,8 @@ const doc = (tmdbId, fields = {}) => ({
   ...fields,
 })
 const media = (tmdbId, title, releaseDate) => ({ tmdbId, mediaType: 'movie', title, releaseDate, isInternal: true })
-const lookups = (...entries) => new Map(entries.map((entry) => [entry.tmdbId, entry]))
+// Keyed as batchResolveMedia keys them: by type and TMDB id
+const lookups = (...entries) => new Map(entries.map((entry) => [`${entry.mediaType}:${entry.tmdbId}`, entry]))
 const list = (options = {}) => getUserWatchlist({ playlistId: PLAYLIST_ID, userId: 'user-1', ...options })
 const kinds = () => mockCalls.map(([kind]) => kind)
 
@@ -169,7 +170,13 @@ it('lists an internalOnly playlist', async () => {
 
   expect(items.map((item) => item.title)).toEqual(['Alien'])
   const [, options] = mockBatchResolveMedia.mock.calls[0]
-  expect([...options.precomputedAvailability]).toEqual([1])
+  expect([...options.precomputedAvailability]).toEqual(['movie:1'])
+  // Each type matched within itself: a movie in the library doesn't make a show available
+  const [, pipeline] = mockCalls.find(([kind]) => kind === 'aggregate')
+  expect(pipeline[0].$match.$or).toEqual([
+    { mediaType: 'movie', tmdbId: { $in: [1] } },
+    { mediaType: 'tv', tmdbId: { $in: [] } },
+  ])
 })
 
 it('pages from an absolute offset when given one', async () => {

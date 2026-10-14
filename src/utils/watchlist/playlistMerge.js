@@ -2,12 +2,14 @@
  * A watchlist item's identity within a playlist. TMDB ids repeat across media
  * types (movie 920 and TV show 920 are different titles), so the type is part
  * of it. Matches the unique_playlist_title index on the Watchlist collection.
+ * Also the key of every watchlist lookup map (resolved media, availability,
+ * Coming Soon). A numeric string id keys the same as the number.
  *
- * @param {{ mediaType: string, tmdbId: number }} item
- * @returns {string}
+ * @param {{ mediaType: string, tmdbId: number|string }} item
+ * @returns {string} e.g. "movie:920"
  */
 export function titleKey(item) {
-  return `${item.mediaType}:${item.tmdbId}`
+  return `${item.mediaType}:${Number(item.tmdbId)}`
 }
 
 /**

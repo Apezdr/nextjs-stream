@@ -75,7 +75,9 @@ describe('sortDetailsFrom', () => {
 describe('sortDetailUpdates', () => {
   const now = new Date('2026-09-27T12:00:00Z')
   const item = (fields) => ({ _id: `id-${fields.tmdbId}`, mediaType: 'movie', ...fields })
-  const resolved = (entries) => new Map(entries.map((entry) => [entry.tmdbId, { mediaType: 'movie', ...entry }]))
+  // Keyed as batchResolveMedia keys them: by type and TMDB id
+  const resolved = (entries) =>
+    new Map(entries.map((entry) => [`${entry.mediaType ?? 'movie'}:${entry.tmdbId}`, { mediaType: 'movie', ...entry }]))
 
   it('stores what an item resolved to, marking it resolved', () => {
     const updates = sortDetailUpdates(
@@ -109,12 +111,12 @@ describe('sortDetailUpdates', () => {
   })
 
   it("never takes another media type's title under the same TMDB id", () => {
-    const show = new Map([[1, { tmdbId: 1, mediaType: 'tv', title: 'A Show' }]])
+    const show = new Map([['tv:1', { tmdbId: 1, mediaType: 'tv', title: 'A Show' }]])
     expect(sortDetailUpdates([item({ tmdbId: 1, title: 'A Film' })], show)).toEqual([])
   })
 
   it('keeps the stored title of one TMDB no longer has, and only marks it', () => {
-    const gone = new Map([[1, { tmdbId: 1, mediaType: 'movie', tmdbNotFound: true, title: 'No longer on TMDB' }]])
+    const gone = new Map([['movie:1', { tmdbId: 1, mediaType: 'movie', tmdbNotFound: true, title: 'No longer on TMDB' }]])
     const [update] = sortDetailUpdates([item({ tmdbId: 1, title: 'Old Film' })], gone, now)
     expect(update.updateOne.update).toEqual({ $set: { [DETAILS_RESOLVED_AT]: now } })
   })
