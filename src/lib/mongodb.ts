@@ -67,99 +67,71 @@ const syncOptions: MongoClientOptions = {
 }
 
 declare global {
-  // Cached across HMR reloads in development so we don't open a new pool (and
-  // leak minPoolSize connections) on every file change. Unused in production,
-  // where the module singleton persists for the process lifetime.
+  // One client per pool per process, in every environment. The production
+  // build bundles this module twice (once for server components, once for
+  // route handlers), and before 2026-10-14 each copy built its own client,
+  // pool and failure state. In development the global also survives HMR
+  // reloads, so a file change doesn't open another pool.
   var _mongoClient: MongoClient | undefined
-  var _mongoClientPromise: Promise<MongoClient> | undefined
   var _mongoSyncClient: MongoClient | undefined
-  var _mongoSyncClientPromise: Promise<MongoClient> | undefined
 }
 
-class Singleton {
-  private static _instance: Singleton
-  private client: MongoClient
-  private clientPromise: Promise<MongoClient>
-  private constructor() {
-    if (
-      process.env.NODE_ENV === 'development' &&
-      global._mongoClient &&
-      global._mongoClientPromise
-    ) {
-      // Reuse the existing client/pool across HMR reloads.
-      this.client = global._mongoClient
-      this.clientPromise = global._mongoClientPromise
-    } else {
-      this.client = new MongoClient(uri, options)
-      this.clientPromise = this.client.connect()
-      if (process.env.NODE_ENV === 'development') {
-        // In development mode, use a global variable so that the value
-        // is preserved across module reloads caused by HMR (Hot Module Replacement).
-        global._mongoClient = this.client
-        global._mongoClientPromise = this.clientPromise
-      }
-    }
-  }
-
-  public static get instance() {
-    if (!this._instance) {
-      this._instance = new Singleton()
-    }
-    return this._instance.clientPromise
-  }
-
-  public static get client(): MongoClient {
-    if (!this._instance) {
-      this._instance = new Singleton()
-    }
-    return this._instance.client
-  }
-}
-const clientPromise = Singleton.instance
-
-// Export a module-scoped MongoClient promise. By doing this in a
-// separate module, the client can be shared across functions.
-export default clientPromise
-
-// Synchronous client reference (connected lazily) — used where a Db instance is needed synchronously
-export const mongoClient = Singleton.client
-
-class SyncSingleton {
-  private static _instance: SyncSingleton
-  private client: MongoClient
-  private clientPromise: Promise<MongoClient>
-  private constructor() {
-    if (
-      process.env.NODE_ENV === 'development' &&
-      global._mongoSyncClient &&
-      global._mongoSyncClientPromise
-    ) {
-      // Reuse the existing client/pool across HMR reloads.
-      this.client = global._mongoSyncClient
-      this.clientPromise = global._mongoSyncClientPromise
-    } else {
-      this.client = new MongoClient(uri, syncOptions)
-      this.clientPromise = this.client.connect()
-      if (process.env.NODE_ENV === 'development') {
-        global._mongoSyncClient = this.client
-        global._mongoSyncClientPromise = this.clientPromise
-      }
-    }
-  }
-
-  public static get instance() {
-    if (!this._instance) {
-      this._instance = new SyncSingleton()
-    }
-    return this._instance.clientPromise
-  }
+function sharedClient(
+  key: '_mongoClient' | '_mongoSyncClient',
+  opts: MongoClientOptions
+): MongoClient {
+  return (globalThis[key] ??= new MongoClient(uri, opts))
 }
 
 /**
- * Sync-dedicated MongoClient promise (lazy — the pool is only created when the
- * sync path first asks for it). Use ONLY for sync bulk work; request-serving
- * code stays on the default export's pool.
+ * Await-able handle that calls connect() on every acquisition instead of
+ * replaying one stored result. The old module kept the boot-time connect()
+ * promise, so a boot that raced mongod's startup rejected every later
+ * `await clientPromise` with the same ECONNREFUSED for the life of the
+ * process (2026-10-14: 16 minutes of route-handler failures after mongod was
+ * up). Driver 7.x connect() returns at once when connected, shares one
+ * in-flight attempt between concurrent callers, and builds a fresh topology
+ * after a failed one.
+ */
+function connectOnUse(client: MongoClient): Promise<MongoClient> {
+  const acquire = () => client.connect()
+  const handle: Promise<MongoClient> = {
+    then: (onFulfilled, onRejected) => acquire().then(onFulfilled, onRejected),
+    catch: (onRejected) => acquire().catch(onRejected),
+    finally: (onFinally) => acquire().finally(onFinally),
+    [Symbol.toStringTag]: 'MongoClientHandle',
+  }
+  return handle
+}
+
+// Connect at boot so minPoolSize is warm before traffic, and keep retrying
+// until one attempt succeeds. better-auth and userQueries use mongoClient
+// directly, and after a failed connect() the driver keeps the closed topology:
+// its auto-connect only runs when there is no topology at all, so every
+// operation throws MongoTopologyClosedError until another connect() replaces it.
+const BOOT_CONNECT_RETRY_MS = 5_000
+function connectUntilUp(client: MongoClient): void {
+  client.connect().catch(() => {
+    setTimeout(() => connectUntilUp(client), BOOT_CONNECT_RETRY_MS).unref()
+  })
+}
+
+// Synchronous client reference — used where a Db instance is needed synchronously
+export const mongoClient = sharedClient('_mongoClient', options)
+
+const clientPromise = connectOnUse(mongoClient)
+
+// Export a module-scoped MongoClient handle. By doing this in a
+// separate module, the client can be shared across functions.
+export default clientPromise
+
+connectUntilUp(mongoClient)
+
+/**
+ * Sync-dedicated MongoClient (lazy — the pool is only created when the sync
+ * path first asks for it). Use ONLY for sync bulk work; request-serving code
+ * stays on the default export's pool.
  */
 export function getSyncClientPromise(): Promise<MongoClient> {
-  return SyncSingleton.instance
+  return connectOnUse(sharedClient('_mongoSyncClient', syncOptions))
 }
