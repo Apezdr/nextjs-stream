@@ -10,6 +10,7 @@ import { mongoClient } from './mongodb'
 import { getDefaultApprovalStatus } from '@src/utils/autoApproval'
 import { userQueries } from './userQueries'
 import { gatedAuthTrustedOrigins } from '@src/utils/gatedAuthOrigins'
+import { USER_ADDITIONAL_FIELDS } from './authUserFields'
 
 const adminEmails = (process.env.ADMIN_USER_EMAILS || '')
   .split(',')
@@ -78,27 +79,8 @@ export const auth = betterAuth({
   },
 
   user: {
-    additionalFields: {
-      approved: {
-        type: 'boolean',
-        required: false,
-        defaultValue: false,
-        input: true,
-      },
-      limitedAccess: {
-        type: 'boolean',
-        required: false,
-        defaultValue: false,
-        input: true,
-      },
-      // Stored as object in MongoDB (better-auth 'string' type allows flexible storage)
-      // Migration keeps it as object - no JSON.parse/stringify needed in app code
-      preferences: {
-        type: 'string',
-        required: false,
-        input: true,
-      },
-    },
+    // approved / limitedAccess are server-written only: see authUserFields.ts
+    additionalFields: USER_ADDITIONAL_FIELDS,
   },
 
   databaseHooks: {
