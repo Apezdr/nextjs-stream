@@ -1395,6 +1395,13 @@ export default function WatchlistPage({ user }) {
     })
   }, [currentItems, selectedPlaylistId, matchesPlaylistId, setCurrentItems, setPlaylists, setSummary])
 
+  // Patches one item in place (e.g. marked Coming Soon by a Radarr/Sonarr
+  // add). A reload would swap every card for the skeleton, unmounting the card
+  // and any dialog it has open.
+  const handleItemUpdated = useCallback((itemId, changes) => {
+    setCurrentItems(prevItems => prevItems.map(item => (item.id === itemId ? { ...item, ...changes } : item)))
+  }, [setCurrentItems])
+
   // Optimistic bulk removal handler
   const handleItemsRemoved = useCallback((removedItemIds) => {
     setCurrentItems(prevItems => {
@@ -2057,6 +2064,7 @@ export default function WatchlistPage({ user }) {
                 onRefresh={handleRefresh}
                 onItemRemoved={handleItemRemoved}
                 onItemMoved={handleItemMoved}
+                onItemUpdated={handleItemUpdated}
                 onShowMoveModal={handleShowMoveModal}
                 onShowCopyModal={handleShowCopyModal}
                 currentPlaylist={currentPlaylist}

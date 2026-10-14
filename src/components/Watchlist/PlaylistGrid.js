@@ -6,6 +6,8 @@ import WatchlistCard from './WatchlistCard'
 import { GridItemSkeleton, WATCHLIST_GRID_CLASSES } from './WatchlistSkeletons'
 import { classNames } from '@src/utils'
 import { useNavigation } from '@src/contexts/NavigationContext'
+import useArrStatus from '@components/Arr/useArrStatus'
+import { arrKey, canUseArr } from '@components/Arr/arrApi'
 
 export default function PlaylistGrid({
   items,
@@ -16,6 +18,7 @@ export default function PlaylistGrid({
   onRefresh,
   onItemRemoved,
   onItemMoved,
+  onItemUpdated,
   onShowMoveModal,
   onShowCopyModal,
   currentPlaylist,
@@ -37,6 +40,10 @@ export default function PlaylistGrid({
   
   // Get navigation state for grid coordination
   const { isNavigating: globalIsNavigating, targetUrl } = useNavigation()
+
+  // Where each title stands in Radarr/Sonarr, for those allowed: one request per page
+  const arrEnabled = canUseArr(user)
+  const { statuses: arrStatuses, services: arrServices, refresh: refreshArrStatus } = useArrStatus(items, arrEnabled)
 
   const handleDragStart = useCallback((e, item, index) => {
     setDraggedItem(item)
@@ -302,6 +309,7 @@ export default function PlaylistGrid({
                 onRefresh={onRefresh}
                 onItemRemoved={onItemRemoved}
                 onItemMoved={onItemMoved}
+                onItemUpdated={onItemUpdated}
                 onShowMoveModal={onShowMoveModal}
                 onShowCopyModal={onShowCopyModal}
                 currentPlaylist={currentPlaylist}
@@ -311,6 +319,9 @@ export default function PlaylistGrid({
                 user={user}
                 selectionActive={selectionActive}
                 reorder={reorderFor(item, index)}
+                arrStatus={arrStatuses?.[arrKey(item)] ?? null}
+                arrServices={arrServices}
+                onArrChanged={refreshArrStatus}
               />
           </motion.div>
         )})}
@@ -406,6 +417,7 @@ export default function PlaylistGrid({
               onRefresh={onRefresh}
               onItemRemoved={onItemRemoved}
               onItemMoved={onItemMoved}
+              onItemUpdated={onItemUpdated}
               onShowMoveModal={onShowMoveModal}
               onShowCopyModal={onShowCopyModal}
               currentPlaylist={currentPlaylist}
@@ -415,6 +427,9 @@ export default function PlaylistGrid({
               user={user}
               selectionActive={selectionActive}
               reorder={reorderFor(item, index)}
+              arrStatus={arrStatuses?.[arrKey(item)] ?? null}
+              arrServices={arrServices}
+              onArrChanged={refreshArrStatus}
             />
             </motion.div>
           )

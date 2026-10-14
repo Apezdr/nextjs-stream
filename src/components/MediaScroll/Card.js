@@ -13,6 +13,9 @@ import ProgressBar from '@components/WatchProgress/ProgressBar'
 import useLiveProgress from '@components/WatchProgress/useLiveProgress'
 import { canShowProgress, durationMsFrom } from '@components/WatchProgress/progress'
 
+// Admin-only, opened from the popup: loaded on first use, not with every rail.
+const ArrDialog = dynamic(() => import('@components/Arr/ArrDialog'), { ssr: false })
+
 // Consolidated interaction/popup state machine (replaces several related useState hooks)
 const initialInteractionState = {
   showPortal: false,
@@ -342,6 +345,17 @@ const Card = ({
       onCollapse()
     }
   }, [isAnimating, onCollapse])
+
+  // The popup's Radarr/Sonarr button. The popup unmounts when it collapses,
+  // so the card holds the dialog, and the popup closes under it.
+  const [arrItem, setArrItem] = useState(null)
+  const handleOpenArr = useCallback(
+    (item) => {
+      setArrItem(item)
+      handleCollapse()
+    },
+    [handleCollapse]
+  )
 
   const handleMouseEnter = useCallback(() => {
     if (isAnimating || isExpanded || isTouchDevice) return
@@ -731,9 +745,13 @@ const Card = ({
             watchHistory={watchHistory}
             duration={duration}
             durableMediaId={durableMediaId}
+            onOpenArr={handleOpenArr}
           />,
           document.body
         )}
+      {/* A sibling of the card, not inside it: the card's click/focus/key
+          handlers expand the popup, and React events bubble out of portals. */}
+      {arrItem && <ArrDialog item={arrItem} onClose={() => setArrItem(null)} />}
     </Fragment>
   )
 }

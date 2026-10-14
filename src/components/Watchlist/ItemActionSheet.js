@@ -1,6 +1,7 @@
 'use client'
 
 import {
+  ArrowDownTrayIcon,
   CheckCircleIcon,
   ChevronDoubleDownIcon,
   ChevronDoubleUpIcon,
@@ -64,6 +65,8 @@ export default function ItemActionSheet({
   onRemove,
   onMarkComingSoon,
   onRemoveComingSoon,
+  arrActionLabel = null,
+  onOpenArr,
 }) {
   const iconClass = 'h-5 w-5'
 
@@ -107,18 +110,24 @@ export default function ItemActionSheet({
             </div>
           </div>
         )}
-        {/* Admin-only Coming Soon controls - only for unavailable items */}
-        {isAdmin && !item.isAvailable && (
+        {/* Admin-only: Radarr/Sonarr for any title; Coming Soon only for unavailable ones */}
+        {isAdmin && (arrActionLabel || !item.isAvailable) && (
           <div className="mt-1 border-t border-gray-700 pt-1">
-            {item.comingSoon ? (
-              <SheetAction onClick={onRemoveComingSoon} tone="warning" icon={<XCircleIcon className={iconClass} />}>
-                Remove &quot;Coming Soon&quot;
-              </SheetAction>
-            ) : (
-              <SheetAction onClick={onMarkComingSoon} tone="accent" icon={<ClockIcon className={iconClass} />}>
-                Mark as &quot;Coming Soon&quot;
+            {arrActionLabel && (
+              <SheetAction onClick={onOpenArr} tone="accent" icon={<ArrowDownTrayIcon className={iconClass} />}>
+                {arrActionLabel}
               </SheetAction>
             )}
+            {!item.isAvailable &&
+              (item.comingSoon ? (
+                <SheetAction onClick={onRemoveComingSoon} tone="warning" icon={<XCircleIcon className={iconClass} />}>
+                  Remove &quot;Coming Soon&quot;
+                </SheetAction>
+              ) : (
+                <SheetAction onClick={onMarkComingSoon} tone="accent" icon={<ClockIcon className={iconClass} />}>
+                  Mark as &quot;Coming Soon&quot;
+                </SheetAction>
+              ))}
           </div>
         )}
       </div>
