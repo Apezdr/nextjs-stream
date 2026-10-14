@@ -79,6 +79,7 @@ describe('display mapping', () => {
       'segment-floor',
       'segment-budget',
       'unscannable',
+      'codec-unsupported',
       'ineligible-source',
       'unmappable-codec',
       'poisoned',
@@ -97,6 +98,12 @@ describe('display mapping', () => {
 
   test('unmappable-codec reads as ineligible, not as an unknown verdict', () => {
     expect(reasonToUserCopy('unmappable-codec')).toBe(reasonToUserCopy('ineligible-source'))
+  })
+
+  test('codec-unsupported names the codec as the reason, not a generic "not available"', () => {
+    const copy = reasonToUserCopy('codec-unsupported')
+    expect(copy).toBe("This file's video codec can't be streamed unmodified.")
+    expect(copy).not.toBe(reasonToUserCopy('some-future-verdict'))
   })
 
   test('badgeLabel only when offered, reasonCopy only when withheld', () => {
