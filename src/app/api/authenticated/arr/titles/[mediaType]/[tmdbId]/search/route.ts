@@ -11,8 +11,8 @@ import { serviceForMediaType, type ArrService } from '@src/lib/arr/types'
 type Context = { params: Promise<{ mediaType: string; tmdbId: string }> }
 
 export async function POST(request: Request, { params }: Context) {
-  const user = await requireArrAccess()
-  if (user instanceof Response) return user
+  const actor = await requireArrAccess()
+  if (actor instanceof Response) return actor
   let service: ArrService | null = null
   try {
     const ref = parseTitleRef(await params)
@@ -21,7 +21,7 @@ export async function POST(request: Request, { params }: Context) {
     const scope = ref.mediaType === 'tv' ? parseScope(body?.scope, { forAdd: false }) : { type: 'all' as const }
     const title = new URL(request.url).searchParams.get('title')?.slice(0, 200) || null
     // 202: the search is queued in the service, not finished.
-    return NextResponse.json(await searchArrTitle(ref, scope, title), { status: 202 })
+    return NextResponse.json(await searchArrTitle(ref, scope, title, actor), { status: 202 })
   } catch (error) {
     return arrErrorResponse(error, service)
   }

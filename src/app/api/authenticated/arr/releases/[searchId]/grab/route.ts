@@ -14,15 +14,15 @@ type Context = { params: Promise<{ searchId: string }> }
 const SEARCH_ID = /^[0-9a-f-]{36}$/
 
 export async function POST(request: Request, { params }: Context) {
-  const user = await requireArrAccess()
-  if (user instanceof Response) return user
+  const actor = await requireArrAccess()
+  if (actor instanceof Response) return actor
   let service: ArrService | null = null
   try {
     const { searchId } = await params
     if (!SEARCH_ID.test(searchId)) throw new ArrRequestError(400, 'invalid_request', 'That isn’t a search id.')
     service = pickService(searchId)
     const body = (await request.json().catch(() => null)) as { releaseId?: unknown } | null
-    return NextResponse.json(await grabPick(searchId, body?.releaseId))
+    return NextResponse.json(await grabPick(searchId, body?.releaseId, actor))
   } catch (error) {
     return arrErrorResponse(error, service)
   }

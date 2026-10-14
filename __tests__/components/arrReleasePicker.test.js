@@ -105,7 +105,7 @@ beforeEach(() => {
 
 test('results keep Radarr’s order, its pick is marked, and a rejected release says why', async () => {
   fakeApi({ [START]: [202, view(RESULTS)] })
-  render(<ReleasePicker item={movie} target={null} />)
+  render(<ReleasePicker item={movie} target={null} canGrabRejected />)
 
   expect(await rowOf(RESULTS[1].title)).toHaveTextContent('Radarr’s pick')
   expect(titlesInOrder()).toEqual(RESULTS.map((result) => result.title))
@@ -121,7 +121,7 @@ test('grabbing an approved release: one click, sent by its id, marked as grabbed
     [GRAB]: { service: 'radarr', title: RESULTS[1].title, monitored: true },
   })
   const onGrabbed = jest.fn()
-  render(<ReleasePicker item={movie} target={null} onGrabbed={onGrabbed} />)
+  render(<ReleasePicker item={movie} target={null} canGrabRejected onGrabbed={onGrabbed} />)
 
   const row = await rowOf(RESULTS[1].title)
   await click(within(row).getByRole('button', { name: 'Grab' }))
@@ -134,7 +134,7 @@ test('grabbing an approved release: one click, sent by its id, marked as grabbed
 
 test('a rejected release is grabbed only on a second, deliberate click', async () => {
   fakeApi({ [START]: [202, view(RESULTS)], [GRAB]: { service: 'radarr', title: RESULTS[0].title, monitored: false } })
-  render(<ReleasePicker item={movie} target={null} />)
+  render(<ReleasePicker item={movie} target={null} canGrabRejected />)
 
   const row = await rowOf(RESULTS[0].title)
   await click(within(row).getByRole('button', { name: 'Grab…' }))
@@ -149,7 +149,7 @@ test('a rejected release is grabbed only on a second, deliberate click', async (
 
 test('rejected releases can be hidden, and the list re-sorted', async () => {
   fakeApi({ [START]: [202, view(RESULTS)] })
-  render(<ReleasePicker item={movie} target={null} />)
+  render(<ReleasePicker item={movie} target={null} canGrabRejected />)
 
   await click(await screen.findByRole('checkbox', { name: 'Hide rejected (1)' }))
   expect(screen.queryByText(RESULTS[0].title)).not.toBeInTheDocument()
@@ -164,7 +164,7 @@ test('while Radarr searches, the picker says so and polls until the results arri
     [START]: [202, view([], { state: 'searching', finishedAt: null, expiresAt: null })],
     [`GET ${API}/releases/${SEARCH_ID}`]: view(RESULTS),
   })
-  render(<ReleasePicker item={movie} target={null} />)
+  render(<ReleasePicker item={movie} target={null} canGrabRejected />)
 
   expect(await screen.findByText(/Searching Radarr’s indexers…/)).toBeInTheDocument()
   await act(async () => {
@@ -179,7 +179,7 @@ test('results Radarr no longer has: told to search again, and every grab stops',
     [START]: [202, view(RESULTS)],
     [GRAB]: [410, { error: 'expired', message: 'Radarr no longer has these results. Search again.' }],
   })
-  render(<ReleasePicker item={movie} target={null} />)
+  render(<ReleasePicker item={movie} target={null} canGrabRejected />)
 
   await click(within(await rowOf(RESULTS[1].title)).getByRole('button', { name: 'Grab' }))
 
@@ -196,7 +196,7 @@ test('a failed search says why, and Search again starts a new one', async () => 
         ? view([], { state: 'failed', expiresAt: null, failure: { reason: 'timeout', message: 'Radarr’s indexers took too long to answer. Try again.' } })
         : view(RESULTS),
   })
-  render(<ReleasePicker item={movie} target={null} />)
+  render(<ReleasePicker item={movie} target={null} canGrabRejected />)
 
   expect(await screen.findByRole('alert')).toHaveTextContent('Radarr’s indexers took too long to answer. Try again.')
   await click(screen.getByRole('button', { name: 'Search again' }))
@@ -206,8 +206,19 @@ test('a failed search says why, and Search again starts a new one', async () => 
 
 test('no results is said plainly', async () => {
   fakeApi({ [START]: [202, view([])] })
-  render(<ReleasePicker item={movie} target={null} />)
+  render(<ReleasePicker item={movie} target={null} canGrabRejected />)
   expect(await screen.findByText('No releases found on Radarr’s indexers.')).toBeInTheDocument()
+})
+
+test('without the manage capability, a rejected release can’t be grabbed', async () => {
+  fakeApi({ [START]: [202, view(RESULTS)] })
+  render(<ReleasePicker item={movie} target={null} />)
+
+  const row = await rowOf(RESULTS[0].title)
+  expect(within(row).getByText('Managers only')).toBeInTheDocument()
+  expect(within(row).queryByRole('button')).not.toBeInTheDocument()
+  // Approved ones still can.
+  expect(within(await rowOf(RESULTS[1].title)).getByRole('button', { name: 'Grab' })).toBeInTheDocument()
 })
 
 describe('from the dialog', () => {
@@ -226,6 +237,7 @@ describe('from the dialog', () => {
         options: radarrOptions,
         catalog: { inLibrary: false, folderTakenBy: null },
         rootFolderPath: '/processed_movies',
+        permissions: { manage: true, manual: true, canAct: true },
       },
       [`POST ${API}/titles/movie/11`]: [201, { service: 'radarr', entry: { id: 900 }, inLibrary: false, next: null, comingSoon: true }],
       [START]: [202, view(RESULTS)],
@@ -265,6 +277,7 @@ describe('from the dialog', () => {
         },
         options: { qualityProfiles: [{ id: 8, name: 'Ultra-HD' }], rootFolders: [], defaultQualityProfileId: 8 },
         download: null,
+        permissions: { manage: true, manual: true, canAct: true },
       },
       [`GET ${API}/titles/tv/1438/episodes`]: {
         seriesId: 7,

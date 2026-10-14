@@ -11,6 +11,7 @@ import {
   updateUserLimitedAccessFlag,
 } from '@src/utils/actions/admin_users'
 import { memo, useMemo, useState } from 'react'
+import UserRolesPicker from './UserRolesPicker'
 
 function cn(...classes) {
   return classes.filter(Boolean).join(' ')
@@ -115,6 +116,7 @@ function UserListRecords({
   subtitle,
   data,
   updateProcessedData,
+  roleOptions = [],
 }) {
   const [loadingStates, setLoadingStates] = useState(data ? data.map(() => false) : [])
 
@@ -169,6 +171,9 @@ function UserListRecords({
               <th className="px-6 py-5 text-left text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
                 Approval
               </th>
+              <th className="px-6 py-5 text-left text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
+                Roles
+              </th>
               <th className="px-6 py-5 text-right text-[10px] font-bold uppercase tracking-[0.18em] text-slate-300">
                 Actions
               </th>
@@ -202,6 +207,15 @@ function UserListRecords({
 
                   <td className="px-6 py-5">
                     <StatusPill approved={item.approved} />
+                  </td>
+
+                  <td className="px-6 py-5">
+                    <UserRolesPicker
+                      userId={item.id}
+                      userName={item.name || item.email}
+                      value={item.roles ?? []}
+                      roleOptions={roleOptions}
+                    />
                   </td>
 
                   <td className="px-6 py-5">

@@ -59,6 +59,7 @@ test('adding with “Pick a release myself” keeps the dialog open and patches 
       },
       catalog: { inLibrary: false, folderTakenBy: null },
       rootFolderPath: '/processed_movies',
+      permissions: { manage: true, manual: true, canAct: true },
     },
     [`POST ${API}/titles/movie/23437`]: [201, { service: 'radarr', entry: { id: 900 }, inLibrary: false, next: null, comingSoon: true }],
     [`POST ${API}/titles/movie/23437/releases`]: [
@@ -89,6 +90,7 @@ test('adding with “Pick a release myself” keeps the dialog open and patches 
       onItemUpdated={onItemUpdated}
       onArrChanged={onArrChanged}
       arrStatus={{ state: 'absent' }}
+      arrPermissions={{ profiles: { radarr: 'all', sonarr: 'all' }, manual: true, anyTitle: true, manage: true }}
       arrServices={{ radarr: 'ok', sonarr: 'ok' }}
     />
   )

@@ -13,7 +13,7 @@ import { prefersSheet } from './BottomSheet'
 import useOverlayState from './useOverlayState'
 import ArrDialog from '@components/Arr/ArrDialog'
 import ArrStatusChip, { describeArrStatus } from '@components/Arr/ArrStatusChip'
-import { arrServiceName, canUseArr, isArrMediaType } from '@components/Arr/arrApi'
+import { arrAllowsMediaType, arrServiceName, isArrMediaType } from '@components/Arr/arrApi'
 
 export default function WatchlistCard({
   item,
@@ -35,6 +35,7 @@ export default function WatchlistCard({
   reorder = null,
   arrStatus = null,
   arrServices = null,
+  arrPermissions = null,
   onArrChanged
 }) {
   const [showActions, setShowActions] = useState(false)
@@ -58,15 +59,17 @@ export default function WatchlistCard({
   // Check if user is admin
   const isAdmin = user?.role === 'admin' || user?.permissions?.includes('Admin')
 
-  // Admin: send the title to Radarr (movies) or Sonarr (shows), or manage it
-  // there. Hidden once the status check says the service isn't set up; before
-  // that answer arrives, the dialog explains instead.
+  // Send the title to Radarr (movies) or Sonarr (shows), or manage it there,
+  // for users whose roles allow it. Hidden once the status check says the
+  // service isn't set up; before that answer arrives, the dialog explains.
   const [showArrDialog, setShowArrDialog] = useState(false)
   const arrService = isArrMediaType(item.mediaType) && item.tmdbId ? arrServiceName(item.mediaType) : null
+  const arrServiceState = arrServices?.[item.mediaType === 'movie' ? 'radarr' : 'sonarr']
   const showArrAction =
-    canUseArr(user) &&
     arrService !== null &&
-    arrServices?.[item.mediaType === 'movie' ? 'radarr' : 'sonarr'] !== 'not_configured'
+    arrAllowsMediaType(arrPermissions, item.mediaType) &&
+    arrServiceState !== 'not_configured' &&
+    arrServiceState !== 'no_access'
   const arrMenuLabel =
     arrStatus && arrStatus.state !== 'absent' ? `Manage in ${arrService}…` : `Send to ${arrService}…`
   // Never a list reload: that swaps every card for the skeleton and would
@@ -266,7 +269,7 @@ export default function WatchlistCard({
     <ArrDialog item={item} onClose={() => setShowArrDialog(false)} onChanged={handleArrChanged} />
   )
 
-  const arrChip = canUseArr(user) && describeArrStatus(arrStatus, { isAvailable: Boolean(item.url) }) && (
+  const arrChip = Boolean(arrPermissions) && describeArrStatus(arrStatus, { isAvailable: Boolean(item.url) }) && (
     <ArrStatusChip status={arrStatus} mediaType={item.mediaType} isAvailable={Boolean(item.url)} />
   )
 

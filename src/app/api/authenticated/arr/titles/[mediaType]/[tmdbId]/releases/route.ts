@@ -14,8 +14,8 @@ type Context = { params: Promise<{ mediaType: string; tmdbId: string }> }
 
 export async function POST(request: Request, { params }: Context) {
   // Authorize before any upstream request: those carry the services' API keys.
-  const user = await requireArrAccess()
-  if (user instanceof Response) return user
+  const actor = await requireArrAccess()
+  if (actor instanceof Response) return actor
   let service: ArrService | null = null
   try {
     const ref = parseTitleRef(await params)
@@ -23,7 +23,7 @@ export async function POST(request: Request, { params }: Context) {
     const pick = parsePickTarget(await request.json().catch(() => null), ref.mediaType)
     const title = new URL(request.url).searchParams.get('title')?.slice(0, 200) || null
     // 202: the search has started, not finished.
-    return NextResponse.json(await startPick(ref, pick, title, user.id), { status: 202 })
+    return NextResponse.json(await startPick(ref, pick, title, actor), { status: 202 })
   } catch (error) {
     return arrErrorResponse(error, service)
   }

@@ -48,8 +48,10 @@ function facts(release) {
   ].filter(Boolean)
 }
 
-function GrabButton({ release, grabbed, grabbing, disabled, onGrab }) {
-  // A rejected release can still be grabbed, as in Radarr/Sonarr, but asks twice.
+function GrabButton({ release, grabbed, grabbing, disabled, canGrabRejected, onGrab }) {
+  // A rejected release can still be grabbed, as in Radarr/Sonarr, but asks
+  // twice, and only managers may: a rejection is often the title's quality
+  // profile saying no, which a requester's role is limited to.
   const [confirming, setConfirming] = useState(false)
   if (grabbed) {
     return (
@@ -57,6 +59,9 @@ function GrabButton({ release, grabbed, grabbing, disabled, onGrab }) {
     )
   }
   const rejected = !release.approved
+  if (rejected && !canGrabRejected) {
+    return <span className="shrink-0 px-2 py-1.5 text-xs text-gray-500">Managers only</span>
+  }
   return (
     <button
       type="button"
@@ -83,7 +88,7 @@ function GrabButton({ release, grabbed, grabbing, disabled, onGrab }) {
  * results: a movie (target null), or a show's { seasonNumber } / { episodeId }.
  * `target` must keep its identity between renders: a new object searches again.
  */
-export default function ReleasePicker({ item, target, onGrabbed }) {
+export default function ReleasePicker({ item, target, canGrabRejected = false, onGrabbed }) {
   const service = arrServiceName(item.mediaType)
   const [search, setSearch] = useState(null)
   const [error, setError] = useState(null)
@@ -274,6 +279,7 @@ export default function ReleasePicker({ item, target, onGrabbed }) {
                   grabbing={grabbing === release.id}
                   // One grab at a time, and none once the service has dropped the results.
                   disabled={grabbing !== null || expired}
+                  canGrabRejected={canGrabRejected}
                   onGrab={grab}
                 />
               </div>

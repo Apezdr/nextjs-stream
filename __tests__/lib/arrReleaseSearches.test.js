@@ -19,7 +19,7 @@ beforeEach(() => {
   jest.useRealTimers()
   store = require('@src/lib/arr/releaseSearches')
   ArrError = require('@src/lib/arr/http').ArrError
-  ArrRequestError = require('@src/lib/arr/titles').ArrRequestError
+  ArrRequestError = require('@src/lib/arr/errors').ArrRequestError
 })
 
 /** A run() the test settles by hand. */

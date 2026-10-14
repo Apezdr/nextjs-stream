@@ -1,6 +1,8 @@
 // Browser side of /api/authenticated/arr. Every call throws ArrApiError with
 // the server's own message on a non-2xx answer, which is written for people.
 
+import { allowsService, arrManage, arrPermissionsFrom, arrRequest } from '@src/lib/arr/capabilities'
+
 const BASE = '/api/authenticated/arr'
 
 export class ArrApiError extends Error {
@@ -33,14 +35,24 @@ export const fetchJson = (url) => request(url)
 
 export const arrServiceName = (mediaType) => (mediaType === 'movie' ? 'Radarr' : 'Sonarr')
 
-/**
- * Whether to offer this user the Radarr/Sonarr actions: admins only for now,
- * as the server's requireArrAccess() decides. The planned requester role
- * changes both together.
- */
-export const canUseArr = (user) => user?.role === 'admin'
-
 export const isArrMediaType = (mediaType) => mediaType === 'movie' || mediaType === 'tv'
+
+/**
+ * What the user may do with Radarr/Sonarr, from usePermissions(): the
+ * arr.request and arr.manage grants combined, or null for nothing. The same
+ * reading the server's requireArrAccess() makes.
+ */
+export function arrPermissionsOf(permissions) {
+  const grants = permissions?.grants
+  if (!grants) return null
+  return arrPermissionsFrom(grants[arrRequest.key] ?? null, arrManage.key in grants)
+}
+
+/** Whether to offer the Radarr (movie) or Sonarr (tv) actions for a title. */
+export const arrAllowsMediaType = (arrPermissions, mediaType) =>
+  Boolean(arrPermissions) &&
+  isArrMediaType(mediaType) &&
+  allowsService(arrPermissions, mediaType === 'movie' ? 'radarr' : 'sonarr')
 
 export const arrKey = (item) => `${item.mediaType}:${item.tmdbId}`
 

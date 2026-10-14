@@ -4,6 +4,8 @@
 // are left out, so the cards just show no chip.
 import 'server-only'
 import { createLogger } from '@src/lib/logger'
+import type { ArrActor } from './rules'
+import { allowsService } from './capabilities'
 import { ArrError, readArrConfig } from './http'
 import { movieStatuses } from './radarr'
 import { seriesStatuses } from './sonarr'
@@ -55,13 +57,18 @@ function noteOutcome(service: ArrService, failure: ArrError | null) {
 
 const SERVICE_MEDIA_TYPE: Record<ArrService, ArrMediaType> = { radarr: 'movie', sonarr: 'tv' }
 
-export async function getArrStatuses(items: TitleRef[]): Promise<ArrStatusResponse> {
+export async function getArrStatuses(items: TitleRef[], actor: ArrActor): Promise<ArrStatusResponse> {
   const response: ArrStatusResponse = { services: { radarr: 'ok', sonarr: 'ok' }, items: {} }
   const idsByType: Record<ArrMediaType, number[]> = { movie: [], tv: [] }
   for (const item of items) idsByType[item.mediaType].push(item.tmdbId)
 
   await Promise.all(
     ARR_SERVICES.map(async (service) => {
+      // A service outside the user's role isn't asked at all.
+      if (!allowsService(actor.permissions, service)) {
+        response.services[service] = 'no_access'
+        return
+      }
       const resolved = readArrConfig(service)
       if ('missing' in resolved) {
         response.services[service] = 'not_configured'

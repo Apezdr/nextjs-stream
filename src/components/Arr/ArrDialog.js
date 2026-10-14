@@ -192,6 +192,8 @@ function ScopeChoice({ name, scopeType, onScopeType, seasons, selectedSeasons, o
 
 function AddForm({ data, item, onAdded, onCancel }) {
   const { service, candidate, options, catalog } = data
+  // What the user's role lets them choose here (the server checks again).
+  const { manage, manual } = data.permissions
   const name = arrServiceName(item.mediaType)
   const [profileId, setProfileId] = useState(() => initialProfileId(options, service))
   const [rootFolderPath, setRootFolderPath] = useState(data.rootFolderPath ?? '')
@@ -207,7 +209,9 @@ function AddForm({ data, item, onAdded, onCancel }) {
   const folderProblem = folder ? folderNameProblem(folder) : candidate.folder ? 'Enter a folder name.' : null
   const folderTaken =
     folder === candidate.folder && catalog.folderTakenBy
-      ? `“${catalog.folderTakenBy.title}” already lives in this folder. Choose a different name, such as “${candidate.folder}${candidate.year ? ` (${candidate.year})` : ' (2)'}”.`
+      ? manage
+        ? `“${catalog.folderTakenBy.title}” already lives in this folder. Choose a different name, such as “${candidate.folder}${candidate.year ? ` (${candidate.year})` : ' (2)'}”.`
+        : `“${catalog.folderTakenBy.title}” already lives in this folder. Ask a manager to add this one under another name.`
       : null
   const canSubmit =
     profileId !== null && !folderProblem && !folderTaken && (scopeType !== 'seasons' || seasons.size > 0) && !submitting
@@ -272,7 +276,7 @@ function AddForm({ data, item, onAdded, onCancel }) {
         </select>
       </Field>
 
-      {options.rootFolders.length > 1 && (
+      {manage && options.rootFolders.length > 1 && (
         <Field label="Root folder" htmlFor="arr-root">
           <select
             id="arr-root"
@@ -300,6 +304,8 @@ function AddForm({ data, item, onAdded, onCancel }) {
             value={folder}
             onChange={(event) => setFolder(event.target.value)}
             placeholder={candidate.folder ? '' : `${name} picks the name`}
+            // Folder names are permanent: managers choose them.
+            readOnly={!manage}
             spellCheck={false}
             autoComplete="off"
             aria-invalid={Boolean(folderProblem || folderTaken)}
@@ -310,6 +316,7 @@ function AddForm({ data, item, onAdded, onCancel }) {
         {(folderProblem || folderTaken) && <p className="mt-1 text-xs text-red-400">{folderProblem || folderTaken}</p>}
         <p id="arr-folder-hint" className="mt-1 text-xs text-gray-400">
           The folder name becomes the title’s permanent key, in links and on disk.
+          {manage ? '' : ' Only managers can change it.'}
           {freeSpace ? ` ${freeSpace}.` : ''}
         </p>
       </Field>
@@ -352,13 +359,15 @@ function AddForm({ data, item, onAdded, onCancel }) {
                 ? 'Pick the episodes next; Sonarr then grabs the best release for each.'
                 : `${name} grabs the best release its quality profile allows.`,
           },
-          {
+          manual && {
             value: 'manual',
             label: 'Pick a release myself',
             hint: `Search ${name}’s indexers now and choose from what they find.`,
           },
           { value: 'later', label: 'Don’t search yet', hint: `${name} waits for new releases to turn up.` },
-        ].map((choice) => (
+        ]
+          .filter(Boolean)
+          .map((choice) => (
           <label key={choice.value} className="flex cursor-pointer items-start gap-2 text-sm">
             <input
               type="radio"
@@ -423,7 +432,7 @@ const pickButton =
   'rounded-md px-4 py-2 text-sm font-medium text-indigo-200 ring-1 ring-inset ring-indigo-400/50 hover:bg-indigo-500/10 disabled:cursor-not-allowed disabled:opacity-50'
 
 function ManagePanel({ data, item, onChanged, onClose, onPickRelease }) {
-  const { service, entry, options, download } = data
+  const { service, entry, options, download, permissions } = data
   const name = arrServiceName(item.mediaType)
   const [savedProfileId, setSavedProfileId] = useState(entry.qualityProfileId)
   const [profileId, setProfileId] = useState(entry.qualityProfileId)
@@ -478,37 +487,57 @@ function ManagePanel({ data, item, onChanged, onClose, onPickRelease }) {
         )}
       </section>
 
-      <Field label="Quality profile" htmlFor="arr-manage-profile">
-        <div className="flex gap-2">
-          <select
-            id="arr-manage-profile"
-            value={profileId}
-            onChange={(event) => setProfileId(Number(event.target.value))}
-            className={inputClass}
-          >
-            {!profileKnown && <option value={savedProfileId}>Unknown profile</option>}
-            {options.qualityProfiles.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                {profile.name}
-              </option>
-            ))}
-          </select>
-          {profileId !== savedProfileId && (
-            <button type="button" onClick={saveProfile} disabled={busy !== null} className={primaryButton}>
-              {busy === 'profile' ? 'Saving…' : 'Save'}
-            </button>
-          )}
-        </div>
-      </Field>
+      {!permissions.manage ? (
+        <p className="text-sm text-gray-300">
+          Quality profile:{' '}
+          <span className="text-gray-100">
+            {options.qualityProfiles.find((profile) => profile.id === savedProfileId)?.name ?? 'Unknown'}
+          </span>
+        </p>
+      ) : (
+        <Field label="Quality profile" htmlFor="arr-manage-profile">
+          <div className="flex gap-2">
+            <select
+              id="arr-manage-profile"
+              value={profileId}
+              onChange={(event) => setProfileId(Number(event.target.value))}
+              className={inputClass}
+            >
+              {!profileKnown && <option value={savedProfileId}>Unknown profile</option>}
+              {options.qualityProfiles.map((profile) => (
+                <option key={profile.id} value={profile.id}>
+                  {profile.name}
+                </option>
+              ))}
+            </select>
+            {profileId !== savedProfileId && (
+              <button type="button" onClick={saveProfile} disabled={busy !== null} className={primaryButton}>
+                {busy === 'profile' ? 'Saving…' : 'Save'}
+              </button>
+            )}
+          </div>
+        </Field>
+      )}
 
-      {service === 'radarr' ? (
+      {!permissions.canAct ? (
+        <div className="space-y-3">
+          <Note>Your role lets you search only for titles you requested, in the quality profiles it allows.</Note>
+          <div className="flex justify-end">
+            <button type="button" onClick={onClose} className={secondaryButton}>
+              Close
+            </button>
+          </div>
+        </div>
+      ) : service === 'radarr' ? (
         <div className="flex flex-wrap justify-end gap-2">
           <button type="button" onClick={onClose} className={secondaryButton}>
             Close
           </button>
-          <button type="button" onClick={() => onPickRelease()} disabled={busy !== null} className={pickButton}>
-            Pick a release…
-          </button>
+          {permissions.manual && (
+            <button type="button" onClick={() => onPickRelease()} disabled={busy !== null} className={pickButton}>
+              Pick a release…
+            </button>
+          )}
           <button type="button" onClick={() => search({ type: 'all' })} disabled={busy !== null} className={primaryButton}>
             {busy === 'search' ? 'Starting search…' : entry.hasFile ? 'Search for an upgrade' : 'Search now'}
           </button>
@@ -535,14 +564,16 @@ function ManagePanel({ data, item, onChanged, onClose, onPickRelease }) {
               <button type="button" onClick={onClose} className={secondaryButton}>
                 Close
               </button>
-              <button
-                type="button"
-                onClick={() => onPickRelease(scopeType === 'seasons' && seasons.size > 0 ? Math.min(...seasons) : undefined)}
-                disabled={busy !== null}
-                className={pickButton}
-              >
-                Pick a release…
-              </button>
+              {permissions.manual && (
+                <button
+                  type="button"
+                  onClick={() => onPickRelease(scopeType === 'seasons' && seasons.size > 0 ? Math.min(...seasons) : undefined)}
+                  disabled={busy !== null}
+                  className={pickButton}
+                >
+                  Pick a release…
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() =>
@@ -642,7 +673,15 @@ export default function ArrDialog({ item, onClose, onChanged }) {
 
   let body
   if (step?.kind === 'releases') {
-    body = <ReleaseStep item={ref} defaultSeason={step.defaultSeason} onGrabbed={changed} onDone={onClose} />
+    body = (
+      <ReleaseStep
+        item={ref}
+        defaultSeason={step.defaultSeason}
+        canGrabRejected={data?.permissions?.manage === true}
+        onGrabbed={changed}
+        onDone={onClose}
+      />
+    )
   } else if (step?.kind === 'episodes') {
     body = (
       <div className="space-y-3">

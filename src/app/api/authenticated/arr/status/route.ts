@@ -11,8 +11,8 @@ const log = createLogger('ArrStatusRoute')
 
 export async function GET(request: Request) {
   // Authorize before any upstream request: those carry the services' API keys.
-  const user = await requireArrAccess()
-  if (user instanceof Response) return user
+  const actor = await requireArrAccess()
+  if (actor instanceof Response) return actor
 
   const items = parseStatusItems(new URL(request.url).searchParams.get('items'))
   if (!items) {
@@ -26,7 +26,7 @@ export async function GET(request: Request) {
   }
 
   try {
-    return NextResponse.json(await getArrStatuses(items))
+    return NextResponse.json(await getArrStatuses(items, actor))
   } catch (error) {
     log.error({ err: error }, 'Failed to load Radarr/Sonarr status')
     return NextResponse.json({ error: 'internal', message: 'Failed to load Radarr/Sonarr status.' }, { status: 500 })

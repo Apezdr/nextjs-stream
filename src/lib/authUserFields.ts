@@ -24,6 +24,12 @@ export const USER_ADDITIONAL_FIELDS = {
     defaultValue: false,
     input: false,
   },
+  // Role ids (src/lib/roles), given by admins from the Users page.
+  roles: {
+    type: 'string[]',
+    required: false,
+    input: false,
+  },
   // Stored as object in MongoDB (better-auth 'string' type allows flexible storage)
   // Migration keeps it as object - no JSON.parse/stringify needed in app code
   preferences: {

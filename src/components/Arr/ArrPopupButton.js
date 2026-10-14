@@ -3,19 +3,21 @@
 import { ArrowDownTrayIcon } from '@heroicons/react/20/solid'
 import { authClient } from '@src/lib/auth-client'
 import { classNames } from '@src/utils'
-import { arrServiceName, canUseArr, isArrMediaType } from './arrApi'
+import usePermissions from '@components/Roles/usePermissions'
+import { arrAllowsMediaType, arrPermissionsOf, arrServiceName } from './arrApi'
 
 /**
- * The Radarr/Sonarr button in a title's popup card, for users who may use
- * them. The popup is a hover card that unmounts the moment it collapses, so
- * this only asks: the card that owns the popup closes it and opens the dialog
- * itself. Client-only (the popup never renders on the server), so the session
- * check needs no hydration gate.
+ * The Radarr/Sonarr button in a title's popup card, for users whose roles
+ * allow that service. The popup is a hover card that unmounts the moment it
+ * collapses, so this only asks: the card that owns the popup closes it and
+ * opens the dialog itself. Client-only (the popup never renders on the
+ * server), so the session check needs no hydration gate.
  */
 export default function ArrPopupButton({ mediaType, tmdbId, title, onOpen, className = '' }) {
   const { data: session } = authClient.useSession()
+  const arrPermissions = arrPermissionsOf(usePermissions(session?.user))
   const id = Number(tmdbId)
-  if (!onOpen || !canUseArr(session?.user) || !isArrMediaType(mediaType) || !Number.isSafeInteger(id) || id <= 0) {
+  if (!onOpen || !arrAllowsMediaType(arrPermissions, mediaType) || !Number.isSafeInteger(id) || id <= 0) {
     return null
   }
   const service = arrServiceName(mediaType)

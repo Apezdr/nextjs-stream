@@ -25,7 +25,12 @@ const startRoute = require('@src/app/api/authenticated/arr/titles/[mediaType]/[t
 const searchRoute = require('@src/app/api/authenticated/arr/releases/[searchId]/route')
 const grabRoute = require('@src/app/api/authenticated/arr/releases/[searchId]/grab/route')
 
-const ADMIN = { id: 'admin-1', name: 'Adam', role: 'admin' }
+// What requireArrAccess() answers for an admin
+const ADMIN = {
+  userId: 'admin-1',
+  userName: 'Adam',
+  permissions: { profiles: { radarr: 'all', sonarr: 'all' }, manual: true, anyTitle: true, manage: true },
+}
 const BASE = 'http://localhost/api/authenticated/arr'
 const SEARCH_ID = '0f8fad5b-d9cb-469f-a165-70867728950e'
 
@@ -58,10 +63,10 @@ test('starting: 202; a show names its season or episode, a movie needs nothing',
 
   const show = await startRoute.POST(post(`${BASE}/titles/tv/1438/releases?title=The%20Wire`, { seasonNumber: 2 }), titleContext('tv', 1438))
   expect(show.status).toBe(202)
-  expect(picks.startPick).toHaveBeenLastCalledWith({ mediaType: 'tv', tmdbId: 1438 }, { seasonNumber: 2 }, 'The Wire', ADMIN.id)
+  expect(picks.startPick).toHaveBeenLastCalledWith({ mediaType: 'tv', tmdbId: 1438 }, { seasonNumber: 2 }, 'The Wire', ADMIN)
 
   await startRoute.POST(post(`${BASE}/titles/movie/11/releases`, { seasonNumber: 2 }), titleContext('movie', 11))
-  expect(picks.startPick).toHaveBeenLastCalledWith({ mediaType: 'movie', tmdbId: 11 }, null, null, ADMIN.id)
+  expect(picks.startPick).toHaveBeenLastCalledWith({ mediaType: 'movie', tmdbId: 11 }, null, null, ADMIN)
 
   const noTarget = await startRoute.POST(post(`${BASE}/titles/tv/1438/releases`, {}), titleContext('tv', 1438))
   expect(noTarget.status).toBe(400)
@@ -81,7 +86,7 @@ test('grabbing passes the release id on; the service’s refusal is named after 
   picks.grabPick.mockResolvedValue({ service: 'sonarr', title: 'The.Wire.S02', monitored: true })
   const ok = await grabRoute.POST(post(`${BASE}/releases/${SEARCH_ID}/grab`, { releaseId: '3' }), searchContext(SEARCH_ID))
   expect(ok.status).toBe(200)
-  expect(picks.grabPick).toHaveBeenCalledWith(SEARCH_ID, '3')
+  expect(picks.grabPick).toHaveBeenCalledWith(SEARCH_ID, '3', ADMIN)
 
   picks.pickService.mockReturnValue('sonarr')
   picks.grabPick.mockRejectedValue(new ArrError('rejected', 409, ['Getting release from indexer failed']))

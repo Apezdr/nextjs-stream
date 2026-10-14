@@ -1,22 +1,33 @@
 /**
- * The popup card's Radarr/Sonarr button: only for users who may use them
- * (admins, for now), only for a title with a TMDB id, and it hands the card
- * exactly what the dialog needs.
+ * The popup card's Radarr/Sonarr button: offered for a service the user's
+ * roles allow (admins hold everything), only for a title with a TMDB id, and
+ * it hands the card exactly what the dialog needs.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
 import ArrPopupButton from '@src/components/Arr/ArrPopupButton'
 
-const mockUseSession = jest.fn()
-jest.mock('@src/lib/auth-client', () => ({ authClient: { useSession: () => mockUseSession() } }))
+jest.mock('@src/lib/auth-client', () => ({ authClient: { useSession: () => ({ data: { user: { id: 'u1' } } }) } }))
+const mockPermissions = jest.fn()
+jest.mock('@src/components/Roles/usePermissions', () => ({
+  __esModule: true,
+  default: () => mockPermissions(),
+}))
 
-const asUser = (user) => mockUseSession.mockReturnValue({ data: user ? { user } : null })
+const ADMIN = {
+  admin: true,
+  grants: { 'arr.request': { radarr: 'all', sonarr: 'all', manual: true, anyTitle: true }, 'arr.manage': {} },
+}
+const RADARR_REQUESTER = {
+  admin: false,
+  grants: { 'arr.request': { radarr: [4], sonarr: [], manual: false, anyTitle: false } },
+}
 
 beforeEach(() => {
-  mockUseSession.mockReset()
+  mockPermissions.mockReset()
 })
 
-test('an admin gets the service’s button, which hands the card the title', () => {
-  asUser({ id: 'u1', role: 'admin' })
+test('a user whose roles allow it gets the service’s button, which hands the card the title', () => {
+  mockPermissions.mockReturnValue(ADMIN)
   const onOpen = jest.fn()
   render(<ArrPopupButton mediaType="movie" tmdbId="11" title="Star Wars" onOpen={onOpen} />)
 
@@ -26,18 +37,25 @@ test('an admin gets the service’s button, which hands the card the title', () 
 })
 
 test('a show goes to Sonarr', () => {
-  asUser({ id: 'u1', role: 'admin' })
+  mockPermissions.mockReturnValue(ADMIN)
   render(<ArrPopupButton mediaType="tv" tmdbId={1438} title="The Wire" onOpen={jest.fn()} />)
   expect(screen.getByRole('button', { name: /Sonarr/ })).toHaveAttribute('title', 'Send to Sonarr, or manage it there')
 })
 
+test('only for the services a requester’s role includes', () => {
+  mockPermissions.mockReturnValue(RADARR_REQUESTER)
+  const { rerender } = render(<ArrPopupButton mediaType="movie" tmdbId={11} title="Star Wars" onOpen={jest.fn()} />)
+  expect(screen.getByRole('button', { name: /Radarr/ })).toBeInTheDocument()
+
+  rerender(<ArrPopupButton mediaType="tv" tmdbId={1438} title="The Wire" onOpen={jest.fn()} />)
+  expect(screen.queryByRole('button')).not.toBeInTheDocument()
+})
+
 test.each([
-  ['signed out', null],
-  ['a regular user', { id: 'u2', role: 'user' }],
-  // The server checks the role alone; a legacy permissions entry isn't enough.
-  ['a user with only the legacy Admin permission', { id: 'u3', role: 'user', permissions: ['Admin'] }],
-])('nothing for %s', (_label, user) => {
-  asUser(user)
+  ['no permissions (yet, or at all)', null],
+  ['roles that grant nothing here', { admin: false, grants: {} }],
+])('nothing for %s', (_label, permissions) => {
+  mockPermissions.mockReturnValue(permissions)
   const { container } = render(<ArrPopupButton mediaType="movie" tmdbId={11} title="Star Wars" onOpen={jest.fn()} />)
   expect(container).toBeEmptyDOMElement()
 })
@@ -47,7 +65,7 @@ test.each([
   ['a bad TMDB id', { mediaType: 'movie', tmdbId: 'abc' }],
   ['an episode-only type', { mediaType: 'episode', tmdbId: 11 }],
 ])('nothing for %s', (_label, props) => {
-  asUser({ id: 'u1', role: 'admin' })
+  mockPermissions.mockReturnValue(ADMIN)
   const { container } = render(<ArrPopupButton {...props} title="x" onOpen={jest.fn()} />)
   expect(container).toBeEmptyDOMElement()
 })
