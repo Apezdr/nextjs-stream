@@ -41,8 +41,8 @@ afterEach(() => jest.restoreAllMocks())
 it('keeps what the item stored, and labels an item with nothing stored', async () => {
   mockBatchResolveMedia.mockResolvedValue(
     new Map([
-      [1, missingFromTmdbMedia(1, 'tv')],
-      [2, missingFromTmdbMedia(2, 'tv')],
+      ['tv:1', missingFromTmdbMedia(1, 'tv')],
+      ['tv:2', missingFromTmdbMedia(2, 'tv')],
     ])
   )
 

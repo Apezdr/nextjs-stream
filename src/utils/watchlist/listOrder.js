@@ -12,6 +12,8 @@
  * async functions.
  */
 
+import { titleKey } from './playlistMerge.js'
+
 /** The sorts that read the stored details; date added and custom order don't. */
 export const SORTS_NEEDING_DETAILS = new Set(['title', 'releaseDate'])
 
@@ -125,16 +127,15 @@ export function sortDetailsFrom(media) {
  * again next time; one TMDB no longer has keeps whatever it stored, and is
  * only marked, so sorting stops looking it up.
  * @param {Object[]} items - Watchlist documents
- * @param {Map} resolvedMedia - From batchResolveMedia, keyed by TMDB id
+ * @param {Map} resolvedMedia - From batchResolveMedia, keyed by titleKey ("movie:603")
  * @param {Date} [now]
  * @returns {Object[]}
  */
 export function sortDetailUpdates(items, resolvedMedia, now = new Date()) {
   const updates = []
   for (const item of items) {
-    const entry = resolvedMedia.get(parseInt(item.tmdbId))
-    // The map is keyed by TMDB id alone, and ids repeat across media types
-    if (!entry || entry.mediaType !== item.mediaType) continue
+    const entry = resolvedMedia.get(titleKey(item))
+    if (!entry) continue
 
     const details = entry.tmdbNotFound ? {} : sortDetailsFrom(entry)
     const changed = Object.entries(details).some(([field, value]) => (item[field] ?? null) !== value)

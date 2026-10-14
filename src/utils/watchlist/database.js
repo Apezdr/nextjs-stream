@@ -5,6 +5,7 @@ import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { batchResolveMedia } from './mediaResolver.js'
+import { titleKey } from './playlistMerge.js'
 import { asResolvedMedia, untitledLabel } from './tmdbMissing.js'
 import {
   DETAILS_RESOLVED_AT,
@@ -431,7 +432,7 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
     // Declared out here because batchResolveMedia reads it below. Declared
     // inside the block, it threw a ReferenceError for any internalOnly list
     // with something to show.
-    let availableTmdbIds = null
+    let availableTitleKeys = null
 
     // For internalOnly mode, we need to check library availability via TMDB ID
     // This requires a more complex query using aggregation
@@ -470,18 +471,24 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
           : Promise.resolve([])
       ])
       
-      // Get available TMDB IDs
-      availableTmdbIds = new Set([
-        ...movieMatches.map(m => m.metadata?.id).filter(Boolean),
-        ...tvMatches.map(t => t.metadata?.id).filter(Boolean)
+      // Available titles, each within its own type: a movie in the library
+      // says nothing about the show that shares its TMDB number
+      const availableMovieIds = movieMatches.map(m => m.metadata?.id).filter(Boolean)
+      const availableTvIds = tvMatches.map(t => t.metadata?.id).filter(Boolean)
+      availableTitleKeys = new Set([
+        ...availableMovieIds.map(tmdbId => titleKey({ mediaType: 'movie', tmdbId })),
+        ...availableTvIds.map(tmdbId => titleKey({ mediaType: 'tv', tmdbId }))
       ])
       
       if (countOnly) {
-        return availableTmdbIds.size
+        return availableTitleKeys.size
       }
       
       // Filter watchlist to only available items
-      filter.tmdbId = { $in: Array.from(availableTmdbIds) }
+      filter.$or = [
+        { mediaType: 'movie', tmdbId: { $in: availableMovieIds } },
+        { mediaType: 'tv', tmdbId: { $in: availableTvIds } }
+      ]
     }
 
     // Count only query (after applying internalOnly filter if needed)
@@ -531,12 +538,12 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
 
     // Resolve media data in batch - pass pre-computed availability to eliminate duplicate queries
     const resolvedMedia = await batchResolveMedia(itemsToResolve, {
-      precomputedAvailability: internalOnly ? availableTmdbIds : null
+      precomputedAvailability: internalOnly ? availableTitleKeys : null
     })
 
     // Combine watchlist items with resolved media data
     const enhancedItems = watchlistItems.map((item) => {
-      const resolved = resolvedMedia.get(parseInt(item.tmdbId))
+      const resolved = resolvedMedia.get(titleKey(item))
       const mediaData = asResolvedMedia(resolved)
 
       if (mediaData) {
@@ -710,7 +717,7 @@ export async function addToWatchlist({
     let mediaData = null
     try {
       const resolvedMedia = await batchResolveMedia([{ tmdbId: numericTmdbId, mediaType }])
-      mediaData = asResolvedMedia(resolvedMedia.get(numericTmdbId))
+      mediaData = asResolvedMedia(resolvedMedia.get(titleKey({ mediaType, tmdbId: numericTmdbId })))
       await storeSortDetails(
         collection,
         [{ _id: upsertResult.upsertedId, tmdbId: numericTmdbId, mediaType, title: watchlistItem.title }],
@@ -2221,9 +2228,9 @@ export async function removeComingSoonStatus(tmdbId, mediaType) {
 
 /**
  * Bulk get "Coming Soon" status for multiple TMDB items
- * Returns a Map of tmdbId -> coming soon data for efficient lookups
+ * Returns a Map of titleKey ("movie:603") -> coming soon data for efficient lookups
  * @param {Array<{tmdbId: number, mediaType: string}>} items - Array of items to check
- * @returns {Promise<Map>} Map of tmdbId -> coming soon data
+ * @returns {Promise<Map>} Map of titleKey -> coming soon data (TMDB ids repeat across media types)
  */
 export async function bulkGetComingSoonStatus(items) {
   if (!items || items.length === 0) {
@@ -2247,7 +2254,7 @@ export async function bulkGetComingSoonStatus(items) {
   // Create map for quick lookup
   const resultMap = new Map()
   docs.forEach((doc) => {
-    resultMap.set(parseInt(doc.tmdbId), {
+    resultMap.set(titleKey(doc), {
       tmdbId: doc.tmdbId,
       mediaType: doc.mediaType,
       comingSoon: true,
@@ -2383,19 +2390,21 @@ export async function cleanExpiredComingSoon() {
       : Promise.resolve([]),
   ])
 
-  // Get TMDB IDs that are now available
-  const nowAvailableTmdbIds = [
-    ...movieMatches.map((m) => m.metadata?.id).filter(Boolean),
-    ...tvMatches.map((t) => t.metadata?.id).filter(Boolean),
-  ]
+  // TMDB ids that are now available, per type: a movie arriving must not
+  // clear the Coming Soon of a show that shares its number, or vice versa
+  const availableMovieIds = movieMatches.map((m) => m.metadata?.id).filter(Boolean)
+  const availableTvIds = tvMatches.map((t) => t.metadata?.id).filter(Boolean)
 
-  if (nowAvailableTmdbIds.length === 0) {
+  if (availableMovieIds.length === 0 && availableTvIds.length === 0) {
     return 0
   }
 
   // Remove coming soon entries for items that are now available
   const result = await comingSoonColl.deleteMany({
-    tmdbId: { $in: nowAvailableTmdbIds },
+    $or: [
+      { mediaType: 'movie', tmdbId: { $in: availableMovieIds } },
+      { mediaType: 'tv', tmdbId: { $in: availableTvIds } },
+    ],
   })
 
   return result.deletedCount || 0
@@ -2492,20 +2501,18 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
 
     const [movies, tvShows] = await Promise.all(queries)
 
-    // Create a map of TMDB ID -> available media document for quick lookup
+    // titleKey -> available media document. Keyed by type too: TMDB ids
+    // repeat across media types
     const availableMediaMap = new Map()
-    ;[...movies, ...tvShows].forEach((item) => {
-      const tmdbId = item.metadata?.id
-      if (tmdbId) {
-        availableMediaMap.set(parseInt(tmdbId), item)
+    for (const [mediaType, documents] of [['movie', movies], ['tv', tvShows]]) {
+      for (const item of documents) {
+        const tmdbId = item.metadata?.id
+        if (tmdbId) availableMediaMap.set(titleKey({ mediaType, tmdbId }), item)
       }
-    })
+    }
 
     // Identify external items that need TMDB data fetching
-    const externalItems = watchlistItems.filter(item => {
-      const tmdbId = parseInt(item.tmdbId)
-      return !availableMediaMap.has(tmdbId) && includeUnavailable
-    })
+    const externalItems = watchlistItems.filter(item => !availableMediaMap.has(titleKey(item)) && includeUnavailable)
 
     // Resolve TMDB metadata for external items. Pre-resolved items (already
     // enhanced by getUserWatchlist's batchResolveMedia pass) are reused as-is —
@@ -2517,10 +2524,10 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
         ? externalItems.filter(item => item.isExternal === true && item.title)
         : []
       for (const item of preResolvedItems) {
-        externalTmdbData.set(parseInt(item.tmdbId), item)
+        externalTmdbData.set(titleKey(item), item)
       }
 
-      const itemsToFetch = externalItems.filter(item => !externalTmdbData.has(parseInt(item.tmdbId)))
+      const itemsToFetch = externalItems.filter(item => !externalTmdbData.has(titleKey(item)))
 
       if (preResolvedItems.length > 0) {
         console.log(`[getMinimalCardDataForPlaylist] Reusing pre-resolved TMDB data for ${preResolvedItems.length} external items`)
@@ -2538,8 +2545,8 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
             })),
             { authHeaders }  // Forward auth headers for authentication
           )
-          for (const [tmdbId, mediaData] of tmdbResults) {
-            externalTmdbData.set(tmdbId, mediaData)
+          for (const [key, mediaData] of tmdbResults) {
+            externalTmdbData.set(key, mediaData)
           }
 
           // Log TMDB fetch success/failure
@@ -2548,7 +2555,7 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
           console.log(`[getMinimalCardDataForPlaylist] TMDB fetch results: ${successCount} success, ${failureCount} failures`)
 
           if (failureCount > 0) {
-            const failedItems = itemsToFetch.filter(item => !externalTmdbData.has(parseInt(item.tmdbId)))
+            const failedItems = itemsToFetch.filter(item => !externalTmdbData.has(titleKey(item)))
             console.warn(`[getMinimalCardDataForPlaylist] Failed to fetch TMDB data for items:`,
               failedItems.map(item => `${item.mediaType}/${item.tmdbId}`).join(', '))
           }
@@ -2570,8 +2577,8 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
     // Process ALL watchlist items with minimal data
     let results = watchlistItems.map((watchlistItem) => {
       const tmdbId = parseInt(watchlistItem.tmdbId)
-      const availableMedia = availableMediaMap.get(tmdbId)
-      const comingSoonData = comingSoonMap.get(tmdbId)
+      const availableMedia = availableMediaMap.get(titleKey(watchlistItem))
+      const comingSoonData = comingSoonMap.get(titleKey(watchlistItem))
       
       if (availableMedia) {
         // Item is available in library - return minimal media document
@@ -2599,7 +2606,7 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
         }
       } else if (includeUnavailable) {
         // Item is NOT in library - fetch TMDB data or use fallback
-        const resolved = externalTmdbData.get(tmdbId)
+        const resolved = externalTmdbData.get(titleKey(watchlistItem))
         const tmdbData = asResolvedMedia(resolved)
 
         // Use TMDB data if available, otherwise fall back to cached watchlist data
@@ -2654,17 +2661,11 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
 
       if (sortBy === 'custom' && playlist.customOrder?.length > 0) {
         const orderMap = new Map(playlist.customOrder.map((id, index) => [id, index]))
-        const tmdbToWatchlistId = new Map(
-          watchlistItems.map(item => [parseInt(item.tmdbId), item._id?.toString() || item.id])
-        )
-        
+        // Every card carries its watchlist id; matching on the TMDB id instead
+        // mixed up a movie and a show that share one
         results.sort((a, b) => {
-          const aTmdbId = a.metadata?.id || a.tmdbId
-          const bTmdbId = b.metadata?.id || b.tmdbId
-          const aWatchlistId = tmdbToWatchlistId.get(parseInt(aTmdbId))
-          const bWatchlistId = tmdbToWatchlistId.get(parseInt(bTmdbId))
-          const aOrder = aWatchlistId ? (orderMap.get(aWatchlistId) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER
-          const bOrder = bWatchlistId ? (orderMap.get(bWatchlistId) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER
+          const aOrder = orderMap.get(a.watchlistId) ?? Number.MAX_SAFE_INTEGER
+          const bOrder = orderMap.get(b.watchlistId) ?? Number.MAX_SAFE_INTEGER
           return aOrder - bOrder
         })
       } else {
@@ -2689,13 +2690,8 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
             }
             case 'dateAdded':
             default: {
-              const aTmdbId = a.metadata?.id || a.tmdbId
-              const bTmdbId = b.metadata?.id || b.tmdbId
-              const aWatchlistItem = watchlistItems.find(item => parseInt(item.tmdbId) === parseInt(aTmdbId))
-              const bWatchlistItem = watchlistItems.find(item => parseInt(item.tmdbId) === parseInt(bTmdbId))
-              const aDate = new Date(aWatchlistItem?.dateAdded || 0)
-              const bDate = new Date(bWatchlistItem?.dateAdded || 0)
-              comparison = aDate - bDate
+              // Each card carries its own watchlist item's dateAdded
+              comparison = new Date(a.dateAdded || 0) - new Date(b.dateAdded || 0)
               break
             }
           }
