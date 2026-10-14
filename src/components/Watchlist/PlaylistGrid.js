@@ -7,7 +7,8 @@ import { GridItemSkeleton, WATCHLIST_GRID_CLASSES } from './WatchlistSkeletons'
 import { classNames } from '@src/utils'
 import { useNavigation } from '@src/contexts/NavigationContext'
 import useArrStatus from '@components/Arr/useArrStatus'
-import { arrKey, canUseArr } from '@components/Arr/arrApi'
+import { arrKey, arrPermissionsOf } from '@components/Arr/arrApi'
+import usePermissions from '@components/Roles/usePermissions'
 
 export default function PlaylistGrid({
   items,
@@ -41,9 +42,13 @@ export default function PlaylistGrid({
   // Get navigation state for grid coordination
   const { isNavigating: globalIsNavigating, targetUrl } = useNavigation()
 
-  // Where each title stands in Radarr/Sonarr, for those allowed: one request per page
-  const arrEnabled = canUseArr(user)
-  const { statuses: arrStatuses, services: arrServices, refresh: refreshArrStatus } = useArrStatus(items, arrEnabled)
+  // What this user's roles let them do with Radarr/Sonarr, and where each
+  // title stands there: one request per page, and none for anyone else
+  const arrPermissions = arrPermissionsOf(usePermissions(user))
+  const { statuses: arrStatuses, services: arrServices, refresh: refreshArrStatus } = useArrStatus(
+    items,
+    Boolean(arrPermissions)
+  )
 
   const handleDragStart = useCallback((e, item, index) => {
     setDraggedItem(item)
@@ -321,6 +326,7 @@ export default function PlaylistGrid({
                 reorder={reorderFor(item, index)}
                 arrStatus={arrStatuses?.[arrKey(item)] ?? null}
                 arrServices={arrServices}
+                arrPermissions={arrPermissions}
                 onArrChanged={refreshArrStatus}
               />
           </motion.div>
@@ -429,6 +435,7 @@ export default function PlaylistGrid({
               reorder={reorderFor(item, index)}
               arrStatus={arrStatuses?.[arrKey(item)] ?? null}
               arrServices={arrServices}
+              arrPermissions={arrPermissions}
               onArrChanged={refreshArrStatus}
             />
             </motion.div>

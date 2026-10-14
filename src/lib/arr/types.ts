@@ -124,6 +124,16 @@ export interface CatalogCheck {
   folderTakenBy: { title: string } | null
 }
 
+/** What the dialog may offer this user for this title (their role, applied to it). */
+export interface ArrTitlePermissions {
+  /** Choose the folder and root folder, change the quality profile, grab rejected releases. */
+  manage: boolean
+  /** Pick a release by hand. */
+  manual: boolean
+  /** Search and pick for this title: always true for one not yet added. */
+  canAct: boolean
+}
+
 export type ArrTitle =
   | { state: 'not_configured'; service: ArrService; missing: string[] }
   | { state: 'unreachable'; service: ArrService; reason: ArrFailureReason; httpStatus: number | null }
@@ -135,8 +145,16 @@ export type ArrTitle =
       options: ArrOptions
       catalog: CatalogCheck
       rootFolderPath: string | null
+      permissions: ArrTitlePermissions
     }
-  | { state: 'present'; service: ArrService; entry: ArrEntry; options: ArrOptions; download: ArrDownload | null }
+  | {
+      state: 'present'
+      service: ArrService
+      entry: ArrEntry
+      options: ArrOptions
+      download: ArrDownload | null
+      permissions: ArrTitlePermissions
+    }
 
 /** One watchlist card's chip. */
 export type ArrItemStatus =
@@ -147,7 +165,8 @@ export type ArrItemStatus =
   | { state: 'wanted'; released: boolean | null }
   | { state: 'unmonitored' }
 
-export type ArrServiceState = 'ok' | 'not_configured' | 'unreachable'
+/** no_access: the user's role doesn't include the service. */
+export type ArrServiceState = 'ok' | 'not_configured' | 'unreachable' | 'no_access'
 
 export interface ArrStatusResponse {
   services: Record<ArrService, ArrServiceState>

@@ -11,13 +11,13 @@ import { ArrRequestError, arrErrorResponse, getArrEpisodes, parseTitleRef } from
 type Context = { params: Promise<{ mediaType: string; tmdbId: string }> }
 
 export async function GET(request: Request, { params }: Context) {
-  const user = await requireArrAccess()
-  if (user instanceof Response) return user
+  const actor = await requireArrAccess()
+  if (actor instanceof Response) return actor
   try {
     const ref = parseTitleRef(await params)
     if (ref.mediaType !== 'tv') throw new ArrRequestError(400, 'invalid_request', 'Only shows have episodes.')
     const title = new URL(request.url).searchParams.get('title')?.slice(0, 200) || null
-    return NextResponse.json(await getArrEpisodes(ref.tmdbId, title))
+    return NextResponse.json(await getArrEpisodes(ref.tmdbId, title, actor))
   } catch (error) {
     return arrErrorResponse(error, 'sonarr')
   }

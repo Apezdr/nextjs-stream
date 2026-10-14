@@ -16,6 +16,8 @@ const { ArrError } = require('@src/lib/arr/http')
 const { MAX_STATUS_ITEMS, getArrStatuses, parseStatusItems } = require('@src/lib/arr/status')
 
 const originalEnv = process.env
+// A manager: every service, no limits. Status reads only which services are allowed.
+const MANAGER = { userId: 'u1', userName: 'Adam', permissions: { profiles: { radarr: 'all', sonarr: 'all' }, manual: true, anyTitle: true, manage: true } }
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -48,10 +50,13 @@ test('statuses are keyed mediaType:tmdbId, so a movie and a show sharing a TMDB 
   seriesStatuses.mockResolvedValue(new Map([[1399, { state: 'wanted', released: true }]]))
 
   await expect(
-    getArrStatuses([
-      { mediaType: 'movie', tmdbId: 1399 },
-      { mediaType: 'tv', tmdbId: 1399 },
-    ])
+    getArrStatuses(
+      [
+        { mediaType: 'movie', tmdbId: 1399 },
+        { mediaType: 'tv', tmdbId: 1399 },
+      ],
+      MANAGER
+    )
   ).resolves.toEqual({
     services: { radarr: 'ok', sonarr: 'ok' },
     items: { 'movie:1399': { state: 'downloaded' }, 'tv:1399': { state: 'wanted', released: true } },
@@ -63,20 +68,40 @@ test('an unset service and a failing one are reported, and the other still answe
   seriesStatuses.mockRejectedValue(new ArrError('timeout'))
 
   await expect(
-    getArrStatuses([
-      { mediaType: 'movie', tmdbId: 603 },
-      { mediaType: 'tv', tmdbId: 1399 },
-    ])
+    getArrStatuses(
+      [
+        { mediaType: 'movie', tmdbId: 603 },
+        { mediaType: 'tv', tmdbId: 1399 },
+      ],
+      MANAGER
+    )
   ).resolves.toEqual({ services: { radarr: 'not_configured', sonarr: 'unreachable' }, items: {} })
   expect(movieStatuses).not.toHaveBeenCalled()
 
   // The failure is logged once, not on every poll.
-  await getArrStatuses([{ mediaType: 'tv', tmdbId: 1399 }])
+  await getArrStatuses([{ mediaType: 'tv', tmdbId: 1399 }], MANAGER)
   expect(mockLog.warn).toHaveBeenCalledTimes(1)
 })
 
 test('a service with no titles on the page is not asked', async () => {
   seriesStatuses.mockResolvedValue(new Map())
-  await getArrStatuses([{ mediaType: 'tv', tmdbId: 1399 }])
+  await getArrStatuses([{ mediaType: 'tv', tmdbId: 1399 }], MANAGER)
   expect(movieStatuses).not.toHaveBeenCalled()
+})
+
+test('a service outside the user’s role is reported as no_access and never asked', async () => {
+  movieStatuses.mockResolvedValue(new Map([[603, { state: 'absent' }]]))
+  const radarrOnly = { ...MANAGER, permissions: { profiles: { radarr: [4], sonarr: [] }, manual: false, anyTitle: false, manage: false } }
+
+  const response = await getArrStatuses(
+    [
+      { mediaType: 'movie', tmdbId: 603 },
+      { mediaType: 'tv', tmdbId: 1399 },
+    ],
+    radarrOnly
+  )
+
+  expect(response.services).toEqual({ radarr: 'ok', sonarr: 'no_access' })
+  expect(Object.keys(response.items)).toEqual(['movie:603'])
+  expect(seriesStatuses).not.toHaveBeenCalled()
 })

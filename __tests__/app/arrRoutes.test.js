@@ -33,7 +33,12 @@ const searchRoute = require('@src/app/api/authenticated/arr/titles/[mediaType]/[
 const episodesRoute = require('@src/app/api/authenticated/arr/titles/[mediaType]/[tmdbId]/episodes/route')
 const statusRoute = require('@src/app/api/authenticated/arr/status/route')
 
-const ADMIN = { id: '64b7f0c2a1b2c3d4e5f60718', name: 'Adam', role: 'admin' }
+// What requireArrAccess() answers for an admin
+const ADMIN = {
+  userId: '64b7f0c2a1b2c3d4e5f60718',
+  userName: 'Adam',
+  permissions: { profiles: { radarr: 'all', sonarr: 'all' }, manual: true, anyTitle: true, manage: true },
+}
 const BASE = 'http://localhost/api/authenticated/arr'
 
 const context = (mediaType, tmdbId) => ({ params: Promise.resolve({ mediaType, tmdbId: String(tmdbId) }) })
@@ -80,12 +85,13 @@ describe('POST (add)', () => {
     expect(titles.addArrTitle).toHaveBeenCalledWith(
       { mediaType: 'movie', tmdbId: 11 },
       expect.objectContaining({ qualityProfileId: 4, folder: 'Star Wars', search: true }),
-      'Star Wars'
+      'Star Wars',
+      ADMIN
     )
     expect(setComingSoonStatus).toHaveBeenCalledWith({
       tmdbId: 11,
       mediaType: 'movie',
-      setBy: ADMIN.id,
+      setBy: ADMIN.userId,
       setByUsername: 'Adam',
       source: 'radarr',
     })
@@ -135,7 +141,7 @@ test('GET answers the dialog’s state, passing the display title through', asyn
   titles.getArrTitle.mockResolvedValue({ state: 'not_found', service: 'sonarr' })
   const response = await titleRoute.GET(new Request(`${BASE}/titles/tv/1438?title=The%20Wire`), context('tv', 1438))
   await expect(response.json()).resolves.toEqual({ state: 'not_found', service: 'sonarr' })
-  expect(titles.getArrTitle).toHaveBeenCalledWith({ mediaType: 'tv', tmdbId: 1438 }, 'The Wire')
+  expect(titles.getArrTitle).toHaveBeenCalledWith({ mediaType: 'tv', tmdbId: 1438 }, 'The Wire', ADMIN)
 })
 
 test('search: a movie ignores any scope; a show’s scope is parsed', async () => {
@@ -145,14 +151,19 @@ test('search: a movie ignores any scope; a show’s scope is parsed', async () =
     context('movie', 11)
   )
   expect(movie.status).toBe(202)
-  expect(titles.searchArrTitle).toHaveBeenLastCalledWith({ mediaType: 'movie', tmdbId: 11 }, { type: 'all' }, null)
+  expect(titles.searchArrTitle).toHaveBeenLastCalledWith({ mediaType: 'movie', tmdbId: 11 }, { type: 'all' }, null, ADMIN)
 
   titles.searchArrTitle.mockResolvedValue({ service: 'sonarr', episodes: 10 })
   await searchRoute.POST(
     jsonRequest(`${BASE}/titles/tv/1438/search`, 'POST', { scope: { type: 'seasons', seasons: [2, 2] } }),
     context('tv', 1438)
   )
-  expect(titles.searchArrTitle).toHaveBeenLastCalledWith({ mediaType: 'tv', tmdbId: 1438 }, { type: 'seasons', seasons: [2] }, null)
+  expect(titles.searchArrTitle).toHaveBeenLastCalledWith(
+    { mediaType: 'tv', tmdbId: 1438 },
+    { type: 'seasons', seasons: [2] },
+    null,
+    ADMIN
+  )
 
   const empty = await searchRoute.POST(
     jsonRequest(`${BASE}/titles/tv/1438/search`, 'POST', { scope: { type: 'episodes', episodeIds: [] } }),
@@ -174,8 +185,11 @@ test('status: malformed items are a 400; good ones are passed on parsed', async 
   getArrStatuses.mockResolvedValue({ services: { radarr: 'ok', sonarr: 'ok' }, items: {} })
   const good = await statusRoute.GET(new Request(`${BASE}/status?items=movie:11,tv:1438`))
   expect(good.status).toBe(200)
-  expect(getArrStatuses).toHaveBeenCalledWith([
-    { mediaType: 'movie', tmdbId: 11 },
-    { mediaType: 'tv', tmdbId: 1438 },
-  ])
+  expect(getArrStatuses).toHaveBeenCalledWith(
+    [
+      { mediaType: 'movie', tmdbId: 11 },
+      { mediaType: 'tv', tmdbId: 1438 },
+    ],
+    ADMIN
+  )
 })

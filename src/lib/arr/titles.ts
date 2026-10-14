@@ -6,10 +6,14 @@
 import 'server-only'
 import { NextResponse } from 'next/server'
 import { createLogger } from '@src/lib/logger'
+import { canActOn, requireActOn, requireManage, requireService, type ArrActor } from './rules'
+import { allowsProfile } from './capabilities'
 import { checkCatalog } from './catalog'
+import { ArrRequestError, REASON_TEXT, SERVICE_NAMES, forbidden } from './errors'
 import { folderNameProblem } from './folders'
 import { ArrError, readArrConfig, type ArrConfig } from './http'
 import * as radarr from './radarr'
+import { logArrActivity } from './requestLog'
 import * as sonarr from './sonarr'
 import {
   ARR_MEDIA_TYPES,
@@ -21,6 +25,7 @@ import {
   type ArrOptions,
   type ArrService,
   type ArrTitle,
+  type ArrTitlePermissions,
   type CatalogCheck,
   type EpisodeScope,
   type MinimumAvailability,
@@ -29,20 +34,7 @@ import {
 
 const log = createLogger('Arr')
 
-export const SERVICE_NAMES: Record<ArrService, string> = { radarr: 'Radarr', sonarr: 'Sonarr' }
-
-/** A request refused here, before (or instead of) asking the service. */
-export class ArrRequestError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-    readonly details: Record<string, unknown> = {}
-  ) {
-    super(message)
-    this.name = 'ArrRequestError'
-  }
-}
+export { ArrRequestError, REASON_TEXT, SERVICE_NAMES }
 
 export const invalid = (message: string) => new ArrRequestError(400, 'invalid_request', message)
 
@@ -169,7 +161,12 @@ function chooseRootFolder(options: ArrOptions, requested: string | null): string
 }
 
 /** The folder must be a usable name that no other title in the library already has. */
-async function checkFolder(mediaType: ArrMediaType, tmdbId: number, folder: string | null): Promise<CatalogCheck> {
+async function checkFolder(
+  mediaType: ArrMediaType,
+  tmdbId: number,
+  folder: string | null,
+  canRename: boolean
+): Promise<CatalogCheck> {
   if (folder !== null) {
     const problem = folderNameProblem(folder)
     if (problem) throw new ArrRequestError(400, 'invalid_folder', problem)
@@ -179,7 +176,9 @@ async function checkFolder(mediaType: ArrMediaType, tmdbId: number, folder: stri
     throw new ArrRequestError(
       409,
       'folder_taken',
-      `“${catalog.folderTakenBy.title}” already lives in the folder “${folder}”. Choose a different folder name.`
+      `“${catalog.folderTakenBy.title}” already lives in the folder “${folder}”. ${
+        canRename ? 'Choose a different folder name.' : 'Ask a manager to add it under another folder name.'
+      }`
     )
   }
   return catalog
@@ -188,14 +187,64 @@ async function checkFolder(mediaType: ArrMediaType, tmdbId: number, folder: stri
 export const notAdded = (service: ArrService) =>
   new ArrRequestError(404, 'not_added', `${SERVICE_NAMES[service]} doesn’t have this title.`)
 
+/** The add form's choices: the quality profiles the user's role allows; only managers pick a root folder. */
+function choicesFor(actor: ArrActor, service: ArrService, options: ArrOptions): ArrOptions {
+  const qualityProfiles = options.qualityProfiles.filter((profile) => allowsProfile(actor.permissions, service, profile.id))
+  const root = defaultRootFolder(options)
+  return {
+    qualityProfiles,
+    rootFolders: actor.permissions.manage ? options.rootFolders : options.rootFolders.filter((folder) => folder.path === root),
+    defaultQualityProfileId: qualityProfiles.some((profile) => profile.id === options.defaultQualityProfileId)
+      ? options.defaultQualityProfileId
+      : (qualityProfiles[0]?.id ?? null),
+  }
+}
+
+const titlePermissions = (actor: ArrActor, canAct: boolean): ArrTitlePermissions => ({
+  manage: actor.permissions.manage,
+  manual: actor.permissions.manual,
+  canAct,
+})
+
+function requireAllowedProfile(actor: ArrActor, service: ArrService, options: ArrOptions, qualityProfileId: number) {
+  requireProfile(options, qualityProfileId)
+  if (!allowsProfile(actor.permissions, service, qualityProfileId)) {
+    throw forbidden('That quality profile isn’t one your role allows.')
+  }
+}
+
+/** A manager's folder and root folder choices; anyone else gets the ones the service would use. */
+function placementFor(actor: ArrActor, options: ArrOptions, input: AddInput, predictedFolder: string | null) {
+  if (actor.permissions.manage) {
+    return { rootFolderPath: chooseRootFolder(options, input.rootFolderPath), folder: input.folder ?? predictedFolder }
+  }
+  if (input.rootFolderPath !== null && input.rootFolderPath !== defaultRootFolder(options)) {
+    throw forbidden('Choosing the root folder is for managers.')
+  }
+  if (input.folder !== null && input.folder !== predictedFolder) throw forbidden('Choosing the folder name is for managers.')
+  return { rootFolderPath: chooseRootFolder(options, null), folder: predictedFolder }
+}
+
 // ---- Reads ------------------------------------------------------------------
 
-async function radarrTitle(config: ArrConfig, tmdbId: number): Promise<ArrTitle> {
+async function radarrTitle(config: ArrConfig, ref: TitleRef, actor: ArrActor): Promise<ArrTitle> {
+  const { tmdbId } = ref
   const [movie, options] = await Promise.all([radarr.findMovie(config, tmdbId), radarr.getRadarrOptions(config)])
   if (movie) {
-    // Detail only: losing the queue still shows the title.
-    const download = await radarr.movieDownload(config, movie.id).catch(() => null)
-    return { state: 'present', service: 'radarr', entry: radarr.toRadarrEntry(movie), options: publicOptions(options), download }
+    const entry = radarr.toRadarrEntry(movie)
+    const [download, canAct] = await Promise.all([
+      // Detail only: losing the queue still shows the title.
+      radarr.movieDownload(config, movie.id).catch(() => null),
+      canActOn(actor, ref, 'radarr', entry.qualityProfileId),
+    ])
+    return {
+      state: 'present',
+      service: 'radarr',
+      entry,
+      options: publicOptions(options),
+      download,
+      permissions: titlePermissions(actor, canAct),
+    }
   }
   const lookup = await radarr.lookupMovie(config, tmdbId)
   if (!lookup) return { state: 'not_found', service: 'radarr' }
@@ -204,20 +253,26 @@ async function radarrTitle(config: ArrConfig, tmdbId: number): Promise<ArrTitle>
     state: 'absent',
     service: 'radarr',
     candidate,
-    options: publicOptions(options),
+    options: choicesFor(actor, 'radarr', publicOptions(options)),
     catalog: await checkCatalog('movie', tmdbId, candidate.folder),
     rootFolderPath: defaultRootFolder(options),
+    permissions: titlePermissions(actor, true),
   }
 }
 
-async function sonarrTitle(config: ArrConfig, tmdbId: number, titleHint: string | null): Promise<ArrTitle> {
+async function sonarrTitle(config: ArrConfig, ref: TitleRef, titleHint: string | null, actor: ArrActor): Promise<ArrTitle> {
+  const { tmdbId } = ref
   const [found, options] = await Promise.all([
     sonarr.resolveSeries(config, tmdbId, titleHint),
     sonarr.getSonarrOptions(config),
   ])
   if (found.entry) {
-    const download = await sonarr.seriesDownload(config, found.entry.id).catch(() => null)
-    return { state: 'present', service: 'sonarr', entry: sonarr.toSonarrEntry(found.entry), options, download }
+    const entry = sonarr.toSonarrEntry(found.entry)
+    const [download, canAct] = await Promise.all([
+      sonarr.seriesDownload(config, found.entry.id).catch(() => null),
+      canActOn(actor, ref, 'sonarr', entry.qualityProfileId),
+    ])
+    return { state: 'present', service: 'sonarr', entry, options, download, permissions: titlePermissions(actor, canAct) }
   }
   if (!found.candidate) return { state: 'not_found', service: 'sonarr' }
   const candidate = sonarr.toSonarrCandidate(found.candidate)
@@ -225,21 +280,23 @@ async function sonarrTitle(config: ArrConfig, tmdbId: number, titleHint: string 
     state: 'absent',
     service: 'sonarr',
     candidate,
-    options,
+    options: choicesFor(actor, 'sonarr', options),
     catalog: await checkCatalog('tv', tmdbId, candidate.folder),
     rootFolderPath: defaultRootFolder(options),
+    permissions: titlePermissions(actor, true),
   }
 }
 
-/** The dialog's view of a title. Service failures are a state, not an error. */
-export async function getArrTitle(ref: TitleRef, titleHint: string | null): Promise<ArrTitle> {
+/** The dialog's view of a title, shaped by the user's role. Service failures are a state, not an error. */
+export async function getArrTitle(ref: TitleRef, titleHint: string | null, actor: ArrActor): Promise<ArrTitle> {
   const service = serviceForMediaType(ref.mediaType)
+  requireService(actor, service)
   const resolved = readArrConfig(service)
   if ('missing' in resolved) return { state: 'not_configured', service, missing: resolved.missing }
   try {
     return service === 'radarr'
-      ? await radarrTitle(resolved.config, ref.tmdbId)
-      : await sonarrTitle(resolved.config, ref.tmdbId, titleHint)
+      ? await radarrTitle(resolved.config, ref, actor)
+      : await sonarrTitle(resolved.config, ref, titleHint, actor)
   } catch (error) {
     if (!(error instanceof ArrError)) throw error
     log.warn({ service, reason: error.reason, httpStatus: error.httpStatus }, 'Arr title lookup failed')
@@ -254,10 +311,12 @@ export interface ArrEpisodes {
   episodes: sonarr.EpisodeSummary[]
 }
 
-export async function getArrEpisodes(tmdbId: number, titleHint: string | null): Promise<ArrEpisodes> {
+export async function getArrEpisodes(tmdbId: number, titleHint: string | null, actor: ArrActor): Promise<ArrEpisodes> {
+  requireService(actor, 'sonarr')
   const config = configFor('sonarr')
   const { entry } = await sonarr.resolveSeries(config, tmdbId, titleHint)
   if (!entry) throw notAdded('sonarr')
+  await requireActOn(actor, { mediaType: 'tv', tmdbId }, 'sonarr', sonarr.toSonarrEntry(entry).qualityProfileId)
   const [pending, episodes] = await Promise.all([
     sonarr.refreshPending(config, entry.id),
     sonarr.listEpisodes(config, entry.id),
@@ -276,21 +335,39 @@ export interface AddResult {
   next: 'choose_episodes' | null
 }
 
-export async function addArrTitle(ref: TitleRef, input: AddInput, titleHint: string | null): Promise<AddResult> {
+export async function addArrTitle(
+  ref: TitleRef,
+  input: AddInput,
+  titleHint: string | null,
+  actor: ArrActor
+): Promise<AddResult> {
   const service = serviceForMediaType(ref.mediaType)
+  requireService(actor, service)
   const config = configFor(service)
+  const logAdd = () =>
+    logArrActivity({
+      kind: 'add',
+      actor,
+      ref,
+      service,
+      detail: { qualityProfileId: input.qualityProfileId, search: input.search, scope: input.scope.type },
+    })
 
   if (service === 'radarr') {
     const options = await radarr.getRadarrOptions(config)
-    requireProfile(options, input.qualityProfileId)
-    const rootFolderPath = chooseRootFolder(options, input.rootFolderPath)
+    requireAllowedProfile(actor, service, options, input.qualityProfileId)
     if (await radarr.findMovie(config, ref.tmdbId)) {
       throw new ArrRequestError(409, 'already_added', 'Radarr already has this movie.')
     }
     const movie = await radarr.lookupMovie(config, ref.tmdbId)
     if (!movie) throw new ArrRequestError(404, 'not_found', 'Radarr can’t find this movie by its TMDB id.')
-    const folder = input.folder ?? radarr.toRadarrCandidate(movie, options.naming).folder
-    const catalog = await checkFolder('movie', ref.tmdbId, folder)
+    const { rootFolderPath, folder } = placementFor(
+      actor,
+      options,
+      input,
+      radarr.toRadarrCandidate(movie, options.naming).folder
+    )
+    const catalog = await checkFolder('movie', ref.tmdbId, folder, actor.permissions.manage)
     const added = await radarr.addMovie(config, movie, {
       qualityProfileId: input.qualityProfileId,
       rootFolderPath,
@@ -299,12 +376,13 @@ export async function addArrTitle(ref: TitleRef, input: AddInput, titleHint: str
       search: input.search,
     })
     log.info({ service, tmdbId: ref.tmdbId, movieId: added.id, search: input.search }, 'Movie added to Radarr')
+    // Before answering: it's what lets a requester search for this title later.
+    await logAdd()
     return { service, entry: radarr.toRadarrEntry(added), inLibrary: catalog.inLibrary, next: null }
   }
 
   const options = await sonarr.getSonarrOptions(config)
-  requireProfile(options, input.qualityProfileId)
-  const rootFolderPath = chooseRootFolder(options, input.rootFolderPath)
+  requireAllowedProfile(actor, service, options, input.qualityProfileId)
   const found = await sonarr.resolveSeries(config, ref.tmdbId, titleHint)
   if (found.entry) throw new ArrRequestError(409, 'already_added', 'Sonarr already has this show.')
   if (!found.candidate) throw new ArrRequestError(404, 'not_found', 'Sonarr can’t find this show by its TMDB id.')
@@ -315,8 +393,8 @@ export async function addArrTitle(ref: TitleRef, input: AddInput, titleHint: str
       throw invalid('Sonarr doesn’t list one of those seasons.')
     }
   }
-  const folder = input.folder ?? candidate.folder
-  const catalog = await checkFolder('tv', ref.tmdbId, folder)
+  const { rootFolderPath, folder } = placementFor(actor, options, input, candidate.folder)
+  const catalog = await checkFolder('tv', ref.tmdbId, folder, actor.permissions.manage)
   const added = await sonarr.addSeries(config, found.candidate, {
     qualityProfileId: input.qualityProfileId,
     rootFolderPath,
@@ -328,6 +406,7 @@ export async function addArrTitle(ref: TitleRef, input: AddInput, titleHint: str
     { service, tmdbId: ref.tmdbId, seriesId: added.id, scope: input.scope.type, search: input.search },
     'Show added to Sonarr'
   )
+  await logAdd()
   return {
     service,
     entry: sonarr.toSonarrEntry(added),
@@ -339,8 +418,10 @@ export async function addArrTitle(ref: TitleRef, input: AddInput, titleHint: str
 export async function updateArrTitle(
   ref: TitleRef,
   change: { qualityProfileId: number },
-  titleHint: string | null
+  titleHint: string | null,
+  actor: ArrActor
 ): Promise<{ service: ArrService; entry: ArrEntry }> {
+  requireManage(actor, 'Changing a title’s quality profile')
   const service = serviceForMediaType(ref.mediaType)
   const config = configFor(service)
 
@@ -363,41 +444,36 @@ export async function updateArrTitle(
 export async function searchArrTitle(
   ref: TitleRef,
   scope: EpisodeScope,
-  titleHint: string | null
+  titleHint: string | null,
+  actor: ArrActor
 ): Promise<{ service: ArrService; episodes: number | null }> {
   const service = serviceForMediaType(ref.mediaType)
+  requireService(actor, service)
   const config = configFor(service)
 
   if (service === 'radarr') {
     const movie = await radarr.findMovie(config, ref.tmdbId)
     if (!movie) throw notAdded(service)
+    await requireActOn(actor, ref, service, radarr.toRadarrEntry(movie).qualityProfileId)
     // An unmonitored movie would be searched once and then forgotten by RSS.
     if (movie.monitored !== true) await radarr.updateMovie(config, movie.id, { monitored: true })
     await radarr.searchMovie(config, movie.id)
     log.info({ service, tmdbId: ref.tmdbId, movieId: movie.id }, 'Radarr search queued')
+    await logArrActivity({ kind: 'search', actor, ref, service, detail: { scope: 'all' } })
     return { service, episodes: null }
   }
 
   const { entry } = await sonarr.resolveSeries(config, ref.tmdbId, titleHint)
   if (!entry) throw notAdded(service)
+  await requireActOn(actor, ref, service, sonarr.toSonarrEntry(entry).qualityProfileId)
   const { episodes } = await sonarr.monitorAndSearch(config, entry.id, scope)
+  await logArrActivity({ kind: 'search', actor, ref, service, detail: { scope: scope.type, episodes } })
   log.info({ service, tmdbId: ref.tmdbId, seriesId: entry.id, scope: scope.type, episodes }, 'Sonarr search queued')
   return { service, episodes }
 }
 
 // ---- Responses --------------------------------------------------------------
 
-export const REASON_TEXT: Record<ArrFailureReason, string> = {
-  timeout: 'it timed out',
-  unauthorized: 'its API key was refused',
-  refused: 'the connection was refused',
-  network: 'a network error',
-  bad_url: 'check its URL',
-  http_error: 'it returned an error',
-  invalid_response: 'an unexpected answer',
-  not_found: 'not found',
-  rejected: 'it refused the request',
-}
 
 /** The JSON error answer for anything a write or an episode read throws. */
 export function arrErrorResponse(error: unknown, service: ArrService | null): NextResponse {

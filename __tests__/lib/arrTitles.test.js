@@ -28,12 +28,27 @@ jest.mock('@src/lib/arr/sonarr', () => ({
   monitorAndSearch: jest.fn(),
 }))
 jest.mock('@src/lib/arr/catalog', () => ({ checkCatalog: jest.fn() }))
+jest.mock('@src/lib/arr/requestLog', () => ({ logArrActivity: jest.fn(async () => {}), requestedBy: jest.fn(async () => false) }))
 
 const radarr = require('@src/lib/arr/radarr')
 const sonarr = require('@src/lib/arr/sonarr')
 const { checkCatalog } = require('@src/lib/arr/catalog')
 const { ArrError } = require('@src/lib/arr/http')
 const titles = require('@src/lib/arr/titles')
+const { logArrActivity, requestedBy } = require('@src/lib/arr/requestLog')
+
+// A manager (what an admin is): every service and profile, no limits.
+const MANAGER = {
+  userId: 'admin-1',
+  userName: 'Adam',
+  permissions: { profiles: { radarr: 'all', sonarr: 'all' }, manual: true, anyTitle: true, manage: true },
+}
+// A requester: HD-1080p movies only by default.
+const requester = (permissions = {}) => ({
+  userId: 'user-2',
+  userName: 'Robin',
+  permissions: { profiles: { radarr: [4], sonarr: [] }, manual: false, anyTitle: false, manage: false, ...permissions },
+})
 
 const ENV = {
   RADARR_URL: 'http://radarr.test:7878/radarr',
@@ -130,7 +145,7 @@ describe('input', () => {
 
 describe('getArrTitle', () => {
   test('a movie Radarr lacks: the candidate with its predicted folder, checked against the library', async () => {
-    const title = await titles.getArrTitle(movieRef, null)
+    const title = await titles.getArrTitle(movieRef, null, MANAGER)
 
     expect(title).toMatchObject({
       state: 'absent',
@@ -148,7 +163,7 @@ describe('getArrTitle', () => {
     radarr.findMovie.mockResolvedValue({ id: 186, tmdbId: 11, title: 'Star Wars', monitored: true, hasFile: false, qualityProfileId: 5 })
     radarr.movieDownload.mockRejectedValue(new ArrError('timeout'))
 
-    await expect(titles.getArrTitle(movieRef, null)).resolves.toMatchObject({
+    await expect(titles.getArrTitle(movieRef, null, MANAGER)).resolves.toMatchObject({
       state: 'present',
       entry: { id: 186, qualityProfileId: 5, hasFile: false },
       download: null,
@@ -157,7 +172,7 @@ describe('getArrTitle', () => {
 
   test('service trouble is a state; a bug is not swallowed', async () => {
     radarr.getRadarrOptions.mockRejectedValue(new ArrError('unauthorized', 401))
-    await expect(titles.getArrTitle(movieRef, null)).resolves.toEqual({
+    await expect(titles.getArrTitle(movieRef, null, MANAGER)).resolves.toEqual({
       state: 'unreachable',
       service: 'radarr',
       reason: 'unauthorized',
@@ -165,12 +180,12 @@ describe('getArrTitle', () => {
     })
 
     radarr.getRadarrOptions.mockRejectedValue(new TypeError('boom'))
-    await expect(titles.getArrTitle(movieRef, null)).rejects.toThrow('boom')
+    await expect(titles.getArrTitle(movieRef, null, MANAGER)).rejects.toThrow('boom')
   })
 
   test('unset environment names the missing variables', async () => {
     delete process.env.SONARR_API_KEY
-    await expect(titles.getArrTitle(showRef, null)).resolves.toEqual({
+    await expect(titles.getArrTitle(showRef, null, MANAGER)).resolves.toEqual({
       state: 'not_configured',
       service: 'sonarr',
       missing: ['SONARR_API_KEY'],
@@ -179,14 +194,14 @@ describe('getArrTitle', () => {
 
   test('a show Sonarr can’t match', async () => {
     sonarr.resolveSeries.mockResolvedValue({ entry: null, candidate: null })
-    await expect(titles.getArrTitle(showRef, 'The Wire')).resolves.toEqual({ state: 'not_found', service: 'sonarr' })
+    await expect(titles.getArrTitle(showRef, 'The Wire', MANAGER)).resolves.toEqual({ state: 'not_found', service: 'sonarr' })
     expect(sonarr.resolveSeries).toHaveBeenCalledWith(expect.anything(), 1438, 'The Wire')
   })
 })
 
 describe('addArrTitle', () => {
   test('a movie goes in under the folder the dialog showed, in the first root folder', async () => {
-    const result = await titles.addArrTitle(movieRef, addInput(), null)
+    const result = await titles.addArrTitle(movieRef, addInput(), null, MANAGER)
 
     expect(radarr.addMovie).toHaveBeenCalledWith(expect.anything(), starWars, {
       qualityProfileId: 4,
@@ -199,36 +214,36 @@ describe('addArrTitle', () => {
   })
 
   test('a typed folder name is the one checked and used', async () => {
-    await titles.addArrTitle(movieRef, addInput({ folder: 'Star Wars (1977)' }), null)
+    await titles.addArrTitle(movieRef, addInput({ folder: 'Star Wars (1977)' }), null, MANAGER)
     expect(checkCatalog).toHaveBeenCalledWith('movie', 11, 'Star Wars (1977)')
     expect(radarr.addMovie.mock.calls[0][2].folder).toBe('Star Wars (1977)')
   })
 
   test('a folder another title already lives in is refused, and nothing is added', async () => {
     checkCatalog.mockResolvedValue({ inLibrary: false, folderTakenBy: { title: 'Star Wars (Holiday Special)' } })
-    const failure = await refusal(titles.addArrTitle(movieRef, addInput(), null))
+    const failure = await refusal(titles.addArrTitle(movieRef, addInput(), null, MANAGER))
     expect(failure).toMatchObject({ status: 409, code: 'folder_taken' })
     expect(failure.message).toContain('Choose a different folder name')
     expect(radarr.addMovie).not.toHaveBeenCalled()
   })
 
   test('refused before asking Radarr to add: bad folder, unknown profile or root, already added, unknown id', async () => {
-    expect(await refusal(titles.addArrTitle(movieRef, addInput({ folder: 'AC/DC' }), null))).toMatchObject({ status: 400, code: 'invalid_folder' })
-    expect(await refusal(titles.addArrTitle(movieRef, addInput({ qualityProfileId: 99 }), null))).toMatchObject({ status: 400 })
-    expect(await refusal(titles.addArrTitle(movieRef, addInput({ rootFolderPath: '/elsewhere' }), null))).toMatchObject({ status: 400 })
+    expect(await refusal(titles.addArrTitle(movieRef, addInput({ folder: 'AC/DC' }), null, MANAGER))).toMatchObject({ status: 400, code: 'invalid_folder' })
+    expect(await refusal(titles.addArrTitle(movieRef, addInput({ qualityProfileId: 99 }), null, MANAGER))).toMatchObject({ status: 400 })
+    expect(await refusal(titles.addArrTitle(movieRef, addInput({ rootFolderPath: '/elsewhere' }), null, MANAGER))).toMatchObject({ status: 400 })
 
     radarr.findMovie.mockResolvedValueOnce({ id: 186, tmdbId: 11 })
-    expect(await refusal(titles.addArrTitle(movieRef, addInput(), null))).toMatchObject({ status: 409, code: 'already_added' })
+    expect(await refusal(titles.addArrTitle(movieRef, addInput(), null, MANAGER))).toMatchObject({ status: 409, code: 'already_added' })
 
     radarr.lookupMovie.mockResolvedValueOnce(null)
-    expect(await refusal(titles.addArrTitle(movieRef, addInput(), null))).toMatchObject({ status: 404, code: 'not_found' })
+    expect(await refusal(titles.addArrTitle(movieRef, addInput(), null, MANAGER))).toMatchObject({ status: 404, code: 'not_found' })
 
     expect(radarr.addMovie).not.toHaveBeenCalled()
   })
 
   test('not configured is a 503 that names the variables', async () => {
     delete process.env.RADARR_URL
-    expect(await refusal(titles.addArrTitle(movieRef, addInput(), null))).toMatchObject({
+    expect(await refusal(titles.addArrTitle(movieRef, addInput(), null, MANAGER))).toMatchObject({
       status: 503,
       code: 'not_configured',
       details: { missing: ['RADARR_URL'] },
@@ -237,14 +252,15 @@ describe('addArrTitle', () => {
 
   test('a show: seasons must be ones Sonarr lists; an episodes add asks for the pick next', async () => {
     const unknownSeason = await refusal(
-      titles.addArrTitle(showRef, titles.parseAddInput({ qualityProfileId: 8, scope: { type: 'seasons', seasons: [5] } }), null)
+      titles.addArrTitle(showRef, titles.parseAddInput({ qualityProfileId: 8, scope: { type: 'seasons', seasons: [5] } }), null, MANAGER)
     )
     expect(unknownSeason).toMatchObject({ status: 400 })
 
     const result = await titles.addArrTitle(
       showRef,
       titles.parseAddInput({ qualityProfileId: 8, scope: { type: 'episodes' } }),
-      'The Wire'
+      'The Wire',
+      MANAGER
     )
     expect(sonarr.addSeries).toHaveBeenCalledWith(expect.anything(), theWire, {
       qualityProfileId: 8,
@@ -258,7 +274,7 @@ describe('addArrTitle', () => {
 
   test('a show Sonarr already has is not added twice', async () => {
     sonarr.resolveSeries.mockResolvedValue({ entry: { id: 7 }, candidate: null })
-    expect(await refusal(titles.addArrTitle(showRef, titles.parseAddInput({ qualityProfileId: 8 }), null))).toMatchObject({
+    expect(await refusal(titles.addArrTitle(showRef, titles.parseAddInput({ qualityProfileId: 8 }), null, MANAGER))).toMatchObject({
       status: 409,
       code: 'already_added',
     })
@@ -269,7 +285,7 @@ test('searchArrTitle monitors an unmonitored movie before searching, so RSS keep
   radarr.findMovie.mockResolvedValue({ id: 186, tmdbId: 11, monitored: false })
   radarr.updateMovie.mockResolvedValue({ id: 186, monitored: true })
 
-  await expect(titles.searchArrTitle(movieRef, { type: 'all' }, null)).resolves.toEqual({ service: 'radarr', episodes: null })
+  await expect(titles.searchArrTitle(movieRef, { type: 'all' }, null, MANAGER)).resolves.toEqual({ service: 'radarr', episodes: null })
   expect(radarr.updateMovie).toHaveBeenCalledWith(expect.anything(), 186, { monitored: true })
   expect(radarr.searchMovie).toHaveBeenCalledWith(expect.anything(), 186)
 })
@@ -299,5 +315,100 @@ describe('arrErrorResponse', () => {
     const crashed = titles.arrErrorResponse(new TypeError('boom'), 'radarr')
     expect(crashed.status).toBe(500)
     expect(mockLog.error).toHaveBeenCalled()
+  })
+})
+
+describe('a requester’s role', () => {
+  test('the add form offers only the profiles their role allows, and the default root folder', async () => {
+    radarr.getRadarrOptions.mockResolvedValue({
+      ...radarrOptions,
+      rootFolders: [...radarrOptions.rootFolders, { path: '/more_movies', accessible: true, freeSpaceBytes: 1 }],
+      defaultQualityProfileId: 5,
+    })
+
+    const title = await titles.getArrTitle(movieRef, null, requester())
+
+    expect(title.options.qualityProfiles).toEqual([{ id: 4, name: 'HD-1080p' }])
+    // The library's usual profile isn't theirs to choose, so the default is their first.
+    expect(title.options.defaultQualityProfileId).toBe(4)
+    expect(title.options.rootFolders.map((folder) => folder.path)).toEqual(['/processed_movies'])
+    expect(title.permissions).toEqual({ manage: false, manual: false, canAct: true })
+  })
+
+  test('a service outside their role is refused before anything is asked', async () => {
+    expect(await refusal(titles.getArrTitle(showRef, null, requester()))).toMatchObject({
+      status: 403,
+      message: 'Your role doesn’t include Sonarr.',
+    })
+    expect(sonarr.resolveSeries).not.toHaveBeenCalled()
+  })
+
+  test('an add is limited to their profiles and the folder Radarr would use, and is logged', async () => {
+    expect(await refusal(titles.addArrTitle(movieRef, addInput({ qualityProfileId: 5 }), null, requester()))).toMatchObject({
+      status: 403,
+      message: 'That quality profile isn’t one your role allows.',
+    })
+    expect(await refusal(titles.addArrTitle(movieRef, addInput({ folder: 'Star Wars (1977)' }), null, requester()))).toMatchObject({
+      status: 403,
+      message: 'Choosing the folder name is for managers.',
+    })
+    expect(await refusal(titles.addArrTitle(movieRef, addInput({ rootFolderPath: '/other' }), null, requester()))).toMatchObject({
+      status: 403,
+    })
+    expect(radarr.addMovie).not.toHaveBeenCalled()
+
+    // The predicted folder, sent back unchanged, is fine.
+    await titles.addArrTitle(movieRef, addInput({ folder: 'Star Wars' }), null, requester())
+    expect(radarr.addMovie.mock.calls[0][2]).toMatchObject({ folder: 'Star Wars', rootFolderPath: '/processed_movies' })
+    expect(logArrActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'add', actor: expect.objectContaining({ userId: 'user-2' }), ref: movieRef, service: 'radarr' })
+    )
+  })
+
+  test('a folder clash tells a requester to ask a manager', async () => {
+    checkCatalog.mockResolvedValue({ inLibrary: false, folderTakenBy: { title: 'Star Wars (Holiday Special)' } })
+    const failure = await refusal(titles.addArrTitle(movieRef, addInput(), null, requester()))
+    expect(failure).toMatchObject({ status: 409, code: 'folder_taken' })
+    expect(failure.message).toContain('Ask a manager')
+  })
+
+  test('changing a title’s quality profile is for managers', async () => {
+    expect(await refusal(titles.updateArrTitle(movieRef, { qualityProfileId: 4 }, null, requester()))).toMatchObject({
+      status: 403,
+    })
+    expect(radarr.updateMovie).not.toHaveBeenCalled()
+  })
+
+  describe('searching a title Radarr has', () => {
+    beforeEach(() => radarr.findMovie.mockResolvedValue({ id: 186, tmdbId: 11, monitored: true, qualityProfileId: 4 }))
+
+    test('only their own, by default', async () => {
+      expect(await refusal(titles.searchArrTitle(movieRef, { type: 'all' }, null, requester()))).toMatchObject({
+        status: 403,
+        message: 'You can search only for titles you requested.',
+      })
+      requestedBy.mockResolvedValueOnce(true)
+      await expect(titles.searchArrTitle(movieRef, { type: 'all' }, null, requester())).resolves.toMatchObject({ service: 'radarr' })
+      expect(requestedBy).toHaveBeenLastCalledWith('user-2', movieRef)
+      expect(logArrActivity).toHaveBeenCalledWith(expect.objectContaining({ kind: 'search' }))
+    })
+
+    test('with “any title”, any title whose profile their role allows', async () => {
+      await expect(titles.searchArrTitle(movieRef, { type: 'all' }, null, requester({ anyTitle: true }))).resolves.toMatchObject({
+        service: 'radarr',
+      })
+      radarr.findMovie.mockResolvedValue({ id: 186, tmdbId: 11, monitored: true, qualityProfileId: 5 })
+      expect(await refusal(titles.searchArrTitle(movieRef, { type: 'all' }, null, requester({ anyTitle: true })))).toMatchObject({
+        status: 403,
+        message: 'This title’s quality profile isn’t one your role allows.',
+      })
+    })
+
+    test('the dialog is told whether they may', async () => {
+      const own = await titles.getArrTitle(movieRef, null, requester())
+      expect(own.permissions.canAct).toBe(false)
+      requestedBy.mockResolvedValueOnce(true)
+      expect((await titles.getArrTitle(movieRef, null, requester())).permissions.canAct).toBe(true)
+    })
   })
 })

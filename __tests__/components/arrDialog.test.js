@@ -32,6 +32,7 @@ const absentMovie = {
   options: radarrOptions,
   catalog: { inLibrary: false, folderTakenBy: null },
   rootFolderPath: '/processed_movies',
+  permissions: { manage: true, manual: true, canAct: true },
 }
 const absentShow = {
   state: 'absent',
@@ -51,6 +52,7 @@ const absentShow = {
   options: sonarrOptions,
   catalog: { inLibrary: false, folderTakenBy: null },
   rootFolderPath: '/processed_tv',
+  permissions: { manage: true, manual: true, canAct: true },
 }
 const movie = { mediaType: 'movie', tmdbId: 11, title: 'Star Wars' }
 const show = { mediaType: 'tv', tmdbId: 1438, title: 'The Wire' }
@@ -227,6 +229,7 @@ test('a movie Radarr has: where it stands, a profile change, and a search', asyn
       entry: { id: 186, title: 'Star Wars', monitored: true, qualityProfileId: 4, path: '/processed_movies/Star Wars', hasFile: false, released: true, episodeFileCount: null, episodeCount: null, seasons: [] },
       options: radarrOptions,
       download: { progress: 42, timeLeftSeconds: 1500, records: 1 },
+      permissions: { manage: true, manual: true, canAct: true },
     },
     [`PATCH ${API}/movie/11`]: { service: 'radarr', entry: { id: 186, qualityProfileId: 5 } },
     [`POST ${API}/movie/11/search`]: [202, { service: 'radarr', episodes: null }],
@@ -268,4 +271,49 @@ test('a service that isn’t set up, or doesn’t answer, says so plainly; the l
 
   await click(screen.getByRole('button', { name: 'Try again' }))
   expect(await screen.findByRole('button', { name: 'Add to Radarr' })).toBeInTheDocument()
+})
+
+describe('what a requester’s role shows', () => {
+  const requesterAdd = {
+    ...absentMovie,
+    options: { ...radarrOptions, qualityProfiles: [{ id: 4, name: 'HD-1080p' }] },
+    permissions: { manage: false, manual: false, canAct: true },
+  }
+
+  test('their profiles only, the folder Radarr will use (read-only), and no picking by hand', async () => {
+    fakeApi({
+      [`GET ${API}/movie/11`]: requesterAdd,
+      [`POST ${API}/movie/11`]: [201, { service: 'radarr', entry: { id: 900 }, inLibrary: false, next: null, comingSoon: true }],
+    })
+    render(<ArrDialog item={movie} onClose={jest.fn()} />)
+
+    const profile = await screen.findByLabelText('Quality profile')
+    expect([...profile.options].map((option) => option.textContent)).toEqual(['HD-1080p'])
+    expect(screen.getByLabelText('Folder')).toHaveAttribute('readonly')
+    expect(screen.getByText(/Only managers can change it\./)).toBeInTheDocument()
+    expect(screen.queryByRole('radio', { name: /Pick a release myself/ })).not.toBeInTheDocument()
+
+    await click(screen.getByRole('button', { name: 'Add to Radarr' }))
+    await waitFor(() => expect(sent(`POST ${API}/movie/11`)).toHaveLength(1))
+    expect(sent(`POST ${API}/movie/11`)[0]).toMatchObject({ qualityProfileId: 4, folder: 'Star Wars' })
+  })
+
+  test('a title they may not search: its profile shown, and why there is nothing to press', async () => {
+    fakeApi({
+      [`GET ${API}/movie/11`]: {
+        state: 'present',
+        service: 'radarr',
+        entry: { id: 186, title: 'Star Wars', monitored: true, qualityProfileId: 5, path: '/processed_movies/Star Wars', hasFile: false, released: true, episodeFileCount: null, episodeCount: null, seasons: [] },
+        options: radarrOptions,
+        download: null,
+        permissions: { manage: false, manual: true, canAct: false },
+      },
+    })
+    render(<ArrDialog item={movie} onClose={jest.fn()} />)
+
+    expect(await screen.findByText('Ultra-HD - 1080p')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Quality profile')).not.toBeInTheDocument()
+    expect(screen.getByText(/Your role lets you search only for titles you requested/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Search now|Pick a release/ })).not.toBeInTheDocument()
+  })
 })

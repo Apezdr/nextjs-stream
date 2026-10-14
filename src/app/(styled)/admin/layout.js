@@ -21,6 +21,7 @@ import {
   FingerPrintIcon,
   FolderIcon,
   HomeIcon,
+  IdentificationIcon,
   UsersIcon,
   XMarkIcon,
   ChevronDownIcon as ChevronDownIconOutline,
@@ -39,6 +40,7 @@ import { MinimalizedServerProcesses } from '@components/Admin/Stats/ServerProces
 const navigation = [
   { name: 'Dashboard', href: '/admin', icon: HomeIcon },
   { name: 'Users', href: '/admin/users', icon: UsersIcon },
+  { name: 'Roles', href: '/admin/roles', icon: IdentificationIcon },
   {
     name: 'Media',
     href: '/admin/media',

@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { createLogger } from '@src/lib/logger'
 import { ArrError } from './http'
 import type { ReleaseSummary, ReleaseTarget, StoredRelease } from './releases'
-import { ArrRequestError, REASON_TEXT, SERVICE_NAMES } from './titles'
+import { ArrRequestError, REASON_TEXT, SERVICE_NAMES } from './errors'
 import type { ArrFailureReason, ArrService, TitleRef } from './types'
 
 const log = createLogger('ArrReleaseSearch')

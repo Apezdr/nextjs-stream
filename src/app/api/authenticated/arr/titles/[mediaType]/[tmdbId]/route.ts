@@ -38,23 +38,23 @@ async function readJson(request: Request): Promise<unknown> {
 
 export async function GET(request: Request, { params }: Context) {
   // Authorize before any upstream request: those carry the services' API keys.
-  const user = await requireArrAccess()
-  if (user instanceof Response) return user
+  const actor = await requireArrAccess()
+  if (actor instanceof Response) return actor
   try {
-    return NextResponse.json(await getArrTitle(parseTitleRef(await params), titleHint(request)))
+    return NextResponse.json(await getArrTitle(parseTitleRef(await params), titleHint(request), actor))
   } catch (error) {
     return arrErrorResponse(error, null)
   }
 }
 
 export async function POST(request: Request, { params }: Context) {
-  const user = await requireArrAccess()
-  if (user instanceof Response) return user
+  const actor = await requireArrAccess()
+  if (actor instanceof Response) return actor
   let service: ArrService | null = null
   try {
     const ref = parseTitleRef(await params)
     service = serviceForMediaType(ref.mediaType)
-    const result = await addArrTitle(ref, parseAddInput(await readJson(request)), titleHint(request))
+    const result = await addArrTitle(ref, parseAddInput(await readJson(request)), titleHint(request), actor)
 
     // Everyone with the title on a watchlist sees it's on its way. The add has
     // already happened by now, so a failure here is reported, not fatal.
@@ -64,8 +64,8 @@ export async function POST(request: Request, { params }: Context) {
         await setComingSoonStatus({
           tmdbId: ref.tmdbId,
           mediaType: ref.mediaType,
-          setBy: user.id,
-          setByUsername: user.name || user.email || 'Admin',
+          setBy: actor.userId,
+          setByUsername: actor.userName,
           source: result.service,
         })
         comingSoon = true
@@ -80,14 +80,14 @@ export async function POST(request: Request, { params }: Context) {
 }
 
 export async function PATCH(request: Request, { params }: Context) {
-  const user = await requireArrAccess()
-  if (user instanceof Response) return user
+  const actor = await requireArrAccess()
+  if (actor instanceof Response) return actor
   let service: ArrService | null = null
   try {
     const ref = parseTitleRef(await params)
     service = serviceForMediaType(ref.mediaType)
     return NextResponse.json(
-      await updateArrTitle(ref, parseProfileChange(await readJson(request)), titleHint(request))
+      await updateArrTitle(ref, parseProfileChange(await readJson(request)), titleHint(request), actor)
     )
   } catch (error) {
     return arrErrorResponse(error, service)

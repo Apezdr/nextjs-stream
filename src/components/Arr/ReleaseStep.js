@@ -15,7 +15,7 @@ const selectClass =
  * Sonarr's own episode list (a show it has just added waits for its first
  * refresh). Each Search press runs a fresh search.
  */
-function ShowReleases({ item, defaultSeason, onGrabbed }) {
+function ShowReleases({ item, defaultSeason, canGrabRejected, onGrabbed }) {
   const load = useSonarrEpisodes(item)
   const seasons = useMemo(() => groupBySeason(load.episodes), [load.episodes])
   const [season, setSeason] = useState(null)
@@ -74,19 +74,19 @@ function ShowReleases({ item, defaultSeason, onGrabbed }) {
           Search
         </button>
       </div>
-      {target && <ReleasePicker key={searchCount} item={item} target={target} onGrabbed={onGrabbed} />}
+      {target && <ReleasePicker key={searchCount} item={item} target={target} canGrabRejected={canGrabRejected} onGrabbed={onGrabbed} />}
     </div>
   )
 }
 
 /** Pick a release by hand: the dialog step after "Pick a release…". */
-export default function ReleaseStep({ item, defaultSeason, onGrabbed, onDone }) {
+export default function ReleaseStep({ item, defaultSeason, canGrabRejected = false, onGrabbed, onDone }) {
   return (
     <div className="space-y-4">
       {item.mediaType === 'movie' ? (
-        <ReleasePicker item={item} target={MOVIE_TARGET} onGrabbed={onGrabbed} />
+        <ReleasePicker item={item} target={MOVIE_TARGET} canGrabRejected={canGrabRejected} onGrabbed={onGrabbed} />
       ) : (
-        <ShowReleases item={item} defaultSeason={defaultSeason} onGrabbed={onGrabbed} />
+        <ShowReleases item={item} defaultSeason={defaultSeason} canGrabRejected={canGrabRejected} onGrabbed={onGrabbed} />
       )}
       <div className="flex justify-end border-t border-gray-700 pt-3">
         <button

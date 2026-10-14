@@ -13,12 +13,12 @@ type Context = { params: Promise<{ searchId: string }> }
 const SEARCH_ID = /^[0-9a-f-]{36}$/
 
 export async function GET(_request: Request, { params }: Context) {
-  const user = await requireArrAccess()
-  if (user instanceof Response) return user
+  const actor = await requireArrAccess()
+  if (actor instanceof Response) return actor
   try {
     const { searchId } = await params
     if (!SEARCH_ID.test(searchId)) throw new ArrRequestError(400, 'invalid_request', 'That isn’t a search id.')
-    return NextResponse.json(readPick(searchId))
+    return NextResponse.json(readPick(searchId, actor))
   } catch (error) {
     return arrErrorResponse(error, null)
   }
