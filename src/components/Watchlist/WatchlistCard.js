@@ -23,6 +23,7 @@ export default function WatchlistCard({
   onRefresh,
   onItemRemoved,
   onItemMoved,
+  onItemUpdated,
   onShowMoveModal,
   onShowCopyModal,
   currentPlaylist,
@@ -68,11 +69,17 @@ export default function WatchlistCard({
     arrServices?.[item.mediaType === 'movie' ? 'radarr' : 'sonarr'] !== 'not_configured'
   const arrMenuLabel =
     arrStatus && arrStatus.state !== 'absent' ? `Manage in ${arrService}…` : `Send to ${arrService}…`
-  const handleArrChanged = useCallback(() => {
-    onArrChanged?.()
-    // The add marks the title Coming Soon, which comes with the list.
-    onRefresh?.()
-  }, [onArrChanged, onRefresh])
+  // Never a list reload: that swaps every card for the skeleton and would
+  // unmount this card, and with it the dialog (still open to pick a release).
+  // An add's only change to the item is Coming Soon, patched in place; the
+  // Radarr/Sonarr chip refreshes on its own.
+  const handleArrChanged = useCallback(
+    (change) => {
+      onArrChanged?.()
+      if (change?.comingSoon && !item.comingSoon) onItemUpdated?.(item.id, { comingSoon: true })
+    },
+    [onArrChanged, onItemUpdated, item.id, item.comingSoon]
+  )
 
   // Enhanced navigation handler using navigation context
   const handleNavigationClick = useCallback((url) => {

@@ -610,7 +610,8 @@ export default function ArrDialog({ item, onClose, onChanged }) {
   const changed = () => onChanged?.()
 
   const handleAdded = (result, { after, search, defaultSeason }) => {
-    changed()
+    // The one change an add makes outside Radarr/Sonarr.
+    onChanged?.({ comingSoon: result.comingSoon === true })
     if (after === 'manual') {
       setStep({ kind: 'releases', defaultSeason })
       return

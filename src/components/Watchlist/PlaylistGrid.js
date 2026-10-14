@@ -18,6 +18,7 @@ export default function PlaylistGrid({
   onRefresh,
   onItemRemoved,
   onItemMoved,
+  onItemUpdated,
   onShowMoveModal,
   onShowCopyModal,
   currentPlaylist,
@@ -308,6 +309,7 @@ export default function PlaylistGrid({
                 onRefresh={onRefresh}
                 onItemRemoved={onItemRemoved}
                 onItemMoved={onItemMoved}
+                onItemUpdated={onItemUpdated}
                 onShowMoveModal={onShowMoveModal}
                 onShowCopyModal={onShowCopyModal}
                 currentPlaylist={currentPlaylist}
@@ -415,6 +417,7 @@ export default function PlaylistGrid({
               onRefresh={onRefresh}
               onItemRemoved={onItemRemoved}
               onItemMoved={onItemMoved}
+              onItemUpdated={onItemUpdated}
               onShowMoveModal={onShowMoveModal}
               onShowCopyModal={onShowCopyModal}
               currentPlaylist={currentPlaylist}
