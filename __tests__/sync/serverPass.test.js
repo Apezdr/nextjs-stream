@@ -439,6 +439,73 @@ describe('a full pass for one server', () => {
   })
 })
 
+// ---------------------------------------------------------------- title hashes
+
+describe('the title hashes a pass fetches from the server’s Node.js API', () => {
+  const NODE = 'https://default-node.example'
+  const MOVIE_HASH = 'movie-metadata-hash-1'
+  const SHOW_HASH = 'show-hash-1'
+  const SHOW_CONTENT_HASH = 'show-content-hash-1'
+  const answer = (body) => ({ ok: true, status: 200, json: async () => body })
+  const entry = (hash, extra = {}) => ({ hash, lastModified: '2024-01-01T00:00:00.000Z', generated: '2024-01-01T00:00:00.000Z', ...extra })
+
+  // Each list answers only at its own URL, so a pass that asked for the
+  // movies' list at the TV URL (or the other way round) gets the other kind's
+  // titles, which name neither the movie nor the show.
+  const hashEndpoints = () =>
+    jest.fn(async (url) => {
+      if (url === `${NODE}/api/metadata-hashes/movies`) {
+        return answer({ hash: 'all-movies', titles: { [MOVIE]: entry(MOVIE_HASH) } })
+      }
+      if (url === `${NODE}/api/metadata-hashes/tv`) {
+        return answer({ hash: 'all-tv', titles: { [SHOW]: entry(SHOW_HASH, { contentHash: SHOW_CONTENT_HASH }) } })
+      }
+      return { ok: false, status: 404 }
+    })
+
+  const { fetchMetadataMultiServer } = require('@src/utils/admin_utils')
+  const movieMetadataFetches = () =>
+    fetchMetadataMultiServer.mock.calls.filter(([, url, type]) => type === 'file' && url === moviePayload().urls.metadata)
+      .length
+
+  beforeEach(() => {
+    global.fetch = hashEndpoints()
+    fetchMetadataMultiServer.mockClear()
+  })
+
+  it('asks the server’s Node.js URL for the movie list and the TV list, once each', async () => {
+    await runSync(oneServer())
+
+    const asked = global.fetch.mock.calls.map(([url]) => url).filter((url) => url.includes('/api/metadata-hashes/'))
+    expect(asked.sort()).toEqual([`${NODE}/api/metadata-hashes/movies`, `${NODE}/api/metadata-hashes/tv`])
+  })
+
+  it('hands the movie list to the metadata step: a hash that matches the stored one skips the metadata fetch', async () => {
+    await runSync(oneServer())
+    const [movie] = docs('FlatMovies')
+    expect(movie).toMatchObject({ metadataHash: MOVIE_HASH, metadataSource: 'default', syncHash: MOVIE_HASH })
+    expect(movieMetadataFetches()).toBe(1)
+
+    // A forced pass runs every step; the metadata step finds the hash unchanged
+    fetchMetadataMultiServer.mockClear()
+    await runSync(oneServer(), { forceSync: true })
+    expect(movieMetadataFetches()).toBe(0)
+
+    // Without the list the same forced pass fetches the metadata
+    global.fetch = jest.fn(async () => ({ ok: false, status: 404 }))
+    await runSync(oneServer(), { forceSync: true })
+    expect(movieMetadataFetches()).toBe(1)
+  })
+
+  it('writes the show’s syncHash and contentHash from the TV list', async () => {
+    await runSync(oneServer())
+
+    const [show] = docs('FlatTVShows')
+    expect(show).toMatchObject({ syncHash: SHOW_HASH, contentHash: SHOW_CONTENT_HASH })
+    expect(show.syncGates?.default).toEqual(expect.stringMatching(/^g\d+:/))
+  })
+})
+
 // ---------------------------------------------------------------- added
 
 describe('what the admins’ sync notice counts as added', () => {
