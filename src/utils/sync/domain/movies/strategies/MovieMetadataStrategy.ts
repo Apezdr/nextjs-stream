@@ -21,8 +21,7 @@ import {
 import { syncLogger } from '../../../core/logger'
 
 import {
-  MovieRepository,
-  UrlBuilder
+  MovieRepository
 } from '../../../infrastructure'
 
 import {

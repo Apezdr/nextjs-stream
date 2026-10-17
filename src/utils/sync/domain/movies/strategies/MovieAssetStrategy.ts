@@ -20,7 +20,7 @@ import {
 
 import { 
   MovieRepository,
-  UrlBuilder,
+  fileServerUrl,
   isTopLevelFieldLocked
 } from '../../../infrastructure'
 
@@ -228,8 +228,8 @@ export class MovieAssetStrategy implements SyncStrategy {
         continue
       }
 
-      // Build full URL: fileServerData paths already include prefix, so pass empty prefix
-      const newAssetUrl = UrlBuilder.createFullUrl(assetRelativePath, { ...context.serverConfig, prefix: '' })
+      // Build full URL: fileServerData paths already include the prefix
+      const newAssetUrl = fileServerUrl(assetRelativePath, context.serverConfig)
       const currentUrl = currentMovie[urlField as keyof MovieEntity] as string
 
       // The stored URL must be the owner's URL. The two used to be compared by
@@ -418,8 +418,8 @@ export class MovieAssetStrategy implements SyncStrategy {
       return null
     }
     
-    // Use UrlBuilder with empty prefix since fileServerData paths already include the prefix
-    const fullUrl = UrlBuilder.createFullUrl(blurhashRelativePath, { ...context.serverConfig, prefix: '' })
+    // fileServerData paths already include the prefix
+    const fullUrl = fileServerUrl(blurhashRelativePath, context.serverConfig)
     
     syncLogger.debug(`✅ Built blurhash URL: ${fullUrl}`)
     return fullUrl

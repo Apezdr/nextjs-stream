@@ -29,7 +29,8 @@ import {
   EpisodeRepository,
   SeasonRepository,
   TVShowRepository,
-  UrlBuilder,
+  captionUrls,
+  fileServerUrl,
   isTopLevelFieldLocked,
 } from '../../infrastructure'
 import {
@@ -42,9 +43,6 @@ import {
   availabilityFingerprintForPrefixes,
   payloadFingerprint,
 } from '@src/utils/sync/core/syncGate'
-import {
-  createFullUrl,
-} from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { warnOnJitIdentityFork } from '@src/utils/sync/core/jitIdentityParity'
@@ -582,7 +580,7 @@ export class EpisodeSyncService {
           entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
         }
       } else {
-        entity.videoURL = createFullUrl(fileData.videoURL, context.serverConfig)
+        entity.videoURL = fileServerUrl(fileData.videoURL, context.serverConfig)
         entity.videoSource = context.serverConfig.id
         entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
       }
@@ -616,9 +614,9 @@ export class EpisodeSyncService {
       }
 
       // Episodes carry these flat; source urls go through the same
-      // createFullUrl transform as videoURL above.
+      // fileServerUrl as videoURL above.
       const facts = resolveDeliveryFacts(fileData, (url) =>
-        createFullUrl(url, context.serverConfig)
+        fileServerUrl(url, context.serverConfig)
       )
       entity.sources = facts.sources
       entity.primaryContainer = facts.primaryContainer
@@ -742,7 +740,7 @@ export class EpisodeSyncService {
     // --- Thumbnail (priority-gated) ---
     const canUpdateThumbnail = owns('thumbnail', Boolean(fileData?.thumbnail || fileData?.thumbnailURL))
     if (canUpdateThumbnail) {
-      entity.thumbnail = createFullUrl(
+      entity.thumbnail = fileServerUrl(
         fileData.thumbnail || fileData.thumbnailURL,
         context.serverConfig
       )
@@ -762,7 +760,7 @@ export class EpisodeSyncService {
       try {
         listedCaptions =
           fileData.subtitles && typeof fileData.subtitles === 'object'
-            ? UrlBuilder.processCaptionURLs(fileData.subtitles, context.serverConfig)
+            ? captionUrls(fileData.subtitles, context.serverConfig)
             : null
       } catch (error) {
         // Not being able to read the list is not the same as an empty list.
@@ -810,7 +808,7 @@ export class EpisodeSyncService {
     // Legacy stores chapterURL as a single URL string (not an array)
     const canUpdateChapters = owns('chapters', Boolean(fileData?.chapters))
     if (canUpdateChapters) {
-      entity.chapterURL = createFullUrl(fileData.chapters, context.serverConfig)
+      entity.chapterURL = fileServerUrl(fileData.chapters, context.serverConfig)
       entity.chapterSource = context.serverConfig.id
     }
 
@@ -890,7 +888,7 @@ export class EpisodeSyncService {
         try {
           blurhash = await fetchMetadataMultiServer(
             context.serverConfig.id,
-            createFullUrl(fileData.thumbnailBlurhash, context.serverConfig),
+            fileServerUrl(fileData.thumbnailBlurhash, context.serverConfig),
             'blurhash',
             'tv',
             showOriginalTitle

@@ -23,7 +23,7 @@ import {
   type CleanableField
 } from '../../core'
 
-import { TVShowRepository, EpisodeRepository, SeasonRepository, isTopLevelFieldLocked } from '../../infrastructure'
+import { TVShowRepository, EpisodeRepository, SeasonRepository, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
 import { SeasonSyncService } from './SeasonSyncService'
 import { EpisodeSyncService } from './EpisodeSyncService'
 import {
@@ -35,9 +35,6 @@ import {
   availabilityFingerprint,
   payloadFingerprint,
 } from '@src/utils/sync/core/syncGate'
-import {
-  createFullUrl,
-} from '@src/utils/sync/utils'
 import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates } from '../../core/syncGate'
 import isEqual from 'lodash/isEqual'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
@@ -450,7 +447,7 @@ export class TVShowSyncService {
       context.fieldAvailability, 'tv', showTitle, 'poster', context.serverConfig
     )
     if (canUpdatePoster && (fileData.posterURL || fileData.poster)) {
-      entity.posterURL = createFullUrl(fileData.posterURL || fileData.poster, context.serverConfig)
+      entity.posterURL = fileServerUrl(fileData.posterURL || fileData.poster, context.serverConfig)
       entity.posterSource = context.serverConfig.id
     }
 
@@ -459,7 +456,7 @@ export class TVShowSyncService {
       context.fieldAvailability, 'tv', showTitle, 'backdrop', context.serverConfig
     )
     if (canUpdateBackdrop && (fileData.backdropURL || fileData.backdrop)) {
-      entity.backdrop = createFullUrl(fileData.backdropURL || fileData.backdrop, context.serverConfig)
+      entity.backdrop = fileServerUrl(fileData.backdropURL || fileData.backdrop, context.serverConfig)
       entity.backdropSource = context.serverConfig.id
     }
 
@@ -468,7 +465,7 @@ export class TVShowSyncService {
       context.fieldAvailability, 'tv', showTitle, 'logo', context.serverConfig
     )
     if (canUpdateLogo && (fileData.logoURL || fileData.logo)) {
-      entity.logo = createFullUrl(fileData.logoURL || fileData.logo, context.serverConfig)
+      entity.logo = fileServerUrl(fileData.logoURL || fileData.logo, context.serverConfig)
       entity.logoSource = context.serverConfig.id
     }
 
@@ -495,7 +492,7 @@ export class TVShowSyncService {
       // blurhash an admin locked is not ours to change.
       if (locked(imageField) || locked(field)) return
       const sourceField = `${field}Source`
-      const imageUrl = createFullUrl(imagePath as string, context.serverConfig)
+      const imageUrl = fileServerUrl(imagePath as string, context.serverConfig)
       const stored = (existing as any)?.[field]
       const notOfThisImage =
         Boolean(stored) &&
@@ -506,7 +503,7 @@ export class TVShowSyncService {
         try {
           blurhash = await fetchMetadataMultiServer(
             context.serverConfig.id,
-            createFullUrl(blurhashPath as string, context.serverConfig),
+            fileServerUrl(blurhashPath as string, context.serverConfig),
             'blurhash',
             'tv',
             showTitle

@@ -28,7 +28,7 @@ import {
   safeStringify,
 } from '../../../core'
 
-import { MovieRepository, UrlBuilder, isTopLevelFieldLocked } from '../../../infrastructure'
+import { MovieRepository, captionUrls, fileServerUrl, isTopLevelFieldLocked, prefixedPath } from '../../../infrastructure'
 
 import { reconcileCaptions } from '../../../core/captionReconcile'
 import {
@@ -571,7 +571,7 @@ export class MovieContentStrategy implements SyncStrategy {
       let listedCaptions: Record<string, any> | null = null
       let captionsReadable = true
       try {
-        listedCaptions = UrlBuilder.processCaptionURLs(
+        listedCaptions = captionUrls(
           (fileServerMovieData as any)?.urls?.subtitles,
           context.serverConfig
         )
@@ -793,9 +793,9 @@ export class MovieContentStrategy implements SyncStrategy {
     }
 
     // --- Delivery facts (mirrored) ---
-    // Movies nest these under `urls`; the same prefix-strip + createFullUrl
-    // transform used for urls.mp4 is applied to each source url so a source
-    // entry and videoURL can never disagree about host or encoding.
+    // Movies nest these under `urls`; each source url goes through the same
+    // fileServerUrl as urls.mp4, so a source entry and videoURL can never
+    // disagree about host or encoding.
     const facts = resolveDeliveryFacts(
       {
         sources: fileServerData.urls?.sources,
@@ -819,16 +819,9 @@ export class MovieContentStrategy implements SyncStrategy {
     }
   }
 
-  /**
-   * Mirror of the urls.mp4 conversion: strip a doubled server prefix, then
-   * build the full URL.
-   */
+  /** The urls.mp4 conversion: the payload's path already carries the server's prefix. */
   private toFullSourceUrl(url: string, context: SyncContext): string {
-    let relativePath = url
-    if (context.serverConfig.prefix && relativePath.startsWith(context.serverConfig.prefix)) {
-      relativePath = relativePath.substring(context.serverConfig.prefix.length)
-    }
-    return UrlBuilder.createFullUrl(relativePath, context.serverConfig)
+    return fileServerUrl(url, context.serverConfig)
   }
 
   private getVideoUrlFromFileServerData(
@@ -845,22 +838,12 @@ export class MovieContentStrategy implements SyncStrategy {
 
     try {
       // Check if we have video URL in the expected format (urls.mp4)
-      // IMPORTANT: urls.mp4 is a RELATIVE PATH from file server, convert to full URL
+      // IMPORTANT: urls.mp4 is a RELATIVE PATH from file server, already under
+      // the server's prefix (e.g. "/media/movies/..."); convert to full URL
       if (fileServerData.urls?.mp4) {
-        let relativePath = fileServerData.urls.mp4
-
-        // Strip prefix if it's already included in the relative path to avoid double prefixes
-        // e.g., if path is "/media/movies/..." and prefix is "/media", remove prefix from path
-        if (context.serverConfig.prefix && relativePath.startsWith(context.serverConfig.prefix)) {
-          relativePath = relativePath.substring(context.serverConfig.prefix.length)
-          console.log(
-            `🔧 Stripped prefix "${context.serverConfig.prefix}" from path: ${fileServerData.urls.mp4} -> ${relativePath}`
-          )
-        }
-
-        const videoUrl = UrlBuilder.createFullUrl(relativePath, context.serverConfig)
+        const videoUrl = fileServerUrl(fileServerData.urls.mp4, context.serverConfig)
         syncLogger.debug(
-          `✅ Found video URL from urls.mp4 (final path: ${relativePath}) -> full: ${videoUrl}`
+          `✅ Found video URL from urls.mp4 (path: ${fileServerData.urls.mp4}) -> full: ${videoUrl}`
         )
         return videoUrl
       }
@@ -874,7 +857,8 @@ export class MovieContentStrategy implements SyncStrategy {
           )
           if (videoFile) {
             const relativePath = `/movies/${originalTitle}/${videoFile}`
-            const videoUrl = UrlBuilder.createFullUrl(relativePath, context.serverConfig)
+            // Built here, so not under the server's prefix yet
+            const videoUrl = fileServerUrl(prefixedPath(relativePath, context.serverConfig), context.serverConfig)
             syncLogger.debug(
               `✅ Found video file via fileNames (relative: ${relativePath}) -> full: ${videoUrl}`
             )
@@ -1204,7 +1188,7 @@ export class MovieContentStrategy implements SyncStrategy {
    * Extract captions from file server data.
    *
    * Delegates URL resolution to the shared, absolute-safe
-   * `UrlBuilder.processCaptionURLs` so movies and TV episodes build caption URLs
+   * `captionUrls` (infrastructure/fileSystem/urls) so movies and TV episodes build caption URLs
    * identically — including the pending-vs-completed auto-caption handling (a
    * completed `.auto.srt` is a relative path and MUST be prefixed; only an
    * already-absolute pending track URL is passed through).
@@ -1215,7 +1199,7 @@ export class MovieContentStrategy implements SyncStrategy {
     context: SyncContext
   ): Record<string, any> | null {
     try {
-      const captionURLs = UrlBuilder.processCaptionURLs(
+      const captionURLs = captionUrls(
         fileServerData?.urls?.subtitles,
         context.serverConfig
       )
@@ -1250,15 +1234,8 @@ export class MovieContentStrategy implements SyncStrategy {
         return null
       }
 
-      const relativePath = fileServerData.urls.chapters
-
-      // Strip prefix if it's already included in the relative path to avoid double prefixes
-      let cleanPath = relativePath
-      if (context.serverConfig.prefix && cleanPath.startsWith(context.serverConfig.prefix)) {
-        cleanPath = cleanPath.substring(context.serverConfig.prefix.length)
-      }
-
-      const fullUrl = UrlBuilder.createFullUrl(cleanPath, context.serverConfig)
+      // Already under the server's prefix, like every path in the payload
+      const fullUrl = fileServerUrl(fileServerData.urls.chapters, context.serverConfig)
       syncLogger.debug(`✅ Found chapter data: ${fullUrl}`)
 
       return fullUrl
