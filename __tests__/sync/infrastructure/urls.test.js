@@ -2,22 +2,26 @@
  * @jest-environment node
  *
  * The sync's one URL function (infrastructure/fileSystem/urls) against the
- * functions it replaces, over the paths a processor payload carries.
+ * functions it replaced, over the paths a processor payload carries.
  *
  * Every row names the caller, the path, the server and the URL the sync
  * writes (or, for "fetch", the URL a metadata or blurhash fetch requests).
- * The old functions, with each caller's own handling of the prefix, must give
- * that URL, and so must the new one: what the sync stores does not change.
+ * The new function must give that URL: what the sync stores does not change.
  *
  *   movie video  MovieContentStrategy: urls.mp4, each urls.sources url and
- *                urls.chapters. Strips the server's prefix, then
- *                UrlBuilder.createFullUrl adds it back.
+ *                urls.chapters. Was: strip the server's prefix, then
+ *                UrlBuilder.createFullUrl added it back.
  *   movie asset  MovieAssetStrategy: poster, backdrop, logo and their
- *                blurhash files. UrlBuilder.createFullUrl with no prefix.
- *   tv           The show, season and episode services: createFullUrl in
- *                sync/utils.js, i.e. url_utils' createFullURL(path, false).
- *   fetch        fetchMetadataMultiServer's own URL: url_utils'
+ *                blurhash files. Was: UrlBuilder.createFullUrl, no prefix.
+ *   tv           The show, season and episode services. Was: createFullUrl
+ *                in sync/utils.js, i.e. url_utils' createFullURL(path, false).
+ *   fetch        fetchMetadataMultiServer's own URL. Was: url_utils'
  *                stripPrefixPath, then createFullURL with the prefix.
+ *
+ * UrlBuilder and sync/utils.js are deleted. Until they were, every row here
+ * also ran them and they gave these same bytes; the movie rows now hold what
+ * UrlBuilder gave. url_utils stays (config.js uses it), so the tv and fetch
+ * rows still run it.
  */
 
 // Two servers on the same host, one behind a prefix, and one whose baseURL has
@@ -34,8 +38,7 @@ jest.mock('@src/utils/config', () => {
   return { multiServerHandler: createMultiServerURLHandler(mockServerList) }
 })
 
-const { UrlBuilder } = require('@src/utils/sync/infrastructure/fileSystem/UrlBuilder')
-const { createFullUrl: tvCreateFullUrl } = require('@src/utils/sync/utils')
+const { createURLHandler } = jest.requireActual('@src/utils/url_utils')
 const { multiServerHandler } = require('@src/utils/config')
 const { fileServerUrl, prefixedPath, captionUrls } = require('@src/utils/sync/infrastructure/fileSystem/urls')
 
@@ -45,22 +48,18 @@ const server = (id) => {
   return { id, priority: 1, baseUrl: baseURL, prefix: prefixPath, enabled: true, timeout: 30000 }
 }
 
-// ---------------------------------------------------------------- the old callers
+// ---------------------------------------------------------------- the old callers still here
 
 const old = {
-  'movie video': (path, config) => {
-    let relativePath = path
-    if (config.prefix && relativePath.startsWith(config.prefix)) {
-      relativePath = relativePath.substring(config.prefix.length)
-    }
-    return UrlBuilder.createFullUrl(relativePath, config)
-  },
-  'movie asset': (path, config) => UrlBuilder.createFullUrl(path, { ...config, prefix: '' }),
-  tv: (path, config) => tvCreateFullUrl(path, config),
+  // sync/utils.js createFullUrl, as it was
+  tv: (path, config) => multiServerHandler.getHandler(config.id).createFullURL(path, false),
   fetch: (path, config) => {
     const handler = multiServerHandler.getHandler(config.id)
     return handler.createFullURL(handler.stripPrefixPath(path))
   },
+}
+const expectOld = (caller, path, config, url) => {
+  if (old[caller]) expect(old[caller](path, config)).toBe(url)
 }
 
 // Each caller now hands the payload's path to fileServerUrl as it is.
@@ -70,10 +69,6 @@ const current = {
   tv: (path, config) => fileServerUrl(path, config),
   fetch: (path, config) => fileServerUrl(path, config),
 }
-
-// UrlBuilder keeps a cache keyed on the server id and the path alone; the rows
-// reuse both with other configs.
-beforeEach(() => UrlBuilder.clearCache())
 
 // ---------------------------------------------------------------- payload paths
 
@@ -149,7 +144,7 @@ describe('the URL of every path a payload carries is the one the old functions w
 
   it.each(PAYLOAD_ROWS)('%s on %s: %s', (caller, serverId, path, url) => {
     const config = server(serverId)
-    expect(old[caller](path, config)).toBe(url)
+    expectOld(caller, path, config, url)
     expect(current[caller](path, config)).toBe(url)
   })
 
@@ -163,7 +158,7 @@ describe('the URL of every path a payload carries is the one the old functions w
     ['fetch', 'prefixed', '/media/movies/Some%20Movie%20(2020)/metadata.json', 'https://files.example/media/movies/Some%20Movie%20(2020)/metadata.json'],
   ])('%s on %s: %s', (caller, serverId, path, url) => {
     const config = server(serverId)
-    expect(old[caller](path, config)).toBe(url)
+    expectOld(caller, path, config, url)
     expect(current[caller](path, config)).toBe(url)
   })
 })
@@ -173,10 +168,8 @@ describe('absolute URLs', () => {
     ['movie video', 'prefixed', 'https://jit.example/stream/abc/master.m3u8'],
     ['movie asset', 'plain', 'https://image.example/t/p/original/poster.jpg'],
     ['movie asset', 'prefixed', 'http://files.example/media/movies/Some%20Movie%20(2020)/poster.jpg?hash=1'],
-  ])('%s on %s keeps %s as it is', (caller, serverId, url) => {
-    const config = server(serverId)
-    expect(old[caller](url, config)).toBe(url)
-    expect(current[caller](url, config)).toBe(url)
+  ])('%s on %s keeps %s as it is, as UrlBuilder did', (caller, serverId, url) => {
+    expect(current[caller](url, server(serverId))).toBe(url)
   })
 
   // The TV services hand the blurhash fetch the full URL they built.
@@ -204,9 +197,7 @@ describe('a movie video path the sync puts together itself (no urls.mp4, a video
     ['ported', 'Some Movie (2020)', 'Some Movie (2020).avi', 'http://192.168.1.20:8080/library/movies/Some Movie (2020)/Some Movie (2020).avi'],
   ])('on %s: %s / %s', (serverId, title, file, url) => {
     const config = server(serverId)
-    const path = `/movies/${title}/${file}`
-    expect(UrlBuilder.createFullUrl(path, config)).toBe(url)
-    expect(fileServerUrl(prefixedPath(path, config), config)).toBe(url)
+    expect(fileServerUrl(prefixedPath(`/movies/${title}/${file}`, config), config)).toBe(url)
   })
 
   it.each([
@@ -216,9 +207,7 @@ describe('a movie video path the sync puts together itself (no urls.mp4, a video
     ['/', ''],
   ])('a prefix configured as %j is written as %j, as UrlBuilder did', (prefix, written) => {
     const config = { ...server('plain'), prefix }
-    const url = `https://files.example${written}/movies/A/A.mkv`
-    expect(UrlBuilder.createFullUrl('/movies/A/A.mkv', config)).toBe(url)
-    expect(fileServerUrl(prefixedPath('/movies/A/A.mkv', config), config)).toBe(url)
+    expect(fileServerUrl(prefixedPath('/movies/A/A.mkv', config), config)).toBe(`https://files.example${written}/movies/A/A.mkv`)
   })
 })
 
@@ -240,24 +229,20 @@ describe('caption URLs', () => {
     ['ported', ''],
   ])('on %s, for movies and episodes alike, are the ones UrlBuilder.processCaptionURLs wrote', (serverId, p) => {
     const config = server(serverId)
-    const expected = UrlBuilder.processCaptionURLs(subtitles(p), config)
-    expect(captionUrls(subtitles(p), config)).toEqual(expected)
+    const folder = `${config.baseUrl}${p}/movies/${MOVIE}`
+    const expected = {
+      English: { srcLang: 'en', url: `${folder}/Some%20Movie%20(2020).en.srt`, lastModified: '2024-05-01T00:00:00.000Z', sourceServerId: serverId },
+      'Spanish (Auto)': { srcLang: 'es', url: `${folder}/Some%20Movie%20(2020).es.auto.srt`, lastModified: '2024-05-02T00:00:00.000Z', sourceServerId: serverId, autoGenerated: true },
+      'French (Auto)': { srcLang: 'fr', url: 'https://node.example/api/captions/track/abc123.vtt', sourceServerId: serverId, autoGenerated: true, pending: true },
+      'German (Auto)': { srcLang: 'de', url: 'https://node.example/api/captions/track/def456.vtt', sourceServerId: serverId, autoGenerated: true, pending: true },
+    }
+    // Byte for byte, key order included
     expect(JSON.stringify(captionUrls(subtitles(p), config))).toBe(JSON.stringify(expected))
-    expect(expected.English.url).toBe(`${config.baseUrl}${p}/movies/${MOVIE}/Some%20Movie%20(2020).en.srt`)
-    expect(expected['French (Auto)']).toEqual({
-      srcLang: 'fr',
-      url: 'https://node.example/api/captions/track/abc123.vtt',
-      sourceServerId: serverId,
-      autoGenerated: true,
-      pending: true,
-    })
-    expect(Object.keys(expected)).toEqual(['English', 'Spanish (Auto)', 'French (Auto)', 'German (Auto)'])
   })
 
   it('is null when there is nothing to write, as before', () => {
     const config = server('prefixed')
     for (const input of [null, undefined, {}, { English: { srcLang: 'en' } }]) {
-      expect(UrlBuilder.processCaptionURLs(input, config)).toBeNull()
       expect(captionUrls(input, config)).toBeNull()
     }
   })
@@ -273,9 +258,9 @@ describe('where the old functions disagreed with each other', () => {
   it('a baseURL ending in "/": the movie functions dropped the slash, the TV one kept it; the new one drops it', () => {
     const config = { ...server('plain'), baseUrl: 'https://files.example/' }
     const path = '/tv/Some%20Show%20(2019)/show_poster.jpg?hash=1'
-    expect(old['movie asset'](path, config)).toBe('https://files.example/tv/Some%20Show%20(2019)/show_poster.jpg?hash=1')
-    // (the TV function read the baseURL from config.js, which has no such server)
-    const tvHandler = jest.requireActual('@src/utils/url_utils').createURLHandler({ baseURL: 'https://files.example/', prefixPath: '' })
+    // UrlBuilder gave https://files.example/tv/…. The TV function read the
+    // baseURL from config.js:
+    const tvHandler = createURLHandler({ baseURL: 'https://files.example/', prefixPath: '' })
     expect(tvHandler.createFullURL(path, false)).toBe('https://files.example//tv/Some%20Show%20(2019)/show_poster.jpg?hash=1')
     expect(fileServerUrl(path, config)).toBe('https://files.example/tv/Some%20Show%20(2019)/show_poster.jpg?hash=1')
   })
@@ -283,7 +268,7 @@ describe('where the old functions disagreed with each other', () => {
   it('a path starting with "//": the TV function collapsed the slashes, the movie ones kept them; the new one collapses them', () => {
     const config = server('plain')
     expect(old.tv('//tv/A/a.jpg', config)).toBe('https://files.example/tv/A/a.jpg')
-    expect(old['movie asset']('//tv/A/a.jpg', config)).toBe('https://files.example//tv/A/a.jpg')
+    // UrlBuilder gave https://files.example//tv/A/a.jpg
     expect(fileServerUrl('//tv/A/a.jpg', config)).toBe('https://files.example/tv/A/a.jpg')
   })
 
@@ -291,14 +276,14 @@ describe('where the old functions disagreed with each other', () => {
     const config = server('plain')
     const url = 'https://image.example/poster.jpg'
     expect(old.tv(url, config)).toBe('https://files.example/https://image.example/poster.jpg')
-    expect(old['movie asset'](url, config)).toBe(url)
+    // UrlBuilder kept it as it is
     expect(fileServerUrl(url, config)).toBe(url)
   })
 
   it('an empty path: the TV function wrote the bare baseURL, the movie ones threw; the new one throws', () => {
     const config = server('plain')
     expect(old.tv('', config)).toBe('https://files.example/')
-    expect(() => old['movie asset']('', config)).toThrow('Path and server config are required')
+    // UrlBuilder threw "Path and server config are required"
     expect(() => fileServerUrl('', config)).toThrow('A file server path is required')
     expect(() => fileServerUrl(undefined, config)).toThrow('A file server path is required')
   })
@@ -306,14 +291,11 @@ describe('where the old functions disagreed with each other', () => {
   it('a path without the configured prefix: the movie video and the fetch added the prefix, the TV and movie asset ones did not; the new one does not', () => {
     const config = server('prefixed')
     const path = '/movies/Some%20Movie%20(2020)/Some%20Movie%20(2020).mkv'
-    expect(old['movie video'](path, config)).toBe(`https://files.example/media${path}`)
+    // The movie video gave https://files.example/media/movies/…, the movie
+    // asset https://files.example/movies/… (or the video's URL when the video
+    // came first: UrlBuilder cached on the server id and the path alone).
     expect(old.fetch(path, config)).toBe(`https://files.example/media${path}`)
     expect(old.tv(path, config)).toBe(`https://files.example${path}`)
-    // UrlBuilder's cache, keyed on the server id and the path, would hand the
-    // asset the movie video's URL here: which one came first decided it.
-    expect(old['movie asset'](path, config)).toBe(`https://files.example/media${path}`)
-    UrlBuilder.clearCache()
-    expect(old['movie asset'](path, config)).toBe(`https://files.example${path}`)
     expect(fileServerUrl(path, config)).toBe(`https://files.example${path}`)
   })
 })
