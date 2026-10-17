@@ -64,6 +64,5 @@ export {
 } from './types'
 
 export {
-  syncEventBus,
-  SyncEvents
+  syncEventBus
 } from './events'

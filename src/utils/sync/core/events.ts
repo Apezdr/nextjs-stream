@@ -214,36 +214,3 @@ export class SyncEventBus {
 
 // Global event bus instance
 export const syncEventBus = new SyncEventBus()
-
-// Convenience functions for common event patterns
-export const SyncEvents = {
-  onProgress: (callback: (event: SyncEvent) => void) => 
-    syncEventBus.subscribe(SyncEventType.Progress, callback),
-    
-  onError: (callback: (event: SyncEvent) => void) => 
-    syncEventBus.subscribe(SyncEventType.Error, callback),
-    
-  onComplete: (callback: (event: SyncEvent) => void) => 
-    syncEventBus.subscribe(SyncEventType.Complete, callback),
-
-  forEntity: (entityId: string, callback: (event: SyncEvent) => void) =>
-    syncEventBus.subscribeToEntity(entityId, callback),
-
-  // Utility to track sync progress
-  trackSync: (entityId: string, mediaType: MediaType, serverId: string) => {
-    const events: SyncEvent[] = []
-    
-    const unsubscribe = syncEventBus.subscribeToEntity(entityId, (event) => {
-      events.push(event)
-    })
-
-    return {
-      events,
-      unsubscribe,
-      getProgress: () => events.filter(e => e.type === SyncEventType.Progress),
-      getErrors: () => events.filter(e => e.type === SyncEventType.Error),
-      isComplete: () => events.some(e => e.type === SyncEventType.Complete),
-      hasErrors: () => events.some(e => e.type === SyncEventType.Error)
-    }
-  }
-}

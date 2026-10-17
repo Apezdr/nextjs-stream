@@ -48,9 +48,26 @@ let mockShowMetadata = defaultShowMetadata()
 let mockImageVersion = 'v1'
 
 jest.mock('@src/utils/sync/core/ResourceManager', () => ({
-  ResourceManager: { getInstance: () => ({ dbWriteLimitFor: () => (fn) => fn() }) },
+  ResourceManager: {
+    getInstance: () => ({ config: { syncConcurrency: 1, httpConcurrency: 1 }, dbWriteLimitFor: () => (fn) => fn() }),
+  },
   getResourceManager: () => ({}),
 }))
+// The real p-limit is an ES module jest does not transform; a pass here has one show.
+jest.mock('p-limit', () => () => (fn) => fn())
+// The database a case's pass reads and writes, and the show hashes the
+// Node.js server answers with (null: the request fails).
+let mockDb = null
+let mockHashes = null
+jest.mock('@src/utils/sync/infrastructure/database/DatabaseAdapter', () => ({
+  createDatabaseAdapter: async () => mockDb.repositories,
+}))
+// The pass's side jobs, which do not touch the show.
+jest.mock('@src/utils/notifications/MediaNotificationOrchestrator', () => ({
+  MediaNotificationOrchestrator: { processSyncResults: jest.fn(async () => ({})) },
+}))
+jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNeeded: jest.fn() }))
+jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
 jest.mock('@src/lib/httpHelper', () => ({ httpGet: jest.fn() }))
 jest.mock('@src/lib/mongodb', () => ({ __esModule: true, default: Promise.resolve({}) }))
 jest.mock('@src/lib/logger', () => ({
@@ -81,14 +98,13 @@ jest.mock('@src/utils/admin_utils', () => ({
   }),
 }))
 
+const { runServerPass } = require('@src/utils/sync/run/serverPass')
 const { TVShowSyncService } = require('@src/utils/sync/domain/tv/TVShowSyncService')
-const { SeasonSyncService } = require('@src/utils/sync/domain/tv/SeasonSyncService')
 const { EpisodeSyncService } = require('@src/utils/sync/domain/tv/EpisodeSyncService')
 const { TVShowRepository } = require('@src/utils/sync/infrastructure/database/TVShowRepository')
 const { SeasonRepository } = require('@src/utils/sync/infrastructure/database/SeasonRepository')
 const { EpisodeRepository } = require('@src/utils/sync/infrastructure/database/EpisodeRepository')
-const { resolveCleanupConfig } = require('@src/utils/sync/core/FieldAbsenceCleaner')
-const { MediaType, SyncOperation } = require('@src/utils/sync/core')
+const { MediaType } = require('@src/utils/sync/core')
 const isEqual = require('lodash/isEqual')
 // The availability map is built by the same function the admin sync route uses.
 const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
@@ -191,19 +207,15 @@ function makeCollection() {
 function makeDatabase() {
   const collections = { FlatTVShows: makeCollection(), FlatSeasons: makeCollection(), FlatEpisodes: makeCollection() }
   const client = { db: () => ({ collection: (name) => collections[name] }) }
-  const shows = new TVShowRepository(client)
-  const seasons = new SeasonRepository(client)
-  const episodes = new EpisodeRepository(client)
-  const service = new TVShowSyncService(
-    shows,
-    new SeasonSyncService(seasons, shows),
-    new EpisodeSyncService(episodes, seasons, shows),
-    episodes,
-    seasons
-  )
+  // What run/serverPass builds its services over (createDatabaseAdapter)
+  const repositories = {
+    tvShows: new TVShowRepository(client),
+    seasons: new SeasonRepository(client),
+    episodes: new EpisodeRepository(client),
+  }
   return {
     collections,
-    service,
+    repositories,
     show: () => collections.FlatTVShows.docs[0],
     season: (number) => collections.FlatSeasons.docs.find((d) => d.seasonNumber === number),
     episode: (number, season = 1) =>
@@ -315,30 +327,40 @@ function hashesFor(payload) {
   }
 }
 
-/** One server's pass over the show. `payloads` is every server that answered this run. */
+/**
+ * One server's pass over the show, run as production runs it
+ * (run/serverPass). `payloads` is every server that answered this run.
+ * Returns what the show service reported for the show.
+ */
 async function pass(db, serverId, payloads, { forceSync = false, allProbed = true, hashesOf = payloads, hashes: withHashes = true } = {}) {
   const fieldAvailability = { movies: {}, tv: { [SHOW]: {} } }
   for (const [id, payload] of Object.entries(payloads)) {
     collectFieldAvailability(payload, '', id, fieldAvailability.tv[SHOW])
   }
+  mockDb = db
   // `hashesOf` lets a case hand over the hashes of a DIFFERENT payload than the
   // one applied — what happens when a scan commits between the two fetches.
-  const hashes = hashesFor(hashesOf[serverId])
-  const context = {
-    mediaType: MediaType.TVShow,
-    operation: SyncOperation.Metadata,
-    serverConfig: { id: serverId, priority: mockServers[serverId].priority, baseUrl: `https://${serverId}.example`, prefix: '', enabled: true },
-    fieldAvailability,
-    forceSync,
-    fileServerData: { tv: { [SHOW]: payloads[serverId] } },
-    // `hashes: false` is a run on which the file server's hash requests failed.
-    ...(withHashes
-      ? { tvShowHashesCache: { titles: { [SHOW]: hashes.show } }, tvEpisodeHashesCache: new Map([[SHOW, hashes.episodeHashes]]) }
-      : {}),
-    cleanup: resolveCleanupConfig(allProbed),
-    allEnabledServersProbed: allProbed,
+  // `hashes: false` is a run on which the file server's hash requests failed.
+  mockHashes = withHashes ? { titles: { [SHOW]: hashesFor(hashesOf[serverId]).show } } : null
+  const syncTVShow = jest.spyOn(TVShowSyncService.prototype, 'syncTVShow')
+  try {
+    await runServerPass(
+      { tv: { [SHOW]: payloads[serverId] } },
+      {
+        id: serverId,
+        baseURL: `https://${serverId}.example`,
+        prefixPath: '',
+        syncEndpoint: `https://${serverId}-node.example`,
+        priority: mockServers[serverId].priority,
+      },
+      fieldAvailability,
+      { forceSync, allEnabledServersProbed: allProbed }
+    )
+    if (syncTVShow.mock.calls.length !== 1) throw new Error(`the pass synced the show ${syncTVShow.mock.calls.length} times`)
+    return await syncTVShow.mock.results[0].value
+  } finally {
+    syncTVShow.mockRestore()
   }
-  return db.service.syncTVShow(SHOW, context)
 }
 
 async function run(db, payloads, order, options) {
@@ -374,10 +396,18 @@ function settled(db) {
 const statuses = (results) => results.map((r) => r.status)
 const ORDERS = [['A', 'B'], ['B', 'A']]
 
+const realFetch = global.fetch
 beforeAll(() => {
   for (const method of ['log', 'warn', 'info', 'debug', 'error']) {
     jest.spyOn(console, method).mockImplementation(() => {})
   }
+  // The Node.js server's show hashes, which the pass fetches once.
+  global.fetch = jest.fn(async () =>
+    mockHashes ? { ok: true, status: 200, json: async () => mockHashes } : { ok: false, status: 503 }
+  )
+})
+afterAll(() => {
+  global.fetch = realFetch
 })
 beforeEach(() => {
   mockFailingUrls.clear()

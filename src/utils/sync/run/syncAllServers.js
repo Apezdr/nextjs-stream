@@ -2,9 +2,7 @@ import { ObjectId } from 'mongodb'
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
 import { updateLastSynced } from './lastSynced'
-import {
-  syncToFlatStructure,
-} from '@src/utils/flatSync'
+import { runServerPass } from './serverPass'
 import { runPostSyncCleanup } from './postSync'
 import {
   setCurrentSyncRunId,
@@ -210,19 +208,13 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
         // projection-only finds + a Set diff — see computeMissingMedia.js.
         const [missingMedia, syncResult] = await Promise.all([
           computeMissingMedia(fileServer, fieldAvailability),
-          syncToFlatStructure(
-            fileServer,
-            serverConfig,
-            fieldAvailability,
-            false,
-            Boolean(options.forceSync),
-            {
-              // Authoritative-pass gate for field-absence cleanup: true only when
-              // every enabled file server responded this run (computed in the route
-              // handler). Threaded unchanged into SyncContext.cleanup.
-              allEnabledServersProbed: options.allEnabledServersProbed === true,
-            }
-          )
+          runServerPass(fileServer, serverConfig, fieldAvailability, {
+            forceSync: Boolean(options.forceSync),
+            // Authoritative-pass gate for field-absence cleanup: true only when
+            // every enabled file server responded this run (computed in the route
+            // handler). Threaded unchanged into SyncContext.cleanup.
+            allEnabledServersProbed: options.allEnabledServersProbed === true,
+          }),
         ])
 
         // Process missing movies
