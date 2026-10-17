@@ -244,7 +244,7 @@ function formatStatuses(servers, statuses) {
  * @returns {Promise<
  *   { skipped: true, result: Object } |
  *   { skipped: false, fileServers: Object, errors: Array|undefined, etags: Object, statuses: Object, reason: string }
- * >} `errors` is undefined when every server answered, as getFileServerData has it.
+ * >} `errors` is undefined when every server answered, never an empty array.
  */
 export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}) {
   const startedAt = Date.now()

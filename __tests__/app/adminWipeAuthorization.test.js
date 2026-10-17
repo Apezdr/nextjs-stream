@@ -48,7 +48,6 @@ jest.mock('@src/utils/sync/infrastructure', () => ({}))
 jest.mock('@src/utils/sync_verification', () => ({}))
 jest.mock('@src/utils/auth_utils', () => ({}))
 jest.mock('@src/utils/notifications/NotificationManager.js', () => ({ NotificationManager: {} }))
-jest.mock('@src/utils/fileServerDataService', () => ({}))
 jest.mock('next/cache', () => ({ revalidateTag: jest.fn() }))
 jest.mock('@src/utils/cache/mediaPagesTags', () => ({}))
 jest.mock('@src/lib/logger', () => ({

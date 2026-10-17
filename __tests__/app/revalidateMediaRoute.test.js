@@ -42,7 +42,6 @@ jest.mock('@src/utils/sync/infrastructure', () => ({}))
 jest.mock('@src/utils/sync_verification', () => ({}))
 jest.mock('@src/utils/auth_utils', () => ({}))
 jest.mock('@src/utils/notifications/NotificationManager.js', () => ({ NotificationManager: {} }))
-jest.mock('@src/utils/fileServerDataService', () => ({}))
 jest.mock('@src/lib/logger', () => ({
   createLogger: jest.fn(() => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() })),
 }))

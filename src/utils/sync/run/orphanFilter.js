@@ -4,7 +4,7 @@
  * backstop — that were last written before the run started. A document with
  * no `updatedAt` (legacy) is never deleted.
  *
- * Shared with the sync-tick skip check (sync/tickSkip.js), which asks the same
+ * Shared with the sync-tick skip check (run/tickSkip.js), which asks the same
  * question after the fact: is anything left that cleanup should have deleted?
  *
  * @param {string} syncRunId - The run whose stamp marks a document as kept

@@ -1036,12 +1036,12 @@ export async function getFlatRecentlyWatchedForUser({
       )
     }
 
-    // Step 6: Create format expected by processWatchedDetails
+    // Step 6: Create format expected by processFlatWatchedDetails
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatRecentlyWatchedForUser:prepareData')
     }
 
-    // Format watched videos to structure expected by processWatchedDetails,
+    // Format watched videos to structure expected by processFlatWatchedDetails,
     // normalizing trailer URLs to internal movie identifiers while preserving
     // the original external URL for limited-access playback.
     const formattedWatchedVideos = watchedVideos.map((video) => {

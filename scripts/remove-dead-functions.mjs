@@ -106,7 +106,7 @@ const _DEAD_SYMBOLS_ROUND1 = {
   'src/utils/recommendations/filters.js': ['filterByMinimumScore', 'filterExcludeBlacklist'],
   'src/utils/recommendations/scoring.js': ['calculateCompletionScore'],
   'src/utils/routeAuth.js': ['isAuthenticatedBySessionId', 'getUserById'],
-  'src/utils/sync.js': ['syncMissingMedia'],
+  'src/utils/sync/run/syncAllServers.js': ['syncMissingMedia'],
   'src/utils/sync/captions.js': ['syncCaptions'],
   'src/utils/sync/featureFlags.js': ['validateFeatureFlagConfig', 'withFeatureFlagOverride'],
   'src/utils/sync/fileServer.js': ['identifyMissingMedia'],

@@ -20,7 +20,7 @@ import { MediaType, SyncOperation } from '@src/utils/sync/core'
 import { startPassRecord, recordCompletePass } from './tickSkip'
 
 // The sync route fetches each tick's payloads through this, and skips the tick
-// when nothing changed (see sync/tickSkip).
+// when nothing changed (see run/tickSkip.js).
 export { fetchSyncTick } from './tickSkip'
 
 // Hard ceiling on how long the orchestration single-flight lock may be held. A
@@ -139,7 +139,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   // No tick may be skipped on the strength of an earlier pass while this one
   // writes: the record of the last complete pass is replaced now by this
   // pass's running marker, which becomes a complete record only if this pass
-  // completes (recordCompletePass below; see sync/tickSkip).
+  // completes (recordCompletePass below; see run/tickSkip.js).
   await startPassRecord(client, syncRunId)
 
   // Pre-tag every record currently present on a file server with the current

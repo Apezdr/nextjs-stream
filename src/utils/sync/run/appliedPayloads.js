@@ -8,7 +8,7 @@ import clientPromise from '@src/lib/mongodb'
 
 /**
  * `app_config.syncInfo` document a sync tick reads to decide whether it can be
- * skipped (sync/tickSkip.js). It is in one of two states:
+ * skipped (run/tickSkip.js). It is in one of two states:
  *
  *   - `state: 'running'` with a `syncRunId`: that pass started and has not
  *     recorded itself complete — it is still writing, or it did not complete;
