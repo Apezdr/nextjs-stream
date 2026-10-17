@@ -43,6 +43,7 @@ import { getAllServers } from '@src/utils/config'
 import { fetchAllServerData } from '@src/utils/fetchAllServerData'
 import { migratePlaybackStatusIfNeeded } from '@src/utils/watchHistory/migrate'
 import { validateWatchHistoryAgainstDatabase } from '@src/utils/flatSync/watchHistoryValidation'
+import { cleanupOrphanFilter } from '@src/utils/flatSync/orphanFilter'
 import { SYNC_GATE_VERSION } from './core/syncGate'
 import { syncEventBus } from './core/events'
 import { MediaType, SyncOperation } from './core/types'
@@ -102,17 +103,17 @@ export async function countDocumentsOfRun(db, syncRunId) {
 
 /**
  * How many documents in each stamped collection post-sync cleanup would
- * delete after a pass with this syncRunId — its own filter (postSyncCleanup):
- * not stamped by the run, not a manual entry, last written before now. Any
- * left means that pass's cleanup did not finish (it failed, or refused), and
- * a full pass, whose cleanup retries it, must run.
+ * delete after a pass with this syncRunId — its own filter, with "before the
+ * run started" read as "before now". Any left means that pass's cleanup did
+ * not finish (it failed, or refused), and a full pass, whose cleanup retries
+ * it, must run.
  *
  * @param {import('mongodb').Db} db
  * @param {string} syncRunId
  * @returns {Promise<Object<string, number>>} Only non-zero entries
  */
 export async function countLeftForCleanup(db, syncRunId) {
-  const filter = { syncRunId: { $ne: syncRunId }, manualEntry: { $ne: true }, updatedAt: { $lt: new Date() } }
+  const filter = cleanupOrphanFilter(syncRunId, new Date())
   const counts = await Promise.all(STAMPED_COLLECTIONS.map((name) => db.collection(name).countDocuments(filter)))
   return Object.fromEntries(
     STAMPED_COLLECTIONS.map((name, i) => [name, counts[i]]).filter(([, count]) => count > 0)
