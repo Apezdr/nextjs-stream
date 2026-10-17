@@ -8,8 +8,9 @@
  * migration and the watch-history validation) are recorded.
  *
  * The cases: what one pass writes, the side jobs it runs and the lines it
- * logs; the server config a pass refuses, or hands the services; a title
- * that throws; and the one pool movies and shows go through.
+ * logs; the server config a pass refuses, or hands the services; which
+ * errors fail the server and which only fail a title; and the one pool movies
+ * and shows go through.
  */
 
 const mockServers = [
@@ -489,6 +490,19 @@ describe('the server config a pass refuses', () => {
 // ---------------------------------------------------------------- errors
 
 describe('errors', () => {
+  it('an error thrown in the pass reaches syncAllServers’ per-server catch: the server failed, nothing recorded', async () => {
+    mockSyncClientError = new Error('sync pool unavailable')
+
+    const result = await runSync(oneServer())
+
+    expect(result.errors).toEqual([
+      expect.objectContaining({ serverId: 'default', error: 'sync pool unavailable' }),
+    ])
+    expect(result.flatSyncResults?.default).toBeUndefined()
+    expect(mockSideJobs).toEqual([])
+    expect(appliedRecord()).toMatchObject({ state: 'running', syncRunId: result.syncRunId })
+  })
+
   it('a show whose sync throws is one failed result; the other titles are written and the pass goes on', async () => {
     const OTHER = 'Another Show (2021)'
     const syncTVShow = TVShowSyncService.prototype.syncTVShow

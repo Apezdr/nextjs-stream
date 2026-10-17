@@ -20,9 +20,10 @@
  *
  * Failures. A title that fails is a failed result and the pass goes on: the
  * failure is counted, so run/tickSkip does not record the pass as complete.
- * The config check throws to the caller. An error anywhere else in steps 2 to
- * 5 ends the pass with an entry in its `errors`; run/tickSkip does not record
- * that pass either. The side jobs keep their own catches: they never failed a
+ * Anything else that throws (the config check, the database adapter, the
+ * pass's own code) is not caught here. It reaches syncAllServers' per-server
+ * catch, which records the server as failed, and the pass is not recorded as
+ * complete either. The side jobs keep their own catches: they never failed a
  * pass, and run/tickSkip does not count them.
  */
 
@@ -140,172 +141,144 @@ export async function runServerPass(
   const startTime = Date.now()
   const results = emptyResults()
 
-  try {
-    const { movieService, tvShowService } = await createServices()
-    const resourceManager = ResourceManager.getInstance()
-    const pool = pLimit(resourceManager.config.syncConcurrency)
+  const { movieService, tvShowService } = await createServices()
+  const resourceManager = ResourceManager.getInstance()
+  const pool = pLimit(resourceManager.config.syncConcurrency)
 
-    // ---- 2. Movies ----
-    const movieTitles = extractMovieTitles(fileServer)
-    if (movieTitles.length > 0) {
-      log.info(
-        { serverId: serverConfig.id, movieCount: movieTitles.length, architecture: 'new' },
-        'Processing movies with new architecture'
-      )
-      const movieStart = Date.now()
-      const context: SyncContext = {
-        mediaType: MediaType.Movie,
-        operation: SyncOperation.Metadata,
-        serverConfig,
-        fieldAvailability,
-        forceSync,
-        fileServerData: fileServer,
-        metadataHashesCache: (await fetchTitleHashes(serverConfig, 'movies')) ?? undefined,
-        resourceManager,
-        // Field-absence cleanup, and the same signal for the sync's own clearing
-        // decisions (present whether or not cleanup is switched on).
-        cleanup: resolveCleanupConfig(allEnabledServersProbed),
-        allEnabledServersProbed,
-      }
-      syncLogger.info(
-        `Processing ${movieTitles.length} movies with concurrency: ${resourceManager.config.syncConcurrency} ` +
-          `(HTTP limit: ${resourceManager.config.httpConcurrency})`
-      )
-      const progress = progressTracker(movieTitles.length)
-      let movieResults: SyncResult[] = []
-      try {
-        movieResults = await syncTitles(
-          movieTitles,
-          pool,
-          (title) => movieService.syncMovie(title, context, MOVIE_OPERATIONS, title),
-          (title, error) => failedResult(title, MediaType.Movie, serverConfig.id, error),
-          (titleResults) => progress.update(titleResults.some((r) => r.status === SyncStatus.Failed))
-        )
-      } catch (error) {
-        syncLogger.error('Movie sync failed:', error)
-      }
-      logSummary('Movie', movieResults, Date.now() - movieStart)
-
-      results.movies = translateMovieResults(movieResults)
-      collectChangedMedia(movieResults, results.changedMedia)
-      log.info(
-        {
-          serverId: serverConfig.id,
-          processed: results.movies.processed,
-          errors: results.movies.errors,
-          skipped: results.movies.skipped,
-        },
-        'Movie processing completed'
-      )
+  // ---- 2. Movies ----
+  const movieTitles = extractMovieTitles(fileServer)
+  if (movieTitles.length > 0) {
+    log.info(
+      { serverId: serverConfig.id, movieCount: movieTitles.length, architecture: 'new' },
+      'Processing movies with new architecture'
+    )
+    const movieStart = Date.now()
+    const context: SyncContext = {
+      mediaType: MediaType.Movie,
+      operation: SyncOperation.Metadata,
+      serverConfig,
+      fieldAvailability,
+      forceSync,
+      fileServerData: fileServer,
+      metadataHashesCache: (await fetchTitleHashes(serverConfig, 'movies')) ?? undefined,
+      resourceManager,
+      // Field-absence cleanup, and the same signal for the sync's own clearing
+      // decisions (present whether or not cleanup is switched on).
+      cleanup: resolveCleanupConfig(allEnabledServersProbed),
+      allEnabledServersProbed,
     }
+    syncLogger.info(
+      `Processing ${movieTitles.length} movies with concurrency: ${resourceManager.config.syncConcurrency} ` +
+        `(HTTP limit: ${resourceManager.config.httpConcurrency})`
+    )
+    const progress = progressTracker(movieTitles.length)
+    const movieResults = await syncTitles(
+      movieTitles,
+      pool,
+      (title) => movieService.syncMovie(title, context, MOVIE_OPERATIONS, title),
+      (title, error) => failedResult(title, MediaType.Movie, serverConfig.id, error),
+      (titleResults) => progress.update(titleResults.some((r) => r.status === SyncStatus.Failed))
+    )
+    logSummary('Movie', movieResults, Date.now() - movieStart)
 
-    // ---- 3. TV ----
-    const tvLog = createLogger('FlatSync.NewArch.TV')
-    const showTitles = fileServer?.tv ? Object.keys(fileServer.tv) : []
-    if (!fileServer?.tv) {
-      tvLog.info({ serverId: serverConfig.id }, 'No TV content in fileServer, skipping TV sync')
-    } else if (showTitles.length === 0) {
-      tvLog.info({ serverId: serverConfig.id }, 'No TV show titles found, skipping TV sync')
-    } else {
-      tvLog.info(
-        { serverId: serverConfig.id, tvShowCount: showTitles.length, architecture: 'new' },
-        'Starting TV sync with new domain architecture'
-      )
-      const tvStart = performance.now()
-      try {
-        const tvShowHashes = await fetchTitleHashes(serverConfig, 'tv')
-        if (!tvShowHashes) syncLogger.warn('TV show hashes unavailable — proceeding without show-level skip optimisation')
-        const context: SyncContext = {
-          mediaType: MediaType.TVShow,
-          operation: SyncOperation.Metadata,
-          serverConfig,
-          fieldAvailability,
-          forceSync,
-          fileServerData: fileServer,
-          resourceManager,
-          tvShowHashesCache: tvShowHashes ?? undefined,
-          cleanup: resolveCleanupConfig(allEnabledServersProbed),
-          allEnabledServersProbed,
-        }
-        const tvResults = await syncTitles(
-          showTitles,
-          pool,
-          (title) => tvShowService.syncTVShow(title, context),
-          (title, error) => failedResult(title, MediaType.TVShow, serverConfig.id, error)
-        )
-        logSummary('TV', tvResults, performance.now() - tvStart)
-
-        translateTVResults(tvResults, results, serverConfig.id)
-        collectChangedMedia(tvResults, results.changedMedia)
-        tvLog.info(
-          {
-            serverId: serverConfig.id,
-            durationSec: parseFloat(((performance.now() - tvStart) / 1000).toFixed(2)),
-            processed: {
-              tvShows: results.tvShows.processed,
-              seasons: results.seasons.processed,
-              episodes: results.episodes.processed,
-            },
-            errors: results.tvShows.errors + results.seasons.errors + results.episodes.errors,
-          },
-          'TV content sync completed with new architecture'
-        )
-      } catch (error) {
-        logError(tvLog, error, { serverId: serverConfig.id, phase: 'tvContentSync', architecture: 'new' })
-        results.errors.push({
-          phase: 'tvContentSync',
-          error: error instanceof Error ? error.message : String(error),
-          stack: error instanceof Error ? error.stack : undefined,
-          serverId: serverConfig.id,
-        })
-      }
-    }
-
-    // ---- 4. Results ----
-    results.performance.endTime = new Date()
-    results.performance.duration = Date.now() - startTime
-
-    // changedMedia should track the processed counts closely; changedMedia
-    // dwarfing what actually changed on disk is the over-invalidation signal.
+    results.movies = translateMovieResults(movieResults)
+    collectChangedMedia(movieResults, results.changedMedia)
     log.info(
       {
         serverId: serverConfig.id,
-        changedMedia: {
-          movies: results.changedMedia.movies.length,
-          shows: results.changedMedia.shows.length,
-          seasons: results.changedMedia.seasons.length,
-          episodes: results.changedMedia.episodes.length,
-        },
+        processed: results.movies.processed,
+        errors: results.movies.errors,
+        skipped: results.movies.skipped,
+      },
+      'Movie processing completed'
+    )
+  }
+
+  // ---- 3. TV ----
+  const tvLog = createLogger('FlatSync.NewArch.TV')
+  const showTitles = fileServer?.tv ? Object.keys(fileServer.tv) : []
+  if (!fileServer?.tv) {
+    tvLog.info({ serverId: serverConfig.id }, 'No TV content in fileServer, skipping TV sync')
+  } else if (showTitles.length === 0) {
+    tvLog.info({ serverId: serverConfig.id }, 'No TV show titles found, skipping TV sync')
+  } else {
+    tvLog.info(
+      { serverId: serverConfig.id, tvShowCount: showTitles.length, architecture: 'new' },
+      'Starting TV sync with new domain architecture'
+    )
+    const tvStart = performance.now()
+    const tvShowHashes = await fetchTitleHashes(serverConfig, 'tv')
+    if (!tvShowHashes) syncLogger.warn('TV show hashes unavailable — proceeding without show-level skip optimisation')
+    const context: SyncContext = {
+      mediaType: MediaType.TVShow,
+      operation: SyncOperation.Metadata,
+      serverConfig,
+      fieldAvailability,
+      forceSync,
+      fileServerData: fileServer,
+      resourceManager,
+      tvShowHashesCache: tvShowHashes ?? undefined,
+      cleanup: resolveCleanupConfig(allEnabledServersProbed),
+      allEnabledServersProbed,
+    }
+    const tvResults = await syncTitles(
+      showTitles,
+      pool,
+      (title) => tvShowService.syncTVShow(title, context),
+      (title, error) => failedResult(title, MediaType.TVShow, serverConfig.id, error)
+    )
+    logSummary('TV', tvResults, performance.now() - tvStart)
+
+    translateTVResults(tvResults, results, serverConfig.id)
+    collectChangedMedia(tvResults, results.changedMedia)
+    tvLog.info(
+      {
+        serverId: serverConfig.id,
+        durationSec: parseFloat(((performance.now() - tvStart) / 1000).toFixed(2)),
         processed: {
-          movies: results.movies.processed,
           tvShows: results.tvShows.processed,
           seasons: results.seasons.processed,
           episodes: results.episodes.processed,
         },
+        errors: results.tvShows.errors + results.seasons.errors + results.episodes.errors,
       },
-      'Collected changed media for post-sync cache invalidation'
+      'TV content sync completed with new architecture'
     )
-    log.info(
-      { serverId: serverConfig.id, durationMs: results.performance.duration, architecture: 'new' },
-      'NEW architecture sync completed'
-    )
-
-    // ---- 5. This server's side jobs ----
-    await runSideJobs(results, serverConfig.id, log)
-
-    return results
-  } catch (error) {
-    logError(log, error, { serverId: serverConfig.id, phase: 'newArchitectureSync', architecture: 'new' })
-    results.errors.push({
-      phase: 'newArchitectureSync',
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-      serverId: serverConfig.id,
-    })
-    results.performance.endTime = new Date()
-    results.performance.duration = Date.now() - startTime
-    return results
   }
+
+  // ---- 4. Results ----
+  results.performance.endTime = new Date()
+  results.performance.duration = Date.now() - startTime
+
+  // changedMedia should track the processed counts closely; changedMedia
+  // dwarfing what actually changed on disk is the over-invalidation signal.
+  log.info(
+    {
+      serverId: serverConfig.id,
+      changedMedia: {
+        movies: results.changedMedia.movies.length,
+        shows: results.changedMedia.shows.length,
+        seasons: results.changedMedia.seasons.length,
+        episodes: results.changedMedia.episodes.length,
+      },
+      processed: {
+        movies: results.movies.processed,
+        tvShows: results.tvShows.processed,
+        seasons: results.seasons.processed,
+        episodes: results.episodes.processed,
+      },
+    },
+    'Collected changed media for post-sync cache invalidation'
+  )
+  log.info(
+    { serverId: serverConfig.id, durationMs: results.performance.duration, architecture: 'new' },
+    'NEW architecture sync completed'
+  )
+
+  // ---- 5. This server's side jobs ----
+  await runSideJobs(results, serverConfig.id, log)
+
+  return results
 }
 
 /**
