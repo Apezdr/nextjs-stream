@@ -77,8 +77,3 @@ export function warnOnJitIdentityFork(
   }
   return result
 }
-
-/** Test hook. */
-export function _resetJitIdentityParityWarningsForTests(): void {
-  warned.clear()
-}

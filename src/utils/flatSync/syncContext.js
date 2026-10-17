@@ -38,46 +38,6 @@ export function getCurrentSyncRunId() {
   return _currentSyncRunId
 }
 
-/**
- * Inject `syncRunId` into a MongoDB update operator document so the field
- * is set on every write that flows through a hub helper.
- *
- * - Mutates `$set` so the marker is set on existing records.
- * - Mutates `$setOnInsert` (when present) so the marker is set on the upsert
- *   path too.
- * - Pass-through if no syncRunId is currently active (e.g., a maintenance
- *   write that runs outside an orchestration).
- *
- * Returns the same `updates` object for chaining convenience.
- */
-export function withSyncRunIdMarker(updates) {
-  const id = _currentSyncRunId
-  if (!id || !updates || typeof updates !== 'object') return updates
-
-  if (updates.$set && typeof updates.$set === 'object') {
-    updates.$set.syncRunId = id
-  } else {
-    updates.$set = { syncRunId: id }
-  }
-
-  if (updates.$setOnInsert && typeof updates.$setOnInsert === 'object') {
-    updates.$setOnInsert.syncRunId = id
-  }
-
-  return updates
-}
-
-/**
- * Stamp a plain document with `syncRunId` before insertOne / replaceOne.
- * Mutates and returns the same object. Pass-through if no syncRunId active.
- */
-export function stampDocumentWithSyncRunId(doc) {
-  const id = _currentSyncRunId
-  if (!id || !doc || typeof doc !== 'object') return doc
-  doc.syncRunId = id
-  return doc
-}
-
 // ─── Orchestration single-flight lock ────────────────────────────────────────
 // A whole-orchestration mutex covering pre-tag → per-server writes → post-sync
 // cleanup. Unlike `_currentSyncRunId` (cleared at the end of the WRITE phase,

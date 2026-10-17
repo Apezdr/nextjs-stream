@@ -29,7 +29,6 @@ jest.mock('@src/utils/sync/core/events', () => ({
 }))
 // sync/database's own imports; only its syncInfo helpers are used here
 jest.mock('@src/utils/sync/utils', () => ({ MediaType: { TV: 'tv', MOVIE: 'movie' } }))
-jest.mock('@src/utils/admin_frontend_database', () => ({ updateMediaUpdates: jest.fn() }))
 
 const { fetchSyncTick, currentBootId } = require('@src/utils/sync/tickSkip')
 const { SYNC_GATE_VERSION } = require('@src/utils/sync/core/syncGate')

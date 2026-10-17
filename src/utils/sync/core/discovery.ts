@@ -24,9 +24,7 @@
  *     titles that were already here.
  */
 
-/** `initialDiscoveryServer` values that are not server ids. */
-export const DISCOVERY_SOURCE_BACKFILL = 'backfill'
-export const DISCOVERY_SOURCE_MANUAL = 'manual'
+// `initialDiscoveryServer` values that are not server ids: 'backfill' and 'manual'.
 
 /**
  * A `firstSeen` further ahead than this is a broken clock on the file server,

@@ -64,20 +64,13 @@ export interface SyncContext {
   serverConfig: ServerConfig
   fieldAvailability: FieldAvailability
   forceSync?: boolean
-  skipCache?: boolean
-  
+
   // Entity identifiers for strategies when entity might be null
   entityTitle?: string          // Pretty display title (TMDB)
   entityOriginalTitle?: string  // Filesystem key title
   
   // File server data for content sync
   fileServerData?: any          // File server data structure (movies/TV data)
-  
-  // Pre-fetched entity caches for performance optimization
-  movieCache?: Map<string, MovieEntity>      // Pre-fetched movies indexed by originalTitle
-  episodeCache?: Map<string, EpisodeEntity>  // Future: Pre-fetched episodes
-  seasonCache?: Map<string, SeasonEntity>    // Future: Pre-fetched seasons
-  tvShowCache?: Map<string, TVShowEntity>    // Future: Pre-fetched TV shows
   
   // Metadata hashes cache (fetched once per server for all movies)
   metadataHashesCache?: {
@@ -101,18 +94,6 @@ export interface SyncContext {
       generated: string
     }>
   }
-
-  // Per-season episode hashes — keyed by showTitle → seasonNumber.
-  // No longer populated: the episode skip is decided from the payload itself
-  // (`syncGates`, core/syncGate), which needs no extra request per season.
-  tvEpisodeHashesCache?: Map<string, Map<number, {
-    hash: string  // Season-level aggregate hash
-    episodes: Record<string, {  // key = S01E01 format
-      hash: string
-      lastModified: string
-      generated: string
-    }>
-  }>>
 
   // Resource manager for throttling HTTP requests and monitoring memory
   // Strategies should use context.resourceManager?.throttleHttp() for outbound calls
@@ -523,21 +504,6 @@ export interface TVShowEntity extends BaseMediaEntity {
 // Media Assets and Content
 // ==========================================
 
-export interface CaptionTrack {
-  language: string
-  label: string
-  url: string
-  format: 'srt' | 'vtt' | 'ass'
-  source: string
-}
-
-export interface ChapterMarker {
-  title: string
-  startTime: number
-  endTime?: number
-  thumbnailURL?: string
-}
-
 export interface VideoInfo {
   duration?: number
   resolution?: string
@@ -621,38 +587,6 @@ export interface SyncStrategy {
 }
 
 // ==========================================
-// File System Abstractions
-// ==========================================
-
-export interface FileServerAdapter {
-  buildUrl(path: string, serverConfig: ServerConfig): string
-  validateAvailability(urls: string[]): Promise<AvailabilityResult>
-  getMetadata(path: string, serverConfig: ServerConfig): Promise<FileMetadata>
-  listFiles(path: string, serverConfig: ServerConfig): Promise<FileEntry[]>
-}
-
-export interface AvailabilityResult {
-  available: string[]
-  unavailable: string[]
-  errors: Record<string, string>
-}
-
-export interface FileMetadata {
-  size: number
-  lastModified: Date
-  contentType: string
-  exists: boolean
-}
-
-export interface FileEntry {
-  name: string
-  path: string
-  isDirectory: boolean
-  size?: number
-  lastModified?: Date
-}
-
-// ==========================================
 // Error Types
 // ==========================================
 
@@ -666,13 +600,6 @@ export class SyncError extends Error {
   ) {
     super(message)
     this.name = 'SyncError'
-  }
-}
-
-export class ValidationError extends SyncError {
-  constructor(message: string, entityId?: string, mediaType?: MediaType) {
-    super(message, 'VALIDATION_ERROR', entityId, mediaType)
-    this.name = 'ValidationError'
   }
 }
 

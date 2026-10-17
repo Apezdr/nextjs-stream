@@ -16,6 +16,5 @@ export {
 } from './database'
 
 export {
-  DefaultFileServerAdapter,
   UrlBuilder
 } from './fileSystem'

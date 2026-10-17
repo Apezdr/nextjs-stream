@@ -26,11 +26,6 @@ import {
 } from '../../../infrastructure'
 
 import {
-  FileServerAdapter
-} from '../../../core'
-
-import {
-  isCurrentServerHighestPriorityForField,
   isCurrentServerHighestPriorityForReportedField,
 } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
@@ -44,10 +39,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
    */
   readonly currentVersion = '2.1'
 
-  constructor(
-    private repository: MovieRepository,
-    private fileAdapter: FileServerAdapter
-  ) {}
+  constructor(private repository: MovieRepository) {}
 
   /**
    * Check if this strategy can handle the sync context
@@ -105,14 +97,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
       // Get current movie entity using originalTitle (filesystem key)
       let movie = entity as MovieEntity | null
       if (!movie) {
-        // 🚀 OPTIMIZATION: Check cache first, then database
-        if (context.movieCache?.has(originalTitle)) {
-          movie = context.movieCache.get(originalTitle)!
-          syncLogger.debug(`💾 Cache HIT for "${originalTitle}"`)
-        } else {
-          syncLogger.debug(`🔍 Cache MISS for "${originalTitle}", querying database...`)
-          movie = await this.repository.findByOriginalTitle(originalTitle)
-        }
+        movie = await this.repository.findByOriginalTitle(originalTitle)
       }
 
       const changes: string[] = []
@@ -581,48 +566,6 @@ export class MovieMetadataStrategy implements SyncStrategy {
 
     // Handle primitive types
     return current === incoming
-  }
-
-  /**
-   * Check if current server should update a field using existing priority system
-   * CRITICAL: Always use originalTitle (filesystem key) for fieldAvailability lookups
-   */
-  private shouldUpdateField(fieldPath: string, originalTitle: string, context: SyncContext): boolean {
-    syncLogger.debug(`🔍 Priority check: field="${fieldPath}", originalTitle="${originalTitle}", server=${context.serverConfig.id}`)
-    
-    // Check if fieldAvailability exists
-    if (!context.fieldAvailability) {
-      syncLogger.debug(`⚠️ No fieldAvailability in context, defaulting to true for ${fieldPath}`)
-      return true
-    }
-    
-    // Check if movie exists in fieldAvailability (using originalTitle as key)
-    const movieFields = context.fieldAvailability?.movies?.[originalTitle]
-    if (!movieFields) {
-      syncLogger.debug(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true`)
-      return true
-    }
-    
-    // Get servers that have this field
-    const serversWithField = movieFields[fieldPath] || []
-    syncLogger.debug(`📊 Servers with ${fieldPath}: ${JSON.stringify(serversWithField)} (${serversWithField.length} total)`)
-    
-    // Check priority
-    const hasHighestPriority = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability,
-      'movies',
-      originalTitle,  // ← CRITICAL: Always use originalTitle for consistency
-      fieldPath,
-      context.serverConfig
-    )
-    
-    if (hasHighestPriority) {
-      syncLogger.debug(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has highest priority for ${fieldPath}`)
-    } else {
-      syncLogger.debug(`❌ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does NOT have highest priority for ${fieldPath}`)
-    }
-    
-    return hasHighestPriority
   }
 
   /**

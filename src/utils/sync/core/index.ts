@@ -9,9 +9,6 @@ export * from './types'
 // Event system
 export * from './events'
 
-// Validation system
-export * from './validation'
-
 // Logger system
 export * from './logger'
 
@@ -70,11 +67,3 @@ export {
   syncEventBus,
   SyncEvents
 } from './events'
-
-export {
-  validateEntity,
-  validateEntityOrThrow,
-  validateVideoInfo,
-  validateCaptionTracks,
-  validateChapterMarkers
-} from './validation'

@@ -194,14 +194,10 @@ const withoutVideo = () => ({
 function makeService(docs) {
   const client = { db: () => ({ collection: () => makeCollection(docs) }) }
   const repo = new MovieRepository(client)
-  const fileAdapter = {
-    validateAvailability: async () => ({ available: [] }),
-    getMetadata: async () => ({ exists: false }),
-  }
-  return new MovieSyncService(repo, fileAdapter, [
-    new MovieMetadataStrategy(repo, fileAdapter),
-    new MovieAssetStrategy(repo, fileAdapter),
-    new MovieContentStrategy(repo, fileAdapter),
+  return new MovieSyncService(repo, [
+    new MovieMetadataStrategy(repo),
+    new MovieAssetStrategy(repo),
+    new MovieContentStrategy(repo),
     new BlurhashStrategy(repo),
   ])
 }

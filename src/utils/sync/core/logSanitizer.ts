@@ -56,24 +56,6 @@ export function sanitizeForLog(obj: any, maxDepth = 2, currentDepth = 0): any {
 }
 
 /**
- * Create a minimal summary of an entity for logging (without large fields)
- */
-export function createEntitySummary(entity: any): string {
-  if (!entity) return 'null'
-  
-  const parts: string[] = []
-  
-  if (entity.title) parts.push(`title="${entity.title}"`)
-  if (entity.originalTitle && entity.originalTitle !== entity.title) {
-    parts.push(`originalTitle="${entity.originalTitle}"`)
-  }
-  if (entity._id) parts.push(`id=${entity._id}`)
-  if (entity.syncVersion) parts.push(`v${entity.syncVersion}`)
-  
-  return parts.join(', ') || 'entity'
-}
-
-/**
  * Safe wrapper for JSON.stringify with sanitization
  */
 export function safeStringify(obj: any, maxDepth = 2): string {

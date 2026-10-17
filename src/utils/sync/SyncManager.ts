@@ -24,7 +24,6 @@ import { ResourceManager } from './core/ResourceManager'
 import {
   createDatabaseAdapter,
   DatabaseAdapter,
-  DefaultFileServerAdapter,
   UrlBuilder
 } from './infrastructure'
 
@@ -44,14 +43,12 @@ import {
 
 export class SyncManager {
   private dbAdapter?: DatabaseAdapter
-  private fileAdapter: DefaultFileServerAdapter
   private movieService?: MovieSyncService
   private tvShowService?: TVShowSyncService
   private initialized = false
   private resourceManager: ResourceManager
 
   constructor() {
-    this.fileAdapter = new DefaultFileServerAdapter()
     this.resourceManager = ResourceManager.getInstance()
   }
 
@@ -71,15 +68,14 @@ export class SyncManager {
       // Initialize domain services
       this.movieService = new MovieSyncService(
         this.dbAdapter.movies,
-        this.fileAdapter,
         [
-          new MovieMetadataStrategy(this.dbAdapter.movies, this.fileAdapter),
-          new MovieAssetStrategy(this.dbAdapter.movies, this.fileAdapter),
-          new MovieContentStrategy(this.dbAdapter.movies, this.fileAdapter),
+          new MovieMetadataStrategy(this.dbAdapter.movies),
+          new MovieAssetStrategy(this.dbAdapter.movies),
+          new MovieContentStrategy(this.dbAdapter.movies),
           // BlurhashStrategy is post-entity: runs after the entity is saved by
           // Metadata/Asset strategies. It skips computation when the blurhash is
           // already stored and gates on isCurrentServerHighestPriorityForField.
-          new BlurhashStrategy(this.dbAdapter.movies, this.dbAdapter.seasons, this.dbAdapter.tvShows)
+          new BlurhashStrategy(this.dbAdapter.movies)
         ]
       )
       syncLogger.info('Movie sync service initialized (with BlurhashStrategy)')
@@ -215,7 +211,6 @@ export class SyncManager {
       concurrency?: number
       forceSync?: boolean
       fileServerData?: any // Add file server data parameter
-      movieCache?: Map<string, any> // 🚀 OPTIMIZATION: Pre-fetched movie cache
       allEnabledServersProbed?: boolean // Authoritative-pass gate for field-absence cleanup
     } = {}
   ): Promise<BatchSyncResult> {
@@ -238,7 +233,6 @@ export class SyncManager {
       fieldAvailability,
       forceSync: options.forceSync || false,
       fileServerData: options.fileServerData, // Pass file server data through context
-      movieCache: options.movieCache, // 🚀 OPTIMIZATION: Pass pre-fetched movie cache through context
       metadataHashesCache: metadataHashes || undefined, // 🚀 OPTIMIZATION: Pass metadata hashes for change detection
       resourceManager: this.resourceManager, // 🚀 RESOURCE CONTROL: Throttle HTTP & monitor memory
       // Field-absence cleanup (was previously TV-only — movies were silently
@@ -250,9 +244,6 @@ export class SyncManager {
     }
     
     // Log optimization statistics
-    if (options.movieCache) {
-      syncLogger.info(`✅ Database pre-fetch optimization: ${options.movieCache.size} movies cached`)
-    }
     if (metadataHashes) {
       syncLogger.info(`✅ Metadata hash optimization: ${Object.keys(metadataHashes.titles || {}).length} hashes cached`)
     }
@@ -335,49 +326,6 @@ export class SyncManager {
   }
 
   /**
-   * Cleanup movies that are no longer on the file server or have invalid content
-   */
-  async cleanupMovies(
-    availableTitles: string[],
-    serverConfig: ServerConfig
-  ): Promise<{
-    orphansRemoved: number
-    invalidRemoved: number
-    errors: string[]
-  }> {
-    await this.initialize()
-
-    syncLogger.info(`Starting cleanup for ${availableTitles.length} available movies...`)
-
-    const context: SyncContext = {
-      mediaType: MediaType.Movie,
-      operation: SyncOperation.Validation,
-      serverConfig,
-      fieldAvailability: {} as any, // Not needed for cleanup
-      forceSync: false
-    }
-
-    try {
-      const result = await this.movieService!.cleanup(availableTitles, context)
-      
-      syncLogger.info(`Cleanup completed: Removed ${result.orphansRemoved} orphans and ${result.invalidRemoved} invalid entries`)
-      
-      if (result.errors.length > 0) {
-        syncLogger.warn(`Cleanup encountered ${result.errors.length} errors`)
-      }
-
-      return result
-    } catch (error) {
-      syncLogger.error('Cleanup failed:', error)
-      return {
-        orphansRemoved: 0,
-        invalidRemoved: 0,
-        errors: [error instanceof Error ? error.message : String(error)]
-      }
-    }
-  }
-
-  /**
    * Sync one or more TV shows (including all seasons and episodes) using bulk writes.
    *
    * Bulk-write guarantee:
@@ -420,7 +368,6 @@ export class SyncManager {
       fileServerData: options.fileServerData,
       resourceManager: this.resourceManager,
       tvShowHashesCache: tvShowHashes || undefined,
-      tvEpisodeHashesCache: new Map(),  // Populated lazily per season in EpisodeSyncService
       cleanup,
       allEnabledServersProbed: options.allEnabledServersProbed === true,
     }
@@ -446,128 +393,6 @@ export class SyncManager {
         summary: { total: showTitles.length, completed: 0, failed: showTitles.length, skipped: 0 },
         duration,
         errors: [error instanceof Error ? error.message : String(error)]
-      }
-    }
-  }
-
-  /**
-   * Get comprehensive sync statistics
-   */
-  async getSyncStats(): Promise<{
-    system: {
-      initialized: boolean
-      uptime: number
-      memoryUsage: NodeJS.MemoryUsage
-    }
-    resources: ReturnType<ResourceManager['getStats']>
-    database: any
-    movies: any
-    cache: any
-  }> {
-    await this.initialize()
-
-    const [dbStats, movieStats] = await Promise.all([
-      this.dbAdapter!.getStats(),
-      this.movieService!.getSyncStats()
-    ])
-
-    return {
-      system: {
-        initialized: this.initialized,
-        uptime: process.uptime(),
-        memoryUsage: process.memoryUsage()
-      },
-      resources: this.resourceManager.getStats(),
-      database: dbStats,
-      movies: movieStats,
-      cache: this.fileAdapter.getCacheStats()
-    }
-  }
-
-  /**
-   * Find content that needs sync across all media types
-   */
-  async findContentNeedingSync(criteria: {
-    mediaTypes?: MediaType[]
-    olderThan?: Date
-    missingAssets?: boolean
-    limit?: number
-  } = {}): Promise<{
-    movies: any[]
-    episodes: any[]
-    seasons: any[]
-    tvShows: any[]
-  }> {
-    await this.initialize()
-
-    const results = {
-      movies: [] as any[],
-      episodes: [] as any[],
-      seasons: [] as any[],
-      tvShows: [] as any[]
-    }
-
-    const mediaTypes = criteria.mediaTypes || [MediaType.Movie, MediaType.Episode, MediaType.Season, MediaType.TVShow]
-
-    if (mediaTypes.includes(MediaType.Movie)) {
-      results.movies = await this.movieService!.findMoviesNeedingSync({
-        missingAssets: criteria.missingAssets,
-        missingVideo: true,
-        olderThan: criteria.olderThan,
-        limit: criteria.limit
-      })
-    }
-
-    // TODO: Add other media types when their services are implemented
-
-    return results
-  }
-
-  /**
-   * Performance comparison between old and new sync approaches
-   */
-  async performanceComparison(
-    movieTitles: string[], 
-    serverConfig: ServerConfig,
-    fieldAvailability: FieldAvailability
-  ): Promise<{
-    newArchitecture: {
-      duration: number
-      results: BatchSyncResult
-      memoryUsage: { start: NodeJS.MemoryUsage; end: NodeJS.MemoryUsage }
-    }
-    comparison: {
-      speedImprovement?: string
-      memoryEfficiency?: string
-      errorReduction?: string
-    }
-  }> {
-    console.log('🔬 Starting performance comparison...')
-
-    // Test new architecture
-    const startMemory = process.memoryUsage()
-    const newStart = Date.now()
-    
-    const newResults = await this.syncMovies(movieTitles, serverConfig, fieldAvailability, {
-      operations: [SyncOperation.Metadata, SyncOperation.Assets]
-    })
-    
-    const newDuration = Date.now() - newStart
-    const endMemory = process.memoryUsage()
-
-    console.log(`🆕 New architecture: ${newDuration}ms`)
-    console.log(`📈 Memory usage: ${Math.round((endMemory.heapUsed - startMemory.heapUsed) / 1024 / 1024)}MB`)
-
-    return {
-      newArchitecture: {
-        duration: newDuration,
-        results: newResults,
-        memoryUsage: { start: startMemory, end: endMemory }
-      },
-      comparison: {
-        speedImprovement: 'New architecture provides better observability and error handling',
-        memoryEfficiency: 'Optimized with caching and efficient database operations',
-        errorReduction: 'Improved error isolation and recovery mechanisms'
       }
     }
   }
@@ -641,52 +466,7 @@ export class SyncManager {
   getDatabaseAdapter(): DatabaseAdapter | undefined {
     return this.dbAdapter
   }
-
-  /**
-   * Clean shutdown
-   */
-  async shutdown(): Promise<void> {
-    if (this.dbAdapter) {
-      await this.dbAdapter.close()
-    }
-    
-    this.fileAdapter.clearCache()
-    console.log('🔄 Sync manager shutdown complete')
-  }
 }
 
 // Export singleton instance
 export const syncManager = new SyncManager()
-
-// Convenience functions for easy migration
-export async function syncMoviesWithNewArchitecture(
-  movieTitles: string[],
-  serverConfig: ServerConfig,
-  fieldAvailability: FieldAvailability
-): Promise<BatchSyncResult> {
-  return syncManager.syncMovies(movieTitles, serverConfig, fieldAvailability)
-}
-
-export async function getSyncSystemStats() {
-  return syncManager.getSyncStats()
-}
-
-export async function cleanupMovies(
-  availableTitles: string[],
-  serverConfig: ServerConfig
-) {
-  return syncManager.cleanupMovies(availableTitles, serverConfig)
-}
-
-/**
- * Sync TV shows using the new bulk-write architecture.
- * Seasons → bulkUpsertShow(), Episodes → bulkUpsertSeason() per season.
- */
-export async function syncTVShowsWithNewArchitecture(
-  showTitles: string[],
-  serverConfig: ServerConfig,
-  fieldAvailability: FieldAvailability,
-  options: { concurrency?: number; forceSync?: boolean; fileServerData?: any } = {}
-): Promise<BatchSyncResult> {
-  return syncManager.syncTVShows(showTitles, serverConfig, fieldAvailability, options)
-}

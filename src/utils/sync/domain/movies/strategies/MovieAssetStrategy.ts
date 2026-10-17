@@ -25,10 +25,6 @@ import {
 } from '../../../infrastructure'
 
 import {
-  FileServerAdapter
-} from '../../../core'
-
-import {
   isCurrentServerHighestPriorityForReportedField,
   getServersReportingField,
 } from '@src/utils/sync/utils'
@@ -44,10 +40,7 @@ export class MovieAssetStrategy implements SyncStrategy {
   readonly supportedOperations = [SyncOperation.Assets]
   readonly supportedMediaTypes = [MediaType.Movie]
 
-  constructor(
-    private repository: MovieRepository,
-    private fileAdapter: FileServerAdapter
-  ) {}
+  constructor(private repository: MovieRepository) {}
 
   canHandle(context: SyncContext): boolean {
     return (
@@ -75,21 +68,14 @@ export class MovieAssetStrategy implements SyncStrategy {
 
       let movie = entity as MovieEntity | null
       if (!movie) {
-        // 🚀 OPTIMIZATION: Check cache first, then database
-        if (context.movieCache?.has(originalTitle)) {
-          movie = context.movieCache.get(originalTitle)!
-          syncLogger.debug(`💾 Cache HIT for "${originalTitle}"`)
-        } else {
-          syncLogger.debug(`🔍 Cache MISS for "${originalTitle}", querying database...`)
-          movie = await this.repository.findByOriginalTitle(originalTitle)
-          if (!movie) {
-            syncLogger.debug(`🎬 Movie not in database, creating basic entity for assets: "${originalTitle}"`)
-            movie = {
-              title,
-              originalTitle,
-              lastSynced: new Date(),
-              metadata: {}
-            }
+        movie = await this.repository.findByOriginalTitle(originalTitle)
+        if (!movie) {
+          syncLogger.debug(`🎬 Movie not in database, creating basic entity for assets: "${originalTitle}"`)
+          movie = {
+            title,
+            originalTitle,
+            lastSynced: new Date(),
+            metadata: {}
           }
         }
       }

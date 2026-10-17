@@ -38,7 +38,6 @@ jest.mock('@src/utils/fetchAllServerData', () => ({ fetchAllServerData: jest.fn(
 jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNeeded: jest.fn() }))
 jest.mock('@src/utils/flatSync/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
 jest.mock('@src/utils/sync/utils', () => ({ MediaType: { TV: 'tv', MOVIE: 'movie' } }))
-jest.mock('@src/utils/admin_frontend_database', () => ({ updateMediaUpdates: jest.fn() }))
 
 const { syncAllServers } = require('@src/utils/sync.js')
 const { currentBootId, startPassRecord, recordCompletePass } = require('@src/utils/sync/tickSkip')

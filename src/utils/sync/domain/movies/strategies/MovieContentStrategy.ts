@@ -19,7 +19,6 @@ import {
   resolveEffectiveVideoUrl,
   VideoInfo,
   MediaQuality,
-  ServerConfig,
   syncEventBus,
   MediaTypesFieldAvailability,
   getFieldPath,
@@ -31,7 +30,6 @@ import {
 
 import { MovieRepository, UrlBuilder, isTopLevelFieldLocked } from '../../../infrastructure'
 
-import { FileServerAdapter } from '../../../core'
 import { reconcileCaptions } from '../../../core/captionReconcile'
 import {
   preferReportedViewingExperience,
@@ -69,9 +67,6 @@ export class MovieContentStrategy implements SyncStrategy {
     '.avi',
   ]
 
-  // Common video filenames to check (in priority order)
-  private readonly VIDEO_FILENAMES = ['video', 'movie', 'film', 'main', 'feature']
-
   // Everything on the document that describes the primary video FILE. These
   // follow the file: written from the payload of the server that owns the
   // video, and cleared with it. mediaId is not here on purpose — it is the
@@ -86,10 +81,7 @@ export class MovieContentStrategy implements SyncStrategy {
     'mediaLastModified',
   ] as const
 
-  constructor(
-    private repository: MovieRepository,
-    private fileAdapter: FileServerAdapter
-  ) {}
+  constructor(private repository: MovieRepository) {}
 
   canHandle(context: SyncContext): boolean {
     return (
@@ -130,23 +122,16 @@ export class MovieContentStrategy implements SyncStrategy {
       // Get current movie entity using originalTitle (filesystem key)
       let movie = entity as MovieEntity | null
       if (!movie) {
-        // 🚀 OPTIMIZATION: Check cache first, then database
-        if (context.movieCache?.has(originalTitle)) {
-          movie = context.movieCache.get(originalTitle)!
-          syncLogger.debug(`💾 Cache HIT for "${originalTitle}"`)
-        } else {
-          syncLogger.debug(`🔍 Cache MISS for "${originalTitle}", querying database...`)
-          movie = await this.repository.findByOriginalTitle(originalTitle)
-          if (!movie) {
-            syncLogger.debug(
-              `🎬 Movie not in database, creating basic entity for content: "${originalTitle}"`
-            )
-            movie = {
-              title,
-              originalTitle,
-              lastSynced: new Date(),
-              metadata: {},
-            }
+        movie = await this.repository.findByOriginalTitle(originalTitle)
+        if (!movie) {
+          syncLogger.debug(
+            `🎬 Movie not in database, creating basic entity for content: "${originalTitle}"`
+          )
+          movie = {
+            title,
+            originalTitle,
+            lastSynced: new Date(),
+            metadata: {},
           }
         }
       }
@@ -360,9 +345,6 @@ export class MovieContentStrategy implements SyncStrategy {
     let videoUrl: string | null = null
     if (fileServerMovieData) {
       videoUrl = this.getVideoUrlFromFileServerData(originalTitle, fileServerMovieData, context)
-    } else {
-      syncLogger.debug(`No file server data available for "${originalTitle}", falling back to file probing`)
-      videoUrl = await this.findVideoFileByProbing(originalTitle, context)
     }
 
     // Who may write the video block, and who may clear it.
@@ -380,8 +362,8 @@ export class MovieContentStrategy implements SyncStrategy {
     // server answered. A server that is down has not deleted its files.
     const videoPath = getFieldPath('videoURL')
     const isVideoUrlLocked = isTopLevelFieldLocked((currentMovie as any)?.lockedFields, 'videoURL')
-    let ownsVideo: boolean
-    let videoGone: boolean
+    let ownsVideo = false
+    let videoGone = false
     if (fileServerMovieData) {
       const reporters = getServersReportingField(
         context.fieldAvailability,
@@ -403,15 +385,10 @@ export class MovieContentStrategy implements SyncStrategy {
         // There is a video to clear and this pass may not clear it.
         deferred = true
       }
-    } else {
-      // No payload for this title: the URL, if any, came from probing, and
-      // there is no availability to rank against. A probe that finds nothing
-      // (or fails) is not evidence the video is gone, so this path never clears.
-      ownsVideo =
-        videoUrl != null &&
-        (this.shouldUpdateField(videoPath, originalTitle, context) || !currentMovie.videoURL)
-      videoGone = false
     }
+    // No payload for this title: there is no video URL and no availability to
+    // rank against, and "no payload" is not evidence the video is gone, so this
+    // path neither writes nor clears.
 
     if (ownsVideo) {
       if (currentMovie.videoURL !== videoUrl) {
@@ -483,138 +460,6 @@ export class MovieContentStrategy implements SyncStrategy {
         ]) {
           if (hasStoredValue((currentMovie as any)[field])) unset.push(field)
         }
-      }
-    } else if (videoUrl || currentMovie.videoURL) {
-      // No payload for this title: the per-file probe below is all there is.
-      let videoMetadata: {
-        duration?: number
-        dimensions?: string
-        hdr?: string
-        mediaLastModified?: Date
-        codec?: string
-        bitrate?: number
-        frameRate?: number
-        audioCodec?: string
-        audioChannels?: number
-        fileSize?: number
-        mediaQuality?: MediaQuality
-      } | null = null
-      syncLogger.debug(`No file server data for "${originalTitle}" metadata, falling back to legacy method`)
-      videoMetadata = await this.extractVideoMetadata(
-        videoUrl || currentMovie.videoURL!,
-        originalTitle,
-        context
-      )
-
-      if (videoMetadata) {
-        // LEGACY STRUCTURE: Store fields FLAT at root level (NO nested videoInfo object)
-
-        // Check priority for each metadata field separately
-        if (
-          videoMetadata.duration &&
-          this.shouldUpdateField(getFieldPath('duration'), originalTitle, context)
-        ) {
-          if (currentMovie.duration !== videoMetadata.duration) {
-            updates.duration = videoMetadata.duration
-            syncLogger.debug(
-              `✅ Updating duration from server ${context.serverConfig.id}: ${currentMovie.duration} → ${videoMetadata.duration}`
-            )
-          } else {
-            syncLogger.debug(
-              `📝 Duration unchanged: ${videoMetadata.duration} (server ${context.serverConfig.id} has priority but value identical)`
-            )
-          }
-        }
-
-        if (
-          videoMetadata.dimensions &&
-          this.shouldUpdateField(getFieldPath('dimensions'), originalTitle, context)
-        ) {
-          if (currentMovie.dimensions !== videoMetadata.dimensions) {
-            updates.dimensions = videoMetadata.dimensions
-            syncLogger.debug(
-              `✅ Updating dimensions from server ${context.serverConfig.id}: "${currentMovie.dimensions}" → "${videoMetadata.dimensions}"`
-            )
-          } else {
-            syncLogger.debug(
-              `📝 Dimensions unchanged: "${videoMetadata.dimensions}" (server ${context.serverConfig.id} has priority but value identical)`
-            )
-          }
-        }
-
-        // HDR field at root level (legacy format)
-        if (
-          videoMetadata.hdr &&
-          this.shouldUpdateField(getFieldPath('hdr'), originalTitle, context)
-        ) {
-          if (currentMovie.hdr !== videoMetadata.hdr) {
-            updates.hdr = videoMetadata.hdr
-            syncLogger.debug(
-              `✅ Updating hdr from server ${context.serverConfig.id}: "${currentMovie.hdr}" → "${videoMetadata.hdr}"`
-            )
-          } else {
-            console.log(
-              `📝 HDR unchanged: "${videoMetadata.hdr}" (server ${context.serverConfig.id} has priority but value identical)`
-            )
-          }
-        }
-
-        // NEW: Media last modified field (legacy format)
-        if (
-          videoMetadata.mediaLastModified &&
-          this.shouldUpdateField(getFieldPath('mediaLastModified'), originalTitle, context)
-        ) {
-          const currentModified = currentMovie.mediaLastModified
-          const newModified = videoMetadata.mediaLastModified
-          if (!currentModified || currentModified.getTime() !== newModified.getTime()) {
-            updates.mediaLastModified = newModified
-            console.log(`✅ Updating mediaLastModified from server ${context.serverConfig.id}`)
-          } else {
-            console.log(
-              `📝 MediaLastModified unchanged (server ${context.serverConfig.id} has priority but value identical)`
-            )
-          }
-        }
-
-        // FIX: Add size field update logic here
-        // Check priority for any of the size subfields (gb, mb, kb)
-        const shouldUpdateSize =
-          this.shouldUpdateField('additional_metadata.size.gb', originalTitle, context) ||
-          this.shouldUpdateField('additional_metadata.size.mb', originalTitle, context) ||
-          this.shouldUpdateField('additional_metadata.size.kb', originalTitle, context)
-
-        if (videoMetadata.fileSize && shouldUpdateSize) {
-          if (currentMovie.size !== videoMetadata.fileSize) {
-            updates.size = videoMetadata.fileSize
-            console.log(
-              `✅ Updating size from server ${context.serverConfig.id}: ${currentMovie.size} → ${videoMetadata.fileSize}`
-            )
-          } else {
-            console.log(
-              `📝 Size unchanged: ${videoMetadata.fileSize} (server ${context.serverConfig.id} has priority but value identical)`
-            )
-          }
-        }
-
-        if (
-          videoMetadata.mediaQuality &&
-          this.shouldUpdateMediaQuality(videoMetadata.mediaQuality, originalTitle, context)
-        ) {
-          const currentQuality = currentMovie.mediaQuality
-          if (!this.isMediaQualityEqual(currentQuality, videoMetadata.mediaQuality)) {
-            updates.mediaQuality = videoMetadata.mediaQuality
-            console.log(`✅ Updating mediaQuality from server ${context.serverConfig.id}`)
-            console.log(`   Current:`, currentQuality)
-            console.log(`   New:`, videoMetadata.mediaQuality)
-          } else {
-            console.log(
-              `📝 MediaQuality unchanged (server ${context.serverConfig.id} has priority for some fields but value identical)`
-            )
-          }
-        }
-
-        // NOTE: videoInfo uses FLAT structure only
-        // All fields are stored at root level: duration, dimensions, hdr, mediaQuality, mediaLastModified
       }
     }
 
@@ -1047,49 +892,6 @@ export class MovieContentStrategy implements SyncStrategy {
   }
 
   /**
-   * Fallback method to probe for video files directly
-   */
-  private async findVideoFileByProbing(
-    originalTitle: string,
-    context: SyncContext
-  ): Promise<string | null> {
-    console.log(`🔍 Probing for video files for: "${originalTitle}"`)
-
-    // Generate potential video file paths
-    const potentialPaths: string[] = []
-
-    // Try different filename patterns with different extensions
-    for (const filename of this.VIDEO_FILENAMES) {
-      for (const ext of this.VIDEO_EXTENSIONS) {
-        potentialPaths.push(`/movies/${originalTitle}/${filename}${ext}`)
-      }
-    }
-
-    // Also try the movie title as filename
-    for (const ext of this.VIDEO_EXTENSIONS) {
-      potentialPaths.push(`/movies/${originalTitle}/${originalTitle}${ext}`)
-    }
-
-    // Convert paths to full URLs
-    const urls = potentialPaths.map((path) => UrlBuilder.createFullUrl(path, context.serverConfig))
-
-    try {
-      const availability = await this.fileAdapter.validateAvailability(urls)
-      if (availability.available.length > 0) {
-        const foundUrl = availability.available[0] // First available (highest priority by extension order)
-        console.log(`✅ Found video file via probing: ${foundUrl}`)
-        return foundUrl
-      }
-
-      console.log(`❌ No video file found for: "${originalTitle}"`)
-      return null
-    } catch (error) {
-      console.error('Failed to probe for video files:', error)
-      return null
-    }
-  }
-
-  /**
    * Extract video metadata from existing file server data (passed through sync context)
    */
   private extractVideoMetadataFromFileServerData(
@@ -1203,127 +1005,6 @@ export class MovieContentStrategy implements SyncStrategy {
   }
 
   /**
-   * Legacy method for extracting metadata from individual files (kept as fallback)
-   * Respects ResourceManager HTTP throttling when available in context
-   */
-  private async extractVideoMetadata(
-    videoUrl: string,
-    originalTitle: string,
-    context: SyncContext
-  ): Promise<{
-    duration?: number
-    dimensions?: string
-    codec?: string
-    bitrate?: number
-    frameRate?: number
-    audioCodec?: string
-    audioChannels?: number
-    fileSize?: number
-    mediaQuality?: MediaQuality
-  } | null> {
-    const doFetch = async () => {
-      try {
-        console.log(`🔍 Extracting video metadata for: "${originalTitle}"`)
-
-        // Try to get metadata from server's metadata file first
-        const metadataPath = `/movies/${originalTitle}/video.json`
-        const metadataUrl = UrlBuilder.createFullUrl(metadataPath, context.serverConfig)
-
-        try {
-          const availability = await this.fileAdapter.validateAvailability([metadataUrl])
-
-          if (availability.available.includes(metadataUrl)) {
-            const response = await fetch(metadataUrl, {
-              signal: AbortSignal.timeout(10000),
-              headers: {
-                Accept: 'application/json',
-                'Cache-Control': 'no-cache',
-              },
-            })
-
-            if (response.ok) {
-              const metadata = await response.json()
-              console.log(`✅ Found video metadata file for: "${originalTitle}"`)
-
-              return {
-                duration: metadata.duration || metadata.length,
-                dimensions: metadata.dimensions || metadata.resolution,
-                codec: metadata.codec || metadata.video_codec,
-                bitrate: metadata.bitrate || metadata.video_bitrate,
-                frameRate: metadata.framerate || metadata.frame_rate,
-                audioCodec: metadata.audio_codec,
-                audioChannels: metadata.audio_channels,
-                fileSize: metadata.size || metadata.file_size,
-                mediaQuality: this.parseMediaQuality(metadata),
-              }
-            }
-          }
-        } catch (error) {
-          console.warn(`⚠️ Failed to fetch video metadata for ${originalTitle}: ${error.message}`)
-        }
-
-        // Fallback: Try to extract basic info from video file headers
-        const basicInfo = await this.extractBasicVideoInfo(videoUrl)
-        console.log(`📝 Extracted basic video info for: "${originalTitle}"`)
-        return basicInfo
-      } catch (error) {
-        console.error(`Failed to extract video metadata for ${originalTitle}:`, error)
-        return null
-      }
-    }
-
-    // Throttle through ResourceManager if available
-    if (context.resourceManager) {
-      return context.resourceManager.throttleHttp(doFetch)
-    }
-    return doFetch()
-  }
-
-  /**
-   * Extract basic video information from video file
-   */
-  private async extractBasicVideoInfo(videoUrl: string): Promise<{
-    duration?: number
-    dimensions?: string
-    fileSize?: number
-    mediaQuality?: MediaQuality
-  } | null> {
-    try {
-      // Get file metadata via HEAD request
-      try {
-        const urlObj = new URL(videoUrl)
-        const serverConfig: ServerConfig = {
-          baseUrl: urlObj.origin,
-          id: 'temp',
-          priority: 999,
-          enabled: true,
-        }
-        const relativePath = UrlBuilder.getRelativePath(videoUrl, serverConfig) || videoUrl
-        const metadata = await this.fileAdapter.getMetadata(relativePath, serverConfig)
-
-        if (!metadata.exists) {
-          return null
-        }
-
-        // Basic quality detection from filename
-        const filename = videoUrl.split('/').pop() || ''
-        const mediaQuality = this.detectQualityFromFilename(filename)
-
-        return {
-          fileSize: metadata.size,
-          mediaQuality,
-        }
-      } catch (urlError) {
-        console.warn('Failed to parse video URL for metadata extraction:', urlError)
-        return null
-      }
-    } catch (error) {
-      console.warn('Failed to extract basic video info:', error)
-      return null
-    }
-  }
-
-  /**
    * Parse media quality from metadata - LEGACY FORMAT with isHDR and viewingExperience
    */
   private parseMediaQualityLegacy(metadata: any, hdrValue?: any): MediaQuality | undefined {
@@ -1374,72 +1055,6 @@ export class MovieContentStrategy implements SyncStrategy {
     )
 
     return quality
-  }
-
-  /**
-   * Parse media quality from metadata - NEW FORMAT (kept for compatibility)
-   */
-  private parseMediaQuality(metadata: any): MediaQuality | undefined {
-    if (!metadata) return undefined
-
-    return {
-      format: metadata.format || metadata.codec,
-      bitDepth: metadata.bit_depth || metadata.bitDepth,
-      colorSpace: metadata.color_space || metadata.colorSpace,
-      transferCharacteristics:
-        metadata.transfer_characteristics || metadata.transferCharacteristics,
-      hdrFormat: metadata.hdr_format || metadata.hdrFormat,
-      enhancedViewing: metadata.enhanced_viewing || metadata.enhancedViewing || false,
-    }
-  }
-
-  /**
-   * Detect media quality from filename patterns
-   */
-  private detectQualityFromFilename(filename: string): MediaQuality {
-    const upper = filename.toUpperCase()
-
-    const mediaQuality: MediaQuality = {
-      enhancedViewing: false,
-    }
-
-    // Format detection
-    if (upper.includes('HEVC') || upper.includes('H265') || upper.includes('X265')) {
-      mediaQuality.format = 'HEVC'
-    } else if (upper.includes('H264') || upper.includes('X264') || upper.includes('AVC')) {
-      mediaQuality.format = 'AVC'
-    }
-
-    // Bit depth detection
-    if (upper.includes('10BIT') || upper.includes('10-BIT')) {
-      mediaQuality.bitDepth = 10
-    } else if (upper.includes('8BIT') || upper.includes('8-BIT')) {
-      mediaQuality.bitDepth = 8
-    }
-
-    // HDR detection
-    if (upper.includes('HDR10+')) {
-      mediaQuality.hdrFormat = 'HDR10+'
-      mediaQuality.enhancedViewing = true
-    } else if (upper.includes('HDR10')) {
-      mediaQuality.hdrFormat = 'HDR10'
-      mediaQuality.enhancedViewing = true
-    } else if (upper.includes('DOLBY') && upper.includes('VISION')) {
-      mediaQuality.hdrFormat = 'Dolby Vision'
-      mediaQuality.enhancedViewing = true
-    } else if (upper.includes('HDR')) {
-      mediaQuality.hdrFormat = 'HDR'
-      mediaQuality.enhancedViewing = true
-    }
-
-    // Color space detection
-    if (upper.includes('BT2020') || upper.includes('BT.2020')) {
-      mediaQuality.colorSpace = 'BT.2020'
-    } else if (upper.includes('BT709') || upper.includes('BT.709')) {
-      mediaQuality.colorSpace = 'BT.709'
-    }
-
-    return mediaQuality
   }
 
   /**
@@ -1651,74 +1266,6 @@ export class MovieContentStrategy implements SyncStrategy {
       syncLogger.error(`Failed to extract chapter data for ${originalTitle}:`, error)
       return null
     }
-  }
-
-  /**
-   * Check if mediaQuality should be updated based on individual field priority
-   * Only updates if this server has priority for at least one mediaQuality subfield
-   */
-  private shouldUpdateMediaQuality(
-    mediaQuality: MediaQuality,
-    originalTitle: string,
-    context: SyncContext
-  ): boolean {
-    syncLogger.debug(
-      `🔍 MediaQuality priority check for: "${originalTitle}", server=${context.serverConfig.id}`
-    )
-
-    // Check if fieldAvailability is present in context
-    if (!context.fieldAvailability) {
-      syncLogger.debug(`⚠️ No fieldAvailability in context, defaulting to true for mediaQuality`)
-      return true
-    }
-
-    // Ensure mediaType exists in fieldAvailability
-    if (!context.fieldAvailability[MediaTypesFieldAvailability.Movie]) {
-      syncLogger.debug(
-        `⚠️ MediaType.Movie not found in fieldAvailability, defaulting to true for mediaQuality`
-      )
-      return true
-    }
-
-    // Check if the movie exists in fieldAvailability (using originalTitle as key)
-    const movieFields = context.fieldAvailability[MediaTypesFieldAvailability.Movie][originalTitle]
-    if (!movieFields) {
-      syncLogger.debug(
-        `⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true for mediaQuality`
-      )
-      return true
-    }
-
-    // List of mediaQuality subfields to check
-    const mediaQualityFields = [
-      'mediaQuality.format',
-      'mediaQuality.bitDepth',
-      'mediaQuality.colorSpace',
-      'mediaQuality.transferCharacteristics',
-      'mediaQuality.isHDR',
-      'mediaQuality.viewingExperience.enhancedColor',
-      'mediaQuality.viewingExperience.highDynamicRange',
-      'mediaQuality.viewingExperience.dolbyVision',
-      'mediaQuality.viewingExperience.hdr10Plus',
-      'mediaQuality.viewingExperience.standardHDR',
-    ]
-
-    // Check if this server has priority for any mediaQuality subfield
-    for (const fieldPath of mediaQualityFields) {
-      if (this.shouldUpdateField(fieldPath, originalTitle, context)) {
-        syncLogger.debug(`✅ Server ${context.serverConfig.id} has priority for ${fieldPath}`)
-        return true
-      } else {
-        syncLogger.debug(
-          `❌ Server ${context.serverConfig.id} does NOT have priority for ${fieldPath}`
-        )
-      }
-    }
-
-    syncLogger.debug(
-      `⚠️ Server ${context.serverConfig.id} has no priority for any mediaQuality fields, skipping update`
-    )
-    return false
   }
 
   /**
