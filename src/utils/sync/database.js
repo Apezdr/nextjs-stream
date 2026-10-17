@@ -149,6 +149,48 @@ export async function updateMediaInDatabase(client, mediaType, title, updates, s
   }
 }
 
+/**
+ * `app_config.syncInfo` document holding what the last COMPLETE pass applied:
+ * each server's TV and movie payload ETags, the gate version and server set it
+ * ran under, its syncRunId and how many documents carried that id. A sync tick
+ * reads it to decide whether it can be skipped (sync/tickSkip.js). Its absence
+ * means "no complete pass on record": the next tick fetches in full.
+ */
+const APPLIED_PAYLOADS_ID = 'appliedPayloads'
+
+/**
+ * @param {Object} client - MongoDB client
+ * @returns {Promise<Object|null>} The stored record, or null when there is none
+ */
+export async function getAppliedPayloads(client) {
+  return client.db('app_config').collection('syncInfo').findOne({ _id: APPLIED_PAYLOADS_ID })
+}
+
+/**
+ * Record what a complete pass applied. Throws on failure: the caller decides.
+ * @param {Object} client - MongoDB client
+ * @param {Object} record - { servers, gateVersion, serversFingerprint, syncRunId, documentCounts }
+ */
+export async function setAppliedPayloads(client, record) {
+  await client
+    .db('app_config')
+    .collection('syncInfo')
+    .replaceOne(
+      { _id: APPLIED_PAYLOADS_ID },
+      { _id: APPLIED_PAYLOADS_ID, ...record, recordedAt: new Date() },
+      { upsert: true }
+    )
+}
+
+/**
+ * Forget the last complete pass, so no tick is skipped until another pass
+ * completes. Throws on failure: the caller decides.
+ * @param {Object} client - MongoDB client
+ */
+export async function clearAppliedPayloads(client) {
+  await client.db('app_config').collection('syncInfo').deleteOne({ _id: APPLIED_PAYLOADS_ID })
+}
+
 export async function updateLastSynced(client) {
   try {
     const result = await client
