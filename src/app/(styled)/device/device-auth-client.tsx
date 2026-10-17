@@ -99,7 +99,7 @@ export default function DeviceAuthClient({
 
   const handleApprove = async () => {
     if (!userCode.trim()) {
-      dispatch({ type: 'validationError', error: 'Please enter the code shown on your TV.' })
+      dispatch({ type: 'validationError', error: 'Please enter the code shown on your device.' })
       return
     }
     dispatch({ type: 'approveStart' })
@@ -139,7 +139,7 @@ export default function DeviceAuthClient({
         <div style={styles.successIcon}>✓</div>
         <h2 style={styles.successTitle}>Device Approved!</h2>
         <p style={styles.successText}>
-          Your TV is now signed in. This page can be closed.
+          Your device is now signed in. This page can be closed.
         </p>
       </div>
     )
@@ -202,7 +202,7 @@ export default function DeviceAuthClient({
       {/* Allow manual code entry if not pre-filled from QR */}
       {!initialUserCode && (
         <div style={styles.codeInputWrapper}>
-          <label style={styles.codeLabel}>Enter the code shown on your TV</label>
+          <label style={styles.codeLabel}>Enter the code shown on your device</label>
           <input
             type="text"
             value={userCode}
@@ -216,7 +216,7 @@ export default function DeviceAuthClient({
 
       {initialUserCode && (
         <p style={styles.approveText}>
-          Do you want to sign in to your TV with this account?
+          Do you want to sign in to your device with this account?
         </p>
       )}
 
