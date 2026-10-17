@@ -209,6 +209,11 @@ describe('a pass that did not complete is not recorded, so the next tick fetches
         serverConfig.id === 'server2' ? { ...cleanPass(), episodes: { processed: 0, errors: 1, details: [] } } : cleanPass()
       )
     }, {}],
+    ['a show’s close-out failed (its gate not settled: one Failed show result, counted by the adapter)', () => {
+      syncToFlatStructure.mockImplementation(async (_fs, serverConfig) =>
+        serverConfig.id === 'default' ? { ...cleanPass(), tvShows: { processed: 1, errors: 1, details: [] } } : cleanPass()
+      )
+    }, {}],
     ['a whole phase of one server failed', () => {
       syncToFlatStructure.mockImplementation(async () => ({
         ...cleanPass(),
