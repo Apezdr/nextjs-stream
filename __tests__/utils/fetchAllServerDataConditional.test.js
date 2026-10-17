@@ -66,8 +66,16 @@ function fakeFetch(url, options = {}) {
     ok: true,
     statusText: 'OK',
     headers: { get: (name) => (name.toLowerCase() === 'etag' ? entry.etag : null) },
-    text: async () => JSON.stringify({ version: 1.0001, ...entry.body }),
+    text: async () => (entry.raw !== undefined ? entry.raw : JSON.stringify({ version: 1.0001, ...entry.body })),
   })
+}
+
+/** Run a fetch to the end, letting its retry back-offs (fake timers) elapse. */
+async function settle(promise) {
+  let done = false
+  promise.then(() => { done = true }, () => { done = true })
+  while (!done) await jest.advanceTimersByTimeAsync(60_000)
+  return promise
 }
 
 /** The headers sent with each request, in order, for one URL. */
@@ -82,6 +90,7 @@ beforeEach(() => {
   mockServers = [server('default', 1)]
   global.fetch = jest.fn(fakeFetch)
   jest.spyOn(console, 'log').mockImplementation(() => {})
+  jest.spyOn(console, 'warn').mockImplementation(() => {})
   jest.spyOn(console, 'error').mockImplementation(() => {})
   serve('https://default.example/media/tv', { etag: 'W/"tv-1"', body: { 'Show A': { seasons: {} } } })
   serve('https://default.example/media/movies', { etag: '"movies-1"', body: { 'Movie A': { urls: {} } } })
@@ -191,5 +200,31 @@ describe('with validators', () => {
     expect(movieHeaders['Cache-Control']).toBeUndefined()
     expect(result.notModified).toBe(false)
     expect(result.fileServers.default.movies).toEqual({ 'Movie A': { urls: {} } })
+  })
+})
+
+describe('a 200 whose body is not an object', () => {
+  // With two servers, a server synced as if it had no titles would let the
+  // pass count as one where every server answered.
+  it.each([
+    ['null', 'null'],
+    ['an array', '[]'],
+    ['a number', '5'],
+    ['a string', '"tv"'],
+  ])('(%s) puts the server in errors, not in fileServers', async (_label, raw) => {
+    mockServers = [server('default', 1), server('server2', 2)]
+    served['https://default.example/media/tv'] = { etag: 'W/"tv-broken"', raw }
+    serve('https://server2.example/media/tv', { etag: '"s2-tv"', body: { 'Show C': {} } })
+    serve('https://server2.example/media/movies', { etag: '"s2-movies"', body: {} })
+
+    const result = await settle(fetchAllServerData())
+
+    expect(result.errors).toEqual([
+      { serverId: 'default', error: expect.stringContaining('TV payload from https://default.example/media/tv is not an object') },
+    ])
+    expect(Object.keys(result.fileServers)).toEqual(['server2'])
+    expect(result.etags).not.toHaveProperty('default')
+    // Retried like any failed fetch before giving up
+    expect(headersSentTo('https://default.example/media/tv')).toHaveLength(4)
   })
 })

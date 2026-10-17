@@ -205,7 +205,15 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3, reques
         if (parsed.some((data) => data !== null)) {
           await new Promise((resolve) => setImmediate(resolve));
         }
-        parsed.push(JSON.parse(texts[i]));
+        const data = JSON.parse(texts[i]);
+        // A payload is an object keyed by title. Anything else (null, an array,
+        // a bare value) is a broken response: fail the request, so the server
+        // is retried and then reported as not answering — never synced as a
+        // server with no titles.
+        if (data === null || typeof data !== 'object' || Array.isArray(data)) {
+          throw new Error(`${PAYLOAD_LABELS[kinds[i]]} payload from ${syncUrls[kinds[i]]} is not an object`);
+        }
+        parsed.push(data);
       }
       if (texts.some((text) => text !== null)) {
         console.log(
@@ -249,7 +257,7 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3, reques
         syncEndpoint: server.syncEndpoint,  // Node.js server URL for API endpoints
         priority: server.priority,
         payloads,
-        data: payloads.tv?.data && payloads.movies?.data
+        data: payloads.tv?.data != null && payloads.movies?.data != null
           ? { tv: payloads.tv.data, movies: payloads.movies.data }
           : null
       };
