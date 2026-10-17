@@ -25,12 +25,14 @@ const {
   isHighestPriorityAmongServers,
   isCurrentServerHighestPriorityForReportedField,
   getServersReportingField,
-  availabilityFingerprint,
-  availabilityFingerprintForPrefixes,
   seasonsAcrossServers,
   serverOutranks,
   getServersReportingTitle,
-} = require('@src/utils/sync/utils')
+} = require('@src/utils/sync/core/ownership')
+const {
+  availabilityFingerprint,
+  availabilityFingerprintForPrefixes,
+} = require('@src/utils/sync/core/syncGate')
 
 const server = (id) => mockServers[id]
 const availability = (paths) => ({ movies: { Film: paths }, tv: {} })

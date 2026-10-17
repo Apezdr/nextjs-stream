@@ -25,12 +25,10 @@ import {
 
 import { createLogger } from '@src/lib/logger'
 import {
-  availabilityFingerprint,
-  payloadFingerprint,
   isHighestPriorityAmongServers,
   getServersReportingTitle,
-} from '@src/utils/sync/utils'
-import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates } from '../../core/syncGate'
+} from '@src/utils/sync/core/ownership'
+import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
 import isEqual from 'lodash/isEqual'
 
 const pinoLog = createLogger('Sync.Movie')

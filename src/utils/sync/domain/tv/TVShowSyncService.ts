@@ -30,10 +30,14 @@ import { EpisodeSyncService } from './EpisodeSyncService'
 import {
   isCurrentServerHighestPriorityForField,
   isCurrentServerHighestPriorityForReportedField,
-  createFullUrl,
+  serverOutranks,
+} from '@src/utils/sync/core/ownership'
+import {
   availabilityFingerprint,
   payloadFingerprint,
-  serverOutranks,
+} from '@src/utils/sync/core/syncGate'
+import {
+  createFullUrl,
 } from '@src/utils/sync/utils'
 import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates } from '../../core/syncGate'
 import isEqual from 'lodash/isEqual'

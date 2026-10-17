@@ -33,13 +33,17 @@ import {
   isTopLevelFieldLocked,
 } from '../../infrastructure'
 import {
-  createFullUrl,
   getServersReportingField,
   isHighestPriorityAmongServers,
-  availabilityFingerprintForPrefixes,
-  payloadFingerprint,
   seasonsAcrossServers,
   serverOutranks,
+} from '@src/utils/sync/core/ownership'
+import {
+  availabilityFingerprintForPrefixes,
+  payloadFingerprint,
+} from '@src/utils/sync/core/syncGate'
+import {
+  createFullUrl,
 } from '@src/utils/sync/utils'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'

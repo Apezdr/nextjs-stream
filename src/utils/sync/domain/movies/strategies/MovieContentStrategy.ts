@@ -41,7 +41,7 @@ import {
   getServersReportingField,
   isHighestPriorityAmongServers,
   serverOutranks,
-} from '@src/utils/sync/utils'
+} from '@src/utils/sync/core/ownership'
 import { syncLogger } from '../../../core/logger'
 import { warnOnJitIdentityFork } from '../../../core/jitIdentityParity'
 import isEqual from 'lodash/isEqual'

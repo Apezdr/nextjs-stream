@@ -13,8 +13,8 @@ const {
   readSyncGate,
   changesDocument,
   nextSyncGates,
+  payloadFingerprint,
 } = require('@src/utils/sync/core/syncGate')
-const { payloadFingerprint } = require('@src/utils/sync/utils')
 
 describe('buildSyncGate / readSyncGate', () => {
   it('moves when the payload or the who-has-what picture moves', () => {

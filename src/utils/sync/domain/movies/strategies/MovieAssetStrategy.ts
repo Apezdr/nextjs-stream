@@ -27,7 +27,7 @@ import {
 import {
   isCurrentServerHighestPriorityForReportedField,
   getServersReportingField,
-} from '@src/utils/sync/utils'
+} from '@src/utils/sync/core/ownership'
 import { httpGet } from '@src/lib/httpHelper'
 import { syncLogger } from '../../../core/logger'
 

@@ -27,7 +27,7 @@ import {
 
 import {
   isCurrentServerHighestPriorityForReportedField,
-} from '@src/utils/sync/utils'
+} from '@src/utils/sync/core/ownership'
 import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
 export class MovieMetadataStrategy implements SyncStrategy {

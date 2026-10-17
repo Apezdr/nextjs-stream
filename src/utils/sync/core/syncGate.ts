@@ -5,9 +5,9 @@
  * what the pass would write has changed since that server's last COMPLETE pass:
  *
  *   1. the server's own data for the title — a fingerprint of the payload that
- *      was actually applied (`payloadFingerprint` in sync/utils);
+ *      was actually applied (`payloadFingerprint` in this file);
  *   2. which servers have which fields for the title — the availability
- *      fingerprint (`availabilityFingerprint` in sync/utils). Ownership follows
+ *      fingerprint (`availabilityFingerprint` in this file). Ownership follows
  *      from it, and it moves when ANOTHER server gains or loses a field while
  *      this server's payload stays byte for byte the same;
  *   3. the document itself — if another server's pass changed it in between,
@@ -47,6 +47,8 @@
  */
 
 import isEqual from 'lodash/isEqual'
+import { getServer } from '@src/utils/config'
+import { sortedPathsOf } from './ownership'
 
 /** Fields that record the sync itself, not the title. */
 export const GATE_BOOKKEEPING_FIELDS: ReadonlySet<string> = new Set([
@@ -144,4 +146,130 @@ export function nextSyncGates(
   // not survive a pass that did not complete.
   const { [serverId]: _dropped, ...others } = stored
   return others
+}
+
+/**
+ * A short, stable fingerprint of WHO HAS WHAT for one title this run: every
+ * field path any server reported for it, the servers reporting each, and those
+ * servers' priorities.
+ *
+ * It is the second half of the skip decision. A server's payload hash says
+ * whether that server's own data changed. What the server must write also
+ * depends on which fields it owns, and that changes when ANOTHER server gains
+ * or loses a field: the server that owned the video deletes its file, and the
+ * one that now has to supply it has a payload that did not change at all.
+ * Skipping on the payload hash alone left that title without a video until the
+ * second server's own data happened to change.
+ *
+ * Not cryptographic; it only has to change when the picture does.
+ *
+ * @param {Object} fieldAvailability - Field availability mapping
+ * @param {string} mediaType - 'movies' or 'tv'
+ * @param {string} mediaTitle - originalTitle (the filesystem key)
+ * @returns {string} 16 hex characters
+ */
+export function availabilityFingerprint(fieldAvailability: any, mediaType: string, mediaTitle: string): string {
+  const bucket = fieldAvailability?.[mediaType]?.[mediaTitle]
+  if (!bucket || typeof bucket !== 'object') return fingerprintPaths({}, [])
+  return fingerprintPaths(bucket, sortedPathsOf(bucket))
+}
+
+/**
+ * A short fingerprint of a piece of file-server payload, exactly as it was
+ * received and applied.
+ *
+ * The third part of the skip decision. The file server's own hash for a title
+ * is fetched separately from the payload — for episodes, minutes later — and a
+ * scan can commit in between. The sync then stamps the NEW hash on documents
+ * built from the OLD payload, and the next run, seeing that hash again, skips
+ * the title: it stays on the old data until something else changes it. Keeping
+ * a fingerprint of the payload that was actually applied closes that: the next
+ * run's payload is different, so it is not skipped. It also covers any field a
+ * file server publishes but leaves out of its hash.
+ *
+ * The payload is built from stored rows with nothing time-dependent in it, so
+ * an unchanged title serialises identically from one request to the next.
+ *
+ * @param {unknown} payload
+ * @returns {string} 16 hex characters
+ */
+export function payloadFingerprint(payload: unknown): string {
+  const text = JSON.stringify(payload === undefined ? null : payload)
+  let h1 = 0x811c9dc5
+  let h2 = 0x01000193
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    h1 = Math.imul(h1 ^ code, 0x01000193) >>> 0
+    h2 = Math.imul(h2 ^ code, 0x811c9dc5) >>> 0
+  }
+  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0')
+}
+
+/**
+ * The same fingerprint over several prefixes at once. One episode has several
+ * when two servers name its season folder differently ("Season 1" on one,
+ * "Season 01" on the other): each server's leaves sit under its own folder
+ * name, and together they are the picture for that episode.
+ *
+ * @param {Object} fieldAvailability - Field availability mapping
+ * @param {string} mediaType - 'movies' or 'tv'
+ * @param {string} mediaTitle - originalTitle (the filesystem key)
+ * @param {string[]} prefixes - Path prefixes, each including its trailing dot
+ * @returns {string} 16 hex characters
+ */
+export function availabilityFingerprintForPrefixes(
+  fieldAvailability: any,
+  mediaType: string,
+  mediaTitle: string,
+  prefixes: string[]
+): string {
+  const bucket = fieldAvailability?.[mediaType]?.[mediaTitle]
+  if (!bucket || typeof bucket !== 'object' || !Array.isArray(prefixes) || prefixes.length === 0) {
+    return fingerprintPaths({}, [])
+  }
+  const paths = sortedPathsOf(bucket)
+  const slice: string[] = []
+  for (const prefix of [...new Set(prefixes)].sort()) {
+    let low = 0
+    let high = paths.length
+    while (low < high) {
+      const mid = (low + high) >>> 1
+      if (paths[mid] < prefix) low = mid + 1
+      else high = mid
+    }
+    for (let i = low; i < paths.length && paths[i].startsWith(prefix); i++) slice.push(paths[i])
+  }
+  return fingerprintPaths(bucket, slice)
+}
+
+function fingerprintPaths(bucket: any, paths: string[]): string {
+  const serverIds = new Set<string>()
+
+  // Two independent 32-bit FNV-1a passes (different offsets) → 64 bits.
+  let h1 = 0x811c9dc5
+  let h2 = 0x01000193
+  const mix = (text: string): void => {
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i)
+      h1 = Math.imul(h1 ^ code, 0x01000193) >>> 0
+      h2 = Math.imul(h2 ^ code, 0x811c9dc5) >>> 0
+    }
+  }
+
+  for (const path of paths) {
+    const reporters = Array.isArray(bucket[path]) ? [...bucket[path]].map(String).sort() : []
+    for (const id of reporters) serverIds.add(id)
+    mix(`${path}=>${reporters.join(',')};`)
+  }
+  for (const id of [...serverIds].sort()) {
+    let priority: number | undefined
+    try {
+      priority = getServer(id)?.priority
+    } catch {
+      priority = undefined
+    }
+    mix(`${id}@${priority};`)
+  }
+
+  return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0')
 }
