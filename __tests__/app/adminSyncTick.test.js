@@ -116,7 +116,7 @@ it('ends a skipped tick before the pass, with no admin notification', async () =
   await untilIdle()
 
   expect(mockFetchSyncTick).toHaveBeenCalledTimes(1)
-  expect(mockFetchSyncTick).toHaveBeenCalledWith(expect.objectContaining({ forceSync: false }))
+  expect(mockFetchSyncTick).toHaveBeenCalledWith({ forceSync: false, allowSkip: true })
   expect(mockCollectFieldAvailability).not.toHaveBeenCalled()
   expect(mockCreateDatabaseAdapter).not.toHaveBeenCalled()
   expect(mockSyncAllServers).not.toHaveBeenCalled()
@@ -140,4 +140,21 @@ it('runs the pass on a tick that is not skipped, with the ETags of the payloads 
   )
   expect(mockNotify).toHaveBeenCalledTimes(1)
   expect(console.error).not.toHaveBeenCalledWith('Sync operation failed:', expect.anything())
+})
+
+it('never lets a sync started from the admin UI skip; the per-title gates still apply', async () => {
+  // A UI request carries no X-Webhook-ID: it was authenticated as an admin
+  const fileServers = { default: { config: { priority: 1 }, movies: {}, tv: { 'Show A': {} } } }
+  mockFetchSyncTick.mockResolvedValue({ skipped: false, fileServers, errors: undefined, etags: ETAGS })
+
+  await startSync({ webhook: false })
+  await untilIdle()
+
+  expect(mockFetchSyncTick).toHaveBeenCalledWith({ forceSync: false, allowSkip: false })
+  // Not forced: titles whose gates match are still skipped inside the pass
+  expect(mockSyncAllServers).toHaveBeenCalledWith(
+    fileServers,
+    expect.any(Object),
+    expect.objectContaining({ forceSync: false })
+  )
 })

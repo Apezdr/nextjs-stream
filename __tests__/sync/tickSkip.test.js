@@ -285,6 +285,17 @@ describe('a full pass, fetched without If-None-Match', () => {
     await expectFullPass('documents left for post-sync cleanup (FlatMovies=1)')
   })
 
+  it('when the sync was started from the admin UI (only webhook ticks skip)', async () => {
+    serversUnchanged()
+
+    const tick = await fetchSyncTick({ allowSkip: false })
+
+    expect(tick.skipped).toBe(false)
+    expect(fetchAllServerData).toHaveBeenCalledWith({})
+    expect(tick.reason).toBe('started from the admin UI (only webhook ticks skip)')
+    expect(mockCollections.syncInfo.docs.find((d) => d._id === 'lastSyncTime')).toBeUndefined()
+  })
+
   it('when forceSync is on', async () => {
     serversUnchanged()
 

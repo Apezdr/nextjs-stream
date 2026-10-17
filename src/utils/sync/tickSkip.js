@@ -233,24 +233,29 @@ function formatStatuses(servers, statuses) {
  *
  * @param {Object} [options]
  * @param {boolean} [options.forceSync=false]
+ * @param {boolean} [options.allowSkip=true] - false for a sync an admin
+ *   started from the UI: it always runs the full pass (the per-title gates
+ *   still apply), so the admin gets the pass's report
  * @returns {Promise<
  *   { skipped: true, result: Object } |
  *   { skipped: false, fileServers: Object, errors: Array|undefined, etags: Object, statuses: Object, reason: string }
  * >} `errors` is undefined when every server answered, as getFileServerData has it.
  */
-export async function fetchSyncTick({ forceSync = false } = {}) {
+export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}) {
   const startedAt = Date.now()
   const servers = getAllServers()
   const client = await clientPromise
   const db = client.db('Media')
 
   let record = null
-  let blocker = null
-  try {
-    record = await getAppliedPayloads(client)
-    blocker = await whyTickNotSkippable({ db, record, servers, forceSync: Boolean(forceSync) })
-  } catch (error) {
-    blocker = `skip check failed: ${error.message}`
+  let blocker = allowSkip ? null : 'started from the admin UI (only webhook ticks skip)'
+  if (!blocker) {
+    try {
+      record = await getAppliedPayloads(client)
+      blocker = await whyTickNotSkippable({ db, record, servers, forceSync: Boolean(forceSync) })
+    } catch (error) {
+      blocker = `skip check failed: ${error.message}`
+    }
   }
 
   const fetched = await fetchAllServerData(blocker ? {} : { validators: record.servers })
