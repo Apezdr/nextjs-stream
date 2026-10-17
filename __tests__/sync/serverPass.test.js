@@ -8,7 +8,8 @@
  * migration and the watch-history validation) are recorded.
  *
  * The cases: what one pass writes, the side jobs it runs and the lines it
- * logs; and the server config a pass refuses, or hands the services.
+ * logs; the server config a pass refuses, or hands the services; a title
+ * that throws; and the one pool movies and shows go through.
  */
 
 const mockServers = [
@@ -124,6 +125,7 @@ const { syncAllServers } = require('@src/utils/sync/run/syncAllServers')
 const { buildFieldAvailability } = require('@src/utils/sync/run/availability')
 const { getSyncLockHolder, releaseSyncLock } = require('@src/utils/sync/run/runState')
 const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
+const { ResourceManager } = require('@src/utils/sync/core/ResourceManager')
 const { MovieSyncService } = require('@src/utils/sync/domain/movies/MovieSyncService')
 const { TVShowSyncService } = require('@src/utils/sync/domain/tv/TVShowSyncService')
 
@@ -484,3 +486,93 @@ describe('the server config a pass refuses', () => {
   })
 })
 
+// ---------------------------------------------------------------- errors
+
+describe('errors', () => {
+  it('a show whose sync throws is one failed result; the other titles are written and the pass goes on', async () => {
+    const OTHER = 'Another Show (2021)'
+    const syncTVShow = TVShowSyncService.prototype.syncTVShow
+    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, context) {
+      if (title === OTHER) return Promise.reject(new Error('show sync blew up'))
+      return syncTVShow.call(this, title, context)
+    })
+
+    const result = await runSync(oneServer({ tv: { [SHOW]: showPayload(), [OTHER]: showPayload() } }))
+
+    expect(result.errors).toEqual([])
+    const pass = result.flatSyncResults.default
+    expect(pass.tvShows).toMatchObject({ processed: 1, errors: 1 })
+    expect(pass.errors).toEqual([expect.objectContaining({ phase: 'tvContentSync', error: 'show sync blew up' })])
+    expect(docs('FlatTVShows').map((d) => d.originalTitle)).toEqual([SHOW])
+    expect(docs('FlatMovies')).toHaveLength(1)
+    // The side jobs still run, and the failure keeps the pass from being recorded
+    expect(mockSideJobs.map((s) => s.job)).toEqual(['notifications', 'migration', 'validation'])
+    expect(appliedRecord()).toMatchObject({ state: 'running' })
+  })
+})
+
+// ---------------------------------------------------------------- the pool
+
+describe('movies and shows go through one pool', () => {
+  beforeEach(() => {
+    process.env.SYNC_CONCURRENCY = '2'
+    ResourceManager.resetInstance()
+  })
+  afterEach(() => {
+    delete process.env.SYNC_CONCURRENCY
+    ResourceManager.resetInstance()
+  })
+
+  it('as wide as syncConcurrency, the next title starting as soon as one finishes, movies first', async () => {
+    const events = []
+    let inFlight = 0
+    let widest = 0
+    const enter = (title) => {
+      events.push(`start ${title}`)
+      widest = Math.max(widest, ++inFlight)
+    }
+    const leave = (title) => {
+      inFlight--
+      events.push(`end ${title}`)
+    }
+    const tick = () => new Promise((resolve) => setImmediate(resolve))
+    const result = (title, mediaType) => [
+      { status: 'skipped', entityId: title, mediaType, operation: 'metadata', serverId: 'default', timestamp: new Date(), changes: [], errors: [] },
+    ]
+
+    jest.spyOn(MovieSyncService.prototype, 'syncMovie').mockImplementation(async (title) => {
+      enter(title)
+      await tick()
+      leave(title)
+      return result(title, 'movie')
+    })
+    // The first show is slow: it finishes only after the third has run (or
+    // after a second, so a pool that waits for it cannot hang the test).
+    let releaseFirst
+    const firstReleased = new Promise((resolve) => {
+      releaseFirst = resolve
+      setTimeout(resolve, 1000)
+    })
+    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(async (title) => {
+      enter(title)
+      if (title === 'Show 1') await firstReleased
+      else await tick()
+      if (title === 'Show 3') releaseFirst()
+      leave(title)
+      return result(title, 'tvshow')
+    })
+
+    const movies = Object.fromEntries(['Movie 1', 'Movie 2', 'Movie 3'].map((t) => [t, { urls: { mp4: `/movies/${t}/v.mkv` } }]))
+    const tv = Object.fromEntries(['Show 1', 'Show 2', 'Show 3'].map((t) => [t, { seasons: {} }]))
+    const run = await runSync(oneServer({ movies, tv }))
+
+    expect(widest).toBe(2)
+    // Every movie is done before the first show starts
+    const lastMovieEnd = Math.max(...['Movie 1', 'Movie 2', 'Movie 3'].map((t) => events.indexOf(`end ${t}`)))
+    expect(lastMovieEnd).toBeLessThan(events.indexOf('start Show 1'))
+    // The third show started while the first was still running: no batches
+    expect(events.indexOf('start Show 3')).toBeLessThan(events.indexOf('end Show 1'))
+    // Results come back in title order, whatever order the titles finished in
+    expect(run.flatSyncResults.default.tvShows.details.map((r) => r.entityId)).toEqual(['Show 1', 'Show 2', 'Show 3'])
+  })
+})

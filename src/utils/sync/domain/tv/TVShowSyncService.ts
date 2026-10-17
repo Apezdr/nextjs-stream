@@ -18,7 +18,6 @@ import {
   SyncStatus,
   MediaType,
   SyncOperation,
-  BatchSyncResult,
   syncEventBus,
   planFieldCleanup,
   type CleanableField
@@ -232,7 +231,7 @@ export class TVShowSyncService {
       // Surface the failure to Pino logs — emitError only fans out to SSE
       // subscribers, and `syncLogger` is a console-based rate-limited
       // logger that doesn't reach SigNoz. Without this the failure was
-      // silently counted in BatchSyncResult.errors with no observability
+      // silently counted in the pass's errors with no observability
       // footprint.
       pinoLog.error(
         { showTitle, serverId: context.serverConfig.id, err: msg, stack },
@@ -244,42 +243,6 @@ export class TVShowSyncService {
     }
 
     return allResults
-  }
-
-  /**
-   * Sync multiple TV shows with controlled concurrency.
-   */
-  async syncTVShows(
-    showTitles: string[],
-    context: SyncContext,
-    concurrency: number = 3
-  ): Promise<BatchSyncResult> {
-    const startTime = Date.now()
-    const allResults: SyncResult[] = []
-
-    for (let i = 0; i < showTitles.length; i += concurrency) {
-      const batch = showTitles.slice(i, i + concurrency)
-      const settled = await Promise.allSettled(
-        batch.map(title => this.syncTVShow(title, context))
-      )
-      for (const r of settled) {
-        if (r.status === 'fulfilled') allResults.push(...r.value)
-      }
-    }
-
-    const summary = {
-      total: allResults.length,
-      completed: allResults.filter(r => r.status === SyncStatus.Completed).length,
-      failed: allResults.filter(r => r.status === SyncStatus.Failed).length,
-      skipped: allResults.filter(r => r.status === SyncStatus.Skipped).length
-    }
-
-    return {
-      results: allResults,
-      summary,
-      duration: Date.now() - startTime,
-      errors: allResults.filter(r => r.errors.length > 0).flatMap(r => r.errors)
-    }
   }
 
   // ---------------------------------------------------------------------------

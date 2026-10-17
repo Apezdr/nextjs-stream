@@ -161,18 +161,6 @@ export interface SyncResult {
   metadata?: Record<string, any>
 }
 
-export interface BatchSyncResult {
-  results: SyncResult[]
-  summary: {
-    total: number
-    completed: number
-    failed: number
-    skipped: number
-  }
-  duration: number
-  errors: string[]
-}
-
 // ==========================================
 // Backdrop focal-point hint
 // ==========================================

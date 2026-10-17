@@ -9,9 +9,10 @@
  *      for movies and TV. A server with no baseURL, or whose priority is not a
  *      number, fails here: ownership ranks servers on priority, and a guessed
  *      one would hand fields to the wrong server.
- *   2. movies: every movie the payload lists, through MovieSyncService, in a
- *      pool as wide as the ResourceManager's syncConcurrency.
+ *   2. movies: every movie the payload lists, through MovieSyncService.
  *   3. TV: every show, with its seasons and episodes, through TVShowSyncService.
+ *      Movies and shows share one pool, as wide as the ResourceManager's
+ *      syncConcurrency; the last movie finishes before the first show starts.
  *   4. results: per kind, what was processed, skipped or failed, and the
  *      entities the pass changed (post-sync cache invalidation).
  *   5. this server's side jobs: new-content notifications, the PlaybackStatus
@@ -142,6 +143,7 @@ export async function runServerPass(
   try {
     const { movieService, tvShowService } = await createServices()
     const resourceManager = ResourceManager.getInstance()
+    const pool = pLimit(resourceManager.config.syncConcurrency)
 
     // ---- 2. Movies ----
     const movieTitles = extractMovieTitles(fileServer)
@@ -174,7 +176,7 @@ export async function runServerPass(
       try {
         movieResults = await syncTitles(
           movieTitles,
-          pLimit(resourceManager.config.syncConcurrency),
+          pool,
           (title) => movieService.syncMovie(title, context, MOVIE_OPERATIONS, title),
           (title, error) => failedResult(title, MediaType.Movie, serverConfig.id, error),
           (titleResults) => progress.update(titleResults.some((r) => r.status === SyncStatus.Failed))
@@ -225,7 +227,12 @@ export async function runServerPass(
           cleanup: resolveCleanupConfig(allEnabledServersProbed),
           allEnabledServersProbed,
         }
-        const tvResults = (await tvShowService.syncTVShows(showTitles, context, 3)).results
+        const tvResults = await syncTitles(
+          showTitles,
+          pool,
+          (title) => tvShowService.syncTVShow(title, context),
+          (title, error) => failedResult(title, MediaType.TVShow, serverConfig.id, error)
+        )
         logSummary('TV', tvResults, performance.now() - tvStart)
 
         translateTVResults(tvResults, results, serverConfig.id)
