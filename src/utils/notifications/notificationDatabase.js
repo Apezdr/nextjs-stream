@@ -3,6 +3,7 @@ import { ObjectId } from 'mongodb';
 import { createLogger } from '@src/lib/logger';
 import { userQueries } from '@src/lib/userQueries';
 import { getAllWatchHistoryUserIds } from '@src/utils/watchHistory/database';
+import { runMigrationOnce } from '@src/utils/migrations/runOnce';
 
 /**
  * Database operations for notifications
@@ -19,16 +20,47 @@ const NOTIFICATION_INDEXES = [
   { key: { userId: 1, createdAt: -1 }, name: 'userId_createdAt_index' },
 ];
 
+/** How long a read notification is kept after it was read. Unread ones are kept. */
+export const READ_NOTIFICATION_TTL_SECONDS = 30 * 24 * 60 * 60;
+
+// MongoDB's TTL monitor deletes a read notification READ_NOTIFICATION_TTL_SECONDS
+// after its readAt. Every path that marks a notification read sets readAt.
+const READ_TTL_INDEX = {
+  key: { readAt: 1 },
+  name: 'readAt_ttl_read',
+  expireAfterSeconds: READ_NOTIFICATION_TTL_SECONDS,
+  partialFilterExpression: { read: true },
+};
+
+/** The backfill's flag in app_config.migrations (migrations/runOnce). */
+export const READ_AT_BACKFILL_MIGRATION = 'notifications-readAt-restamp';
+
 let indexesEnsured = null;
 
 /**
- * Creates the indexes once per process. Never throws into the request that
- * triggered it: a failure is logged and the request goes on without them.
+ * Before the TTL index exists: give every read notification readAt = now,
+ * once per database, so the ones already read expire a month after this
+ * ships rather than all together the moment the index is built. (Every read
+ * notification has carried a readAt since the notifications shipped, most of
+ * them older than a month: left as they are, the index would delete them at
+ * once.) Idempotent: a second run only moves dates a month out again.
  */
-function ensureIndexes(collection) {
-  indexesEnsured ??= Promise.allSettled(
-    NOTIFICATION_INDEXES.map(({ key, name }) => collection.createIndex(key, { name }))
-  ).then((results) => {
+async function backfillReadAt(collection) {
+  const result = await collection.updateMany({ read: true }, { $set: { readAt: new Date() } });
+  return { readNotifications: result?.modifiedCount ?? 0 };
+}
+
+/**
+ * Creates the indexes once per process, and the read-notification TTL index
+ * once its backfill has run. Never throws into the request that triggered it:
+ * a failure is logged and the request goes on without them (a failed backfill
+ * leaves the TTL index for the next process).
+ */
+function ensureIndexes(client, collection) {
+  indexesEnsured ??= (async () => {
+    const results = await Promise.allSettled(
+      NOTIFICATION_INDEXES.map(({ key, name }) => collection.createIndex(key, { name }))
+    );
     results.forEach((result, i) => {
       if (result.status === 'rejected') {
         log.error(
@@ -37,14 +69,23 @@ function ensureIndexes(collection) {
         );
       }
     });
-  });
+
+    try {
+      const backfill = await runMigrationOnce(client, READ_AT_BACKFILL_MIGRATION, () => backfillReadAt(collection));
+      if (backfill.applied) log.info({ ...backfill.result }, 'Gave every read notification readAt = now');
+      const { key, ...options } = READ_TTL_INDEX;
+      await collection.createIndex(key, options);
+    } catch (err) {
+      log.error({ err, indexName: READ_TTL_INDEX.name }, 'Could not ensure a Notifications index');
+    }
+  })();
   return indexesEnsured;
 }
 
 async function notificationsCollection() {
   const client = await clientPromise;
   const collection = client.db('Media').collection('Notifications');
-  await ensureIndexes(collection);
+  await ensureIndexes(client, collection);
   return collection;
 }
 
