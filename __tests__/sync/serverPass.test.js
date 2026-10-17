@@ -8,7 +8,7 @@
  * migration and the watch-history validation) are recorded.
  *
  * The cases: what one pass writes, the side jobs it runs and the lines it
- * logs; and the server config a pass refuses.
+ * logs; and the server config a pass refuses, or hands the services.
  */
 
 const mockServers = [
@@ -124,6 +124,8 @@ const { syncAllServers } = require('@src/utils/sync/run/syncAllServers')
 const { buildFieldAvailability } = require('@src/utils/sync/run/availability')
 const { getSyncLockHolder, releaseSyncLock } = require('@src/utils/sync/run/runState')
 const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
+const { MovieSyncService } = require('@src/utils/sync/domain/movies/MovieSyncService')
+const { TVShowSyncService } = require('@src/utils/sync/domain/tv/TVShowSyncService')
 
 // ---------------------------------------------------------------- in-memory MongoDB
 
@@ -437,6 +439,9 @@ describe('a full pass for one server', () => {
 
 describe('the server config a pass refuses', () => {
   it.each([
+    ['no priority', { priority: undefined }, /priority undefined for server default is not a number/],
+    ['a priority that is a string', { priority: '1' }, /priority "1" for server default is not a number/],
+    ['a priority that is not a finite number', { priority: NaN }, /priority NaN for server default is not a number/],
     ['no baseURL', { baseURL: undefined }, /missing baseURL for server default/],
   ])('fails the server’s pass on %s, writing nothing and recording nothing', async (_label, overrides, message) => {
     const result = await runSync(oneServer(overrides))
@@ -447,6 +452,35 @@ describe('the server config a pass refuses', () => {
     expect(docs('FlatTVShows')).toEqual([])
     expect(mockSideJobs).toEqual([])
     expect(appliedRecord()).toMatchObject({ state: 'running', syncRunId: result.syncRunId })
+  })
+
+  it('hands movies and shows one server config, with the priority config gives, 0 included', async () => {
+    const syncMovie = MovieSyncService.prototype.syncMovie
+    const syncTVShow = TVShowSyncService.prototype.syncTVShow
+    const seen = []
+    jest.spyOn(MovieSyncService.prototype, 'syncMovie').mockImplementation(function (title, context, ...rest) {
+      seen.push(context.serverConfig)
+      return syncMovie.call(this, title, context, ...rest)
+    })
+    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, context) {
+      seen.push(context.serverConfig)
+      return syncTVShow.call(this, title, context)
+    })
+
+    const result = await runSync(oneServer({ priority: 0 }))
+
+    expect(result.errors).toEqual([])
+    expect(seen).toHaveLength(2)
+    expect(seen[0]).toBe(seen[1])
+    expect(seen[0]).toEqual({
+      id: 'default',
+      priority: 0,
+      baseUrl: 'https://default.example',
+      nodeUrl: 'https://default-node.example',
+      prefix: '',
+      enabled: true,
+      timeout: 30000,
+    })
   })
 })
 

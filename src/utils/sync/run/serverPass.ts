@@ -5,8 +5,10 @@
  * orchestration lock: after pre-tag, before post-sync cleanup. A pass, top to
  * bottom:
  *
- *   1. config: the server's settings in the shape the services read. A server
- *      with no baseURL fails here.
+ *   1. config: the server's settings in the shape the services read, one copy
+ *      for movies and TV. A server with no baseURL, or whose priority is not a
+ *      number, fails here: ownership ranks servers on priority, and a guessed
+ *      one would hand fields to the wrong server.
  *   2. movies: every movie the payload lists, through MovieSyncService, in a
  *      pool as wide as the ResourceManager's syncConcurrency.
  *   3. TV: every show, with its seasons and episodes, through TVShowSyncService.
@@ -125,12 +127,14 @@ export async function runServerPass(
 
   // ---- 1. Config ----
   log.info({ serverId: config?.id, architecture: 'new', forceSync }, 'Starting NEW architecture sync')
-  if (!config || !config.baseURL) {
-    const error = new Error(`Invalid server configuration: missing baseURL for server ${config?.id || 'unknown'}`)
+  let serverConfig: ServerConfig
+  try {
+    serverConfig = toServerConfig(config)
+  } catch (error) {
     logError(log, error, { serverId: config?.id, context: 'server_config_validation' })
     throw error
   }
-  log.info({ serverId: config.id, baseURL: config.baseURL }, 'Server config validated')
+  log.info({ serverId: serverConfig.id, baseURL: serverConfig.baseUrl }, 'Server config validated')
 
   const startTime = Date.now()
   const results = emptyResults()
@@ -143,10 +147,9 @@ export async function runServerPass(
     const movieTitles = extractMovieTitles(fileServer)
     if (movieTitles.length > 0) {
       log.info(
-        { serverId: config.id, movieCount: movieTitles.length, architecture: 'new' },
+        { serverId: serverConfig.id, movieCount: movieTitles.length, architecture: 'new' },
         'Processing movies with new architecture'
       )
-      const serverConfig = toServerConfig(config, (config.priority as number) || 1)
       const movieStart = Date.now()
       const context: SyncContext = {
         mediaType: MediaType.Movie,
@@ -185,7 +188,7 @@ export async function runServerPass(
       collectChangedMedia(movieResults, results.changedMedia)
       log.info(
         {
-          serverId: config.id,
+          serverId: serverConfig.id,
           processed: results.movies.processed,
           errors: results.movies.errors,
           skipped: results.movies.skipped,
@@ -198,16 +201,15 @@ export async function runServerPass(
     const tvLog = createLogger('FlatSync.NewArch.TV')
     const showTitles = fileServer?.tv ? Object.keys(fileServer.tv) : []
     if (!fileServer?.tv) {
-      tvLog.info({ serverId: config.id }, 'No TV content in fileServer, skipping TV sync')
+      tvLog.info({ serverId: serverConfig.id }, 'No TV content in fileServer, skipping TV sync')
     } else if (showTitles.length === 0) {
-      tvLog.info({ serverId: config.id }, 'No TV show titles found, skipping TV sync')
+      tvLog.info({ serverId: serverConfig.id }, 'No TV show titles found, skipping TV sync')
     } else {
       tvLog.info(
-        { serverId: config.id, tvShowCount: showTitles.length, architecture: 'new' },
+        { serverId: serverConfig.id, tvShowCount: showTitles.length, architecture: 'new' },
         'Starting TV sync with new domain architecture'
       )
       const tvStart = performance.now()
-      const serverConfig = toServerConfig(config, config.priority as number)
       try {
         const tvShowHashes = await fetchTitleHashes(serverConfig, 'tv')
         if (!tvShowHashes) syncLogger.warn('TV show hashes unavailable — proceeding without show-level skip optimisation')
@@ -226,11 +228,11 @@ export async function runServerPass(
         const tvResults = (await tvShowService.syncTVShows(showTitles, context, 3)).results
         logSummary('TV', tvResults, performance.now() - tvStart)
 
-        translateTVResults(tvResults, results, config.id)
+        translateTVResults(tvResults, results, serverConfig.id)
         collectChangedMedia(tvResults, results.changedMedia)
         tvLog.info(
           {
-            serverId: config.id,
+            serverId: serverConfig.id,
             durationSec: parseFloat(((performance.now() - tvStart) / 1000).toFixed(2)),
             processed: {
               tvShows: results.tvShows.processed,
@@ -242,12 +244,12 @@ export async function runServerPass(
           'TV content sync completed with new architecture'
         )
       } catch (error) {
-        logError(tvLog, error, { serverId: config.id, phase: 'tvContentSync', architecture: 'new' })
+        logError(tvLog, error, { serverId: serverConfig.id, phase: 'tvContentSync', architecture: 'new' })
         results.errors.push({
           phase: 'tvContentSync',
           error: error instanceof Error ? error.message : String(error),
           stack: error instanceof Error ? error.stack : undefined,
-          serverId: config.id,
+          serverId: serverConfig.id,
         })
       }
     }
@@ -260,7 +262,7 @@ export async function runServerPass(
     // dwarfing what actually changed on disk is the over-invalidation signal.
     log.info(
       {
-        serverId: config.id,
+        serverId: serverConfig.id,
         changedMedia: {
           movies: results.changedMedia.movies.length,
           shows: results.changedMedia.shows.length,
@@ -277,21 +279,21 @@ export async function runServerPass(
       'Collected changed media for post-sync cache invalidation'
     )
     log.info(
-      { serverId: config.id, durationMs: results.performance.duration, architecture: 'new' },
+      { serverId: serverConfig.id, durationMs: results.performance.duration, architecture: 'new' },
       'NEW architecture sync completed'
     )
 
     // ---- 5. This server's side jobs ----
-    await runSideJobs(results, config.id, log)
+    await runSideJobs(results, serverConfig.id, log)
 
     return results
   } catch (error) {
-    logError(log, error, { serverId: config.id, phase: 'newArchitectureSync', architecture: 'new' })
+    logError(log, error, { serverId: serverConfig.id, phase: 'newArchitectureSync', architecture: 'new' })
     results.errors.push({
       phase: 'newArchitectureSync',
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
-      serverId: config.id,
+      serverId: serverConfig.id,
     })
     results.performance.endTime = new Date()
     results.performance.duration = Date.now() - startTime
@@ -299,12 +301,23 @@ export async function runServerPass(
   }
 }
 
-/** The server's settings in the shape the services read. */
-function toServerConfig(config: ServerPassConfig, priority: number): ServerConfig {
+/**
+ * The server's settings in the shape the services read. Throws when a setting
+ * the pass cannot do without is missing; nothing is defaulted.
+ */
+function toServerConfig(config: ServerPassConfig): ServerConfig {
+  if (!config || !config.baseURL) {
+    throw new Error(`Invalid server configuration: missing baseURL for server ${config?.id || 'unknown'}`)
+  }
+  // The test ownership applies to every other server's priority (core/ownership).
+  if (typeof config.priority !== 'number' || !Number.isFinite(config.priority)) {
+    const shown = typeof config.priority === 'string' ? JSON.stringify(config.priority) : String(config.priority)
+    throw new Error(`Invalid server configuration: priority ${shown} for server ${config.id} is not a number`)
+  }
   return {
     id: config.id,
-    priority,
-    baseUrl: config.baseURL as string, // file server URL (media files)
+    priority: config.priority,
+    baseUrl: config.baseURL, // file server URL (media files)
     // Node.js server URL (API endpoints): the internal one when set
     nodeUrl: config.internalEndpoint || config.syncEndpoint,
     prefix: config.prefixPath,
