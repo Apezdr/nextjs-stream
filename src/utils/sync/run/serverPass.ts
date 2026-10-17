@@ -7,8 +7,8 @@
  *
  *   1. config: the server's settings in the shape the services read, one copy
  *      for movies and TV. A server with no baseURL, or whose priority is not a
- *      number, fails here: ownership ranks servers on priority, and a guessed
- *      one would hand fields to the wrong server.
+ *      positive integer, fails here: ownership ranks servers on priority, and a
+ *      guessed one would hand fields to the wrong server.
  *   2. movies: every movie the payload lists, through MovieSyncService.
  *   3. TV: every show, with its seasons and episodes, through TVShowSyncService.
  *      Movies and shows share one pool, as wide as the ResourceManager's
@@ -16,16 +16,20 @@
  *   4. results: per kind, what was processed, skipped or failed; the entities
  *      the pass changed (post-sync cache invalidation) and the documents it
  *      created (the admins' "sync complete" notice).
- *   5. this server's side jobs: new-content notifications, the PlaybackStatus
- *      migration and the watch-history validation.
+ *
+ * As each title finishes, its results are also recorded into the run's
+ * record of what was written (options.written, run/writtenMedia), so the run
+ * has them even if the pass throws later. The jobs that run once per run —
+ * the new-content notices, the PlaybackStatus migration and the watch-history
+ * validation — are not a pass's: they run after every server's pass and after
+ * post-sync cleanup (run/postSync runAfterSyncJobs).
  *
  * Failures. A title that fails is a failed result and the pass goes on: the
  * failure is counted, so run/tickSkip does not record the pass as complete.
  * Anything else that throws (the config check, the database adapter, the
  * pass's own code) is not caught here. It reaches syncAllServers' per-server
  * catch, which records the server as failed, and the pass is not recorded as
- * complete either. The side jobs keep their own catches: they never failed a
- * pass, and run/tickSkip does not count them.
+ * complete either.
  */
 
 import pLimit from 'p-limit'
@@ -52,9 +56,7 @@ import {
 } from '../domain'
 import { EpisodeSyncService, SeasonSyncService, TVShowSyncService } from '../domain/tv'
 import { createLogger, logError } from '@src/lib/logger'
-import { MediaNotificationOrchestrator } from '@src/utils/notifications/MediaNotificationOrchestrator'
-import { migratePlaybackStatusIfNeeded } from '@src/utils/watchHistory/migrate'
-import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation'
+import { createWrittenMedia, type ChangedMedia, type WrittenMedia } from './writtenMedia'
 
 /** A server's settings as syncAllServers hands them over: its id plus `fileServer.config`. */
 export interface ServerPassConfig {
@@ -70,6 +72,11 @@ export interface ServerPassOptions {
   forceSync?: boolean
   /** True only when every enabled file server answered this run. */
   allEnabledServersProbed?: boolean
+  /**
+   * The run's record of what the passes wrote (run/writtenMedia). Each title's
+   * results are recorded into it as the title finishes.
+   */
+  written?: WrittenMedia
 }
 
 interface KindResults {
@@ -79,24 +86,14 @@ interface KindResults {
   skipped?: number
 }
 
-/** Display titles of what the pass changed, for post-sync cache invalidation. */
-interface ChangedMedia {
-  movies: string[]
-  shows: string[]
-  seasons: Array<{ title: string; season: number }>
-  episodes: Array<{ title: string; season: number; episode: number }>
-}
-
 export interface ServerPassResult {
   movies: KindResults
   episodes: KindResults
   seasons: KindResults
   tvShows: KindResults
   performance: { startTime: Date; endTime: Date | null; duration: number }
-  notifications: any
   errors: Array<{ phase: string; error: unknown; stack?: string; serverId: string }>
-  migration: { completed: boolean; error?: string } | null
-  watchHistoryValidation: any
+  /** Display titles of what this pass changed, for post-sync cache invalidation. */
   changedMedia: ChangedMedia
   /** Documents this pass created (not updated): the admins' sync notice counts them. */
   added: { movies: number; shows: number; episodes: number }
@@ -143,7 +140,13 @@ export async function runServerPass(
 
   const startTime = Date.now()
   const results = emptyResults()
-  const added = { movies: new Set<string>(), shows: new Set<string>(), episodes: new Set<string>() }
+  // This pass's own record of what it wrote, for its result and its log; the
+  // run's record (options.written) gets the same results as each title finishes.
+  const written = createWrittenMedia()
+  const record = (titleResults: SyncResult[]) => {
+    written.record(titleResults)
+    options.written?.record(titleResults)
+  }
 
   const { movieService, tvShowService } = await createServices()
   const resourceManager = ResourceManager.getInstance()
@@ -181,12 +184,14 @@ export async function runServerPass(
       pool,
       (title) => movieService.syncMovie(title, context, MOVIE_OPERATIONS, title),
       (title, error) => failedResult(title, MediaType.Movie, serverConfig.id, error),
-      (titleResults) => progress.update(titleResults.some((r) => r.status === SyncStatus.Failed))
+      (titleResults) => {
+        record(titleResults)
+        progress.update(titleResults.some((r) => r.status === SyncStatus.Failed))
+      }
     )
     logSummary('Movie', movieResults, Date.now() - movieStart)
 
     results.movies = translateMovieResults(movieResults)
-    collectChangedMedia(movieResults, results.changedMedia, added)
     log.info(
       {
         serverId: serverConfig.id,
@@ -229,12 +234,12 @@ export async function runServerPass(
       showTitles,
       pool,
       (title) => tvShowService.syncTVShow(title, context),
-      (title, error) => failedResult(title, MediaType.TVShow, serverConfig.id, error)
+      (title, error) => failedResult(title, MediaType.TVShow, serverConfig.id, error),
+      record
     )
     logSummary('TV', tvResults, performance.now() - tvStart)
 
     translateTVResults(tvResults, results, serverConfig.id)
-    collectChangedMedia(tvResults, results.changedMedia, added)
     tvLog.info(
       {
         serverId: serverConfig.id,
@@ -251,7 +256,8 @@ export async function runServerPass(
   }
 
   // ---- 4. Results ----
-  results.added = { movies: added.movies.size, shows: added.shows.size, episodes: added.episodes.size }
+  results.changedMedia = written.changedMedia
+  results.added = written.addedCounts()
   results.performance.endTime = new Date()
   results.performance.duration = Date.now() - startTime
 
@@ -280,9 +286,6 @@ export async function runServerPass(
     'NEW architecture sync completed'
   )
 
-  // ---- 5. This server's side jobs ----
-  await runSideJobs(results, serverConfig.id, log)
-
   return results
 }
 
@@ -294,10 +297,12 @@ function toServerConfig(config: ServerPassConfig): ServerConfig {
   if (!config || !config.baseURL) {
     throw new Error(`Invalid server configuration: missing baseURL for server ${config?.id || 'unknown'}`)
   }
-  // The test ownership applies to every other server's priority (core/ownership).
-  if (typeof config.priority !== 'number' || !Number.isFinite(config.priority)) {
+  // Ownership ranks servers on priority (core/ownership): 1 is the highest,
+  // and config gives 1, 2, 3… in server order. Anything else is a broken
+  // config, not a rank to guess.
+  if (typeof config.priority !== 'number' || !Number.isInteger(config.priority) || config.priority < 1) {
     const shown = typeof config.priority === 'string' ? JSON.stringify(config.priority) : String(config.priority)
-    throw new Error(`Invalid server configuration: priority ${shown} for server ${config.id} is not a number`)
+    throw new Error(`Invalid server configuration: priority ${shown} for server ${config.id} is not a positive integer`)
   }
   return {
     id: config.id,
@@ -448,10 +453,7 @@ function emptyResults(): ServerPassResult {
     seasons: kind(),
     tvShows: kind(),
     performance: { startTime: new Date(), endTime: null, duration: 0 },
-    notifications: [],
     errors: [],
-    migration: null,
-    watchHistoryValidation: null,
     changedMedia: { movies: [], shows: [], seasons: [], episodes: [] },
     added: { movies: 0, shows: 0, episodes: 0 },
   }
@@ -524,118 +526,5 @@ function translateTVResults(tvResults: SyncResult[], results: ServerPassResult, 
 
   for (const error of tvResults.filter((r) => r.errors.length > 0).flatMap((r) => r.errors)) {
     results.errors.push({ phase: 'tvContentSync', error, serverId })
-  }
-}
-
-/**
- * From the results that completed (were not skipped): the entities changed,
- * by display title (the media page cache tags key on it), and the documents
- * created. A movie and a show fall back to the entity id when no display title
- * was stamped; a season or an episode without its numbers is left out, since a
- * partial tag would be wrong.
- *
- * "Completed" means the smart upsert ran, not that a field changed; the
- * pass's log compares these counts with the processed counts.
- */
-function collectChangedMedia(
-  syncResults: SyncResult[],
-  changedMedia: ChangedMedia,
-  added: { movies: Set<string>; shows: Set<string>; episodes: Set<string> }
-) {
-  for (const r of syncResults) {
-    if (r.status !== SyncStatus.Completed) continue
-    const md = r.metadata || {}
-    // Set by the services when no document existed before this pass wrote one.
-    const created = md.created === true
-    switch (r.mediaType) {
-      case MediaType.Movie: {
-        const title = md.displayTitle || r.entityId
-        if (title) changedMedia.movies.push(title)
-        if (created) added.movies.add(r.entityId)
-        break
-      }
-      case MediaType.TVShow: {
-        const title = md.displayTitle || r.entityId
-        if (title) changedMedia.shows.push(title)
-        if (created) added.shows.add(r.entityId)
-        break
-      }
-      case MediaType.Season: {
-        if (md.displayTitle && md.seasonNumber != null) {
-          changedMedia.seasons.push({ title: md.displayTitle, season: md.seasonNumber })
-        }
-        break
-      }
-      case MediaType.Episode: {
-        if (md.displayTitle && md.seasonNumber != null && md.episodeNumber != null) {
-          changedMedia.episodes.push({ title: md.displayTitle, season: md.seasonNumber, episode: md.episodeNumber })
-        }
-        if (created) added.episodes.add(r.entityId)
-        break
-      }
-      default:
-        break
-    }
-  }
-}
-
-/**
- * This server's side jobs, after its movies and TV. Each catches its own
- * failure: none of them fails the pass.
- */
-async function runSideJobs(results: ServerPassResult, serverId: string, log: ReturnType<typeof createLogger>) {
-  // New-content notifications
-  log.info({ serverId, phase: 'notifications' }, 'Starting notification processing')
-  const notificationStart = performance.now()
-  try {
-    results.notifications = await MediaNotificationOrchestrator.processSyncResults(results, {
-      enableNotifications: true,
-      analysisOptions: {
-        minSignificanceThreshold: 1,
-        timeWindow: 24 * 60 * 60 * 1000, // 24 hours
-      },
-      generationOptions: {
-        batchSimilarContent: true,
-        maxMoviesPerNotification: 5,
-        includeMetadata: true,
-      },
-      deliveryOptions: {
-        targetAllUsers: true,
-        checkDuplicates: true,
-        duplicateWindow: 24 * 60 * 60 * 1000, // 24 hours
-      },
-    })
-  } catch (notificationError) {
-    logError(log, notificationError, { serverId, context: 'notification_processing' })
-  }
-  log.info(
-    {
-      serverId,
-      phase: 'notifications',
-      durationSec: parseFloat(((performance.now() - notificationStart) / 1000).toFixed(2)),
-    },
-    'Notification processing completed'
-  )
-
-  // PlaybackStatus -> WatchHistory migration (if needed)
-  try {
-    await migratePlaybackStatusIfNeeded()
-    results.migration = { completed: true }
-  } catch (migrationError) {
-    log.warn({ error: migrationError }, 'WatchHistory migration encountered an issue, but sync continues')
-    results.migration = {
-      completed: false,
-      error: migrationError instanceof Error ? migrationError.message : String(migrationError),
-    }
-  }
-
-  // WatchHistory records against the current database state
-  try {
-    results.watchHistoryValidation = await validateWatchHistoryAgainstDatabase()
-  } catch (validationError) {
-    log.warn({ error: validationError }, 'WatchHistory validation encountered an issue, but sync continues')
-    results.watchHistoryValidation = {
-      error: validationError instanceof Error ? validationError.message : String(validationError),
-    }
   }
 }

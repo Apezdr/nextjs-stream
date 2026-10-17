@@ -253,13 +253,15 @@ export class EpisodeSyncService {
           [`Upserted episode ${entity.episodeNumber}`, ...(cleanupChanges || [])], [],
           {
             displayTitle: entity.showTitle,
+            // The show's folder name: the key run/newContent finds the episode by.
+            showOriginalTitle: showTitle,
             seasonNumber: entity.seasonNumber,
             episodeNumber: entity.episodeNumber,
             // Read by TVShowSyncService when it decides the show's own gate.
             ...(gateLeftOpen ? { gateLeftOpen: true } : {}),
             ...(documentChanged ? { documentChanged: true } : {}),
             // No document existed before this write (counted for the admins'
-            // sync notice).
+            // sync notice, and a candidate for the new-content notices).
             ...(existing ? {} : { created: true }),
           }
         ))

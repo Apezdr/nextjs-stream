@@ -25,6 +25,10 @@
  *    `getServer('manual')` in generateClipVideoURL/MediaPlayer.
  *  - `lockedFields` is persisted in the nested shape `filterLockedFields`
  *    expects ({ posterURL: true, metadata: { overview: true } }).
+ *  - Every delete forgets the sync's record of its last complete pass
+ *    (forgetAppliedPayloads) and then validates watch history at once
+ *    (sync/run/validateWatchHistory), so no history row keeps counting on a
+ *    title that is gone.
  *  - Validation / duplicate / not-found problems are returned as
  *    { status: 'error', message } so the editor can surface them via
  *    useActionState — the write is aborted, never defaulted.
@@ -42,6 +46,7 @@ import clientPromise from '@src/lib/mongodb'
 import { isAdmin } from '@src/utils/routeAuth'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { forgetAppliedPayloads } from '@src/utils/sync/run/appliedPayloads'
+import { validateWatchHistory } from '@src/utils/sync/run/validateWatchHistory'
 import {
   invalidateMovieDetailsCache,
   invalidateTVShowDetailsCache,
@@ -349,6 +354,7 @@ export async function deleteMovieAction(_prevState, payload = {}) {
   // If a file server still has the movie, the next sync puts it back; a tick
   // that skips (sync/run/tickSkip) would not, so make the next one a full pass.
   await forgetAppliedPayloads()
+  await validateWatchHistory('admin delete')
   if (result.deletedCount === 0) return fail('Movie not found.')
 
   revalidateMedia()
@@ -476,6 +482,7 @@ export async function deleteTVShowAction(_prevState, payload = {}) {
   // If a file server still has the show, the next sync puts it back; a tick
   // that skips (sync/run/tickSkip) would not, so make the next one a full pass.
   await forgetAppliedPayloads()
+  await validateWatchHistory('admin delete')
 
   revalidateMedia()
   const showKey = existing.originalTitle || existing.title
@@ -563,6 +570,7 @@ export async function deleteSeasonAction(_prevState, payload = {}) {
   const result = await db.collection('FlatSeasons').deleteOne({ showId, seasonNumber })
   // Its episodes may be gone even when the season was not found.
   await forgetAppliedPayloads()
+  await validateWatchHistory('admin delete')
   if (result.deletedCount === 0) return fail('Season not found.')
   // If a file server still has the season, the next sync puts it back; it can
   // only do that if the show is not skipped (neither the show nor the tick).
@@ -665,6 +673,7 @@ export async function deleteEpisodeAction(_prevState, payload = {}) {
   )
   const result = await col.deleteOne({ _id })
   await forgetAppliedPayloads()
+  await validateWatchHistory('admin delete')
   if (result.deletedCount === 0) return fail('Episode not found.')
   // If a file server still has the episode, the next sync puts it back; it can
   // only do that if the show is not skipped (neither the show nor the tick).

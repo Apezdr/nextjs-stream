@@ -27,6 +27,7 @@ jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNee
 jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({
   validateWatchHistoryAgainstDatabase: jest.fn(async () => ({ markedInvalid: 0 })),
 }))
+jest.mock('@src/utils/sync/run/newContent', () => ({ announceNewContent: jest.fn() }))
 jest.mock('@src/utils/sync/run/runState', () => ({
   getCurrentSyncRunId: jest.fn(() => null),
   getSyncLockHolder: jest.fn(() => ({ syncRunId: 'run-1' })),
@@ -101,12 +102,13 @@ describe('runPostSyncCleanup', () => {
     expect(result.removed).toEqual({ movies: [], tvShows: [], tvSeasons: [], tvEpisodes: [] })
   })
 
-  it('still validates watch history on that run', async () => {
+  it('leaves the watch-history validation to the run, which runs it after cleanup however cleanup ends', async () => {
+    // (syncAllServers runs runAfterSyncJobs after cleanup: serverPass.test)
     install()
     const result = await runPostSyncCleanup(fileServers, {}, options(false))
 
-    expect(validateWatchHistoryAgainstDatabase).toHaveBeenCalledTimes(1)
-    expect(result.watchHistoryValidation).toEqual({ markedInvalid: 0 })
+    expect(validateWatchHistoryAgainstDatabase).not.toHaveBeenCalled()
+    expect(result).not.toHaveProperty('watchHistoryValidation')
   })
 
   it('deletes nothing for a caller that does not say either way', async () => {

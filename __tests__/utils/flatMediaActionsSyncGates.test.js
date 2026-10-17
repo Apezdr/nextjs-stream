@@ -21,6 +21,13 @@ jest.mock('@src/utils/cache/invalidation', () => ({
 const mockUpdates = []
 const mockDeletes = []
 const mockDocs = {}
+// Recorded in the same list as the deletes, so the order shows
+jest.mock('@src/utils/sync/run/validateWatchHistory', () => ({
+  validateWatchHistory: jest.fn(async (reason) => {
+    mockDeletes.push({ validated: reason })
+    return { markedInvalid: 0 }
+  }),
+}))
 jest.mock('@src/lib/mongodb', () => ({
   __esModule: true,
   default: Promise.resolve({
@@ -153,16 +160,20 @@ describe('an admin edit reopens the sync\'s skip gates', () => {
   })
 })
 
-describe('an admin delete makes the next sync tick a full pass', () => {
+describe('an admin delete makes the next sync tick a full pass, and validates watch history', () => {
   // A tick is skipped when the payloads are unchanged (sync/run/tickSkip), and a
   // skipped tick never puts back a title a file server still has. Every delete
   // forgets the record of the last complete pass — after deleting, so a pass
   // that recorded itself in between cannot be trusted either.
+  //
+  // Then it validates watch history, so no row keeps counting on the title
+  // that is gone (sync/run/validateWatchHistory).
   const forgetsAfterDeleting = () => {
-    const last = mockDeletes.at(-1)
-    expect(last).toEqual({ db: 'app_config', collection: 'syncInfo', filter: { _id: 'appliedPayloads' } })
-    expect(mockDeletes.slice(0, -1).length).toBeGreaterThan(0)
-    expect(mockDeletes.slice(0, -1).every((d) => d.collection.startsWith('Flat'))).toBe(true)
+    const [forget, validate] = mockDeletes.slice(-2)
+    expect(forget).toEqual({ db: 'app_config', collection: 'syncInfo', filter: { _id: 'appliedPayloads' } })
+    expect(validate).toEqual({ validated: 'admin delete' })
+    expect(mockDeletes.slice(0, -2).length).toBeGreaterThan(0)
+    expect(mockDeletes.slice(0, -2).every((d) => d.collection.startsWith('Flat'))).toBe(true)
   }
 
   it('when a movie is deleted', async () => {

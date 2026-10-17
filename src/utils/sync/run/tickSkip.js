@@ -46,7 +46,7 @@ import clientPromise from '@src/lib/mongodb'
 import { getAllServers } from '@src/utils/config'
 import { fetchAllServerData } from '@src/utils/fetchAllServerData'
 import { migratePlaybackStatusIfNeeded } from '@src/utils/watchHistory/migrate'
-import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation'
+import { validateWatchHistoryIfDue } from './validateWatchHistory'
 import { cleanupOrphanFilter } from './orphanFilter'
 import { getSyncLockHolder } from './runState'
 import { SYNC_GATE_VERSION } from '@src/utils/sync/core/syncGate'
@@ -229,10 +229,12 @@ function formatStatuses(servers, statuses) {
  *   - runs migratePlaybackStatusIfNeeded: once per process, it creates the
  *     WatchHistory indexes playback writes rely on, and a process whose
  *     ticks all skip would otherwise never create them;
- *   - runs validateWatchHistoryAgainstDatabase: WatchHistory changes without
- *     the payloads changing (the player marks a record invalid when a HEAD
- *     request fails, a network blip included), and this is what marks it
- *     valid again;
+ *   - validates watch history when it is due (run/validateWatchHistory): not
+ *     for removals, since nothing in the library changed, but because
+ *     WatchHistory changes without the payloads changing (the player marks a
+ *     record invalid when a HEAD request fails, a network blip included), and
+ *     the validation is what marks it valid again. At most once every 15
+ *     minutes, not on every tick;
  *   - emits the sync's start and complete events, so an admin's sync popup
  *     closes.
  *
@@ -296,12 +298,8 @@ export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}
   } catch (error) {
     console.warn(`WatchHistory migration check failed on a skipped tick: ${error.message}`)
   }
-  let watchHistoryValidation = null
-  try {
-    watchHistoryValidation = await validateWatchHistoryAgainstDatabase()
-  } catch (error) {
-    watchHistoryValidation = { error: error.message }
-  }
+  // Null when not due; never throws (a failure comes back as { error })
+  const watchHistoryValidation = await validateWatchHistoryIfDue()
 
   const result = {
     syncRunId: null,

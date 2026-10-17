@@ -18,6 +18,8 @@ jest.mock('@src/lib/logger', () => ({
 }))
 jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNeeded: jest.fn() }))
 jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
+// The run's own jobs after cleanup (runAfterSyncJobs) are not under test here
+jest.mock('@src/utils/sync/run/newContent', () => ({ announceNewContent: jest.fn() }))
 jest.mock('@src/utils/sync/run/runState', () => ({ getCurrentSyncRunId: jest.fn(), getSyncLockHolder: jest.fn() }))
 jest.mock('@src/utils/sync/run/preTag', () => ({ isCollectionFullyCovered: jest.fn() }))
 jest.mock('@src/utils/cache/postSyncRevalidation', () => ({ requestMediaRevalidation: jest.fn() }))

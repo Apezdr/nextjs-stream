@@ -20,6 +20,7 @@ import { fetchProcesses } from '@src/utils/server_track_processes'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import { syncAllServers, fetchSyncTick } from '@src/utils/sync/run/syncAllServers'
 import { forgetAppliedPayloads } from '@src/utils/sync/run/appliedPayloads'
+import { validateWatchHistory } from '@src/utils/sync/run/validateWatchHistory'
 import { buildFieldAvailability } from '@src/utils/sync/run/availability'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { SyncEventType } from '@src/utils/sync/core/types'
@@ -952,6 +953,9 @@ export async function DELETE(request, props) {
       // The next sync tick must be a full pass that rebuilds the catalog, not
       // a skip on the strength of the last one (sync/run/tickSkip).
       await forgetAppliedPayloads()
+      // Nothing is left for watch history to count on until that pass
+      // (sync/run/validateWatchHistory; never throws).
+      await validateWatchHistory('admin wipe')
 
       console.log('Cleared all documents from flat database collections')
       return new Response(JSON.stringify({ 

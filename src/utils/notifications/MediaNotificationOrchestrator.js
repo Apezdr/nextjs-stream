@@ -1,28 +1,28 @@
 /**
- * Main orchestrator for media addition notifications
- * Called by each server's sync pass (src/utils/sync/run/serverPass) to analyze and generate notifications for newly added content
+ * Main orchestrator for media addition notifications.
+ * Called once per sync run, after every server's pass and post-sync cleanup
+ * (src/utils/sync/run/newContent), with the titles that run added to the library.
  */
 
 import { MediaAdditionAnalyzer } from './analyzers/MediaAdditionAnalyzer.js';
 import { NewContentNotificationGenerator } from './generators/NewContentNotificationGenerator.js';
 import { NotificationManager } from './NotificationManager.js';
-import { NOTIFICATION_TYPES } from './NotificationTypes.js';
 import clientPromise from '@src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import { userQueries } from '@src/lib/userQueries';
 
 export class MediaNotificationOrchestrator {
   /**
-   * Process sync results and generate appropriate notifications
-   * This is the main entry point, called by run/serverPass after a server's movies and TV
-   * @param {Object} syncResults - One server's pass results (run/serverPass)
+   * Generate and deliver the notices for the titles a sync run added.
+   * This is the main entry point, called by run/newContent once per run.
+   * @param {Object} newContent - `{ movies, episodes }`: the titles that are new
+   *   to the library, already selected (run/newContent selectNewContent)
    * @param {Object} options - Processing options
    * @returns {Promise<Object>} Processing results
    */
-  static async processSyncResults(syncResults, options = {}) {
+  static async announceNewContent(newContent, options = {}) {
     const {
       enableNotifications = true,
-      analysisOptions = {},
       generationOptions = {},
       deliveryOptions = {}
     } = options;
@@ -45,9 +45,8 @@ export class MediaNotificationOrchestrator {
         return results;
       }
 
-      // Step 1: Analyze sync results for notification-worthy content
-      console.log('Analyzing sync results for new content notifications...');
-      results.analysis = MediaAdditionAnalyzer.analyzeSyncResults(syncResults, analysisOptions);
+      // Step 1: Group the new content (movies, and episodes by show)
+      results.analysis = MediaAdditionAnalyzer.analyzeNewContent(newContent);
 
       if (!results.analysis.shouldNotify) {
         console.log('No significant new content detected, skipping notification generation');
@@ -415,14 +414,14 @@ export class MediaNotificationOrchestrator {
 
   /**
    * Test notification generation and delivery (for development/testing)
-   * @param {Object} testData - Test sync results
+   * @param {Object} testData - `{ movies, episodes }`, as announceNewContent takes them
    * @param {Object} options - Test options
    * @returns {Promise<Object>} Test results
    */
   static async testNotificationSystem(testData, options = {}) {
     console.log('Testing notification system...');
-    
-    const testResults = await this.processSyncResults(testData, {
+
+    const testResults = await this.announceNewContent(testData, {
       enableNotifications: true,
       ...options
     });

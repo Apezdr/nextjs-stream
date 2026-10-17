@@ -7,11 +7,13 @@
  *   - One in-memory pass over `allFileServers` + `fieldAvailability` to
  *     compute orphan id arrays per collection
  *   - One `deleteMany()` per collection (split across $in shards for cascades)
- *   - Two `updateMany()` calls in WatchHistory validation
  *
  * Total wall time is dominated by MongoDB roundtrips (~hundreds of ms);
  * the in-memory predicate pass is sub-100ms even at 16k entities. There
  * is no longer a justification for off-thread execution.
+ *
+ * After it, the run's own jobs (runAfterSyncJobs below): the WatchHistory
+ * migration, the watch-history validation and the new-content notices.
  *
  * The legacy cleanup functions in videoAvailability.js are preserved as
  * @deprecated reference for predicate-equivalence review.
@@ -21,7 +23,8 @@ import { trace } from '@opentelemetry/api'
 import clientPromise from '@src/lib/mongodb'
 import { createLogger, logError } from '@src/lib/logger'
 import { migratePlaybackStatusIfNeeded } from '@src/utils/watchHistory/migrate'
-import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation'
+import { validateWatchHistory } from './validateWatchHistory'
+import { announceNewContent } from './newContent'
 import { getCurrentSyncRunId, getSyncLockHolder } from './runState'
 import { isCollectionFullyCovered } from './preTag'
 import { cleanupOrphanFilter } from './orphanFilter'
@@ -159,9 +162,54 @@ const EMPTY_RESULT = Object.freeze({
   removed: { movies: [], tvShows: [], tvSeasons: [], tvEpisodes: [] },
   errors: { movies: [], tvShows: [], tvSeasons: [], tvEpisodes: [] },
   cache: null,
-  watchHistoryValidation: null,
-  migration: null,
 })
+
+/**
+ * The run's own jobs, once per run: after every server's pass and after
+ * post-sync cleanup, whether or not cleanup completed (syncAllServers calls
+ * this from its background task, holding the orchestration lock). Each job
+ * catches its own failure; none stops the next.
+ *
+ *  1. The PlaybackStatus -> WatchHistory migration. Once per process (it also
+ *     creates the WatchHistory indexes), so after the first run it returns at
+ *     once.
+ *  2. The watch-history validation (run/validateWatchHistory): after
+ *     cleanup's deletes, and after the pass, which can take a title's video
+ *     away without deleting anything.
+ *  3. The new-content notices (run/newContent): after cleanup has decided what
+ *     is deleted, so a title deleted this run is never announced.
+ *
+ * @param {Object} args
+ * @param {string} args.syncRunId
+ * @param {Date|number} args.runStartedAt - When the run started
+ * @param {import('./writtenMedia').WrittenMedia} args.written - What the run's passes wrote
+ * @returns {Promise<{migration: Object, watchHistoryValidation: Object, notifications: Object|null}>}
+ */
+export async function runAfterSyncJobs({ syncRunId, runStartedAt, written }) {
+  const log = createLogger('FlatSync.AfterSync')
+  const out = { migration: null, watchHistoryValidation: null, notifications: null }
+
+  const migrationStartedAt = Date.now()
+  try {
+    await migratePlaybackStatusIfNeeded()
+    out.migration = { completed: true, durationSec: parseFloat(((Date.now() - migrationStartedAt) / 1000).toFixed(2)) }
+  } catch (error) {
+    log.warn({ syncRunId, error: error.message }, 'WatchHistory migration encountered an issue, but sync continues')
+    out.migration = { completed: false, error: error.message }
+  }
+
+  // Never throws (a failure comes back as { error })
+  out.watchHistoryValidation = await validateWatchHistory('full pass')
+
+  try {
+    out.notifications = await announceNewContent(written?.createdTitles, { runStartedAt, syncRunId })
+  } catch (error) {
+    logError(log, error, { syncRunId, context: 'notification_processing' })
+    out.notifications = { error: error.message }
+  }
+
+  return out
+}
 
 /**
  * Marker-based cleanup orchestrator. Same return shape as the legacy
@@ -180,7 +228,7 @@ const EMPTY_RESULT = Object.freeze({
  * @param {Object} [options]
  * @param {string} [options.syncRunId] - The orchestration's syncRunId. The
  *   marker-based path requires this; if absent the cleanup is skipped.
- * @returns {Promise<Object>} { removed, errors, cache, watchHistoryValidation, migration }
+ * @returns {Promise<Object>} { removed, errors, cache }
  */
  
 export async function runPostSyncCleanup(allFileServers, _fieldAvailability, options = {}) {
@@ -533,17 +581,8 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
         )
       }
 
-      // ─── Phase 7: WatchHistory migration (unchanged) ────────────────────────
-      const migrationStartedAt = Date.now()
-      try {
-        await migratePlaybackStatusIfNeeded()
-      } catch (error) {
-        log.warn({ error: error.message }, 'WatchHistory migration encountered an issue, but cleanup continues')
-      }
-      const migrationDurationSec = parseFloat(((Date.now() - migrationStartedAt) / 1000).toFixed(2))
-
-      // ─── Phase 8: WatchHistory validation (rewritten in watchHistoryValidation.js) ──
-      const validationResults = await validateWatchHistoryAgainstDatabase()
+      // (The WatchHistory migration and validation that used to follow are the
+      // run's jobs now, run after this whichever way it ends: runAfterSyncJobs.)
 
       span.setAttributes({
         'cleanup.removed.movies': removed.movies.length,
@@ -557,8 +596,6 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
         removed,
         errors: { movies: [], tvShows: [], tvSeasons: [], tvEpisodes: [] },
         cache: cacheResults,
-        watchHistoryValidation: validationResults,
-        migration: { durationSec: migrationDurationSec },
       }
     } catch (error) {
       logError(log, error, { context: 'post_sync_cleanup' })

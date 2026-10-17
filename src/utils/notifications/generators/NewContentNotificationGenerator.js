@@ -48,6 +48,8 @@ export class NewContentNotificationGenerator {
       batchSimilarContent = true,
       maxMoviesPerNotification = 5,
       maxEpisodesPerShow = 10,
+      // More notices than this become one digest (a first sync, a new server)
+      maxNotifications = null,
       includeMetadata = true
     } = options;
 
@@ -72,11 +74,77 @@ export class NewContentNotificationGenerator {
         notifications.push(...episodeNotifications);
       }
 
+      if (maxNotifications && notifications.length > maxNotifications) {
+        return [this.createNewContentDigest(analysis, includeMetadata)];
+      }
+
       return notifications;
     } catch (error) {
       console.error('Error generating new content notifications:', error);
       return [];
     }
+  }
+
+  /**
+   * One notice for everything a run added, sent instead of the individual
+   * ones when there would be too many of them (a first sync into an empty
+   * library, a newly added server)
+   * @param {Object} analysis - Results from MediaAdditionAnalyzer
+   * @param {boolean} includeMetadata - Whether to include metadata
+   * @returns {Object} Notification object
+   */
+  static createNewContentDigest(analysis, includeMetadata = true) {
+    const movieCount = analysis.newMovies.length;
+    const episodeCount = analysis.newEpisodes.length;
+    const showCount = analysis.showsWithNewEpisodes.size;
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+    const parts = [];
+    if (movieCount > 0) parts.push(plural(movieCount, 'new movie'));
+    if (episodeCount > 0) parts.push(`${plural(episodeCount, 'new episode')} of ${plural(showCount, 'show')}`);
+    const verb = movieCount + episodeCount === 1 ? 'has' : 'have';
+
+    const shows = [...analysis.showsWithNewEpisodes.values()].map(show => ({
+      showTitle: show.showTitle,
+      originalTitle: show.originalTitle,
+      totalNewEpisodes: show.totalNewEpisodes
+    }));
+
+    const notification = {
+      type: NOTIFICATION_TYPES.NEW_CONTENT,
+      subtype: 'new_content_digest',
+      title: 'New in Your Library',
+      message: `${parts.join(' and ')} ${verb} been added to your library.`,
+      actionUrl: '/list',
+      data: {
+        contentType: 'digest',
+        movieCount,
+        episodeCount,
+        showCount,
+        // Limited for size, like the weekly digest
+        movies: analysis.newMovies.slice(0, 10),
+        shows: shows.slice(0, 10)
+      },
+      createdAt: new Date(),
+      priority: 'normal'
+    };
+
+    if (includeMetadata) {
+      notification.metadata = {
+        featuredMovies: analysis.newMovies.slice(0, 3).map(movie => ({ title: movie.title })),
+        topShows: [...shows]
+          .sort((a, b) => b.totalNewEpisodes - a.totalNewEpisodes)
+          .slice(0, 5)
+          .map(show => ({ showTitle: show.showTitle, count: show.totalNewEpisodes }))
+      };
+    }
+
+    notification.contentHash = NotificationHashing.generateContentHash({
+      movies: analysis.newMovies,
+      episodes: analysis.newEpisodes
+    });
+
+    return notification;
   }
 
   /**

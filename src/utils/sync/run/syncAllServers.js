@@ -3,7 +3,8 @@ import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
 import { updateLastSynced } from './lastSynced'
 import { runServerPass } from './serverPass'
-import { runPostSyncCleanup } from './postSync'
+import { runPostSyncCleanup, runAfterSyncJobs } from './postSync'
+import { createWrittenMedia } from './writtenMedia'
 import {
   setCurrentSyncRunId,
   clearCurrentSyncRunId,
@@ -90,6 +91,11 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   }, SYNC_LOCK_WATCHDOG_MS)
   if (typeof lockWatchdog.unref === 'function') lockWatchdog.unref()
 
+  // What the passes wrote, recorded by each pass title by title as the titles
+  // finish (run/writtenMedia): a pass that throws part way has still handed
+  // over what it wrote before it threw.
+  const written = createWrittenMedia()
+
   const results = {
     syncRunId,
     missingMedia: {},
@@ -97,12 +103,14 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     errors: [],
     // Union (across servers) of entities re-synced this run, keyed by display
     // title. Drives the post-sync cache-invalidation POST in the route handler.
-    // Populated from each server's syncResult.changedMedia (new architecture).
-    changedMedia: { movies: [], shows: [], seasons: [], episodes: [] },
-    // Documents the passes created (not updated), summed across servers: the
-    // admins' "sync complete" notice reports them. A document one server's
-    // pass creates is an update to every later server's pass, so none is
-    // counted twice.
+    // The run's record itself, so it holds every title as soon as it finishes.
+    // Duplicates across servers are fine — the revalidate route builds a tag
+    // Set, which dedupes.
+    changedMedia: written.changedMedia,
+    // Documents the passes created (not updated), across servers: the admins'
+    // "sync complete" notice reports them. A document one server's pass
+    // creates is an update to every later server's pass, so none is counted
+    // twice. Set when the passes are done.
     added: { movies: 0, shows: 0, episodes: 0 },
   }
 
@@ -220,6 +228,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
             // every enabled file server responded this run (computed in the route
             // handler). Threaded unchanged into SyncContext.cleanup.
             allEnabledServersProbed: options.allEnabledServersProbed === true,
+            written,
           }),
         ])
 
@@ -278,22 +287,10 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
           })
         }
 
-        // Store the sync results for reference
+        // Store the sync results for reference. (What the pass changed and
+        // created is already in the run's record, `written`.)
         results.flatSyncResults = results.flatSyncResults || {}
         results.flatSyncResults[serverId] = syncResult
-
-        // Accumulate changed entities for post-sync cache invalidation. Guarded
-        // because a server's result may carry no changedMedia. Duplicates across servers are fine — the revalidate route builds
-        // a tag Set which dedupes.
-        if (syncResult?.changedMedia) {
-          results.changedMedia.movies.push(...(syncResult.changedMedia.movies || []))
-          results.changedMedia.shows.push(...(syncResult.changedMedia.shows || []))
-          results.changedMedia.seasons.push(...(syncResult.changedMedia.seasons || []))
-          results.changedMedia.episodes.push(...(syncResult.changedMedia.episodes || []))
-        }
-        for (const kind of ['movies', 'shows', 'episodes']) {
-          results.added[kind] += syncResult?.added?.[kind] || 0
-        }
 
         // Signal that this server finished successfully
         syncEventBus.emitComplete('__server_complete__', MediaType.Movie, serverId)
@@ -351,6 +348,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     payloadETags: options.payloadETags,
   })
  } finally {
+  results.added = written.addedCounts()
   // The "writing phase" of this orchestration ends here. Clear before any
   // background task starts so a follow-up syncAllServers invocation that
   // overlaps in wall-clock time doesn't see this one's id. The post-sync
@@ -369,8 +367,8 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   results.duration = duration
 
   // Signal SSE subscribers that the sync is fully complete — fires immediately so
-  // the popup closes. The availability check / migration / validation below runs
-  // as a background task and does not block the user-facing sync completion.
+  // the popup closes. Post-sync cleanup and the run's own jobs below run as a
+  // background task and do not block the user-facing sync completion.
   try {
     syncEventBus.emitComplete(
       '__sync_complete__',
@@ -384,31 +382,41 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   }
 
   // Run post-sync cleanup in the background — does not block __sync_complete__ above.
-  // Includes: stale video detection/removal, WatchHistory migration, WatchHistory validation.
-  // The orchestration lock is held until cleanup settles (so the next run cannot
+  // Then the run's own jobs, once per run (run/postSync runAfterSyncJobs): the
+  // WatchHistory migration, the watch-history validation (after cleanup's
+  // deletes, and after the pass, which can take a title's video away) and the
+  // new-content notices (after cleanup has decided what is deleted, so a title
+  // deleted this run is never announced). They run whether or not cleanup
+  // completed: a pass that wrote anything has to be followed by them.
+  // The orchestration lock is held until all of it settles (so the next run cannot
   // race this run's find→delete), then released in the finally (the watchdog
   // armed at acquire is the liveness backstop; ownership is re-checked inside
   // runPostSyncCleanup before any delete, so a force-released stale run cannot
   // reap a newer run's records).
   Promise.resolve().then(async () => {
     try {
-      console.log(chalk.bold.yellow('Performing post-sync cleanup (background)...'))
-      const finalAvailabilityResults = await runPostSyncCleanup(
-        fileServers,
-        fieldAvailability,
-        {
-          syncRunId,
-          preTagCoverage: preTagResult,
-          runStartedAt: startTime,
-          // Whether every enabled server answered. Cleanup deletes nothing on a
-          // run where one did not (see the every-server gate there).
-          allEnabledServersProbed: options.allEnabledServersProbed === true,
-        }
-      )
-      results.finalAvailabilityResults = finalAvailabilityResults
-      console.log(chalk.bold.yellow('Post-sync cleanup complete'))
+      try {
+        console.log(chalk.bold.yellow('Performing post-sync cleanup (background)...'))
+        const finalAvailabilityResults = await runPostSyncCleanup(
+          fileServers,
+          fieldAvailability,
+          {
+            syncRunId,
+            preTagCoverage: preTagResult,
+            runStartedAt: startTime,
+            // Whether every enabled server answered. Cleanup deletes nothing on a
+            // run where one did not (see the every-server gate there).
+            allEnabledServersProbed: options.allEnabledServersProbed === true,
+          }
+        )
+        results.finalAvailabilityResults = finalAvailabilityResults
+        console.log(chalk.bold.yellow('Post-sync cleanup complete'))
+      } catch (error) {
+        console.error(chalk.red(`❌ Post-sync cleanup failed: ${error.message}`))
+      }
+      results.afterSync = await runAfterSyncJobs({ syncRunId, runStartedAt: startTime, written })
     } catch (error) {
-      console.error(chalk.red(`❌ Post-sync cleanup failed: ${error.message}`))
+      console.error(chalk.red(`❌ The run's after-sync jobs failed: ${error.message}`))
     } finally {
       clearTimeout(lockWatchdog)
       releaseSyncLock(syncRunId)
