@@ -156,8 +156,9 @@ Create `.env.local` with required variables:
 - Uses `originalTitle` as database keys
 - Granular source tracking per field
 - The run orchestration (single-flight lock, `syncRunId`, pre-tag, tick skip,
-  post-sync cleanup) lives in `src/utils/sync/run/`; `src/utils/flatSync/` only
-  hands each server's pass to `SyncManager`
+  post-sync cleanup) lives in `src/utils/sync/run/`; `src/utils/flatSync/` hands
+  each server's pass to `SyncManager`, then runs that server's new-content
+  notifications and the WatchHistory migration and validation
 
 #### Critical Sync Architecture Rules
 
