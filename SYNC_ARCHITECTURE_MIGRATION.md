@@ -1,5 +1,8 @@
 # 🏗️ Sync Architecture Migration Guide
 
+> **Historical.** This migration is finished and most modules it names (SyncManager, `src/utils/flatSync/`, the traditional sync) are deleted.
+> The sync now runs from `src/utils/sync/run/` (one server's pass: `run/serverPass.ts`); read the code there, not this guide.
+
 This document outlines the migration from the traditional sync system to the new domain-driven architecture.
 
 ## 🎯 **Architecture Overview**

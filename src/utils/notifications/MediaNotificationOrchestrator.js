@@ -1,6 +1,6 @@
 /**
  * Main orchestrator for media addition notifications
- * Integrates with flatSync process to analyze and generate notifications for newly added content
+ * Called by each server's sync pass (src/utils/sync/run/serverPass) to analyze and generate notifications for newly added content
  */
 
 import { MediaAdditionAnalyzer } from './analyzers/MediaAdditionAnalyzer.js';
@@ -14,8 +14,8 @@ import { userQueries } from '@src/lib/userQueries';
 export class MediaNotificationOrchestrator {
   /**
    * Process sync results and generate appropriate notifications
-   * This is the main entry point called from flatSync operations
-   * @param {Object} syncResults - Results from flatSync operations
+   * This is the main entry point, called by run/serverPass after a server's movies and TV
+   * @param {Object} syncResults - One server's pass results (run/serverPass)
    * @param {Object} options - Processing options
    * @returns {Promise<Object>} Processing results
    */

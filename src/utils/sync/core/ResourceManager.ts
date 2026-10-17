@@ -8,7 +8,7 @@
  * - Configurable per-batch concurrency for movie processing
  *
  * All limits are configurable via environment variables:
- *   SYNC_CONCURRENCY          – max movies processed in parallel (default: 3)
+ *   SYNC_CONCURRENCY          – max movies, then shows, processed in parallel (default: 15)
  *   SYNC_HTTP_CONCURRENCY     – max concurrent outbound HTTP requests (default: 8)
  *   SYNC_BATCH_DELAY_MS       – minimum ms between movie batches (default: 200)
  *   SYNC_MEMORY_THRESHOLD_MB  – heap MB at which throttling kicks in (default: 512)

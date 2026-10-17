@@ -9,7 +9,7 @@ import { NotificationHashing } from '../utils/NotificationHashing.js';
 export class MediaAdditionAnalyzer {
   /**
    * Analyze sync results to identify new content worthy of notifications
-   * @param {Object} syncResults - Results from flatSync operations
+   * @param {Object} syncResults - One server's pass results (run/serverPass)
    * @param {Object} options - Analysis options
    * @returns {Object} Analysis results with categorized content
    */

@@ -50,7 +50,7 @@ const pinoLog = createLogger('Sync.TV.Show')
 
 // Show-level asset fields eligible for field-absence cleanup. TV uses BARE field
 // paths (no `urls.` prefix) — show fileAvailability is built from the show object
-// directly. See src/utils/flatSync/tvShows/{poster,backdrop,logos}.js.
+// directly (run/availability). buildTVShowEntity below writes these fields.
 const TVSHOW_CLEANABLE_FIELDS: CleanableField[] = [
   { entityField: 'posterURL', fieldPath: 'poster', companions: ['posterSource', 'posterBlurhash', 'posterBlurhashSource'] },
   { entityField: 'backdrop', fieldPath: 'backdrop', companions: ['backdropSource', 'backdropBlurhash', 'backdropBlurhashSource'] },
@@ -638,7 +638,7 @@ export class TVShowSyncService {
       serverId: context.serverConfig.id,
       timestamp: new Date(),
       changes, errors,
-      // Carry the display title up to the adapter so post-sync cache
+      // Carry the display title up to run/serverPass so post-sync cache
       // invalidation can build the correct page tags (tags key on display
       // title, not the originalTitle/showTitle filesystem key).
       ...(metadata ? { metadata } : {})

@@ -156,9 +156,12 @@ Create `.env.local` with required variables:
 - Uses `originalTitle` as database keys
 - Granular source tracking per field
 - The run orchestration (single-flight lock, `syncRunId`, pre-tag, tick skip,
-  post-sync cleanup) lives in `src/utils/sync/run/`; `src/utils/flatSync/` hands
-  each server's pass to `SyncManager`, then runs that server's new-content
-  notifications and the WatchHistory migration and validation
+  post-sync cleanup) lives in `src/utils/sync/run/`. Each server's pass is
+  `src/utils/sync/run/serverPass.ts`, which runs, in order: the server config
+  check, the movies (`MovieSyncService`), the shows with their seasons and
+  episodes (`TVShowSyncService`, through the movies' pool once the last movie
+  is done), then that server's new-content notifications and the WatchHistory
+  migration and validation
 
 #### Critical Sync Architecture Rules
 
@@ -173,7 +176,7 @@ const canUpdate = isCurrentServerHighestPriorityForReportedField(
 ```
 
 **New Sync Architecture Components:**
-- `SyncManager` - Runs one server's pass through the domain services, with dual-title support
+- `run/serverPass` (`runServerPass`) - Runs one server's pass: config check, movies, TV, then the server's side jobs
 - `MovieMetadataStrategy` - Handles metadata with priority checking
 - `MovieAssetStrategy` - Manages assets (posters, backdrops, logos) with priority
 - `BaseRepository` - Uses `originalTitle` for all database operations
