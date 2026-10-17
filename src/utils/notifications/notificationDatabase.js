@@ -1,5 +1,6 @@
 import clientPromise from '@src/lib/mongodb';
 import { ObjectId } from 'mongodb';
+import { createLogger } from '@src/lib/logger';
 import { userQueries } from '@src/lib/userQueries';
 import { getAllWatchHistoryUserIds } from '@src/utils/watchHistory/database';
 
@@ -8,15 +9,52 @@ import { getAllWatchHistoryUserIds } from '@src/utils/watchHistory/database';
  * All userId parameters are expected to be ObjectIds
  */
 
+const log = createLogger('Notifications');
+
+// The unread counts and the newest-first lists read through these two. Keys
+// and names must match the indexes prod already has, so createIndex is a
+// no-op there: the same keys under another name raise IndexOptionsConflict.
+const NOTIFICATION_INDEXES = [
+  { key: { userId: 1, read: 1 }, name: 'userId_read_index' },
+  { key: { userId: 1, createdAt: -1 }, name: 'userId_createdAt_index' },
+];
+
+let indexesEnsured = null;
+
+/**
+ * Creates the indexes once per process. Never throws into the request that
+ * triggered it: a failure is logged and the request goes on without them.
+ */
+function ensureIndexes(collection) {
+  indexesEnsured ??= Promise.allSettled(
+    NOTIFICATION_INDEXES.map(({ key, name }) => collection.createIndex(key, { name }))
+  ).then((results) => {
+    results.forEach((result, i) => {
+      if (result.status === 'rejected') {
+        log.error(
+          { err: result.reason, indexName: NOTIFICATION_INDEXES[i].name },
+          'Could not ensure a Notifications index'
+        );
+      }
+    });
+  });
+  return indexesEnsured;
+}
+
+async function notificationsCollection() {
+  const client = await clientPromise;
+  const collection = client.db('Media').collection('Notifications');
+  await ensureIndexes(collection);
+  return collection;
+}
+
 /**
  * Create a new notification
  * @param {Object} notificationData - The notification data
  * @returns {Promise<Object>} The created notification
  */
 export async function createNotification(notificationData) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   // Add timestamps
   const notification = {
@@ -37,9 +75,7 @@ export async function createNotification(notificationData) {
  * @returns {Promise<Array>} The created notifications
  */
 export async function createNotifications(notifications) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   const now = new Date();
   const notificationsWithTimestamps = notifications.map(notification => ({
@@ -64,9 +100,7 @@ export async function createNotifications(notifications) {
  * @returns {Promise<Array>} Array of matching notifications
  */
 export async function getNotifications(query = {}, options = {}) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   const {
     sort = { createdAt: -1 },
@@ -90,9 +124,7 @@ export async function getNotifications(query = {}, options = {}) {
  * @returns {Promise<Object>} Notifications and metadata
  */
 export async function getUserNotifications(userId, options = {}) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   const {
     page = 1,
@@ -145,9 +177,7 @@ export async function getUserNotifications(userId, options = {}) {
  * @returns {Promise<boolean>} Success status
  */
 export async function markNotificationAsRead(notificationId, userId) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   const result = await collection.updateOne(
     { _id: new ObjectId(notificationId), userId: new ObjectId(userId) },
@@ -170,9 +200,7 @@ export async function markNotificationAsRead(notificationId, userId) {
  * @returns {Promise<number>} Number of notifications marked as read
  */
 export async function markNotificationsAsRead(notificationIds, userId) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   const objectIds = notificationIds.map(id => new ObjectId(id));
   const result = await collection.updateMany(
@@ -195,9 +223,7 @@ export async function markNotificationsAsRead(notificationIds, userId) {
  * @returns {Promise<number>} Number of notifications marked as read
  */
 export async function markAllNotificationsAsRead(userId) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   const result = await collection.updateMany(
     { userId: new ObjectId(userId), read: false },
@@ -220,9 +246,7 @@ export async function markAllNotificationsAsRead(userId) {
  * @returns {Promise<boolean>} Success status
  */
 export async function deleteNotification(notificationId, userId) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   const result = await collection.deleteOne({
     _id: new ObjectId(notificationId),
@@ -240,9 +264,7 @@ export async function deleteNotification(notificationId, userId) {
  * @returns {Promise<Object>} The created/updated notification
  */
 export async function replaceNotificationByGroup(userId, groupKey, newNotificationData) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   const userObjectId = new ObjectId(userId);
 
@@ -283,9 +305,7 @@ export async function replaceNotificationByGroup(userId, groupKey, newNotificati
  * @returns {Promise<number>} Unread count
  */
 export async function getUnreadNotificationCount(userId) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   return await collection.countDocuments({ userId: new ObjectId(userId), read: false });
 }
@@ -328,9 +348,7 @@ export async function getAdminUserIds(adminEmails) {
  * @returns {Promise<number>} Number of deleted notifications
  */
 export async function cleanupOldNotifications(daysOld = 30) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   const cutoffDate = new Date();
   cutoffDate.setDate(cutoffDate.getDate() - daysOld);
@@ -350,9 +368,7 @@ export async function cleanupOldNotifications(daysOld = 30) {
  * @returns {Promise<Object|null>} The notification or null
  */
 export async function getNotificationById(notificationId, userId) {
-  const client = await clientPromise;
-  const db = client.db('Media');
-  const collection = db.collection('Notifications');
+  const collection = await notificationsCollection();
 
   return await collection.findOne({
     _id: new ObjectId(notificationId),

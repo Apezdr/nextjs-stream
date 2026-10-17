@@ -57,7 +57,7 @@ export class SeasonRepository extends BaseRepository<SeasonEntity> {
         this.createIndexSafely({ episodeCount: 1 }, { sparse: true }),
 
         // Sync-run marker — post-sync cleanup deletes by { syncRunId: { $ne } }.
-        // Name must match flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        // Name must match prod's existing index to avoid IndexOptionsConflict.
         this.createIndexSafely({ syncRunId: 1 }, { name: 'sync_run_id_index' })
       ])
       return true

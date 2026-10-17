@@ -18,19 +18,18 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
   async createIndexes(): Promise<boolean> {
     try {
       await Promise.all([
-        // Primary lookup indexes — name must match flatSync/initializeDatabase.js
+        // Primary lookup indexes — names must match prod's existing index names
         // to avoid "Index already exists with a different name" conflicts.
         // title is deliberately NOT unique: it is the TMDB display name and two
         // distinct shows can legally share it (Kingdom 2019 vs Kingdom 2025
         // threw E11000 on every sync until 2026-07-14). Uniqueness lives on
-        // originalTitle (the filesystem key) per CLAUDE.md — matching
-        // flatSync/initializeDatabase.js.
+        // originalTitle (the filesystem key) per CLAUDE.md, as it does in prod.
         this.createIndexSafely({ title: 1 }, { name: 'title_index' }),
         this.createIndexSafely({ title: 1, serverId: 1 }),
 
         // originalTitle — used by findByOriginalTitle() before every show sync
         // and as the upsert filter key in BaseRepository.upsert().
-        // Name + unique must match flatSync/initializeDatabase.js:112 to avoid
+        // Name + unique must match prod's existing index to avoid
         // IndexOptionsConflict.
         this.createIndexSafely({ originalTitle: 1 }, { unique: true, name: 'originalTitle_index' }),
 
@@ -51,8 +50,8 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
 
         // Trailer-URL lookup — getFlatRecentlyWatchedForUser resolves trailer watch
         // entries to shows via find({ 'metadata.trailer_url': ... }), which COLLSCANned
-        // FlatTVShows (SigNoz slow-query log, 7d). Name matches trailer_url_index in
-        // flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        // FlatTVShows (SigNoz slow-query log, 7d). Name matches prod's existing
+        // trailer_url_index to avoid IndexOptionsConflict.
         this.createIndexSafely({ 'metadata.trailer_url': 1 }, { name: 'trailer_url_index' }),
         
         // Text search
@@ -62,7 +61,7 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
         }),
 
         // Sync-run marker — post-sync cleanup deletes by { syncRunId: { $ne } }.
-        // Name must match flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        // Name must match prod's existing index to avoid IndexOptionsConflict.
         this.createIndexSafely({ syncRunId: 1 }, { name: 'sync_run_id_index' })
       ])
       return true
