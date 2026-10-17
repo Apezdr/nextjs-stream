@@ -52,6 +52,12 @@ it('creates exactly the two prod indexes, once per process', async () => {
 
   expect(mockCollection.createIndex).toHaveBeenCalledTimes(2)
   expect(mockCollection.createIndex.mock.calls).toEqual(EXPECTED_SPECS)
+  // toEqual ignores key order, but an index's key order is part of its
+  // identity: { read: 1, userId: 1 } would be a different index in prod.
+  expect(mockCollection.createIndex.mock.calls.map(([key]) => Object.keys(key))).toEqual([
+    ['userId', 'read'],
+    ['userId', 'createdAt'],
+  ])
   expect(mockLog.error).not.toHaveBeenCalled()
 })
 
