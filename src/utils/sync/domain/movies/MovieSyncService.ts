@@ -118,7 +118,6 @@ export class MovieSyncService {
       // The gate is only ever stamped by a pass in which no strategy failed, so
       // a matching gate is by itself the evidence the earlier checks here used
       // to look for in the stored metadata.
-      const incomingHash = context.metadataHashesCache?.titles?.[effectiveOriginalTitle]?.hash
       const syncGate = movieSyncGate(
         context.fileServerData?.movies?.[effectiveOriginalTitle],
         context.fieldAvailability,
@@ -266,10 +265,11 @@ export class MovieSyncService {
       // A failed metadata fetch must not advance the metadata gate. If the
       // metadata strategy reported Failed (fetch error, or it preserved existing
       // metadata because the fetch came back empty), still persist whatever other
-      // strategies changed (e.g. asset URLs) but leave syncHash unstamped so the
-      // next sync retries the fetch. Without this, an asset-only change during a
-      // metadata-fetch failure would stamp syncHash to the current hash and lock
-      // the movie out of future metadata refreshes (the "spent gate" failure mode).
+      // strategies changed (e.g. asset URLs) but leave this server's gate
+      // unstamped so the next sync retries the fetch. Without this, an
+      // asset-only change during a metadata-fetch failure would stamp the gate
+      // and lock the movie out of future metadata refreshes (the "spent gate"
+      // failure mode).
       const metadataFetchFailed = results.some(
         r => r.operation === SyncOperation.Metadata && r.status === SyncStatus.Failed
       )
@@ -301,8 +301,6 @@ export class MovieSyncService {
       // removal was held back because not every server answered, so the next
       // run does the work again. A pass that changed the document drops the
       // other servers' entries.
-      // `syncHash` (the file server's hash for the title) is still recorded when
-      // the document changes, for anyone inspecting it; nothing decides on it.
       const removalDeferred =
         context.pendingMovieDeferrals?.has(effectiveOriginalTitle) === true || cleanupPlan.withheld === true
       const documentChanged = changesDocument(existingMovie as any, pending, unsetFields)
@@ -314,7 +312,6 @@ export class MovieSyncService {
       const storedGates = ((existingMovie as any)?.syncGates ?? {}) as Record<string, string>
       const gates = nextSyncGates(storedGates, context.serverConfig.id, gateToStamp, documentChanged)
       if (!isEqual(gates, storedGates)) pending.syncGates = gates
-      if (gateToStamp && incomingHash && documentChanged) pending.syncHash = incomingHash
       context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
 
       // Write when strategies changed something OR there are fields to clear. A

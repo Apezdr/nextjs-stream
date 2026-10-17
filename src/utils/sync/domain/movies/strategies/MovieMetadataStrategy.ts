@@ -182,7 +182,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
 
       // A failed metadata fetch must NOT advance the sync gate. Preserve any
       // existing good metadata instead of clobbering it with a stub, and report
-      // Failed so MovieSyncService leaves syncHash/metadataHash unstamped.
+      // Failed so MovieSyncService leaves the gate and metadataHash unstamped.
       // Without this, a transient fetch error (e.g. file-server blip) during a
       // hash change would stamp the gate and lock the movie out of future
       // metadata refreshes — the "spent gate" failure mode.

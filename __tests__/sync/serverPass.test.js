@@ -121,6 +121,8 @@ jest.mock('@src/utils/notifications/MediaNotificationOrchestrator', () => ({
     }),
   },
 }))
+// Removing the stale title hashes, once per database (dropTitleHashes.test)
+jest.mock('@src/utils/sync/run/dropTitleHashes', () => ({ dropTitleHashesOnce: jest.fn(async () => ({ applied: false })) }))
 jest.mock('@src/utils/watchHistory/migrate', () => ({
   migratePlaybackStatusIfNeeded: jest.fn(async () => mockSideJobs.push({ job: 'migration' })),
 }))
@@ -141,6 +143,7 @@ const { MovieSyncService } = require('@src/utils/sync/domain/movies/MovieSyncSer
 const { TVShowSyncService } = require('@src/utils/sync/domain/tv/TVShowSyncService')
 const { runPostSyncCleanup } = require('@src/utils/sync/run/postSync')
 const { MediaNotificationOrchestrator } = require('@src/utils/notifications/MediaNotificationOrchestrator')
+const { dropTitleHashesOnce } = require('@src/utils/sync/run/dropTitleHashes')
 
 // ---------------------------------------------------------------- in-memory MongoDB
 
@@ -470,7 +473,7 @@ describe('a full pass for one server', () => {
 
 // ---------------------------------------------------------------- title hashes
 
-describe('the title hashes a pass fetches from the server’s Node.js API', () => {
+describe('the title hashes a pass fetches from the server’s Node.js API: the movies’ only', () => {
   const NODE = 'https://default-node.example'
   const MOVIE_HASH = 'movie-metadata-hash-1'
   const SHOW_HASH = 'show-hash-1'
@@ -479,8 +482,9 @@ describe('the title hashes a pass fetches from the server’s Node.js API', () =
   const entry = (hash, extra = {}) => ({ hash, lastModified: '2024-01-01T00:00:00.000Z', generated: '2024-01-01T00:00:00.000Z', ...extra })
 
   // Each list answers only at its own URL, so a pass that asked for the
-  // movies' list at the TV URL (or the other way round) gets the other kind's
-  // titles, which name neither the movie nor the show.
+  // movies' list at the TV URL gets the show's titles, which do not name the
+  // movie. The TV list is served, as the processor serves it, and never asked
+  // for: nothing reads it.
   const hashEndpoints = () =>
     jest.fn(async (url) => {
       if (url === `${NODE}/api/metadata-hashes/movies`) {
@@ -502,17 +506,17 @@ describe('the title hashes a pass fetches from the server’s Node.js API', () =
     fetchMetadataMultiServer.mockClear()
   })
 
-  it('asks the server’s Node.js URL for the movie list and the TV list, once each', async () => {
+  it('asks the server’s Node.js URL for the movie list once, and never for the TV list', async () => {
     await runSync(oneServer())
 
     const asked = global.fetch.mock.calls.map(([url]) => url).filter((url) => url.includes('/api/metadata-hashes/'))
-    expect(asked.sort()).toEqual([`${NODE}/api/metadata-hashes/movies`, `${NODE}/api/metadata-hashes/tv`])
+    expect(asked).toEqual([`${NODE}/api/metadata-hashes/movies`])
   })
 
   it('hands the movie list to the metadata step: a hash that matches the stored one skips the metadata fetch', async () => {
     await runSync(oneServer())
     const [movie] = docs('FlatMovies')
-    expect(movie).toMatchObject({ metadataHash: MOVIE_HASH, metadataSource: 'default', syncHash: MOVIE_HASH })
+    expect(movie).toMatchObject({ metadataHash: MOVIE_HASH, metadataSource: 'default' })
     expect(movieMetadataFetches()).toBe(1)
 
     // A forced pass runs every step; the metadata step finds the hash unchanged
@@ -526,11 +530,18 @@ describe('the title hashes a pass fetches from the server’s Node.js API', () =
     expect(movieMetadataFetches()).toBe(1)
   })
 
-  it('writes the show’s syncHash and contentHash from the TV list', async () => {
+  it('stamps no title hash on any document: the gates are stamped, the hashes are not', async () => {
     await runSync(oneServer())
+    // A forced pass rewrites what differs, and writes no hash either
+    await runSync(oneServer({ tv: { [SHOW]: showPayload([1, 2, 3]) } }), { forceSync: true })
 
+    for (const name of ['FlatMovies', 'FlatTVShows', 'FlatSeasons', 'FlatEpisodes']) {
+      for (const doc of docs(name)) {
+        expect(doc).not.toHaveProperty('syncHash')
+        expect(doc).not.toHaveProperty('contentHash')
+      }
+    }
     const [show] = docs('FlatTVShows')
-    expect(show).toMatchObject({ syncHash: SHOW_HASH, contentHash: SHOW_CONTENT_HASH })
     expect(show.syncGates?.default).toEqual(expect.stringMatching(/^g\d+:/))
   })
 })
@@ -646,6 +657,19 @@ describe('the run’s own jobs', () => {
     await runSync(oneServer())
 
     expect(mockSideJobs).toEqual([{ job: 'cleanup' }, { job: 'migration' }, { job: 'validation' }])
+  })
+
+  it('remove the stale title hashes after cleanup, once per run (it applies once per database)', async () => {
+    runPostSyncCleanup.mockImplementationOnce(async () => {
+      mockSideJobs.push({ job: 'cleanup' })
+      expect(dropTitleHashesOnce).not.toHaveBeenCalled()
+      return {}
+    })
+    dropTitleHashesOnce.mockClear()
+
+    await runSync(twoServers())
+
+    expect(dropTitleHashesOnce).toHaveBeenCalledTimes(1)
   })
 
   it('validate watch history after every full pass, however recent the last validation', async () => {

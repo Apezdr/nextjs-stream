@@ -84,7 +84,6 @@ export class TVShowSyncService {
       //      changed the show since;
       //   2. the DB still holds at least the episodes and seasons the payload
       //      lists (drift from deletes the payload cannot see).
-      const incoming = context.tvShowHashesCache?.titles?.[showTitle]
       const showGate = buildSyncGate(
         payloadFingerprint(context.fileServerData?.tv?.[showTitle]),
         availabilityFingerprint(context.fieldAvailability, 'tv', showTitle)
@@ -202,8 +201,6 @@ export class TVShowSyncService {
       const closedOut = await this.finalizeShow(showTitle, null, {
         gate: gateToStamp,
         subtreeChanged,
-        hash: incoming?.hash,
-        contentHash: incoming?.contentHash,
         serverId: context.serverConfig.id,
       })
       if (!closedOut) {
@@ -271,8 +268,6 @@ export class TVShowSyncService {
       gate: string | null
       /** Whether the pass changed the show, a season or an episode. */
       subtreeChanged: boolean
-      hash?: string
-      contentHash?: string
       serverId: string
     } | null
   ): Promise<boolean> {
@@ -287,12 +282,6 @@ export class TVShowSyncService {
         const storedGates = ((show as any).syncGates ?? {}) as Record<string, string>
         const gates = nextSyncGates(storedGates, gating.serverId, gating.gate, gating.subtreeChanged)
         if (!isEqual(gates, storedGates)) next.syncGates = gates
-        // The last writer's hashes, kept for anything that reads them. The skip
-        // decision reads the gate.
-        if (gating.gate) {
-          if (gating.hash) next.syncHash = gating.hash
-          if (gating.contentHash) next.contentHash = gating.contentHash
-        }
       }
 
       await this.tvShowRepository.smartUpsert(next as TVShowEntity, show)
@@ -362,7 +351,7 @@ export class TVShowSyncService {
     // --- Metadata (priority-gated) ---
     // Tracks whether we have a CONFIRMED fresh metadata source. Default true so
     // that "nothing to fetch" / "not metadata-authoritative" never blocks the
-    // syncHash gate; only an attempted-but-failed fetch flips it false.
+    // show's gate; only an attempted-but-failed fetch flips it false.
     let metadataFetchSucceeded = true
     // The show's metadata — and with it the show's identity below — belongs to
     // the highest-priority server that HAS a metadata file for it. The legacy
@@ -380,7 +369,7 @@ export class TVShowSyncService {
       if (typeof fileData.metadata === 'string') {
         // URL path — fetch real metadata from the file server. Mark the gate as
         // not-yet-confirmed: only a usable response flips it back true below, so
-        // a failed/stale fetch leaves syncHash unstamped for retry next sync.
+        // a failed/stale fetch leaves the gate unstamped for retry next sync.
         metadataFetchSucceeded = false
         try {
           showMetadata = await fetchMetadataMultiServer(

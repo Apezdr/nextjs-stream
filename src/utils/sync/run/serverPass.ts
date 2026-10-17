@@ -99,9 +99,10 @@ export interface ServerPassResult {
   added: { movies: number; shows: number; episodes: number }
 }
 
-type TitleHashes = {
+/** The file server's metadata hash for every movie (GET /api/metadata-hashes/movies). */
+type MovieHashes = {
   hash: string
-  titles: Record<string, { hash: string; contentHash?: string; lastModified: string; generated: string }>
+  titles: Record<string, { hash: string; lastModified: string; generated: string }>
 }
 
 /** The four movie operations every pass runs, in this order. */
@@ -167,7 +168,7 @@ export async function runServerPass(
       fieldAvailability,
       forceSync,
       fileServerData: fileServer,
-      metadataHashesCache: (await fetchTitleHashes(serverConfig, 'movies')) ?? undefined,
+      metadataHashesCache: (await fetchMovieHashes(serverConfig)) ?? undefined,
       resourceManager,
       // Field-absence cleanup, and the same signal for the sync's own clearing
       // decisions (present whether or not cleanup is switched on).
@@ -216,8 +217,6 @@ export async function runServerPass(
       'Starting TV sync with new domain architecture'
     )
     const tvStart = performance.now()
-    const tvShowHashes = await fetchTitleHashes(serverConfig, 'tv')
-    if (!tvShowHashes) syncLogger.warn('TV show hashes unavailable — proceeding without show-level skip optimisation')
     const context: SyncContext = {
       mediaType: MediaType.TVShow,
       operation: SyncOperation.Metadata,
@@ -226,7 +225,6 @@ export async function runServerPass(
       forceSync,
       fileServerData: fileServer,
       resourceManager,
-      tvShowHashesCache: tvShowHashes ?? undefined,
       cleanup: resolveCleanupConfig(allEnabledServersProbed),
       allEnabledServersProbed,
     }
@@ -382,10 +380,14 @@ function failedResult(title: string, mediaType: MediaType, serverId: string, err
 }
 
 /**
- * The file server's hashes for every title of one kind, fetched once per
- * pass. Null when they cannot be had: the pass then runs without them.
+ * The file server's metadata hash for every movie, fetched once per pass: a
+ * movie's metadata step skips the metadata.json fetch when the hash matches
+ * the one it stored (metadataHash). Null when it cannot be had: the pass then
+ * fetches each movie's metadata. (Shows have no such step, and nothing reads
+ * the TV list, so it is not fetched.)
  */
-async function fetchTitleHashes(serverConfig: ServerConfig, kind: 'movies' | 'tv'): Promise<TitleHashes | null> {
+async function fetchMovieHashes(serverConfig: ServerConfig): Promise<MovieHashes | null> {
+  const kind = 'movies'
   if (!serverConfig.nodeUrl) {
     syncLogger.warn(`⚠️ No Node.js server URL for ${serverConfig.id}: no ${kind} hashes`)
     return null

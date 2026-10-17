@@ -50,7 +50,12 @@ import isEqual from 'lodash/isEqual'
 import { getServer } from '@src/utils/config'
 import { sortedPathsOf } from './ownership'
 
-/** Fields that record the sync itself, not the title. */
+/**
+ * Fields that record the sync itself, not the title. (`syncHash` and
+ * `contentHash` are no longer written; run/dropTitleHashes removes what is
+ * left of them, and until it has, a document that still carries one must not
+ * count as changed.)
+ */
 export const GATE_BOOKKEEPING_FIELDS: ReadonlySet<string> = new Set([
   'syncGates',
   'syncHash',

@@ -25,6 +25,7 @@ import { createLogger, logError } from '@src/lib/logger'
 import { migratePlaybackStatusIfNeeded } from '@src/utils/watchHistory/migrate'
 import { validateWatchHistory } from './validateWatchHistory'
 import { announceNewContent } from './newContent'
+import { dropTitleHashesOnce } from './dropTitleHashes'
 import { getCurrentSyncRunId, getSyncLockHolder } from './runState'
 import { isCollectionFullyCovered } from './preTag'
 import { cleanupOrphanFilter } from './orphanFilter'
@@ -173,21 +174,23 @@ const EMPTY_RESULT = Object.freeze({
  *  1. The PlaybackStatus -> WatchHistory migration. Once per process (it also
  *     creates the WatchHistory indexes), so after the first run it returns at
  *     once.
- *  2. The watch-history validation (run/validateWatchHistory): after
+ *  2. Removing the stale title hashes from the Flat* documents
+ *     (run/dropTitleHashes). Once per database.
+ *  3. The watch-history validation (run/validateWatchHistory): after
  *     cleanup's deletes, and after the pass, which can take a title's video
  *     away without deleting anything.
- *  3. The new-content notices (run/newContent): after cleanup has decided what
+ *  4. The new-content notices (run/newContent): after cleanup has decided what
  *     is deleted, so a title deleted this run is never announced.
  *
  * @param {Object} args
  * @param {string} args.syncRunId
  * @param {Date|number} args.runStartedAt - When the run started
  * @param {import('./writtenMedia').WrittenMedia} args.written - What the run's passes wrote
- * @returns {Promise<{migration: Object, watchHistoryValidation: Object, notifications: Object|null}>}
+ * @returns {Promise<{migration: Object, titleHashes: Object, watchHistoryValidation: Object, notifications: Object|null}>}
  */
 export async function runAfterSyncJobs({ syncRunId, runStartedAt, written }) {
   const log = createLogger('FlatSync.AfterSync')
-  const out = { migration: null, watchHistoryValidation: null, notifications: null }
+  const out = { migration: null, titleHashes: null, watchHistoryValidation: null, notifications: null }
 
   const migrationStartedAt = Date.now()
   try {
@@ -196,6 +199,17 @@ export async function runAfterSyncJobs({ syncRunId, runStartedAt, written }) {
   } catch (error) {
     log.warn({ syncRunId, error: error.message }, 'WatchHistory migration encountered an issue, but sync continues')
     out.migration = { completed: false, error: error.message }
+  }
+
+  try {
+    out.titleHashes = await dropTitleHashesOnce(await clientPromise)
+    if (out.titleHashes.applied) {
+      log.info({ syncRunId, changed: out.titleHashes.result }, 'Removed the stale title hashes from the Flat* documents')
+    }
+  } catch (error) {
+    // No flag was written: the next run tries again
+    logError(log, error, { syncRunId, context: 'drop_title_hashes' })
+    out.titleHashes = { applied: false, error: error.message }
   }
 
   // Never throws (a failure comes back as { error })
