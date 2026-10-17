@@ -2,10 +2,12 @@
  * @jest-environment node
  *
  * The ETags a tick sends are those of the last COMPLETE pass. syncAllServers
- * forgets the record when a pass starts and writes it again only when every
- * enabled server answered, pre-tag stamped every collection and every
- * server's pass ran to the end with nothing failed — so a failed or partial
- * pass is retried with a full fetch.
+ * replaces the record with its running marker when a pass starts, and turns
+ * the marker into a complete record only when every enabled server answered,
+ * pre-tag stamped every collection and every server's pass ran to the end
+ * with nothing failed — so a failed or partial pass is retried with a full
+ * fetch. A Flat* delete outside the sync removes the marker, and the pass can
+ * then not record itself.
  */
 
 const mockCollections = {}
@@ -40,6 +42,8 @@ jest.mock('@src/utils/sync/utils', () => ({ MediaType: { TV: 'tv', MOVIE: 'movie
 jest.mock('@src/utils/admin_frontend_database', () => ({ updateMediaUpdates: jest.fn() }))
 
 const { syncAllServers } = require('@src/utils/sync.js')
+const { currentBootId } = require('@src/utils/sync/tickSkip')
+const { forgetAppliedPayloads } = require('@src/utils/sync/appliedPayloads')
 const { SYNC_GATE_VERSION } = require('@src/utils/sync/core/syncGate')
 const { syncToFlatStructure } = require('@src/utils/flatSync')
 const { preTagSyncRunId } = require('@src/utils/flatSync/preTagSyncRunId')
@@ -59,6 +63,7 @@ function memoryCollection(docs = []) {
       const i = collection.docs.findIndex((d) => matches(d, filter))
       if (i >= 0) collection.docs[i] = stored(replacement)
       else if (upsert) collection.docs.push(stored(replacement))
+      return { matchedCount: i >= 0 ? 1 : 0 }
     },
     updateOne: async (filter, update, { upsert } = {}) => {
       let doc = collection.docs.find((d) => matches(d, filter))
@@ -152,9 +157,11 @@ it('records the ETags a complete pass applied, with what the skip check compares
 
   expect(appliedRecord()).toEqual({
     _id: 'appliedPayloads',
+    state: 'complete',
     servers: ETAGS,
     gateVersion: SYNC_GATE_VERSION,
     serversFingerprint: 'default:1,server2:2',
+    bootId: currentBootId(),
     syncRunId: result.syncRunId,
     // The manual entry no server has is not counted
     documentCounts: { FlatMovies: 1, FlatTVShows: 1, FlatSeasons: 1, FlatEpisodes: 2 },
@@ -162,19 +169,40 @@ it('records the ETags a complete pass applied, with what the skip check compares
   })
 })
 
-it('forgets the earlier record before the pass writes anything', async () => {
+it('replaces the earlier record with its running marker before it writes anything', async () => {
   let recordWhenPreTagRan = 'not run'
+  let runId = null
   preTagSyncRunId.mockImplementation(async (_fileServers, syncRunId) => {
     recordWhenPreTagRan = appliedRecord()
+    runId = syncRunId
     return { ok: true, skipped: false, syncRunId, coverage: {} }
+  })
+
+  await runPass({ allEnabledServersProbed: false })
+
+  expect(recordWhenPreTagRan).toMatchObject({ _id: 'appliedPayloads', state: 'running', syncRunId: runId })
+  // Not complete, so the marker is all that is left
+  expect(appliedRecord()).toMatchObject({ state: 'running', syncRunId: runId })
+})
+
+it('cannot record itself when a Flat* document was deleted outside the sync during the pass', async () => {
+  // What deleteMovieAction does while the pass runs: delete, then forget.
+  syncToFlatStructure.mockImplementation(async (_fs, serverConfig) => {
+    if (serverConfig.id === 'server2') {
+      mockCollections.FlatMovies.docs = mockCollections.FlatMovies.docs.filter((d) => d._id !== 'm1')
+      await forgetAppliedPayloads()
+    }
+    return cleanPass()
   })
 
   await runPass()
 
-  expect(recordWhenPreTagRan).toBeNull()
+  // The pass would have counted the database after the delete; nothing is
+  // recorded, so the next tick is a full pass that puts the movie back.
+  expect(appliedRecord()).toBeNull()
 })
 
-describe('a pass that did not complete leaves no record, so the next tick fetches in full', () => {
+describe('a pass that did not complete is not recorded, so the next tick fetches in full', () => {
   it.each([
     ['a title failed on one server', () => {
       syncToFlatStructure.mockImplementation(async (_fs, serverConfig) =>
@@ -202,6 +230,6 @@ describe('a pass that did not complete leaves no record, so the next tick fetche
 
     await runPass(options)
 
-    expect(appliedRecord()).toBeNull()
+    expect(appliedRecord()).toMatchObject({ state: 'running' })
   })
 })

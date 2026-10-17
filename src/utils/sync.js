@@ -18,7 +18,7 @@ import { preTagSyncRunId } from './flatSync/preTagSyncRunId'
 import { computeMissingMedia } from './flatSync/computeMissingMedia'
 import { syncEventBus } from './sync/core/events'
 import { MediaType, SyncOperation } from './sync/core'
-import { forgetAppliedPayloads, recordCompletePass } from './sync/tickSkip'
+import { startPassRecord, recordCompletePass } from './sync/tickSkip'
 
 // The sync route fetches each tick's payloads through this, and skips the tick
 // when nothing changed (see sync/tickSkip).
@@ -235,9 +235,10 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
 
  try {
   // No tick may be skipped on the strength of an earlier pass while this one
-  // writes: the record of the last complete pass goes now, and comes back only
-  // if this pass completes (recordCompletePass below; see sync/tickSkip).
-  await forgetAppliedPayloads(client)
+  // writes: the record of the last complete pass is replaced now by this
+  // pass's running marker, which becomes a complete record only if this pass
+  // completes (recordCompletePass below; see sync/tickSkip).
+  await startPassRecord(client, syncRunId)
 
   // Pre-tag every record currently present on a file server with the current
   // syncRunId. The per-write marker injection in the sync helpers only fires

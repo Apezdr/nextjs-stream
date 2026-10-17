@@ -3,10 +3,10 @@
  *
  * A sync tick is skipped — no parse, no fieldAvailability, no pass, no
  * cleanup — only when a full pass would change nothing: forceSync is off, a
- * complete pass is on record under the current gate version and server set,
- * every document that pass covered is still there and carries every enabled
- * server's gate, and every server answers 304 for both payloads. Anything
- * else is a full pass, fetched without If-None-Match.
+ * complete pass is on record under the current gate version, server set and
+ * process, every document that pass covered is still there and carries every
+ * enabled server's gate, and every server answers 304 for both payloads.
+ * Anything else is a full pass, fetched without If-None-Match.
  */
 
 const mockCollections = {}
@@ -31,7 +31,7 @@ jest.mock('@src/utils/sync/core/events', () => ({
 jest.mock('@src/utils/sync/utils', () => ({ MediaType: { TV: 'tv', MOVIE: 'movie' } }))
 jest.mock('@src/utils/admin_frontend_database', () => ({ updateMediaUpdates: jest.fn() }))
 
-const { fetchSyncTick } = require('@src/utils/sync/tickSkip')
+const { fetchSyncTick, currentBootId } = require('@src/utils/sync/tickSkip')
 const { SYNC_GATE_VERSION } = require('@src/utils/sync/core/syncGate')
 const { fetchAllServerData } = require('@src/utils/fetchAllServerData')
 const { validateWatchHistoryAgainstDatabase } = require('@src/utils/flatSync/watchHistoryValidation')
@@ -102,6 +102,8 @@ const ETAGS = { default: { tv: 'W/"tv-1"', movies: '"movies-1"' } }
 function record(overrides = {}) {
   return {
     _id: 'appliedPayloads',
+    state: 'complete',
+    bootId: currentBootId(),
     servers: ETAGS,
     gateVersion: SYNC_GATE_VERSION,
     serversFingerprint: 'default:1',
@@ -316,6 +318,18 @@ describe('a full pass, fetched without If-None-Match', () => {
     install({ syncInfo: [] })
 
     await expectFullPass('no complete pass on record')
+  })
+
+  it('when the last pass left only its running marker (still running, or it did not complete)', async () => {
+    install({ syncInfo: [{ _id: 'appliedPayloads', state: 'running', syncRunId: 'run-that-never-finished' }] })
+
+    await expectFullPass('the last pass is still running or did not complete')
+  })
+
+  it('on the first tick since the app started (a restart or a deploy)', async () => {
+    install({ syncInfo: [record({ bootId: 'the-process-before-this-one' })] })
+
+    await expectFullPass('first tick since the app started')
   })
 
   it('when the skip check itself fails', async () => {

@@ -9,13 +9,17 @@
  *
  *   1. forceSync is off;
  *   2. a complete pass is on record (`app_config.syncInfo`, see sync/database)
- *      under the current SYNC_GATE_VERSION and the current server set and
+ *      under the current SYNC_GATE_VERSION, the current server set and
  *      priorities (ownership follows priority; a deploy that changes the write
- *      rules raises the version);
+ *      rules raises the version), and THIS process: the first tick after a
+ *      restart or deploy is a full pass, so a changed environment or new code
+ *      (and the indexes a pass creates) is applied whether or not anyone
+ *      raised the version;
  *   3. every document that pass covered is still there: a document deleted
- *      since (an admin delete) has to be put back by a pass — and nothing is
- *      left for that pass's post-sync cleanup, which runs after it is
- *      recorded and is retried by the next full pass if it failed;
+ *      since has to be put back by a pass (the admin deletes also forget the
+ *      record, below; the count catches a delete made any other way) — and
+ *      nothing is left for that pass's post-sync cleanup, which runs after it
+ *      is recorded and is retried by the next full pass if it failed;
  *   4. no document that pass covered lacks an enabled server's gate: an admin
  *      edit, a removal held back, a failed title or a pass that changed a
  *      document all leave a gate open, and only a pass closes it;
@@ -25,11 +29,15 @@
  * stamp it on each document a server has. Manual entries no server has are
  * not stamped, never carry a gate, and so do not hold every tick open.
  *
- * The record is cleared when a pass starts and written only when the pass
- * completed for every server, so a failed or partial pass is retried with a
- * full fetch.
+ * A pass replaces the record with its running marker when it starts, and
+ * turns that marker into a complete record only when the pass completed for
+ * every server — so a failed or partial pass is retried with a full fetch.
+ * A Flat* delete outside the sync removes the record (forgetAppliedPayloads):
+ * after a pass, so the next tick runs one; during a pass, so that pass, whose
+ * counts may be taken after the delete, cannot record itself.
  */
 
+import { randomUUID } from 'crypto'
 import clientPromise from '@src/lib/mongodb'
 import { getAllServers } from '@src/utils/config'
 import { fetchAllServerData } from '@src/utils/fetchAllServerData'
@@ -38,15 +46,21 @@ import { validateWatchHistoryAgainstDatabase } from '@src/utils/flatSync/watchHi
 import { SYNC_GATE_VERSION } from './core/syncGate'
 import { syncEventBus } from './core/events'
 import { MediaType, SyncOperation } from './core/types'
-import {
-  getAppliedPayloads,
-  setAppliedPayloads,
-  clearAppliedPayloads,
-  updateLastSynced,
-} from './database'
+import { updateLastSynced } from './database'
+import { getAppliedPayloads, markPassRunning, setAppliedPayloads } from './appliedPayloads'
 
 /** The payloads each server publishes. */
 const PAYLOAD_KINDS = ['tv', 'movies']
+
+/**
+ * This process's id, new on every start. Kept on globalThis so every bundle
+ * that loads this module in the one process agrees on it.
+ * @returns {string}
+ */
+export function currentBootId() {
+  if (!globalThis.__syncTickBootId) globalThis.__syncTickBootId = randomUUID()
+  return globalThis.__syncTickBootId
+}
 
 /**
  * Collections whose documents carry `syncGates`. Seasons do not: a season is
@@ -147,6 +161,8 @@ export async function countOpenGates(db, syncRunId, serverIds) {
 export async function whyTickNotSkippable({ db, record, servers, forceSync }) {
   if (forceSync) return 'force sync requested'
   if (!record?.syncRunId) return 'no complete pass on record'
+  if (record.state !== 'complete') return 'the last pass is still running or did not complete'
+  if (record.bootId !== currentBootId()) return 'first tick since the app started'
   if (record.gateVersion !== SYNC_GATE_VERSION) {
     return `gate version changed (${record.gateVersion} -> ${SYNC_GATE_VERSION})`
   }
@@ -302,18 +318,22 @@ export async function fetchSyncTick({ forceSync = false } = {}) {
 }
 
 /**
- * Forget the last complete pass. Called when a pass starts: until it
- * completes, no tick may be skipped. Never throws — if the record cannot be
- * removed, the pass's own stamps (pre-tag restamps every covered document)
- * leave its document counts wrong, which keeps the next tick from skipping.
+ * Replace the record with this pass's running marker. Called when a pass
+ * starts: until it completes, no tick may be skipped, and only this pass may
+ * record itself (recordCompletePass). Never throws — if the marker cannot be
+ * written, the pass cannot record itself either, and an earlier complete
+ * record left in place no longer matches the database: pre-tag restamps every
+ * covered document with this pass's id, so that record's document counts are
+ * wrong and the next tick does not skip.
  *
  * @param {Object} client - MongoDB client
+ * @param {string} syncRunId
  */
-export async function forgetAppliedPayloads(client) {
+export async function startPassRecord(client, syncRunId) {
   try {
-    await clearAppliedPayloads(client)
+    await markPassRunning(client, syncRunId)
   } catch (error) {
-    console.error(`[SYNC] Could not clear the record of the last complete pass: ${error.message}`)
+    console.error(`[SYNC] Could not mark the pass as running: ${error.message}`)
   }
 }
 
@@ -398,7 +418,7 @@ export async function recordCompletePass({
     }
 
     const documentCounts = await countDocumentsOfRun(client.db('Media'), syncRunId)
-    await setAppliedPayloads(client, {
+    const recorded = await setAppliedPayloads(client, syncRunId, {
       servers: Object.fromEntries(
         servers.map((server) => [
           server.id,
@@ -407,10 +427,16 @@ export async function recordCompletePass({
       ),
       gateVersion: SYNC_GATE_VERSION,
       serversFingerprint: serversFingerprint(servers),
-      syncRunId,
+      bootId: currentBootId(),
       documentCounts,
     })
-    return true
+    if (!recorded) {
+      console.info(
+        '[SYNC] Pass not recorded as complete, next tick fetches in full: ' +
+        'its running marker is gone (a Flat* document was deleted outside the sync during the pass)'
+      )
+    }
+    return recorded
   } catch (error) {
     console.error(`[SYNC] Could not record the complete pass: ${error.message}`)
     return false

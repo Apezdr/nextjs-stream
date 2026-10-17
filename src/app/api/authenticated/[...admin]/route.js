@@ -19,6 +19,7 @@ import { getServerLoadSnapshot, noteServerLoadDemand } from '@src/utils/monitor_
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import { syncAllServers, fetchSyncTick } from '@src/utils/sync'
+import { forgetAppliedPayloads } from '@src/utils/sync/appliedPayloads'
 import { collectFieldAvailability } from '@src/utils/sync/fieldAvailability'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { SyncEventType } from '@src/utils/sync/core/types'
@@ -1012,7 +1013,10 @@ export async function DELETE(request, props) {
         results[collectionName] = deleteResult.deletedCount
         console.log(`Cleared ${deleteResult.deletedCount} documents from ${collectionName}`)
       }
-      
+      // The next sync tick must be a full pass that rebuilds the catalog, not
+      // a skip on the strength of the last one (sync/tickSkip).
+      await forgetAppliedPayloads()
+
       console.log('Cleared all documents from flat database collections')
       return new Response(JSON.stringify({ 
         message: 'Cleared all documents from flat database collections',

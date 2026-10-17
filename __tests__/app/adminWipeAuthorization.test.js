@@ -38,6 +38,10 @@ jest.mock('@src/utils/monitor_server_load', () => ({ monitorConfig: {} }))
 jest.mock('@src/utils/server_track_processes', () => ({}))
 jest.mock('@src/utils/backendAuth', () => ({ getBackendAuthHeaders: jest.fn(async () => ({})) }))
 jest.mock('@src/utils/sync', () => ({}))
+const mockForgetAppliedPayloads = jest.fn(async () => {})
+jest.mock('@src/utils/sync/appliedPayloads', () => ({
+  forgetAppliedPayloads: (...args) => mockForgetAppliedPayloads(...args),
+}))
 jest.mock('@src/utils/sync/core/events', () => ({ syncEventBus: {} }))
 jest.mock('@src/utils/sync/core/types', () => ({ SyncEventType: {} }))
 jest.mock('@src/utils/sync/infrastructure', () => ({}))
@@ -98,5 +102,24 @@ describe('DELETE /api/authenticated/admin/wipe-db', () => {
       'FlatEpisodes',
     ])
     expect(mockDeleteMany).toHaveBeenCalledTimes(4)
+  })
+
+  test('makes the next sync tick a full pass, so the catalog is rebuilt', async () => {
+    mockIsAdmin.mockResolvedValue({ id: 'admin-1', role: 'admin' })
+
+    await wipe()
+
+    expect(mockForgetAppliedPayloads).toHaveBeenCalledTimes(1)
+    // After the deletes, not before: a pass recorded in between would be trusted
+    expect(mockForgetAppliedPayloads.mock.invocationCallOrder[0])
+      .toBeGreaterThan(Math.max(...mockDeleteMany.mock.invocationCallOrder))
+  })
+
+  test('a refused wipe leaves the sync record alone', async () => {
+    mockIsAdmin.mockResolvedValue(new Response('{}', { status: 401 }))
+
+    await wipe()
+
+    expect(mockForgetAppliedPayloads).not.toHaveBeenCalled()
   })
 })

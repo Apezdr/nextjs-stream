@@ -41,6 +41,7 @@ import { revalidatePath } from 'next/cache'
 import clientPromise from '@src/lib/mongodb'
 import { isAdmin } from '@src/utils/routeAuth'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
+import { forgetAppliedPayloads } from '@src/utils/sync/appliedPayloads'
 import {
   invalidateMovieDetailsCache,
   invalidateTVShowDetailsCache,
@@ -345,6 +346,9 @@ export async function deleteMovieAction(_prevState, payload = {}) {
   const col = client.db(DB_NAME).collection('FlatMovies')
   const existing = await col.findOne({ _id }, { projection: { title: 1, originalTitle: 1 } })
   const result = await col.deleteOne({ _id })
+  // If a file server still has the movie, the next sync puts it back; a tick
+  // that skips (sync/tickSkip) would not, so make the next one a full pass.
+  await forgetAppliedPayloads()
   if (result.deletedCount === 0) return fail('Movie not found.')
 
   revalidateMedia()
@@ -469,6 +473,9 @@ export async function deleteTVShowAction(_prevState, payload = {}) {
   await db.collection('FlatEpisodes').deleteMany({ showId: _id })
   await db.collection('FlatSeasons').deleteMany({ showId: _id })
   await db.collection('FlatTVShows').deleteOne({ _id })
+  // If a file server still has the show, the next sync puts it back; a tick
+  // that skips (sync/tickSkip) would not, so make the next one a full pass.
+  await forgetAppliedPayloads()
 
   revalidateMedia()
   const showKey = existing.originalTitle || existing.title
@@ -554,9 +561,11 @@ export async function deleteSeasonAction(_prevState, payload = {}) {
   // Remove the season and all of its episodes
   await db.collection('FlatEpisodes').deleteMany({ showId, seasonNumber })
   const result = await db.collection('FlatSeasons').deleteOne({ showId, seasonNumber })
+  // Its episodes may be gone even when the season was not found.
+  await forgetAppliedPayloads()
   if (result.deletedCount === 0) return fail('Season not found.')
   // If a file server still has the season, the next sync puts it back; it can
-  // only do that if the show is not skipped.
+  // only do that if the show is not skipped (neither the show nor the tick).
   await reopenSyncGates(db, showId)
 
   revalidateMedia()
@@ -655,9 +664,10 @@ export async function deleteEpisodeAction(_prevState, payload = {}) {
     { projection: { showId: 1, showTitle: 1, seasonNumber: 1, episodeNumber: 1 } }
   )
   const result = await col.deleteOne({ _id })
+  await forgetAppliedPayloads()
   if (result.deletedCount === 0) return fail('Episode not found.')
   // If a file server still has the episode, the next sync puts it back; it can
-  // only do that if the show is not skipped.
+  // only do that if the show is not skipped (neither the show nor the tick).
   if (existing?.showId) await reopenSyncGates(db, existing.showId)
 
   revalidateMedia()
