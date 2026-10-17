@@ -18,7 +18,7 @@ jest.mock('@src/utils/routeAuth', () => ({
   isAdmin: jest.fn(async () => ({ id: 'admin-1' })),
   isAdminOrWebhook: jest.fn(async () => true),
 }))
-jest.mock('@src/utils/sync', () => ({
+jest.mock('@src/utils/sync/run/syncAllServers', () => ({
   fetchSyncTick: (...args) => mockFetchSyncTick(...args),
   syncAllServers: (...args) => mockSyncAllServers(...args),
 }))
@@ -28,8 +28,11 @@ jest.mock('@src/utils/notifications/NotificationManager.js', () => ({
 jest.mock('@src/utils/sync/infrastructure', () => ({
   createDatabaseAdapter: (...args) => mockCreateDatabaseAdapter(...args),
 }))
-jest.mock('@src/utils/sync/fieldAvailability', () => ({
-  collectFieldAvailability: (...args) => mockCollectFieldAvailability(...args),
+jest.mock('@src/utils/sync/run/availability', () => ({
+  buildFieldAvailability: async (...args) => {
+    mockCollectFieldAvailability(...args)
+    return { movies: {}, tv: {} }
+  },
 }))
 jest.mock('@src/utils/sync/core/events', () => ({ syncEventBus: { subscribe: () => () => {} } }))
 jest.mock('@src/utils/sync/core/types', () => ({ SyncEventType: {} }))
@@ -38,7 +41,7 @@ jest.mock('@src/utils/cache/postSyncRevalidation', () => ({
   countChangedMedia: () => 0,
   requestMediaRevalidation: jest.fn(),
 }))
-jest.mock('@src/utils/sync/appliedPayloads', () => ({ forgetAppliedPayloads: jest.fn() }))
+jest.mock('@src/utils/sync/run/appliedPayloads', () => ({ forgetAppliedPayloads: jest.fn() }))
 
 // The route's other dependencies play no part in a sync tick.
 jest.mock('next/cache', () => ({ revalidateTag: jest.fn(), updateTag: jest.fn() }))

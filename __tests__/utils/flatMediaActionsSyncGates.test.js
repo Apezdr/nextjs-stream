@@ -154,7 +154,7 @@ describe('an admin edit reopens the sync\'s skip gates', () => {
 })
 
 describe('an admin delete makes the next sync tick a full pass', () => {
-  // A tick is skipped when the payloads are unchanged (sync/tickSkip), and a
+  // A tick is skipped when the payloads are unchanged (sync/run/tickSkip), and a
   // skipped tick never puts back a title a file server still has. Every delete
   // forgets the record of the last complete pass — after deleting, so a pass
   // that recorded itself in between cannot be trusted either.

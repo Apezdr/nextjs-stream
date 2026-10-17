@@ -9,7 +9,7 @@ import { BaseRepository } from './BaseRepository'
 import { ResourceManager } from '../../core/ResourceManager'
  
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
-import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
+import { getCurrentSyncRunId } from '../../run/runState'
 
 export class SeasonRepository extends BaseRepository<SeasonEntity> {
   constructor(client: MongoClient) {

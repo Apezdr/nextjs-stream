@@ -8,7 +8,7 @@ import { BaseMediaEntity, MediaRepository, DatabaseError } from '../../core/type
 import isEqual from 'lodash/isEqual'
  
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
-import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
+import { getCurrentSyncRunId } from '../../run/runState'
 
 // Fields that must never appear in a diff — either MongoDB internals or
 // system timestamps that always change and should not trigger a write.
@@ -545,7 +545,7 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
    * (observed 2026-06-20: all four repos failed index creation on one drop, then
    * the un-indexed cleanup `{syncRunId:{$ne}}` COLLSCAN kept the contention alive).
    * `createIndex` is idempotent, so re-issuing a dropped build is safe. Mirrors
-   * `withTransientRetry` in preTagSyncRunId.js.
+   * `withTransientRetry` in sync/run/preTag.js.
    */
   protected async createIndexSafely(indexSpec: Record<string, any>, options?: Record<string, any>): Promise<void> {
     const isAlreadyExists = (error: any): boolean =>

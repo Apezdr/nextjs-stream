@@ -25,9 +25,9 @@ jest.mock('chalk', () => {
   return { __esModule: true, default: paint }
 })
 jest.mock('@src/utils/flatSync', () => ({ syncToFlatStructure: jest.fn() }))
-jest.mock('@src/utils/flatSync/postSyncCleanup', () => ({ runPostSyncCleanup: jest.fn(async () => ({})) }))
-jest.mock('@src/utils/flatSync/preTagSyncRunId', () => ({ preTagSyncRunId: jest.fn() }))
-jest.mock('@src/utils/flatSync/computeMissingMedia', () => ({
+jest.mock('@src/utils/sync/run/postSync', () => ({ runPostSyncCleanup: jest.fn(async () => ({})) }))
+jest.mock('@src/utils/sync/run/preTag', () => ({ preTagSyncRunId: jest.fn() }))
+jest.mock('@src/utils/sync/run/missingMedia', () => ({
   computeMissingMedia: jest.fn(async () => ({ missingMovies: [], missingTVShows: [] })),
 }))
 jest.mock('@src/utils/sync/core', () => ({ MediaType: { Movie: 'movie' }, SyncOperation: { Metadata: 'metadata' } }))
@@ -36,16 +36,15 @@ jest.mock('@src/utils/sync/core/events', () => ({
 }))
 jest.mock('@src/utils/fetchAllServerData', () => ({ fetchAllServerData: jest.fn() }))
 jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNeeded: jest.fn() }))
-jest.mock('@src/utils/flatSync/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
-jest.mock('@src/utils/sync/utils', () => ({ MediaType: { TV: 'tv', MOVIE: 'movie' } }))
+jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
 
-const { syncAllServers } = require('@src/utils/sync.js')
-const { currentBootId, startPassRecord, recordCompletePass } = require('@src/utils/sync/tickSkip')
-const { forgetAppliedPayloads, markPassRunning } = require('@src/utils/sync/appliedPayloads')
-const { getSyncLockHolder, releaseSyncLock, tryAcquireSyncLock } = require('@src/utils/flatSync/syncContext')
+const { syncAllServers } = require('@src/utils/sync/run/syncAllServers')
+const { currentBootId, startPassRecord, recordCompletePass } = require('@src/utils/sync/run/tickSkip')
+const { forgetAppliedPayloads, markPassRunning } = require('@src/utils/sync/run/appliedPayloads')
+const { getSyncLockHolder, releaseSyncLock, tryAcquireSyncLock } = require('@src/utils/sync/run/runState')
 const { SYNC_GATE_VERSION } = require('@src/utils/sync/core/syncGate')
 const { syncToFlatStructure } = require('@src/utils/flatSync')
-const { preTagSyncRunId } = require('@src/utils/flatSync/preTagSyncRunId')
+const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
 
 const stored = (value) => JSON.parse(JSON.stringify(value, (_key, v) => (v === undefined ? null : v)))
 const matches = (doc, filter) => Object.entries(filter).every(([key, value]) => doc[key] === value)

@@ -37,9 +37,9 @@ jest.mock('@src/utils/config', () => ({}))
 jest.mock('@src/utils/monitor_server_load', () => ({ monitorConfig: {} }))
 jest.mock('@src/utils/server_track_processes', () => ({}))
 jest.mock('@src/utils/backendAuth', () => ({ getBackendAuthHeaders: jest.fn(async () => ({})) }))
-jest.mock('@src/utils/sync', () => ({}))
+jest.mock('@src/utils/sync/run/syncAllServers', () => ({}))
 const mockForgetAppliedPayloads = jest.fn(async () => {})
-jest.mock('@src/utils/sync/appliedPayloads', () => ({
+jest.mock('@src/utils/sync/run/appliedPayloads', () => ({
   forgetAppliedPayloads: (...args) => mockForgetAppliedPayloads(...args),
 }))
 jest.mock('@src/utils/sync/core/events', () => ({ syncEventBus: {} }))

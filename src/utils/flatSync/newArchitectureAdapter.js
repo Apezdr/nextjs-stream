@@ -11,7 +11,7 @@ import { performance } from 'perf_hooks'
 import { MediaNotificationOrchestrator } from '../notifications/MediaNotificationOrchestrator'
 // Import post-sync operations
 import { migratePlaybackStatusIfNeeded } from '../watchHistory/migrate'
-import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation'
+import { validateWatchHistoryAgainstDatabase } from '@src/utils/sync/run/watchHistoryValidation'
 import { getAllServers } from '../config'
 
 /**

@@ -91,7 +91,7 @@ const { resolveCleanupConfig } = require('@src/utils/sync/core/FieldAbsenceClean
 const { MediaType, SyncOperation } = require('@src/utils/sync/core')
 const isEqual = require('lodash/isEqual')
 // The availability map is built by the same function the admin sync route uses.
-const { collectFieldAvailability } = require('@src/utils/sync/fieldAvailability')
+const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
 // ---------------------------------------------------------------- in-memory MongoDB
 

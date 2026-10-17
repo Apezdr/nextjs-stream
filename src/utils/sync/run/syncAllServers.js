@@ -1,27 +1,27 @@
 import { ObjectId } from 'mongodb'
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
-import { updateLastSynced } from './sync/database'
+import { updateLastSynced } from './lastSynced'
 import {
   syncToFlatStructure,
-} from './flatSync'
-import { runPostSyncCleanup } from './flatSync/postSyncCleanup'
+} from '@src/utils/flatSync'
+import { runPostSyncCleanup } from './postSync'
 import {
   setCurrentSyncRunId,
   clearCurrentSyncRunId,
   tryAcquireSyncLock,
   releaseSyncLock,
   getSyncLockHolder,
-} from './flatSync/syncContext'
-import { preTagSyncRunId } from './flatSync/preTagSyncRunId'
-import { computeMissingMedia } from './flatSync/computeMissingMedia'
-import { syncEventBus } from './sync/core/events'
-import { MediaType, SyncOperation } from './sync/core'
-import { startPassRecord, recordCompletePass } from './sync/tickSkip'
+} from './runState'
+import { preTagSyncRunId } from './preTag'
+import { computeMissingMedia } from './missingMedia'
+import { syncEventBus } from '@src/utils/sync/core/events'
+import { MediaType, SyncOperation } from '@src/utils/sync/core'
+import { startPassRecord, recordCompletePass } from './tickSkip'
 
 // The sync route fetches each tick's payloads through this, and skips the tick
 // when nothing changed (see sync/tickSkip).
-export { fetchSyncTick } from './sync/tickSkip'
+export { fetchSyncTick } from './tickSkip'
 
 // Hard ceiling on how long the orchestration single-flight lock may be held. A
 // hung post-sync cleanup must never freeze every future sync — if the lock is

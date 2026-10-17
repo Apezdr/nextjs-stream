@@ -8,7 +8,6 @@ This module provides utilities for syncing data between file servers and a flat 
 - Proper indexing for efficient queries
 - Hash-based synchronization for improved performance
 - Parallel processing for faster sync operations
-- Video availability checking and cleanup
 
 ## Collections
 
@@ -18,6 +17,10 @@ The flat structure uses the following collections:
 - `FlatTVShows`: For TV show data
 - `FlatSeasons`: For season data
 - `FlatEpisodes`: For episode data
+
+## Where the rest lives
+
+The run itself (single-flight lock, run id, pre-tag, post-sync cleanup, tick skip) is in `src/utils/sync/run/`; this folder holds the per-server pass (`index.js`, `newArchitectureAdapter.js`).
 
 ## Usage Example
 
@@ -30,40 +33,8 @@ const results = await syncToFlatStructure(
   serverConfig,
   fieldAvailability,
   false, // skipInitialization
-  true   // checkAvailability - check and remove unavailable videos
+  false  // forceSync
 );
-```
-
-## Video Availability
-
-The module includes functions to check video availability across file servers and remove unavailable videos from the flat database structure.
-
-### Basic Usage
-
-```javascript
-import { 
-  checkAndRemoveUnavailableVideosFlat 
-} from '@src/utils/flatSync';
-
-// Check and remove unavailable videos
-const results = await checkAndRemoveUnavailableVideosFlat(currentDB, fileServers);
-```
-
-### Advanced Usage
-
-```javascript
-import {
-  checkVideoAvailabilityAcrossServers,
-  removeUnavailableVideosFlat
-} from '@src/utils/flatSync';
-
-// Check video availability
-const recordsToRemove = await checkVideoAvailabilityAcrossServers(currentDB, fileServers);
-
-// Now you can inspect or modify recordsToRemove if needed
-
-// Remove unavailable videos
-const results = await removeUnavailableVideosFlat(recordsToRemove);
 ```
 
 ## Database Structure

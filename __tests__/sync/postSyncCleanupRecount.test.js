@@ -17,12 +17,12 @@ jest.mock('@src/lib/logger', () => ({
   logError: jest.fn(),
 }))
 jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNeeded: jest.fn() }))
-jest.mock('@src/utils/flatSync/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
-jest.mock('@src/utils/flatSync/syncContext', () => ({ getCurrentSyncRunId: jest.fn(), getSyncLockHolder: jest.fn() }))
-jest.mock('@src/utils/flatSync/preTagSyncRunId', () => ({ isCollectionFullyCovered: jest.fn() }))
+jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
+jest.mock('@src/utils/sync/run/runState', () => ({ getCurrentSyncRunId: jest.fn(), getSyncLockHolder: jest.fn() }))
+jest.mock('@src/utils/sync/run/preTag', () => ({ isCollectionFullyCovered: jest.fn() }))
 jest.mock('@src/utils/cache/postSyncRevalidation', () => ({ requestMediaRevalidation: jest.fn() }))
 
-const { recountVisibleEpisodes } = require('@src/utils/flatSync/postSyncCleanup')
+const { recountVisibleEpisodes } = require('@src/utils/sync/run/postSync')
 
 function matches(doc, filter) {
   return Object.entries(filter).every(([key, condition]) => {

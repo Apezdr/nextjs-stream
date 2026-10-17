@@ -5,7 +5,7 @@
  * which documents does cleanup delete after a run — through one filter.
  */
 
-const { cleanupOrphanFilter } = require('@src/utils/flatSync/orphanFilter')
+const { cleanupOrphanFilter } = require('@src/utils/sync/run/orphanFilter')
 
 it('keeps what the run stamped, manual entries, and anything written since the run started', () => {
   const runStart = new Date('2026-10-17T00:00:00Z')

@@ -5,7 +5,7 @@
  * server is listed for a field only when its payload has a value there.
  */
 
-const { collectFieldAvailability } = require('@src/utils/sync/fieldAvailability')
+const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
 const collect = (payloadByServer) => {
   const map = {}

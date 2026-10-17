@@ -88,7 +88,7 @@ const _DEAD_SYMBOLS_ROUND1 = {
     'cleanupMissingEpisodes',
     'clearCacheEntries',
   ],
-  'src/utils/flatSync/watchHistoryValidation.js': ['validateUserWatchHistory'],
+  'src/utils/sync/run/watchHistoryValidation.js': ['validateUserWatchHistory'],
   'src/utils/index.js': ['convertToPlainObjects', 'convertToDate', 'formatTime'],
   'src/utils/media/mediaFetcher.js': ['fetchMediaWithRedirect'],
   'src/utils/media/metadataBuilder.js': ['buildMetadataBreadcrumbs'],

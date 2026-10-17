@@ -209,7 +209,7 @@ export class TVShowSyncService {
         // The gates were not settled: the show keeps the ones it had before
         // this pass, which a pass that changed the subtree should have reset.
         // Reported as a failure, so the run is not taken as complete and the
-        // next tick is not skipped on those gates (sync/tickSkip).
+        // next tick is not skipped on those gates (sync/run/tickSkip).
         allResults.push(this.makeResult(
           showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Failed, [],
           ['Closing out the show failed: its gate was not settled']

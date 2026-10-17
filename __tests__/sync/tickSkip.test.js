@@ -21,19 +21,17 @@ jest.mock('@src/lib/mongodb', () => ({
 jest.mock('@src/utils/config', () => ({ getAllServers: () => mockServers }))
 jest.mock('@src/utils/fetchAllServerData', () => ({ fetchAllServerData: jest.fn() }))
 jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNeeded: jest.fn(async () => {}) }))
-jest.mock('@src/utils/flatSync/watchHistoryValidation', () => ({
+jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({
   validateWatchHistoryAgainstDatabase: jest.fn(async () => ({ markedValid: 1, markedInvalid: 0 })),
 }))
 jest.mock('@src/utils/sync/core/events', () => ({
   syncEventBus: { emitStarted: jest.fn(), emitComplete: jest.fn() },
 }))
-// sync/database's own imports; only its syncInfo helpers are used here
-jest.mock('@src/utils/sync/utils', () => ({ MediaType: { TV: 'tv', MOVIE: 'movie' } }))
 
-const { fetchSyncTick, currentBootId } = require('@src/utils/sync/tickSkip')
+const { fetchSyncTick, currentBootId } = require('@src/utils/sync/run/tickSkip')
 const { SYNC_GATE_VERSION } = require('@src/utils/sync/core/syncGate')
 const { fetchAllServerData } = require('@src/utils/fetchAllServerData')
-const { validateWatchHistoryAgainstDatabase } = require('@src/utils/flatSync/watchHistoryValidation')
+const { validateWatchHistoryAgainstDatabase } = require('@src/utils/sync/run/watchHistoryValidation')
 const { migratePlaybackStatusIfNeeded } = require('@src/utils/watchHistory/migrate')
 const { syncEventBus } = require('@src/utils/sync/core/events')
 

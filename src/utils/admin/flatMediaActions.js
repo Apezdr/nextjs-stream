@@ -41,7 +41,7 @@ import { revalidatePath } from 'next/cache'
 import clientPromise from '@src/lib/mongodb'
 import { isAdmin } from '@src/utils/routeAuth'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
-import { forgetAppliedPayloads } from '@src/utils/sync/appliedPayloads'
+import { forgetAppliedPayloads } from '@src/utils/sync/run/appliedPayloads'
 import {
   invalidateMovieDetailsCache,
   invalidateTVShowDetailsCache,
@@ -347,7 +347,7 @@ export async function deleteMovieAction(_prevState, payload = {}) {
   const existing = await col.findOne({ _id }, { projection: { title: 1, originalTitle: 1 } })
   const result = await col.deleteOne({ _id })
   // If a file server still has the movie, the next sync puts it back; a tick
-  // that skips (sync/tickSkip) would not, so make the next one a full pass.
+  // that skips (sync/run/tickSkip) would not, so make the next one a full pass.
   await forgetAppliedPayloads()
   if (result.deletedCount === 0) return fail('Movie not found.')
 
@@ -474,7 +474,7 @@ export async function deleteTVShowAction(_prevState, payload = {}) {
   await db.collection('FlatSeasons').deleteMany({ showId: _id })
   await db.collection('FlatTVShows').deleteOne({ _id })
   // If a file server still has the show, the next sync puts it back; a tick
-  // that skips (sync/tickSkip) would not, so make the next one a full pass.
+  // that skips (sync/run/tickSkip) would not, so make the next one a full pass.
   await forgetAppliedPayloads()
 
   revalidateMedia()

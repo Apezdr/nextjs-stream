@@ -5,7 +5,7 @@
  * its skip gate, in one write. When that write fails, the show keeps the gates
  * it had before the pass — and a pass that changed the show's subtree should
  * have reset them. The failure is reported as a Failed result, so the run is
- * not recorded as complete (sync/tickSkip: a failed title keeps the record
+ * not recorded as complete (sync/run/tickSkip: a failed title keeps the record
  * from being written) and no tick is skipped on those gates.
  */
 

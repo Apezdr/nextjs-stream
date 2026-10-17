@@ -77,7 +77,7 @@ const { MovieRepository } = require('@src/utils/sync/infrastructure/database/Mov
 const { resolveCleanupConfig } = require('@src/utils/sync/core/FieldAbsenceCleaner')
 const { SyncOperation, MediaType } = require('@src/utils/sync/core')
 // The availability map is built by the same function the admin sync route uses.
-const { collectFieldAvailability } = require('@src/utils/sync/fieldAvailability')
+const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
 // ---------------------------------------------------------------- in-memory collection
 

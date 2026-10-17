@@ -65,3 +65,71 @@ export function collectFieldAvailability(mediaData, currentPath, serverId, avail
     }
   }
 }
+
+/**
+ * Builds the per-server who-has-what maps for a sync pass:
+ * `{ movies: { [originalTitle]: map }, tv: { [originalTitle]: map } }`.
+ * Yields to the event loop every 50 titles (see below).
+ *
+ * @param {Object} fileServers - Fetched payloads by server id
+ * @returns {Promise<{movies: Object, tv: Object}>}
+ */
+export async function buildFieldAvailability(fileServers) {
+  // Initialize field-level availability maps
+  const fieldAvailability = {
+    movies: {},
+    tv: {},
+  }
+
+  // Build availability maps per server.
+  // The collectFieldAvailability recursion over the full library is the
+  // single largest synchronous block in a sync tick — with no yields it
+  // starves every in-flight request for its whole duration (observed as
+  // multi-second slow-request bursts aligned to sync starts). Yield to the
+  // event loop every N titles so concurrent requests keep getting turns.
+  const FIELD_AVAILABILITY_YIELD_EVERY = 50
+  const fieldAvailabilityStart = performance.now()
+  let titlesSinceYield = 0
+  const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve))
+
+  for (const [serverId, fileServer] of Object.entries(fileServers)) {
+    // For Movies - add null check to avoid errors on undefined
+    if (fileServer.movies) {
+      for (const [movieTitle, movieData] of Object.entries(fileServer.movies)) {
+        if (!fieldAvailability.movies[movieTitle]) {
+          fieldAvailability.movies[movieTitle] = {}
+        }
+
+        collectFieldAvailability(movieData, '', serverId, fieldAvailability.movies[movieTitle])
+
+        if (++titlesSinceYield >= FIELD_AVAILABILITY_YIELD_EVERY) {
+          titlesSinceYield = 0
+          await yieldToEventLoop()
+        }
+      }
+    }
+
+    // For TV Shows - add null check to avoid errors on undefined
+    if (fileServer.tv) {
+      for (const [showTitle, showData] of Object.entries(fileServer.tv)) {
+        if (!fieldAvailability.tv[showTitle]) {
+          fieldAvailability.tv[showTitle] = {}
+        }
+
+        collectFieldAvailability(showData, '', serverId, fieldAvailability.tv[showTitle])
+
+        if (++titlesSinceYield >= FIELD_AVAILABILITY_YIELD_EVERY) {
+          titlesSinceYield = 0
+          await yieldToEventLoop()
+        }
+      }
+    }
+  }
+
+  console.log(
+    `[SYNC PERF] fieldAvailability built in ${(performance.now() - fieldAvailabilityStart).toFixed(0)}ms ` +
+    `(${Object.keys(fieldAvailability.movies).length} movies, ${Object.keys(fieldAvailability.tv).length} shows)`
+  )
+
+  return fieldAvailability
+}
