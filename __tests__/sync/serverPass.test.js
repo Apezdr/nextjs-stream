@@ -8,9 +8,9 @@
  * migration and the watch-history validation) are recorded.
  *
  * The cases: what one pass writes, the side jobs it runs and the lines it
- * logs; the server config a pass refuses, or hands the services; which
- * errors fail the server and which only fail a title; and the one pool movies
- * and shows go through.
+ * logs; what the admins' sync notice counts as added; the server config a
+ * pass refuses, or hands the services; which errors fail the server and which
+ * only fail a title; and the one pool movies and shows go through.
  */
 
 const mockServers = [
@@ -129,6 +129,7 @@ const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
 const { ResourceManager } = require('@src/utils/sync/core/ResourceManager')
 const { MovieSyncService } = require('@src/utils/sync/domain/movies/MovieSyncService')
 const { TVShowSyncService } = require('@src/utils/sync/domain/tv/TVShowSyncService')
+const { MediaAdditionAnalyzer } = require('@src/utils/notifications/analyzers/MediaAdditionAnalyzer')
 
 // ---------------------------------------------------------------- in-memory MongoDB
 
@@ -435,6 +436,58 @@ describe('a full pass for one server', () => {
       component: 'FlatSync.NewArch',
       obj: { serverId: 'default', durationMs: expect.any(Number) },
     })
+  })
+})
+
+// ---------------------------------------------------------------- added
+
+describe('what the admins’ sync notice counts as added', () => {
+  it('counts the documents a run created', async () => {
+    const result = await runSync(oneServer())
+
+    expect(result.added).toEqual({ movies: 1, shows: 1, episodes: 2 })
+  })
+
+  it('does not count a document a run only rewrote', async () => {
+    await runSync(oneServer())
+
+    // A forced pass runs every title in full and rewrites what differs
+    const forced = await runSync(oneServer(), { forceSync: true })
+
+    expect(forced.changedMedia.movies.length).toBeGreaterThan(0)
+    expect(forced.changedMedia.episodes.length).toBe(2)
+    expect(forced.added).toEqual({ movies: 0, shows: 0, episodes: 0 })
+  })
+
+  it('counts only the new episode when a show gains one', async () => {
+    await runSync(oneServer())
+
+    const result = await runSync(oneServer({ tv: { [SHOW]: showPayload([1, 2, 3]) } }))
+
+    expect(result.added).toEqual({ movies: 0, shows: 0, episodes: 1 })
+    expect(docs('FlatEpisodes')).toHaveLength(3)
+  })
+
+  it('turns on no new-content notice: the analyzer reads no flag the count reads', async () => {
+    const result = await runSync(oneServer())
+
+    // What the pass hands the notifications side job (mocked above)
+    const analysis = MediaAdditionAnalyzer.analyzeSyncResults(result.flatSyncResults.default)
+    expect(analysis.summary).toMatchObject({ totalNewMovies: 0, totalNewEpisodes: 0 })
+    expect(analysis.shouldNotify).toBe(false)
+  })
+
+  it('counts a document two servers have once: the second server’s pass updates it', async () => {
+    const fileServers = {
+      ...oneServer(),
+      server2: { config: config('server2'), movies: { [MOVIE]: moviePayload() }, tv: { [SHOW]: showPayload() } },
+    }
+
+    const result = await runSync(fileServers)
+
+    expect(result.errors).toEqual([])
+    expect(result.added).toEqual({ movies: 1, shows: 1, episodes: 2 })
+    expect(docs('FlatMovies')).toHaveLength(1)
   })
 })
 

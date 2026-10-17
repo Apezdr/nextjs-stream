@@ -144,6 +144,26 @@ it('runs the pass on a tick that is not skipped, with the ETags of the payloads 
   expect(console.error).not.toHaveBeenCalledWith('Sync operation failed:', expect.anything())
 })
 
+it('tells the admins what the run added: the documents its passes created, per kind', async () => {
+  const fileServers = { default: { config: { priority: 1 }, movies: { 'Movie A': {} }, tv: {} } }
+  mockFetchSyncTick.mockResolvedValue({ skipped: false, fileServers, errors: undefined, etags: ETAGS })
+  mockSyncAllServers.mockResolvedValue({
+    errors: [],
+    changedMedia: { movies: ['Movie A', 'Movie B'], shows: ['Show A'], seasons: [], episodes: [] },
+    added: { movies: 1, shows: 1, episodes: 4 },
+  })
+
+  await startSync()
+  await untilIdle()
+
+  expect(mockNotify).toHaveBeenCalledWith('default', {
+    moviesAdded: 1,
+    showsAdded: 1,
+    episodesAdded: 4,
+    duration: expect.stringMatching(/ minutes$/),
+  })
+})
+
 it('never lets a sync started from the admin UI skip; the per-title gates still apply', async () => {
   // A UI request carries no X-Webhook-ID: it was authenticated as an admin
   const fileServers = { default: { config: { priority: 1 }, movies: {}, tv: { 'Show A': {} } } }

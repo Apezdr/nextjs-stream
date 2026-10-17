@@ -13,8 +13,9 @@
  *   3. TV: every show, with its seasons and episodes, through TVShowSyncService.
  *      Movies and shows share one pool, as wide as the ResourceManager's
  *      syncConcurrency; the last movie finishes before the first show starts.
- *   4. results: per kind, what was processed, skipped or failed, and the
- *      entities the pass changed (post-sync cache invalidation).
+ *   4. results: per kind, what was processed, skipped or failed; the entities
+ *      the pass changed (post-sync cache invalidation) and the documents it
+ *      created (the admins' "sync complete" notice).
  *   5. this server's side jobs: new-content notifications, the PlaybackStatus
  *      migration and the watch-history validation.
  *
@@ -97,6 +98,8 @@ export interface ServerPassResult {
   migration: { completed: boolean; error?: string } | null
   watchHistoryValidation: any
   changedMedia: ChangedMedia
+  /** Documents this pass created (not updated): the admins' sync notice counts them. */
+  added: { movies: number; shows: number; episodes: number }
 }
 
 type TitleHashes = {
@@ -140,6 +143,7 @@ export async function runServerPass(
 
   const startTime = Date.now()
   const results = emptyResults()
+  const added = { movies: new Set<string>(), shows: new Set<string>(), episodes: new Set<string>() }
 
   const { movieService, tvShowService } = await createServices()
   const resourceManager = ResourceManager.getInstance()
@@ -182,7 +186,7 @@ export async function runServerPass(
     logSummary('Movie', movieResults, Date.now() - movieStart)
 
     results.movies = translateMovieResults(movieResults)
-    collectChangedMedia(movieResults, results.changedMedia)
+    collectChangedMedia(movieResults, results.changedMedia, added)
     log.info(
       {
         serverId: serverConfig.id,
@@ -230,7 +234,7 @@ export async function runServerPass(
     logSummary('TV', tvResults, performance.now() - tvStart)
 
     translateTVResults(tvResults, results, serverConfig.id)
-    collectChangedMedia(tvResults, results.changedMedia)
+    collectChangedMedia(tvResults, results.changedMedia, added)
     tvLog.info(
       {
         serverId: serverConfig.id,
@@ -247,6 +251,7 @@ export async function runServerPass(
   }
 
   // ---- 4. Results ----
+  results.added = { movies: added.movies.size, shows: added.shows.size, episodes: added.episodes.size }
   results.performance.endTime = new Date()
   results.performance.duration = Date.now() - startTime
 
@@ -448,6 +453,7 @@ function emptyResults(): ServerPassResult {
     migration: null,
     watchHistoryValidation: null,
     changedMedia: { movies: [], shows: [], seasons: [], episodes: [] },
+    added: { movies: 0, shows: 0, episodes: 0 },
   }
 }
 
@@ -522,27 +528,36 @@ function translateTVResults(tvResults: SyncResult[], results: ServerPassResult, 
 }
 
 /**
- * The entities the results that completed (were not skipped) changed, by
- * display title: the media page cache tags key on it. A movie and a show fall
- * back to the entity id when no display title was stamped; a season or an
- * episode without its numbers is left out, since a partial tag would be wrong.
+ * From the results that completed (were not skipped): the entities changed,
+ * by display title (the media page cache tags key on it), and the documents
+ * created. A movie and a show fall back to the entity id when no display title
+ * was stamped; a season or an episode without its numbers is left out, since a
+ * partial tag would be wrong.
  *
  * "Completed" means the smart upsert ran, not that a field changed; the
  * pass's log compares these counts with the processed counts.
  */
-function collectChangedMedia(syncResults: SyncResult[], changedMedia: ChangedMedia) {
+function collectChangedMedia(
+  syncResults: SyncResult[],
+  changedMedia: ChangedMedia,
+  added: { movies: Set<string>; shows: Set<string>; episodes: Set<string> }
+) {
   for (const r of syncResults) {
     if (r.status !== SyncStatus.Completed) continue
     const md = r.metadata || {}
+    // Set by the services when no document existed before this pass wrote one.
+    const created = md.created === true
     switch (r.mediaType) {
       case MediaType.Movie: {
         const title = md.displayTitle || r.entityId
         if (title) changedMedia.movies.push(title)
+        if (created) added.movies.add(r.entityId)
         break
       }
       case MediaType.TVShow: {
         const title = md.displayTitle || r.entityId
         if (title) changedMedia.shows.push(title)
+        if (created) added.shows.add(r.entityId)
         break
       }
       case MediaType.Season: {
@@ -555,6 +570,7 @@ function collectChangedMedia(syncResults: SyncResult[], changedMedia: ChangedMed
         if (md.displayTitle && md.seasonNumber != null && md.episodeNumber != null) {
           changedMedia.episodes.push({ title: md.displayTitle, season: md.seasonNumber, episode: md.episodeNumber })
         }
+        if (created) added.episodes.add(r.entityId)
         break
       }
       default:

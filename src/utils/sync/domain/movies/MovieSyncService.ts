@@ -364,7 +364,13 @@ export class MovieSyncService {
       }
       for (const r of results) {
         if (r.status === SyncStatus.Completed) {
-          r.metadata = { ...r.metadata, displayTitle: movieDisplayTitle }
+          r.metadata = {
+            ...r.metadata,
+            displayTitle: movieDisplayTitle,
+            // No document existed before this pass inserted one (counted for
+            // the admins' sync notice).
+            ...(existingMovie ? {} : { created: true }),
+          }
         }
       }
       // Surface field-absence diagnostics on the first completed result (once).

@@ -69,6 +69,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       reason: 'orchestration_in_progress',
       errors: [],
       changedMedia: { movies: [], shows: [], seasons: [], episodes: [] },
+      added: { movies: 0, shows: 0, episodes: 0 },
     }
   }
   setCurrentSyncRunId(syncRunId)
@@ -98,6 +99,11 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     // title. Drives the post-sync cache-invalidation POST in the route handler.
     // Populated from each server's syncResult.changedMedia (new architecture).
     changedMedia: { movies: [], shows: [], seasons: [], episodes: [] },
+    // Documents the passes created (not updated), summed across servers: the
+    // admins' "sync complete" notice reports them. A document one server's
+    // pass creates is an update to every later server's pass, so none is
+    // counted twice.
+    added: { movies: 0, shows: 0, episodes: 0 },
   }
 
   // let contentAddedToDB = {
@@ -284,6 +290,9 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
           results.changedMedia.shows.push(...(syncResult.changedMedia.shows || []))
           results.changedMedia.seasons.push(...(syncResult.changedMedia.seasons || []))
           results.changedMedia.episodes.push(...(syncResult.changedMedia.episodes || []))
+        }
+        for (const kind of ['movies', 'shows', 'episodes']) {
+          results.added[kind] += syncResult?.added?.[kind] || 0
         }
 
         // Signal that this server finished successfully

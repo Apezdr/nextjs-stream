@@ -168,7 +168,9 @@ export class TVShowSyncService {
       allResults.push(this.makeResult(
         showTitle, context, MediaType.TVShow, SyncOperation.Metadata,
         SyncStatus.Completed, [`Upserted TV show "${showTitle}"`, ...cleanupPlan.changes], [],
-        { displayTitle: showEntity.title }
+        // `created`: no document existed before this write (counted for the
+        // admins' sync notice).
+        { displayTitle: showEntity.title, ...(existing ? {} : { created: true }) }
       ))
 
       // 4. Bulk-upsert all seasons (one bulkWrite per show)

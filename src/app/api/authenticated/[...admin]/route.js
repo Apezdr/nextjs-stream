@@ -880,10 +880,11 @@ async function handleSync(webhookId, request, syncOptions = {}) {
       const serverNames = Object.keys(fileServers);
       const serverName = serverNames.length > 0 ? serverNames[0] : 'Unknown Server';
       
-      // Extract sync statistics from the result
+      // The documents this run created (not updated), across every server
       const stats = {
-        moviesAdded: result.moviesAdded || 0,
-        episodesAdded: result.episodesAdded || 0,
+        moviesAdded: result.added?.movies || 0,
+        showsAdded: result.added?.shows || 0,
+        episodesAdded: result.added?.episodes || 0,
         duration: `${durationMinutes} minutes`
       };
       

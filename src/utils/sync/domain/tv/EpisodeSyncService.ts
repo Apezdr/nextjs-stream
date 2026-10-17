@@ -248,7 +248,7 @@ export class EpisodeSyncService {
         await this.episodeRepository.smartBulkUpsert(episodeOps)
       }
 
-      for (const { merged: entity, cleanupChanges, gateLeftOpen, documentChanged } of episodeOps) {
+      for (const { merged: entity, existing, cleanupChanges, gateLeftOpen, documentChanged } of episodeOps) {
         results.push(this.makeResult(
           `${label}E${entity.episodeNumber}`, context,
           SyncStatus.Completed,
@@ -260,6 +260,9 @@ export class EpisodeSyncService {
             // Read by TVShowSyncService when it decides the show's own gate.
             ...(gateLeftOpen ? { gateLeftOpen: true } : {}),
             ...(documentChanged ? { documentChanged: true } : {}),
+            // No document existed before this write (counted for the admins'
+            // sync notice).
+            ...(existing ? {} : { created: true }),
           }
         ))
       }
