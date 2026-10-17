@@ -21,7 +21,7 @@ import {
   planFieldCleanup
 } from '../../core'
 
-import { SeasonRepository, TVShowRepository, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
+import { SeasonRepository, TVShowRepository, fetchMetadataMultiServer, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
 import { seedDiscovery } from '../../core/discovery'
 import {
   getServersReportingField,
@@ -29,7 +29,6 @@ import {
   seasonsAcrossServers,
 } from '@src/utils/sync/core/ownership'
 import { changesDocument } from '@src/utils/sync/core/syncGate'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Season')

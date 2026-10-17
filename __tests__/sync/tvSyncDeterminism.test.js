@@ -83,7 +83,7 @@ jest.mock('@src/utils/config', () => ({
 jest.mock('@src/utils/flatDatabaseUtils', () => ({
   generateNormalizedVideoId: (url) => `nid:${url}`,
 }))
-jest.mock('@src/utils/admin_utils', () => ({
+jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({
   // Stands in for the HTTP fetch of a metadata or blurhash file.
   fetchMetadataMultiServer: jest.fn(async (serverId, url, type) => {
     // Like the real one: no file to fetch is an empty answer, not an error.

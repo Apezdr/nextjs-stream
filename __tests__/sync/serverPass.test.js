@@ -75,7 +75,7 @@ jest.mock('p-limit', () => (width) => {
       next()
     })
 })
-jest.mock('@src/utils/admin_utils', () => ({
+jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({
   // A metadata, or a blurhash, file on the file server.
   fetchMetadataMultiServer: jest.fn(async (serverId, url, type) => {
     if (!url) return {}
@@ -463,7 +463,7 @@ describe('the title hashes a pass fetches from the server’s Node.js API', () =
       return { ok: false, status: 404 }
     })
 
-  const { fetchMetadataMultiServer } = require('@src/utils/admin_utils')
+  const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
   const movieMetadataFetches = () =>
     fetchMetadataMultiServer.mock.calls.filter(([, url, type]) => type === 'file' && url === moviePayload().urls.metadata)
       .length
@@ -720,6 +720,45 @@ describe('errors', () => {
 })
 
 // ---------------------------------------------------------------- the pool
+
+describe('the HTTP limiter', () => {
+  const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
+
+  it('is not held by the caller of a file fetch: the fetch takes its own slot', async () => {
+    // A caller that held a ResourceManager slot around fetchMetadataMultiServer
+    // would wait for a second slot while holding one: with every slot held that
+    // way, the pass would never finish.
+    const fetchFile = fetchMetadataMultiServer.getMockImplementation()
+    const heldByCaller = []
+    fetchMetadataMultiServer.mockImplementation(async (...args) => {
+      heldByCaller.push(ResourceManager.getInstance().getStats().activeHttpRequests)
+      return fetchFile(...args)
+    })
+    // The asset step cannot read the movie's poster blurhash, so the blurhash
+    // step fetches it; the show, its season and its episode publish one too.
+    const { httpGet } = require('@src/lib/httpHelper')
+    httpGet.mockRejectedValueOnce(new Error('timeout of 3000ms exceeded'))
+    const show = showPayload([1])
+    show.posterBlurhash = `${SHOW_ROOT}/show_poster.jpg.blurhash`
+    show.seasons['Season 1'].seasonPosterBlurhash = `${SEASON_FOLDER}/season_poster.jpg.blurhash`
+    show.seasons['Season 1'].episodes[key(1)].thumbnailBlurhash = `${SEASON_FOLDER}/1 - Thumbnail.jpg.blurhash`
+    fetchMetadataMultiServer.mockClear()
+    try {
+      const result = await runSync(oneServer({ tv: { [SHOW]: show } }))
+
+      expect(result.errors).toEqual([])
+      const fetched = fetchMetadataMultiServer.mock.calls.map(([, url, type]) => `${type} ${url}`)
+      // The metadata of the movie, the show and the episode; the blurhashes of
+      // the movie's poster, the show's poster, the season's and the episode's
+      expect(fetched).toHaveLength(7)
+      expect(fetched.filter((call) => call.startsWith('blurhash '))).toHaveLength(4)
+      expect(fetched).toContain(`blurhash ${moviePayload().urls.posterBlurhash}`)
+      expect(heldByCaller).toEqual(Array(7).fill(0))
+    } finally {
+      fetchMetadataMultiServer.mockImplementation(fetchFile)
+    }
+  })
+})
 
 describe('movies and shows go through one pool', () => {
   beforeEach(() => {

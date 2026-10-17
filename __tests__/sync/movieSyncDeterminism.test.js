@@ -75,7 +75,7 @@ jest.mock('@src/utils/config', () => ({
   getServer: (id) => mockServers[id],
   multiServerHandler: {},
 }))
-jest.mock('@src/utils/admin_utils', () => ({
+jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({
   // Like the real one: a server with no metadata file for the title is not
   // asked at all, and the answer is an empty object.
   fetchMetadataMultiServer: jest.fn(async (serverId, url, type) => {
@@ -679,7 +679,7 @@ describe('two servers with subtitles', () => {
 // ---------------------------------------------------------------- the skip gate
 
 describe('skipping an unchanged title', () => {
-  const adminUtils = require('@src/utils/admin_utils')
+  const adminUtils = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
   const statuses = (results) => results.map((r) => r.status)
 
   it('skips every server on a run in which nothing changed', async () => {
@@ -1593,7 +1593,7 @@ describe('source fields after the owner was down when the title was first synced
   })
 
   it('do not make a settled title refetch its metadata', async () => {
-    const adminUtils = require('@src/utils/admin_utils')
+    const adminUtils = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
     const payloads = { A: withVideo(), B: withVideo() }
     const docs = []
     await run(docs, payloads, ['A', 'B'])

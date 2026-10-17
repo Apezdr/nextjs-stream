@@ -26,12 +26,11 @@ import {
   syncEventBus,
 } from '../../core'
 
-import { MovieRepository, isTopLevelFieldLocked } from '../../infrastructure'
+import { MovieRepository, fetchMetadataMultiServer, isTopLevelFieldLocked } from '../../infrastructure'
 import {
   isCurrentServerHighestPriorityForField,
   isCurrentServerHighestPriorityForReportedField,
 } from '@src/utils/sync/core/ownership'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
 // ────────────────────────────────────────────────────────────────────────────
 // Field-path constants used in fieldAvailability lookups
@@ -350,9 +349,9 @@ export class BlurhashStrategy implements SyncStrategy {
       }
     }
 
-    const blurhash = context.resourceManager
-      ? await context.resourceManager.throttleHttp(doFetch)
-      : await doFetch()
+    // fetchMetadataMultiServer takes the ResourceManager's HTTP slot itself:
+    // wrapping it in throttleHttp would hold one slot while waiting for another.
+    const blurhash = await doFetch()
 
     // The file server publishes this blurhash, and it is still missing after
     // this attempt (or was fetched after all). MovieSyncService reads the set:

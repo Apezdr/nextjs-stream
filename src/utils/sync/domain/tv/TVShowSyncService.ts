@@ -23,7 +23,7 @@ import {
   type CleanableField
 } from '../../core'
 
-import { TVShowRepository, EpisodeRepository, SeasonRepository, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
+import { TVShowRepository, EpisodeRepository, SeasonRepository, fetchMetadataMultiServer, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
 import { SeasonSyncService } from './SeasonSyncService'
 import { EpisodeSyncService } from './EpisodeSyncService'
 import {
@@ -37,7 +37,6 @@ import {
 } from '@src/utils/sync/core/syncGate'
 import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates } from '../../core/syncGate'
 import isEqual from 'lodash/isEqual'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { syncLogger } from '../../core/logger'
 import { seedDiscovery, applyFirstSeen } from '../../core/discovery'
 import { resolveMediaId } from '../../core/deliveryFacts'

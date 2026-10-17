@@ -24,7 +24,7 @@ jest.mock('@src/utils/config', () => ({
   multiServerHandler: { getHandler: () => ({ createFullURL: (path) => `https://A.example${path}` }) },
 }))
 jest.mock('@src/utils/flatDatabaseUtils', () => ({ generateNormalizedVideoId: (url) => `nid:${url}` }))
-jest.mock('@src/utils/admin_utils', () => ({ fetchMetadataMultiServer: jest.fn(async () => ({})) }))
+jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({ fetchMetadataMultiServer: jest.fn(async () => ({})) }))
 
 const { TVShowSyncService } = require('@src/utils/sync/domain/tv/TVShowSyncService')
 const { resolveCleanupConfig } = require('@src/utils/sync/core/FieldAbsenceCleaner')

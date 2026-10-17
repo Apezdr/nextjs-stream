@@ -21,13 +21,13 @@ import {
 import { syncLogger } from '../../../core/logger'
 
 import {
-  MovieRepository
+  MovieRepository,
+  fetchMetadataMultiServer
 } from '../../../infrastructure'
 
 import {
   isCurrentServerHighestPriorityForReportedField,
 } from '@src/utils/sync/core/ownership'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 
 export class MovieMetadataStrategy implements SyncStrategy {
   readonly name = 'MovieMetadataStrategy'
@@ -383,39 +383,31 @@ export class MovieMetadataStrategy implements SyncStrategy {
 
   /**
    * Extract metadata from file server using originalTitle (filesystem key)
-   * Now uses fetchMetadataMultiServer for caching and reliability
-   * Respects ResourceManager HTTP throttling when available in context
+   * through fetchMetadataMultiServer (caching, retries). That takes the
+   * ResourceManager's HTTP slot itself: wrapping it in throttleHttp here
+   * would hold one slot while waiting for another.
    */
   private async extractMetadata(originalTitle: string, context: SyncContext): Promise<Record<string, any> | null> {
-    const doFetch = async () => {
-      try {
-        // Get metadata URL from fileserver data if available
-        const fileServerData = context.fileServerData?.movies?.[originalTitle]
-        const metadataRelativePath = fileServerData?.urls?.metadata
-        
-        // Use fetchMetadataMultiServer from admin_utils for caching and reliability
-        const metadata = await fetchMetadataMultiServer(
-          context.serverConfig.id,
-          metadataRelativePath,
-          'file',
-          'movie',
-          originalTitle
-        )
-        
-        syncLogger.debug(`✅ Fetched metadata for "${originalTitle}" from ${context.serverConfig.id}`)
-        return metadata
+    try {
+      // Get metadata URL from fileserver data if available
+      const fileServerData = context.fileServerData?.movies?.[originalTitle]
+      const metadataRelativePath = fileServerData?.urls?.metadata
 
-      } catch (error) {
-        syncLogger.error(`Failed to extract metadata for ${originalTitle}:`, error)
-        return null
-      }
-    }
+      const metadata = await fetchMetadataMultiServer(
+        context.serverConfig.id,
+        metadataRelativePath,
+        'file',
+        'movie',
+        originalTitle
+      )
 
-    // Throttle through ResourceManager if available
-    if (context.resourceManager) {
-      return context.resourceManager.throttleHttp(doFetch)
+      syncLogger.debug(`✅ Fetched metadata for "${originalTitle}" from ${context.serverConfig.id}`)
+      return metadata
+
+    } catch (error) {
+      syncLogger.error(`Failed to extract metadata for ${originalTitle}:`, error)
+      return null
     }
-    return doFetch()
   }
 
   /**

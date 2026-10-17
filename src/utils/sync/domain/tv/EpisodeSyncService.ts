@@ -30,6 +30,7 @@ import {
   SeasonRepository,
   TVShowRepository,
   captionUrls,
+  fetchMetadataMultiServer,
   fileServerUrl,
   isTopLevelFieldLocked,
 } from '../../infrastructure'
@@ -43,7 +44,6 @@ import {
   availabilityFingerprintForPrefixes,
   payloadFingerprint,
 } from '@src/utils/sync/core/syncGate'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { warnOnJitIdentityFork } from '@src/utils/sync/core/jitIdentityParity'
 import { seedDiscovery, applyFirstSeen } from '@src/utils/sync/core/discovery'

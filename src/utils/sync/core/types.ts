@@ -96,7 +96,9 @@ export interface SyncContext {
   }
 
   // Resource manager for throttling HTTP requests and monitoring memory
-  // Strategies should use context.resourceManager?.throttleHttp() for outbound calls
+  // Strategies should use context.resourceManager?.throttleHttp() for outbound
+  // calls they make themselves. Not around fetchMetadataMultiServer, which
+  // takes its own slot (infrastructure/fileSystem/fetchFile)
   resourceManager?: {
     throttleHttp: <T>(fn: () => Promise<T>) => Promise<T>
     isMemoryPressure: () => boolean
