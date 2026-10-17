@@ -145,29 +145,3 @@ export function nextSyncGates(
   const { [serverId]: _dropped, ...others } = stored
   return others
 }
-
-/** Every collection whose documents carry `syncGates`. */
-export const GATED_COLLECTIONS = ['FlatMovies', 'FlatTVShows', 'FlatSeasons', 'FlatEpisodes'] as const
-
-/**
- * Remove every stored gate, so the next run looks at every title again.
- *
- * For a writer that does not keep the gates: the legacy flat sync writes each
- * field with its own update, and a gate left in place after it would let the
- * next run skip a title those rules have just rewritten. It throws when a
- * collection cannot be updated — the caller must not go on to write under
- * gates it failed to remove.
- *
- * @param db - The media database (anything with `collection(name).updateMany`)
- * @returns How many documents had a gate removed
- */
-export async function clearSyncGates(db: {
-  collection: (name: string) => { updateMany: (filter: any, update: any) => Promise<any> }
-}): Promise<number> {
-  const results = await Promise.all(
-    GATED_COLLECTIONS.map((name) =>
-      db.collection(name).updateMany({ syncGates: { $exists: true } }, { $unset: { syncGates: '' } })
-    )
-  )
-  return results.reduce((total, result) => total + (result?.modifiedCount ?? 0), 0)
-}

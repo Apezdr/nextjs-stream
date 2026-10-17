@@ -2,7 +2,6 @@ import { ObjectId } from 'mongodb'
 import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
 import { updateLastSynced } from './sync/database'
-import { processMovie, processTVShow } from './sync_utils'
 import {
   syncToFlatStructure,
 } from './flatSync'
@@ -34,107 +33,10 @@ const SYNC_LOCK_WATCHDOG_MS = (() => {
 })()
 
 /**
- * Syncs missing media items that are missing from the database.
- * @param {Object} missingMedia - Missing media items
- * @param {Object} fileServer - File server data
- * @param {Object} serverConfig - Server configuration
- * @param {Object} contentAddedToDB - Content already added to DB
- * @returns {Promise<Object>} Sync results
- */
-export async function syncMissingMedia(missingMedia, fileServer, serverConfig, contentAddedToDB) {
-  const client = await clientPromise
-  const results = {
-    processed: { movies: [], tv: [] },
-    errors: { movies: [], tv: [] },
-  }
-
-  // Filter out contentAddedToDB from missingMedia
-  missingMedia.movies = missingMedia.movies.filter(
-    (movie) => !contentAddedToDB.movies.includes(movie)
-  )
-  missingMedia.tv = missingMedia.tv.filter((show) => !contentAddedToDB.tv.includes(show))
-
-  try {
-    // Process movies and TV shows concurrently
-    const [movieResults, tvResults] = await Promise.all([
-      // Process all movies concurrently
-      Promise.allSettled(
-        missingMedia.movies.map(async (movieTitle) => {
-          try {
-            await processMovie(client, movieTitle, fileServer, serverConfig)
-            results.processed.movies.push({
-              title: movieTitle,
-              serverId: serverConfig.id,
-            })
-            contentAddedToDB.movies.push(movieTitle)
-          } catch (error) {
-            results.errors.movies.push({
-              title: movieTitle,
-              serverId: serverConfig.id,
-              error: error.message,
-            })
-          }
-        })
-      ),
-
-      // Process all TV shows concurrently
-      Promise.allSettled(
-        missingMedia.tv.map(async (show) => {
-          try {
-            await processTVShow(client, show, fileServer, show.showTitle, serverConfig)
-            results.processed.tv.push({
-              title: show.showTitle,
-              serverId: serverConfig.id,
-              seasons: show.seasons.length,
-            })
-            contentAddedToDB.tv.push(show.showTitle)
-          } catch (error) {
-            results.errors.tv.push({
-              title: show.showTitle,
-              serverId: serverConfig.id,
-              error: error.message,
-            })
-          }
-        })
-      ),
-    ])
-
-    // Log results
-    if (results.processed.movies.length > 0) {
-      console.log(
-        `Successfully processed ${results.processed.movies.length} movies from server ${serverConfig.id}`
-      )
-    }
-    if (results.processed.tv.length > 0) {
-      console.log(
-        `Successfully processed ${results.processed.tv.length} TV shows from server ${serverConfig.id}`
-      )
-    }
-    if (results.errors.movies.length > 0) {
-      console.error(
-        `Failed to process ${results.errors.movies.length} movies from server ${serverConfig.id}`
-      )
-    }
-    if (results.errors.tv.length > 0) {
-      console.error(
-        `Failed to process ${results.errors.tv.length} TV shows from server ${serverConfig.id}`
-      )
-    }
-
-    return results
-  } catch (error) {
-    console.error(`Error in syncMissingMedia for server ${serverConfig.id}:`, error)
-    throw new Error(`Failed to sync missing media from server ${serverConfig.id}: ${error.message}`)
-  }
-}
-
-/**
  * Performs a multi-server sync operation.
  * @param {Object} fileServers - File server data
  * @param {Object} fieldAvailability - Field availability map
  * @param {Object} options - Additional sync options
- * @param {boolean} options.useNewArchitecture - Force use of new architecture (overrides feature flag)
- * @param {boolean} options.forceOldArchitecture - Force use of old architecture (overrides feature flag)
  * @param {Object} [options.payloadETags] - Per server id, the ETags of the TV and
  *   movie payloads in `fileServers` (fetchSyncTick). When given and the pass
  *   completes for every server, they are recorded so the next tick can skip.
@@ -315,8 +217,6 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
             false,
             Boolean(options.forceSync),
             {
-              useNewArchitecture: options.useNewArchitecture,
-              forceOldArchitecture: options.forceOldArchitecture,
               // Authoritative-pass gate for field-absence cleanup: true only when
               // every enabled file server responded this run (computed in the route
               // handler). Threaded unchanged into SyncContext.cleanup.
@@ -384,9 +284,8 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
         results.flatSyncResults = results.flatSyncResults || {}
         results.flatSyncResults[serverId] = syncResult
 
-        // Accumulate changed entities for post-sync cache invalidation. Only the
-        // new architecture populates changedMedia; the old-arch path omits it, so
-        // guard. Duplicates across servers are fine — the revalidate route builds
+        // Accumulate changed entities for post-sync cache invalidation. Guarded
+        // because a server's result may carry no changedMedia. Duplicates across servers are fine — the revalidate route builds
         // a tag Set which dedupes.
         if (syncResult?.changedMedia) {
           results.changedMedia.movies.push(...(syncResult.changedMedia.movies || []))

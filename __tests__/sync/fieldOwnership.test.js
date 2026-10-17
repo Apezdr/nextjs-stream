@@ -19,7 +19,6 @@ jest.mock('@src/utils/config', () => ({
   }),
   multiServerHandler: { getHandler: jest.fn() },
 }))
-jest.mock('@src/utils/sync/captions', () => ({ sortSubtitleEntries: jest.fn() }))
 
 const {
   isCurrentServerHighestPriorityForField,

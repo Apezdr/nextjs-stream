@@ -35,11 +35,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `src/contexts/` - React contexts for global state
 
 ### Database Architecture
-Two sync implementations exist:
-1. **Traditional Sync** (`src/utils/sync/`) - Nested document structure
-2. **Flat Database Sync** (`src/utils/flatSync/`) - Separate collections for Movies, TV Shows, Seasons, Episodes
+The sync writes to flat collections (`src/utils/flatSync/`, `src/utils/sync/`) - separate collections for Movies, TV Shows, Seasons, Episodes.
 
-Current implementation uses flat database structure for better performance with large datasets.
+The flat database structure gives better performance with large datasets.
 
 ### Key Components
 
@@ -145,12 +143,7 @@ Create `.env.local` with required variables:
 
 ### Sync System
 
-#### Two Sync Architectures (Current State)
-
-**1. New Domain-Driven Sync** (`src/utils/sync/domain/`)
-- The live default: `shouldUseNewArchitecture()` (`src/utils/sync/featureFlags.js`)
-  returns `true` unless explicitly forced off, and `USE_NEW_SYNC_ARCHITECTURE=true`
-  on all deployments
+#### Domain-Driven Sync (`src/utils/sync/domain/`)
 - Modern architecture with TypeScript support
 - Strategy pattern with pluggable sync operations
 - Domain-specific services (MovieSyncService, EpisodeSyncService, etc.)
@@ -158,15 +151,9 @@ Create `.env.local` with required variables:
   `EpisodeRepository.smartBulkUpsert` / `SeasonRepository.smartBulkUpsert`),
   which is where `lockedFields` enforcement (`computeDiff`) and `manualFields`
   cleanup (`manualFieldsToClear`) live
-
-**2. Traditional Flat Sync** (`src/utils/flatSync/`)
-- Legacy per-field write path; still used as an automatic fallback if the new
-  architecture throws or fails a compatibility check (`flatSync/index.js`)
 - Field-level priority system with `fieldAvailability`
 - Uses `originalTitle` as database keys
 - Granular source tracking per field
-- No single write chokepoint — each field (poster, backdrop, metadata, etc.)
-  issues its own independent `updateOne` per media type
 
 #### Critical Sync Architecture Rules
 

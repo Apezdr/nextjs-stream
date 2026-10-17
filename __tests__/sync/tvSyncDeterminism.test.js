@@ -51,7 +51,6 @@ jest.mock('@src/utils/sync/core/ResourceManager', () => ({
   ResourceManager: { getInstance: () => ({ dbWriteLimitFor: () => (fn) => fn() }) },
   getResourceManager: () => ({}),
 }))
-jest.mock('@src/utils/sync/captions', () => ({ sortSubtitleEntries: (entries) => entries }))
 jest.mock('@src/lib/httpHelper', () => ({ httpGet: jest.fn() }))
 jest.mock('@src/lib/mongodb', () => ({ __esModule: true, default: Promise.resolve({}) }))
 jest.mock('@src/lib/logger', () => ({

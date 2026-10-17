@@ -24,7 +24,6 @@ jest.mock('chalk', () => {
   const paint = new Proxy((text) => text, { get: () => paint })
   return { __esModule: true, default: paint }
 })
-jest.mock('@src/utils/sync_utils', () => ({}))
 jest.mock('@src/utils/flatSync', () => ({ syncToFlatStructure: jest.fn() }))
 jest.mock('@src/utils/flatSync/postSyncCleanup', () => ({ runPostSyncCleanup: jest.fn(async () => ({})) }))
 jest.mock('@src/utils/flatSync/preTagSyncRunId', () => ({ preTagSyncRunId: jest.fn() }))

@@ -12,12 +12,6 @@ export * from './shared'
 // TV domain (TVShowSyncService, SeasonSyncService, EpisodeSyncService)
 export * from './tv'
 
-// TV show domain
-export * from './tvShows'
-
-// Season domain
-export * from './seasons'
-
 // Re-export key domain services for convenience
 export {
   MovieSyncService,
@@ -33,12 +27,6 @@ export {
   EpisodeSyncService as EpisodeSyncServiceCore
 } from './tv'
 
-export {
-  TVShowSyncService,
-  TVShowMetadataStrategy,
-  TVShowAssetStrategy
-} from './tvShows'
-
 // EpisodeSyncService is the production read-merge-replace service from './tv'
 // (re-exported via `export * from './tv'` above, and aliased as
 // EpisodeSyncServiceCore). The former strategy-based './episodes' variant was
@@ -46,9 +34,3 @@ export {
 export {
   EpisodeSyncService
 } from './tv'
-
-export {
-  SeasonSyncService,
-  SeasonMetadataStrategy,
-  SeasonPosterStrategy
-} from './seasons'

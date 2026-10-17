@@ -37,7 +37,6 @@ jest.mock('@src/utils/sync/core/ResourceManager', () => ({
   ResourceManager: class {},
   getResourceManager: () => ({}),
 }))
-jest.mock('@src/utils/sync/captions', () => ({ sortSubtitleEntries: (entries) => entries }))
 jest.mock('@src/lib/httpHelper', () => ({
   // The asset strategy reads a blurhash file with this.
   httpGet: jest.fn(async (url) => {

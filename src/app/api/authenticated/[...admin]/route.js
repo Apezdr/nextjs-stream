@@ -897,18 +897,6 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     const importSettings = await getFileServerImportSettings()
     console.log('Import Settings:', importSettings)
 
-    // Parse URL parameters for sync architecture options
-    const url = new URL(request.url);
-    const useNewArchitecture = url.searchParams.get('useNewArchitecture') === 'true';
-    const forceOldArchitecture = url.searchParams.get('forceOldArchitecture') === 'true';
-    
-    // Log architecture choice for debugging
-    if (useNewArchitecture) {
-      console.log('🆕 Admin API: Using NEW sync architecture (query parameter override)');
-    } else if (forceOldArchitecture) {
-      console.log('🔄 Admin API: Forcing OLD sync architecture (query parameter override)');
-    }
-
     // Ensure MongoDB indexes exist before the first bulk write.
     // createDatabaseAdapter is idempotent — it initialises the singleton adapter
     // and calls createIndexes() on all four collections (Movies, TVShows, Seasons,
@@ -924,10 +912,8 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     // deletion and wipe good data.
     const allEnabledServersProbed = !errors && Object.keys(fileServers || {}).length > 0
 
-    // Perform the actual sync with architecture options
+    // Perform the actual sync
     const result = await syncAllServers(fileServers, fieldAvailability, {
-      useNewArchitecture,
-      forceOldArchitecture,
       forceSync,
       allEnabledServersProbed,
       // Recorded if the pass completes, for the next tick's conditional fetch
