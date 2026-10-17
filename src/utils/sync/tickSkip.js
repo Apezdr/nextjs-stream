@@ -8,7 +8,7 @@
  * post-sync cleanup — when all of these hold:
  *
  *   1. forceSync is off;
- *   2. a complete pass is on record (`app_config.syncInfo`, see sync/database)
+ *   2. a complete pass is on record (`app_config.syncInfo`, see sync/appliedPayloads)
  *      under the current SYNC_GATE_VERSION, the current server set and
  *      priorities (ownership follows priority; a deploy that changes the write
  *      rules raises the version), and THIS process: the first tick after a
@@ -16,10 +16,14 @@
  *      (and the indexes a pass creates) is applied whether or not anyone
  *      raised the version;
  *   3. every document that pass covered is still there: a document deleted
- *      since has to be put back by a pass (the admin deletes also forget the
- *      record, below; the count catches a delete made any other way) — and
- *      nothing is left for that pass's post-sync cleanup, which runs after it
- *      is recorded and is retried by the next full pass if it failed;
+ *      since has to be put back by a pass — and nothing is left for that
+ *      pass's post-sync cleanup, which runs after it is recorded and is
+ *      retried by the next full pass if it failed. The admin deletes also
+ *      forget the record (below). The document count catches only a delete
+ *      made AFTER the record was written, by any path; a delete made DURING a
+ *      pass is counted out by that pass, so it is caught only by the forget
+ *      — a delete whose forget failed, or a path that does not forget, goes
+ *      unnoticed until a pass runs for another reason;
  *   4. no document that pass covered lacks an enabled server's gate: an admin
  *      edit, a removal held back, a failed title or a pass that changed a
  *      document all leave a gate open, and only a pass closes it;
@@ -44,6 +48,7 @@ import { fetchAllServerData } from '@src/utils/fetchAllServerData'
 import { migratePlaybackStatusIfNeeded } from '@src/utils/watchHistory/migrate'
 import { validateWatchHistoryAgainstDatabase } from '@src/utils/flatSync/watchHistoryValidation'
 import { cleanupOrphanFilter } from '@src/utils/flatSync/orphanFilter'
+import { getSyncLockHolder } from '@src/utils/flatSync/syncContext'
 import { SYNC_GATE_VERSION } from './core/syncGate'
 import { syncEventBus } from './core/events'
 import { MediaType, SyncOperation } from './core/types'
@@ -326,7 +331,8 @@ export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}
 /**
  * Replace the record with this pass's running marker. Called when a pass
  * starts: until it completes, no tick may be skipped, and only this pass may
- * record itself (recordCompletePass). Never throws — if the marker cannot be
+ * record itself (recordCompletePass). Writes nothing for a run that no longer
+ * holds the sync lock (holdsSyncLock). Never throws — if the marker cannot be
  * written, the pass cannot record itself either, and an earlier complete
  * record left in place no longer matches the database: pre-tag restamps every
  * covered document with this pass's id, so that record's document counts are
@@ -336,11 +342,32 @@ export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}
  * @param {string} syncRunId
  */
 export async function startPassRecord(client, syncRunId) {
+  if (!holdsSyncLock(syncRunId)) {
+    console.error(`[SYNC] Not marking run ${syncRunId} as running: it no longer holds the sync lock`)
+    return
+  }
   try {
     await markPassRunning(client, syncRunId)
   } catch (error) {
     console.error(`[SYNC] Could not mark the pass as running: ${error.message}`)
   }
+}
+
+/**
+ * Whether `syncRunId` still holds the orchestration lock — the ownership
+ * re-check runPostSyncCleanup makes before deleting. A pass the watchdog has
+ * released (it hung, and a stale takeover may have started a newer pass)
+ * must not write the record: its marker would replace the newer pass's, and
+ * its record would describe a database the newer pass is writing. A write
+ * already in flight when the lock is lost can still land; that only costs
+ * the newer pass its record (its compare-and-set then fails), never records
+ * a pass that did not complete.
+ *
+ * @param {string} syncRunId
+ * @returns {boolean}
+ */
+function holdsSyncLock(syncRunId) {
+  return Boolean(syncRunId) && getSyncLockHolder()?.syncRunId === syncRunId
 }
 
 /** Failures a server's pass reported, whichever result shape it has. */
@@ -424,6 +451,10 @@ export async function recordCompletePass({
     }
 
     const documentCounts = await countDocumentsOfRun(client.db('Media'), syncRunId)
+    if (!holdsSyncLock(syncRunId)) {
+      console.error(`[SYNC] Not recording run ${syncRunId} as complete: it no longer holds the sync lock`)
+      return false
+    }
     const recorded = await setAppliedPayloads(client, syncRunId, {
       servers: Object.fromEntries(
         servers.map((server) => [
@@ -439,7 +470,7 @@ export async function recordCompletePass({
     if (!recorded) {
       console.info(
         '[SYNC] Pass not recorded as complete, next tick fetches in full: ' +
-        'its running marker is gone (a Flat* document was deleted outside the sync during the pass)'
+        'its running marker is gone or replaced (a Flat* document was deleted outside the sync during the pass)'
       )
     }
     return recorded

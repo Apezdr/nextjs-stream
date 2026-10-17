@@ -42,8 +42,9 @@ jest.mock('@src/utils/sync/utils', () => ({ MediaType: { TV: 'tv', MOVIE: 'movie
 jest.mock('@src/utils/admin_frontend_database', () => ({ updateMediaUpdates: jest.fn() }))
 
 const { syncAllServers } = require('@src/utils/sync.js')
-const { currentBootId } = require('@src/utils/sync/tickSkip')
-const { forgetAppliedPayloads } = require('@src/utils/sync/appliedPayloads')
+const { currentBootId, startPassRecord, recordCompletePass } = require('@src/utils/sync/tickSkip')
+const { forgetAppliedPayloads, markPassRunning } = require('@src/utils/sync/appliedPayloads')
+const { getSyncLockHolder, releaseSyncLock, tryAcquireSyncLock } = require('@src/utils/flatSync/syncContext')
 const { SYNC_GATE_VERSION } = require('@src/utils/sync/core/syncGate')
 const { syncToFlatStructure } = require('@src/utils/flatSync')
 const { preTagSyncRunId } = require('@src/utils/flatSync/preTagSyncRunId')
@@ -149,6 +150,9 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  // A case that hands the lock to a "newer run" gives it back here
+  const holder = getSyncLockHolder()
+  if (holder) releaseSyncLock(holder.syncRunId)
   jest.restoreAllMocks()
 })
 
@@ -236,5 +240,63 @@ describe('a pass that did not complete is not recorded, so the next tick fetches
     await runPass(options)
 
     expect(appliedRecord()).toMatchObject({ state: 'running' })
+  })
+})
+
+describe('a run that no longer holds the sync lock neither marks nor records', () => {
+  // The watchdog released a hung pass's lock, and a stale takeover may have
+  // started a newer pass: the old one must not write the record.
+  const client = { db: () => ({ collection: (name) => mockCollections[name] }) }
+
+  it('does not replace a newer pass’s running marker with its own', async () => {
+    expect(tryAcquireSyncLock('newer-run')).toBe(true)
+    await markPassRunning(client, 'newer-run')
+
+    await startPassRecord(client, 'zombie-run')
+
+    expect(appliedRecord()).toMatchObject({ state: 'running', syncRunId: 'newer-run' })
+  })
+
+  it('does not mark itself running when no run holds the lock', async () => {
+    await startPassRecord(client, 'zombie-run')
+
+    expect(appliedRecord()).toEqual({ _id: 'appliedPayloads', syncRunId: 'earlier-run', servers: {} })
+  })
+
+  it.each([
+    ['a newer run holds it', () => expect(tryAcquireSyncLock('newer-run')).toBe(true)],
+    ['no run holds it', () => {}],
+  ])('does not record itself complete over its own marker when %s', async (_label, arrange) => {
+    await markPassRunning(client, 'zombie-run')
+    arrange()
+
+    const recorded = await recordCompletePass({
+      client,
+      syncRunId: 'zombie-run',
+      results: { errors: [], flatSyncResults: { default: cleanPass(), server2: cleanPass() } },
+      preTagResult: { ok: true, skipped: false },
+      fileServers,
+      allEnabledServersProbed: true,
+      payloadETags: ETAGS,
+    })
+
+    expect(recorded).toBe(false)
+    expect(appliedRecord()).toMatchObject({ state: 'running', syncRunId: 'zombie-run' })
+  })
+
+  it('a pass whose lock the watchdog released while it ran is not recorded', async () => {
+    // The pass hangs long enough for the watchdog; nothing else has started yet
+    syncToFlatStructure.mockImplementation(async () => {
+      const holder = getSyncLockHolder()
+      if (holder) releaseSyncLock(holder.syncRunId)
+      return cleanPass()
+    })
+
+    const result = await runPass()
+
+    // Every server's pass completed and its own marker is still there, so only
+    // the lock check stops the record
+    expect(result.errors).toEqual([])
+    expect(appliedRecord()).toMatchObject({ state: 'running', syncRunId: result.syncRunId })
   })
 })
