@@ -22,7 +22,7 @@ Concrete skip points already in tree:
 
 Result: a `logo`, `backdrop`, `chapterURL`, episode `thumbnail`, season poster, or per-language caption that previously lived on server A and was deleted will linger in MongoDB indefinitely. The frontend then renders a 404'd asset URL.
 
-The priority helper at [src/utils/sync/utils.js:170-195](src/utils/sync/utils.js#L170-L195) already handles "nobody has this field" correctly — it returns `true` for an empty `serversWithData` array — but no caller ever exercises that branch because the per-server strategies short-circuit on missing local data before getting there.
+The priority helper (then in the since-deleted `src/utils/sync/utils.js`; now `isCurrentServerHighestPriorityForField` in [src/utils/sync/core/ownership.ts](src/utils/sync/core/ownership.ts)) already handles "nobody has this field" correctly — it returns `true` for an empty `serversWithData` array — but no caller ever exercises that branch because the per-server strategies short-circuit on missing local data before getting there.
 
 ## Goals
 

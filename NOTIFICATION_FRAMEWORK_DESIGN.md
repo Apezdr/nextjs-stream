@@ -2,7 +2,7 @@
 
 ## 1. Why we're building this
 
-The new domain-driven sync architecture (`src/utils/sync/`) reaches users only through the legacy `MediaNotificationOrchestrator`, which each server's pass (`run/serverPass`) calls once its movies and TV are done — the domain services themselves produce no user-facing notifications. The legacy orchestrator works but is procedural, tightly coupled to the flat-sync result shape, and operates on a "load all users, fan out per entity" model that doesn't scale.
+The new domain-driven sync architecture (`src/utils/sync/`) reaches users only through the legacy `MediaNotificationOrchestrator`, which the run calls once, after every server's pass and after post-sync cleanup (`run/newContent`, from `run/postSync` `runAfterSyncJobs`) — the domain services themselves produce no user-facing notifications. The legacy orchestrator works but is procedural, tightly coupled to the flat-sync result shape, and operates on a "load all users, fan out per entity" model that doesn't scale.
 
 Rather than port the legacy approach, we're designing a notification subsystem that's **event-driven, content-keyed, preference-aware, and decoupled from sync wall-clock time** — and structured so the relevance layer can extract cleanly into an ML microservice when that becomes useful.
 
@@ -33,8 +33,8 @@ Tier 3 is the default. Users opt *into* Tiers 1 and 2 per category.
 
 ```
 ┌────────────────┐
-│ run/serverPass │  emits { kind, tmdbId, originalTitle } only
-└───────┬────────┘
+│ run/newContent │  emits { kind, tmdbId, originalTitle } only,
+└───────┬────────┘  once per run, after cleanup
         │  one in-memory push, non-blocking
         ▼
 ┌────────────────┐
@@ -74,7 +74,7 @@ Tier 3 is the default. Users opt *into* Tiers 1 and 2 per category.
 └────────────────┘
 ```
 
-**Key property:** `run/serverPass` has zero notification imports (today it imports `MediaNotificationOrchestrator`; this design replaces that call). Subscribe-at-boot pattern makes the integration deletable without sync changes.
+**Key property:** the sync's passes have zero notification imports (`run/serverPass` has none; the run's `run/newContent` calls `MediaNotificationOrchestrator`, and this design replaces that call). Subscribe-at-boot pattern makes the integration deletable without sync changes.
 
 ---
 
@@ -184,7 +184,7 @@ keyed by the existing `{ groupKey: 1, userId: 1 }` index.
 
 ---
 
-## 7. Sync integration (`run/serverPass`)
+## 7. Sync integration (`run/newContent`)
 
 Three minimal changes in `src/utils/sync/`, plus one boot file:
 
@@ -207,21 +207,22 @@ interface SyncResult {
 }
 ```
 
-### 7.3 `run/serverPass` emits one event on creation
-Where a title's results come back (`collectChangedMedia` already reads the services' `metadata.created`):
+### 7.3 `run/newContent` emits one event per title new to the library
+Not where a title's results come back: a created document is not necessarily new content (cleanup can delete a document whose title comes back, a show re-created under a new `_id` inserts its episodes again, a first sync creates everything). Each pass records its created movies and episodes into the run's `run/writtenMedia` record as each title finishes, keyed by title, so a title two servers have is one candidate. Once per run, after every pass and after post-sync cleanup has decided deletions, `run/newContent` reads the candidates back and keeps those still there, listed (`isWebVisible`), whose `initialDiscoveryDate` (restored from the processor's `mediaIdentity.firstSeen`, which survives a deleted document) is within the last day, and which its ledger has not announced in that day. It emits for those:
 ```ts
-for (const result of titleResults) {
-  if (result.created && result.tmdbId) {
-    syncEventBus.emitEntityCreated({
-      kind: result.mediaType,
-      tmdbId: result.tmdbId,
-      originalTitle: result.entityId,
-      showTmdbId: result.metadata?.showTmdbId,
-      seasonN: result.metadata?.seasonNumber,
-      episodeN: result.metadata?.episodeNumber,
-      createdAt: new Date(),
-    })
-  }
+for (const title of newToTheLibrary) {        // run/newContent selectNewContent
+  syncEventBus.emitEntityCreated({
+    kind: title.kind,                          // 'movie' | 'episode'
+    tmdbId: title.tmdbId,
+    // The folder name: a movie result's entityId; for an episode, its show's
+    // folder name from the result's metadata.showOriginalTitle. An episode or
+    // season result's entityId is "<show> S<n>E<m>" / "<show> S<n>", never a key.
+    originalTitle: title.kind === 'movie' ? title.originalTitle : title.showOriginalTitle,
+    showTmdbId: title.showTmdbId,
+    seasonN: title.seasonNumber,
+    episodeN: title.episodeNumber,
+    createdAt: title.initialDiscoveryDate,
+  })
 }
 ```
 
@@ -260,7 +261,7 @@ The compound WatchHistory index is load-bearing — without it, Rule 2 degrades 
 | Concern | Mitigation |
 |---|---|
 | N×M fan-out | Content-keyed targeting; lookup inverted to "for this content, which users?" |
-| Sync blocking | Bus emit is sync, drain is decoupled timer; `run/serverPass` never `await`s notification work |
+| Sync blocking | Bus emit is sync, drain is decoupled timer; no pass `await`s notification work (the run's `run/newContent` emits once, after cleanup) |
 | Per-event DB queries | 3 queries per batch regardless of batch size |
 | Heap pressure | Tiny event payloads (~200B), bounded queue (10k events = ~2MB ceiling), overflow coalescing |
 | Write storms | `bulkWrite` per drain, group merging |
@@ -379,7 +380,7 @@ Stateless, idempotent, batch-friendly. The service fetches user features (watch 
 
 ## 12. Phased rollout
 
-1. **Phase 1 — Plumbing only.** `BaseRepository.wasCreated`, `run/serverPass` emits, `NotificationBus` drains, `TargetingService` runs Rule 1 (watchlist match) only. Aggregation writes to existing `Notifications` collection. Validates the wiring end-to-end with the safest deterministic rule.
+1. **Phase 1 — Plumbing only.** `BaseRepository.wasCreated`, `run/newContent` emits, `NotificationBus` drains, `TargetingService` runs Rule 1 (watchlist match) only. Aggregation writes to existing `Notifications` collection. Validates the wiring end-to-end with the safest deterministic rule.
 
 2. **Phase 2 — Rule 2 (next-episode) + cooldowns.** Adds the highest-value rule. Aggregation gains group-merge and 24h cooldown.
 

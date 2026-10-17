@@ -18,7 +18,7 @@ No TV symptom has been *reported* yet — this is preventative. Recommended orde
 Metadata flows: media-processor scans → writes `metadata.json` + computes a hash into SQLite `metadata_hashes` → serves `GET /api/metadata-hashes/{movies,tv}` (the gate hash) and the `metadata.json` file (the content) → webhook triggers a frontend sync → frontend compares the incoming hash vs the stored hash, and if different fetches the `metadata.json` and writes it to MongoDB.
 
 1. **Frozen hash** — the upstream hash does not change when only `metadata.json` *content* changes (e.g. a tmdb_id edit with unchanged images). The frontend's stored hash keeps matching → it skips forever.
-2. **Stale fetch** — the frontend fetches `metadata.json` via `fetchMetadataMultiServer` ([`src/utils/admin_utils.js`](src/utils/admin_utils.js)), keyed by **URL**, with a 1h Redis cache + conditional-304 path. If the URL has no content-version token, a content change is served stale from cache.
+2. **Stale fetch** — the frontend fetches `metadata.json` via `fetchMetadataMultiServer` (then in `src/utils/admin_utils.js`; now [`src/utils/sync/infrastructure/fileSystem/fetchFile.ts`](src/utils/sync/infrastructure/fileSystem/fetchFile.ts)), keyed by **URL**, with a 1h Redis cache + conditional-304 path. If the URL has no content-version token, a content change is served stale from cache.
 3. **Spent gate** — the stored gate hash (`syncHash`) advances even though the metadata wasn't actually refreshed (asset-only change, stale fetch, or failed fetch). Once it matches, the early-skip fires forever and the entity is locked on stale metadata.
 
 ### What was already done for movies (use as the implementation template)
