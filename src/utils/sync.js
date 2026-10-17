@@ -18,6 +18,11 @@ import { preTagSyncRunId } from './flatSync/preTagSyncRunId'
 import { computeMissingMedia } from './flatSync/computeMissingMedia'
 import { syncEventBus } from './sync/core/events'
 import { MediaType, SyncOperation } from './sync/core'
+import { startPassRecord, recordCompletePass } from './sync/tickSkip'
+
+// The sync route fetches each tick's payloads through this, and skips the tick
+// when nothing changed (see sync/tickSkip).
+export { fetchSyncTick } from './sync/tickSkip'
 
 // Hard ceiling on how long the orchestration single-flight lock may be held. A
 // hung post-sync cleanup must never freeze every future sync — if the lock is
@@ -130,6 +135,9 @@ export async function syncMissingMedia(missingMedia, fileServer, serverConfig, c
  * @param {Object} options - Additional sync options
  * @param {boolean} options.useNewArchitecture - Force use of new architecture (overrides feature flag)
  * @param {boolean} options.forceOldArchitecture - Force use of old architecture (overrides feature flag)
+ * @param {Object} [options.payloadETags] - Per server id, the ETags of the TV and
+ *   movie payloads in `fileServers` (fetchSyncTick). When given and the pass
+ *   completes for every server, they are recorded so the next tick can skip.
  * @returns {Promise<Object>} Sync results
  */
 export async function syncAllServers(fileServers, fieldAvailability, options = {}) {
@@ -226,6 +234,12 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   let preTagResult = null
 
  try {
+  // No tick may be skipped on the strength of an earlier pass while this one
+  // writes: the record of the last complete pass is replaced now by this
+  // pass's running marker, which becomes a complete record only if this pass
+  // completes (recordCompletePass below; see sync/tickSkip).
+  await startPassRecord(client, syncRunId)
+
   // Pre-tag every record currently present on a file server with the current
   // syncRunId. The per-write marker injection in the sync helpers only fires
   // for records that change; this catches the steady-state case where most
@@ -424,6 +438,18 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   } catch (error) {
     results.errors.push({ error: error.message, phase: 'update_last_synced', stack: error.stack })
   }
+
+  // If every server's pass completed, record the payloads it applied: the
+  // next tick sends their ETags and is skipped when none changed.
+  await recordCompletePass({
+    client,
+    syncRunId,
+    results,
+    preTagResult,
+    fileServers,
+    allEnabledServersProbed: options.allEnabledServersProbed === true,
+    payloadETags: options.payloadETags,
+  })
  } finally {
   // The "writing phase" of this orchestration ends here. Clear before any
   // background task starts so a follow-up syncAllServers invocation that

@@ -19,11 +19,12 @@ jest.mock('@src/utils/cache/invalidation', () => ({
 }))
 
 const mockUpdates = []
+const mockDeletes = []
 const mockDocs = {}
 jest.mock('@src/lib/mongodb', () => ({
   __esModule: true,
   default: Promise.resolve({
-    db: () => ({
+    db: (dbName) => ({
       collection: (name) => ({
         findOne: async () => mockDocs[name] ?? null,
         updateOne: async (filter, update) => {
@@ -32,8 +33,14 @@ jest.mock('@src/lib/mongodb', () => ({
         },
         updateMany: async () => ({ modifiedCount: 0 }),
         insertOne: async () => ({ acknowledged: true }),
-        deleteOne: async () => ({ deletedCount: 1 }),
-        deleteMany: async () => ({ deletedCount: 0 }),
+        deleteOne: async (filter) => {
+          mockDeletes.push({ db: dbName, collection: name, filter })
+          return { deletedCount: 1 }
+        },
+        deleteMany: async (filter) => {
+          mockDeletes.push({ db: dbName, collection: name, filter })
+          return { deletedCount: 0 }
+        },
       }),
     }),
   }),
@@ -47,6 +54,8 @@ const {
   saveEpisodeAction,
   deleteSeasonAction,
   deleteEpisodeAction,
+  deleteMovieAction,
+  deleteTVShowAction,
 } = require('@src/utils/admin/flatMediaActions')
 
 const id = () => new ObjectId().toString()
@@ -55,6 +64,7 @@ const reopensGates = (update) => update.$unset && 'syncGates' in update.$unset
 
 beforeEach(() => {
   mockUpdates.length = 0
+  mockDeletes.length = 0
   for (const key of Object.keys(mockDocs)) delete mockDocs[key]
 })
 
@@ -140,5 +150,53 @@ describe('an admin edit reopens the sync\'s skip gates', () => {
     mockDocs.FlatEpisodes = null
     expect((await saveEpisodeAction(null, { showId, seasonNumber: 3, episodeNumber: 1 })).status).toBe('success')
     expect(updatesTo('FlatTVShows').filter((u) => reopensGates(u.update))).toHaveLength(2)
+  })
+})
+
+describe('an admin delete makes the next sync tick a full pass', () => {
+  // A tick is skipped when the payloads are unchanged (sync/tickSkip), and a
+  // skipped tick never puts back a title a file server still has. Every delete
+  // forgets the record of the last complete pass — after deleting, so a pass
+  // that recorded itself in between cannot be trusted either.
+  const forgetsAfterDeleting = () => {
+    const last = mockDeletes.at(-1)
+    expect(last).toEqual({ db: 'app_config', collection: 'syncInfo', filter: { _id: 'appliedPayloads' } })
+    expect(mockDeletes.slice(0, -1).length).toBeGreaterThan(0)
+    expect(mockDeletes.slice(0, -1).every((d) => d.collection.startsWith('Flat'))).toBe(true)
+  }
+
+  it('when a movie is deleted', async () => {
+    const result = await deleteMovieAction(null, { id: id() })
+
+    expect(result.status).toBe('success')
+    forgetsAfterDeleting()
+  })
+
+  it('when a show is deleted', async () => {
+    const showId = id()
+    mockDocs.FlatTVShows = { _id: new ObjectId(showId), title: 'Show', originalTitle: 'Show (2008)' }
+
+    const result = await deleteTVShowAction(null, { id: showId })
+
+    expect(result.status).toBe('success')
+    forgetsAfterDeleting()
+  })
+
+  it('when a season is deleted', async () => {
+    const showId = id()
+    mockDocs.FlatTVShows = { _id: new ObjectId(showId), title: 'Show', originalTitle: 'Show (2008)' }
+
+    await deleteSeasonAction(null, { showId, seasonNumber: 1 })
+
+    forgetsAfterDeleting()
+  })
+
+  it('when an episode is deleted', async () => {
+    const showId = id()
+    mockDocs.FlatEpisodes = { _id: new ObjectId(), showId: new ObjectId(showId), seasonNumber: 1, episodeNumber: 2 }
+
+    await deleteEpisodeAction(null, { episodeId: id(), showId })
+
+    forgetsAfterDeleting()
   })
 })

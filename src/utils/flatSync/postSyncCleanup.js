@@ -24,6 +24,7 @@ import { migratePlaybackStatusIfNeeded } from '../watchHistory/migrate'
 import { validateWatchHistoryAgainstDatabase } from './watchHistoryValidation'
 import { getCurrentSyncRunId, getSyncLockHolder } from './syncContext'
 import { isCollectionFullyCovered } from './preTagSyncRunId'
+import { cleanupOrphanFilter } from './orphanFilter'
 import { requestMediaRevalidation } from '@src/utils/cache/postSyncRevalidation'
 import { visibleEpisodeFilter } from '@src/utils/mediaVisibility'
 
@@ -328,11 +329,7 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
       // somehow missed) has updatedAt >= runStart and is excluded here. Docs
       // missing an updatedAt field (legacy) are conservatively left alone.
       const runStart = runStartedAt ? new Date(runStartedAt) : null
-      const orphanFilter = {
-        syncRunId: { $ne: syncRunId },
-        manualEntry: { $ne: true },
-        ...(runStart ? { updatedAt: { $lt: runStart } } : {}),
-      }
+      const orphanFilter = cleanupOrphanFilter(syncRunId, runStart)
       const [movieOrphans, showOrphans, seasonOrphans, episodeOrphans] = await Promise.all([
         deleteEligible.movies
           ? db.collection('FlatMovies')

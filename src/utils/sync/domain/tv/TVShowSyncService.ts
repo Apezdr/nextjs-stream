@@ -198,13 +198,23 @@ export class TVShowSyncService {
         cleanupPlan.withheld !== true && !seasonCountHeld && !fetchIncomplete
           ? showGate
           : null
-      await this.finalizeShow(showTitle, null, {
+      const closedOut = await this.finalizeShow(showTitle, null, {
         gate: gateToStamp,
         subtreeChanged,
         hash: incoming?.hash,
         contentHash: incoming?.contentHash,
         serverId: context.serverConfig.id,
       })
+      if (!closedOut) {
+        // The gates were not settled: the show keeps the ones it had before
+        // this pass, which a pass that changed the subtree should have reset.
+        // Reported as a failure, so the run is not taken as complete and the
+        // next tick is not skipped on those gates (sync/tickSkip).
+        allResults.push(this.makeResult(
+          showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Failed, [],
+          ['Closing out the show failed: its gate was not settled']
+        ))
+      }
 
       syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
         totalOperations: allResults.length,
@@ -278,13 +288,15 @@ export class TVShowSyncService {
    * decision is given, settle the show's skip gate. One smartUpsert (single
    * write chokepoint — computeDiff writes only what changed).
    *
-   * Never fails the sync: a stale count degrades to slightly-wrong list
-   * filtering, and an unstamped gate just means the show is synced again.
+   * Never throws: a stale count degrades to slightly-wrong list filtering.
+   * A failure to settle the gate is reported to the caller instead, which
+   * fails the pass: the gate left in place is the one from before this pass.
    *
    * @param cachedShow pass the already-fetched doc on the skip path to save a
    *                   find; null on the full-sync path (re-fetched, since the
    *                   doc was just rewritten).
    * @param gating     null on the skip path (count only).
+   * @returns false when a write or read failed; true otherwise
    */
   private async finalizeShow(
     showTitle: string,
@@ -298,10 +310,10 @@ export class TVShowSyncService {
       contentHash?: string
       serverId: string
     } | null
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const show = cachedShow ?? await this.tvShowRepository.findByOriginalTitle(showTitle)
-      if (!show || !(show as any)._id) return
+      if (!show || !(show as any)._id) return true
 
       const next: any = { ...show }
       next.visibleEpisodeCount = await this.episodeRepository.getVisibleEpisodeCount((show as any)._id)
@@ -319,11 +331,13 @@ export class TVShowSyncService {
       }
 
       await this.tvShowRepository.smartUpsert(next as TVShowEntity, show)
+      return true
     } catch (error) {
       pinoLog.warn(
         { showTitle, err: error instanceof Error ? error.message : String(error) },
         'closing out the show failed — its episode count or gate may lag one sync'
       )
+      return false
     }
   }
 

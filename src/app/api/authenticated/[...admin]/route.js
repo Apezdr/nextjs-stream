@@ -18,14 +18,14 @@ import clientPromise from '@src/lib/mongodb'
 import { getServerLoadSnapshot, noteServerLoadDemand } from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
-import { syncAllServers } from '@src/utils/sync'
+import { syncAllServers, fetchSyncTick } from '@src/utils/sync'
+import { forgetAppliedPayloads } from '@src/utils/sync/appliedPayloads'
 import { collectFieldAvailability } from '@src/utils/sync/fieldAvailability'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { SyncEventType } from '@src/utils/sync/core/types'
 import { createDatabaseAdapter } from '@src/utils/sync/infrastructure'
 import { getSyncVerificationReport } from '@src/utils/sync_verification'
 import { NotificationManager } from '@src/utils/notifications/NotificationManager.js'
-import { getFileServerData } from '@src/utils/fileServerDataService'
 import { revalidateTag } from 'next/cache'
 import {
   getAllMovieCacheTags,
@@ -710,7 +710,10 @@ async function handleSyncOperation(request, webhookId) {
   // The settlement handlers compare identity before touching module state:
   // after a stale takeover, the abandoned run may still settle eventually and
   // must not clear the CURRENT run's handle or subscribers.
-  const thisOperation = handleSync(webhookId, request, { forceSync })
+  // isAdminOrWebhook refuses an X-Webhook-ID it cannot validate, so a request
+  // that got here carrying one was authenticated by it: a file server's tick.
+  // Only such a tick may be skipped; a sync an admin starts always runs.
+  const thisOperation = handleSync(webhookId, request, { forceSync, startedByWebhook: Boolean(webhookId) })
   activeSyncOperation = thisOperation
   thisOperation
     .then(() => {
@@ -823,8 +826,17 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     const headers = {}
     if (webhookId) headers['X-Webhook-ID'] = webhookId
 
-    // Get file server(s) data directly (no internal HTTP call)
-    const { fileServers, errors } = await getFileServerData({skipAuth: true});
+    // Get file server(s) data directly (no internal HTTP call). The payloads
+    // are fetched conditionally, and a tick that would change nothing ends
+    // here: no parse, no fieldAvailability, no pass, no cleanup (see
+    // fetchSyncTick in sync/tickSkip for the conditions and what a skip still
+    // does).
+    const tick = await fetchSyncTick({ forceSync, allowSkip: syncOptions.startedByWebhook === true })
+    if (tick.skipped) {
+      syncInProgress = false
+      return tick.result
+    }
+    const { fileServers, errors } = tick
 
     // Initialize field-level availability maps
     const fieldAvailability = {
@@ -905,7 +917,7 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     // sync writes can't starve the request-serving pool.
     await createDatabaseAdapter()
 
-    // Authoritative-pass gate for field-absence cleanup. getFileServerData sets
+    // Authoritative-pass gate for field-absence cleanup. fetchSyncTick sets
     // `errors` (an array) only when a server failed to respond; undefined means
     // every configured server was fetched cleanly. Field-absence cleanup must
     // never run on a partial pass, or a transient outage would be read as a
@@ -918,6 +930,8 @@ async function handleSync(webhookId, request, syncOptions = {}) {
       forceOldArchitecture,
       forceSync,
       allEnabledServersProbed,
+      // Recorded if the pass completes, for the next tick's conditional fetch
+      payloadETags: tick.etags,
     })
     
     // Mark sync as complete to prevent logging errors after completion
@@ -1002,7 +1016,10 @@ export async function DELETE(request, props) {
         results[collectionName] = deleteResult.deletedCount
         console.log(`Cleared ${deleteResult.deletedCount} documents from ${collectionName}`)
       }
-      
+      // The next sync tick must be a full pass that rebuilds the catalog, not
+      // a skip on the strength of the last one (sync/tickSkip).
+      await forgetAppliedPayloads()
+
       console.log('Cleared all documents from flat database collections')
       return new Response(JSON.stringify({ 
         message: 'Cleared all documents from flat database collections',
