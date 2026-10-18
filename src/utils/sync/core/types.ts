@@ -3,6 +3,8 @@
  * This file defines the foundational contracts for our domain-driven sync architecture
  */
 
+import type { CleanupConfig } from './FieldAbsenceCleaner'
+
 // ==========================================
 // Media Domain Types
 // ==========================================
@@ -110,6 +112,80 @@ export interface SyncContext {
     maxFieldsPerEntity: number
     allEnabledServersProbed: boolean
   }
+}
+
+// ==========================================
+// What a server's pass hands its steps and builders
+// ==========================================
+//
+// run/serverPass builds these once per pass and none of them changes during
+// it. Each movie step and TV builder is given only the parts it reads, typed
+// down to the fields it reads, so reaching for anything else fails the
+// typecheck. The title's payload is not one of them: each title is handed its
+// own (`fileServer.movies[title]`, `fileServer.tv[title]`).
+
+/** The run and the server this pass applies. */
+export interface RunConfig {
+  serverConfig: ServerConfig
+  /** Ignore the skip gates: every title is synced in full. */
+  forceSync: boolean
+  /**
+   * True only when every enabled file server answered this run. "No server
+   * reports this" means the data is gone only then; on a run with a server
+   * missing it may just mean that server is down.
+   */
+  allEnabledServersProbed: boolean
+  /**
+   * Field-absence cleanup (drops stale optional fields that NO enabled server
+   * reports anymore — see core/FieldAbsenceCleaner +
+   * FIELD_ABSENCE_CLEANUP_DESIGN.md). Defaults to `enforce`;
+   * SYNC_FIELD_CLEANUP=dry-run downgrades to detect+log, and
+   * off/false/disabled leaves it undefined, and the cleaner is never invoked.
+   * Its own `allEnabledServersProbed` is the run's: false makes cleanup a
+   * no-op, so a transient outage is never mistaken for a deletion.
+   */
+  cleanup?: CleanupConfig
+}
+
+/** Who reports what: the input of every ownership check and of the gates. */
+export interface Availability {
+  fieldAvailability: FieldAvailability
+}
+
+/** The file server's metadata hash for every movie (GET /api/metadata-hashes/movies). */
+export interface MovieMetadataHashes {
+  hash: string
+  titles: Record<string, { hash: string; lastModified: string; generated: string }>
+}
+
+/** What a movie pass fetches or creates once and its steps share. */
+export interface Caches {
+  /**
+   * The metadata step skips a movie's metadata.json fetch when its hash
+   * matches the stored metadataHash.
+   */
+  metadataHashes?: MovieMetadataHashes
+  /**
+   * Throttles the outbound calls a step makes itself. Not around
+   * fetchMetadataMultiServer, which takes its own slot
+   * (infrastructure/fileSystem/fetchFile).
+   */
+  resourceManager?: {
+    throttleHttp: <T>(fn: () => Promise<T>) => Promise<T>
+  }
+}
+
+/** Everything a movie pass hands MovieSyncService. */
+export interface MoviePassParts {
+  run: RunConfig
+  availability: Availability
+  caches: Caches
+}
+
+/** Everything a TV pass hands the TV services: no caches. */
+export interface TVPassParts {
+  run: RunConfig
+  availability: Availability
 }
 
 export interface SyncResult {
