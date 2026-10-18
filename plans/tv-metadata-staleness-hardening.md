@@ -25,7 +25,7 @@ Metadata flows: media-processor scans → writes `metadata.json` + computes a ha
 
 - **Frozen hash** — backend: `generateMovieHashes` folds `metadata` content into the hash (`node/sqlite/metadataHashes.mjs`, the `metadata: movie.metadata` field).
 - **Stale fetch** — backend: `urls.metadata` is cache-busted with `directory_hash` via `buildImageUrl` in `getMovies` / `getMovieById` / `getMovieByName` (`node/sqliteDatabase.mjs`). `directory_hash` moves on any dir change incl. a `metadata.json` rewrite, so the URL changes → frontend cache busts → fresh fetch.
-- **Spent gate** — frontend: [`MovieMetadataStrategy.ts`](src/utils/sync/domain/movies/strategies/MovieMetadataStrategy.ts) preserves existing metadata + returns `SyncStatus.Failed` on a failed fetch (no `_metadataHash` stamp); [`MovieSyncService.ts`](src/utils/sync/domain/movies/MovieSyncService.ts) stamps `syncHash` only when no metadata op reported `Failed`.
+- **Spent gate** — frontend: the movie metadata step, [`metadata.ts`](src/utils/sync/domain/movies/metadata.ts), preserves existing metadata + returns `SyncStatus.Failed` on a failed fetch (no `_metadataHash` stamp, its plan incomplete); [`MovieSyncService.ts`](src/utils/sync/domain/movies/MovieSyncService.ts) stamps the server's skip gate only when the merged plan is complete.
 
 ---
 
@@ -140,5 +140,5 @@ Seasons source metadata inline from the parent show (`SeasonSyncService` ~L175-2
 
 ## References
 
-- Movie precedent + cross-repo chain: see the media-processor memory `project_metadata_propagation_chain.md`, and the movie implementations in `MovieMetadataStrategy.ts` / `MovieSyncService.ts` (this repo) and `generateMovieHashes` / `getMovies` (media-processor).
+- Movie precedent + cross-repo chain: see the media-processor memory `project_metadata_propagation_chain.md`, and the movie implementations in `domain/movies/metadata.ts` / `MovieSyncService.ts` (this repo) and `generateMovieHashes` / `getMovies` (media-processor).
 - Sync architecture overview: [`SYNC_ARCHITECTURE_MIGRATION.md`](../SYNC_ARCHITECTURE_MIGRATION.md).

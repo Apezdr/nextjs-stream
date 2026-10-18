@@ -19,13 +19,21 @@ import { episodeDetailsTag, tvShowDetailsTag, seasonDetailsTag, MEDIA_CACHE_TAGS
 async function CachedEpisodeDetails({ media }) {
   'use cache'
   cacheLife('mediaLists') // 2 minute stale, revalidates in background
+  // The per-title tags by the show's folder name, as the pages and every
+  // invalidation key them: an episode's `originalTitle` is its show's folder
+  // name (the display `showTitle` only for an episode that lacks one). An
+  // episode carries seasonNumber / episodeNumber; the limited-access trailer
+  // stand-in carries season_number / episode_number.
+  const showKey = media.originalTitle || media.showTitle
+  const season = media.seasonNumber ?? media.season_number
+  const episode = media.episodeNumber ?? media.episode_number
   cacheTag(
     'media-library',
     'tv',
     MEDIA_CACHE_TAGS.EPISODE_DETAILS,
-    tvShowDetailsTag(media.showTitle),
-    seasonDetailsTag(media.showTitle, media.season_number),
-    episodeDetailsTag(media.showTitle, media.season_number, media.episode_number)
+    tvShowDetailsTag(showKey),
+    seasonDetailsTag(showKey, season),
+    episodeDetailsTag(showKey, season, episode)
   )
   
   return <TVEpisodeDetailsComponent media={media} />

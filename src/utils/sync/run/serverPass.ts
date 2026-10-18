@@ -39,21 +39,18 @@ import {
   SyncOperation,
   SyncStatus,
   resolveCleanupConfig,
+  type Availability,
+  type Caches,
   type FieldAvailability,
+  type MovieMetadataHashes,
+  type RunConfig,
   type ServerConfig,
-  type SyncContext,
   type SyncResult,
 } from '../core'
 import { syncLogger } from '../core/logger'
 import { ResourceManager } from '../core/ResourceManager'
 import { createDatabaseAdapter } from '../infrastructure'
-import {
-  BlurhashStrategy,
-  MovieAssetStrategy,
-  MovieContentStrategy,
-  MovieMetadataStrategy,
-  MovieSyncService,
-} from '../domain'
+import { MovieSyncService } from '../domain'
 import { EpisodeSyncService, SeasonSyncService, TVShowSyncService } from '../domain/tv'
 import { createLogger, logError } from '@src/lib/logger'
 import { createWrittenMedia, type ChangedMedia, type WrittenMedia } from './writtenMedia'
@@ -93,20 +90,11 @@ export interface ServerPassResult {
   tvShows: KindResults
   performance: { startTime: Date; endTime: Date | null; duration: number }
   errors: Array<{ phase: string; error: unknown; stack?: string; serverId: string }>
-  /** Display titles of what this pass changed, for post-sync cache invalidation. */
+  /** What this pass changed, by folder name, for post-sync cache invalidation. */
   changedMedia: ChangedMedia
   /** Documents this pass created (not updated): the admins' sync notice counts them. */
   added: { movies: number; shows: number; episodes: number }
 }
-
-/** The file server's metadata hash for every movie (GET /api/metadata-hashes/movies). */
-type MovieHashes = {
-  hash: string
-  titles: Record<string, { hash: string; lastModified: string; generated: string }>
-}
-
-/** The four movie operations every pass runs, in this order. */
-const MOVIE_OPERATIONS = [SyncOperation.Metadata, SyncOperation.Assets, SyncOperation.Content, SyncOperation.Blurhash]
 
 /**
  * Run one file server's pass. See the module comment for the steps, and for
@@ -144,14 +132,27 @@ export async function runServerPass(
   // This pass's own record of what it wrote, for its result and its log; the
   // run's record (options.written) gets the same results as each title finishes.
   const written = createWrittenMedia()
-  const record = (titleResults: SyncResult[]) => {
-    written.record(titleResults)
-    options.written?.record(titleResults)
+  const record = (titleResults: SyncResult[], title: string) => {
+    written.record(titleResults, title)
+    options.written?.record(titleResults, title)
   }
 
   const { movieService, tvShowService } = await createServices()
   const resourceManager = ResourceManager.getInstance()
   const pool = pLimit(resourceManager.config.syncConcurrency)
+
+  // What every title's pass is handed (core/types). None of it changes
+  // during the pass.
+  const run: RunConfig = {
+    serverConfig,
+    forceSync,
+    allEnabledServersProbed,
+    // Field-absence cleanup; the sync's own clearing decisions read
+    // allEnabledServersProbed above, which is there whether or not cleanup
+    // is switched on.
+    cleanup: resolveCleanupConfig(allEnabledServersProbed),
+  }
+  const availability: Availability = { fieldAvailability }
 
   // ---- 2. Movies ----
   const movieTitles = extractMovieTitles(fileServer)
@@ -161,19 +162,9 @@ export async function runServerPass(
       'Processing movies with new architecture'
     )
     const movieStart = Date.now()
-    const context: SyncContext = {
-      mediaType: MediaType.Movie,
-      operation: SyncOperation.Metadata,
-      serverConfig,
-      fieldAvailability,
-      forceSync,
-      fileServerData: fileServer,
-      metadataHashesCache: (await fetchMovieHashes(serverConfig)) ?? undefined,
+    const caches: Caches = {
+      metadataHashes: (await fetchMovieHashes(serverConfig)) ?? undefined,
       resourceManager,
-      // Field-absence cleanup, and the same signal for the sync's own clearing
-      // decisions (present whether or not cleanup is switched on).
-      cleanup: resolveCleanupConfig(allEnabledServersProbed),
-      allEnabledServersProbed,
     }
     syncLogger.info(
       `Processing ${movieTitles.length} movies with concurrency: ${resourceManager.config.syncConcurrency} ` +
@@ -183,10 +174,10 @@ export async function runServerPass(
     const movieResults = await syncTitles(
       movieTitles,
       pool,
-      (title) => movieService.syncMovie(title, context, MOVIE_OPERATIONS, title),
+      (title) => movieService.syncMovie(title, fileServer?.movies?.[title], { run, availability, caches }),
       (title, error) => failedResult(title, MediaType.Movie, serverConfig.id, error),
-      (titleResults) => {
-        record(titleResults)
+      (titleResults, title) => {
+        record(titleResults, title)
         progress.update(titleResults.some((r) => r.status === SyncStatus.Failed))
       }
     )
@@ -217,21 +208,10 @@ export async function runServerPass(
       'Starting TV sync with new domain architecture'
     )
     const tvStart = performance.now()
-    const context: SyncContext = {
-      mediaType: MediaType.TVShow,
-      operation: SyncOperation.Metadata,
-      serverConfig,
-      fieldAvailability,
-      forceSync,
-      fileServerData: fileServer,
-      resourceManager,
-      cleanup: resolveCleanupConfig(allEnabledServersProbed),
-      allEnabledServersProbed,
-    }
     const tvResults = await syncTitles(
       showTitles,
       pool,
-      (title) => tvShowService.syncTVShow(title, context),
+      (title) => tvShowService.syncTVShow(title, fileServer.tv[title], { run, availability }),
       (title, error) => failedResult(title, MediaType.TVShow, serverConfig.id, error),
       record
     )
@@ -317,19 +297,14 @@ function toServerConfig(config: ServerPassConfig): ServerConfig {
 /** The domain services over the sync's repositories (the sync-dedicated Mongo pool). */
 async function createServices(): Promise<{ movieService: MovieSyncService; tvShowService: TVShowSyncService }> {
   const db = await createDatabaseAdapter()
-  const movieService = new MovieSyncService(db.movies, [
-    new MovieMetadataStrategy(db.movies),
-    new MovieAssetStrategy(db.movies),
-    new MovieContentStrategy(db.movies),
-    // Runs after the entity is saved by the metadata and asset strategies.
-    new BlurhashStrategy(db.movies),
-  ])
-  // The season and episode services read the show (and the season) for the
-  // showId / seasonId foreign keys.
+  const movieService = new MovieSyncService(db.movies)
+  // The show service hands the season and episode services the show as
+  // stored (showId foreign key); the episode service reads the season for
+  // the seasonId one.
   const tvShowService = new TVShowSyncService(
     db.tvShows,
-    new SeasonSyncService(db.seasons, db.tvShows),
-    new EpisodeSyncService(db.episodes, db.seasons, db.tvShows),
+    new SeasonSyncService(db.seasons),
+    new EpisodeSyncService(db.episodes, db.seasons),
     db.episodes,
     db.seasons
   )
@@ -339,14 +314,15 @@ async function createServices(): Promise<{ movieService: MovieSyncService; tvSho
 /**
  * Sync every title through the pool: as each title finishes the next one
  * starts. A title whose sync throws is reported as one failed result; it never
- * fails the pass. Results come back in title order.
+ * fails the pass. Results come back in title order. `onTitleDone` gets each
+ * title's results with the title (its folder name, the payload key).
  */
 async function syncTitles(
   titles: string[],
   pool: ReturnType<typeof pLimit>,
   sync: (title: string) => Promise<SyncResult[]>,
   failed: (title: string, error: unknown) => SyncResult,
-  onTitleDone?: (results: SyncResult[]) => void
+  onTitleDone?: (results: SyncResult[], title: string) => void
 ): Promise<SyncResult[]> {
   const perTitle = await Promise.all(
     titles.map((title) =>
@@ -358,7 +334,7 @@ async function syncTitles(
           syncLogger.error(`Failed to sync "${title}":`, error)
           titleResults = [failed(title, error)]
         }
-        onTitleDone?.(titleResults)
+        onTitleDone?.(titleResults, title)
         return titleResults
       })
     )
@@ -386,7 +362,7 @@ function failedResult(title: string, mediaType: MediaType, serverId: string, err
  * fetches each movie's metadata. (Shows have no such step, and nothing reads
  * the TV list, so it is not fetched.)
  */
-async function fetchMovieHashes(serverConfig: ServerConfig): Promise<MovieHashes | null> {
+async function fetchMovieHashes(serverConfig: ServerConfig): Promise<MovieMetadataHashes | null> {
   const kind = 'movies'
   if (!serverConfig.nodeUrl) {
     syncLogger.warn(`⚠️ No Node.js server URL for ${serverConfig.id}: no ${kind} hashes`)

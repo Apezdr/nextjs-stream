@@ -88,7 +88,6 @@ const wrongPath = `/movies/${movie.title}/poster.jpg` // Will fail!
 - Server priority determines data precedence (lower number = higher priority; equal priorities break on server id)
 - Pre-computed `fieldAvailability` object maps which servers have a value for each exact leaf path (`urls.poster`)
 - Ownership fails closed: a field belongs to the highest-priority server among those that report a value. Check it with `isCurrentServerHighestPriorityForReportedField()` (or `isHighestPriorityAmongServers()`) before updating any field
-- `isCurrentServerHighestPriorityForField()` is legacy and fails open; not for new code
 
 **Priority Check Pattern:**
 ```javascript
@@ -144,10 +143,16 @@ Create `.env.local` with required variables:
 
 ### Sync System
 
-#### Domain-Driven Sync (`src/utils/sync/domain/`)
-- Modern architecture with TypeScript support
-- Strategy pattern with pluggable sync operations
-- Domain-specific services (MovieSyncService, EpisodeSyncService, etc.)
+#### Domain-Driven Sync (`src/utils/sync/`)
+- `run/` - orchestration: the run and each server's pass (below)
+- `core/` - the pure rules: ownership, skip gates, field-absence cleanup,
+  titles, and the write plan (`WritePlan`, merged by `core/writePlan`)
+- `domain/movies` - `MovieSyncService` and its steps (`metadata`, `artwork`,
+  `video`); `domain/tv` - the TV services and their builders (`showPlan`,
+  `seasonPlan`, `episodePlan`). Steps and builders do no I/O: each returns a
+  write plan, and the files it reads are fetched for it by the prefetch step
+- `infrastructure/` - the repositories, the only writers, and `fileSystem`
+  (file-server URLs, file fetches, the prefetch step)
 - Single write chokepoint per entity (`BaseRepository.smartUpsert` /
   `EpisodeRepository.smartBulkUpsert` / `SeasonRepository.smartBulkUpsert`),
   which is where `lockedFields` enforcement (`computeDiff`) and `manualFields`
@@ -177,21 +182,20 @@ const canUpdate = isCurrentServerHighestPriorityForReportedField(
 
 **New Sync Architecture Components:**
 - `run/serverPass` (`runServerPass`) - Runs one server's pass: config check, movies, TV, then the server's side jobs
-- `MovieMetadataStrategy` - Handles metadata with priority checking
-- `MovieAssetStrategy` - Manages assets (posters, backdrops, logos) with priority
+- `MovieSyncService` - One server's pass over one movie: runs the metadata, artwork and video steps (and the blurhash retry), merges their plans, makes one write
+- `TVShowSyncService` / `SeasonSyncService` / `EpisodeSyncService` - The show, its seasons and its episodes, each planned by its builder
 - `BaseRepository` - Uses `originalTitle` for all database operations
-- `SyncContext` - Enhanced with `entityTitle` and `entityOriginalTitle`
+- `RunConfig` / `Availability` / `Caches` (`core/types`) - The parts of a pass; each step and builder is handed only the parts it reads
 
 **Priority System Integration:**
 - Import `isCurrentServerHighestPriorityForReportedField` / `isHighestPriorityAmongServers` from `@src/utils/sync/core/ownership`
 - Check ownership before every field update: it fails closed, ties break on server id
-- Not `isCurrentServerHighestPriorityForField`: it is legacy and fails open
 - Use `fieldAvailability` object for pre-computed server data mapping
 - Respect existing server priority configuration
 
 **New Architecture Benefits:**
 - Type safety with TypeScript interfaces
-- Clear separation of concerns with strategy pattern
+- Clear separation of concerns: pure steps and builders return write plans; the repositories write
 - Comprehensive error handling and event tracking
 - Performance optimizations with caching and bulk operations
 - Real-time progress monitoring and observability
@@ -230,28 +234,35 @@ if (canUpdatePoster) {
 const displayTitle = movie.title // For UI components
 ```
 
-**New Sync Strategy Pattern:**
+**Step / Builder Pattern (a movie step, a TV builder):**
 ```javascript
-// When creating new sync strategies
-class NewSyncStrategy implements SyncStrategy {
-  async sync(entity: BaseMediaEntity | null, context: SyncContext): Promise<SyncResult> {
-    const originalTitle = context.entityOriginalTitle || entity?.originalTitle
-    
-    // Use originalTitle for all filesystem operations
-    const dataPath = `/movies/${originalTitle}/data.json`
-    
-    // Check ownership before updating (fails closed)
-    if (this.shouldUpdateField('urls.poster', originalTitle, context)) {
-      // Perform update with source tracking
-    }
-  }
-  
-  private shouldUpdateField(fieldPath: string, mediaTitle: string, context: SyncContext): boolean {
-    return isCurrentServerHighestPriorityForReportedField(
-      context.fieldAvailability, 'movies', mediaTitle, fieldPath, context.serverConfig
+// A step returns a write plan; it does no I/O and writes nothing
+function planPoster({ originalTitle, payload, run, availability }, resources) {
+  const plan = emptyWritePlan()
+
+  // Check ownership before updating (fails closed); originalTitle is the key
+  if (
+    isCurrentServerHighestPriorityForReportedField(
+      availability.fieldAvailability, 'movies', originalTitle, 'urls.poster', run.serverConfig
     )
+  ) {
+    // Update with source tracking
+    plan.set.posterURL = fileServerUrl(payload.urls.poster, run.serverConfig)
+    plan.set.posterSource = run.serverConfig.id
   }
+
+  // A file the step reads comes from `resources`: one not fetched yet reads as
+  // a failed fetch and is named in the plan's needs
+  const file = resources.read({ kind: 'metadata', serverId: run.serverConfig.id, path: payload.urls.metadata })
+  if (!file?.ok) {
+    plan.incomplete = true // the gate stays open, so the next pass retries
+    plan.deferrals.push('metadata')
+  }
+  return { plan: { ...plan, needs: resources.needs } }
 }
+
+// The service runs it through the prefetch step, then writes through a repository
+const { plan } = await buildWithResources((resources) => planPoster(input, resources), { mediaType: 'movie', title: originalTitle })
 ```
 
 ### Component Development
@@ -281,7 +292,7 @@ class NewSyncStrategy implements SyncStrategy {
 const posterPath = `/movies/${movie.title}/poster.jpg`
 ```
 
-**❌ Not checking ownership, or checking it with the fail-open `isCurrentServerHighestPriorityForField`:**
+**❌ Not checking ownership:**
 ```javascript
 // WRONG - May overwrite higher priority data
 movie.posterURL = newUrl // Direct assignment without an ownership check

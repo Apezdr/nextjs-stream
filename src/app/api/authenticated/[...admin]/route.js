@@ -563,7 +563,10 @@ async function handleSystemStatusNotification(request, webhookId, serverId) {
  *
  * Body: { movies: string[], shows: string[],
  *         seasons: {title,season}[], episodes: {title,season,episode}[] }
- * All titles are DISPLAY titles (media page tags key on the display title).
+ * All titles are FOLDER NAMES (`originalTitle`; for a season or an episode,
+ * its show's), never display titles: the media pages tag their caches with
+ * the folder name their URL carries, decoded (e.g. `tv-show-<originalTitle>`,
+ * see list/tv/[title]/page.js). The bucket tags are the same either way.
  *
  * @param {Request} request - The request object
  * @returns {Promise<Response>}

@@ -92,6 +92,22 @@ function trimOrNull(v) {
   return s.length ? s : null
 }
 
+/**
+ * An update that would clear a movie's, show's or episode's stored title. The
+ * form posts `title` with everything else, and an empty value would be
+ * `$unset` (applyScalarFields); with the title locked, as the editors lock a
+ * changed one, the sync would never put a title back. Refused. A document
+ * with no stored title (or only whitespace) stays saveable with the field
+ * still empty: there is nothing to clear. A payload that does not send
+ * `title` leaves it as stored.
+ *
+ * @param {Object} payload - What the form posted
+ * @param {Object} existing - The stored document
+ */
+function clearsTitle(payload, existing) {
+  return 'title' in payload && !trimOrNull(payload.title) && Boolean(trimOrNull(existing?.title))
+}
+
 function parseIntStrict(v) {
   const n = parseInt(v, 10)
   return Number.isNaN(n) ? null : n
@@ -317,6 +333,7 @@ export async function saveMovieAction(_prevState, payload = {}) {
   const col = client.db(DB_NAME).collection('FlatMovies')
   const existing = await col.findOne({ _id })
   if (!existing) return fail('Movie not found.')
+  if (clearsTitle(payload, existing)) return fail('Title is required.')
 
   const { set, unset } = applyScalarFields(payload, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: false, existing })
   applyMetadata(payload, set, { isCreate: false, existing })
@@ -435,6 +452,7 @@ export async function saveTVShowAction(_prevState, payload = {}) {
   const col = db.collection('FlatTVShows')
   const existing = await col.findOne({ _id })
   if (!existing) return fail('TV show not found.')
+  if (clearsTitle(payload, existing)) return fail('Title is required.')
 
   const { set, unset } = applyScalarFields(payload, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: false, existing })
   applyMetadata(payload, set, { isCreate: false, existing })
@@ -562,7 +580,8 @@ export async function saveSeasonAction(_prevState, payload = {}) {
 
   revalidateMedia()
   revalidatePath(`/admin/media/tv/${showId.toString()}`)
-  await invalidateSeasonDetailsCache(show.title, seasonNumber)
+  // By the show's folder name, which the media pages tag their caches with
+  await invalidateSeasonDetailsCache(show.originalTitle || show.title, seasonNumber)
   return ok({ id: doc._id.toString() })
 }
 
@@ -622,6 +641,9 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
   const existing = episodeObjId
     ? await episodesCol.findOne({ _id: episodeObjId })
     : await episodesCol.findOne({ showId, seasonId: season._id, episodeNumber })
+  // On an update only: an episode can still be added without a title, as
+  // before (an empty value is left out of an insert).
+  if (existing && clearsTitle(payload, existing)) return fail('Title is required.')
 
   const { set, unset } = applyScalarFields(payload, EPISODE_FIELDS, EPISODE_MANUAL_TRACKED_FIELDS, { isCreate: !existing, existing })
   applyMetadata(payload, set, { isCreate: !existing, existing })
@@ -666,7 +688,8 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
 
   revalidateMedia()
   revalidatePath(`/admin/media/tv/${showId.toString()}`)
-  await invalidateEpisodeDetailsCache(show.title, seasonNumber, episodeNumber)
+  // By the show's folder name, which the media pages tag their caches with
+  await invalidateEpisodeDetailsCache(show.originalTitle || show.title, seasonNumber, episodeNumber)
   return ok({ id: doc._id.toString() })
 }
 

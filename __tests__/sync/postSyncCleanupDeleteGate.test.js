@@ -111,6 +111,24 @@ describe('runPostSyncCleanup', () => {
     expect(result).not.toHaveProperty('watchHistoryValidation')
   })
 
+  it('asks for the removed movies and shows to be revalidated by folder name, which the media pages tag their caches with', async () => {
+    const { requestMediaRevalidation } = require('@src/utils/cache/postSyncRevalidation')
+    install()
+    mockDb.collections.FlatMovies = collection([{ _id: 'm1', title: 'Gone Film', originalTitle: 'Gone Film (2001)' }])
+    mockDb.collections.FlatTVShows = collection([{ _id: 's1', title: 'Gone Show', originalTitle: 'Gone Show (2019)' }])
+
+    const result = await runPostSyncCleanup(fileServers, {}, options(true))
+
+    // (`removed` keeps naming display titles, for the Redis keys and the log)
+    expect(result.removed.movies).toEqual(['Gone Film'])
+    expect(result.removed.tvShows).toEqual(['Gone Show'])
+    expect(requestMediaRevalidation).toHaveBeenCalledTimes(1)
+    expect(requestMediaRevalidation).toHaveBeenCalledWith(
+      { movies: ['Gone Film (2001)'], shows: ['Gone Show (2019)'], seasons: [], episodes: [] },
+      { label: 'Post-cleanup' }
+    )
+  })
+
   it('deletes nothing for a caller that does not say either way', async () => {
     // Fail-closed: only an explicit "every server answered" allows a delete.
     const collections = install()

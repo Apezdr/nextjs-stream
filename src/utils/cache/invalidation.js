@@ -191,9 +191,18 @@ export async function invalidateTVShowDetailsCache(showTitle) {
   }
 }
 
+/**
+ * A season or episode number that is not there: null, undefined or NaN. Zero
+ * is a number like any other (season 0 is the Specials; an episode 0 exists
+ * too), and its pages are tagged with it.
+ */
+function isMissingNumber(n) {
+  return n === null || n === undefined || (typeof n === 'number' && Number.isNaN(n))
+}
+
 // Invalidate episode details cache when episode is updated
 export async function invalidateEpisodeDetailsCache(showTitle, seasonNum, episodeNum) {
-  if (!showTitle || !seasonNum || !episodeNum) return false
+  if (!showTitle || isMissingNumber(seasonNum) || isMissingNumber(episodeNum)) return false
   
   try {
     const { getAllEpisodeCacheTags } = await import('./mediaPagesTags')
@@ -214,7 +223,7 @@ export async function invalidateEpisodeDetailsCache(showTitle, seasonNum, episod
 
 // Invalidate season details cache when a season is updated
 export async function invalidateSeasonDetailsCache(showTitle, seasonNum) {
-  if (!showTitle || seasonNum === undefined || seasonNum === null) return false
+  if (!showTitle || isMissingNumber(seasonNum)) return false
 
   try {
     const { getAllSeasonCacheTags } = await import('./mediaPagesTags')

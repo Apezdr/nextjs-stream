@@ -97,7 +97,7 @@ const DEFAULT_MAX_FIELDS_PER_ENTITY = 5
 /**
  * Whether a top-level field is locked per a doc's nested `lockedFields` map.
  * A nested-object lock (e.g. { metadata: { overview: true } }) locks the whole
- * top-level key — same conservative rule as BaseRepository.isTopLevelFieldLocked.
+ * top-level key — same conservative rule as core/locks isTopLevelFieldLocked.
  */
 function isTopLevelFieldLocked(lockedFields: any, key: string): boolean {
   if (!lockedFields || typeof lockedFields !== 'object') return false
@@ -145,9 +145,8 @@ export function detectAbsentFields(input: AbsenceCleanupInput): AbsenceCleanupRe
     const serversWithData = [field.fieldPath, ...(field.alsoReportedAs ?? [])].flatMap(
       (path) => serverBucket[path] ?? []
     )
-    // Some server still reports it → keep. This is the empty-array branch that
-    // isCurrentServerHighestPriorityForField returns true for, but here we read
-    // it directly because we want the "nobody has it" signal, not priority.
+    // Some server still reports it → keep. Read directly: the question here is
+    // whether anybody has it ("nobody has it" is the signal), not who owns it.
     if (serversWithData.length !== 0) continue
 
     // Nothing in the DB to clear.
@@ -197,7 +196,7 @@ export function detectAbsentFields(input: AbsenceCleanupInput): AbsenceCleanupRe
   }
 }
 
-/** SyncContext.cleanup shape (kept in sync with core/types.ts). */
+/** RunConfig.cleanup (core/types.ts). */
 export interface CleanupConfig {
   enabled: boolean
   mode: 'enforce' | 'dry-run'

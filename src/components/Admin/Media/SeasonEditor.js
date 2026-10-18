@@ -1,9 +1,10 @@
 'use client'
 
-import { useActionState, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useActionState, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { saveSeasonAction, deleteSeasonAction } from '@src/utils/admin/flatMediaActions'
 import LockableField from './LockableField'
+import ActionError from './ActionError'
 import ImagePreview from './ImagePreview'
 import EpisodeEditor from './EpisodeEditor'
 import RawRecordButton from './RawRecordButton'
@@ -93,7 +94,8 @@ export default function SeasonEditor({ showId, season, defaultOpen = false, init
           <form
             onSubmit={(e) => {
               e.preventDefault()
-              save(savePayload)
+              // In a transition, as useActionState needs: isSaving follows the save
+              startTransition(() => save(savePayload))
             }}
             className="grid grid-cols-1 gap-4 sm:grid-cols-2"
           >
@@ -134,13 +136,13 @@ export default function SeasonEditor({ showId, season, defaultOpen = false, init
               <button
                 type="button"
                 disabled={isDeleting}
-                onClick={() => del({ showId, seasonNumber: season.seasonNumber })}
+                onClick={() => startTransition(() => del({ showId, seasonNumber: season.seasonNumber }))}
                 className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
               >
                 {isDeleting ? 'Deleting…' : 'Delete season (and episodes)'}
               </button>
-              {saveState.status === 'error' && <span className="text-sm text-red-600">{saveState.message}</span>}
-              {delState.status === 'error' && <span className="text-sm text-red-600">{delState.message}</span>}
+              <ActionError state={saveState} />
+              <ActionError state={delState} />
             </div>
           </form>
 

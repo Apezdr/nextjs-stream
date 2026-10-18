@@ -466,6 +466,22 @@ describe('a full pass for one server', () => {
     expect(appliedRecord()).toMatchObject({ state: 'complete', syncRunId: result.syncRunId })
   })
 
+  it('names what it changed by folder name, which the media pages tag their caches with, never by display title', async () => {
+    const result = await runSync(oneServer())
+
+    // The display titles are 'Example Movie' and 'Example Show' (see the first case)
+    expect(new Set(result.changedMedia.movies)).toEqual(new Set([MOVIE]))
+    expect(result.changedMedia.shows).toEqual([SHOW])
+    expect(result.changedMedia.seasons).toEqual([{ title: SHOW, season: 1 }])
+    expect(result.changedMedia.episodes).toEqual(
+      expect.arrayContaining([
+        { title: SHOW, season: 1, episode: 1 },
+        { title: SHOW, season: 1, episode: 2 },
+      ])
+    )
+    expect(result.changedMedia.episodes).toHaveLength(2)
+  })
+
   it('logs the lines the verifier and the dashboards read', async () => {
     await runSync(oneServer())
 
@@ -1084,13 +1100,13 @@ describe('the server config a pass refuses', () => {
     const syncMovie = MovieSyncService.prototype.syncMovie
     const syncTVShow = TVShowSyncService.prototype.syncTVShow
     const seen = []
-    jest.spyOn(MovieSyncService.prototype, 'syncMovie').mockImplementation(function (title, context, ...rest) {
-      seen.push(context.serverConfig)
-      return syncMovie.call(this, title, context, ...rest)
+    jest.spyOn(MovieSyncService.prototype, 'syncMovie').mockImplementation(function (title, payload, parts) {
+      seen.push(parts.run.serverConfig)
+      return syncMovie.call(this, title, payload, parts)
     })
-    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, context) {
-      seen.push(context.serverConfig)
-      return syncTVShow.call(this, title, context)
+    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, payload, parts) {
+      seen.push(parts.run.serverConfig)
+      return syncTVShow.call(this, title, payload, parts)
     })
 
     const result = await runSync(oneServer({ priority: 3 }))
@@ -1129,9 +1145,9 @@ describe('errors', () => {
   it('a show whose sync throws is one failed result; the other titles are written and the pass goes on', async () => {
     const OTHER = 'Another Show (2021)'
     const syncTVShow = TVShowSyncService.prototype.syncTVShow
-    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, context) {
+    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, payload, parts) {
       if (title === OTHER) return Promise.reject(new Error('show sync blew up'))
-      return syncTVShow.call(this, title, context)
+      return syncTVShow.call(this, title, payload, parts)
     })
 
     const result = await runSync(oneServer({ tv: { [SHOW]: showPayload(), [OTHER]: showPayload() } }))
@@ -1169,7 +1185,8 @@ describe('errors', () => {
     // The admins' count, the cache invalidation and the new-content notice all
     // still have the movie the pass wrote before it threw
     expect(result.added).toEqual({ movies: 1, shows: 0, episodes: 0 })
-    expect(result.changedMedia.movies).toContain('Example Movie')
+    // (by folder name, as the media pages tag their caches)
+    expect(result.changedMedia.movies).toContain(MOVIE)
     expect(mockSideJobs).toContainEqual({ job: 'notifications', movies: [MOVIE], episodes: [] })
   })
 })

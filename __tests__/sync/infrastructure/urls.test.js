@@ -8,11 +8,13 @@
  * writes (or, for "fetch", the URL a metadata or blurhash fetch requests).
  * The new function must give that URL: what the sync stores does not change.
  *
- *   movie video  MovieContentStrategy: urls.mp4, each urls.sources url and
- *                urls.chapters. Was: strip the server's prefix, then
- *                UrlBuilder.createFullUrl added it back.
- *   movie asset  MovieAssetStrategy: poster, backdrop, logo and their
- *                blurhash files. Was: UrlBuilder.createFullUrl, no prefix.
+ *   movie video  The movie video step (domain/movies/video, videoPayload):
+ *                urls.mp4, each urls.sources url and urls.chapters. Was:
+ *                strip the server's prefix, then UrlBuilder.createFullUrl
+ *                added it back.
+ *   movie asset  The movie artwork step (domain/movies/artwork): poster,
+ *                backdrop, logo and their blurhash files. Was:
+ *                UrlBuilder.createFullUrl, no prefix.
  *   tv           The show, season and episode services. Was: createFullUrl
  *                in sync/utils.js, i.e. url_utils' createFullURL(path, false).
  *   fetch        fetchMetadataMultiServer's own URL. Was: url_utils'

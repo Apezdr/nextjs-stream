@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { startTransition, useActionState, useState } from 'react'
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react'
 import {
   Cog6ToothIcon,
@@ -14,6 +14,10 @@ import { buildURL } from '@src/utils'
 import { getTmdbConfigAction, saveTmdbConfigAction } from '@src/utils/admin/tmdbConfigActions'
 import { describeIdentitySource, IDENTITY_SOURCE_AUTO, IDENTITY_SOURCE_MANUAL } from '@src/utils/admin/identitySource'
 import TmdbImagePicker from './TmdbImagePicker'
+import ActionError from './ActionError'
+
+// What the dialog shows in place of a save result from before it opened
+const NO_RESULT = { status: 'idle' }
 
 const inputClass =
   'mt-1 block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 shadow-sm focus:border-indigo-500 focus:ring-indigo-500'
@@ -106,6 +110,10 @@ export default function TmdbConfigButton({
   const [advancedOpen, setAdvancedOpen] = useState(false)
 
   const [saveState, save, isSaving] = useActionState(saveTmdbConfigAction, { status: 'idle' })
+  // The save's state when the dialog last opened: a result from before it
+  // (useActionState cannot be reset) is not shown, or announced, again.
+  const [openedOn, setOpenedOn] = useState(null)
+  const shownSaveState = saveState === openedOn ? NO_RESULT : saveState
 
   const [searchQuery, setSearchQuery] = useState('')
   const [results, setResults] = useState([])
@@ -229,6 +237,7 @@ export default function TmdbConfigButton({
   // Load on open from an event handler (not an effect) so we never setState
   // synchronously inside an effect body.
   async function open() {
+    setOpenedOn(saveState)
     setIsOpen(true)
     setLoading(true)
     setLoadError(null)
@@ -357,7 +366,8 @@ export default function TmdbConfigButton({
     if (Object.keys(finalMetadata).length) config.metadata = finalMetadata
     else delete config.metadata
 
-    save({ mediaType: type, originalTitle, config })
+    // In a transition, as useActionState needs: isSaving follows the save
+    startTransition(() => save({ mediaType: type, originalTitle, config }))
   }
 
   const tmdbIdSet = String(tmdbId).trim() !== ''
@@ -719,8 +729,11 @@ export default function TmdbConfigButton({
                     >
                       Cancel
                     </button>
-                    {saveState.status === 'error' && <span className="text-sm text-red-600">{saveState.message}</span>}
-                    {saveState.status === 'success' && <span className="text-sm text-green-600">{saveState.message}</span>}
+                    {shownSaveState.status === 'success' && (
+                      <span className="text-sm text-green-600">{shownSaveState.message}</span>
+                    )}
+                    {/* In the dialog (outside it the modal hides it), from the form's first render */}
+                    <ActionError state={shownSaveState} />
                   </div>
                 </>
               )}

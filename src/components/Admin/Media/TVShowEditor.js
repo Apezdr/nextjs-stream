@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useEffect, useMemo, useState } from 'react'
+import { startTransition, useActionState, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeftIcon, PlusIcon } from '@heroicons/react/24/outline'
@@ -10,6 +10,8 @@ import {
   saveSeasonAction,
 } from '@src/utils/admin/flatMediaActions'
 import LockableField from './LockableField'
+import ActionError from './ActionError'
+import { METADATA_FIELD_HELP, TITLE_LOCK_HELP, tmdbIdHelp, useFieldLocks } from './useFieldLocks'
 import ImagePreview from './ImagePreview'
 import DeleteMediaButton from './DeleteMediaButton'
 import TmdbConfigButton from './TmdbConfigButton'
@@ -33,7 +35,8 @@ function AddSeason({ showId, suggested }) {
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        save({ showId, seasonNumber: num })
+        // In a transition, as useActionState needs: isSaving follows the save
+        startTransition(() => save({ showId, seasonNumber: num }))
       }}
       className="flex items-center gap-2"
     >
@@ -51,7 +54,7 @@ function AddSeason({ showId, suggested }) {
       >
         <PlusIcon className="h-4 w-4" /> {isSaving ? 'Adding…' : 'Add season'}
       </button>
-      {state.status === 'error' && <span className="text-sm text-red-600">{state.message}</span>}
+      <ActionError state={state} />
     </form>
   )
 }
@@ -68,7 +71,11 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
   const [form, setForm] = useState(() => initForm(record))
   const [tmdbId, setTmdbId] = useState(() => record?.metadata?.id ?? '')
   const [overview, setOverview] = useState(() => record?.metadata?.overview ?? '')
-  const [locks, setLocks] = useState(() => ({ ...(record?.lockedFields ?? {}) }))
+  // Changing the title locks it, or the next sync puts the old one back.
+  const { locks, isLocked, toggleLock, noteEdit, autoLocked } = useFieldLocks(record, ['title'])
+  // The TMDB Config control (the processor's tmdb.config) needs a saved show
+  // with a folder name; the TMDB ID's hint points to it when it is shown.
+  const showsTmdbConfig = Boolean(!isNew && record?._id && record?.originalTitle)
 
   useEffect(() => {
     if (state.status === 'success' && isNew && state.id) {
@@ -76,15 +83,10 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
     }
   }, [state, isNew, router])
 
-  const setField = (key) => (v) => setForm((p) => ({ ...p, [key]: v }))
-  const isLocked = (key) => locks[key] === true
-  const toggleLock = (key) =>
-    setLocks((p) => {
-      const next = { ...p }
-      if (next[key] === true) delete next[key]
-      else next[key] = true
-      return next
-    })
+  const setField = (key) => (v) => {
+    setForm((p) => ({ ...p, [key]: v }))
+    noteEdit(key, v)
+  }
 
   const seasons = useMemo(() => record?.seasons ?? [], [record])
   const nextSeasonNumber = seasons.length
@@ -132,7 +134,7 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
         {!isNew && record?._id && (
           <div className="flex items-center gap-3">
             <RawRecordButton record={record} title="TV show record" />
-            {record?.originalTitle && (
+            {showsTmdbConfig && (
               <TmdbConfigButton
                 type="tv"
                 originalTitle={record.originalTitle}
@@ -153,14 +155,14 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          save(payload)
+          startTransition(() => save(payload))
         }}
         className="space-y-8"
       >
         <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">Identity</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {field('title', 'Title (display)')}
+            {field('title', 'Title (display)', { helpText: TITLE_LOCK_HELP, autoLocked: autoLocked('title') })}
             {field('originalTitle', 'Original Title (filesystem key)', {
               helpText: 'Renaming the title cascades to all seasons/episodes.',
             })}
@@ -171,9 +173,18 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
               onChange={setTmdbId}
               locked={isLocked('metadata')}
               onToggleLock={() => toggleLock('metadata')}
-              helpText="Locking applies to all metadata."
+              helpText={tmdbIdHelp(showsTmdbConfig)}
             />
-            <LockableField id="overview" label="Overview" value={overview} onChange={setOverview} locked={isLocked('metadata')} onToggleLock={() => toggleLock('metadata')} textarea />
+            <LockableField
+              id="overview"
+              label="Overview"
+              value={overview}
+              onChange={setOverview}
+              locked={isLocked('metadata')}
+              onToggleLock={() => toggleLock('metadata')}
+              helpText={METADATA_FIELD_HELP}
+              textarea
+            />
             <JitOverrideSelect
               id="show-jit-override"
               value={form.jitServeOverride}
@@ -209,8 +220,8 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
           >
             {isSaving ? 'Saving…' : isNew ? 'Create Show' : 'Save Changes'}
           </button>
-          {state.status === 'error' && <span className="text-sm text-red-600">{state.message}</span>}
           {state.status === 'success' && !isNew && <span className="text-sm text-green-600">Saved.</span>}
+          <ActionError state={state} />
         </div>
       </form>
 

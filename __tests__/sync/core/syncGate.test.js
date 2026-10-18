@@ -13,6 +13,7 @@ const {
   readSyncGate,
   changesDocument,
   nextSyncGates,
+  decideGate,
   payloadFingerprint,
 } = require('@src/utils/sync/core/syncGate')
 
@@ -119,5 +120,36 @@ describe('nextSyncGates', () => {
     const stored = { A: 'a1' }
     nextSyncGates(stored, 'B', 'b1', true)
     expect(stored).toEqual({ A: 'a1' })
+  })
+})
+
+describe('decideGate', () => {
+  const COMPLETE = { failed: false, heldBack: false, deferred: false }
+
+  it('stamps a pass that ran to the end, including one that changed nothing', () => {
+    expect(decideGate(COMPLETE)).toBe('stamp')
+  })
+
+  it('leaves the gate open when a step failed', () => {
+    expect(decideGate({ ...COMPLETE, failed: true })).toBe('leaveOpen')
+  })
+
+  it('leaves the gate open when a removal was held back for a server that did not answer', () => {
+    expect(decideGate({ ...COMPLETE, heldBack: true })).toBe('leaveOpen')
+  })
+
+  it('leaves the gate open when something was left for a later pass', () => {
+    expect(decideGate({ ...COMPLETE, deferred: true })).toBe('leaveOpen')
+  })
+
+  it('stamps only when all three are false', () => {
+    for (const failed of [false, true]) {
+      for (const heldBack of [false, true]) {
+        for (const deferred of [false, true]) {
+          const expected = failed || heldBack || deferred ? 'leaveOpen' : 'stamp'
+          expect(decideGate({ failed, heldBack, deferred })).toBe(expected)
+        }
+      }
+    }
   })
 })

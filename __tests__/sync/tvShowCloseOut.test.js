@@ -28,7 +28,7 @@ jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({ fetchM
 
 const { TVShowSyncService } = require('@src/utils/sync/domain/tv/TVShowSyncService')
 const { resolveCleanupConfig } = require('@src/utils/sync/core/FieldAbsenceCleaner')
-const { MediaType, SyncOperation } = require('@src/utils/sync/core')
+const { MediaType } = require('@src/utils/sync/core')
 
 const SHOW = 'A Show (2020)'
 
@@ -54,15 +54,14 @@ async function syncShow({ closeOutFails }) {
     { getVisibleEpisodeCount: async () => 0, getEpisodeCount: async () => 0 },
     { getSeasonCount: async () => 0 }
   )
-  return service.syncTVShow(SHOW, {
-    mediaType: MediaType.TVShow,
-    operation: SyncOperation.Metadata,
-    serverConfig: { id: 'A', priority: 1, baseUrl: 'https://A.example', prefix: '', enabled: true },
-    fieldAvailability: { movies: {}, tv: { [SHOW]: {} } },
-    forceSync: false,
-    fileServerData: { tv: { [SHOW]: { seasons: {} } } },
-    cleanup: resolveCleanupConfig(true),
-    allEnabledServersProbed: true,
+  return service.syncTVShow(SHOW, { seasons: {} }, {
+    run: {
+      serverConfig: { id: 'A', priority: 1, baseUrl: 'https://A.example', prefix: '', enabled: true },
+      forceSync: false,
+      cleanup: resolveCleanupConfig(true),
+      allEnabledServersProbed: true,
+    },
+    availability: { fieldAvailability: { movies: {}, tv: { [SHOW]: {} } } },
   })
 }
 

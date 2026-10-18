@@ -3,6 +3,8 @@
  * This file defines the foundational contracts for our domain-driven sync architecture
  */
 
+import type { CleanupConfig } from './FieldAbsenceCleaner'
+
 // ==========================================
 // Media Domain Types
 // ==========================================
@@ -55,90 +57,87 @@ export interface FieldAvailability {
 }
 
 // ==========================================
-// Sync Context and Results
+// What a server's pass hands its steps and builders
 // ==========================================
+//
+// run/serverPass builds these once per pass and none of them changes during
+// it. Each movie step and TV builder is given only the parts it reads, typed
+// down to the fields it reads, so reaching for anything else fails the
+// typecheck. The title's payload is not one of them: each title is handed its
+// own (`fileServer.movies[title]`, `fileServer.tv[title]`).
 
-export interface SyncContext {
-  mediaType: MediaType
-  operation: SyncOperation
+/**
+ * The run and the server this pass applies. It holds no server list and no
+ * run id on purpose: no step or builder reads them (the availability says who
+ * reports what; the repositories stamp the run id, run/runState).
+ */
+export interface RunConfig {
   serverConfig: ServerConfig
+  /** Ignore the skip gates: every title is synced in full. */
+  forceSync: boolean
+  /**
+   * True only when every enabled file server answered this run. "No server
+   * reports this" means the data is gone only then; on a run with a server
+   * missing it may just mean that server is down.
+   */
+  allEnabledServersProbed: boolean
+  /**
+   * Field-absence cleanup (drops stale optional fields that NO enabled server
+   * reports anymore — see core/FieldAbsenceCleaner +
+   * FIELD_ABSENCE_CLEANUP_DESIGN.md). Defaults to `enforce`;
+   * SYNC_FIELD_CLEANUP=dry-run downgrades to detect+log, and
+   * off/false/disabled leaves it undefined, and the cleaner is never invoked.
+   * Its own `allEnabledServersProbed` is the run's: false makes cleanup a
+   * no-op, so a transient outage is never mistaken for a deletion.
+   */
+  cleanup?: CleanupConfig
+}
+
+/** Who reports what: the input of every ownership check and of the gates. */
+export interface Availability {
   fieldAvailability: FieldAvailability
-  forceSync?: boolean
+}
 
-  // Entity identifiers for strategies when entity might be null
-  entityTitle?: string          // Pretty display title (TMDB)
-  entityOriginalTitle?: string  // Filesystem key title
-  
-  // File server data for content sync
-  fileServerData?: any          // File server data structure (movies/TV data)
-  
-  // Metadata hashes cache (fetched once per server for all movies): the
-  // metadata step skips a movie's metadata.json fetch when its hash matches
-  // the stored metadataHash
-  metadataHashesCache?: {
-    hash: string  // Overall hash for all movies
-    titles: Record<string, {
-      hash: string
-      lastModified: string
-      generated: string
-    }>
-  }
+/** The file server's metadata hash for every movie (GET /api/metadata-hashes/movies). */
+export interface MovieMetadataHashes {
+  hash: string
+  titles: Record<string, { hash: string; lastModified: string; generated: string }>
+}
 
-  // Resource manager for throttling HTTP requests and monitoring memory
-  // Strategies should use context.resourceManager?.throttleHttp() for outbound
-  // calls they make themselves. Not around fetchMetadataMultiServer, which
-  // takes its own slot (infrastructure/fileSystem/fetchFile)
+/** What a movie pass fetches or creates once and its steps share. */
+export interface Caches {
+  /**
+   * The metadata step skips a movie's metadata.json fetch when its hash
+   * matches the stored metadataHash.
+   */
+  metadataHashes?: MovieMetadataHashes
+  /**
+   * Throttles the prefetch step's plain reads (the movie artwork step's first
+   * read of a blurhash, infrastructure/fileSystem/prefetch). Not around
+   * fetchMetadataMultiServer, which takes its own slot
+   * (infrastructure/fileSystem/fetchFile). No step is handed it.
+   */
   resourceManager?: {
     throttleHttp: <T>(fn: () => Promise<T>) => Promise<T>
-    isMemoryPressure: () => boolean
-    getHeapUsedMb: () => number
-  }
-
-  // Accumulated movie field changes from strategies — keyed by originalTitle.
-  // Strategies append their computed changes here instead of writing to the DB
-  // directly. MovieSyncService performs a single consolidated write after all
-  // strategies complete, using smartUpsert to write only changed fields.
-  pendingMovieUpdates?: Map<string, Partial<MovieEntity>>
-
-  // Fields a movie strategy wants REMOVED from the document, keyed like
-  // pendingMovieUpdates. The data they held is gone (the file was deleted, the
-  // last subtitle was removed), which `$set` alone cannot express.
-  // MovieSyncService folds them into the same consolidated write, after
-  // dropping any that an admin has locked.
-  pendingMovieUnsets?: Map<string, Set<string>>
-
-  // Movies (by originalTitle) for which a strategy held a removal back this
-  // pass because not every enabled server answered. MovieSyncService leaves
-  // such a movie's skip gate open so the removal is retried.
-  pendingMovieDeferrals?: Set<string>
-  // Files a server publishes that could not be fetched this pass, per movie
-  // (keyed by originalTitle → what failed, e.g. 'posterBlurhash'). A later
-  // strategy that fetches the same file successfully removes its entry. While
-  // any remain, the pass is not marked complete. Created by MovieSyncService,
-  // for the same reason as the two above: strategies see a copy of the context.
-  pendingMovieFetchFailures?: Map<string, Set<string>>
-
-  // True only when every enabled file server answered this run. "No server
-  // reports this" means the data is gone only then; on a run with a server
-  // missing it may just mean that server is down. Set by the sync route for
-  // every run, whether or not field-absence cleanup is switched on (the copy
-  // inside `cleanup` below exists only when it is).
-  allEnabledServersProbed?: boolean
-
-  // Field-absence cleanup (drops stale optional fields that NO enabled server
-  // reports anymore — see core/FieldAbsenceCleaner + FIELD_ABSENCE_CLEANUP_DESIGN.md).
-  // Defaults to `enforce`; SYNC_FIELD_CLEANUP=dry-run downgrades to detect+log,
-  // and off/false/disabled fully disables (cleanup left undefined). When undefined
-  // the cleaner is never invoked. `allEnabledServersProbed` is the mandatory
-  // authoritative-pass gate: false (e.g. a server failed this run) makes cleanup a
-  // no-op so a transient outage is never mistaken for a deletion.
-  cleanup?: {
-    enabled: boolean
-    mode: 'enforce' | 'dry-run'
-    maxFieldsPerEntity: number
-    allEnabledServersProbed: boolean
   }
 }
+
+/** Everything a movie pass hands MovieSyncService. */
+export interface MoviePassParts {
+  run: RunConfig
+  availability: Availability
+  caches: Caches
+}
+
+/** Everything a TV pass hands the TV services: no caches. */
+export interface TVPassParts {
+  run: RunConfig
+  availability: Availability
+}
+
+// ==========================================
+// Sync Results
+// ==========================================
 
 export interface SyncResult {
   status: SyncStatus
@@ -150,6 +149,90 @@ export interface SyncResult {
   changes: string[]
   errors: string[]
   metadata?: Record<string, any>
+}
+
+// ==========================================
+// Write plans
+// ==========================================
+
+/**
+ * A file a builder (a movie step, a TV builder) reads. Builders do no I/O: a
+ * builder names the files it reads in its plan's `needs`, the service fetches
+ * them (infrastructure/fileSystem/prefetch) and calls the builder again with
+ * them as Resources (core/resources).
+ */
+export interface ResourceRequest {
+  /** What the file is. */
+  kind: 'metadata' | 'blurhash'
+  /** The server to ask. */
+  serverId: string
+  /**
+   * The file as the fetch takes it: its path in that server's payload, or the
+   * full URL built from it. Requests are told apart by it, so it is passed on
+   * exactly as the builder gives it.
+   */
+  path: string
+  /**
+   * Read a blurhash with one plain request (httpGet, in a slot of the pass's
+   * HTTP throttle) instead of through fetchMetadataMultiServer: the movie
+   * artwork step's first read. Its retry step reads the same file through
+   * fetchMetadataMultiServer, with its Redis cache and fallback.
+   */
+  direct?: boolean
+}
+
+/**
+ * A file the prefetch step fetched for a builder: the request, and what came
+ * back. A fetch that failed is a value here, never a throw into the builder:
+ * `ok: false` for an error, for a metadata file that came back empty (null),
+ * and for a blurhash that is not a non-empty string.
+ */
+export type Resource = ResourceRequest &
+  (
+    | { ok: true; data: unknown }
+    | {
+        ok: false
+        error: string
+        /**
+         * What the fetch threw, when it threw rather than came back empty: the
+         * builder that reads the file logs it where it used to catch it.
+         */
+        thrown?: { value: unknown }
+      }
+  )
+
+/**
+ * What one sync step wants written: its inputs go in, this comes out, and the
+ * service merges the steps' plans into one write (core/writePlan).
+ */
+export interface WritePlan<E = Record<string, any>> {
+  /** Fields to write. */
+  set: Partial<E>
+  /** Fields to remove: their data is gone, which `$set` cannot express. */
+  unset: string[]
+  /**
+   * Files the step read that it was not handed (core/resources). A plan with
+   * needs is never written: the service fetches them and calls the step
+   * again.
+   */
+  needs: ResourceRequest[]
+  /**
+   * A decision was held back (a step failed, a removal waits for a run on
+   * which every server answers, a file could not be fetched): the skip gate
+   * stays open, so the next pass does the work.
+   */
+  incomplete: boolean
+  /** Which decisions were held back, for the event log. */
+  deferrals: string[]
+}
+
+/**
+ * What one step of a pass returns: its write plan. Whether the plan writes
+ * the document is read off the plan (core/writePlan writesDocument: a step
+ * that writes stamps `lastSynced`).
+ */
+export interface PlanOutcome<E = Record<string, any>> {
+  plan: WritePlan<E>
 }
 
 // ==========================================
@@ -531,20 +614,6 @@ export interface MediaRepository<T extends BaseMediaEntity> {
   delete(title: string): Promise<void>
   findAll(filter?: Record<string, any>): Promise<T[]>
   exists(title: string): Promise<boolean>
-}
-
-// ==========================================
-// Strategy Pattern Interfaces
-// ==========================================
-
-export interface SyncStrategy {
-  readonly name: string
-  readonly supportedOperations: SyncOperation[]
-  readonly supportedMediaTypes: MediaType[]
-  
-  canHandle(context: SyncContext): boolean
-  sync(entity: BaseMediaEntity | null, context: SyncContext): Promise<SyncResult>
-  validate?(entity: BaseMediaEntity, context: SyncContext): Promise<boolean>
 }
 
 // ==========================================

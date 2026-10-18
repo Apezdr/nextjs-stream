@@ -31,7 +31,8 @@ export function countChangedMedia(changedMedia) {
  * from the admin UI, or the background cleanup, carries none).
  *
  * @param {{ movies?: string[], shows?: string[], seasons?: object[], episodes?: object[] }} changedMedia
- *   Display titles, which is what the media page tags key on
+ *   Folder names (`originalTitle`; a season's or an episode's is its show's),
+ *   which is what the media pages' per-title tags key on, never display titles
  * @param {Object} [options]
  * @param {string|null} [options.webhookId] - The incoming webhook id, if any
  * @param {string} [options.port] - The port this server listens on (default: PORT, then 3000)

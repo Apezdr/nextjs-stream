@@ -12,9 +12,6 @@ export * from './events'
 // Logger system
 export * from './logger'
 
-// Log sanitizer (prevents OOM from logging large objects)
-export * from './logSanitizer'
-
 // Field path mappings (type-safe fieldAvailability lookups)
 export * from './fieldPaths'
 
@@ -50,9 +47,9 @@ export {
   SyncStatus,
   SyncEventType,
   type MediaRepository,
-  type SyncStrategy,
-  type SyncContext,
   type SyncResult,
+  type WritePlan,
+  type ResourceRequest,
   type ServerConfig,
   type FieldAvailability,
   type BaseMediaEntity,

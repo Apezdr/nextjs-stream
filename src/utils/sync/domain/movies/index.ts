@@ -1,14 +1,7 @@
 /**
  * Movie domain exports
- * Central export point for all movie-related sync components
+ * MovieSyncService runs a movie's steps (metadata, artwork, video) and makes
+ * the one write a pass makes.
  */
 
-export * from './MovieSyncService'
-export * from './strategies'
-
-// Re-export key components for convenience
-export { MovieSyncService } from './MovieSyncService'
-export { 
-  MovieMetadataStrategy,
-  MovieAssetStrategy
-} from './strategies'
+export { MovieSyncService, movieSyncGate } from './MovieSyncService'

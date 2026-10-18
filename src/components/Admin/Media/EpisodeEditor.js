@@ -1,9 +1,11 @@
 'use client'
 
-import { useActionState, useEffect, useMemo, useRef, useState } from 'react'
+import { startTransition, useActionState, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDownIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { saveEpisodeAction, deleteEpisodeAction } from '@src/utils/admin/flatMediaActions'
 import LockableField from './LockableField'
+import ActionError from './ActionError'
+import { TITLE_LOCK_HELP, useFieldLocks } from './useFieldLocks'
 import ImagePreview from './ImagePreview'
 import RawRecordButton from './RawRecordButton'
 import JitOverrideSelect from './JitOverrideSelect'
@@ -48,21 +50,19 @@ export default function EpisodeEditor({ showId, seasonNumber, episode = null, is
   }, [defaultOpen])
   const [epNumber, setEpNumber] = useState(() => (episode?.episodeNumber ?? defaultEpisodeNumber)?.toString?.() ?? '')
   const [form, setForm] = useState(() => initForm(episode))
-  const [locks, setLocks] = useState(() => ({ ...(episode?.lockedFields ?? {}) }))
+  // Changing the title locks it, or the next sync puts the old one back: every
+  // pass rewrites an episode's title (its metadata name, or the video owner's
+  // reading of the file name).
+  const { locks, isLocked, toggleLock, noteEdit, autoLocked } = useFieldLocks(episode, ['title'])
 
   // The "add new" form resets automatically: on a successful add, the season's
   // episode count changes, which remounts this component via its parent `key`
   // (see SeasonEditor) — no setState-in-effect needed.
 
-  const setField = (key) => (v) => setForm((p) => ({ ...p, [key]: v }))
-  const isLocked = (key) => locks[key] === true
-  const toggleLock = (key) =>
-    setLocks((p) => {
-      const next = { ...p }
-      if (next[key] === true) delete next[key]
-      else next[key] = true
-      return next
-    })
+  const setField = (key) => (v) => {
+    setForm((p) => ({ ...p, [key]: v }))
+    noteEdit(key, v)
+  }
 
   const payload = useMemo(
     () => ({
@@ -122,7 +122,8 @@ export default function EpisodeEditor({ showId, seasonNumber, episode = null, is
         <form
           onSubmit={(e) => {
             e.preventDefault()
-            save(payload)
+            // In a transition, as useActionState needs: isSaving follows the save
+            startTransition(() => save(payload))
           }}
           className="space-y-3 border-t border-gray-200 p-3"
         >
@@ -134,7 +135,9 @@ export default function EpisodeEditor({ showId, seasonNumber, episode = null, is
               value={epNumber}
               onChange={setEpNumber}
             />
-            <div className="sm:col-span-3">{field('title', 'Title')}</div>
+            <div className="sm:col-span-3">
+              {field('title', 'Title', { helpText: TITLE_LOCK_HELP, autoLocked: autoLocked('title') })}
+            </div>
           </div>
           {field('videoURL', 'Video URL')}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -167,14 +170,14 @@ export default function EpisodeEditor({ showId, seasonNumber, episode = null, is
               <button
                 type="button"
                 disabled={isDeleting}
-                onClick={() => del({ episodeId: episode._id, showId })}
+                onClick={() => startTransition(() => del({ episodeId: episode._id, showId }))}
                 className="rounded-md border border-red-300 px-3 py-1.5 text-sm font-medium text-red-700 hover:bg-red-50 disabled:opacity-60"
               >
                 {isDeleting ? 'Deleting…' : 'Delete'}
               </button>
             )}
-            {saveState.status === 'error' && <span className="text-sm text-red-600">{saveState.message}</span>}
-            {delState.status === 'error' && <span className="text-sm text-red-600">{delState.message}</span>}
+            <ActionError state={saveState} />
+            <ActionError state={delState} />
           </div>
         </form>
       )}

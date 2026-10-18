@@ -3,23 +3,11 @@
  * Central export point for all domain services and components
  */
 
-// Movie domain
+// Movie domain (MovieSyncService)
 export * from './movies'
-
-// Shared cross-domain strategies
-export * from './shared'
 
 // TV domain (TVShowSyncService, SeasonSyncService, EpisodeSyncService)
 export * from './tv'
-
-// Re-export key domain services for convenience
-export {
-  MovieSyncService,
-  MovieMetadataStrategy,
-  MovieAssetStrategy
-} from './movies'
-
-export { BlurhashStrategy } from './shared'
 
 export {
   TVShowSyncService as TVShowSyncServiceCore,

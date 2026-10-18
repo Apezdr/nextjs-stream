@@ -67,6 +67,7 @@ import {
   createMovieAction,
   createTVShowAction,
   saveMovieAction,
+  saveTVShowAction,
   saveSeasonAction,
   saveEpisodeAction,
 } from '@src/utils/admin/flatMediaActions'
@@ -231,5 +232,163 @@ describe('saving flags only the values that changed', () => {
 
     const { $set } = updateOf('FlatEpisodes')
     expect(manualFlagsIn($set)).toEqual([])
+  })
+})
+
+// The editors lock the display title when the admin changes it (useFieldLocks),
+// since the sync rewrites an unlocked one. A save stores the locks the form
+// sends, as they are, and reopens the sync's gates.
+describe.each([
+  ['saveMovieAction', saveMovieAction, 'FlatMovies'],
+  ['saveTVShowAction', saveTVShowAction, 'FlatTVShows'],
+])('%s and the title lock', (_name, save, collection) => {
+  const existing = {
+    _id: 'doc-id',
+    title: 'Old Title',
+    originalTitle: 'Old Title (2001)',
+    lockedFields: { posterURL: true },
+    syncGates: { A: 'gate' },
+  }
+
+  it('stores the title locked when the form sends it locked', async () => {
+    mockCollection(collection).findOne.mockResolvedValue({ ...existing })
+
+    const result = await save(null, { id: 'doc-id', title: 'New Title', lockedFields: { posterURL: true, title: true } })
+
+    expect(result.status).toBe('success')
+    const { $set, $unset } = updateOf(collection)
+    expect($set.title).toBe('New Title')
+    expect($set.lockedFields).toEqual({ posterURL: true, title: true })
+    expect($unset).toEqual(expect.objectContaining({ syncGates: '' }))
+  })
+
+  it('stores it unlocked when the admin turned the lock off before saving', async () => {
+    mockCollection(collection).findOne.mockResolvedValue({ ...existing, lockedFields: { title: true } })
+
+    await save(null, { id: 'doc-id', title: 'New Title', lockedFields: {} })
+
+    const { $set, $unset } = updateOf(collection)
+    expect($set.title).toBe('New Title')
+    expect($set).not.toHaveProperty('lockedFields')
+    expect($unset).toEqual(expect.objectContaining({ lockedFields: '', syncGates: '' }))
+  })
+
+  it.each([[''], ['   '], [null]])('refuses to clear the title (%j), as create does', async (title) => {
+    mockCollection(collection).findOne.mockResolvedValue({ ...existing })
+
+    const result = await save(null, { id: 'doc-id', title, lockedFields: { title: true } })
+
+    expect(result).toEqual({ status: 'error', message: 'Title is required.' })
+    expect(mockCollection(collection).updateOne).not.toHaveBeenCalled()
+  })
+
+  it.each([[undefined], [''], ['   ']])(
+    'saves one whose stored title is %j with the title still empty: there is no title to clear',
+    async (storedTitle) => {
+      mockCollection(collection).findOne.mockResolvedValue({ ...existing, title: storedTitle })
+
+      const result = await save(null, { id: 'doc-id', title: '', posterURL: 'https://server/new.jpg', lockedFields: { posterURL: true } })
+
+      expect(result.status).toBe('success')
+      const { $set, $unset } = updateOf(collection)
+      expect($set.posterURL).toBe('https://server/new.jpg')
+      expect($set).not.toHaveProperty('title')
+      expect($set.lockedFields).toEqual({ posterURL: true })
+      expect($unset).toEqual(expect.objectContaining({ title: '', syncGates: '' }))
+    }
+  )
+
+  it('leaves the locks as they were when the title is unchanged', async () => {
+    mockCollection(collection).findOne.mockResolvedValue({ ...existing })
+
+    await save(null, { id: 'doc-id', title: 'Old Title', lockedFields: { posterURL: true } })
+
+    const { $set, $unset } = updateOf(collection)
+    expect($set.lockedFields).toEqual({ posterURL: true })
+    expect($unset).toEqual({ syncGates: '' })
+  })
+})
+
+// The episode editor locks a changed title the same way (the sync rewrites an
+// episode's title on every pass), and its save refuses an empty one on update.
+describe('saveEpisodeAction and the title lock', () => {
+  const existing = {
+    _id: 'episode-id',
+    showId: 'show-id',
+    seasonNumber: 1,
+    episodeNumber: 2,
+    title: 'Old Title',
+    lockedFields: { thumbnail: true },
+    syncGates: { A: 'gate' },
+  }
+  const saveEpisode = (fields) =>
+    saveEpisodeAction(null, { showId: 'show-id', seasonNumber: '1', episodeNumber: '2', episodeId: 'episode-id', ...fields })
+
+  beforeEach(() => {
+    mockCollection('FlatTVShows').findOne.mockResolvedValue(show)
+    mockCollection('FlatSeasons').findOne.mockResolvedValue({ _id: 'season-id' })
+    mockCollection('FlatEpisodes').findOne.mockResolvedValue({ ...existing })
+  })
+
+  it('stores the title locked when the form sends it locked', async () => {
+    const result = await saveEpisode({ title: 'New Title', lockedFields: { thumbnail: true, title: true } })
+
+    expect(result.status).toBe('success')
+    const { $set, $unset } = updateOf('FlatEpisodes')
+    expect($set.title).toBe('New Title')
+    expect($set.lockedFields).toEqual({ thumbnail: true, title: true })
+    expect($unset).toEqual(expect.objectContaining({ syncGates: '' }))
+  })
+
+  it('stores it unlocked when the admin turned the lock off before saving', async () => {
+    mockCollection('FlatEpisodes').findOne.mockResolvedValue({ ...existing, lockedFields: { title: true } })
+
+    await saveEpisode({ title: 'New Title', lockedFields: {} })
+
+    const { $set, $unset } = updateOf('FlatEpisodes')
+    expect($set.title).toBe('New Title')
+    expect($set).not.toHaveProperty('lockedFields')
+    expect($unset).toEqual(expect.objectContaining({ lockedFields: '', syncGates: '' }))
+  })
+
+  it.each([[''], ['   '], [null]])('refuses to clear the title (%j) of an existing episode', async (title) => {
+    const result = await saveEpisode({ title, lockedFields: { title: true } })
+
+    expect(result).toEqual({ status: 'error', message: 'Title is required.' })
+    expect(mockCollection('FlatEpisodes').updateOne).not.toHaveBeenCalled()
+    expect(mockCollection('FlatEpisodes').insertOne).not.toHaveBeenCalled()
+  })
+
+  it.each([[undefined], [''], ['   ']])(
+    'saves an episode whose stored title is %j with the title still empty: there is no title to clear',
+    async (storedTitle) => {
+      mockCollection('FlatEpisodes').findOne.mockResolvedValue({ ...existing, title: storedTitle })
+
+      const result = await saveEpisode({ title: '', thumbnail: 'https://server/new.jpg', lockedFields: { thumbnail: true } })
+
+      expect(result.status).toBe('success')
+      const { $set, $unset } = updateOf('FlatEpisodes')
+      expect($set.thumbnail).toBe('https://server/new.jpg')
+      expect($set).not.toHaveProperty('title')
+      expect($set.lockedFields).toEqual({ thumbnail: true })
+      expect($unset).toEqual(expect.objectContaining({ title: '', syncGates: '' }))
+    }
+  )
+
+  it('leaves the locks as they were when the title is unchanged', async () => {
+    await saveEpisode({ title: 'Old Title', lockedFields: { thumbnail: true } })
+
+    const { $set, $unset } = updateOf('FlatEpisodes')
+    expect($set.lockedFields).toEqual({ thumbnail: true })
+    expect($unset).toEqual({ syncGates: '' })
+  })
+
+  it('still adds a new episode without a title, as before', async () => {
+    mockCollection('FlatEpisodes').findOne.mockResolvedValue(null)
+
+    const result = await saveEpisodeAction(null, { showId: 'show-id', seasonNumber: '1', episodeNumber: '3', title: '' })
+
+    expect(result.status).toBe('success')
+    expect(insertedDoc('FlatEpisodes')).not.toHaveProperty('title')
   })
 })
