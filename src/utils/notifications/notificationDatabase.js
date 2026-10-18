@@ -135,6 +135,43 @@ export async function createNotifications(notifications) {
 }
 
 /**
+ * Insert notifications whose `_id`s the caller derived deterministically, so
+ * that inserting the same batch again adds only what is missing: a duplicate
+ * `_id` is a notification that is already there, not an error. Every other
+ * failure throws, and the caller tries the whole batch again later.
+ *
+ * @param {Array<Object>} notifications - Each with `_id` (ObjectId) and `userId`
+ * @returns {Promise<{inserted: number, alreadyThere: number}>}
+ */
+export async function insertNotificationsOnce(notifications) {
+  if (notifications.length === 0) return { inserted: 0, alreadyThere: 0 };
+  const collection = await notificationsCollection();
+
+  const now = new Date();
+  const docs = notifications.map((notification) => ({
+    ...notification,
+    userId: new ObjectId(notification.userId),
+    read: false,
+    createdAt: now,
+    updatedAt: now,
+  }));
+
+  try {
+    const result = await collection.insertMany(docs, { ordered: false });
+    return { inserted: result.insertedCount ?? docs.length, alreadyThere: 0 };
+  } catch (error) {
+    const writeErrors = Array.isArray(error?.writeErrors)
+      ? error.writeErrors
+      : Object.values(error?.writeErrors ?? {});
+    const codes = writeErrors.length > 0 ? writeErrors.map((e) => e?.code ?? e?.err?.code) : [error?.code];
+    if (codes.length > 0 && codes.every((code) => code === 11000)) {
+      return { inserted: docs.length - codes.length, alreadyThere: codes.length };
+    }
+    throw error;
+  }
+}
+
+/**
  * Get notifications with custom query
  * @param {Object} query - MongoDB query object
  * @param {Object} options - Query options (sort, limit, etc.)

@@ -261,7 +261,7 @@ export class EpisodeSyncService {
             ...(gateLeftOpen ? { gateLeftOpen: true } : {}),
             ...(documentChanged ? { documentChanged: true } : {}),
             // No document existed before this write (counted for the admins'
-            // sync notice, and a candidate for the new-content notices).
+            // sync notice).
             ...(existing ? {} : { created: true }),
           }
         ))

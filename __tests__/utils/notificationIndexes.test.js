@@ -185,3 +185,44 @@ describe('every path that marks a notification read sets readAt (the TTL counts 
     expect(update.$set).toMatchObject({ read: true, readAt: expect.any(Date) })
   })
 })
+
+describe('insertNotificationsOnce (the new-content notices’ delivery)', () => {
+  const { ObjectId } = require('mongodb')
+  const doc = (n) => ({ _id: new ObjectId(), userId: USER_ID, title: `Notice ${n}` })
+  const duplicate = (count) =>
+    Object.assign(new Error('E11000 duplicate key error'), {
+      code: 11000,
+      writeErrors: Array.from({ length: count }, () => ({ code: 11000 })),
+    })
+
+  it('inserts every notification unread, stamped now', async () => {
+    mockCollection.insertMany = jest.fn(async (docs) => ({ insertedCount: docs.length }))
+    const db = freshModule()
+
+    await expect(db.insertNotificationsOnce([doc(1), doc(2)])).resolves.toEqual({ inserted: 2, alreadyThere: 0 })
+
+    const [docs, options] = mockCollection.insertMany.mock.calls[0]
+    expect(options).toEqual({ ordered: false })
+    expect(docs[0]).toMatchObject({ read: false, createdAt: expect.any(Date), updatedAt: expect.any(Date) })
+    // An ObjectId (from the module's own copy of the driver)
+    expect(docs[0].userId.toHexString()).toBe(USER_ID)
+  })
+
+  it('counts a notification that is already there (same _id) as delivered', async () => {
+    mockCollection.insertMany = jest.fn(async () => {
+      throw duplicate(1)
+    })
+    const db = freshModule()
+
+    await expect(db.insertNotificationsOnce([doc(1), doc(2)])).resolves.toEqual({ inserted: 1, alreadyThere: 1 })
+  })
+
+  it('throws any other failure, so the delivery is tried again', async () => {
+    mockCollection.insertMany = jest.fn(async () => {
+      throw Object.assign(new Error('not primary'), { writeErrors: [{ code: 11000 }, { code: 10107 }] })
+    })
+    const db = freshModule()
+
+    await expect(db.insertNotificationsOnce([doc(1), doc(2)])).rejects.toThrow('not primary')
+  })
+})

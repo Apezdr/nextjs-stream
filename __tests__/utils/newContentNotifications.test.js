@@ -9,14 +9,16 @@
 
 jest.mock('@src/lib/mongodb', () => ({ __esModule: true, default: Promise.resolve({}) }))
 jest.mock('@src/lib/userQueries', () => ({ userQueries: { find: jest.fn() } }))
-jest.mock('@src/utils/notifications/NotificationManager.js', () => ({
-  NotificationManager: { createNotification: jest.fn(async () => ({})), getNotificationsByContentHash: jest.fn(async () => []) },
-}))
+jest.mock('@src/utils/notifications/notificationDatabase.js', () => ({ insertNotificationsOnce: jest.fn() }))
 
 const { MediaAdditionAnalyzer } = require('@src/utils/notifications/analyzers/MediaAdditionAnalyzer')
 const { NewContentNotificationGenerator } = require('@src/utils/notifications/generators/NewContentNotificationGenerator')
-const { MediaNotificationOrchestrator } = require('@src/utils/notifications/MediaNotificationOrchestrator')
-const { NotificationManager } = require('@src/utils/notifications/NotificationManager.js')
+const {
+  MediaNotificationOrchestrator,
+  newContentNotificationId,
+} = require('@src/utils/notifications/MediaNotificationOrchestrator')
+const { insertNotificationsOnce } = require('@src/utils/notifications/notificationDatabase.js')
+const { NEW_CONTENT_RECIPIENTS_FILTER } = require('@src/utils/notifications/recipients')
 const { userQueries } = require('@src/lib/userQueries')
 
 const ARRIVED = new Date('2026-10-17T10:00:00.000Z')
@@ -108,21 +110,63 @@ describe('NewContentNotificationGenerator.generateNotifications', () => {
   })
 })
 
-describe('MediaNotificationOrchestrator.announceNewContent', () => {
-  it('delivers each notice once to every user', async () => {
-    userQueries.find.mockResolvedValue([{ _id: { toString: () => 'u1' } }, { _id: { toString: () => 'u2' } }])
-    jest.spyOn(console, 'log').mockImplementation(() => {})
+describe('MediaNotificationOrchestrator new-content delivery', () => {
+  const DELIVERY = '6710a0b0c1d2e3f405060708'
+  const recipients = [{ _id: { toString: () => 'aaaaaaaaaaaaaaaaaaaaaaaa' } }, { _id: { toString: () => 'bbbbbbbbbbbbbbbbbbbbbbbb' } }]
 
-    const result = await MediaNotificationOrchestrator.announceNewContent(
-      { movies: [movie(1)], episodes: [] },
-      { generationOptions: OPTIONS, deliveryOptions: { targetAllUsers: true, checkDuplicates: true } }
-    )
+  beforeEach(() => {
+    userQueries.find.mockReset().mockResolvedValue(recipients)
+    insertNotificationsOnce.mockReset().mockImplementation(async (docs) => ({ inserted: docs.length, alreadyThere: 0 }))
+  })
 
-    expect(result.summary).toMatchObject({ totalGenerated: 1, totalDelivered: 1, totalErrors: 0 })
-    expect(NotificationManager.createNotification).toHaveBeenCalledTimes(2)
-    expect(NotificationManager.createNotification.mock.calls[0][1]).toMatchObject({
-      subtype: 'new_movie',
-      actionUrl: `/list/movies/${encodeURIComponent('Movie 1 (2020)')}`,
-    })
+  it('composes nothing when there is nothing to announce', () => {
+    expect(MediaNotificationOrchestrator.composeNewContentNotices({ movies: [], episodes: [] }, OPTIONS)).toEqual([])
+  })
+
+  it('sends to approved accounts without limited access, chosen in one place', async () => {
+    await MediaNotificationOrchestrator.deliverNewContentNotices([{ title: 'n' }], DELIVERY)
+
+    expect(userQueries.find).toHaveBeenCalledWith({ approved: true, limitedAccess: { $ne: true } }, { _id: 1 })
+    expect(NEW_CONTENT_RECIPIENTS_FILTER).toEqual({ approved: true, limitedAccess: { $ne: true } })
+  })
+
+  it('gives every notice one notification per recipient, under ids the same on every attempt', async () => {
+    const notices = MediaNotificationOrchestrator.composeNewContentNotices({ movies: [movie(1)], episodes: [episode('A', 1, 1)] }, OPTIONS)
+
+    const first = await MediaNotificationOrchestrator.deliverNewContentNotices(notices, DELIVERY)
+    const second = await MediaNotificationOrchestrator.deliverNewContentNotices(notices, DELIVERY)
+
+    expect(first).toEqual({ recipients: 2, notices: 2, inserted: 4, alreadyThere: 0 })
+    const [docs1] = insertNotificationsOnce.mock.calls[0]
+    const [docs2] = insertNotificationsOnce.mock.calls[1]
+    expect(docs1.map((d) => d._id.toHexString())).toEqual(docs2.map((d) => d._id.toHexString()))
+    expect(new Set(docs1.map((d) => d._id.toHexString())).size).toBe(4)
+    // The delivery's timestamp leads, so ids still sort by when they were queued
+    expect(docs1.every((d) => d._id.toHexString().startsWith(DELIVERY.slice(0, 8)))).toBe(true)
+    expect(docs1.map((d) => d.userId)).toEqual([
+      'aaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbbbbbbbbbb', 'aaaaaaaaaaaaaaaaaaaaaaaa', 'bbbbbbbbbbbbbbbbbbbbbbbb',
+    ])
+    expect(second.recipients).toBe(2)
+  })
+
+  it('uses other ids for another queued delivery', () => {
+    const a = newContentNotificationId(DELIVERY, 0, 'aaaaaaaaaaaaaaaaaaaaaaaa')
+    expect(newContentNotificationId(DELIVERY, 0, 'aaaaaaaaaaaaaaaaaaaaaaaa').equals(a)).toBe(true)
+    expect(newContentNotificationId('6710a0b0c1d2e3f405060709', 0, 'aaaaaaaaaaaaaaaaaaaaaaaa').equals(a)).toBe(false)
+    expect(newContentNotificationId(DELIVERY, 1, 'aaaaaaaaaaaaaaaaaaaaaaaa').equals(a)).toBe(false)
+  })
+
+  it('throws when the notifications could not be written, so the queued delivery is tried again', async () => {
+    insertNotificationsOnce.mockRejectedValue(new Error('not primary'))
+
+    await expect(MediaNotificationOrchestrator.deliverNewContentNotices([{ title: 'n' }], DELIVERY)).rejects.toThrow('not primary')
+  })
+
+  it('links a movie notice to the movie page and a batch to the movie list', () => {
+    const [single] = MediaNotificationOrchestrator.composeNewContentNotices({ movies: [movie(1)], episodes: [] }, OPTIONS)
+    const [batch] = MediaNotificationOrchestrator.composeNewContentNotices({ movies: [movie(1), movie(2)], episodes: [] }, OPTIONS)
+
+    expect(single.actionUrl).toBe(`/list/movie/${encodeURIComponent('Movie 1 (2020)')}`)
+    expect(batch.actionUrl).toBe('/list/movie')
   })
 })

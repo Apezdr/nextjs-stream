@@ -5,8 +5,9 @@
  * pass (run/serverPass), which records each title's results into it the moment
  * the title is done. A pass that throws part way through has therefore already
  * handed the run everything it wrote before it threw: the post-sync cache
- * invalidation, the admins' "added" counts and the new-content notices
- * (run/newContent) all read from here, not from the pass's return value.
+ * invalidation, the admins' "added" counts and the new-content notices'
+ * candidates (run/newContent) all read from here, not from the pass's return
+ * value.
  */
 
 import { MediaType, SyncStatus, type SyncResult } from '../core'
@@ -19,31 +20,31 @@ export interface ChangedMedia {
   episodes: Array<{ title: string; season: number; episode: number }>
 }
 
-/** A movie or an episode document a pass created (run/newContent decides whether it is new content). */
-export type CreatedTitle =
+/** A movie or an episode a pass wrote (run/newContent decides whether to announce it). */
+export type WrittenTitle =
   | { kind: 'movie'; originalTitle: string }
   | { kind: 'episode'; showOriginalTitle: string; seasonNumber: number; episodeNumber: number }
 
 export interface WrittenMedia {
   changedMedia: ChangedMedia
   /**
-   * Movies and episodes whose document a pass created, keyed by title
-   * (`movieKey` / `episodeKey`): a title two servers have is created by the
-   * first server's pass and only updated by the next, and appears once.
+   * Movies and episodes a pass wrote this run, created or updated (a title
+   * whose pass was skipped on its gate is not here), keyed by title
+   * (`movieKey` / `episodeKey`): a title two servers have appears once.
    */
-  createdTitles: Map<string, CreatedTitle>
+  writtenTitles: Map<string, WrittenTitle>
   /** Record one title's results. */
   record(results: SyncResult[]): void
   /** How many documents the passes created (not updated): the admins' sync notice. */
   addedCounts(): { movies: number; shows: number; episodes: number }
 }
 
-/** The key a movie is recorded (and announced) under: its folder name. */
+/** The key a movie is recorded (and announced) under: its folder name, never its _id. */
 export function movieKey(originalTitle: string): string {
   return `movie:${originalTitle}`
 }
 
-/** The key an episode is recorded (and announced) under: its show's folder name and its numbers. */
+/** The key an episode is recorded (and announced) under: its show's folder name and its numbers, never an _id. */
 export function episodeKey(showOriginalTitle: string, seasonNumber: number, episodeNumber: number): string {
   return `episode:${showOriginalTitle}:S${seasonNumber}E${episodeNumber}`
 }
@@ -51,7 +52,7 @@ export function episodeKey(showOriginalTitle: string, seasonNumber: number, epis
 export function createWrittenMedia(): WrittenMedia {
   const changedMedia: ChangedMedia = { movies: [], shows: [], seasons: [], episodes: [] }
   const created = { movies: new Set<string>(), shows: new Set<string>(), episodes: new Set<string>() }
-  const createdTitles = new Map<string, CreatedTitle>()
+  const writtenTitles = new Map<string, WrittenTitle>()
 
   /**
    * From the results that completed (were not skipped): the entities changed,
@@ -73,11 +74,9 @@ export function createWrittenMedia(): WrittenMedia {
         case MediaType.Movie: {
           const title = md.displayTitle || r.entityId
           if (title) changedMedia.movies.push(title)
-          if (wasCreated) {
-            created.movies.add(r.entityId)
-            // A movie's entity id is its folder name.
-            createdTitles.set(movieKey(r.entityId), { kind: 'movie', originalTitle: r.entityId })
-          }
+          if (wasCreated) created.movies.add(r.entityId)
+          // A movie's entity id is its folder name.
+          writtenTitles.set(movieKey(r.entityId), { kind: 'movie', originalTitle: r.entityId })
           break
         }
         case MediaType.TVShow: {
@@ -96,18 +95,16 @@ export function createWrittenMedia(): WrittenMedia {
           if (md.displayTitle && md.seasonNumber != null && md.episodeNumber != null) {
             changedMedia.episodes.push({ title: md.displayTitle, season: md.seasonNumber, episode: md.episodeNumber })
           }
-          if (wasCreated) {
-            created.episodes.add(r.entityId)
-            // An episode's entity id is "<show> S<n>E<m>"; its show's folder
-            // name comes separately, never parsed back out of it.
-            if (typeof md.showOriginalTitle === 'string' && md.seasonNumber != null && md.episodeNumber != null) {
-              createdTitles.set(episodeKey(md.showOriginalTitle, md.seasonNumber, md.episodeNumber), {
-                kind: 'episode',
-                showOriginalTitle: md.showOriginalTitle,
-                seasonNumber: md.seasonNumber,
-                episodeNumber: md.episodeNumber,
-              })
-            }
+          if (wasCreated) created.episodes.add(r.entityId)
+          // An episode's entity id is "<show> S<n>E<m>"; its show's folder
+          // name comes separately, never parsed back out of it.
+          if (typeof md.showOriginalTitle === 'string' && md.seasonNumber != null && md.episodeNumber != null) {
+            writtenTitles.set(episodeKey(md.showOriginalTitle, md.seasonNumber, md.episodeNumber), {
+              kind: 'episode',
+              showOriginalTitle: md.showOriginalTitle,
+              seasonNumber: md.seasonNumber,
+              episodeNumber: md.episodeNumber,
+            })
           }
           break
         }
@@ -119,7 +116,7 @@ export function createWrittenMedia(): WrittenMedia {
 
   return {
     changedMedia,
-    createdTitles,
+    writtenTitles,
     record,
     addedCounts: () => ({ movies: created.movies.size, shows: created.shows.size, episodes: created.episodes.size }),
   }

@@ -180,15 +180,15 @@ const EMPTY_RESULT = Object.freeze({
  *     cleanup's deletes, and after the pass, which can take a title's video
  *     away without deleting anything.
  *  4. The new-content notices (run/newContent): after cleanup has decided what
- *     is deleted, so a title deleted this run is never announced.
+ *     is deleted, so a title deleted this run is never announced; and the
+ *     delivery of any notices still queued from earlier runs.
  *
  * @param {Object} args
  * @param {string} args.syncRunId
- * @param {Date|number} args.runStartedAt - When the run started
  * @param {import('./writtenMedia').WrittenMedia} args.written - What the run's passes wrote
  * @returns {Promise<{migration: Object, titleHashes: Object, watchHistoryValidation: Object, notifications: Object|null}>}
  */
-export async function runAfterSyncJobs({ syncRunId, runStartedAt, written }) {
+export async function runAfterSyncJobs({ syncRunId, written }) {
   const log = createLogger('FlatSync.AfterSync')
   const out = { migration: null, titleHashes: null, watchHistoryValidation: null, notifications: null }
 
@@ -216,7 +216,7 @@ export async function runAfterSyncJobs({ syncRunId, runStartedAt, written }) {
   out.watchHistoryValidation = await validateWatchHistory('full pass')
 
   try {
-    out.notifications = await announceNewContent(written?.createdTitles, { runStartedAt, syncRunId })
+    out.notifications = await announceNewContent(written?.writtenTitles, { syncRunId })
   } catch (error) {
     logError(log, error, { syncRunId, context: 'notification_processing' })
     out.notifications = { error: error.message }

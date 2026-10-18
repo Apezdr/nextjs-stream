@@ -8,13 +8,15 @@ import { NotificationHashing } from '../utils/NotificationHashing.js';
 
 export class NewContentNotificationGenerator {
   /**
-   * Generate action URL for movie content
-   * @param {string} movieTitle - Movie title
+   * Generate action URL for movie content: the movie page, keyed on the
+   * folder name (originalTitle) like every media page route
+   * (app/(styled)/list/movie/[title]). /list/movies/... is no route.
+   * @param {string} movieTitle - The movie's originalTitle
    * @returns {string} Action URL
    */
   static generateMovieActionUrl(movieTitle) {
     const encodedTitle = encodeURIComponent(movieTitle);
-    return `/list/movies/${encodedTitle}`;
+    return `/list/movie/${encodedTitle}`;
   }
 
   /**
@@ -257,7 +259,7 @@ export class NewContentNotificationGenerator {
       subtype: 'new_movies_batch',
       title,
       message,
-      actionUrl: `/list/movies`, // General movies list for batch notifications
+      actionUrl: '/list/movie', // General movies list for batch notifications
       data: {
         contentType: 'movies',
         count,

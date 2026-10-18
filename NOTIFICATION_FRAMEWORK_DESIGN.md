@@ -1,5 +1,52 @@
 # Notification Framework — Design Writeup
 
+## New-content notices: what ships
+
+This section describes what the app does today. The rest of the document is a design for a later framework. The code is `src/utils/sync/run/newContent.js` (its module header says the same thing), with `src/utils/notifications/MediaNotificationOrchestrator.js` composing and delivering the notices.
+
+### When it runs
+Once per sync run (a full pass, not a skipped tick), after every file server's pass and after post-sync cleanup has deleted what it deletes.
+
+### What counts as new
+The app keeps a permanent set of the titles it has announced (`Media.AnnouncedTitles`). Each title has one key, built from folder names and never from a database id:
+- a movie: its folder name (`originalTitle`);
+- an episode: its show's folder name, its season number and its episode number.
+
+A movie or an episode is announced when, after the run:
+1. a pass wrote it this run, created or updated (a title skipped on its gate was not written);
+2. it is still in the library (a title cleanup deleted this run is not announced);
+3. a list would show it (it has a video a browser can play, or a transcoder link);
+4. its key is not in the set, and is not waiting to be delivered.
+
+How long ago a file server first saw the title plays no part. A movie whose folder arrives before its video (a placeholder, or a scan in the middle of an import) is announced when the video arrives and the movie becomes visible. A title added during an outage is announced on the first run after it.
+
+A title two servers have is one title, and is announced once.
+
+### The baseline
+On a database where the set has never been started, the first run announces nothing. Instead it puts every movie and episode the library holds after that run into the set, hidden ones included, and leaves a flag (`new-content-baseline` in `app_config.migrations`). On an upgrade, this means the existing library is never announced. On a fresh install, the first sync into an empty database announces nothing either. If seeding fails, nothing is announced and no flag is written, so the next run seeds again. Seeding can be repeated safely.
+
+### Retries
+The notices for a run's titles are queued (`Media.NewContentOutbox`) with the keys they announce. Every run delivers every queued entry, oldest first, whether or not that run wrote anything. When an entry is delivered, it is removed, and only then do its keys go into the set. When delivery fails, the entry stays queued and the next run tries again.
+
+Nothing is lost: a key is in the queue until the set has it. Nothing is sent twice:
+- each notification's id is derived from the queued entry, the notice and the user, so delivering an entry again adds only the notifications the last attempt did not;
+- a title waiting in the queue is not queued a second time.
+
+An entry is delivered as it was queued: a title deleted while its notice waits is still named in it.
+
+### Titles removed and added back
+A title stays in the set after it leaves the library. If it comes back later (a folder restored, a document re-created after cleanup, a show re-created under a new id with every episode inserted again), it is not announced again. If the owner ever wants returning titles announced, the set is the one place to change: remove a key when its title leaves the library.
+
+### Grouping and the digest
+- Movies are grouped five to a notice. One movie gets its own notice, which links to its page.
+- Episodes get one notice per show, linking to the episode when there is one and to the show otherwise.
+- When a run's titles would come to more than five notices, one digest is sent instead. A first sync of a new library, or a newly added server, sends one digest, not hundreds of notices.
+
+### Recipients
+Accounts with `approved: true` and without `limitedAccess` (which may not be able to open the content). This is decided in one place, `src/utils/notifications/recipients.js`.
+
+---
+
 ## 1. Why we're building this
 
 The new domain-driven sync architecture (`src/utils/sync/`) reaches users only through the legacy `MediaNotificationOrchestrator`, which the run calls once, after every server's pass and after post-sync cleanup (`run/newContent`, from `run/postSync` `runAfterSyncJobs`) — the domain services themselves produce no user-facing notifications. The legacy orchestrator works but is procedural, tightly coupled to the flat-sync result shape, and operates on a "load all users, fan out per entity" model that doesn't scale.
@@ -208,9 +255,9 @@ interface SyncResult {
 ```
 
 ### 7.3 `run/newContent` emits one event per title new to the library
-Not where a title's results come back: a created document is not necessarily new content (cleanup can delete a document whose title comes back, a show re-created under a new `_id` inserts its episodes again, a first sync creates everything). Each pass records its created movies and episodes into the run's `run/writtenMedia` record as each title finishes, keyed by title, so a title two servers have is one candidate. Once per run, after every pass and after post-sync cleanup has decided deletions, `run/newContent` reads the candidates back and keeps those still there, listed (`isWebVisible`), whose `initialDiscoveryDate` (restored from the processor's `mediaIdentity.firstSeen`, which survives a deleted document) is within the last day, and which its ledger has not announced in that day. It emits for those:
+Not where a title's results come back: a created document is not necessarily new content (cleanup can delete a document whose title comes back, a show re-created under a new `_id` inserts its episodes again, a first sync creates everything). Each pass records every movie and episode it writes into the run's `run/writtenMedia` record as the title finishes, keyed by folder names, so a title two servers have is one candidate. Once per run, after every pass and after post-sync cleanup has decided deletions, `run/newContent` keeps the candidates still there, listed (`isWebVisible`) and not in the announced-titles set (see "New-content notices: what ships" above). It would emit for those:
 ```ts
-for (const title of newToTheLibrary) {        // run/newContent selectNewContent
+for (const title of newToTheLibrary) {        // run/newContent selectAnnounceable
   syncEventBus.emitEntityCreated({
     kind: title.kind,                          // 'movie' | 'episode'
     tmdbId: title.tmdbId,
@@ -225,6 +272,7 @@ for (const title of newToTheLibrary) {        // run/newContent selectNewContent
   })
 }
 ```
+The announced-titles set keeps the "at most once per title" promise whichever delivery sits behind the event.
 
 ### 7.4 Subscribe at boot (instrumentation.ts)
 ```ts

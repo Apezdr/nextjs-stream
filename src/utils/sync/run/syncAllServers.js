@@ -414,7 +414,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       } catch (error) {
         console.error(chalk.red(`❌ Post-sync cleanup failed: ${error.message}`))
       }
-      results.afterSync = await runAfterSyncJobs({ syncRunId, runStartedAt: startTime, written })
+      results.afterSync = await runAfterSyncJobs({ syncRunId, written })
     } catch (error) {
       console.error(chalk.red(`❌ The run's after-sync jobs failed: ${error.message}`))
     } finally {

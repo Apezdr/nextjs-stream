@@ -365,8 +365,7 @@ export class MovieSyncService {
             ...r.metadata,
             displayTitle: movieDisplayTitle,
             // No document existed before this pass inserted one (counted for
-            // the admins' sync notice, and a candidate for the new-content
-            // notices).
+            // the admins' sync notice).
             ...(existingMovie ? {} : { created: true }),
           }
         }
