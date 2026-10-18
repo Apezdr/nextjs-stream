@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useEffect, useMemo, useState } from 'react'
+import { startTransition, useActionState, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeftIcon, PlusIcon } from '@heroicons/react/24/outline'
@@ -10,6 +10,7 @@ import {
   saveSeasonAction,
 } from '@src/utils/admin/flatMediaActions'
 import LockableField from './LockableField'
+import ActionError from './ActionError'
 import { METADATA_FIELD_HELP, TITLE_LOCK_HELP, tmdbIdHelp, useFieldLocks } from './useFieldLocks'
 import ImagePreview from './ImagePreview'
 import DeleteMediaButton from './DeleteMediaButton'
@@ -34,7 +35,8 @@ function AddSeason({ showId, suggested }) {
     <form
       onSubmit={(e) => {
         e.preventDefault()
-        save({ showId, seasonNumber: num })
+        // In a transition, as useActionState needs: isSaving follows the save
+        startTransition(() => save({ showId, seasonNumber: num }))
       }}
       className="flex items-center gap-2"
     >
@@ -52,7 +54,7 @@ function AddSeason({ showId, suggested }) {
       >
         <PlusIcon className="h-4 w-4" /> {isSaving ? 'Adding…' : 'Add season'}
       </button>
-      {state.status === 'error' && <span className="text-sm text-red-600">{state.message}</span>}
+      <ActionError state={state} />
     </form>
   )
 }
@@ -153,7 +155,7 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          save(payload)
+          startTransition(() => save(payload))
         }}
         className="space-y-8"
       >
@@ -218,8 +220,8 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
           >
             {isSaving ? 'Saving…' : isNew ? 'Create Show' : 'Save Changes'}
           </button>
-          {state.status === 'error' && <span className="text-sm text-red-600">{state.message}</span>}
           {state.status === 'success' && !isNew && <span className="text-sm text-green-600">Saved.</span>}
+          <ActionError state={state} />
         </div>
       </form>
 

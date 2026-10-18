@@ -42,18 +42,6 @@ const MovieEditor = require('@components/Admin/Media/MovieEditor').default
 const TVShowEditor = require('@components/Admin/Media/TVShowEditor').default
 const { METADATA_FIELD_HELP, tmdbIdHelp } = require('@components/Admin/Media/useFieldLocks')
 
-// The editors dispatch their save outside a transition, which React reports
-// (the save still runs). Every other console error is let through.
-const consoleError = console.error
-beforeAll(() => {
-  jest.spyOn(console, 'error').mockImplementation((...args) => {
-    if (String(args[0]).includes('useActionState was called outside of a transition')) return
-    consoleError(...args)
-  })
-})
-afterAll(() => {
-  console.error.mockRestore()
-})
 beforeEach(() => {
   mockSaveMovie.mockClear()
   mockSaveShow.mockClear()

@@ -1,11 +1,12 @@
 'use client'
 
-import { useActionState, useEffect, useMemo, useState } from 'react'
+import { startTransition, useActionState, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { createMovieAction, saveMovieAction } from '@src/utils/admin/flatMediaActions'
 import LockableField from './LockableField'
+import ActionError from './ActionError'
 import { METADATA_FIELD_HELP, TITLE_LOCK_HELP, tmdbIdHelp, useFieldLocks } from './useFieldLocks'
 import ImagePreview from './ImagePreview'
 import CaptionsEditor from './CaptionsEditor'
@@ -124,7 +125,8 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
       <form
         onSubmit={(e) => {
           e.preventDefault()
-          save(payload)
+          // In a transition, as useActionState needs: isSaving follows the save
+          startTransition(() => save(payload))
         }}
         className="space-y-8"
       >
@@ -201,8 +203,8 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
           >
             {isSaving ? 'Saving…' : isNew ? 'Create Movie' : 'Save Changes'}
           </button>
-          {state.status === 'error' && <span className="text-sm text-red-600">{state.message}</span>}
           {state.status === 'success' && !isNew && <span className="text-sm text-green-600">Saved.</span>}
+          <ActionError state={state} />
         </div>
       </form>
     </div>

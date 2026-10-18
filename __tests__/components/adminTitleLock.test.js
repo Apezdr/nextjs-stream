@@ -83,19 +83,9 @@ const EDITORS = [
 const type = (input, value) => act(() => fireEvent.change(input, { target: { value } }))
 const click = (element) => act(() => fireEvent.click(element))
 
-// The editors dispatch their save outside a transition, which React reports
-// (the save still runs). Every other console error is let through.
-const consoleError = console.error
 beforeAll(() => {
   // The episode editor scrolls itself into view when it opens as the target
   Element.prototype.scrollIntoView = jest.fn()
-  jest.spyOn(console, 'error').mockImplementation((...args) => {
-    if (String(args[0]).includes('useActionState was called outside of a transition')) return
-    consoleError(...args)
-  })
-})
-afterAll(() => {
-  console.error.mockRestore()
 })
 beforeEach(() => {
   mockSaveMovie.mockClear()
