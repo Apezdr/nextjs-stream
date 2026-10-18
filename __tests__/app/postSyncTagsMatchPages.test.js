@@ -414,3 +414,96 @@ describe.each(FOLDERS)('the cached views of the folder %j (display title %j)', (
     )
   })
 })
+
+// ---------------------------------------------------------------- Specials and episode 0
+
+// Season 0 holds the Specials, and an episode 0 exists too: zero is a number
+// like any other on every path, and only null, undefined or NaN means missing.
+describe.each([
+  ['Example Show (2019)', 'Example Show'],
+  ['Show: Part One & Two? #1 (2019)', 'Show Part One and Two'],
+])('season 0 and episode 0 of the folder %j (display title %j)', (folder, displayTitle) => {
+  const show = { _id: 'show-1', title: displayTitle, originalTitle: folder }
+  const specialsTags = async (episode) => [
+    ...(await pageTitleTags('episode', folder, 0, episode)),
+    ...(await pageTitleTags('season', folder, 0)),
+    ...(await pageTitleTags('show', folder)),
+  ]
+
+  beforeEach(() => {
+    for (const key of Object.keys(mockDocs)) delete mockDocs[key]
+  })
+
+  it('are tagged by the pages with the 0 in them', async () => {
+    expect(await pageTitleTags('season', folder, 0)).toEqual([`season-${folder}-0`])
+    expect(await pageTitleTags('episode', folder, 0, 0)).toEqual([`episode-${folder}-S0E0`])
+  })
+
+  it('are revalidated after a sync pass that wrote them', async () => {
+    const { calls } = await revalidatedBy([[folder, showPass(folder, displayTitle, 0, 0)]])
+
+    for (const tag of await specialsTags(0)) expect(calls).toContainEqual([tag, 'max'])
+  })
+
+  it('are revalidated by an admin create of the Specials season and of its episodes 0 and 3', async () => {
+    mockDocs.FlatTVShows = show
+    const seasonTags = await titleTagsRevalidatedBy(() => saveSeasonAction(null, { showId: 'show-1', seasonNumber: '0' }))
+    expect(new Set(seasonTags)).toEqual(
+      new Set([...(await pageTitleTags('season', folder, 0)), ...(await pageTitleTags('show', folder))])
+    )
+
+    mockDocs.FlatSeasons = { _id: 'season-0', showId: 'show-1', seasonNumber: 0 }
+    for (const episode of [0, 3]) {
+      const tags = await titleTagsRevalidatedBy(() =>
+        saveEpisodeAction(null, { showId: 'show-1', seasonNumber: '0', episodeNumber: String(episode), title: 'Special' })
+      )
+      expect(new Set(tags)).toEqual(new Set(await specialsTags(episode)))
+    }
+  })
+
+  it('are revalidated by an admin save of an existing episode 0', async () => {
+    mockDocs.FlatTVShows = show
+    mockDocs.FlatSeasons = { _id: 'season-1', showId: 'show-1', seasonNumber: 1 }
+    mockDocs.FlatEpisodes = { _id: 'episode-0', showId: 'show-1', seasonNumber: 1, episodeNumber: 0, title: 'Prologue' }
+
+    const tags = await titleTagsRevalidatedBy(() =>
+      saveEpisodeAction(null, { showId: 'show-1', seasonNumber: '1', episodeNumber: '0', episodeId: 'episode-0', title: 'Prologue' })
+    )
+
+    expect(new Set(tags)).toEqual(
+      new Set([
+        ...(await pageTitleTags('episode', folder, 1, 0)),
+        ...(await pageTitleTags('season', folder, 1)),
+        ...(await pageTitleTags('show', folder)),
+      ])
+    )
+  })
+
+  it('are tagged by the episode view as the pages tag them', async () => {
+    const media = { title: 'Special', showTitle: displayTitle, originalTitle: folder, seasonNumber: 0, episodeNumber: 0 }
+
+    expect(new Set(await viewTitleTags(TVEpisodeDetailsView, media))).toEqual(new Set(await specialsTags(0)))
+  })
+})
+
+describe('a season or episode number that is not there', () => {
+  const { invalidateEpisodeDetailsCache, invalidateSeasonDetailsCache } = require('@src/utils/cache/invalidation')
+
+  it.each([[null], [undefined], [NaN]])('(%p) invalidates nothing rather than a tag with it in', async (missing) => {
+    mockRevalidateTag.mockClear()
+
+    await expect(invalidateSeasonDetailsCache('Example Show (2019)', missing)).resolves.toBe(false)
+    await expect(invalidateEpisodeDetailsCache('Example Show (2019)', missing, 1)).resolves.toBe(false)
+    await expect(invalidateEpisodeDetailsCache('Example Show (2019)', 1, missing)).resolves.toBe(false)
+    expect(mockRevalidateTag).not.toHaveBeenCalled()
+  })
+
+  it('is not 0', async () => {
+    mockRevalidateTag.mockClear()
+
+    await expect(invalidateSeasonDetailsCache('Example Show (2019)', 0)).resolves.toBe(true)
+    await expect(invalidateEpisodeDetailsCache('Example Show (2019)', 0, 0)).resolves.toBe(true)
+    expect(mockRevalidateTag).toHaveBeenCalledWith('season-Example Show (2019)-0', 'max')
+    expect(mockRevalidateTag).toHaveBeenCalledWith('episode-Example Show (2019)-S0E0', 'max')
+  })
+})
