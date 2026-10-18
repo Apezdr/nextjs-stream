@@ -19,7 +19,8 @@ import { movieDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTa
 async function CachedMovieDetails({ media }) {
   'use cache'
   cacheLife('mediaLists') // 2 minute stale, revalidates in background
-  cacheTag('media-library', 'movies', MEDIA_CACHE_TAGS.MOVIE_DETAILS, movieDetailsTag(media.title))
+  // The per-title tag by folder name, as the page and every invalidation key it
+  cacheTag('media-library', 'movies', MEDIA_CACHE_TAGS.MOVIE_DETAILS, movieDetailsTag(media.originalTitle || media.title))
   
   return <MovieDetailsComponent media={media} />
 }

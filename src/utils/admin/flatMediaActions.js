@@ -580,7 +580,8 @@ export async function saveSeasonAction(_prevState, payload = {}) {
 
   revalidateMedia()
   revalidatePath(`/admin/media/tv/${showId.toString()}`)
-  await invalidateSeasonDetailsCache(show.title, seasonNumber)
+  // By the show's folder name, which the media pages tag their caches with
+  await invalidateSeasonDetailsCache(show.originalTitle || show.title, seasonNumber)
   return ok({ id: doc._id.toString() })
 }
 
@@ -687,7 +688,8 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
 
   revalidateMedia()
   revalidatePath(`/admin/media/tv/${showId.toString()}`)
-  await invalidateEpisodeDetailsCache(show.title, seasonNumber, episodeNumber)
+  // By the show's folder name, which the media pages tag their caches with
+  await invalidateEpisodeDetailsCache(show.originalTitle || show.title, seasonNumber, episodeNumber)
   return ok({ id: doc._id.toString() })
 }
 

@@ -13,12 +13,16 @@
  * code puts on their cache entries, given the params Next hands them for the
  * URLs the app links to (matched and decoded by Next's route matcher, then
  * re-encoded by getDynamicParam, as Next 16 does).
+ *
+ * The admin creates (flatMediaActions) are held to the same pages, and so are
+ * the cached views nested in the movie and episode pages.
  */
 
 const mockRevalidateTag = jest.fn()
 const mockCacheTag = jest.fn()
 jest.mock('next/cache', () => ({
   revalidateTag: (...args) => mockRevalidateTag(...args),
+  revalidatePath: jest.fn(),
   updateTag: jest.fn(),
   cacheTag: (...args) => mockCacheTag(...args),
   cacheLife: jest.fn(),
@@ -46,19 +50,55 @@ jest.mock('@src/utils/cache/mediaFetching', () => ({
 }))
 jest.mock('@src/utils/media/mediaFetcher', () => ({ fetchTrailerMedia: jest.fn() }))
 jest.mock('@src/utils/media/metadataBuilder', () => ({ buildMediaMetadata: jest.fn() }))
+jest.mock('@src/components/MediaPages/MovieDetailsComponent', () => ({ __esModule: true, default: () => null }))
+jest.mock('@src/components/MediaPages/TVEpisodeDetailsComponent', () => ({ __esModule: true, default: () => null }))
+
+// The admin actions' database: the documents a create finds (by collection)
+const mockDocs = {}
+jest.mock('@src/lib/mongodb', () => ({
+  __esModule: true,
+  default: Promise.resolve({
+    db: () => ({
+      collection: (name) => ({
+        findOne: async () => mockDocs[name] ?? null,
+        insertOne: async () => ({ acknowledged: true }),
+        updateOne: async () => ({ matchedCount: 1 }),
+        updateMany: async () => ({ matchedCount: 0 }),
+      }),
+    }),
+  }),
+}))
+jest.mock('mongodb', () => {
+  let next = 0
+  class ObjectId {
+    constructor(value) {
+      this.value = value ?? `generated-${(next += 1)}`
+    }
+
+    static isValid(value) {
+      return Boolean(value)
+    }
+
+    toString() {
+      return String(this.value)
+    }
+  }
+  return { ObjectId }
+})
+jest.mock('@src/utils/sync/run/appliedPayloads', () => ({ forgetAppliedPayloads: jest.fn() }))
+jest.mock('@src/utils/sync/run/validateWatchHistory', () => ({ validateWatchHistory: jest.fn() }))
 
 // The route's other dependencies play no part in revalidate-media.
 jest.mock('@src/utils/routeAuth', () => ({
-  isAdmin: jest.fn(),
+  // An admin: the actions go ahead
+  isAdmin: jest.fn(async () => ({ id: 'admin' })),
   isAdminOrWebhook: jest.fn(async () => true),
 }))
-jest.mock('@src/lib/mongodb', () => ({ __esModule: true, default: Promise.resolve({}) }))
 jest.mock('@src/utils', () => ({ buildURL: jest.fn() }))
 jest.mock('@src/utils/admin_database', () => ({}))
-jest.mock('@src/utils/flatDatabaseUtils', () => ({}))
+jest.mock('@src/utils/flatDatabaseUtils', () => ({ generateNormalizedVideoId: jest.fn(() => 'normalized') }))
 jest.mock('@src/utils/playbackPresence/database', () => ({}))
 jest.mock('@src/utils/playbackPresence/attach', () => ({}))
-jest.mock('mongodb', () => ({ ObjectId: jest.fn() }))
 jest.mock('@src/lib/userQueries', () => ({ userQueries: {} }))
 jest.mock('@src/utils/admin_utils', () => ({}))
 jest.mock('axios', () => ({ __esModule: true, default: {} }))
@@ -82,6 +122,14 @@ const { getRouteMatcher } = require('next/dist/shared/lib/router/utils/route-mat
 const { getDynamicParam } = require('next/dist/shared/lib/router/utils/get-dynamic-param')
 const { POST } = require('@src/app/api/authenticated/[...admin]/route')
 const { createWrittenMedia } = require('@src/utils/sync/run/writtenMedia')
+const {
+  createMovieAction,
+  createTVShowAction,
+  saveSeasonAction,
+  saveEpisodeAction,
+} = require('@src/utils/admin/flatMediaActions')
+const MovieDetailsView = require('@src/components/MediaPages/DynamicPage/views/MovieDetailsView').default
+const TVEpisodeDetailsView = require('@src/components/MediaPages/DynamicPage/views/TVEpisodeDetailsView').default
 
 const PAGES = {
   movie: {
@@ -276,5 +324,93 @@ describe('the tags a post-sync revalidation marks stale', () => {
       ['episode-Example Show (2019)-S1E2', 'max'],
       ['episode-details', 'max'],
     ])
+  })
+})
+
+// ---------------------------------------------------------------- admin creates
+
+/** The per-title tags an admin action revalidated (bucket tags left out). */
+async function titleTagsRevalidatedBy(run) {
+  mockRevalidateTag.mockClear()
+  const result = await run()
+  expect(result.status).toBe('success')
+  return mockRevalidateTag.mock.calls.map(([tag]) => tag).filter((tag) => !BUCKETS.has(tag) && tag !== 'banner')
+}
+
+describe.each(FOLDERS)('an admin create under the folder %j (display title %j)', (folder, displayTitle) => {
+  const show = { _id: 'show-1', title: displayTitle, originalTitle: folder }
+
+  beforeEach(() => {
+    for (const key of Object.keys(mockDocs)) delete mockDocs[key]
+  })
+
+  it('of a movie revalidates the movie page\'s tag', async () => {
+    const tags = await titleTagsRevalidatedBy(() =>
+      createMovieAction(null, { title: displayTitle, originalTitle: folder, videoURL: 'https://server/film.mp4' })
+    )
+
+    expect(tags).toEqual(await pageTitleTags('movie', folder))
+  })
+
+  it('of a show revalidates the show page\'s tag', async () => {
+    const tags = await titleTagsRevalidatedBy(() => createTVShowAction(null, { title: displayTitle, originalTitle: folder }))
+
+    expect(tags).toEqual(await pageTitleTags('show', folder))
+  })
+
+  it('of a season revalidates the season page\'s and the show page\'s tags, by the show\'s folder name', async () => {
+    mockDocs.FlatTVShows = show
+    const tags = await titleTagsRevalidatedBy(() => saveSeasonAction(null, { showId: 'show-1', seasonNumber: '2' }))
+
+    expect(new Set(tags)).toEqual(
+      new Set([...(await pageTitleTags('season', folder, 2)), ...(await pageTitleTags('show', folder))])
+    )
+  })
+
+  it('of an episode revalidates the episode, season and show pages\' tags, by the show\'s folder name', async () => {
+    mockDocs.FlatTVShows = show
+    mockDocs.FlatSeasons = { _id: 'season-2', showId: 'show-1', seasonNumber: 2 }
+    const tags = await titleTagsRevalidatedBy(() =>
+      saveEpisodeAction(null, { showId: 'show-1', seasonNumber: '2', episodeNumber: '5', title: 'Pilot' })
+    )
+
+    expect(new Set(tags)).toEqual(
+      new Set([
+        ...(await pageTitleTags('episode', folder, 2, 5)),
+        ...(await pageTitleTags('season', folder, 2)),
+        ...(await pageTitleTags('show', folder)),
+      ])
+    )
+  })
+})
+
+// ---------------------------------------------------------------- nested views
+
+/** The per-title tags of the cached component a view renders: <Suspense><div><Cached media /></div></Suspense>. */
+async function viewTitleTags(View, media) {
+  const cached = View({ media }).props.children.props.children
+  mockCacheTag.mockClear()
+  await cached.type(cached.props)
+  return mockCacheTag.mock.calls.flat().filter((tag) => !BUCKETS.has(tag))
+}
+
+describe.each(FOLDERS)('the cached views of the folder %j (display title %j)', (folder, displayTitle) => {
+  it('tag the movie details as the movie page does', async () => {
+    const media = { title: displayTitle, originalTitle: folder }
+
+    expect(await viewTitleTags(MovieDetailsView, media)).toEqual(await pageTitleTags('movie', folder))
+  })
+
+  it('tag the episode details as the episode, season and show pages do', async () => {
+    // As getFlatRequestedMedia builds an episode: the show's display title and folder name
+    const media = { title: 'Pilot', showTitle: displayTitle, originalTitle: folder, seasonNumber: 2, episodeNumber: 5 }
+
+    expect(new Set(await viewTitleTags(TVEpisodeDetailsView, media))).toEqual(
+      new Set([
+        ...(await pageTitleTags('show', folder)),
+        ...(await pageTitleTags('season', folder, 2)),
+        ...(await pageTitleTags('episode', folder, 2, 5)),
+      ])
+    )
   })
 })
