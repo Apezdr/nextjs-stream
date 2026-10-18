@@ -17,7 +17,6 @@ import {
   claimDiscovery,
   resolveDeliveryFacts,
   resolveEffectiveVideoUrl,
-  VideoInfo,
   MediaQuality,
   syncEventBus,
   MediaTypesFieldAvailability,
@@ -1098,78 +1097,6 @@ export class MovieContentStrategy implements SyncStrategy {
     }
 
     return allEqual
-  }
-
-  /**
-   * Compare video info objects for equality
-   */
-  private isVideoInfoEqual(current: VideoInfo | null | undefined, incoming: VideoInfo): boolean {
-    if (!current && !incoming) return true
-    if (!current || !incoming) return false
-
-    // Property-by-property comparison with better null/undefined handling
-    const durationEqual = this.areValuesEqual(current.duration, incoming.duration)
-    const resolutionEqual = this.areValuesEqual(current.resolution, incoming.resolution)
-    const codecEqual = this.areValuesEqual(current.codec, incoming.codec)
-    const bitrateEqual = this.areValuesEqual(current.bitrate, incoming.bitrate)
-    const frameRateEqual = this.areValuesEqual(current.frameRate, incoming.frameRate)
-    const audioCodecEqual = this.areValuesEqual(current.audioCodec, incoming.audioCodec)
-    const audioChannelsEqual = this.areValuesEqual(current.audioChannels, incoming.audioChannels)
-    const fileSizeEqual = this.areValuesEqual(current.fileSize, incoming.fileSize)
-    const mediaQualityEqual = this.isMediaQualityEqual(current.mediaQuality, incoming.mediaQuality)
-
-    const allEqual =
-      durationEqual &&
-      resolutionEqual &&
-      codecEqual &&
-      bitrateEqual &&
-      frameRateEqual &&
-      audioCodecEqual &&
-      audioChannelsEqual &&
-      fileSizeEqual &&
-      mediaQualityEqual
-
-    // Log only if there are differences (summary only, no full objects)
-    if (!allEqual) {
-      syncLogger.debug(
-        `🔍 VideoInfo differs: duration=${!durationEqual}, resolution=${!resolutionEqual}, codec=${!codecEqual}, bitrate=${!bitrateEqual}, frameRate=${!frameRateEqual}, audio=${!audioCodecEqual}/${!audioChannelsEqual}, size=${!fileSizeEqual}, quality=${!mediaQualityEqual}`
-      )
-    }
-
-    return allEqual
-  }
-
-  /**
-   * Extract captions from file server data.
-   *
-   * Delegates URL resolution to the shared, absolute-safe
-   * `captionUrls` (infrastructure/fileSystem/urls) so movies and TV episodes build caption URLs
-   * identically — including the pending-vs-completed auto-caption handling (a
-   * completed `.auto.srt` is a relative path and MUST be prefixed; only an
-   * already-absolute pending track URL is passed through).
-   */
-  private extractCaptionsFromFileServerData(
-    originalTitle: string,
-    fileServerData: any,
-    context: SyncContext
-  ): Record<string, any> | null {
-    try {
-      const captionURLs = captionUrls(
-        fileServerData?.urls?.subtitles,
-        context.serverConfig
-      )
-      if (!captionURLs) {
-        syncLogger.debug(`❌ No subtitles found in file server data for: "${originalTitle}"`)
-        return null
-      }
-      syncLogger.debug(
-        `🎬 Extracted ${Object.keys(captionURLs).length} caption(s) for "${originalTitle}": ${Object.keys(captionURLs).join(', ')}`
-      )
-      return captionURLs
-    } catch (error) {
-      syncLogger.error(`Failed to extract captions for ${originalTitle}:`, error)
-      return null
-    }
   }
 
   /**
