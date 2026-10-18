@@ -26,7 +26,7 @@ What follows from that:
 - **A title is announced when it becomes visible, however it does:** a movie whose folder arrives before its video (a placeholder, a scan in the middle of an import), a transcoder that starts serving it, an admin override.
 - **How long ago a file server first saw the title plays no part.** A title added during an outage is announced on the first full run after it.
 - **A title two servers have is one title**, announced once.
-- **The cost:** a projected scan of the library on every full run (every movie and visible episode, every show's folder name, and the set's keys). Full runs are rare once ticks skip.
+- **The cost:** a projected scan of the library on every full run (every visible movie and visible episode, every show's folder name, and the set's keys). Full runs are rare once ticks skip.
 
 ### Renamed titles
 - A renamed movie folder (a year fixed, a change of case) keeps its media key and is not announced again. Its new folder key is added to the set.
@@ -34,9 +34,12 @@ What follows from that:
 - Two cases still look new:
   - a renamed title with no durable identity (an older processor, or a sidecar it could not write);
   - an episode whose numbers change, since an episode's identity is its season and episode numbers.
+- Two cases can keep a genuinely new title quiet, both rare:
+  - a new episode that lands on season and episode numbers a renumbered episode used before, whose key is already in the set;
+  - a title on another server that carries a copied `.mediaid.json` from a different title, so it shares that title's media key.
 
 ### The baseline
-Until the set has been started on a database, nothing is announced. The set is started by the first **complete** run: every enabled file server answered, pre-tag covered every collection, and every server's pass ran with nothing failed. That run announces nothing. It puts every movie and episode the library holds after it into the set, hidden ones included, with both keys of each, and then leaves a flag (`new-content-baseline` in `app_config.migrations`).
+Until the set has been started on a database, nothing is announced. The set is started by the first **complete** run: every enabled file server answered, pre-tag covered every collection, the run had no orchestration errors, and every server's pass ran with nothing failed. That run announces nothing. It puts every movie and episode the library holds after it into the set, hidden ones included, with both keys of each, and then leaves a flag (`new-content-baseline` in `app_config.migrations`).
 
 - **Incomplete runs never start the set.** A run that is not complete leaves the set alone, so a server that is down cannot keep its titles out of the set and have them announced as new when it comes back.
 - **Upgrade:** the existing library is never announced.
@@ -49,7 +52,7 @@ The notices for a run's new titles are queued as one entry in `Media.NewContentO
 - **Failed:** the entry stays queued and the next full run tries again.
 - **After 10 failed attempts** the entry is marked dead. It is logged once and never tried again. A TTL index on `deadAt` removes it 30 days later; if its titles are still not in the set, the next full run finds them again and queues a new entry.
 
-**What is guaranteed:**
+**What is guaranteed** (with one app process running the sync; two instances can each queue the same title):
 - A title is announced at most once. The one exception is a dead entry (below): when it expires, its titles are queued again.
 - A title is in at most one entry, live or dead. A full run adds at most one entry. So during a persistent failure the queue holds at most one entry per title still waiting, and dead entries leave after 30 days.
 - No user gets a notice twice from one entry. Each notification's id is derived from the entry, the notice and the user, so delivering an entry again adds only what the last attempt did not.
