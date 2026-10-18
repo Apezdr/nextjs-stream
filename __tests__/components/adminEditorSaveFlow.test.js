@@ -181,6 +181,25 @@ describe.each([
   })
 })
 
+describe('the empty error regions', () => {
+  it('take no space under the season editor\'s buttons, and only the one with a message joins the column', async () => {
+    mockActions.saveSeasonAction = jest.fn(async () => ({ status: 'error', message: 'Parent TV show not found.' }))
+    render(EDITORS[2].element())
+    const column = screen.getByRole('button', { name: 'Save season' }).parentElement
+    const [saveRegion, deleteRegion] = within(column).getAllByRole('alert')
+
+    // Out of the column's flex flow (no gap under the buttons), still in the DOM
+    expect(saveRegion).toHaveClass('absolute')
+    expect(deleteRegion).toHaveClass('absolute')
+
+    await click(screen.getByRole('button', { name: 'Save season' }))
+
+    expect(saveRegion).toHaveTextContent('Parent TV show not found.')
+    expect(saveRegion).not.toHaveClass('absolute')
+    expect(deleteRegion).toHaveClass('absolute')
+  })
+})
+
 describe('the show editor\'s "add season" control', () => {
   it('says "Adding…" while it runs, and announces its error', async () => {
     const add = inFlight()
