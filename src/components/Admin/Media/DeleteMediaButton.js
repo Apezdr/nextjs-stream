@@ -15,7 +15,8 @@ const NO_ERROR = { status: 'idle' }
  * The delete is dispatched in a transition, so "Deleting…" shows while it
  * runs. Its error is announced by an ActionError region that is rendered from
  * the first render on (it takes no space while empty) and shows the error
- * while the confirm step is open, as the error always did.
+ * while the confirm step is open. Opening the confirm step clears the last
+ * delete's result: the region stays empty until a new one arrives.
  *
  * @param {'movie'|'tv'} type
  * @param {string} id - flat document id
@@ -28,11 +29,20 @@ export default function DeleteMediaButton({ type, id, label = 'this entry', redi
   const action = type === 'tv' ? deleteTVShowAction : deleteMovieAction
   const [state, dispatch, isPending] = useActionState(action, { status: 'idle' })
   const [confirming, setConfirming] = useState(false)
+  // The action's state when the confirm step last opened: a result from
+  // before it (useActionState cannot be reset) is not shown again.
+  const [openedOn, setOpenedOn] = useState(null)
   const router = useRouter()
 
   useEffect(() => {
     if (state.status === 'success' && redirectTo) router.push(redirectTo)
   }, [state, redirectTo, router])
+
+  const openConfirm = () => {
+    setOpenedOn(state)
+    setConfirming(true)
+  }
+  const shownState = confirming && state !== openedOn ? state : NO_ERROR
 
   let control
   if (confirming) {
@@ -61,7 +71,7 @@ export default function DeleteMediaButton({ type, id, label = 'this entry', redi
     control = (
       <button
         type="button"
-        onClick={() => setConfirming(true)}
+        onClick={openConfirm}
         className="inline-flex items-center gap-1 rounded-md border border-red-300 px-3 py-2 text-sm font-medium text-red-700 hover:bg-red-50"
       >
         <TrashIcon className="h-4 w-4" /> Delete
@@ -71,7 +81,7 @@ export default function DeleteMediaButton({ type, id, label = 'this entry', redi
     control = (
       <button
         type="button"
-        onClick={() => setConfirming(true)}
+        onClick={openConfirm}
         title={`Delete ${label}`}
         className="text-gray-400 hover:text-red-600"
       >
@@ -85,7 +95,7 @@ export default function DeleteMediaButton({ type, id, label = 'this entry', redi
     <>
       {control}
       {/* Second child of every branch, so the same region stays mounted */}
-      <ActionError state={confirming ? state : NO_ERROR} className="ml-1 text-xs text-red-600" />
+      <ActionError state={shownState} className="ml-1 text-xs text-red-600" />
     </>
   )
 }

@@ -93,6 +93,30 @@ describe.each([
     expect(region).toBeEmptyDOMElement()
   })
 
+  it('opens the confirm step again with the region empty, and announces the next delete\'s error afresh', async () => {
+    mockActions[del] = jest.fn(async () => ({ status: 'error', message: 'Not found.' }))
+    render(<DeleteMediaButton type={type} id="doc-1" label="Old Title" variant={variant} />)
+    const region = screen.getByRole('alert')
+
+    await click(openButton())
+    await click(screen.getByRole('button', { name: 'Confirm' }))
+    expect(region).toHaveTextContent('Not found.')
+    const first = region.firstChild
+
+    await click(screen.getByRole('button', { name: 'Cancel' }))
+    await click(openButton())
+
+    // The last delete's error is not shown, or announced, again
+    expect(screen.getByRole('alert')).toBe(region)
+    expect(region).toBeEmptyDOMElement()
+    expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled()
+
+    await click(screen.getByRole('button', { name: 'Confirm' }))
+    expect(mockActions[del]).toHaveBeenCalledTimes(2)
+    expect(region).toHaveTextContent('Not found.')
+    expect(region.firstChild).not.toBe(first)
+  })
+
   it('goes where it is told once the delete succeeds', async () => {
     mockActions[del] = jest.fn(async () => ({ status: 'success', deleted: true }))
     render(<DeleteMediaButton type={type} id="doc-1" label="Old Title" variant={variant} redirectTo="/admin/media" />)
@@ -140,6 +164,31 @@ describe('the TMDB Config dialog', () => {
     expect(dialog.getByRole('button', { name: 'Save config' })).toBeEnabled()
     expect(dialog.getByRole('alert')).toBe(region)
     expect(region).toHaveTextContent('The file server rejected the config.')
+  })
+
+  it.each([
+    ['an error', { status: 'error', message: 'The file server rejected the config.' }],
+    ['a success', { status: 'success', message: 'Saved tmdb.config.' }],
+  ])('opens again without the last save\'s result (%s), until a new one arrives', async (_kind, result) => {
+    // A new object per call, as a server action's result always is
+    mockActions.saveTmdbConfigAction = jest.fn(async () => ({ ...result }))
+    let dialog = await openDialog()
+    await click(dialog.getByRole('button', { name: 'Save config' }))
+    expect(dialog.getByText(result.message)).toBeInTheDocument()
+
+    await click(dialog.getByRole('button', { name: 'Cancel' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await click(screen.getByRole('button', { name: 'TMDB Config' }))
+    dialog = within(screen.getByRole('dialog'))
+
+    // Nothing from before it opened is shown, or announced
+    expect(dialog.queryByText(result.message)).not.toBeInTheDocument()
+    expect(dialog.getByRole('alert')).toBeEmptyDOMElement()
+
+    // A new save shows its own result
+    await click(dialog.getByRole('button', { name: 'Save config' }))
+    expect(mockActions.saveTmdbConfigAction).toHaveBeenCalledTimes(2)
+    expect(dialog.getByText(result.message)).toBeInTheDocument()
   })
 
   it('shows a successful save\'s message, with the error region empty', async () => {
