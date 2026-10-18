@@ -246,11 +246,23 @@ describe('the wroteDocument flag of each TV plan', () => {
   const seasonData = PAYLOAD.seasons['Season 1']
 
   it('is set by the show, season and episode builders, which always stamp lastSynced', async () => {
-    const shows = await makeDatabase().service.planTVShow(SHOW, PAYLOAD, run, availability, null)
-    const seasons = await new SeasonSyncService(null).planSeason(SHOW, 'Show Name', 1, seasonData, run, availability, null, 'show-1', null, 'Season 1')
-    const episodes = await new EpisodeSyncService(null, null).planEpisode(
-      SHOW, 'Show Name', 1, 1, seasonData.episodes.S01E01, PAYLOAD, run, availability, null, 'show-1', 'season-1', null, seasonData, 'S01E01'
-    )
+    const { planTVShow } = require('@src/utils/sync/domain/tv/showPlan')
+    const { planSeason } = require('@src/utils/sync/domain/tv/seasonPlan')
+    const { planEpisode } = require('@src/utils/sync/domain/tv/episodePlan')
+    const { buildWithResources } = require('@src/utils/sync/infrastructure/fileSystem/prefetch')
+    // Each builder run as its service runs it: through the prefetch step.
+    const built = (build) => buildWithResources(build, { mediaType: 'tv', title: SHOW })
+    const log = { warn: jest.fn(), error: jest.fn() }
+    const shows = await built((resources) => planTVShow({ showTitle: SHOW, fileData: PAYLOAD, run, availability, existing: null }, resources))
+    const seasons = await built((resources) => planSeason({
+      showOriginalTitle: SHOW, displayTitle: 'Show Name', seasonNumber: 1, seasonKey: 'Season 1', fileData: seasonData,
+      run, availability, existing: null, showId: 'show-1', parentShow: null,
+    }, resources))
+    const episodes = await built((resources) => planEpisode({
+      showOriginalTitle: SHOW, displayTitle: 'Show Name', seasonNumber: 1, episodeNumber: 1, fileData: seasonData.episodes.S01E01,
+      showPayload: PAYLOAD, run, availability, existing: null, showId: 'show-1', seasonId: 'season-1', parentShow: null,
+      seasonFileData: seasonData, episodeFileName: 'S01E01',
+    }, resources, log))
     for (const outcome of [shows, seasons, episodes]) {
       expect(outcome.wroteDocument).toBe(true)
       agrees(outcome)

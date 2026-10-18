@@ -17,6 +17,9 @@ import type { MovieSyncService } from '@src/utils/sync/domain/movies/MovieSyncSe
 import type { TVShowSyncService } from '@src/utils/sync/domain/tv/TVShowSyncService'
 import type { SeasonSyncService } from '@src/utils/sync/domain/tv/SeasonSyncService'
 import type { EpisodeSyncService } from '@src/utils/sync/domain/tv/EpisodeSyncService'
+import type { planTVShow } from '@src/utils/sync/domain/tv/showPlan'
+import type { planSeason } from '@src/utils/sync/domain/tv/seasonPlan'
+import type { planEpisode } from '@src/utils/sync/domain/tv/episodePlan'
 
 // The repository has no jest type package; the two globals this file uses.
 declare const test: (name: string, fn: () => void) => void
@@ -30,11 +33,10 @@ type RetryInput = Parameters<typeof retryMovieBlurhashes>[0]
 type ShowPass = Parameters<TVShowSyncService['syncTVShow']>[2]
 type SeasonPass = Parameters<SeasonSyncService['syncShow']>[2]
 type EpisodePass = Parameters<EpisodeSyncService['syncShow']>[2]
-// Each builder's own `run` parameter (the builders are private; an indexed
-// access type reaches them).
-type ShowBuilderRun = Parameters<TVShowSyncService['planTVShow']>[2]
-type SeasonBuilderRun = Parameters<SeasonSyncService['planSeason']>[4]
-type EpisodeBuilderRun = Parameters<EpisodeSyncService['planEpisode']>[6]
+// Each builder's own input (./showPlan, ./seasonPlan, ./episodePlan).
+type ShowBuilderInput = Parameters<typeof planTVShow>[0]
+type SeasonBuilderInput = Parameters<typeof planSeason>[0]
+type EpisodeBuilderInput = Parameters<typeof planEpisode>[0]
 
 /** Never called: the typecheck reads it. */
 function movieSteps(pass: MoviePass, metadata: MetadataInput, artwork: ArtworkInput, video: VideoInput, retry: RetryInput) {
@@ -96,10 +98,11 @@ function tvBuilders(
   show: ShowPass,
   season: SeasonPass,
   episode: EpisodePass,
-  showRun: ShowBuilderRun,
-  seasonRun: SeasonBuilderRun,
-  episodeRun: EpisodeBuilderRun
+  showInput: ShowBuilderInput,
+  seasonInput: SeasonBuilderInput,
+  episodeInput: EpisodeBuilderInput
 ) {
+  const [showRun, seasonRun, episodeRun] = [showInput.run, seasonInput.run, episodeInput.run]
   // A TV pass holds the run and the availability.
   void [show.run.forceSync, show.run.cleanup, show.availability, season.availability, episode.run]
   // @ts-expect-error A TV pass has no caches.
@@ -112,6 +115,14 @@ function tvBuilders(
   // Each builder reads the server and allEnabledServersProbed of the run, not
   // forceSync (the gates are checked before it runs) or the cleanup config
   // (field-absence cleanup plans apart).
+  void [showInput.availability, seasonInput.availability, episodeInput.availability]
+  // @ts-expect-error planTVShow is handed no caches.
+  void showInput.caches
+  // @ts-expect-error planSeason is handed no caches.
+  void seasonInput.caches
+  // @ts-expect-error planEpisode is handed no caches.
+  void episodeInput.caches
+
   void [showRun.serverConfig, showRun.allEnabledServersProbed]
   // @ts-expect-error planTVShow does not read forceSync.
   void showRun.forceSync

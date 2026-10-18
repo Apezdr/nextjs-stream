@@ -26,6 +26,10 @@ const BUILDER_MODULES = [
   'src/utils/sync/domain/movies/video.ts',
   'src/utils/sync/domain/movies/videoPayload.ts',
   'src/utils/sync/domain/movies/step.ts',
+  'src/utils/sync/domain/tv/showPlan.ts',
+  'src/utils/sync/domain/tv/seasonPlan.ts',
+  'src/utils/sync/domain/tv/episodePlan.ts',
+  'src/utils/sync/domain/tv/blurhashFile.ts',
 ]
 
 /** I/O: modules under src (a path prefix), and packages. */
@@ -109,8 +113,13 @@ describe('the builders do no I/O', () => {
     expect(offending).toEqual([])
   })
 
-  it('would see an I/O import: the services that run the builders reach the prefetch step', () => {
-    const { reached } = closure(path.join(ROOT, 'src/utils/sync/domain/movies/MovieSyncService.ts'))
+  it.each([
+    'src/utils/sync/domain/movies/MovieSyncService.ts',
+    'src/utils/sync/domain/tv/TVShowSyncService.ts',
+    'src/utils/sync/domain/tv/SeasonSyncService.ts',
+    'src/utils/sync/domain/tv/EpisodeSyncService.ts',
+  ])('would see an I/O import: %s, which runs builders, reaches the prefetch step and the file fetch', (service) => {
+    const { reached } = closure(path.join(ROOT, service))
     const names = [...reached.keys()].map(relative)
     expect(names).toContain('src/utils/sync/infrastructure/fileSystem/prefetch.ts')
     expect(names).toContain('src/utils/sync/infrastructure/fileSystem/fetchFile.ts')

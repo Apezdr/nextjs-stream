@@ -136,19 +136,20 @@ export function settleBlurhash(
 }
 
 /**
- * The whole rule, for a caller that fetches as it goes: decide, fetch when the
- * decision says so, settle.
+ * The whole rule, for a caller that reads the file as it goes: decide, read
+ * the file when the decision says so, settle.
  *
- * @param fetchBlurhash - Reads the blurhash file at `blurhashUrl`. It reports a
- *   failure by returning anything but a non-empty string; an error it throws is
- *   not caught here.
+ * @param readBlurhash - What the blurhash file at `blurhashUrl` holds: the
+ *   file a builder was handed (core/resources). It reports a failure by
+ *   returning anything but a non-empty string; an error it throws is not
+ *   caught here.
  */
-export async function resolveBlurhash(
+export function resolveBlurhash(
   input: BlurhashRuleInput,
-  fetchBlurhash: (blurhashUrl: string) => Promise<unknown>
-): Promise<BlurhashOutcome> {
+  readBlurhash: (blurhashUrl: string) => unknown
+): BlurhashOutcome {
   const decision = decideBlurhash(input)
   if (decision.action === 'keep') return { action: 'keep', fetchFailed: false }
   if (decision.action === 'unset') return { action: 'unset', fetchFailed: false }
-  return settleBlurhash(decision, await fetchBlurhash(decision.blurhashUrl))
+  return settleBlurhash(decision, readBlurhash(decision.blurhashUrl))
 }

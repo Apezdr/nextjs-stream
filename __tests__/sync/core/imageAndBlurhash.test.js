@@ -121,26 +121,27 @@ describe('settleBlurhash', () => {
 })
 
 describe('resolveBlurhash', () => {
-  it('fetches only when the decision says so', async () => {
-    const fetch = jest.fn(async () => 'LKO2?U')
+  it('reads the file only when the decision says so', () => {
+    const read = jest.fn(() => 'LKO2?U')
     const current = { url: A_POSTER, blurhash: 'LKO2?U', blurhashSource: 'A' }
 
-    expect(await resolveBlurhash(input({ stored: current }), fetch)).toEqual({ action: 'keep', fetchFailed: false })
-    expect(await resolveBlurhash(input({ owner: null }), fetch)).toEqual({ action: 'keep', fetchFailed: false })
-    expect(await resolveBlurhash(input({ stored: { ...current, blurhashSource: 'B' }, reported: { blurhashUrl: null } }), fetch))
+    expect(resolveBlurhash(input({ stored: current }), read)).toEqual({ action: 'keep', fetchFailed: false })
+    expect(resolveBlurhash(input({ owner: null }), read)).toEqual({ action: 'keep', fetchFailed: false })
+    expect(resolveBlurhash(input({ stored: { ...current, blurhashSource: 'B' }, reported: { blurhashUrl: null } }), read))
       .toEqual({ action: 'unset', fetchFailed: false })
-    expect(fetch).not.toHaveBeenCalled()
+    expect(read).not.toHaveBeenCalled()
 
-    expect(await resolveBlurhash(input(), fetch)).toEqual({ action: 'write', blurhash: 'LKO2?U', blurhashSource: 'A' })
-    expect(fetch).toHaveBeenCalledWith(BLURHASH_FILE)
+    expect(resolveBlurhash(input(), read)).toEqual({ action: 'write', blurhash: 'LKO2?U', blurhashSource: 'A' })
+    expect(read).toHaveBeenCalledWith(BLURHASH_FILE)
   })
 
-  it('removes a stale blurhash when its replacement could not be fetched', async () => {
+  it('removes a stale blurhash when its replacement could not be fetched', () => {
     const stored = { url: 'https://A.example/movies/Film/poster.jpg?hash=p0', blurhash: 'old', blurhashSource: 'A' }
-    expect(await resolveBlurhash(input({ stored }), async () => '')).toEqual({ action: 'unset', fetchFailed: true })
+    expect(resolveBlurhash(input({ stored }), () => '')).toEqual({ action: 'unset', fetchFailed: true })
+    expect(resolveBlurhash(input({ stored }), () => null)).toEqual({ action: 'unset', fetchFailed: true })
   })
 
-  it('leaves an error the fetch throws to the caller', async () => {
-    await expect(resolveBlurhash(input(), async () => { throw new Error('timeout') })).rejects.toThrow('timeout')
+  it('leaves an error the read throws to the caller', () => {
+    expect(() => resolveBlurhash(input(), () => { throw new Error('timeout') })).toThrow('timeout')
   })
 })
