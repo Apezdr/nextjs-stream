@@ -27,7 +27,6 @@ import { TVShowRepository, EpisodeRepository, SeasonRepository, fetchMetadataMul
 import { SeasonSyncService } from './SeasonSyncService'
 import { EpisodeSyncService } from './EpisodeSyncService'
 import {
-  isCurrentServerHighestPriorityForField,
   isCurrentServerHighestPriorityForReportedField,
   serverOutranks,
 } from '@src/utils/sync/core/ownership'
@@ -431,8 +430,14 @@ export class TVShowSyncService {
       serverOutranks(context.serverConfig, heldServerId)
     )
 
-    // --- Poster (priority-gated) ---
-    const canUpdatePoster = isCurrentServerHighestPriorityForField(
+    // --- Poster, backdrop, logo ---
+    // Each belongs to the highest-priority server among those that report it
+    // (ties broken on server id). A server the availability map does not list
+    // for the field never owns it. The fail-open check these used also let
+    // through a server when no server reported the field, and every server
+    // of the best priority, so with two of them the show held whichever
+    // synced last.
+    const canUpdatePoster = isCurrentServerHighestPriorityForReportedField(
       context.fieldAvailability, 'tv', showTitle, 'poster', context.serverConfig
     )
     if (canUpdatePoster && (fileData.posterURL || fileData.poster)) {
@@ -440,8 +445,7 @@ export class TVShowSyncService {
       entity.posterSource = context.serverConfig.id
     }
 
-    // --- Backdrop (priority-gated) ---
-    const canUpdateBackdrop = isCurrentServerHighestPriorityForField(
+    const canUpdateBackdrop = isCurrentServerHighestPriorityForReportedField(
       context.fieldAvailability, 'tv', showTitle, 'backdrop', context.serverConfig
     )
     if (canUpdateBackdrop && (fileData.backdropURL || fileData.backdrop)) {
@@ -449,8 +453,7 @@ export class TVShowSyncService {
       entity.backdropSource = context.serverConfig.id
     }
 
-    // --- Logo (priority-gated) ---
-    const canUpdateLogo = isCurrentServerHighestPriorityForField(
+    const canUpdateLogo = isCurrentServerHighestPriorityForReportedField(
       context.fieldAvailability, 'tv', showTitle, 'logo', context.serverConfig
     )
     if (canUpdateLogo && (fileData.logoURL || fileData.logo)) {
