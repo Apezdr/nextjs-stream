@@ -156,9 +156,33 @@ describe('buildWithResources', () => {
     expect(fetchMetadataMultiServer).toHaveBeenCalledTimes(1)
   })
 
-  it('fails a builder that asks again for a file it was handed', async () => {
+  it('fails a builder that asks again for a file it was handed, naming it, after fetching it once', async () => {
     fetchMetadataMultiServer.mockResolvedValue({ name: 'n' })
-    const build = () => ({ plan: { ...emptyWritePlan(), needs: [metadata] } })
-    await expect(buildWithResources(build, context)).rejects.toThrow('asked again for files it was handed')
+    let calls = 0
+    const build = () => {
+      calls++
+      return { plan: { ...emptyWritePlan(), needs: [metadata] } }
+    }
+    await expect(buildWithResources(build, context)).rejects.toThrow(
+      `A builder for "Show (2020)" asked again for files it was handed: ${metadata.path}`
+    )
+    expect(calls).toBe(2)
+    expect(fetchMetadataMultiServer).toHaveBeenCalledTimes(1)
+  })
+
+  it('stops a builder that names a new file on every call after 8 calls, naming the files it still wanted', async () => {
+    fetchMetadataMultiServer.mockResolvedValue({ name: 'n' })
+    let calls = 0
+    // Names one more file per call, for 12 calls; without the bound it would finish on the 13th.
+    const build = (resources) => {
+      calls++
+      for (let n = 1; n <= Math.min(calls, 12); n++) resources.read({ kind: 'metadata', serverId: 'A', path: `/f${n}.json` })
+      return { plan: { ...emptyWritePlan(), needs: resources.needs } }
+    }
+    await expect(buildWithResources(build, context)).rejects.toThrow(
+      'A builder for "Show (2020)" still named files it was not handed after 8 calls: /f8.json'
+    )
+    expect(calls).toBe(8)
+    expect(fetchMetadataMultiServer).toHaveBeenCalledTimes(7)
   })
 })

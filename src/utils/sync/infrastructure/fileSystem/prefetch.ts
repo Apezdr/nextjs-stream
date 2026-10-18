@@ -29,7 +29,11 @@ export interface PrefetchContext {
   throttle?: { throttleHttp: <T>(fn: () => Promise<T>) => Promise<T> }
 }
 
-/** A builder never needs more calls than this; one that does is asking again for what it was handed. */
+/**
+ * The most calls a builder gets. Each call after the first is made because
+ * the one before named a file not fetched yet; a builder reads at most three
+ * files, so one that keeps naming new files is stopped here.
+ */
 const MAX_CALLS = 8
 
 /**
@@ -86,8 +90,14 @@ export async function buildWithResources<O extends { plan: Pick<WritePlan<any>, 
       needs = resources.needs
     }
     const fresh = needs.filter((need) => !fetched.some((resource) => sameRequest(resource, need)))
-    if (fresh.length === 0 || call >= MAX_CALLS) {
+    if (fresh.length === 0) {
+      // Everything it names was handed to it: fetching again would loop.
       throw new Error(`A builder for "${context.title}" asked again for files it was handed: ${needs.map((need) => need.path).join(', ')}`)
+    }
+    if (call >= MAX_CALLS) {
+      throw new Error(
+        `A builder for "${context.title}" still named files it was not handed after ${MAX_CALLS} calls: ${fresh.map((need) => need.path).join(', ')}`
+      )
     }
     fetched = [...fetched, ...(await fetchResources(fresh, context))]
   }
