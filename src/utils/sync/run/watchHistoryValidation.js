@@ -121,8 +121,8 @@ export async function validateWatchHistoryAgainstDatabase() {
     // `normalizedVideoId_index`. This relies on FlatMovies/FlatEpisodes
     // writers producing the same 16-char SHA-256 prefix as
     // `flatDatabaseUtils.generateNormalizedVideoId` — see the 2026-05-09 fix
-    // in MovieContentStrategy.generateNormalizedVideoId, which removed an
-    // `_id` short-circuit that broke this invariant.
+    // in what is now normalizedVideoIdOf (sync/domain/movies/videoPayload),
+    // which removed an `_id` short-circuit that broke this invariant.
     // P5 cutover: a row is valid when EITHER identity matches the catalog —
     // the URL-hash (nid) or the durable mediaId. The invalid arm requires
     // BOTH to miss ($nin matches a missing mediaId field, so legacy rows
