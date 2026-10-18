@@ -242,7 +242,10 @@ export class EpisodeSyncService {
         const cleanup = this.planEpisodeCleanup(showTitle, seasonNumber, key, existing, displayTitle, epNum, context)
         // One plan for the episode's write (core/writePlan): the cleanup's
         // removals first, then the builder's plan.
-        const episodePlan = mergeWritePlans<EpisodeEntity>([cleanupWritePlan(cleanup), built.plan])
+        const episodePlan = mergeWritePlans<EpisodeEntity>(
+          [cleanupWritePlan(cleanup), built.plan],
+          `${label}E${epNum}`
+        )
         const unset = episodePlan.unset
 
         // Stamp this server's gate. Only a complete pass may (the merged

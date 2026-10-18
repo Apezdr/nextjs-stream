@@ -8,7 +8,8 @@
  *
  *  - set: a later plan's value for a field wins over an earlier one's;
  *  - unset: every plan's removals, once each, in the order they were asked
- *    for; a removal is dropped when the merged set writes the same field;
+ *    for; a removal is dropped when the merged set writes the same field
+ *    (which no pass should ask for, so it is logged as an error);
  *  - needs and deferrals: every plan's, in order;
  *  - incomplete: any plan held something back.
  *
@@ -20,12 +21,15 @@
  * document a plan leaves. Field-absence cleanup's outcome is a plan too
  * (cleanupWritePlan).
  *
- * Pure: the caller writes what the merged plan says.
+ * Writes nothing: the caller writes what the merged plan says.
  */
 
 import type { WritePlan } from './types'
 import type { CleanupPlan } from './FieldAbsenceCleaner'
 import { decideGate, type GateDecision } from './syncGate'
+import { createLogger } from '@src/lib/logger'
+
+const log = createLogger('Sync.WritePlan')
 
 /** The steps' plans as one, with the gate decision they lead to. */
 export interface MergedWritePlan<E = Record<string, any>> extends WritePlan<E> {
@@ -40,10 +44,17 @@ export function emptyWritePlan<E = Record<string, any>>(): WritePlan<E> {
 /**
  * Merge the steps' plans, in the order the steps ran, and decide the gate.
  *
+ * No plan sets a field that a plan removes: the steps are built so that the
+ * one with the field's data decides it. Should that ever break, the set
+ * still wins, and each such field is logged as an error with the entity's
+ * key, so that a regression is loud without failing the pass.
+ *
  * @param plans - One plan per step, in step order
+ * @param entityKey - The entity the plans are for (its results' entity id), for the log
  */
 export function mergeWritePlans<E = Record<string, any>>(
-  plans: readonly WritePlan<E>[]
+  plans: readonly WritePlan<E>[],
+  entityKey: string
 ): MergedWritePlan<E> {
   const set: Record<string, any> = {}
   const unset: string[] = []
@@ -58,6 +69,15 @@ export function mergeWritePlans<E = Record<string, any>>(
     needs.push(...plan.needs)
     deferrals.push(...plan.deferrals)
     incomplete = incomplete || plan.incomplete
+  }
+
+  for (const field of unset) {
+    if (Object.prototype.hasOwnProperty.call(set, field)) {
+      log.error(
+        { field, entity: entityKey },
+        'A write plan sets a field another plan removes; the set wins'
+      )
+    }
   }
 
   const merged: WritePlan<E> = {

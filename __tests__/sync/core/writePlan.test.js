@@ -6,6 +6,10 @@
  */
 
 jest.mock('@src/utils/config', () => ({ getServer: () => ({ priority: 1 }), multiServerHandler: {} }))
+const mockLogError = jest.fn()
+jest.mock('@src/lib/logger', () => ({
+  createLogger: () => ({ info: jest.fn(), warn: jest.fn(), error: (...args) => mockLogError(...args), debug: jest.fn() }),
+}))
 
 const { mergeWritePlans, emptyWritePlan } = require('@src/utils/sync/core/writePlan')
 const { decideGate } = require('@src/utils/sync/core/syncGate')
@@ -51,6 +55,35 @@ describe('mergeWritePlans: unset', () => {
       expect(merged.set).toEqual({ a: 1 })
       expect(merged.unset).toEqual(['x'])
     }
+  })
+})
+
+describe('mergeWritePlans: a field set and removed', () => {
+  beforeEach(() => mockLogError.mockClear())
+
+  it('logs each such field as an error with the entity key, and the set still wins', () => {
+    const merged = mergeWritePlans(
+      [plan({ unset: ['a', 'x'] }), plan({ set: { a: 1, b: 2 } }), plan({ unset: ['b'] })],
+      'Show (2020) S1E2'
+    )
+
+    expect(merged.set).toEqual({ a: 1, b: 2 })
+    expect(merged.unset).toEqual(['x'])
+    expect(mockLogError).toHaveBeenCalledTimes(2)
+    expect(mockLogError.mock.calls.map(([fields]) => fields)).toEqual([
+      { field: 'a', entity: 'Show (2020) S1E2' },
+      { field: 'b', entity: 'Show (2020) S1E2' },
+    ])
+  })
+
+  it('logs a plan that sets and removes the same field itself', () => {
+    mergeWritePlans([plan({ set: { a: 1 }, unset: ['a'] })], 'Film (2020)')
+    expect(mockLogError).toHaveBeenCalledWith({ field: 'a', entity: 'Film (2020)' }, expect.any(String))
+  })
+
+  it('logs nothing when no field is both set and removed', () => {
+    mergeWritePlans([plan({ set: { a: 1 }, unset: ['x'] }), plan({ set: { b: 1 }, unset: ['y'] })], 'Film (2020)')
+    expect(mockLogError).not.toHaveBeenCalled()
   })
 })
 

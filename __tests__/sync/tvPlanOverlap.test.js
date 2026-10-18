@@ -50,9 +50,9 @@ jest.mock('@src/utils/sync/core/writePlan', () => {
   const actual = jest.requireActual('@src/utils/sync/core/writePlan')
   return {
     ...actual,
-    mergeWritePlans: (plans) => {
+    mergeWritePlans: (plans, entityKey) => {
       mockMerges.push(plans.map((p) => ({ set: Object.keys(p.set), unset: [...p.unset] })))
-      return actual.mergeWritePlans(plans)
+      return actual.mergeWritePlans(plans, entityKey)
     },
   }
 })

@@ -185,7 +185,7 @@ export class TVShowSyncService {
 
       // 2. One plan for the show's write (core/writePlan): the cleanup's
       //    removals first, then the builder's plan.
-      const showPlan = mergeWritePlans<TVShowEntity>([cleanupWritePlan(cleanupPlan), built.plan])
+      const showPlan = mergeWritePlans<TVShowEntity>([cleanupWritePlan(cleanupPlan), built.plan], showTitle)
 
       // 3. Smart write — $set changed fields only, skip if nothing changed,
       //    plus $unset any cleared assets (enforce mode).
@@ -245,7 +245,7 @@ export class TVShowSyncService {
       // held back) merged with what the seasons and episodes report. The
       // merged plan's `incomplete` decides (decideGate); either way the pass
       // has to run again.
-      const passPlan = mergeWritePlans<TVShowEntity>([showPlan, childrenWritePlan(childResults)])
+      const passPlan = mergeWritePlans<TVShowEntity>([showPlan, childrenWritePlan(childResults)], showTitle)
       const gateToStamp = passPlan.gate === 'stamp' ? showGate : null
       if (!gateToStamp) {
         syncLogger.debug(`Gate left open for show "${showTitle}": ${passPlan.deferrals.join(', ')}`)

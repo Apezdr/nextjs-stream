@@ -152,7 +152,10 @@ export class SeasonSyncService {
 
         // One plan for the season's write (core/writePlan): the cleanup's
         // removals first, then the builder's plan.
-        const seasonPlan = mergeWritePlans<SeasonEntity>([cleanupWritePlan(cleanup), built.plan])
+        const seasonPlan = mergeWritePlans<SeasonEntity>(
+          [cleanupWritePlan(cleanup), built.plan],
+          `${showTitle} S${seasonNumber}`
+        )
         seasonOps.push({
           filter,
           existing,

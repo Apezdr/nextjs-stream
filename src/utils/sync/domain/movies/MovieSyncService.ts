@@ -219,7 +219,7 @@ export class MovieSyncService {
         },
         { ...emptyWritePlan<MovieEntity>(), set: stepsWrite ? normalizationOf(normalized, existingMovie) : {} },
         ...stepPlans,
-      ])
+      ], originalTitle)
 
       // Fields whose data is gone. An admin lock keeps a field, here as
       // everywhere else.
