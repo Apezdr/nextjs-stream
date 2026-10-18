@@ -21,7 +21,6 @@ import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import { syncAllServers, fetchSyncTick } from '@src/utils/sync/run/syncAllServers'
 import { forgetAppliedPayloads } from '@src/utils/sync/run/appliedPayloads'
 import { validateWatchHistory } from '@src/utils/sync/run/validateWatchHistory'
-import { buildFieldAvailability } from '@src/utils/sync/run/availability'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { SyncEventType } from '@src/utils/sync/core/types'
 import { createDatabaseAdapter } from '@src/utils/sync/infrastructure'
@@ -840,9 +839,7 @@ async function handleSync(webhookId, request, syncOptions = {}) {
       syncInProgress = false
       return tick.result
     }
-    const { fileServers, errors } = tick
-
-    const fieldAvailability = await buildFieldAvailability(fileServers)
+    const { fileServers } = tick
 
     const importSettings = await getFileServerImportSettings()
     console.log('Import Settings:', importSettings)
@@ -855,20 +852,11 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     // sync writes can't starve the request-serving pool.
     await createDatabaseAdapter()
 
-    // Authoritative-pass gate for field-absence cleanup. fetchSyncTick sets
-    // `errors` (an array) only when a server failed to respond; undefined means
-    // every configured server was fetched cleanly. Field-absence cleanup must
-    // never run on a partial pass, or a transient outage would be read as a
-    // deletion and wipe good data.
-    const allEnabledServersProbed = !errors && Object.keys(fileServers || {}).length > 0
-
-    // Perform the actual sync
-    const result = await syncAllServers(fileServers, fieldAvailability, {
-      forceSync,
-      allEnabledServersProbed,
-      // Recorded if the pass completes, for the next tick's conditional fetch
-      payloadETags: tick.etags,
-    })
+    // Perform the actual sync. Under its lock, after its running marker, the
+    // run builds the pass's inputs from the tick: fieldAvailability, each
+    // server's listing, and whether every enabled server answered (the gate
+    // for every removal; see syncAllServers' passInputs).
+    const result = await syncAllServers(tick, { forceSync })
     
     // Mark sync as complete to prevent logging errors after completion
     syncInProgress = false;

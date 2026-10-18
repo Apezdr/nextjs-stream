@@ -74,6 +74,21 @@ export interface ServerPassOptions {
    * results are recorded into it as the title finishes.
    */
   written?: WrittenMedia
+  /**
+   * Called once for each title the pass finishes, by kind and folder name.
+   * `clean` when the title adds nothing to the failures run/tickSkip counts
+   * (movies: no failed result; TV: no failed result and no result with an
+   * error message). A movie the pass has nothing to sync for is clean. A
+   * title the pass never reaches (it threw first) is not reported at all.
+   */
+  onTitleFinished?: (kind: 'movies' | 'tv', title: string, clean: boolean) => void
+}
+
+/** Whether a title's results add nothing to the pass's failures (see onTitleFinished). */
+function finishedCleanly(kind: 'movies' | 'tv', titleResults: SyncResult[]): boolean {
+  return titleResults.every(
+    (result) => result.status !== SyncStatus.Failed && (kind === 'movies' || !(result.errors?.length > 0))
+  )
 }
 
 interface KindResults {
@@ -156,6 +171,13 @@ export async function runServerPass(
 
   // ---- 2. Movies ----
   const movieTitles = extractMovieTitles(fileServer)
+  if (options.onTitleFinished) {
+    // A movie with nothing to sync (no URL, metadata or poster) is done as is
+    const synced = new Set(movieTitles)
+    for (const title of Object.keys(fileServer?.movies ?? {})) {
+      if (!synced.has(title)) options.onTitleFinished('movies', title, true)
+    }
+  }
   if (movieTitles.length > 0) {
     log.info(
       { serverId: serverConfig.id, movieCount: movieTitles.length, architecture: 'new' },
@@ -179,6 +201,7 @@ export async function runServerPass(
       (titleResults, title) => {
         record(titleResults, title)
         progress.update(titleResults.some((r) => r.status === SyncStatus.Failed))
+        options.onTitleFinished?.('movies', title, finishedCleanly('movies', titleResults))
       }
     )
     logSummary('Movie', movieResults, Date.now() - movieStart)
@@ -213,7 +236,10 @@ export async function runServerPass(
       pool,
       (title) => tvShowService.syncTVShow(title, fileServer.tv[title], { run, availability }),
       (title, error) => failedResult(title, MediaType.TVShow, serverConfig.id, error),
-      record
+      (titleResults, title) => {
+        record(titleResults, title)
+        options.onTitleFinished?.('tv', title, finishedCleanly('tv', titleResults))
+      }
     )
     logSummary('TV', tvResults, performance.now() - tvStart)
 

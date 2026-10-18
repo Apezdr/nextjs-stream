@@ -145,7 +145,6 @@ jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({
 
 const isEqual = require('lodash/isEqual')
 const { syncAllServers } = require('@src/utils/sync/run/syncAllServers')
-const { buildFieldAvailability } = require('@src/utils/sync/run/availability')
 const { getSyncLockHolder, releaseSyncLock } = require('@src/utils/sync/run/runState')
 const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
 const { ResourceManager } = require('@src/utils/sync/core/ResourceManager')
@@ -373,17 +372,18 @@ async function settled() {
  * started on an earlier run (run/newContent); without it, the first run on the
  * database starts it and announces nothing.
  */
-async function runSync(fileServers, { availabilityOf = fileServers, baselineStarted = false, ...options } = {}) {
+async function runSync(fileServers, { baselineStarted = false, allEnabledServersProbed = true, forceSync = false } = {}) {
   if (baselineStarted) {
     const flags = mockCollection('app_config', 'migrations')
     if (!flags.docs.some((d) => d._id === 'new-content-baseline')) flags.docs.push({ _id: 'new-content-baseline' })
   }
-  const fieldAvailability = await buildFieldAvailability(availabilityOf)
-  const result = await syncAllServers(fileServers, fieldAvailability, {
-    allEnabledServersProbed: true,
-    payloadETags: ETAGS,
-    ...options,
-  })
+  // The tick fetchSyncTick hands over; a server that did not answer is in `errors`
+  const tick = {
+    fileServers,
+    errors: allEnabledServersProbed ? undefined : [{ serverId: 'down', error: 'did not answer' }],
+    etags: ETAGS,
+  }
+  const result = await syncAllServers(tick, { forceSync })
   await settled()
   return result
 }
@@ -1167,7 +1167,7 @@ describe('errors', () => {
     // The TV payload cannot be listed once the movie is written: the pass
     // throws between its movies and its shows, out of reach of the per-title
     // catch. (Before the pass, the run reads the keys of every payload for
-    // pre-tag; they read as no shows.)
+    // pre-tag and fieldAvailability; they read as no shows.)
     const unreadable = new Proxy({}, {
       ownKeys() {
         if (docs('FlatMovies').length > 0) throw new Error('TV payload unreadable')
@@ -1177,10 +1177,7 @@ describe('errors', () => {
     const movie = playableMovie()
     const fileServers = oneServer({ movies: { [MOVIE]: movie }, tv: unreadable })
 
-    const result = await runSync(fileServers, {
-      availabilityOf: oneServer({ movies: { [MOVIE]: movie }, tv: {} }),
-      baselineStarted: true,
-    })
+    const result = await runSync(fileServers, { baselineStarted: true })
 
     expect(result.errors).toEqual([expect.objectContaining({ serverId: 'default', error: 'TV payload unreadable' })])
     expect(result.flatSyncResults?.default).toBeUndefined()
@@ -1191,6 +1188,79 @@ describe('errors', () => {
     // (by folder name, as the media pages tag their caches)
     expect(result.changedMedia.movies).toContain(MOVIE)
     expect(mockSideJobs).toContainEqual({ job: 'notifications', movies: [MOVIE], episodes: [] })
+  })
+})
+
+// ---------------------------------------------------------------- per-title completion
+
+describe('onTitleFinished: what the pass tells the run about each title', () => {
+  const { runServerPass } = require('@src/utils/sync/run/serverPass')
+  const { buildFieldAvailability } = require('@src/utils/sync/run/availability')
+
+  async function passOver(fileServers) {
+    const fieldAvailability = await buildFieldAvailability(fileServers)
+    const finished = []
+    let error = null
+    try {
+      await runServerPass(fileServers.default, { id: 'default', ...fileServers.default.config }, fieldAvailability, {
+        allEnabledServersProbed: true,
+        onTitleFinished: (kind, title, clean) => finished.push([kind, title, clean]),
+      })
+    } catch (thrown) {
+      error = thrown
+    }
+    return { finished, error }
+  }
+
+  it('reports each title once, clean when it finished cleanly; a movie with nothing to sync is clean', async () => {
+    const { finished, error } = await passOver(oneServer({ movies: { [MOVIE]: playableMovie(), 'Empty Folder (2001)': {} } }))
+    expect(error).toBeNull()
+    expect(finished).toHaveLength(3)
+    expect(finished).toEqual(
+      expect.arrayContaining([['movies', 'Empty Folder (2001)', true], ['movies', MOVIE, true], ['tv', SHOW, true]])
+    )
+  })
+
+  it('reports a title whose sync throws as not clean', async () => {
+    const OTHER = 'Another Show (2021)'
+    const syncTVShow = TVShowSyncService.prototype.syncTVShow
+    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, payload, parts) {
+      if (title === OTHER) return Promise.reject(new Error('show sync blew up'))
+      return syncTVShow.call(this, title, payload, parts)
+    })
+    const { finished } = await passOver(oneServer({ tv: { [SHOW]: showPayload(), [OTHER]: showPayload() } }))
+    expect(finished).toEqual(expect.arrayContaining([['tv', SHOW, true], ['tv', OTHER, false]]))
+  })
+
+  it('does not report a title the pass never reached because it threw first', async () => {
+    const unreadable = new Proxy({}, {
+      ownKeys() {
+        if (docs('FlatMovies').length > 0) throw new Error('TV payload unreadable')
+        return []
+      },
+    })
+    const { finished, error } = await passOver(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: unreadable }))
+    expect(error?.message).toBe('TV payload unreadable')
+    expect(finished).toEqual([['movies', MOVIE, true]])
+  })
+})
+
+describe('the pass inputs the run builds under its lock', () => {
+  it('fail closed when they cannot be built: no pass, no delete, nothing recorded', async () => {
+    const unreadable = new Proxy({}, {
+      ownKeys() {
+        throw new Error('movie payload unreadable')
+      },
+    })
+    mockCollection('Media', 'FlatMovies').docs.push({ _id: 'orphan', originalTitle: 'Orphan (1999)', syncRunId: 'old', updatedAt: new Date(0) })
+
+    const result = await runSync(oneServer({ movies: unreadable }), { baselineStarted: true })
+
+    expect(result.errors).toEqual([expect.objectContaining({ phase: 'pass_inputs', error: 'movie payload unreadable' })])
+    expect(result.flatSyncResults).toBeUndefined()
+    expect(docs('FlatMovies').map((d) => d._id)).toEqual(['orphan'])
+    expect(docs('FlatTVShows')).toHaveLength(0)
+    expect(appliedRecord()).toMatchObject({ state: 'running' })
   })
 })
 

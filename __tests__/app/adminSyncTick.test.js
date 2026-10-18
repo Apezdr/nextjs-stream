@@ -4,8 +4,9 @@
  * POST /api/authenticated/admin/sync starts a sync tick and answers 202; the
  * tick runs in the background. A tick whose payloads are unchanged ends at the
  * conditional fetch (fetchSyncTick): no fieldAvailability, no pass, and no
- * admin "sync complete" notification. Any other tick runs the pass with the
- * ETags of the payloads it fetched, for the pass to record when it completes.
+ * admin "sync complete" notification. Any other tick hands the run the tick
+ * itself: its payloads, which servers did not answer and the ETags to record
+ * when the pass completes.
  */
 
 const mockFetchSyncTick = jest.fn()
@@ -135,10 +136,10 @@ it('runs the pass on a tick that is not skipped, with the ETags of the payloads 
   await untilIdle()
 
   expect(mockSyncAllServers).toHaveBeenCalledTimes(1)
+  // The run builds fieldAvailability and the every-server flag from the tick, under its lock
   expect(mockSyncAllServers).toHaveBeenCalledWith(
-    fileServers,
-    expect.any(Object),
-    expect.objectContaining({ forceSync: false, allEnabledServersProbed: true, payloadETags: ETAGS })
+    expect.objectContaining({ fileServers, errors: undefined, etags: ETAGS }),
+    { forceSync: false }
   )
   expect(mockNotify).toHaveBeenCalledTimes(1)
   expect(console.error).not.toHaveBeenCalledWith('Sync operation failed:', expect.anything())
@@ -174,9 +175,5 @@ it('never lets a sync started from the admin UI skip; the per-title gates still 
 
   expect(mockFetchSyncTick).toHaveBeenCalledWith({ forceSync: false, allowSkip: false })
   // Not forced: titles whose gates match are still skipped inside the pass
-  expect(mockSyncAllServers).toHaveBeenCalledWith(
-    fileServers,
-    expect.any(Object),
-    expect.objectContaining({ forceSync: false })
-  )
+  expect(mockSyncAllServers).toHaveBeenCalledWith(expect.objectContaining({ fileServers }), { forceSync: false })
 })

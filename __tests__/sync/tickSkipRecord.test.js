@@ -112,12 +112,15 @@ function preTagCovers({ ok = true } = {}) {
   })
 }
 
-async function runPass(options = {}) {
-  const result = await syncAllServers(fileServers, { movies: {}, tv: {} }, {
-    allEnabledServersProbed: true,
-    payloadETags: ETAGS,
-    ...options,
-  })
+async function runPass({ allEnabledServersProbed = true, ...options } = {}) {
+  const { payloadETags, ...passOptions } = options
+  // The tick fetchSyncTick hands over; a server that did not answer is in `errors`
+  const tick = {
+    fileServers,
+    errors: allEnabledServersProbed ? undefined : [{ serverId: 'server3', error: 'did not answer' }],
+    etags: 'payloadETags' in options ? payloadETags : ETAGS,
+  }
+  const result = await syncAllServers(tick, passOptions)
   // Let the background cleanup settle and release the orchestration lock
   await new Promise((resolve) => setImmediate(resolve))
   await new Promise((resolve) => setImmediate(resolve))

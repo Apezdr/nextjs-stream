@@ -15,6 +15,7 @@ import {
 import { preTagSyncRunId } from './preTag'
 import { computeMissingMedia } from './missingMedia'
 import { listingsOfFileServers } from './listing'
+import { buildFieldAvailability } from './availability'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { MediaType, SyncOperation } from '@src/utils/sync/core'
 import { startPassRecord, recordCompletePass, incompletePassReasons } from './tickSkip'
@@ -33,16 +34,38 @@ const SYNC_LOCK_WATCHDOG_MS = (() => {
 })()
 
 /**
+ * The pass's inputs, built from a tick once the run holds the lock and has
+ * written its running marker: the payloads, whether every enabled server
+ * answered, fieldAvailability and each server's listing.
+ *
+ * @param {Object} tick - fetchSyncTick's answer for a tick that is not skipped
+ */
+async function passInputs(tick) {
+  const fileServers = tick?.fileServers || {}
+  return {
+    fileServers,
+    // Authoritative-pass gate for every removal the pass and cleanup make:
+    // fetchSyncTick sets `errors` (an array) only when a server failed to
+    // respond; undefined means every configured server answered. A transient
+    // outage must never be read as a deletion.
+    allEnabledServersProbed: !tick?.errors && Object.keys(fileServers).length > 0,
+    fieldAvailability: await buildFieldAvailability(fileServers),
+    listings: listingsOfFileServers(fileServers),
+  }
+}
+
+/**
  * Performs a multi-server sync operation.
- * @param {Object} fileServers - File server data
- * @param {Object} fieldAvailability - Field availability map
- * @param {Object} options - Additional sync options
- * @param {Object} [options.payloadETags] - Per server id, the ETags of the TV and
- *   movie payloads in `fileServers` (fetchSyncTick). When given and the pass
- *   completes for every server, they are recorded so the next tick can skip.
+ * @param {Object} tick - fetchSyncTick's answer for a tick that is not skipped:
+ *   `fileServers` (the payloads of the servers that answered), `errors`
+ *   (undefined when every enabled server answered) and `etags` (per server
+ *   id, the ETags of its TV and movie payloads; when the pass completes for
+ *   every server they are recorded so the next tick can skip)
+ * @param {Object} [options]
+ * @param {boolean} [options.forceSync]
  * @returns {Promise<Object>} Sync results
  */
-export async function syncAllServers(fileServers, fieldAvailability, options = {}) {
+export async function syncAllServers(tick, options = {}) {
   const client = await clientPromise
   const startTime = Date.now()
   console.info(
@@ -155,9 +178,15 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   // in scope at the background cleanup call below.
   let preTagResult = null
 
-  // What each answering server has, by key (run/listing): pre-tag, the
-  // missing-media report and cleanup's no-server-data guard read these, never
-  // the payloads. Built inside the try below; empty, cleanup deletes nothing.
+  // The pass's inputs (passInputs), built inside the try below, after the
+  // running marker. Until then, and if building them fails, they say no
+  // server answered: no pass runs and cleanup deletes nothing.
+  // `listings` is what each answering server has, by key (run/listing):
+  // pre-tag, the missing-media report and cleanup's no-server-data guard read
+  // these, never the payloads.
+  let fileServers = {}
+  let allEnabledServersProbed = false
+  let fieldAvailability = { movies: {}, tv: {} }
   let listings = new Map()
 
  try {
@@ -167,7 +196,12 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   // completes (recordCompletePass below; see run/tickSkip.js).
   await startPassRecord(client, syncRunId)
 
-  listings = listingsOfFileServers(fileServers)
+  try {
+    ;({ fileServers, allEnabledServersProbed, fieldAvailability, listings } = await passInputs(tick))
+  } catch (inputError) {
+    console.error(chalk.red(`❌ Could not build the pass's inputs: ${inputError.message}`))
+    results.errors.push({ error: inputError.message, phase: 'pass_inputs', stack: inputError.stack })
+  }
 
   // Pre-tag every record currently present on a file server with the current
   // syncRunId. The per-write marker injection in the sync helpers only fires
@@ -240,9 +274,9 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
           runServerPass(fileServer, serverConfig, fieldAvailability, {
             forceSync: Boolean(options.forceSync),
             // Authoritative-pass gate for field-absence cleanup: true only when
-            // every enabled file server responded this run (computed in the route
-            // handler). Threaded unchanged into RunConfig (and its cleanup).
-            allEnabledServersProbed: options.allEnabledServersProbed === true,
+            // every enabled file server responded this run (passInputs).
+            // Threaded unchanged into RunConfig (and its cleanup).
+            allEnabledServersProbed,
             written,
           }),
         ])
@@ -355,7 +389,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     results,
     preTagResult,
     fileServers,
-    allEnabledServersProbed: options.allEnabledServersProbed === true,
+    allEnabledServersProbed,
   })
 
   // If every server's pass completed, record the payloads it applied: the
@@ -366,8 +400,8 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     results,
     preTagResult,
     fileServers,
-    allEnabledServersProbed: options.allEnabledServersProbed === true,
-    payloadETags: options.payloadETags,
+    allEnabledServersProbed,
+    payloadETags: tick?.etags,
   })
  } finally {
   results.added = written.addedCounts()
@@ -428,7 +462,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
             runStartedAt: startTime,
             // Whether every enabled server answered. Cleanup deletes nothing on a
             // run where one did not (see the every-server gate there).
-            allEnabledServersProbed: options.allEnabledServersProbed === true,
+            allEnabledServersProbed,
           }
         )
         results.finalAvailabilityResults = finalAvailabilityResults
