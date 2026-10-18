@@ -25,7 +25,6 @@ import {
   type Availability,
   type PlanOutcome,
   type RunConfig,
-  type TVBuilderRun,
   type TVPassParts,
   type TVShowEntity
 } from '../../core'
@@ -44,6 +43,13 @@ import { effectiveMetadata } from '@src/utils/sync/core/metadataLock'
 import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Season')
+
+/**
+ * What planSeason reads of the run, besides the availability: not forceSync
+ * (the show's gate is checked before it runs), not the cleanup config
+ * (field-absence cleanup plans apart).
+ */
+export type SeasonPlanRun = Pick<RunConfig, 'serverConfig' | 'allEnabledServersProbed'>
 
 export class SeasonSyncService {
   constructor(
@@ -249,7 +255,7 @@ export class SeasonSyncService {
     displayTitle: string,
     seasonNumber: number,
     fileData: any,
-    run: TVBuilderRun,
+    run: SeasonPlanRun,
     availability: Availability,
     existing: SeasonEntity | null,
     showId: any,

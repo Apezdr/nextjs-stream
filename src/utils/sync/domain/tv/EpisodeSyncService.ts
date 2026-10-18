@@ -29,7 +29,6 @@ import {
   type CleanupPlan,
   type PlanOutcome,
   type RunConfig,
-  type TVBuilderRun,
   type TVPassParts,
   type TVShowEntity
 } from '../../core'
@@ -70,6 +69,13 @@ import isEqual from 'lodash/isEqual'
 import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Episode')
+
+/**
+ * What planEpisode reads of the run, besides the availability: not forceSync
+ * (the episode's gate is checked before it runs), not the cleanup config
+ * (field-absence cleanup plans apart).
+ */
+export type EpisodePlanRun = Pick<RunConfig, 'serverConfig' | 'allEnabledServersProbed'>
 
 export class EpisodeSyncService {
   constructor(
@@ -566,7 +572,7 @@ export class EpisodeSyncService {
     fileData: any,
     /** The show's payload: the season's literal key is resolved from it. */
     showPayload: any,
-    run: TVBuilderRun,
+    run: EpisodePlanRun,
     availability: Availability,
     existing: EpisodeEntity | null,
     showId: any,

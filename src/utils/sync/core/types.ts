@@ -130,13 +130,6 @@ export interface TVPassParts {
   availability: Availability
 }
 
-/**
- * What a TV builder (planTVShow, planSeason, planEpisode) reads of the run,
- * besides the availability: not forceSync (the gates are checked before it
- * runs), not the cleanup config (field-absence cleanup plans apart).
- */
-export type TVBuilderRun = Pick<RunConfig, 'serverConfig' | 'allEnabledServersProbed'>
-
 // ==========================================
 // Sync Results
 // ==========================================

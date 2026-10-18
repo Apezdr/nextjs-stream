@@ -30,7 +30,6 @@ import {
   type CleanableField,
   type PlanOutcome,
   type RunConfig,
-  type TVBuilderRun,
   type TVPassParts,
   type WritePlan
 } from '../../core'
@@ -67,6 +66,13 @@ const TVSHOW_CLEANABLE_FIELDS: CleanableField[] = [
   { entityField: 'backdrop', fieldPath: 'backdrop', companions: ['backdropSource', 'backdropBlurhash', 'backdropBlurhashSource'] },
   { entityField: 'logo', fieldPath: 'logo', companions: ['logoSource', 'logoBlurhash'] },
 ]
+
+/**
+ * What planTVShow reads of the run, besides the availability: not forceSync
+ * (the gate is checked before it runs), not the cleanup config (field-absence
+ * cleanup plans apart).
+ */
+export type TVShowPlanRun = Pick<RunConfig, 'serverConfig' | 'allEnabledServersProbed'>
 
 /**
  * What the seasons and episodes under a show left undone, as a plan for the
@@ -372,7 +378,7 @@ export class TVShowSyncService {
   private async planTVShow(
     showTitle: string,
     fileData: any,
-    run: TVBuilderRun,
+    run: TVShowPlanRun,
     availability: Availability,
     existing: TVShowEntity | null
   ): Promise<PlanOutcome<TVShowEntity>> {
