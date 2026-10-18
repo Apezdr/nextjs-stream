@@ -163,6 +163,17 @@ export interface WritePlan<E = Record<string, any>> {
   deferrals: string[]
 }
 
+/**
+ * What one step of a pass returns: its write plan, and whether it writes the
+ * document. A step that writes stamps `lastSynced` in its plan; the flag says
+ * so explicitly, so the service does not read it off the plan's fields.
+ */
+export interface PlanOutcome<E = Record<string, any>> {
+  plan: WritePlan<E>
+  /** The step writes the document (its plan stamps `lastSynced`). */
+  wroteDocument: boolean
+}
+
 // ==========================================
 // Backdrop focal-point hint
 // ==========================================

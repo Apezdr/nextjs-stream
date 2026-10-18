@@ -64,6 +64,8 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
   const title = originalTitle
   const plan = emptyWritePlan<MovieEntity>()
   const retries: BlurhashRetry[] = []
+  // Whether the step writes the movie: set where its plan stamps lastSynced.
+  let wroteDocument = false
 
   try {
     syncEventBus.emitProgress(title, MediaType.Movie, context.serverConfig.id, SyncOperation.Assets, {
@@ -77,6 +79,7 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
 
     if (Object.keys(assetUpdates).length > 0) {
       const set: any = { ...assetUpdates, lastSynced: new Date() }
+      wroteDocument = true
 
       // Add source tracking for updated asset fields
       Object.keys(assetUpdates).forEach((field) => {
@@ -110,6 +113,7 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
 
     return {
       plan,
+      wroteDocument,
       retries,
       result: movieStepResult(
         title,
@@ -131,6 +135,7 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
     plan.deferrals.push('artwork')
     return {
       plan,
+      wroteDocument: false,
       retries,
       result: movieStepResult(title, SyncOperation.Assets, context, SyncStatus.Failed, [], [message], {
         processingTime: Date.now() - startTime,
@@ -201,6 +206,8 @@ export async function retryMovieBlurhashes(
 
     return {
       plan,
+      // The retry writes blurhashes alone; it does not stamp lastSynced.
+      wroteDocument: false,
       result: movieStepResult(
         title,
         SyncOperation.Blurhash,
@@ -216,6 +223,7 @@ export async function retryMovieBlurhashes(
     syncEventBus.emitError(title, MediaType.Movie, context.serverConfig.id, message, SyncOperation.Blurhash)
     return {
       plan: { ...emptyWritePlan<MovieEntity>(), incomplete: true, deferrals: ['blurhash retry'] },
+      wroteDocument: false,
       result: movieStepResult(title, SyncOperation.Blurhash, context, SyncStatus.Failed, [], [message], {
         processingTime: Date.now() - startTime,
       }),

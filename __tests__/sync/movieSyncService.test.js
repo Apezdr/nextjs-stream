@@ -4,8 +4,9 @@
  * MovieSyncService runs the movie's steps (metadata, artwork, video, the
  * blurhash retry), merges their write plans and makes one write. These cases
  * pin what the service itself decides: it reads the stored movie once, the
- * fields normalization heals are written only with a step's write, and the
- * metadata step's plan never names the display title.
+ * fields normalization heals are written only with a step's write (which
+ * each step reports with its wroteDocument flag), and the metadata step's plan
+ * never names the display title.
  */
 
 const mockServers = { A: { id: 'A', priority: 1 }, B: { id: 'B', priority: 2 } }
@@ -30,6 +31,8 @@ jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({
 
 const { MovieSyncService, movieSyncGate } = require('@src/utils/sync/domain/movies/MovieSyncService')
 const { syncMovieMetadata } = require('@src/utils/sync/domain/movies/metadata')
+const { syncMovieArtwork, retryMovieBlurhashes } = require('@src/utils/sync/domain/movies/artwork')
+const { syncMovieVideo } = require('@src/utils/sync/domain/movies/video')
 const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
 const { httpGet } = require('@src/lib/httpHelper')
 const { MediaType, SyncOperation } = require('@src/utils/sync/core')
@@ -165,5 +168,55 @@ describe('the metadata step', () => {
     expect(plan.set).not.toHaveProperty('titleSource')
     expect(result).toMatchObject({ status: 'completed', changes: [] })
     expect(plan.incomplete).toBe(false)
+  })
+})
+
+describe('the wroteDocument flag of each step', () => {
+  // Set exactly when the step's plan stamps lastSynced: the service writes
+  // the healed fields with such a step's write, and with no other.
+  const outcomeOf = async (step, payload, movie) => step({ originalTitle: KEY, movie: { originalTitle: KEY, title: KEY, ...movie }, context: contextFor(payload) })
+  const agrees = (outcome) => expect(outcome.wroteDocument).toBe(Object.prototype.hasOwnProperty.call(outcome.plan.set, 'lastSynced'))
+
+  it('is set by the metadata step when it fetched the metadata, and not when it did not', async () => {
+    fetchMetadataMultiServer.mockImplementation(async () => ({ title: 'Film Title' }))
+    const fetched = await outcomeOf(syncMovieMetadata, { urls: { metadata: `${FOLDER}/metadata.json` } }, {})
+    expect(fetched.wroteDocument).toBe(true)
+    agrees(fetched)
+
+    const notOwner = await outcomeOf(syncMovieMetadata, posterOnly(), {})
+    expect(notOwner.wroteDocument).toBe(false)
+    agrees(notOwner)
+  })
+
+  it('is set by the artwork step when it changes an image, and not when nothing changes', async () => {
+    const changed = await outcomeOf(syncMovieArtwork, posterOnly(), {})
+    expect(changed.wroteDocument).toBe(true)
+    agrees(changed)
+
+    const unchanged = await outcomeOf(syncMovieArtwork, { urls: {} }, {})
+    expect(unchanged.wroteDocument).toBe(false)
+    agrees(unchanged)
+  })
+
+  it('is set by the video step when it changes the video, and not when nothing changes', async () => {
+    const payload = { fileNames: ['Film.mkv'], urls: { mp4: `${FOLDER}/Film.mkv` } }
+    const changed = await outcomeOf(syncMovieVideo, payload, {})
+    expect(changed.wroteDocument).toBe(true)
+    agrees(changed)
+
+    const unchanged = await outcomeOf(syncMovieVideo, { urls: {} }, {})
+    expect(unchanged.wroteDocument).toBe(false)
+    agrees(unchanged)
+  })
+
+  it('is never set by the blurhash retry, even when it writes a blurhash', async () => {
+    httpGet.mockRejectedValue(new Error('timeout of 3000ms exceeded'))
+    const artwork = await outcomeOf(syncMovieArtwork, posterOnly(), storedWithoutType())
+    expect(artwork.retries).toHaveLength(1)
+    const retry = await retryMovieBlurhashes({ originalTitle: KEY, movie: storedWithoutType(), context: contextFor(posterOnly()) }, artwork.retries)
+
+    expect(retry.plan.set).toHaveProperty('posterBlurhash')
+    expect(retry.wroteDocument).toBe(false)
+    agrees(retry)
   })
 })

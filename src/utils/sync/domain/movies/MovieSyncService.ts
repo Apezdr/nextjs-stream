@@ -141,6 +141,9 @@ export class MovieSyncService {
       // before it set; none of them writes. ----
       const results: SyncResult[] = []
       const stepPlans: WritePlan<MovieEntity>[] = []
+      // Whether the metadata, artwork or video step writes the movie (each
+      // says so when its plan stamps lastSynced).
+      let stepsWrite = false
       let movie: MovieEntity = normalized
       const runStep = async <O extends MovieStepOutcome>(
         operation: SyncOperation,
@@ -165,11 +168,13 @@ export class MovieSyncService {
           syncEventBus.emitError(title, MediaType.Movie, context.serverConfig.id, errorResult.errors[0], operation)
           stepOutcome = {
             plan: { ...emptyWritePlan<MovieEntity>(), incomplete: true, deferrals: [operation] },
+            wroteDocument: false,
             result: errorResult,
           }
         }
         results.push(stepOutcome.result)
         stepPlans.push(stepOutcome.plan)
+        if (stepOutcome.wroteDocument) stepsWrite = true
         movie = { ...movie, ...stepOutcome.plan.set } as MovieEntity
         return outcome
       }
@@ -196,11 +201,10 @@ export class MovieSyncService {
 
       // What normalizeMovieEntity added or healed (a missing type, discovery
       // date, source..., and lastSynced) is written whenever the metadata,
-      // artwork or video step writes: each of them stamps lastSynced then, as
-      // the strategies they replace wrote the whole movie then. A pass in
-      // which nothing but the blurhash retry, the title or the gate changes
-      // writes only that.
-      const stepsWrite = stepPlans.some((plan) => Object.prototype.hasOwnProperty.call(plan.set, 'lastSynced'))
+      // artwork or video step writes (stepsWrite: each says so where it stamps
+      // lastSynced), as the strategies they replace wrote the whole movie
+      // then. A pass in which nothing but the blurhash retry, the title or the
+      // gate changes writes only that.
 
       // ---- One plan (core/writePlan): the cleanup's removals first, then
       // the normalization, then the steps' plans in step order. ----

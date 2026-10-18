@@ -7,7 +7,7 @@
  * merges the plans into the one write the pass makes (core/writePlan).
  */
 
-import { MediaType, type MovieEntity, type SyncContext, type SyncOperation, type SyncResult, type SyncStatus, type WritePlan } from '../../core'
+import { MediaType, type MovieEntity, type PlanOutcome, type SyncContext, type SyncOperation, type SyncResult, type SyncStatus } from '../../core'
 
 export interface MovieStepInput {
   /** The folder name: the payload key, the availability key and the results' entity id. */
@@ -17,8 +17,7 @@ export interface MovieStepInput {
   context: SyncContext
 }
 
-export interface MovieStepOutcome {
-  plan: WritePlan<MovieEntity>
+export interface MovieStepOutcome extends PlanOutcome<MovieEntity> {
   result: SyncResult
 }
 

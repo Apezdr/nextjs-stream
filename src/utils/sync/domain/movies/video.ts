@@ -55,8 +55,11 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
   const startTime = Date.now()
   const title = originalTitle
   const plan = emptyWritePlan<MovieEntity>()
+  // Whether the step writes the movie: set where its plan stamps lastSynced.
+  let wroteDocument = false
   const failed = (errors: string[]): MovieStepOutcome => ({
     plan: { ...emptyWritePlan<MovieEntity>(), incomplete: true, deferrals: ['video'] },
+    wroteDocument: false,
     result: movieStepResult(title, SyncOperation.Content, context, SyncStatus.Failed, [], errors, {
       processingTime: Date.now() - startTime,
     }),
@@ -92,6 +95,7 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
       // "The Matrix" and "The Matrix (1999)" depending on which strategy had
       // something to change.
       const set: any = { ...contentUpdates, lastSynced: new Date() }
+      wroteDocument = true
 
       // Add source tracking for updated content fields
       Object.keys(contentUpdates).forEach((field) => {
@@ -161,6 +165,7 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
 
     return {
       plan,
+      wroteDocument,
       result: movieStepResult(
         title,
         SyncOperation.Content,

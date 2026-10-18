@@ -42,6 +42,8 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
   const startTime = Date.now()
   const title = originalTitle
   const plan = emptyWritePlan<MovieEntity>()
+  // Whether the step writes the movie: set where its plan stamps lastSynced.
+  let wroteDocument = false
   const outcome = (
     entityId: string,
     status: SyncStatus,
@@ -55,6 +57,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
     }
     return {
       plan,
+      wroteDocument,
       result: movieStepResult(entityId, SyncOperation.Metadata, context, status, changes, errors, metadata),
     }
   }
@@ -171,6 +174,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
 
     // The step writes the movie whenever it got this far (lastSynced at least).
     const set: Partial<MovieEntity> = { lastSynced: new Date() }
+    wroteDocument = true
 
     // Check if entity needs version upgrade or normal metadata update
     const needsVersionUpgrade = !movie.syncVersion || movie.syncVersion < METADATA_SCHEMA_VERSION
@@ -245,6 +249,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
       SyncOperation.Metadata
     )
     plan.set = {}
+    wroteDocument = false
     return outcome(title, SyncStatus.Failed, [], [error instanceof Error ? error.message : String(error)], {
       processingTime: Date.now() - startTime,
     })
