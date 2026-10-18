@@ -32,6 +32,7 @@ import {
 } from '@src/utils/sync/core/ownership'
 import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
 import { effectiveMetadata } from '@src/utils/sync/core/metadataLock'
+import { resolveTitle } from '@src/utils/sync/core/title'
 import {
   availabilityFingerprint,
   payloadFingerprint,
@@ -398,8 +399,7 @@ export class TVShowSyncService {
         metadataFetchSucceeded = true
       }
       // Metadata an admin locked stays as stored, and so do the fields taken
-      // from it: the fetched copy is dropped on the way to the database, and a
-      // title derived from it would not be the stored metadata's
+      // from it: the fetched copy is dropped on the way to the database
       // (core/metadataLock).
       const metadata = effectiveMetadata<any>({
         stored: existing ? { metadata: existing.metadata, metadataSource: existing.metadataSource } : null,
@@ -412,7 +412,6 @@ export class TVShowSyncService {
         entity.metadataSource = metadata.metadataSource
 
         // Extract queryable fields from metadata (matching legacy document shape)
-        if (fresh.name) entity.title = fresh.name
         if (fresh.first_air_date) entity.firstAirDate = new Date(fresh.first_air_date)
         if (fresh.last_air_date) entity.lastAirDate = new Date(fresh.last_air_date)
         if (fresh.status) entity.status = fresh.status
@@ -423,6 +422,24 @@ export class TVShowSyncService {
         if (fresh.networks) entity.networks = fresh.networks
       }
     }
+
+    // --- Display title (core/title) ---
+    // Derived on every pass from the metadata the show ends this pass with
+    // (`entity.metadata` is the fresh copy written above, or what is stored),
+    // so it never depends on which server last fetched. The source goes with
+    // it; a locked title keeps its source, and the title itself is dropped at
+    // the write chokepoint.
+    const titleRule = resolveTitle({
+      originalTitle: showTitle,
+      metadata: { metadata: entity.metadata, metadataSource: entity.metadataSource },
+      fieldAvailability: context.fieldAvailability,
+      mediaType: 'tv',
+      serverConfig: context.serverConfig,
+      stored: existing,
+      locks: { title: locked('title') },
+    })
+    if (titleRule.writeTitle) entity.title = titleRule.title
+    if (titleRule.writeTitleSource) entity.titleSource = titleRule.titleSource
 
     // --- Show identity (follows metadata priority) ---
     // A show has no video of its own, so the metadata owner — the show-level

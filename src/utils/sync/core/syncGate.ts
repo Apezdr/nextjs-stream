@@ -65,7 +65,8 @@ export const GATE_BOOKKEEPING_FIELDS: ReadonlySet<string> = new Set([
   'syncRunId',
 ])
 
-export const SYNC_GATE_VERSION = 1
+// 2: a show's title and titleSource follow core/title.
+export const SYNC_GATE_VERSION = 2
 
 /**
  * The value a server's gate must hold for its pass to be skipped.
