@@ -23,7 +23,7 @@
  * folder of the same name, which is therefore not synced (fetchAllServerData
  * deletes the key); a listing leaves that name out too.
  */
-const LIST_VERSION_KEY = 'version'
+export const LIST_VERSION_KEY = 'version'
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -70,6 +70,21 @@ export function listingOfPayload(fileServer) {
     if (title !== LIST_VERSION_KEY) tv.set(title, seasonKeysOf(showData))
   }
   return { movies, tv }
+}
+
+/**
+ * The listing of one server from its two manifests (run/manifestSource), which
+ * already hold every title with its season and episode keys.
+ *
+ * @param {{ titles: Map<string, Object> }} tvManifest
+ * @param {{ titles: Map<string, Object> }} moviesManifest
+ * @returns {ServerListing}
+ */
+export function listingOfManifests(tvManifest, moviesManifest) {
+  return {
+    movies: new Set(moviesManifest.titles.keys()),
+    tv: new Map([...tvManifest.titles].map(([title, record]) => [title, record.seasons])),
+  }
 }
 
 /**

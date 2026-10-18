@@ -18,7 +18,10 @@ jest.mock('@src/lib/logger', () => ({
   logError: jest.fn(),
 }))
 
-const { listingOfPayload, listingsOfFileServers } = require('@src/utils/sync/run/listing')
+jest.mock('@src/utils/config', () => ({ getSyncUrls: () => ({}), fileServerVersionTV: 1.0001, fileServerVersionMOVIES: 1.0001 }))
+jest.mock('@src/utils/webhookServer', () => ({ getWebhookIdForServer: jest.fn() }))
+
+const { listingOfPayload, listingsOfFileServers, listingOfManifests } = require('@src/utils/sync/run/listing')
 const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
 const { computeMissingMedia } = require('@src/utils/sync/run/missingMedia')
 const { buildFieldAvailability } = require('@src/utils/sync/run/availability')
@@ -168,6 +171,29 @@ describe('listingOfPayload', () => {
     const listing = listingOfPayload({ tv: { A: { seasons: ['Season 1'] }, B: { seasons: { 'Season 1': { episodes: ['S01E01'] } } } } })
     expect(listing.tv.get('A').size).toBe(0)
     expect(listing.tv.get('B').get('Season 1')).toEqual([])
+  })
+})
+
+describe('listingOfManifests', () => {
+  it('lists what listingOfPayload lists for the body the manifests describe', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const { parseManifest } = require('@src/utils/sync/run/manifestSource')
+    const body = fileServers().A
+    const fromBody = listingOfPayload(body)
+    // The manifests the processor builds from that body (its tvManifestKeys rule)
+    const hash = '0123456789abcdef'
+    const tvTitles = Object.fromEntries(
+      [...fromBody.tv].map(([title, seasons]) => [title, { hash, seasons: Object.fromEntries(seasons) }])
+    )
+    const movieTitles = Object.fromEntries([...fromBody.movies].map((title) => [title, { hash }]))
+    const bytes = (titles, kind) => new TextEncoder().encode(JSON.stringify({ format: 2, kind, version: 1.0001, titles }))
+    // (Object.fromEntries makes `__proto__` an own key, so the manifest carries it)
+    expect(JSON.stringify(movieTitles)).toContain('"__proto__"')
+
+    const listing = listingOfManifests(parseManifest(bytes(tvTitles, 'tv'), 'tv', 'W/"t"'), parseManifest(bytes(movieTitles, 'movies'), 'movies', 'W/"m"'))
+
+    expect(listing.movies).toEqual(fromBody.movies)
+    expect(listing.tv).toEqual(fromBody.tv)
   })
 })
 
