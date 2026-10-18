@@ -93,11 +93,11 @@ function trimOrNull(v) {
 }
 
 /**
- * An update that would leave a movie or show without a display title. The
+ * An update that would leave a movie, show or episode without a title. The
  * form posts `title` with everything else, and an empty value would be
  * `$unset` (applyScalarFields); with the title locked, as the editors lock a
- * changed one, the sync would never put a title back. Refused, as on create.
- * A payload that does not send `title` leaves it as stored.
+ * changed one, the sync would never put a title back. Refused, as a movie or
+ * show create is. A payload that does not send `title` leaves it as stored.
  */
 function clearsTitle(payload) {
   return 'title' in payload && !trimOrNull(payload.title)
@@ -635,6 +635,9 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
   const existing = episodeObjId
     ? await episodesCol.findOne({ _id: episodeObjId })
     : await episodesCol.findOne({ showId, seasonId: season._id, episodeNumber })
+  // On an update only: an episode can still be added without a title, as
+  // before (an empty value is left out of an insert).
+  if (existing && clearsTitle(payload)) return fail('Title is required.')
 
   const { set, unset } = applyScalarFields(payload, EPISODE_FIELDS, EPISODE_MANUAL_TRACKED_FIELDS, { isCreate: !existing, existing })
   applyMetadata(payload, set, { isCreate: !existing, existing })
