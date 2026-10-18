@@ -36,7 +36,6 @@ jest.mock('@src/utils/config', () => ({
 }))
 
 const { syncMovieVideo } = require('@src/utils/sync/domain/movies/video')
-const { MediaType, SyncOperation } = require('@src/utils/sync/core')
 const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
 const KEY = 'Film (2020)'
@@ -67,14 +66,13 @@ async function contentPass(serverId, payload, fieldAvailability, stored = {}) {
   const { plan, result } = await syncMovieVideo({
     originalTitle: KEY,
     movie: { title: 'Film', originalTitle: KEY, ...stored },
-    context: {
-      mediaType: MediaType.Movie,
-      operation: SyncOperation.Content,
+    payload,
+    run: {
       serverConfig: { ...mockServers[serverId], baseUrl: `https://${serverId}.example`, prefix: '', enabled: true },
-      fieldAvailability,
-      fileServerData: { movies: { [KEY]: payload } },
+      forceSync: false,
       allEnabledServersProbed: true,
     },
+    availability: { fieldAvailability },
   })
   const document = { ...stored, ...plan.set }
   return {

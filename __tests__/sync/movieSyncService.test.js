@@ -36,7 +36,6 @@ const { syncMovieArtwork, retryMovieBlurhashes } = require('@src/utils/sync/doma
 const { syncMovieVideo } = require('@src/utils/sync/domain/movies/video')
 const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
 const { httpGet } = require('@src/lib/httpHelper')
-const { MediaType, SyncOperation } = require('@src/utils/sync/core')
 const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
 const KEY = 'Film (2020)'
@@ -63,20 +62,25 @@ const storedWithoutType = () => ({
   posterSource: 'A',
 })
 
-const contextFor = (payload, { forceSync = false, cleanup } = {}) => {
+/** The parts of server A's pass over `payload` (core/types). */
+const partsFor = (payload, { forceSync = false, cleanup } = {}) => {
   const fieldAvailability = { movies: { [KEY]: {} }, tv: {} }
   collectFieldAvailability(payload, '', 'A', fieldAvailability.movies[KEY])
   return {
-    mediaType: MediaType.Movie,
-    operation: SyncOperation.Metadata,
-    serverConfig: { ...mockServers.A, baseUrl: 'https://A.example', prefix: '', enabled: true },
-    fieldAvailability,
-    fileServerData: { movies: { [KEY]: payload } },
-    allEnabledServersProbed: true,
-    forceSync,
-    ...(cleanup ? { cleanup } : {}),
+    run: {
+      serverConfig: { ...mockServers.A, baseUrl: 'https://A.example', prefix: '', enabled: true },
+      forceSync,
+      allEnabledServersProbed: true,
+      ...(cleanup ? { cleanup } : {}),
+    },
+    availability: { fieldAvailability },
+    caches: {},
   }
 }
+
+/** Server A's pass over `payload`. */
+const syncOver = (repository, payload, options) =>
+  new MovieSyncService(repository).syncMovie(KEY, payload, partsFor(payload, options))
 
 const repositoryOver = (stored) => ({
   findByOriginalTitle: jest.fn(async () => (stored ? structuredClone(stored) : null)),
@@ -99,8 +103,8 @@ beforeEach(() => {
 describe('the stored movie', () => {
   it('is read once by a pass, whether it is skipped, run or forced', async () => {
     const payload = posterOnly()
-    const context = contextFor(payload)
-    const gated = { ...storedWithoutType(), type: 'movie', syncGates: { A: movieSyncGate(payload, context.fieldAvailability, KEY) } }
+    const parts = partsFor(payload)
+    const gated = { ...storedWithoutType(), type: 'movie', syncGates: { A: movieSyncGate(payload, parts.availability.fieldAvailability, KEY) } }
 
     for (const [stored, forceSync, expected] of [
       [gated, false, ['skipped']],
@@ -109,7 +113,7 @@ describe('the stored movie', () => {
       [null, false, ['skipped', 'completed', 'skipped', 'skipped']],
     ]) {
       const repository = repositoryOver(stored)
-      const results = await new MovieSyncService(repository).syncMovie(KEY, contextFor(payload, { forceSync }))
+      const results = await syncOver(repository, payload, { forceSync })
       expect(results.map((r) => r.status)).toEqual(expected)
       expect(repository.findByOriginalTitle).toHaveBeenCalledTimes(1)
       expect(repository.findByOriginalTitle).toHaveBeenCalledWith(KEY)
@@ -120,7 +124,7 @@ describe('the stored movie', () => {
 describe('the fields normalization heals', () => {
   it('are written with a step\'s write', async () => {
     const repository = repositoryOver(storedWithoutType())
-    await new MovieSyncService(repository).syncMovie(KEY, contextFor(posterOnly()))
+    await syncOver(repository, posterOnly())
 
     // The artwork step wrote the poster's blurhash, so the missing type goes with it.
     const [written] = repository.smartUpsert.mock.calls[0]
@@ -131,7 +135,7 @@ describe('the fields normalization heals', () => {
   it('are not written when only the blurhash retry writes', async () => {
     httpGet.mockRejectedValue(new Error('timeout of 3000ms exceeded'))
     const repository = repositoryOver(storedWithoutType())
-    const results = await new MovieSyncService(repository).syncMovie(KEY, contextFor(posterOnly()))
+    const results = await syncOver(repository, posterOnly())
 
     expect(results.map((r) => [r.operation, r.status])).toEqual([
       ['metadata', 'skipped'],
@@ -163,7 +167,7 @@ describe('the metadata step', () => {
       syncVersion: '2.1',
     }
 
-    const { plan, result } = await syncMovieMetadata({ originalTitle: KEY, movie, context: contextFor(payload) })
+    const { plan, result } = await syncMovieMetadata({ originalTitle: KEY, movie, payload, ...partsFor(payload) })
 
     expect(plan.set).toEqual({ lastSynced: expect.any(Date) })
     expect(plan.set).not.toHaveProperty('title')
@@ -176,7 +180,7 @@ describe('the metadata step', () => {
 describe('the wroteDocument flag of each step', () => {
   // Set exactly when the step's plan stamps lastSynced: the service writes
   // the healed fields with such a step's write, and with no other.
-  const outcomeOf = async (step, payload, movie) => step({ originalTitle: KEY, movie: { originalTitle: KEY, title: KEY, ...movie }, context: contextFor(payload) })
+  const outcomeOf = async (step, payload, movie) => step({ originalTitle: KEY, movie: { originalTitle: KEY, title: KEY, ...movie }, payload, ...partsFor(payload) })
   const agrees = (outcome) => expect(outcome.wroteDocument).toBe(Object.prototype.hasOwnProperty.call(outcome.plan.set, 'lastSynced'))
 
   it('is set by the metadata step when it fetched the metadata, and not when it did not', async () => {
@@ -215,7 +219,7 @@ describe('the wroteDocument flag of each step', () => {
     httpGet.mockRejectedValue(new Error('timeout of 3000ms exceeded'))
     const artwork = await outcomeOf(syncMovieArtwork, posterOnly(), storedWithoutType())
     expect(artwork.retries).toHaveLength(1)
-    const retry = await retryMovieBlurhashes({ originalTitle: KEY, movie: storedWithoutType(), context: contextFor(posterOnly()) }, artwork.retries)
+    const retry = await retryMovieBlurhashes({ originalTitle: KEY, run: partsFor(posterOnly()).run }, artwork.retries)
 
     expect(retry.plan.set).toHaveProperty('posterBlurhash')
     expect(retry.wroteDocument).toBe(false)
@@ -232,7 +236,7 @@ describe('the field-absence cleanup log', () => {
   it('names the stored display title', async () => {
     // The poster is stored, and no server reports one any more.
     const repository = repositoryOver({ ...storedWithoutType(), type: 'movie', title: 'Film Title' })
-    await new MovieSyncService(repository).syncMovie(KEY, contextFor({ urls: {} }, { cleanup: enforce }))
+    await syncOver(repository, { urls: {} }, { cleanup: enforce })
 
     expect(cleanupLog()[0]).toMatchObject({ title: 'Film Title', originalTitle: KEY, fields: ['posterURL', 'posterSource'] })
   })
@@ -240,7 +244,7 @@ describe('the field-absence cleanup log', () => {
   it('falls back to the folder name when the stored movie has no title', async () => {
     const { title: _title, ...untitled } = storedWithoutType()
     const repository = repositoryOver({ ...untitled, type: 'movie' })
-    await new MovieSyncService(repository).syncMovie(KEY, contextFor({ urls: {} }, { cleanup: enforce }))
+    await syncOver(repository, { urls: {} }, { cleanup: enforce })
 
     expect(cleanupLog()[0]).toMatchObject({ title: KEY, originalTitle: KEY })
   })

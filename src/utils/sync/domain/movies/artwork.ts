@@ -22,13 +22,14 @@
 import {
   BackdropFocal,
   MovieEntity,
-  SyncContext,
   SyncStatus,
   SyncOperation,
   MediaType,
   syncEventBus,
   getFieldPath,
   MovieFieldPathMap,
+  type Availability,
+  type RunConfig,
 } from '../../core'
 import { emptyWritePlan } from '../../core/writePlan'
 import { fetchMetadataMultiServer, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
@@ -39,7 +40,12 @@ import {
 import { decideBlurhash, settleBlurhash, type BlurhashDecision } from '@src/utils/sync/core/imageAndBlurhash'
 import { httpGet } from '@src/lib/httpHelper'
 import { syncLogger } from '../../core/logger'
-import { movieStepResult, type MovieStepInput, type MovieStepOutcome } from './step'
+import {
+  movieStepResult,
+  type MovieArtworkInput,
+  type MovieBlurhashRetryInput,
+  type MovieStepOutcome,
+} from './step'
 
 /** A blurhash the artwork step's single fetch did not get, for an image that had none. */
 export interface BlurhashRetry {
@@ -59,7 +65,14 @@ export interface MovieArtworkOutcome extends MovieStepOutcome {
 /**
  * The artwork step. See the module comment.
  */
-export async function syncMovieArtwork({ originalTitle, movie, context }: MovieStepInput): Promise<MovieArtworkOutcome> {
+export async function syncMovieArtwork({
+  originalTitle,
+  movie,
+  payload,
+  run,
+  availability,
+  caches,
+}: MovieArtworkInput): Promise<MovieArtworkOutcome> {
   const startTime = Date.now()
   const title = originalTitle
   const plan = emptyWritePlan<MovieEntity>()
@@ -68,13 +81,22 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
   let wroteDocument = false
 
   try {
-    syncEventBus.emitProgress(title, MediaType.Movie, context.serverConfig.id, SyncOperation.Assets, {
+    syncEventBus.emitProgress(title, MediaType.Movie, run.serverConfig.id, SyncOperation.Assets, {
       stage: 'starting',
       progress: 0,
     })
 
     const changes: string[] = []
-    const { updates: assetUpdates, cleared } = await decideArtwork(originalTitle, context, movie, plan, retries)
+    const { updates: assetUpdates, cleared } = await decideArtwork(
+      originalTitle,
+      payload,
+      run,
+      availability,
+      caches,
+      movie,
+      plan,
+      retries
+    )
     changes.push(...cleared.map((key) => `Cleared ${key}`))
 
     if (Object.keys(assetUpdates).length > 0) {
@@ -85,27 +107,27 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
       Object.keys(assetUpdates).forEach((field) => {
         // Map field names to their source tracking fields
         if (field === 'posterURL') {
-          set.posterSource = context.serverConfig.id
+          set.posterSource = run.serverConfig.id
         } else if (field === 'backdrop') {
-          set.backdropSource = context.serverConfig.id
+          set.backdropSource = run.serverConfig.id
         } else if (field === 'logo') {
-          set.logoSource = context.serverConfig.id
+          set.logoSource = run.serverConfig.id
         } else if (field === 'backdropFocal') {
-          set.backdropFocalSource = context.serverConfig.id
+          set.backdropFocalSource = run.serverConfig.id
         } else if (field === 'backdropFocalSuggested') {
-          set.backdropFocalSuggestedSource = context.serverConfig.id
+          set.backdropFocalSuggestedSource = run.serverConfig.id
         }
       })
       plan.set = set
       changes.push(...Object.keys(assetUpdates).map((key) => `Updated ${key}`))
 
-      syncEventBus.emitProgress(title, MediaType.Movie, context.serverConfig.id, SyncOperation.Assets, {
+      syncEventBus.emitProgress(title, MediaType.Movie, run.serverConfig.id, SyncOperation.Assets, {
         stage: 'completed',
         progress: 100,
         updatedAssets: Object.keys(assetUpdates),
       })
     } else {
-      syncEventBus.emitProgress(title, MediaType.Movie, context.serverConfig.id, SyncOperation.Assets, {
+      syncEventBus.emitProgress(title, MediaType.Movie, run.serverConfig.id, SyncOperation.Assets, {
         stage: 'unchanged',
         progress: 100,
       })
@@ -118,7 +140,7 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
       result: movieStepResult(
         title,
         SyncOperation.Assets,
-        context,
+        run,
         changes.length > 0 ? SyncStatus.Completed : SyncStatus.Skipped,
         changes,
         [],
@@ -127,7 +149,7 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    syncEventBus.emitError(title, MediaType.Movie, context.serverConfig.id, message, SyncOperation.Assets)
+    syncEventBus.emitError(title, MediaType.Movie, run.serverConfig.id, message, SyncOperation.Assets)
     // Nothing is written. What the step had already asked to remove, held
     // back or left to the retry stands.
     plan.set = {}
@@ -137,7 +159,7 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
       plan,
       wroteDocument: false,
       retries,
-      result: movieStepResult(title, SyncOperation.Assets, context, SyncStatus.Failed, [], [message], {
+      result: movieStepResult(title, SyncOperation.Assets, run, SyncStatus.Failed, [], [message], {
         processingTime: Date.now() - startTime,
       }),
     }
@@ -150,7 +172,7 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
  * @param retries - The artwork step's retries, poster first
  */
 export async function retryMovieBlurhashes(
-  { originalTitle, context }: MovieStepInput,
+  { originalTitle, run }: MovieBlurhashRetryInput,
   retries: readonly BlurhashRetry[]
 ): Promise<MovieStepOutcome> {
   const startTime = Date.now()
@@ -158,7 +180,7 @@ export async function retryMovieBlurhashes(
   const plan = emptyWritePlan<MovieEntity>()
 
   try {
-    syncEventBus.emitProgress(title, MediaType.Movie, context.serverConfig.id, SyncOperation.Blurhash, {
+    syncEventBus.emitProgress(title, MediaType.Movie, run.serverConfig.id, SyncOperation.Blurhash, {
       stage: 'starting',
       progress: 0,
     })
@@ -167,13 +189,13 @@ export async function retryMovieBlurhashes(
     const set: Record<string, any> = {}
     for (const { field, sourceField, decision } of retries) {
       console.log(
-        `🔍 Movie blurhash retry: fetching "${field}" for "${originalTitle}" (server: "${context.serverConfig.id}", path: ${decision.blurhashUrl})`
+        `🔍 Movie blurhash retry: fetching "${field}" for "${originalTitle}" (server: "${run.serverConfig.id}", path: ${decision.blurhashUrl})`
       )
       // fetchMetadataMultiServer takes the ResourceManager's HTTP slot itself:
       // wrapping it in throttleHttp would hold one slot while waiting for another.
       let fetched: unknown = null
       try {
-        fetched = await fetchMetadataMultiServer(context.serverConfig.id, decision.blurhashUrl, 'blurhash', 'movie', originalTitle)
+        fetched = await fetchMetadataMultiServer(run.serverConfig.id, decision.blurhashUrl, 'blurhash', 'movie', originalTitle)
       } catch (fetchError) {
         console.warn(
           `⚠️ Movie blurhash retry: failed to fetch "${field}" for "${originalTitle}":`,
@@ -192,14 +214,14 @@ export async function retryMovieBlurhashes(
       set[field] = outcome.blurhash
       set[sourceField] = outcome.blurhashSource
       changes.push(`Updated ${field}`)
-      console.log(`✅ Movie blurhash retry: "${field}" updated for "${originalTitle}" (server: ${context.serverConfig.id})`)
+      console.log(`✅ Movie blurhash retry: "${field}" updated for "${originalTitle}" (server: ${run.serverConfig.id})`)
     }
     plan.set = set
 
     syncEventBus.emitProgress(
       title,
       MediaType.Movie,
-      context.serverConfig.id,
+      run.serverConfig.id,
       SyncOperation.Blurhash,
       changes.length > 0 ? { stage: 'completed', progress: 100, updatedFields: changes } : { stage: 'unchanged', progress: 100 }
     )
@@ -211,7 +233,7 @@ export async function retryMovieBlurhashes(
       result: movieStepResult(
         title,
         SyncOperation.Blurhash,
-        context,
+        run,
         changes.length > 0 ? SyncStatus.Completed : SyncStatus.Skipped,
         changes,
         [],
@@ -220,11 +242,11 @@ export async function retryMovieBlurhashes(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    syncEventBus.emitError(title, MediaType.Movie, context.serverConfig.id, message, SyncOperation.Blurhash)
+    syncEventBus.emitError(title, MediaType.Movie, run.serverConfig.id, message, SyncOperation.Blurhash)
     return {
       plan: { ...emptyWritePlan<MovieEntity>(), incomplete: true, deferrals: ['blurhash retry'] },
       wroteDocument: false,
-      result: movieStepResult(title, SyncOperation.Blurhash, context, SyncStatus.Failed, [], [message], {
+      result: movieStepResult(title, SyncOperation.Blurhash, run, SyncStatus.Failed, [], [message], {
         processingTime: Date.now() - startTime,
       }),
     }
@@ -240,7 +262,10 @@ export async function retryMovieBlurhashes(
  */
 async function decideArtwork(
   originalTitle: string,
-  context: SyncContext,
+  payload: any,
+  run: MovieArtworkInput['run'],
+  availability: Availability,
+  caches: MovieArtworkInput['caches'],
   currentMovie: MovieEntity,
   plan: MovieStepOutcome['plan'],
   retries: BlurhashRetry[]
@@ -265,7 +290,7 @@ async function decideArtwork(
   }
 
   // Get file server data for this movie
-  const fileServerData = context.fileServerData?.movies?.[originalTitle]
+  const fileServerData = payload
   if (!fileServerData?.urls) {
     syncLogger.debug(`⏭️ No fileServerData.urls found for "${originalTitle}"`)
     return { updates, cleared }
@@ -291,13 +316,13 @@ async function decideArtwork(
     // The asset belongs to the highest-priority server that HAS it.
     // CRITICAL: Use type-safe field path mapping (e.g., posterURL → "urls.poster")
     const fieldPath = getFieldPath(urlField as keyof typeof MovieFieldPathMap)
-    if (!ownsReportedField(fieldPath, originalTitle, context)) {
-      syncLogger.debug(`⏭️ Skipping ${urlField} - server ${context.serverConfig.id} does not have highest priority for ${fieldPath}`)
+    if (!ownsReportedField(fieldPath, originalTitle, run, availability)) {
+      syncLogger.debug(`⏭️ Skipping ${urlField} - server ${run.serverConfig.id} does not have highest priority for ${fieldPath}`)
       continue
     }
 
     // Build full URL: fileServerData paths already include the prefix
-    const newAssetUrl = fileServerUrl(assetRelativePath, context.serverConfig)
+    const newAssetUrl = fileServerUrl(assetRelativePath, run.serverConfig)
     const currentUrl = currentMovie[urlField as keyof MovieEntity] as string
 
     // The stored URL must be the owner's URL. The two used to be compared by
@@ -318,7 +343,7 @@ async function decideArtwork(
     // Update asset URL if changed
     if (assetChanged) {
       updates[urlField] = newAssetUrl
-      syncLogger.debug(`✅ Updating ${urlField} from server ${context.serverConfig.id} (hash changed: ${currentHash} → ${newHash})`)
+      syncLogger.debug(`✅ Updating ${urlField} from server ${run.serverConfig.id} (hash changed: ${currentHash} → ${newHash})`)
     }
 
     // Blurhash for poster and backdrop: kept, fetched or removed by the one
@@ -337,7 +362,7 @@ async function decideArtwork(
           blurhashSource: (currentMovie as any)[blurhashSourceField],
         },
         reported: { url: newAssetUrl, blurhashUrl: fileServerData.urls[blurhashField] },
-        owner: context.serverConfig.id,
+        owner: run.serverConfig.id,
         locks: {
           image: isTopLevelFieldLocked(lockedFields, urlField),
           blurhash: isTopLevelFieldLocked(lockedFields, blurhashField),
@@ -348,7 +373,7 @@ async function decideArtwork(
           ? settleBlurhash(
               decision,
               // The payload's path is already under the server's prefix.
-              await fetchBlurhashData(fileServerUrl(decision.blurhashUrl, context.serverConfig), context)
+              await fetchBlurhashData(fileServerUrl(decision.blurhashUrl, run.serverConfig), caches)
             )
           : decision.action === 'unset'
             ? ({ action: 'unset', fetchFailed: false } as const)
@@ -401,17 +426,17 @@ async function decideArtwork(
     const current = currentMovie[focalField] ?? null
 
     if (incoming !== null && incoming !== '') {
-      if (!ownsReportedField(fieldPath, originalTitle, context)) {
-        syncLogger.debug(`⏭️ Skipping ${focalField} - server ${context.serverConfig.id} does not have highest priority for ${fieldPath}`)
+      if (!ownsReportedField(fieldPath, originalTitle, run, availability)) {
+        syncLogger.debug(`⏭️ Skipping ${focalField} - server ${run.serverConfig.id} does not have highest priority for ${fieldPath}`)
         continue
       }
       // The owner's id is the hint's source whether or not the value moved.
-      if ((currentMovie as any)[`${focalField}Source`] !== context.serverConfig.id) {
-        updates[`${focalField}Source`] = context.serverConfig.id
+      if ((currentMovie as any)[`${focalField}Source`] !== run.serverConfig.id) {
+        updates[`${focalField}Source`] = run.serverConfig.id
       }
       if (incoming !== current) {
         updates[focalField] = incoming as BackdropFocal
-        syncLogger.debug(`✅ Updating ${focalField} from server ${context.serverConfig.id} ("${current}" → "${incoming}")`)
+        syncLogger.debug(`✅ Updating ${focalField} from server ${run.serverConfig.id} ("${current}" → "${incoming}")`)
       }
       continue
     }
@@ -421,9 +446,9 @@ async function decideArtwork(
     if (current === null) continue
     // A hint an admin locked stays, whatever the servers say.
     if (isTopLevelFieldLocked((currentMovie as any).lockedFields, focalField)) continue
-    const serversWithHint = getServersReportingField(context.fieldAvailability, 'movies', originalTitle, fieldPath)
+    const serversWithHint = getServersReportingField(availability.fieldAvailability, 'movies', originalTitle, fieldPath)
     if (serversWithHint.length > 0) continue
-    if ((context.allEnabledServersProbed ?? context.cleanup?.allEnabledServersProbed) === true) {
+    if (run.allEnabledServersProbed === true) {
       unset([focalField, `${focalField}Source`])
       cleared.push(focalField)
     } else {
@@ -454,9 +479,12 @@ function extractHashFromUrl(url: string): string | null {
  * Fetch actual blurhash data from URL using httpHelper
  * httpHelper handles caching and HTTP errors internally
  * Returns null on failure so the field is OMITTED (not set to null in database)
- * Respects ResourceManager HTTP throttling when available in context
+ * Respects ResourceManager HTTP throttling when the pass's caches hold one
  */
-async function fetchBlurhashData(blurhashUrl: string, context?: SyncContext): Promise<string | null> {
+async function fetchBlurhashData(
+  blurhashUrl: string,
+  caches?: MovieArtworkInput['caches']
+): Promise<string | null> {
   const doFetch = async () => {
     try {
       const response = await httpGet(
@@ -501,8 +529,8 @@ async function fetchBlurhashData(blurhashUrl: string, context?: SyncContext): Pr
   }
 
   // Throttle through ResourceManager if available
-  if (context?.resourceManager) {
-    return context.resourceManager.throttleHttp(doFetch)
+  if (caches?.resourceManager) {
+    return caches.resourceManager.throttleHttp(doFetch)
   }
   return doFetch()
 }
@@ -513,8 +541,13 @@ async function fetchBlurhashData(blurhashUrl: string, context?: SyncContext): Pr
  * field never owns it, and neither does anyone when the availability map is
  * missing.
  */
-function ownsReportedField(fieldPath: string, originalTitle: string, context: SyncContext): boolean {
+function ownsReportedField(
+  fieldPath: string,
+  originalTitle: string,
+  run: Pick<RunConfig, 'serverConfig'>,
+  availability: Availability
+): boolean {
   return isCurrentServerHighestPriorityForReportedField(
-    context.fieldAvailability, 'movies', originalTitle, fieldPath, context.serverConfig
+    availability.fieldAvailability, 'movies', originalTitle, fieldPath, run.serverConfig
   )
 }

@@ -22,7 +22,6 @@
 
 import {
   MovieEntity,
-  SyncContext,
   SyncResult,
   SyncStatus,
   MediaType,
@@ -31,6 +30,9 @@ import {
   planFieldCleanup,
   seedDiscovery,
   type CleanableField,
+  type FieldAvailability,
+  type MoviePassParts,
+  type RunConfig,
   type WritePlan,
 } from '../../core'
 
@@ -49,7 +51,7 @@ import isEqual from 'lodash/isEqual'
 import { syncMovieMetadata } from './metadata'
 import { syncMovieArtwork, retryMovieBlurhashes } from './artwork'
 import { syncMovieVideo } from './video'
-import type { MovieStepInput, MovieStepOutcome } from './step'
+import type { MovieStepOutcome } from './step'
 
 const pinoLog = createLogger('Sync.Movie')
 
@@ -74,7 +76,7 @@ const MOVIE_STEP_COUNT = 4
  */
 export function movieSyncGate(
   payload: unknown,
-  fieldAvailability: SyncContext['fieldAvailability'],
+  fieldAvailability: FieldAvailability,
   originalTitle: string
 ): string {
   return buildSyncGate(
@@ -91,11 +93,18 @@ export class MovieSyncService {
    *
    * @param originalTitle - The movie's folder name: its key in the payload,
    *   in the availability map and in the database, and its results' entity id
+   * @param payload - This server's payload for the movie (`fileServer.movies[originalTitle]`)
+   * @param parts - The pass's run, availability and caches (core/types); each
+   *   step is handed only the parts it reads
    */
-  async syncMovie(originalTitle: string, context: SyncContext): Promise<SyncResult[]> {
+  async syncMovie(
+    originalTitle: string,
+    payload: any,
+    { run, availability, caches }: MoviePassParts
+  ): Promise<SyncResult[]> {
     const title = originalTitle
 
-    syncEventBus.emitStarted(title, MediaType.Movie, context.serverConfig.id)
+    syncEventBus.emitStarted(title, MediaType.Movie, run.serverConfig.id)
 
     try {
       // Whole-movie early-skip: bypass entity normalisation and all steps
@@ -107,8 +116,8 @@ export class MovieSyncService {
       // a matching gate is by itself the evidence the earlier checks here used
       // to look for in the stored metadata.
       const syncGate = movieSyncGate(
-        context.fileServerData?.movies?.[originalTitle],
-        context.fieldAvailability,
+        payload,
+        availability.fieldAvailability,
         originalTitle
       )
 
@@ -116,8 +125,8 @@ export class MovieSyncService {
       // write all work from it.
       const existingMovie = await this.repository.findByOriginalTitle(originalTitle)
 
-      if (!context.forceSync && readSyncGate(existingMovie as any, context.serverConfig.id) === syncGate) {
-        syncEventBus.emitComplete(title, MediaType.Movie, context.serverConfig.id, undefined, {
+      if (!run.forceSync && readSyncGate(existingMovie as any, run.serverConfig.id) === syncGate) {
+        syncEventBus.emitComplete(title, MediaType.Movie, run.serverConfig.id, undefined, {
           totalOperations: 0,
           successful: 0,
           failed: 0
@@ -127,7 +136,7 @@ export class MovieSyncService {
           entityId: title,
           mediaType: MediaType.Movie,
           operation: SyncOperation.Metadata,
-          serverId: context.serverConfig.id,
+          serverId: run.serverConfig.id,
           timestamp: new Date(),
           changes: [],
           errors: []
@@ -135,7 +144,7 @@ export class MovieSyncService {
       }
 
       // Normalize entity to ensure complete schema (handles new, existing, and partial records)
-      const normalized = this.normalizeMovieEntity(existingMovie, originalTitle, originalTitle, context)
+      const normalized = this.normalizeMovieEntity(existingMovie, originalTitle, originalTitle, run)
 
       // ---- The steps, in order. Each sees the movie with what the steps
       // before it set; none of them writes. ----
@@ -145,14 +154,16 @@ export class MovieSyncService {
       // says so when its plan stamps lastSynced).
       let stepsWrite = false
       let movie: MovieEntity = normalized
+      // Each step is called with the movie as it stands and, besides it, only
+      // the parts of the pass it reads (./step).
       const runStep = async <O extends MovieStepOutcome>(
         operation: SyncOperation,
-        step: (input: MovieStepInput) => Promise<O>
+        step: (movie: MovieEntity) => Promise<O>
       ): Promise<O | null> => {
         let outcome: O | null = null
         let stepOutcome: MovieStepOutcome
         try {
-          outcome = await step({ originalTitle, movie, context })
+          outcome = await step(movie)
           stepOutcome = outcome
         } catch (error) {
           const errorResult: SyncResult = {
@@ -160,12 +171,12 @@ export class MovieSyncService {
             entityId: title,
             mediaType: MediaType.Movie,
             operation,
-            serverId: context.serverConfig.id,
+            serverId: run.serverConfig.id,
             timestamp: new Date(),
             changes: [],
             errors: [error instanceof Error ? error.message : String(error)]
           }
-          syncEventBus.emitError(title, MediaType.Movie, context.serverConfig.id, errorResult.errors[0], operation)
+          syncEventBus.emitError(title, MediaType.Movie, run.serverConfig.id, errorResult.errors[0], operation)
           stepOutcome = {
             plan: { ...emptyWritePlan<MovieEntity>(), incomplete: true, deferrals: [operation] },
             wroteDocument: false,
@@ -179,10 +190,18 @@ export class MovieSyncService {
         return outcome
       }
 
-      await runStep(SyncOperation.Metadata, syncMovieMetadata)
-      const artwork = await runStep(SyncOperation.Assets, syncMovieArtwork)
-      await runStep(SyncOperation.Content, syncMovieVideo)
-      await runStep(SyncOperation.Blurhash, (input) => retryMovieBlurhashes(input, artwork?.retries ?? []))
+      await runStep(SyncOperation.Metadata, (movie) =>
+        syncMovieMetadata({ originalTitle, movie, payload, run, availability, caches })
+      )
+      const artwork = await runStep(SyncOperation.Assets, (movie) =>
+        syncMovieArtwork({ originalTitle, movie, payload, run, availability, caches })
+      )
+      await runStep(SyncOperation.Content, (movie) =>
+        syncMovieVideo({ originalTitle, movie, payload, run, availability })
+      )
+      await runStep(SyncOperation.Blurhash, () =>
+        retryMovieBlurhashes({ originalTitle, run }, artwork?.retries ?? [])
+      )
 
       // ---- Field-absence cleanup: drop asset fields no enabled server
       // reports anymore (only meaningful for an existing doc).
@@ -190,11 +209,11 @@ export class MovieSyncService {
       // enforce. originalTitle is the fieldAvailability key; the log names
       // the stored display title, as the TV services name the show's. ----
       const cleanupPlan = planFieldCleanup({
-        cleanup: context.cleanup,
+        cleanup: run.cleanup,
         mediaType: 'movies',
         availabilityKey: originalTitle,
         entity: existingMovie,
-        fieldAvailability: context.fieldAvailability,
+        fieldAvailability: availability.fieldAvailability,
         fields: MOVIE_CLEANABLE_FIELDS,
         log: (obj, msg) => pinoLog.info(obj, msg),
         logContext: { title: existingMovie?.title || title, originalTitle },
@@ -247,9 +266,9 @@ export class MovieSyncService {
       const titleRule = resolveTitle({
         originalTitle,
         metadata: metadataCopy,
-        fieldAvailability: context.fieldAvailability,
+        fieldAvailability: availability.fieldAvailability,
         mediaType: 'movies',
-        serverConfig: context.serverConfig,
+        serverConfig: run.serverConfig,
         stored: existingMovie,
         locks: { title: titleLocked },
       })
@@ -277,7 +296,7 @@ export class MovieSyncService {
         syncLogger.debug(`Gate left open for "${originalTitle}": ${merged.deferrals.join(', ')}`)
       }
       const storedGates = ((existingMovie as any)?.syncGates ?? {}) as Record<string, string>
-      const gates = nextSyncGates(storedGates, context.serverConfig.id, gateToStamp, documentChanged)
+      const gates = nextSyncGates(storedGates, run.serverConfig.id, gateToStamp, documentChanged)
       if (!isEqual(gates, storedGates)) pending.syncGates = gates
 
       // Write when the plan sets something OR there are fields to clear. A
@@ -315,7 +334,7 @@ export class MovieSyncService {
           entityId: title,
           mediaType: MediaType.Movie,
           operation: SyncOperation.Metadata,
-          serverId: context.serverConfig.id,
+          serverId: run.serverConfig.id,
           timestamp: new Date(),
           changes: [`Updated display title: "${displayTitle}"`],
           errors: []
@@ -338,7 +357,7 @@ export class MovieSyncService {
         if (firstCompleted) firstCompleted.changes = [...firstCompleted.changes, ...cleanupPlan.changes]
       }
 
-      syncEventBus.emitComplete(title, MediaType.Movie, context.serverConfig.id, undefined, {
+      syncEventBus.emitComplete(title, MediaType.Movie, run.serverConfig.id, undefined, {
         totalOperations: MOVIE_STEP_COUNT,
         successful: results.filter(r => r.status === SyncStatus.Completed).length,
         failed: results.filter(r => r.status === SyncStatus.Failed).length
@@ -352,7 +371,7 @@ export class MovieSyncService {
         entityId: title,
         mediaType: MediaType.Movie,
         operation: SyncOperation.Metadata, // Default operation for general failures
-        serverId: context.serverConfig.id,
+        serverId: run.serverConfig.id,
         timestamp: new Date(),
         changes: [],
         errors: [error instanceof Error ? error.message : String(error)]
@@ -361,7 +380,7 @@ export class MovieSyncService {
       syncEventBus.emitError(
         title,
         MediaType.Movie,
-        context.serverConfig.id,
+        run.serverConfig.id,
         errorResult.errors[0]
       )
 
@@ -377,7 +396,7 @@ export class MovieSyncService {
     existingMovie: MovieEntity | null,
     title: string,
     originalTitle: string,
-    context: SyncContext
+    run: Pick<RunConfig, 'serverConfig'>
   ): MovieEntity {
     const now = new Date()
     
@@ -396,7 +415,7 @@ export class MovieSyncService {
       }
       
       // Heal any critical missing fields
-      this.healCriticalFields(normalizedMovie, existingMovie, context)
+      this.healCriticalFields(normalizedMovie, existingMovie, run)
       
       console.log(`🔧 Entity normalized: preserved all ${Object.keys(existingMovie).length} existing fields`)
       return normalizedMovie
@@ -414,7 +433,7 @@ export class MovieSyncService {
       type: 'movie',
       createdAt: now,
       initialDiscoveryDate: now,
-      initialDiscoveryServer: context.serverConfig.id,
+      initialDiscoveryServer: run.serverConfig.id,
       
       // Sync tracking
       lastSynced: now,
@@ -423,8 +442,8 @@ export class MovieSyncService {
       metadata: {},
       
       // Source tracking for field-level ownership
-      titleSource: context.serverConfig.id,
-      originalTitleSource: context.serverConfig.id,
+      titleSource: run.serverConfig.id,
+      originalTitleSource: run.serverConfig.id,
       
       // All other fields will be populated by strategies as needed
       // No need to initialize them as undefined - strategies will set them when data is available
@@ -441,7 +460,7 @@ export class MovieSyncService {
   private healCriticalFields(
     normalizedMovie: MovieEntity,
     existingMovie: MovieEntity,
-    context: SyncContext
+    run: Pick<RunConfig, 'serverConfig'>
   ): void {
     const healedFields: string[] = []
     
@@ -459,17 +478,17 @@ export class MovieSyncService {
     // One rule for movies and TV (core/discovery.ts): a document that predates
     // the field is healed from its createdAt; a date already held never moves.
     healedFields.push(
-      ...seedDiscovery(normalizedMovie, existingMovie, context.serverConfig.id, new Date())
+      ...seedDiscovery(normalizedMovie, existingMovie, run.serverConfig.id, new Date())
     )
 
     // Ensure source tracking for critical fields
     if (!normalizedMovie.titleSource) {
-      normalizedMovie.titleSource = context.serverConfig.id
+      normalizedMovie.titleSource = run.serverConfig.id
       healedFields.push('titleSource')
     }
     
     if (!normalizedMovie.originalTitleSource) {
-      normalizedMovie.originalTitleSource = context.serverConfig.id
+      normalizedMovie.originalTitleSource = run.serverConfig.id
       healedFields.push('originalTitleSource')
     }
     

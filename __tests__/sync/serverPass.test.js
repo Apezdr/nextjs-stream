@@ -1100,9 +1100,9 @@ describe('the server config a pass refuses', () => {
     const syncMovie = MovieSyncService.prototype.syncMovie
     const syncTVShow = TVShowSyncService.prototype.syncTVShow
     const seen = []
-    jest.spyOn(MovieSyncService.prototype, 'syncMovie').mockImplementation(function (title, context, ...rest) {
-      seen.push(context.serverConfig)
-      return syncMovie.call(this, title, context, ...rest)
+    jest.spyOn(MovieSyncService.prototype, 'syncMovie').mockImplementation(function (title, payload, parts) {
+      seen.push(parts.run.serverConfig)
+      return syncMovie.call(this, title, payload, parts)
     })
     jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, context) {
       seen.push(context.serverConfig)

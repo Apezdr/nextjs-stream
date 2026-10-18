@@ -11,10 +11,11 @@
 
 import {
   MovieEntity,
-  SyncContext,
   SyncStatus,
   SyncOperation,
   MediaType,
+  type Availability,
+  type RunConfig,
   resolveMediaId,
   resolveFirstSeen,
   claimDiscovery,
@@ -39,7 +40,7 @@ import {
 import { syncLogger } from '../../core/logger'
 import { warnOnJitIdentityFork } from '../../core/jitIdentityParity'
 import isEqual from 'lodash/isEqual'
-import { movieStepResult, type MovieStepInput, type MovieStepOutcome } from './step'
+import { movieStepResult, type MovieStepOutcome, type MovieVideoInput } from './step'
 import {
   chapterUrlOf,
   isMediaQualityEqual,
@@ -51,7 +52,13 @@ import {
 /**
  * The video step. See the module comment.
  */
-export async function syncMovieVideo({ originalTitle, movie, context }: MovieStepInput): Promise<MovieStepOutcome> {
+export async function syncMovieVideo({
+  originalTitle,
+  movie,
+  payload,
+  run,
+  availability,
+}: MovieVideoInput): Promise<MovieStepOutcome> {
   const startTime = Date.now()
   const title = originalTitle
   const plan = emptyWritePlan<MovieEntity>()
@@ -60,7 +67,7 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
   const failed = (errors: string[]): MovieStepOutcome => ({
     plan: { ...emptyWritePlan<MovieEntity>(), incomplete: true, deferrals: ['video'] },
     wroteDocument: false,
-    result: movieStepResult(title, SyncOperation.Content, context, SyncStatus.Failed, [], errors, {
+    result: movieStepResult(title, SyncOperation.Content, run, SyncStatus.Failed, [], errors, {
       processingTime: Date.now() - startTime,
     }),
   })
@@ -72,13 +79,13 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
   }
 
   try {
-    syncEventBus.emitProgress(title, MediaType.Movie, context.serverConfig.id, SyncOperation.Content, {
+    syncEventBus.emitProgress(title, MediaType.Movie, run.serverConfig.id, SyncOperation.Content, {
       stage: 'starting',
       progress: 0,
     })
 
     const changes: string[] = []
-    const { updates: contentUpdates, unset: contentUnset, heldBack } = decideVideo(originalTitle, context, movie)
+    const { updates: contentUpdates, unset: contentUnset, heldBack } = decideVideo(originalTitle, payload, run, availability, movie)
 
     // A removal held back for lack of a full probe: the plan is incomplete,
     // so this pass is not marked complete. Otherwise it would be skipped from
@@ -110,19 +117,19 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
           field === 'jitUrl' ||
           field === 'mediaId'
         ) {
-          set.videoSource = context.serverConfig.id
+          set.videoSource = run.serverConfig.id
         } else if ((VIDEO_FILE_FACTS as readonly string[]).includes(field)) {
           // All video metadata fields use videoInfoSource
-          set.videoInfoSource = context.serverConfig.id
+          set.videoInfoSource = run.serverConfig.id
         } else if (field === 'captionURLs') {
           // The map can hold entries from several servers. Name the source
           // from the map itself (its first language, alphabetically) so the
           // value does not depend on which server's pass ran last.
           const captions = contentUpdates.captionURLs as Record<string, any>
           const firstLanguage = Object.keys(captions).sort()[0]
-          set.captionSource = captions[firstLanguage]?.sourceServerId ?? context.serverConfig.id
+          set.captionSource = captions[firstLanguage]?.sourceServerId ?? run.serverConfig.id
         } else if (field === 'chapterURL') {
-          set.chapterSource = context.serverConfig.id
+          set.chapterSource = run.serverConfig.id
         }
       })
 
@@ -151,13 +158,13 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
         changes.push(`Cleared ${key}`)
       })
 
-      syncEventBus.emitProgress(title, MediaType.Movie, context.serverConfig.id, SyncOperation.Content, {
+      syncEventBus.emitProgress(title, MediaType.Movie, run.serverConfig.id, SyncOperation.Content, {
         stage: 'completed',
         progress: 100,
         updatedFields: [...Object.keys(contentUpdates), ...contentUnset],
       })
     } else {
-      syncEventBus.emitProgress(title, MediaType.Movie, context.serverConfig.id, SyncOperation.Content, {
+      syncEventBus.emitProgress(title, MediaType.Movie, run.serverConfig.id, SyncOperation.Content, {
         stage: 'unchanged',
         progress: 100,
       })
@@ -169,7 +176,7 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
       result: movieStepResult(
         title,
         SyncOperation.Content,
-        context,
+        run,
         changes.length > 0 ? SyncStatus.Completed : SyncStatus.Skipped,
         changes,
         [],
@@ -181,7 +188,7 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    syncEventBus.emitError(title, MediaType.Movie, context.serverConfig.id, message, SyncOperation.Content)
+    syncEventBus.emitError(title, MediaType.Movie, run.serverConfig.id, message, SyncOperation.Content)
     return failed([message])
   }
 }
@@ -191,7 +198,9 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
  */
 function decideVideo(
   originalTitle: string,
-  context: SyncContext,
+  payload: any,
+  run: MovieVideoInput['run'],
+  availability: Availability,
   currentMovie: MovieEntity
 ): {
   /** Fields to write. */
@@ -229,8 +238,8 @@ function decideVideo(
   let fileServerMovieData = null
 
   // Extract the specific movie data from the file server data structure
-  if (context.fileServerData?.movies?.[originalTitle]) {
-    fileServerMovieData = context.fileServerData.movies[originalTitle]
+  if (payload) {
+    fileServerMovieData = payload
     syncLogger.debug(`Found file server data for "${originalTitle}"`)
   } else {
     syncLogger.debug(`No file server data found for "${originalTitle}"`)
@@ -239,7 +248,7 @@ function decideVideo(
   // Step 1: Get video URL from file server data
   let videoUrl: string | null = null
   if (fileServerMovieData) {
-    videoUrl = videoUrlOf(originalTitle, fileServerMovieData, context)
+    videoUrl = videoUrlOf(originalTitle, fileServerMovieData, run.serverConfig)
   }
 
   // Who may write the video block, and who may clear it.
@@ -260,17 +269,17 @@ function decideVideo(
   let ownsVideo = false
   let videoGone = false
   if (fileServerMovieData) {
-    const reporters = getServersReportingField(context.fieldAvailability, 'movies', originalTitle, videoPath)
+    const reporters = getServersReportingField(availability.fieldAvailability, 'movies', originalTitle, videoPath)
     // A URL found through the fileNames fallback has no urls.mp4 leaf, so
     // the server is not among the reporters. It counts as having the video
     // only when nobody reports one: ranked alongside real reporters it would
     // be an owner in its own pass and absent from everyone else's, and two
     // servers would each conclude they own the video.
     const serversWithVideo =
-      reporters.length > 0 ? reporters : videoUrl != null ? [context.serverConfig.id] : []
-    ownsVideo = videoUrl != null && isHighestPriorityAmongServers(serversWithVideo, context.serverConfig)
+      reporters.length > 0 ? reporters : videoUrl != null ? [run.serverConfig.id] : []
+    ownsVideo = videoUrl != null && isHighestPriorityAmongServers(serversWithVideo, run.serverConfig)
     const noServerHasVideo = videoUrl == null && reporters.length === 0
-    videoGone = noServerHasVideo && mayDeclareVideoGone(currentMovie, context)
+    videoGone = noServerHasVideo && mayDeclareVideoGone(currentMovie, run)
     if (noServerHasVideo && !videoGone && currentMovie.videoURL) {
       // There is a video to clear and this pass may not clear it.
       heldBack.push('videoURL')
@@ -284,7 +293,7 @@ function decideVideo(
     if (currentMovie.videoURL !== videoUrl) {
       updates.videoURL = videoUrl
       syncLogger.debug(
-        `✅ Updating videoURL from server ${context.serverConfig.id}: "${currentMovie.videoURL}" → "${videoUrl}"`
+        `✅ Updating videoURL from server ${run.serverConfig.id}: "${currentMovie.videoURL}" → "${videoUrl}"`
       )
     }
   } else if (videoGone && currentMovie.videoURL) {
@@ -299,11 +308,11 @@ function decideVideo(
   // it was). Stamped here rather than left to "a field changed", so the value
   // does not depend on the title's history.
   if (ownsVideo && fileServerMovieData) {
-    if ((currentMovie as any).videoSource !== context.serverConfig.id) {
-      updates.videoSource = context.serverConfig.id
+    if ((currentMovie as any).videoSource !== run.serverConfig.id) {
+      updates.videoSource = run.serverConfig.id
     }
-    if ((currentMovie as any).videoInfoSource !== context.serverConfig.id) {
-      updates.videoInfoSource = context.serverConfig.id
+    if ((currentMovie as any).videoInfoSource !== run.serverConfig.id) {
+      updates.videoInfoSource = run.serverConfig.id
     }
   }
 
@@ -383,7 +392,7 @@ function decideVideo(
     if (currentMovie.normalizedVideoId !== normalizedId) {
       updates.normalizedVideoId = normalizedId
       syncLogger.debug(
-        `✅ Updating normalizedVideoId from server ${context.serverConfig.id}: "${currentMovie.normalizedVideoId}" → "${normalizedId}"`
+        `✅ Updating normalizedVideoId from server ${run.serverConfig.id}: "${currentMovie.normalizedVideoId}" → "${normalizedId}"`
       )
     } else {
       syncLogger.debug(`📝 NormalizedVideoId unchanged: "${normalizedId}"`)
@@ -408,7 +417,7 @@ function decideVideo(
   // that does not own videoURL must not be able to publish them. The server
   // that may declare the video gone mirrors them too: that is what clears them.
   if (fileServerMovieData && (ownsVideo || videoGone)) {
-    applyIdentityAndDeliveryUpdates(updates, currentMovie, fileServerMovieData, originalTitle, context)
+    applyIdentityAndDeliveryUpdates(updates, currentMovie, fileServerMovieData, originalTitle, run)
   }
 
   // Step 3c: Library-add date (earlier-wins, never later; core/discovery.ts).
@@ -428,11 +437,11 @@ function decideVideo(
       currentMovie.initialDiscoveryDate,
       currentMovie.initialDiscoveryServer,
       firstSeen,
-      context.serverConfig.id,
-      (heldServerId) => serverOutranks(context.serverConfig, heldServerId)
+      run.serverConfig.id,
+      (heldServerId) => serverOutranks(run.serverConfig, heldServerId)
     )
     if (claim === 'date') updates.initialDiscoveryDate = firstSeen
-    if (claim) updates.initialDiscoveryServer = context.serverConfig.id
+    if (claim) updates.initialDiscoveryServer = run.serverConfig.id
   }
 
   // Step 4: Captions. One language belongs to the highest-priority server
@@ -445,7 +454,7 @@ function decideVideo(
     let listedCaptions: Record<string, any> | null = null
     let captionsReadable = true
     try {
-      listedCaptions = captionUrls((fileServerMovieData as any)?.urls?.subtitles, context.serverConfig)
+      listedCaptions = captionUrls((fileServerMovieData as any)?.urls?.subtitles, run.serverConfig)
     } catch (error) {
       // Not being able to read the list is not the same as an empty list:
       // leave the stored captions alone.
@@ -456,7 +465,7 @@ function decideVideo(
     if (captionsReadable) {
       const serversListing = (language: string) =>
         getServersReportingField(
-          context.fieldAvailability,
+          availability.fieldAvailability,
           'movies',
           originalTitle,
           getCaptionFieldPath(language, 'url')
@@ -464,12 +473,12 @@ function decideVideo(
       const result = reconcileCaptions({
         existing: currentMovie.captionURLs as Record<string, any> | undefined,
         listed: listedCaptions,
-        serverId: context.serverConfig.id,
+        serverId: run.serverConfig.id,
         // Fails closed: a server the map does not list for the language's
         // url never owns it.
-        ownsLanguage: (language) => isHighestPriorityAmongServers(serversListing(language), context.serverConfig),
+        ownsLanguage: (language) => isHighestPriorityAmongServers(serversListing(language), run.serverConfig),
         listedByAnyServer: (language) => serversListing(language).length > 0,
-        allEnabledServersProbed: allEnabledServersProbed(context),
+        allEnabledServersProbed: allEnabledServersProbed(run),
       })
 
       if (result.withheld.length > 0) heldBack.push('captionURLs')
@@ -482,7 +491,7 @@ function decideVideo(
           unset.push('captionURLs', 'captionSource')
         }
         syncLogger.debug(
-          `✅ Captions for "${originalTitle}" from server ${context.serverConfig.id}: ` +
+          `✅ Captions for "${originalTitle}" from server ${run.serverConfig.id}: ` +
             `wrote [${result.written.join(', ')}], removed [${result.removed.join(', ')}]`
         )
       }
@@ -495,24 +504,24 @@ function decideVideo(
   // owns it. Removal is field-absence cleanup's, on a run where every
   // enabled server answered (MovieSyncService).
   if (fileServerMovieData) {
-    const chapterUrl = chapterUrlOf(originalTitle, fileServerMovieData, context)
+    const chapterUrl = chapterUrlOf(originalTitle, fileServerMovieData, run.serverConfig)
 
     if (
       chapterUrl &&
       isCurrentServerHighestPriorityForReportedField(
-        context.fieldAvailability,
+        availability.fieldAvailability,
         MediaTypesFieldAvailability.Movie,
         originalTitle,
         getFieldPath('chapterURL'),
-        context.serverConfig
+        run.serverConfig
       )
     ) {
       if (currentMovie.chapterURL !== chapterUrl) {
         updates.chapterURL = chapterUrl
-        syncLogger.debug(`✅ Updating chapterURL from server ${context.serverConfig.id}: "${chapterUrl}"`)
+        syncLogger.debug(`✅ Updating chapterURL from server ${run.serverConfig.id}: "${chapterUrl}"`)
       } else {
         syncLogger.debug(
-          `📝 ChapterURL unchanged: "${chapterUrl}" (server ${context.serverConfig.id} has priority but value identical)`
+          `📝 ChapterURL unchanged: "${chapterUrl}" (server ${run.serverConfig.id} has priority but value identical)`
         )
       }
     }
@@ -525,8 +534,8 @@ function decideVideo(
  * Whether every enabled server answered this run. Only then does "no server
  * reports it" mean the data is gone rather than that a server is down.
  */
-function allEnabledServersProbed(context: SyncContext): boolean {
-  return (context.allEnabledServersProbed ?? context.cleanup?.allEnabledServersProbed) === true
+function allEnabledServersProbed(run: Pick<RunConfig, 'allEnabledServersProbed'>): boolean {
+  return run.allEnabledServersProbed === true
 }
 
 /**
@@ -535,9 +544,9 @@ function allEnabledServersProbed(context: SyncContext): boolean {
  * Any other server can only on a run in which every enabled server answered:
  * otherwise the owner may simply be down.
  */
-function mayDeclareVideoGone(currentMovie: MovieEntity, context: SyncContext): boolean {
+function mayDeclareVideoGone(currentMovie: MovieEntity, run: MovieVideoInput['run']): boolean {
   const storedOwner = (currentMovie as any)?.videoSource
-  return !storedOwner || storedOwner === context.serverConfig.id || allEnabledServersProbed(context)
+  return !storedOwner || storedOwner === run.serverConfig.id || allEnabledServersProbed(run)
 }
 
 /**
@@ -598,7 +607,7 @@ function applyIdentityAndDeliveryUpdates(
   currentMovie: MovieEntity,
   fileServerData: any,
   originalTitle: string,
-  context: SyncContext
+  run: Pick<RunConfig, 'serverConfig'>
 ): void {
   // --- Content identity (set-only) ---
   const incomingMediaId = resolveMediaId(fileServerData.mediaIdentity)
@@ -609,7 +618,7 @@ function applyIdentityAndDeliveryUpdates(
       // renamed on one server only). The video owner wins; surface it so the
       // divergence is fixable rather than silently absorbed.
       syncLogger.warn(
-        `⚠️ mediaId mismatch for "${originalTitle}": stored "${currentMovie.mediaId}" (source ${currentMovie.videoSource}) → incoming "${incomingMediaId}" from server ${context.serverConfig.id}`
+        `⚠️ mediaId mismatch for "${originalTitle}": stored "${currentMovie.mediaId}" (source ${currentMovie.videoSource}) → incoming "${incomingMediaId}" from server ${run.serverConfig.id}`
       )
     }
     if (currentMovie.mediaId !== incomingMediaId) {
@@ -628,7 +637,7 @@ function applyIdentityAndDeliveryUpdates(
       jitUrl: fileServerData.urls?.jitUrl,
     },
     // The urls.mp4 conversion: the payload's path already carries the server's prefix.
-    (url) => fileServerUrl(url, context.serverConfig)
+    (url) => fileServerUrl(url, run.serverConfig)
   )
 
   if (!isEqual(currentMovie.sources ?? null, facts.sources)) {

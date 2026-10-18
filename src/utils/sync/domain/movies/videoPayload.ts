@@ -5,7 +5,7 @@
  * write.
  */
 
-import { MediaQuality, SyncContext } from '../../core'
+import { MediaQuality, type ServerConfig } from '../../core'
 import { fileServerUrl, prefixedPath } from '../../infrastructure'
 import { sizeInBytes } from '../../core/fileFacts'
 import { preferReportedViewingExperience, sameViewingExperience } from '../../core/viewingExperience'
@@ -40,7 +40,7 @@ export interface VideoFacts {
  * /nodejs/media/movies, fetched for the whole pass), or null when it lists
  * no video.
  */
-export function videoUrlOf(originalTitle: string, fileServerData: any, context: SyncContext): string | null {
+export function videoUrlOf(originalTitle: string, fileServerData: any, serverConfig: ServerConfig): string | null {
   console.log(`🔍 Getting video URL from file server data for: "${originalTitle}"`)
 
   if (!fileServerData) {
@@ -53,7 +53,7 @@ export function videoUrlOf(originalTitle: string, fileServerData: any, context: 
     // IMPORTANT: urls.mp4 is a RELATIVE PATH from file server, already under
     // the server's prefix (e.g. "/media/movies/..."); convert to full URL
     if (fileServerData.urls?.mp4) {
-      const videoUrl = fileServerUrl(fileServerData.urls.mp4, context.serverConfig)
+      const videoUrl = fileServerUrl(fileServerData.urls.mp4, serverConfig)
       syncLogger.debug(`✅ Found video URL from urls.mp4 (path: ${fileServerData.urls.mp4}) -> full: ${videoUrl}`)
       return videoUrl
     }
@@ -66,7 +66,7 @@ export function videoUrlOf(originalTitle: string, fileServerData: any, context: 
         if (videoFile) {
           const relativePath = `/movies/${originalTitle}/${videoFile}`
           // Built here, so not under the server's prefix yet
-          const videoUrl = fileServerUrl(prefixedPath(relativePath, context.serverConfig), context.serverConfig)
+          const videoUrl = fileServerUrl(prefixedPath(relativePath, serverConfig), serverConfig)
           syncLogger.debug(`✅ Found video file via fileNames (relative: ${relativePath}) -> full: ${videoUrl}`)
           return videoUrl
         }
@@ -210,7 +210,7 @@ function parseMediaQualityLegacy(metadata: any, hdrValue?: any): MediaQuality | 
 /**
  * The chapter file's URL from the payload, or null when it lists none.
  */
-export function chapterUrlOf(originalTitle: string, fileServerData: any, context: SyncContext): string | null {
+export function chapterUrlOf(originalTitle: string, fileServerData: any, serverConfig: ServerConfig): string | null {
   try {
     syncLogger.debug(`🎬 Extracting chapter data for: "${originalTitle}"`)
 
@@ -221,7 +221,7 @@ export function chapterUrlOf(originalTitle: string, fileServerData: any, context
     }
 
     // Already under the server's prefix, like every path in the payload
-    const fullUrl = fileServerUrl(fileServerData.urls.chapters, context.serverConfig)
+    const fullUrl = fileServerUrl(fileServerData.urls.chapters, serverConfig)
     syncLogger.debug(`✅ Found chapter data: ${fullUrl}`)
 
     return fullUrl

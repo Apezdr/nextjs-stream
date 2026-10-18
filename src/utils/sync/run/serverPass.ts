@@ -167,16 +167,6 @@ export async function runServerPass(
       metadataHashes: (await fetchMovieHashes(serverConfig)) ?? undefined,
       resourceManager,
     }
-    // Until the movie service takes the parts.
-    const context: SyncContext = {
-      mediaType: MediaType.Movie,
-      operation: SyncOperation.Metadata,
-      ...run,
-      fieldAvailability: availability.fieldAvailability,
-      fileServerData: fileServer,
-      metadataHashesCache: caches.metadataHashes,
-      resourceManager,
-    }
     syncLogger.info(
       `Processing ${movieTitles.length} movies with concurrency: ${resourceManager.config.syncConcurrency} ` +
         `(HTTP limit: ${resourceManager.config.httpConcurrency})`
@@ -185,7 +175,7 @@ export async function runServerPass(
     const movieResults = await syncTitles(
       movieTitles,
       pool,
-      (title) => movieService.syncMovie(title, context),
+      (title) => movieService.syncMovie(title, fileServer?.movies?.[title], { run, availability, caches }),
       (title, error) => failedResult(title, MediaType.Movie, serverConfig.id, error),
       (titleResults, title) => {
         record(titleResults, title)

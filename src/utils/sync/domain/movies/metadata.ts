@@ -10,7 +10,6 @@
 
 import {
   MovieEntity,
-  SyncContext,
   SyncStatus,
   SyncOperation,
   MediaType,
@@ -21,7 +20,7 @@ import { syncLogger } from '../../core/logger'
 import { emptyWritePlan } from '../../core/writePlan'
 import { fetchMetadataMultiServer } from '../../infrastructure'
 import { isCurrentServerHighestPriorityForReportedField } from '@src/utils/sync/core/ownership'
-import { movieStepResult, type MovieStepInput, type MovieStepOutcome } from './step'
+import { movieStepResult, type MovieMetadataInput, type MovieStepOutcome } from './step'
 
 /** Current version of the metadata schema, raised as the stored shape changes. */
 const METADATA_SCHEMA_VERSION = '2.1'
@@ -38,7 +37,14 @@ const METADATA_FAILED = 'metadata'
  * metadata that is already stored, and writes a minimal stub for a movie
  * that has none.
  */
-export async function syncMovieMetadata({ originalTitle, movie, context }: MovieStepInput): Promise<MovieStepOutcome> {
+export async function syncMovieMetadata({
+  originalTitle,
+  movie,
+  payload,
+  run,
+  availability,
+  caches,
+}: MovieMetadataInput): Promise<MovieStepOutcome> {
   const startTime = Date.now()
   const title = originalTitle
   const plan = emptyWritePlan<MovieEntity>()
@@ -58,7 +64,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
     return {
       plan,
       wroteDocument,
-      result: movieStepResult(entityId, SyncOperation.Metadata, context, status, changes, errors, metadata),
+      result: movieStepResult(entityId, SyncOperation.Metadata, run, status, changes, errors, metadata),
     }
   }
 
@@ -71,7 +77,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
   }
 
   try {
-    syncEventBus.emitProgress(title, MediaType.Movie, context.serverConfig.id, SyncOperation.Metadata, {
+    syncEventBus.emitProgress(title, MediaType.Movie, run.serverConfig.id, SyncOperation.Metadata, {
       stage: 'starting',
       progress: 0,
     })
@@ -87,25 +93,25 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
     // lower: its fetch then came back empty, and that emptiness replaced the
     // metadata another server had supplied, on every run.
     const canUpdateMetadata = isCurrentServerHighestPriorityForReportedField(
-      context.fieldAvailability,
+      availability.fieldAvailability,
       'movies',
       originalTitle,
       getFieldPath('metadata'),
-      context.serverConfig
+      run.serverConfig
     )
 
     if (!canUpdateMetadata) {
-      syncLogger.debug(`⏭️ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does not have priority for metadata, skipping`)
+      syncLogger.debug(`⏭️ Server ${run.serverConfig.id} (priority ${run.serverConfig.priority}) does not have priority for metadata, skipping`)
       return outcome(title, SyncStatus.Skipped, [], [], {
         processingTime: Date.now() - startTime,
         reason: 'server does not have priority for metadata field',
       })
     }
 
-    syncLogger.debug(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has priority for metadata, proceeding`)
+    syncLogger.debug(`✅ Server ${run.serverConfig.id} (priority ${run.serverConfig.priority}) has priority for metadata, proceeding`)
 
-    // Check if we have metadata hash from context for change detection
-    const metadataHashInfo = context.metadataHashesCache?.titles?.[originalTitle]
+    // Check if we have metadata hash from the pass's caches for change detection
+    const metadataHashInfo = caches.metadataHashes?.titles?.[originalTitle]
     const currentMetadataHash = movie.metadataHash
 
     // Guard: only trust the hash skip when metadata is actually populated.
@@ -120,7 +126,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
     // down when the title was first synced never took the metadata back once
     // its copy hashed the same, and the title kept naming the other server
     // as its metadata source.
-    const storedMetadataIsFromThisServer = movie.metadataSource === context.serverConfig.id
+    const storedMetadataIsFromThisServer = movie.metadataSource === run.serverConfig.id
 
     // If we have both hashes and they match, skip metadata fetch (optimization)
     if (metadataHashInfo?.hash && currentMetadataHash && metadataHashInfo.hash === currentMetadataHash && metadataIsPopulated && storedMetadataIsFromThisServer) {
@@ -135,7 +141,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
       syncLogger.debug(`🔄 Metadata hash changed for "${originalTitle}": ${currentMetadataHash || 'none'} → ${metadataHashInfo.hash}`)
     }
 
-    const fetchedMetadata = await extractMetadata(originalTitle, context)
+    const fetchedMetadata = await extractMetadata(originalTitle, payload, run.serverConfig.id)
     const metadataFetchFailed = !fetchedMetadata
 
     // A failed metadata fetch must NOT advance the sync gate. Preserve any
@@ -160,7 +166,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
     // keeps the skip guard open so the next sync retries.
     const metadata = fetchedMetadata || {
       title,
-      source: context.serverConfig.id,
+      source: run.serverConfig.id,
       dateAdded: new Date().toISOString(),
       lastScanned: new Date().toISOString(),
       hasExternalMetadata: false,
@@ -190,12 +196,12 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
     // when the comparison calls the two equal (it tolerates keys only the
     // stored copy has): the document must hold what its metadataSource says
     // it holds, whichever server happened to supply it first.
-    const storedFromAnotherServer = !metadataFetchFailed && movie.metadataSource !== context.serverConfig.id
+    const storedFromAnotherServer = !metadataFetchFailed && movie.metadataSource !== run.serverConfig.id
     const metadataChanged = storedFromAnotherServer || !isMetadataEqual(movie.metadata, normalizedMetadata)
 
     if (needsVersionUpgrade || metadataChanged) {
       set.metadata = normalizedMetadata
-      set.metadataSource = context.serverConfig.id
+      set.metadataSource = run.serverConfig.id
       set.syncVersion = METADATA_SCHEMA_VERSION // Update version after successful migration
 
       // Store metadata hash for future change detection
@@ -225,7 +231,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
 
     plan.set = set
 
-    syncEventBus.emitProgress(title, MediaType.Movie, context.serverConfig.id, SyncOperation.Metadata, {
+    syncEventBus.emitProgress(title, MediaType.Movie, run.serverConfig.id, SyncOperation.Metadata, {
       stage: changes.length > 0 ? 'updated' : 'unchanged',
       progress: 100,
     })
@@ -244,7 +250,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
     syncEventBus.emitError(
       title,
       MediaType.Movie,
-      context.serverConfig.id,
+      run.serverConfig.id,
       error instanceof Error ? error.message : String(error),
       SyncOperation.Metadata
     )
@@ -272,21 +278,24 @@ function hasExternalMetadata(movie: MovieEntity): boolean {
  * ResourceManager's HTTP slot itself: wrapping it in throttleHttp here
  * would hold one slot while waiting for another.
  */
-async function extractMetadata(originalTitle: string, context: SyncContext): Promise<Record<string, any> | null> {
+async function extractMetadata(
+  originalTitle: string,
+  payload: any,
+  serverId: string
+): Promise<Record<string, any> | null> {
   try {
     // Get metadata URL from fileserver data if available
-    const fileServerData = context.fileServerData?.movies?.[originalTitle]
-    const metadataRelativePath = fileServerData?.urls?.metadata
+    const metadataRelativePath = payload?.urls?.metadata
 
     const metadata = await fetchMetadataMultiServer(
-      context.serverConfig.id,
+      serverId,
       metadataRelativePath,
       'file',
       'movie',
       originalTitle
     )
 
-    syncLogger.debug(`✅ Fetched metadata for "${originalTitle}" from ${context.serverConfig.id}`)
+    syncLogger.debug(`✅ Fetched metadata for "${originalTitle}" from ${serverId}`)
     return metadata
   } catch (error) {
     syncLogger.error(`Failed to extract metadata for ${originalTitle}:`, error)

@@ -32,7 +32,6 @@ jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({
 const { syncMovieArtwork, retryMovieBlurhashes } = require('@src/utils/sync/domain/movies/artwork')
 const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
 const { httpGet } = require('@src/lib/httpHelper')
-const { MediaType, SyncOperation } = require('@src/utils/sync/core')
 
 const KEY = 'Film (2020)'
 const FOLDER = `/movies/${encodeURIComponent(KEY)}`
@@ -50,13 +49,16 @@ async function pass({ movie, serverId = 'A', reporters = ['A'] }) {
   const input = {
     originalTitle: KEY,
     movie: { title: KEY, originalTitle: KEY, ...movie },
-    context: {
-      mediaType: MediaType.Movie,
-      operation: SyncOperation.Metadata,
+    payload: { urls },
+    run: {
       serverConfig: { ...mockServers[serverId], baseUrl: `https://${serverId}.example`, prefix: '', enabled: true },
-      fieldAvailability: { movies: { [KEY]: { 'urls.poster': reporters, 'urls.posterBlurhash': reporters } }, tv: {} },
-      fileServerData: { movies: { [KEY]: { urls } } },
+      forceSync: false,
+      allEnabledServersProbed: false,
     },
+    availability: {
+      fieldAvailability: { movies: { [KEY]: { 'urls.poster': reporters, 'urls.posterBlurhash': reporters } }, tv: {} },
+    },
+    caches: {},
   }
   const artwork = await syncMovieArtwork(input)
   const retry = await retryMovieBlurhashes(input, artwork.retries)
