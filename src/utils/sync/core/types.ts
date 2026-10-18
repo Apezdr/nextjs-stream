@@ -65,10 +65,6 @@ export interface SyncContext {
   fieldAvailability: FieldAvailability
   forceSync?: boolean
 
-  // Entity identifiers for strategies when entity might be null
-  entityTitle?: string          // Pretty display title (TMDB)
-  entityOriginalTitle?: string  // Filesystem key title
-  
   // File server data for content sync
   fileServerData?: any          // File server data structure (movies/TV data)
   
@@ -85,7 +81,7 @@ export interface SyncContext {
   }
 
   // Resource manager for throttling HTTP requests and monitoring memory
-  // Strategies should use context.resourceManager?.throttleHttp() for outbound
+  // Sync steps should use context.resourceManager?.throttleHttp() for outbound
   // calls they make themselves. Not around fetchMetadataMultiServer, which
   // takes its own slot (infrastructure/fileSystem/fetchFile)
   resourceManager?: {
@@ -93,30 +89,6 @@ export interface SyncContext {
     isMemoryPressure: () => boolean
     getHeapUsedMb: () => number
   }
-
-  // Accumulated movie field changes from strategies — keyed by originalTitle.
-  // Strategies append their computed changes here instead of writing to the DB
-  // directly. MovieSyncService performs a single consolidated write after all
-  // strategies complete, using smartUpsert to write only changed fields.
-  pendingMovieUpdates?: Map<string, Partial<MovieEntity>>
-
-  // Fields a movie strategy wants REMOVED from the document, keyed like
-  // pendingMovieUpdates. The data they held is gone (the file was deleted, the
-  // last subtitle was removed), which `$set` alone cannot express.
-  // MovieSyncService folds them into the same consolidated write, after
-  // dropping any that an admin has locked.
-  pendingMovieUnsets?: Map<string, Set<string>>
-
-  // Movies (by originalTitle) for which a strategy held a removal back this
-  // pass because not every enabled server answered. MovieSyncService leaves
-  // such a movie's skip gate open so the removal is retried.
-  pendingMovieDeferrals?: Set<string>
-  // Files a server publishes that could not be fetched this pass, per movie
-  // (keyed by originalTitle → what failed, e.g. 'posterBlurhash'). A later
-  // strategy that fetches the same file successfully removes its entry. While
-  // any remain, the pass is not marked complete. Created by MovieSyncService,
-  // for the same reason as the two above: strategies see a copy of the context.
-  pendingMovieFetchFailures?: Map<string, Set<string>>
 
   // True only when every enabled file server answered this run. "No server
   // reports this" means the data is gone only then; on a run with a server
@@ -570,20 +542,6 @@ export interface MediaRepository<T extends BaseMediaEntity> {
   delete(title: string): Promise<void>
   findAll(filter?: Record<string, any>): Promise<T[]>
   exists(title: string): Promise<boolean>
-}
-
-// ==========================================
-// Strategy Pattern Interfaces
-// ==========================================
-
-export interface SyncStrategy {
-  readonly name: string
-  readonly supportedOperations: SyncOperation[]
-  readonly supportedMediaTypes: MediaType[]
-  
-  canHandle(context: SyncContext): boolean
-  sync(entity: BaseMediaEntity | null, context: SyncContext): Promise<SyncResult>
-  validate?(entity: BaseMediaEntity, context: SyncContext): Promise<boolean>
 }
 
 // ==========================================

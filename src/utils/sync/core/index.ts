@@ -50,7 +50,6 @@ export {
   SyncStatus,
   SyncEventType,
   type MediaRepository,
-  type SyncStrategy,
   type SyncContext,
   type SyncResult,
   type WritePlan,

@@ -35,7 +35,7 @@ jest.mock('@src/utils/config', () => ({
   multiServerHandler: {},
 }))
 
-const { MovieContentStrategy } = require('@src/utils/sync/domain/movies/strategies/MovieContentStrategy')
+const { syncMovieVideo } = require('@src/utils/sync/domain/movies/video')
 const { MediaType, SyncOperation } = require('@src/utils/sync/core')
 const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
@@ -60,29 +60,23 @@ const availabilityOf = (payloads) => {
 }
 
 /**
- * One server's content pass over `stored`. Returns the document's chapter
- * fields after it, and whether the pass wrote the chapter URL.
+ * One server's video step over `stored`. Returns the document's chapter
+ * fields after it, and whether the step wrote the chapter URL.
  */
 async function contentPass(serverId, payload, fieldAvailability, stored = {}) {
-  const pendingMovieUpdates = new Map([[KEY, {}]])
-  const result = await new MovieContentStrategy({ findByOriginalTitle: jest.fn() }).sync(
-    { title: 'Film', originalTitle: KEY, ...stored },
-    {
+  const { plan, result } = await syncMovieVideo({
+    originalTitle: KEY,
+    movie: { title: 'Film', originalTitle: KEY, ...stored },
+    context: {
       mediaType: MediaType.Movie,
       operation: SyncOperation.Content,
       serverConfig: { ...mockServers[serverId], baseUrl: `https://${serverId}.example`, prefix: '', enabled: true },
       fieldAvailability,
       fileServerData: { movies: { [KEY]: payload } },
-      entityTitle: 'Film',
-      entityOriginalTitle: KEY,
       allEnabledServersProbed: true,
-      pendingMovieUpdates,
-      pendingMovieUnsets: new Map([[KEY, new Set()]]),
-      pendingMovieDeferrals: new Set(),
-      pendingMovieFetchFailures: new Map([[KEY, new Set()]]),
-    }
-  )
-  const document = { ...stored, ...pendingMovieUpdates.get(KEY) }
+    },
+  })
+  const document = { ...stored, ...plan.set }
   return {
     wrote: result.changes.includes('Updated chapterURL'),
     chapters: { chapterURL: document.chapterURL, chapterSource: document.chapterSource },

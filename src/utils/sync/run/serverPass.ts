@@ -47,13 +47,7 @@ import {
 import { syncLogger } from '../core/logger'
 import { ResourceManager } from '../core/ResourceManager'
 import { createDatabaseAdapter } from '../infrastructure'
-import {
-  BlurhashStrategy,
-  MovieAssetStrategy,
-  MovieContentStrategy,
-  MovieMetadataStrategy,
-  MovieSyncService,
-} from '../domain'
+import { MovieSyncService } from '../domain'
 import { EpisodeSyncService, SeasonSyncService, TVShowSyncService } from '../domain/tv'
 import { createLogger, logError } from '@src/lib/logger'
 import { createWrittenMedia, type ChangedMedia, type WrittenMedia } from './writtenMedia'
@@ -104,9 +98,6 @@ type MovieHashes = {
   hash: string
   titles: Record<string, { hash: string; lastModified: string; generated: string }>
 }
-
-/** The four movie operations every pass runs, in this order. */
-const MOVIE_OPERATIONS = [SyncOperation.Metadata, SyncOperation.Assets, SyncOperation.Content, SyncOperation.Blurhash]
 
 /**
  * Run one file server's pass. See the module comment for the steps, and for
@@ -183,7 +174,7 @@ export async function runServerPass(
     const movieResults = await syncTitles(
       movieTitles,
       pool,
-      (title) => movieService.syncMovie(title, context, MOVIE_OPERATIONS, title),
+      (title) => movieService.syncMovie(title, context),
       (title, error) => failedResult(title, MediaType.Movie, serverConfig.id, error),
       (titleResults, title) => {
         record(titleResults, title)
@@ -317,13 +308,7 @@ function toServerConfig(config: ServerPassConfig): ServerConfig {
 /** The domain services over the sync's repositories (the sync-dedicated Mongo pool). */
 async function createServices(): Promise<{ movieService: MovieSyncService; tvShowService: TVShowSyncService }> {
   const db = await createDatabaseAdapter()
-  const movieService = new MovieSyncService(db.movies, [
-    new MovieMetadataStrategy(db.movies),
-    new MovieAssetStrategy(db.movies),
-    new MovieContentStrategy(db.movies),
-    // Runs after the entity is saved by the metadata and asset strategies.
-    new BlurhashStrategy(db.movies),
-  ])
+  const movieService = new MovieSyncService(db.movies)
   // The season and episode services read the show (and the season) for the
   // showId / seasonId foreign keys.
   const tvShowService = new TVShowSyncService(

@@ -1,6 +1,23 @@
 /**
- * Movie sync service - domain orchestrator for all movie sync operations
- * Demonstrates the new domain-driven architecture with strategy pattern
+ * Movie sync service: one server's pass over one movie.
+ *
+ * The pass reads the stored movie once, and is skipped when this server's gate
+ * on it still holds (core/syncGate). Otherwise it runs four steps, always in
+ * this order, each of which returns a write plan and a result:
+ *
+ *   1. metadata (./metadata): the metadata file of the server that owns it;
+ *   2. artwork (./artwork): poster, backdrop and logo, their blurhashes, and
+ *      the backdrop focal-point hints;
+ *   3. video (./video): the video and the facts about its file, the content
+ *      identity and delivery facts, captions and chapters;
+ *   4. the blurhash retry (./artwork): a second attempt at a blurhash the
+ *      artwork step's fetch did not get.
+ *
+ * Field-absence cleanup adds a plan of its own, and so does the movie's
+ * normalization (the fields normalizeMovieEntity heals) when a step writes.
+ * The plans are merged into one (core/writePlan), the display title is
+ * derived from the metadata the document ends up with (core/title), and the
+ * merged plan's `incomplete` decides the gate. One write, or none, follows.
  */
 
 import {
@@ -10,12 +27,11 @@ import {
   SyncStatus,
   MediaType,
   SyncOperation,
-  SyncStrategy,
   syncEventBus,
   planFieldCleanup,
   seedDiscovery,
   type CleanableField,
-  type CleanupPlan
+  type WritePlan,
 } from '../../core'
 
 import {
@@ -24,10 +40,16 @@ import {
 } from '../../infrastructure'
 
 import { createLogger } from '@src/lib/logger'
-import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, decideGate, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
+import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
+import { emptyWritePlan, mergeWritePlans } from '../../core/writePlan'
 import { effectiveMetadata } from '../../core/metadataLock'
 import { resolveTitle } from '../../core/title'
+import { syncLogger } from '../../core/logger'
 import isEqual from 'lodash/isEqual'
+import { syncMovieMetadata } from './metadata'
+import { syncMovieArtwork, retryMovieBlurhashes } from './artwork'
+import { syncMovieVideo } from './video'
+import type { MovieStepInput, MovieStepOutcome } from './step'
 
 const pinoLog = createLogger('Sync.Movie')
 
@@ -40,6 +62,9 @@ const MOVIE_CLEANABLE_FIELDS: CleanableField[] = [
   { entityField: 'logo', fieldPath: 'urls.logo', companions: ['logoSource', 'logoBlurhash'] },
   { entityField: 'chapterURL', fieldPath: 'urls.chapters', companions: ['chapterSource'] },
 ]
+
+/** How many steps a pass runs (the event log's operation count). */
+const MOVIE_STEP_COUNT = 4
 
 /**
  * The value a movie's skip gate must hold, for one server, for that server's
@@ -59,123 +84,73 @@ export function movieSyncGate(
 }
 
 export class MovieSyncService {
-  private repository: MovieRepository
-  private strategies: Map<SyncOperation, SyncStrategy[]> = new Map()
-
-  constructor(
-    repository: MovieRepository,
-    strategies: SyncStrategy[] = []
-  ) {
-    this.repository = repository
-    this.registerStrategies(strategies)
-  }
+  constructor(private repository: MovieRepository) {}
 
   /**
-   * Register sync strategies by operation type
+   * One server's pass over one movie.
+   *
+   * @param originalTitle - The movie's folder name: its key in the payload,
+   *   in the availability map and in the database, and its results' entity id
    */
-  private registerStrategies(strategies: SyncStrategy[]): void {
-    for (const strategy of strategies) {
-      for (const operation of strategy.supportedOperations) {
-        if (!this.strategies.has(operation)) {
-          this.strategies.set(operation, [])
-        }
-        this.strategies.get(operation)!.push(strategy)
-      }
-    }
-  }
-
-  /**
-   * Sync a single movie with all applicable strategies
-   */
-  async syncMovie(
-    title: string,
-    context: SyncContext,
-    operations: SyncOperation[] = [
-      SyncOperation.Metadata,
-      SyncOperation.Assets,
-      SyncOperation.Content
-    ],
-    originalTitle?: string  // Optional filesystem key title
-  ): Promise<SyncResult[]> {
-    const results: SyncResult[] = []
+  async syncMovie(originalTitle: string, context: SyncContext): Promise<SyncResult[]> {
+    const title = originalTitle
 
     syncEventBus.emitStarted(title, MediaType.Movie, context.serverConfig.id)
 
     try {
-      // Determine the filesystem key and display title
-      // When originalTitle is provided, it's the definitive filesystem key
-      const effectiveOriginalTitle = originalTitle || title
-      // For display title, use the originalTitle as fallback since that's what we have
-      const effectiveTitle = originalTitle ? originalTitle : title
-
-      // Whole-movie early-skip: bypass entity normalisation and all strategies
+      // Whole-movie early-skip: bypass entity normalisation and all steps
       // when neither this server's payload nor the who-has-what picture for the
       // title has changed since this server's last complete pass, and no other
       // server has changed the document since (movieSyncGate).
       //
-      // The gate is only ever stamped by a pass in which no strategy failed, so
+      // The gate is only ever stamped by a pass that left nothing undone, so
       // a matching gate is by itself the evidence the earlier checks here used
       // to look for in the stored metadata.
       const syncGate = movieSyncGate(
-        context.fileServerData?.movies?.[effectiveOriginalTitle],
+        context.fileServerData?.movies?.[originalTitle],
         context.fieldAvailability,
-        effectiveOriginalTitle
+        originalTitle
       )
 
-      if (!context.forceSync) {
-        const cached = await this.repository.findByOriginalTitle(effectiveOriginalTitle)
+      // The one read of the stored movie: the gate check, the steps and the
+      // write all work from it.
+      const existingMovie = await this.repository.findByOriginalTitle(originalTitle)
 
-        if (readSyncGate(cached as any, context.serverConfig.id) === syncGate) {
-          syncEventBus.emitComplete(title, MediaType.Movie, context.serverConfig.id, undefined, {
-            totalOperations: 0,
-            successful: 0,
-            failed: 0
-          })
-          return [{
-            status: SyncStatus.Skipped,
-            entityId: title,
-            mediaType: MediaType.Movie,
-            operation: SyncOperation.Metadata,
-            serverId: context.serverConfig.id,
-            timestamp: new Date(),
-            changes: [],
-            errors: []
-          }]
-        }
+      if (!context.forceSync && readSyncGate(existingMovie as any, context.serverConfig.id) === syncGate) {
+        syncEventBus.emitComplete(title, MediaType.Movie, context.serverConfig.id, undefined, {
+          totalOperations: 0,
+          successful: 0,
+          failed: 0
+        })
+        return [{
+          status: SyncStatus.Skipped,
+          entityId: title,
+          mediaType: MediaType.Movie,
+          operation: SyncOperation.Metadata,
+          serverId: context.serverConfig.id,
+          timestamp: new Date(),
+          changes: [],
+          errors: []
+        }]
       }
 
-      const existingMovie = await this.repository.findByOriginalTitle(effectiveOriginalTitle)
-
       // Normalize entity to ensure complete schema (handles new, existing, and partial records)
-      let movie = this.normalizeMovieEntity(existingMovie, effectiveTitle, effectiveOriginalTitle, context)
+      const normalized = this.normalizeMovieEntity(existingMovie, originalTitle, originalTitle, context)
 
-      // Initialise accumulator — strategies append their changes here instead of
-      // writing to the DB directly. A single consolidated write happens after all
-      // strategies complete, writing only what changed (or nothing if unchanged).
-      if (!context.pendingMovieUpdates) context.pendingMovieUpdates = new Map()
-      context.pendingMovieUpdates.set(effectiveOriginalTitle, {})
-      if (!context.pendingMovieUnsets) context.pendingMovieUnsets = new Map()
-      context.pendingMovieUnsets.set(effectiveOriginalTitle, new Set())
-      // Created here, not by the strategy that needs it: each strategy is handed
-      // a copy of the context, so a set it created would never be seen again.
-      if (!context.pendingMovieDeferrals) context.pendingMovieDeferrals = new Set()
-      context.pendingMovieDeferrals.delete(effectiveOriginalTitle)
-      if (!context.pendingMovieFetchFailures) context.pendingMovieFetchFailures = new Map()
-      context.pendingMovieFetchFailures.set(effectiveOriginalTitle, new Set())
-
-      for (const operation of operations) {
+      // ---- The steps, in order. Each sees the movie with what the steps
+      // before it set; none of them writes. ----
+      const results: SyncResult[] = []
+      const stepPlans: WritePlan<MovieEntity>[] = []
+      let movie: MovieEntity = normalized
+      const runStep = async <O extends MovieStepOutcome>(
+        operation: SyncOperation,
+        step: (input: MovieStepInput) => Promise<O>
+      ): Promise<O | null> => {
+        let outcome: O | null = null
+        let stepOutcome: MovieStepOutcome
         try {
-          const operationResult = await this.syncMovieOperation(movie, operation, context, effectiveTitle)
-          results.push(operationResult)
-
-          // Advance `movie` to include changes accumulated by this strategy so that
-          // the next strategy's `{ ...(movie || {}), ...itsChanges }` spread sees the
-          // current accumulated state rather than the stale normalized base.
-          // Without this, each strategy overwrites the previous strategy's fields
-          // (e.g. AssetStrategy would clobber metadata: {} over MetadataStrategy's
-          // populated metadata because both spread from the same stale `movie`).
-          const accumulated = context.pendingMovieUpdates?.get(effectiveOriginalTitle)
-          if (accumulated) movie = { ...movie, ...accumulated } as any
+          outcome = await step({ originalTitle, movie, context })
+          stepOutcome = outcome
         } catch (error) {
           const errorResult: SyncResult = {
             status: SyncStatus.Failed,
@@ -187,36 +162,73 @@ export class MovieSyncService {
             changes: [],
             errors: [error instanceof Error ? error.message : String(error)]
           }
-
-          results.push(errorResult)
-
-          syncEventBus.emitError(
-            title,
-            MediaType.Movie,
-            context.serverConfig.id,
-            errorResult.errors[0],
-            operation
-          )
+          syncEventBus.emitError(title, MediaType.Movie, context.serverConfig.id, errorResult.errors[0], operation)
+          stepOutcome = {
+            plan: { ...emptyWritePlan<MovieEntity>(), incomplete: true, deferrals: [operation] },
+            result: errorResult,
+          }
         }
+        results.push(stepOutcome.result)
+        stepPlans.push(stepOutcome.plan)
+        movie = { ...movie, ...stepOutcome.plan.set } as MovieEntity
+        return outcome
       }
 
-      // ---- Consolidated write — single smartUpsert after all strategies ----
-      const pending: any = context.pendingMovieUpdates.get(effectiveOriginalTitle) || {}
+      await runStep(SyncOperation.Metadata, syncMovieMetadata)
+      const artwork = await runStep(SyncOperation.Assets, syncMovieArtwork)
+      await runStep(SyncOperation.Content, syncMovieVideo)
+      await runStep(SyncOperation.Blurhash, (input) => retryMovieBlurhashes(input, artwork?.retries ?? []))
 
-      // Fields a strategy asked to remove (their data is gone). An admin lock
-      // keeps a field, here as everywhere else. A field being removed must not
-      // also be written, so it is taken out of the pending set.
-      const strategyUnset = [...(context.pendingMovieUnsets.get(effectiveOriginalTitle) ?? [])].filter(
-        (field) => !isTopLevelFieldLocked((existingMovie as any)?.lockedFields, field)
-      )
-      for (const field of strategyUnset) delete pending[field]
+      // ---- Field-absence cleanup: drop asset fields no enabled server
+      // reports anymore (only meaningful for an existing doc).
+      // planFieldCleanup logs (both modes) and returns `unset` only in
+      // enforce. originalTitle is the fieldAvailability key. ----
+      const cleanupPlan = planFieldCleanup({
+        cleanup: context.cleanup,
+        mediaType: 'movies',
+        availabilityKey: originalTitle,
+        entity: existingMovie,
+        fieldAvailability: context.fieldAvailability,
+        fields: MOVIE_CLEANABLE_FIELDS,
+        log: (obj, msg) => pinoLog.info(obj, msg),
+        logContext: { title: (movie as any)?.title || title, originalTitle },
+      })
+
+      // What normalizeMovieEntity added or healed (a missing type, discovery
+      // date, source..., and lastSynced) is written whenever the metadata,
+      // artwork or video step writes: each of them stamps lastSynced then, as
+      // the strategies they replace wrote the whole movie then. A pass in
+      // which nothing but the blurhash retry, the title or the gate changes
+      // writes only that.
+      const stepsWrite = stepPlans.some((plan) => Object.prototype.hasOwnProperty.call(plan.set, 'lastSynced'))
+
+      // ---- One plan (core/writePlan): the cleanup's removals first, then
+      // the normalization, then the steps' plans in step order. ----
+      const merged = mergeWritePlans<MovieEntity>([
+        {
+          ...emptyWritePlan<MovieEntity>(),
+          unset: cleanupPlan.unset ?? [],
+          // A removal held back because not every server answered.
+          incomplete: cleanupPlan.withheld === true,
+          deferrals: cleanupPlan.withheld === true ? ['field-absence cleanup'] : [],
+        },
+        { ...emptyWritePlan<MovieEntity>(), set: stepsWrite ? normalizationOf(normalized, existingMovie) : {} },
+        ...stepPlans,
+      ])
+
+      // Fields whose data is gone. An admin lock keeps a field, here as
+      // everywhere else.
+      const lockedFields = (existingMovie as any)?.lockedFields
+      const unsetFields = merged.unset.filter((field) => !isTopLevelFieldLocked(lockedFields, field))
+
+      const pending: any = { ...merged.set }
 
       // The display title and its source are derived here, once, from the
       // metadata the document ends up with (core/title). Each strategy used to
       // write a title of its own (the metadata strategy the TMDB one, the asset
       // and content strategies the folder name), so the stored title depended
       // on which of them last had something to change.
-      // (A locked `metadata` keeps what is stored: the strategy's copy will be
+      // (A locked `metadata` keeps what is stored: the plan's copy will be
       // dropped on the way to the database, so it must not name the title.
       // See core/metadataLock.)
       const metadataCopy = effectiveMetadata<Record<string, any>>({
@@ -224,11 +236,11 @@ export class MovieSyncService {
           ? { metadata: existingMovie.metadata, metadataSource: existingMovie.metadataSource }
           : null,
         incoming: { metadata: pending.metadata, metadataSource: pending.metadataSource },
-        locked: isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'metadata'),
+        locked: isTopLevelFieldLocked(lockedFields, 'metadata'),
       })
-      const titleLocked = isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'title')
+      const titleLocked = isTopLevelFieldLocked(lockedFields, 'title')
       const titleRule = resolveTitle({
-        originalTitle: effectiveOriginalTitle,
+        originalTitle,
         metadata: metadataCopy,
         fieldAvailability: context.fieldAvailability,
         mediaType: 'movies',
@@ -240,77 +252,43 @@ export class MovieSyncService {
       if (titleRule.writeTitle) {
         pending.title = displayTitle
       } else {
-        // Unchanged: make sure a strategy's stale copy cannot override it.
+        // Unchanged: make sure the normalized folder name cannot override it.
         delete pending.title
       }
       // Only the rule's source is written, and only when it differs.
       delete pending.titleSource
       if (titleRule.writeTitleSource) pending.titleSource = titleRule.titleSource
-      context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
-
-      // A failed strategy leaves the gate open. A failed metadata fetch is one
-      // (the metadata strategy reports Failed on a fetch error, or when it
-      // preserved existing metadata because the fetch came back empty): what
-      // other strategies changed (e.g. asset URLs) is still written, but this
-      // server's gate stays unstamped so the next sync retries the fetch.
-      // Without this, an asset-only change during a metadata-fetch failure
-      // would stamp the gate and lock the movie out of future metadata
-      // refreshes (the "spent gate" failure mode). Any other strategy that
-      // failed did not do its work either.
-      const anyStrategyFailed = results.some(r => r.status === SyncStatus.Failed)
-
-      // Field-absence cleanup: drop asset fields no enabled server reports anymore
-      // (only meaningful for an existing doc). planFieldCleanup logs (both modes)
-      // and returns `unset` only in enforce. effectiveOriginalTitle is the
-      // fieldAvailability key.
-      const cleanupPlan: CleanupPlan = planFieldCleanup({
-        cleanup: context.cleanup,
-        mediaType: 'movies',
-        availabilityKey: effectiveOriginalTitle,
-        entity: existingMovie,
-        fieldAvailability: context.fieldAvailability,
-        fields: MOVIE_CLEANABLE_FIELDS,
-        log: (obj, msg) => pinoLog.info(obj, msg),
-        logContext: { title: (movie as any)?.title || effectiveTitle, originalTitle: effectiveOriginalTitle },
-      })
-      const unsetFields = [...new Set([...(cleanupPlan.unset ?? []), ...strategyUnset])]
-      const hasUnset = unsetFields.length > 0
 
       // The skip gate (core/syncGate). This server's entry is stamped only when
-      // the pass ran to the end with nothing failed, held back or deferred
-      // (decideGate) — including a pass that found nothing to change, which
-      // would otherwise be repeated in full on every run. Otherwise it is left
-      // out, so the next run does the work again. A pass that changed the
-      // document drops the other servers' entries.
-      const removalHeldBack =
-        context.pendingMovieDeferrals?.has(effectiveOriginalTitle) === true || cleanupPlan.withheld === true
+      // the merged plan held nothing back: no step failed, no removal was held
+      // back, no file was left unfetched (merged.gate). That includes a pass
+      // that found nothing to change, which would otherwise be repeated in
+      // full on every run. Otherwise it is left out, so the next run does the
+      // work again. A pass that changed the document drops the other servers'
+      // entries.
       const documentChanged = changesDocument(existingMovie as any, pending, unsetFields)
-      // A file the server publishes (a blurhash) that could not be fetched is
-      // work left for the next pass.
-      const fetchFailed = (context.pendingMovieFetchFailures?.get(effectiveOriginalTitle)?.size ?? 0) > 0
-      const gateToStamp =
-        decideGate({ failed: anyStrategyFailed, heldBack: removalHeldBack, deferred: fetchFailed }) === 'stamp'
-          ? syncGate
-          : null
+      const gateToStamp = merged.gate === 'stamp' ? syncGate : null
+      if (!gateToStamp) {
+        syncLogger.debug(`Gate left open for "${originalTitle}": ${merged.deferrals.join(', ')}`)
+      }
       const storedGates = ((existingMovie as any)?.syncGates ?? {}) as Record<string, string>
       const gates = nextSyncGates(storedGates, context.serverConfig.id, gateToStamp, documentChanged)
       if (!isEqual(gates, storedGates)) pending.syncGates = gates
-      context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
 
-      // Write when strategies changed something OR there are fields to clear. A
-      // pure field-absence pass (empty pending + unset) must still write.
-      if (Object.keys(pending).length > 0 || hasUnset) {
+      // Write when the plan sets something OR there are fields to clear. A
+      // pure field-absence pass (empty set + unset) must still write.
+      if (Object.keys(pending).length > 0 || unsetFields.length > 0) {
         if (!existingMovie) {
-          // New document — full insert from the accumulated pending fields.
-          // There is nothing stored to remove; a field a strategy wanted gone
-          // is simply left out.
+          // New document — full insert of the normalized movie with what the
+          // steps set. There is nothing stored to remove; a field a step
+          // wanted gone is simply left out.
           const toInsert: any = { ...movie, ...pending }
-          for (const field of strategyUnset) delete toInsert[field]
+          for (const field of unsetFields) delete toInsert[field]
           await this.repository.upsert(toInsert)
         } else {
-          // Existing document — diff against the pre-loop snapshot, write only changes,
-          // and $unset the fields whose data is gone (absent on every server, or
-          // removed by a strategy).
+          // Existing document — diff against the stored one, write only
+          // changes, and $unset the fields whose data is gone (absent on every
+          // server, or removed by a step).
           await this.repository.smartUpsert(
             { ...existingMovie, ...pending } as any,
             existingMovie as any,
@@ -322,11 +300,8 @@ export class MovieSyncService {
       // Stamp the resolved display title onto completed results. (The post-sync
       // cache invalidation does not read it: the page caches are tagged by the
       // folder name, which run/writtenMedia takes from the title being synced.)
-      // `movie.title` reflects metadata-strategy updates (line ~141 spread);
-      // fall back to the filesystem key only when no display title is available.
-      const movieDisplayTitle = displayTitle
       // A corrected display title is a change in its own right: the media
-      // pages show it. When no strategy had anything else to write there is no
+      // pages show it. When no step had anything else to write there is no
       // completed result to carry it to the cache invalidation, so add one.
       const titleChanged = Boolean(existingMovie) && existingMovie!.title !== displayTitle && !titleLocked
       if (titleChanged && !results.some(r => r.status === SyncStatus.Completed)) {
@@ -345,7 +320,7 @@ export class MovieSyncService {
         if (r.status === SyncStatus.Completed) {
           r.metadata = {
             ...r.metadata,
-            displayTitle: movieDisplayTitle,
+            displayTitle,
             // No document existed before this pass inserted one (counted for
             // the admins' sync notice).
             ...(existingMovie ? {} : { created: true }),
@@ -359,7 +334,7 @@ export class MovieSyncService {
       }
 
       syncEventBus.emitComplete(title, MediaType.Movie, context.serverConfig.id, undefined, {
-        totalOperations: operations.length,
+        totalOperations: MOVIE_STEP_COUNT,
         successful: results.filter(r => r.status === SyncStatus.Completed).length,
         failed: results.filter(r => r.status === SyncStatus.Failed).length
       })
@@ -387,60 +362,6 @@ export class MovieSyncService {
 
       return [errorResult]
     }
-  }
-
-  /**
-   * Sync a single operation for a movie
-   */
-  private async syncMovieOperation(
-    movie: MovieEntity | null,
-    operation: SyncOperation,
-    context: SyncContext,
-    title: string
-  ): Promise<SyncResult> {
-    const strategies = this.strategies.get(operation) || []
-    
-    if (strategies.length === 0) {
-      return {
-        status: SyncStatus.Skipped,
-        entityId: movie?.title || 'unknown',
-        mediaType: MediaType.Movie,
-        operation,
-        serverId: context.serverConfig.id,
-        timestamp: new Date(),
-        changes: [],
-        errors: [`No strategies available for operation: ${operation}`]
-      }
-    }
-
-    // Find the first strategy that can handle this context
-    const applicableStrategy = strategies.find(strategy => 
-      strategy.canHandle({ ...context, operation })
-    )
-
-    if (!applicableStrategy) {
-      return {
-        status: SyncStatus.Skipped,
-        entityId: movie?.title || 'unknown',
-        mediaType: MediaType.Movie,
-        operation,
-        serverId: context.serverConfig.id,
-        timestamp: new Date(),
-        changes: [],
-        errors: [`No applicable strategy found for operation: ${operation}`]
-      }
-    }
-
-    // Execute the strategy with both titles in context
-    const strategyContext = { 
-      ...context, 
-      operation,
-      entityTitle: title,
-      entityOriginalTitle: movie?.originalTitle || movie?.title || title
-    }
-    
-    
-    return await applicableStrategy.sync(movie, strategyContext)
   }
 
   /**
@@ -557,4 +478,21 @@ export class MovieSyncService {
       console.log(`🏥 Healed critical fields: ${healedFields.join(', ')}`)
     }
   }
+}
+
+/**
+ * What normalizeMovieEntity added to the stored movie or changed in it (a
+ * healed field, lastSynced), as fields to write: every field of the
+ * normalized movie for a new one. Written over the stored document, it gives
+ * the normalized movie.
+ */
+function normalizationOf(normalized: MovieEntity, existing: MovieEntity | null): Partial<MovieEntity> {
+  if (!existing) return { ...normalized }
+  const changed: Record<string, any> = {}
+  for (const [field, value] of Object.entries(normalized)) {
+    if (!Object.prototype.hasOwnProperty.call(existing, field) || !Object.is((existing as any)[field], value)) {
+      changed[field] = value
+    }
+  }
+  return changed as Partial<MovieEntity>
 }
