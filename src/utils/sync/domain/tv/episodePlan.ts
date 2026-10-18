@@ -78,8 +78,8 @@ export interface EpisodePlanInput {
  * data merged on top, respecting per-field server priority.
  *
  * Key differences from naive field copy:
- *  - fileData.metadata is a URL path, not inline data — must be fetched via
- *    fetchMetadataMultiServer. Fallback: parent show's metadata.seasons[].episodes[].
+ *  - fileData.metadata is a URL path, not inline data — the prefetch step fetches
+ *    it through fetchMetadataMultiServer. Fallback: parent show's metadata.seasons[].episodes[].
  *  - fileData.thumbnailBlurhash is a URL path to a blurhash file, not the actual
  *    blurhash string. It is fetched (or the stored one kept or removed) by the
  *    blurhash rule, core/imageAndBlurhash.

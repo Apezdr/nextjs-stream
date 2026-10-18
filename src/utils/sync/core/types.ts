@@ -112,9 +112,10 @@ export interface Caches {
    */
   metadataHashes?: MovieMetadataHashes
   /**
-   * Throttles the outbound calls a step makes itself. Not around
+   * Throttles the prefetch step's plain reads (the movie artwork step's first
+   * read of a blurhash, infrastructure/fileSystem/prefetch). Not around
    * fetchMetadataMultiServer, which takes its own slot
-   * (infrastructure/fileSystem/fetchFile).
+   * (infrastructure/fileSystem/fetchFile). No step is handed it.
    */
   resourceManager?: {
     throttleHttp: <T>(fn: () => Promise<T>) => Promise<T>
