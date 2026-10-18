@@ -6,9 +6,10 @@
  * changes it. `title` is for display only, and this rule decides it once per
  * pass, from the metadata the document ends up with (core/metadataLock):
  *
- *  1. The metadata's title, trimmed, when it has one. A stub written after a
- *     failed first fetch (`hasExternalMetadata: false`) carries the folder
- *     name, which is not a metadata title.
+ *  1. The metadata's title, trimmed, when it has one: a movie's `title`, a
+ *     show's `name` (TMDB names the field differently for each). A stub
+ *     written after a failed first fetch (`hasExternalMetadata: false`)
+ *     carries the folder name, which is not a metadata title.
  *  2. Otherwise the folder name.
  *
  * `titleSource` goes with it:
@@ -26,9 +27,8 @@
  * An admin-locked title keeps its source here; the title itself is dropped
  * at the write chokepoint (BaseRepository.computeDiff).
  *
- * Movies follow this rule. The show builder does not: it takes a show's title
- * from a usable fresh copy's `name` and leaves `titleSource` as the document
- * was created.
+ * Movies and shows follow this rule. (Seasons and episodes have titles of
+ * their own, from their own metadata and payload, and are not covered.)
  *
  * Pure: the caller writes what the outcome says.
  */
@@ -62,10 +62,14 @@ export interface TitleOutcome {
   writeTitleSource: boolean
 }
 
-/** The metadata's own title, or '' when it has none. */
-function metadataTitleOf(metadata: unknown): string {
-  const copy = metadata as { title?: unknown; hasExternalMetadata?: unknown } | null | undefined
-  return typeof copy?.title === 'string' && copy.hasExternalMetadata !== false ? copy.title.trim() : ''
+/** The field a metadata copy holds its title in, by media type. */
+const METADATA_TITLE_FIELD = { movies: 'title', tv: 'name' } as const
+
+/** The metadata's own title, trimmed, or '' when it has none. */
+function metadataTitleOf(metadata: unknown, mediaType: TitleRuleInput['mediaType']): string {
+  const copy = metadata as Record<string, unknown> | null | undefined
+  const value = copy?.[METADATA_TITLE_FIELD[mediaType]]
+  return typeof value === 'string' && copy?.hasExternalMetadata !== false ? value.trim() : ''
 }
 
 export function resolveTitle({
@@ -77,7 +81,7 @@ export function resolveTitle({
   stored,
   locks,
 }: TitleRuleInput): TitleOutcome {
-  const metadataTitle = metadataTitleOf(metadata.metadata)
+  const metadataTitle = metadataTitleOf(metadata.metadata, mediaType)
   const title = metadataTitle || originalTitle
   const titleSource = metadataTitle
     ? metadata.metadataSource

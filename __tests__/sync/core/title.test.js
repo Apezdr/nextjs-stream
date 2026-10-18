@@ -49,6 +49,46 @@ describe('resolveTitle: the title', () => {
   })
 })
 
+describe('resolveTitle: a show', () => {
+  const SHOW = 'The Show (2001)'
+  const showAvailability = (...servers) => ({ movies: {}, tv: { [SHOW]: { 'seasons.Season 1.episodes.S01E01.videoURL': servers } } })
+  const showInput = (overrides) => input({
+    originalTitle: SHOW,
+    mediaType: 'tv',
+    fieldAvailability: showAvailability('A', 'B'),
+    ...overrides,
+  })
+
+  it('reads the metadata\'s `name`, trimmed, credited to the metadata\'s source', () => {
+    const outcome = resolveTitle(showInput({ metadata: { metadata: { name: '  The Show  ' }, metadataSource: 'B' } }))
+    expect(outcome).toMatchObject({ title: 'The Show', titleSource: 'B' })
+  })
+
+  it('does not read a movie\'s `title` field, and a movie does not read `name`', () => {
+    const copy = { metadata: { title: 'A Movie Field', name: 'A Show Field' }, metadataSource: 'A' }
+    expect(resolveTitle(showInput({ metadata: copy })).title).toBe('A Show Field')
+    expect(resolveTitle(input({ metadata: copy })).title).toBe('A Movie Field')
+    expect(resolveTitle(showInput({ metadata: { metadata: { title: 'A Movie Field' }, metadataSource: 'A' } })).title).toBe(SHOW)
+    expect(resolveTitle(input({ metadata: { metadata: { name: 'A Show Field' }, metadataSource: 'A' } })).title).toBe(FOLDER)
+  })
+
+  it('is the folder name when the metadata has no name, credited to the best server with the folder', () => {
+    for (const metadata of [{}, { name: '' }, { name: '   ' }, { name: 7 }, null, undefined]) {
+      const outcome = resolveTitle(showInput({ metadata: { metadata, metadataSource: 'B' }, serverConfig: server('A') }))
+      expect(outcome).toMatchObject({ title: SHOW, titleSource: 'A' })
+    }
+    // B's pass names no source while A has the folder; with A gone, B is credited.
+    expect(resolveTitle(showInput({ metadata: { metadata: {} } })).titleSource).toBeUndefined()
+    expect(resolveTitle(showInput({ metadata: { metadata: {} }, fieldAvailability: showAvailability('B') })).titleSource).toBe('B')
+  })
+
+  it('keys the availability on the show\'s folder under `tv`, never under `movies`', () => {
+    const elsewhere = { movies: { [SHOW]: { 'urls.mp4': ['A'] } }, tv: {} }
+    const outcome = resolveTitle(showInput({ metadata: { metadata: {} }, fieldAvailability: elsewhere, serverConfig: server('A') }))
+    expect(outcome.titleSource).toBeUndefined()
+  })
+})
+
 describe('resolveTitle: the source', () => {
   it('is the metadata\'s source when the title is the metadata\'s, whichever server is syncing', () => {
     expect(resolveTitle(input({ serverConfig: server('B') })).titleSource).toBe('A')
