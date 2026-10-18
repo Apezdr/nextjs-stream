@@ -187,7 +187,8 @@ export class MovieSyncService {
       // ---- Field-absence cleanup: drop asset fields no enabled server
       // reports anymore (only meaningful for an existing doc).
       // planFieldCleanup logs (both modes) and returns `unset` only in
-      // enforce. originalTitle is the fieldAvailability key. ----
+      // enforce. originalTitle is the fieldAvailability key; the log names
+      // the stored display title, as the TV services name the show's. ----
       const cleanupPlan = planFieldCleanup({
         cleanup: context.cleanup,
         mediaType: 'movies',
@@ -196,7 +197,7 @@ export class MovieSyncService {
         fieldAvailability: context.fieldAvailability,
         fields: MOVIE_CLEANABLE_FIELDS,
         log: (obj, msg) => pinoLog.info(obj, msg),
-        logContext: { title: (movie as any)?.title || title, originalTitle },
+        logContext: { title: existingMovie?.title || title, originalTitle },
       })
 
       // What normalizeMovieEntity added or healed (a missing type, discovery

@@ -17,8 +17,9 @@ jest.mock('@src/utils/sync/core/ResourceManager', () => ({
 }))
 jest.mock('@src/lib/httpHelper', () => ({ httpGet: jest.fn() }))
 jest.mock('@src/lib/mongodb', () => ({ __esModule: true, default: Promise.resolve({}) }))
+const mockLog = { info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }
 jest.mock('@src/lib/logger', () => ({
-  createLogger: () => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn(), debug: jest.fn() }),
+  createLogger: () => mockLog,
   logError: jest.fn(),
 }))
 jest.mock('@src/utils/config', () => ({
@@ -62,7 +63,7 @@ const storedWithoutType = () => ({
   posterSource: 'A',
 })
 
-const contextFor = (payload, { forceSync = false } = {}) => {
+const contextFor = (payload, { forceSync = false, cleanup } = {}) => {
   const fieldAvailability = { movies: { [KEY]: {} }, tv: {} }
   collectFieldAvailability(payload, '', 'A', fieldAvailability.movies[KEY])
   return {
@@ -73,6 +74,7 @@ const contextFor = (payload, { forceSync = false } = {}) => {
     fileServerData: { movies: { [KEY]: payload } },
     allEnabledServersProbed: true,
     forceSync,
+    ...(cleanup ? { cleanup } : {}),
   }
 }
 
@@ -218,5 +220,28 @@ describe('the wroteDocument flag of each step', () => {
     expect(retry.plan.set).toHaveProperty('posterBlurhash')
     expect(retry.wroteDocument).toBe(false)
     agrees(retry)
+  })
+})
+
+describe('the field-absence cleanup log', () => {
+  const enforce = { enabled: true, mode: 'enforce', maxFieldsPerEntity: 5, allEnabledServersProbed: true }
+  const cleanupLog = () => mockLog.info.mock.calls.find(([, message]) => message === 'field-absence cleanup (enforce)')
+
+  beforeEach(() => mockLog.info.mockClear())
+
+  it('names the stored display title', async () => {
+    // The poster is stored, and no server reports one any more.
+    const repository = repositoryOver({ ...storedWithoutType(), type: 'movie', title: 'Film Title' })
+    await new MovieSyncService(repository).syncMovie(KEY, contextFor({ urls: {} }, { cleanup: enforce }))
+
+    expect(cleanupLog()[0]).toMatchObject({ title: 'Film Title', originalTitle: KEY, fields: ['posterURL', 'posterSource'] })
+  })
+
+  it('falls back to the folder name when the stored movie has no title', async () => {
+    const { title: _title, ...untitled } = storedWithoutType()
+    const repository = repositoryOver({ ...untitled, type: 'movie' })
+    await new MovieSyncService(repository).syncMovie(KEY, contextFor({ urls: {} }, { cleanup: enforce }))
+
+    expect(cleanupLog()[0]).toMatchObject({ title: KEY, originalTitle: KEY })
   })
 })
