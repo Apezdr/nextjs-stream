@@ -233,7 +233,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
             forceSync: Boolean(options.forceSync),
             // Authoritative-pass gate for field-absence cleanup: true only when
             // every enabled file server responded this run (computed in the route
-            // handler). Threaded unchanged into SyncContext.cleanup.
+            // handler). Threaded unchanged into RunConfig (and its cleanup).
             allEnabledServersProbed: options.allEnabledServersProbed === true,
             written,
           }),

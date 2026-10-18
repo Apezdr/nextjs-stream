@@ -39,7 +39,11 @@ import {
   SyncOperation,
   SyncStatus,
   resolveCleanupConfig,
+  type Availability,
+  type Caches,
   type FieldAvailability,
+  type MovieMetadataHashes,
+  type RunConfig,
   type ServerConfig,
   type SyncContext,
   type SyncResult,
@@ -93,12 +97,6 @@ export interface ServerPassResult {
   added: { movies: number; shows: number; episodes: number }
 }
 
-/** The file server's metadata hash for every movie (GET /api/metadata-hashes/movies). */
-type MovieHashes = {
-  hash: string
-  titles: Record<string, { hash: string; lastModified: string; generated: string }>
-}
-
 /**
  * Run one file server's pass. See the module comment for the steps, and for
  * which errors are caught and which reach the caller.
@@ -144,6 +142,19 @@ export async function runServerPass(
   const resourceManager = ResourceManager.getInstance()
   const pool = pLimit(resourceManager.config.syncConcurrency)
 
+  // What every title's pass is handed (core/types). None of it changes
+  // during the pass.
+  const run: RunConfig = {
+    serverConfig,
+    forceSync,
+    allEnabledServersProbed,
+    // Field-absence cleanup; the sync's own clearing decisions read
+    // allEnabledServersProbed above, which is there whether or not cleanup
+    // is switched on.
+    cleanup: resolveCleanupConfig(allEnabledServersProbed),
+  }
+  const availability: Availability = { fieldAvailability }
+
   // ---- 2. Movies ----
   const movieTitles = extractMovieTitles(fileServer)
   if (movieTitles.length > 0) {
@@ -152,19 +163,19 @@ export async function runServerPass(
       'Processing movies with new architecture'
     )
     const movieStart = Date.now()
+    const caches: Caches = {
+      metadataHashes: (await fetchMovieHashes(serverConfig)) ?? undefined,
+      resourceManager,
+    }
+    // Until the movie service takes the parts.
     const context: SyncContext = {
       mediaType: MediaType.Movie,
       operation: SyncOperation.Metadata,
-      serverConfig,
-      fieldAvailability,
-      forceSync,
+      ...run,
+      fieldAvailability: availability.fieldAvailability,
       fileServerData: fileServer,
-      metadataHashesCache: (await fetchMovieHashes(serverConfig)) ?? undefined,
+      metadataHashesCache: caches.metadataHashes,
       resourceManager,
-      // Field-absence cleanup, and the same signal for the sync's own clearing
-      // decisions (present whether or not cleanup is switched on).
-      cleanup: resolveCleanupConfig(allEnabledServersProbed),
-      allEnabledServersProbed,
     }
     syncLogger.info(
       `Processing ${movieTitles.length} movies with concurrency: ${resourceManager.config.syncConcurrency} ` +
@@ -208,16 +219,14 @@ export async function runServerPass(
       'Starting TV sync with new domain architecture'
     )
     const tvStart = performance.now()
+    // Until the TV services take the parts.
     const context: SyncContext = {
       mediaType: MediaType.TVShow,
       operation: SyncOperation.Metadata,
-      serverConfig,
-      fieldAvailability,
-      forceSync,
+      ...run,
+      fieldAvailability: availability.fieldAvailability,
       fileServerData: fileServer,
       resourceManager,
-      cleanup: resolveCleanupConfig(allEnabledServersProbed),
-      allEnabledServersProbed,
     }
     const tvResults = await syncTitles(
       showTitles,
@@ -373,7 +382,7 @@ function failedResult(title: string, mediaType: MediaType, serverId: string, err
  * fetches each movie's metadata. (Shows have no such step, and nothing reads
  * the TV list, so it is not fetched.)
  */
-async function fetchMovieHashes(serverConfig: ServerConfig): Promise<MovieHashes | null> {
+async function fetchMovieHashes(serverConfig: ServerConfig): Promise<MovieMetadataHashes | null> {
   const kind = 'movies'
   if (!serverConfig.nodeUrl) {
     syncLogger.warn(`⚠️ No Node.js server URL for ${serverConfig.id}: no ${kind} hashes`)
