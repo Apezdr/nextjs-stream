@@ -190,6 +190,17 @@ export class TVShowSyncService {
       // 3. Smart write — $set changed fields only, skip if nothing changed,
       //    plus $unset any cleared assets (enforce mode).
       const showChanged = changesDocument(existing as any, showEntity as any, showPlan.unset)
+      // A write that changes the show drops every server's gate on it, in the
+      // same update: the gates were stamped on the show as it was. This
+      // server's own is stamped again by the close-out, once everything under
+      // the show is written. Were the drop left to the close-out alone, a pass
+      // that stopped after this write (the read below failing) would leave
+      // the other servers skipping a show that has changed.
+      if (showChanged && existing) {
+        const storedGates = ((existing as any).syncGates ?? {}) as Record<string, string>
+        const gates = nextSyncGates(storedGates, context.serverConfig.id, null, true)
+        if (!isEqual(gates, storedGates)) (showEntity as any).syncGates = gates
+      }
       await this.tvShowRepository.smartUpsert(showEntity, existing, { unset: showPlan.unset })
 
       allResults.push(this.makeResult(
