@@ -68,6 +68,24 @@ afterEach(() => {
 const lines = (method) => printed.filter(([m]) => m === method).map((line) => line.slice(1).join(' '))
 
 describe('the metadata step', () => {
+  it('called before its metadata file is fetched, names the file and does nothing else: no event, no log', () => {
+    const { syncEventBus, SyncEventType } = require('@src/utils/sync/core')
+    const emitted = []
+    const unsubscribe = Object.values(SyncEventType).map((type) => syncEventBus.subscribe(type, (event) => emitted.push(event.type)))
+
+    const outcome = syncMovieMetadata(input())
+    unsubscribe.forEach((stop) => stop())
+
+    expect(outcome.plan).toEqual({
+      set: {}, unset: [], needs: [{ kind: 'metadata', serverId: 'A', path: urls.metadata }], incomplete: false, deferrals: [],
+    })
+    expect(outcome.result.status).toBe('pending')
+    expect(emitted).toEqual([])
+    // The sync logger is at its debug level here: not even a debug line.
+    expect(printed).toEqual([])
+    expect(fetchMetadataMultiServer).not.toHaveBeenCalled()
+  })
+
   it('logs that it fetched the metadata', async () => {
     fetchMetadataMultiServer.mockResolvedValue({ title: 'Film Title' })
     await run(syncMovieMetadata, input())
