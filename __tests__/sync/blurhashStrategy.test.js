@@ -118,6 +118,29 @@ it('does not fetch for a server that does not own the image', async () => {
   expect(written).toEqual({})
 })
 
+it('fails, and writes nothing on its own, outside the consolidated movie write', async () => {
+  // MovieSyncService creates pendingMovieUpdates before any strategy runs.
+  // There used to be a fallback here that wrote straight to the repository,
+  // keyed on the display title.
+  const repository = { findByOriginalTitle: jest.fn(), update: jest.fn(), upsert: jest.fn(), smartUpsert: jest.fn() }
+  const result = await new BlurhashStrategy(repository).sync(
+    { title: 'Film', originalTitle: KEY, posterURL: A_POSTER },
+    {
+      mediaType: MediaType.Movie,
+      operation: SyncOperation.Blurhash,
+      serverConfig: { ...mockServers.A, baseUrl: 'https://A.example', prefix: '', enabled: true },
+      fieldAvailability: { movies: { [KEY]: { 'urls.poster': ['A'], 'urls.posterBlurhash': ['A'] } }, tv: {} },
+      fileServerData: { movies: { [KEY]: { urls } } },
+      entityTitle: 'Film',
+      entityOriginalTitle: KEY,
+    }
+  )
+
+  expect(result.status).toBe('failed')
+  expect(result.errors[0]).toContain(`no pending movie update for "${KEY}"`)
+  for (const write of ['update', 'upsert', 'smartUpsert']) expect(repository[write]).not.toHaveBeenCalled()
+})
+
 it('leaves the blurhash of an image an admin locked, or a blurhash an admin locked', async () => {
   for (const lockedFields of [{ posterURL: true }, { posterBlurhash: true }]) {
     const { written, failures } = await retry({ movie: { posterURL: A_POSTER, lockedFields } })

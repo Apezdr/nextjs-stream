@@ -317,15 +317,14 @@ export class BlurhashStrategy implements SyncStrategy {
     // ── Persist ──────────────────────────────────────────────────────────────
     const blurhashUpdate = { [label]: outcome.blurhash, [sourceField]: outcome.blurhashSource }
     try {
-      // Accumulate into pendingMovieUpdates when running inside the consolidated
-      // movie sync path (MovieSyncService). This prevents calling repository.update()
-      // before the movie document has been written (e.g. after a DB wipe).
-      if (context.pendingMovieUpdates) {
-        const prev = context.pendingMovieUpdates.get(originalTitle) || {}
-        context.pendingMovieUpdates.set(originalTitle, { ...prev, ...blurhashUpdate })
-      } else {
-        await this.repository.update(entity.title, blurhashUpdate as Partial<MovieEntity>)
+      // Into the consolidated movie write. MovieSyncService, the only caller,
+      // creates the pending map before any strategy runs; without it there is
+      // nowhere to write, and the pass fails rather than writing on its own.
+      const pending = context.pendingMovieUpdates
+      if (!pending) {
+        throw new Error(`no pending movie update for "${originalTitle}": BlurhashStrategy runs inside MovieSyncService`)
       }
+      pending.set(originalTitle, { ...(pending.get(originalTitle) || {}), ...blurhashUpdate })
       console.log(
         `✅ BlurhashStrategy: "${label}" updated for "${originalTitle}" (server: ${context.serverConfig.id})`
       )
