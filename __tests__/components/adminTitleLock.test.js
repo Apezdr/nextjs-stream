@@ -171,8 +171,20 @@ describe.each(EDITORS)('the $kind editor', ({ save, editRecord, newEntry, extra,
     type(titleInput(), '   ')
     expect(titleLock()).toHaveAttribute('aria-pressed', 'false')
 
-    // (The save refuses the empty title; the form still sends its locks as shown.)
+    // (The save refuses to clear the stored title; the form still sends its locks as shown.)
     expect((await submit()).lockedFields).toEqual({ [other.key]: true })
+  })
+
+  it('sends an untitled record\'s empty title as it is, unlocked, so it stays saveable', async () => {
+    render(editRecord(record({ title: undefined })))
+
+    type(titleInput(), '   ')
+    expect(titleLock()).toHaveAttribute('aria-pressed', 'false')
+    type(otherInput(), 'https://server/other-image.jpg')
+
+    const payload = await submit()
+    expect(payload.title.trim()).toBe('')
+    expect(payload.lockedFields).toEqual({ [other.key]: true })
   })
 
   it('locks the title typed into a new entry as well (nothing is stored yet)', () => {

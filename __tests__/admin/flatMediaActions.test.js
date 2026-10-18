@@ -282,6 +282,22 @@ describe.each([
     expect(mockCollection(collection).updateOne).not.toHaveBeenCalled()
   })
 
+  it.each([[undefined], [''], ['   ']])(
+    'saves one whose stored title is %j with the title still empty: there is no title to clear',
+    async (storedTitle) => {
+      mockCollection(collection).findOne.mockResolvedValue({ ...existing, title: storedTitle })
+
+      const result = await save(null, { id: 'doc-id', title: '', posterURL: 'https://server/new.jpg', lockedFields: { posterURL: true } })
+
+      expect(result.status).toBe('success')
+      const { $set, $unset } = updateOf(collection)
+      expect($set.posterURL).toBe('https://server/new.jpg')
+      expect($set).not.toHaveProperty('title')
+      expect($set.lockedFields).toEqual({ posterURL: true })
+      expect($unset).toEqual(expect.objectContaining({ title: '', syncGates: '' }))
+    }
+  )
+
   it('leaves the locks as they were when the title is unchanged', async () => {
     mockCollection(collection).findOne.mockResolvedValue({ ...existing })
 
@@ -342,6 +358,22 @@ describe('saveEpisodeAction and the title lock', () => {
     expect(mockCollection('FlatEpisodes').updateOne).not.toHaveBeenCalled()
     expect(mockCollection('FlatEpisodes').insertOne).not.toHaveBeenCalled()
   })
+
+  it.each([[undefined], [''], ['   ']])(
+    'saves an episode whose stored title is %j with the title still empty: there is no title to clear',
+    async (storedTitle) => {
+      mockCollection('FlatEpisodes').findOne.mockResolvedValue({ ...existing, title: storedTitle })
+
+      const result = await saveEpisode({ title: '', thumbnail: 'https://server/new.jpg', lockedFields: { thumbnail: true } })
+
+      expect(result.status).toBe('success')
+      const { $set, $unset } = updateOf('FlatEpisodes')
+      expect($set.thumbnail).toBe('https://server/new.jpg')
+      expect($set).not.toHaveProperty('title')
+      expect($set.lockedFields).toEqual({ thumbnail: true })
+      expect($unset).toEqual(expect.objectContaining({ title: '', syncGates: '' }))
+    }
+  )
 
   it('leaves the locks as they were when the title is unchanged', async () => {
     await saveEpisode({ title: 'Old Title', lockedFields: { thumbnail: true } })

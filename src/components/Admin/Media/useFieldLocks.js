@@ -40,7 +40,7 @@ export function tmdbIdHelp(tmdbConfigOnPage) {
  *  - typing the stored value back, or clearing the field, puts the stored
  *    lock back: an empty value is never locked, since a lock on a missing
  *    value would stop the sync from ever restoring it (the save actions
- *    refuse an empty title anyway);
+ *    refuse to clear a stored title anyway);
  *  - once the admin uses the field's lock toggle, the toggle decides: later
  *    edits do not move it, and the save sends what the form shows.
  *

@@ -93,14 +93,19 @@ function trimOrNull(v) {
 }
 
 /**
- * An update that would leave a movie, show or episode without a title. The
+ * An update that would clear a movie's, show's or episode's stored title. The
  * form posts `title` with everything else, and an empty value would be
  * `$unset` (applyScalarFields); with the title locked, as the editors lock a
- * changed one, the sync would never put a title back. Refused, as a movie or
- * show create is. A payload that does not send `title` leaves it as stored.
+ * changed one, the sync would never put a title back. Refused. A document
+ * with no stored title (or only whitespace) stays saveable with the field
+ * still empty: there is nothing to clear. A payload that does not send
+ * `title` leaves it as stored.
+ *
+ * @param {Object} payload - What the form posted
+ * @param {Object} existing - The stored document
  */
-function clearsTitle(payload) {
-  return 'title' in payload && !trimOrNull(payload.title)
+function clearsTitle(payload, existing) {
+  return 'title' in payload && !trimOrNull(payload.title) && Boolean(trimOrNull(existing?.title))
 }
 
 function parseIntStrict(v) {
@@ -323,12 +328,12 @@ export async function saveMovieAction(_prevState, payload = {}) {
   if (refused) return refused
   const _id = toObjectId(payload.id)
   if (!_id) return fail('A valid movie id is required.')
-  if (clearsTitle(payload)) return fail('Title is required.')
 
   const client = await clientPromise
   const col = client.db(DB_NAME).collection('FlatMovies')
   const existing = await col.findOne({ _id })
   if (!existing) return fail('Movie not found.')
+  if (clearsTitle(payload, existing)) return fail('Title is required.')
 
   const { set, unset } = applyScalarFields(payload, MOVIE_FIELDS, MOVIE_MANUAL_TRACKED_FIELDS, { isCreate: false, existing })
   applyMetadata(payload, set, { isCreate: false, existing })
@@ -441,13 +446,13 @@ export async function saveTVShowAction(_prevState, payload = {}) {
   if (refused) return refused
   const _id = toObjectId(payload.id)
   if (!_id) return fail('A valid show id is required.')
-  if (clearsTitle(payload)) return fail('Title is required.')
 
   const client = await clientPromise
   const db = client.db(DB_NAME)
   const col = db.collection('FlatTVShows')
   const existing = await col.findOne({ _id })
   if (!existing) return fail('TV show not found.')
+  if (clearsTitle(payload, existing)) return fail('Title is required.')
 
   const { set, unset } = applyScalarFields(payload, SHOW_FIELDS, SHOW_MANUAL_TRACKED_FIELDS, { isCreate: false, existing })
   applyMetadata(payload, set, { isCreate: false, existing })
@@ -637,7 +642,7 @@ export async function saveEpisodeAction(_prevState, payload = {}) {
     : await episodesCol.findOne({ showId, seasonId: season._id, episodeNumber })
   // On an update only: an episode can still be added without a title, as
   // before (an empty value is left out of an insert).
-  if (existing && clearsTitle(payload)) return fail('Title is required.')
+  if (existing && clearsTitle(payload, existing)) return fail('Title is required.')
 
   const { set, unset } = applyScalarFields(payload, EPISODE_FIELDS, EPISODE_MANUAL_TRACKED_FIELDS, { isCreate: !existing, existing })
   applyMetadata(payload, set, { isCreate: !existing, existing })
