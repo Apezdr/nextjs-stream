@@ -32,6 +32,13 @@ import { MovieRepository, captionUrls, fileServerUrl, isTopLevelFieldLocked, pre
 
 import { reconcileCaptions } from '../../../core/captionReconcile'
 import {
+  VIDEO_FILE_FACTS,
+  planVideoFileFacts,
+  sizeInBytes,
+  videoFileChanged,
+  type FileFactsPlan,
+} from '../../../core/fileFacts'
+import {
   preferReportedViewingExperience,
   sameViewingExperience,
 } from '../../../core/viewingExperience'
@@ -66,20 +73,6 @@ export class MovieContentStrategy implements SyncStrategy {
     '.webm',
     '.avi',
   ]
-
-  // Everything on the document that describes the primary video FILE. These
-  // follow the file: written from the payload of the server that owns the
-  // video, and cleared with it. mediaId is not here on purpose — it is the
-  // folder's durable identity and is set-only (see
-  // applyIdentityAndDeliveryUpdates).
-  private readonly VIDEO_FILE_FACT_FIELDS = [
-    'duration',
-    'dimensions',
-    'size',
-    'hdr',
-    'mediaQuality',
-    'mediaLastModified',
-  ] as const
 
   constructor(private repository: MovieRepository) {}
 
@@ -178,13 +171,7 @@ export class MovieContentStrategy implements SyncStrategy {
             field === 'mediaId'
           ) {
             movieToSave.videoSource = context.serverConfig.id
-          } else if (
-            field === 'duration' ||
-            field === 'dimensions' ||
-            field === 'hdr' ||
-            field === 'mediaQuality' ||
-            field === 'mediaLastModified'
-          ) {
+          } else if ((VIDEO_FILE_FACTS as readonly string[]).includes(field)) {
             // All video metadata fields use videoInfoSource
             movieToSave.videoInfoSource = context.serverConfig.id
           } else if (field === 'captionURLs') {
@@ -426,16 +413,12 @@ export class MovieContentStrategy implements SyncStrategy {
     })
 
     // Step 2: Facts about the video file (duration, dimensions, size, hdr,
-    // mediaQuality, mediaLastModified).
-    //
-    // These describe the file videoURL points at, so they come from the server
-    // that owns the video and from nowhere else: a value in its payload is
-    // written, and a value its probe did not report is cleared. They used to
-    // be set-if-present under their own per-field priority, which left an
-    // "HDR10" label on a title whose file had been replaced by an SDR one (the
-    // payload says hdr: null), left the whole block behind when the file was
-    // deleted, and let a server with no video own `hdr` and `mediaQuality`
-    // merely by reporting them as null.
+    // mediaQuality, mediaLastModified), by the rule in core/fileFacts: they
+    // come from the server that owns the video and from nowhere else, and
+    // one its payload does not report is removed only when the probe ran or
+    // the file changed. They used to be set-if-present under their own
+    // per-field priority, which also let a server with no video own `hdr`
+    // and `mediaQuality` merely by reporting them as null.
     if (fileServerMovieData) {
       if (ownsVideo) {
         const videoFacts = this.extractVideoMetadataFromFileServerData(
@@ -445,15 +428,23 @@ export class MovieContentStrategy implements SyncStrategy {
         // null means the payload could not be read. Change nothing rather than
         // clear on an error.
         if (videoFacts) {
-          // The stored facts describe the stored URL. When this pass points the
-          // title at another file (another server's, or a replacement under a
-          // new name) they are not that file's, probed or not.
-          const differentFile = !isVideoUrlLocked && currentMovie.videoURL !== videoUrl
-          this.mirrorVideoFileFacts(updates, unset, currentMovie, videoFacts, originalTitle, differentFile)
+          const plan = planVideoFileFacts(
+            {
+              duration: videoFacts.duration,
+              dimensions: videoFacts.dimensions,
+              size: videoFacts.fileSize,
+              hdr: videoFacts.hdr,
+              mediaQuality: videoFacts.mediaQuality,
+              mediaLastModified: videoFacts.mediaLastModified,
+            },
+            videoFileChanged(currentMovie, videoUrl, isVideoUrlLocked)
+          )
+          this.applyVideoFileFacts(updates, unset, currentMovie, plan, originalTitle)
         }
       } else if (videoGone && !effectiveVideoUrl) {
+        // The video is gone, and every fact about its file with it.
         for (const field of [
-          ...this.VIDEO_FILE_FACT_FIELDS,
+          ...VIDEO_FILE_FACTS,
           'normalizedVideoId',
           'videoSource',
           'videoInfoSource',
@@ -678,67 +669,33 @@ export class MovieContentStrategy implements SyncStrategy {
   }
 
   /**
-   * Make the document's facts about the video file match the owning server's
-   * payload: a value it reports is written, and a value its probe did not
-   * report is cleared.
-   *
-   * Clearing needs evidence that the probe ran. A file server that cannot
-   * probe a file still publishes it, with every fact null and an empty
-   * `additional_metadata` (a file mid-copy, a sidecar being regenerated). That
-   * is not "these facts are gone" — the file is there and its facts are simply
-   * unknown this scan — and the stored ones are left alone. A probed video
-   * always has a duration, so a duration in the payload is the evidence: with
-   * one, `hdr: null` means the file is SDR; without one, it means nothing.
-   *
-   * That holds while the document still points at the same file. Facts stored
-   * for ANOTHER file (the video was handed to this server, or replaced under a
-   * new name) are removed whether or not the new file has been probed: an
-   * unknown is better than the previous file's HDR label.
+   * Write the file-facts plan (core/fileFacts) into this strategy's update and
+   * unset lists: a fact is written only when it differs from the stored one,
+   * and removed only when the document holds a value for it.
    */
-  private mirrorVideoFileFacts(
+  private applyVideoFileFacts(
     updates: any,
     unset: string[],
     currentMovie: MovieEntity,
-    facts: {
-      duration?: number
-      dimensions?: string
-      hdr?: string
-      mediaLastModified?: Date
-      fileSize?: number
-      mediaQuality?: MediaQuality
-    },
-    originalTitle: string,
-    /** The stored facts are of another file than the one the payload describes. */
-    differentFile: boolean
+    plan: FileFactsPlan,
+    originalTitle: string
   ): void {
     const current = currentMovie as any
-    const probed = facts.duration !== undefined && facts.duration !== null
-    const mirror = (field: string, incoming: unknown, same: (a: any, b: any) => boolean) => {
-      if (incoming === undefined || incoming === null || incoming === '') {
-        if ((probed || differentFile) && current[field] !== undefined && current[field] !== null) unset.push(field)
-      } else if (!same(current[field], incoming)) {
-        updates[field] = incoming
-      }
+    for (const fact of plan.unset) {
+      if (current[fact] !== undefined && current[fact] !== null) unset.push(fact)
     }
-    const strictlyEqual = (a: any, b: any) => a === b
-
-    mirror('duration', facts.duration, strictlyEqual)
-    mirror('dimensions', facts.dimensions, strictlyEqual)
-    mirror('size', facts.fileSize, strictlyEqual)
-    mirror('hdr', facts.hdr, strictlyEqual)
-    mirror('mediaQuality', facts.mediaQuality, (a, b) => this.isMediaQualityEqual(a, b))
-
-    // The file's modified time is set when the payload has one and otherwise
-    // left alone: a file that exists has one, so its absence is a failed stat,
-    // not a fact.
-    const modified = facts.mediaLastModified
-    if (modified instanceof Date && Number.isNaN(modified.getTime())) {
+    for (const [fact, value] of Object.entries(plan.set)) {
+      const same =
+        fact === 'mediaQuality'
+          ? this.isMediaQualityEqual(current.mediaQuality, value as MediaQuality)
+          : fact === 'mediaLastModified'
+            ? current.mediaLastModified instanceof Date &&
+              current.mediaLastModified.getTime() === (value as Date).getTime()
+            : current[fact] === value
+      if (!same) updates[fact] = value
+    }
+    if (plan.unreadableModified) {
       syncLogger.warn(`⚠️ Unreadable mediaLastModified in the payload for "${originalTitle}", keeping the stored value`)
-    } else if (modified instanceof Date) {
-      const stored = current.mediaLastModified
-      if (!(stored instanceof Date) || stored.getTime() !== modified.getTime()) {
-        updates.mediaLastModified = modified
-      }
     }
   }
 
@@ -938,20 +895,8 @@ export class MovieContentStrategy implements SyncStrategy {
       }
 
       // File size from additional_metadata (supports {kb, mb, gb} object or numeric)
-      if (fileServerData.additional_metadata?.size != null) {
-        const sz = fileServerData.additional_metadata.size
-        if (typeof sz === 'number') {
-          result.fileSize = sz
-        } else if (typeof sz === 'object') {
-          if (typeof sz.gb === 'number') {
-            result.fileSize = Math.round(sz.gb * 1024 * 1024 * 1024)
-          } else if (typeof sz.mb === 'number') {
-            result.fileSize = Math.round(sz.mb * 1024 * 1024)
-          } else if (typeof sz.kb === 'number') {
-            result.fileSize = Math.round(sz.kb * 1024)
-          }
-        }
-      }
+      const fileSize = sizeInBytes(fileServerData.additional_metadata?.size)
+      if (fileSize !== undefined) result.fileSize = fileSize
 
       // Audio/Video codec info from additional_metadata
       if (fileServerData.additional_metadata?.video?.[0]) {

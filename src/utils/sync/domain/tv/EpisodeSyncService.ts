@@ -49,6 +49,7 @@ import { warnOnJitIdentityFork } from '@src/utils/sync/core/jitIdentityParity'
 import { seedDiscovery, applyFirstSeen } from '@src/utils/sync/core/discovery'
 import { reconcileCaptions } from '@src/utils/sync/core/captionReconcile'
 import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
+import { planVideoFileFacts, sizeInBytes, videoFileChanged } from '@src/utils/sync/core/fileFacts'
 import {
   buildSyncGate,
   readSyncGate,
@@ -661,78 +662,37 @@ export class EpisodeSyncService {
     }
 
     // --- Facts about the video file (flat, matching legacy document shape) ---
-    // duration, dimensions, hdr, size, mediaQuality, mediaLastModified describe
-    // the file videoURL points at, so they come from the server that owns the
-    // video: a value in its payload is written, and a value its probe did not
-    // report is removed. They used to be set-if-present, which left "HDR10" on
-    // an episode whose file was replaced by an SDR one (the payload says
-    // hdr: null) and the old file's numbers on anything the new payload lacked.
-    //
-    // Removing needs evidence that the probe ran. A file server that cannot
-    // probe a file still publishes the episode, with hdr, mediaQuality, length
-    // and dimensions null and an empty additionalMetadata (a file being
-    // replaced in place, a starved disk). That is not "these facts are gone" —
-    // the file is there and its facts are unknown this scan — and the stored
-    // ones are left alone. A probed video always has a duration, so a duration
-    // in the season's lengths map is the evidence: with one, `hdr: null` means
-    // the file is SDR; without one, it means nothing.
+    // duration, dimensions, size, hdr, mediaQuality and mediaLastModified, by
+    // the rule in core/fileFacts: they come from the server that owns the
+    // video, and one its payload does not report is removed only when the
+    // probe ran (a duration in the season's lengths map) or the file changed.
     if (canUpdateVideo) {
-      const duration =
-        seasonFileData?.lengths && episodeFileName ? seasonFileData.lengths[episodeFileName] : undefined
-      const probed = duration !== undefined && duration !== null
-      // The stored facts describe the stored URL. When this pass points the
-      // episode at another file (another server's, or a replacement under a
-      // new name) they are not that file's, probed or not.
-      const differentFile =
-        Boolean(existing) &&
-        !isTopLevelFieldLocked((existing as any)?.lockedFields, 'videoURL') &&
-        existing!.videoURL !== entity.videoURL
-      const mirror = (field: string, incoming: unknown) => {
-        if (incoming === undefined || incoming === null || incoming === '') {
-          if (probed || differentFile) clearField(field)
-        } else {
-          (entity as any)[field] = incoming
-        }
-      }
-
-      mirror('duration', duration)
-      mirror(
-        'dimensions',
-        seasonFileData?.dimensions && episodeFileName ? seasonFileData.dimensions[episodeFileName] : undefined
+      const plan = planVideoFileFacts(
+        {
+          duration:
+            seasonFileData?.lengths && episodeFileName ? seasonFileData.lengths[episodeFileName] : undefined,
+          dimensions:
+            seasonFileData?.dimensions && episodeFileName ? seasonFileData.dimensions[episodeFileName] : undefined,
+          // Bytes, or a {kb, mb, gb} object converted to bytes as for movies,
+          // so consumers can treat `size` as bytes for both media types.
+          size: typeof fileData?.size === 'number' ? fileData.size : sizeInBytes(fileData?.additionalMetadata?.size),
+          hdr: fileData?.hdr,
+          mediaQuality: fileData?.mediaQuality || undefined,
+          mediaLastModified: fileData?.mediaLastModified,
+        },
+        videoFileChanged(
+          existing,
+          entity.videoURL,
+          isTopLevelFieldLocked((existing as any)?.lockedFields, 'videoURL')
+        )
       )
-      mirror('hdr', fileData?.hdr)
-
-      // Size arrives as bytes, or as a {kb, mb, gb} object that is converted to
-      // bytes to match the movie path (MovieContentStrategy), so consumers can
-      // treat `size` as bytes for both media types.
-      let size: number | undefined
-      if (typeof fileData?.size === 'number') {
-        size = fileData.size
-      } else {
-        const sz = fileData?.additionalMetadata?.size
-        if (typeof sz === 'number') size = sz
-        else if (sz && typeof sz === 'object') {
-          if (typeof sz.gb === 'number') size = Math.round(sz.gb * 1024 * 1024 * 1024)
-          else if (typeof sz.mb === 'number') size = Math.round(sz.mb * 1024 * 1024)
-          else if (typeof sz.kb === 'number') size = Math.round(sz.kb * 1024)
-        }
-      }
-      mirror('size', size)
-      mirror('mediaQuality', fileData?.mediaQuality || undefined)
-
-      // The file's modified time is set when the payload has one and otherwise
-      // left alone: a file that exists has one, so its absence is a failed
-      // stat, not a fact.
-      if (fileData?.mediaLastModified) {
-        const modified = new Date(fileData.mediaLastModified)
-        if (Number.isNaN(modified.getTime())) {
-          pinoLog.warn(
-            { showOriginalTitle, seasonNumber, episodeNumber, value: fileData.mediaLastModified },
-            'Unreadable mediaLastModified in the episode payload, keeping the stored value'
-          )
-        } else {
-          entity.mediaLastModified = modified
-        }
+      for (const [fact, value] of Object.entries(plan.set)) (entity as any)[fact] = value
+      for (const fact of plan.unset) clearField(fact)
+      if (plan.unreadableModified) {
+        pinoLog.warn(
+          { showOriginalTitle, seasonNumber, episodeNumber, value: fileData.mediaLastModified },
+          'Unreadable mediaLastModified in the episode payload, keeping the stored value'
+        )
       }
 
       entity.videoInfoSource = context.serverConfig.id
