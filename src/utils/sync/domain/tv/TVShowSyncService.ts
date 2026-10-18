@@ -58,7 +58,7 @@ const pinoLog = createLogger('Sync.TV.Show')
 
 // Show-level asset fields eligible for field-absence cleanup. TV uses BARE field
 // paths (no `urls.` prefix) — show fileAvailability is built from the show object
-// directly (run/availability). buildTVShowEntity below writes these fields.
+// directly (run/availability). planTVShow below writes these fields.
 const TVSHOW_CLEANABLE_FIELDS: CleanableField[] = [
   { entityField: 'posterURL', fieldPath: 'poster', companions: ['posterSource', 'posterBlurhash', 'posterBlurhashSource'] },
   { entityField: 'backdrop', fieldPath: 'backdrop', companions: ['backdropSource', 'backdropBlurhash', 'backdropBlurhashSource'] },

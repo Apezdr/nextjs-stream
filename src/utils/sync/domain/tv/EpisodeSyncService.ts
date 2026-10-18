@@ -455,7 +455,7 @@ export class EpisodeSyncService {
    * builder and removed by field-absence cleanup in the same write.
    *
    * One exception: when the literal paths cannot be built (the episode's key
-   * is empty, which no processor sends; logged in buildEpisodeEntity), the
+   * is empty, which no processor sends; logged in planEpisode), the
    * server is ranked against no one and owns what its payload has. It is
    * safe: the server still writes only a value it has, never clears another
    * server's with nothing, and nothing is removed for such an episode
