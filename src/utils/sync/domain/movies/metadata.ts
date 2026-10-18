@@ -3,9 +3,9 @@
  * hash-based change detection.
  *
  * The first of the movie's steps (MovieSyncService). Its plan sets the
- * metadata, its source, the schema version and the hash. The display title is
- * MovieSyncService's, derived once from the metadata the document ends up
- * with (core/title).
+ * metadata, its source, the schema version and the hash; it never names the
+ * display title, which MovieSyncService derives once from the metadata the
+ * document ends up with (core/title).
  */
 
 import {
@@ -170,9 +170,7 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
     }
 
     // The step writes the movie whenever it got this far (lastSynced at least).
-    // (The display title is MovieSyncService's to derive; this copy of it
-    // never reaches the database.)
-    const set: Partial<MovieEntity> = { title, lastSynced: new Date() }
+    const set: Partial<MovieEntity> = { lastSynced: new Date() }
 
     // Check if entity needs version upgrade or normal metadata update
     const needsVersionUpgrade = !movie.syncVersion || movie.syncVersion < METADATA_SCHEMA_VERSION
@@ -219,14 +217,6 @@ export async function syncMovieMetadata({ originalTitle, movie, context }: Movie
       } else if (normalizedMetadata.release_date) {
         syncLogger.debug(`📅 Saving release_date as ${typeof normalizedMetadata.release_date}: ${normalizedMetadata.release_date}`)
       }
-    }
-
-    // If metadata fetch succeeded and contains a title, use it
-    if (metadata?.title && metadata.title !== movie.title) {
-      set.title = metadata.title
-      set.titleSource = context.serverConfig.id
-      changes.push(`Updated title from metadata: "${metadata.title}"`)
-      syncLogger.debug(`📝 Title from metadata: "${metadata.title}"`)
     }
 
     plan.set = set

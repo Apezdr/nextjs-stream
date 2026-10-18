@@ -76,7 +76,7 @@ export async function syncMovieArtwork({ originalTitle, movie, context }: MovieS
     changes.push(...cleared.map((key) => `Cleared ${key}`))
 
     if (Object.keys(assetUpdates).length > 0) {
-      const set: any = { ...assetUpdates, title, lastSynced: new Date() }
+      const set: any = { ...assetUpdates, lastSynced: new Date() }
 
       // Add source tracking for updated asset fields
       Object.keys(assetUpdates).forEach((field) => {

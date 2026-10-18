@@ -4,7 +4,8 @@
  * MovieSyncService runs the movie's steps (metadata, artwork, video, the
  * blurhash retry), merges their write plans and makes one write. These cases
  * pin what the service itself decides: it reads the stored movie once, the
- * fields normalization heals are written only with a step's write.
+ * fields normalization heals are written only with a step's write, and the
+ * metadata step's plan never names the display title.
  */
 
 const mockServers = { A: { id: 'A', priority: 1 }, B: { id: 'B', priority: 2 } }
@@ -28,6 +29,7 @@ jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({
 }))
 
 const { MovieSyncService, movieSyncGate } = require('@src/utils/sync/domain/movies/MovieSyncService')
+const { syncMovieMetadata } = require('@src/utils/sync/domain/movies/metadata')
 const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
 const { httpGet } = require('@src/lib/httpHelper')
 const { MediaType, SyncOperation } = require('@src/utils/sync/core')
@@ -144,3 +146,24 @@ describe('the fields normalization heals', () => {
   })
 })
 
+describe('the metadata step', () => {
+  it('never names the display title, and completes on a successful fetch even when nothing changed', async () => {
+    const payload = { urls: { metadata: `${FOLDER}/metadata.json` } }
+    fetchMetadataMultiServer.mockImplementation(async () => ({ title: 'Film Title', overview: 'x' }))
+    const movie = {
+      originalTitle: KEY,
+      title: KEY,
+      metadata: { title: 'Film Title', overview: 'x' },
+      metadataSource: 'A',
+      syncVersion: '2.1',
+    }
+
+    const { plan, result } = await syncMovieMetadata({ originalTitle: KEY, movie, context: contextFor(payload) })
+
+    expect(plan.set).toEqual({ lastSynced: expect.any(Date) })
+    expect(plan.set).not.toHaveProperty('title')
+    expect(plan.set).not.toHaveProperty('titleSource')
+    expect(result).toMatchObject({ status: 'completed', changes: [] })
+    expect(plan.incomplete).toBe(false)
+  })
+})
