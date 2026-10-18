@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { startTransition, useActionState, useState } from 'react'
 import { Dialog, DialogBackdrop, DialogPanel, DialogTitle } from '@headlessui/react'
 import {
   Cog6ToothIcon,
@@ -14,6 +14,7 @@ import { buildURL } from '@src/utils'
 import { getTmdbConfigAction, saveTmdbConfigAction } from '@src/utils/admin/tmdbConfigActions'
 import { describeIdentitySource, IDENTITY_SOURCE_AUTO, IDENTITY_SOURCE_MANUAL } from '@src/utils/admin/identitySource'
 import TmdbImagePicker from './TmdbImagePicker'
+import ActionError from './ActionError'
 
 const inputClass =
   'mt-1 block w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 shadow-sm focus:border-indigo-500 focus:ring-indigo-500'
@@ -357,7 +358,8 @@ export default function TmdbConfigButton({
     if (Object.keys(finalMetadata).length) config.metadata = finalMetadata
     else delete config.metadata
 
-    save({ mediaType: type, originalTitle, config })
+    // In a transition, as useActionState needs: isSaving follows the save
+    startTransition(() => save({ mediaType: type, originalTitle, config }))
   }
 
   const tmdbIdSet = String(tmdbId).trim() !== ''
@@ -719,8 +721,9 @@ export default function TmdbConfigButton({
                     >
                       Cancel
                     </button>
-                    {saveState.status === 'error' && <span className="text-sm text-red-600">{saveState.message}</span>}
                     {saveState.status === 'success' && <span className="text-sm text-green-600">{saveState.message}</span>}
+                    {/* In the dialog (outside it the modal hides it), from the form's first render */}
+                    <ActionError state={saveState} />
                   </div>
                 </>
               )}
