@@ -5,6 +5,28 @@ export const TITLE_LOCK_HELP =
   'Changing the title locks it, so the sync keeps yours. Unlock it to let the sync set it again.'
 
 /**
+ * The hint on a field the editors store in `metadata.*` (Overview, the TMDB
+ * ID). The sync replaces the metadata whenever it takes a fresh copy, unless
+ * `metadata` is locked. The editors do not lock it on edit: that would freeze
+ * every field derived from the metadata, so the hint says what will happen.
+ */
+export const METADATA_FIELD_HELP =
+  'Comes from the metadata: the next metadata refresh replaces it unless the metadata is locked. This lock locks all metadata.'
+
+/**
+ * The TMDB ID's hint: the metadata hint, and where to choose the TMDB entry
+ * so that it lasts, which is the processor's `tmdb.config` for the folder.
+ *
+ * @param {boolean} tmdbConfigOnPage - Whether the editor shows TmdbConfigButton
+ */
+export function tmdbIdHelp(tmdbConfigOnPage) {
+  const where = tmdbConfigOnPage
+    ? 'set the ID in TMDB Config, above (the processor\'s tmdb.config)'
+    : 'set the ID in the processor\'s tmdb.config for the title\'s folder'
+  return `${METADATA_FIELD_HELP} To match the title to another TMDB entry, ${where}.`
+}
+
+/**
  * An editor's per-field locks (`lockedFields`), and the rule that locks a
  * field when the admin changes it.
  *

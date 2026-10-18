@@ -10,7 +10,7 @@ import {
   saveSeasonAction,
 } from '@src/utils/admin/flatMediaActions'
 import LockableField from './LockableField'
-import { TITLE_LOCK_HELP, useFieldLocks } from './useFieldLocks'
+import { METADATA_FIELD_HELP, TITLE_LOCK_HELP, tmdbIdHelp, useFieldLocks } from './useFieldLocks'
 import ImagePreview from './ImagePreview'
 import DeleteMediaButton from './DeleteMediaButton'
 import TmdbConfigButton from './TmdbConfigButton'
@@ -71,6 +71,9 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
   const [overview, setOverview] = useState(() => record?.metadata?.overview ?? '')
   // Changing the title locks it, or the next sync puts the old one back.
   const { locks, isLocked, toggleLock, noteEdit, autoLocked } = useFieldLocks(record, ['title'])
+  // The TMDB Config control (the processor's tmdb.config) needs a saved show
+  // with a folder name; the TMDB ID's hint points to it when it is shown.
+  const showsTmdbConfig = Boolean(!isNew && record?._id && record?.originalTitle)
 
   useEffect(() => {
     if (state.status === 'success' && isNew && state.id) {
@@ -129,7 +132,7 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
         {!isNew && record?._id && (
           <div className="flex items-center gap-3">
             <RawRecordButton record={record} title="TV show record" />
-            {record?.originalTitle && (
+            {showsTmdbConfig && (
               <TmdbConfigButton
                 type="tv"
                 originalTitle={record.originalTitle}
@@ -168,9 +171,18 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
               onChange={setTmdbId}
               locked={isLocked('metadata')}
               onToggleLock={() => toggleLock('metadata')}
-              helpText="Locking applies to all metadata."
+              helpText={tmdbIdHelp(showsTmdbConfig)}
             />
-            <LockableField id="overview" label="Overview" value={overview} onChange={setOverview} locked={isLocked('metadata')} onToggleLock={() => toggleLock('metadata')} textarea />
+            <LockableField
+              id="overview"
+              label="Overview"
+              value={overview}
+              onChange={setOverview}
+              locked={isLocked('metadata')}
+              onToggleLock={() => toggleLock('metadata')}
+              helpText={METADATA_FIELD_HELP}
+              textarea
+            />
             <JitOverrideSelect
               id="show-jit-override"
               value={form.jitServeOverride}

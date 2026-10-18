@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { createMovieAction, saveMovieAction } from '@src/utils/admin/flatMediaActions'
 import LockableField from './LockableField'
-import { TITLE_LOCK_HELP, useFieldLocks } from './useFieldLocks'
+import { METADATA_FIELD_HELP, TITLE_LOCK_HELP, tmdbIdHelp, useFieldLocks } from './useFieldLocks'
 import ImagePreview from './ImagePreview'
 import CaptionsEditor from './CaptionsEditor'
 import DeleteMediaButton from './DeleteMediaButton'
@@ -43,6 +43,9 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
   const [captionURLs, setCaptionURLs] = useState(() => record?.captionURLs ?? {})
   // Changing the title locks it, or the next sync puts the old one back.
   const { locks, isLocked, toggleLock, noteEdit, autoLocked } = useFieldLocks(record, ['title'])
+  // The TMDB Config control (the processor's tmdb.config) needs a saved title
+  // with a folder name; the TMDB ID's hint points to it when it is shown.
+  const showsTmdbConfig = Boolean(!isNew && record?._id && record?.originalTitle)
 
   // After a successful create, move to the persistent editor for the new id.
   useEffect(() => {
@@ -99,7 +102,7 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
         {!isNew && record?._id && (
           <div className="flex items-center gap-3">
             <RawRecordButton record={record} title="Movie record" />
-            {record?.originalTitle && (
+            {showsTmdbConfig && (
               <TmdbConfigButton
                 type="movie"
                 originalTitle={record.originalTitle}
@@ -140,7 +143,7 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
               onChange={setTmdbId}
               locked={isLocked('metadata')}
               onToggleLock={() => toggleLock('metadata')}
-              helpText="Locking applies to all metadata."
+              helpText={tmdbIdHelp(showsTmdbConfig)}
             />
           </div>
         </section>
@@ -180,6 +183,7 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
               onChange={setOverview}
               locked={isLocked('metadata')}
               onToggleLock={() => toggleLock('metadata')}
+              helpText={METADATA_FIELD_HELP}
               textarea
             />
           </div>
