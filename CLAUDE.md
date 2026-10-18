@@ -258,7 +258,7 @@ function planPoster({ originalTitle, payload, run, availability }, resources) {
     plan.incomplete = true // the gate stays open, so the next pass retries
     plan.deferrals.push('metadata')
   }
-  return { plan: { ...plan, needs: resources.needs }, wroteDocument: false }
+  return { plan: { ...plan, needs: resources.needs } }
 }
 
 // The service runs it through the prefetch step, then writes through a repository

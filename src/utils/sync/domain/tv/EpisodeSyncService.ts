@@ -180,8 +180,8 @@ export class EpisodeSyncService {
           // re-created). Refresh just those, with no rebuild and no fetch.
           // (A re-created SHOW is not handled here: its episodes are looked up
           // by the new show id above, so the old ones are not found at all.)
-          // A plan of its own, which does not stamp lastSynced (wroteDocument
-          // false): only the parents' copies are written.
+          // A plan of its own, which does not stamp lastSynced: only the
+          // parents' copies are written.
           const sameId = (a: any, b: any) => String(a ?? '') === String(b ?? '')
           const relink: PlanOutcome<EpisodeEntity> = {
             plan: {
@@ -191,7 +191,6 @@ export class EpisodeSyncService {
                 ...(seasonId && !sameId((existing as any).seasonId, seasonId) ? { seasonId } : {}),
               },
             },
-            wroteDocument: false,
           }
           const relinked = applyWritePlan(existing, relink.plan)
           // Judged on what will actually be written: a locked field is dropped

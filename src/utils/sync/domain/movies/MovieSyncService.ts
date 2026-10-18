@@ -48,7 +48,7 @@ import type { Resources } from '../../core/resources'
 
 import { createLogger } from '@src/lib/logger'
 import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
-import { cleanupWritePlan, draftWritePlan, emptyWritePlan, mergeWritePlans } from '../../core/writePlan'
+import { cleanupWritePlan, draftWritePlan, emptyWritePlan, mergeWritePlans, writesDocument } from '../../core/writePlan'
 import { effectiveMetadata } from '../../core/metadataLock'
 import { resolveTitle } from '../../core/title'
 import { syncLogger } from '../../core/logger'
@@ -155,8 +155,8 @@ export class MovieSyncService {
       // before it set; none of them writes. ----
       const results: SyncResult[] = []
       const stepPlans: WritePlan<MovieEntity>[] = []
-      // Whether the metadata, artwork or video step writes the movie (each
-      // says so when its plan stamps lastSynced).
+      // Whether the metadata, artwork or video step writes the movie: its
+      // plan stamps lastSynced (core/writePlan writesDocument).
       let stepsWrite = false
       let movie: MovieEntity = normalized
       // The files a step reads are fetched by the prefetch step: through
@@ -189,13 +189,12 @@ export class MovieSyncService {
           syncEventBus.emitError(title, MediaType.Movie, run.serverConfig.id, errorResult.errors[0], operation)
           stepOutcome = {
             plan: { ...emptyWritePlan<MovieEntity>(), incomplete: true, deferrals: [operation] },
-            wroteDocument: false,
             result: errorResult,
           }
         }
         results.push(stepOutcome.result)
         stepPlans.push(stepOutcome.plan)
-        if (stepOutcome.wroteDocument) stepsWrite = true
+        if (writesDocument(stepOutcome.plan)) stepsWrite = true
         movie = { ...movie, ...stepOutcome.plan.set } as MovieEntity
         return outcome
       }

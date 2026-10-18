@@ -5,7 +5,7 @@
  * blurhash retry), merges their write plans and makes one write. These cases
  * pin what the service itself decides: it reads the stored movie once, the
  * fields normalization heals are written only with a step's write (which
- * each step reports with its wroteDocument flag), and the metadata step's plan
+ * each step's plan says by stamping lastSynced), and the metadata step's plan
  * never names the display title.
  */
 
@@ -181,52 +181,53 @@ describe('the metadata step', () => {
   })
 })
 
-describe('the wroteDocument flag of each step', () => {
-  // Set exactly when the step's plan stamps lastSynced: the service writes
+describe('whether each step writes the movie (core/writePlan writesDocument)', () => {
+  // True exactly when the step's plan stamps lastSynced: the service writes
   // the healed fields with such a step's write, and with no other.
+  const { writesDocument } = require('@src/utils/sync/core/writePlan')
   const outcomeOf = async (step, payload, movie) => runStep(step, { originalTitle: KEY, movie: { originalTitle: KEY, title: KEY, ...movie }, payload, ...partsFor(payload) })
-  const agrees = (outcome) => expect(outcome.wroteDocument).toBe(Object.prototype.hasOwnProperty.call(outcome.plan.set, 'lastSynced'))
+  const agrees = (outcome) => expect(writesDocument(outcome.plan)).toBe(Object.prototype.hasOwnProperty.call(outcome.plan.set, 'lastSynced'))
 
-  it('is set by the metadata step when it fetched the metadata, and not when it did not', async () => {
+  it('is true for the metadata step when it fetched the metadata, and not when it did not', async () => {
     fetchMetadataMultiServer.mockImplementation(async () => ({ title: 'Film Title' }))
     const fetched = await outcomeOf(syncMovieMetadata, { urls: { metadata: `${FOLDER}/metadata.json` } }, {})
-    expect(fetched.wroteDocument).toBe(true)
+    expect(writesDocument(fetched.plan)).toBe(true)
     agrees(fetched)
 
     const notOwner = await outcomeOf(syncMovieMetadata, posterOnly(), {})
-    expect(notOwner.wroteDocument).toBe(false)
+    expect(writesDocument(notOwner.plan)).toBe(false)
     agrees(notOwner)
   })
 
-  it('is set by the artwork step when it changes an image, and not when nothing changes', async () => {
+  it('is true for the artwork step when it changes an image, and not when nothing changes', async () => {
     const changed = await outcomeOf(syncMovieArtwork, posterOnly(), {})
-    expect(changed.wroteDocument).toBe(true)
+    expect(writesDocument(changed.plan)).toBe(true)
     agrees(changed)
 
     const unchanged = await outcomeOf(syncMovieArtwork, { urls: {} }, {})
-    expect(unchanged.wroteDocument).toBe(false)
+    expect(writesDocument(unchanged.plan)).toBe(false)
     agrees(unchanged)
   })
 
-  it('is set by the video step when it changes the video, and not when nothing changes', async () => {
+  it('is true for the video step when it changes the video, and not when nothing changes', async () => {
     const payload = { fileNames: ['Film.mkv'], urls: { mp4: `${FOLDER}/Film.mkv` } }
     const changed = await outcomeOf(syncMovieVideo, payload, {})
-    expect(changed.wroteDocument).toBe(true)
+    expect(writesDocument(changed.plan)).toBe(true)
     agrees(changed)
 
     const unchanged = await outcomeOf(syncMovieVideo, { urls: {} }, {})
-    expect(unchanged.wroteDocument).toBe(false)
+    expect(writesDocument(unchanged.plan)).toBe(false)
     agrees(unchanged)
   })
 
-  it('is never set by the blurhash retry, even when it writes a blurhash', async () => {
+  it('is never true for the blurhash retry, even when it writes a blurhash', async () => {
     httpGet.mockRejectedValue(new Error('timeout of 3000ms exceeded'))
     const artwork = await outcomeOf(syncMovieArtwork, posterOnly(), storedWithoutType())
     expect(artwork.retries).toHaveLength(1)
     const retry = await runStep(retryMovieBlurhashes, { originalTitle: KEY, run: partsFor(posterOnly()).run }, artwork.retries)
 
     expect(retry.plan.set).toHaveProperty('posterBlurhash')
-    expect(retry.wroteDocument).toBe(false)
+    expect(writesDocument(retry.plan)).toBe(false)
     agrees(retry)
   })
 })

@@ -37,6 +37,15 @@ export interface MergedWritePlan<E = Record<string, any>> extends WritePlan<E> {
   gate: GateDecision
 }
 
+/**
+ * Whether a plan writes its document: a step or builder that writes stamps
+ * `lastSynced` in its plan. MovieSyncService writes the movie's
+ * normalization only with a step whose plan does.
+ */
+export function writesDocument(plan: Pick<WritePlan<any>, 'set'>): boolean {
+  return Object.prototype.hasOwnProperty.call(plan.set, 'lastSynced')
+}
+
 /** A plan that writes nothing and holds nothing back. */
 export function emptyWritePlan<E = Record<string, any>>(): WritePlan<E> {
   return { set: {}, unset: [], needs: [], incomplete: false, deferrals: [] }

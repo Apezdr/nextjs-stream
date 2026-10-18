@@ -235,9 +235,10 @@ describe('the show the seasons and episodes copy', () => {
   })
 })
 
-describe('the wroteDocument flag of each TV plan', () => {
-  // Set where the builder stamps lastSynced, as for the movie steps.
-  const agrees = (outcome) => expect(outcome.wroteDocument).toBe(Object.prototype.hasOwnProperty.call(outcome.plan.set, 'lastSynced'))
+describe('whether each TV plan writes its document (core/writePlan writesDocument)', () => {
+  // True where the builder stamps lastSynced, as for the movie steps.
+  const { writesDocument } = require('@src/utils/sync/core/writePlan')
+  const agrees = (outcome) => expect(writesDocument(outcome.plan)).toBe(Object.prototype.hasOwnProperty.call(outcome.plan.set, 'lastSynced'))
   const run = {
     serverConfig: { ...mockServers.A, baseUrl: 'https://A.example', prefix: '', enabled: true },
     allEnabledServersProbed: true,
@@ -245,7 +246,7 @@ describe('the wroteDocument flag of each TV plan', () => {
   const availability = { fieldAvailability: { movies: {}, tv: { [SHOW]: {} } } }
   const seasonData = PAYLOAD.seasons['Season 1']
 
-  it('is set by the show, season and episode builders, which always stamp lastSynced', async () => {
+  it('is true for the show, season and episode builders, which always stamp lastSynced', async () => {
     const { planTVShow } = require('@src/utils/sync/domain/tv/showPlan')
     const { planSeason } = require('@src/utils/sync/domain/tv/seasonPlan')
     const { planEpisode } = require('@src/utils/sync/domain/tv/episodePlan')
@@ -264,7 +265,7 @@ describe('the wroteDocument flag of each TV plan', () => {
       seasonFileData: seasonData, episodeFileName: 'S01E01',
     }, resources, log))
     for (const outcome of [shows, seasons, episodes]) {
-      expect(outcome.wroteDocument).toBe(true)
+      expect(writesDocument(outcome.plan)).toBe(true)
       agrees(outcome)
     }
   })

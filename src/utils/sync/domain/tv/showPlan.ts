@@ -76,7 +76,7 @@ export function planTVShow(
 
   // The show this pass wants stored: the existing doc (preserving ALL
   // fields) or a new one. Either way the pass stamps lastSynced, so the
-  // plan writes the show (wroteDocument).
+  // plan writes the show (core/writePlan writesDocument).
   const entity: TVShowEntity = existing
     ? { ...existing, lastSynced: now }
     : {
@@ -90,7 +90,6 @@ export function planTVShow(
       }
   const planned = (): PlanOutcome<TVShowEntity> => ({
     plan: { ...plan, ...draftWritePlan(existing, entity, unset), needs: resources.needs },
-    wroteDocument: true,
   })
 
   // Heal structural fields that must always be present

@@ -129,7 +129,7 @@ export function planEpisode(
 
   // The episode this pass wants stored: the existing doc (preserving ALL
   // fields) or a new one. Either way the pass stamps lastSynced, so the plan
-  // writes the episode (wroteDocument).
+  // writes the episode (core/writePlan writesDocument).
   const entity: EpisodeEntity = existing
     ? { ...existing, lastSynced: now }
     : {
@@ -472,7 +472,7 @@ export function planEpisode(
     entity.title = fileData?.title || fileData?.derivedEpisodeName || `Episode ${episodeNumber}`
   }
 
-  return { plan: { ...plan, ...draftWritePlan(existing, entity, [...new Set(unset)]), needs: resources.needs }, wroteDocument: true }
+  return { plan: { ...plan, ...draftWritePlan(existing, entity, [...new Set(unset)]), needs: resources.needs } }
 }
 
 /**

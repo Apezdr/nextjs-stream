@@ -85,7 +85,6 @@ export function pendingStep(
 ): MovieStepOutcome {
   return {
     plan: { ...emptyWritePlan<MovieEntity>(), needs },
-    wroteDocument: false,
     result: movieStepResult(entityId, operation, run, SyncStatus.Pending, [], []),
   }
 }

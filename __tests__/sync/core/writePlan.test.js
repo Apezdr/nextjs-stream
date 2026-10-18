@@ -121,6 +121,17 @@ describe('mergeWritePlans: needs, deferrals, incomplete and the gate', () => {
   })
 })
 
+describe('writesDocument: whether a plan writes its document', () => {
+  const { writesDocument } = require('@src/utils/sync/core/writePlan')
+
+  it('is true when the plan stamps lastSynced, and only then', () => {
+    expect(writesDocument({ set: { lastSynced: new Date(), posterURL: 'p' } })).toBe(true)
+    expect(writesDocument({ set: { lastSynced: undefined } })).toBe(true)
+    expect(writesDocument({ set: { posterBlurhash: 'b' } })).toBe(false)
+    expect(writesDocument(emptyWritePlan())).toBe(false)
+  })
+})
+
 describe('draftWritePlan: the plan of a builder that edits a copy of the stored document', () => {
   const { draftWritePlan } = require('@src/utils/sync/core/writePlan')
 

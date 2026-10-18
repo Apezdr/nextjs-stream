@@ -127,7 +127,7 @@ export function planSeason(
 
   // The season this pass wants stored: the existing doc (preserving ALL
   // fields) or a new one. Either way the pass stamps lastSynced, so the plan
-  // writes the season (wroteDocument).
+  // writes the season (core/writePlan writesDocument).
   const entity: SeasonEntity = existing
     ? { ...existing, lastSynced: now }
     : {
@@ -286,7 +286,7 @@ export function planSeason(
 
   // A field is either written or removed, never both.
   const removed = [...new Set(unset)].filter((field) => (entity as any)[field] === undefined)
-  return { plan: { ...plan, ...draftWritePlan(existing, entity, removed), needs: resources.needs }, wroteDocument: true }
+  return { plan: { ...plan, ...draftWritePlan(existing, entity, removed), needs: resources.needs } }
 }
 
 /**

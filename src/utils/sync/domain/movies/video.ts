@@ -63,11 +63,8 @@ export function syncMovieVideo({
   const startTime = Date.now()
   const title = originalTitle
   const plan = emptyWritePlan<MovieEntity>()
-  // Whether the step writes the movie: set where its plan stamps lastSynced.
-  let wroteDocument = false
   const failed = (errors: string[]): MovieStepOutcome => ({
     plan: { ...emptyWritePlan<MovieEntity>(), incomplete: true, deferrals: ['video'] },
-    wroteDocument: false,
     result: movieStepResult(title, SyncOperation.Content, run, SyncStatus.Failed, [], errors, {
       processingTime: Date.now() - startTime,
     }),
@@ -103,7 +100,6 @@ export function syncMovieVideo({
       // the metadata name and the folder name (the same name plus its year)
       // depending on which strategy had something to change.
       const set: any = { ...contentUpdates, lastSynced: new Date() }
-      wroteDocument = true
 
       // Add source tracking for updated content fields
       Object.keys(contentUpdates).forEach((field) => {
@@ -173,7 +169,6 @@ export function syncMovieVideo({
 
     return {
       plan,
-      wroteDocument,
       result: movieStepResult(
         title,
         SyncOperation.Content,

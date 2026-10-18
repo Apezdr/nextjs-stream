@@ -103,8 +103,6 @@ export function syncMovieArtwork(
 
   const plan = emptyWritePlan<MovieEntity>()
   const retries: BlurhashRetry[] = []
-  // Whether the step writes the movie: set where its plan stamps lastSynced.
-  let wroteDocument = false
 
   try {
     syncEventBus.emitProgress(title, MediaType.Movie, run.serverConfig.id, SyncOperation.Assets, {
@@ -128,7 +126,6 @@ export function syncMovieArtwork(
 
     if (Object.keys(assetUpdates).length > 0) {
       const set: any = { ...assetUpdates, lastSynced: new Date() }
-      wroteDocument = true
 
       // Add source tracking for updated asset fields
       Object.keys(assetUpdates).forEach((field) => {
@@ -162,7 +159,6 @@ export function syncMovieArtwork(
 
     return {
       plan,
-      wroteDocument,
       retries,
       result: movieStepResult(
         title,
@@ -184,7 +180,6 @@ export function syncMovieArtwork(
     plan.deferrals.push('artwork')
     return {
       plan,
-      wroteDocument: false,
       retries,
       result: movieStepResult(title, SyncOperation.Assets, run, SyncStatus.Failed, [], [message], {
         processingTime: Date.now() - startTime,
@@ -268,9 +263,8 @@ export function retryMovieBlurhashes(
     )
 
     return {
+      // The retry writes blurhashes alone; its plan does not stamp lastSynced.
       plan,
-      // The retry writes blurhashes alone; it does not stamp lastSynced.
-      wroteDocument: false,
       result: movieStepResult(
         title,
         SyncOperation.Blurhash,
@@ -286,7 +280,6 @@ export function retryMovieBlurhashes(
     syncEventBus.emitError(title, MediaType.Movie, run.serverConfig.id, message, SyncOperation.Blurhash)
     return {
       plan: { ...emptyWritePlan<MovieEntity>(), incomplete: true, deferrals: ['blurhash retry'] },
-      wroteDocument: false,
       result: movieStepResult(title, SyncOperation.Blurhash, run, SyncStatus.Failed, [], [message], {
         processingTime: Date.now() - startTime,
       }),
