@@ -87,3 +87,65 @@ describe('mergeWritePlans: needs, deferrals, incomplete and the gate', () => {
     expect(decideGate({ incomplete: false })).toBe('stamp')
   })
 })
+
+describe('draftWritePlan: the plan of a builder that edits a copy of the stored document', () => {
+  const { draftWritePlan } = require('@src/utils/sync/core/writePlan')
+
+  it('sets the fields the copy changed or added, in the copy\'s order, and nothing it left alone', () => {
+    const shared = { nested: true }
+    const existing = { a: 1, b: shared, c: 'x' }
+    const draft = { ...existing, c: 'y', d: 2, a: 1 }
+    const { set } = draftWritePlan(existing, draft, [])
+    expect(set).toEqual({ c: 'y', d: 2 })
+    expect(Object.keys(set)).toEqual(['c', 'd'])
+  })
+
+  it('sets a field the stored document holds as an equal but distinct object', () => {
+    const existing = { meta: { name: 'n' } }
+    expect(draftWritePlan(existing, { meta: { name: 'n' } }, []).set).toEqual({ meta: { name: 'n' } })
+  })
+
+  it('sets every field of a new document, and takes the removals as given', () => {
+    const plan = draftWritePlan(null, { title: 't', type: 'season' }, ['gone'])
+    expect(plan).toEqual({ set: { title: 't', type: 'season' }, unset: ['gone'] })
+  })
+})
+
+describe('applyWritePlan: the document a plan leaves', () => {
+  const { applyWritePlan, draftWritePlan } = require('@src/utils/sync/core/writePlan')
+
+  it('writes the set over the stored document in place, adds new fields last, and makes the removals', () => {
+    const doc = applyWritePlan({ a: 1, b: 2, c: 3 }, { set: { d: 4, b: 9 }, unset: ['c'] })
+    expect(doc).toEqual({ a: 1, b: 9, d: 4 })
+    expect(Object.keys(doc)).toEqual(['a', 'b', 'd'])
+  })
+
+  it('does not make a removal of a field the plan also sets, and does not change its inputs', () => {
+    const existing = { a: 1 }
+    const plan = { set: { a: 2 }, unset: ['a'] }
+    expect(applyWritePlan(existing, plan)).toEqual({ a: 2 })
+    expect(existing).toEqual({ a: 1 })
+    expect(applyWritePlan(null, { set: { a: 1 }, unset: ['b'] })).toEqual({ a: 1 })
+  })
+
+  it('gives back the copy a builder edited, given its plan', () => {
+    const existing = { _id: 's1', title: 'Season 1', posterBlurhash: 'old', episodeCount: 3 }
+    const draft = { ...existing, lastSynced: 'now', title: 'Named', posterURL: 'p' }
+    delete draft.posterBlurhash
+    expect(applyWritePlan(existing, draftWritePlan(existing, draft, ['posterBlurhash']))).toEqual(draft)
+  })
+})
+
+describe('cleanupWritePlan: field-absence cleanup as a plan', () => {
+  const { cleanupWritePlan } = require('@src/utils/sync/core/writePlan')
+
+  it('removes what the cleanup removes, and holds the gate open for a removal it held back', () => {
+    expect(cleanupWritePlan({ unset: ['logo', 'logoSource'], changes: [] })).toEqual({
+      ...emptyWritePlan(), unset: ['logo', 'logoSource'],
+    })
+    expect(cleanupWritePlan({ changes: [], withheld: true })).toEqual({
+      ...emptyWritePlan(), incomplete: true, deferrals: ['field-absence cleanup'],
+    })
+    expect(cleanupWritePlan({ changes: [] })).toEqual(emptyWritePlan())
+  })
+})
