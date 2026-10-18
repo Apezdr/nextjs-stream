@@ -43,7 +43,7 @@ import {
 
 import { createLogger } from '@src/lib/logger'
 import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
-import { emptyWritePlan, mergeWritePlans } from '../../core/writePlan'
+import { cleanupWritePlan, draftWritePlan, emptyWritePlan, mergeWritePlans } from '../../core/writePlan'
 import { effectiveMetadata } from '../../core/metadataLock'
 import { resolveTitle } from '../../core/title'
 import { syncLogger } from '../../core/logger'
@@ -226,17 +226,16 @@ export class MovieSyncService {
       // then. A pass in which nothing but the blurhash retry, the title or the
       // gate changes writes only that.
 
-      // ---- One plan (core/writePlan): the cleanup's removals first, then
-      // the normalization, then the steps' plans in step order. ----
+      // ---- One plan (core/writePlan): the cleanup's removals (and a removal
+      // it held back because not every server answered) first, then the
+      // normalization, then the steps' plans in step order. The normalized
+      // movie is a draft of the stored one: its plan sets what it added or
+      // healed, every field for a new movie. ----
       const merged = mergeWritePlans<MovieEntity>([
-        {
-          ...emptyWritePlan<MovieEntity>(),
-          unset: cleanupPlan.unset ?? [],
-          // A removal held back because not every server answered.
-          incomplete: cleanupPlan.withheld === true,
-          deferrals: cleanupPlan.withheld === true ? ['field-absence cleanup'] : [],
-        },
-        { ...emptyWritePlan<MovieEntity>(), set: stepsWrite ? normalizationOf(normalized, existingMovie) : {} },
+        cleanupWritePlan<MovieEntity>(cleanupPlan),
+        stepsWrite
+          ? { ...emptyWritePlan<MovieEntity>(), ...draftWritePlan(existingMovie, normalized, []) }
+          : emptyWritePlan<MovieEntity>(),
         ...stepPlans,
       ], originalTitle)
 
@@ -502,21 +501,4 @@ export class MovieSyncService {
       console.log(`🏥 Healed critical fields: ${healedFields.join(', ')}`)
     }
   }
-}
-
-/**
- * What normalizeMovieEntity added to the stored movie or changed in it (a
- * healed field, lastSynced), as fields to write: every field of the
- * normalized movie for a new one. Written over the stored document, it gives
- * the normalized movie.
- */
-function normalizationOf(normalized: MovieEntity, existing: MovieEntity | null): Partial<MovieEntity> {
-  if (!existing) return { ...normalized }
-  const changed: Record<string, any> = {}
-  for (const [field, value] of Object.entries(normalized)) {
-    if (!Object.prototype.hasOwnProperty.call(existing, field) || !Object.is((existing as any)[field], value)) {
-      changed[field] = value
-    }
-  }
-  return changed as Partial<MovieEntity>
 }

@@ -227,6 +227,32 @@ describe('the wroteDocument flag of each step', () => {
   })
 })
 
+describe('the field-absence cleanup plan (core/writePlan cleanupWritePlan)', () => {
+  // The poster is stored, and no server reports one any more.
+  const stored = () => ({ ...storedWithoutType(), type: 'movie', syncGates: { A: 'stale' } })
+  const cleanup = (allEnabledServersProbed) => ({ enabled: true, mode: 'enforce', maxFieldsPerEntity: 5, allEnabledServersProbed })
+
+  it('removes what no server reports, and stamps the gate', async () => {
+    const repository = repositoryOver(stored())
+    await syncOver(repository, { urls: {} }, { cleanup: cleanup(true) })
+
+    const [written, , options] = repository.smartUpsert.mock.calls[0]
+    expect(options.unset).toEqual(expect.arrayContaining(['posterURL', 'posterSource']))
+    expect(written.syncGates?.A).toEqual(expect.any(String))
+    expect(written.syncGates?.A).not.toBe('stale')
+  })
+
+  it('holds a removal back when not every server answered, and leaves the gate open', async () => {
+    const repository = repositoryOver(stored())
+    await syncOver(repository, { urls: {} }, { cleanup: cleanup(false) })
+
+    const [written, , options] = repository.smartUpsert.mock.calls[0]
+    expect(options.unset).toEqual([])
+    expect(written.posterURL).toBe(A_POSTER)
+    expect(written.syncGates?.A).toBeUndefined()
+  })
+})
+
 describe('the field-absence cleanup log', () => {
   const enforce = { enabled: true, mode: 'enforce', maxFieldsPerEntity: 5, allEnabledServersProbed: true }
   const cleanupLog = () => mockLog.info.mock.calls.find(([, message]) => message === 'field-absence cleanup (enforce)')

@@ -192,7 +192,11 @@ export interface WritePlan<E = Record<string, any>> {
  */
 export interface PlanOutcome<E = Record<string, any>> {
   plan: WritePlan<E>
-  /** The step writes the document (its plan stamps `lastSynced`). */
+  /**
+   * The step writes the document (its plan stamps `lastSynced`).
+   * MovieSyncService reads it: the movie's normalization is written only
+   * with a step that writes. A TV builder's plan always writes its document.
+   */
   wroteDocument: boolean
 }
 

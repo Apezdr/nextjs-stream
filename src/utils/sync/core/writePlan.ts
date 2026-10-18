@@ -16,10 +16,11 @@
  * The gate decision reads the merged plan alone: an incomplete pass leaves
  * the gate open (core/syncGate decideGate).
  *
- * A builder that works on a copy of the stored document (the TV builders)
- * states its plan with draftWritePlan, and applyWritePlan gives back the
- * document a plan leaves. Field-absence cleanup's outcome is a plan too
- * (cleanupWritePlan).
+ * A builder that works on a copy of the stored document (the TV builders,
+ * and the movie's normalization) states its plan with draftWritePlan, and
+ * applyWritePlan gives back the document a plan leaves. Field-absence
+ * cleanup's outcome is a plan too (cleanupWritePlan), for movies and TV.
+ * These are the one implementation of each for both.
  *
  * Writes nothing: the caller writes what the merged plan says.
  */
