@@ -28,7 +28,7 @@ import {
   isHighestPriorityAmongServers,
   seasonsAcrossServers,
 } from '@src/utils/sync/core/ownership'
-import { changesDocument } from '@src/utils/sync/core/syncGate'
+import { changesDocument, decideGate } from '@src/utils/sync/core/syncGate'
 import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
 import { createLogger } from '@src/lib/logger'
 
@@ -87,8 +87,11 @@ export class SeasonSyncService {
         cleanupChanges?: string[]
         /** The pass changed the season's data (not just sync bookkeeping). */
         documentChanged: boolean
-        /** A removal was held back because not every enabled server answered. */
-        removalWithheld: boolean
+        /**
+         * The season's part of the pass is not complete (decideGate): a
+         * removal was held back, or something was left for a later pass.
+         */
+        gateLeftOpen: boolean
       }> = []
 
       for (const [key, fileData] of Object.entries(showFileData.seasons)) {
@@ -143,7 +146,8 @@ export class SeasonSyncService {
           documentChanged: changesDocument(existing as any, merged as any, unset),
           // Either way the pass has to run again: a removal held back because
           // not every server answered, or a count or blurhash it could not settle.
-          removalWithheld: plan.withheld === true || incomplete,
+          gateLeftOpen:
+            decideGate({ failed: false, heldBack: plan.withheld === true, deferred: incomplete }) === 'leaveOpen',
         })
       }
 
@@ -152,7 +156,7 @@ export class SeasonSyncService {
         await this.seasonRepository.smartBulkUpsert(seasonOps)
       }
 
-      for (const { merged: entity, cleanupChanges, documentChanged, removalWithheld } of seasonOps) {
+      for (const { merged: entity, cleanupChanges, documentChanged, gateLeftOpen } of seasonOps) {
         results.push(this.makeResult(
           `${showTitle} S${entity.seasonNumber}`, context,
           SyncStatus.Completed,
@@ -162,7 +166,7 @@ export class SeasonSyncService {
             seasonNumber: entity.seasonNumber,
             // Read by TVShowSyncService when it decides the show's own gate.
             ...(documentChanged ? { documentChanged: true } : {}),
-            ...(removalWithheld ? { gateLeftOpen: true } : {}),
+            ...(gateLeftOpen ? { gateLeftOpen: true } : {}),
           }
         ))
       }

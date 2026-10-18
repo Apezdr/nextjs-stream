@@ -35,7 +35,7 @@ import {
   availabilityFingerprint,
   payloadFingerprint,
 } from '@src/utils/sync/core/syncGate'
-import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates } from '../../core/syncGate'
+import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, decideGate } from '../../core/syncGate'
 import isEqual from 'lodash/isEqual'
 import { syncLogger } from '../../core/logger'
 import { seedDiscovery, applyFirstSeen } from '../../core/discovery'
@@ -187,15 +187,20 @@ export class TVShowSyncService {
       //    failed metadata fetch, was never retried, because the next run
       //    skipped the whole show.
       const childFailed = childResults.some(r => r.status === SyncStatus.Failed)
-      const gateLeftOpen = childResults.some(r => (r.metadata as any)?.gateLeftOpen === true)
+      const childGateLeftOpen = childResults.some(r => (r.metadata as any)?.gateLeftOpen === true)
       const subtreeChanged =
         showChanged || childResults.some(r => (r.metadata as any)?.documentChanged === true)
-      // `seasonCountHeld` and `cleanupPlan.withheld` are both a removal held
-      // back because not every server answered: the pass has to run again on a
-      // run where they all do, so it may not be marked complete.
+      // The pass is complete only when nothing failed, held back or deferred
+      // (decideGate). `cleanupPlan.withheld` is a removal held back because
+      // not every server answered; `seasonCountHeld` keeps the stored count
+      // until a run where they all do, and a blurhash that could not be
+      // fetched is retried: either way the pass has to run again.
       const gateToStamp =
-        metadataFetchSucceeded && !childFailed && !gateLeftOpen &&
-        cleanupPlan.withheld !== true && !seasonCountHeld && !fetchIncomplete
+        decideGate({
+          failed: !metadataFetchSucceeded || childFailed,
+          heldBack: cleanupPlan.withheld === true,
+          deferred: seasonCountHeld || fetchIncomplete || childGateLeftOpen,
+        }) === 'stamp'
           ? showGate
           : null
       const closedOut = await this.finalizeShow(showTitle, null, {

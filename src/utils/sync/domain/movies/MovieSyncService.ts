@@ -28,7 +28,7 @@ import {
   isHighestPriorityAmongServers,
   getServersReportingTitle,
 } from '@src/utils/sync/core/ownership'
-import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
+import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, decideGate, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
 import isEqual from 'lodash/isEqual'
 
 const pinoLog = createLogger('Sync.Movie')
@@ -262,19 +262,15 @@ export class MovieSyncService {
       }
       context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
 
-      // A failed metadata fetch must not advance the metadata gate. If the
-      // metadata strategy reported Failed (fetch error, or it preserved existing
-      // metadata because the fetch came back empty), still persist whatever other
-      // strategies changed (e.g. asset URLs) but leave this server's gate
-      // unstamped so the next sync retries the fetch. Without this, an
-      // asset-only change during a metadata-fetch failure would stamp the gate
-      // and lock the movie out of future metadata refreshes (the "spent gate"
-      // failure mode).
-      const metadataFetchFailed = results.some(
-        r => r.operation === SyncOperation.Metadata && r.status === SyncStatus.Failed
-      )
-      // The same holds for any other strategy that failed: its work was not
-      // done, so the gate must stay open for the next run to retry it.
+      // A failed strategy leaves the gate open. A failed metadata fetch is one
+      // (the metadata strategy reports Failed on a fetch error, or when it
+      // preserved existing metadata because the fetch came back empty): what
+      // other strategies changed (e.g. asset URLs) is still written, but this
+      // server's gate stays unstamped so the next sync retries the fetch.
+      // Without this, an asset-only change during a metadata-fetch failure
+      // would stamp the gate and lock the movie out of future metadata
+      // refreshes (the "spent gate" failure mode). Any other strategy that
+      // failed did not do its work either.
       const anyStrategyFailed = results.some(r => r.status === SyncStatus.Failed)
 
       // Field-absence cleanup: drop asset fields no enabled server reports anymore
@@ -294,21 +290,22 @@ export class MovieSyncService {
       const unsetFields = [...new Set([...(cleanupPlan.unset ?? []), ...strategyUnset])]
       const hasUnset = unsetFields.length > 0
 
-      // The skip gate (core/syncGate). This server's entry is stamped when the
-      // pass ran to the end with nothing failed and nothing deferred — including
-      // a pass that found nothing to change, which would otherwise be repeated
-      // in full on every run. It is left out when a strategy failed, or when a
-      // removal was held back because not every server answered, so the next
-      // run does the work again. A pass that changed the document drops the
-      // other servers' entries.
-      const removalDeferred =
+      // The skip gate (core/syncGate). This server's entry is stamped only when
+      // the pass ran to the end with nothing failed, held back or deferred
+      // (decideGate) — including a pass that found nothing to change, which
+      // would otherwise be repeated in full on every run. Otherwise it is left
+      // out, so the next run does the work again. A pass that changed the
+      // document drops the other servers' entries.
+      const removalHeldBack =
         context.pendingMovieDeferrals?.has(effectiveOriginalTitle) === true || cleanupPlan.withheld === true
       const documentChanged = changesDocument(existingMovie as any, pending, unsetFields)
       // A file the server publishes (a blurhash) that could not be fetched is
-      // work left undone as well.
+      // work left for the next pass.
       const fetchFailed = (context.pendingMovieFetchFailures?.get(effectiveOriginalTitle)?.size ?? 0) > 0
       const gateToStamp =
-        !metadataFetchFailed && !anyStrategyFailed && !removalDeferred && !fetchFailed ? syncGate : null
+        decideGate({ failed: anyStrategyFailed, heldBack: removalHeldBack, deferred: fetchFailed }) === 'stamp'
+          ? syncGate
+          : null
       const storedGates = ((existingMovie as any)?.syncGates ?? {}) as Record<string, string>
       const gates = nextSyncGates(storedGates, context.serverConfig.id, gateToStamp, documentChanged)
       if (!isEqual(gates, storedGates)) pending.syncGates = gates

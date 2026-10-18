@@ -55,6 +55,7 @@ import {
   readSyncGate,
   changesDocument,
   nextSyncGates,
+  decideGate,
 } from '@src/utils/sync/core/syncGate'
 import isEqual from 'lodash/isEqual'
 import { createLogger } from '@src/lib/logger'
@@ -219,15 +220,19 @@ export class EpisodeSyncService {
         const plan = this.planEpisodeCleanup(showTitle, seasonNumber, key, existing, displayTitle, epNum, context)
         const unset = [...new Set([...(plan.unset ?? []), ...builtUnset])]
 
-        // Stamp this server's gate. Only a complete pass may: a failed metadata
-        // fetch (or the inline parent fallback, which is display-only) would
-        // lock the episode on stale metadata, and a removal held back because
-        // not every server answered has to be retried on a run where they do.
+        // Stamp this server's gate. Only a complete pass may (decideGate): a
+        // failed metadata fetch (or the inline parent fallback, which is
+        // display-only) would lock the episode on stale metadata, a removal
+        // held back because not every server answered has to be retried on a
+        // run where they do, and so does a blurhash that could not be fetched.
         // A pass that changed the episode drops the other servers' gates either
         // way.
-        const removalWithheld = builtWithheld || plan.withheld === true
+        const removalHeldBack = builtWithheld || plan.withheld === true
         const documentChanged = changesDocument(existing as any, merged as any, unset)
-        const gateToStamp = metadataFromFreshFetch && !removalWithheld && !fetchIncomplete ? episodeGate : null
+        const gateToStamp =
+          decideGate({ failed: !metadataFromFreshFetch, heldBack: removalHeldBack, deferred: fetchIncomplete }) === 'stamp'
+            ? episodeGate
+            : null
         const storedGates = ((existing as any)?.syncGates ?? {}) as Record<string, string>
         const gates = nextSyncGates(storedGates, context.serverConfig.id, gateToStamp, documentChanged)
         if (!existing || !isEqual(gates, storedGates)) (merged as any).syncGates = gates
