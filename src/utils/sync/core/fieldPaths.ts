@@ -148,8 +148,10 @@ export function getFieldPath(entityField: keyof typeof MovieFieldPathMap): Movie
  * const posterPath = getFieldPath('posterURL')  // Returns: 'urls.poster'
  * const backdropPath = getFieldPath('backdrop')  // Returns: 'urls.backdrop'
  * 
- * // Use in shouldUpdateField
- * if (shouldUpdateField(posterPath, originalTitle, context)) {
+ * // Use with the ownership check (core/ownership)
+ * if (isCurrentServerHighestPriorityForReportedField(
+ *   context.fieldAvailability, 'movies', originalTitle, posterPath, context.serverConfig
+ * )) {
  *   // Update poster
  * }
  * 

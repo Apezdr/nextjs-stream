@@ -44,8 +44,8 @@ import {
 } from '../../../core/viewingExperience'
 
 import {
-  isCurrentServerHighestPriorityForField,
   getServersReportingField,
+  isCurrentServerHighestPriorityForReportedField,
   isHighestPriorityAmongServers,
   serverOutranks,
 } from '@src/utils/sync/core/ownership'
@@ -615,7 +615,11 @@ export class MovieContentStrategy implements SyncStrategy {
       }
     }
 
-    // Step 5: Process chapters from file server data
+    // Step 5: Process chapters from file server data. The chapter file belongs
+    // to the highest-priority server among those that report one (ties broken
+    // on server id); a server the availability map does not list for it never
+    // owns it. Removal is field-absence cleanup's, on a run where every
+    // enabled server answered (MovieSyncService).
     if (fileServerMovieData) {
       const chapterUrl = this.extractChapterFromFileServerData(
         originalTitle,
@@ -625,7 +629,13 @@ export class MovieContentStrategy implements SyncStrategy {
 
       if (
         chapterUrl &&
-        this.shouldUpdateField(getFieldPath('chapterURL'), originalTitle, context)
+        isCurrentServerHighestPriorityForReportedField(
+          context.fieldAvailability,
+          MediaTypesFieldAvailability.Movie,
+          originalTitle,
+          getFieldPath('chapterURL'),
+          context.serverConfig
+        )
       ) {
         if (currentMovie.chapterURL !== chapterUrl) {
           updates.chapterURL = chapterUrl
@@ -1188,66 +1198,6 @@ export class MovieContentStrategy implements SyncStrategy {
       syncLogger.error(`Failed to extract chapter data for ${originalTitle}:`, error)
       return null
     }
-  }
-
-  /**
-   * Check if the specified field should be updated based on server priority
-   * CRITICAL: Always use originalTitle (filesystem key) for fieldAvailability lookups
-   */
-  private shouldUpdateField(field: string, originalTitle: string, context: SyncContext): boolean {
-    syncLogger.debug(
-      `🔍 Priority check: field="${field}", originalTitle="${originalTitle}", server=${context.serverConfig.id}`
-    )
-
-    // Check if fieldAvailability is present in context
-    if (!context.fieldAvailability) {
-      syncLogger.debug(`⚠️ No fieldAvailability in context, defaulting to true for ${field}`)
-      return true
-    }
-
-    // Ensure mediaType exists in fieldAvailability
-    if (!context.fieldAvailability[MediaTypesFieldAvailability.Movie]) {
-      syncLogger.debug(
-        `⚠️ MediaType.Movie not found in fieldAvailability, defaulting to true for ${field}`
-      )
-      return true
-    }
-
-    // Check if the movie exists in fieldAvailability (using originalTitle as key)
-    const movieFields = context.fieldAvailability[MediaTypesFieldAvailability.Movie][originalTitle]
-    if (!movieFields) {
-      syncLogger.debug(
-        `⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true`
-      )
-      return true
-    }
-
-    // Get servers that have this field
-    const serversWithField = movieFields[field] || []
-    syncLogger.debug(
-      `📊 Servers with ${field}: ${JSON.stringify(serversWithField)} (${serversWithField.length} total)`
-    )
-
-    // Check priority
-    const hasHighestPriority = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability,
-      MediaTypesFieldAvailability.Movie,
-      originalTitle, // ← CRITICAL: Always use originalTitle for consistency
-      field,
-      context.serverConfig
-    )
-
-    if (hasHighestPriority) {
-      syncLogger.debug(
-        `✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has highest priority for ${field}`
-      )
-    } else {
-      syncLogger.debug(
-        `❌ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does NOT have highest priority for ${field}`
-      )
-    }
-
-    return hasHighestPriority
   }
 
   /**
