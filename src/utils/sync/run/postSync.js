@@ -185,10 +185,12 @@ const EMPTY_RESULT = Object.freeze({
  *
  * @param {Object} args
  * @param {string} args.syncRunId
- * @param {import('./writtenMedia').WrittenMedia} args.written - What the run's passes wrote
+ * @param {string[]} [args.incompleteReasons] - Why the run was not complete
+ *   (tickSkip incompletePassReasons): only a complete run may start the
+ *   announced-titles set
  * @returns {Promise<{migration: Object, titleHashes: Object, watchHistoryValidation: Object, notifications: Object|null}>}
  */
-export async function runAfterSyncJobs({ syncRunId, written }) {
+export async function runAfterSyncJobs({ syncRunId, incompleteReasons = [] }) {
   const log = createLogger('FlatSync.AfterSync')
   const out = { migration: null, titleHashes: null, watchHistoryValidation: null, notifications: null }
 
@@ -216,7 +218,7 @@ export async function runAfterSyncJobs({ syncRunId, written }) {
   out.watchHistoryValidation = await validateWatchHistory('full pass')
 
   try {
-    out.notifications = await announceNewContent(written?.writtenTitles, { syncRunId })
+    out.notifications = await announceNewContent({ syncRunId, incompleteReasons })
   } catch (error) {
     logError(log, error, { syncRunId, context: 'notification_processing' })
     out.notifications = { error: error.message }

@@ -195,7 +195,9 @@ function mockCollection(dbName, name) {
   if (mockDatabases[dbName][name]) return mockDatabases[dbName][name]
   const collection = {
     docs: [],
-    async createIndex() {
+    indexes: [],
+    async createIndex(key, options) {
+      collection.indexes.push({ key, options })
       return 'index'
     },
     async findOne(filter) {
@@ -406,6 +408,7 @@ beforeEach(() => {
   delete globalThis.__watchHistoryValidationState
   // ... and its own database, with no migration known to be done
   delete globalThis.__dataMigrations
+  delete globalThis.__newContentOutboxIndex
   mockDeliveryFailures.length = 0
   // The Node.js server's hash endpoints: not there, so the pass runs without them.
   global.fetch = jest.fn(async () => ({ ok: false, status: 404 }))
@@ -702,39 +705,58 @@ describe('the new-content notices', () => {
   const announcedSet = () => docs('AnnouncedTitles').map((d) => d._id).sort()
   const outbox = () => docs('NewContentOutbox')
   const movieKey = (title) => `movie:${title}`
-  const episodeKey = (n) => `episode:${SHOW}:S1E${n}`
+  const episodeKey = (n, show = SHOW) => `episode:${show}:S1E${n}`
   const nextRun = () => {
     mockSideJobs.length = 0
     mockLogLines.length = 0
   }
-  const HIDDEN_MOVIE = 'Hidden Movie (2021)'
   // A run on a database whose announced-titles set was started earlier
   const started = (fileServers, options = {}) => runSync(fileServers, { baselineStarted: true, ...options })
+  const HIDDEN_MOVIE = 'Hidden Movie (2021)'
+  const hiddenMovie = () => ({ ...moviePayload(), mediaIdentity: { id: 'mid:hidden', scheme: 'mid', firstSeen: null } })
+  /** The same movie under another folder name (the identity sidecar moves with the folder). */
+  const RENAMED = 'Example Movie (2019)'
+  const renamedFolder = (payload, from, to) =>
+    JSON.parse(JSON.stringify(payload).split(encodeURIComponent(from)).join(encodeURIComponent(to)))
 
   describe('the baseline', () => {
-    it('the first run on a database announces nothing and puts the whole library, hidden titles included, in the set', async () => {
-      const result = await runSync(
-        oneServer({ movies: { [MOVIE]: playableMovie(), [HIDDEN_MOVIE]: moviePayload() } }),
-      )
+    it('the first complete run announces nothing and puts the whole library, hidden titles and identities included, in the set', async () => {
+      const result = await runSync(oneServer({ movies: { [MOVIE]: playableMovie(), [HIDDEN_MOVIE]: hiddenMovie() } }))
 
       expect(result.added).toEqual({ movies: 2, shows: 1, episodes: 2 })
       expect(announced()).toEqual([])
-      expect(announcedSet()).toEqual([episodeKey(1), episodeKey(2), movieKey(HIDDEN_MOVIE), movieKey(MOVIE)].sort())
+      expect(announcedSet()).toEqual(
+        [
+          episodeKey(1), episodeKey(2), movieKey(HIDDEN_MOVIE), movieKey(MOVIE),
+          'media:mid:hidden', 'media:mid:movie', 'media:mid:show:e1', 'media:mid:show:e2',
+        ].sort()
+      )
       expect(docs('AnnouncedTitles')[0]).toMatchObject({ by: 'baseline' })
-      expect(completed()).toMatchObject({ baseline: { movies: 2, episodes: 2 } })
+      expect(completed()).toMatchObject({ baseline: { movies: 2, episodes: 2, keys: 8 } })
       expect(mockCollection('app_config', 'migrations').docs.map((d) => d._id)).toContain('new-content-baseline')
     })
 
-    it('after it, a run announces what is new and nothing that was there', async () => {
+    it('waits for a complete run: an incomplete one starts nothing and announces nothing', async () => {
+      // A server did not answer
+      await runSync(oneServer({ movies: { [MOVIE]: playableMovie() } }), { allEnabledServersProbed: false })
+
+      expect(announced()).toEqual([])
+      expect(announcedSet()).toEqual([])
+      expect(mockCollection('app_config', 'migrations').docs.map((d) => d._id)).not.toContain('new-content-baseline')
+      expect(completed()).toMatchObject({ baseline: { waiting: ['not every enabled server answered'] } })
+      nextRun()
+
+      // The next complete run starts it, and still announces nothing
       await runSync(oneServer({ movies: { [MOVIE]: playableMovie() } }))
+      expect(announced()).toEqual([])
+      expect(announcedSet()).toContain(movieKey(MOVIE))
       nextRun()
 
       await runSync(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: { [SHOW]: showPayload([1, 2, 3]) } }))
-
       expect(announced()).toEqual([{ job: 'notifications', movies: [], episodes: [`${SHOW} S1E3`] }])
     })
 
-    it('a baseline that fails announces nothing, writes no flag, and is seeded again by the next run', async () => {
+    it('a baseline that fails announces nothing, writes no flag, and is seeded by the next complete run', async () => {
       const set = mockCollection('Media', 'AnnouncedTitles')
       const bulkWrite = set.bulkWrite
       set.bulkWrite = async () => {
@@ -745,11 +767,10 @@ describe('the new-content notices', () => {
       expect(mockCollection('app_config', 'migrations').docs.map((d) => d._id)).not.toContain('new-content-baseline')
 
       set.bulkWrite = bulkWrite
-      delete globalThis.__dataMigrations
       nextRun()
-      await runSync(oneServer({ movies: { [MOVIE]: playableMovie() } }), { forceSync: true })
+      await runSync(oneServer({ movies: { [MOVIE]: playableMovie() } }))
 
-      // The run that seeds announces nothing, even what it rewrote
+      // The run that seeds announces nothing
       expect(announced()).toEqual([])
       expect(announcedSet()).toContain(movieKey(MOVIE))
     })
@@ -762,7 +783,9 @@ describe('the new-content notices', () => {
       expect(announced()).toEqual([
         { job: 'notifications', movies: [MOVIE], episodes: [`${SHOW} S1E1`, `${SHOW} S1E2`] },
       ])
-      expect(announcedSet()).toEqual([episodeKey(1), episodeKey(2), movieKey(MOVIE)].sort())
+      expect(announcedSet()).toEqual(
+        [episodeKey(1), episodeKey(2), movieKey(MOVIE), 'media:mid:movie', 'media:mid:show:e1', 'media:mid:show:e2'].sort()
+      )
       expect(docs('AnnouncedTitles').every((d) => d.by === 'notice')).toBe(true)
       expect(outbox()).toEqual([])
       // The posters the digest's list shows: the movie's, and the episodes' show's
@@ -771,8 +794,19 @@ describe('the new-content notices', () => {
       expect(composed.episodes[0].showPosterURL).toBe(`https://default.example${SHOW_ROOT}/show_poster.jpg?hash=p1`)
     })
 
-    it('announce a title however long ago it first reached a file server (an outage, an old folder)', async () => {
-      // The processor first saw it in 2024: the date plays no part
+    it('find a title whose notice was lost before it was queued on the next full run, though it is not written again', async () => {
+      const queue = mockCollection('Media', 'NewContentOutbox')
+      const insertOne = queue.insertOne
+      queue.insertOne = async () => {
+        throw new Error('connection reset')
+      }
+      await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
+      expect(announced()).toEqual([])
+      expect(outbox()).toEqual([])
+      queue.insertOne = insertOne
+      nextRun()
+
+      // The movie is skipped on its gate: nothing writes it
       await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
 
       expect(announced()).toEqual([{ job: 'notifications', movies: [MOVIE], episodes: [] }])
@@ -784,11 +818,24 @@ describe('the new-content notices', () => {
       delete placeholder.urls.mp4
       await started(oneServer({ movies: { [MOVIE]: placeholder }, tv: {} }))
       expect(announced()).toEqual([])
-      expect(completed()).toMatchObject({ notAnnounced: { hidden: 1 } })
       expect(announcedSet()).toEqual([])
       nextRun()
 
       await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
+
+      expect(announced()).toEqual([{ job: 'notifications', movies: [MOVIE], episodes: [] }])
+    })
+
+    it('announce a title an admin override makes visible, with no pass writing it', async () => {
+      // A transcoder link the file server does not offer as eligible: hidden
+      const movie = moviePayload()
+      movie.urls = { ...movie.urls, jitEligible: false, jitUrl: 'https://jit.example/stream/movie/master.m3u8' }
+      await started(oneServer({ movies: { [MOVIE]: movie }, tv: {} }))
+      expect(announced()).toEqual([])
+      docs('FlatMovies')[0].jitServeOverride = 'on'
+      nextRun()
+
+      await started(oneServer({ movies: { [MOVIE]: movie }, tv: {} }))
 
       expect(announced()).toEqual([{ job: 'notifications', movies: [MOVIE], episodes: [] }])
     })
@@ -804,7 +851,38 @@ describe('the new-content notices', () => {
 
       expect(result.added.movies).toBe(1)
       expect(announced()).toEqual([])
-      expect(completed()).toMatchObject({ notAnnounced: { alreadyAnnounced: 1 } })
+      expect(completed()).toMatchObject({ candidates: 0, alreadyAnnounced: 1 })
+    })
+
+    it('do not announce a movie whose folder was renamed: its identity was announced', async () => {
+      await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
+      // The folder is renamed (a year fixed); the old document goes with cleanup
+      docs('FlatMovies').length = 0
+      nextRun()
+
+      await started(oneServer({ movies: { [RENAMED]: renamedFolder(playableMovie(), MOVIE, RENAMED) }, tv: {} }))
+
+      expect(docs('FlatMovies').map((d) => d.originalTitle)).toEqual([RENAMED])
+      expect(announced()).toEqual([])
+      // The new folder name joins the set beside the identity
+      expect(announcedSet()).toContain(movieKey(RENAMED))
+      expect(docs('AnnouncedTitles').find((d) => d._id === movieKey(RENAMED))).toMatchObject({ by: 'alias' })
+    })
+
+    it('do not announce the episodes of a show whose folder was renamed: their identities were announced', async () => {
+      const RENAMED_SHOW = 'Example Show (2019) [Renamed]'
+      await started(oneServer({ movies: {}, tv: { [SHOW]: showPayload([1, 2]) } }))
+      expect(announced()).toHaveLength(1)
+      docs('FlatTVShows').length = 0
+      docs('FlatSeasons').length = 0
+      docs('FlatEpisodes').length = 0
+      nextRun()
+
+      await started(oneServer({ movies: {}, tv: { [RENAMED_SHOW]: renamedFolder(showPayload([1, 2]), SHOW, RENAMED_SHOW) } }))
+
+      expect(docs('FlatEpisodes')).toHaveLength(2)
+      expect(announced()).toEqual([])
+      expect(completed()).toMatchObject({ candidates: 0, alreadyAnnounced: 2 })
     })
 
     it('announce no episode of a show re-created under a new _id, except one new to the library', async () => {
@@ -814,13 +892,11 @@ describe('the new-content notices', () => {
       docs('FlatTVShows').length = 0
       nextRun()
 
-      const result = await started(oneServer({ movies: {}, tv: { [SHOW]: showPayload([1, 2, 3]) } }))
+      const result = await runSync(oneServer({ movies: {}, tv: { [SHOW]: showPayload([1, 2, 3]) } }))
 
-      // A new show document, and every episode inserted again under it
       expect(docs('FlatTVShows')[0]._id).not.toBe(firstShow._id)
       expect(result.added).toEqual({ movies: 0, shows: 1, episodes: 3 })
       expect(announced()).toEqual([{ job: 'notifications', movies: [], episodes: [`${SHOW} S1E3`] }])
-      expect(completed()).toMatchObject({ notAnnounced: { alreadyAnnounced: 2 } })
     })
 
     it('announce a title two servers add in the same run once', async () => {
@@ -837,7 +913,6 @@ describe('the new-content notices', () => {
       await started(oneServer({ movies: { [MOVIE]: moviePayload() }, tv: {} }))
 
       expect(announced()).toEqual([])
-      expect(completed()).toMatchObject({ notAnnounced: { hidden: 1 } })
       expect(announcedSet()).toEqual([])
     })
 
@@ -851,16 +926,16 @@ describe('the new-content notices', () => {
       await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
 
       expect(announced()).toEqual([])
-      expect(completed()).toMatchObject({ notAnnounced: { gone: 1 } })
+      expect(announcedSet()).toEqual([])
     })
 
-    it('announce nothing again on a run that rewrites what was announced', async () => {
+    it('announce nothing again on a later run', async () => {
       await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
       nextRun()
 
       await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }), { forceSync: true })
 
-      expect(completed()).toMatchObject({ candidates: 1, notAnnounced: { alreadyAnnounced: 1 } })
+      expect(completed()).toMatchObject({ candidates: 0, alreadyAnnounced: 1 })
       expect(announced()).toEqual([])
     })
   })
@@ -870,37 +945,30 @@ describe('the new-content notices', () => {
       mockDeliveryFailures.push(new Error('connection reset'))
       await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
 
-      // Not announced, and not in the set: it is queued
+      // Not announced, and not in the set: it is queued, with both its keys
       expect(announced()).toEqual([])
       expect(announcedSet()).toEqual([])
       expect(outbox()).toEqual([
-        expect.objectContaining({ titleKeys: [movieKey(MOVIE)], attempts: 1, lastError: 'connection reset' }),
+        expect.objectContaining({
+          state: 'pending',
+          titleKeys: [movieKey(MOVIE), 'media:mid:movie'],
+          attempts: 1,
+          lastError: 'connection reset',
+        }),
       ])
       nextRun()
 
       // The next run skips the movie on its gate, and still delivers the notice
       await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
 
-      expect(completed()).toMatchObject({ candidates: 0, delivery: { delivered: 1, failed: 0 } })
+      expect(completed()).toMatchObject({ candidates: 0, alreadyQueued: 1, delivery: { delivered: 1, failed: 0 } })
       expect(announced()).toEqual([{ job: 'notifications', movies: [MOVIE], episodes: [] }])
-      expect(announcedSet()).toEqual([movieKey(MOVIE)])
+      expect(announcedSet()).toEqual(['media:mid:movie', movieKey(MOVIE)])
       expect(outbox()).toEqual([])
       nextRun()
 
       await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }), { forceSync: true })
       expect(announced()).toEqual([])
-    })
-
-    it('does not queue a title again while its notice waits', async () => {
-      mockDeliveryFailures.push(new Error('connection reset'), new Error('connection reset'))
-      await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
-      nextRun()
-
-      await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }), { forceSync: true })
-
-      expect(completed()).toMatchObject({ notAnnounced: { alreadyQueued: 1 } })
-      expect(outbox()).toHaveLength(1)
-      expect(outbox()[0]).toMatchObject({ attempts: 2 })
     })
 
     it('hands a queued notice to delivery under the same id every time, so a retry adds nothing twice', async () => {
@@ -912,6 +980,36 @@ describe('the new-content notices', () => {
       const ids = MediaNotificationOrchestrator.deliverNewContentNotices.mock.calls.map(([, deliveryId]) => deliveryId)
       expect(ids).toHaveLength(2)
       expect(ids[0]).toBe(ids[1])
+    })
+
+    it('gives up on an entry after 10 failed attempts, logs it once, and finds its titles again once the entry has expired', async () => {
+      MediaNotificationOrchestrator.deliverNewContentNotices.mockClear()
+      const gaveUp = () => mockLogLines.filter((line) => /^Gave up delivering/.test(line.msg ?? ''))
+      mockDeliveryFailures.push(...Array.from({ length: 10 }, () => new Error('not primary')))
+      const lines = []
+      for (let run = 1; run <= 11; run++) {
+        await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
+        lines.push(...gaveUp())
+        nextRun()
+      }
+
+      expect(outbox()).toEqual([
+        expect.objectContaining({ state: 'dead', attempts: 10, deadAt: expect.any(String), lastError: 'not primary' }),
+      ])
+      // Ten attempts, none on the eleventh run, and one line
+      expect(MediaNotificationOrchestrator.deliverNewContentNotices).toHaveBeenCalledTimes(10)
+      expect(lines).toHaveLength(1)
+      expect(announced()).toEqual([])
+      // Dead entries expire (a TTL index on deadAt, 30 days)
+      expect(mockCollection('Media', 'NewContentOutbox').indexes).toContainEqual({
+        key: { deadAt: 1 },
+        options: { name: 'deadAt_ttl', expireAfterSeconds: 30 * 24 * 60 * 60 },
+      })
+
+      // Once the TTL has removed it, the movie is a candidate again
+      docs('NewContentOutbox').length = 0
+      await started(oneServer({ movies: { [MOVIE]: playableMovie() }, tv: {} }))
+      expect(announced()).toEqual([{ job: 'notifications', movies: [MOVIE], episodes: [] }])
     })
   })
 })

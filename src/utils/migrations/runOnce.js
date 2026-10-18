@@ -19,6 +19,23 @@ function state() {
 }
 
 /**
+ * Whether this database has had a migration, without applying it.
+ *
+ * @param {import('mongodb').MongoClient} client
+ * @param {string} id
+ * @returns {Promise<boolean>}
+ */
+export async function migrationApplied(client, id) {
+  const s = state()
+  if (s.done.has(id)) return true
+  if (await client.db('app_config').collection(FLAGS).findOne({ _id: id })) {
+    s.done.add(id)
+    return true
+  }
+  return false
+}
+
+/**
  * Apply a migration unless this database has already had it. Throws whatever
  * the migration throws (and then writes no flag): the caller decides whether
  * that stops anything.

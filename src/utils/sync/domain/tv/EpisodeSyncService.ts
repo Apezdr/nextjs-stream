@@ -815,7 +815,7 @@ export class EpisodeSyncService {
     // --- Metadata (priority-gated) ---
     // Tracks whether episode metadata came from a CONFIRMED fresh source (URL
     // fetch ok, or backend-inlined object) vs. the parent inline fallback or a
-    // failure. Only a fresh source may advance the syncHash gate — the inline
+    // failure. Only a fresh source may advance the episode's gate — the inline
     // fallback is fine for display but must not lock the episode on a stale
     // parent. Default true so "no episode metadata URL" never blocks the gate.
     let metadataFromFreshFetch = true

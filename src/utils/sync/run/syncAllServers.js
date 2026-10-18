@@ -16,7 +16,7 @@ import { preTagSyncRunId } from './preTag'
 import { computeMissingMedia } from './missingMedia'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { MediaType, SyncOperation } from '@src/utils/sync/core'
-import { startPassRecord, recordCompletePass } from './tickSkip'
+import { startPassRecord, recordCompletePass, incompletePassReasons } from './tickSkip'
 
 // The sync route fetches each tick's payloads through this, and skips the tick
 // when nothing changed (see run/tickSkip.js).
@@ -140,6 +140,12 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   } catch (error) {
     console.error(chalk.red(`emitStarted(warmup) failed: ${error.message}`))
   }
+
+  // Why this run was not complete (every enabled server answered, pre-tag
+  // covered every collection, every pass ran with nothing failed), or empty:
+  // only a complete run may start the new-content notices' announced-titles
+  // set (run/newContent). Set when the passes are done.
+  let incompleteReasons = ['the passes did not finish']
 
   // Captured from pre-tag and handed to post-sync cleanup as a coverage
   // contract: cleanup deletes a collection ONLY if pre-tag proved it fully
@@ -336,6 +342,13 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     results.errors.push({ error: error.message, phase: 'update_last_synced', stack: error.stack })
   }
 
+  incompleteReasons = incompletePassReasons({
+    results,
+    preTagResult,
+    fileServers,
+    allEnabledServersProbed: options.allEnabledServersProbed === true,
+  })
+
   // If every server's pass completed, record the payloads it applied: the
   // next tick sends their ETags and is skipped when none changed.
   await recordCompletePass({
@@ -414,7 +427,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       } catch (error) {
         console.error(chalk.red(`❌ Post-sync cleanup failed: ${error.message}`))
       }
-      results.afterSync = await runAfterSyncJobs({ syncRunId, written })
+      results.afterSync = await runAfterSyncJobs({ syncRunId, incompleteReasons })
     } catch (error) {
       console.error(chalk.red(`❌ The run's after-sync jobs failed: ${error.message}`))
     } finally {
