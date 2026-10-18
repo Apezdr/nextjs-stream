@@ -24,12 +24,9 @@ import {
 } from '../../infrastructure'
 
 import { createLogger } from '@src/lib/logger'
-import {
-  isHighestPriorityAmongServers,
-  getServersReportingTitle,
-} from '@src/utils/sync/core/ownership'
 import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, decideGate, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
 import { effectiveMetadata } from '../../core/metadataLock'
+import { resolveTitle } from '../../core/title'
 import isEqual from 'lodash/isEqual'
 
 const pinoLog = createLogger('Sync.Movie')
@@ -214,11 +211,11 @@ export class MovieSyncService {
       )
       for (const field of strategyUnset) delete pending[field]
 
-      // The display title is derived here, once, from the metadata the document
-      // ends up with: its TMDB title when it has one, the folder name otherwise.
-      // Each strategy used to write a title of its own (the metadata strategy
-      // the TMDB one, the asset and content strategies the folder name), so the
-      // stored title depended on which of them last had something to change.
+      // The display title and its source are derived here, once, from the
+      // metadata the document ends up with (core/title). Each strategy used to
+      // write a title of its own (the metadata strategy the TMDB one, the asset
+      // and content strategies the folder name), so the stored title depended
+      // on which of them last had something to change.
       // (A locked `metadata` keeps what is stored: the strategy's copy will be
       // dropped on the way to the database, so it must not name the title.
       // See core/metadataLock.)
@@ -229,43 +226,26 @@ export class MovieSyncService {
         incoming: { metadata: pending.metadata, metadataSource: pending.metadataSource },
         locked: isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'metadata'),
       })
-      const storedMetadata: any = metadataCopy.metadata
-      // (The stub the metadata strategy writes after a failed first fetch
-      // carries the folder name as its title and `hasExternalMetadata: false`;
-      // that is not a metadata title.)
-      const metadataTitle =
-        typeof storedMetadata?.title === 'string' && storedMetadata.hasExternalMetadata !== false
-          ? storedMetadata.title.trim()
-          : ''
-      const displayTitle = metadataTitle || effectiveOriginalTitle
-      if (existingMovie ? existingMovie.title !== displayTitle : true) {
+      const titleLocked = isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'title')
+      const titleRule = resolveTitle({
+        originalTitle: effectiveOriginalTitle,
+        metadata: metadataCopy,
+        fieldAvailability: context.fieldAvailability,
+        mediaType: 'movies',
+        serverConfig: context.serverConfig,
+        stored: existingMovie,
+        locks: { title: titleLocked },
+      })
+      const displayTitle = titleRule.title
+      if (titleRule.writeTitle) {
         pending.title = displayTitle
       } else {
         // Unchanged: make sure a strategy's stale copy cannot override it.
         delete pending.title
       }
-
-      // The title's source goes with it: the metadata's owner when the title
-      // is the metadata's, otherwise the highest-priority server that has the
-      // folder. (The folder name is the same on every server, so for a title
-      // with no metadata anywhere the source used to be whichever server had
-      // created the document.)
-      const titleSource = metadataTitle
-        ? metadataCopy.metadataSource
-        : isHighestPriorityAmongServers(
-            getServersReportingTitle(context.fieldAvailability, 'movies', effectiveOriginalTitle),
-            context.serverConfig
-          )
-          ? context.serverConfig.id
-          : undefined
+      // Only the rule's source is written, and only when it differs.
       delete pending.titleSource
-      if (
-        titleSource &&
-        !isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'title') &&
-        (existingMovie as any)?.titleSource !== titleSource
-      ) {
-        pending.titleSource = titleSource
-      }
+      if (titleRule.writeTitleSource) pending.titleSource = titleRule.titleSource
       context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
 
       // A failed strategy leaves the gate open. A failed metadata fetch is one
@@ -348,8 +328,7 @@ export class MovieSyncService {
       // caches are keyed on it. When no strategy had anything else to write
       // there is no completed result to carry it to the cache invalidation, so
       // add one.
-      const titleChanged = Boolean(existingMovie) && existingMovie!.title !== displayTitle &&
-        !isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'title')
+      const titleChanged = Boolean(existingMovie) && existingMovie!.title !== displayTitle && !titleLocked
       if (titleChanged && !results.some(r => r.status === SyncStatus.Completed)) {
         results.push({
           status: SyncStatus.Completed,
