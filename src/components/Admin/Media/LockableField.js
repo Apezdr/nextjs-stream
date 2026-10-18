@@ -8,6 +8,12 @@ import { classNames } from '@src/utils'
  *
  * Locking a field persists it into the media doc's `lockedFields` so the sync
  * pipeline (filterLockedFields) will not overwrite the admin's manual value.
+ * The lock state is carried by the toggle's pressed state, label and icon
+ * (closed / open padlock); the amber field only repeats it.
+ *
+ * `helpText` describes the input (aria-describedby). A field that locks
+ * itself when the admin changes it (useFieldLocks) passes `autoLocked`: the
+ * field then keeps a polite live region, which says so when it happens.
  */
 export default function LockableField({
   id,
@@ -22,7 +28,9 @@ export default function LockableField({
   rows = 3,
   disabled = false,
   helpText,
+  autoLocked,
 }) {
+  const helpId = helpText ? `${id}-help` : undefined
   const inputClass = classNames(
     'mt-1 block w-full rounded-md border px-3 py-2 text-sm text-gray-900 shadow-sm',
     'focus:border-indigo-500 focus:ring-indigo-500 disabled:cursor-not-allowed disabled:bg-gray-100',
@@ -64,6 +72,7 @@ export default function LockableField({
           placeholder={placeholder}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
+          aria-describedby={helpId}
           className={inputClass}
         />
       ) : (
@@ -74,10 +83,21 @@ export default function LockableField({
           placeholder={placeholder}
           disabled={disabled}
           onChange={(e) => onChange(e.target.value)}
+          aria-describedby={helpId}
           className={inputClass}
         />
       )}
-      {helpText && <p className="mt-1 text-xs text-gray-400">{helpText}</p>}
+      {helpText && (
+        <p id={helpId} className="mt-1 text-xs text-gray-400">
+          {helpText}
+        </p>
+      )}
+      {autoLocked !== undefined && (
+        // Present from the first render, so the change is announced.
+        <p role="status" aria-live="polite" className="sr-only">
+          {autoLocked ? `${label} locked, so the sync keeps your change. Unlock it to let the sync set it again.` : ''}
+        </p>
+      )}
     </div>
   )
 }

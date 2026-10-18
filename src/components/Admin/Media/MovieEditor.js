@@ -42,7 +42,7 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
   const [overview, setOverview] = useState(() => record?.metadata?.overview ?? '')
   const [captionURLs, setCaptionURLs] = useState(() => record?.captionURLs ?? {})
   // Changing the title locks it, or the next sync puts the old one back.
-  const { locks, isLocked, toggleLock, noteEdit } = useFieldLocks(record, ['title'])
+  const { locks, isLocked, toggleLock, noteEdit, autoLocked } = useFieldLocks(record, ['title'])
 
   // After a successful create, move to the persistent editor for the new id.
   useEffect(() => {
@@ -128,7 +128,7 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
         <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">Identity</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {field('title', 'Title (display)', { helpText: TITLE_LOCK_HELP })}
+            {field('title', 'Title (display)', { helpText: TITLE_LOCK_HELP, autoLocked: autoLocked('title') })}
             {field('originalTitle', 'Original Title (filesystem key)', {
               helpText: 'Used for sync/filesystem lookups. Defaults to Title on create.',
             })}

@@ -39,6 +39,7 @@ jest.mock('@components/Admin/Media/SeasonEditor', () => ({ __esModule: true, def
 
 const MovieEditor = require('@components/Admin/Media/MovieEditor').default
 const TVShowEditor = require('@components/Admin/Media/TVShowEditor').default
+const { TITLE_LOCK_HELP } = require('@components/Admin/Media/useFieldLocks')
 
 const EDITORS = [
   ['movie', MovieEditor, mockSaveMovie, { videoURL: 'https://server/film.mp4' }],
@@ -153,6 +154,39 @@ describe.each(EDITORS)('the %s editor', (_kind, Editor, save, extra) => {
     type(titleInput(), 'New Title')
 
     expect(titleLock()).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('describes the title input with its hint', () => {
+    render(<Editor record={record()} />)
+
+    expect(titleInput()).toHaveAccessibleDescription(TITLE_LOCK_HELP)
+  })
+
+  it('announces politely when the title locks itself, and clears it when the admin takes over', () => {
+    render(<Editor record={record()} />)
+    const status = screen.getByRole('status')
+    expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(status).toBeEmptyDOMElement()
+
+    type(titleInput(), 'New Title')
+    expect(status).toHaveTextContent('Title (display) locked, so the sync keeps your change.')
+    type(titleInput(), 'Newer Title')
+    expect(status).toHaveTextContent('Title (display) locked, so the sync keeps your change.')
+
+    click(titleLock())
+    expect(status).toBeEmptyDOMElement()
+  })
+
+  it('announces nothing when the title is typed back, or was locked already', () => {
+    const { unmount } = render(<Editor record={record()} />)
+    type(titleInput(), 'New Title')
+    type(titleInput(), 'Old Title')
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
+    unmount()
+
+    render(<Editor record={record({ lockedFields: { title: true } })} />)
+    type(titleInput(), 'New Title')
+    expect(screen.getByRole('status')).toBeEmptyDOMElement()
   })
 
   it('keeps a title that was already locked locked, whatever the edits', async () => {

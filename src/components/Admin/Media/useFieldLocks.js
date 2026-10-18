@@ -13,7 +13,8 @@ export const TITLE_LOCK_HELP =
  * and does not stop a sync write), so an edit to a field the sync owns is
  * undone unless the field is locked. For each field in `lockOnEdit`:
  *  - a value that differs from the stored one turns the field's lock on, in
- *    the form, where the admin sees it;
+ *    the form, where the admin sees it, and `autoLocked` says so, for the
+ *    field to announce (LockableField);
  *  - typing the stored value back, or clearing the field, puts the stored
  *    lock back: an empty value is never locked, since a lock on a missing
  *    value would stop the sync from ever restoring it (the save actions
@@ -58,5 +59,12 @@ export function useFieldLocks(record, lockOnEdit = []) {
     })
   }
 
-  return { locks, isLocked, toggleLock, noteEdit }
+  /**
+   * Whether the field's lock is on because the admin changed its value: on,
+   * not on as stored, and not set by hand. Only noteEdit turns such a lock on.
+   */
+  const autoLocked = (key) =>
+    lockOnEdit.includes(key) && locks[key] === true && storedLocks[key] !== true && !toggled.has(key)
+
+  return { locks, isLocked, toggleLock, noteEdit, autoLocked }
 }

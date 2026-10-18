@@ -70,7 +70,7 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
   const [tmdbId, setTmdbId] = useState(() => record?.metadata?.id ?? '')
   const [overview, setOverview] = useState(() => record?.metadata?.overview ?? '')
   // Changing the title locks it, or the next sync puts the old one back.
-  const { locks, isLocked, toggleLock, noteEdit } = useFieldLocks(record, ['title'])
+  const { locks, isLocked, toggleLock, noteEdit, autoLocked } = useFieldLocks(record, ['title'])
 
   useEffect(() => {
     if (state.status === 'success' && isNew && state.id) {
@@ -157,7 +157,7 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
         <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">Identity</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {field('title', 'Title (display)', { helpText: TITLE_LOCK_HELP })}
+            {field('title', 'Title (display)', { helpText: TITLE_LOCK_HELP, autoLocked: autoLocked('title') })}
             {field('originalTitle', 'Original Title (filesystem key)', {
               helpText: 'Renaming the title cascades to all seasons/episodes.',
             })}
