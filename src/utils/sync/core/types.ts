@@ -64,8 +64,7 @@ export interface SyncContext {
   serverConfig: ServerConfig
   fieldAvailability: FieldAvailability
   forceSync?: boolean
-  skipCache?: boolean
-  
+
   // Entity identifiers for strategies when entity might be null
   entityTitle?: string          // Pretty display title (TMDB)
   entityOriginalTitle?: string  // Filesystem key title
@@ -73,13 +72,9 @@ export interface SyncContext {
   // File server data for content sync
   fileServerData?: any          // File server data structure (movies/TV data)
   
-  // Pre-fetched entity caches for performance optimization
-  movieCache?: Map<string, MovieEntity>      // Pre-fetched movies indexed by originalTitle
-  episodeCache?: Map<string, EpisodeEntity>  // Future: Pre-fetched episodes
-  seasonCache?: Map<string, SeasonEntity>    // Future: Pre-fetched seasons
-  tvShowCache?: Map<string, TVShowEntity>    // Future: Pre-fetched TV shows
-  
-  // Metadata hashes cache (fetched once per server for all movies)
+  // Metadata hashes cache (fetched once per server for all movies): the
+  // metadata step skips a movie's metadata.json fetch when its hash matches
+  // the stored metadataHash
   metadataHashesCache?: {
     hash: string  // Overall hash for all movies
     titles: Record<string, {
@@ -88,34 +83,11 @@ export interface SyncContext {
       generated: string
     }>
   }
-  
-  // TV show-level hashes (fetched once per server from /api/metadata-hashes/tv).
-  // Recorded on the show (syncHash / contentHash) for inspection. They no longer
-  // decide whether a show is skipped — `syncGates` does (core/syncGate).
-  tvShowHashesCache?: {
-    hash: string  // Overall hash across all TV shows on this server
-    titles: Record<string, {
-      hash: string
-      contentHash?: string  // Aggregate of per-episode hashes — invalidates on video file changes
-      lastModified: string
-      generated: string
-    }>
-  }
-
-  // Per-season episode hashes — keyed by showTitle → seasonNumber.
-  // No longer populated: the episode skip is decided from the payload itself
-  // (`syncGates`, core/syncGate), which needs no extra request per season.
-  tvEpisodeHashesCache?: Map<string, Map<number, {
-    hash: string  // Season-level aggregate hash
-    episodes: Record<string, {  // key = S01E01 format
-      hash: string
-      lastModified: string
-      generated: string
-    }>
-  }>>
 
   // Resource manager for throttling HTTP requests and monitoring memory
-  // Strategies should use context.resourceManager?.throttleHttp() for outbound calls
+  // Strategies should use context.resourceManager?.throttleHttp() for outbound
+  // calls they make themselves. Not around fetchMetadataMultiServer, which
+  // takes its own slot (infrastructure/fileSystem/fetchFile)
   resourceManager?: {
     throttleHttp: <T>(fn: () => Promise<T>) => Promise<T>
     isMemoryPressure: () => boolean
@@ -178,18 +150,6 @@ export interface SyncResult {
   changes: string[]
   errors: string[]
   metadata?: Record<string, any>
-}
-
-export interface BatchSyncResult {
-  results: SyncResult[]
-  summary: {
-    total: number
-    completed: number
-    failed: number
-    skipped: number
-  }
-  duration: number
-  errors: string[]
 }
 
 // ==========================================
@@ -364,11 +324,6 @@ export interface MovieEntity extends BaseMediaEntity {
   backdropFocalSuggested?: BackdropFocal
   backdropFocalSuggestedSource?: string
 
-  // The file server's hash for the movie as of the last pass that changed the
-  // document. Informational: the skip decision reads `syncGates` below. (The
-  // metadata strategy's own refetch gate is `metadataHash`, a separate field.)
-  syncHash?: string
-
   // Per-server skip gates: { <serverId>: "g<version>:<payload>#<availability>" }.
   // A server's pass over this document is skipped when its entry matches the
   // gate computed for the current run. See core/syncGate for the whole rule.
@@ -427,10 +382,6 @@ export interface EpisodeEntity extends BaseMediaEntity {
   mediaQuality?: MediaQuality
   mediaLastModified?: Date
 
-  // Left by earlier versions of the sync, which skipped an episode on it. No
-  // longer written or read; the skip decision reads `syncGates`.
-  syncHash?: string
-
   // Per-server skip gates: { <serverId>: "g<version>:<payload>#<availability>" }.
   // A server's pass over this document is skipped when its entry matches the
   // gate computed for the current run. See core/syncGate for the whole rule.
@@ -459,9 +410,6 @@ export interface SeasonEntity extends BaseMediaEntity {
   overview?: string
   posterPath?: string
   rating?: number
-
-  // Content hash from media processor — reserved for future season-level skip.
-  syncHash?: string
 }
 
 export interface TVShowEntity extends BaseMediaEntity {
@@ -507,12 +455,6 @@ export interface TVShowEntity extends BaseMediaEntity {
   genres?: any[]
   networks?: any[]
 
-  // The file server's show hash and content hash (the aggregate of its episode
-  // and season hashes) as of the last complete pass. Informational: the skip
-  // decision reads `syncGates` below.
-  syncHash?: string
-  contentHash?: string
-
   // Per-server skip gates: { <serverId>: "g<version>:<payload>#<availability>" }.
   // A server's pass over this document is skipped when its entry matches the
   // gate computed for the current run. See core/syncGate for the whole rule.
@@ -522,21 +464,6 @@ export interface TVShowEntity extends BaseMediaEntity {
 // ==========================================
 // Media Assets and Content
 // ==========================================
-
-export interface CaptionTrack {
-  language: string
-  label: string
-  url: string
-  format: 'srt' | 'vtt' | 'ass'
-  source: string
-}
-
-export interface ChapterMarker {
-  title: string
-  startTime: number
-  endTime?: number
-  thumbnailURL?: string
-}
 
 export interface VideoInfo {
   duration?: number
@@ -621,38 +548,6 @@ export interface SyncStrategy {
 }
 
 // ==========================================
-// File System Abstractions
-// ==========================================
-
-export interface FileServerAdapter {
-  buildUrl(path: string, serverConfig: ServerConfig): string
-  validateAvailability(urls: string[]): Promise<AvailabilityResult>
-  getMetadata(path: string, serverConfig: ServerConfig): Promise<FileMetadata>
-  listFiles(path: string, serverConfig: ServerConfig): Promise<FileEntry[]>
-}
-
-export interface AvailabilityResult {
-  available: string[]
-  unavailable: string[]
-  errors: Record<string, string>
-}
-
-export interface FileMetadata {
-  size: number
-  lastModified: Date
-  contentType: string
-  exists: boolean
-}
-
-export interface FileEntry {
-  name: string
-  path: string
-  isDirectory: boolean
-  size?: number
-  lastModified?: Date
-}
-
-// ==========================================
 // Error Types
 // ==========================================
 
@@ -666,13 +561,6 @@ export class SyncError extends Error {
   ) {
     super(message)
     this.name = 'SyncError'
-  }
-}
-
-export class ValidationError extends SyncError {
-  constructor(message: string, entityId?: string, mediaType?: MediaType) {
-    super(message, 'VALIDATION_ERROR', entityId, mediaType)
-    this.name = 'ValidationError'
   }
 }
 

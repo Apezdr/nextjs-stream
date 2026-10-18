@@ -18,12 +18,12 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
   async createIndexes(): Promise<boolean> {
     try {
       await Promise.all([
-        // Primary lookup indexes — names must match flatSync/initializeDatabase.js
+        // Primary lookup indexes — names must match prod's existing index names
         // to avoid "Index already exists with a different name" conflicts.
         // title is deliberately NOT unique: it is the TMDB display name and two
         // distinct movies can legally share it (remakes — same class of bug as
         // the Kingdom show E11000 incident). Uniqueness lives on originalTitle
-        // (the filesystem key) per CLAUDE.md — matching flatSync/initializeDatabase.js.
+        // (the filesystem key) per CLAUDE.md, as it does in prod.
         this.createIndexSafely({ title: 1 }, { name: 'title_index' }),
         this.createIndexSafely({ originalTitle: 1 }, { unique: true, name: 'originalTitle_index' }),
         this.createIndexSafely({ title: 1, serverId: 1 }),
@@ -40,7 +40,7 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
         // as the tiebreak only (mtime is bumped by quality upgrades and buried
         // by preserved download mtimes). The tiebreak is part of the key because
         // migration cohorts put hundreds of movies on one discovery date.
-        // Mirrored in flatSync/initializeDatabase.js, which this path never runs.
+        // The name matches prod's existing index.
         this.createIndexSafely(
           { initialDiscoveryDate: -1, mediaLastModified: -1 },
           { name: 'recently_added_index' }
@@ -48,9 +48,8 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
         // The /list banner takes the 8 newest releases among visible movies.
         // Without this index every banner query scanned and sorted all of
         // FlatMovies (16.5 ms of a 40 ms request in production); with it Mongo
-        // walks the newest releases and stops at 8. Declared until now only in
-        // flatSync/initializeDatabase.js, which this path never runs; the name
-        // matches it.
+        // walks the newest releases and stops at 8. The name matches prod's
+        // existing index.
         this.createIndexSafely({ 'metadata.release_date': -1 }, { name: 'release_date_index' }),
 
         // Asset availability indexes
@@ -64,19 +63,19 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
         // An $or only avoids a COLLSCAN when EVERY branch is indexed: videoURL is
         // covered above, but normalizedVideoId and metadata.trailer_url were not,
         // so the whole $or COLLSCANned FlatMovies (SigNoz slow-query log, 7d).
-        // Names match normalized_id_index / trailer_url_index in
-        // flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        // Names match prod's existing normalized_id_index / trailer_url_index
+        // to avoid IndexOptionsConflict.
         this.createIndexSafely({ normalizedVideoId: 1 }, { name: 'normalized_id_index' }),
         this.createIndexSafely({ 'metadata.trailer_url': 1 }, { name: 'trailer_url_index' }),
 
         // Backend-sourced content identity ("mid:..."). Sparse — only titles
-        // whose identity the scanner resolved carry it. Name matches
-        // media_id_index in flatSync/initializeDatabase.js.
+        // whose identity the scanner resolved carry it. Name matches prod's
+        // existing media_id_index.
         this.createIndexSafely({ mediaId: 1 }, { sparse: true, name: 'media_id_index' }),
 
         // Covered-query index for validateWatchHistoryAgainstDatabase() — projects
-        // only { videoURL, normalizedVideoId } for an index-only scan. Mirrors
-        // videoURL_normalizedId_covered_index in flatSync/initializeDatabase.js.
+        // only { videoURL, normalizedVideoId } for an index-only scan. Name
+        // matches prod's existing videoURL_normalizedId_covered_index.
         this.createIndexSafely(
           { videoURL: 1, normalizedVideoId: 1 },
           { name: 'videoURL_normalizedId_covered_index' }
@@ -94,7 +93,7 @@ export class MovieRepository extends BaseRepository<MovieEntity> {
         }),
 
         // Sync-run marker — post-sync cleanup deletes by { syncRunId: { $ne } }.
-        // Name must match flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        // Name must match prod's existing index to avoid IndexOptionsConflict.
         this.createIndexSafely({ syncRunId: 1 }, { name: 'sync_run_id_index' })
       ])
       return true

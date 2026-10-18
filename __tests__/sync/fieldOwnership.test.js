@@ -19,21 +19,20 @@ jest.mock('@src/utils/config', () => ({
   }),
   multiServerHandler: { getHandler: jest.fn() },
 }))
-jest.mock('@src/utils/sync/captions', () => ({ sortSubtitleEntries: jest.fn() }))
 
 const {
   isCurrentServerHighestPriorityForField,
   isHighestPriorityAmongServers,
   isCurrentServerHighestPriorityForReportedField,
-  isCurrentServerHighestPriorityForReportedFieldGroup,
   getServersReportingField,
-  availabilityFingerprint,
-  availabilityFingerprintForPrefix,
-  availabilityFingerprintForPrefixes,
   seasonsAcrossServers,
   serverOutranks,
   getServersReportingTitle,
-} = require('@src/utils/sync/utils')
+} = require('@src/utils/sync/core/ownership')
+const {
+  availabilityFingerprint,
+  availabilityFingerprintForPrefixes,
+} = require('@src/utils/sync/core/syncGate')
 
 const server = (id) => mockServers[id]
 const availability = (paths) => ({ movies: { Film: paths }, tv: {} })
@@ -83,13 +82,6 @@ describe('the reported-field checks', () => {
   it('ranks the servers that both report it', () => {
     expect(isCurrentServerHighestPriorityForReportedField(fa, 'movies', 'Film', 'urls.poster', server('main'))).toBe(true)
     expect(isCurrentServerHighestPriorityForReportedField(fa, 'movies', 'Film', 'urls.poster', server('second'))).toBe(false)
-  })
-
-  it('treats equivalent paths as one field', () => {
-    const sizes = availability({ 'additional_metadata.size.kb': ['main'], 'additional_metadata.size.gb': ['second'] })
-    const paths = ['additional_metadata.size.kb', 'additional_metadata.size.gb']
-    expect(isCurrentServerHighestPriorityForReportedFieldGroup(sizes, 'movies', 'Film', paths, server('main'))).toBe(true)
-    expect(isCurrentServerHighestPriorityForReportedFieldGroup(sizes, 'movies', 'Film', paths, server('second'))).toBe(false)
   })
 
   it('lists the servers reporting a field', () => {
@@ -167,8 +159,7 @@ describe('availabilityFingerprintForPrefixes', () => {
     expect(print(base, [E1_PADDED, E1, E1])).toBe(print(base, [E1, E1_PADDED]))
   })
 
-  it('matches the single-prefix form, and is stable when there is nothing to cover', () => {
-    expect(print(base, [E1])).toBe(availabilityFingerprintForPrefix(show(base), 'tv', 'Show', E1))
+  it('is stable when there is nothing to cover', () => {
     expect(print(base, [])).toBe(print({}, [E1]))
     expect(availabilityFingerprintForPrefixes(undefined, 'tv', 'Show', [E1])).toBe(print({}, [E1]))
   })

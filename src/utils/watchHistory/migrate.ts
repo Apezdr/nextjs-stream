@@ -89,11 +89,10 @@ async function migrateUserPlayback(
 /**
  * Create indexes on WatchHistory collection.
  *
- * This is the LIVE declaration site for WatchHistory indexes — a fresh
- * deployment gets them from here on startup, with no manual DB work.
- * (`flatSync/initializeDatabase.js` also declares them, but the new sync
- * architecture never calls it, so a spec that lives only there is a no-op
- * in production.)
+ * This is the only declaration site for WatchHistory indexes — a fresh
+ * deployment gets them from here on startup, with no manual DB work. Names
+ * and options must match prod's existing indexes, or createIndex raises
+ * IndexOptionsConflict.
  */
 async function createWatchHistoryIndexes(db: any): Promise<void> {
   const collection = db.collection('WatchHistory')

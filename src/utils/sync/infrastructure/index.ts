@@ -14,8 +14,3 @@ export {
   createDatabaseAdapter,
   type DatabaseAdapter
 } from './database'
-
-export {
-  DefaultFileServerAdapter,
-  UrlBuilder
-} from './fileSystem'

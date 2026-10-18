@@ -54,12 +54,12 @@ async function connectToDb() {
 
 /**
  * Create indexes on WatchHistory collection
- * NOTE: Index creation has been moved to src/utils/flatSync/initializeDatabase.js
+ * NOTE: Index creation has moved to src/utils/watchHistory/migrate.ts
  * This function is kept for backward compatibility with existing migration scripts
  */
 async function createWatchHistoryIndexes(db) {
-  console.log('NOTE: Index creation is now handled by initializeDatabase.js')
-  console.log('Indexes will be created automatically during database initialization')
+  console.log('NOTE: Index creation is now handled by src/utils/watchHistory/migrate.ts')
+  console.log('The app creates the WatchHistory indexes on startup')
   return Promise.resolve()
 }
 

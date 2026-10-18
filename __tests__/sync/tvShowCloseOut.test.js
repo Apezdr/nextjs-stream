@@ -5,7 +5,7 @@
  * its skip gate, in one write. When that write fails, the show keeps the gates
  * it had before the pass — and a pass that changed the show's subtree should
  * have reset them. The failure is reported as a Failed result, so the run is
- * not recorded as complete (sync/tickSkip: a failed title keeps the record
+ * not recorded as complete (sync/run/tickSkip: a failed title keeps the record
  * from being written) and no tick is skipped on those gates.
  */
 
@@ -13,7 +13,6 @@ jest.mock('@src/utils/sync/core/ResourceManager', () => ({
   ResourceManager: { getInstance: () => ({ dbWriteLimitFor: () => (fn) => fn() }) },
   getResourceManager: () => ({}),
 }))
-jest.mock('@src/utils/sync/captions', () => ({ sortSubtitleEntries: (entries) => entries }))
 jest.mock('@src/lib/httpHelper', () => ({ httpGet: jest.fn() }))
 jest.mock('@src/lib/mongodb', () => ({ __esModule: true, default: Promise.resolve({}) }))
 jest.mock('@src/lib/logger', () => ({
@@ -25,7 +24,7 @@ jest.mock('@src/utils/config', () => ({
   multiServerHandler: { getHandler: () => ({ createFullURL: (path) => `https://A.example${path}` }) },
 }))
 jest.mock('@src/utils/flatDatabaseUtils', () => ({ generateNormalizedVideoId: (url) => `nid:${url}` }))
-jest.mock('@src/utils/admin_utils', () => ({ fetchMetadataMultiServer: jest.fn(async () => ({})) }))
+jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({ fetchMetadataMultiServer: jest.fn(async () => ({})) }))
 
 const { TVShowSyncService } = require('@src/utils/sync/domain/tv/TVShowSyncService')
 const { resolveCleanupConfig } = require('@src/utils/sync/core/FieldAbsenceCleaner')

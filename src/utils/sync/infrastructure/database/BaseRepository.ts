@@ -8,7 +8,7 @@ import { BaseMediaEntity, MediaRepository, DatabaseError } from '../../core/type
 import isEqual from 'lodash/isEqual'
  
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
-import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
+import { getCurrentSyncRunId } from '../../run/runState'
 
 // Fields that must never appear in a diff — either MongoDB internals or
 // system timestamps that always change and should not trigger a write.
@@ -25,9 +25,8 @@ const DIFF_EXCLUDED_FIELDS = new Set(['_id', 'lastSynced', 'updatedAt', 'created
  * top-level key here. computeDiff emits whole-object `$set` for changed nested
  * objects, so honoring a sub-path lock by partially rebuilding the object would
  * drop the locked sub-value on write — locking the whole key is the safe,
- * never-lose-data behavior. The default flatSync path (filterLockedFields) does
- * sub-path-precise dot-path writes; the new architecture is coarser but never
- * overwrites an admin's locked value.
+ * never-lose-data behavior. It is coarser than a sub-path-precise dot-path write
+ * would be, but it never overwrites an admin's locked value.
  */
 export function isTopLevelFieldLocked(lockedFields: any, key: string): boolean {
   if (!lockedFields || typeof lockedFields !== 'object') return false
@@ -227,9 +226,8 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
     const diff: Partial<T> = {}
     // Honor admin field locks: a changed-but-locked field is omitted from the
     // diff, so the existing (manually-set) value is preserved on write. This is
-    // the new architecture's lock enforcement point — both smartUpsert (movies,
-    // TV shows) and smartBulkUpsert (episodes) flow through here, mirroring the
-    // protection filterLockedFields provides on the default flatSync path.
+    // the sync's lock enforcement point — both smartUpsert (movies, TV shows)
+    // and smartBulkUpsert (episodes) flow through here.
     const lockedFields = (existing as any)?.lockedFields
     for (const key of Object.keys(merged)) {
       if (DIFF_EXCLUDED_FIELDS.has(key)) continue
@@ -545,7 +543,7 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
    * (observed 2026-06-20: all four repos failed index creation on one drop, then
    * the un-indexed cleanup `{syncRunId:{$ne}}` COLLSCAN kept the contention alive).
    * `createIndex` is idempotent, so re-issuing a dropped build is safe. Mirrors
-   * `withTransientRetry` in preTagSyncRunId.js.
+   * `withTransientRetry` in sync/run/preTag.js.
    */
   protected async createIndexSafely(indexSpec: Record<string, any>, options?: Record<string, any>): Promise<void> {
     const isAlreadyExists = (error: any): boolean =>

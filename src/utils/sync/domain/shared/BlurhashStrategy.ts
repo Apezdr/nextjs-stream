@@ -5,11 +5,10 @@
  * database (by Metadata/Asset strategies). It is gated on field availability and
  * skips computation when the blurhash is already stored.
  *
- * Supported media types: Movie, TVShow, Season
+ * Supported media types: Movie
  * Operation:            SyncOperation.Blurhash
  *
- * Computation pattern mirrors src/utils/flatSync/blurhashSync.js and
- * src/utils/flatSync/movies/blurhash.js:
+ * Computation pattern:
  *   1. Resolve the blurhash URL from fileServerData
  *   2. Fetch the pre-computed blurhash string via fetchMetadataMultiServer
  *   3. Persist only the blurhash fields via repository.update() — no full upsert
@@ -24,17 +23,14 @@ import {
   MediaType,
   BaseMediaEntity,
   MovieEntity,
-  SeasonEntity,
-  TVShowEntity,
   syncEventBus,
 } from '../../core'
 
-import { MovieRepository, SeasonRepository, TVShowRepository, isTopLevelFieldLocked } from '../../infrastructure'
+import { MovieRepository, fetchMetadataMultiServer, isTopLevelFieldLocked } from '../../infrastructure'
 import {
   isCurrentServerHighestPriorityForField,
   isCurrentServerHighestPriorityForReportedField,
-} from '@src/utils/sync/utils'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+} from '@src/utils/sync/core/ownership'
 
 // ────────────────────────────────────────────────────────────────────────────
 // Field-path constants used in fieldAvailability lookups
@@ -44,12 +40,6 @@ import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 const MOVIE_POSTER_BLURHASH_FIELD = 'urls.posterBlurhash'
 /** fieldAvailability path for movie backdrop blurhash */
 const MOVIE_BACKDROP_BLURHASH_FIELD = 'urls.backdropBlurhash'
-/** fieldAvailability path for TV show poster blurhash */
-const TV_POSTER_BLURHASH_FIELD = 'posterBlurhash'
-/** fieldAvailability path for TV show backdrop blurhash */
-const TV_BACKDROP_BLURHASH_FIELD = 'backdropBlurhash'
-/** prefix for season fieldAvailability path */
-const SEASON_POSTER_BLURHASH_FIELD_PREFIX = 'seasons.Season '
 
 // ────────────────────────────────────────────────────────────────────────────
 // BlurhashStrategy
@@ -58,17 +48,9 @@ const SEASON_POSTER_BLURHASH_FIELD_PREFIX = 'seasons.Season '
 export class BlurhashStrategy implements SyncStrategy {
   readonly name = 'BlurhashStrategy'
   readonly supportedOperations = [SyncOperation.Blurhash]
-  readonly supportedMediaTypes = [
-    MediaType.Movie,
-    MediaType.TVShow,
-    MediaType.Season,
-  ]
+  readonly supportedMediaTypes = [MediaType.Movie]
 
-  constructor(
-    private repository: MovieRepository,
-    private seasonRepository?: SeasonRepository,
-    private tvShowRepository?: TVShowRepository
-  ) {}
+  constructor(private repository: MovieRepository) {}
 
   // ──────────────────────────────────────────────────────────────────────────
   // canHandle
@@ -109,22 +91,6 @@ export class BlurhashStrategy implements SyncStrategy {
         case MediaType.Movie:
           changes = await this.syncMovieBlurhash(
             entity as MovieEntity | null,
-            originalTitle,
-            context
-          )
-          break
-
-        case MediaType.TVShow:
-          changes = await this.syncTVShowBlurhash(
-            entity as TVShowEntity | null,
-            originalTitle,
-            context
-          )
-          break
-
-        case MediaType.Season:
-          changes = await this.syncSeasonBlurhash(
-            entity as SeasonEntity | null,
             originalTitle,
             context
           )
@@ -194,16 +160,10 @@ export class BlurhashStrategy implements SyncStrategy {
   ): Promise<string[]> {
     const changes: string[] = []
 
-    // Resolve entity from cache or DB when not passed in directly
+    // Resolve entity from the DB when not passed in directly
     let entity = movie
     if (!entity) {
-      if (context.movieCache?.has(originalTitle)) {
-        entity = context.movieCache.get(originalTitle)!
-        console.log(`💾 BlurhashStrategy cache HIT for movie: "${originalTitle}"`)
-      } else {
-        console.log(`🔍 BlurhashStrategy cache MISS for movie: "${originalTitle}", querying DB…`)
-        entity = await this.repository.findByOriginalTitle(originalTitle)
-      }
+      entity = await this.repository.findByOriginalTitle(originalTitle)
     }
 
     // Post-entity gate: entity must exist (must have been saved by a prior strategy)
@@ -282,122 +242,6 @@ export class BlurhashStrategy implements SyncStrategy {
       },
     })
     if (backdropChange) changes.push(backdropChange)
-
-    return changes
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // TVShow blurhash sync
-  // ──────────────────────────────────────────────────────────────────────────
-
-  private async syncTVShowBlurhash(
-    show: TVShowEntity | null,
-    originalTitle: string,
-    context: SyncContext
-  ): Promise<string[]> {
-    const changes: string[] = []
-
-    // Post-entity gate: entity must be provided
-    if (!show) {
-      console.log(`⏭️ BlurhashStrategy: TVShow entity not provided for "${originalTitle}" — skipping`)
-      return changes
-    }
-
-    const fileServerShowData = context.fileServerData?.tv?.[originalTitle]
-    if (!fileServerShowData) {
-      console.log(`⏭️ BlurhashStrategy: no fileServerData.tv for TVShow "${originalTitle}"`)
-      return changes
-    }
-
-    // ── Poster blurhash ──────────────────────────────────────────────────────
-    const posterChange = await this.processBlurhashField({
-      label: 'posterBlurhash',
-      currentValue: show.posterBlurhash,
-      blurhashRelativePath: fileServerShowData.posterBlurhash,
-      fieldPath: TV_POSTER_BLURHASH_FIELD,
-      mediaCategory: 'tv',
-      originalTitle,
-      context,
-      onSuccess: async (blurhash: string) => {
-        if (this.tvShowRepository) {
-          await this.tvShowRepository.updateAssets(show.title, {
-            posterBlurhash: blurhash,
-          })
-        }
-      },
-    })
-    if (posterChange) changes.push(posterChange)
-
-    // ── Backdrop blurhash ────────────────────────────────────────────────────
-    const backdropChange = await this.processBlurhashField({
-      label: 'backdropBlurhash',
-      currentValue: show.backdropBlurhash,
-      blurhashRelativePath: fileServerShowData.backdropBlurhash,
-      fieldPath: TV_BACKDROP_BLURHASH_FIELD,
-      mediaCategory: 'tv',
-      originalTitle,
-      context,
-      onSuccess: async (blurhash: string) => {
-        if (this.tvShowRepository) {
-          await this.tvShowRepository.updateAssets(show.title, {
-            backdropBlurhash: blurhash,
-          })
-        }
-      },
-    })
-    if (backdropChange) changes.push(backdropChange)
-
-    return changes
-  }
-
-  // ──────────────────────────────────────────────────────────────────────────
-  // Season blurhash sync
-  // ──────────────────────────────────────────────────────────────────────────
-
-  private async syncSeasonBlurhash(
-    season: SeasonEntity | null,
-    originalTitle: string,
-    context: SyncContext
-  ): Promise<string[]> {
-    const changes: string[] = []
-
-    // Post-entity gate
-    if (!season) {
-      console.log(`⏭️ BlurhashStrategy: Season entity not provided for "${originalTitle}" — skipping`)
-      return changes
-    }
-
-    const showTitle = season.showTitle || originalTitle
-    const seasonNumber = season.seasonNumber
-    const fileServerSeasonData =
-      context.fileServerData?.tv?.[showTitle]?.seasons?.[`Season ${seasonNumber}`]
-
-    if (!fileServerSeasonData) {
-      console.log(`⏭️ BlurhashStrategy: no fileServerData for Season ${seasonNumber} of "${showTitle}"`)
-      return changes
-    }
-
-    // fieldAvailability path: "seasons.Season N.seasonPosterBlurhash"
-    const fieldPath = `${SEASON_POSTER_BLURHASH_FIELD_PREFIX}${seasonNumber}.seasonPosterBlurhash`
-
-    const posterChange = await this.processBlurhashField({
-      label: 'posterBlurhash',
-      currentValue: season.posterBlurhash,
-      blurhashRelativePath: fileServerSeasonData.seasonPosterBlurhash,
-      fieldPath,
-      mediaCategory: 'tv',
-      originalTitle: showTitle,
-      context,
-      onSuccess: async (blurhash: string) => {
-        if (this.seasonRepository) {
-          await this.seasonRepository.updateBlurhash(showTitle, seasonNumber, {
-            posterBlurhash: blurhash,
-            posterBlurhashSource: context.serverConfig.id,
-          })
-        }
-      },
-    })
-    if (posterChange) changes.push(posterChange)
 
     return changes
   }
@@ -505,9 +349,9 @@ export class BlurhashStrategy implements SyncStrategy {
       }
     }
 
-    const blurhash = context.resourceManager
-      ? await context.resourceManager.throttleHttp(doFetch)
-      : await doFetch()
+    // fetchMetadataMultiServer takes the ResourceManager's HTTP slot itself:
+    // wrapping it in throttleHttp would hold one slot while waiting for another.
+    const blurhash = await doFetch()
 
     // The file server publishes this blurhash, and it is still missing after
     // this attempt (or was fetched after all). MovieSyncService reads the set:

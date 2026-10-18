@@ -270,8 +270,8 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
         }
 
         // Not modified, and nothing cached here to serve: the conditional
-        // headers were the caller's own (admin_utils and sync metadata keep a
-        // cached copy of their own and expect data: null, as above)
+        // headers were the caller's own (the sync's fetchFile keeps a cached
+        // copy of its own and expects data: null, as above)
         cleanupResponse(response);
         return { data: null, headers: responseHeaders };
       }

@@ -24,11 +24,10 @@ jest.mock('chalk', () => {
   const paint = new Proxy((text) => text, { get: () => paint })
   return { __esModule: true, default: paint }
 })
-jest.mock('@src/utils/sync_utils', () => ({}))
-jest.mock('@src/utils/flatSync', () => ({ syncToFlatStructure: jest.fn() }))
-jest.mock('@src/utils/flatSync/postSyncCleanup', () => ({ runPostSyncCleanup: jest.fn(async () => ({})) }))
-jest.mock('@src/utils/flatSync/preTagSyncRunId', () => ({ preTagSyncRunId: jest.fn() }))
-jest.mock('@src/utils/flatSync/computeMissingMedia', () => ({
+jest.mock('@src/utils/sync/run/serverPass', () => ({ runServerPass: jest.fn() }))
+jest.mock('@src/utils/sync/run/postSync', () => ({ runPostSyncCleanup: jest.fn(async () => ({})) }))
+jest.mock('@src/utils/sync/run/preTag', () => ({ preTagSyncRunId: jest.fn() }))
+jest.mock('@src/utils/sync/run/missingMedia', () => ({
   computeMissingMedia: jest.fn(async () => ({ missingMovies: [], missingTVShows: [] })),
 }))
 jest.mock('@src/utils/sync/core', () => ({ MediaType: { Movie: 'movie' }, SyncOperation: { Metadata: 'metadata' } }))
@@ -37,17 +36,15 @@ jest.mock('@src/utils/sync/core/events', () => ({
 }))
 jest.mock('@src/utils/fetchAllServerData', () => ({ fetchAllServerData: jest.fn() }))
 jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNeeded: jest.fn() }))
-jest.mock('@src/utils/flatSync/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
-jest.mock('@src/utils/sync/utils', () => ({ MediaType: { TV: 'tv', MOVIE: 'movie' } }))
-jest.mock('@src/utils/admin_frontend_database', () => ({ updateMediaUpdates: jest.fn() }))
+jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
 
-const { syncAllServers } = require('@src/utils/sync.js')
-const { currentBootId, startPassRecord, recordCompletePass } = require('@src/utils/sync/tickSkip')
-const { forgetAppliedPayloads, markPassRunning } = require('@src/utils/sync/appliedPayloads')
-const { getSyncLockHolder, releaseSyncLock, tryAcquireSyncLock } = require('@src/utils/flatSync/syncContext')
+const { syncAllServers } = require('@src/utils/sync/run/syncAllServers')
+const { currentBootId, startPassRecord, recordCompletePass } = require('@src/utils/sync/run/tickSkip')
+const { forgetAppliedPayloads, markPassRunning } = require('@src/utils/sync/run/appliedPayloads')
+const { getSyncLockHolder, releaseSyncLock, tryAcquireSyncLock } = require('@src/utils/sync/run/runState')
 const { SYNC_GATE_VERSION } = require('@src/utils/sync/core/syncGate')
-const { syncToFlatStructure } = require('@src/utils/flatSync')
-const { preTagSyncRunId } = require('@src/utils/flatSync/preTagSyncRunId')
+const { runServerPass } = require('@src/utils/sync/run/serverPass')
+const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
 
 const stored = (value) => JSON.parse(JSON.stringify(value, (_key, v) => (v === undefined ? null : v)))
 const matches = (doc, filter) => Object.entries(filter).every(([key, value]) => doc[key] === value)
@@ -141,8 +138,8 @@ beforeEach(() => {
   ])
   // A record from an earlier complete pass
   mockCollections.syncInfo = memoryCollection([{ _id: 'appliedPayloads', syncRunId: 'earlier-run', servers: {} }])
-  syncToFlatStructure.mockReset()
-  syncToFlatStructure.mockImplementation(async () => cleanPass())
+  runServerPass.mockReset()
+  runServerPass.mockImplementation(async () => cleanPass())
   preTagCovers()
   jest.spyOn(console, 'info').mockImplementation(() => {})
   jest.spyOn(console, 'log').mockImplementation(() => {})
@@ -191,7 +188,7 @@ it('replaces the earlier record with its running marker before it writes anythin
 
 it('cannot record itself when a Flat* document was deleted outside the sync during the pass', async () => {
   // What deleteMovieAction does while the pass runs: delete, then forget.
-  syncToFlatStructure.mockImplementation(async (_fs, serverConfig) => {
+  runServerPass.mockImplementation(async (_fs, serverConfig) => {
     if (serverConfig.id === 'server2') {
       mockCollections.FlatMovies.docs = mockCollections.FlatMovies.docs.filter((d) => d._id !== 'm1')
       await forgetAppliedPayloads()
@@ -209,23 +206,23 @@ it('cannot record itself when a Flat* document was deleted outside the sync duri
 describe('a pass that did not complete is not recorded, so the next tick fetches in full', () => {
   it.each([
     ['a title failed on one server', () => {
-      syncToFlatStructure.mockImplementation(async (_fs, serverConfig) =>
+      runServerPass.mockImplementation(async (_fs, serverConfig) =>
         serverConfig.id === 'server2' ? { ...cleanPass(), episodes: { processed: 0, errors: 1, details: [] } } : cleanPass()
       )
     }, {}],
-    ['a show’s close-out failed (its gate not settled: one Failed show result, counted by the adapter)', () => {
-      syncToFlatStructure.mockImplementation(async (_fs, serverConfig) =>
+    ['a show’s close-out failed (its gate not settled: one Failed show result, counted by the pass)', () => {
+      runServerPass.mockImplementation(async (_fs, serverConfig) =>
         serverConfig.id === 'default' ? { ...cleanPass(), tvShows: { processed: 1, errors: 1, details: [] } } : cleanPass()
       )
     }, {}],
     ['a whole phase of one server failed', () => {
-      syncToFlatStructure.mockImplementation(async () => ({
+      runServerPass.mockImplementation(async () => ({
         ...cleanPass(),
         errors: [{ phase: 'tvContentSync', error: 'TV sync failed' }],
       }))
     }, {}],
     ['one server’s pass threw', () => {
-      syncToFlatStructure.mockImplementation(async (_fs, serverConfig) => {
+      runServerPass.mockImplementation(async (_fs, serverConfig) => {
         if (serverConfig.id === 'default') throw new Error('Mongo went away')
         return cleanPass()
       })
@@ -286,7 +283,7 @@ describe('a run that no longer holds the sync lock neither marks nor records', (
 
   it('a pass whose lock the watchdog released while it ran is not recorded', async () => {
     // The pass hangs long enough for the watchdog; nothing else has started yet
-    syncToFlatStructure.mockImplementation(async () => {
+    runServerPass.mockImplementation(async () => {
       const holder = getSyncLockHolder()
       if (holder) releaseSyncLock(holder.syncRunId)
       return cleanPass()

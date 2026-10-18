@@ -6,7 +6,6 @@
  */
 
 jest.mock('@src/utils/config', () => ({ getServer: () => ({ priority: 1 }), multiServerHandler: {} }))
-jest.mock('@src/utils/sync/captions', () => ({ sortSubtitleEntries: jest.fn() }))
 
 const {
   SYNC_GATE_VERSION,
@@ -14,9 +13,8 @@ const {
   readSyncGate,
   changesDocument,
   nextSyncGates,
-  clearSyncGates,
+  payloadFingerprint,
 } = require('@src/utils/sync/core/syncGate')
-const { payloadFingerprint } = require('@src/utils/sync/utils')
 
 describe('buildSyncGate / readSyncGate', () => {
   it('moves when the payload or the who-has-what picture moves', () => {
@@ -121,36 +119,5 @@ describe('nextSyncGates', () => {
     const stored = { A: 'a1' }
     nextSyncGates(stored, 'B', 'b1', true)
     expect(stored).toEqual({ A: 'a1' })
-  })
-})
-
-describe('clearSyncGates', () => {
-  const database = (modifiedCount, failing) => {
-    const calls = []
-    return {
-      calls,
-      collection: (name) => ({
-        updateMany: async (filter, update) => {
-          calls.push([name, filter, update])
-          if (name === failing) throw new Error('not primary')
-          return { modifiedCount }
-        },
-      }),
-    }
-  }
-
-  it('removes the gates from every collection that carries them, and nothing else', async () => {
-    const db = database(3)
-    expect(await clearSyncGates(db)).toBe(12)
-
-    expect(db.calls.map(([name]) => name).sort()).toEqual(['FlatEpisodes', 'FlatMovies', 'FlatSeasons', 'FlatTVShows'])
-    for (const [, filter, update] of db.calls) {
-      expect(filter).toEqual({ syncGates: { $exists: true } })
-      expect(update).toEqual({ $unset: { syncGates: '' } })
-    }
-  })
-
-  it('throws when a collection could not be updated, so the caller does not write under stale gates', async () => {
-    await expect(clearSyncGates(database(0, 'FlatEpisodes'))).rejects.toThrow('not primary')
   })
 })

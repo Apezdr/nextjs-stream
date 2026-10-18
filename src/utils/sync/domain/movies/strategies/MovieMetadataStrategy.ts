@@ -22,18 +22,12 @@ import { syncLogger } from '../../../core/logger'
 
 import {
   MovieRepository,
-  UrlBuilder
+  fetchMetadataMultiServer
 } from '../../../infrastructure'
 
 import {
-  FileServerAdapter
-} from '../../../core'
-
-import {
-  isCurrentServerHighestPriorityForField,
   isCurrentServerHighestPriorityForReportedField,
-} from '@src/utils/sync/utils'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+} from '@src/utils/sync/core/ownership'
 
 export class MovieMetadataStrategy implements SyncStrategy {
   readonly name = 'MovieMetadataStrategy'
@@ -44,10 +38,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
    */
   readonly currentVersion = '2.1'
 
-  constructor(
-    private repository: MovieRepository,
-    private fileAdapter: FileServerAdapter
-  ) {}
+  constructor(private repository: MovieRepository) {}
 
   /**
    * Check if this strategy can handle the sync context
@@ -105,14 +96,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
       // Get current movie entity using originalTitle (filesystem key)
       let movie = entity as MovieEntity | null
       if (!movie) {
-        // 🚀 OPTIMIZATION: Check cache first, then database
-        if (context.movieCache?.has(originalTitle)) {
-          movie = context.movieCache.get(originalTitle)!
-          syncLogger.debug(`💾 Cache HIT for "${originalTitle}"`)
-        } else {
-          syncLogger.debug(`🔍 Cache MISS for "${originalTitle}", querying database...`)
-          movie = await this.repository.findByOriginalTitle(originalTitle)
-        }
+        movie = await this.repository.findByOriginalTitle(originalTitle)
       }
 
       const changes: string[] = []
@@ -198,7 +182,7 @@ export class MovieMetadataStrategy implements SyncStrategy {
 
       // A failed metadata fetch must NOT advance the sync gate. Preserve any
       // existing good metadata instead of clobbering it with a stub, and report
-      // Failed so MovieSyncService leaves syncHash/metadataHash unstamped.
+      // Failed so MovieSyncService leaves the gate and metadataHash unstamped.
       // Without this, a transient fetch error (e.g. file-server blip) during a
       // hash change would stamp the gate and lock the movie out of future
       // metadata refreshes — the "spent gate" failure mode.
@@ -399,39 +383,31 @@ export class MovieMetadataStrategy implements SyncStrategy {
 
   /**
    * Extract metadata from file server using originalTitle (filesystem key)
-   * Now uses fetchMetadataMultiServer for caching and reliability
-   * Respects ResourceManager HTTP throttling when available in context
+   * through fetchMetadataMultiServer (caching, retries). That takes the
+   * ResourceManager's HTTP slot itself: wrapping it in throttleHttp here
+   * would hold one slot while waiting for another.
    */
   private async extractMetadata(originalTitle: string, context: SyncContext): Promise<Record<string, any> | null> {
-    const doFetch = async () => {
-      try {
-        // Get metadata URL from fileserver data if available
-        const fileServerData = context.fileServerData?.movies?.[originalTitle]
-        const metadataRelativePath = fileServerData?.urls?.metadata
-        
-        // Use fetchMetadataMultiServer from admin_utils for caching and reliability
-        const metadata = await fetchMetadataMultiServer(
-          context.serverConfig.id,
-          metadataRelativePath,
-          'file',
-          'movie',
-          originalTitle
-        )
-        
-        syncLogger.debug(`✅ Fetched metadata for "${originalTitle}" from ${context.serverConfig.id}`)
-        return metadata
+    try {
+      // Get metadata URL from fileserver data if available
+      const fileServerData = context.fileServerData?.movies?.[originalTitle]
+      const metadataRelativePath = fileServerData?.urls?.metadata
 
-      } catch (error) {
-        syncLogger.error(`Failed to extract metadata for ${originalTitle}:`, error)
-        return null
-      }
-    }
+      const metadata = await fetchMetadataMultiServer(
+        context.serverConfig.id,
+        metadataRelativePath,
+        'file',
+        'movie',
+        originalTitle
+      )
 
-    // Throttle through ResourceManager if available
-    if (context.resourceManager) {
-      return context.resourceManager.throttleHttp(doFetch)
+      syncLogger.debug(`✅ Fetched metadata for "${originalTitle}" from ${context.serverConfig.id}`)
+      return metadata
+
+    } catch (error) {
+      syncLogger.error(`Failed to extract metadata for ${originalTitle}:`, error)
+      return null
     }
-    return doFetch()
   }
 
   /**
@@ -581,48 +557,6 @@ export class MovieMetadataStrategy implements SyncStrategy {
 
     // Handle primitive types
     return current === incoming
-  }
-
-  /**
-   * Check if current server should update a field using existing priority system
-   * CRITICAL: Always use originalTitle (filesystem key) for fieldAvailability lookups
-   */
-  private shouldUpdateField(fieldPath: string, originalTitle: string, context: SyncContext): boolean {
-    syncLogger.debug(`🔍 Priority check: field="${fieldPath}", originalTitle="${originalTitle}", server=${context.serverConfig.id}`)
-    
-    // Check if fieldAvailability exists
-    if (!context.fieldAvailability) {
-      syncLogger.debug(`⚠️ No fieldAvailability in context, defaulting to true for ${fieldPath}`)
-      return true
-    }
-    
-    // Check if movie exists in fieldAvailability (using originalTitle as key)
-    const movieFields = context.fieldAvailability?.movies?.[originalTitle]
-    if (!movieFields) {
-      syncLogger.debug(`⚠️ Movie "${originalTitle}" not found in fieldAvailability, defaulting to true`)
-      return true
-    }
-    
-    // Get servers that have this field
-    const serversWithField = movieFields[fieldPath] || []
-    syncLogger.debug(`📊 Servers with ${fieldPath}: ${JSON.stringify(serversWithField)} (${serversWithField.length} total)`)
-    
-    // Check priority
-    const hasHighestPriority = isCurrentServerHighestPriorityForField(
-      context.fieldAvailability,
-      'movies',
-      originalTitle,  // ← CRITICAL: Always use originalTitle for consistency
-      fieldPath,
-      context.serverConfig
-    )
-    
-    if (hasHighestPriority) {
-      syncLogger.debug(`✅ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) has highest priority for ${fieldPath}`)
-    } else {
-      syncLogger.debug(`❌ Server ${context.serverConfig.id} (priority ${context.serverConfig.priority}) does NOT have highest priority for ${fieldPath}`)
-    }
-    
-    return hasHighestPriority
   }
 
   /**

@@ -6,15 +6,20 @@
 import { NOTIFICATION_TYPES } from '../NotificationTypes.js';
 import { NotificationHashing } from '../utils/NotificationHashing.js';
 
+/** The most titles a digest lists; the rest are counted in its moreCount. */
+export const DIGEST_ITEM_LIMIT = 24;
+
 export class NewContentNotificationGenerator {
   /**
-   * Generate action URL for movie content
-   * @param {string} movieTitle - Movie title
+   * Generate action URL for movie content: the movie page, keyed on the
+   * folder name (originalTitle) like every media page route
+   * (app/(styled)/list/movie/[title]). /list/movies/... is no route.
+   * @param {string} movieTitle - The movie's originalTitle
    * @returns {string} Action URL
    */
   static generateMovieActionUrl(movieTitle) {
     const encodedTitle = encodeURIComponent(movieTitle);
-    return `/list/movies/${encodedTitle}`;
+    return `/list/movie/${encodedTitle}`;
   }
 
   /**
@@ -48,6 +53,8 @@ export class NewContentNotificationGenerator {
       batchSimilarContent = true,
       maxMoviesPerNotification = 5,
       maxEpisodesPerShow = 10,
+      // More notices than this become one digest (a first sync, a new server)
+      maxNotifications = null,
       includeMetadata = true
     } = options;
 
@@ -72,11 +79,109 @@ export class NewContentNotificationGenerator {
         notifications.push(...episodeNotifications);
       }
 
+      if (maxNotifications && notifications.length > maxNotifications) {
+        return [this.createNewContentDigest(analysis, includeMetadata)];
+      }
+
       return notifications;
     } catch (error) {
       console.error('Error generating new content notifications:', error);
       return [];
     }
+  }
+
+  /**
+   * One notice for everything a run added, sent instead of the individual
+   * ones when there would be too many of them (a first sync into an empty
+   * library, a newly added server). It carries the titles it covers, for the
+   * digest's detail view (components/notifications/NewContentDigest), in the
+   * shape NOTIFICATION_FRAMEWORK_DESIGN.md ("The digest's payload") documents:
+   *
+   *   data: {
+   *     contentType: 'digest',
+   *     movieCount, episodeCount, showCount,   // everything the run added
+   *     items: [                               // at most DIGEST_ITEM_LIMIT
+   *       { kind: 'movie', title, originalTitle, href, posterURL },
+   *       { kind: 'show', title, originalTitle, href, posterURL, newEpisodes },
+   *     ],
+   *     moreCount,                             // items left out
+   *   }
+   *
+   * Movies first, then shows, each by title. `href` is the media page, keyed
+   * on the folder name like every media route; `posterURL` is null when the
+   * title had none. A show stands for its new episodes.
+   *
+   * @param {Object} analysis - Results from MediaAdditionAnalyzer
+   * @param {boolean} includeMetadata - Whether to include metadata
+   * @returns {Object} Notification object
+   */
+  static createNewContentDigest(analysis, includeMetadata = true) {
+    const movieCount = analysis.newMovies.length;
+    const episodeCount = analysis.newEpisodes.length;
+    const showCount = analysis.showsWithNewEpisodes.size;
+    const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+    const parts = [];
+    if (movieCount > 0) parts.push(plural(movieCount, 'new movie'));
+    if (episodeCount > 0) parts.push(`${plural(episodeCount, 'new episode')} of ${plural(showCount, 'show')}`);
+    const verb = movieCount + episodeCount === 1 ? 'has' : 'have';
+
+    const byTitle = (a, b) => String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' });
+    const movieItems = analysis.newMovies
+      .map(movie => ({
+        kind: 'movie',
+        title: movie.title || movie.originalTitle,
+        originalTitle: movie.originalTitle,
+        href: this.generateMovieActionUrl(movie.originalTitle || movie.title),
+        posterURL: movie.posterURL || null
+      }))
+      .sort(byTitle);
+    const showItems = [...analysis.showsWithNewEpisodes.values()]
+      .map(show => ({
+        kind: 'show',
+        title: show.showTitle || show.originalTitle,
+        originalTitle: show.originalTitle,
+        href: this.generateTVActionUrl(show.showTitle, null, null, show.originalTitle),
+        posterURL: show.posterURL || null,
+        newEpisodes: show.totalNewEpisodes
+      }))
+      .sort(byTitle);
+    const items = [...movieItems, ...showItems];
+
+    const notification = {
+      type: NOTIFICATION_TYPES.NEW_CONTENT,
+      subtype: 'new_content_digest',
+      title: 'New in Your Library',
+      message: `${parts.join(' and ')} ${verb} been added to your library.`,
+      actionUrl: '/list',
+      data: {
+        contentType: 'digest',
+        movieCount,
+        episodeCount,
+        showCount,
+        items: items.slice(0, DIGEST_ITEM_LIMIT),
+        moreCount: Math.max(0, items.length - DIGEST_ITEM_LIMIT)
+      },
+      createdAt: new Date(),
+      priority: 'normal'
+    };
+
+    if (includeMetadata) {
+      notification.metadata = {
+        featuredMovies: movieItems.slice(0, 3).map(movie => ({ title: movie.title })),
+        topShows: [...showItems]
+          .sort((a, b) => b.newEpisodes - a.newEpisodes)
+          .slice(0, 5)
+          .map(show => ({ showTitle: show.title, count: show.newEpisodes }))
+      };
+    }
+
+    notification.contentHash = NotificationHashing.generateContentHash({
+      movies: analysis.newMovies,
+      episodes: analysis.newEpisodes
+    });
+
+    return notification;
   }
 
   /**
@@ -189,7 +294,7 @@ export class NewContentNotificationGenerator {
       subtype: 'new_movies_batch',
       title,
       message,
-      actionUrl: `/list/movies`, // General movies list for batch notifications
+      actionUrl: '/list/movie', // General movies list for batch notifications
       data: {
         contentType: 'movies',
         count,

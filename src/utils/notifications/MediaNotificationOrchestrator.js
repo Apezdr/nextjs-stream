@@ -1,96 +1,76 @@
 /**
- * Main orchestrator for media addition notifications
- * Integrates with flatSync process to analyze and generate notifications for newly added content
+ * Main orchestrator for media addition notifications.
+ *
+ * The new-content notices: run/newContent (src/utils/sync/run/newContent)
+ * decides once per sync run which titles to announce, has the notices composed
+ * here (composeNewContentNotices), queues them, and has them delivered here
+ * (deliverNewContentNotices) until a delivery succeeds.
  */
 
+import { createHash } from 'crypto';
 import { MediaAdditionAnalyzer } from './analyzers/MediaAdditionAnalyzer.js';
 import { NewContentNotificationGenerator } from './generators/NewContentNotificationGenerator.js';
 import { NotificationManager } from './NotificationManager.js';
-import { NOTIFICATION_TYPES } from './NotificationTypes.js';
+import { insertNotificationsOnce } from './notificationDatabase.js';
+import { findNewContentRecipients } from './recipients.js';
 import clientPromise from '@src/lib/mongodb';
 import { ObjectId } from 'mongodb';
 import { userQueries } from '@src/lib/userQueries';
 
+/**
+ * A notification's `_id`, the same every time the same queued delivery is
+ * delivered to the same user: the queued delivery's timestamp, then a hash of
+ * the delivery, the notice's place in it and the user. A retry that finds the
+ * notification already there inserts nothing (insertNotificationsOnce).
+ *
+ * @param {string} deliveryId - The queued delivery's id (an ObjectId's hex)
+ * @param {number} noticeIndex
+ * @param {string} userId
+ * @returns {ObjectId}
+ */
+export function newContentNotificationId(deliveryId, noticeIndex, userId) {
+  const hash = createHash('sha256').update(`${deliveryId}:${noticeIndex}:${userId}`).digest('hex');
+  return new ObjectId(`${String(deliveryId).slice(0, 8)}${hash.slice(0, 16)}`);
+}
+
 export class MediaNotificationOrchestrator {
   /**
-   * Process sync results and generate appropriate notifications
-   * This is the main entry point called from flatSync operations
-   * @param {Object} syncResults - Results from flatSync operations
-   * @param {Object} options - Processing options
-   * @returns {Promise<Object>} Processing results
+   * The notices for the titles a sync run is announcing: movies five to a
+   * notice, episodes one notice per show, or one digest when that comes to
+   * more than `generationOptions.maxNotifications`.
+   * @param {Object} newContent - `{ movies, episodes }`, selected by run/newContent
+   * @param {Object} generationOptions - NewContentNotificationGenerator options
+   * @returns {Array<Object>} The notices (none when there is nothing to announce)
    */
-  static async processSyncResults(syncResults, options = {}) {
-    const {
-      enableNotifications = true,
-      analysisOptions = {},
-      generationOptions = {},
-      deliveryOptions = {}
-    } = options;
+  static composeNewContentNotices(newContent, generationOptions = {}) {
+    const analysis = MediaAdditionAnalyzer.analyzeNewContent(newContent);
+    if (!analysis.shouldNotify) return [];
+    return NewContentNotificationGenerator.generateNotifications(analysis, generationOptions);
+  }
 
-    const results = {
-      analysis: null,
-      notifications: [],
-      delivered: [],
-      errors: [],
-      summary: {
-        totalGenerated: 0,
-        totalDelivered: 0,
-        totalErrors: 0
+  /**
+   * Deliver a queued batch of new-content notices to every recipient
+   * (notifications/recipients). Safe to repeat: each notification's `_id` is
+   * derived from the batch, the notice and the user, so a second delivery of
+   * the same batch inserts only what the first did not. Throws when a
+   * notification could not be inserted; the caller delivers the batch again
+   * on a later run.
+   *
+   * @param {Array<Object>} notices - From composeNewContentNotices
+   * @param {string} deliveryId - The queued batch's id
+   * @returns {Promise<{recipients: number, notices: number, inserted: number, alreadyThere: number}>}
+   */
+  static async deliverNewContentNotices(notices, deliveryId) {
+    const recipients = await findNewContentRecipients();
+    const docs = [];
+    notices.forEach((notice, noticeIndex) => {
+      for (const user of recipients) {
+        const userId = user._id.toString();
+        docs.push({ ...notice, _id: newContentNotificationId(deliveryId, noticeIndex, userId), userId });
       }
-    };
-
-    try {
-      if (!enableNotifications) {
-        console.log('Notifications disabled, skipping notification processing');
-        return results;
-      }
-
-      // Step 1: Analyze sync results for notification-worthy content
-      console.log('Analyzing sync results for new content notifications...');
-      results.analysis = MediaAdditionAnalyzer.analyzeSyncResults(syncResults, analysisOptions);
-
-      if (!results.analysis.shouldNotify) {
-        console.log('No significant new content detected, skipping notification generation');
-        return results;
-      }
-
-      console.log(`Detected ${results.analysis.summary.totalNewMovies} new movies and ${results.analysis.summary.totalNewEpisodes} new episodes`);
-
-      // Step 2: Generate notifications based on analysis
-      console.log('Generating notifications for new content...');
-      results.notifications = NewContentNotificationGenerator.generateNotifications(
-        results.analysis,
-        generationOptions
-      );
-
-      results.summary.totalGenerated = results.notifications.length;
-
-      if (results.notifications.length === 0) {
-        console.log('No notifications generated');
-        return results;
-      }
-
-      // Step 3: Check for duplicates and deliver notifications
-      console.log(`Generated ${results.notifications.length} notifications, delivering to users...`);
-      const deliveryResults = await this.deliverNotifications(results.notifications, deliveryOptions);
-      
-      results.delivered = deliveryResults.delivered;
-      results.errors = deliveryResults.errors;
-      results.summary.totalDelivered = deliveryResults.delivered.length;
-      results.summary.totalErrors = deliveryResults.errors.length;
-
-      console.log(`Successfully delivered ${results.summary.totalDelivered} notifications with ${results.summary.totalErrors} errors`);
-
-      return results;
-    } catch (error) {
-      console.error('Error processing sync results for notifications:', error);
-      results.errors.push({
-        type: 'processing_error',
-        message: error.message,
-        stack: error.stack
-      });
-      return results;
-    }
+    });
+    const { inserted, alreadyThere } = await insertNotificationsOnce(docs);
+    return { recipients: recipients.length, notices: notices.length, inserted, alreadyThere };
   }
 
   /**
@@ -411,29 +391,5 @@ export class MediaNotificationOrchestrator {
     weekStart.setDate(now.getDate() - now.getDay());
     weekStart.setHours(0, 0, 0, 0);
     return weekStart;
-  }
-
-  /**
-   * Test notification generation and delivery (for development/testing)
-   * @param {Object} testData - Test sync results
-   * @param {Object} options - Test options
-   * @returns {Promise<Object>} Test results
-   */
-  static async testNotificationSystem(testData, options = {}) {
-    console.log('Testing notification system...');
-    
-    const testResults = await this.processSyncResults(testData, {
-      enableNotifications: true,
-      ...options
-    });
-
-    console.log('Test Results:', {
-      analysisSignificance: testResults.analysis?.significance,
-      notificationsGenerated: testResults.summary.totalGenerated,
-      notificationsDelivered: testResults.summary.totalDelivered,
-      errors: testResults.summary.totalErrors
-    });
-
-    return testResults;
   }
 }

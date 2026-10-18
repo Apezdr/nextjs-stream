@@ -11,10 +11,7 @@ import {
   MediaType,
   SyncOperation,
   SyncStrategy,
-  ValidationError,
-  DatabaseError,
   syncEventBus,
-  validateEntityOrThrow,
   planFieldCleanup,
   seedDiscovery,
   type CleanableField,
@@ -26,18 +23,12 @@ import {
   isTopLevelFieldLocked
 } from '../../infrastructure'
 
-import {
-  FileServerAdapter
-} from '../../core'
-
 import { createLogger } from '@src/lib/logger'
 import {
-  availabilityFingerprint,
-  payloadFingerprint,
   isHighestPriorityAmongServers,
   getServersReportingTitle,
-} from '@src/utils/sync/utils'
-import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates } from '../../core/syncGate'
+} from '@src/utils/sync/core/ownership'
+import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
 import isEqual from 'lodash/isEqual'
 
 const pinoLog = createLogger('Sync.Movie')
@@ -71,16 +62,13 @@ export function movieSyncGate(
 
 export class MovieSyncService {
   private repository: MovieRepository
-  private fileAdapter: FileServerAdapter
   private strategies: Map<SyncOperation, SyncStrategy[]> = new Map()
 
   constructor(
     repository: MovieRepository,
-    fileAdapter: FileServerAdapter,
     strategies: SyncStrategy[] = []
   ) {
     this.repository = repository
-    this.fileAdapter = fileAdapter
     this.registerStrategies(strategies)
   }
 
@@ -130,7 +118,6 @@ export class MovieSyncService {
       // The gate is only ever stamped by a pass in which no strategy failed, so
       // a matching gate is by itself the evidence the earlier checks here used
       // to look for in the stored metadata.
-      const incomingHash = context.metadataHashesCache?.titles?.[effectiveOriginalTitle]?.hash
       const syncGate = movieSyncGate(
         context.fileServerData?.movies?.[effectiveOriginalTitle],
         context.fieldAvailability,
@@ -138,9 +125,7 @@ export class MovieSyncService {
       )
 
       if (!context.forceSync) {
-        // Prefer pre-fetched cache — avoids extra DB read when movieCache is populated
-        const cached = context.movieCache?.get(effectiveOriginalTitle)
-                    ?? await this.repository.findByOriginalTitle(effectiveOriginalTitle)
+        const cached = await this.repository.findByOriginalTitle(effectiveOriginalTitle)
 
         if (readSyncGate(cached as any, context.serverConfig.id) === syncGate) {
           syncEventBus.emitComplete(title, MediaType.Movie, context.serverConfig.id, undefined, {
@@ -280,10 +265,11 @@ export class MovieSyncService {
       // A failed metadata fetch must not advance the metadata gate. If the
       // metadata strategy reported Failed (fetch error, or it preserved existing
       // metadata because the fetch came back empty), still persist whatever other
-      // strategies changed (e.g. asset URLs) but leave syncHash unstamped so the
-      // next sync retries the fetch. Without this, an asset-only change during a
-      // metadata-fetch failure would stamp syncHash to the current hash and lock
-      // the movie out of future metadata refreshes (the "spent gate" failure mode).
+      // strategies changed (e.g. asset URLs) but leave this server's gate
+      // unstamped so the next sync retries the fetch. Without this, an
+      // asset-only change during a metadata-fetch failure would stamp the gate
+      // and lock the movie out of future metadata refreshes (the "spent gate"
+      // failure mode).
       const metadataFetchFailed = results.some(
         r => r.operation === SyncOperation.Metadata && r.status === SyncStatus.Failed
       )
@@ -315,8 +301,6 @@ export class MovieSyncService {
       // removal was held back because not every server answered, so the next
       // run does the work again. A pass that changed the document drops the
       // other servers' entries.
-      // `syncHash` (the file server's hash for the title) is still recorded when
-      // the document changes, for anyone inspecting it; nothing decides on it.
       const removalDeferred =
         context.pendingMovieDeferrals?.has(effectiveOriginalTitle) === true || cleanupPlan.withheld === true
       const documentChanged = changesDocument(existingMovie as any, pending, unsetFields)
@@ -328,7 +312,6 @@ export class MovieSyncService {
       const storedGates = ((existingMovie as any)?.syncGates ?? {}) as Record<string, string>
       const gates = nextSyncGates(storedGates, context.serverConfig.id, gateToStamp, documentChanged)
       if (!isEqual(gates, storedGates)) pending.syncGates = gates
-      if (gateToStamp && incomingHash && documentChanged) pending.syncHash = incomingHash
       context.pendingMovieUpdates.set(effectiveOriginalTitle, pending)
 
       // Write when strategies changed something OR there are fields to clear. A
@@ -378,7 +361,13 @@ export class MovieSyncService {
       }
       for (const r of results) {
         if (r.status === SyncStatus.Completed) {
-          r.metadata = { ...r.metadata, displayTitle: movieDisplayTitle }
+          r.metadata = {
+            ...r.metadata,
+            displayTitle: movieDisplayTitle,
+            // No document existed before this pass inserted one (counted for
+            // the admins' sync notice).
+            ...(existingMovie ? {} : { created: true }),
+          }
         }
       }
       // Surface field-absence diagnostics on the first completed result (once).
@@ -416,48 +405,6 @@ export class MovieSyncService {
 
       return [errorResult]
     }
-  }
-
-  /**
-   * Sync multiple movies efficiently
-   */
-  async syncMovies(
-    titles: string[],
-    context: SyncContext,
-    concurrency: number = 5
-  ): Promise<SyncResult[]> {
-    const allResults: SyncResult[] = []
-
-    // Process movies in batches to control concurrency
-    for (let i = 0; i < titles.length; i += concurrency) {
-      const batch = titles.slice(i, i + concurrency)
-      
-      const batchPromises = batch.map(title =>
-        this.syncMovie(title, context).catch(error => [{
-          status: SyncStatus.Failed,
-          entityId: title,
-          mediaType: MediaType.Movie,
-          operation: SyncOperation.Metadata,
-          serverId: context.serverConfig.id,
-          timestamp: new Date(),
-          changes: [],
-          errors: [error instanceof Error ? error.message : String(error)]
-        }])
-      )
-
-      const batchResults = await Promise.allSettled(batchPromises)
-      
-      batchResults.forEach(result => {
-        if (result.status === 'fulfilled') {
-          allResults.push(...result.value)
-        } else {
-          // This shouldn't happen due to catch above, but handle anyway
-          console.error('Unexpected batch result failure:', result.reason)
-        }
-      })
-    }
-
-    return allResults
   }
 
   /**
@@ -627,295 +574,5 @@ export class MovieSyncService {
     if (healedFields.length > 0) {
       console.log(`🏥 Healed critical fields: ${healedFields.join(', ')}`)
     }
-  }
-
-  /**
-   * Get movie sync statistics
-   */
-  async getSyncStats(): Promise<{
-    totalMovies: number
-    needingSync: number
-    recentlyUpdated: number
-    byOperation: Record<SyncOperation, number>
-  }> {
-    try {
-      const [
-        totalMovies,
-        recentlyUpdated,
-        missingVideo,
-        missingPosters,
-        missingBackdrops
-      ] = await Promise.all([
-        this.repository.count(),
-        this.repository.findModifiedSince(new Date(Date.now() - 24 * 60 * 60 * 1000)).then(movies => movies.length),
-        this.repository.findMissingAssets('poster').then(movies => movies.length),
-        this.repository.findMissingAssets('backdrop').then(movies => movies.length),
-        this.repository.findWithVideo().then(movies => totalMovies - movies.length)
-      ])
-
-      const needingSync = missingVideo + missingPosters + missingBackdrops
-
-      return {
-        totalMovies,
-        needingSync,
-        recentlyUpdated,
-        byOperation: {
-          [SyncOperation.Metadata]: 0, // Would need to calculate based on missing metadata
-          [SyncOperation.Assets]: missingPosters + missingBackdrops,
-          [SyncOperation.Content]: missingVideo,
-          [SyncOperation.Validation]: 0,
-          [SyncOperation.Blurhash]: 0  // Would need to calculate based on missing blurhashes
-        }
-      }
-    } catch (error) {
-      throw new DatabaseError(`Failed to get movie sync statistics: ${error}`)
-    }
-  }
-
-  /**
-   * Find movies that need sync based on criteria
-   */
-  async findMoviesNeedingSync(criteria: {
-    missingAssets?: boolean
-    missingVideo?: boolean
-    olderThan?: Date
-    limit?: number
-  }): Promise<MovieEntity[]> {
-    const conditions: Promise<MovieEntity[]>[] = []
-
-    if (criteria.missingVideo) {
-      conditions.push(
-        this.repository.findAll({
-          $or: [
-            { videoURL: { $exists: false } },
-            { videoURL: null },
-            { videoURL: '' }
-          ]
-        })
-      )
-    }
-
-    if (criteria.missingAssets) {
-      conditions.push(
-        this.repository.findMissingAssets('poster'),
-        this.repository.findMissingAssets('backdrop')
-      )
-    }
-
-    if (criteria.olderThan) {
-      conditions.push(
-        this.repository.findAll({
-          $or: [
-            { lastSynced: { $lt: criteria.olderThan } },
-            { lastSynced: { $exists: false } }
-          ]
-        })
-      )
-    }
-
-    if (conditions.length === 0) {
-      return []
-    }
-
-    // Combine results and deduplicate
-    const allResults = await Promise.all(conditions)
-    const combined = allResults.flat()
-    const unique = Array.from(
-      new Map(combined.map(movie => [movie.title, movie])).values()
-    )
-
-    // Apply limit if specified
-    if (criteria.limit && unique.length > criteria.limit) {
-      return unique.slice(0, criteria.limit)
-    }
-
-    return unique
-  }
-
-  /**
-   * Cleanup movies that are no longer on the file server or have invalid content
-   */
-  async cleanup(
-    availableTitles: string[],
-    context: SyncContext
-  ): Promise<{
-    orphansRemoved: number
-    invalidRemoved: number
-    errors: string[]
-  }> {
-    const result = {
-      orphansRemoved: 0,
-      invalidRemoved: 0,
-      errors: [] as string[]
-    }
-
-    try {
-      syncEventBus.emitProgress(
-        'cleanup',
-        MediaType.Movie,
-        context.serverConfig.id,
-        SyncOperation.Validation, // Use Validation as operation type
-        { stage: 'starting', progress: 0 }
-      )
-
-      // 1. Get all movies from DB
-      const allMovies = await this.repository.getAllMoviesForCleanup()
-      const dbTitles = new Set(allMovies.map(m => m.originalTitle))
-      const availableSet = new Set(availableTitles)
-
-      // 2. Identify orphans (in DB but not in availableTitles)
-      const orphans = allMovies
-        .filter(m => !availableSet.has(m.originalTitle))
-        .map(m => m.originalTitle)
-
-      if (orphans.length > 0) {
-        console.log(`🧹 Found ${orphans.length} orphaned movies to remove`)
-        const deletedCount = await this.repository.deleteByOriginalTitles(orphans)
-        result.orphansRemoved = deletedCount
-        console.log(`✅ Removed ${deletedCount} orphaned movies`)
-      }
-
-      // 3. Identify invalid video URLs for remaining movies
-      const remainingMovies = allMovies.filter(m => availableSet.has(m.originalTitle))
-      const moviesWithVideo = remainingMovies.filter(m => m.videoURL)
-      
-      if (moviesWithVideo.length > 0) {
-        console.log(`🔍 Validating video URLs for ${moviesWithVideo.length} movies...`)
-        
-        // Validate in batches to avoid overwhelming the file server
-        const batchSize = 50
-        const invalidTitles: string[] = []
-
-        for (let i = 0; i < moviesWithVideo.length; i += batchSize) {
-          const batch = moviesWithVideo.slice(i, i + batchSize)
-          const urls = batch.map(m => m.videoURL!)
-          
-          try {
-            const availability = await this.fileAdapter.validateAvailability(urls)
-            
-            // Find movies associated with unavailable URLs
-            const unavailableUrls = new Set(availability.unavailable)
-            const batchInvalid = batch
-              .filter(m => unavailableUrls.has(m.videoURL!))
-              .map(m => m.originalTitle)
-            
-            invalidTitles.push(...batchInvalid)
-            
-            // Update progress
-            const progress = Math.round(((i + batch.length) / moviesWithVideo.length) * 100)
-            syncEventBus.emitProgress(
-              'cleanup',
-              MediaType.Movie,
-              context.serverConfig.id,
-              SyncOperation.Validation,
-              { stage: 'validating', progress }
-            )
-            
-          } catch (error) {
-            console.error(`Failed to validate batch ${i}-${i+batchSize}:`, error)
-            result.errors.push(`Failed to validate batch starting at index ${i}: ${error}`)
-          }
-        }
-
-        if (invalidTitles.length > 0) {
-          console.log(`🧹 Found ${invalidTitles.length} movies with invalid video URLs`)
-          const deletedCount = await this.repository.deleteByOriginalTitles(invalidTitles)
-          result.invalidRemoved = deletedCount
-          console.log(`✅ Removed ${deletedCount} movies with invalid video URLs`)
-        }
-      }
-
-      syncEventBus.emitProgress(
-        'cleanup',
-        MediaType.Movie,
-        context.serverConfig.id,
-        SyncOperation.Validation,
-        { stage: 'completed', progress: 100 }
-      )
-
-      return result
-
-    } catch (error) {
-      console.error('Cleanup failed:', error)
-      result.errors.push(error instanceof Error ? error.message : String(error))
-      return result
-    }
-  }
-
-  /**
-   * Validate movie data
-   */
-  async validateMovie(movie: MovieEntity): Promise<boolean> {
-    try {
-      validateEntityOrThrow(movie, MediaType.Movie)
-      
-      // Additional movie-specific validation
-      if (movie.videoURL) {
-        const availability = await this.fileAdapter.validateAvailability([movie.videoURL])
-        if (availability.unavailable.includes(movie.videoURL)) {
-          throw new ValidationError(
-            `Video URL is not accessible: ${movie.videoURL}`,
-            movie.title,
-            MediaType.Movie
-          )
-        }
-      }
-
-      return true
-    } catch (error) {
-      if (error instanceof ValidationError) {
-        throw error
-      }
-      
-      throw new ValidationError(
-        `Movie validation failed: ${error}`,
-        movie.title,
-        MediaType.Movie
-      )
-    }
-  }
-
-  /**
-   * Get repository reference for advanced operations
-   */
-  getRepository(): MovieRepository {
-    return this.repository
-  }
-
-  /**
-   * Get file adapter reference for advanced operations
-   */
-  getFileAdapter(): FileServerAdapter {
-    return this.fileAdapter
-  }
-
-  /**
-   * Add or update sync strategy
-   */
-  addStrategy(strategy: SyncStrategy): void {
-    this.registerStrategies([strategy])
-  }
-
-  /**
-   * Remove strategy by name
-   */
-  removeStrategy(strategyName: string): void {
-    for (const [operation, strategies] of this.strategies.entries()) {
-      const filtered = strategies.filter(s => s.name !== strategyName)
-      this.strategies.set(operation, filtered)
-    }
-  }
-
-  /**
-   * Get available strategies for debugging
-   */
-  getStrategies(): Record<SyncOperation, string[]> {
-    const result: Record<SyncOperation, string[]> = {} as any
-
-    for (const [operation, strategies] of this.strategies.entries()) {
-      result[operation] = strategies.map(s => s.name)
-    }
-
-    return result
   }
 }

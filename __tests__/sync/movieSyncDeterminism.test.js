@@ -34,10 +34,31 @@ let mockMetadata = { id: 603, title: 'The Matrix', overview: 'x' }
 let mockMetadataByServer = {}
 
 jest.mock('@src/utils/sync/core/ResourceManager', () => ({
-  ResourceManager: class {},
+  ResourceManager: {
+    getInstance: () => ({
+      config: { syncConcurrency: 1, httpConcurrency: 1 },
+      throttleHttp: (fn) => fn(),
+      isMemoryPressure: () => false,
+      getHeapUsedMb: () => 0,
+    }),
+  },
   getResourceManager: () => ({}),
 }))
-jest.mock('@src/utils/sync/captions', () => ({ sortSubtitleEntries: (entries) => entries }))
+// The real p-limit is an ES module jest does not transform; a pass here has one title.
+jest.mock('p-limit', () => () => (fn) => fn())
+// The documents a case's pass reads and writes, and the hashes the Node.js
+// server answers with (null: the request fails).
+let mockDocs = []
+let mockHashes = null
+jest.mock('@src/utils/sync/infrastructure/database/DatabaseAdapter', () => ({
+  createDatabaseAdapter: async () => mockAdapter(),
+}))
+// The pass's side jobs, which do not touch the movie.
+jest.mock('@src/utils/notifications/MediaNotificationOrchestrator', () => ({
+  MediaNotificationOrchestrator: { processSyncResults: jest.fn(async () => ({})) },
+}))
+jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNeeded: jest.fn() }))
+jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
 jest.mock('@src/lib/httpHelper', () => ({
   // The asset strategy reads a blurhash file with this.
   httpGet: jest.fn(async (url) => {
@@ -54,7 +75,7 @@ jest.mock('@src/utils/config', () => ({
   getServer: (id) => mockServers[id],
   multiServerHandler: {},
 }))
-jest.mock('@src/utils/admin_utils', () => ({
+jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({
   // Like the real one: a server with no metadata file for the title is not
   // asked at all, and the answer is an empty object.
   fetchMetadataMultiServer: jest.fn(async (serverId, url, type) => {
@@ -69,16 +90,11 @@ jest.mock('@src/utils/admin_utils', () => ({
   }),
 }))
 
+const { runServerPass } = require('@src/utils/sync/run/serverPass')
 const { MovieSyncService } = require('@src/utils/sync/domain/movies/MovieSyncService')
-const { MovieMetadataStrategy } = require('@src/utils/sync/domain/movies/strategies/MovieMetadataStrategy')
-const { MovieAssetStrategy } = require('@src/utils/sync/domain/movies/strategies/MovieAssetStrategy')
-const { MovieContentStrategy } = require('@src/utils/sync/domain/movies/strategies/MovieContentStrategy')
-const { BlurhashStrategy } = require('@src/utils/sync/domain/shared/BlurhashStrategy')
 const { MovieRepository } = require('@src/utils/sync/infrastructure/database/MovieRepository')
-const { resolveCleanupConfig } = require('@src/utils/sync/core/FieldAbsenceCleaner')
-const { SyncOperation, MediaType } = require('@src/utils/sync/core')
 // The availability map is built by the same function the admin sync route uses.
-const { collectFieldAvailability } = require('@src/utils/sync/fieldAvailability')
+const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
 // ---------------------------------------------------------------- in-memory collection
 
@@ -192,52 +208,50 @@ const withoutVideo = () => ({
 
 // ---------------------------------------------------------------- driving a run
 
-function makeService(docs) {
-  const client = { db: () => ({ collection: () => makeCollection(docs) }) }
-  const repo = new MovieRepository(client)
-  const fileAdapter = {
-    validateAvailability: async () => ({ available: [] }),
-    getMetadata: async () => ({ exists: false }),
-  }
-  return new MovieSyncService(repo, fileAdapter, [
-    new MovieMetadataStrategy(repo, fileAdapter),
-    new MovieAssetStrategy(repo, fileAdapter),
-    new MovieContentStrategy(repo, fileAdapter),
-    new BlurhashStrategy(repo),
-  ])
+/** The pass's repositories (run/serverPass asks the adapter), over the case's documents. */
+function mockAdapter() {
+  const client = { db: () => ({ collection: () => makeCollection(mockDocs) }) }
+  return { movies: new MovieRepository(client) }
 }
 
-/** One server's pass. `payloads` is every server that answered this run. */
+/**
+ * One server's pass, run as production runs it (run/serverPass). `payloads` is
+ * every server that answered this run. Returns what the movie service reported
+ * for the title.
+ */
 async function pass(docs, serverId, payloads, { forceSync = false, allProbed = true, hashesOf = payloads, hashes = true } = {}) {
   const fieldAvailability = { movies: { [KEY]: {} }, tv: {} }
   for (const [id, payload] of Object.entries(payloads)) {
     collectFieldAvailability(payload, '', id, fieldAvailability.movies[KEY])
   }
-  const context = {
-    mediaType: MediaType.Movie,
-    operation: SyncOperation.Metadata,
-    serverConfig: { id: serverId, priority: mockServers[serverId].priority, baseUrl: `https://${serverId}.example`, prefix: '', enabled: true },
-    fieldAvailability,
-    forceSync,
-    fileServerData: { movies: { [KEY]: payloads[serverId] } },
-    // The file server's hash for the title: a hash of its payload. The skip
-    // decision does not read it (only the metadata strategy's own refetch gate
-    // does). `hashesOf` lets a case hand over the hash of a DIFFERENT payload
-    // than the one applied — what happens when a scan commits between the two
-    // fetches. `hashes: false` is a run on which the hash request failed.
-    metadataHashesCache: hashes
-      ? { hash: 'x', titles: { [KEY]: { hash: `h:${JSON.stringify(hashesOf[serverId]).length}:${JSON.stringify(hashesOf[serverId])}` } } }
-      : undefined,
-    cleanup: resolveCleanupConfig(allProbed),
-    allEnabledServersProbed: allProbed,
+  mockDocs = docs
+  // The file server's hash for the title: a hash of its payload. The skip
+  // decision does not read it (only the metadata strategy's own refetch gate
+  // does). `hashesOf` lets a case hand over the hash of a DIFFERENT payload
+  // than the one applied — what happens when a scan commits between the two
+  // fetches. `hashes: false` is a run on which the hash request failed.
+  mockHashes = hashes
+    ? { hash: 'x', titles: { [KEY]: { hash: `h:${JSON.stringify(hashesOf[serverId]).length}:${JSON.stringify(hashesOf[serverId])}` } } }
+    : null
+  const syncMovie = jest.spyOn(MovieSyncService.prototype, 'syncMovie')
+  try {
+    await runServerPass(
+      { movies: { [KEY]: payloads[serverId] } },
+      {
+        id: serverId,
+        baseURL: `https://${serverId}.example`,
+        prefixPath: '',
+        syncEndpoint: `https://${serverId}-node.example`,
+        priority: mockServers[serverId].priority,
+      },
+      fieldAvailability,
+      { forceSync, allEnabledServersProbed: allProbed }
+    )
+    if (syncMovie.mock.calls.length !== 1) throw new Error(`the pass synced the title ${syncMovie.mock.calls.length} times`)
+    return await syncMovie.mock.results[0].value
+  } finally {
+    syncMovie.mockRestore()
   }
-  return makeService(docs).syncMovie(
-    KEY,
-    context,
-    // The four operations production runs (flatSync/newArchitectureAdapter).
-    [SyncOperation.Metadata, SyncOperation.Assets, SyncOperation.Content, SyncOperation.Blurhash],
-    KEY
-  )
 }
 
 /** A whole run: every server that has the folder is synced, in the given order. */
@@ -263,10 +277,18 @@ const A_URL = `https://A.example${FOLDER}/The%20Matrix.mkv`
 const B_URL = `https://B.example${FOLDER}/The%20Matrix.mkv`
 const FILE_FACTS = ['normalizedVideoId', 'duration', 'dimensions', 'size', 'hdr', 'mediaQuality', 'mediaLastModified']
 
+const realFetch = global.fetch
 beforeAll(() => {
   for (const method of ['log', 'warn', 'info', 'debug', 'error']) {
     jest.spyOn(console, method).mockImplementation(() => {})
   }
+  // The Node.js server's metadata hashes, which the pass fetches once.
+  global.fetch = jest.fn(async () =>
+    mockHashes ? { ok: true, status: 200, json: async () => mockHashes } : { ok: false, status: 503 }
+  )
+})
+afterAll(() => {
+  global.fetch = realFetch
 })
 beforeEach(() => {
   mockMetadata = { id: 603, title: 'The Matrix', overview: 'x' }
@@ -657,7 +679,7 @@ describe('two servers with subtitles', () => {
 // ---------------------------------------------------------------- the skip gate
 
 describe('skipping an unchanged title', () => {
-  const adminUtils = require('@src/utils/admin_utils')
+  const adminUtils = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
   const statuses = (results) => results.map((r) => r.status)
 
   it('skips every server on a run in which nothing changed', async () => {
@@ -1571,7 +1593,7 @@ describe('source fields after the owner was down when the title was first synced
   })
 
   it('do not make a settled title refetch its metadata', async () => {
-    const adminUtils = require('@src/utils/admin_utils')
+    const adminUtils = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
     const payloads = { A: withVideo(), B: withVideo() }
     const docs = []
     await run(docs, payloads, ['A', 'B'])

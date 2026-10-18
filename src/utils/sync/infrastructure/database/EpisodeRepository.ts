@@ -10,7 +10,7 @@ import { BaseRepository } from './BaseRepository'
 import { ResourceManager } from '../../core/ResourceManager'
  
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
-import { getCurrentSyncRunId } from '../../../flatSync/syncContext'
+import { getCurrentSyncRunId } from '../../run/runState'
 // @ts-ignore — dependency-light JS module with no .d.ts
 import { visibleEpisodeFilter } from '@src/utils/mediaVisibility'
 
@@ -63,9 +63,8 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         // indexes above are prefixed by seasonId, so every such query COLLSCANs
         // the whole collection (confirmed in production: ~7.2k docs scanned per
         // query, 1s+ durations). The compound key covers both the seasonId match
-        // and the episodeNumber sort. Mirrors season_episode_index in
-        // flatSync/initializeDatabase.js, which the new-arch sync path never runs;
-        // name must match it to avoid IndexOptionsConflict.
+        // and the episodeNumber sort. Name must match prod's existing
+        // season_episode_index to avoid IndexOptionsConflict.
         this.createIndexSafely({ seasonId: 1, episodeNumber: 1 }, { name: 'season_episode_index' }),
 
         // Server and sync indexes
@@ -84,19 +83,19 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         // back to a full scan — the single worst offender in the SigNoz slow-query
         // log (175 of 200 entries over 7d, ~7.2k docs scanned, 0 keys, up to
         // 541ms each). Adding normalizedVideoId lets MongoDB build an index-OR
-        // plan across both branches. Name matches normalized_id_index in
-        // flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        // plan across both branches. Name matches prod's existing
+        // normalized_id_index to avoid IndexOptionsConflict.
         this.createIndexSafely({ normalizedVideoId: 1 }, { name: 'normalized_id_index' }),
 
         // Backend-sourced content identity (`${showMediaId}:s##e##`). Sparse —
         // only episodes whose show resolved an identity carry it. Name matches
-        // media_id_index in flatSync/initializeDatabase.js.
+        // prod's existing media_id_index.
         this.createIndexSafely({ mediaId: 1 }, { sparse: true, name: 'media_id_index' }),
 
         // Covered-query index for validateWatchHistoryAgainstDatabase(), which
         // projects only { videoURL, normalizedVideoId } — an index-only scan with
-        // no document fetch. Mirrors videoURL_normalizedId_covered_index in
-        // flatSync/initializeDatabase.js (never run by the new-arch sync path).
+        // no document fetch. Name matches prod's existing
+        // videoURL_normalizedId_covered_index.
         this.createIndexSafely(
           { videoURL: 1, normalizedVideoId: 1 },
           { name: 'videoURL_normalizedId_covered_index' }
@@ -111,13 +110,12 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         // and does a blocking in-memory sort (confirmed via explain: all docs
         // scanned, totalKeysExamined: 0). The compound key is covered —
         // mediaLastModified satisfies the sort, showId satisfies the group — so it
-        // walks only the most recent entries. Mirrors mediaLastModified_index in
-        // flatSync/initializeDatabase.js, which the new-arch sync path never runs.
+        // walks only the most recent entries.
         this.createIndexSafely({ mediaLastModified: -1, showId: 1 }),
         // "Recently Added" now sorts episodes by library-add date, then mtime,
         // and groups by showId — same covered shape as the index above, keyed on
-        // the date that a replaced file cannot move. Mirrored in
-        // flatSync/initializeDatabase.js, which the new-arch path never runs.
+        // the date that a replaced file cannot move. The name matches prod's
+        // existing index.
         this.createIndexSafely(
           { initialDiscoveryDate: -1, mediaLastModified: -1, showId: 1 },
           { name: 'recently_added_index' }
@@ -128,7 +126,7 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         this.createIndexSafely({ 'captionURLs': 1 }, { sparse: true }),
 
         // Sync-run marker — post-sync cleanup deletes by { syncRunId: { $ne } }.
-        // Name must match flatSync/initializeDatabase.js to avoid IndexOptionsConflict.
+        // Name must match prod's existing index to avoid IndexOptionsConflict.
         this.createIndexSafely({ syncRunId: 1 }, { name: 'sync_run_id_index' })
       ])
       return true

@@ -29,19 +29,21 @@ import {
   EpisodeRepository,
   SeasonRepository,
   TVShowRepository,
-  UrlBuilder,
+  captionUrls,
+  fetchMetadataMultiServer,
+  fileServerUrl,
   isTopLevelFieldLocked,
 } from '../../infrastructure'
 import {
-  createFullUrl,
   getServersReportingField,
   isHighestPriorityAmongServers,
-  availabilityFingerprintForPrefixes,
-  payloadFingerprint,
   seasonsAcrossServers,
   serverOutranks,
-} from '@src/utils/sync/utils'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
+} from '@src/utils/sync/core/ownership'
+import {
+  availabilityFingerprintForPrefixes,
+  payloadFingerprint,
+} from '@src/utils/sync/core/syncGate'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { warnOnJitIdentityFork } from '@src/utils/sync/core/jitIdentityParity'
 import { seedDiscovery, applyFirstSeen } from '@src/utils/sync/core/discovery'
@@ -244,7 +246,7 @@ export class EpisodeSyncService {
         await this.episodeRepository.smartBulkUpsert(episodeOps)
       }
 
-      for (const { merged: entity, cleanupChanges, gateLeftOpen, documentChanged } of episodeOps) {
+      for (const { merged: entity, existing, cleanupChanges, gateLeftOpen, documentChanged } of episodeOps) {
         results.push(this.makeResult(
           `${label}E${entity.episodeNumber}`, context,
           SyncStatus.Completed,
@@ -256,6 +258,9 @@ export class EpisodeSyncService {
             // Read by TVShowSyncService when it decides the show's own gate.
             ...(gateLeftOpen ? { gateLeftOpen: true } : {}),
             ...(documentChanged ? { documentChanged: true } : {}),
+            // No document existed before this write (counted for the admins'
+            // sync notice).
+            ...(existing ? {} : { created: true }),
           }
         ))
       }
@@ -575,7 +580,7 @@ export class EpisodeSyncService {
           entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
         }
       } else {
-        entity.videoURL = createFullUrl(fileData.videoURL, context.serverConfig)
+        entity.videoURL = fileServerUrl(fileData.videoURL, context.serverConfig)
         entity.videoSource = context.serverConfig.id
         entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
       }
@@ -609,9 +614,9 @@ export class EpisodeSyncService {
       }
 
       // Episodes carry these flat; source urls go through the same
-      // createFullUrl transform as videoURL above.
+      // fileServerUrl as videoURL above.
       const facts = resolveDeliveryFacts(fileData, (url) =>
-        createFullUrl(url, context.serverConfig)
+        fileServerUrl(url, context.serverConfig)
       )
       entity.sources = facts.sources
       entity.primaryContainer = facts.primaryContainer
@@ -735,7 +740,7 @@ export class EpisodeSyncService {
     // --- Thumbnail (priority-gated) ---
     const canUpdateThumbnail = owns('thumbnail', Boolean(fileData?.thumbnail || fileData?.thumbnailURL))
     if (canUpdateThumbnail) {
-      entity.thumbnail = createFullUrl(
+      entity.thumbnail = fileServerUrl(
         fileData.thumbnail || fileData.thumbnailURL,
         context.serverConfig
       )
@@ -755,7 +760,7 @@ export class EpisodeSyncService {
       try {
         listedCaptions =
           fileData.subtitles && typeof fileData.subtitles === 'object'
-            ? UrlBuilder.processCaptionURLs(fileData.subtitles, context.serverConfig)
+            ? captionUrls(fileData.subtitles, context.serverConfig)
             : null
       } catch (error) {
         // Not being able to read the list is not the same as an empty list.
@@ -803,14 +808,14 @@ export class EpisodeSyncService {
     // Legacy stores chapterURL as a single URL string (not an array)
     const canUpdateChapters = owns('chapters', Boolean(fileData?.chapters))
     if (canUpdateChapters) {
-      entity.chapterURL = createFullUrl(fileData.chapters, context.serverConfig)
+      entity.chapterURL = fileServerUrl(fileData.chapters, context.serverConfig)
       entity.chapterSource = context.serverConfig.id
     }
 
     // --- Metadata (priority-gated) ---
     // Tracks whether episode metadata came from a CONFIRMED fresh source (URL
     // fetch ok, or backend-inlined object) vs. the parent inline fallback or a
-    // failure. Only a fresh source may advance the syncHash gate — the inline
+    // failure. Only a fresh source may advance the episode's gate — the inline
     // fallback is fine for display but must not lock the episode on a stale
     // parent. Default true so "no episode metadata URL" never blocks the gate.
     let metadataFromFreshFetch = true
@@ -883,7 +888,7 @@ export class EpisodeSyncService {
         try {
           blurhash = await fetchMetadataMultiServer(
             context.serverConfig.id,
-            createFullUrl(fileData.thumbnailBlurhash, context.serverConfig),
+            fileServerUrl(fileData.thumbnailBlurhash, context.serverConfig),
             'blurhash',
             'tv',
             showOriginalTitle

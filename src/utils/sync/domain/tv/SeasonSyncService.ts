@@ -21,16 +21,14 @@ import {
   planFieldCleanup
 } from '../../core'
 
-import { SeasonRepository, TVShowRepository, isTopLevelFieldLocked } from '../../infrastructure'
+import { SeasonRepository, TVShowRepository, fetchMetadataMultiServer, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
 import { seedDiscovery } from '../../core/discovery'
 import {
   getServersReportingField,
   isHighestPriorityAmongServers,
   seasonsAcrossServers,
-  createFullUrl,
-} from '@src/utils/sync/utils'
+} from '@src/utils/sync/core/ownership'
 import { changesDocument } from '@src/utils/sync/core/syncGate'
-import { fetchMetadataMultiServer } from '@src/utils/admin_utils'
 import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Season')
@@ -334,7 +332,7 @@ export class SeasonSyncService {
     // File-server key for season poster is "season_poster", not "poster"
     const canUpdatePoster = owns('season_poster', Boolean((fileData as any)?.season_poster))
     if (canUpdatePoster) {
-      entity.posterURL = createFullUrl(
+      entity.posterURL = fileServerUrl(
         (fileData as any).season_poster,
         context.serverConfig
       )
@@ -388,7 +386,7 @@ export class SeasonSyncService {
         try {
           blurhash = await fetchMetadataMultiServer(
             context.serverConfig.id,
-            createFullUrl((fileData as any).seasonPosterBlurhash, context.serverConfig),
+            fileServerUrl((fileData as any).seasonPosterBlurhash, context.serverConfig),
             'blurhash',
             'tv',
             showOriginalTitle

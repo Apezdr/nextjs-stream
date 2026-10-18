@@ -51,7 +51,9 @@ jest.mock('@src/utils/jit/serveSettings', () => ({ invalidateCachedJitServeSetti
 jest.mock('@src/utils/jit/health', () => ({ invalidateTranscoderHealthCache: jest.fn() }))
 jest.mock('@src/utils/flatDatabaseUtils', () => ({ generateNormalizedVideoId: jest.fn() }))
 // The delete actions also forget the sync's record (tested in flatMediaActionsSyncGates)
-jest.mock('@src/utils/sync/appliedPayloads', () => ({ forgetAppliedPayloads: jest.fn(async () => {}) }))
+jest.mock('@src/utils/sync/run/appliedPayloads', () => ({ forgetAppliedPayloads: jest.fn(async () => {}) }))
+// ...and validate watch history (also tested in flatMediaActionsSyncGates)
+jest.mock('@src/utils/sync/run/validateWatchHistory', () => ({ validateWatchHistory: jest.fn(async () => ({})) }))
 jest.mock('@src/utils/cache/invalidation', () => ({
   invalidateMovieDetailsCache: jest.fn(),
   invalidateTVShowDetailsCache: jest.fn(),

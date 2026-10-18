@@ -20,18 +20,14 @@ import {
 
 import { 
   MovieRepository,
-  UrlBuilder,
+  fileServerUrl,
   isTopLevelFieldLocked
 } from '../../../infrastructure'
 
 import {
-  FileServerAdapter
-} from '../../../core'
-
-import {
   isCurrentServerHighestPriorityForReportedField,
   getServersReportingField,
-} from '@src/utils/sync/utils'
+} from '@src/utils/sync/core/ownership'
 import { httpGet } from '@src/lib/httpHelper'
 import { syncLogger } from '../../../core/logger'
 
@@ -44,10 +40,7 @@ export class MovieAssetStrategy implements SyncStrategy {
   readonly supportedOperations = [SyncOperation.Assets]
   readonly supportedMediaTypes = [MediaType.Movie]
 
-  constructor(
-    private repository: MovieRepository,
-    private fileAdapter: FileServerAdapter
-  ) {}
+  constructor(private repository: MovieRepository) {}
 
   canHandle(context: SyncContext): boolean {
     return (
@@ -75,21 +68,14 @@ export class MovieAssetStrategy implements SyncStrategy {
 
       let movie = entity as MovieEntity | null
       if (!movie) {
-        // 🚀 OPTIMIZATION: Check cache first, then database
-        if (context.movieCache?.has(originalTitle)) {
-          movie = context.movieCache.get(originalTitle)!
-          syncLogger.debug(`💾 Cache HIT for "${originalTitle}"`)
-        } else {
-          syncLogger.debug(`🔍 Cache MISS for "${originalTitle}", querying database...`)
-          movie = await this.repository.findByOriginalTitle(originalTitle)
-          if (!movie) {
-            syncLogger.debug(`🎬 Movie not in database, creating basic entity for assets: "${originalTitle}"`)
-            movie = {
-              title,
-              originalTitle,
-              lastSynced: new Date(),
-              metadata: {}
-            }
+        movie = await this.repository.findByOriginalTitle(originalTitle)
+        if (!movie) {
+          syncLogger.debug(`🎬 Movie not in database, creating basic entity for assets: "${originalTitle}"`)
+          movie = {
+            title,
+            originalTitle,
+            lastSynced: new Date(),
+            metadata: {}
           }
         }
       }
@@ -242,8 +228,8 @@ export class MovieAssetStrategy implements SyncStrategy {
         continue
       }
 
-      // Build full URL: fileServerData paths already include prefix, so pass empty prefix
-      const newAssetUrl = UrlBuilder.createFullUrl(assetRelativePath, { ...context.serverConfig, prefix: '' })
+      // Build full URL: fileServerData paths already include the prefix
+      const newAssetUrl = fileServerUrl(assetRelativePath, context.serverConfig)
       const currentUrl = currentMovie[urlField as keyof MovieEntity] as string
 
       // The stored URL must be the owner's URL. The two used to be compared by
@@ -432,8 +418,8 @@ export class MovieAssetStrategy implements SyncStrategy {
       return null
     }
     
-    // Use UrlBuilder with empty prefix since fileServerData paths already include the prefix
-    const fullUrl = UrlBuilder.createFullUrl(blurhashRelativePath, { ...context.serverConfig, prefix: '' })
+    // fileServerData paths already include the prefix
+    const fullUrl = fileServerUrl(blurhashRelativePath, context.serverConfig)
     
     syncLogger.debug(`✅ Built blurhash URL: ${fullUrl}`)
     return fullUrl

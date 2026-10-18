@@ -18,9 +18,10 @@ import clientPromise from '@src/lib/mongodb'
 import { getServerLoadSnapshot, noteServerLoadDemand } from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
-import { syncAllServers, fetchSyncTick } from '@src/utils/sync'
-import { forgetAppliedPayloads } from '@src/utils/sync/appliedPayloads'
-import { collectFieldAvailability } from '@src/utils/sync/fieldAvailability'
+import { syncAllServers, fetchSyncTick } from '@src/utils/sync/run/syncAllServers'
+import { forgetAppliedPayloads } from '@src/utils/sync/run/appliedPayloads'
+import { validateWatchHistory } from '@src/utils/sync/run/validateWatchHistory'
+import { buildFieldAvailability } from '@src/utils/sync/run/availability'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { SyncEventType } from '@src/utils/sync/core/types'
 import { createDatabaseAdapter } from '@src/utils/sync/infrastructure'
@@ -829,7 +830,7 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     // Get file server(s) data directly (no internal HTTP call). The payloads
     // are fetched conditionally, and a tick that would change nothing ends
     // here: no parse, no fieldAvailability, no pass, no cleanup (see
-    // fetchSyncTick in sync/tickSkip for the conditions and what a skip still
+    // fetchSyncTick in sync/run/tickSkip for the conditions and what a skip still
     // does).
     const tick = await fetchSyncTick({ forceSync, allowSkip: syncOptions.startedByWebhook === true })
     if (tick.skipped) {
@@ -838,76 +839,10 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     }
     const { fileServers, errors } = tick
 
-    // Initialize field-level availability maps
-    const fieldAvailability = {
-      movies: {},
-      tv: {},
-    }
-
-    // Build availability maps per server.
-    // The collectFieldAvailability recursion over the full library is the
-    // single largest synchronous block in a sync tick — with no yields it
-    // starves every in-flight request for its whole duration (observed as
-    // multi-second slow-request bursts aligned to sync starts). Yield to the
-    // event loop every N titles so concurrent requests keep getting turns.
-    const FIELD_AVAILABILITY_YIELD_EVERY = 50
-    const fieldAvailabilityStart = performance.now()
-    let titlesSinceYield = 0
-    const yieldToEventLoop = () => new Promise((resolve) => setImmediate(resolve))
-
-    for (const [serverId, fileServer] of Object.entries(fileServers)) {
-      // For Movies - add null check to avoid errors on undefined
-      if (fileServer.movies) {
-        for (const [movieTitle, movieData] of Object.entries(fileServer.movies)) {
-          if (!fieldAvailability.movies[movieTitle]) {
-            fieldAvailability.movies[movieTitle] = {}
-          }
-
-          collectFieldAvailability(movieData, '', serverId, fieldAvailability.movies[movieTitle])
-
-          if (++titlesSinceYield >= FIELD_AVAILABILITY_YIELD_EVERY) {
-            titlesSinceYield = 0
-            await yieldToEventLoop()
-          }
-        }
-      }
-
-      // For TV Shows - add null check to avoid errors on undefined
-      if (fileServer.tv) {
-        for (const [showTitle, showData] of Object.entries(fileServer.tv)) {
-          if (!fieldAvailability.tv[showTitle]) {
-            fieldAvailability.tv[showTitle] = {}
-          }
-
-          collectFieldAvailability(showData, '', serverId, fieldAvailability.tv[showTitle])
-
-          if (++titlesSinceYield >= FIELD_AVAILABILITY_YIELD_EVERY) {
-            titlesSinceYield = 0
-            await yieldToEventLoop()
-          }
-        }
-      }
-    }
-
-    console.log(
-      `[SYNC PERF] fieldAvailability built in ${(performance.now() - fieldAvailabilityStart).toFixed(0)}ms ` +
-      `(${Object.keys(fieldAvailability.movies).length} movies, ${Object.keys(fieldAvailability.tv).length} shows)`
-    )
+    const fieldAvailability = await buildFieldAvailability(fileServers)
 
     const importSettings = await getFileServerImportSettings()
     console.log('Import Settings:', importSettings)
-
-    // Parse URL parameters for sync architecture options
-    const url = new URL(request.url);
-    const useNewArchitecture = url.searchParams.get('useNewArchitecture') === 'true';
-    const forceOldArchitecture = url.searchParams.get('forceOldArchitecture') === 'true';
-    
-    // Log architecture choice for debugging
-    if (useNewArchitecture) {
-      console.log('🆕 Admin API: Using NEW sync architecture (query parameter override)');
-    } else if (forceOldArchitecture) {
-      console.log('🔄 Admin API: Forcing OLD sync architecture (query parameter override)');
-    }
 
     // Ensure MongoDB indexes exist before the first bulk write.
     // createDatabaseAdapter is idempotent — it initialises the singleton adapter
@@ -924,10 +859,8 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     // deletion and wipe good data.
     const allEnabledServersProbed = !errors && Object.keys(fileServers || {}).length > 0
 
-    // Perform the actual sync with architecture options
+    // Perform the actual sync
     const result = await syncAllServers(fileServers, fieldAvailability, {
-      useNewArchitecture,
-      forceOldArchitecture,
       forceSync,
       allEnabledServersProbed,
       // Recorded if the pass completes, for the next tick's conditional fetch
@@ -948,10 +881,11 @@ async function handleSync(webhookId, request, syncOptions = {}) {
       const serverNames = Object.keys(fileServers);
       const serverName = serverNames.length > 0 ? serverNames[0] : 'Unknown Server';
       
-      // Extract sync statistics from the result
+      // The documents this run created (not updated), across every server
       const stats = {
-        moviesAdded: result.moviesAdded || 0,
-        episodesAdded: result.episodesAdded || 0,
+        moviesAdded: result.added?.movies || 0,
+        showsAdded: result.added?.shows || 0,
+        episodesAdded: result.added?.episodes || 0,
         duration: `${durationMinutes} minutes`
       };
       
@@ -1017,8 +951,12 @@ export async function DELETE(request, props) {
         console.log(`Cleared ${deleteResult.deletedCount} documents from ${collectionName}`)
       }
       // The next sync tick must be a full pass that rebuilds the catalog, not
-      // a skip on the strength of the last one (sync/tickSkip).
+      // a skip on the strength of the last one (sync/run/tickSkip).
       await forgetAppliedPayloads()
+      // Nothing is left for watch history to count on until that pass
+      // (sync/run/validateWatchHistory; never throws). A wipe of an empty
+      // catalog changed nothing it counts on.
+      if (Object.values(results).some((count) => count > 0)) await validateWatchHistory('admin wipe')
 
       console.log('Cleared all documents from flat database collections')
       return new Response(JSON.stringify({ 

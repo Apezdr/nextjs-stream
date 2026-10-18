@@ -11,10 +11,11 @@ export class NotificationHashing {
    * @returns {string} Hash string
    */
   static generateContentHash(content) {
+    // The new-content notices carry `id` (a string), the weekly digest `_id`.
     const contentString = JSON.stringify({
-      movies: content.movies?.map(m => ({ id: m._id, title: m.title, createdAt: m.createdAt })) || [],
-      episodes: content.episodes?.map(e => ({ 
-        id: e._id, 
+      movies: content.movies?.map(m => ({ id: m.id ?? m._id, title: m.title, createdAt: m.createdAt })) || [],
+      episodes: content.episodes?.map(e => ({
+        id: e.id ?? e._id,
         showTitle: e.showTitle, 
         seasonNumber: e.seasonNumber, 
         episodeNumber: e.episodeNumber,

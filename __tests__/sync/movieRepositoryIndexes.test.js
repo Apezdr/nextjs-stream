@@ -2,9 +2,10 @@
  * @jest-environment node
  *
  * The /list banner sorts FlatMovies by metadata.release_date and takes 8. The
- * index for that was declared only in flatSync/initializeDatabase.js, which
- * the new sync architecture never runs, so production scanned and sorted
- * every movie on each banner query (16.5 ms of a 40 ms request). The new-arch
+ * index for that was declared only in the since-deleted
+ * flatSync/initializeDatabase.js, which the new sync architecture never ran,
+ * so production scanned and sorted every movie on each banner query
+ * (16.5 ms of a 40 ms request). The new-arch
  * repository has to create it, under the same name, so a copy that already
  * exists is accepted rather than a conflict.
  */

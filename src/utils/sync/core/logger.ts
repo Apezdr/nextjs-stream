@@ -129,11 +129,3 @@ class SyncLogger {
 
 // Export singleton instance
 export const syncLogger = new SyncLogger()
-
-// Convenience functions
-export const logError = syncLogger.error.bind(syncLogger)
-export const logWarn = syncLogger.warn.bind(syncLogger)
-export const logInfo = syncLogger.info.bind(syncLogger)
-export const logDebug = syncLogger.debug.bind(syncLogger)
-export const logProgress = syncLogger.progress.bind(syncLogger)
-export const logBatch = syncLogger.batch.bind(syncLogger)

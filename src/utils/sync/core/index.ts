@@ -9,9 +9,6 @@ export * from './types'
 // Event system
 export * from './events'
 
-// Validation system
-export * from './validation'
-
 // Logger system
 export * from './logger'
 
@@ -56,7 +53,6 @@ export {
   type SyncStrategy,
   type SyncContext,
   type SyncResult,
-  type BatchSyncResult,
   type ServerConfig,
   type FieldAvailability,
   type BaseMediaEntity,
@@ -67,14 +63,5 @@ export {
 } from './types'
 
 export {
-  syncEventBus,
-  SyncEvents
+  syncEventBus
 } from './events'
-
-export {
-  validateEntity,
-  validateEntityOrThrow,
-  validateVideoInfo,
-  validateCaptionTracks,
-  validateChapterMarkers
-} from './validation'

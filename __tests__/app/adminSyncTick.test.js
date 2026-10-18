@@ -18,7 +18,7 @@ jest.mock('@src/utils/routeAuth', () => ({
   isAdmin: jest.fn(async () => ({ id: 'admin-1' })),
   isAdminOrWebhook: jest.fn(async () => true),
 }))
-jest.mock('@src/utils/sync', () => ({
+jest.mock('@src/utils/sync/run/syncAllServers', () => ({
   fetchSyncTick: (...args) => mockFetchSyncTick(...args),
   syncAllServers: (...args) => mockSyncAllServers(...args),
 }))
@@ -28,8 +28,11 @@ jest.mock('@src/utils/notifications/NotificationManager.js', () => ({
 jest.mock('@src/utils/sync/infrastructure', () => ({
   createDatabaseAdapter: (...args) => mockCreateDatabaseAdapter(...args),
 }))
-jest.mock('@src/utils/sync/fieldAvailability', () => ({
-  collectFieldAvailability: (...args) => mockCollectFieldAvailability(...args),
+jest.mock('@src/utils/sync/run/availability', () => ({
+  buildFieldAvailability: async (...args) => {
+    mockCollectFieldAvailability(...args)
+    return { movies: {}, tv: {} }
+  },
 }))
 jest.mock('@src/utils/sync/core/events', () => ({ syncEventBus: { subscribe: () => () => {} } }))
 jest.mock('@src/utils/sync/core/types', () => ({ SyncEventType: {} }))
@@ -38,7 +41,7 @@ jest.mock('@src/utils/cache/postSyncRevalidation', () => ({
   countChangedMedia: () => 0,
   requestMediaRevalidation: jest.fn(),
 }))
-jest.mock('@src/utils/sync/appliedPayloads', () => ({ forgetAppliedPayloads: jest.fn() }))
+jest.mock('@src/utils/sync/run/appliedPayloads', () => ({ forgetAppliedPayloads: jest.fn() }))
 
 // The route's other dependencies play no part in a sync tick.
 jest.mock('next/cache', () => ({ revalidateTag: jest.fn(), updateTag: jest.fn() }))
@@ -59,7 +62,6 @@ jest.mock('@src/utils/server_track_processes', () => ({}))
 jest.mock('@src/utils/backendAuth', () => ({ getBackendAuthHeaders: jest.fn(async () => ({})) }))
 jest.mock('@src/utils/sync_verification', () => ({}))
 jest.mock('@src/utils/auth_utils', () => ({}))
-jest.mock('@src/utils/fileServerDataService', () => ({}))
 jest.mock('@src/lib/logger', () => ({
   createLogger: jest.fn(() => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() })),
 }))
@@ -140,6 +142,26 @@ it('runs the pass on a tick that is not skipped, with the ETags of the payloads 
   )
   expect(mockNotify).toHaveBeenCalledTimes(1)
   expect(console.error).not.toHaveBeenCalledWith('Sync operation failed:', expect.anything())
+})
+
+it('tells the admins what the run added: the documents its passes created, per kind', async () => {
+  const fileServers = { default: { config: { priority: 1 }, movies: { 'Movie A': {} }, tv: {} } }
+  mockFetchSyncTick.mockResolvedValue({ skipped: false, fileServers, errors: undefined, etags: ETAGS })
+  mockSyncAllServers.mockResolvedValue({
+    errors: [],
+    changedMedia: { movies: ['Movie A', 'Movie B'], shows: ['Show A'], seasons: [], episodes: [] },
+    added: { movies: 1, shows: 1, episodes: 4 },
+  })
+
+  await startSync()
+  await untilIdle()
+
+  expect(mockNotify).toHaveBeenCalledWith('default', {
+    moviesAdded: 1,
+    showsAdded: 1,
+    episodesAdded: 4,
+    duration: expect.stringMatching(/ minutes$/),
+  })
 })
 
 it('never lets a sync started from the admin UI skip; the per-title gates still apply', async () => {

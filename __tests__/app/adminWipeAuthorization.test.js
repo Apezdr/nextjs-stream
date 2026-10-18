@@ -37,10 +37,14 @@ jest.mock('@src/utils/config', () => ({}))
 jest.mock('@src/utils/monitor_server_load', () => ({ monitorConfig: {} }))
 jest.mock('@src/utils/server_track_processes', () => ({}))
 jest.mock('@src/utils/backendAuth', () => ({ getBackendAuthHeaders: jest.fn(async () => ({})) }))
-jest.mock('@src/utils/sync', () => ({}))
+jest.mock('@src/utils/sync/run/syncAllServers', () => ({}))
 const mockForgetAppliedPayloads = jest.fn(async () => {})
-jest.mock('@src/utils/sync/appliedPayloads', () => ({
+jest.mock('@src/utils/sync/run/appliedPayloads', () => ({
   forgetAppliedPayloads: (...args) => mockForgetAppliedPayloads(...args),
+}))
+const mockValidateWatchHistory = jest.fn(async () => ({ markedInvalid: 0 }))
+jest.mock('@src/utils/sync/run/validateWatchHistory', () => ({
+  validateWatchHistory: (...args) => mockValidateWatchHistory(...args),
 }))
 jest.mock('@src/utils/sync/core/events', () => ({ syncEventBus: {} }))
 jest.mock('@src/utils/sync/core/types', () => ({ SyncEventType: {} }))
@@ -48,7 +52,6 @@ jest.mock('@src/utils/sync/infrastructure', () => ({}))
 jest.mock('@src/utils/sync_verification', () => ({}))
 jest.mock('@src/utils/auth_utils', () => ({}))
 jest.mock('@src/utils/notifications/NotificationManager.js', () => ({ NotificationManager: {} }))
-jest.mock('@src/utils/fileServerDataService', () => ({}))
 jest.mock('next/cache', () => ({ revalidateTag: jest.fn() }))
 jest.mock('@src/utils/cache/mediaPagesTags', () => ({}))
 jest.mock('@src/lib/logger', () => ({
@@ -115,11 +118,31 @@ describe('DELETE /api/authenticated/admin/wipe-db', () => {
       .toBeGreaterThan(Math.max(...mockDeleteMany.mock.invocationCallOrder))
   })
 
+  test('validates watch history after the deletes: nothing is left for it to count on', async () => {
+    mockIsAdmin.mockResolvedValue({ id: 'admin-1', role: 'admin' })
+
+    await wipe()
+
+    expect(mockValidateWatchHistory).toHaveBeenCalledTimes(1)
+    expect(mockValidateWatchHistory.mock.invocationCallOrder[0])
+      .toBeGreaterThan(Math.max(...mockDeleteMany.mock.invocationCallOrder))
+  })
+
+  test('validates nothing when the catalog was already empty', async () => {
+    mockIsAdmin.mockResolvedValue({ id: 'admin-1', role: 'admin' })
+    mockDeleteMany.mockResolvedValue({ deletedCount: 0 })
+
+    await wipe()
+
+    expect(mockValidateWatchHistory).not.toHaveBeenCalled()
+  })
+
   test('a refused wipe leaves the sync record alone', async () => {
     mockIsAdmin.mockResolvedValue(new Response('{}', { status: 401 }))
 
     await wipe()
 
     expect(mockForgetAppliedPayloads).not.toHaveBeenCalled()
+    expect(mockValidateWatchHistory).not.toHaveBeenCalled()
   })
 })

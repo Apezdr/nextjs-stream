@@ -33,7 +33,7 @@ jest.mock('@src/utils/watchHistory/database', () => ({
   updateValidationStatus: jest.fn(),
 }))
 
-const { validateWatchHistoryAgainstDatabase, VOUCHING_FILTERS } = require('@src/utils/flatSync/watchHistoryValidation')
+const { validateWatchHistoryAgainstDatabase, VOUCHING_FILTERS } = require('@src/utils/sync/run/watchHistoryValidation')
 const { visibleMovieFilter, visibleEpisodeFilter } = require('@src/utils/mediaVisibility')
 
 // Just enough of MongoDB's matching for the filters the validation issues,

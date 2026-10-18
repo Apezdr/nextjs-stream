@@ -35,11 +35,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `src/contexts/` - React contexts for global state
 
 ### Database Architecture
-Two sync implementations exist:
-1. **Traditional Sync** (`src/utils/sync/`) - Nested document structure
-2. **Flat Database Sync** (`src/utils/flatSync/`) - Separate collections for Movies, TV Shows, Seasons, Episodes
+The sync (`src/utils/sync/`) writes to flat collections - separate collections for Movies, TV Shows, Seasons, Episodes.
 
-Current implementation uses flat database structure for better performance with large datasets.
+The flat database structure gives better performance with large datasets.
 
 ### Key Components
 
@@ -87,20 +85,21 @@ const wrongPath = `/movies/${movie.title}/poster.jpg` // Will fail!
 **Field-level priority management using `fieldAvailability` and server priorities:**
 
 - Each field can have different source servers based on data availability
-- Server priority determines data precedence (lower number = higher priority)
-- Pre-computed `fieldAvailability` object maps which servers have data for each field
-- Use `isCurrentServerHighestPriorityForField()` before updating any field
+- Server priority determines data precedence (lower number = higher priority; equal priorities break on server id)
+- Pre-computed `fieldAvailability` object maps which servers have a value for each exact leaf path (`urls.poster`)
+- Ownership fails closed: a field belongs to the highest-priority server among those that report a value. Check it with `isCurrentServerHighestPriorityForReportedField()` (or `isHighestPriorityAmongServers()`) before updating any field
+- `isCurrentServerHighestPriorityForField()` is legacy and fails open; not for new code
 
 **Priority Check Pattern:**
 ```javascript
-import { isCurrentServerHighestPriorityForField } from '@src/utils/sync/utils'
+import { isCurrentServerHighestPriorityForReportedField } from '@src/utils/sync/core/ownership'
 
-// Always check priority before updating fields
-const canUpdate = isCurrentServerHighestPriorityForField(
+// Always check ownership before updating fields (fails closed)
+const canUpdate = isCurrentServerHighestPriorityForReportedField(
   fieldAvailability,
   'movies',
   originalTitle,  // Use originalTitle as key
-  'posterURL',
+  'urls.poster',  // Exact leaf path the server reported
   serverConfig
 )
 
@@ -145,12 +144,7 @@ Create `.env.local` with required variables:
 
 ### Sync System
 
-#### Two Sync Architectures (Current State)
-
-**1. New Domain-Driven Sync** (`src/utils/sync/domain/`)
-- The live default: `shouldUseNewArchitecture()` (`src/utils/sync/featureFlags.js`)
-  returns `true` unless explicitly forced off, and `USE_NEW_SYNC_ARCHITECTURE=true`
-  on all deployments
+#### Domain-Driven Sync (`src/utils/sync/domain/`)
 - Modern architecture with TypeScript support
 - Strategy pattern with pluggable sync operations
 - Domain-specific services (MovieSyncService, EpisodeSyncService, etc.)
@@ -158,15 +152,16 @@ Create `.env.local` with required variables:
   `EpisodeRepository.smartBulkUpsert` / `SeasonRepository.smartBulkUpsert`),
   which is where `lockedFields` enforcement (`computeDiff`) and `manualFields`
   cleanup (`manualFieldsToClear`) live
-
-**2. Traditional Flat Sync** (`src/utils/flatSync/`)
-- Legacy per-field write path; still used as an automatic fallback if the new
-  architecture throws or fails a compatibility check (`flatSync/index.js`)
 - Field-level priority system with `fieldAvailability`
 - Uses `originalTitle` as database keys
 - Granular source tracking per field
-- No single write chokepoint — each field (poster, backdrop, metadata, etc.)
-  issues its own independent `updateOne` per media type
+- The run orchestration (single-flight lock, `syncRunId`, pre-tag, tick skip,
+  post-sync cleanup) lives in `src/utils/sync/run/`. Each server's pass is
+  `src/utils/sync/run/serverPass.ts`, which runs, in order: the server config
+  check, the movies (`MovieSyncService`), the shows with their seasons and
+  episodes (`TVShowSyncService`, through the movies' pool once the last movie
+  is done), then that server's new-content notifications and the WatchHistory
+  migration and validation
 
 #### Critical Sync Architecture Rules
 
@@ -175,21 +170,22 @@ Create `.env.local` with required variables:
 // ✅ CORRECT - All sync operations use originalTitle
 const movie = await repository.findByOriginalTitle(originalTitle)
 const assetPath = `/movies/${originalTitle}/poster.jpg`
-const canUpdate = isCurrentServerHighestPriorityForField(
-  fieldAvailability, 'movies', originalTitle, 'posterURL', serverConfig
+const canUpdate = isCurrentServerHighestPriorityForReportedField(
+  fieldAvailability, 'movies', originalTitle, 'urls.poster', serverConfig
 )
 ```
 
 **New Sync Architecture Components:**
-- `SyncManager` - Main orchestrator with dual-title support
+- `run/serverPass` (`runServerPass`) - Runs one server's pass: config check, movies, TV, then the server's side jobs
 - `MovieMetadataStrategy` - Handles metadata with priority checking
 - `MovieAssetStrategy` - Manages assets (posters, backdrops, logos) with priority
 - `BaseRepository` - Uses `originalTitle` for all database operations
 - `SyncContext` - Enhanced with `entityTitle` and `entityOriginalTitle`
 
 **Priority System Integration:**
-- Import `isCurrentServerHighestPriorityForField` from `@src/utils/sync/utils`
-- Check priority before every field update
+- Import `isCurrentServerHighestPriorityForReportedField` / `isHighestPriorityAmongServers` from `@src/utils/sync/core/ownership`
+- Check ownership before every field update: it fails closed, ties break on server id
+- Not `isCurrentServerHighestPriorityForField`: it is legacy and fails open
 - Use `fieldAvailability` object for pre-computed server data mapping
 - Respect existing server priority configuration
 
@@ -220,9 +216,9 @@ const canUpdate = isCurrentServerHighestPriorityForField(
 const movie = await movieRepository.findByOriginalTitle(originalTitle)
 const videoPath = `/movies/${originalTitle}/video.mp4`
 
-// ✅ ALWAYS check server priority before updates
-const canUpdatePoster = isCurrentServerHighestPriorityForField(
-  fieldAvailability, 'movies', originalTitle, 'posterURL', serverConfig
+// ✅ ALWAYS check ownership before updates (fails closed)
+const canUpdatePoster = isCurrentServerHighestPriorityForReportedField(
+  fieldAvailability, 'movies', originalTitle, 'urls.poster', serverConfig
 )
 
 if (canUpdatePoster) {
@@ -244,14 +240,14 @@ class NewSyncStrategy implements SyncStrategy {
     // Use originalTitle for all filesystem operations
     const dataPath = `/movies/${originalTitle}/data.json`
     
-    // Check priority before updating
-    if (this.shouldUpdateField('fieldName', originalTitle, context)) {
+    // Check ownership before updating (fails closed)
+    if (this.shouldUpdateField('urls.poster', originalTitle, context)) {
       // Perform update with source tracking
     }
   }
   
   private shouldUpdateField(fieldPath: string, mediaTitle: string, context: SyncContext): boolean {
-    return isCurrentServerHighestPriorityForField(
+    return isCurrentServerHighestPriorityForReportedField(
       context.fieldAvailability, 'movies', mediaTitle, fieldPath, context.serverConfig
     )
   }
@@ -285,10 +281,10 @@ class NewSyncStrategy implements SyncStrategy {
 const posterPath = `/movies/${movie.title}/poster.jpg`
 ```
 
-**❌ Not checking server priority:**
+**❌ Not checking ownership, or checking it with the fail-open `isCurrentServerHighestPriorityForField`:**
 ```javascript
 // WRONG - May overwrite higher priority data
-movie.posterURL = newUrl // Direct assignment without priority check
+movie.posterURL = newUrl // Direct assignment without an ownership check
 ```
 
 **❌ Using `title` as database key:**
@@ -305,9 +301,9 @@ const movie = await repository.findByOriginalTitle(originalTitle)
 const assetPath = `/movies/${originalTitle}/asset.jpg`
 ```
 
-**✅ Always check priority before field updates:**
+**✅ Always check ownership before field updates:**
 ```javascript
-if (isCurrentServerHighestPriorityForField(fieldAvailability, 'movies', originalTitle, 'posterURL', serverConfig)) {
+if (isCurrentServerHighestPriorityForReportedField(fieldAvailability, 'movies', originalTitle, 'urls.poster', serverConfig)) {
   movie.posterURL = newUrl
   movie.posterSource = serverConfig.id
 }

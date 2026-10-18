@@ -58,8 +58,8 @@ const APPLY = process.argv.includes('--apply')
 
 const COLLECTIONS = ['FlatMovies', 'FlatTVShows', 'FlatSeasons', 'FlatEpisodes']
 
-// Must match MovieRepository / EpisodeRepository createIndexes() and
-// flatSync/initializeDatabase.js — same keys, same name.
+// Must match MovieRepository / EpisodeRepository createIndexes() and prod's
+// existing indexes — same keys, same name.
 const INDEXES = [
   {
     collection: 'FlatMovies',

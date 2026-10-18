@@ -21,20 +21,17 @@ jest.mock('@src/lib/mongodb', () => ({
 jest.mock('@src/utils/config', () => ({ getAllServers: () => mockServers }))
 jest.mock('@src/utils/fetchAllServerData', () => ({ fetchAllServerData: jest.fn() }))
 jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNeeded: jest.fn(async () => {}) }))
-jest.mock('@src/utils/flatSync/watchHistoryValidation', () => ({
+jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({
   validateWatchHistoryAgainstDatabase: jest.fn(async () => ({ markedValid: 1, markedInvalid: 0 })),
 }))
 jest.mock('@src/utils/sync/core/events', () => ({
   syncEventBus: { emitStarted: jest.fn(), emitComplete: jest.fn() },
 }))
-// sync/database's own imports; only its syncInfo helpers are used here
-jest.mock('@src/utils/sync/utils', () => ({ MediaType: { TV: 'tv', MOVIE: 'movie' } }))
-jest.mock('@src/utils/admin_frontend_database', () => ({ updateMediaUpdates: jest.fn() }))
 
-const { fetchSyncTick, currentBootId } = require('@src/utils/sync/tickSkip')
+const { fetchSyncTick, currentBootId } = require('@src/utils/sync/run/tickSkip')
 const { SYNC_GATE_VERSION } = require('@src/utils/sync/core/syncGate')
 const { fetchAllServerData } = require('@src/utils/fetchAllServerData')
-const { validateWatchHistoryAgainstDatabase } = require('@src/utils/flatSync/watchHistoryValidation')
+const { validateWatchHistoryAgainstDatabase } = require('@src/utils/sync/run/watchHistoryValidation')
 const { migratePlaybackStatusIfNeeded } = require('@src/utils/watchHistory/migrate')
 const { syncEventBus } = require('@src/utils/sync/core/events')
 
@@ -161,6 +158,8 @@ beforeEach(() => {
   mockServers = [{ id: 'default', priority: 1 }]
   install()
   fetchAllServerData.mockReset()
+  // Each case starts with no validation run in this process
+  delete globalThis.__watchHistoryValidationState
   validateWatchHistoryAgainstDatabase.mockClear()
   migratePlaybackStatusIfNeeded.mockClear()
   syncEventBus.emitStarted.mockClear()
@@ -202,18 +201,38 @@ describe('a tick that would change nothing', () => {
     expect(lines[0]).toContain('default tv=304 movies=304')
   })
 
-  it('still records the sync time, revalidates watch history and closes the sync popup', async () => {
+  it('still records the sync time, revalidates watch history when due and closes the sync popup', async () => {
     serversUnchanged()
 
     const { result } = await fetchSyncTick()
 
     expect(mockCollections.syncInfo.docs.find((d) => d._id === 'lastSyncTime')?.timestamp).toBeTruthy()
+    // No validation has run in this process yet, so one is due
     expect(validateWatchHistoryAgainstDatabase).toHaveBeenCalledTimes(1)
+    expect(result.watchHistoryValidation).toEqual({ markedValid: 1, markedInvalid: 0 })
     expect(migratePlaybackStatusIfNeeded).toHaveBeenCalledTimes(1)
     expect(syncEventBus.emitStarted).toHaveBeenCalledWith('__sync_warmup__', expect.anything(), 'server-all')
     expect(syncEventBus.emitComplete).toHaveBeenCalledWith(
       '__sync_complete__', expect.anything(), 'server-all', expect.anything(), { summary: result }
     )
+  })
+
+  it('does not validate watch history again within 15 minutes of the last validation', async () => {
+    serversUnchanged()
+    const now = Date.now()
+    const clock = jest.spyOn(Date, 'now').mockReturnValue(now)
+
+    await fetchSyncTick()
+    clock.mockReturnValue(now + 14 * 60 * 1000)
+    const second = await fetchSyncTick()
+    clock.mockReturnValue(now + 15 * 60 * 1000)
+    const third = await fetchSyncTick()
+
+    // Nothing in the library changed on a skipped tick: the validation there
+    // only restores rows a failed playback check marked invalid, on a timer
+    expect(second.result.watchHistoryValidation).toBeNull()
+    expect(third.result.watchHistoryValidation).toEqual({ markedValid: 1, markedInvalid: 0 })
+    expect(validateWatchHistoryAgainstDatabase).toHaveBeenCalledTimes(2)
   })
 
   it('even with a document post-sync cleanup never deletes (no updatedAt) left from an older run', async () => {
