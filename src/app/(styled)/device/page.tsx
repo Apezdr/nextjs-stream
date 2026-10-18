@@ -1,6 +1,6 @@
 // src/app/(styled)/device/page.tsx
 // Device authorization verification page — RFC 8628.
-// TV apps encode verification_uri_complete (which contains user_code) into a QR code.
+// Client apps encode verification_uri_complete (which contains user_code) into a QR code.
 // The user scans it, lands here, signs in if needed, then approves the device.
 // IMPORTANT: Only APPROVED users can authorize devices.
 import { connection } from 'next/server'
@@ -26,7 +26,7 @@ export default async function DevicePage({
   return (
     <div style={styles.container}>
       <div style={styles.card}>
-        <h1 style={styles.title}>Sign in to your TV</h1>
+        <h1 style={styles.title}>Sign in to your device</h1>
         <p style={styles.subtitle}>
           Approve the device waiting for authorization
         </p>

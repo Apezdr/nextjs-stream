@@ -33,7 +33,7 @@ export default function DeviceLinkModal({ isOpen, onClose }) {
 
   const handleApprove = async () => {
     if (!userCode.trim()) {
-      dispatch({ type: 'validationError', error: 'Please enter the code shown on your TV.' })
+      dispatch({ type: 'validationError', error: 'Please enter the code shown on your device.' })
       return
     }
     dispatch({ type: 'start' })
@@ -78,7 +78,7 @@ export default function DeviceLinkModal({ isOpen, onClose }) {
             {/* Header with close button */}
             <div className="flex items-center justify-between mb-4">
               <DialogTitle className="text-lg font-semibold text-gray-900">
-                Link your TV device
+                Link your device
               </DialogTitle>
               <button
                 onClick={handleClose}
@@ -94,7 +94,7 @@ export default function DeviceLinkModal({ isOpen, onClose }) {
                 <div className="text-5xl mb-3 text-green-600">✓</div>
                 <h3 className="text-lg font-semibold text-green-600 mb-2">Device Approved!</h3>
                 <p className="text-gray-600 text-sm mb-4">
-                  Your TV has been linked to your account.
+                  Your device has been linked to your account.
                 </p>
                 <button
                   onClick={handleClose}
@@ -126,7 +126,7 @@ export default function DeviceLinkModal({ isOpen, onClose }) {
             {!success && !denied && (
               <div className="space-y-4">
                 <p className="text-gray-600 text-sm">
-                  Enter the device code shown on your TV
+                  Enter the code shown on your device
                 </p>
 
                 {/* Code input */}
