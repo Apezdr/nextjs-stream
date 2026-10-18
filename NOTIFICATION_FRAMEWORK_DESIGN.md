@@ -45,6 +45,26 @@ A title stays in the set after it leaves the library. If it comes back later (a 
 ### Recipients
 Accounts with `approved: true` and without `limitedAccess` (which may not be able to open the content). This is decided in one place, `src/utils/notifications/recipients.js`.
 
+## Retention
+
+MongoDB TTL indexes on `Media.Notifications` delete notifications on their own. The code is `src/utils/notifications/notificationDatabase.js`, which builds the indexes once per process.
+
+| Notification | Kept until |
+|---|---|
+| Read, any type | 30 days after it was read (`readAt`) |
+| Unread new-content notice (type `new_content`, the digest included) | 90 days after it was sent (`createdAt`) |
+| Any other unread notification | Kept |
+
+- **Read notifications** expire 30 days after `readAt`. That includes the backlog: a notification read more than 30 days before the index is built goes when it is built. A read notification with no `readAt` is given its `createdAt` once (a self-applying migration, flag `notifications-readAt-from-createdAt`), so it expires too. Every path that marks a notification read (one, several, all; the web app and the TV app use the same route) sets `readAt`. Nothing marks a notification unread.
+- **Unread new-content notices** expire 90 days after they were sent. The TTL index on `createdAt` is partial on `{ read: false, type: 'new_content' }`, so other types are never matched.
+- **Partial filters** accept equality, `$exists: true`, `$gt`/`$gte`/`$lt`/`$lte`, `$type` and `$and`; MongoDB 6.0 and later also accept `$or` and `$in`. Negations (`$ne`, `$nin`, `$not`) are not allowed. Both indexes use equality only.
+
+### Where critical types fit (planned, not built)
+The owner expects critical notification types that never expire, of which a user holds at most one. One fits without changing either index:
+- It is not `new_content`, so the unread index never matches it.
+- It never carries `readAt`, so the read index never matches it. When it is marked read, only `read` and `updatedAt` are set. The mark-read functions in `notificationDatabase.js` are the only writers of `readAt`, so that is where its type gets its own branch.
+- At most one per user: it is created with `replaceNotificationByGroup` under one `groupKey` per critical type, replacing the user's existing one whether it was read or not.
+
 ---
 
 ## 1. Why we're building this

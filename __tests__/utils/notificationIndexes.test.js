@@ -3,14 +3,14 @@
  *
  * The Notifications indexes were declared only in the deleted
  * flatSync/initializeDatabase.js. notificationDatabase.js now ensures the two
- * that prod uses, once per process, under prod's existing names, and the TTL
- * index that deletes a read notification 30 days after it was read. A
+ * that prod uses, once per process, under prod's existing names, and the two
+ * TTL indexes of the retention rules: a read notification goes 30 days after
+ * it was read, an unread new-content notice 90 days after it was sent. A
  * conflict (the same keys under another name) must be logged, never thrown
  * into the user's request.
  *
- * Before the TTL index is built, every read notification gets readAt = now,
- * once per database: they all carry a readAt already, most older than a
- * month, and the index would otherwise delete them the moment it exists.
+ * Before the indexes, a read notification without a readAt gets its
+ * createdAt, once per database, so the read TTL covers it too.
  */
 
 let mockCollection
@@ -38,6 +38,14 @@ const EXPECTED_SPECS = [
   [
     { readAt: 1 },
     { name: 'readAt_ttl_read', expireAfterSeconds: 2592000, partialFilterExpression: { read: true } },
+  ],
+  [
+    { createdAt: 1 },
+    {
+      name: 'createdAt_ttl_unread_new_content',
+      expireAfterSeconds: 7776000,
+      partialFilterExpression: { read: false, type: 'new_content' },
+    },
   ],
 ]
 
@@ -82,14 +90,14 @@ beforeEach(() => {
   }
 })
 
-it('creates exactly the three indexes, once per process', async () => {
+it('creates exactly the four indexes, once per process', async () => {
   const db = freshModule()
 
   await Promise.all([db.getUnreadNotificationCount(USER_ID), db.getUnreadNotificationCount(USER_ID)])
   await db.createNotification({ userId: USER_ID, title: 'New episode' })
   await db.getUnreadNotificationCount(USER_ID)
 
-  expect(mockCollection.createIndex).toHaveBeenCalledTimes(3)
+  expect(mockCollection.createIndex).toHaveBeenCalledTimes(4)
   expect(mockCollection.createIndex.mock.calls).toEqual(EXPECTED_SPECS)
   // toEqual ignores key order, but an index's key order is part of its
   // identity: { read: 1, userId: 1 } would be a different index in prod.
@@ -97,52 +105,68 @@ it('creates exactly the three indexes, once per process', async () => {
     ['userId', 'read'],
     ['userId', 'createdAt'],
     ['readAt'],
+    ['createdAt'],
   ])
   expect(mockLog.error).not.toHaveBeenCalled()
 })
 
-it('gives every read notification readAt = now before the TTL index exists, once per database', async () => {
-  const before = Date.now()
+it('keeps the expiry to read notifications, and to unread ones of the new-content type', async () => {
+  await freshModule().getUnreadNotificationCount(USER_ID)
+  const options = (name) => mockCollection.createIndex.mock.calls.find(([, o]) => o.name === name)[1]
+  const readTtl = options('readAt_ttl_read')
+  const unreadTtl = options('createdAt_ttl_unread_new_content')
+  // Every other unread notification has no expiry: no other TTL index
+  expect(mockCollection.createIndex.mock.calls.filter(([, o]) => 'expireAfterSeconds' in o)).toHaveLength(2)
+  // 30 days after it was read, whatever its type
+  expect(readTtl).toMatchObject({ expireAfterSeconds: 30 * 86400, partialFilterExpression: { read: true } })
+  // 90 days after it was sent, unread, new content (the digest has the same type)
+  expect(unreadTtl).toMatchObject({
+    expireAfterSeconds: 90 * 86400,
+    partialFilterExpression: { read: false, type: 'new_content' },
+  })
+})
+
+it('gives read notifications without a readAt their createdAt, before the indexes, once per database', async () => {
   const db = freshModule()
 
   await db.getUnreadNotificationCount(USER_ID)
 
   expect(mockCollection.updateMany).toHaveBeenCalledTimes(1)
   const [filter, update] = mockCollection.updateMany.mock.calls[0]
-  // Every read one, not only those without a readAt: they all have one
-  expect(filter).toEqual({ read: true })
-  expect(update.$set.readAt).toBeInstanceOf(Date)
-  expect(update.$set.readAt.getTime()).toBeGreaterThanOrEqual(before)
+  // Only those without one: a read notification keeps the readAt it has, and
+  // the backlog read more than 30 days ago goes when the index is built
+  expect(filter).toEqual({ read: true, readAt: { $exists: false } })
+  expect(update).toEqual([{ $set: { readAt: { $ifNull: ['$createdAt', '$$NOW'] } } }])
   expect(mockOrder.indexOf('backfill')).toBeLessThan(mockOrder.indexOf('index readAt_ttl_read'))
   expect(mockMigrations.flags).toEqual([
-    expect.objectContaining({ _id: 'notifications-readAt-restamp', result: { readNotifications: 12 } }),
+    expect.objectContaining({
+      _id: 'notifications-readAt-from-createdAt',
+      result: { readNotificationsWithoutReadAt: 12 },
+    }),
   ])
 
-  // The next process finds the flag: no second backfill, the index is still ensured
+  // The next process finds the flag: no second backfill, the indexes are still ensured
   await newProcess().getUnreadNotificationCount(USER_ID)
   expect(mockCollection.updateMany).toHaveBeenCalledTimes(1)
   expect(mockCollection.createIndex.mock.calls.filter(([key]) => 'readAt' in key)).toHaveLength(2)
 })
 
-it('builds no TTL index in a process whose backfill failed, answers the request, and backfills in the next', async () => {
+it('builds the indexes when the backfill fails, answers the request, and backfills in the next process', async () => {
   mockCollection.updateMany.mockRejectedValueOnce(new Error('not primary'))
   const db = freshModule()
 
   await expect(db.getUnreadNotificationCount(USER_ID)).resolves.toBe(3)
 
-  expect(mockCollection.createIndex.mock.calls.map(([, { name }]) => name)).toEqual([
-    'userId_read_index',
-    'userId_createdAt_index',
-  ])
+  expect(mockCollection.createIndex).toHaveBeenCalledTimes(4)
   expect(mockMigrations.flags).toEqual([])
   expect(mockLog.error).toHaveBeenCalledWith(
-    expect.objectContaining({ indexName: 'readAt_ttl_read' }),
+    expect.objectContaining({ migration: 'notifications-readAt-from-createdAt' }),
     expect.any(String)
   )
 
   await newProcess().getUnreadNotificationCount(USER_ID)
   expect(mockCollection.updateMany).toHaveBeenCalledTimes(2)
-  expect(mockCollection.createIndex.mock.calls.map(([, { name }]) => name)).toContain('readAt_ttl_read')
+  expect(mockMigrations.flags).toHaveLength(1)
 })
 
 it('logs a conflict, answers the request and does not retry', async () => {
@@ -159,7 +183,7 @@ it('logs a conflict, answers the request and does not retry', async () => {
   await expect(db.getUnreadNotificationCount(USER_ID)).resolves.toBe(3)
   await expect(db.getUnreadNotificationCount(USER_ID)).resolves.toBe(3)
 
-  expect(mockCollection.createIndex).toHaveBeenCalledTimes(3)
+  expect(mockCollection.createIndex).toHaveBeenCalledTimes(4)
   expect(mockLog.error).toHaveBeenCalledTimes(1)
   expect(mockLog.error).toHaveBeenCalledWith(
     expect.objectContaining({ err: conflict, indexName: 'userId_read_index' }),

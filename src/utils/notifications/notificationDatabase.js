@@ -20,11 +20,43 @@ const NOTIFICATION_INDEXES = [
   { key: { userId: 1, createdAt: -1 }, name: 'userId_createdAt_index' },
 ];
 
-/** How long a read notification is kept after it was read. Unread ones are kept. */
+/**
+ * RETENTION, per kind of notification (owner's decisions, 2026-10-17). MongoDB
+ * TTL indexes do the deleting; NOTIFICATION_FRAMEWORK_DESIGN.md ("Retention")
+ * says the same for readers who do not read code.
+ *
+ *  - Read, any type: deleted READ_NOTIFICATION_TTL_SECONDS (30 days) after
+ *    `readAt` (READ_TTL_INDEX). The mark-read functions below are the only
+ *    writers of `readAt`.
+ *  - Unread new-content notices (`type: 'new_content'`, the digest included):
+ *    deleted UNREAD_NEW_CONTENT_TTL_SECONDS (90 days) after `createdAt`
+ *    (UNREAD_NEW_CONTENT_TTL_INDEX).
+ *  - Every other unread notification: kept.
+ *
+ * Partial filters may use equality, `$exists: true`, `$gt`/`$gte`/`$lt`/`$lte`,
+ * `$type` and `$and` (MongoDB 6.0 and later also allow `$or` and `$in`), never
+ * `$ne`, `$nin` or `$not`; a TTL index is on one date field. Both indexes keep to
+ * equality, which every supported MongoDB accepts.
+ *
+ * A CRITICAL TYPE (planned, not built: never expires, a user holds at most one)
+ * fits like this. It is not `new_content`, so the unread index never matches it.
+ * It must never carry `readAt`, so the read index never matches it either:
+ * marking it read sets `read` and `updatedAt` only, which means the mark-read
+ * functions below give its type a branch of their own, and it is the one
+ * place to change. "At most one per user" is replaceNotificationByGroup with a
+ * groupKey per critical type, replacing read notifications as well as unread
+ * ones.
+ */
+
+/** How long a read notification is kept after it was read. */
 export const READ_NOTIFICATION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
-// MongoDB's TTL monitor deletes a read notification READ_NOTIFICATION_TTL_SECONDS
-// after its readAt. Every path that marks a notification read sets readAt.
+/** How long an unread new-content notice is kept after it was created. */
+export const UNREAD_NEW_CONTENT_TTL_SECONDS = 90 * 24 * 60 * 60;
+
+/** The new-content notices' type (NOTIFICATION_TYPES.NEW_CONTENT), the digest included. */
+const NEW_CONTENT_TYPE = 'new_content';
+
 const READ_TTL_INDEX = {
   key: { readAt: 1 },
   name: 'readAt_ttl_read',
@@ -32,52 +64,62 @@ const READ_TTL_INDEX = {
   partialFilterExpression: { read: true },
 };
 
+const UNREAD_NEW_CONTENT_TTL_INDEX = {
+  key: { createdAt: 1 },
+  name: 'createdAt_ttl_unread_new_content',
+  expireAfterSeconds: UNREAD_NEW_CONTENT_TTL_SECONDS,
+  partialFilterExpression: { read: false, type: NEW_CONTENT_TYPE },
+};
+
+const TTL_INDEXES = [READ_TTL_INDEX, UNREAD_NEW_CONTENT_TTL_INDEX];
+
 /** The backfill's flag in app_config.migrations (migrations/runOnce). */
-export const READ_AT_BACKFILL_MIGRATION = 'notifications-readAt-restamp';
+export const READ_AT_BACKFILL_MIGRATION = 'notifications-readAt-from-createdAt';
 
 let indexesEnsured = null;
 
 /**
- * Before the TTL index exists: give every read notification readAt = now,
- * once per database, so the ones already read expire a month after this
- * ships rather than all together the moment the index is built. (Every read
- * notification has carried a readAt since the notifications shipped, most of
- * them older than a month: left as they are, the index would delete them at
- * once.) Idempotent: a second run only moves dates a month out again.
+ * Every read notification without a `readAt` gets its `createdAt` (now, when
+ * it has none), once per database, so the read TTL index covers it too, and
+ * one read long ago goes promptly. Read notifications that have a `readAt`
+ * keep it: the owner chose to let the backlog read more than 30 days ago go
+ * when the index is built. Idempotent.
  */
 async function backfillReadAt(collection) {
-  const result = await collection.updateMany({ read: true }, { $set: { readAt: new Date() } });
-  return { readNotifications: result?.modifiedCount ?? 0 };
+  const result = await collection.updateMany(
+    { read: true, readAt: { $exists: false } },
+    [{ $set: { readAt: { $ifNull: ['$createdAt', '$$NOW'] } } }]
+  );
+  return { readNotificationsWithoutReadAt: result?.modifiedCount ?? 0 };
 }
 
 /**
- * Creates the indexes once per process, and the read-notification TTL index
- * once its backfill has run. Never throws into the request that triggered it:
- * a failure is logged and the request goes on without them (a failed backfill
- * leaves the TTL index for the next process).
+ * Creates the indexes once per process, after the readAt backfill. Never
+ * throws into the request that triggered it: a failure is logged and the
+ * request goes on without them; a failed backfill is tried again by the next
+ * process.
  */
 function ensureIndexes(client, collection) {
   indexesEnsured ??= (async () => {
+    try {
+      const backfill = await runMigrationOnce(client, READ_AT_BACKFILL_MIGRATION, () => backfillReadAt(collection));
+      if (backfill.applied) log.info({ ...backfill.result }, 'Gave read notifications without a readAt their createdAt');
+    } catch (err) {
+      log.error({ err, migration: READ_AT_BACKFILL_MIGRATION }, 'Could not backfill readAt on read notifications');
+    }
+
+    const specs = [...NOTIFICATION_INDEXES, ...TTL_INDEXES];
     const results = await Promise.allSettled(
-      NOTIFICATION_INDEXES.map(({ key, name }) => collection.createIndex(key, { name }))
+      specs.map(({ key, ...options }) => collection.createIndex(key, options))
     );
     results.forEach((result, i) => {
       if (result.status === 'rejected') {
         log.error(
-          { err: result.reason, indexName: NOTIFICATION_INDEXES[i].name },
+          { err: result.reason, indexName: specs[i].name },
           'Could not ensure a Notifications index'
         );
       }
     });
-
-    try {
-      const backfill = await runMigrationOnce(client, READ_AT_BACKFILL_MIGRATION, () => backfillReadAt(collection));
-      if (backfill.applied) log.info({ ...backfill.result }, 'Gave every read notification readAt = now');
-      const { key, ...options } = READ_TTL_INDEX;
-      await collection.createIndex(key, options);
-    } catch (err) {
-      log.error({ err, indexName: READ_TTL_INDEX.name }, 'Could not ensure a Notifications index');
-    }
   })();
   return indexesEnsured;
 }
