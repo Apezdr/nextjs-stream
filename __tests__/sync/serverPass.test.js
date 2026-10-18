@@ -466,6 +466,22 @@ describe('a full pass for one server', () => {
     expect(appliedRecord()).toMatchObject({ state: 'complete', syncRunId: result.syncRunId })
   })
 
+  it('names what it changed by folder name, which the media pages tag their caches with, never by display title', async () => {
+    const result = await runSync(oneServer())
+
+    // The display titles are 'Example Movie' and 'Example Show' (see the first case)
+    expect(new Set(result.changedMedia.movies)).toEqual(new Set([MOVIE]))
+    expect(result.changedMedia.shows).toEqual([SHOW])
+    expect(result.changedMedia.seasons).toEqual([{ title: SHOW, season: 1 }])
+    expect(result.changedMedia.episodes).toEqual(
+      expect.arrayContaining([
+        { title: SHOW, season: 1, episode: 1 },
+        { title: SHOW, season: 1, episode: 2 },
+      ])
+    )
+    expect(result.changedMedia.episodes).toHaveLength(2)
+  })
+
   it('logs the lines the verifier and the dashboards read', async () => {
     await runSync(oneServer())
 
@@ -1169,7 +1185,8 @@ describe('errors', () => {
     // The admins' count, the cache invalidation and the new-content notice all
     // still have the movie the pass wrote before it threw
     expect(result.added).toEqual({ movies: 1, shows: 0, episodes: 0 })
-    expect(result.changedMedia.movies).toContain('Example Movie')
+    // (by folder name, as the media pages tag their caches)
+    expect(result.changedMedia.movies).toContain(MOVIE)
     expect(mockSideJobs).toContainEqual({ job: 'notifications', movies: [MOVIE], episodes: [] })
   })
 })

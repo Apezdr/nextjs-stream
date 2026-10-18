@@ -587,12 +587,19 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
       // Deleted movies and shows would otherwise live on in the page caches
       // and the /list banner until those expire. Cleanup runs detached from
       // any request, where revalidateTag is a no-op, so it asks the
-      // revalidation route instead. Season and episode entries are display
-      // strings, not the {title, season} keys that route takes, so they wait
-      // for their caches to expire as before. Never throws.
+      // revalidation route instead, by folder name, as the pages tag their
+      // caches (`removed` names display titles). Season and episode entries are
+      // display strings, not the {title, season} keys that route takes, so they
+      // wait for their caches to expire as before. Never throws.
       if (removed.movies.length || removed.tvShows.length) {
+        const folderOf = (doc) => doc.originalTitle || doc.title
         await requestMediaRevalidation(
-          { movies: removed.movies, shows: removed.tvShows, seasons: [], episodes: [] },
+          {
+            movies: deleteEligible.movies ? movieOrphans.map(folderOf) : [],
+            shows: deleteEligible.tvShows ? showOrphans.map(folderOf) : [],
+            seasons: [],
+            episodes: [],
+          },
           { label: 'Post-cleanup' }
         )
       }

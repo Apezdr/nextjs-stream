@@ -27,9 +27,16 @@ export const MEDIA_CACHE_TAGS = {
   BANNER: 'banner',
 }
 
+/*
+ * The per-title tags below take the folder name (`originalTitle`), as is: the
+ * media pages pass decodeURIComponent of their [title] param, which Next hands
+ * them percent-encoded, so the page's tag holds the plain folder name the URL
+ * was built from. Never a display title: the URLs never carry one.
+ */
+
 /**
  * Generate cache tag for specific movie details
- * @param {string} movieTitle - Movie title (URL encoded)
+ * @param {string} movieTitle - The movie's folder name (originalTitle), not encoded
  * @returns {string} Cache tag
  */
 export function movieDetailsTag(movieTitle) {
@@ -38,7 +45,7 @@ export function movieDetailsTag(movieTitle) {
 
 /**
  * Generate cache tag for specific TV show details
- * @param {string} showTitle - Show title (URL encoded)
+ * @param {string} showTitle - The show's folder name (originalTitle), not encoded
  * @returns {string} Cache tag
  */
 export function tvShowDetailsTag(showTitle) {
@@ -47,7 +54,7 @@ export function tvShowDetailsTag(showTitle) {
 
 /**
  * Generate cache tag for specific season
- * @param {string} showTitle - Show title (URL encoded)
+ * @param {string} showTitle - The show's folder name (originalTitle), not encoded
  * @param {string|number} seasonNum - Season number
  * @returns {string} Cache tag
  */
@@ -57,7 +64,7 @@ export function seasonDetailsTag(showTitle, seasonNum) {
 
 /**
  * Generate cache tag for specific episode
- * @param {string} showTitle - Show title (URL encoded)
+ * @param {string} showTitle - The show's folder name (originalTitle), not encoded
  * @param {string|number} seasonNum - Season number
  * @param {string|number} episodeNum - Episode number
  * @returns {string} Cache tag
@@ -68,7 +75,7 @@ export function episodeDetailsTag(showTitle, seasonNum, episodeNum) {
 
 /**
  * Get all cache tags for a movie (for comprehensive invalidation)
- * @param {string} movieTitle - Movie title
+ * @param {string} movieTitle - The movie's folder name (originalTitle)
  * @returns {string[]} Array of cache tags to invalidate
  */
 export function getAllMovieCacheTags(movieTitle) {
@@ -83,7 +90,7 @@ export function getAllMovieCacheTags(movieTitle) {
 
 /**
  * Get all cache tags for a TV show (for comprehensive invalidation)
- * @param {string} showTitle - Show title
+ * @param {string} showTitle - The show's folder name (originalTitle)
  * @returns {string[]} Array of cache tags to invalidate
  */
 export function getAllTVShowCacheTags(showTitle) {
@@ -98,7 +105,7 @@ export function getAllTVShowCacheTags(showTitle) {
 
 /**
  * Get all cache tags for a season (for comprehensive invalidation)
- * @param {string} showTitle - Show title
+ * @param {string} showTitle - The show's folder name (originalTitle)
  * @param {string|number} seasonNum - Season number
  * @returns {string[]} Array of cache tags to invalidate
  */
@@ -115,7 +122,7 @@ export function getAllSeasonCacheTags(showTitle, seasonNum) {
 
 /**
  * Get all cache tags for an episode (for comprehensive invalidation)
- * @param {string} showTitle - Show title
+ * @param {string} showTitle - The show's folder name (originalTitle)
  * @param {string|number} seasonNum - Season number
  * @param {string|number} episodeNum - Episode number
  * @returns {string[]} Array of cache tags to invalidate

@@ -13,7 +13,12 @@
 
 import { MediaType, SyncStatus, type SyncResult } from '../core'
 
-/** Display titles of what the passes changed, for post-sync cache invalidation. */
+/**
+ * What the passes changed, for post-sync cache invalidation, by folder name
+ * (`originalTitle`): the media pages key their per-title cache tags on it,
+ * since their URLs carry it. A season's or an episode's `title` is its show's
+ * folder name.
+ */
 export interface ChangedMedia {
   movies: string[]
   shows: string[]
@@ -23,8 +28,13 @@ export interface ChangedMedia {
 
 export interface WrittenMedia {
   changedMedia: ChangedMedia
-  /** Record one title's results. */
-  record(results: SyncResult[]): void
+  /**
+   * Record one title's results.
+   *
+   * @param results - Everything the pass returned for the title
+   * @param originalTitle - The title's folder name (its key in the payload)
+   */
+  record(results: SyncResult[], originalTitle: string): void
   /** How many documents the passes created (not updated): the admins' sync notice. */
   addedCounts(): { movies: number; shows: number; episodes: number }
 }
@@ -35,15 +45,16 @@ export function createWrittenMedia(): WrittenMedia {
 
   /**
    * From the results that completed (were not skipped): the entities changed,
-   * by display title (the media page cache tags key on it), and the documents
-   * created. A movie and a show fall back to the entity id when no display
-   * title was stamped; a season or an episode without its numbers is left
-   * out, since a partial tag would be wrong.
+   * by the title's folder name (the media pages' per-title cache tags key on
+   * it, never on the display title), and the documents created. Every result
+   * a title's pass returns belongs to that title: a show's pass returns its
+   * seasons' and episodes' too. A season or an episode without its numbers is
+   * left out, since a partial tag would be wrong.
    *
    * "Completed" means the smart upsert ran, not that a field changed; the
    * pass's log compares these counts with the processed counts.
    */
-  function record(results: SyncResult[]) {
+  function record(results: SyncResult[], originalTitle: string) {
     for (const r of results) {
       if (r.status !== SyncStatus.Completed) continue
       const md = r.metadata || {}
@@ -51,26 +62,24 @@ export function createWrittenMedia(): WrittenMedia {
       const wasCreated = md.created === true
       switch (r.mediaType) {
         case MediaType.Movie: {
-          const title = md.displayTitle || r.entityId
-          if (title) changedMedia.movies.push(title)
+          if (originalTitle) changedMedia.movies.push(originalTitle)
           if (wasCreated) created.movies.add(r.entityId)
           break
         }
         case MediaType.TVShow: {
-          const title = md.displayTitle || r.entityId
-          if (title) changedMedia.shows.push(title)
+          if (originalTitle) changedMedia.shows.push(originalTitle)
           if (wasCreated) created.shows.add(r.entityId)
           break
         }
         case MediaType.Season: {
-          if (md.displayTitle && md.seasonNumber != null) {
-            changedMedia.seasons.push({ title: md.displayTitle, season: md.seasonNumber })
+          if (originalTitle && md.seasonNumber != null) {
+            changedMedia.seasons.push({ title: originalTitle, season: md.seasonNumber })
           }
           break
         }
         case MediaType.Episode: {
-          if (md.displayTitle && md.seasonNumber != null && md.episodeNumber != null) {
-            changedMedia.episodes.push({ title: md.displayTitle, season: md.seasonNumber, episode: md.episodeNumber })
+          if (originalTitle && md.seasonNumber != null && md.episodeNumber != null) {
+            changedMedia.episodes.push({ title: originalTitle, season: md.seasonNumber, episode: md.episodeNumber })
           }
           if (wasCreated) created.episodes.add(r.entityId)
           break

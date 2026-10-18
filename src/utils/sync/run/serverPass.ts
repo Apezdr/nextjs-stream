@@ -93,7 +93,7 @@ export interface ServerPassResult {
   tvShows: KindResults
   performance: { startTime: Date; endTime: Date | null; duration: number }
   errors: Array<{ phase: string; error: unknown; stack?: string; serverId: string }>
-  /** Display titles of what this pass changed, for post-sync cache invalidation. */
+  /** What this pass changed, by folder name, for post-sync cache invalidation. */
   changedMedia: ChangedMedia
   /** Documents this pass created (not updated): the admins' sync notice counts them. */
   added: { movies: number; shows: number; episodes: number }
@@ -144,9 +144,9 @@ export async function runServerPass(
   // This pass's own record of what it wrote, for its result and its log; the
   // run's record (options.written) gets the same results as each title finishes.
   const written = createWrittenMedia()
-  const record = (titleResults: SyncResult[]) => {
-    written.record(titleResults)
-    options.written?.record(titleResults)
+  const record = (titleResults: SyncResult[], title: string) => {
+    written.record(titleResults, title)
+    options.written?.record(titleResults, title)
   }
 
   const { movieService, tvShowService } = await createServices()
@@ -185,8 +185,8 @@ export async function runServerPass(
       pool,
       (title) => movieService.syncMovie(title, context, MOVIE_OPERATIONS, title),
       (title, error) => failedResult(title, MediaType.Movie, serverConfig.id, error),
-      (titleResults) => {
-        record(titleResults)
+      (titleResults, title) => {
+        record(titleResults, title)
         progress.update(titleResults.some((r) => r.status === SyncStatus.Failed))
       }
     )
@@ -339,14 +339,15 @@ async function createServices(): Promise<{ movieService: MovieSyncService; tvSho
 /**
  * Sync every title through the pool: as each title finishes the next one
  * starts. A title whose sync throws is reported as one failed result; it never
- * fails the pass. Results come back in title order.
+ * fails the pass. Results come back in title order. `onTitleDone` gets each
+ * title's results with the title (its folder name, the payload key).
  */
 async function syncTitles(
   titles: string[],
   pool: ReturnType<typeof pLimit>,
   sync: (title: string) => Promise<SyncResult[]>,
   failed: (title: string, error: unknown) => SyncResult,
-  onTitleDone?: (results: SyncResult[]) => void
+  onTitleDone?: (results: SyncResult[], title: string) => void
 ): Promise<SyncResult[]> {
   const perTitle = await Promise.all(
     titles.map((title) =>
@@ -358,7 +359,7 @@ async function syncTitles(
           syncLogger.error(`Failed to sync "${title}":`, error)
           titleResults = [failed(title, error)]
         }
-        onTitleDone?.(titleResults)
+        onTitleDone?.(titleResults, title)
         return titleResults
       })
     )

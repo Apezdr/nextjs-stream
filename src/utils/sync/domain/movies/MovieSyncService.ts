@@ -319,15 +319,15 @@ export class MovieSyncService {
         }
       }
 
-      // Stamp the resolved display title onto completed results so the post-sync
-      // cache invalidation can build the correct `movie-details-<displayTitle>`
-      // tag. `movie.title` reflects metadata-strategy updates (line ~141 spread);
+      // Stamp the resolved display title onto completed results. (The post-sync
+      // cache invalidation does not read it: the page caches are tagged by the
+      // folder name, which run/writtenMedia takes from the title being synced.)
+      // `movie.title` reflects metadata-strategy updates (line ~141 spread);
       // fall back to the filesystem key only when no display title is available.
       const movieDisplayTitle = displayTitle
-      // A corrected display title is a change in its own right, and the page
-      // caches are keyed on it. When no strategy had anything else to write
-      // there is no completed result to carry it to the cache invalidation, so
-      // add one.
+      // A corrected display title is a change in its own right: the media
+      // pages show it. When no strategy had anything else to write there is no
+      // completed result to carry it to the cache invalidation, so add one.
       const titleChanged = Boolean(existingMovie) && existingMovie!.title !== displayTitle && !titleLocked
       if (titleChanged && !results.some(r => r.status === SyncStatus.Completed)) {
         results.push({
