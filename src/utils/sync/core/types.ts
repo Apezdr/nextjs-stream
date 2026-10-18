@@ -66,7 +66,11 @@ export interface FieldAvailability {
 // typecheck. The title's payload is not one of them: each title is handed its
 // own (`fileServer.movies[title]`, `fileServer.tv[title]`).
 
-/** The run and the server this pass applies. */
+/**
+ * The run and the server this pass applies. It holds no server list and no
+ * run id on purpose: no step or builder reads them (the availability says who
+ * reports what; the repositories stamp the run id, run/runState).
+ */
 export interface RunConfig {
   serverConfig: ServerConfig
   /** Ignore the skip gates: every title is synced in full. */

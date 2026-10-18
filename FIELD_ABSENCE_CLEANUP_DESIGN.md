@@ -4,7 +4,7 @@ Drop stale optional fields from sync entities (movies, TV shows, seasons, episod
 
 ## Problem
 
-Today the new domain-driven sync (`src/utils/sync/`) is **additive only**. Every asset/content/metadata strategy follows the same shape:
+When this was written, the new domain-driven sync (`src/utils/sync/`) was **additive only**. Every asset/content/metadata strategy followed the same shape:
 
 ```ts
 const assetRelativePath = fileServerData.urls[fileServerKey]
@@ -13,12 +13,7 @@ if (!assetRelativePath) {
 }
 ```
 
-Concrete skip points already in tree:
-
-- [src/utils/sync/domain/movies/strategies/MovieAssetStrategy.ts:213-219](src/utils/sync/domain/movies/strategies/MovieAssetStrategy.ts#L213-L219)
-- [src/utils/sync/domain/tvShows/strategies/TVShowAssetStrategy.ts:138-141](src/utils/sync/domain/tvShows/strategies/TVShowAssetStrategy.ts#L138-L141)
-- [src/utils/sync/domain/seasons/strategies/SeasonPosterStrategy.ts](src/utils/sync/domain/seasons/strategies/SeasonPosterStrategy.ts)
-- [src/utils/sync/domain/episodes/strategies/EpisodeContentStrategy.ts](src/utils/sync/domain/episodes/strategies/EpisodeContentStrategy.ts)
+The skip points were in the movie asset strategy and the TV show, season and episode strategies. Those strategies are deleted: the movie steps (`src/utils/sync/domain/movies/`) and the TV builders (`src/utils/sync/domain/tv/showPlan.ts`, `seasonPlan.ts`, `episodePlan.ts`) replaced them, and each returns a write plan.
 
 Result: a `logo`, `backdrop`, `chapterURL`, episode `thumbnail`, season poster, or per-language caption that previously lived on server A and was deleted will linger in MongoDB indefinitely. The frontend then renders a 404'd asset URL.
 
@@ -112,11 +107,11 @@ The orchestrators (`MovieSyncService`, `TVShowSyncService`, `SeasonSyncService`,
 
 ## Per-entity integration
 
-Cleanup runs **once per entity per sync pass**, after all per-server strategies have finished contributing to `pendingUpdates`. It folds an `$unset` payload into the same write the orchestrator already performs.
+Cleanup runs **once per entity per sync pass**, after the steps or the builder have made their write plans. Its removals are a plan of their own (`cleanupWritePlan`, `core/writePlan`), merged with theirs into the one write the service makes, as `$unset`.
 
 ### 1. Movies
 
-**Where:** `MovieSyncService.syncMovie()` — right before the consolidated `repository.smartUpsert(...)` call that flushes `context.pendingMovieUpdates.get(originalTitle)`.
+**Where:** `MovieSyncService.syncMovie()` — where the steps' plans are merged, before the one `repository.smartUpsert(...)`.
 
 **Cleanable fields:**
 
@@ -135,7 +130,7 @@ Cleanup runs **once per entity per sync pass**, after all per-server strategies 
 
 ### 2. TV shows
 
-**Where:** `TVShowSyncService.syncTVShow()` — after metadata + asset strategies complete, before the show-level write.
+**Where:** `TVShowSyncService.syncTVShow()` — after the show's builder (`planTVShow`, `domain/tv/showPlan.ts`), before the show-level write.
 
 **Cleanable fields:** same shape as movies minus the video/caption set.
 
@@ -145,13 +140,13 @@ Cleanup runs **once per entity per sync pass**, after all per-server strategies 
 | `backdrop` | `backdrop` | `backdropSource`, `backdropBlurhash`, `backdropBlurhashSource` |
 | `logo` | `logo` | `logoSource` |
 
-**Note:** TV show field paths are **not** prefixed with `urls.` — see [TVShowAssetStrategy.ts](src/utils/sync/domain/tvShows/strategies/TVShowAssetStrategy.ts) for the convention. The `MovieFieldPathMap` does not apply; TV uses raw field names.
+**Note:** TV show field paths are **not** prefixed with `urls.` — see [showPlan.ts](src/utils/sync/domain/tv/showPlan.ts) and `TVSHOW_CLEANABLE_FIELDS` in [TVShowSyncService.ts](src/utils/sync/domain/tv/TVShowSyncService.ts) for the convention. The `MovieFieldPathMap` does not apply; TV uses raw field names.
 
 `availabilityKey` is the show's `originalTitle`, mediaType `'tv'`.
 
 ### 3. Seasons
 
-**Where:** `SeasonSyncService.syncSeason()`, after `SeasonPosterStrategy` + `SeasonMetadataStrategy` finish.
+**Where:** `SeasonSyncService.syncShow()`, after each season's builder (`planSeason`, `domain/tv/seasonPlan.ts`).
 
 **Cleanable fields:**
 
@@ -159,13 +154,13 @@ Cleanup runs **once per entity per sync pass**, after all per-server strategies 
 |---|---|---|
 | `season_poster` | `seasons.${seasonKey}.season_poster` | `seasonPosterBlurhash`, `season_posterSource` |
 
-`seasonKey` matches the format used by the season strategies (e.g., `"Season 1"`). `availabilityKey` is the **show's** `originalTitle` (seasons piggy-back on the show's `fieldAvailability.tv[showOriginalTitle]` namespace via compound paths).
+`seasonKey` is the literal season key the server sent (e.g., `"Season 1"`, `"Season 01"`). `availabilityKey` is the **show's** `originalTitle` (seasons piggy-back on the show's `fieldAvailability.tv[showOriginalTitle]` namespace via compound paths).
 
 ### 4. Episodes
 
-**Where:** `EpisodeSyncService.syncEpisode()`, after `EpisodeContentStrategy` finishes.
+**Where:** `EpisodeSyncService.syncSeason()` (`planEpisodeCleanup`), after each episode's builder (`planEpisode`, `domain/tv/episodePlan.ts`).
 
-Episodes are **not** keyed in `fieldAvailability` directly. Each episode-level field uses a compound path under the show's bucket: `seasons.${seasonKey}.episodes.${episodeKey}.${field}`. The exact templates live in the episode strategy — re-use those constants, do not invent new ones.
+Episodes are **not** keyed in `fieldAvailability` directly. Each episode-level field uses a compound path under the show's bucket: `seasons.${seasonKey}.episodes.${episodeKey}.${field}`. The prefixes come from `episodeLeafPrefixes` (`domain/tv/episodePlan.ts`) — re-use it, do not invent new paths.
 
 **Cleanable fields:**
 
@@ -223,11 +218,11 @@ This lets the SigNoz integration alert if cleanup volume spikes — typically a 
 1. **Authoritative-pass gate.** `allEnabledServersProbed === true` is mandatory. Cleanup must never fire on a partial sync.
 2. **Per-pass cap.** The orchestrator passes a max-fields-per-entity threshold (default 5). If `fieldsToUnset.length` exceeds the cap, **abort the cleanup for that entity** and emit a `field.cleared.aborted` event with the candidate list. Catastrophic regressions (e.g., file server returns an empty manifest) shouldn't be able to wipe a record in one pass.
 3. **Required-field allowlist.** `FieldAbsenceCleaner` rejects any `entityField` not in a small allowlist (per-entity constants). This is belt-and-braces protection against a future caller passing `'title'` or `'_id'`.
-4. **Dry-run mode.** Strategy or service config can set `cleanup: 'dry-run'`, which logs and emits events but does not write. Use it for the first production rollout.
+4. **Dry-run mode.** The run's cleanup config can set `cleanup: 'dry-run'`, which logs and emits events but does not write. Use it for the first production rollout.
 
 ## Configuration
 
-Add to `SyncContext`:
+The cleanup config is the run's: `RunConfig.cleanup` (`core/types`), resolved by `resolveCleanupConfig` from `SYNC_FIELD_CLEANUP`:
 
 ```ts
 cleanup?: {

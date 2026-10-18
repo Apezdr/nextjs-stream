@@ -143,10 +143,16 @@ Create `.env.local` with required variables:
 
 ### Sync System
 
-#### Domain-Driven Sync (`src/utils/sync/domain/`)
-- Modern architecture with TypeScript support
-- Strategy pattern with pluggable sync operations
-- Domain-specific services (MovieSyncService, EpisodeSyncService, etc.)
+#### Domain-Driven Sync (`src/utils/sync/`)
+- `run/` - orchestration: the run and each server's pass (below)
+- `core/` - the pure rules: ownership, skip gates, field-absence cleanup,
+  titles, and the write plan (`WritePlan`, merged by `core/writePlan`)
+- `domain/movies` - `MovieSyncService` and its steps (`metadata`, `artwork`,
+  `video`); `domain/tv` - the TV services and their builders (`showPlan`,
+  `seasonPlan`, `episodePlan`). Steps and builders do no I/O: each returns a
+  write plan, and the files it reads are fetched for it by the prefetch step
+- `infrastructure/` - the repositories, the only writers, and `fileSystem`
+  (file-server URLs, file fetches, the prefetch step)
 - Single write chokepoint per entity (`BaseRepository.smartUpsert` /
   `EpisodeRepository.smartBulkUpsert` / `SeasonRepository.smartBulkUpsert`),
   which is where `lockedFields` enforcement (`computeDiff`) and `manualFields`
@@ -176,10 +182,10 @@ const canUpdate = isCurrentServerHighestPriorityForReportedField(
 
 **New Sync Architecture Components:**
 - `run/serverPass` (`runServerPass`) - Runs one server's pass: config check, movies, TV, then the server's side jobs
-- `MovieMetadataStrategy` - Handles metadata with priority checking
-- `MovieAssetStrategy` - Manages assets (posters, backdrops, logos) with priority
+- `MovieSyncService` - One server's pass over one movie: runs the metadata, artwork and video steps (and the blurhash retry), merges their plans, makes one write
+- `TVShowSyncService` / `SeasonSyncService` / `EpisodeSyncService` - The show, its seasons and its episodes, each planned by its builder
 - `BaseRepository` - Uses `originalTitle` for all database operations
-- `SyncContext` - Enhanced with `entityTitle` and `entityOriginalTitle`
+- `RunConfig` / `Availability` / `Caches` (`core/types`) - The parts of a pass; each step and builder is handed only the parts it reads
 
 **Priority System Integration:**
 - Import `isCurrentServerHighestPriorityForReportedField` / `isHighestPriorityAmongServers` from `@src/utils/sync/core/ownership`
@@ -189,7 +195,7 @@ const canUpdate = isCurrentServerHighestPriorityForReportedField(
 
 **New Architecture Benefits:**
 - Type safety with TypeScript interfaces
-- Clear separation of concerns with strategy pattern
+- Clear separation of concerns: pure steps and builders return write plans; the repositories write
 - Comprehensive error handling and event tracking
 - Performance optimizations with caching and bulk operations
 - Real-time progress monitoring and observability
@@ -228,26 +234,35 @@ if (canUpdatePoster) {
 const displayTitle = movie.title // For UI components
 ```
 
-**New Sync Strategy Pattern:**
+**Step / Builder Pattern (a movie step, a TV builder):**
 ```javascript
-// When creating new sync strategies
-class NewSyncStrategy implements SyncStrategy {
-  async sync(entity: BaseMediaEntity | null, context: SyncContext): Promise<SyncResult> {
-    const originalTitle = context.entityOriginalTitle || entity?.originalTitle
-    
-    // Use originalTitle for all filesystem operations
-    const dataPath = `/movies/${originalTitle}/data.json`
-    
-    // Check ownership before updating (fails closed)
-    if (
-      isCurrentServerHighestPriorityForReportedField(
-        context.fieldAvailability, 'movies', originalTitle, 'urls.poster', context.serverConfig
-      )
-    ) {
-      // Perform update with source tracking
-    }
+// A step returns a write plan; it does no I/O and writes nothing
+function planPoster({ originalTitle, payload, run, availability }, resources) {
+  const plan = emptyWritePlan()
+
+  // Check ownership before updating (fails closed); originalTitle is the key
+  if (
+    isCurrentServerHighestPriorityForReportedField(
+      availability.fieldAvailability, 'movies', originalTitle, 'urls.poster', run.serverConfig
+    )
+  ) {
+    // Update with source tracking
+    plan.set.posterURL = fileServerUrl(payload.urls.poster, run.serverConfig)
+    plan.set.posterSource = run.serverConfig.id
   }
+
+  // A file the step reads comes from `resources`: one not fetched yet reads as
+  // a failed fetch and is named in the plan's needs
+  const file = resources.read({ kind: 'metadata', serverId: run.serverConfig.id, path: payload.urls.metadata })
+  if (!file?.ok) {
+    plan.incomplete = true // the gate stays open, so the next pass retries
+    plan.deferrals.push('metadata')
+  }
+  return { plan: { ...plan, needs: resources.needs }, wroteDocument: false }
 }
+
+// The service runs it through the prefetch step, then writes through a repository
+const { plan } = await buildWithResources((resources) => planPoster(input, resources), { mediaType: 'movie', title: originalTitle })
 ```
 
 ### Component Development
