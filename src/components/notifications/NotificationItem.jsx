@@ -187,7 +187,8 @@ export default function NotificationItem({ notification, onClose }) {
                   type="button"
                   onClick={handleDigestToggle}
                   aria-expanded={isDigestOpen}
-                  aria-controls={digestPanelId}
+                  // Only while the panel is in the DOM
+                  aria-controls={isDigestOpen ? digestPanelId : undefined}
                   className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
                 >
                   {isDigestOpen ? 'Hide titles' : `Show ${digestTitleCount} title${digestTitleCount === 1 ? '' : 's'}`}

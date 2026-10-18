@@ -253,8 +253,6 @@ export class EpisodeSyncService {
           [`Upserted episode ${entity.episodeNumber}`, ...(cleanupChanges || [])], [],
           {
             displayTitle: entity.showTitle,
-            // The show's folder name: the key run/newContent finds the episode by.
-            showOriginalTitle: showTitle,
             seasonNumber: entity.seasonNumber,
             episodeNumber: entity.episodeNumber,
             // Read by TVShowSyncService when it decides the show's own gate.
@@ -817,7 +815,7 @@ export class EpisodeSyncService {
     // --- Metadata (priority-gated) ---
     // Tracks whether episode metadata came from a CONFIRMED fresh source (URL
     // fetch ok, or backend-inlined object) vs. the parent inline fallback or a
-    // failure. Only a fresh source may advance the episode's gate — the inline
+    // failure. Only a fresh source may advance the syncHash gate — the inline
     // fallback is fine for display but must not lock the episode on a stale
     // parent. Default true so "no episode metadata URL" never blocks the gate.
     let metadataFromFreshFetch = true

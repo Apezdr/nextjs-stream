@@ -112,6 +112,26 @@ describe('a digest in the notification list', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('points its button at the list only while the list is there', async () => {
+    render(<NotificationItem notification={digest()} onClose={jest.fn()} />)
+    const toggle = screen.getByRole('button', { name: 'Show 3 titles' })
+    expect(toggle).not.toHaveAttribute('aria-controls')
+
+    await act(async () => {
+      fireEvent.click(toggle)
+    })
+
+    const controls = screen.getByRole('button', { name: 'Hide titles' }).getAttribute('aria-controls')
+    expect(controls).toBeTruthy()
+    expect(document.getElementById(controls)).toContainElement(screen.getByRole('list', { name: 'Titles added' }))
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Hide titles' }))
+    })
+    expect(screen.getByRole('button', { name: 'Show 3 titles' })).not.toHaveAttribute('aria-controls')
+    expect(document.getElementById(controls)).toBeNull()
+  })
+
   it('counts the titles it leaves out in its button', () => {
     render(<NotificationItem notification={digest({ moreCount: 21 })} onClose={jest.fn()} />)
 
