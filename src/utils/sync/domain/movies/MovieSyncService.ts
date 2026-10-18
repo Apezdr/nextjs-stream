@@ -29,6 +29,7 @@ import {
   getServersReportingTitle,
 } from '@src/utils/sync/core/ownership'
 import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, decideGate, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
+import { effectiveMetadata } from '../../core/metadataLock'
 import isEqual from 'lodash/isEqual'
 
 const pinoLog = createLogger('Sync.Movie')
@@ -219,11 +220,16 @@ export class MovieSyncService {
       // the TMDB one, the asset and content strategies the folder name), so the
       // stored title depended on which of them last had something to change.
       // (A locked `metadata` keeps what is stored: the strategy's copy will be
-      // dropped on the way to the database, so it must not name the title.)
-      const metadataLocked = isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'metadata')
-      const storedMetadata: any = metadataLocked
-        ? existingMovie?.metadata
-        : pending.metadata ?? existingMovie?.metadata
+      // dropped on the way to the database, so it must not name the title.
+      // See core/metadataLock.)
+      const metadataCopy = effectiveMetadata<Record<string, any>>({
+        stored: existingMovie
+          ? { metadata: existingMovie.metadata, metadataSource: existingMovie.metadataSource }
+          : null,
+        incoming: { metadata: pending.metadata, metadataSource: pending.metadataSource },
+        locked: isTopLevelFieldLocked((existingMovie as any)?.lockedFields, 'metadata'),
+      })
+      const storedMetadata: any = metadataCopy.metadata
       // (The stub the metadata strategy writes after a failed first fetch
       // carries the folder name as its title and `hasExternalMetadata: false`;
       // that is not a metadata title.)
@@ -245,7 +251,7 @@ export class MovieSyncService {
       // with no metadata anywhere the source used to be whichever server had
       // created the document.)
       const titleSource = metadataTitle
-        ? (metadataLocked ? existingMovie?.metadataSource : pending.metadataSource ?? existingMovie?.metadataSource)
+        ? metadataCopy.metadataSource
         : isHighestPriorityAmongServers(
             getServersReportingTitle(context.fieldAvailability, 'movies', effectiveOriginalTitle),
             context.serverConfig

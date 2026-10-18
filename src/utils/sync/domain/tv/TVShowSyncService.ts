@@ -31,6 +31,7 @@ import {
   serverOutranks,
 } from '@src/utils/sync/core/ownership'
 import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
+import { effectiveMetadata } from '@src/utils/sync/core/metadataLock'
 import {
   availabilityFingerprint,
   payloadFingerprint,
@@ -392,26 +393,34 @@ export class TVShowSyncService {
         showMetadata = fileData.metadata
       }
 
-      if (showMetadata && typeof showMetadata === 'object' && !showMetadata.error) {
+      const fetchedUsable = Boolean(showMetadata && typeof showMetadata === 'object' && !showMetadata.error)
+      if (fetchedUsable) {
         metadataFetchSucceeded = true
       }
       // Metadata an admin locked stays as stored, and so do the fields taken
       // from it: the fetched copy is dropped on the way to the database, and a
-      // title derived from it would not be the stored metadata's.
-      if (showMetadata && typeof showMetadata === 'object' && !showMetadata.error && !locked('metadata')) {
-        entity.metadata = showMetadata
-        entity.metadataSource = context.serverConfig.id
+      // title derived from it would not be the stored metadata's
+      // (core/metadataLock).
+      const metadata = effectiveMetadata<any>({
+        stored: existing ? { metadata: existing.metadata, metadataSource: existing.metadataSource } : null,
+        incoming: fetchedUsable ? { metadata: showMetadata, metadataSource: context.serverConfig.id } : null,
+        locked: locked('metadata'),
+      })
+      if (metadata.action === 'write') {
+        const fresh = metadata.metadata
+        entity.metadata = fresh
+        entity.metadataSource = metadata.metadataSource
 
         // Extract queryable fields from metadata (matching legacy document shape)
-        if (showMetadata.name) entity.title = showMetadata.name
-        if (showMetadata.first_air_date) entity.firstAirDate = new Date(showMetadata.first_air_date)
-        if (showMetadata.last_air_date) entity.lastAirDate = new Date(showMetadata.last_air_date)
-        if (showMetadata.status) entity.status = showMetadata.status
-        if (showMetadata.number_of_seasons != null) entity.numberOfSeasons = showMetadata.number_of_seasons
-        if (showMetadata.vote_average != null) entity.rating = showMetadata.vote_average
-        if (showMetadata.overview) entity.overview = showMetadata.overview
-        if (showMetadata.genres) entity.genres = showMetadata.genres
-        if (showMetadata.networks) entity.networks = showMetadata.networks
+        if (fresh.name) entity.title = fresh.name
+        if (fresh.first_air_date) entity.firstAirDate = new Date(fresh.first_air_date)
+        if (fresh.last_air_date) entity.lastAirDate = new Date(fresh.last_air_date)
+        if (fresh.status) entity.status = fresh.status
+        if (fresh.number_of_seasons != null) entity.numberOfSeasons = fresh.number_of_seasons
+        if (fresh.vote_average != null) entity.rating = fresh.vote_average
+        if (fresh.overview) entity.overview = fresh.overview
+        if (fresh.genres) entity.genres = fresh.genres
+        if (fresh.networks) entity.networks = fresh.networks
       }
     }
 

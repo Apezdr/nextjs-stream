@@ -30,6 +30,7 @@ import {
 } from '@src/utils/sync/core/ownership'
 import { changesDocument, decideGate } from '@src/utils/sync/core/syncGate'
 import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
+import { effectiveMetadata } from '@src/utils/sync/core/metadataLock'
 import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Season')
@@ -299,31 +300,41 @@ export class SeasonSyncService {
     const seasonMetadata = Array.isArray(showSeasons)
       ? showSeasons.find((s: any) => s.season_number === seasonNumber)
       : undefined
-    if (locked('metadata')) {
-      // Metadata an admin locked stays as stored, and so do the fields taken
-      // from it (the title, the episode count below): the show's copy would be
-      // dropped on the way to the database, and must not name the season.
-    } else if (seasonMetadata) {
+    let cleanedMetadata: any
+    if (seasonMetadata) {
       // Clean metadata: remove episodes array (stored separately)
-      const cleanedMetadata = { ...seasonMetadata }
+      cleanedMetadata = { ...seasonMetadata }
       delete cleanedMetadata.episodes
-
-      entity.metadata = cleanedMetadata
+    }
+    // Metadata an admin locked stays as stored, and so do the fields taken
+    // from it (the title, the episode count below): the show's copy would be
+    // dropped on the way to the database, and must not name the season
+    // (core/metadataLock).
+    const metadata = effectiveMetadata<any>({
+      stored: existing ? { metadata: existing.metadata, metadataSource: existing.metadataSource } : null,
       // The source is the show's metadata source, not whoever copied it.
-      if (parentShow?.metadataSource) entity.metadataSource = parentShow.metadataSource
+      incoming: seasonMetadata ? { metadata: cleanedMetadata, metadataSource: parentShow?.metadataSource } : null,
+      // The show's metadata lists its seasons, and not this one. (A show with
+      // no metadata at all is not this case: its metadata may simply not have
+      // been synced yet.)
+      gone: Array.isArray(showSeasons),
+      locked: locked('metadata'),
+    })
+    if (metadata.action === 'write') {
+      const fresh = metadata.metadata
+      entity.metadata = fresh
+      if (metadata.metadataSource) entity.metadataSource = metadata.metadataSource
 
       // Extract queryable fields from metadata (matching legacy document shape)
-      if (seasonMetadata.name) entity.title = seasonMetadata.name
-      if (seasonMetadata.air_date) entity.airDate = new Date(seasonMetadata.air_date)
-      if (seasonMetadata.overview) entity.overview = seasonMetadata.overview
-      if (seasonMetadata.poster_path) entity.posterPath = seasonMetadata.poster_path
-      if (seasonMetadata.vote_average != null) entity.rating = seasonMetadata.vote_average
-      if (seasonMetadata.episode_count != null) entity.episodeCount = seasonMetadata.episode_count
-    } else if (Array.isArray(showSeasons) && existing?.metadata) {
-      // The show's metadata no longer lists this season. What was copied from
-      // it goes, so the season ends as a first sync against the same metadata
-      // would leave it. (A show with no metadata at all is not this case: its
-      // metadata may simply not have been synced yet.)
+      if (fresh.name) entity.title = fresh.name
+      if (fresh.air_date) entity.airDate = new Date(fresh.air_date)
+      if (fresh.overview) entity.overview = fresh.overview
+      if (fresh.poster_path) entity.posterPath = fresh.poster_path
+      if (fresh.vote_average != null) entity.rating = fresh.vote_average
+      if (fresh.episode_count != null) entity.episodeCount = fresh.episode_count
+    } else if (metadata.action === 'remove') {
+      // What was copied from the season's old entry goes, so the season ends
+      // as a first sync against the same metadata would leave it.
       for (const field of ['metadata', 'metadataSource', 'airDate', 'overview', 'posterPath', 'rating']) {
         clearField(field)
       }
@@ -344,10 +355,11 @@ export class SeasonSyncService {
       entity.posterSource = context.serverConfig.id
     }
 
-    // Episode count: the season's metadata when it has one, otherwise the
-    // episodes the servers hold between them, counted once each. The fallback
-    // used to be the first syncing server's own count, kept from then on.
-    const metadataEpisodeCount = (entity.metadata as any)?.episode_count
+    // Episode count: the season's metadata when it has one (the stored copy
+    // while it is locked), otherwise the episodes the servers hold between
+    // them, counted once each. The fallback used to be the first syncing
+    // server's own count, kept from then on.
+    const metadataEpisodeCount = (metadata.metadata as any)?.episode_count
     if (metadataEpisodeCount != null) {
       entity.episodeCount = metadataEpisodeCount
     } else {

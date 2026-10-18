@@ -49,6 +49,7 @@ import { warnOnJitIdentityFork } from '@src/utils/sync/core/jitIdentityParity'
 import { seedDiscovery, applyFirstSeen } from '@src/utils/sync/core/discovery'
 import { reconcileCaptions } from '@src/utils/sync/core/captionReconcile'
 import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
+import { effectiveMetadata } from '@src/utils/sync/core/metadataLock'
 import { planVideoFileFacts, sizeInBytes, videoFileChanged } from '@src/utils/sync/core/fileFacts'
 import {
   buildSyncGate,
@@ -785,6 +786,8 @@ export class EpisodeSyncService {
     // fallback is fine for display but must not lock the episode on a stale
     // parent. Default true so "no episode metadata URL" never blocks the gate.
     let metadataFromFreshFetch = true
+    // The copy this pass brings, when it is usable.
+    let incomingMetadata: any = null
     const canUpdateMetadata = owns('metadata', Boolean(fileData?.metadata))
     if (canUpdateMetadata) {
       // fileData.metadata is typically a URL path — fetch actual metadata from file server
@@ -822,16 +825,21 @@ export class EpisodeSyncService {
         }
       }
 
-      // Metadata an admin locked stays as stored: the fetched copy is dropped
-      // on the way to the database, and the title below is taken from what the
-      // document actually holds.
-      if (
-        episodeMetadata && typeof episodeMetadata === 'object' && !episodeMetadata.error &&
-        !isTopLevelFieldLocked((existing as any)?.lockedFields, 'metadata')
-      ) {
-        entity.metadata = episodeMetadata
-        entity.metadataSource = context.serverConfig.id
+      if (episodeMetadata && typeof episodeMetadata === 'object' && !episodeMetadata.error) {
+        incomingMetadata = episodeMetadata
       }
+    }
+    // Metadata an admin locked stays as stored: the fetched copy is dropped
+    // on the way to the database, and the title below is taken from what the
+    // document actually holds (core/metadataLock).
+    const metadata = effectiveMetadata<any>({
+      stored: existing ? { metadata: existing.metadata, metadataSource: existing.metadataSource } : null,
+      incoming: incomingMetadata ? { metadata: incomingMetadata, metadataSource: context.serverConfig.id } : null,
+      locked: isTopLevelFieldLocked((existing as any)?.lockedFields, 'metadata'),
+    })
+    if (metadata.action === 'write') {
+      entity.metadata = metadata.metadata
+      entity.metadataSource = metadata.metadataSource
     }
 
     // --- Thumbnail blurhash ---
@@ -883,7 +891,7 @@ export class EpisodeSyncService {
     // video owner's reading of the filename. ---
     // Decided here, from what the document ends up holding, so it does not
     // depend on which server created the episode or synced last.
-    const metadataName = (entity.metadata as any)?.name
+    const metadataName = (metadata.metadata as any)?.name
     if (typeof metadataName === 'string' && metadataName.trim()) {
       entity.title = metadataName
     } else if (canUpdateVideo) {
