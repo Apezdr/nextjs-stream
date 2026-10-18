@@ -92,8 +92,8 @@ export async function syncMovieVideo({ originalTitle, movie, context }: MovieSte
       // The display title is not this step's to write: MovieSyncService
       // derives it once, from the stored metadata, at the consolidated write.
       // Forcing the folder name in here is what made a title flip between
-      // "The Matrix" and "The Matrix (1999)" depending on which strategy had
-      // something to change.
+      // the metadata name and the folder name (the same name plus its year)
+      // depending on which strategy had something to change.
       const set: any = { ...contentUpdates, lastSynced: new Date() }
       wroteDocument = true
 
