@@ -35,11 +35,11 @@
  * (1) and (2) are the stored value. (3) is how it is written: a pass that
  * changes the document keeps only its own entry.
  *
- * A gate is stamped only when the pass ran to the end with nothing failed and
- * nothing deferred, including a pass that found nothing to change — otherwise
- * that pass would be repeated in full on every run. "Deferred" covers a removal
- * the pass held back because not every server answered this run: the pass must
- * run again when they all do.
+ * A gate is stamped only when the pass ran to the end with nothing failed,
+ * nothing held back and nothing deferred (decideGate), including a pass that
+ * found nothing to change — otherwise that pass would be repeated in full on
+ * every run. A removal held back because not every server answered this run
+ * leaves the gate open: the pass must run again when they all do.
  *
  * SYNC_GATE_VERSION is part of the value. Raise it when the rules for what a
  * pass writes change, so already-gated documents are reprocessed once instead
@@ -151,6 +151,43 @@ export function nextSyncGates(
   // not survive a pass that did not complete.
   const { [serverId]: _dropped, ...others } = stored
   return others
+}
+
+/**
+ * What a pass left undone, as far as its gate goes. Each one is a reason to
+ * leave the gate open, so that the next pass runs in full and does the work.
+ * Every caller states all three.
+ */
+export interface PassOutcome {
+  /**
+   * A step of the pass failed: a strategy, a write, the metadata fetch, or
+   * the season or episode service under a show.
+   */
+  failed: boolean
+  /**
+   * A removal was held back because not every enabled server answered this
+   * run (a video, a caption, a hint, a field no server reports any more). It
+   * is made on a run where they all do.
+   */
+  heldBack: boolean
+  /**
+   * Something was left for a later pass to settle: a file the server
+   * publishes that could not be fetched (a blurhash), a count kept at its
+   * stored value while a server was missing, or a season or episode under a
+   * show that left its own gate open.
+   */
+  deferred: boolean
+}
+
+export type GateDecision = 'stamp' | 'leaveOpen'
+
+/**
+ * Whether a pass may stamp its gate: only when nothing failed, nothing was
+ * held back and nothing was deferred. Otherwise the gate stays open (see
+ * nextSyncGates for what is stored either way).
+ */
+export function decideGate(outcome: PassOutcome): GateDecision {
+  return outcome.failed || outcome.heldBack || outcome.deferred ? 'leaveOpen' : 'stamp'
 }
 
 /**
