@@ -1164,11 +1164,14 @@ describe('errors', () => {
   })
 
   it('a pass that throws after its movies has already handed the run what it wrote', async () => {
-    // The TV payload cannot even be listed: the pass throws between its movies
-    // and its shows, out of reach of the per-title catch.
+    // The TV payload cannot be listed once the movie is written: the pass
+    // throws between its movies and its shows, out of reach of the per-title
+    // catch. (Before the pass, the run reads the keys of every payload for
+    // pre-tag; they read as no shows.)
     const unreadable = new Proxy({}, {
       ownKeys() {
-        throw new Error('TV payload unreadable')
+        if (docs('FlatMovies').length > 0) throw new Error('TV payload unreadable')
+        return []
       },
     })
     const movie = playableMovie()

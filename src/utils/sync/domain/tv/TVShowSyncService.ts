@@ -48,6 +48,7 @@ import {
 } from '@src/utils/sync/core/syncGate'
 import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates } from '../../core/syncGate'
 import { applyWritePlan, cleanupWritePlan, emptyWritePlan, mergeWritePlans } from '../../core/writePlan'
+import { expectedSeasonCounts, type ExpectedCounts } from '../../core/seasonCounts'
 import isEqual from 'lodash/isEqual'
 import { syncLogger } from '../../core/logger'
 import { createLogger } from '@src/lib/logger'
@@ -128,7 +129,8 @@ export class TVShowSyncService {
       const existing = await this.tvShowRepository.findByOriginalTitle(showTitle)
 
       if (!run.forceSync && existing && readSyncGate(existing as any, run.serverConfig.id) === showGate) {
-        const expectedEpisodes = this.countExpectedEpisodes(payload)
+        const expected = this.expectedCounts(payload)
+        const expectedEpisodes = expected.episodes
         const actualEpisodes = expectedEpisodes > 0
           ? await this.episodeRepository.getEpisodeCount(existing.title, undefined, (existing as any)._id)
           : 0
@@ -136,7 +138,7 @@ export class TVShowSyncService {
         // leaving its episodes intact and its hash unchanged. Without this
         // check the show would be skipped forever and the seasons never
         // re-created (episodes render under seasons, so the UI shows nothing).
-        const expectedSeasons = this.countExpectedSeasons(payload)
+        const expectedSeasons = expected.seasons
         const actualSeasons = expectedSeasons > 0
           ? await this.seasonRepository.getSeasonCount(existing.title, (existing as any)._id)
           : 0
@@ -354,32 +356,16 @@ export class TVShowSyncService {
   }
 
   /**
-   * Count episodes expected for this show based on the file-server data —
-   * sum of episode keys across every season. Used as the "expected" side of
+   * The seasons and episodes this server's payload says the show has, counted
+   * by the drift check's one rule (core/seasonCounts): the "expected" side of
    * the show-level integrity check.
    */
-  private countExpectedEpisodes(payload: any): number {
+  private expectedCounts(payload: any): ExpectedCounts {
     const seasons = payload?.seasons
-    if (!seasons) return 0
-    // Only seasons the sync can store: a folder whose name has no number in it
-    // ("Specials") is never written, and counting its episodes as expected
-    // made the show look short of episodes — and so never skippable — forever.
-    return Object.entries(seasons)
-      .filter(([key]) => /(?:season_?|s)?(\d+)/i.test(key))
-      .reduce<number>((sum, [, s]: [string, any]) => sum + Object.keys(s?.episodes || {}).length, 0)
-  }
-
-  /**
-   * Count seasons expected for this show from the file-server data. Counts only
-   * keys that parse to a valid season number (matching what
-   * SeasonSyncService.parseSeasonNumber persists), so a non-numeric season key
-   * cannot perpetually force a full sync. Used as the "expected" side of the
-   * show-level season-drift check.
-   */
-  private countExpectedSeasons(payload: any): number {
-    const seasons = payload?.seasons
-    if (!seasons) return 0
-    return Object.keys(seasons).filter(k => /(?:season_?|s)?(\d+)/i.test(k)).length
+    if (!seasons) return { seasons: 0, episodes: 0 }
+    return expectedSeasonCounts(
+      Object.entries(seasons).map(([key, s]: [string, any]) => [key, Object.keys(s?.episodes || {}).length] as const)
+    )
   }
 
   private makeResult(

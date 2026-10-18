@@ -235,9 +235,10 @@ export async function runAfterSyncJobs({ syncRunId, incompleteReasons = [] }) {
  * start of the orchestration by `preTagSyncRunId`) as the deletion criterion.
  * Anything missing the current `syncRunId` is, by construction, orphan.
  *
- * @param {Object} allFileServers - { [serverId]: { movies, tv, ... } }. Used
- *   only for the top-level "no-server-data" safety guard — the cleanup
- *   predicate itself is the marker, not in-memory file-server state.
+ * @param {Map<string, import('./listing').ServerListing>} listings - Each
+ *   answering server's titles (run/listing). Used only for the top-level
+ *   "no-server-data" safety guard — the cleanup predicate itself is the
+ *   marker, not in-memory file-server state.
  * @param {Object} [_fieldAvailability] - Vestigial. Pre-marker cleanup used
  *   this for the per-record predicate. Kept in the signature for callers that
  *   still pass it; ignored by the marker-based path.
@@ -247,7 +248,7 @@ export async function runAfterSyncJobs({ syncRunId, incompleteReasons = [] }) {
  * @returns {Promise<Object>} { removed, errors, cache }
  */
  
-export async function runPostSyncCleanup(allFileServers, _fieldAvailability, options = {}) {
+export async function runPostSyncCleanup(listings, _fieldAvailability, options = {}) {
   const log = createLogger('FlatSync.PostSyncCleanup')
   const { syncRunId, preTagCoverage, runStartedAt, allEnabledServersProbed } = options
 
@@ -260,11 +261,10 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
   return tracer.startActiveSpan('flatsync.post-sync.cleanup', async (span) => {
     try {
       // ─── Safety guard: don't mass-delete on transient connectivity loss ──────
-      const serverCount = Object.keys(allFileServers || {}).length
-      const totalServerMovies = Object.values(allFileServers || {})
-        .reduce((n, fs) => n + (fs?.movies ? Object.keys(fs.movies).length : 0), 0)
-      const totalServerShows = Object.values(allFileServers || {})
-        .reduce((n, fs) => n + (fs?.tv ? Object.keys(fs.tv).length : 0), 0)
+      const servers = [...(listings?.values() ?? [])]
+      const serverCount = servers.length
+      const totalServerMovies = servers.reduce((n, listing) => n + listing.movies.size, 0)
+      const totalServerShows = servers.reduce((n, listing) => n + listing.tv.size, 0)
 
       if (serverCount === 0 || (totalServerMovies === 0 && totalServerShows === 0)) {
         log.warn(
@@ -352,7 +352,7 @@ export async function runPostSyncCleanup(allFileServers, _fieldAvailability, opt
       // ─── Every-server gate (fail-closed) ────────────────────────────────────
       // Deleting a record says "no file server has this any more". That is only
       // known when every enabled server answered. A server that failed to
-      // respond is simply missing from `allFileServers`, so pre-tag did not
+      // respond is simply missing from `listings`, so pre-tag did not
       // stamp the titles only it holds, and they would be deleted here as
       // orphans — with the orphan-fraction breaker below as the only thing in
       // the way — then re-created, with new ids, when the server came back.

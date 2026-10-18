@@ -28,14 +28,17 @@ import { createLogger, logError } from '@src/lib/logger'
 import clientPromise from '@src/lib/mongodb'
 
 /**
- * @param {Object} fileServer - One server's manifest: `{ movies: {...}, tv: {...}, ... }`
- * @param {Object} fieldAvailability - Cross-server field-availability map (same shape as elsewhere)
+ * @param {import('./listing').ServerListing} listing - One server's titles,
+ *   seasons and episodes, by key (run/listing)
+ * @param {Object} fieldAvailability - Cross-server field-availability map (same shape as elsewhere).
+ *   A movie the report can name has no document, so the pass syncs it, so its
+ *   bucket is in the map.
  * @returns {Promise<{missingMovies: string[], missingTVShows: Array<{title: string, seasons: number}>}>}
  */
-export async function computeMissingMedia(fileServer, fieldAvailability) {
+export async function computeMissingMedia(listing, fieldAvailability) {
   const log = createLogger('FlatSync.ComputeMissingMedia')
 
-  if (!fileServer || (!fileServer.movies && !fileServer.tv)) {
+  if (!listing) {
     return { missingMovies: [], missingTVShows: [] }
   }
 
@@ -46,16 +49,12 @@ export async function computeMissingMedia(fileServer, fieldAvailability) {
     // Two projection-only finds — both served by `title_index` /
     // `originalTitle_index`. Index-only scans, no doc fetch.
     const [movieDocs, showDocs] = await Promise.all([
-      fileServer.movies
-        ? db.collection('FlatMovies')
-            .find({}, { projection: { _id: 0, title: 1, originalTitle: 1 } })
-            .toArray()
-        : Promise.resolve([]),
-      fileServer.tv
-        ? db.collection('FlatTVShows')
-            .find({}, { projection: { _id: 0, title: 1, originalTitle: 1 } })
-            .toArray()
-        : Promise.resolve([]),
+      db.collection('FlatMovies')
+        .find({}, { projection: { _id: 0, title: 1, originalTitle: 1 } })
+        .toArray(),
+      db.collection('FlatTVShows')
+        .find({}, { projection: { _id: 0, title: 1, originalTitle: 1 } })
+        .toArray(),
     ])
 
     // Movie title set: union of title + originalTitle, matching legacy.
@@ -81,16 +80,14 @@ export async function computeMissingMedia(fileServer, fieldAvailability) {
     // set, applying the same fieldAvailability rescue as legacy code at
     // memoryUtils.js:217-225.
     const missingMovies = []
-    if (fileServer.movies) {
-      for (const title of Object.keys(fileServer.movies)) {
-        if (dbMovieTitles.has(title)) continue
-        const fa = fieldAvailability?.movies?.[title]
-        if (fa) {
-          const responsible = fa['urls.mp4'] || []
-          if (responsible.length > 0) missingMovies.push(title)
-        } else {
-          missingMovies.push(title)
-        }
+    for (const title of listing.movies) {
+      if (dbMovieTitles.has(title)) continue
+      const fa = fieldAvailability?.movies?.[title]
+      if (fa) {
+        const responsible = fa['urls.mp4'] || []
+        if (responsible.length > 0) missingMovies.push(title)
+      } else {
+        missingMovies.push(title)
       }
     }
 
@@ -98,14 +95,11 @@ export async function computeMissingMedia(fileServer, fieldAvailability) {
     // Legacy only reports a show when the file server lists at least one
     // season for it (memoryUtils.js:267-274). Preserved here.
     const missingTVShows = []
-    if (fileServer.tv) {
-      for (const showTitle of Object.keys(fileServer.tv)) {
-        if (dbShowTitles.has(showTitle)) continue
-        const showData = fileServer.tv[showTitle]
-        const seasonCount = showData?.seasons ? Object.keys(showData.seasons).length : 0
-        if (seasonCount > 0) {
-          missingTVShows.push({ title: showTitle, seasons: seasonCount })
-        }
+    for (const [showTitle, seasons] of listing.tv) {
+      if (dbShowTitles.has(showTitle)) continue
+      const seasonCount = seasons.size
+      if (seasonCount > 0) {
+        missingTVShows.push({ title: showTitle, seasons: seasonCount })
       }
     }
 

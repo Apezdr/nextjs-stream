@@ -75,10 +75,13 @@ export function collectFieldAvailability(mediaData, currentPath, serverId, avail
  * @returns {Promise<{movies: Object, tv: Object}>}
  */
 export async function buildFieldAvailability(fileServers) {
-  // Initialize field-level availability maps
+  // Keyed by folder name, and each title's bucket by leaf path: null-prototype,
+  // so every name is an own key. On a plain object a folder named `__proto__`
+  // or `constructor` reads as Object.prototype or Object, and its leaves were
+  // written onto those (and kept there from one tick to the next).
   const fieldAvailability = {
-    movies: {},
-    tv: {},
+    movies: Object.create(null),
+    tv: Object.create(null),
   }
 
   // Build availability maps per server.
@@ -97,7 +100,7 @@ export async function buildFieldAvailability(fileServers) {
     if (fileServer.movies) {
       for (const [movieTitle, movieData] of Object.entries(fileServer.movies)) {
         if (!fieldAvailability.movies[movieTitle]) {
-          fieldAvailability.movies[movieTitle] = {}
+          fieldAvailability.movies[movieTitle] = Object.create(null)
         }
 
         collectFieldAvailability(movieData, '', serverId, fieldAvailability.movies[movieTitle])
@@ -113,7 +116,7 @@ export async function buildFieldAvailability(fileServers) {
     if (fileServer.tv) {
       for (const [showTitle, showData] of Object.entries(fileServer.tv)) {
         if (!fieldAvailability.tv[showTitle]) {
-          fieldAvailability.tv[showTitle] = {}
+          fieldAvailability.tv[showTitle] = Object.create(null)
         }
 
         collectFieldAvailability(showData, '', serverId, fieldAvailability.tv[showTitle])

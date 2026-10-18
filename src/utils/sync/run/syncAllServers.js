@@ -14,6 +14,7 @@ import {
 } from './runState'
 import { preTagSyncRunId } from './preTag'
 import { computeMissingMedia } from './missingMedia'
+import { listingsOfFileServers } from './listing'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { MediaType, SyncOperation } from '@src/utils/sync/core'
 import { startPassRecord, recordCompletePass, incompletePassReasons } from './tickSkip'
@@ -154,6 +155,11 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   // in scope at the background cleanup call below.
   let preTagResult = null
 
+  // What each answering server has, by key (run/listing): pre-tag, the
+  // missing-media report and cleanup's no-server-data guard read these, never
+  // the payloads. Built inside the try below; empty, cleanup deletes nothing.
+  let listings = new Map()
+
  try {
   // No tick may be skipped on the strength of an earlier pass while this one
   // writes: the record of the last complete pass is replaced now by this
@@ -161,13 +167,15 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   // completes (recordCompletePass below; see run/tickSkip.js).
   await startPassRecord(client, syncRunId)
 
+  listings = listingsOfFileServers(fileServers)
+
   // Pre-tag every record currently present on a file server with the current
   // syncRunId. The per-write marker injection in the sync helpers only fires
   // for records that change; this catches the steady-state case where most
   // records are unchanged. By the time post-sync cleanup runs, anything
   // without the current marker is provably orphan.
   try {
-    preTagResult = await preTagSyncRunId(fileServers, syncRunId)
+    preTagResult = await preTagSyncRunId(listings, syncRunId)
   } catch (preTagError) {
     // preTagSyncRunId is fail-closed (returns a coverage report, does not throw),
     // so this only catches truly unexpected failures. Leaving preTagResult = null
@@ -228,7 +236,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
         // cycle per SigNoz). The missing-media report only needs two
         // projection-only finds + a Set diff — see computeMissingMedia.js.
         const [missingMedia, syncResult] = await Promise.all([
-          computeMissingMedia(fileServer, fieldAvailability),
+          computeMissingMedia(listings.get(serverId), fieldAvailability),
           runServerPass(fileServer, serverConfig, fieldAvailability, {
             forceSync: Boolean(options.forceSync),
             // Authoritative-pass gate for field-absence cleanup: true only when
@@ -412,7 +420,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       try {
         console.log(chalk.bold.yellow('Performing post-sync cleanup (background)...'))
         const finalAvailabilityResults = await runPostSyncCleanup(
-          fileServers,
+          listings,
           fieldAvailability,
           {
             syncRunId,

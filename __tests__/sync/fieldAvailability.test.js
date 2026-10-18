@@ -198,3 +198,40 @@ describe('buildFieldAvailability', () => {
     expect(result.tv['Show 22'].poster).toEqual(['A', 'B'])
   })
 })
+
+describe('folder names that are Object.prototype keys', () => {
+  it('gives `__proto__` and `constructor` folders their own buckets, and touches neither Object.prototype nor Object', async () => {
+    // As JSON.parse leaves them: `__proto__` an own key, like any other folder
+    const movies = JSON.parse(
+      '{"__proto__":{"urls":{"mp4":"/movies/a.mkv"}},"constructor":{"urls":{"mp4":"/movies/b.mkv"}},"toString":{"hdr":"HDR10"}}'
+    )
+    const tv = JSON.parse('{"__proto__":{"poster":"/tv/p.jpg"},"constructor":{"logo":"/tv/l.png"}}')
+
+    const result = await buildFieldAvailability({ A: { movies, tv }, B: { movies: { constructor: { urls: { mp4: '/m.mkv' } } }, tv: {} } })
+
+    expect(Object.keys(result.movies).sort()).toEqual(['__proto__', 'constructor', 'toString'])
+    expect(Object.getOwnPropertyDescriptor(result.movies, '__proto__').value['urls.mp4']).toEqual(['A'])
+    expect(result.movies.constructor['urls.mp4']).toEqual(['A', 'B'])
+    expect(result.movies.toString.hdr).toEqual(['A'])
+    expect(Object.keys(result.tv).sort()).toEqual(['__proto__', 'constructor'])
+    expect(Object.getOwnPropertyDescriptor(result.tv, '__proto__').value.poster).toEqual(['A'])
+    expect(result.tv.constructor.logo).toEqual(['A'])
+
+    // Nothing was written where every object (or Object itself) would read it
+    for (const leaf of ['urls.mp4', 'hdr', 'poster', 'logo']) {
+      expect(Object.prototype).not.toHaveProperty([leaf])
+      expect(Object.hasOwn(Object, leaf)).toBe(false)
+      expect({}[leaf]).toBeUndefined()
+    }
+    // and a title without a bucket reads as absent, whatever its name
+    expect(result.movies.valueOf).toBeUndefined()
+    expect(result.tv.toString).toBeUndefined()
+  })
+
+  it('keeps a leaf path named like an Object.prototype key in its own bucket', async () => {
+    const result = await buildFieldAvailability({ A: { movies: { Film: JSON.parse('{"constructor":"x","__proto__":"y"}') }, tv: {} } })
+    expect(result.movies.Film.constructor).toEqual(['A'])
+    expect(Object.getOwnPropertyDescriptor(result.movies.Film, '__proto__').value).toEqual(['A'])
+    expect(Object.prototype).not.toHaveProperty(['x'])
+  })
+})
