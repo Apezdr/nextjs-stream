@@ -2,10 +2,14 @@
  * Season sync service — bulk-write pattern with read-merge-replace.
  *
  * Write pattern:
- *  1. Pre-fetch all existing seasons for the show (one query).
- *  2. Pre-fetch the parent TV show for its _id (showId foreign key).
- *  3. For each season in file-server data, merge onto existing doc with priority.
- *  4. Flush all seasons with a single SeasonRepository.bulkUpsertShow() call.
+ *  1. Pre-fetch all existing seasons for the show (one query). The parent
+ *     show (its _id for the showId foreign key, its display title, its
+ *     metadata) is handed in as stored: TVShowSyncService reads it once,
+ *     after the show's write.
+ *  2. For each season in file-server data, a write plan over the existing
+ *     doc, with priority, merged with field-absence cleanup's (core/writePlan).
+ *  3. Flush all seasons with a single SeasonRepository.smartBulkUpsert() call:
+ *     one op per season, the batching in the repository.
  *
  * repository.upsert() is NEVER called inside a season loop.
  */
@@ -18,17 +22,20 @@ import {
   MediaType,
   SyncOperation,
   syncEventBus,
-  planFieldCleanup
+  planFieldCleanup,
+  type PlanOutcome,
+  type TVShowEntity
 } from '../../core'
 
-import { SeasonRepository, TVShowRepository, fetchMetadataMultiServer, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
+import { SeasonRepository, fetchMetadataMultiServer, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
 import { seedDiscovery } from '../../core/discovery'
 import {
   getServersReportingField,
   isHighestPriorityAmongServers,
   seasonsAcrossServers,
 } from '@src/utils/sync/core/ownership'
-import { changesDocument, decideGate } from '@src/utils/sync/core/syncGate'
+import { changesDocument } from '@src/utils/sync/core/syncGate'
+import { applyWritePlan, cleanupWritePlan, draftWritePlan, emptyWritePlan, mergeWritePlans } from '@src/utils/sync/core/writePlan'
 import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
 import { effectiveMetadata } from '@src/utils/sync/core/metadataLock'
 import { createLogger } from '@src/lib/logger'
@@ -37,19 +44,22 @@ const pinoLog = createLogger('Sync.TV.Season')
 
 export class SeasonSyncService {
   constructor(
-    private readonly seasonRepository: SeasonRepository,
-    private readonly tvShowRepository: TVShowRepository
+    private readonly seasonRepository: SeasonRepository
   ) {}
 
   /**
-   * Sync all seasons for a show via a single bulkUpsertShow call.
+   * Sync all seasons for a show via a single smartBulkUpsert call.
    *
    * Pattern:
-   *  1. Pre-fetch existing seasons + parent show for showId.
-   *  2. Build merged SeasonEntity[] from file-server data + existing docs.
-   *  3. seasonRepository.bulkUpsertShow(entities) once — never per-season upserts.
+   *  1. Pre-fetch existing seasons for the show.
+   *  2. One write plan per season, from file-server data + its existing doc.
+   *  3. seasonRepository.smartBulkUpsert(ops) once — never per-season upserts.
+   *
+   * @param showTitle - The show's folder name (originalTitle)
+   * @param parentShow - The show as stored after this pass's show write
+   *   (TVShowSyncService), or null when there is none
    */
-  async syncShow(showTitle: string, context: SyncContext): Promise<SyncResult[]> {
+  async syncShow(showTitle: string, context: SyncContext, parentShow: TVShowEntity | null): Promise<SyncResult[]> {
     const results: SyncResult[] = []
 
     syncEventBus.emitStarted(showTitle, MediaType.Season, context.serverConfig.id)
@@ -64,8 +74,7 @@ export class SeasonSyncService {
         return results
       }
 
-      // Pre-fetch parent show first to resolve display title, showId, and metadata
-      const parentShow = await this.tvShowRepository.findByOriginalTitle(showTitle)
+      // The parent show resolves the display title, showId and metadata.
       const showId = (parentShow as any)?._id || null
       // Use the display title for showTitle on seasons (matches legacy document shape)
       const displayTitle = parentShow?.title || showTitle
@@ -89,8 +98,9 @@ export class SeasonSyncService {
         /** The pass changed the season's data (not just sync bookkeeping). */
         documentChanged: boolean
         /**
-         * The season's part of the pass is not complete (decideGate): a
-         * removal was held back, or something was left for a later pass.
+         * The season's part of the pass is not complete (its merged plan is
+         * incomplete): a removal was held back, or something was left for a
+         * later pass.
          */
         gateLeftOpen: boolean
       }> = []
@@ -106,7 +116,10 @@ export class SeasonSyncService {
         }
 
         const existing = existingByNumber.get(seasonNumber) || null
-        const { entity: merged, incomplete, unset: builtUnset } = await this.buildSeasonEntity(showTitle, displayTitle, seasonNumber, fileData, context, existing, showId, parentShow, key)
+        const built = await this.planSeason(showTitle, displayTitle, seasonNumber, fileData, context, existing, showId, parentShow, key)
+        // The document the plan leaves. Field-absence cleanup's removals are
+        // not taken out of it: they go to the write as $unset.
+        const merged = applyWritePlan(existing, built.plan)
 
         // Filter shape mirrors bulkUpsertShow: prefer showId for stability
         const filter = (merged as any).showId
@@ -116,7 +129,7 @@ export class SeasonSyncService {
         // Field-absence cleanup for the season poster. `key` is the literal season
         // key from the file-server data, matching collectFieldAvailability's path.
         // showTitle is the originalTitle (fieldAvailability key).
-        const plan = planFieldCleanup({
+        const cleanup = planFieldCleanup({
           cleanup: context.cleanup,
           mediaType: 'tv',
           availabilityKey: showTitle,
@@ -137,18 +150,20 @@ export class SeasonSyncService {
           logContext: { show: displayTitle, originalTitle: showTitle, season: seasonNumber },
         })
 
-        const unset = [...new Set([...(plan.unset ?? []), ...builtUnset])]
+        // One plan for the season's write (core/writePlan): the cleanup's
+        // removals first, then the builder's plan.
+        const seasonPlan = mergeWritePlans<SeasonEntity>([cleanupWritePlan(cleanup), built.plan])
         seasonOps.push({
           filter,
           existing,
           merged,
-          unset,
-          cleanupChanges: plan.changes,
-          documentChanged: changesDocument(existing as any, merged as any, unset),
+          unset: seasonPlan.unset,
+          cleanupChanges: cleanup.changes,
+          documentChanged: changesDocument(existing as any, merged as any, seasonPlan.unset),
           // Either way the pass has to run again: a removal held back because
-          // not every server answered, or a count or blurhash it could not settle.
-          gateLeftOpen:
-            decideGate({ failed: false, heldBack: plan.withheld === true, deferred: incomplete }) === 'leaveOpen',
+          // not every server answered, or a count or blurhash it could not
+          // settle (the merged plan's `incomplete`, decideGate).
+          gateLeftOpen: seasonPlan.gate === 'leaveOpen',
         })
       }
 
@@ -200,8 +215,8 @@ export class SeasonSyncService {
   // ---------------------------------------------------------------------------
 
   /**
-   * Build a season entity by merging existing data with incoming file-server
-   * data, respecting per-field server priority.
+   * A season's write plan: the existing doc with the incoming file-server
+   * data merged on top, respecting per-field server priority.
    *
    * Key differences from naive field copy:
    *  - Season metadata lives in the PARENT SHOW's metadata.seasons[] array,
@@ -209,8 +224,14 @@ export class SeasonSyncService {
    *  - The poster key in file-server data is "season_poster", not "poster".
    *  - Blurhash fields in file-server data are URL paths (fetched by the
    *    blurhash rule, core/imageAndBlurhash) — never copied directly to the entity.
+   *
+   * The plan's removals are the fields whose data is gone, not changed. It is
+   * incomplete, and its deferrals name why, when something could not be
+   * settled this pass and must be retried: the episode count was held because
+   * a server did not answer, or a blurhash fetch failed. The plan always
+   * writes the season: it stamps lastSynced.
    */
-  private async buildSeasonEntity(
+  private async planSeason(
     showOriginalTitle: string,
     displayTitle: string,
     seasonNumber: number,
@@ -221,18 +242,14 @@ export class SeasonSyncService {
     parentShow: any,
     /** The season's LITERAL key in the file-server data, e.g. "Season 01". */
     seasonKey: string
-  ): Promise<{
-    entity: SeasonEntity
-    /**
-     * Something could not be settled this pass and must be retried: a blurhash
-     * fetch failed, or the episode count was held because a server did not answer.
-     */
-    incomplete: boolean
-    /** Fields to remove from the stored season: their data is gone, not changed. */
-    unset: string[]
-  }> {
+  ): Promise<PlanOutcome<SeasonEntity>> {
     const now = new Date()
-    let incomplete = false
+    // What was held back, and why (the plan's incomplete and deferrals).
+    const plan = emptyWritePlan<SeasonEntity>()
+    const holdBack = (reason: string) => {
+      plan.incomplete = true
+      plan.deferrals.push(reason)
+    }
     const unset: string[] = []
     const locked = (field: string) => isTopLevelFieldLocked((existing as any)?.lockedFields, field)
     // Remove a field whose data is gone. An admin lock keeps it.
@@ -266,7 +283,9 @@ export class SeasonSyncService {
       return isHighestPriorityAmongServers(reporters, context.serverConfig)
     }
 
-    // Start from existing doc (preserving ALL fields) or create new
+    // The season this pass wants stored: the existing doc (preserving ALL
+    // fields) or a new one. Either way the pass stamps lastSynced, so the plan
+    // writes the season (wroteDocument).
     const entity: SeasonEntity = existing
       ? { ...existing, lastSynced: now }
       : {
@@ -374,7 +393,7 @@ export class SeasonSyncService {
         const stored = (existing as any)?.episodeCount
         if (!everyServerAnswered && typeof stored === 'number' && stored > acrossServers) {
           entity.episodeCount = stored
-          incomplete = true
+          holdBack('episodeCount')
         } else {
           entity.episodeCount = acrossServers
         }
@@ -422,7 +441,7 @@ export class SeasonSyncService {
       entity.posterBlurhash = posterBlurhash.blurhash
       entity.posterBlurhashSource = posterBlurhash.blurhashSource
     } else {
-      if (posterBlurhash.fetchFailed) incomplete = true
+      if (posterBlurhash.fetchFailed) holdBack('posterBlurhash')
       if (posterBlurhash.action === 'unset') {
         clearField('posterBlurhash')
         clearField('posterBlurhashSource')
@@ -436,7 +455,8 @@ export class SeasonSyncService {
     }
 
     // A field is either written or removed, never both.
-    return { entity, incomplete, unset: [...new Set(unset)].filter((field) => (entity as any)[field] === undefined) }
+    const removed = [...new Set(unset)].filter((field) => (entity as any)[field] === undefined)
+    return { plan: { ...plan, ...draftWritePlan(existing, entity, removed) }, wroteDocument: true }
   }
 
   /**

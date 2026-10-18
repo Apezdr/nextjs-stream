@@ -309,12 +309,13 @@ function toServerConfig(config: ServerPassConfig): ServerConfig {
 async function createServices(): Promise<{ movieService: MovieSyncService; tvShowService: TVShowSyncService }> {
   const db = await createDatabaseAdapter()
   const movieService = new MovieSyncService(db.movies)
-  // The season and episode services read the show (and the season) for the
-  // showId / seasonId foreign keys.
+  // The show service hands the season and episode services the show as
+  // stored (showId foreign key); the episode service reads the season for
+  // the seasonId one.
   const tvShowService = new TVShowSyncService(
     db.tvShows,
-    new SeasonSyncService(db.seasons, db.tvShows),
-    new EpisodeSyncService(db.episodes, db.seasons, db.tvShows),
+    new SeasonSyncService(db.seasons),
+    new EpisodeSyncService(db.episodes, db.seasons),
     db.episodes,
     db.seasons
   )

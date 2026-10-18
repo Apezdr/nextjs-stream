@@ -15,10 +15,16 @@
  * The gate decision reads the merged plan alone: an incomplete pass leaves
  * the gate open (core/syncGate decideGate).
  *
+ * A builder that works on a copy of the stored document (the TV builders)
+ * states its plan with draftWritePlan, and applyWritePlan gives back the
+ * document a plan leaves. Field-absence cleanup's outcome is a plan too
+ * (cleanupWritePlan).
+ *
  * Pure: the caller writes what the merged plan says.
  */
 
 import type { WritePlan } from './types'
+import type { CleanupPlan } from './FieldAbsenceCleaner'
 import { decideGate, type GateDecision } from './syncGate'
 
 /** The steps' plans as one, with the gate decision they lead to. */
@@ -62,4 +68,63 @@ export function mergeWritePlans<E = Record<string, any>>(
     deferrals,
   }
   return { ...merged, gate: decideGate(merged) }
+}
+
+/**
+ * The plan of a builder that works on a copy of the stored document (a
+ * draft): it sets every field the draft holds and the stored document does
+ * not, or holds with another value, in the draft's order, and it removes
+ * the fields the builder says it removed.
+ *
+ * The builder's removals are its own list, taken as they are. Each field it
+ * took out of the draft that the stored document holds must be on it, and
+ * no field on it may still be in the draft.
+ *
+ * @param existing - The stored document, or null for a new one
+ * @param draft - The document the builder wants stored
+ * @param unset - The fields the builder removed
+ */
+export function draftWritePlan<E extends Record<string, any>>(
+  existing: E | null,
+  draft: E,
+  unset: readonly string[]
+): Pick<WritePlan<E>, 'set' | 'unset'> {
+  const set: Record<string, any> = {}
+  for (const [field, value] of Object.entries(draft)) {
+    if (!existing || !Object.prototype.hasOwnProperty.call(existing, field) || !Object.is(existing[field], value)) {
+      set[field] = value
+    }
+  }
+  return { set: set as Partial<E>, unset: [...unset] }
+}
+
+/**
+ * The document a plan leaves: the stored document with the plan's fields
+ * written over it, in place, and new ones added in the plan's order, then
+ * its removals made. A removal of a field the plan also sets is not made,
+ * as in mergeWritePlans.
+ *
+ * @param existing - The stored document, or null for a new one
+ */
+export function applyWritePlan<E>(existing: E | null, plan: Pick<WritePlan<E>, 'set' | 'unset'>): E {
+  const doc: Record<string, any> = { ...(existing ?? {}), ...plan.set }
+  for (const field of plan.unset) {
+    if (!Object.prototype.hasOwnProperty.call(plan.set, field)) delete doc[field]
+  }
+  return doc as E
+}
+
+/**
+ * Field-absence cleanup's outcome as a plan: the fields it removes (enforce
+ * mode only), and a removal it held back because not every enabled server
+ * answered, which leaves the gate open.
+ */
+export function cleanupWritePlan<E = Record<string, any>>(cleanup: Pick<CleanupPlan, 'unset' | 'withheld'>): WritePlan<E> {
+  const withheld = cleanup.withheld === true
+  return {
+    ...emptyWritePlan<E>(),
+    unset: [...(cleanup.unset ?? [])],
+    incomplete: withheld,
+    deferrals: withheld ? ['field-absence cleanup'] : [],
+  }
 }

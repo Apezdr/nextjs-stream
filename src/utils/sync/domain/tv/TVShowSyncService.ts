@@ -2,10 +2,17 @@
  * TV Show sync service — orchestrates show-level upserts and delegates to
  * SeasonSyncService and EpisodeSyncService for bulk season/episode writes.
  *
- * Write pattern: read-merge-replace (atomic replacement based on server priority)
- *  1. Read existing document from the database.
- *  2. Merge incoming file-server data on top, checking priority per field.
- *  3. replaceOne the document atomically — no partial $set operations.
+ * Each builder (the show's here, the seasons' and the episodes' in their
+ * services) takes the stored document and the payload and returns a write
+ * plan (core/types WritePlan): the fields to set, the fields to remove, and
+ * what it held back. Field-absence cleanup adds a plan of its own; the plans
+ * are merged (core/writePlan) and the merged plan's `incomplete` decides the
+ * gate.
+ *
+ * The show is read twice in a pass: once before its write, which the gate
+ * check, the drift checks and the show's plan work from, and once after it.
+ * That stored copy is handed to the seasons and episodes (they copy its
+ * display title and id) and to the close-out.
  *
  * This ensures multi-server priority is respected: fields from higher-priority
  * servers are never overwritten by lower-priority servers.
@@ -20,7 +27,9 @@ import {
   SyncOperation,
   syncEventBus,
   planFieldCleanup,
-  type CleanableField
+  type CleanableField,
+  type PlanOutcome,
+  type WritePlan
 } from '../../core'
 
 import { TVShowRepository, EpisodeRepository, SeasonRepository, fetchMetadataMultiServer, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
@@ -37,7 +46,8 @@ import {
   availabilityFingerprint,
   payloadFingerprint,
 } from '@src/utils/sync/core/syncGate'
-import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, decideGate } from '../../core/syncGate'
+import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates } from '../../core/syncGate'
+import { applyWritePlan, cleanupWritePlan, draftWritePlan, emptyWritePlan, mergeWritePlans } from '../../core/writePlan'
 import isEqual from 'lodash/isEqual'
 import { syncLogger } from '../../core/logger'
 import { seedDiscovery, applyFirstSeen } from '../../core/discovery'
@@ -55,6 +65,24 @@ const TVSHOW_CLEANABLE_FIELDS: CleanableField[] = [
   { entityField: 'logo', fieldPath: 'logo', companions: ['logoSource', 'logoBlurhash'] },
 ]
 
+/**
+ * What the seasons and episodes under a show left undone, as a plan for the
+ * show's gate: a season or episode pass that failed, or one that left its
+ * own gate open (its results' `gateLeftOpen`). It writes nothing.
+ */
+function childrenWritePlan(childResults: readonly SyncResult[]): WritePlan<TVShowEntity> {
+  const plan = emptyWritePlan<TVShowEntity>()
+  if (childResults.some(r => r.status === SyncStatus.Failed)) {
+    plan.incomplete = true
+    plan.deferrals.push('a season or episode failed')
+  }
+  if (childResults.some(r => (r.metadata as any)?.gateLeftOpen === true)) {
+    plan.incomplete = true
+    plan.deferrals.push('a season or episode left its gate open')
+  }
+  return plan
+}
+
 export class TVShowSyncService {
   constructor(
     private readonly tvShowRepository: TVShowRepository,
@@ -68,9 +96,10 @@ export class TVShowSyncService {
    * Sync one TV show and all of its seasons/episodes.
    *
    * Write order:
-   *  1. tvShowRepository.upsert(show)          — one write for the show header.
-   *  2. seasonSyncService.syncShow(showTitle)   → bulkUpsertShow() for all seasons.
-   *  3. episodeSyncService.syncShow(showTitle)  → bulkUpsertSeason() per season.
+   *  1. tvShowRepository.smartUpsert(show)                → one write for the show header.
+   *  2. seasonSyncService.syncShow(showTitle, …, show)    → one bulk write for all seasons.
+   *  3. episodeSyncService.syncShow(showTitle, …, show)   → one bulk write per season.
+   *  4. finalizeShow                                      → the episode count and the gate.
    */
   async syncTVShow(showTitle: string, context: SyncContext): Promise<SyncResult[]> {
     const allResults: SyncResult[] = []
@@ -91,56 +120,54 @@ export class TVShowSyncService {
         availabilityFingerprint(context.fieldAvailability, 'tv', showTitle)
       )
 
-      if (!context.forceSync) {
-        const cached = await this.tvShowRepository.findByOriginalTitle(showTitle)
-
-        if (cached && readSyncGate(cached as any, context.serverConfig.id) === showGate) {
-          const expectedEpisodes = this.countExpectedEpisodes(showTitle, context)
-          const actualEpisodes = expectedEpisodes > 0
-            ? await this.episodeRepository.getEpisodeCount(cached.title, undefined, (cached as any)._id)
-            : 0
-          // Season-count drift: a past cleanup can delete a show's seasons while
-          // leaving its episodes intact and its hash unchanged. Without this
-          // check the show would be skipped forever and the seasons never
-          // re-created (episodes render under seasons, so the UI shows nothing).
-          const expectedSeasons = this.countExpectedSeasons(showTitle, context)
-          const actualSeasons = expectedSeasons > 0
-            ? await this.seasonRepository.getSeasonCount(cached.title, (cached as any)._id)
-            : 0
-
-          if (actualEpisodes >= expectedEpisodes && actualSeasons >= expectedSeasons) {
-            // One-time backfill: a show that early-skips forever would never
-            // acquire visibleEpisodeCount (episode visibility inputs are in
-            // the episode hash, so any real change routes through the full
-            // sync below). visibleShowFilter fails open on the missing
-            // field, so this is convergence, not correctness.
-            if ((cached as any).visibleEpisodeCount === undefined) {
-              await this.finalizeShow(showTitle, cached, null)
-            }
-            syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
-              totalOperations: 0, successful: 0, failed: 0
-            })
-            return [this.makeResult(
-              showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Skipped, [], []
-            )]
-          }
-
-          syncLogger.info(
-            `Show "${showTitle}": gate matches but DB has ${actualEpisodes}/${expectedEpisodes} ` +
-            `episodes, ${actualSeasons}/${expectedSeasons} seasons — forcing full sync to repair drift`
-          )
-          // fall through to full sync — missing seasons/episodes will be $setOnInsert'd
-        }
-      }
-
-      // 1. Read existing doc for merge
+      // The first of the pass's two reads of the show: the gate check, the
+      // drift checks and the show's plan all work from it.
       const existing = await this.tvShowRepository.findByOriginalTitle(showTitle)
 
-      // 2. Build merged entity with priority checking (async — may fetch metadata)
+      if (!context.forceSync && existing && readSyncGate(existing as any, context.serverConfig.id) === showGate) {
+        const expectedEpisodes = this.countExpectedEpisodes(showTitle, context)
+        const actualEpisodes = expectedEpisodes > 0
+          ? await this.episodeRepository.getEpisodeCount(existing.title, undefined, (existing as any)._id)
+          : 0
+        // Season-count drift: a past cleanup can delete a show's seasons while
+        // leaving its episodes intact and its hash unchanged. Without this
+        // check the show would be skipped forever and the seasons never
+        // re-created (episodes render under seasons, so the UI shows nothing).
+        const expectedSeasons = this.countExpectedSeasons(showTitle, context)
+        const actualSeasons = expectedSeasons > 0
+          ? await this.seasonRepository.getSeasonCount(existing.title, (existing as any)._id)
+          : 0
+
+        if (actualEpisodes >= expectedEpisodes && actualSeasons >= expectedSeasons) {
+          // One-time backfill: a show that early-skips forever would never
+          // acquire visibleEpisodeCount (episode visibility inputs are in
+          // the episode hash, so any real change routes through the full
+          // sync below). visibleShowFilter fails open on the missing
+          // field, so this is convergence, not correctness.
+          if ((existing as any).visibleEpisodeCount === undefined) {
+            await this.finalizeShow(showTitle, existing, null)
+          }
+          syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
+            totalOperations: 0, successful: 0, failed: 0
+          })
+          return [this.makeResult(
+            showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Skipped, [], []
+          )]
+        }
+
+        syncLogger.info(
+          `Show "${showTitle}": gate matches but DB has ${actualEpisodes}/${expectedEpisodes} ` +
+          `episodes, ${actualSeasons}/${expectedSeasons} seasons — forcing full sync to repair drift`
+        )
+        // fall through to full sync — missing seasons/episodes will be $setOnInsert'd
+      }
+
+      // 1. The show's plan, with priority checking (async — may fetch metadata),
+      //    and the document it leaves. Field-absence cleanup's removals are
+      //    not taken out of that document: they go to the write as $unset.
       const showFileData = context.fileServerData?.tv?.[showTitle]
-      const { entity: showEntity, metadataFetchSucceeded, seasonCountHeld, fetchIncomplete, unset: builtUnset } = await this.buildTVShowEntity(
-        showTitle, showFileData, context, existing
-      )
+      const built = await this.planTVShow(showTitle, showFileData, context, existing)
+      const showEntity = applyWritePlan(existing, built.plan)
 
       // Field-absence cleanup: drop show-level assets no enabled server reports
       // anymore. planFieldCleanup logs (both modes) and returns `unset` only in
@@ -156,11 +183,14 @@ export class TVShowSyncService {
         logContext: { show: showEntity.title, originalTitle: showTitle },
       })
 
+      // 2. One plan for the show's write (core/writePlan): the cleanup's
+      //    removals first, then the builder's plan.
+      const showPlan = mergeWritePlans<TVShowEntity>([cleanupWritePlan(cleanupPlan), built.plan])
+
       // 3. Smart write — $set changed fields only, skip if nothing changed,
       //    plus $unset any cleared assets (enforce mode).
-      const showUnset = [...new Set([...(cleanupPlan.unset ?? []), ...builtUnset])]
-      const showChanged = changesDocument(existing as any, showEntity as any, showUnset)
-      await this.tvShowRepository.smartUpsert(showEntity, existing, { unset: showUnset })
+      const showChanged = changesDocument(existing as any, showEntity as any, showPlan.unset)
+      await this.tvShowRepository.smartUpsert(showEntity, existing, { unset: showPlan.unset })
 
       allResults.push(this.makeResult(
         showTitle, context, MediaType.TVShow, SyncOperation.Metadata,
@@ -170,12 +200,20 @@ export class TVShowSyncService {
         { displayTitle: showEntity.title, ...(existing ? {} : { created: true }) }
       ))
 
+      // The second read: the show as the write left it. The seasons and
+      // episodes copy its display title and id, and the close-out writes over
+      // it. The planned show will not do: the write drops a locked field
+      // (computeDiff) and clears manual flags (manualFieldsToClear), and a new
+      // show has no id until it is inserted. Nothing writes the show between
+      // here and the close-out.
+      const storedShow = await this.tvShowRepository.findByOriginalTitle(showTitle)
+
       // 4. Bulk-upsert all seasons (one bulkWrite per show)
       const childResults: SyncResult[] = []
-      childResults.push(...await this.seasonSyncService.syncShow(showTitle, context))
+      childResults.push(...await this.seasonSyncService.syncShow(showTitle, context, storedShow))
 
       // 5. Bulk-upsert all episodes (one bulkWrite per season)
-      childResults.push(...await this.episodeSyncService.syncShow(showTitle, context))
+      childResults.push(...await this.episodeSyncService.syncShow(showTitle, context, storedShow))
       allResults.push(...childResults)
 
       // 6. Close out the show now that everything under it is written: recount
@@ -188,24 +226,20 @@ export class TVShowSyncService {
       //    then failed, or an episode deliberately left to retry after a
       //    failed metadata fetch, was never retried, because the next run
       //    skipped the whole show.
-      const childFailed = childResults.some(r => r.status === SyncStatus.Failed)
-      const childGateLeftOpen = childResults.some(r => (r.metadata as any)?.gateLeftOpen === true)
       const subtreeChanged =
         showChanged || childResults.some(r => (r.metadata as any)?.documentChanged === true)
-      // The pass is complete only when nothing failed, held back or deferred
-      // (decideGate). `cleanupPlan.withheld` is a removal held back because
-      // not every server answered; `seasonCountHeld` keeps the stored count
-      // until a run where they all do, and a blurhash that could not be
-      // fetched is retried: either way the pass has to run again.
-      const gateToStamp =
-        decideGate({
-          failed: !metadataFetchSucceeded || childFailed,
-          heldBack: cleanupPlan.withheld === true,
-          deferred: seasonCountHeld || fetchIncomplete || childGateLeftOpen,
-        }) === 'stamp'
-          ? showGate
-          : null
-      const closedOut = await this.finalizeShow(showTitle, null, {
+      // The pass is complete only when nothing failed, held back or deferred:
+      // the show's plan (a failed metadata fetch, a season count held while a
+      // server did not answer, a blurhash that could not be fetched, a removal
+      // held back) merged with what the seasons and episodes report. The
+      // merged plan's `incomplete` decides (decideGate); either way the pass
+      // has to run again.
+      const passPlan = mergeWritePlans<TVShowEntity>([showPlan, childrenWritePlan(childResults)])
+      const gateToStamp = passPlan.gate === 'stamp' ? showGate : null
+      if (!gateToStamp) {
+        syncLogger.debug(`Gate left open for show "${showTitle}": ${passPlan.deferrals.join(', ')}`)
+      }
+      const closedOut = await this.finalizeShow(showTitle, storedShow, {
         gate: gateToStamp,
         subtreeChanged,
         serverId: context.serverConfig.id,
@@ -261,15 +295,15 @@ export class TVShowSyncService {
    * A failure to settle the gate is reported to the caller instead, which
    * fails the pass: the gate left in place is the one from before this pass.
    *
-   * @param cachedShow pass the already-fetched doc on the skip path to save a
-   *                   find; null on the full-sync path (re-fetched, since the
-   *                   doc was just rewritten).
-   * @param gating     null on the skip path (count only).
-   * @returns false when a write or read failed; true otherwise
+   * @param show   the show as stored: the copy read before the pass on the
+   *               skip path, the copy read after the show's write on the
+   *               full-sync path. Nothing is read here.
+   * @param gating null on the skip path (count only).
+   * @returns false when a write or the count failed; true otherwise
    */
   private async finalizeShow(
     showTitle: string,
-    cachedShow: TVShowEntity | null,
+    show: TVShowEntity | null,
     gating: {
       /** The gate to stamp, or null when the pass must be retried. */
       gate: string | null
@@ -279,7 +313,6 @@ export class TVShowSyncService {
     } | null
   ): Promise<boolean> {
     try {
-      const show = cachedShow ?? await this.tvShowRepository.findByOriginalTitle(showTitle)
       if (!show || !(show as any)._id) return true
 
       const next: any = { ...show }
@@ -303,32 +336,39 @@ export class TVShowSyncService {
   }
 
   /**
-   * Build a TV show entity by merging existing data with incoming file-server
-   * data, respecting per-field server priority.
+   * The show's write plan: the stored show with the incoming file-server data
+   * merged on top, respecting per-field server priority.
    *
    * - If the document already exists, start from it (preserving all fields).
    * - For each field group (metadata, poster, backdrop, logo), only overwrite
    *   if the current server has highest priority for that field.
    * - Structural fields (type, createdAt) are healed if missing.
+   *
+   * The plan's removals are the fields whose data is gone, not changed. It is
+   * incomplete, and its deferrals name why, when the metadata fetch failed,
+   * the stored season count was kept above this run's because a server did
+   * not answer, or a blurhash the file server publishes could not be fetched.
+   * The plan always writes the show: it stamps lastSynced.
    */
-  private async buildTVShowEntity(
+  private async planTVShow(
     showTitle: string,
     fileData: any,
     context: SyncContext,
     existing: TVShowEntity | null
-  ): Promise<{
-    entity: TVShowEntity
-    metadataFetchSucceeded: boolean
-    /** The stored season count was kept above this run's because a server did not answer. */
-    seasonCountHeld: boolean
-    /** A blurhash the file server publishes could not be fetched this pass. */
-    fetchIncomplete: boolean
-    /** Fields to remove from the stored show: their data is gone, not changed. */
-    unset: string[]
-  }> {
+  ): Promise<PlanOutcome<TVShowEntity>> {
     const now = new Date()
+    // What was held back, and why (the plan's incomplete and deferrals).
+    const plan = emptyWritePlan<TVShowEntity>()
+    const holdBack = (reason: string) => {
+      plan.incomplete = true
+      plan.deferrals.push(reason)
+    }
+    // Fields to remove from the stored show: their data is gone, not changed.
+    const unset: string[] = []
 
-    // Start from existing doc (preserving ALL fields) or create new
+    // The show this pass wants stored: the existing doc (preserving ALL
+    // fields) or a new one. Either way the pass stamps lastSynced, so the
+    // plan writes the show (wroteDocument).
     const entity: TVShowEntity = existing
       ? { ...existing, lastSynced: now }
       : {
@@ -340,6 +380,10 @@ export class TVShowSyncService {
           titleSource: context.serverConfig.id,
           originalTitleSource: context.serverConfig.id,
         }
+    const planned = (): PlanOutcome<TVShowEntity> => ({
+      plan: { ...plan, ...draftWritePlan(existing, entity, unset) },
+      wroteDocument: true,
+    })
 
     // Heal structural fields that must always be present
     if (!entity.type) entity.type = 'tvShow'
@@ -350,9 +394,7 @@ export class TVShowSyncService {
     // its newest EPISODE, so a new season of an old show still surfaces.
     seedDiscovery(entity, existing, context.serverConfig.id, now)
 
-    if (!fileData) return { entity, metadataFetchSucceeded: true, seasonCountHeld: false, fetchIncomplete: false, unset: [] }
-    let fetchIncomplete = false
-    const unset: string[] = []
+    if (!fileData) return planned()
     const locked = (field: string) => isTopLevelFieldLocked((existing as any)?.lockedFields, field)
 
     // --- Metadata (priority-gated) ---
@@ -422,6 +464,9 @@ export class TVShowSyncService {
         if (fresh.networks) entity.networks = fresh.networks
       }
     }
+    // A failed or stale metadata fetch leaves the gate open for the next run
+    // to retry.
+    if (!metadataFetchSucceeded) holdBack('metadata')
 
     // --- Display title (core/title) ---
     // Derived on every pass from the metadata the show ends this pass with
@@ -539,7 +584,7 @@ export class TVShowSyncService {
         ;(entity as any)[sourceField] = outcome.blurhashSource
         return
       }
-      if (outcome.fetchFailed) fetchIncomplete = true
+      if (outcome.fetchFailed) holdBack(field)
       if (outcome.action === 'unset') {
         delete (entity as any)[field]
         delete (entity as any)[sourceField]
@@ -556,22 +601,21 @@ export class TVShowSyncService {
     const seasonCount = this.countSeasonsAcrossServers(showTitle, fileData, context)
     const everyServerAnswered =
       (context.allEnabledServersProbed ?? context.cleanup?.allEnabledServersProbed) === true
-    let seasonCountHeld = false
     if (seasonCount !== null) {
       // With a server missing, its seasons are missing from the count. Do not
       // let it drop on such a run: the seasons have not gone anywhere. The
       // caller is told, so the lower count is applied on the next run where
       // every server answers instead of this pass being skipped from now on.
       const stored = (existing as any)?.seasonCount
-      seasonCountHeld = !everyServerAnswered && typeof stored === 'number' && stored > seasonCount
+      const seasonCountHeld = !everyServerAnswered && typeof stored === 'number' && stored > seasonCount
       entity.seasonCount = seasonCountHeld ? stored : seasonCount
+      if (seasonCountHeld) holdBack('seasonCount')
     }
 
-    // The show's hashes are NOT stamped here. syncTVShow settles the gate after
-    // the seasons and episodes are written (finalizeShow); `metadataFetchSucceeded`
-    // tells it whether this part may be counted as done — a failed or stale
-    // metadata fetch must leave the gate open for the next run to retry.
-    return { entity, metadataFetchSucceeded, seasonCountHeld, fetchIncomplete, unset }
+    // The show's gate is NOT stamped here. syncTVShow settles it after the
+    // seasons and episodes are written (finalizeShow); the plan's
+    // `incomplete` tells it whether this part may be counted as done.
+    return planned()
   }
 
   /**

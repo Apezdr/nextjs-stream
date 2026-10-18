@@ -180,8 +180,8 @@ async function pass(db, serverId, payload, { fieldAvailability = availabilityOf(
   const { tvShows, seasons, episodes } = db.repositories
   const service = new TVShowSyncService(
     tvShows,
-    new SeasonSyncService(seasons, tvShows),
-    new EpisodeSyncService(episodes, seasons, tvShows),
+    new SeasonSyncService(seasons),
+    new EpisodeSyncService(episodes, seasons),
     episodes,
     seasons
   )
