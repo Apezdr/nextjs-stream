@@ -412,19 +412,29 @@ export class EpisodeSyncService {
   }
 
   /**
-   * Whether the syncing server owns one of an episode's fields: it has a value
-   * for it and no higher-priority server reports the same field.
+   * Whether the syncing server owns one of an episode's fields: the
+   * availability map lists it for the field's exact path (under any of the
+   * episode's prefixes) and no server listed there outranks it
+   * (core/ownership). Fails closed: a server the map does not list for the
+   * field never owns it, even when its payload has something there.
    *
    * Every episode field used to be checked against a bare name ('thumbnail',
    * 'chapters', 'metadata') that no availability map ever contains, and the
    * priority helper answers "anyone may write" for a path nobody reports. So
    * with two servers each one overwrote the other's thumbnail, chapters,
    * metadata and captions on every run, and the result was whichever synced
-   * last.
+   * last. The fix after that still counted the syncing server as a reporter
+   * whenever its payload had a value, listed or not: a value the map records
+   * under another leaf (the `thumbnailURL` alias) was then written by the
+   * builder and removed by field-absence cleanup in the same write.
    *
-   * When the literal paths cannot be built the server is ranked against no
-   * one, which is the old permissive behavior for that episode only; it is
-   * logged.
+   * One exception: when the literal paths cannot be built (the episode's key
+   * is empty, which no processor sends; logged in buildEpisodeEntity), the
+   * server is ranked against no one and owns what its payload has. It is
+   * safe: the server still writes only a value it has, never clears another
+   * server's with nothing, and nothing is removed for such an episode
+   * (planEpisodeCleanup needs a path, and reconcileCaptions is told not every
+   * server answered), so no write can both set and remove a field.
    */
   private ownsEpisodeField(
     leafPrefixes: string[],
@@ -434,11 +444,10 @@ export class EpisodeSyncService {
     context: SyncContext
   ): boolean {
     if (!hasValue) return false
-    const reporters = this.serversReportingEpisodeField(leafPrefixes, field, showOriginalTitle, context)
-    const serversWithValue = reporters.includes(context.serverConfig.id)
-      ? reporters
-      : [...reporters, context.serverConfig.id]
-    return isHighestPriorityAmongServers(serversWithValue, context.serverConfig)
+    const reporters = leafPrefixes.length === 0
+      ? [context.serverConfig.id]
+      : this.serversReportingEpisodeField(leafPrefixes, field, showOriginalTitle, context)
+    return isHighestPriorityAmongServers(reporters, context.serverConfig)
   }
 
   /**
@@ -705,12 +714,11 @@ export class EpisodeSyncService {
     }
 
     // --- Thumbnail (priority-gated) ---
-    const canUpdateThumbnail = owns('thumbnail', Boolean(fileData?.thumbnail || fileData?.thumbnailURL))
+    // Read from `thumbnail` alone, the key the processor publishes and the
+    // path the availability map and field-absence cleanup rank on.
+    const canUpdateThumbnail = owns('thumbnail', Boolean(fileData?.thumbnail))
     if (canUpdateThumbnail) {
-      entity.thumbnail = fileServerUrl(
-        fileData.thumbnail || fileData.thumbnailURL,
-        context.serverConfig
-      )
+      entity.thumbnail = fileServerUrl(fileData.thumbnail, context.serverConfig)
       entity.thumbnailSource = context.serverConfig.id
     }
 

@@ -248,6 +248,9 @@ export class SeasonSyncService {
     // and the priority helper then let every server write — last one synced
     // won. Two servers need not agree on the folder's name either, so the
     // reporters are gathered under every key in use for this season number.
+    // Fails closed: a server the map does not list for the field never owns
+    // it, even when its payload has a value there. (This server's own key is
+    // always among the keys, so its path can always be built.)
     const seasonKeys = this.seasonKeysAcrossServers(showOriginalTitle, seasonNumber, seasonKey, context)
     const owns = (field: string, hasValue: boolean) => {
       if (!hasValue) return false
@@ -260,10 +263,7 @@ export class SeasonSyncService {
           )
         ),
       ]
-      return isHighestPriorityAmongServers(
-        reporters.includes(context.serverConfig.id) ? reporters : [...reporters, context.serverConfig.id],
-        context.serverConfig
-      )
+      return isHighestPriorityAmongServers(reporters, context.serverConfig)
     }
 
     // Start from existing doc (preserving ALL fields) or create new

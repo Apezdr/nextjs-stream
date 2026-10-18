@@ -460,13 +460,9 @@ function decideVideo(
         existing: currentMovie.captionURLs as Record<string, any> | undefined,
         listed: listedCaptions,
         serverId: context.serverConfig.id,
-        ownsLanguage: (language) => {
-          const servers = serversListing(language)
-          return isHighestPriorityAmongServers(
-            servers.includes(context.serverConfig.id) ? servers : [...servers, context.serverConfig.id],
-            context.serverConfig
-          )
-        },
+        // Fails closed: a server the map does not list for the language's
+        // url never owns it.
+        ownsLanguage: (language) => isHighestPriorityAmongServers(serversListing(language), context.serverConfig),
         listedByAnyServer: (language) => serversListing(language).length > 0,
         allEnabledServersProbed: allEnabledServersProbed(context),
       })
