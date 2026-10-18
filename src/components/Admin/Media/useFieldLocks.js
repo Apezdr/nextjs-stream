@@ -14,7 +14,10 @@ export const TITLE_LOCK_HELP =
  * undone unless the field is locked. For each field in `lockOnEdit`:
  *  - a value that differs from the stored one turns the field's lock on, in
  *    the form, where the admin sees it;
- *  - typing the stored value back puts the stored lock back;
+ *  - typing the stored value back, or clearing the field, puts the stored
+ *    lock back: an empty value is never locked, since a lock on a missing
+ *    value would stop the sync from ever restoring it (the save actions
+ *    refuse an empty title anyway);
  *  - once the admin uses the field's lock toggle, the toggle decides: later
  *    edits do not move it, and the save sends what the form shows.
  *
@@ -42,8 +45,10 @@ export function useFieldLocks(record, lockOnEdit = []) {
   /** Call with every new value of a field; only `lockOnEdit` fields react. */
   const noteEdit = (key, value) => {
     if (!lockOnEdit.includes(key) || toggled.has(key)) return
-    // The save trims, so whitespace alone is not a change.
-    const changed = String(value ?? '').trim() !== String(record?.[key] ?? '').trim()
+    // The save trims, so whitespace alone is not a change, and a field
+    // holding nothing but whitespace is empty.
+    const typed = String(value ?? '').trim()
+    const changed = typed !== '' && typed !== String(record?.[key] ?? '').trim()
     setLocks((prev) => {
       const next = { ...prev }
       if (changed) next[key] = true

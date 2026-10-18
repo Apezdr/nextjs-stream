@@ -92,6 +92,17 @@ function trimOrNull(v) {
   return s.length ? s : null
 }
 
+/**
+ * An update that would leave a movie or show without a display title. The
+ * form posts `title` with everything else, and an empty value would be
+ * `$unset` (applyScalarFields); with the title locked, as the editors lock a
+ * changed one, the sync would never put a title back. Refused, as on create.
+ * A payload that does not send `title` leaves it as stored.
+ */
+function clearsTitle(payload) {
+  return 'title' in payload && !trimOrNull(payload.title)
+}
+
 function parseIntStrict(v) {
   const n = parseInt(v, 10)
   return Number.isNaN(n) ? null : n
@@ -312,6 +323,7 @@ export async function saveMovieAction(_prevState, payload = {}) {
   if (refused) return refused
   const _id = toObjectId(payload.id)
   if (!_id) return fail('A valid movie id is required.')
+  if (clearsTitle(payload)) return fail('Title is required.')
 
   const client = await clientPromise
   const col = client.db(DB_NAME).collection('FlatMovies')
@@ -429,6 +441,7 @@ export async function saveTVShowAction(_prevState, payload = {}) {
   if (refused) return refused
   const _id = toObjectId(payload.id)
   if (!_id) return fail('A valid show id is required.')
+  if (clearsTitle(payload)) return fail('Title is required.')
 
   const client = await clientPromise
   const db = client.db(DB_NAME)

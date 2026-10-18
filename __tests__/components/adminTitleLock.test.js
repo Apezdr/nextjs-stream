@@ -132,6 +132,21 @@ describe.each(EDITORS)('the %s editor', (_kind, Editor, save, extra) => {
     expect((await submit(save)).lockedFields).toEqual({ posterURL: true })
   })
 
+  it('never locks an empty title: clearing the field puts the stored lock back', async () => {
+    render(<Editor record={record()} />)
+
+    type(titleInput(), '')
+    expect(titleLock()).toHaveAttribute('aria-pressed', 'false')
+
+    type(titleInput(), 'New Title')
+    expect(titleLock()).toHaveAttribute('aria-pressed', 'true')
+    type(titleInput(), '   ')
+    expect(titleLock()).toHaveAttribute('aria-pressed', 'false')
+
+    // (The save refuses the empty title; the form still sends its locks as shown.)
+    expect((await submit(save)).lockedFields).toEqual({ posterURL: true })
+  })
+
   it('locks the title typed into a new entry as well (nothing is stored yet)', () => {
     render(<Editor isNew />)
 

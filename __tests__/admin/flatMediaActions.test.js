@@ -273,6 +273,15 @@ describe.each([
     expect($unset).toEqual(expect.objectContaining({ lockedFields: '', syncGates: '' }))
   })
 
+  it.each([[''], ['   '], [null]])('refuses to clear the title (%j), as create does', async (title) => {
+    mockCollection(collection).findOne.mockResolvedValue({ ...existing })
+
+    const result = await save(null, { id: 'doc-id', title, lockedFields: { title: true } })
+
+    expect(result).toEqual({ status: 'error', message: 'Title is required.' })
+    expect(mockCollection(collection).updateOne).not.toHaveBeenCalled()
+  })
+
   it('leaves the locks as they were when the title is unchanged', async () => {
     mockCollection(collection).findOne.mockResolvedValue({ ...existing })
 
