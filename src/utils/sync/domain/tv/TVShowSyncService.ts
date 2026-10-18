@@ -34,7 +34,8 @@ import {
   type WritePlan
 } from '../../core'
 
-import { TVShowRepository, EpisodeRepository, SeasonRepository, fetchMetadataMultiServer, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
+import { TVShowRepository, EpisodeRepository, SeasonRepository, fetchMetadataMultiServer, fileServerUrl } from '../../infrastructure'
+import { isTopLevelFieldLocked } from '../../core/locks'
 import { SeasonSyncService } from './SeasonSyncService'
 import { EpisodeSyncService } from './EpisodeSyncService'
 import {

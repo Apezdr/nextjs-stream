@@ -34,6 +34,7 @@ const { MovieSyncService, movieSyncGate } = require('@src/utils/sync/domain/movi
 const { syncMovieMetadata } = require('@src/utils/sync/domain/movies/metadata')
 const { syncMovieArtwork, retryMovieBlurhashes } = require('@src/utils/sync/domain/movies/artwork')
 const { syncMovieVideo } = require('@src/utils/sync/domain/movies/video')
+const { buildWithResources } = require('@src/utils/sync/infrastructure/fileSystem/prefetch')
 const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
 const { httpGet } = require('@src/lib/httpHelper')
 const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
@@ -81,6 +82,9 @@ const partsFor = (payload, { forceSync = false, cleanup } = {}) => {
 /** Server A's pass over `payload`. */
 const syncOver = (repository, payload, options) =>
   new MovieSyncService(repository).syncMovie(KEY, payload, partsFor(payload, options))
+
+/** One step run as the service runs it: through the prefetch step, which fetches the files it reads. */
+const runStep = (step, ...args) => buildWithResources((resources) => step(...args, resources), { mediaType: 'movie', title: KEY })
 
 const repositoryOver = (stored) => ({
   findByOriginalTitle: jest.fn(async () => (stored ? structuredClone(stored) : null)),
@@ -167,7 +171,7 @@ describe('the metadata step', () => {
       syncVersion: '2.1',
     }
 
-    const { plan, result } = await syncMovieMetadata({ originalTitle: KEY, movie, payload, ...partsFor(payload) })
+    const { plan, result } = await runStep(syncMovieMetadata, { originalTitle: KEY, movie, payload, ...partsFor(payload) })
 
     expect(plan.set).toEqual({ lastSynced: expect.any(Date) })
     expect(plan.set).not.toHaveProperty('title')
@@ -180,7 +184,7 @@ describe('the metadata step', () => {
 describe('the wroteDocument flag of each step', () => {
   // Set exactly when the step's plan stamps lastSynced: the service writes
   // the healed fields with such a step's write, and with no other.
-  const outcomeOf = async (step, payload, movie) => step({ originalTitle: KEY, movie: { originalTitle: KEY, title: KEY, ...movie }, payload, ...partsFor(payload) })
+  const outcomeOf = async (step, payload, movie) => runStep(step, { originalTitle: KEY, movie: { originalTitle: KEY, title: KEY, ...movie }, payload, ...partsFor(payload) })
   const agrees = (outcome) => expect(outcome.wroteDocument).toBe(Object.prototype.hasOwnProperty.call(outcome.plan.set, 'lastSynced'))
 
   it('is set by the metadata step when it fetched the metadata, and not when it did not', async () => {
@@ -219,7 +223,7 @@ describe('the wroteDocument flag of each step', () => {
     httpGet.mockRejectedValue(new Error('timeout of 3000ms exceeded'))
     const artwork = await outcomeOf(syncMovieArtwork, posterOnly(), storedWithoutType())
     expect(artwork.retries).toHaveLength(1)
-    const retry = await retryMovieBlurhashes({ originalTitle: KEY, run: partsFor(posterOnly()).run }, artwork.retries)
+    const retry = await runStep(retryMovieBlurhashes, { originalTitle: KEY, run: partsFor(posterOnly()).run }, artwork.retries)
 
     expect(retry.plan.set).toHaveProperty('posterBlurhash')
     expect(retry.wroteDocument).toBe(false)

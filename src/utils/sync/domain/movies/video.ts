@@ -27,7 +27,8 @@ import {
   getFieldPath,
   getCaptionFieldPath,
 } from '../../core'
-import { captionUrls, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
+import { captionUrls, fileServerUrl } from '../../infrastructure/fileSystem/urls'
+import { isTopLevelFieldLocked } from '../../core/locks'
 import { emptyWritePlan } from '../../core/writePlan'
 import { reconcileCaptions } from '../../core/captionReconcile'
 import { VIDEO_FILE_FACTS, planVideoFileFacts, videoFileChanged, type FileFactsPlan } from '../../core/fileFacts'
@@ -52,13 +53,13 @@ import {
 /**
  * The video step. See the module comment.
  */
-export async function syncMovieVideo({
+export function syncMovieVideo({
   originalTitle,
   movie,
   payload,
   run,
   availability,
-}: MovieVideoInput): Promise<MovieStepOutcome> {
+}: MovieVideoInput): MovieStepOutcome {
   const startTime = Date.now()
   const title = originalTitle
   const plan = emptyWritePlan<MovieEntity>()

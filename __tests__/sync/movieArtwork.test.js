@@ -30,6 +30,7 @@ jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({
 }))
 
 const { syncMovieArtwork, retryMovieBlurhashes } = require('@src/utils/sync/domain/movies/artwork')
+const { buildWithResources } = require('@src/utils/sync/infrastructure/fileSystem/prefetch')
 const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
 const { httpGet } = require('@src/lib/httpHelper')
 
@@ -43,7 +44,8 @@ const A_POSTER = `https://A.example${urls.poster}`
 
 /**
  * One pass of `serverId` over the title: the artwork step on `movie`, then
- * the retry step with what the artwork step handed it.
+ * the retry step with what the artwork step handed it, each run through the
+ * prefetch step that fetches the files it reads, as MovieSyncService runs them.
  */
 async function pass({ movie, serverId = 'A', reporters = ['A'] }) {
   const input = {
@@ -58,10 +60,10 @@ async function pass({ movie, serverId = 'A', reporters = ['A'] }) {
     availability: {
       fieldAvailability: { movies: { [KEY]: { 'urls.poster': reporters, 'urls.posterBlurhash': reporters } }, tv: {} },
     },
-    caches: {},
   }
-  const artwork = await syncMovieArtwork(input)
-  const retry = await retryMovieBlurhashes(input, artwork.retries)
+  const prefetch = { mediaType: 'movie', title: KEY }
+  const artwork = await buildWithResources((resources) => syncMovieArtwork(input, resources), prefetch)
+  const retry = await buildWithResources((resources) => retryMovieBlurhashes(input, artwork.retries, resources), prefetch)
   return { artwork, retry }
 }
 
@@ -139,6 +141,38 @@ it('fetches nothing for a server that does not own the image', async () => {
   expect(fetchMetadataMultiServer).not.toHaveBeenCalled()
   expect(artwork.plan).toMatchObject({ set: {}, unset: [], incomplete: false })
   expect(retry.plan).toMatchObject({ set: {}, unset: [], incomplete: false })
+})
+
+it('names the blurhash files it reads, and does nothing else, when called before they are fetched', () => {
+  const { syncEventBus } = require('@src/utils/sync/core')
+  const emitted = jest.spyOn(syncEventBus, 'emitProgress')
+  const input = {
+    originalTitle: KEY,
+    movie: { title: KEY, originalTitle: KEY },
+    payload: { urls },
+    run: { serverConfig: { ...mockServers.A, baseUrl: 'https://A.example', prefix: '', enabled: true }, allEnabledServersProbed: true },
+    availability: { fieldAvailability: { movies: { [KEY]: { 'urls.poster': ['A'] } }, tv: {} } },
+  }
+
+  const artwork = syncMovieArtwork(input)
+
+  expect(artwork.plan).toEqual({
+    set: {},
+    unset: [],
+    needs: [{ kind: 'blurhash', serverId: 'A', path: `https://A.example${urls.posterBlurhash}`, direct: true }],
+    incomplete: false,
+    deferrals: [],
+  })
+  expect(artwork.result.status).toBe('pending')
+  expect(artwork.retries).toEqual([])
+  expect(emitted).not.toHaveBeenCalled()
+  expect(httpGet).not.toHaveBeenCalled()
+  emitted.mockRestore()
+
+  const retry = retryMovieBlurhashes(input, [{ field: 'posterBlurhash', sourceField: 'posterBlurhashSource', decision: { action: 'fetch', blurhashUrl: urls.posterBlurhash, source: 'A', replacesStale: false } }])
+  expect(retry.plan.needs).toEqual([{ kind: 'blurhash', serverId: 'A', path: urls.posterBlurhash }])
+  expect(retry.plan.set).toEqual({})
+  expect(fetchMetadataMultiServer).not.toHaveBeenCalled()
 })
 
 it('leaves the blurhash of an image an admin locked, or a blurhash an admin locked', async () => {

@@ -29,7 +29,8 @@ import {
   type TVShowEntity
 } from '../../core'
 
-import { SeasonRepository, fetchMetadataMultiServer, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
+import { SeasonRepository, fetchMetadataMultiServer, fileServerUrl } from '../../infrastructure'
+import { isTopLevelFieldLocked } from '../../core/locks'
 import { seedDiscovery } from '../../core/discovery'
 import {
   getServersReportingField,

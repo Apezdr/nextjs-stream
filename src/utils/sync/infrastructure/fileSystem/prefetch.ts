@@ -1,0 +1,152 @@
+/**
+ * The prefetch step: the files a builder reads, fetched for it.
+ *
+ * A builder (a movie step, a TV builder) does no I/O. It names the files it
+ * reads in its plan's `needs` (core/resources); buildWithResources fetches
+ * them here and calls it again with them. Metadata files and blurhashes are
+ * read through fetchMetadataMultiServer (./fetchFile): its Redis cache,
+ * conditional requests, retries and slot of the sync's one HTTP limiter. The
+ * movie artwork step's first read of a blurhash is the one plain request
+ * (readBlurhashDirect), in a slot of the pass's throttle when there is one.
+ *
+ * A fetch that fails comes back as a failed Resource, never as a throw.
+ */
+
+import { httpGet } from '@src/lib/httpHelper'
+import { fetchMetadataMultiServer } from './fetchFile'
+import { syncLogger } from '../../core/logger'
+import { Resources, sameRequest } from '../../core/resources'
+import type { Resource, ResourceRequest, WritePlan } from '../../core/types'
+
+/** What the fetches of one title's builders share. */
+export interface PrefetchContext {
+  /** For fetchMetadataMultiServer's debug log. */
+  mediaType: 'movie' | 'tv'
+  /** The title's folder name, for the same log. */
+  title: string
+  /** The pass's HTTP throttle, for a direct read; without one it is not throttled. */
+  throttle?: { throttleHttp: <T>(fn: () => Promise<T>) => Promise<T> }
+}
+
+/** A builder never needs more calls than this; one that does is asking again for what it was handed. */
+const MAX_CALLS = 8
+
+/**
+ * Fetch the files a builder needs, one at a time and in the order it read
+ * them: the order in which it used to fetch them itself.
+ */
+export async function fetchResources(needs: readonly ResourceRequest[], context: PrefetchContext): Promise<Resource[]> {
+  const fetched: Resource[] = []
+  for (const need of needs) fetched.push(await fetchResource(need, context))
+  return fetched
+}
+
+async function fetchResource(request: ResourceRequest, context: PrefetchContext): Promise<Resource> {
+  const { kind, serverId, path, direct } = request
+  const asked: ResourceRequest = direct ? { kind, serverId, path, direct } : { kind, serverId, path }
+  try {
+    const data =
+      kind === 'blurhash' && direct
+        ? await readBlurhashDirect(path, context.throttle)
+        : await fetchMetadataMultiServer(serverId, path, kind === 'metadata' ? 'file' : 'blurhash', context.mediaType, context.title)
+    if (kind === 'metadata' ? !data : typeof data !== 'string' || data === '') {
+      return { ...asked, ok: false, error: kind === 'metadata' ? 'no metadata file came back' : 'no blurhash came back' }
+    }
+    return { ...asked, ok: true, data }
+  } catch (error) {
+    return { ...asked, ok: false, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
+/**
+ * Run a builder: call it with the files fetched for it so far, fetch what its
+ * plan names in `needs`, and call it again, until a call needs nothing more.
+ * That call's outcome is the builder's.
+ *
+ * A call that throws after reading a file it was not handed has that file
+ * fetched and is made again: a builder that fetched for itself made that
+ * fetch before it threw. A call that throws with everything it read handed
+ * throws here.
+ */
+export async function buildWithResources<O extends { plan: Pick<WritePlan<any>, 'needs'> }>(
+  build: (resources: Resources) => O,
+  context: PrefetchContext
+): Promise<O> {
+  let fetched: Resource[] = []
+  for (let call = 1; ; call++) {
+    const resources = new Resources(fetched)
+    let needs: ResourceRequest[]
+    try {
+      const outcome = build(resources)
+      if (outcome.plan.needs.length === 0) return outcome
+      needs = outcome.plan.needs
+    } catch (error) {
+      if (resources.needs.length === 0) throw error
+      needs = resources.needs
+    }
+    const fresh = needs.filter((need) => !fetched.some((resource) => sameRequest(resource, need)))
+    if (fresh.length === 0 || call >= MAX_CALLS) {
+      throw new Error(`A builder for "${context.title}" asked again for files it was handed: ${needs.map((need) => need.path).join(', ')}`)
+    }
+    fetched = [...fetched, ...(await fetchResources(fresh, context))]
+  }
+}
+
+/**
+ * One plain read of a blurhash file, through httpGet (which returns its
+ * cached copy on a 304): the movie artwork step's first read. Null on any
+ * failure, an HTML error page included; the retry step reads the file again
+ * through fetchMetadataMultiServer.
+ */
+export async function readBlurhashDirect(
+  blurhashUrl: string,
+  throttle?: PrefetchContext['throttle']
+): Promise<string | null> {
+  const doFetch = async () => {
+    try {
+      const response = await httpGet(
+        blurhashUrl,
+        {
+          timeout: 3000, // 3 second timeout for blurhash (matches legacy)
+          responseType: 'text',
+          headers: {
+            Accept: 'text/plain, */*',
+          },
+        },
+        true // returnCacheDataIfAvailable - return cached data on 304
+      )
+
+      // Check Content-Type header - should be text/plain, not text/html (error page)
+      const contentType = response.headers['content-type'] || response.headers['Content-Type'] || ''
+      if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
+        syncLogger.warn(`⚠️ Blurhash URL returned HTML (error page), Content-Type: ${contentType}`)
+        return null
+      }
+
+      // Extract data from wrapper if it's a cached response with _dataType
+      // httpHelper stores text as: { _dataType: 'text', _isBuffer: false, data: actualText }
+      let blurhashData = response.data
+      if (blurhashData && typeof blurhashData === 'object' && blurhashData._dataType === 'text') {
+        blurhashData = blurhashData.data
+      }
+
+      const trimmedData = blurhashData ? blurhashData.trim() : null
+
+      if (!trimmedData) {
+        return null
+      }
+
+      return trimmedData
+    } catch (error) {
+      // httpHelper throws on HTTP errors (404, 500, timeouts, etc)
+      syncLogger.warn(`⚠️ Failed to fetch blurhash:`, error instanceof Error ? error.message : String(error))
+      return null
+    }
+  }
+
+  // Throttled through the pass's ResourceManager when it has one
+  if (throttle) {
+    return throttle.throttleHttp(doFetch)
+  }
+  return doFetch()
+}

@@ -97,7 +97,7 @@ const DEFAULT_MAX_FIELDS_PER_ENTITY = 5
 /**
  * Whether a top-level field is locked per a doc's nested `lockedFields` map.
  * A nested-object lock (e.g. { metadata: { overview: true } }) locks the whole
- * top-level key — same conservative rule as BaseRepository.isTopLevelFieldLocked.
+ * top-level key — same conservative rule as core/locks isTopLevelFieldLocked.
  */
 function isTopLevelFieldLocked(lockedFields: any, key: string): boolean {
   if (!lockedFields || typeof lockedFields !== 'object') return false

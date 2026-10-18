@@ -55,14 +55,14 @@ function movieSteps(pass: MoviePass, metadata: MetadataInput, artwork: ArtworkIn
   // @ts-expect-error The metadata step does not get the HTTP throttle.
   void metadata.caches.resourceManager
 
-  // The artwork step: the server, allEnabledServersProbed, the availability and the throttle.
-  void [artwork.run.serverConfig, artwork.run.allEnabledServersProbed, artwork.availability, artwork.caches.resourceManager]
+  // The artwork step: the server, allEnabledServersProbed and the availability.
+  void [artwork.run.serverConfig, artwork.run.allEnabledServersProbed, artwork.availability, artwork.payload]
   // @ts-expect-error The artwork step does not read forceSync.
   void artwork.run.forceSync
   // @ts-expect-error The artwork step does not read the cleanup config.
   void artwork.run.cleanup
-  // @ts-expect-error The artwork step does not get the metadata hashes.
-  void artwork.caches.metadataHashes
+  // @ts-expect-error The artwork step is handed no caches: the throttle its reads take is the prefetch step's.
+  void artwork.caches
 
   // The video step: the server, allEnabledServersProbed and the availability.
   void [video.run.serverConfig, video.run.allEnabledServersProbed, video.availability, video.payload]

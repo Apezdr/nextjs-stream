@@ -151,18 +151,38 @@ export interface SyncResult {
 // ==========================================
 
 /**
- * A file a sync step wants fetched before it runs. Steps fetch for themselves
- * for now and leave `needs` empty; the request shape is the prefetch step's to
- * settle.
+ * A file a builder (a movie step, a TV builder) reads. Builders do no I/O: a
+ * builder names the files it reads in its plan's `needs`, the service fetches
+ * them (infrastructure/fileSystem/prefetch) and calls the builder again with
+ * them as Resources (core/resources).
  */
 export interface ResourceRequest {
   /** What the file is. */
   kind: 'metadata' | 'blurhash'
   /** The server to ask. */
   serverId: string
-  /** The file's path in that server's payload. */
+  /**
+   * The file as the fetch takes it: its path in that server's payload, or the
+   * full URL built from it. Requests are told apart by it, so it is passed on
+   * exactly as the builder gives it.
+   */
   path: string
+  /**
+   * Read a blurhash with one plain request (httpGet, in a slot of the pass's
+   * HTTP throttle) instead of through fetchMetadataMultiServer: the movie
+   * artwork step's first read. Its retry step reads the same file through
+   * fetchMetadataMultiServer, with its Redis cache and fallback.
+   */
+  direct?: boolean
 }
+
+/**
+ * A file the prefetch step fetched for a builder: the request, and what came
+ * back. A fetch that failed is a value here, never a throw into the builder:
+ * `ok: false` for an error, for a metadata file that came back empty (null),
+ * and for a blurhash that is not a non-empty string.
+ */
+export type Resource = ResourceRequest & ({ ok: true; data: unknown } | { ok: false; error: string })
 
 /**
  * What one sync step wants written: its inputs go in, this comes out, and the
@@ -173,7 +193,11 @@ export interface WritePlan<E = Record<string, any>> {
   set: Partial<E>
   /** Fields to remove: their data is gone, which `$set` cannot express. */
   unset: string[]
-  /** Fetches the step wants done first. */
+  /**
+   * Files the step read that it was not handed (core/resources). A plan with
+   * needs is never written: the service fetches them and calls the step
+   * again.
+   */
   needs: ResourceRequest[]
   /**
    * A decision was held back (a step failed, a removal waits for a run on

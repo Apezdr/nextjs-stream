@@ -16,7 +16,10 @@
  *    itself. (A stale blurhash whose replacement could not be fetched is
  *    removed by the artwork step, and not tried again in the same pass.)
  *
- * Both return write plans; neither writes.
+ * Both return write plans; neither writes, and neither fetches: each reads
+ * its blurhash files from the resources the prefetch step fetched for it
+ * (./step). The artwork step's first read is a plain request (`direct`); the
+ * retry's goes through fetchMetadataMultiServer.
  */
 
 import {
@@ -29,19 +32,22 @@ import {
   getFieldPath,
   MovieFieldPathMap,
   type Availability,
+  type ResourceRequest,
   type RunConfig,
 } from '../../core'
 import { emptyWritePlan } from '../../core/writePlan'
-import { fetchMetadataMultiServer, fileServerUrl, isTopLevelFieldLocked } from '../../infrastructure'
+import { Resources } from '../../core/resources'
+import { fileServerUrl } from '../../infrastructure/fileSystem/urls'
+import { isTopLevelFieldLocked } from '../../core/locks'
 import {
   isCurrentServerHighestPriorityForReportedField,
   getServersReportingField,
 } from '@src/utils/sync/core/ownership'
 import { decideBlurhash, settleBlurhash, type BlurhashDecision } from '@src/utils/sync/core/imageAndBlurhash'
-import { httpGet } from '@src/lib/httpHelper'
 import { syncLogger } from '../../core/logger'
 import {
   movieStepResult,
+  pendingStep,
   type MovieArtworkInput,
   type MovieBlurhashRetryInput,
   type MovieStepOutcome,
@@ -65,16 +71,27 @@ export interface MovieArtworkOutcome extends MovieStepOutcome {
 /**
  * The artwork step. See the module comment.
  */
-export async function syncMovieArtwork({
-  originalTitle,
-  movie,
-  payload,
-  run,
-  availability,
-  caches,
-}: MovieArtworkInput): Promise<MovieArtworkOutcome> {
+export function syncMovieArtwork(
+  { originalTitle, movie, payload, run, availability }: MovieArtworkInput,
+  resources: Resources = new Resources()
+): MovieArtworkOutcome {
   const startTime = Date.now()
   const title = originalTitle
+
+  // The blurhash files the step reads: its decisions, made first without
+  // them and without a word in the log, name them, and a call made before
+  // they are fetched stops here. A decision that throws part way has named
+  // the files read before it, which is as far as the step gets: the step's
+  // catch below meets the same throw.
+  try {
+    decideArtwork(originalTitle, payload, run, availability, movie, emptyWritePlan<MovieEntity>(), [], resources, () => {})
+  } catch {
+    // Made again below.
+  }
+  if (resources.needs.length > 0) {
+    return { ...pendingStep(title, SyncOperation.Assets, run, resources.needs), retries: [] }
+  }
+
   const plan = emptyWritePlan<MovieEntity>()
   const retries: BlurhashRetry[] = []
   // Whether the step writes the movie: set where its plan stamps lastSynced.
@@ -87,15 +104,16 @@ export async function syncMovieArtwork({
     })
 
     const changes: string[] = []
-    const { updates: assetUpdates, cleared } = await decideArtwork(
+    const { updates: assetUpdates, cleared } = decideArtwork(
       originalTitle,
       payload,
       run,
       availability,
-      caches,
       movie,
       plan,
-      retries
+      retries,
+      resources,
+      (message, ...details) => syncLogger.debug(message, ...details)
     )
     changes.push(...cleared.map((key) => `Cleared ${key}`))
 
@@ -170,13 +188,25 @@ export async function syncMovieArtwork({
  * The blurhash retry step. See the module comment.
  *
  * @param retries - The artwork step's retries, poster first
+ * @param resources - The blurhash files, read through fetchMetadataMultiServer;
+ *   a call made before they are fetched names them and does nothing else
  */
-export async function retryMovieBlurhashes(
+export function retryMovieBlurhashes(
   { originalTitle, run }: MovieBlurhashRetryInput,
-  retries: readonly BlurhashRetry[]
-): Promise<MovieStepOutcome> {
+  retries: readonly BlurhashRetry[],
+  resources: Resources = new Resources()
+): MovieStepOutcome {
   const startTime = Date.now()
   const title = originalTitle
+  // Each retry reads the owner's blurhash file at the payload's path.
+  const fileOf = ({ decision }: BlurhashRetry): ResourceRequest => ({
+    kind: 'blurhash',
+    serverId: run.serverConfig.id,
+    path: decision.blurhashUrl,
+  })
+  for (const retry of retries) resources.read(fileOf(retry))
+  if (resources.needs.length > 0) return pendingStep(title, SyncOperation.Blurhash, run, resources.needs)
+
   const plan = emptyWritePlan<MovieEntity>()
 
   try {
@@ -187,22 +217,18 @@ export async function retryMovieBlurhashes(
 
     const changes: string[] = []
     const set: Record<string, any> = {}
-    for (const { field, sourceField, decision } of retries) {
+    for (const retry of retries) {
+      const { field, sourceField, decision } = retry
       console.log(
-        `🔍 Movie blurhash retry: fetching "${field}" for "${originalTitle}" (server: "${run.serverConfig.id}", path: ${decision.blurhashUrl})`
+        `🔍 Movie blurhash retry: read "${field}" for "${originalTitle}" (server: "${run.serverConfig.id}", path: ${decision.blurhashUrl})`
       )
-      // fetchMetadataMultiServer takes the ResourceManager's HTTP slot itself:
-      // wrapping it in throttleHttp would hold one slot while waiting for another.
-      let fetched: unknown = null
-      try {
-        fetched = await fetchMetadataMultiServer(run.serverConfig.id, decision.blurhashUrl, 'blurhash', 'movie', originalTitle)
-      } catch (fetchError) {
-        console.warn(
-          `⚠️ Movie blurhash retry: failed to fetch "${field}" for "${originalTitle}":`,
-          fetchError instanceof Error ? fetchError.message : String(fetchError)
-        )
+      // Fetched by the prefetch step through fetchMetadataMultiServer, which
+      // takes the ResourceManager's HTTP slot itself.
+      const file = resources.read(fileOf(retry))
+      if (file && !file.ok) {
+        console.warn(`⚠️ Movie blurhash retry: failed to fetch "${field}" for "${originalTitle}":`, file.error)
       }
-      const outcome = settleBlurhash(decision, fetched)
+      const outcome = settleBlurhash(decision, file?.ok ? file.data : null)
       if (outcome.action !== 'write') {
         // Still missing: the pass is not complete, so the title is not
         // skipped from now on with the blurhash missing.
@@ -259,17 +285,22 @@ export async function retryMovieBlurhashes(
  * detection). Returns the fields to write and the names of the fields cleared.
  * What to remove, hold back or retry goes straight into `plan` and `retries`,
  * so that a throw part way keeps what was decided before it.
+ *
+ * Each blurhash it fetches it reads from `resources` (one plain request each,
+ * `direct`): one not fetched yet reads as a failed fetch, and is recorded
+ * there as a need.
  */
-async function decideArtwork(
+function decideArtwork(
   originalTitle: string,
   payload: any,
   run: MovieArtworkInput['run'],
   availability: Availability,
-  caches: MovieArtworkInput['caches'],
   currentMovie: MovieEntity,
   plan: MovieStepOutcome['plan'],
-  retries: BlurhashRetry[]
-): Promise<{
+  retries: BlurhashRetry[],
+  resources: Resources,
+  debug: (message: string, ...details: unknown[]) => void
+): {
   updates: {
     posterURL?: string
     backdrop?: string
@@ -282,7 +313,7 @@ async function decideArtwork(
     backdropFocalSuggested?: BackdropFocal
   }
   cleared: string[]
-}> {
+} {
   const updates: any = {}
   const cleared: string[] = []
   const unset = (fields: string[]) => {
@@ -292,7 +323,7 @@ async function decideArtwork(
   // Get file server data for this movie
   const fileServerData = payload
   if (!fileServerData?.urls) {
-    syncLogger.debug(`⏭️ No fileServerData.urls found for "${originalTitle}"`)
+    debug(`⏭️ No fileServerData.urls found for "${originalTitle}"`)
     return { updates, cleared }
   }
 
@@ -309,7 +340,7 @@ async function decideArtwork(
     const assetRelativePath = fileServerData.urls[fileServerKey]
 
     if (!assetRelativePath) {
-      syncLogger.debug(`⏭️ No ${type} path in fileServerData.urls for "${originalTitle}"`)
+      debug(`⏭️ No ${type} path in fileServerData.urls for "${originalTitle}"`)
       continue
     }
 
@@ -317,7 +348,7 @@ async function decideArtwork(
     // CRITICAL: Use type-safe field path mapping (e.g., posterURL → "urls.poster")
     const fieldPath = getFieldPath(urlField as keyof typeof MovieFieldPathMap)
     if (!ownsReportedField(fieldPath, originalTitle, run, availability)) {
-      syncLogger.debug(`⏭️ Skipping ${urlField} - server ${run.serverConfig.id} does not have highest priority for ${fieldPath}`)
+      debug(`⏭️ Skipping ${urlField} - server ${run.serverConfig.id} does not have highest priority for ${fieldPath}`)
       continue
     }
 
@@ -334,7 +365,7 @@ async function decideArtwork(
     const currentHash = currentUrl ? extractHashFromUrl(currentUrl) : null
     const assetChanged = newAssetUrl !== currentUrl
 
-    syncLogger.debug(`🔍 Asset comparison for ${type}:`, {
+    debug(`🔍 Asset comparison for ${type}:`, {
       newHash,
       currentHash,
       changed: assetChanged,
@@ -343,7 +374,7 @@ async function decideArtwork(
     // Update asset URL if changed
     if (assetChanged) {
       updates[urlField] = newAssetUrl
-      syncLogger.debug(`✅ Updating ${urlField} from server ${run.serverConfig.id} (hash changed: ${currentHash} → ${newHash})`)
+      debug(`✅ Updating ${urlField} from server ${run.serverConfig.id} (hash changed: ${currentHash} → ${newHash})`)
     }
 
     // Blurhash for poster and backdrop: kept, fetched or removed by the one
@@ -373,7 +404,12 @@ async function decideArtwork(
           ? settleBlurhash(
               decision,
               // The payload's path is already under the server's prefix.
-              await fetchBlurhashData(fileServerUrl(decision.blurhashUrl, run.serverConfig), caches)
+              resources.data({
+                kind: 'blurhash',
+                serverId: run.serverConfig.id,
+                path: fileServerUrl(decision.blurhashUrl, run.serverConfig),
+                direct: true,
+              })
             )
           : decision.action === 'unset'
             ? ({ action: 'unset', fetchFailed: false } as const)
@@ -418,7 +454,7 @@ async function decideArtwork(
   for (const focalField of ['backdropFocal', 'backdropFocalSuggested'] as const) {
     const incoming = fileServerData[focalField]
     if (incoming === undefined) {
-      syncLogger.debug(`⏭️ No ${focalField} in fileServerData for "${originalTitle}"`)
+      debug(`⏭️ No ${focalField} in fileServerData for "${originalTitle}"`)
       continue
     }
 
@@ -427,7 +463,7 @@ async function decideArtwork(
 
     if (incoming !== null && incoming !== '') {
       if (!ownsReportedField(fieldPath, originalTitle, run, availability)) {
-        syncLogger.debug(`⏭️ Skipping ${focalField} - server ${run.serverConfig.id} does not have highest priority for ${fieldPath}`)
+        debug(`⏭️ Skipping ${focalField} - server ${run.serverConfig.id} does not have highest priority for ${fieldPath}`)
         continue
       }
       // The owner's id is the hint's source whether or not the value moved.
@@ -436,7 +472,7 @@ async function decideArtwork(
       }
       if (incoming !== current) {
         updates[focalField] = incoming as BackdropFocal
-        syncLogger.debug(`✅ Updating ${focalField} from server ${run.serverConfig.id} ("${current}" → "${incoming}")`)
+        debug(`✅ Updating ${focalField} from server ${run.serverConfig.id} ("${current}" → "${incoming}")`)
       }
       continue
     }
@@ -473,66 +509,6 @@ function extractHashFromUrl(url: string): string | null {
     // If URL parsing fails, return null
     return null
   }
-}
-
-/**
- * Fetch actual blurhash data from URL using httpHelper
- * httpHelper handles caching and HTTP errors internally
- * Returns null on failure so the field is OMITTED (not set to null in database)
- * Respects ResourceManager HTTP throttling when the pass's caches hold one
- */
-async function fetchBlurhashData(
-  blurhashUrl: string,
-  caches?: MovieArtworkInput['caches']
-): Promise<string | null> {
-  const doFetch = async () => {
-    try {
-      const response = await httpGet(
-        blurhashUrl,
-        {
-          timeout: 3000, // 3 second timeout for blurhash (matches legacy)
-          responseType: 'text',
-          headers: {
-            Accept: 'text/plain, */*',
-          },
-        },
-        true // returnCacheDataIfAvailable - return cached data on 304
-      )
-
-      // Check Content-Type header - should be text/plain, not text/html (error page)
-      const contentType = response.headers['content-type'] || response.headers['Content-Type'] || ''
-      if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
-        syncLogger.warn(`⚠️ Blurhash URL returned HTML (error page), Content-Type: ${contentType}`)
-        return null
-      }
-
-      // Extract data from wrapper if it's a cached response with _dataType
-      // httpHelper stores text as: { _dataType: 'text', _isBuffer: false, data: actualText }
-      let blurhashData = response.data
-      if (blurhashData && typeof blurhashData === 'object' && blurhashData._dataType === 'text') {
-        blurhashData = blurhashData.data
-      }
-
-      const trimmedData = blurhashData ? blurhashData.trim() : null
-
-      if (!trimmedData) {
-        return null
-      }
-
-      return trimmedData
-    } catch (error) {
-      // httpHelper throws on HTTP errors (404, 500, timeouts, etc)
-      // Return null so field is OMITTED from database update (not set to null)
-      syncLogger.warn(`⚠️ Failed to fetch blurhash:`, error instanceof Error ? error.message : String(error))
-      return null
-    }
-  }
-
-  // Throttle through ResourceManager if available
-  if (caches?.resourceManager) {
-    return caches.resourceManager.throttleHttp(doFetch)
-  }
-  return doFetch()
 }
 
 /**

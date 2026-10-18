@@ -18,9 +18,10 @@ import {
 } from '../../core'
 import { syncLogger } from '../../core/logger'
 import { emptyWritePlan } from '../../core/writePlan'
-import { fetchMetadataMultiServer } from '../../infrastructure'
+import { Resources } from '../../core/resources'
+import type { ResourceRequest } from '../../core/types'
 import { isCurrentServerHighestPriorityForReportedField } from '@src/utils/sync/core/ownership'
-import { movieStepResult, type MovieMetadataInput, type MovieStepOutcome } from './step'
+import { movieStepResult, pendingStep, type MovieMetadataInput, type MovieStepOutcome } from './step'
 
 /** Current version of the metadata schema, raised as the stored shape changes. */
 const METADATA_SCHEMA_VERSION = '2.1'
@@ -36,15 +37,14 @@ const METADATA_FAILED = 'metadata'
  * A failed fetch reports Failed and leaves the plan incomplete; it preserves
  * metadata that is already stored, and writes a minimal stub for a movie
  * that has none.
+ *
+ * Reads the metadata file from `resources`: a call made before it is fetched
+ * names it in its plan's `needs` and does nothing else (./step).
  */
-export async function syncMovieMetadata({
-  originalTitle,
-  movie,
-  payload,
-  run,
-  availability,
-  caches,
-}: MovieMetadataInput): Promise<MovieStepOutcome> {
+export function syncMovieMetadata(
+  { originalTitle, movie, payload, run, availability, caches }: MovieMetadataInput,
+  resources: Resources = new Resources()
+): MovieStepOutcome {
   const startTime = Date.now()
   const title = originalTitle
   const plan = emptyWritePlan<MovieEntity>()
@@ -68,6 +68,19 @@ export async function syncMovieMetadata({
     }
   }
 
+  // What the step decides before it reads anything, and so the file it reads,
+  // if any. A call made before that file is fetched stops here. (Should the
+  // decision throw, it is made again below, where the step's catch meets it.)
+  let read: MetadataRead | null = null
+  try {
+    read = decideMetadataRead({ originalTitle, movie, payload, run, availability, caches })
+  } catch {
+    read = null
+  }
+  if (read?.request && !resources.read(read.request)) {
+    return pendingStep(title, SyncOperation.Metadata, run, resources.needs)
+  }
+
   syncLogger.debug(`🎬 Movie metadata step starting for: "${title}"`)
 
   if (!title || title.trim().length === 0) {
@@ -83,22 +96,8 @@ export async function syncMovieMetadata({
     })
 
     const changes: string[] = []
-
-    // 🚀 CRITICAL FIX: Check priority FIRST before doing any work
-    // This prevents lower-priority servers from wasting API calls
-    //
-    // Metadata belongs to the highest-priority server that HAS a metadata file
-    // for the title. The check used to be "no server with one outranks me",
-    // which a server without one passes whenever its priority number is
-    // lower: its fetch then came back empty, and that emptiness replaced the
-    // metadata another server had supplied, on every run.
-    const canUpdateMetadata = isCurrentServerHighestPriorityForReportedField(
-      availability.fieldAvailability,
-      'movies',
-      originalTitle,
-      getFieldPath('metadata'),
-      run.serverConfig
-    )
+    const { canUpdateMetadata, metadataHashInfo, currentMetadataHash, hashUnchanged, request } =
+      read ?? decideMetadataRead({ originalTitle, movie, payload, run, availability, caches })
 
     if (!canUpdateMetadata) {
       syncLogger.debug(`⏭️ Server ${run.serverConfig.id} (priority ${run.serverConfig.priority}) does not have priority for metadata, skipping`)
@@ -110,27 +109,9 @@ export async function syncMovieMetadata({
 
     syncLogger.debug(`✅ Server ${run.serverConfig.id} (priority ${run.serverConfig.priority}) has priority for metadata, proceeding`)
 
-    // Check if we have metadata hash from the pass's caches for change detection
-    const metadataHashInfo = caches.metadataHashes?.titles?.[originalTitle]
-    const currentMetadataHash = movie.metadataHash
-
-    // Guard: only trust the hash skip when metadata is actually populated.
-    // If metadata is empty ({} or absent), force a re-fetch even when hashes match —
-    // this repairs movies that previously had their metadata clobbered by a bug
-    // while the metadataHash was still stored, leaving them permanently stuck in skip.
-    const metadataIsPopulated = hasExternalMetadata(movie)
-
-    // The stored hash is the hash of ONE server's copy: the one the stored
-    // metadata was fetched from. It says nothing about this server's copy
-    // unless this server is that one. Without this, a metadata owner that was
-    // down when the title was first synced never took the metadata back once
-    // its copy hashed the same, and the title kept naming the other server
-    // as its metadata source.
-    const storedMetadataIsFromThisServer = movie.metadataSource === run.serverConfig.id
-
     // If we have both hashes and they match, skip metadata fetch (optimization)
-    if (metadataHashInfo?.hash && currentMetadataHash && metadataHashInfo.hash === currentMetadataHash && metadataIsPopulated && storedMetadataIsFromThisServer) {
-      syncLogger.debug(`📝 Metadata hash unchanged for "${originalTitle}" (${metadataHashInfo.hash}), skipping fetch`)
+    if (hashUnchanged) {
+      syncLogger.debug(`📝 Metadata hash unchanged for "${originalTitle}" (${metadataHashInfo?.hash}), skipping fetch`)
       return outcome(title, SyncStatus.Skipped, [], [], {
         processingTime: Date.now() - startTime,
         reason: 'metadata hash unchanged',
@@ -141,7 +122,13 @@ export async function syncMovieMetadata({
       syncLogger.debug(`🔄 Metadata hash changed for "${originalTitle}": ${currentMetadataHash || 'none'} → ${metadataHashInfo.hash}`)
     }
 
-    const fetchedMetadata = await extractMetadata(originalTitle, payload, run.serverConfig.id)
+    // The file as the prefetch step read it (null when the fetch failed). A
+    // payload without a metadata path reads as an empty file, which is what
+    // fetchMetadataMultiServer answers for no path, without a request.
+    const fetchedMetadata = request
+      ? (resources.data(request) as Record<string, any> | null)
+      : {}
+    syncLogger.debug(`✅ Read metadata for "${originalTitle}" from ${run.serverConfig.id}`)
     const metadataFetchFailed = !fetchedMetadata
 
     // A failed metadata fetch must NOT advance the sync gate. Preserve any
@@ -272,34 +259,82 @@ function hasExternalMetadata(movie: MovieEntity): boolean {
   )
 }
 
+/** What the metadata step decides before it reads anything. */
+interface MetadataRead {
+  canUpdateMetadata: boolean
+  metadataHashInfo: { hash?: string } | undefined
+  currentMetadataHash: string | undefined
+  /** The stored metadata is this server's copy, and its hash is the file server's. */
+  hashUnchanged: boolean
+  /** The metadata file the step reads; null when it reads none. */
+  request: ResourceRequest | null
+}
+
 /**
- * Extract metadata from file server using originalTitle (filesystem key)
- * through fetchMetadataMultiServer (caching, retries). That takes the
- * ResourceManager's HTTP slot itself: wrapping it in throttleHttp here
- * would hold one slot while waiting for another.
+ * Whose metadata this is, whether the stored copy is current, and so which
+ * file the step reads: the metadata file in this server's payload, read
+ * through fetchMetadataMultiServer (its cache and retries) by the prefetch
+ * step.
  */
-async function extractMetadata(
-  originalTitle: string,
-  payload: any,
-  serverId: string
-): Promise<Record<string, any> | null> {
-  try {
-    // Get metadata URL from fileserver data if available
-    const metadataRelativePath = payload?.urls?.metadata
+function decideMetadataRead({
+  originalTitle,
+  movie,
+  payload,
+  run,
+  availability,
+  caches,
+}: MovieMetadataInput): MetadataRead {
+  // 🚀 CRITICAL FIX: Check priority FIRST before doing any work
+  // This prevents lower-priority servers from wasting API calls
+  //
+  // Metadata belongs to the highest-priority server that HAS a metadata file
+  // for the title. The check used to be "no server with one outranks me",
+  // which a server without one passes whenever its priority number is
+  // lower: its fetch then came back empty, and that emptiness replaced the
+  // metadata another server had supplied, on every run.
+  const canUpdateMetadata = isCurrentServerHighestPriorityForReportedField(
+    availability.fieldAvailability,
+    'movies',
+    originalTitle,
+    getFieldPath('metadata'),
+    run.serverConfig
+  )
 
-    const metadata = await fetchMetadataMultiServer(
-      serverId,
-      metadataRelativePath,
-      'file',
-      'movie',
-      originalTitle
-    )
+  // Check if we have metadata hash from the pass's caches for change detection
+  const metadataHashInfo = caches.metadataHashes?.titles?.[originalTitle]
+  const currentMetadataHash = movie.metadataHash
 
-    syncLogger.debug(`✅ Fetched metadata for "${originalTitle}" from ${serverId}`)
-    return metadata
-  } catch (error) {
-    syncLogger.error(`Failed to extract metadata for ${originalTitle}:`, error)
-    return null
+  // Guard: only trust the hash skip when metadata is actually populated.
+  // If metadata is empty ({} or absent), force a re-fetch even when hashes match —
+  // this repairs movies that previously had their metadata clobbered by a bug
+  // while the metadataHash was still stored, leaving them permanently stuck in skip.
+  const metadataIsPopulated = hasExternalMetadata(movie)
+
+  // The stored hash is the hash of ONE server's copy: the one the stored
+  // metadata was fetched from. It says nothing about this server's copy
+  // unless this server is that one. Without this, a metadata owner that was
+  // down when the title was first synced never took the metadata back once
+  // its copy hashed the same, and the title kept naming the other server
+  // as its metadata source.
+  const storedMetadataIsFromThisServer = movie.metadataSource === run.serverConfig.id
+
+  const hashUnchanged = Boolean(
+    metadataHashInfo?.hash &&
+      currentMetadataHash &&
+      metadataHashInfo.hash === currentMetadataHash &&
+      metadataIsPopulated &&
+      storedMetadataIsFromThisServer
+  )
+
+  // Get metadata URL from fileserver data if available
+  const metadataPath = payload?.urls?.metadata
+  const reads = Boolean(originalTitle && originalTitle.trim().length > 0) && canUpdateMetadata && !hashUnchanged
+  return {
+    canUpdateMetadata,
+    metadataHashInfo,
+    currentMetadataHash,
+    hashUnchanged,
+    request: reads && metadataPath ? { kind: 'metadata', serverId: run.serverConfig.id, path: metadataPath } : null,
   }
 }
 

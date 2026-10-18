@@ -5,19 +5,27 @@
  * movie as it stands after the steps before it and returns a write plan (what
  * to set, what to remove, what it held back) and its result. The service
  * merges the plans into the one write the pass makes (core/writePlan).
+ *
+ * The steps do no I/O. A step that reads a file (the metadata file, a
+ * blurhash) takes the files fetched for it (core/resources); a call made
+ * before they are fetched names them in its plan's `needs` and does nothing
+ * else, and the service calls it again once they are
+ * (infrastructure/fileSystem/prefetch).
  */
 
 import {
   MediaType,
+  SyncStatus,
   type Availability,
   type Caches,
   type MovieEntity,
   type PlanOutcome,
+  type ResourceRequest,
   type RunConfig,
   type SyncOperation,
   type SyncResult,
-  type SyncStatus,
 } from '../../core'
+import { emptyWritePlan } from '../../core/writePlan'
 
 /**
  * What every step is handed. Each step's input adds the parts of the pass
@@ -39,11 +47,13 @@ export interface MovieMetadataInput extends MovieStepBase {
   caches: Pick<Caches, 'metadataHashes'>
 }
 
-/** The artwork step's input (./artwork). */
+/**
+ * The artwork step's input (./artwork). No caches: the HTTP throttle its
+ * blurhash reads take is the prefetch step's.
+ */
 export interface MovieArtworkInput extends MovieStepBase {
   run: Pick<RunConfig, 'serverConfig' | 'allEnabledServersProbed'>
   availability: Availability
-  caches: Pick<Caches, 'resourceManager'>
 }
 
 /** The video step's input (./video). */
@@ -60,6 +70,24 @@ export interface MovieBlurhashRetryInput {
 
 export interface MovieStepOutcome extends PlanOutcome<MovieEntity> {
   result: SyncResult
+}
+
+/**
+ * The outcome of a call made before the files a step reads were fetched:
+ * their requests, and nothing else. Its result is pending, and never
+ * reported: the service calls the step again.
+ */
+export function pendingStep(
+  entityId: string,
+  operation: SyncOperation,
+  run: Pick<RunConfig, 'serverConfig'>,
+  needs: ResourceRequest[]
+): MovieStepOutcome {
+  return {
+    plan: { ...emptyWritePlan<MovieEntity>(), needs },
+    wroteDocument: false,
+    result: movieStepResult(entityId, operation, run, SyncStatus.Pending, [], []),
+  }
 }
 
 /** One step's result. */

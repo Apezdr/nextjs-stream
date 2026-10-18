@@ -39,8 +39,8 @@ import {
   captionUrls,
   fetchMetadataMultiServer,
   fileServerUrl,
-  isTopLevelFieldLocked,
 } from '../../infrastructure'
+import { isTopLevelFieldLocked } from '../../core/locks'
 import {
   getServersReportingField,
   isHighestPriorityAmongServers,

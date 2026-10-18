@@ -13,6 +13,11 @@
  *   4. the blurhash retry (./artwork): a second attempt at a blurhash the
  *      artwork step's fetch did not get.
  *
+ * The steps do no I/O. The files a step reads (the metadata file, the
+ * blurhashes) it names in its plan's `needs`; each step is run through the
+ * prefetch step (infrastructure/fileSystem/prefetch), which fetches them and
+ * calls it again with them, one step at a time, in step order.
+ *
  * Field-absence cleanup adds a plan of its own, and so does the movie's
  * normalization (the fields normalizeMovieEntity heals) when a step writes.
  * The plans are merged into one (core/writePlan), the display title is
@@ -36,10 +41,10 @@ import {
   type WritePlan,
 } from '../../core'
 
-import {
-  MovieRepository,
-  isTopLevelFieldLocked
-} from '../../infrastructure'
+import { MovieRepository } from '../../infrastructure'
+import { buildWithResources, type PrefetchContext } from '../../infrastructure/fileSystem/prefetch'
+import { isTopLevelFieldLocked } from '../../core/locks'
+import type { Resources } from '../../core/resources'
 
 import { createLogger } from '@src/lib/logger'
 import { buildSyncGate, readSyncGate, changesDocument, nextSyncGates, availabilityFingerprint, payloadFingerprint } from '../../core/syncGate'
@@ -154,16 +159,21 @@ export class MovieSyncService {
       // says so when its plan stamps lastSynced).
       let stepsWrite = false
       let movie: MovieEntity = normalized
-      // Each step is called with the movie as it stands and, besides it, only
-      // the parts of the pass it reads (./step).
+      // The files a step reads are fetched by the prefetch step: through
+      // fetchMetadataMultiServer, or (the artwork step's first blurhash read)
+      // in a slot of the pass's throttle.
+      const prefetch: PrefetchContext = { mediaType: 'movie', title: originalTitle, throttle: caches.resourceManager }
+      // Each step is called with the movie as it stands, the files fetched
+      // for it and, besides them, only the parts of the pass it reads (./step).
       const runStep = async <O extends MovieStepOutcome>(
         operation: SyncOperation,
-        step: (movie: MovieEntity) => Promise<O>
+        step: (movie: MovieEntity, resources: Resources) => O
       ): Promise<O | null> => {
         let outcome: O | null = null
         let stepOutcome: MovieStepOutcome
         try {
-          outcome = await step(movie)
+          const current = movie
+          outcome = await buildWithResources((resources) => step(current, resources), prefetch)
           stepOutcome = outcome
         } catch (error) {
           const errorResult: SyncResult = {
@@ -190,17 +200,17 @@ export class MovieSyncService {
         return outcome
       }
 
-      await runStep(SyncOperation.Metadata, (movie) =>
-        syncMovieMetadata({ originalTitle, movie, payload, run, availability, caches })
+      await runStep(SyncOperation.Metadata, (movie, resources) =>
+        syncMovieMetadata({ originalTitle, movie, payload, run, availability, caches }, resources)
       )
-      const artwork = await runStep(SyncOperation.Assets, (movie) =>
-        syncMovieArtwork({ originalTitle, movie, payload, run, availability, caches })
+      const artwork = await runStep(SyncOperation.Assets, (movie, resources) =>
+        syncMovieArtwork({ originalTitle, movie, payload, run, availability }, resources)
       )
       await runStep(SyncOperation.Content, (movie) =>
         syncMovieVideo({ originalTitle, movie, payload, run, availability })
       )
-      await runStep(SyncOperation.Blurhash, () =>
-        retryMovieBlurhashes({ originalTitle, run }, artwork?.retries ?? [])
+      await runStep(SyncOperation.Blurhash, (_movie, resources) =>
+        retryMovieBlurhashes({ originalTitle, run }, artwork?.retries ?? [], resources)
       )
 
       // ---- Field-absence cleanup: drop asset fields no enabled server

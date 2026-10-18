@@ -6,7 +6,7 @@
  */
 
 import { MediaQuality, type ServerConfig } from '../../core'
-import { fileServerUrl, prefixedPath } from '../../infrastructure'
+import { fileServerUrl, prefixedPath } from '../../infrastructure/fileSystem/urls'
 import { sizeInBytes } from '../../core/fileFacts'
 import { preferReportedViewingExperience, sameViewingExperience } from '../../core/viewingExperience'
 import { syncLogger } from '../../core/logger'
