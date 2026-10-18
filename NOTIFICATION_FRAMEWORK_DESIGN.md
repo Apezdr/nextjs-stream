@@ -5,37 +5,62 @@
 This section describes what the app does today. The rest of the document is a design for a later framework. The code is `src/utils/sync/run/newContent.js` (its module header says the same thing), with `src/utils/notifications/MediaNotificationOrchestrator.js` composing and delivering the notices.
 
 ### When it runs
-Once per sync run (a full pass, not a skipped tick), after every file server's pass and after post-sync cleanup has deleted what it deletes.
+Once per full sync run, not on a skipped tick. It runs after every file server's pass and after post-sync cleanup has deleted what it deletes.
 
 ### What counts as new
-The app keeps a permanent set of the titles it has announced (`Media.AnnouncedTitles`). Each title has one key, built from folder names and never from a database id:
-- a movie: its folder name (`originalTitle`);
-- an episode: its show's folder name, its season number and its episode number.
+The app keeps a permanent set of the titles it has announced (`Media.AnnouncedTitles`), one document per key. A title has one or two keys:
+- **its folder key**, built from folder names and never from a database id:
+  - a movie: its folder name (`originalTitle`);
+  - an episode: its show's folder name, its season number and its episode number.
+- **its media key**, when the file server's processor gave the title a durable identity (`mediaId`, a `mid:…` id kept in the folder's identity sidecar). It survives a folder rename.
 
-A movie or an episode is announced when, after the run:
-1. a pass wrote it this run, created or updated (a title skipped on its gate was not written);
-2. it is still in the library (a title cleanup deleted this run is not announced);
-3. a list would show it (it has a video a browser can play, or a transcoder link);
-4. its key is not in the set, and is not waiting to be delivered.
+A title counts as announced when either of its keys is in the set.
 
-How long ago a file server first saw the title plays no part. A movie whose folder arrives before its video (a placeholder, or a scan in the middle of an import) is announced when the video arrives and the movie becomes visible. A title added during an outage is announced on the first run after it.
+On every full run, after cleanup, the candidates are worked out from the library itself, not from what the run wrote. A movie or an episode is announced when:
+1. it is in the library (a title cleanup deleted in this run is not);
+2. a list would show it (it has a video a browser can play, or a transcoder link a list accepts);
+3. neither of its keys is in the set or waiting in the queue (below).
 
-A title two servers have is one title, and is announced once.
+What follows from that:
+- **Nothing written is lost.** A title missed because of a database error, a crash or a restart between its pass and the notices is found on the next full run, whether or not that run writes it.
+- **A title is announced when it becomes visible, however it does:** a movie whose folder arrives before its video (a placeholder, a scan in the middle of an import), a transcoder that starts serving it, an admin override.
+- **How long ago a file server first saw the title plays no part.** A title added during an outage is announced on the first full run after it.
+- **A title two servers have is one title**, announced once.
+- **The cost:** a projected scan of the library on every full run (every movie and visible episode, every show's folder name, and the set's keys). Full runs are rare once ticks skip.
+
+### Renamed titles
+- A renamed movie folder (a year fixed, a change of case) keeps its media key and is not announced again. Its new folder key is added to the set.
+- A renamed show folder keeps every episode's media key, so none of its episodes is announced again.
+- Two cases still look new:
+  - a renamed title with no durable identity (an older processor, or a sidecar it could not write);
+  - an episode whose numbers change, since an episode's identity is its season and episode numbers.
 
 ### The baseline
-On a database where the set has never been started, the first run announces nothing. Instead it puts every movie and episode the library holds after that run into the set, hidden ones included, and leaves a flag (`new-content-baseline` in `app_config.migrations`). On an upgrade, this means the existing library is never announced. On a fresh install, the first sync into an empty database announces nothing either. If seeding fails, nothing is announced and no flag is written, so the next run seeds again. Seeding can be repeated safely.
+Until the set has been started on a database, nothing is announced. The set is started by the first **complete** run: every enabled file server answered, pre-tag covered every collection, and every server's pass ran with nothing failed. That run announces nothing. It puts every movie and episode the library holds after it into the set, hidden ones included, with both keys of each, and then leaves a flag (`new-content-baseline` in `app_config.migrations`).
 
-### Retries
-The notices for a run's titles are queued (`Media.NewContentOutbox`) with the keys they announce. Every run delivers every queued entry, oldest first, whether or not that run wrote anything. When an entry is delivered, it is removed, and only then do its keys go into the set. When delivery fails, the entry stays queued and the next run tries again.
+- **Incomplete runs never start the set.** A run that is not complete leaves the set alone, so a server that is down cannot keep its titles out of the set and have them announced as new when it comes back.
+- **Upgrade:** the existing library is never announced.
+- **Fresh install:** if the first complete run finds titles, it announces nothing and they go into the set. If it finds an empty library (no file server published anything yet), the set starts empty, and **everything added after it is announced**, which the digest keeps to one notice per run.
+- If seeding fails, nothing is announced and no flag is written, and the next complete run seeds again. Seeding can be repeated safely.
 
-Nothing is lost: a key is in the queue until the set has it. Nothing is sent twice:
-- each notification's id is derived from the queued entry, the notice and the user, so delivering an entry again adds only the notifications the last attempt did not;
-- a title waiting in the queue is not queued a second time.
+### Delivery and retries
+The notices for a run's new titles are queued as one entry in `Media.NewContentOutbox`, with every key of every title in it. Every full run delivers every live entry, oldest first, whether or not it wrote anything. A skipped tick delivers nothing.
+- **Delivered:** the entry is removed, and only then do its keys go into the set.
+- **Failed:** the entry stays queued and the next full run tries again.
+- **After 10 failed attempts** the entry is marked dead. It is logged once and never tried again. A TTL index on `deadAt` removes it 30 days later; if its titles are still not in the set, the next full run finds them again and queues a new entry.
 
-An entry is delivered as it was queued: a title deleted while its notice waits is still named in it.
+**What is guaranteed:**
+- A title is announced at most once. The one exception is a dead entry (below): when it expires, its titles are queued again.
+- A title is in at most one entry, live or dead. A full run adds at most one entry. So during a persistent failure the queue holds at most one entry per title still waiting, and dead entries leave after 30 days.
+- No user gets a notice twice from one entry. Each notification's id is derived from the entry, the notice and the user, so delivering an entry again adds only what the last attempt did not.
+
+**What is not guaranteed:**
+- **A dismissed notification can come back.** If an attempt reached some users and then failed, and a user dismissed (deleted) the notification in the meantime, the next attempt inserts it for them again.
+- **A queued entry is delivered as it was queued.** A title deleted while its notice waits is still named in it.
+- **A dead entry's titles wait.** They are not announced until the entry expires (30 days) and a later full run picks them up. If one of the entry's failed attempts had reached some users, those users get the titles a second time from the new entry.
 
 ### Titles removed and added back
-A title stays in the set after it leaves the library. If it comes back later (a folder restored, a document re-created after cleanup, a show re-created under a new id with every episode inserted again), it is not announced again. If the owner ever wants returning titles announced, the set is the one place to change: remove a key when its title leaves the library.
+A title's keys stay in the set after it leaves the library. If it comes back later, it is not announced again. That includes a folder restored, a document re-created after cleanup, and a show re-created under a new id with every episode inserted again. If the owner ever wants returning titles announced, the set is the one place to change: remove a title's keys when it leaves the library.
 
 ### Grouping and the digest
 - Movies are grouped five to a notice. One movie gets its own notice, which links to its page.
@@ -86,7 +111,8 @@ MongoDB TTL indexes on `Media.Notifications` delete notifications on their own. 
 | Unread new-content notice (type `new_content`, the digest included) | 90 days after it was sent (`createdAt`) |
 | Any other unread notification | Kept |
 
-- **Read notifications** expire 30 days after `readAt`. That includes the backlog: a notification read more than 30 days before the index is built goes when it is built. A read notification with no `readAt` is given its `createdAt` once (a self-applying migration, flag `notifications-readAt-from-createdAt`), so it expires too. Every path that marks a notification read (one, several, all; the web app and the TV app use the same route) sets `readAt`. Nothing marks a notification unread.
+- **At deploy**, as the owner decided, MongoDB's TTL monitor deletes every read notification read more than 30 days ago, and every unread new-content notice sent more than 90 days ago, within a minute or so of the indexes being built.
+- **Read notifications** expire 30 days after `readAt`. A read notification with no `readAt` is given its `createdAt` once (a self-applying migration, flag `notifications-readAt-from-createdAt`), so it expires too. Every path that marks a notification read (one, several, all; the web app and the TV app use the same route) sets `readAt`. Nothing marks a notification unread.
 - **Unread new-content notices** expire 90 days after they were sent. The TTL index on `createdAt` is partial on `{ read: false, type: 'new_content' }`, so other types are never matched.
 - **Partial filters** accept equality, `$exists: true`, `$gt`/`$gte`/`$lt`/`$lte`, `$type` and `$and`; MongoDB 6.0 and later also accept `$or` and `$in`. Negations (`$ne`, `$nin`, `$not`) are not allowed. Both indexes use equality only.
 
@@ -306,15 +332,15 @@ interface SyncResult {
 ```
 
 ### 7.3 `run/newContent` emits one event per title new to the library
-Not where a title's results come back: a created document is not necessarily new content (cleanup can delete a document whose title comes back, a show re-created under a new `_id` inserts its episodes again, a first sync creates everything). Each pass records every movie and episode it writes into the run's `run/writtenMedia` record as the title finishes, keyed by folder names, so a title two servers have is one candidate. Once per run, after every pass and after post-sync cleanup has decided deletions, `run/newContent` keeps the candidates still there, listed (`isWebVisible`) and not in the announced-titles set (see "New-content notices: what ships" above). It would emit for those:
+Not where a title's results come back: a created document is not necessarily new content (cleanup can delete a document whose title comes back, a show re-created under a new `_id` inserts its episodes again, a first sync creates everything). Once per full run, after every pass and after post-sync cleanup has decided deletions, `run/newContent` derives the candidates from the library: every movie and episode a list would show, neither of whose keys (folder names; the durable `mediaId`) is in the announced-titles set or the outbox (see "New-content notices: what ships" above). It would emit for those:
 ```ts
-for (const title of newToTheLibrary) {        // run/newContent selectAnnounceable
+for (const title of newToTheLibrary) {        // run/newContent announceNewContent
   syncEventBus.emitEntityCreated({
     kind: title.kind,                          // 'movie' | 'episode'
     tmdbId: title.tmdbId,
-    // The folder name: a movie result's entityId; for an episode, its show's
-    // folder name from the result's metadata.showOriginalTitle. An episode or
-    // season result's entityId is "<show> S<n>E<m>" / "<show> S<n>", never a key.
+    // The folder name: a movie's originalTitle; for an episode, its show's
+    // originalTitle (FlatTVShows, by showId). A sync result's entityId is
+    // never a key: an episode's or a season's is "<show> S<n>E<m>" / "<show> S<n>".
     originalTitle: title.kind === 'movie' ? title.originalTitle : title.showOriginalTitle,
     showTmdbId: title.showTmdbId,
     seasonN: title.seasonNumber,
