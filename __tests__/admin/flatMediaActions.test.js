@@ -67,6 +67,7 @@ import {
   createMovieAction,
   createTVShowAction,
   saveMovieAction,
+  saveTVShowAction,
   saveSeasonAction,
   saveEpisodeAction,
 } from '@src/utils/admin/flatMediaActions'
@@ -231,5 +232,54 @@ describe('saving flags only the values that changed', () => {
 
     const { $set } = updateOf('FlatEpisodes')
     expect(manualFlagsIn($set)).toEqual([])
+  })
+})
+
+// The editors lock the display title when the admin changes it (useFieldLocks),
+// since the sync rewrites an unlocked one. A save stores the locks the form
+// sends, as they are, and reopens the sync's gates.
+describe.each([
+  ['saveMovieAction', saveMovieAction, 'FlatMovies'],
+  ['saveTVShowAction', saveTVShowAction, 'FlatTVShows'],
+])('%s and the title lock', (_name, save, collection) => {
+  const existing = {
+    _id: 'doc-id',
+    title: 'Old Title',
+    originalTitle: 'Old Title (2001)',
+    lockedFields: { posterURL: true },
+    syncGates: { A: 'gate' },
+  }
+
+  it('stores the title locked when the form sends it locked', async () => {
+    mockCollection(collection).findOne.mockResolvedValue({ ...existing })
+
+    const result = await save(null, { id: 'doc-id', title: 'New Title', lockedFields: { posterURL: true, title: true } })
+
+    expect(result.status).toBe('success')
+    const { $set, $unset } = updateOf(collection)
+    expect($set.title).toBe('New Title')
+    expect($set.lockedFields).toEqual({ posterURL: true, title: true })
+    expect($unset).toEqual(expect.objectContaining({ syncGates: '' }))
+  })
+
+  it('stores it unlocked when the admin turned the lock off before saving', async () => {
+    mockCollection(collection).findOne.mockResolvedValue({ ...existing, lockedFields: { title: true } })
+
+    await save(null, { id: 'doc-id', title: 'New Title', lockedFields: {} })
+
+    const { $set, $unset } = updateOf(collection)
+    expect($set.title).toBe('New Title')
+    expect($set).not.toHaveProperty('lockedFields')
+    expect($unset).toEqual(expect.objectContaining({ lockedFields: '', syncGates: '' }))
+  })
+
+  it('leaves the locks as they were when the title is unchanged', async () => {
+    mockCollection(collection).findOne.mockResolvedValue({ ...existing })
+
+    await save(null, { id: 'doc-id', title: 'Old Title', lockedFields: { posterURL: true } })
+
+    const { $set, $unset } = updateOf(collection)
+    expect($set.lockedFields).toEqual({ posterURL: true })
+    expect($unset).toEqual({ syncGates: '' })
   })
 })

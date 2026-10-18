@@ -10,6 +10,7 @@ import {
   saveSeasonAction,
 } from '@src/utils/admin/flatMediaActions'
 import LockableField from './LockableField'
+import { TITLE_LOCK_HELP, useFieldLocks } from './useFieldLocks'
 import ImagePreview from './ImagePreview'
 import DeleteMediaButton from './DeleteMediaButton'
 import TmdbConfigButton from './TmdbConfigButton'
@@ -68,7 +69,8 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
   const [form, setForm] = useState(() => initForm(record))
   const [tmdbId, setTmdbId] = useState(() => record?.metadata?.id ?? '')
   const [overview, setOverview] = useState(() => record?.metadata?.overview ?? '')
-  const [locks, setLocks] = useState(() => ({ ...(record?.lockedFields ?? {}) }))
+  // Changing the title locks it, or the next sync puts the old one back.
+  const { locks, isLocked, toggleLock, noteEdit } = useFieldLocks(record, ['title'])
 
   useEffect(() => {
     if (state.status === 'success' && isNew && state.id) {
@@ -76,15 +78,10 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
     }
   }, [state, isNew, router])
 
-  const setField = (key) => (v) => setForm((p) => ({ ...p, [key]: v }))
-  const isLocked = (key) => locks[key] === true
-  const toggleLock = (key) =>
-    setLocks((p) => {
-      const next = { ...p }
-      if (next[key] === true) delete next[key]
-      else next[key] = true
-      return next
-    })
+  const setField = (key) => (v) => {
+    setForm((p) => ({ ...p, [key]: v }))
+    noteEdit(key, v)
+  }
 
   const seasons = useMemo(() => record?.seasons ?? [], [record])
   const nextSeasonNumber = seasons.length
@@ -160,7 +157,7 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
         <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">Identity</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {field('title', 'Title (display)')}
+            {field('title', 'Title (display)', { helpText: TITLE_LOCK_HELP })}
             {field('originalTitle', 'Original Title (filesystem key)', {
               helpText: 'Renaming the title cascades to all seasons/episodes.',
             })}

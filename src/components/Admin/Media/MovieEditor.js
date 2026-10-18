@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { ArrowLeftIcon } from '@heroicons/react/24/outline'
 import { createMovieAction, saveMovieAction } from '@src/utils/admin/flatMediaActions'
 import LockableField from './LockableField'
+import { TITLE_LOCK_HELP, useFieldLocks } from './useFieldLocks'
 import ImagePreview from './ImagePreview'
 import CaptionsEditor from './CaptionsEditor'
 import DeleteMediaButton from './DeleteMediaButton'
@@ -40,7 +41,8 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
   const [tmdbId, setTmdbId] = useState(() => record?.metadata?.id ?? '')
   const [overview, setOverview] = useState(() => record?.metadata?.overview ?? '')
   const [captionURLs, setCaptionURLs] = useState(() => record?.captionURLs ?? {})
-  const [locks, setLocks] = useState(() => ({ ...(record?.lockedFields ?? {}) }))
+  // Changing the title locks it, or the next sync puts the old one back.
+  const { locks, isLocked, toggleLock, noteEdit } = useFieldLocks(record, ['title'])
 
   // After a successful create, move to the persistent editor for the new id.
   useEffect(() => {
@@ -49,15 +51,10 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
     }
   }, [state, isNew, router])
 
-  const setField = (key) => (v) => setForm((prev) => ({ ...prev, [key]: v }))
-  const isLocked = (key) => locks[key] === true
-  const toggleLock = (key) =>
-    setLocks((prev) => {
-      const next = { ...prev }
-      if (next[key] === true) delete next[key]
-      else next[key] = true
-      return next
-    })
+  const setField = (key) => (v) => {
+    setForm((prev) => ({ ...prev, [key]: v }))
+    noteEdit(key, v)
+  }
 
   const payload = useMemo(() => {
     const metadata = {}
@@ -131,7 +128,7 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
         <section className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
           <h2 className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">Identity</h2>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {field('title', 'Title (display)')}
+            {field('title', 'Title (display)', { helpText: TITLE_LOCK_HELP })}
             {field('originalTitle', 'Original Title (filesystem key)', {
               helpText: 'Used for sync/filesystem lookups. Defaults to Title on create.',
             })}
