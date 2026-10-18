@@ -153,6 +153,45 @@ export interface SyncResult {
 }
 
 // ==========================================
+// Write plans
+// ==========================================
+
+/**
+ * A file a sync step wants fetched before it runs. Steps fetch for themselves
+ * for now and leave `needs` empty; the request shape is the prefetch step's to
+ * settle.
+ */
+export interface ResourceRequest {
+  /** What the file is. */
+  kind: 'metadata' | 'blurhash'
+  /** The server to ask. */
+  serverId: string
+  /** The file's path in that server's payload. */
+  path: string
+}
+
+/**
+ * What one sync step wants written: its inputs go in, this comes out, and the
+ * service merges the steps' plans into one write (core/writePlan).
+ */
+export interface WritePlan<E = Record<string, any>> {
+  /** Fields to write. */
+  set: Partial<E>
+  /** Fields to remove: their data is gone, which `$set` cannot express. */
+  unset: string[]
+  /** Fetches the step wants done first. */
+  needs: ResourceRequest[]
+  /**
+   * A decision was held back (a step failed, a removal waits for a run on
+   * which every server answers, a file could not be fetched): the skip gate
+   * stays open, so the next pass does the work.
+   */
+  incomplete: boolean
+  /** Which decisions were held back, for the event log. */
+  deferrals: string[]
+}
+
+// ==========================================
 // Backdrop focal-point hint
 // ==========================================
 

@@ -49,6 +49,7 @@
 import isEqual from 'lodash/isEqual'
 import { getServer } from '@src/utils/config'
 import { sortedPathsOf } from './ownership'
+import type { WritePlan } from './types'
 
 /**
  * Fields that record the sync itself, not the title. (`syncHash` and
@@ -157,7 +158,8 @@ export function nextSyncGates(
 /**
  * What a pass left undone, as far as its gate goes. Each one is a reason to
  * leave the gate open, so that the next pass runs in full and does the work.
- * Every caller states all three.
+ * Every caller states all three. (A pass built from write plans states them
+ * as one: its merged plan's `incomplete`, see core/writePlan.)
  */
 export interface PassOutcome {
   /**
@@ -186,9 +188,14 @@ export type GateDecision = 'stamp' | 'leaveOpen'
  * Whether a pass may stamp its gate: only when nothing failed, nothing was
  * held back and nothing was deferred. Otherwise the gate stays open (see
  * nextSyncGates for what is stored either way).
+ *
+ * @param outcome - The three reasons, or a merged write plan (core/writePlan),
+ *   whose `incomplete` is any of them
  */
-export function decideGate(outcome: PassOutcome): GateDecision {
-  return outcome.failed || outcome.heldBack || outcome.deferred ? 'leaveOpen' : 'stamp'
+export function decideGate(outcome: PassOutcome | Pick<WritePlan, 'incomplete'>): GateDecision {
+  const leftUndone =
+    'incomplete' in outcome ? outcome.incomplete : outcome.failed || outcome.heldBack || outcome.deferred
+  return leftUndone ? 'leaveOpen' : 'stamp'
 }
 
 /**

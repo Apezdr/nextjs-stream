@@ -53,6 +53,8 @@ export {
   type SyncStrategy,
   type SyncContext,
   type SyncResult,
+  type WritePlan,
+  type ResourceRequest,
   type ServerConfig,
   type FieldAvailability,
   type BaseMediaEntity,
