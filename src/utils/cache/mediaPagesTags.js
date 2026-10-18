@@ -31,7 +31,9 @@ export const MEDIA_CACHE_TAGS = {
  * The per-title tags below take the folder name (`originalTitle`), as is: the
  * media pages pass decodeURIComponent of their [title] param, which Next hands
  * them percent-encoded, so the page's tag holds the plain folder name the URL
- * was built from. Never a display title: the URLs never carry one.
+ * was built from. Never a display title. A collection's movie link falls back
+ * to /list/movie/<display title> when the movie has no `url`, but that page
+ * redirects to the canonical folder-name URL, whose page carries the tag.
  */
 
 /**

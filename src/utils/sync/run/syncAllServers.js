@@ -101,8 +101,9 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     missingMedia: {},
     missingMp4: {},
     errors: [],
-    // Union (across servers) of entities re-synced this run, keyed by display
-    // title. Drives the post-sync cache-invalidation POST in the route handler.
+    // Union (across servers) of entities re-synced this run, keyed by folder
+    // name (originalTitle), as the media pages tag their caches. Drives the
+    // post-sync cache-invalidation POST in the route handler.
     // The run's record itself, so it holds every title as soon as it finishes.
     // Duplicates across servers are fine — the revalidate route builds a tag
     // Set, which dedupes.
