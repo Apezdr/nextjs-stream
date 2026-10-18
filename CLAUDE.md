@@ -88,7 +88,6 @@ const wrongPath = `/movies/${movie.title}/poster.jpg` // Will fail!
 - Server priority determines data precedence (lower number = higher priority; equal priorities break on server id)
 - Pre-computed `fieldAvailability` object maps which servers have a value for each exact leaf path (`urls.poster`)
 - Ownership fails closed: a field belongs to the highest-priority server among those that report a value. Check it with `isCurrentServerHighestPriorityForReportedField()` (or `isHighestPriorityAmongServers()`) before updating any field
-- `isCurrentServerHighestPriorityForField()` is legacy and fails open; not for new code
 
 **Priority Check Pattern:**
 ```javascript
@@ -185,7 +184,6 @@ const canUpdate = isCurrentServerHighestPriorityForReportedField(
 **Priority System Integration:**
 - Import `isCurrentServerHighestPriorityForReportedField` / `isHighestPriorityAmongServers` from `@src/utils/sync/core/ownership`
 - Check ownership before every field update: it fails closed, ties break on server id
-- Not `isCurrentServerHighestPriorityForField`: it is legacy and fails open
 - Use `fieldAvailability` object for pre-computed server data mapping
 - Respect existing server priority configuration
 
@@ -241,15 +239,13 @@ class NewSyncStrategy implements SyncStrategy {
     const dataPath = `/movies/${originalTitle}/data.json`
     
     // Check ownership before updating (fails closed)
-    if (this.shouldUpdateField('urls.poster', originalTitle, context)) {
+    if (
+      isCurrentServerHighestPriorityForReportedField(
+        context.fieldAvailability, 'movies', originalTitle, 'urls.poster', context.serverConfig
+      )
+    ) {
       // Perform update with source tracking
     }
-  }
-  
-  private shouldUpdateField(fieldPath: string, mediaTitle: string, context: SyncContext): boolean {
-    return isCurrentServerHighestPriorityForReportedField(
-      context.fieldAvailability, 'movies', mediaTitle, fieldPath, context.serverConfig
-    )
   }
 }
 ```
@@ -281,7 +277,7 @@ class NewSyncStrategy implements SyncStrategy {
 const posterPath = `/movies/${movie.title}/poster.jpg`
 ```
 
-**❌ Not checking ownership, or checking it with the fail-open `isCurrentServerHighestPriorityForField`:**
+**❌ Not checking ownership:**
 ```javascript
 // WRONG - May overwrite higher priority data
 movie.posterURL = newUrl // Direct assignment without an ownership check
