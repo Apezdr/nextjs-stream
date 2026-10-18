@@ -21,7 +21,9 @@ jest.mock('@src/lib/logger', () => ({
 jest.mock('@src/utils/config', () => ({ getSyncUrls: () => ({}), fileServerVersionTV: 1.0001, fileServerVersionMOVIES: 1.0001 }))
 jest.mock('@src/utils/webhookServer', () => ({ getWebhookIdForServer: jest.fn() }))
 
-const { listingOfPayload, listingsOfFileServers, listingOfManifests } = require('@src/utils/sync/run/listing')
+const { listingOfManifests } = require('@src/utils/sync/run/listing')
+// The listing the sync built from payloads before manifests: the reference
+const { listingOfPayload, listingsOfFileServers } = require('../helpers/payloadListing')
 const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
 const { computeMissingMedia } = require('@src/utils/sync/run/missingMedia')
 const { buildFieldAvailability } = require('@src/utils/sync/run/availability')
@@ -32,7 +34,7 @@ const { buildFieldAvailability } = require('@src/utils/sync/run/availability')
 // the episode regex misses, and a show no FlatTVShows document has.
 const fileServers = () => ({
   A: {
-    movies: JSON.parse('{"Film":{"urls":{}},"1917":{"urls":{}},"__proto__":{"urls":{}},"constructor":{}}'),
+    movies: JSON.parse('{"Film":{"urls":{}},"1234":{"urls":{}},"__proto__":{"urls":{}},"constructor":{}}'),
     tv: {
       'Show One': {
         seasons: {
@@ -144,10 +146,10 @@ function installDb({ movieDocs = [], showDocs = [] } = {}) {
   return writes
 }
 
-describe('listingOfPayload', () => {
+describe('listingOfPayload (the reference, frozen in the test helpers)', () => {
   it('keeps every folder name, seasons and episodes by the processor manifest rule', () => {
     const listing = listingOfPayload(fileServers().A)
-    expect([...listing.movies]).toEqual(['1917', 'Film', '__proto__', 'constructor'])
+    expect([...listing.movies]).toEqual(['1234', 'Film', '__proto__', 'constructor'])
     expect([...listing.tv.keys()]).toEqual(['Show One', 'No Seasons', 'Null Seasons', 'Missing Show'])
     expect(Object.fromEntries(listing.tv.get('Show One'))).toEqual({
       'Season 1': ['S01E01', 'S01E02', 'S01E03 - extra'],

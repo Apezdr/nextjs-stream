@@ -111,6 +111,26 @@ describe('fetchManifest', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('blames the sync’s own configuration, not the processor, when no webhook ID is set: not retried, not a contract failure', async () => {
+    const { getWebhookIdForServer } = require('@src/utils/webhookServer')
+    getWebhookIdForServer.mockResolvedValueOnce(null)
+    const result = await fetchManifest(SERVER, 'tv', NO_WAIT)
+    expect(result).toMatchObject({ ok: false, contract: false })
+    expect(result.error).toMatch(/no webhook ID configured for server A/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('stops at its deadline, mid-retry, without another attempt', async () => {
+    const deadline = new AbortController()
+    fetchMock.mockImplementation(async () => {
+      deadline.abort()
+      return respond(503, 'busy')
+    })
+    const result = await fetchManifest(SERVER, 'tv', { deadline: deadline.signal, retryDelaysMs: [50, 50] })
+    expect(result).toMatchObject({ ok: false })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('retries a 500 (a show the processor could not describe) and then reports the server did not answer', async () => {
     fetchMock.mockImplementation(async () => respond(500, 'Internal server error'))
     const result = await fetchManifest(SERVER, 'tv', NO_WAIT)

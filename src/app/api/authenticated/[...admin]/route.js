@@ -829,18 +829,15 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     const headers = {}
     if (webhookId) headers['X-Webhook-ID'] = webhookId
 
-    // Get file server(s) data directly (no internal HTTP call). The payloads
-    // are fetched conditionally, and a tick that would change nothing ends
-    // here: no parse, no fieldAvailability, no pass, no cleanup (see
-    // fetchSyncTick in sync/run/tickSkip for the conditions and what a skip still
-    // does).
+    // Ask the file servers for their manifests (no internal HTTP call),
+    // conditionally, and end a tick that would change nothing here: no
+    // entries, no fieldAvailability, no pass, no cleanup (see fetchSyncTick in
+    // sync/run/tickSkip for the conditions and what a skip still does).
     const tick = await fetchSyncTick({ forceSync, allowSkip: syncOptions.startedByWebhook === true })
     if (tick.skipped) {
       syncInProgress = false
       return tick.result
     }
-    const { fileServers } = tick
-
     const importSettings = await getFileServerImportSettings()
     console.log('Import Settings:', importSettings)
 
@@ -869,7 +866,8 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     // Create admin-only sync completion notification
     try {
       // Determine server name - use first file server or default
-      const serverNames = Object.keys(fileServers);
+      // The servers that answered this tick's manifests
+      const serverNames = [...(tick.servers?.entries() ?? [])].filter(([, probe]) => probe.ok).map(([id]) => id);
       const serverName = serverNames.length > 0 ? serverNames[0] : 'Unknown Server';
       
       // The documents this run created (not updated), across every server

@@ -13,11 +13,11 @@ import clientPromise from '@src/lib/mongodb'
  *   - `state: 'running'` with a `syncRunId`: that pass started and has not
  *     recorded itself complete — it is still writing, or it did not complete;
  *   - `state: 'complete'`: what the last complete pass applied — each server's
- *     TV and movie payload ETags, the gate version, server set and process it
+ *     TV and movie manifest ETags (recordFormat 2), the gate version, server set and process it
  *     ran under, its syncRunId and how many documents carried that id.
  *
  * Only a complete record lets a tick skip. No document means nothing is on
- * record either: the next tick fetches in full.
+ * record either: the next tick does not skip, and its tick state is not used.
  */
 const APPLIED_PAYLOADS_ID = 'appliedPayloads'
 

@@ -25,11 +25,26 @@
  * those titles unapplied, so the next tick selects them again, whatever hash
  * their servers publish by then.
  *
+ * Only the run that holds the orchestration lock changes it, and once
+ * begun, only while the state still tracks that run: a run the lock watchdog
+ * released (it overran) may keep writing, and must neither begin nor record.
+ * syncAllServers drops the whole state when it releases a run's lock by force
+ * and when such a run finally ends, so the next tick passes over everything.
+ *
  * All title-keyed structures are Maps. Kept on globalThis so every bundle that
  * loads this module in the one process shares it.
  */
 
+import { getSyncLockHolder } from './runState'
+
 const KINDS = ['tv', 'movies']
+
+/** Whether `syncRunId` holds the orchestration lock. */
+const holdsLock = (syncRunId) => Boolean(syncRunId) && getSyncLockHolder()?.syncRunId === syncRunId
+
+/** Whether `syncRunId` may change `state`: it holds the lock, and the state is the current one and tracks it. */
+const tracks = (state, syncRunId) =>
+  holdsLock(syncRunId) && state === getTickState() && state?.lastRunId === syncRunId
 
 /**
  * @typedef {Object} TickState
@@ -46,7 +61,11 @@ export function getTickState() {
   return globalThis.__syncTickState ?? null
 }
 
-/** Drop the state (tests, and nothing else: an unusable state is replaced by the next `all` run). */
+/**
+ * Drop the state, so the next tick passes over every title. syncAllServers
+ * calls it when the lock watchdog releases a run, and when a run that lost its
+ * lock ends: that run's late writes are not in `applied`.
+ */
 export function resetTickState() {
   globalThis.__syncTickState = null
 }
@@ -101,9 +120,11 @@ export function whyStateUnusable(state, { record, bootId, gateVersion, serversFi
  * @param {string} run.serversFingerprint
  * @param {Map<string, {tv: Object, movies: Object}>} run.manifests - The answering servers' manifests
  * @param {{tv: Iterable<string>, movies: Iterable<string>}} run.selected
- * @returns {TickState}
+ * @returns {TickState|null} Null, and nothing changed, for a run that does not
+ *   hold the lock
  */
 export function beginRun({ syncRunId, mode, bootId, gateVersion, serversFingerprint, manifests, selected }) {
+  if (!holdsLock(syncRunId)) return null
   let state = getTickState()
   if (mode === 'all' || !state) {
     state = freshState({ bootId, gateVersion, serversFingerprint })
@@ -121,24 +142,32 @@ export function beginRun({ syncRunId, mode, bootId, gateVersion, serversFingerpr
 
 /**
  * A selected title's pass finished cleanly on every server that lists it.
+ * Ignored unless `syncRunId` still holds the lock and the state tracks it.
  *
  * @param {TickState} state
  * @param {'tv'|'movies'} kind
  * @param {string} title
  * @param {Map<string, string>} servers - Server id → the hash of the entry applied
+ * @param {string} syncRunId - The run recording it
+ * @returns {boolean} Whether it was recorded
  */
-export function recordApplied(state, kind, title, servers) {
+export function recordApplied(state, kind, title, servers, syncRunId) {
+  if (!tracks(state, syncRunId)) return false
   state.applied[kind].set(title, new Map(servers))
+  return true
 }
 
 /**
- * Forget the titles no answering server lists any more.
+ * Forget the titles no answering server lists any more. Ignored unless
+ * `syncRunId` still holds the lock and the state tracks it.
  *
  * @param {TickState} state
  * @param {'tv'|'movies'} kind
  * @param {Set<string>} listed
+ * @param {string} syncRunId - The run forgetting them
  */
-export function forgetUnlisted(state, kind, listed) {
+export function forgetUnlisted(state, kind, listed, syncRunId) {
+  if (!tracks(state, syncRunId)) return
   for (const title of [...state.applied[kind].keys()]) {
     if (!listed.has(title)) state.applied[kind].delete(title)
   }

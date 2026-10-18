@@ -16,10 +16,19 @@
  * title; and the one pool movies and shows go through.
  */
 
-const mockServers = [
-  { id: 'default', priority: 1 },
-  { id: 'server2', priority: 2 },
-]
+const serverConfig = (id, priority) => ({
+  id,
+  priority,
+  baseURL: `https://${id}.example`,
+  prefixPath: '',
+  syncEndpoint: `https://${id}-node.example`,
+})
+const mockServers = [serverConfig('default', 1), serverConfig('server2', 2)]
+// The file servers' manifests and entries (run/manifestSource), from the libraries a run serves
+const { createFakeProcessor } = require('../helpers/fakeProcessor')
+const mockProcessor = createFakeProcessor()
+// A message for the logger of a pass's TV phase to throw (a pass that throws between its movies and its shows)
+let mockFailTvPhase = null
 const mockDatabases = {}
 const mockLogLines = []
 const mockSideJobs = []
@@ -47,13 +56,21 @@ jest.mock('chalk', () => {
   const paint = new Proxy((text) => text, { get: () => paint })
   return { __esModule: true, default: paint }
 })
+jest.mock('@src/utils/sync/run/manifestSource', () => ({
+  ...jest.requireActual('@src/utils/sync/run/manifestSource'),
+  fetchManifest: (...args) => mockProcessor.fetchManifest(...args),
+  fetchEntries: (...args) => mockProcessor.fetchEntries(...args),
+}))
 jest.mock('@src/lib/logger', () => ({
-  createLogger: (component) => ({
+  createLogger: (component) => {
+    if (component === 'FlatSync.NewArch.TV' && mockFailTvPhase) throw new Error(mockFailTvPhase)
+    return {
     info: (obj, msg) => mockLogLines.push({ component, level: 'info', obj, msg }),
     warn: (obj, msg) => mockLogLines.push({ component, level: 'warn', obj, msg }),
     error: (obj, msg) => mockLogLines.push({ component, level: 'error', obj, msg }),
     debug: () => {},
-  }),
+    }
+  },
   logError: jest.fn(),
 }))
 // The real p-limit is an ES module jest does not transform; this one keeps its contract.
@@ -95,7 +112,6 @@ jest.mock('@src/lib/httpHelper', () => ({
   httpGet: jest.fn(async (url) => ({ data: `blurhash-of:${url}`, headers: { 'content-type': 'text/plain' } })),
 }))
 jest.mock('@src/utils/flatDatabaseUtils', () => ({ generateNormalizedVideoId: (url) => `nid:${url}` }))
-jest.mock('@src/utils/fetchAllServerData', () => ({ fetchAllServerData: jest.fn() }))
 jest.mock('@src/utils/sync/run/preTag', () => ({ preTagSyncRunId: jest.fn() }))
 jest.mock('@src/utils/sync/run/missingMedia', () => ({
   computeMissingMedia: jest.fn(async () => ({ missingMovies: [], missingTVShows: [] })),
@@ -145,6 +161,7 @@ jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({
 
 const isEqual = require('lodash/isEqual')
 const { syncAllServers } = require('@src/utils/sync/run/syncAllServers')
+const { probeServers } = require('@src/utils/sync/run/manifestTick')
 const { getSyncLockHolder, releaseSyncLock } = require('@src/utils/sync/run/runState')
 const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
 const { ResourceManager } = require('@src/utils/sync/core/ResourceManager')
@@ -368,24 +385,42 @@ async function settled() {
 }
 
 /**
- * One run. `baselineStarted`: the database's announced-titles set was
- * started on an earlier run (run/newContent); without it, the first run on the
- * database starts it and announces nothing.
+ * One run, reached the way a tick reaches it: the servers `fileServers` names
+ * are the enabled ones, each serving the library it gives through its manifest
+ * and entries (run/manifestSource, faked), and the run is an `all` tick,
+ * passing over every title as a full pass does. `fileServers[id].config` is
+ * that server's config for the run. With `allEnabledServersProbed: false` the
+ * other configured servers are enabled too, and did not answer. `baselineStarted`:
+ * the database's announced-titles set was started on an earlier run
+ * (run/newContent); without it, the first run on the database starts it and
+ * announces nothing. `tick` replaces the tick the run is handed.
  */
-async function runSync(fileServers, { baselineStarted = false, allEnabledServersProbed = true, forceSync = false } = {}) {
+async function runSync(fileServers, { baselineStarted = false, allEnabledServersProbed = true, forceSync = false, tick = null } = {}) {
   if (baselineStarted) {
     const flags = mockCollection('app_config', 'migrations')
     if (!flags.docs.some((d) => d._id === 'new-content-baseline')) flags.docs.push({ _id: 'new-content-baseline' })
   }
-  // The tick fetchSyncTick hands over; a server that did not answer is in `errors`
-  const tick = {
-    fileServers,
-    errors: allEnabledServersProbed ? undefined : [{ serverId: 'down', error: 'did not answer' }],
-    etags: ETAGS,
+  // The enabled servers for the run: those fileServers names, with the config
+  // it gives them, and, when not every server answered, the others, down
+  const saved = [...mockServers]
+  const enabled = saved
+    .filter((server) => fileServers[server.id] || !allEnabledServersProbed)
+    .map((server) => (fileServers[server.id]?.config ? { ...fileServers[server.id].config, id: server.id } : server))
+  mockServers.splice(0, mockServers.length, ...enabled)
+  mockProcessor.reset()
+  for (const server of enabled) {
+    mockProcessor.serve(server.id, fileServers[server.id] ?? {})
+    if (!fileServers[server.id]) mockProcessor.server(server.id).down = true
   }
-  const result = await syncAllServers(tick, { forceSync })
-  await settled()
-  return result
+  try {
+    const probes = await probeServers(mockServers, null)
+    const errors = [...probes].filter(([, probe]) => !probe.ok).map(([serverId, probe]) => ({ serverId, error: probe.error }))
+    const result = await syncAllServers(tick ?? { mode: 'all', servers: probes, errors: errors.length > 0 ? errors : undefined }, { forceSync })
+    await settled()
+    return result
+  } finally {
+    mockServers.splice(0, mockServers.length, ...saved)
+  }
 }
 
 const oneServer = ({ movies = { [MOVIE]: moviePayload() }, tv = { [SHOW]: showPayload() }, ...configOverrides } = {}) => ({
@@ -1164,20 +1199,18 @@ describe('errors', () => {
   })
 
   it('a pass that throws after its movies has already handed the run what it wrote', async () => {
-    // The TV payload cannot be listed once the movie is written: the pass
-    // throws between its movies and its shows, out of reach of the per-title
-    // catch. (Before the pass, the run reads the keys of every payload for
-    // pre-tag and fieldAvailability; they read as no shows.)
-    const unreadable = new Proxy({}, {
-      ownKeys() {
-        if (docs('FlatMovies').length > 0) throw new Error('TV payload unreadable')
-        return []
-      },
-    })
+    // The pass throws between its movies and its shows (as it starts its TV
+    // phase), out of reach of the per-title catch.
+    mockFailTvPhase = 'TV payload unreadable'
     const movie = playableMovie()
-    const fileServers = oneServer({ movies: { [MOVIE]: movie }, tv: unreadable })
+    const fileServers = oneServer({ movies: { [MOVIE]: movie } })
 
-    const result = await runSync(fileServers, { baselineStarted: true })
+    let result
+    try {
+      result = await runSync(fileServers, { baselineStarted: true })
+    } finally {
+      mockFailTvPhase = null
+    }
 
     expect(result.errors).toEqual([expect.objectContaining({ serverId: 'default', error: 'TV payload unreadable' })])
     expect(result.flatSyncResults?.default).toBeUndefined()
@@ -1247,16 +1280,19 @@ describe('onTitleFinished: what the pass tells the run about each title', () => 
 
 describe('the pass inputs the run builds under its lock', () => {
   it('fail closed when they cannot be built: no pass, no delete, nothing recorded', async () => {
-    const unreadable = new Proxy({}, {
-      ownKeys() {
-        throw new Error('movie payload unreadable')
-      },
-    })
     mockCollection('Media', 'FlatMovies').docs.push({ _id: 'orphan', originalTitle: 'Orphan (1999)', syncRunId: 'old', updatedAt: new Date(0) })
+    // A probe whose manifests cannot be read
+    const broken = { mode: 'all', servers: new Map([['default', { ok: true, manifests: { tv: null, movies: null } }]]) }
 
-    const result = await runSync(oneServer({ movies: unreadable }), { baselineStarted: true })
+    const result = await runSync(oneServer(), { baselineStarted: true, tick: broken })
 
-    expect(result.errors).toEqual([expect.objectContaining({ phase: 'pass_inputs', error: 'movie payload unreadable' })])
+    expect(result.errors).toEqual([expect.objectContaining({ phase: 'pass_inputs' })])
+    // Cleanup (stood in for here) is handed no listing and the every-server
+    // flag off: its own gates then delete nothing (postSyncCleanupDeleteGate)
+    const { runPostSyncCleanup } = require('@src/utils/sync/run/postSync')
+    const [listings, , cleanupOptions] = runPostSyncCleanup.mock.calls.at(-1)
+    expect(listings.size).toBe(0)
+    expect(cleanupOptions.allEnabledServersProbed).toBe(false)
     expect(result.flatSyncResults).toBeUndefined()
     expect(docs('FlatMovies').map((d) => d._id)).toEqual(['orphan'])
     expect(docs('FlatTVShows')).toHaveLength(0)

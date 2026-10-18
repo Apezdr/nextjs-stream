@@ -2,11 +2,10 @@
  * @jest-environment node
  *
  * POST /api/authenticated/admin/sync starts a sync tick and answers 202; the
- * tick runs in the background. A tick whose payloads are unchanged ends at the
- * conditional fetch (fetchSyncTick): no fieldAvailability, no pass, and no
- * admin "sync complete" notification. Any other tick hands the run the tick
- * itself: its payloads, which servers did not answer and the ETags to record
- * when the pass completes.
+ * tick runs in the background. A tick whose manifests are unchanged ends at the
+ * conditional probe (fetchSyncTick): no entries, no fieldAvailability, no pass,
+ * and no admin "sync complete" notification. Any other tick hands the run the
+ * tick itself: its mode and every server's manifest probe.
  */
 
 const mockFetchSyncTick = jest.fn()
@@ -95,7 +94,17 @@ async function untilIdle() {
   throw new Error('the sync tick never settled')
 }
 
-const ETAGS = { default: { tv: 'W/"tv-2"', movies: '"movies-1"' } }
+/** A tick fetchSyncTick hands on: the default server answered its manifests, server2 did not. */
+const runningTick = (mode = 'select') => ({
+  skipped: false,
+  mode,
+  servers: new Map([
+    ['default', { ok: true, statuses: { tv: 200, movies: 304 } }],
+    ['server2', { ok: false, error: 'down' }],
+  ]),
+  errors: [{ serverId: 'server2', error: 'down' }],
+  reason: 'a manifest changed or a server did not answer',
+})
 
 beforeEach(() => {
   mockFetchSyncTick.mockReset()
@@ -112,7 +121,7 @@ afterEach(() => {
 })
 
 it('ends a skipped tick before the pass, with no admin notification', async () => {
-  mockFetchSyncTick.mockResolvedValue({ skipped: true, result: { skipped: true, reason: 'payloads_unchanged' } })
+  mockFetchSyncTick.mockResolvedValue({ skipped: true, result: { skipped: true, reason: 'manifests_unchanged' } })
 
   const response = await startSync()
   expect(response.status).toBe(202)
@@ -128,26 +137,22 @@ it('ends a skipped tick before the pass, with no admin notification', async () =
   expect(console.error).not.toHaveBeenCalledWith('Sync operation failed:', expect.anything())
 })
 
-it('runs the pass on a tick that is not skipped, with the ETags of the payloads it fetched', async () => {
-  const fileServers = { default: { config: { priority: 1 }, movies: { 'Movie A': {} }, tv: {} } }
-  mockFetchSyncTick.mockResolvedValue({ skipped: false, fileServers, errors: undefined, etags: ETAGS })
+it('hands a tick that is not skipped to the run as it is', async () => {
+  const tick = runningTick()
+  mockFetchSyncTick.mockResolvedValue(tick)
 
   await startSync()
   await untilIdle()
 
   expect(mockSyncAllServers).toHaveBeenCalledTimes(1)
-  // The run builds fieldAvailability and the every-server flag from the tick, under its lock
-  expect(mockSyncAllServers).toHaveBeenCalledWith(
-    expect.objectContaining({ fileServers, errors: undefined, etags: ETAGS }),
-    { forceSync: false }
-  )
+  // The run selects, fetches entries and builds its inputs from the tick, under its lock
+  expect(mockSyncAllServers).toHaveBeenCalledWith(tick, { forceSync: false })
   expect(mockNotify).toHaveBeenCalledTimes(1)
   expect(console.error).not.toHaveBeenCalledWith('Sync operation failed:', expect.anything())
 })
 
 it('tells the admins what the run added: the documents its passes created, per kind', async () => {
-  const fileServers = { default: { config: { priority: 1 }, movies: { 'Movie A': {} }, tv: {} } }
-  mockFetchSyncTick.mockResolvedValue({ skipped: false, fileServers, errors: undefined, etags: ETAGS })
+  mockFetchSyncTick.mockResolvedValue(runningTick())
   mockSyncAllServers.mockResolvedValue({
     errors: [],
     changedMedia: { movies: ['Movie A', 'Movie B'], shows: ['Show A'], seasons: [], episodes: [] },
@@ -167,13 +172,13 @@ it('tells the admins what the run added: the documents its passes created, per k
 
 it('never lets a sync started from the admin UI skip; the per-title gates still apply', async () => {
   // A UI request carries no X-Webhook-ID: it was authenticated as an admin
-  const fileServers = { default: { config: { priority: 1 }, movies: {}, tv: { 'Show A': {} } } }
-  mockFetchSyncTick.mockResolvedValue({ skipped: false, fileServers, errors: undefined, etags: ETAGS })
+  const tick = runningTick('all')
+  mockFetchSyncTick.mockResolvedValue(tick)
 
   await startSync({ webhook: false })
   await untilIdle()
 
   expect(mockFetchSyncTick).toHaveBeenCalledWith({ forceSync: false, allowSkip: false })
   // Not forced: titles whose gates match are still skipped inside the pass
-  expect(mockSyncAllServers).toHaveBeenCalledWith(expect.objectContaining({ fileServers }), { forceSync: false })
+  expect(mockSyncAllServers).toHaveBeenCalledWith(tick, { forceSync: false })
 })

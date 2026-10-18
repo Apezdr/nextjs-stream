@@ -1,13 +1,11 @@
 /**
  * Skipping sync ticks that would change nothing.
  *
- * Most ticks find the file servers exactly as the last pass left them, yet a
- * full pass downloads and parses every payload and rebuilds fieldAvailability
- * before the per-title gates (core/syncGate) skip every title. A tick is
- * skipped instead — two conditional GETs per server, no parse, no pass, no
- * post-sync cleanup — when all of these hold:
+ * Most ticks find the file servers exactly as the last pass left them. A tick
+ * is skipped — two conditional manifest GETs per server (run/manifestTick), no
+ * entries, no pass, no post-sync cleanup — when all of these hold:
  *
- *   1. forceSync is off;
+ *   1. forceSync is off, and the tick was not started from the admin UI;
  *   2. a complete pass is on record (`app_config.syncInfo`, see sync/appliedPayloads)
  *      under the current SYNC_GATE_VERSION, the current server set and
  *      priorities (ownership follows priority; a deploy that changes the write
@@ -27,7 +25,14 @@
  *   4. no document that pass covered lacks an enabled server's gate: an admin
  *      edit, a removal held back, a failed title or a pass that changed a
  *      document all leave a gate open, and only a pass closes it;
- *   5. every enabled server answers 304 for both payloads.
+ *   5. this process's tick state (run/tickState) tracks that pass, and selects
+ *      no title on its own (rules R1, R2 and R7 of run/selectTitles);
+ *   6. every enabled server answers 304 for both manifests, to the ETags that
+ *      pass recorded.
+ *
+ * Any other tick runs: in `select` mode it passes over only the titles
+ * run/selectTitles picks, in `all` mode (no usable tick state, forceSync, a
+ * sync started from the admin UI) over every title.
  *
  * "Covered by that pass" is the pass's syncRunId: pre-tag and every write
  * stamp it on each document a server has. Manual entries no server has are
@@ -35,7 +40,7 @@
  *
  * A pass replaces the record with its running marker when it starts, and
  * turns that marker into a complete record only when the pass completed for
- * every server — so a failed or partial pass is retried with a full fetch.
+ * every server — so a failed or partial pass is followed by another pass.
  * A Flat* delete outside the sync removes the record (forgetAppliedPayloads):
  * after a pass, so the next tick runs one; during a pass, so that pass, whose
  * counts may be taken after the delete, cannot record itself.
@@ -44,7 +49,6 @@
 import { randomUUID } from 'crypto'
 import clientPromise from '@src/lib/mongodb'
 import { getAllServers } from '@src/utils/config'
-import { fetchAllServerData } from '@src/utils/fetchAllServerData'
 import { migratePlaybackStatusIfNeeded } from '@src/utils/watchHistory/migrate'
 import { validateWatchHistoryIfDue } from './validateWatchHistory'
 import { cleanupOrphanFilter } from './orphanFilter'
@@ -54,9 +58,19 @@ import { syncEventBus } from '@src/utils/sync/core/events'
 import { MediaType, SyncOperation } from '@src/utils/sync/core/types'
 import { updateLastSynced } from './lastSynced'
 import { getAppliedPayloads, markPassRunning, setAppliedPayloads } from './appliedPayloads'
+import { getTickState, whyStateUnusable } from './tickState'
+import { stateRules } from './selectTitles'
+import { probeServers, logProbeFailures, formatProbeStatuses, tickPerfLine, probePerf } from './manifestTick'
 
-/** The payloads each server publishes. */
+/** The kinds each server publishes a manifest for. */
 const PAYLOAD_KINDS = ['tv', 'movies']
+
+/**
+ * The shape of the record a complete pass writes: 2 = manifest ETags. A record
+ * of another shape (the payload ETags before it) never lets a tick skip; the
+ * next complete pass writes this one over it.
+ */
+export const RECORD_FORMAT = 2
 
 /**
  * This process's id, new on every start. Kept on globalThis so every bundle
@@ -168,6 +182,7 @@ export async function whyTickNotSkippable({ db, record, servers, forceSync }) {
   if (forceSync) return 'force sync requested'
   if (!record?.syncRunId) return 'no complete pass on record'
   if (record.state !== 'complete') return 'the last pass is still running or did not complete'
+  if (record.recordFormat !== RECORD_FORMAT) return 'the last complete pass was recorded by an older sync (no manifest ETags)'
   if (record.bootId !== currentBootId()) return 'first tick since the app started'
   if (record.gateVersion !== SYNC_GATE_VERSION) {
     return `gate version changed (${record.gateVersion} -> ${SYNC_GATE_VERSION})`
@@ -206,47 +221,80 @@ export async function whyTickNotSkippable({ db, record, servers, forceSync }) {
   return null
 }
 
-/** `default tv=304 movies=304, server2 tv=200 movies=304` */
-function formatStatuses(servers, statuses) {
-  return servers
-    .map((server) => {
-      const s = statuses?.[server.id]
-      return s ? `${server.id} ${PAYLOAD_KINDS.map((kind) => `${kind}=${s[kind]}`).join(' ')}` : `${server.id} failed`
-    })
-    .join(', ')
+/** What run/tickState's usability is checked against: the record and this process. */
+function tickIdentity(record, servers) {
+  return {
+    record,
+    bootId: currentBootId(),
+    gateVersion: SYNC_GATE_VERSION,
+    serversFingerprint: serversFingerprint(servers),
+  }
 }
 
 /**
- * Fetch the file servers' payloads for a sync tick, conditionally when the
- * tick could be skipped, and skip it when nothing changed (see the module
- * comment).
+ * The tick's mode as it stands once the run holds the lock (before it writes
+ * its marker): a `select` tick becomes `all` when the tick state no longer
+ * tracks the run on record (a run in between threw before it reached the
+ * state, or another process ran). Never throws: a record it cannot read makes
+ * the tick `all`.
  *
- * A skip takes no lock and writes no Flat* document: it never reaches
- * syncAllServers, so it neither holds the orchestration lock nor schedules
- * post-sync cleanup. What it still does, and why:
- *   - updates `syncInfo.lastSyncTime`, which the admin UI shows as the last
- *     sync: the tick did confirm the database matches every server;
- *   - runs migratePlaybackStatusIfNeeded: once per process, it creates the
- *     WatchHistory indexes playback writes rely on, and a process whose
- *     ticks all skip would otherwise never create them;
- *   - validates watch history when it is due (run/validateWatchHistory): not
- *     for removals, since nothing in the library changed, but because
- *     WatchHistory changes without the payloads changing (the player marks a
- *     record invalid when a HEAD request fails, a network blip included), and
- *     the validation is what marks it valid again. At most once every 15
- *     minutes, not on every tick;
- *   - emits the sync's start and complete events, so an admin's sync popup
- *     closes.
+ * @param {Object} client - MongoDB client
+ * @param {{mode: 'all'|'select'}} tick
+ * @returns {Promise<'all'|'select'>}
+ */
+export async function confirmTickMode(client, tick) {
+  if (tick?.mode !== 'select') return 'all'
+  try {
+    const record = await getAppliedPayloads(client)
+    return whyStateUnusable(getTickState(), tickIdentity(record, getAllServers())) ? 'all' : 'select'
+  } catch (error) {
+    console.error(`[SYNC] Could not confirm the tick's mode, passing over every title: ${error.message}`)
+    return 'all'
+  }
+}
+
+/**
+ * Why the held manifests, which every server just confirmed with a 304, do
+ * not let the tick skip: they are not the ones the complete pass on record
+ * applied, or they select a title on their own (R1, R2, R7). Null when they
+ * let it skip.
+ */
+function whyStateDiffers(state, record, servers) {
+  for (const server of servers) {
+    for (const kind of PAYLOAD_KINDS) {
+      const etag = state.manifests.get(server.id)?.[kind]?.etag
+      if (!etag || etag !== record.servers?.[server.id]?.[kind]) {
+        return `${server.id}'s ${kind} manifest is not the one the last complete pass recorded`
+      }
+    }
+  }
+  const manifests = new Map(servers.map((server) => [server.id, state.manifests.get(server.id)]))
+  const pending = stateRules({ manifests, applied: state.applied, held: state.manifests })
+  const count = pending.tv.size + pending.movies.size
+  return count > 0 ? `${count} title(s) pending in the tick state` : null
+}
+
+/**
+ * Probe the file servers' manifests for a sync tick, and skip the tick when
+ * nothing changed (see the module comment).
+ *
+ * A skip takes no lock and writes no Flat* document. What it still does: it
+ * updates `syncInfo.lastSyncTime` (the admin UI's last sync), runs
+ * migratePlaybackStatusIfNeeded (once per process: the WatchHistory indexes),
+ * validates watch history when due (at most every 15 minutes: WatchHistory
+ * changes without the library changing), and emits the sync's start and
+ * complete events, so an admin's sync popup closes.
  *
  * @param {Object} [options]
  * @param {boolean} [options.forceSync=false]
  * @param {boolean} [options.allowSkip=true] - false for a sync an admin
- *   started from the UI: it always runs the full pass (the per-title gates
- *   still apply), so the admin gets the pass's report
+ *   started from the UI: it always passes over every title (the per-title
+ *   gates still apply), so the admin gets the whole report
  * @returns {Promise<
  *   { skipped: true, result: Object } |
- *   { skipped: false, fileServers: Object, errors: Array|undefined, etags: Object, statuses: Object, reason: string }
- * >} `errors` is undefined when every server answered, never an empty array.
+ *   { skipped: false, mode: 'all'|'select', servers: Map<string, Object>, errors: Array|undefined, reason: string }
+ * >} `servers` holds each enabled server's manifest probe (run/manifestTick);
+ *   `errors` is undefined when every server answered, never an empty array.
  */
 export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}) {
   const startedAt = Date.now()
@@ -255,36 +303,47 @@ export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}
   const db = client.db('Media')
 
   let record = null
-  let blocker = allowSkip ? null : 'started from the admin UI (only webhook ticks skip)'
-  if (!blocker) {
+  let blocker = null
+  try {
+    record = await getAppliedPayloads(client)
+  } catch (error) {
+    blocker = `skip check failed: ${error.message}`
+  }
+  const state = getTickState()
+  const stateProblem = blocker ?? whyStateUnusable(state, tickIdentity(record, servers))
+  const mode = forceSync || !allowSkip || stateProblem ? 'all' : 'select'
+
+  if (!allowSkip) blocker = 'started from the admin UI (only webhook ticks skip)'
+  else if (forceSync) blocker = 'force sync requested'
+  else if (stateProblem) blocker = stateProblem
+  else {
     try {
-      record = await getAppliedPayloads(client)
-      blocker = await whyTickNotSkippable({ db, record, servers, forceSync: Boolean(forceSync) })
+      blocker = await whyTickNotSkippable({ db, record, servers, forceSync: false })
     } catch (error) {
       blocker = `skip check failed: ${error.message}`
     }
   }
 
-  const fetched = await fetchAllServerData(blocker ? {} : { validators: record.servers })
-  const statusLine = formatStatuses(servers, fetched.statuses)
+  const probes = await probeServers(servers, mode === 'select' ? state.manifests : null)
+  logProbeFailures(probes)
+  const statusLine = formatProbeStatuses(probes)
+  const unchanged = [...probes.values()].every((probe) => probe.ok && probe.statuses.tv === 304 && probe.statuses.movies === 304)
 
-  if (!fetched.notModified) {
-    const reason = blocker || 'a payload changed or a server did not answer'
-    console.info(`[SYNC] Full pass: ${reason} [${statusLine}]`)
-    return {
-      skipped: false,
-      fileServers: fetched.fileServers,
-      errors: fetched.errors.length > 0 ? fetched.errors : undefined,
-      etags: fetched.etags,
-      statuses: fetched.statuses,
-      reason,
-    }
+  const reason =
+    blocker ||
+    (unchanged ? whyStateDiffers(state, record, servers) : 'a manifest changed or a server did not answer')
+  if (reason) {
+    console.info(`[SYNC] Pass (${mode}): ${reason} [${statusLine}]`)
+    const errors = [...probes].filter(([, probe]) => !probe.ok).map(([serverId, probe]) => ({ serverId, error: probe.error }))
+    return { skipped: false, mode, servers: probes, errors: errors.length > 0 ? errors : undefined, reason }
   }
 
-  const decisionMs = Date.now() - startedAt
   console.info(
-    `[SYNC] Tick skipped: every payload unchanged and every gate stamped [${statusLine}] (${decisionMs}ms)`
+    `[SYNC] Tick skipped: every manifest unchanged and every gate stamped [${statusLine}] (${Date.now() - startedAt}ms)`
   )
+  const none = { tv: new Map(), movies: new Map() }
+  const manifests = new Map(servers.map((server) => [server.id, state.manifests.get(server.id)]))
+  console.info(tickPerfLine({ kind: 'skip', selected: none, manifests, perf: probePerf(probes) }))
 
   try {
     syncEventBus.emitStarted('__sync_warmup__', MediaType.Movie, 'server-all')
@@ -304,8 +363,8 @@ export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}
   const result = {
     syncRunId: null,
     skipped: true,
-    reason: 'payloads_unchanged',
-    servers: fetched.statuses,
+    reason: 'manifests_unchanged',
+    servers: Object.fromEntries([...probes].map(([serverId, probe]) => [serverId, probe.statuses])),
     lastCompleteSyncRunId: record.syncRunId,
     errors: [],
     missingMedia: {},
@@ -325,6 +384,7 @@ export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}
 
   return { skipped: true, result }
 }
+
 
 /**
  * Replace the record with this pass's running marker. Called when a pass
@@ -411,8 +471,8 @@ export function incompletePassReasons({ results, preTagResult, fileServers, allE
 
 /**
  * Record the pass that just ran as the last complete pass, if it was one, so
- * the next tick may send its payloads' ETags and skip. Never throws: a pass
- * that is not recorded just means the next tick fetches in full.
+ * the next tick may send its manifests' ETags and skip. Never throws: a pass
+ * that is not recorded just means the next tick does not skip.
  *
  * @param {Object} args
  * @param {Object} args.client - MongoDB client
@@ -421,8 +481,8 @@ export function incompletePassReasons({ results, preTagResult, fileServers, allE
  * @param {Object|null} args.preTagResult
  * @param {Object} args.fileServers
  * @param {boolean} args.allEnabledServersProbed
- * @param {Object<string, {tv: string|null, movies: string|null}>|undefined} args.payloadETags -
- *   The ETags of the payloads this pass applied (from fetchSyncTick)
+ * @param {Object<string, {tv: string|null, movies: string|null}>|undefined} args.manifestETags -
+ *   Per server, the ETags of the manifests this pass used (run/manifestTick)
  * @returns {Promise<boolean>} Whether the pass was recorded
  */
 export async function recordCompletePass({
@@ -432,19 +492,19 @@ export async function recordCompletePass({
   preTagResult,
   fileServers,
   allEnabledServersProbed,
-  payloadETags,
+  manifestETags,
 }) {
   try {
-    if (!payloadETags) return false
+    if (!manifestETags) return false
     const servers = getAllServers()
     const reasons = incompletePassReasons({ results, preTagResult, fileServers, allEnabledServersProbed })
     for (const server of servers) {
-      const etags = payloadETags[server.id]
+      const etags = manifestETags[server.id]
       const missing = PAYLOAD_KINDS.filter((kind) => !etags?.[kind])
-      if (missing.length > 0) reasons.push(`${server.id} sent no ETag for ${missing.join(' and ')}`)
+      if (missing.length > 0) reasons.push(`${server.id} has no manifest ETag for ${missing.join(' and ')}`)
     }
     if (reasons.length > 0) {
-      console.info(`[SYNC] Pass not recorded as complete, next tick fetches in full: ${reasons.join('; ')}`)
+      console.info(`[SYNC] Pass not recorded as complete, the next tick does not skip: ${reasons.join('; ')}`)
       return false
     }
 
@@ -454,10 +514,11 @@ export async function recordCompletePass({
       return false
     }
     const recorded = await setAppliedPayloads(client, syncRunId, {
+      recordFormat: RECORD_FORMAT,
       servers: Object.fromEntries(
         servers.map((server) => [
           server.id,
-          Object.fromEntries(PAYLOAD_KINDS.map((kind) => [kind, payloadETags[server.id][kind]])),
+          Object.fromEntries(PAYLOAD_KINDS.map((kind) => [kind, manifestETags[server.id][kind]])),
         ])
       ),
       gateVersion: SYNC_GATE_VERSION,
@@ -467,7 +528,7 @@ export async function recordCompletePass({
     })
     if (!recorded) {
       console.info(
-        '[SYNC] Pass not recorded as complete, next tick fetches in full: ' +
+        '[SYNC] Pass not recorded as complete, the next tick does not skip: ' +
         'its running marker is gone or replaced (a Flat* document was deleted outside the sync during the pass)'
       )
     }

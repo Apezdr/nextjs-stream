@@ -89,36 +89,14 @@ const VERSION_LABELS = { tv: 'TV', movies: 'Movies' };
 const EXPECTED_VERSIONS = { tv: fileServerVersionTV, movies: fileServerVersionMOVIES };
 
 /**
- * Headers for one payload request. With a validator (the ETag of the payload
- * last applied, exactly as the server sent it) the request is conditional:
- * If-None-Match plus `Cache-Control: max-age=0`. The second header is not
- * optional: Node's fetch adds `Cache-Control: no-cache` to any request that
- * carries If-None-Match, and Express never answers 304 to no-cache.
- *
- * @param {Object} baseHeaders
- * @param {string|null|undefined} validator
- * @returns {Object}
- */
-function payloadRequestHeaders(baseHeaders, validator) {
-  if (!validator) return baseHeaders;
-  return { ...baseHeaders, 'If-None-Match': validator, 'Cache-Control': 'max-age=0' };
-}
-
-/**
  * Fetches data from a specific server with retry logic and timeout.
  * @param {Object} server - Server configuration.
  * @param {number} timeoutMs - Timeout in milliseconds (default: 10000).
  * @param {number} maxRetries - Maximum number of retry attempts (default: 3).
- * @param {Object} [request]
- * @param {{tv?: string, movies?: string}|null} [request.validators] - ETags to
- *   send as If-None-Match; a payload without one is fetched unconditionally.
- * @param {string[]} [request.kinds] - Which payloads to fetch (default both).
- * @returns {Promise<Object>} Server data. `payloads[kind]` holds the status
- *   (200, or 304 for an unchanged payload, which has no data), the ETag and
- *   the parsed data; `data` holds `{ tv, movies }` when both were fetched.
+ * @returns {Promise<Object>} Server data: `data` holds `{ tv, movies }`.
  */
-async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3, request = {}) {
-  const { validators = null, kinds = PAYLOAD_KINDS } = request;
+async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3) {
+  const kinds = PAYLOAD_KINDS;
   const syncUrls = getSyncUrls(server.id);
   let lastError = null;
   
@@ -164,7 +142,7 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3, reques
         kinds.map((kind) =>
           fetchWithTimeout(
             syncUrls[kind],
-            { headers: payloadRequestHeaders(headers, validators?.[kind]) },
+            { headers },
             timeoutMs
           )
         )
@@ -175,11 +153,8 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3, reques
         kinds.map((kind, i) => `${PAYLOAD_LABELS[kind]}: ${responses[i].status}`).join(', ')
       );
 
-      // 304 is an answer only to a conditional request: the payload is the one
-      // last applied, and the response has no body.
-      const notModified = kinds.map((kind, i) => responses[i].status === 304 && Boolean(validators?.[kind]));
       kinds.forEach((kind, i) => {
-        if (notModified[i] || responses[i].ok) return;
+        if (responses[i].ok) return;
         const error = new Error(`Failed to fetch ${PAYLOAD_LABELS[kind]} data from ${syncUrls[kind]}: ${responses[i].status} ${responses[i].statusText}`);
         error.status = responses[i].status;
         throw error;
@@ -191,18 +166,12 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3, reques
       // combined duration. Parsing the two payloads with a yield in between
       // halves the longest block, and the timing log quantifies whether a
       // worker-thread offload is warranted (sync-tick stall follow-up).
-      const texts = await Promise.all(
-        responses.map((response, i) => (notModified[i] ? null : response.text()))
-      );
+      const texts = await Promise.all(responses.map((response) => response.text()));
 
       const parseStart = performance.now();
       const parsed = [];
       for (let i = 0; i < kinds.length; i++) {
-        if (texts[i] === null) {
-          parsed.push(null);
-          continue;
-        }
-        if (parsed.some((data) => data !== null)) {
+        if (i > 0) {
           await new Promise((resolve) => setImmediate(resolve));
         }
         const data = JSON.parse(texts[i]);
@@ -215,35 +184,22 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3, reques
         }
         parsed.push(data);
       }
-      if (texts.some((text) => text !== null)) {
-        console.log(
-          `[SYNC PERF] ${server.id}: parsed ` +
-          kinds
-            .map((kind, i) => (texts[i] === null ? `${kind}=304` : `${kind}=${(texts[i].length / 1048576).toFixed(1)}MB`))
-            .join(' + ') +
-          ` in ${(performance.now() - parseStart).toFixed(0)}ms`
-        );
-      }
+      console.log(
+        `[SYNC PERF] ${server.id}: parsed ` +
+        kinds.map((kind, i) => `${kind}=${(texts[i].length / 1048576).toFixed(1)}MB`).join(' + ') +
+        ` in ${(performance.now() - parseStart).toFixed(0)}ms`
+      );
 
-      const payloads = {};
+      const data = {};
       kinds.forEach((kind, i) => {
-        const data = parsed[i];
-        if (data !== null) {
-          if (data.version !== EXPECTED_VERSIONS[kind]) {
-            console.error(
-              `${VERSION_LABELS[kind]} data version mismatch: ${data.version ?? "no version"} not equal to expected ${EXPECTED_VERSIONS[kind]} (${syncUrls[kind]})`
-            );
-          }
-          // Remove version keys before returning the data.
-          delete data.version;
+        if (parsed[i].version !== EXPECTED_VERSIONS[kind]) {
+          console.error(
+            `${VERSION_LABELS[kind]} data version mismatch: ${parsed[i].version ?? "no version"} not equal to expected ${EXPECTED_VERSIONS[kind]} (${syncUrls[kind]})`
+          );
         }
-        payloads[kind] = {
-          status: notModified[i] ? 304 : responses[i].status,
-          // Kept verbatim (weak or strong) and sent back as it came. A 304
-          // confirms the validator that was sent, so that one is kept.
-          etag: notModified[i] ? validators[kind] : (responses[i].headers.get('etag') || null),
-          data,
-        };
+        // Remove version keys before returning the data.
+        delete parsed[i].version;
+        data[kind] = parsed[i];
       });
 
       if (attempt > 0) {
@@ -256,10 +212,7 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3, reques
         prefixPath: server.prefixPath,
         syncEndpoint: server.syncEndpoint,  // Node.js server URL for API endpoints
         priority: server.priority,
-        payloads,
-        data: payloads.tv?.data != null && payloads.movies?.data != null
-          ? { tv: payloads.tv.data, movies: payloads.movies.data }
-          : null
+        data,
       };
     } catch (error) {
       lastError = error;
@@ -288,70 +241,24 @@ async function fetchServerData(server, timeoutMs = 10000, maxRetries = 3, reques
 }
 
 /**
- * Fetches data from all configured servers and organizes the results.
+ * Fetches every configured server's whole TV and movie payloads.
  *
- * With `options.validators` the payload requests are conditional (see
- * payloadRequestHeaders). When every server answers 304 for both payloads,
- * nothing is downloaded or parsed and the result says `notModified: true`.
- * Otherwise the payloads that answered 304 are fetched again without
- * If-None-Match: a pass decides ownership across every server's payload, so it
- * needs all of them, not just the ones that changed.
+ * The sync no longer reads these (it reads the manifests and entries,
+ * sync/run/manifestTick); src/utils/sync_verification.js still does, until
+ * Step P removes GET /media/<kind>.
  *
  * @async
  * @function fetchAllServerData
- * @param {Object} [options]
- * @param {Object<string, {tv?: string, movies?: string}>} [options.validators] -
- *   Per server id, the ETags of the payloads last applied. Omit for an
- *   unconditional fetch (every caller other than the sync tick).
  * @returns {Promise<Object>} A promise that resolves to an object containing:
  *   - `fileServers` {Object}: A mapping of server IDs to their respective data and configuration.
  *   - `errors` {Array<Object>}: An array of errors from failed servers, where each error object contains:
  *       - `serverId` {string}: The ID of the server that failed.
  *       - `error` {string}: The error encountered while fetching data from the server.
- *   - `notModified` {boolean}: true when every server answered 304 for both
- *       payloads (then `fileServers` is empty).
- *   - `statuses` {Object}: per server id, `{ tv, movies }` — the status each
- *       payload first answered with (304 = unchanged); servers that failed are absent.
- *   - `etags` {Object}: per server id, `{ tv, movies }` — the ETag of the
- *       payload in `fileServers` (or of the unchanged one), null when the
- *       server sent none; servers that failed are absent.
  * @throws {Error} If an unexpected error occurs during the data fetching process.
  */
-export async function fetchAllServerData(options = {}) {
-  const validators = options.validators || null;
+export async function fetchAllServerData() {
   const servers = getAllServers();
-  let serverResults = await Promise.all(
-    servers.map((server) =>
-      fetchServerData(server, undefined, undefined, { validators: validators?.[server.id] || null })
-    )
-  );
-
-  const statuses = {};
-  for (const result of serverResults) {
-    if (result.payloads) {
-      statuses[result.id] = Object.fromEntries(PAYLOAD_KINDS.map((kind) => [kind, result.payloads[kind].status]));
-    }
-  }
-
-  const allNotModified = Boolean(validators) && serverResults.length > 0 &&
-    serverResults.every((result) => !result.error && PAYLOAD_KINDS.every((kind) => result.payloads?.[kind]?.status === 304));
-  if (allNotModified) {
-    return { fileServers: {}, errors: [], notModified: true, statuses, etags: collectETags(serverResults) };
-  }
-
-  if (validators) {
-    serverResults = await Promise.all(
-      serverResults.map(async (result, i) => {
-        if (result.error) return result;
-        const unchanged = PAYLOAD_KINDS.filter((kind) => result.payloads[kind].status === 304);
-        if (unchanged.length === 0) return result;
-        const refetched = await fetchServerData(servers[i], undefined, undefined, { kinds: unchanged });
-        if (refetched.error) return refetched;
-        const payloads = { ...result.payloads, ...refetched.payloads };
-        return { ...result, payloads, data: { tv: payloads.tv.data, movies: payloads.movies.data } };
-      })
-    );
-  }
+  const serverResults = await Promise.all(servers.map((server) => fetchServerData(server)));
 
   // Build fileServers object for servers with data
   const fileServers = serverResults.reduce((acc, result) => {
@@ -377,19 +284,6 @@ export async function fetchAllServerData(options = {}) {
       error: result.error
     }));
 
-  return { fileServers, errors, notModified: false, statuses, etags: collectETags(serverResults) };
+  return { fileServers, errors };
 }
 
-/**
- * Per server id, the ETag of each payload fetched (or confirmed unchanged).
- * @param {Array<Object>} serverResults
- * @returns {Object<string, {tv: string|null, movies: string|null}>}
- */
-function collectETags(serverResults) {
-  const etags = {};
-  for (const result of serverResults) {
-    if (result.error || !result.payloads) continue;
-    etags[result.id] = Object.fromEntries(PAYLOAD_KINDS.map((kind) => [kind, result.payloads[kind]?.etag ?? null]));
-  }
-  return etags;
-}

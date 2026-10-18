@@ -43,6 +43,12 @@ const EXPECTED_LIST_VERSIONS = { tv: fileServerVersionTV, movies: fileServerVers
 /** Per manifest attempt (the manifests are fetched before the lock). */
 export const MANIFEST_TIMEOUTS = Object.freeze({ headersMs: 10_000, idleMs: 10_000, totalMs: 30_000 })
 
+/**
+ * The deadline over a tick's manifest probes, every server and kind at once,
+ * retries included. Uncapped, one manifest could take 3 × 30 s plus backoff.
+ */
+export const PROBE_BUDGET_MS = 45_000
+
 /** Per entries attempt; the fetch-phase deadline caps them all. */
 export const ENTRIES_TIMEOUTS = Object.freeze({ headersMs: 10_000, idleMs: 30_000, totalMs: 120_000 })
 
@@ -78,6 +84,9 @@ function hasExactKeys(value, keys) {
 /** A break of the contract or of the protocol: retrying cannot help. */
 class ContractError extends Error {}
 
+/** The sync's own configuration is missing something (a webhook ID): retrying cannot help, and the server is not to blame. */
+class ConfigError extends Error {}
+
 /** A response that did not follow the line protocol (it may have been cut off). */
 class ProtocolError extends Error {}
 
@@ -111,10 +120,10 @@ function concatBytes(chunks, size) {
 /**
  * One attempt's abort signal. It aborts when the total passes, when the
  * headers take longer than `headersMs`, when no byte comes for `idleMs` once
- * they have, or when `outer` (the fetch phase's deadline) aborts. `reason`
+ * they have, or when `outer` (a deadline over every attempt) aborts, named by `outerReason`. `reason`
  * says which.
  */
-function attemptTimer({ headersMs, idleMs, totalMs }, outer) {
+function attemptTimer({ headersMs, idleMs, totalMs }, outer, outerReason = 'the deadline passed') {
   const controller = new AbortController()
   const timer = { signal: controller.signal, reason: null }
   const abort = (reason) => {
@@ -128,7 +137,7 @@ function attemptTimer({ headersMs, idleMs, totalMs }, outer) {
     clearTimeout(wait)
     wait = setTimeout(() => abort(`no bytes for ${idleMs} ms`), idleMs)
   }
-  const onOuter = () => abort(`the fetch phase deadline passed`)
+  const onOuter = () => abort(outerReason)
   if (outer?.aborted) onOuter()
   else outer?.addEventListener('abort', onOuter, { once: true })
   timer.headersArrived = idle
@@ -184,7 +193,7 @@ function backoffMs(attempt, delays = BACKOFF_MS) {
 
 /** Whether another attempt may help after `error`. */
 function isRetryable(error) {
-  if (error instanceof ContractError) return false
+  if (error instanceof ContractError || error instanceof ConfigError) return false
   if (error instanceof StatusError) return error.status >= 500 || error.status === 408 || error.status === 429
   return true
 }
@@ -192,7 +201,7 @@ function isRetryable(error) {
 async function requestHeaders(serverId) {
   const webhookId = await getWebhookIdForServer(serverId)
   if (!webhookId) {
-    throw new ContractError(`no webhook ID configured for server ${serverId} (check WEBHOOK_ID)`)
+    throw new ConfigError(`no webhook ID configured for server ${serverId} (check WEBHOOK_ID)`)
   }
   return { 'x-webhook-id': webhookId }
 }
@@ -278,6 +287,7 @@ export function parseManifest(bytes, kind, etag) {
  * @param {'tv'|'movies'} kind
  * @param {Object} [options]
  * @param {string|null} [options.etag]
+ * @param {AbortSignal} [options.deadline] - Stops every attempt and retry when it aborts
  * @param {Object} [options.timeouts] - MANIFEST_TIMEOUTS
  * @param {number[]} [options.retryDelaysMs] - The waits before the 2nd and 3rd attempts (±25 %)
  * @returns {Promise<
@@ -287,12 +297,23 @@ export function parseManifest(bytes, kind, etag) {
  * >} `contract` is true when the server does not serve manifest format 2
  *   (a 404, or another format): its processor predates the contract.
  */
-export async function fetchManifest(server, kind, { etag = null, timeouts = MANIFEST_TIMEOUTS, retryDelaysMs = BACKOFF_MS } = {}) {
+export async function fetchManifest(
+  server,
+  kind,
+  { etag = null, deadline = null, timeouts = MANIFEST_TIMEOUTS, retryDelaysMs = BACKOFF_MS } = {}
+) {
   const url = `${getSyncUrls(server.id)[kind]}/manifest`
   let lastError = null
   for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
-    if (attempt > 0) await sleep(backoffMs(attempt - 1, retryDelaysMs))
-    const timer = attemptTimer(timeouts, null)
+    if (attempt > 0) {
+      try {
+        await sleep(backoffMs(attempt - 1, retryDelaysMs), deadline)
+      } catch {
+        lastError = new Error('the manifest deadline passed')
+        break
+      }
+    }
+    const timer = attemptTimer(timeouts, deadline, 'the manifest deadline passed')
     let reader = null
     try {
       const headers = await requestHeaders(server.id)
@@ -329,7 +350,7 @@ export async function fetchManifest(server, kind, { etag = null, timeouts = MANI
       return { ok: true, status: 200, manifest, received: size, parsed: size }
     } catch (error) {
       lastError = timer.reason ? new Error(timer.reason) : error
-      if (!isRetryable(error)) break
+      if (deadline?.aborted || !isRetryable(error)) break
     } finally {
       timer.done()
       reader?.cancel().catch(() => {})
@@ -452,7 +473,12 @@ function createEntriesParser(requested) {
  *   {ok: false, error: string}
  * >}
  */
-export async function fetchEntries(server, kind, request, { deadline, timeouts = ENTRIES_TIMEOUTS, retryDelaysMs = BACKOFF_MS }) {
+export async function fetchEntries(
+  server,
+  kind,
+  request,
+  { deadline = null, timeouts = ENTRIES_TIMEOUTS, retryDelaysMs = BACKOFF_MS } = {}
+) {
   const url = `${getSyncUrls(server.id)[kind]}/entries`
   const requested = request.all === true ? null : new Set(request.titles)
   const body = JSON.stringify(requested ? { titles: [...requested] } : { all: true })
@@ -466,7 +492,7 @@ export async function fetchEntries(server, kind, request, { deadline, timeouts =
         break
       }
     }
-    const timer = attemptTimer(timeouts, deadline)
+    const timer = attemptTimer(timeouts, deadline, 'the fetch phase deadline passed')
     let reader = null
     let received = 0
     try {
