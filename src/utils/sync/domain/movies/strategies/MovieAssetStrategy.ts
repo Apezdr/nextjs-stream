@@ -28,6 +28,7 @@ import {
   isCurrentServerHighestPriorityForReportedField,
   getServersReportingField,
 } from '@src/utils/sync/core/ownership'
+import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
 import { httpGet } from '@src/lib/httpHelper'
 import { syncLogger } from '../../../core/logger'
 
@@ -253,56 +254,46 @@ export class MovieAssetStrategy implements SyncStrategy {
         syncLogger.debug(`✅ Updating ${urlField} from server ${context.serverConfig.id} (hash changed: ${currentHash} → ${newHash})`)
       }
       
-      // Blurhash for poster and backdrop.
-      //
-      // A stored blurhash is good only while it is OF THE STORED IMAGE: taken
-      // from this server (the image's owner, checked above) and not older than
-      // the image. One that is not is replaced, and when this pass has nothing
-      // to replace it with (the file server publishes no blurhash for the new
-      // image yet, or the fetch failed) it is removed: no blurhash is right,
-      // another picture's is not. A failed fetch is also recorded, so the pass
-      // is not marked complete and the next run tries again.
-      //
-      // It used to be fetched "when the image changed or none is stored" and
-      // otherwise left alone, so one failed fetch after an image was replaced
-      // left the old image's blurhash for good: next run the image no longer
-      // looked changed and a blurhash was there.
+      // Blurhash for poster and backdrop: kept, fetched or removed by the one
+      // rule every image follows (core/imageAndBlurhash). This server owns the
+      // image (checked above). A failed fetch is recorded, so the pass is not
+      // marked complete and the next run tries again.
       if (type === 'poster' || type === 'backdrop') {
         const blurhashField = type === 'poster' ? 'posterBlurhash' : 'backdropBlurhash'
         const blurhashSourceField = type === 'poster' ? 'posterBlurhashSource' : 'backdropBlurhashSource'
         const lockedFields = (currentMovie as any).lockedFields
-        // An image an admin locked is not the file server's image, and a
-        // blurhash an admin locked is not ours to change.
-        if (isTopLevelFieldLocked(lockedFields, urlField) || isTopLevelFieldLocked(lockedFields, blurhashField)) {
-          continue
-        }
+        const currentBlurhash = currentMovie[blurhashField as keyof MovieEntity] as string | undefined
 
-        const currentBlurhash = currentMovie[blurhashField as keyof MovieEntity]
-        const notOfThisImage =
-          Boolean(currentBlurhash) &&
-          (assetChanged || (currentMovie as any)[blurhashSourceField] !== context.serverConfig.id)
+        const outcome = await resolveBlurhash(
+          {
+            stored: {
+              url: currentUrl,
+              blurhash: currentBlurhash,
+              blurhashSource: (currentMovie as any)[blurhashSourceField],
+            },
+            reported: { url: newAssetUrl, blurhashUrl: fileServerData.urls[blurhashField] },
+            owner: context.serverConfig.id,
+            locks: {
+              image: isTopLevelFieldLocked(lockedFields, urlField),
+              blurhash: isTopLevelFieldLocked(lockedFields, blurhashField),
+            },
+          },
+          // The payload's path is already under the server's prefix.
+          (path) => this.fetchBlurhashData(fileServerUrl(path, context.serverConfig), context)
+        )
 
-        let fetched: string | null = null
-        if (!currentBlurhash || notOfThisImage) {
-          const blurhashUrl = await this.findBlurhashUrl(originalTitle, type as 'poster' | 'backdrop', context)
-          if (blurhashUrl) {
-            fetched = await this.fetchBlurhashData(blurhashUrl, context)
-            if (fetched) {
-              context.pendingMovieFetchFailures?.get(originalTitle)?.delete(blurhashField)
-            } else {
-              this.noteFetchFailure(originalTitle, blurhashField, context)
-            }
+        if (outcome.action === 'write') {
+          context.pendingMovieFetchFailures?.get(originalTitle)?.delete(blurhashField)
+          if (currentBlurhash !== outcome.blurhash) updates[blurhashField] = outcome.blurhash
+          if ((currentMovie as any)[blurhashSourceField] !== outcome.blurhashSource) {
+            updates[blurhashSourceField] = outcome.blurhashSource
           }
-        }
-
-        if (fetched) {
-          if (currentBlurhash !== fetched) updates[blurhashField] = fetched
-          if ((currentMovie as any)[blurhashSourceField] !== context.serverConfig.id) {
-            updates[blurhashSourceField] = context.serverConfig.id
+        } else {
+          if (outcome.fetchFailed) this.noteFetchFailure(originalTitle, blurhashField, context)
+          if (outcome.action === 'unset') {
+            this.requestUnset(originalTitle, [blurhashField, blurhashSourceField], context)
+            cleared.push(blurhashField)
           }
-        } else if (notOfThisImage) {
-          this.requestUnset(originalTitle, [blurhashField, blurhashSourceField], context)
-          cleared.push(blurhashField)
         }
       }
     }
@@ -380,51 +371,6 @@ export class MovieAssetStrategy implements SyncStrategy {
   }
 
 
-  /**
-   * Find blurhash URL from file server (matches legacy behavior)
-   */
-  private async findBlurhashUrl(
-    originalTitle: string,
-    assetType: 'poster' | 'backdrop',
-    context: SyncContext
-  ): Promise<string | null> {
-    // Check if file server data has blurhash URLs
-    const fileServerData = context.fileServerData?.movies?.[originalTitle]
-    
-    syncLogger.debug(`🔍 Looking for blurhash URL:`, {
-      originalTitle,
-      assetType,
-      hasFileServerData: !!fileServerData,
-      hasUrls: !!fileServerData?.urls,
-      availableUrlKeys: fileServerData?.urls ? Object.keys(fileServerData.urls) : []
-    })
-    
-    if (!fileServerData?.urls) {
-      syncLogger.debug(`⚠️ No fileServerData.urls found for "${originalTitle}"`)
-      return null
-    }
-    
-    const blurhashField = assetType === 'poster' ? 'posterBlurhash' : 'backdropBlurhash'
-    const blurhashRelativePath = fileServerData.urls[blurhashField]
-    
-    syncLogger.debug(`🔍 Blurhash path lookup:`, {
-      blurhashField,
-      blurhashRelativePath,
-      found: !!blurhashRelativePath
-    })
-    
-    if (!blurhashRelativePath) {
-      syncLogger.debug(`⚠️ No blurhash path found at fileServerData.urls.${blurhashField}`)
-      return null
-    }
-    
-    // fileServerData paths already include the prefix
-    const fullUrl = fileServerUrl(blurhashRelativePath, context.serverConfig)
-    
-    syncLogger.debug(`✅ Built blurhash URL: ${fullUrl}`)
-    return fullUrl
-  }
-  
   /**
    * Fetch actual blurhash data from URL using httpHelper
    * httpHelper handles caching and HTTP errors internally

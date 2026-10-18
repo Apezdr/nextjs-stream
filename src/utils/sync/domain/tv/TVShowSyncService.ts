@@ -31,6 +31,7 @@ import {
   isCurrentServerHighestPriorityForReportedField,
   serverOutranks,
 } from '@src/utils/sync/core/ownership'
+import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
 import {
   availabilityFingerprint,
   payloadFingerprint,
@@ -458,68 +459,61 @@ export class TVShowSyncService {
     }
 
     // --- Poster / backdrop blurhash ---
-    // A stored blurhash is good only while it is OF THE STORED IMAGE: taken
-    // from the server that owns the image, and not older than the image. One
-    // that is not is replaced, and when this pass has nothing to replace it
-    // with (no blurhash published for the image, or the fetch failed) it is
-    // removed: no blurhash is right, another picture's is not. A failed fetch
-    // is reported too, so the show is not skipped from now on without it.
-    //
-    // It used to be ranked on its own, so a show could hold one server's
-    // poster with another's blurhash, and it was compared by the image URL's
-    // ?hash= alone — the file's modified time, which a copy on another server
-    // shares.
-    const syncBlurhash = async (
+    // Kept, fetched or removed by the one rule every image follows
+    // (core/imageAndBlurhash): settled by the image's owner, removed when it
+    // is of another image and nothing replaces it. A failed fetch is reported,
+    // so the show is not skipped from now on without it.
+    const applyBlurhashRule = async (
+      ownsImage: boolean,
       blurhashPath: unknown,
       imagePath: unknown,
       imageField: 'posterURL' | 'backdrop',
       field: 'posterBlurhash' | 'backdropBlurhash'
     ) => {
-      if (!imagePath) return
-      // An image an admin locked is not the file server's image, and a
-      // blurhash an admin locked is not ours to change.
-      if (locked(imageField) || locked(field)) return
       const sourceField = `${field}Source`
-      const imageUrl = fileServerUrl(imagePath as string, context.serverConfig)
-      const stored = (existing as any)?.[field]
-      const notOfThisImage =
-        Boolean(stored) &&
-        (imageUrl !== (existing as any)?.[imageField] || (existing as any)?.[sourceField] !== context.serverConfig.id)
+      const outcome = await resolveBlurhash(
+        {
+          stored: {
+            url: (existing as any)?.[imageField],
+            blurhash: (existing as any)?.[field],
+            blurhashSource: (existing as any)?.[sourceField],
+          },
+          reported: {
+            url: ownsImage && imagePath ? fileServerUrl(imagePath as string, context.serverConfig) : null,
+            blurhashUrl: blurhashPath as string | null | undefined,
+          },
+          owner: ownsImage ? context.serverConfig.id : null,
+          locks: { image: locked(imageField), blurhash: locked(field) },
+        },
+        async (path) => {
+          try {
+            return await fetchMetadataMultiServer(
+              context.serverConfig.id,
+              fileServerUrl(path, context.serverConfig),
+              'blurhash',
+              'tv',
+              showTitle
+            )
+          } catch {
+            return null // a failed fetch, reported through the outcome
+          }
+        }
+      )
 
-      let blurhash: unknown = null
-      if (blurhashPath && (!stored || notOfThisImage)) {
-        try {
-          blurhash = await fetchMetadataMultiServer(
-            context.serverConfig.id,
-            fileServerUrl(blurhashPath as string, context.serverConfig),
-            'blurhash',
-            'tv',
-            showTitle
-          )
-        } catch {
-          // Reported below.
-        }
-        if (!(blurhash && typeof blurhash === 'string')) {
-          blurhash = null
-          fetchIncomplete = true
-        }
+      if (outcome.action === 'write') {
+        (entity as any)[field] = outcome.blurhash
+        ;(entity as any)[sourceField] = outcome.blurhashSource
+        return
       }
-
-      if (blurhash) {
-        (entity as any)[field] = blurhash
-        ;(entity as any)[sourceField] = context.serverConfig.id
-      } else if (notOfThisImage) {
+      if (outcome.fetchFailed) fetchIncomplete = true
+      if (outcome.action === 'unset') {
         delete (entity as any)[field]
         delete (entity as any)[sourceField]
         unset.push(field, sourceField)
       }
     }
-    if (canUpdatePoster) {
-      await syncBlurhash(fileData.posterBlurhash, fileData.posterURL || fileData.poster, 'posterURL', 'posterBlurhash')
-    }
-    if (canUpdateBackdrop) {
-      await syncBlurhash(fileData.backdropBlurhash, fileData.backdropURL || fileData.backdrop, 'backdrop', 'backdropBlurhash')
-    }
+    await applyBlurhashRule(canUpdatePoster, fileData.posterBlurhash, fileData.posterURL || fileData.poster, 'posterURL', 'posterBlurhash')
+    await applyBlurhashRule(canUpdateBackdrop, fileData.backdropBlurhash, fileData.backdropURL || fileData.backdrop, 'backdrop', 'backdropBlurhash')
 
     // Season count: the seasons any server has, counted once each. It used to
     // be each server's own count, written by every pass, so a show whose

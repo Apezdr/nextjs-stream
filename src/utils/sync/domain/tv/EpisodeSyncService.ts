@@ -48,6 +48,7 @@ import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { warnOnJitIdentityFork } from '@src/utils/sync/core/jitIdentityParity'
 import { seedDiscovery, applyFirstSeen } from '@src/utils/sync/core/discovery'
 import { reconcileCaptions } from '@src/utils/sync/core/captionReconcile'
+import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
 import {
   buildSyncGate,
   readSyncGate,
@@ -491,8 +492,8 @@ export class EpisodeSyncService {
    *  - fileData.metadata is a URL path, not inline data — must be fetched via
    *    fetchMetadataMultiServer. Fallback: parent show's metadata.seasons[].episodes[].
    *  - fileData.thumbnailBlurhash is a URL path to a blurhash file, not the actual
-   *    blurhash string. Existing values are preserved from the spread; BlurhashStrategy
-   *    handles fetching actual values.
+   *    blurhash string. It is fetched (or the stored one kept or removed) by the
+   *    blurhash rule, core/imageAndBlurhash.
    */
   private async buildEpisodeEntity(
     showOriginalTitle: string,
@@ -869,43 +870,45 @@ export class EpisodeSyncService {
     }
 
     // --- Thumbnail blurhash ---
-    // A stored blurhash is good only while it is OF THE STORED THUMBNAIL:
-    // taken from the server that owns the thumbnail, and not older than it.
-    // One that is not is replaced, and when this pass has nothing to replace
-    // it with (no blurhash published for the thumbnail, or the fetch failed)
-    // it is removed. A failed fetch is reported, so the episode is not skipped
-    // from now on without it.
+    // Kept, fetched or removed by the one rule every image follows
+    // (core/imageAndBlurhash): settled by the thumbnail's owner, removed when
+    // it is of another thumbnail and nothing replaces it. A failed fetch is
+    // reported, so the episode is not skipped from now on without it.
     const lockedField = (field: string) => isTopLevelFieldLocked((existing as any)?.lockedFields, field)
-    if (canUpdateThumbnail && !lockedField('thumbnail') && !lockedField('thumbnailBlurhash')) {
-      const stored = existing?.thumbnailBlurhash
-      const notOfThisImage =
-        Boolean(stored) &&
-        (entity.thumbnail !== existing?.thumbnail ||
-          (existing as any)?.thumbnailBlurhashSource !== context.serverConfig.id)
-
-      let blurhash: unknown = null
-      if (fileData?.thumbnailBlurhash && (!stored || notOfThisImage)) {
+    const thumbnailBlurhash = await resolveBlurhash(
+      {
+        stored: {
+          url: existing?.thumbnail,
+          blurhash: existing?.thumbnailBlurhash,
+          blurhashSource: (existing as any)?.thumbnailBlurhashSource,
+        },
+        reported: {
+          url: canUpdateThumbnail ? entity.thumbnail : null,
+          blurhashUrl: fileData?.thumbnailBlurhash,
+        },
+        owner: canUpdateThumbnail ? context.serverConfig.id : null,
+        locks: { image: lockedField('thumbnail'), blurhash: lockedField('thumbnailBlurhash') },
+      },
+      async (path) => {
         try {
-          blurhash = await fetchMetadataMultiServer(
+          return await fetchMetadataMultiServer(
             context.serverConfig.id,
-            fileServerUrl(fileData.thumbnailBlurhash, context.serverConfig),
+            fileServerUrl(path, context.serverConfig),
             'blurhash',
             'tv',
             showOriginalTitle
           )
         } catch {
-          // Reported below.
-        }
-        if (!(blurhash && typeof blurhash === 'string')) {
-          blurhash = null
-          fetchIncomplete = true
+          return null // a failed fetch, reported through the outcome
         }
       }
-
-      if (blurhash) {
-        entity.thumbnailBlurhash = blurhash as string
-        entity.thumbnailBlurhashSource = context.serverConfig.id
-      } else if (notOfThisImage) {
+    )
+    if (thumbnailBlurhash.action === 'write') {
+      entity.thumbnailBlurhash = thumbnailBlurhash.blurhash
+      entity.thumbnailBlurhashSource = thumbnailBlurhash.blurhashSource
+    } else {
+      if (thumbnailBlurhash.fetchFailed) fetchIncomplete = true
+      if (thumbnailBlurhash.action === 'unset') {
         clearField('thumbnailBlurhash')
         clearField('thumbnailBlurhashSource')
       }

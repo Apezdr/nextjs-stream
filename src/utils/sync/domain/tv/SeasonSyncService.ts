@@ -29,6 +29,7 @@ import {
   seasonsAcrossServers,
 } from '@src/utils/sync/core/ownership'
 import { changesDocument } from '@src/utils/sync/core/syncGate'
+import { resolveBlurhash } from '@src/utils/sync/core/imageAndBlurhash'
 import { createLogger } from '@src/lib/logger'
 
 const pinoLog = createLogger('Sync.TV.Season')
@@ -201,8 +202,8 @@ export class SeasonSyncService {
    *  - Season metadata lives in the PARENT SHOW's metadata.seasons[] array,
    *    not in the season file-server data directly.
    *  - The poster key in file-server data is "season_poster", not "poster".
-   *  - Blurhash fields in file-server data are URL paths (fetched separately
-   *    by BlurhashStrategy) — never copied directly to the entity.
+   *  - Blurhash fields in file-server data are URL paths (fetched by the
+   *    blurhash rule, core/imageAndBlurhash) — never copied directly to the entity.
    */
   private async buildSeasonEntity(
     showOriginalTitle: string,
@@ -369,41 +370,44 @@ export class SeasonSyncService {
     }
 
     // --- Season poster blurhash ---
-    // A stored blurhash is good only while it is OF THE STORED POSTER: taken
-    // from the server that owns the poster, and not older than it. One that is
-    // not is replaced, and when this pass has nothing to replace it with (no
-    // blurhash published for the poster, or the fetch failed) it is removed.
-    // A failed fetch is reported, so the show is not skipped without it.
-    if (canUpdatePoster && !locked('posterURL') && !locked('posterBlurhash')) {
-      const stored = existing?.posterBlurhash
-      const notOfThisImage =
-        Boolean(stored) &&
-        (entity.posterURL !== existing?.posterURL ||
-          (existing as any)?.posterBlurhashSource !== context.serverConfig.id)
-
-      let blurhash: unknown = null
-      if ((fileData as any)?.seasonPosterBlurhash && (!stored || notOfThisImage)) {
+    // Kept, fetched or removed by the one rule every image follows
+    // (core/imageAndBlurhash): settled by the poster's owner, removed when it
+    // is of another poster and nothing replaces it. A failed fetch is
+    // reported, so the show is not skipped without it.
+    const posterBlurhash = await resolveBlurhash(
+      {
+        stored: {
+          url: existing?.posterURL,
+          blurhash: existing?.posterBlurhash,
+          blurhashSource: (existing as any)?.posterBlurhashSource,
+        },
+        reported: {
+          url: canUpdatePoster ? entity.posterURL : null,
+          blurhashUrl: (fileData as any)?.seasonPosterBlurhash,
+        },
+        owner: canUpdatePoster ? context.serverConfig.id : null,
+        locks: { image: locked('posterURL'), blurhash: locked('posterBlurhash') },
+      },
+      async (path) => {
         try {
-          blurhash = await fetchMetadataMultiServer(
+          return await fetchMetadataMultiServer(
             context.serverConfig.id,
-            fileServerUrl((fileData as any).seasonPosterBlurhash, context.serverConfig),
+            fileServerUrl(path, context.serverConfig),
             'blurhash',
             'tv',
             showOriginalTitle
           )
         } catch {
-          // Reported below.
-        }
-        if (!(blurhash && typeof blurhash === 'string')) {
-          blurhash = null
-          incomplete = true
+          return null // a failed fetch, reported through the outcome
         }
       }
-
-      if (blurhash) {
-        entity.posterBlurhash = blurhash as string
-        entity.posterBlurhashSource = context.serverConfig.id
-      } else if (notOfThisImage) {
+    )
+    if (posterBlurhash.action === 'write') {
+      entity.posterBlurhash = posterBlurhash.blurhash
+      entity.posterBlurhashSource = posterBlurhash.blurhashSource
+    } else {
+      if (posterBlurhash.fetchFailed) incomplete = true
+      if (posterBlurhash.action === 'unset') {
         clearField('posterBlurhash')
         clearField('posterBlurhashSource')
       }
