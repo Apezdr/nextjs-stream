@@ -16,9 +16,9 @@
  *
  * Knobs per server (`processor.server(id)`): `down` (nothing answers), `notFound`
  * (the manifest route 404s), `format` (the manifest format served), `entriesFail`
- * (the entries route fails), `beforeEntries` (called once, with the library and
- * the kind, before the next entries answer: the library moves between the
- * manifest and the entries).
+ * (the entries route fails), `beforeEntries` (called with the library and the
+ * kind before an entries answer, until it returns anything but false: the
+ * library moves between the manifest and the entries).
  */
 
 const { createHash } = require('crypto')
@@ -89,9 +89,8 @@ function createFakeProcessor({ version = 1.0001 } = {}) {
     const s = server(target.id)
     calls.entries.push({ server: target.id, kind, request })
     if (s.beforeEntries) {
-      const move = s.beforeEntries
-      s.beforeEntries = null
-      move(s.library, kind)
+      // Used up once it moves the library (it returns false while it waits for its kind)
+      if (s.beforeEntries(s.library, kind) !== false) s.beforeEntries = null
     }
     if (s.down || s.entriesFail) return { ok: false, error: `${kind} entries: socket hang up` }
     const library = s.library[kind]
