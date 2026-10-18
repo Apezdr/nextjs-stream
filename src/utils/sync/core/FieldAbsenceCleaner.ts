@@ -145,9 +145,8 @@ export function detectAbsentFields(input: AbsenceCleanupInput): AbsenceCleanupRe
     const serversWithData = [field.fieldPath, ...(field.alsoReportedAs ?? [])].flatMap(
       (path) => serverBucket[path] ?? []
     )
-    // Some server still reports it → keep. This is the empty-array branch that
-    // isCurrentServerHighestPriorityForField returns true for, but here we read
-    // it directly because we want the "nobody has it" signal, not priority.
+    // Some server still reports it → keep. Read directly: the question here is
+    // whether anybody has it ("nobody has it" is the signal), not who owns it.
     if (serversWithData.length !== 0) continue
 
     // Nothing in the DB to clear.

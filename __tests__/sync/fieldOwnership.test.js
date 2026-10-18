@@ -21,7 +21,6 @@ jest.mock('@src/utils/config', () => ({
 }))
 
 const {
-  isCurrentServerHighestPriorityForField,
   isHighestPriorityAmongServers,
   isCurrentServerHighestPriorityForReportedField,
   getServersReportingField,
@@ -63,10 +62,6 @@ describe('isHighestPriorityAmongServers', () => {
 
 describe('the reported-field checks', () => {
   const fa = availability({ 'urls.mp4': ['second'], 'urls.poster': ['main', 'second'] })
-
-  it('the legacy check lets a server without the field through — the reason these exist', () => {
-    expect(isCurrentServerHighestPriorityForField(fa, 'movies', 'Film', 'urls.mp4', server('main'))).toBe(true)
-  })
 
   it('fails closed for a server that did not report the field', () => {
     expect(isCurrentServerHighestPriorityForReportedField(fa, 'movies', 'Film', 'urls.mp4', server('main'))).toBe(false)
