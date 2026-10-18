@@ -765,6 +765,10 @@ describe('the new-content notices', () => {
       expect(announcedSet()).toEqual([episodeKey(1), episodeKey(2), movieKey(MOVIE)].sort())
       expect(docs('AnnouncedTitles').every((d) => d.by === 'notice')).toBe(true)
       expect(outbox()).toEqual([])
+      // The posters the digest's list shows: the movie's, and the episodes' show's
+      const [composed] = MediaNotificationOrchestrator.composeNewContentNotices.mock.calls.at(-1)
+      expect(composed.movies[0].posterURL).toBe(`https://default.example${MOVIE_FOLDER}/poster.jpg?hash=p1`)
+      expect(composed.episodes[0].showPosterURL).toBe(`https://default.example${SHOW_ROOT}/show_poster.jpg?hash=p1`)
     })
 
     it('announce a title however long ago it first reached a file server (an outage, an old folder)', async () => {

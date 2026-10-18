@@ -12,8 +12,8 @@ export class MediaAdditionAnalyzer {
   /**
    * Arrange the titles a run added for the notification generator
    * @param {Object} newContent - `{ movies, episodes }` from run/newContent:
-   *   movies `{ id, title, originalTitle, createdAt }`, episodes
-   *   `{ id, showTitle, originalTitle, seasonNumber, episodeNumber, title, createdAt }`
+   *   movies `{ id, title, originalTitle, posterURL, createdAt }`, episodes
+   *   `{ id, showTitle, originalTitle, showPosterURL, seasonNumber, episodeNumber, title, createdAt }`
    *   (originalTitle is the show's on an episode)
    * @returns {Object} Analysis results with categorized content
    */
@@ -39,6 +39,7 @@ export class MediaAdditionAnalyzer {
       id: movie.id,
       title: movie.title, // Keep for fallback display
       originalTitle: movie.originalTitle,
+      posterURL: movie.posterURL || null, // For the digest's list
       createdAt: movie.createdAt
       // Full movie data will be fetched fresh when displaying notifications
     }));
@@ -88,6 +89,7 @@ export class MediaAdditionAnalyzer {
         showsMap.set(showKey, {
           showTitle: episode.showTitle,
           originalTitle: episode.originalTitle,
+          posterURL: episode.showPosterURL || null, // For the digest's list
           episodes: [],
           totalNewEpisodes: 0,
           latestSeason: 0,

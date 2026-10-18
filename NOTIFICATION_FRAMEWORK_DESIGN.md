@@ -40,7 +40,38 @@ A title stays in the set after it leaves the library. If it comes back later (a 
 ### Grouping and the digest
 - Movies are grouped five to a notice. One movie gets its own notice, which links to its page.
 - Episodes get one notice per show, linking to the episode when there is one and to the show otherwise.
-- When a run's titles would come to more than five notices, one digest is sent instead. A first sync of a new library, or a newly added server, sends one digest, not hundreds of notices.
+- When a run's titles would come to more than five notices, one digest is sent instead. A first sync of a new library, or a newly added server, sends one digest, not hundreds of notices. The digest lists its titles (below).
+
+### The digest's payload
+A digest carries the titles it covers, so a client can list them without another request. The list is limited to 24 titles and counts the rest. Written by `NewContentNotificationGenerator.createNewContentDigest`:
+
+```js
+{
+  type: 'new_content',
+  subtype: 'new_content_digest',
+  title: 'New in Your Library',
+  message: '12 new movies and 87 new episodes of 9 shows have been added to your library.',
+  actionUrl: '/list',
+  data: {
+    contentType: 'digest',
+    movieCount: 12,        // every movie the run added
+    episodeCount: 87,      // every episode the run added
+    showCount: 9,          // the shows those episodes belong to
+    items: [               // at most 24: movies first, then shows, each sorted by title
+      { kind: 'movie', title: 'Display Title', originalTitle: 'Folder Name (2020)',
+        href: '/list/movie/Folder%20Name%20(2020)', posterURL: 'https://…' /* or null */ },
+      { kind: 'show', title: 'Display Title', originalTitle: 'Folder Name (2019)',
+        href: '/list/tv/Folder%20Name%20(2019)', posterURL: 'https://…' /* or null */,
+        newEpisodes: 3 },  // a show stands for its new episodes
+    ],
+    moreCount: 0,          // titles left out of `items`
+  },
+}
+```
+
+- `href` is the media page, keyed on the folder name (`originalTitle`) like every media route. A client that builds its own links should use `originalTitle`; `title` is for display only.
+- `posterURL` is the poster stored on the title when the digest was written. It is not refreshed later.
+- In the web app, clicking a digest (or its "Show N titles" button) opens the list in place: posters, titles and links, with "+N more" when the list was cut. It does not navigate to `actionUrl` (`src/components/notifications/NewContentDigest.jsx`). A client that cannot show the list can still use `actionUrl`.
 
 ### Recipients
 Accounts with `approved: true` and without `limitedAccess` (which may not be able to open the content). This is decided in one place, `src/utils/notifications/recipients.js`.

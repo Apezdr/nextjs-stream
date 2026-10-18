@@ -6,6 +6,9 @@
 import { NOTIFICATION_TYPES } from '../NotificationTypes.js';
 import { NotificationHashing } from '../utils/NotificationHashing.js';
 
+/** The most titles a digest lists; the rest are counted in its moreCount. */
+export const DIGEST_ITEM_LIMIT = 24;
+
 export class NewContentNotificationGenerator {
   /**
    * Generate action URL for movie content: the movie page, keyed on the
@@ -90,7 +93,24 @@ export class NewContentNotificationGenerator {
   /**
    * One notice for everything a run added, sent instead of the individual
    * ones when there would be too many of them (a first sync into an empty
-   * library, a newly added server)
+   * library, a newly added server). It carries the titles it covers, for the
+   * digest's detail view (components/notifications/NewContentDigest), in the
+   * shape NOTIFICATION_FRAMEWORK_DESIGN.md ("The digest's payload") documents:
+   *
+   *   data: {
+   *     contentType: 'digest',
+   *     movieCount, episodeCount, showCount,   // everything the run added
+   *     items: [                               // at most DIGEST_ITEM_LIMIT
+   *       { kind: 'movie', title, originalTitle, href, posterURL },
+   *       { kind: 'show', title, originalTitle, href, posterURL, newEpisodes },
+   *     ],
+   *     moreCount,                             // items left out
+   *   }
+   *
+   * Movies first, then shows, each by title. `href` is the media page, keyed
+   * on the folder name like every media route; `posterURL` is null when the
+   * title had none. A show stands for its new episodes.
+   *
    * @param {Object} analysis - Results from MediaAdditionAnalyzer
    * @param {boolean} includeMetadata - Whether to include metadata
    * @returns {Object} Notification object
@@ -106,11 +126,27 @@ export class NewContentNotificationGenerator {
     if (episodeCount > 0) parts.push(`${plural(episodeCount, 'new episode')} of ${plural(showCount, 'show')}`);
     const verb = movieCount + episodeCount === 1 ? 'has' : 'have';
 
-    const shows = [...analysis.showsWithNewEpisodes.values()].map(show => ({
-      showTitle: show.showTitle,
-      originalTitle: show.originalTitle,
-      totalNewEpisodes: show.totalNewEpisodes
-    }));
+    const byTitle = (a, b) => String(a.title).localeCompare(String(b.title), undefined, { sensitivity: 'base' });
+    const movieItems = analysis.newMovies
+      .map(movie => ({
+        kind: 'movie',
+        title: movie.title || movie.originalTitle,
+        originalTitle: movie.originalTitle,
+        href: this.generateMovieActionUrl(movie.originalTitle || movie.title),
+        posterURL: movie.posterURL || null
+      }))
+      .sort(byTitle);
+    const showItems = [...analysis.showsWithNewEpisodes.values()]
+      .map(show => ({
+        kind: 'show',
+        title: show.showTitle || show.originalTitle,
+        originalTitle: show.originalTitle,
+        href: this.generateTVActionUrl(show.showTitle, null, null, show.originalTitle),
+        posterURL: show.posterURL || null,
+        newEpisodes: show.totalNewEpisodes
+      }))
+      .sort(byTitle);
+    const items = [...movieItems, ...showItems];
 
     const notification = {
       type: NOTIFICATION_TYPES.NEW_CONTENT,
@@ -123,9 +159,8 @@ export class NewContentNotificationGenerator {
         movieCount,
         episodeCount,
         showCount,
-        // Limited for size, like the weekly digest
-        movies: analysis.newMovies.slice(0, 10),
-        shows: shows.slice(0, 10)
+        items: items.slice(0, DIGEST_ITEM_LIMIT),
+        moreCount: Math.max(0, items.length - DIGEST_ITEM_LIMIT)
       },
       createdAt: new Date(),
       priority: 'normal'
@@ -133,11 +168,11 @@ export class NewContentNotificationGenerator {
 
     if (includeMetadata) {
       notification.metadata = {
-        featuredMovies: analysis.newMovies.slice(0, 3).map(movie => ({ title: movie.title })),
-        topShows: [...shows]
-          .sort((a, b) => b.totalNewEpisodes - a.totalNewEpisodes)
+        featuredMovies: movieItems.slice(0, 3).map(movie => ({ title: movie.title })),
+        topShows: [...showItems]
+          .sort((a, b) => b.newEpisodes - a.newEpisodes)
           .slice(0, 5)
-          .map(show => ({ showTitle: show.showTitle, count: show.totalNewEpisodes }))
+          .map(show => ({ showTitle: show.title, count: show.newEpisodes }))
       };
     }
 

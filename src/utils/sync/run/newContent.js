@@ -147,7 +147,7 @@ export async function selectAnnounceable(db, writtenTitles) {
       .collection('FlatMovies')
       .find(
         { originalTitle: { $in: movieTitles } },
-        { projection: { _id: 1, title: 1, originalTitle: 1, initialDiscoveryDate: 1, ...VISIBILITY_PROJECTION } }
+        { projection: { _id: 1, title: 1, originalTitle: 1, posterURL: 1, initialDiscoveryDate: 1, ...VISIBILITY_PROJECTION } }
       )
       .toArray()
     const byTitle = new Map(docs.map((doc) => [doc.originalTitle, doc]))
@@ -161,6 +161,7 @@ export async function selectAnnounceable(db, writtenTitles) {
           id: String(doc._id),
           title: doc.title || originalTitle,
           originalTitle,
+          posterURL: doc.posterURL || null,
           createdAt: doc.initialDiscoveryDate ?? null,
         })
       }
@@ -171,7 +172,7 @@ export async function selectAnnounceable(db, writtenTitles) {
     const showTitles = [...new Set(episodeCandidates.map((c) => c.showOriginalTitle))]
     const shows = await db
       .collection('FlatTVShows')
-      .find({ originalTitle: { $in: showTitles } }, { projection: { _id: 1, title: 1, originalTitle: 1 } })
+      .find({ originalTitle: { $in: showTitles } }, { projection: { _id: 1, title: 1, originalTitle: 1, posterURL: 1 } })
       .toArray()
     const showByTitle = new Map(shows.map((show) => [show.originalTitle, show]))
     const seasonNumbers = [...new Set(episodeCandidates.map((c) => c.seasonNumber))]
@@ -203,6 +204,7 @@ export async function selectAnnounceable(db, writtenTitles) {
           id: String(doc._id),
           showTitle: show.title || c.showOriginalTitle,
           originalTitle: c.showOriginalTitle,
+          showPosterURL: show.posterURL || null,
           seasonNumber: c.seasonNumber,
           episodeNumber: c.episodeNumber,
           title: doc.title || null,

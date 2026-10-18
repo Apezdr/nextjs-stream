@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { useNotifications } from '@src/hooks/useNotifications';
+import NewContentDigest, { isNewContentDigest } from './NewContentDigest';
 import { getNotificationIcon, getNotificationColor } from '@src/utils/notifications/NotificationTypes';
 import { authClient } from '@src/lib/auth-client';
 import { classNames } from '@src/utils';
@@ -17,20 +18,37 @@ export default function NotificationItem({ notification, onClose }) {
   const [isDismissing, setIsDismissing] = useState(false);
   const [isMarkingAsRead, setIsMarkingAsRead] = useState(false);
   const router = useRouter();
+  // A new-content digest opens the list of its titles in place instead of
+  // navigating: each title links to its own page
+  const isDigest = isNewContentDigest(notification);
+  const [isDigestOpen, setIsDigestOpen] = useState(false);
+  const digestPanelId = useId();
+  const digestTitleCount = isDigest
+    ? notification.data.items.length + (Number.isInteger(notification.data.moreCount) ? notification.data.moreCount : 0)
+    : 0;
 
   const handleClick = async () => {
+    if (isDigest) setIsDigestOpen((open) => !open);
+
     // Mark as read if unread
     if (!notification.read) {
       await markAsRead(notification._id);
     }
 
+    if (isDigest) return;
+
     // Navigate to action URL if available
     if (notification.data?.actionUrl || notification.actionUrl) {
-      router.push(notification.data.actionUrl || notification.actionUrl);
+      router.push(notification.data?.actionUrl || notification.actionUrl);
     }
 
-    // Close dropdown/notify parent
-    onClose();
+    // Close dropdown/notify parent (the notifications page passes no onClose)
+    onClose?.();
+  };
+
+  const handleDigestToggle = (e) => {
+    e.stopPropagation(); // The item's own click handler would toggle it back
+    handleClick();
   };
 
   const handleMarkAsRead = async (e) => {
@@ -163,6 +181,21 @@ export default function NotificationItem({ notification, onClose }) {
               `}>
                 {notification.message}
               </p>
+
+              {isDigest && (
+                <button
+                  type="button"
+                  onClick={handleDigestToggle}
+                  aria-expanded={isDigestOpen}
+                  aria-controls={digestPanelId}
+                  className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded"
+                >
+                  {isDigestOpen ? 'Hide titles' : `Show ${digestTitleCount} title${digestTitleCount === 1 ? '' : 's'}`}
+                </button>
+              )}
+              {isDigest && isDigestOpen && (
+                <NewContentDigest id={digestPanelId} data={notification.data} onNavigate={() => onClose?.()} />
+              )}
             </div>
           </div>
 

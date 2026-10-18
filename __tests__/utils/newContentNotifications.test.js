@@ -12,7 +12,10 @@ jest.mock('@src/lib/userQueries', () => ({ userQueries: { find: jest.fn() } }))
 jest.mock('@src/utils/notifications/notificationDatabase.js', () => ({ insertNotificationsOnce: jest.fn() }))
 
 const { MediaAdditionAnalyzer } = require('@src/utils/notifications/analyzers/MediaAdditionAnalyzer')
-const { NewContentNotificationGenerator } = require('@src/utils/notifications/generators/NewContentNotificationGenerator')
+const {
+  NewContentNotificationGenerator,
+  DIGEST_ITEM_LIMIT,
+} = require('@src/utils/notifications/generators/NewContentNotificationGenerator')
 const {
   MediaNotificationOrchestrator,
   newContentNotificationId,
@@ -22,11 +25,18 @@ const { NEW_CONTENT_RECIPIENTS_FILTER } = require('@src/utils/notifications/reci
 const { userQueries } = require('@src/lib/userQueries')
 
 const ARRIVED = new Date('2026-10-17T10:00:00.000Z')
-const movie = (n) => ({ id: `m${n}`, title: `Movie ${n}`, originalTitle: `Movie ${n} (2020)`, createdAt: ARRIVED })
+const movie = (n) => ({
+  id: `m${n}`,
+  title: `Movie ${n}`,
+  originalTitle: `Movie ${n} (2020)`,
+  posterURL: n % 2 === 0 ? `https://files.example/movie-${n}.jpg` : null,
+  createdAt: ARRIVED,
+})
 const episode = (show, season, number) => ({
   id: `${show}-${season}-${number}`,
   showTitle: `Show ${show}`,
   originalTitle: `Show ${show} (2019)`,
+  showPosterURL: `https://files.example/show-${show}.jpg`,
   seasonNumber: season,
   episodeNumber: number,
   title: `Episode ${number}`,
@@ -93,8 +103,45 @@ describe('NewContentNotificationGenerator.generateNotifications', () => {
       actionUrl: '/list',
       data: { contentType: 'digest', movieCount: 3, episodeCount: 12, showCount: 6 },
     })
-    expect(sent[0].data.shows).toHaveLength(6)
+    expect(sent[0].data.items).toHaveLength(9)
+    expect(sent[0].data.moreCount).toBe(0)
     expect(sent[0].contentHash).toEqual(expect.any(String))
+  })
+
+  it('lists its titles in the documented shape: movies, then shows, each by title, linking to their pages', () => {
+    const [digest] = notices({
+      movies: [movie(2), movie(1), movie(3)],
+      episodes: ['B', 'A', 'C', 'D', 'E', 'F'].flatMap((show) => [episode(show, 1, 1), episode(show, 1, 2)]),
+    })
+
+    expect(digest.data.items.slice(0, 4)).toEqual([
+      {
+        kind: 'movie',
+        title: 'Movie 1',
+        originalTitle: 'Movie 1 (2020)',
+        href: `/list/movie/${encodeURIComponent('Movie 1 (2020)')}`,
+        posterURL: null,
+      },
+      {
+        kind: 'movie',
+        title: 'Movie 2',
+        originalTitle: 'Movie 2 (2020)',
+        href: `/list/movie/${encodeURIComponent('Movie 2 (2020)')}`,
+        posterURL: 'https://files.example/movie-2.jpg',
+      },
+      expect.objectContaining({ kind: 'movie', title: 'Movie 3' }),
+      {
+        kind: 'show',
+        title: 'Show A',
+        originalTitle: 'Show A (2019)',
+        href: `/list/tv/${encodeURIComponent('Show A (2019)')}`,
+        posterURL: 'https://files.example/show-A.jpg',
+        newEpisodes: 2,
+      },
+    ])
+    expect(digest.data.items.slice(3).map((item) => item.title)).toEqual(['Show A', 'Show B', 'Show C', 'Show D', 'Show E', 'Show F'])
+    // Only what the page needs travels with it
+    expect(Object.keys(digest.data).sort()).toEqual(['contentType', 'episodeCount', 'items', 'moreCount', 'movieCount', 'showCount'])
   })
 
   it('keeps a first sync of a whole library to one notice', () => {
@@ -105,8 +152,10 @@ describe('NewContentNotificationGenerator.generateNotifications', () => {
 
     expect(sent).toHaveLength(1)
     expect(sent[0].data).toMatchObject({ movieCount: 400, episodeCount: 200, showCount: 200 })
-    expect(sent[0].data.movies).toHaveLength(10)
-    expect(sent[0].data.shows).toHaveLength(10)
+    // A bounded list, and a count of the rest
+    expect(sent[0].data.items).toHaveLength(DIGEST_ITEM_LIMIT)
+    expect(DIGEST_ITEM_LIMIT).toBe(24)
+    expect(sent[0].data.moreCount).toBe(600 - 24)
   })
 })
 
