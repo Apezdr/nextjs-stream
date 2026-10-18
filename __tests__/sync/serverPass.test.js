@@ -1104,9 +1104,9 @@ describe('the server config a pass refuses', () => {
       seen.push(parts.run.serverConfig)
       return syncMovie.call(this, title, payload, parts)
     })
-    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, context) {
-      seen.push(context.serverConfig)
-      return syncTVShow.call(this, title, context)
+    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, payload, parts) {
+      seen.push(parts.run.serverConfig)
+      return syncTVShow.call(this, title, payload, parts)
     })
 
     const result = await runSync(oneServer({ priority: 3 }))
@@ -1145,9 +1145,9 @@ describe('errors', () => {
   it('a show whose sync throws is one failed result; the other titles are written and the pass goes on', async () => {
     const OTHER = 'Another Show (2021)'
     const syncTVShow = TVShowSyncService.prototype.syncTVShow
-    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, context) {
+    jest.spyOn(TVShowSyncService.prototype, 'syncTVShow').mockImplementation(function (title, payload, parts) {
       if (title === OTHER) return Promise.reject(new Error('show sync blew up'))
-      return syncTVShow.call(this, title, context)
+      return syncTVShow.call(this, title, payload, parts)
     })
 
     const result = await runSync(oneServer({ tv: { [SHOW]: showPayload(), [OTHER]: showPayload() } }))

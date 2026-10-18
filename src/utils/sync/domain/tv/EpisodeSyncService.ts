@@ -16,7 +16,6 @@
 
 import {
   EpisodeEntity,
-  SyncContext,
   SyncResult,
   SyncStatus,
   MediaType,
@@ -25,9 +24,13 @@ import {
   planFieldCleanup,
   resolveMediaId,
   resolveDeliveryFacts,
+  type Availability,
   type CleanableField,
   type CleanupPlan,
   type PlanOutcome,
+  type RunConfig,
+  type TVBuilderRun,
+  type TVPassParts,
   type TVShowEntity
 } from '../../core'
 
@@ -82,25 +85,28 @@ export class EpisodeSyncService {
    *  2. One write plan per episode, from file-server data + its existing doc.
    *  3. episodeRepository.smartBulkUpsert(ops) once — never per-episode upserts.
    *
+   * @param payload - This server's payload for the show (`fileServer.tv[showTitle]`)
+   * @param parts - The pass's run and availability (core/types)
    * @param parentShow - The show as stored after this pass's show write
    *   (TVShowSyncService), or null when there is none
    */
   async syncSeason(
     showTitle: string,
     seasonNumber: number,
-    context: SyncContext,
+    payload: any,
+    { run, availability }: TVPassParts,
     parentShow: TVShowEntity | null
   ): Promise<SyncResult[]> {
     const results: SyncResult[] = []
     const label = `${showTitle} S${seasonNumber}`
 
-    syncEventBus.emitStarted(label, MediaType.Episode, context.serverConfig.id)
+    syncEventBus.emitStarted(label, MediaType.Episode, run.serverConfig.id)
 
     try {
-      const seasonFileData = this.extractSeasonFileData(showTitle, seasonNumber, context)
+      const seasonFileData = this.extractSeasonFileData(payload, seasonNumber)
 
       if (!seasonFileData) {
-        results.push(this.makeResult(label, context, SyncStatus.Skipped, [], [
+        results.push(this.makeResult(label, run, SyncStatus.Skipped, [], [
           'No file server data found for this season'
         ]))
         return results
@@ -151,7 +157,7 @@ export class EpisodeSyncService {
         const epNum = this.parseEpisodeNumber(key, fileData)
         if (epNum === null) {
           results.push(this.makeResult(
-            `${label}E?`, context, SyncStatus.Skipped, [],
+            `${label}E?`, run, SyncStatus.Skipped, [],
             [`Cannot determine episode number for key "${key}"`]
           ))
           continue
@@ -164,7 +170,7 @@ export class EpisodeSyncService {
         // payload for the episode nor the who-has-what picture for the episode
         // has changed since its last complete pass, and no other server has
         // changed the document since.
-        const leafPrefixes = this.episodeLeafPrefixes(showTitle, seasonNumber, key, context)
+        const leafPrefixes = this.episodeLeafPrefixes(showTitle, seasonNumber, key, payload, availability)
         const episodeGate = buildSyncGate(
           // The episode's own entry plus the two season maps that carry its
           // duration and dimensions: everything applied for it.
@@ -174,7 +180,7 @@ export class EpisodeSyncService {
             (seasonFileData as any)?.dimensions?.[key],
           ]),
           availabilityFingerprintForPrefixes(
-            context.fieldAvailability,
+            availability.fieldAvailability,
             'tv',
             showTitle,
             leafPrefixes.map((prefix) => `${prefix}.`)
@@ -182,9 +188,9 @@ export class EpisodeSyncService {
         )
 
         if (
-          !context.forceSync &&
+          !run.forceSync &&
           existing &&
-          readSyncGate(existing as any, context.serverConfig.id) === episodeGate
+          readSyncGate(existing as any, run.serverConfig.id) === episodeGate
         ) {
           // The episode's own data is current, but it also carries a copy of
           // its parents: the show's display title and its season's id. Those
@@ -221,12 +227,12 @@ export class EpisodeSyncService {
               documentChanged: true,
             })
           } else {
-            results.push(this.makeResult(`${label}E${epNum}`, context, SyncStatus.Skipped, [], []))
+            results.push(this.makeResult(`${label}E${epNum}`, run, SyncStatus.Skipped, [], []))
           }
           continue
         }
 
-        const built = await this.planEpisode(showTitle, displayTitle, seasonNumber, epNum, fileData, context, existing, showId, seasonId, parentShow, seasonFileData, key)
+        const built = await this.planEpisode(showTitle, displayTitle, seasonNumber, epNum, fileData, payload, run, availability, existing, showId, seasonId, parentShow, seasonFileData, key)
         // The document the plan leaves. Field-absence cleanup's removals are
         // not taken out of it: they go to the write as $unset.
         const merged = applyWritePlan(existing, built.plan)
@@ -239,7 +245,7 @@ export class EpisodeSyncService {
         // Field-absence cleanup. `showTitle` here is the originalTitle (filesystem
         // key) — the fieldAvailability key. planFieldCleanup logs (both modes) and
         // returns `unset` only in enforce mode.
-        const cleanup = this.planEpisodeCleanup(showTitle, seasonNumber, key, existing, displayTitle, epNum, context)
+        const cleanup = this.planEpisodeCleanup(showTitle, seasonNumber, key, existing, displayTitle, epNum, payload, run, availability)
         // One plan for the episode's write (core/writePlan): the cleanup's
         // removals first, then the builder's plan.
         const episodePlan = mergeWritePlans<EpisodeEntity>(
@@ -258,7 +264,7 @@ export class EpisodeSyncService {
         const documentChanged = changesDocument(existing as any, merged as any, unset)
         const gateToStamp = episodePlan.gate === 'stamp' ? episodeGate : null
         const storedGates = ((existing as any)?.syncGates ?? {}) as Record<string, string>
-        const gates = nextSyncGates(storedGates, context.serverConfig.id, gateToStamp, documentChanged)
+        const gates = nextSyncGates(storedGates, run.serverConfig.id, gateToStamp, documentChanged)
         if (!existing || !isEqual(gates, storedGates)) (merged as any).syncGates = gates
 
         episodeOps.push({
@@ -279,7 +285,7 @@ export class EpisodeSyncService {
 
       for (const { merged: entity, existing, cleanupChanges, gateLeftOpen, documentChanged } of episodeOps) {
         results.push(this.makeResult(
-          `${label}E${entity.episodeNumber}`, context,
+          `${label}E${entity.episodeNumber}`, run,
           SyncStatus.Completed,
           [`Upserted episode ${entity.episodeNumber}`, ...(cleanupChanges || [])], [],
           {
@@ -296,7 +302,7 @@ export class EpisodeSyncService {
         ))
       }
 
-      syncEventBus.emitComplete(label, MediaType.Episode, context.serverConfig.id, undefined, {
+      syncEventBus.emitComplete(label, MediaType.Episode, run.serverConfig.id, undefined, {
         totalOperations: episodeOps.length,
         successful: episodeOps.length,
         failed: 0
@@ -304,17 +310,17 @@ export class EpisodeSyncService {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       const stack = error instanceof Error ? error.stack : undefined
-      syncEventBus.emitError(label, MediaType.Episode, context.serverConfig.id, msg, SyncOperation.Content)
+      syncEventBus.emitError(label, MediaType.Episode, run.serverConfig.id, msg, SyncOperation.Content)
       // emitError only fans out to SSE — log explicitly via Pino so the
       // failure surfaces in SigNoz instead of being silently counted.
       pinoLog.error(
-        { label, serverId: context.serverConfig.id, err: msg, stack },
+        { label, serverId: run.serverConfig.id, err: msg, stack },
         `Episode sync failed: ${label}`
       )
       // An unordered bulk write can apply some of its operations before it
       // fails. What landed is unknown, so the show is reported as changed: the
       // other servers' gates on it are reset rather than trusted.
-      results.push(this.makeResult(label, context, SyncStatus.Failed, [], [msg], { documentChanged: true }))
+      results.push(this.makeResult(label, run, SyncStatus.Failed, [], [msg], { documentChanged: true }))
     }
 
     return results
@@ -324,13 +330,20 @@ export class EpisodeSyncService {
    * Sync all seasons (and their episodes) for a show.
    * Each season triggers exactly one smartBulkUpsert() call.
    *
+   * @param payload - This server's payload for the show (`fileServer.tv[showTitle]`)
+   * @param parts - The pass's run and availability (core/types)
    * @param parentShow - The show as stored after this pass's show write
    *   (TVShowSyncService), or null when there is none
    */
-  async syncShow(showTitle: string, context: SyncContext, parentShow: TVShowEntity | null): Promise<SyncResult[]> {
-    const showData = context.fileServerData?.tv?.[showTitle]
+  async syncShow(
+    showTitle: string,
+    payload: any,
+    parts: TVPassParts,
+    parentShow: TVShowEntity | null
+  ): Promise<SyncResult[]> {
+    const showData = payload
     if (!showData) {
-      return [this.makeResult(showTitle, context, SyncStatus.Skipped, [], [
+      return [this.makeResult(showTitle, parts.run, SyncStatus.Skipped, [], [
         'No file server data found for this show'
       ])]
     }
@@ -339,7 +352,7 @@ export class EpisodeSyncService {
     for (const key of Object.keys(showData.seasons || {})) {
       const seasonNumber = this.parseSeasonNumber(key)
       if (seasonNumber === null) continue
-      allResults.push(...await this.syncSeason(showTitle, seasonNumber, context, parentShow))
+      allResults.push(...await this.syncSeason(showTitle, seasonNumber, payload, parts, parentShow))
     }
     return allResults
   }
@@ -348,8 +361,7 @@ export class EpisodeSyncService {
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  private extractSeasonFileData(showTitle: string, seasonNumber: number, context: SyncContext): any {
-    const showData = context.fileServerData?.tv?.[showTitle]
+  private extractSeasonFileData(showData: any, seasonNumber: number): any {
     if (!showData?.seasons) return null
 
     for (const candidate of [
@@ -375,8 +387,7 @@ export class EpisodeSyncService {
    * the format would make every lookup miss and report false absences. Mirrors the
    * candidate order of extractSeasonFileData but returns the key, not the data.
    */
-  private resolveSeasonKey(showTitle: string, seasonNumber: number, context: SyncContext): string | null {
-    const showData = context.fileServerData?.tv?.[showTitle]
+  private resolveSeasonKey(showData: any, seasonNumber: number): string | null {
     if (!showData?.seasons) return null
 
     for (const candidate of [
@@ -411,12 +422,13 @@ export class EpisodeSyncService {
     showOriginalTitle: string,
     seasonNumber: number,
     episodeKey: string | undefined,
-    context: SyncContext
+    showPayload: any,
+    availability: Availability
   ): string[] {
     if (!episodeKey) return []
-    const ownKey = this.resolveSeasonKey(showOriginalTitle, seasonNumber, context)
+    const ownKey = this.resolveSeasonKey(showPayload, seasonNumber)
     const otherKeys =
-      seasonsAcrossServers(context.fieldAvailability, showOriginalTitle).get(seasonNumber)?.keys ?? []
+      seasonsAcrossServers(availability.fieldAvailability, showOriginalTitle).get(seasonNumber)?.keys ?? []
     const seasonKeys = [...new Set([...(ownKey ? [ownKey] : []), ...otherKeys])]
     return seasonKeys.map((seasonKey) => `seasons.${seasonKey}.episodes.${episodeKey}`)
   }
@@ -426,12 +438,12 @@ export class EpisodeSyncService {
     leafPrefixes: string[],
     field: string,
     showOriginalTitle: string,
-    context: SyncContext
+    availability: Availability
   ): string[] {
     return [
       ...new Set(
         leafPrefixes.flatMap((prefix) =>
-          getServersReportingField(context.fieldAvailability, 'tv', showOriginalTitle, `${prefix}.${field}`)
+          getServersReportingField(availability.fieldAvailability, 'tv', showOriginalTitle, `${prefix}.${field}`)
         )
       ),
     ]
@@ -467,13 +479,14 @@ export class EpisodeSyncService {
     field: string,
     hasValue: boolean,
     showOriginalTitle: string,
-    context: SyncContext
+    run: Pick<RunConfig, 'serverConfig'>,
+    availability: Availability
   ): boolean {
     if (!hasValue) return false
     const reporters = leafPrefixes.length === 0
-      ? [context.serverConfig.id]
-      : this.serversReportingEpisodeField(leafPrefixes, field, showOriginalTitle, context)
-    return isHighestPriorityAmongServers(reporters, context.serverConfig)
+      ? [run.serverConfig.id]
+      : this.serversReportingEpisodeField(leafPrefixes, field, showOriginalTitle, availability)
+    return isHighestPriorityAmongServers(reporters, run.serverConfig)
   }
 
   /**
@@ -490,13 +503,15 @@ export class EpisodeSyncService {
     existing: EpisodeEntity | null,
     displayTitle: string,
     episodeNumber: number,
-    context: SyncContext
+    showPayload: any,
+    run: Pick<RunConfig, 'cleanup'>,
+    availability: Availability
   ): CleanupPlan {
-    if (!context.cleanup?.enabled || !existing) return { changes: [] }
+    if (!run.cleanup?.enabled || !existing) return { changes: [] }
 
     // Every literal prefix the episode has across the servers: a field is absent
     // only when no server reports it under any of them.
-    const [prefix, ...otherPrefixes] = this.episodeLeafPrefixes(showOriginalTitle, seasonNumber, episodeKey, context)
+    const [prefix, ...otherPrefixes] = this.episodeLeafPrefixes(showOriginalTitle, seasonNumber, episodeKey, showPayload, availability)
     if (!prefix) return { changes: [] }  // can't build a trustworthy path → skip (no guessing)
 
     const fields: CleanableField[] = [
@@ -515,11 +530,11 @@ export class EpisodeSyncService {
     ]
 
     return planFieldCleanup({
-      cleanup: context.cleanup,
+      cleanup: run.cleanup,
       mediaType: 'tv',
       availabilityKey: showOriginalTitle,
       entity: existing,
-      fieldAvailability: context.fieldAvailability,
+      fieldAvailability: availability.fieldAvailability,
       fields,
       log: (obj, msg) => pinoLog.info(obj, msg),
       logContext: { show: displayTitle, originalTitle: showOriginalTitle, season: seasonNumber, episode: episodeNumber },
@@ -549,7 +564,10 @@ export class EpisodeSyncService {
     seasonNumber: number,
     episodeNumber: number,
     fileData: any,
-    context: SyncContext,
+    /** The show's payload: the season's literal key is resolved from it. */
+    showPayload: any,
+    run: TVBuilderRun,
+    availability: Availability,
     existing: EpisodeEntity | null,
     showId: any,
     seasonId: any,
@@ -598,22 +616,22 @@ export class EpisodeSyncService {
     // This is the grain "Recently Added" ranks TV on — a show rises when a NEW
     // episode coordinate arrives, not when an existing episode's file is
     // replaced by a quality upgrade.
-    seedDiscovery(entity, existing, context.serverConfig.id, now)
+    seedDiscovery(entity, existing, run.serverConfig.id, now)
     if (showId) entity.showId = showId
     if (seasonId) entity.seasonId = seasonId
     // Use display title as showTitle (matches legacy document shape)
     entity.showTitle = displayTitle
 
     // --- Video URL (owned by the highest-priority server that has the episode) ---
-    const leafPrefixes = this.episodeLeafPrefixes(showOriginalTitle, seasonNumber, episodeFileName, context)
+    const leafPrefixes = this.episodeLeafPrefixes(showOriginalTitle, seasonNumber, episodeFileName, showPayload, availability)
     if (leafPrefixes.length === 0) {
       pinoLog.warn(
-        { showOriginalTitle, seasonNumber, episodeNumber, serverId: context.serverConfig.id },
+        { showOriginalTitle, seasonNumber, episodeNumber, serverId: run.serverConfig.id },
         'Cannot build the availability path for this episode; field ownership is not ranked against other servers'
       )
     }
     const owns = (field: string, hasValue: boolean) =>
-      this.ownsEpisodeField(leafPrefixes, field, hasValue, showOriginalTitle, context)
+      this.ownsEpisodeField(leafPrefixes, field, hasValue, showOriginalTitle, run, availability)
     const canUpdateVideo = owns('videoURL', Boolean(fileData?.videoURL))
     if (canUpdateVideo && fileData?.videoURL) {
       if (isTopLevelFieldLocked((existing as any)?.lockedFields, 'videoURL')) {
@@ -627,8 +645,8 @@ export class EpisodeSyncService {
           entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
         }
       } else {
-        entity.videoURL = fileServerUrl(fileData.videoURL, context.serverConfig)
-        entity.videoSource = context.serverConfig.id
+        entity.videoURL = fileServerUrl(fileData.videoURL, run.serverConfig)
+        entity.videoSource = run.serverConfig.id
         entity.normalizedVideoId = generateNormalizedVideoId(entity.videoURL)
       }
     }
@@ -652,7 +670,7 @@ export class EpisodeSyncService {
               episodeNumber,
               storedMediaId: existing.mediaId,
               incomingMediaId,
-              serverId: context.serverConfig.id,
+              serverId: run.serverConfig.id,
             },
             'mediaId mismatch for episode — video owner wins'
           )
@@ -663,7 +681,7 @@ export class EpisodeSyncService {
       // Episodes carry these flat; source urls go through the same
       // fileServerUrl as videoURL above.
       const facts = resolveDeliveryFacts(fileData, (url) =>
-        fileServerUrl(url, context.serverConfig)
+        fileServerUrl(url, run.serverConfig)
       )
       entity.sources = facts.sources
       entity.primaryContainer = facts.primaryContainer
@@ -695,15 +713,15 @@ export class EpisodeSyncService {
     // the library. Heard from the owner alone, the date depended on which
     // server was down when the episode was first synced.
     if (fileData?.videoURL) {
-      applyFirstSeen(entity, fileData.mediaIdentity, context.serverConfig.id, now, (heldServerId) =>
-        serverOutranks(context.serverConfig, heldServerId)
+      applyFirstSeen(entity, fileData.mediaIdentity, run.serverConfig.id, now, (heldServerId) =>
+        serverOutranks(run.serverConfig, heldServerId)
       )
     }
 
     // --- Video info (follows video priority) ---
     if (canUpdateVideo && fileData?.videoInfo && typeof fileData.videoInfo === 'object') {
       entity.videoInfo = fileData.videoInfo
-      entity.videoInfoSource = context.serverConfig.id
+      entity.videoInfoSource = run.serverConfig.id
     }
 
     // --- Facts about the video file (flat, matching legacy document shape) ---
@@ -740,7 +758,7 @@ export class EpisodeSyncService {
         )
       }
 
-      entity.videoInfoSource = context.serverConfig.id
+      entity.videoInfoSource = run.serverConfig.id
     }
 
     // --- Thumbnail (priority-gated) ---
@@ -748,8 +766,8 @@ export class EpisodeSyncService {
     // path the availability map and field-absence cleanup rank on.
     const canUpdateThumbnail = owns('thumbnail', Boolean(fileData?.thumbnail))
     if (canUpdateThumbnail) {
-      entity.thumbnail = fileServerUrl(fileData.thumbnail, context.serverConfig)
-      entity.thumbnailSource = context.serverConfig.id
+      entity.thumbnail = fileServerUrl(fileData.thumbnail, run.serverConfig)
+      entity.thumbnailSource = run.serverConfig.id
     }
 
     // --- Captions (one language belongs to the highest-priority server listing it) ---
@@ -765,7 +783,7 @@ export class EpisodeSyncService {
       try {
         listedCaptions =
           fileData.subtitles && typeof fileData.subtitles === 'object'
-            ? captionUrls(fileData.subtitles, context.serverConfig)
+            ? captionUrls(fileData.subtitles, run.serverConfig)
             : null
       } catch (error) {
         // Not being able to read the list is not the same as an empty list.
@@ -779,18 +797,18 @@ export class EpisodeSyncService {
       if (captionsReadable && !isTopLevelFieldLocked((existing as any)?.lockedFields, 'captionURLs')) {
         const serversListing = (language: string) =>
           this.serversReportingEpisodeField(
-            leafPrefixes, `subtitles.${language}.url`, showOriginalTitle, context
+            leafPrefixes, `subtitles.${language}.url`, showOriginalTitle, availability
           )
         const result = reconcileCaptions({
           existing: existing?.captionURLs as Record<string, any> | undefined,
           listed: listedCaptions,
-          serverId: context.serverConfig.id,
+          serverId: run.serverConfig.id,
           ownsLanguage: (language) => owns(`subtitles.${language}.url`, true),
           listedByAnyServer: (language) => serversListing(language).length > 0,
           // Without the literal path nothing can be said about other servers.
           allEnabledServersProbed:
             leafPrefixes.length > 0 &&
-            (context.allEnabledServersProbed ?? context.cleanup?.allEnabledServersProbed) === true,
+            run.allEnabledServersProbed === true,
         })
         if (result.withheld.length > 0) holdBack('captionURLs')
 
@@ -800,7 +818,7 @@ export class EpisodeSyncService {
             entity.captionURLs = result.captions as any
             // Named from the map itself, so it does not depend on which
             // server's pass ran last.
-            entity.captionSource = (result.captions[languages[0]] as any)?.sourceServerId ?? context.serverConfig.id
+            entity.captionSource = (result.captions[languages[0]] as any)?.sourceServerId ?? run.serverConfig.id
           } else {
             clearField('captionURLs')
             clearField('captionSource')
@@ -813,8 +831,8 @@ export class EpisodeSyncService {
     // Legacy stores chapterURL as a single URL string (not an array)
     const canUpdateChapters = owns('chapters', Boolean(fileData?.chapters))
     if (canUpdateChapters) {
-      entity.chapterURL = fileServerUrl(fileData.chapters, context.serverConfig)
-      entity.chapterSource = context.serverConfig.id
+      entity.chapterURL = fileServerUrl(fileData.chapters, run.serverConfig)
+      entity.chapterSource = run.serverConfig.id
     }
 
     // --- Metadata (priority-gated) ---
@@ -834,7 +852,7 @@ export class EpisodeSyncService {
       if (typeof fileData.metadata === 'string') {
         try {
           episodeMetadata = await fetchMetadataMultiServer(
-            context.serverConfig.id,
+            run.serverConfig.id,
             fileData.metadata,
             'file',
             'tv',
@@ -873,7 +891,7 @@ export class EpisodeSyncService {
     // document actually holds (core/metadataLock).
     const metadata = effectiveMetadata<any>({
       stored: existing ? { metadata: existing.metadata, metadataSource: existing.metadataSource } : null,
-      incoming: incomingMetadata ? { metadata: incomingMetadata, metadataSource: context.serverConfig.id } : null,
+      incoming: incomingMetadata ? { metadata: incomingMetadata, metadataSource: run.serverConfig.id } : null,
       locked: isTopLevelFieldLocked((existing as any)?.lockedFields, 'metadata'),
     })
     if (metadata.action === 'write') {
@@ -898,14 +916,14 @@ export class EpisodeSyncService {
           url: canUpdateThumbnail ? entity.thumbnail : null,
           blurhashUrl: fileData?.thumbnailBlurhash,
         },
-        owner: canUpdateThumbnail ? context.serverConfig.id : null,
+        owner: canUpdateThumbnail ? run.serverConfig.id : null,
         locks: { image: lockedField('thumbnail'), blurhash: lockedField('thumbnailBlurhash') },
       },
       async (path) => {
         try {
           return await fetchMetadataMultiServer(
-            context.serverConfig.id,
-            fileServerUrl(path, context.serverConfig),
+            run.serverConfig.id,
+            fileServerUrl(path, run.serverConfig),
             'blurhash',
             'tv',
             showOriginalTitle
@@ -969,7 +987,7 @@ export class EpisodeSyncService {
 
   private makeResult(
     entityId: string,
-    context: SyncContext,
+    run: Pick<RunConfig, 'serverConfig'>,
     status: SyncStatus,
     changes: string[],
     errors: string[],
@@ -980,7 +998,7 @@ export class EpisodeSyncService {
       entityId,
       mediaType: MediaType.Episode,
       operation: SyncOperation.Content,
-      serverId: context.serverConfig.id,
+      serverId: run.serverConfig.id,
       timestamp: new Date(),
       changes,
       errors,

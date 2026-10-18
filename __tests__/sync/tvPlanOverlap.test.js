@@ -60,7 +60,6 @@ jest.mock('@src/utils/sync/core/writePlan', () => {
 const { TVShowSyncService } = require('@src/utils/sync/domain/tv/TVShowSyncService')
 const { SeasonSyncService } = require('@src/utils/sync/domain/tv/SeasonSyncService')
 const { EpisodeSyncService } = require('@src/utils/sync/domain/tv/EpisodeSyncService')
-const { MediaType, SyncOperation } = require('@src/utils/sync/core')
 const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
 function rng(seed) {
@@ -227,15 +226,14 @@ it('never merges a plan that sets a field with one that removes it', async () =>
       repos.episodes,
       repos.seasons
     )
-    const results = await service.syncTVShow(SHOW, {
-      mediaType: MediaType.TVShow,
-      operation: SyncOperation.Metadata,
-      serverConfig: { ...mockServers[syncing], baseUrl: `https://${syncing}.example`, prefix: '', enabled: true },
-      fieldAvailability,
-      forceSync: true,
-      fileServerData: { tv: { [SHOW]: payloads[syncing] } },
-      cleanup: { enabled: true, mode: 'enforce', maxFieldsPerEntity: 10, allEnabledServersProbed: probed },
-      allEnabledServersProbed: probed,
+    const results = await service.syncTVShow(SHOW, payloads[syncing], {
+      run: {
+        serverConfig: { ...mockServers[syncing], baseUrl: `https://${syncing}.example`, prefix: '', enabled: true },
+        forceSync: true,
+        cleanup: { enabled: true, mode: 'enforce', maxFieldsPerEntity: 10, allEnabledServersProbed: probed },
+        allEnabledServersProbed: probed,
+      },
+      availability: { fieldAvailability },
     })
     if (results.some((r) => r.status === 'failed')) failedPasses++
 

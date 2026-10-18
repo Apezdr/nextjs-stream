@@ -55,7 +55,6 @@ const { TVShowRepository } = require('@src/utils/sync/infrastructure/database/TV
 const { SeasonRepository } = require('@src/utils/sync/infrastructure/database/SeasonRepository')
 const { EpisodeRepository } = require('@src/utils/sync/infrastructure/database/EpisodeRepository')
 const { resolveCleanupConfig } = require('@src/utils/sync/core/FieldAbsenceCleaner')
-const { MediaType, SyncOperation } = require('@src/utils/sync/core')
 const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
 // ---------------------------------------------------------------- in-memory MongoDB
@@ -185,15 +184,14 @@ async function pass(db, serverId, payload, { fieldAvailability = availabilityOf(
     episodes,
     seasons
   )
-  return service.syncTVShow(SHOW, {
-    mediaType: MediaType.TVShow,
-    operation: SyncOperation.Metadata,
-    serverConfig: { ...mockServers[serverId], baseUrl: `https://${serverId}.example`, prefix: '', enabled: true },
-    fieldAvailability,
-    forceSync: true,
-    fileServerData: { tv: { [SHOW]: payload } },
-    cleanup,
-    allEnabledServersProbed: true,
+  return service.syncTVShow(SHOW, payload, {
+    run: {
+      serverConfig: { ...mockServers[serverId], baseUrl: `https://${serverId}.example`, prefix: '', enabled: true },
+      forceSync: true,
+      cleanup,
+      allEnabledServersProbed: true,
+    },
+    availability: { fieldAvailability },
   })
 }
 

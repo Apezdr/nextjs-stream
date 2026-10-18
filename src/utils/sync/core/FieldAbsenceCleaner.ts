@@ -196,7 +196,7 @@ export function detectAbsentFields(input: AbsenceCleanupInput): AbsenceCleanupRe
   }
 }
 
-/** SyncContext.cleanup shape (kept in sync with core/types.ts). */
+/** RunConfig.cleanup (core/types.ts). */
 export interface CleanupConfig {
   enabled: boolean
   mode: 'enforce' | 'dry-run'

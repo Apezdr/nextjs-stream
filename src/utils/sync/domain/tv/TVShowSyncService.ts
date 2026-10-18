@@ -20,15 +20,18 @@
 
 import {
   TVShowEntity,
-  SyncContext,
   SyncResult,
   SyncStatus,
   MediaType,
   SyncOperation,
   syncEventBus,
   planFieldCleanup,
+  type Availability,
   type CleanableField,
   type PlanOutcome,
+  type RunConfig,
+  type TVBuilderRun,
+  type TVPassParts,
   type WritePlan
 } from '../../core'
 
@@ -100,11 +103,16 @@ export class TVShowSyncService {
    *  2. seasonSyncService.syncShow(showTitle, …, show)    → one bulk write for all seasons.
    *  3. episodeSyncService.syncShow(showTitle, …, show)   → one bulk write per season.
    *  4. finalizeShow                                      → the episode count and the gate.
+   *
+   * @param payload - This server's payload for the show (`fileServer.tv[showTitle]`)
+   * @param parts - The pass's run and availability (core/types), handed on to
+   *   the season and episode services
    */
-  async syncTVShow(showTitle: string, context: SyncContext): Promise<SyncResult[]> {
+  async syncTVShow(showTitle: string, payload: any, parts: TVPassParts): Promise<SyncResult[]> {
+    const { run, availability } = parts
     const allResults: SyncResult[] = []
 
-    syncEventBus.emitStarted(showTitle, MediaType.TVShow, context.serverConfig.id)
+    syncEventBus.emitStarted(showTitle, MediaType.TVShow, run.serverConfig.id)
 
     try {
       // Show-level skip (core/syncGate). This server's pass over the whole show
@@ -116,16 +124,16 @@ export class TVShowSyncService {
       //   2. the DB still holds at least the episodes and seasons the payload
       //      lists (drift from deletes the payload cannot see).
       const showGate = buildSyncGate(
-        payloadFingerprint(context.fileServerData?.tv?.[showTitle]),
-        availabilityFingerprint(context.fieldAvailability, 'tv', showTitle)
+        payloadFingerprint(payload),
+        availabilityFingerprint(availability.fieldAvailability, 'tv', showTitle)
       )
 
       // The first of the pass's two reads of the show: the gate check, the
       // drift checks and the show's plan all work from it.
       const existing = await this.tvShowRepository.findByOriginalTitle(showTitle)
 
-      if (!context.forceSync && existing && readSyncGate(existing as any, context.serverConfig.id) === showGate) {
-        const expectedEpisodes = this.countExpectedEpisodes(showTitle, context)
+      if (!run.forceSync && existing && readSyncGate(existing as any, run.serverConfig.id) === showGate) {
+        const expectedEpisodes = this.countExpectedEpisodes(payload)
         const actualEpisodes = expectedEpisodes > 0
           ? await this.episodeRepository.getEpisodeCount(existing.title, undefined, (existing as any)._id)
           : 0
@@ -133,7 +141,7 @@ export class TVShowSyncService {
         // leaving its episodes intact and its hash unchanged. Without this
         // check the show would be skipped forever and the seasons never
         // re-created (episodes render under seasons, so the UI shows nothing).
-        const expectedSeasons = this.countExpectedSeasons(showTitle, context)
+        const expectedSeasons = this.countExpectedSeasons(payload)
         const actualSeasons = expectedSeasons > 0
           ? await this.seasonRepository.getSeasonCount(existing.title, (existing as any)._id)
           : 0
@@ -147,11 +155,11 @@ export class TVShowSyncService {
           if ((existing as any).visibleEpisodeCount === undefined) {
             await this.finalizeShow(showTitle, existing, null)
           }
-          syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
+          syncEventBus.emitComplete(showTitle, MediaType.TVShow, run.serverConfig.id, undefined, {
             totalOperations: 0, successful: 0, failed: 0
           })
           return [this.makeResult(
-            showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Skipped, [], []
+            showTitle, run, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Skipped, [], []
           )]
         }
 
@@ -165,19 +173,19 @@ export class TVShowSyncService {
       // 1. The show's plan, with priority checking (async — may fetch metadata),
       //    and the document it leaves. Field-absence cleanup's removals are
       //    not taken out of that document: they go to the write as $unset.
-      const showFileData = context.fileServerData?.tv?.[showTitle]
-      const built = await this.planTVShow(showTitle, showFileData, context, existing)
+      const showFileData = payload
+      const built = await this.planTVShow(showTitle, showFileData, run, availability, existing)
       const showEntity = applyWritePlan(existing, built.plan)
 
       // Field-absence cleanup: drop show-level assets no enabled server reports
       // anymore. planFieldCleanup logs (both modes) and returns `unset` only in
       // enforce. showTitle is the originalTitle (fieldAvailability key).
       const cleanupPlan = planFieldCleanup({
-        cleanup: context.cleanup,
+        cleanup: run.cleanup,
         mediaType: 'tv',
         availabilityKey: showTitle,
         entity: existing,
-        fieldAvailability: context.fieldAvailability,
+        fieldAvailability: availability.fieldAvailability,
         fields: TVSHOW_CLEANABLE_FIELDS,
         log: (obj, msg) => pinoLog.info(obj, msg),
         logContext: { show: showEntity.title, originalTitle: showTitle },
@@ -198,13 +206,13 @@ export class TVShowSyncService {
       // the other servers skipping a show that has changed.
       if (showChanged && existing) {
         const storedGates = ((existing as any).syncGates ?? {}) as Record<string, string>
-        const gates = nextSyncGates(storedGates, context.serverConfig.id, null, true)
+        const gates = nextSyncGates(storedGates, run.serverConfig.id, null, true)
         if (!isEqual(gates, storedGates)) (showEntity as any).syncGates = gates
       }
       await this.tvShowRepository.smartUpsert(showEntity, existing, { unset: showPlan.unset })
 
       allResults.push(this.makeResult(
-        showTitle, context, MediaType.TVShow, SyncOperation.Metadata,
+        showTitle, run, MediaType.TVShow, SyncOperation.Metadata,
         SyncStatus.Completed, [`Upserted TV show "${showTitle}"`, ...cleanupPlan.changes], [],
         // `created`: no document existed before this write (counted for the
         // admins' sync notice).
@@ -221,10 +229,10 @@ export class TVShowSyncService {
 
       // 4. Bulk-upsert all seasons (one bulkWrite per show)
       const childResults: SyncResult[] = []
-      childResults.push(...await this.seasonSyncService.syncShow(showTitle, context, storedShow))
+      childResults.push(...await this.seasonSyncService.syncShow(showTitle, payload, parts, storedShow))
 
       // 5. Bulk-upsert all episodes (one bulkWrite per season)
-      childResults.push(...await this.episodeSyncService.syncShow(showTitle, context, storedShow))
+      childResults.push(...await this.episodeSyncService.syncShow(showTitle, payload, parts, storedShow))
       allResults.push(...childResults)
 
       // 6. Close out the show now that everything under it is written: recount
@@ -253,7 +261,7 @@ export class TVShowSyncService {
       const closedOut = await this.finalizeShow(showTitle, storedShow, {
         gate: gateToStamp,
         subtreeChanged,
-        serverId: context.serverConfig.id,
+        serverId: run.serverConfig.id,
       })
       if (!closedOut) {
         // The gates were not settled: the show keeps the ones it had before
@@ -261,12 +269,12 @@ export class TVShowSyncService {
         // Reported as a failure, so the run is not taken as complete and the
         // next tick is not skipped on those gates (sync/run/tickSkip).
         allResults.push(this.makeResult(
-          showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Failed, [],
+          showTitle, run, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Failed, [],
           ['Closing out the show failed: its gate was not settled']
         ))
       }
 
-      syncEventBus.emitComplete(showTitle, MediaType.TVShow, context.serverConfig.id, undefined, {
+      syncEventBus.emitComplete(showTitle, MediaType.TVShow, run.serverConfig.id, undefined, {
         totalOperations: allResults.length,
         successful: allResults.filter(r => r.status === SyncStatus.Completed).length,
         failed: allResults.filter(r => r.status === SyncStatus.Failed).length
@@ -274,18 +282,18 @@ export class TVShowSyncService {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       const stack = error instanceof Error ? error.stack : undefined
-      syncEventBus.emitError(showTitle, MediaType.TVShow, context.serverConfig.id, msg)
+      syncEventBus.emitError(showTitle, MediaType.TVShow, run.serverConfig.id, msg)
       // Surface the failure to Pino logs — emitError only fans out to SSE
       // subscribers, and `syncLogger` is a console-based rate-limited
       // logger that doesn't reach SigNoz. Without this the failure was
       // silently counted in the pass's errors with no observability
       // footprint.
       pinoLog.error(
-        { showTitle, serverId: context.serverConfig.id, err: msg, stack },
+        { showTitle, serverId: run.serverConfig.id, err: msg, stack },
         `TV show sync failed: ${showTitle}`
       )
       allResults.push(this.makeResult(
-        showTitle, context, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Failed, [], [msg]
+        showTitle, run, MediaType.TVShow, SyncOperation.Metadata, SyncStatus.Failed, [], [msg]
       ))
     }
 
@@ -364,7 +372,8 @@ export class TVShowSyncService {
   private async planTVShow(
     showTitle: string,
     fileData: any,
-    context: SyncContext,
+    run: TVBuilderRun,
+    availability: Availability,
     existing: TVShowEntity | null
   ): Promise<PlanOutcome<TVShowEntity>> {
     const now = new Date()
@@ -388,8 +397,8 @@ export class TVShowSyncService {
           type: 'tvShow',
           createdAt: now,
           lastSynced: now,
-          titleSource: context.serverConfig.id,
-          originalTitleSource: context.serverConfig.id,
+          titleSource: run.serverConfig.id,
+          originalTitleSource: run.serverConfig.id,
         }
     const planned = (): PlanOutcome<TVShowEntity> => ({
       plan: { ...plan, ...draftWritePlan(existing, entity, unset) },
@@ -403,7 +412,7 @@ export class TVShowSyncService {
     // Library-add date: seeded once, never moved later (core/discovery.ts).
     // The show's own date is for detail pages; "Recently Added" ranks a show by
     // its newest EPISODE, so a new season of an old show still surfaces.
-    seedDiscovery(entity, existing, context.serverConfig.id, now)
+    seedDiscovery(entity, existing, run.serverConfig.id, now)
 
     if (!fileData) return planned()
     const locked = (field: string) => isTopLevelFieldLocked((existing as any)?.lockedFields, field)
@@ -419,7 +428,7 @@ export class TVShowSyncService {
     // to write as metadata, but it did write its own identity, and when two
     // servers' ids differed the show's mediaId changed twice per run.
     const canUpdateMetadata = isCurrentServerHighestPriorityForReportedField(
-      context.fieldAvailability, 'tv', showTitle, 'metadata', context.serverConfig
+      availability.fieldAvailability, 'tv', showTitle, 'metadata', run.serverConfig
     )
 
     if (canUpdateMetadata && fileData.metadata) {
@@ -433,7 +442,7 @@ export class TVShowSyncService {
         metadataFetchSucceeded = false
         try {
           showMetadata = await fetchMetadataMultiServer(
-            context.serverConfig.id,
+            run.serverConfig.id,
             fileData.metadata,
             'file',
             'tv',
@@ -456,7 +465,7 @@ export class TVShowSyncService {
       // (core/metadataLock).
       const metadata = effectiveMetadata<any>({
         stored: existing ? { metadata: existing.metadata, metadataSource: existing.metadataSource } : null,
-        incoming: fetchedUsable ? { metadata: showMetadata, metadataSource: context.serverConfig.id } : null,
+        incoming: fetchedUsable ? { metadata: showMetadata, metadataSource: run.serverConfig.id } : null,
         locked: locked('metadata'),
       })
       if (metadata.action === 'write') {
@@ -488,9 +497,9 @@ export class TVShowSyncService {
     const titleRule = resolveTitle({
       originalTitle: showTitle,
       metadata: { metadata: entity.metadata, metadataSource: entity.metadataSource },
-      fieldAvailability: context.fieldAvailability,
+      fieldAvailability: availability.fieldAvailability,
       mediaType: 'tv',
-      serverConfig: context.serverConfig,
+      serverConfig: run.serverConfig,
       stored: existing,
       locks: { title: locked('title') },
     })
@@ -513,8 +522,8 @@ export class TVShowSyncService {
     // is when the show entered the library. Heard from the metadata owner
     // alone, the date depended on which server was down when the show was
     // first synced.
-    applyFirstSeen(entity, fileData.mediaIdentity, context.serverConfig.id, now, (heldServerId) =>
-      serverOutranks(context.serverConfig, heldServerId)
+    applyFirstSeen(entity, fileData.mediaIdentity, run.serverConfig.id, now, (heldServerId) =>
+      serverOutranks(run.serverConfig, heldServerId)
     )
 
     // --- Poster, backdrop, logo ---
@@ -525,27 +534,27 @@ export class TVShowSyncService {
     // of the best priority, so with two of them the show held whichever
     // synced last.
     const canUpdatePoster = isCurrentServerHighestPriorityForReportedField(
-      context.fieldAvailability, 'tv', showTitle, 'poster', context.serverConfig
+      availability.fieldAvailability, 'tv', showTitle, 'poster', run.serverConfig
     )
     if (canUpdatePoster && (fileData.posterURL || fileData.poster)) {
-      entity.posterURL = fileServerUrl(fileData.posterURL || fileData.poster, context.serverConfig)
-      entity.posterSource = context.serverConfig.id
+      entity.posterURL = fileServerUrl(fileData.posterURL || fileData.poster, run.serverConfig)
+      entity.posterSource = run.serverConfig.id
     }
 
     const canUpdateBackdrop = isCurrentServerHighestPriorityForReportedField(
-      context.fieldAvailability, 'tv', showTitle, 'backdrop', context.serverConfig
+      availability.fieldAvailability, 'tv', showTitle, 'backdrop', run.serverConfig
     )
     if (canUpdateBackdrop && (fileData.backdropURL || fileData.backdrop)) {
-      entity.backdrop = fileServerUrl(fileData.backdropURL || fileData.backdrop, context.serverConfig)
-      entity.backdropSource = context.serverConfig.id
+      entity.backdrop = fileServerUrl(fileData.backdropURL || fileData.backdrop, run.serverConfig)
+      entity.backdropSource = run.serverConfig.id
     }
 
     const canUpdateLogo = isCurrentServerHighestPriorityForReportedField(
-      context.fieldAvailability, 'tv', showTitle, 'logo', context.serverConfig
+      availability.fieldAvailability, 'tv', showTitle, 'logo', run.serverConfig
     )
     if (canUpdateLogo && (fileData.logoURL || fileData.logo)) {
-      entity.logo = fileServerUrl(fileData.logoURL || fileData.logo, context.serverConfig)
-      entity.logoSource = context.serverConfig.id
+      entity.logo = fileServerUrl(fileData.logoURL || fileData.logo, run.serverConfig)
+      entity.logoSource = run.serverConfig.id
     }
 
     // --- Poster / backdrop blurhash ---
@@ -569,17 +578,17 @@ export class TVShowSyncService {
             blurhashSource: (existing as any)?.[sourceField],
           },
           reported: {
-            url: ownsImage && imagePath ? fileServerUrl(imagePath as string, context.serverConfig) : null,
+            url: ownsImage && imagePath ? fileServerUrl(imagePath as string, run.serverConfig) : null,
             blurhashUrl: blurhashPath as string | null | undefined,
           },
-          owner: ownsImage ? context.serverConfig.id : null,
+          owner: ownsImage ? run.serverConfig.id : null,
           locks: { image: locked(imageField), blurhash: locked(field) },
         },
         async (path) => {
           try {
             return await fetchMetadataMultiServer(
-              context.serverConfig.id,
-              fileServerUrl(path, context.serverConfig),
+              run.serverConfig.id,
+              fileServerUrl(path, run.serverConfig),
               'blurhash',
               'tv',
               showTitle
@@ -609,9 +618,9 @@ export class TVShowSyncService {
     // be each server's own count, written by every pass, so a show whose
     // seasons are split across servers (or whose folder on the main server
     // holds only artwork) ended on whichever server synced last.
-    const seasonCount = this.countSeasonsAcrossServers(showTitle, fileData, context)
+    const seasonCount = this.countSeasonsAcrossServers(showTitle, fileData, availability)
     const everyServerAnswered =
-      (context.allEnabledServersProbed ?? context.cleanup?.allEnabledServersProbed) === true
+      run.allEnabledServersProbed === true
     if (seasonCount !== null) {
       // With a server missing, its seasons are missing from the count. Do not
       // let it drop on such a run: the seasons have not gone anywhere. The
@@ -634,8 +643,8 @@ export class TVShowSyncService {
    * sum of episode keys across every season. Used as the "expected" side of
    * the show-level integrity check.
    */
-  private countExpectedEpisodes(showTitle: string, context: SyncContext): number {
-    const seasons = context.fileServerData?.tv?.[showTitle]?.seasons
+  private countExpectedEpisodes(payload: any): number {
+    const seasons = payload?.seasons
     if (!seasons) return 0
     // Only seasons the sync can store: a folder whose name has no number in it
     // ("Specials") is never written, and counting its episodes as expected
@@ -651,14 +660,14 @@ export class TVShowSyncService {
    * season key each server sent). Falls back to this server's own payload when
    * the map has nothing for the show. Null when neither says anything.
    */
-  private countSeasonsAcrossServers(showTitle: string, fileData: any, context: SyncContext): number | null {
+  private countSeasonsAcrossServers(showTitle: string, fileData: any, availability: Availability): number | null {
     const seasonNumbers = new Set<number>()
     const note = (seasonKey: string) => {
       const match = seasonKey.match(/(?:season_?|s)?(\d+)/i)
       if (match) seasonNumbers.add(parseInt(match[1], 10))
     }
 
-    const bucket = (context.fieldAvailability as any)?.tv?.[showTitle]
+    const bucket = (availability.fieldAvailability as any)?.tv?.[showTitle]
     if (bucket && typeof bucket === 'object') {
       for (const path of Object.keys(bucket)) {
         if (!path.startsWith('seasons.')) continue
@@ -685,15 +694,15 @@ export class TVShowSyncService {
    * cannot perpetually force a full sync. Used as the "expected" side of the
    * show-level season-drift check.
    */
-  private countExpectedSeasons(showTitle: string, context: SyncContext): number {
-    const seasons = context.fileServerData?.tv?.[showTitle]?.seasons
+  private countExpectedSeasons(payload: any): number {
+    const seasons = payload?.seasons
     if (!seasons) return 0
     return Object.keys(seasons).filter(k => /(?:season_?|s)?(\d+)/i.test(k)).length
   }
 
   private makeResult(
     entityId: string,
-    context: SyncContext,
+    run: Pick<RunConfig, 'serverConfig'>,
     mediaType: MediaType,
     operation: SyncOperation,
     status: SyncStatus,
@@ -703,7 +712,7 @@ export class TVShowSyncService {
   ): SyncResult {
     return {
       status, entityId, mediaType, operation,
-      serverId: context.serverConfig.id,
+      serverId: run.serverConfig.id,
       timestamp: new Date(),
       changes, errors,
       // Carry the display title up to run/serverPass so post-sync cache

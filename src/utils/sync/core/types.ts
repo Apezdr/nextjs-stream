@@ -57,64 +57,6 @@ export interface FieldAvailability {
 }
 
 // ==========================================
-// Sync Context and Results
-// ==========================================
-
-export interface SyncContext {
-  mediaType: MediaType
-  operation: SyncOperation
-  serverConfig: ServerConfig
-  fieldAvailability: FieldAvailability
-  forceSync?: boolean
-
-  // File server data for content sync
-  fileServerData?: any          // File server data structure (movies/TV data)
-  
-  // Metadata hashes cache (fetched once per server for all movies): the
-  // metadata step skips a movie's metadata.json fetch when its hash matches
-  // the stored metadataHash
-  metadataHashesCache?: {
-    hash: string  // Overall hash for all movies
-    titles: Record<string, {
-      hash: string
-      lastModified: string
-      generated: string
-    }>
-  }
-
-  // Resource manager for throttling HTTP requests and monitoring memory
-  // Sync steps should use context.resourceManager?.throttleHttp() for outbound
-  // calls they make themselves. Not around fetchMetadataMultiServer, which
-  // takes its own slot (infrastructure/fileSystem/fetchFile)
-  resourceManager?: {
-    throttleHttp: <T>(fn: () => Promise<T>) => Promise<T>
-    isMemoryPressure: () => boolean
-    getHeapUsedMb: () => number
-  }
-
-  // True only when every enabled file server answered this run. "No server
-  // reports this" means the data is gone only then; on a run with a server
-  // missing it may just mean that server is down. Set by the sync route for
-  // every run, whether or not field-absence cleanup is switched on (the copy
-  // inside `cleanup` below exists only when it is).
-  allEnabledServersProbed?: boolean
-
-  // Field-absence cleanup (drops stale optional fields that NO enabled server
-  // reports anymore — see core/FieldAbsenceCleaner + FIELD_ABSENCE_CLEANUP_DESIGN.md).
-  // Defaults to `enforce`; SYNC_FIELD_CLEANUP=dry-run downgrades to detect+log,
-  // and off/false/disabled fully disables (cleanup left undefined). When undefined
-  // the cleaner is never invoked. `allEnabledServersProbed` is the mandatory
-  // authoritative-pass gate: false (e.g. a server failed this run) makes cleanup a
-  // no-op so a transient outage is never mistaken for a deletion.
-  cleanup?: {
-    enabled: boolean
-    mode: 'enforce' | 'dry-run'
-    maxFieldsPerEntity: number
-    allEnabledServersProbed: boolean
-  }
-}
-
-// ==========================================
 // What a server's pass hands its steps and builders
 // ==========================================
 //
@@ -187,6 +129,17 @@ export interface TVPassParts {
   run: RunConfig
   availability: Availability
 }
+
+/**
+ * What a TV builder (planTVShow, planSeason, planEpisode) reads of the run,
+ * besides the availability: not forceSync (the gates are checked before it
+ * runs), not the cleanup config (field-absence cleanup plans apart).
+ */
+export type TVBuilderRun = Pick<RunConfig, 'serverConfig' | 'allEnabledServersProbed'>
+
+// ==========================================
+// Sync Results
+// ==========================================
 
 export interface SyncResult {
   status: SyncStatus

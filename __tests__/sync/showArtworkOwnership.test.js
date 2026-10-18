@@ -43,7 +43,6 @@ jest.mock('@src/utils/sync/infrastructure/fileSystem/fetchFile', () => ({
 }))
 
 const { TVShowSyncService } = require('@src/utils/sync/domain/tv/TVShowSyncService')
-const { MediaType, SyncOperation } = require('@src/utils/sync/core')
 const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
 const SHOW = 'A Show (2020)'
@@ -100,16 +99,15 @@ async function pass(repository, serverId, payloads, { fieldAvailability } = {}) 
     { getVisibleEpisodeCount: async () => 0, getEpisodeCount: async () => 0 },
     { getSeasonCount: async () => 0 }
   )
-  return service.syncTVShow(SHOW, {
-    mediaType: MediaType.TVShow,
-    operation: SyncOperation.Metadata,
-    serverConfig: { ...mockServers[serverId], baseUrl: `https://${serverId}.example`, prefix: '', enabled: true },
-    fieldAvailability: availability,
-    forceSync: true,
-    fileServerData: { tv: { [SHOW]: payloads[serverId] } },
-    // Field-absence cleanup is off: these cases are about who may write.
-    cleanup: undefined,
-    allEnabledServersProbed: true,
+  return service.syncTVShow(SHOW, payloads[serverId], {
+    run: {
+      serverConfig: { ...mockServers[serverId], baseUrl: `https://${serverId}.example`, prefix: '', enabled: true },
+      forceSync: true,
+      // Field-absence cleanup is off: these cases are about who may write.
+      cleanup: undefined,
+      allEnabledServersProbed: true,
+    },
+    availability: { fieldAvailability: availability },
   })
 }
 

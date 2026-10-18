@@ -45,7 +45,6 @@ import {
   type MovieMetadataHashes,
   type RunConfig,
   type ServerConfig,
-  type SyncContext,
   type SyncResult,
 } from '../core'
 import { syncLogger } from '../core/logger'
@@ -209,19 +208,10 @@ export async function runServerPass(
       'Starting TV sync with new domain architecture'
     )
     const tvStart = performance.now()
-    // Until the TV services take the parts.
-    const context: SyncContext = {
-      mediaType: MediaType.TVShow,
-      operation: SyncOperation.Metadata,
-      ...run,
-      fieldAvailability: availability.fieldAvailability,
-      fileServerData: fileServer,
-      resourceManager,
-    }
     const tvResults = await syncTitles(
       showTitles,
       pool,
-      (title) => tvShowService.syncTVShow(title, context),
+      (title) => tvShowService.syncTVShow(title, fileServer.tv[title], { run, availability }),
       (title, error) => failedResult(title, MediaType.TVShow, serverConfig.id, error),
       record
     )

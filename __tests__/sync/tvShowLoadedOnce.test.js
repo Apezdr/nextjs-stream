@@ -47,7 +47,6 @@ const { TVShowRepository } = require('@src/utils/sync/infrastructure/database/TV
 const { SeasonRepository } = require('@src/utils/sync/infrastructure/database/SeasonRepository')
 const { EpisodeRepository } = require('@src/utils/sync/infrastructure/database/EpisodeRepository')
 const { resolveCleanupConfig } = require('@src/utils/sync/core/FieldAbsenceCleaner')
-const { MediaType, SyncOperation } = require('@src/utils/sync/core')
 const { collectFieldAvailability } = require('@src/utils/sync/run/availability')
 
 // ---------------------------------------------------------------- in-memory MongoDB
@@ -153,15 +152,14 @@ const PAYLOAD = {
 function pass(db, { forceSync = false } = {}) {
   const fieldAvailability = { movies: {}, tv: { [SHOW]: {} } }
   collectFieldAvailability(PAYLOAD, '', 'A', fieldAvailability.tv[SHOW])
-  return db.service.syncTVShow(SHOW, {
-    mediaType: MediaType.TVShow,
-    operation: SyncOperation.Metadata,
-    serverConfig: { ...mockServers.A, baseUrl: 'https://A.example', prefix: '', enabled: true },
-    fieldAvailability,
-    forceSync,
-    fileServerData: { tv: { [SHOW]: PAYLOAD } },
-    cleanup: resolveCleanupConfig(true),
-    allEnabledServersProbed: true,
+  return db.service.syncTVShow(SHOW, PAYLOAD, {
+    run: {
+      serverConfig: { ...mockServers.A, baseUrl: 'https://A.example', prefix: '', enabled: true },
+      forceSync,
+      cleanup: resolveCleanupConfig(true),
+      allEnabledServersProbed: true,
+    },
+    availability: { fieldAvailability },
   })
 }
 
@@ -240,19 +238,18 @@ describe('the show the seasons and episodes copy', () => {
 describe('the wroteDocument flag of each TV plan', () => {
   // Set where the builder stamps lastSynced, as for the movie steps.
   const agrees = (outcome) => expect(outcome.wroteDocument).toBe(Object.prototype.hasOwnProperty.call(outcome.plan.set, 'lastSynced'))
-  const context = {
+  const run = {
     serverConfig: { ...mockServers.A, baseUrl: 'https://A.example', prefix: '', enabled: true },
-    fieldAvailability: { movies: {}, tv: { [SHOW]: {} } },
-    fileServerData: { tv: { [SHOW]: PAYLOAD } },
     allEnabledServersProbed: true,
   }
+  const availability = { fieldAvailability: { movies: {}, tv: { [SHOW]: {} } } }
   const seasonData = PAYLOAD.seasons['Season 1']
 
   it('is set by the show, season and episode builders, which always stamp lastSynced', async () => {
-    const shows = await makeDatabase().service.planTVShow(SHOW, PAYLOAD, context, null)
-    const seasons = await new SeasonSyncService(null).planSeason(SHOW, 'Show Name', 1, seasonData, context, null, 'show-1', null, 'Season 1')
+    const shows = await makeDatabase().service.planTVShow(SHOW, PAYLOAD, run, availability, null)
+    const seasons = await new SeasonSyncService(null).planSeason(SHOW, 'Show Name', 1, seasonData, run, availability, null, 'show-1', null, 'Season 1')
     const episodes = await new EpisodeSyncService(null, null).planEpisode(
-      SHOW, 'Show Name', 1, 1, seasonData.episodes.S01E01, context, null, 'show-1', 'season-1', null, seasonData, 'S01E01'
+      SHOW, 'Show Name', 1, 1, seasonData.episodes.S01E01, PAYLOAD, run, availability, null, 'show-1', 'season-1', null, seasonData, 'S01E01'
     )
     for (const outcome of [shows, seasons, episodes]) {
       expect(outcome.wroteDocument).toBe(true)

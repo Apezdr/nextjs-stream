@@ -16,14 +16,17 @@
 
 import {
   SeasonEntity,
-  SyncContext,
   SyncResult,
   SyncStatus,
   MediaType,
   SyncOperation,
   syncEventBus,
   planFieldCleanup,
+  type Availability,
   type PlanOutcome,
+  type RunConfig,
+  type TVBuilderRun,
+  type TVPassParts,
   type TVShowEntity
 } from '../../core'
 
@@ -56,19 +59,26 @@ export class SeasonSyncService {
    *  3. seasonRepository.smartBulkUpsert(ops) once — never per-season upserts.
    *
    * @param showTitle - The show's folder name (originalTitle)
+   * @param payload - This server's payload for the show (`fileServer.tv[showTitle]`)
+   * @param parts - The pass's run and availability (core/types)
    * @param parentShow - The show as stored after this pass's show write
    *   (TVShowSyncService), or null when there is none
    */
-  async syncShow(showTitle: string, context: SyncContext, parentShow: TVShowEntity | null): Promise<SyncResult[]> {
+  async syncShow(
+    showTitle: string,
+    payload: any,
+    { run, availability }: TVPassParts,
+    parentShow: TVShowEntity | null
+  ): Promise<SyncResult[]> {
     const results: SyncResult[] = []
 
-    syncEventBus.emitStarted(showTitle, MediaType.Season, context.serverConfig.id)
+    syncEventBus.emitStarted(showTitle, MediaType.Season, run.serverConfig.id)
 
     try {
-      const showFileData = context.fileServerData?.tv?.[showTitle]
+      const showFileData = payload
 
       if (!showFileData?.seasons) {
-        results.push(this.makeResult(showTitle, context, SyncStatus.Skipped, [], [
+        results.push(this.makeResult(showTitle, run, SyncStatus.Skipped, [], [
           'No season data found in file server data for this show'
         ]))
         return results
@@ -109,14 +119,14 @@ export class SeasonSyncService {
         const seasonNumber = this.parseSeasonNumber(key)
         if (seasonNumber === null) {
           results.push(this.makeResult(
-            `${showTitle} S?`, context, SyncStatus.Skipped, [],
+            `${showTitle} S?`, run, SyncStatus.Skipped, [],
             [`Cannot determine season number for key "${key}"`]
           ))
           continue
         }
 
         const existing = existingByNumber.get(seasonNumber) || null
-        const built = await this.planSeason(showTitle, displayTitle, seasonNumber, fileData, context, existing, showId, parentShow, key)
+        const built = await this.planSeason(showTitle, displayTitle, seasonNumber, fileData, run, availability, existing, showId, parentShow, key)
         // The document the plan leaves. Field-absence cleanup's removals are
         // not taken out of it: they go to the write as $unset.
         const merged = applyWritePlan(existing, built.plan)
@@ -130,17 +140,17 @@ export class SeasonSyncService {
         // key from the file-server data, matching collectFieldAvailability's path.
         // showTitle is the originalTitle (fieldAvailability key).
         const cleanup = planFieldCleanup({
-          cleanup: context.cleanup,
+          cleanup: run.cleanup,
           mediaType: 'tv',
           availabilityKey: showTitle,
           entity: existing,
-          fieldAvailability: context.fieldAvailability,
+          fieldAvailability: availability.fieldAvailability,
           fields: [
             {
               entityField: 'posterURL',
               fieldPath: `seasons.${key}.season_poster`,
               // The same season under another server's folder name.
-              alsoReportedAs: this.seasonKeysAcrossServers(showTitle, seasonNumber, key, context)
+              alsoReportedAs: this.seasonKeysAcrossServers(showTitle, seasonNumber, key, availability)
                 .filter((other) => other !== key)
                 .map((other) => `seasons.${other}.season_poster`),
               companions: ['posterSource', 'posterBlurhash', 'posterBlurhashSource'],
@@ -177,7 +187,7 @@ export class SeasonSyncService {
 
       for (const { merged: entity, cleanupChanges, documentChanged, gateLeftOpen } of seasonOps) {
         results.push(this.makeResult(
-          `${showTitle} S${entity.seasonNumber}`, context,
+          `${showTitle} S${entity.seasonNumber}`, run,
           SyncStatus.Completed,
           [`Upserted season ${entity.seasonNumber}`, ...(cleanupChanges || [])], [],
           {
@@ -190,7 +200,7 @@ export class SeasonSyncService {
         ))
       }
 
-      syncEventBus.emitComplete(showTitle, MediaType.Season, context.serverConfig.id, undefined, {
+      syncEventBus.emitComplete(showTitle, MediaType.Season, run.serverConfig.id, undefined, {
         totalOperations: seasonOps.length,
         successful: seasonOps.length,
         failed: 0
@@ -198,16 +208,16 @@ export class SeasonSyncService {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       const stack = error instanceof Error ? error.stack : undefined
-      syncEventBus.emitError(showTitle, MediaType.Season, context.serverConfig.id, msg, SyncOperation.Metadata)
+      syncEventBus.emitError(showTitle, MediaType.Season, run.serverConfig.id, msg, SyncOperation.Metadata)
       // emitError only fans out to SSE — log explicitly via Pino so the
       // failure surfaces in SigNoz instead of being silently counted.
       pinoLog.error(
-        { showTitle, serverId: context.serverConfig.id, err: msg, stack },
+        { showTitle, serverId: run.serverConfig.id, err: msg, stack },
         `Season sync failed for show: ${showTitle}`
       )
       // An unordered bulk write can apply some of its operations before it
       // fails. What landed is unknown, so the show is reported as changed.
-      results.push(this.makeResult(showTitle, context, SyncStatus.Failed, [], [msg], { documentChanged: true }))
+      results.push(this.makeResult(showTitle, run, SyncStatus.Failed, [], [msg], { documentChanged: true }))
     }
 
     return results
@@ -239,7 +249,8 @@ export class SeasonSyncService {
     displayTitle: string,
     seasonNumber: number,
     fileData: any,
-    context: SyncContext,
+    run: TVBuilderRun,
+    availability: Availability,
     existing: SeasonEntity | null,
     showId: any,
     parentShow: any,
@@ -271,19 +282,19 @@ export class SeasonSyncService {
     // Fails closed: a server the map does not list for the field never owns
     // it, even when its payload has a value there. (This server's own key is
     // always among the keys, so its path can always be built.)
-    const seasonKeys = this.seasonKeysAcrossServers(showOriginalTitle, seasonNumber, seasonKey, context)
+    const seasonKeys = this.seasonKeysAcrossServers(showOriginalTitle, seasonNumber, seasonKey, availability)
     const owns = (field: string, hasValue: boolean) => {
       if (!hasValue) return false
       const reporters = [
         ...new Set(
           seasonKeys.flatMap((key) =>
             getServersReportingField(
-              context.fieldAvailability, 'tv', showOriginalTitle, `seasons.${key}.${field}`
+              availability.fieldAvailability, 'tv', showOriginalTitle, `seasons.${key}.${field}`
             )
           )
         ),
       ]
-      return isHighestPriorityAmongServers(reporters, context.serverConfig)
+      return isHighestPriorityAmongServers(reporters, run.serverConfig)
     }
 
     // The season this pass wants stored: the existing doc (preserving ALL
@@ -305,7 +316,7 @@ export class SeasonSyncService {
     if (!entity.type) entity.type = 'season'
     if (!entity.createdAt) entity.createdAt = now
     // Library-add date: seeded once, never moved later (core/discovery.ts)
-    seedDiscovery(entity, existing, context.serverConfig.id, now)
+    seedDiscovery(entity, existing, run.serverConfig.id, now)
     if (showId) entity.showId = showId
     // Use display title as showTitle (matches legacy document shape)
     entity.showTitle = displayTitle
@@ -372,9 +383,9 @@ export class SeasonSyncService {
     if (canUpdatePoster) {
       entity.posterURL = fileServerUrl(
         (fileData as any).season_poster,
-        context.serverConfig
+        run.serverConfig
       )
-      entity.posterSource = context.serverConfig.id
+      entity.posterSource = run.serverConfig.id
     }
 
     // Episode count: the season's metadata when it has one (the stored copy
@@ -385,14 +396,14 @@ export class SeasonSyncService {
     if (metadataEpisodeCount != null) {
       entity.episodeCount = metadataEpisodeCount
     } else {
-      const acrossServers = seasonsAcrossServers(context.fieldAvailability, showOriginalTitle)
+      const acrossServers = seasonsAcrossServers(availability.fieldAvailability, showOriginalTitle)
         .get(seasonNumber)?.episodes.size
       if (acrossServers) {
         // With a server missing, its episodes are missing from the count. Do
         // not let it drop on such a run; say so, so the lower count is applied
         // on the next run where every server answers.
         const everyServerAnswered =
-          (context.allEnabledServersProbed ?? context.cleanup?.allEnabledServersProbed) === true
+          run.allEnabledServersProbed === true
         const stored = (existing as any)?.episodeCount
         if (!everyServerAnswered && typeof stored === 'number' && stored > acrossServers) {
           entity.episodeCount = stored
@@ -423,14 +434,14 @@ export class SeasonSyncService {
           url: canUpdatePoster ? entity.posterURL : null,
           blurhashUrl: (fileData as any)?.seasonPosterBlurhash,
         },
-        owner: canUpdatePoster ? context.serverConfig.id : null,
+        owner: canUpdatePoster ? run.serverConfig.id : null,
         locks: { image: locked('posterURL'), blurhash: locked('posterBlurhash') },
       },
       async (path) => {
         try {
           return await fetchMetadataMultiServer(
-            context.serverConfig.id,
-            fileServerUrl(path, context.serverConfig),
+            run.serverConfig.id,
+            fileServerUrl(path, run.serverConfig),
             'blurhash',
             'tv',
             showOriginalTitle
@@ -470,10 +481,10 @@ export class SeasonSyncService {
     showOriginalTitle: string,
     seasonNumber: number,
     ownKey: string,
-    context: SyncContext
+    availability: Availability
   ): string[] {
     const others =
-      seasonsAcrossServers(context.fieldAvailability, showOriginalTitle).get(seasonNumber)?.keys ?? []
+      seasonsAcrossServers(availability.fieldAvailability, showOriginalTitle).get(seasonNumber)?.keys ?? []
     return [...new Set([ownKey, ...others])]
   }
 
@@ -485,7 +496,7 @@ export class SeasonSyncService {
 
   private makeResult(
     entityId: string,
-    context: SyncContext,
+    run: Pick<RunConfig, 'serverConfig'>,
     status: SyncStatus,
     changes: string[],
     errors: string[],
@@ -496,7 +507,7 @@ export class SeasonSyncService {
       entityId,
       mediaType: MediaType.Season,
       operation: SyncOperation.Metadata,
-      serverId: context.serverConfig.id,
+      serverId: run.serverConfig.id,
       timestamp: new Date(),
       changes,
       errors,
