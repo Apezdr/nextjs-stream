@@ -21,6 +21,8 @@ jest.mock('@src/utils/cache/invalidation', () => ({
 const mockUpdates = []
 const mockDeletes = []
 const mockDocs = {}
+// What a deleteOne finds to delete (deleteMany finds nothing)
+const mockDeleteOne = { deletedCount: 1 }
 // Recorded in the same list as the deletes, so the order shows
 jest.mock('@src/utils/sync/run/validateWatchHistory', () => ({
   validateWatchHistory: jest.fn(async (reason) => {
@@ -42,7 +44,7 @@ jest.mock('@src/lib/mongodb', () => ({
         insertOne: async () => ({ acknowledged: true }),
         deleteOne: async (filter) => {
           mockDeletes.push({ db: dbName, collection: name, filter })
-          return { deletedCount: 1 }
+          return { deletedCount: mockDeleteOne.deletedCount }
         },
         deleteMany: async (filter) => {
           mockDeletes.push({ db: dbName, collection: name, filter })
@@ -72,6 +74,7 @@ const reopensGates = (update) => update.$unset && 'syncGates' in update.$unset
 beforeEach(() => {
   mockUpdates.length = 0
   mockDeletes.length = 0
+  mockDeleteOne.deletedCount = 1
   for (const key of Object.keys(mockDocs)) delete mockDocs[key]
 })
 
@@ -209,5 +212,20 @@ describe('an admin delete makes the next sync tick a full pass, and validates wa
     await deleteEpisodeAction(null, { episodeId: id(), showId })
 
     forgetsAfterDeleting()
+  })
+
+  it('but validates nothing when the delete removed nothing', async () => {
+    mockDeleteOne.deletedCount = 0
+
+    const movie = await deleteMovieAction(null, { id: id() })
+    const episode = await deleteEpisodeAction(null, { episodeId: id(), showId: id() })
+    // A season that is not there, and no episodes under it (deleteMany finds none)
+    await deleteSeasonAction(null, { showId: id(), seasonNumber: 1 })
+
+    expect(movie.status).toBe('error')
+    expect(episode.status).toBe('error')
+    expect(mockDeletes.filter((d) => 'validated' in d)).toEqual([])
+    // The record is still forgotten each time
+    expect(mockDeletes.filter((d) => d.collection === 'syncInfo')).toHaveLength(3)
   })
 })

@@ -954,8 +954,9 @@ export async function DELETE(request, props) {
       // a skip on the strength of the last one (sync/run/tickSkip).
       await forgetAppliedPayloads()
       // Nothing is left for watch history to count on until that pass
-      // (sync/run/validateWatchHistory; never throws).
-      await validateWatchHistory('admin wipe')
+      // (sync/run/validateWatchHistory; never throws). A wipe of an empty
+      // catalog changed nothing it counts on.
+      if (Object.values(results).some((count) => count > 0)) await validateWatchHistory('admin wipe')
 
       console.log('Cleared all documents from flat database collections')
       return new Response(JSON.stringify({ 

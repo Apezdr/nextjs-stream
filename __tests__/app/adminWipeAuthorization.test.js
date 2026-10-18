@@ -128,6 +128,15 @@ describe('DELETE /api/authenticated/admin/wipe-db', () => {
       .toBeGreaterThan(Math.max(...mockDeleteMany.mock.invocationCallOrder))
   })
 
+  test('validates nothing when the catalog was already empty', async () => {
+    mockIsAdmin.mockResolvedValue({ id: 'admin-1', role: 'admin' })
+    mockDeleteMany.mockResolvedValue({ deletedCount: 0 })
+
+    await wipe()
+
+    expect(mockValidateWatchHistory).not.toHaveBeenCalled()
+  })
+
   test('a refused wipe leaves the sync record alone', async () => {
     mockIsAdmin.mockResolvedValue(new Response('{}', { status: 401 }))
 
