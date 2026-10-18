@@ -9,13 +9,14 @@
  * movie artwork step's first read of a blurhash is the one plain request
  * (readBlurhashDirect), in a slot of the pass's throttle when there is one.
  *
- * A fetch that fails comes back as a failed Resource, never as a throw.
+ * A fetch that fails comes back as a failed Resource, never as a throw; one
+ * that threw carries what it threw, for the builder to log. Nothing here logs:
+ * the builders log what they read, where they used to fetch it.
  */
 
 import { httpGet } from '@src/lib/httpHelper'
 import { fetchMetadataMultiServer } from './fetchFile'
-import { syncLogger } from '../../core/logger'
-import { Resources, sameRequest } from '../../core/resources'
+import { HtmlPageError, Resources, sameRequest } from '../../core/resources'
 import type { Resource, ResourceRequest, WritePlan } from '../../core/types'
 
 /** What the fetches of one title's builders share. */
@@ -54,7 +55,7 @@ async function fetchResource(request: ResourceRequest, context: PrefetchContext)
     }
     return { ...asked, ok: true, data }
   } catch (error) {
-    return { ...asked, ok: false, error: error instanceof Error ? error.message : String(error) }
+    return { ...asked, ok: false, error: error instanceof Error ? error.message : String(error), thrown: { value: error } }
   }
 }
 
@@ -94,54 +95,50 @@ export async function buildWithResources<O extends { plan: Pick<WritePlan<any>, 
 
 /**
  * One plain read of a blurhash file, through httpGet (which returns its
- * cached copy on a 304): the movie artwork step's first read. Null on any
- * failure, an HTML error page included; the retry step reads the file again
- * through fetchMetadataMultiServer.
+ * cached copy on a 304): the movie artwork step's first read. Null for an
+ * empty file. It logs nothing: an error (httpGet throws on HTTP errors and
+ * timeouts) and an HTML error page (HtmlPageError) are thrown, so that the
+ * failed resource carries them and the artwork step logs them where it reads
+ * the file. The retry step reads the file again through
+ * fetchMetadataMultiServer.
  */
 export async function readBlurhashDirect(
   blurhashUrl: string,
   throttle?: PrefetchContext['throttle']
 ): Promise<string | null> {
   const doFetch = async () => {
-    try {
-      const response = await httpGet(
-        blurhashUrl,
-        {
-          timeout: 3000, // 3 second timeout for blurhash (matches legacy)
-          responseType: 'text',
-          headers: {
-            Accept: 'text/plain, */*',
-          },
+    const response = await httpGet(
+      blurhashUrl,
+      {
+        timeout: 3000, // 3 second timeout for blurhash (matches legacy)
+        responseType: 'text',
+        headers: {
+          Accept: 'text/plain, */*',
         },
-        true // returnCacheDataIfAvailable - return cached data on 304
-      )
+      },
+      true // returnCacheDataIfAvailable - return cached data on 304
+    )
 
-      // Check Content-Type header - should be text/plain, not text/html (error page)
-      const contentType = response.headers['content-type'] || response.headers['Content-Type'] || ''
-      if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
-        syncLogger.warn(`⚠️ Blurhash URL returned HTML (error page), Content-Type: ${contentType}`)
-        return null
-      }
+    // Check Content-Type header - should be text/plain, not text/html (error page)
+    const contentType = response.headers['content-type'] || response.headers['Content-Type'] || ''
+    if (contentType.includes('text/html') || contentType.includes('application/xhtml')) {
+      throw new HtmlPageError(contentType)
+    }
 
-      // Extract data from wrapper if it's a cached response with _dataType
-      // httpHelper stores text as: { _dataType: 'text', _isBuffer: false, data: actualText }
-      let blurhashData = response.data
-      if (blurhashData && typeof blurhashData === 'object' && blurhashData._dataType === 'text') {
-        blurhashData = blurhashData.data
-      }
+    // Extract data from wrapper if it's a cached response with _dataType
+    // httpHelper stores text as: { _dataType: 'text', _isBuffer: false, data: actualText }
+    let blurhashData = response.data
+    if (blurhashData && typeof blurhashData === 'object' && blurhashData._dataType === 'text') {
+      blurhashData = blurhashData.data
+    }
 
-      const trimmedData = blurhashData ? blurhashData.trim() : null
+    const trimmedData = blurhashData ? blurhashData.trim() : null
 
-      if (!trimmedData) {
-        return null
-      }
-
-      return trimmedData
-    } catch (error) {
-      // httpHelper throws on HTTP errors (404, 500, timeouts, etc)
-      syncLogger.warn(`⚠️ Failed to fetch blurhash:`, error instanceof Error ? error.message : String(error))
+    if (!trimmedData) {
       return null
     }
+
+    return trimmedData
   }
 
   // Throttled through the pass's ResourceManager when it has one

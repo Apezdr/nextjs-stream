@@ -36,7 +36,7 @@ import {
   type RunConfig,
 } from '../../core'
 import { emptyWritePlan } from '../../core/writePlan'
-import { Resources } from '../../core/resources'
+import { HtmlPageError, Resources } from '../../core/resources'
 import { fileServerUrl } from '../../infrastructure/fileSystem/urls'
 import { isTopLevelFieldLocked } from '../../core/locks'
 import {
@@ -63,6 +63,15 @@ export interface BlurhashRetry {
   decision: Extract<BlurhashDecision, { action: 'fetch' }>
 }
 
+/** Where decideArtwork logs (syncLogger's debug and warn take the same arguments). */
+interface ArtworkLog {
+  debug(message: string, ...details: unknown[]): void
+  warn(message: string, ...details: unknown[]): void
+}
+
+/** The log of the decisions made only to name the files the step reads. */
+const QUIET: ArtworkLog = { debug: () => {}, warn: () => {} }
+
 export interface MovieArtworkOutcome extends MovieStepOutcome {
   /** For retryMovieBlurhashes, which runs after the video step. */
   retries: BlurhashRetry[]
@@ -84,7 +93,7 @@ export function syncMovieArtwork(
   // the files read before it, which is as far as the step gets: the step's
   // catch below meets the same throw.
   try {
-    decideArtwork(originalTitle, payload, run, availability, movie, emptyWritePlan<MovieEntity>(), [], resources, () => {})
+    decideArtwork(originalTitle, payload, run, availability, movie, emptyWritePlan<MovieEntity>(), [], resources, QUIET)
   } catch {
     // Made again below.
   }
@@ -113,7 +122,7 @@ export function syncMovieArtwork(
       plan,
       retries,
       resources,
-      (message, ...details) => syncLogger.debug(message, ...details)
+      syncLogger
     )
     changes.push(...cleared.map((key) => `Cleared ${key}`))
 
@@ -220,13 +229,19 @@ export function retryMovieBlurhashes(
     for (const retry of retries) {
       const { field, sourceField, decision } = retry
       console.log(
-        `🔍 Movie blurhash retry: read "${field}" for "${originalTitle}" (server: "${run.serverConfig.id}", path: ${decision.blurhashUrl})`
+        `🔍 Movie blurhash retry: fetching "${field}" for "${originalTitle}" (server: "${run.serverConfig.id}", path: ${decision.blurhashUrl})`
       )
       // Fetched by the prefetch step through fetchMetadataMultiServer, which
-      // takes the ResourceManager's HTTP slot itself.
+      // takes the ResourceManager's HTTP slot itself. Only a fetch that threw
+      // is warned about here; an empty answer (fetchMetadataMultiServer's '')
+      // is logged below with any other blurhash still missing.
       const file = resources.read(fileOf(retry))
-      if (file && !file.ok) {
-        console.warn(`⚠️ Movie blurhash retry: failed to fetch "${field}" for "${originalTitle}":`, file.error)
+      if (file && !file.ok && file.thrown) {
+        const cause = file.thrown.value
+        console.warn(
+          `⚠️ Movie blurhash retry: failed to fetch "${field}" for "${originalTitle}":`,
+          cause instanceof Error ? cause.message : String(cause)
+        )
       }
       const outcome = settleBlurhash(decision, file?.ok ? file.data : null)
       if (outcome.action !== 'write') {
@@ -299,7 +314,7 @@ function decideArtwork(
   plan: MovieStepOutcome['plan'],
   retries: BlurhashRetry[],
   resources: Resources,
-  debug: (message: string, ...details: unknown[]) => void
+  log: ArtworkLog
 ): {
   updates: {
     posterURL?: string
@@ -323,7 +338,7 @@ function decideArtwork(
   // Get file server data for this movie
   const fileServerData = payload
   if (!fileServerData?.urls) {
-    debug(`⏭️ No fileServerData.urls found for "${originalTitle}"`)
+    log.debug(`⏭️ No fileServerData.urls found for "${originalTitle}"`)
     return { updates, cleared }
   }
 
@@ -340,7 +355,7 @@ function decideArtwork(
     const assetRelativePath = fileServerData.urls[fileServerKey]
 
     if (!assetRelativePath) {
-      debug(`⏭️ No ${type} path in fileServerData.urls for "${originalTitle}"`)
+      log.debug(`⏭️ No ${type} path in fileServerData.urls for "${originalTitle}"`)
       continue
     }
 
@@ -348,7 +363,7 @@ function decideArtwork(
     // CRITICAL: Use type-safe field path mapping (e.g., posterURL → "urls.poster")
     const fieldPath = getFieldPath(urlField as keyof typeof MovieFieldPathMap)
     if (!ownsReportedField(fieldPath, originalTitle, run, availability)) {
-      debug(`⏭️ Skipping ${urlField} - server ${run.serverConfig.id} does not have highest priority for ${fieldPath}`)
+      log.debug(`⏭️ Skipping ${urlField} - server ${run.serverConfig.id} does not have highest priority for ${fieldPath}`)
       continue
     }
 
@@ -365,7 +380,7 @@ function decideArtwork(
     const currentHash = currentUrl ? extractHashFromUrl(currentUrl) : null
     const assetChanged = newAssetUrl !== currentUrl
 
-    debug(`🔍 Asset comparison for ${type}:`, {
+    log.debug(`🔍 Asset comparison for ${type}:`, {
       newHash,
       currentHash,
       changed: assetChanged,
@@ -374,7 +389,7 @@ function decideArtwork(
     // Update asset URL if changed
     if (assetChanged) {
       updates[urlField] = newAssetUrl
-      debug(`✅ Updating ${urlField} from server ${run.serverConfig.id} (hash changed: ${currentHash} → ${newHash})`)
+      log.debug(`✅ Updating ${urlField} from server ${run.serverConfig.id} (hash changed: ${currentHash} → ${newHash})`)
     }
 
     // Blurhash for poster and backdrop: kept, fetched or removed by the one
@@ -404,12 +419,7 @@ function decideArtwork(
           ? settleBlurhash(
               decision,
               // The payload's path is already under the server's prefix.
-              resources.data({
-                kind: 'blurhash',
-                serverId: run.serverConfig.id,
-                path: fileServerUrl(decision.blurhashUrl, run.serverConfig),
-                direct: true,
-              })
+              readBlurhash(resources, fileServerUrl(decision.blurhashUrl, run.serverConfig), run, log)
             )
           : decision.action === 'unset'
             ? ({ action: 'unset', fetchFailed: false } as const)
@@ -454,7 +464,7 @@ function decideArtwork(
   for (const focalField of ['backdropFocal', 'backdropFocalSuggested'] as const) {
     const incoming = fileServerData[focalField]
     if (incoming === undefined) {
-      debug(`⏭️ No ${focalField} in fileServerData for "${originalTitle}"`)
+      log.debug(`⏭️ No ${focalField} in fileServerData for "${originalTitle}"`)
       continue
     }
 
@@ -463,7 +473,7 @@ function decideArtwork(
 
     if (incoming !== null && incoming !== '') {
       if (!ownsReportedField(fieldPath, originalTitle, run, availability)) {
-        debug(`⏭️ Skipping ${focalField} - server ${run.serverConfig.id} does not have highest priority for ${fieldPath}`)
+        log.debug(`⏭️ Skipping ${focalField} - server ${run.serverConfig.id} does not have highest priority for ${fieldPath}`)
         continue
       }
       // The owner's id is the hint's source whether or not the value moved.
@@ -472,7 +482,7 @@ function decideArtwork(
       }
       if (incoming !== current) {
         updates[focalField] = incoming as BackdropFocal
-        debug(`✅ Updating ${focalField} from server ${run.serverConfig.id} ("${current}" → "${incoming}")`)
+        log.debug(`✅ Updating ${focalField} from server ${run.serverConfig.id} ("${current}" → "${incoming}")`)
       }
       continue
     }
@@ -495,6 +505,25 @@ function decideArtwork(
   }
 
   return { updates, cleared }
+}
+
+/**
+ * What the blurhash file at `url` holds, as the prefetch step's plain read got
+ * it (`direct`): null when the read failed or the file was not handed yet
+ * (recorded as a need). A read that threw is logged here, as it was where the
+ * step fetched for itself: an HTML error page, or the error.
+ */
+function readBlurhash(resources: Resources, url: string, run: MovieArtworkInput['run'], log: ArtworkLog): unknown {
+  const file = resources.read({ kind: 'blurhash', serverId: run.serverConfig.id, path: url, direct: true })
+  if (file && !file.ok && file.thrown) {
+    const cause = file.thrown.value
+    if (cause instanceof HtmlPageError) {
+      log.warn(`⚠️ Blurhash URL returned HTML (error page), Content-Type: ${cause.contentType}`)
+    } else {
+      log.warn(`⚠️ Failed to fetch blurhash:`, cause instanceof Error ? cause.message : String(cause))
+    }
+  }
+  return file?.ok ? file.data : null
 }
 
 /**

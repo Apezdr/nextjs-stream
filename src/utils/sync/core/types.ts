@@ -187,7 +187,19 @@ export interface ResourceRequest {
  * `ok: false` for an error, for a metadata file that came back empty (null),
  * and for a blurhash that is not a non-empty string.
  */
-export type Resource = ResourceRequest & ({ ok: true; data: unknown } | { ok: false; error: string })
+export type Resource = ResourceRequest &
+  (
+    | { ok: true; data: unknown }
+    | {
+        ok: false
+        error: string
+        /**
+         * What the fetch threw, when it threw rather than came back empty: the
+         * builder that reads the file logs it where it used to catch it.
+         */
+        thrown?: { value: unknown }
+      }
+  )
 
 /**
  * What one sync step wants written: its inputs go in, this comes out, and the

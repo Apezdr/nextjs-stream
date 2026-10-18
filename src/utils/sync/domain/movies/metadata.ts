@@ -125,10 +125,17 @@ export function syncMovieMetadata(
     // The file as the prefetch step read it (null when the fetch failed). A
     // payload without a metadata path reads as an empty file, which is what
     // fetchMetadataMultiServer answers for no path, without a request.
+    const metadataFile = request ? resources.read(request) : undefined
     const fetchedMetadata = request
-      ? (resources.data(request) as Record<string, any> | null)
+      ? ((metadataFile?.ok ? metadataFile.data : null) as Record<string, any> | null)
       : {}
-    syncLogger.debug(`✅ Read metadata for "${originalTitle}" from ${run.serverConfig.id}`)
+    // Logged as when the step fetched for itself: a fetch that threw is an
+    // error; any other answer (an empty one included) was fetched.
+    if (metadataFile && !metadataFile.ok && metadataFile.thrown) {
+      syncLogger.error(`Failed to extract metadata for ${originalTitle}:`, metadataFile.thrown.value)
+    } else {
+      syncLogger.debug(`✅ Fetched metadata for "${originalTitle}" from ${run.serverConfig.id}`)
+    }
     const metadataFetchFailed = !fetchedMetadata
 
     // A failed metadata fetch must NOT advance the sync gate. Preserve any

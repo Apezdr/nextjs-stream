@@ -70,9 +70,23 @@ describe('fetchResources', () => {
       [false, 'file server timed out'],
       [false, 'no metadata file came back'],
       [false, 'no blurhash came back'],
-      [false, 'no blurhash came back'],
+      [false, '404'],
     ])
     expect(fetched.every((resource) => !('data' in resource))).toBe(true)
+    // What a fetch threw goes with it, for the builder to log; an empty answer threw nothing.
+    expect(fetched.map((resource) => resource.thrown?.value?.message ?? null)).toEqual(['file server timed out', null, null, '404'])
+  })
+
+  it('throws, from the plain read, an HTML error page as an HtmlPageError, and reads an empty file as none', async () => {
+    const { HtmlPageError } = require('@src/utils/sync/core/resources')
+    httpGet
+      .mockResolvedValueOnce({ data: '<html></html>', headers: { 'content-type': 'text/html; charset=utf-8' } })
+      .mockResolvedValueOnce({ data: '   ', headers: {} })
+    const [html, blank] = await fetchResources([direct, direct], context)
+    expect(html).toMatchObject({ ok: false, error: 'Blurhash URL returned HTML (error page), Content-Type: text/html; charset=utf-8' })
+    expect(html.thrown.value).toBeInstanceOf(HtmlPageError)
+    expect(html.thrown.value.contentType).toBe('text/html; charset=utf-8')
+    expect(blank).toEqual({ ...direct, ok: false, error: 'no blurhash came back' })
   })
 })
 

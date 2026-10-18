@@ -17,6 +17,18 @@
 
 import type { Resource, ResourceRequest } from './types'
 
+/**
+ * A plain read answered with an HTML page (an error page) instead of the
+ * file. The prefetch step's direct read throws it; the movie artwork step,
+ * which reads the file, logs it.
+ */
+export class HtmlPageError extends Error {
+  constructor(readonly contentType: string) {
+    super(`Blurhash URL returned HTML (error page), Content-Type: ${contentType}`)
+    this.name = 'HtmlPageError'
+  }
+}
+
 /** Whether two requests are for the same file, read the same way. */
 export function sameRequest(a: ResourceRequest, b: ResourceRequest): boolean {
   return a.kind === b.kind && a.serverId === b.serverId && a.path === b.path && Boolean(a.direct) === Boolean(b.direct)
