@@ -12,9 +12,6 @@ export * from './events'
 // Logger system
 export * from './logger'
 
-// Log sanitizer (prevents OOM from logging large objects)
-export * from './logSanitizer'
-
 // Field path mappings (type-safe fieldAvailability lookups)
 export * from './fieldPaths'
 
