@@ -48,13 +48,36 @@ describe('cantPlayReason', () => {
 
   it('names the format: the container, else the URL’s extension', () => {
     expect(cantPlayReason({ primaryContainer: 'AVI', videoURL: 'https://h/x.mp4' })).toBe('unsupported format (.avi)')
-    expect(cantPlayReason({ videoURL: 'https://h/movies/X/x.mkv?t=1' })).toBe('unsupported format (.mkv)')
+    expect(cantPlayReason({ videoURL: 'https://h/movies/X/x.avi?t=1' })).toBe('unsupported format (.avi)')
   })
 
   it('says when an admin turned the transcoder off for the title', () => {
     expect(
       cantPlayReason({ primaryContainer: 'mkv', jitUrl: JIT, jitEligible: true, jitServeOverride: 'off' })
     ).toBe('transcoding turned off for this title (.mkv)')
+  })
+
+  const withPrimary = (jitReason, rest = {}) => ({
+    primaryContainer: 'mkv',
+    videoURL: 'https://h/x.mkv',
+    sources: [{ container: 'mkv', isPrimary: false, jitReason: 'host-disabled' }, { container: 'mkv', isPrimary: true, jitReason }],
+    ...rest,
+  })
+
+  it.each([
+    ['container-unsupported', { primaryContainer: 'avi', videoURL: 'https://h/x.avi' }, 'unsupported format (.avi)'],
+    ['host-disabled', {}, 'the transcoder is turned off on this server (.mkv)'],
+    ['probe-incomplete', { jitUrl: JIT }, 'the file has not been fully probed yet (.mkv)'],
+    ['a-reason-of-tomorrow', {}, 'the transcoder does not take it: a-reason-of-tomorrow (.mkv)'],
+  ])('gives the processor’s jitReason of the primary source: %s', (jitReason, rest, reason) => {
+    expect(cantPlayReason(withPrimary(jitReason, rest))).toBe(reason)
+  })
+
+  it('does not call a served container unsupported when only the transcoder is missing', () => {
+    // Recommended, but no transcoder address was configured: no jitUrl
+    expect(cantPlayReason({ primaryContainer: 'mkv', jitEligible: true })).toBe('no transcoder address is configured (.mkv)')
+    // A served container with nothing saying why (a document from before sources)
+    expect(cantPlayReason({ videoURL: 'https://h/movies/X/x.mkv?t=1' })).toBe('not offered to the transcoder (.mkv)')
   })
 })
 

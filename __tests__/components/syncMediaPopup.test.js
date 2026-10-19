@@ -287,7 +287,7 @@ describe('the titles that can’t play yet', () => {
     expect(section).toHaveClass('bg-gray-50')
     expect(
       within(section).getByText(
-        "These titles have a video in a format the player and the transcoder don't support yet, so they're hidden from the library."
+        "These titles have a video the player can't play and the transcoder doesn't serve yet, so they're hidden from the library. Each one says why."
       )
     ).toBeInTheDocument()
     expect(within(section).getByText('Old Rip (1999)').closest('li')).toHaveTextContent('Old Rip (1999): unsupported format (.avi)')

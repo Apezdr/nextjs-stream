@@ -352,8 +352,8 @@ function CantPlaySection({ serverName, movies, tv }) {
         Can&apos;t play yet on {serverName}
       </h4>
       <p className="mt-1 text-gray-600">
-        These titles have a video in a format the player and the transcoder don&apos;t support yet, so they&apos;re
-        hidden from the library.
+        These titles have a video the player can&apos;t play and the transcoder doesn&apos;t serve yet, so
+        they&apos;re hidden from the library. Each one says why.
       </p>
       {movies.length > 0 ? (
         <>

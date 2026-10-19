@@ -14,7 +14,7 @@ import { SyncStatus } from '../core/types'
  * The containers the processor serves (its SUPPORTED_CONTAINERS,
  * components/media-scanner/domain/jit-eligibility.mjs).
  */
-const SERVED_VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.webm'])
+export const SERVED_VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.webm'])
 
 /** Video extensions outside those five: a file of one of these is a video the library cannot serve. */
 const OTHER_VIDEO_EXTENSIONS = new Set([
