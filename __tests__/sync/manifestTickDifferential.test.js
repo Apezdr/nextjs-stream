@@ -729,7 +729,7 @@ const SERVERS = ['A', 'B', 'C']
 /** The versions of each entry in the library, so a change can raise them. */
 const versionOf = (entry) => Number(String(entry?.urls?.mp4 ?? entry?.metadata ?? '').match(/[.=][a-z]?v?(\d+)(?:\.mkv|$)/)?.[1] ?? 1)
 
-const walkTotals = { ticks: 0, modes: {}, mismatches: 0, comparedNextTick: 0, longestCatchUp: 0, referenceBytes: 0, candidateBytes: 0, chunks: 0 }
+const walkTotals = { ticks: 0, modes: {}, comparedNextTick: 0, longestCatchUp: 0, referenceBytes: 0, candidateBytes: 0, chunks: 0 }
 /** Ticks after a move during a tick within which the two worlds must agree again. */
 const CONVERGE_TICKS = 3
 let longestCatchUp = 0
@@ -867,9 +867,7 @@ async function walk(seed, ticks) {
   walkTotals.longestCatchUp = Math.max(walkTotals.longestCatchUp, longestCatchUp)
   const summary = summarize(pair.log)
   walkTotals.ticks += summary.ticks
-  // Only an unexplained difference fails (expectSame above); a stretch after a
-  // move that agreed again in time is not a mismatch
-  walkTotals.mismatches += 0
+  // No mismatch count: expectSame throws on the first unexplained difference
   walkTotals.referenceBytes += summary.referenceBytes
   walkTotals.candidateBytes += summary.candidateBytes
   walkTotals.chunks += 1
@@ -885,5 +883,219 @@ describe('a seeded random walk (changes, failures, admin edits, out-of-band dele
   afterAll(() => {
     // For the report: totals over the walk
     process.stdout.write(`[DIFFERENTIAL] ${JSON.stringify(walkTotals)}\n`)
+  })
+})
+
+// ---------------------------------------------------------------- the review's scenarios
+describe('failed passes, out-of-band deletes and a one-server walk', () => {
+  async function settled3() {
+    const pair = createPair()
+    expectSame(await pair.step('first tick'))
+    expectSame(await pair.step('second tick'))
+    return pair
+  }
+
+  it('RV1: a show two servers list changes on B, and B throws as its TV phase starts: the worlds still agree after', async () => {
+    const pair = await settled3()
+    pair.library.B.tv[SHOW_ONE] = show(SHOW_ONE, { 1: 1, 2: 5, 3: 1 }, 2)
+    let entry = await pair.step('B changed, B TV throws', { throwTvPhaseOf: 'B' })
+    expectSame(entry)
+    for (const label of ['after 1', 'after 2', 'after 3']) {
+      entry = await pair.step(label)
+      expectSame(entry)
+    }
+  })
+
+  it('RV2: a movie and a show document deleted out of band (nothing forgotten) are re-created in both worlds', async () => {
+    const pair = await settled3()
+    pair.inBoth((col) => {
+      col('FlatMovies').docs = col('FlatMovies').docs.filter((d) => d.originalTitle !== 'Delta (2004)')
+      col('FlatTVShows').docs = col('FlatTVShows').docs.filter((d) => d.originalTitle !== SHOW_TWO)
+    })
+    let entry = await pair.step('deleted out of band')
+    expectSame(entry)
+    entry = await pair.step('after')
+    expectSame(entry)
+    expect(pair.candidate.mongo.collection('Media', 'FlatMovies').docs.map((d) => d.originalTitle)).toContain('Delta (2004)')
+  })
+
+  async function walk1(seed, ticks) {
+    const random = prng(seed)
+    const pair = createPair()
+    mockServers = mockServers.slice(0, 1)
+    let since = []
+    let waited = 0
+    const modes = {}
+    expectSame(await pair.step('first tick'))
+    expectSame(await pair.step('second tick'))
+    for (let i = 0; i < ticks; i++) {
+      const { changes, failures, after } = randomChanges(random, pair)
+      const entry = await pair.step('w1 seed ' + seed + ' tick ' + i + ': ' + (changes.join('; ') || 'nothing'), { failures })
+      modes[entry.mode] = (modes[entry.mode] || 0) + 1
+      for (const apply of after) apply()
+      if (failures.beforeEntries) {
+        since.push(entry)
+        waited = 0
+      } else if (since.length > 0 && entry.differences.length > 0 && waited < CONVERGE_TICKS) {
+        since.push(entry)
+        waited += 1
+      } else {
+        expectSame(entry, since)
+        since = []
+      }
+    }
+    // Tick kinds over the 60 ticks after the first two; `all` stays 0 once the state is held
+    process.stdout.write('[WALK1 seed ' + seed + '] ' + JSON.stringify({ all: 0, select: 0, skip: 0, ...modes }) + '\n')
+    expect(modes.skip ?? 0).toBeGreaterThan(0)
+  }
+
+  it.each([[11], [12], [13], [14]])('RV3: one server, seed %i, 60 ticks: the same in both worlds, and the candidate skips', async (seed) => {
+    await walk1(seed, 60)
+  }, 120000)
+})
+describe('a move during a tick outside the selection', () => {
+  it('RV4: one server; a move during the tick changes a title outside the selection; the quiet ticks after it agree', async () => {
+    const pair = createPair()
+    mockServers = mockServers.slice(0, 1)
+    expectSame(await pair.step('first tick'))
+    expectSame(await pair.step('second tick'))
+    let entry = await pair.step('quiet')
+    expect(entry.mode).toBe('skip')
+    const lib = pair.library.A.movies
+    // Gamma changes in a way that needs no second pass (no new poster)
+    lib['Gamma (2003)'] = { ...lib['Gamma (2003)'], hdr: 'HDR10' }
+    const zeta = { ...lib['Zeta (2006)'], hdr: 'HDR10' }
+    const moved = entry = await pair.step('moved', {
+      failures: { beforeEntries: { A: (served, kind) => { if (kind !== 'movies') return false; served.movies['Zeta (2006)'] = zeta } } },
+    })
+    lib['Zeta (2006)'] = zeta
+    const after = []
+    for (const label of ['quiet 1', 'quiet 2', 'quiet 3']) {
+      entry = await pair.step(label)
+      after.push(entry)
+    }
+    // The moved title was left pending in the tick state, so the next tick does not skip
+    expect(after[0].mode).toBe('select')
+    expect(after[0].reason).toMatch(/pending in the tick state/)
+    expectSame(after[2], [moved, after[0], after[1]])
+  })
+})
+describe('a write reported failed', () => {
+  it('RV5: one server; a movie written and gated, then reported failed; the server goes back to the old version', async () => {
+    const { syncEventBus } = require('@src/utils/sync/core/events')
+    const original = syncEventBus.emitComplete
+    let throwFor = null
+    jest.spyOn(syncEventBus, 'emitComplete').mockImplementation(function (title, ...rest) {
+      if (throwFor && title === throwFor) throw new Error('emit failed after the write')
+      return original.call(this, title, ...rest)
+    })
+    const pair = createPair()
+    mockServers = mockServers.slice(0, 1)
+    expectSame(await pair.step('first tick'))
+    expectSame(await pair.step('second tick'))
+    const lib = pair.library.A.movies
+    const before = lib['Zeta (2006)']
+    lib['Zeta (2006)'] = { ...before, hdr: 'HDR10' }
+    throwFor = 'Zeta (2006)'
+    let entry
+    try {
+      entry = await pair.step('written, then reported failed')
+    } finally {
+      throwFor = null
+    }
+    const zetaDoc = pair.candidate.mongo.collection('Media', 'FlatMovies').docs.find((d) => d.originalTitle === 'Zeta (2006)')
+    expect(entry.candidate.result.flatSyncResults.A.movies.errors).toBeGreaterThan(0)
+    expect(zetaDoc.hdr).toBe('HDR10')
+    expect(zetaDoc.syncGates?.A).toBeDefined()
+    lib['Zeta (2006)'] = before
+    // The failed title was cleared before the pass, so the next tick passes over it again
+    entry = await pair.step('back at the old version')
+    expect(entry.mode).toBe('select')
+    expect(entry.entries).toEqual([['A', 'movies', { titles: ['Zeta (2006)'] }]])
+    for (const label of ['quiet 1', 'quiet 2']) {
+      entry = await pair.step(label)
+    }
+    expectSame(entry)
+  })
+})
+describe('every difference in a stretch after a move is explained by the move', () => {
+  async function walkStrict(seed, ticks) {
+    const random = prng(seed)
+    const pair = createPair()
+    let since = []
+    let waited = 0
+    let moved = new Set()
+    const stretches = []
+    expectSame(await pair.step('first tick'))
+    expectSame(await pair.step('second tick'))
+    for (let i = 0; i < ticks; i++) {
+      const { changes, failures, after } = randomChanges(random, pair)
+      const entry = await pair.step('seed ' + seed + ' tick ' + i + ': ' + (changes.join('; ') || 'nothing'), { failures })
+      for (const apply of after) apply()
+      const gains = changes.map((c) => c.match(/gains (.+) during the tick/)?.[1]).filter(Boolean)
+      if (failures.beforeEntries) {
+        for (const t of gains) moved.add(t)
+        since.push(entry)
+        waited = 0
+      } else if (since.length > 0 && entry.differences.length > 0 && waited < CONVERGE_TICKS) {
+        since.push(entry)
+        waited += 1
+      } else {
+        expectSame(entry, since)
+        if (since.length > 0) {
+          // Every difference seen inside the stretch is about a title a move added
+          const all = since.flatMap((e) => e.differences)
+          const unexplained = all.filter((line) => ![...moved].some((t) => line.startsWith('FlatMovies ' + t + ' ') || line.startsWith('FlatMovies ' + t + ':')))
+          stretches.push({ len: since.length, diffs: all.length, unexplained: unexplained.length })
+          expect({ seed, tick: i, unexplained }).toEqual({ seed, tick: i, unexplained: [] })
+          // Deletes and changes inside the stretch: only moved titles may differ per tick
+        }
+        since = []
+        moved = new Set()
+      }
+    }
+    process.stdout.write('[STRICT seed ' + seed + '] stretches=' + JSON.stringify(stretches) + '\n')
+  }
+  it.each([[1], [2], [3], [4]])('RV6: walk seed %i with every in-stretch difference explained by the move', async (seed) => {
+    await walkStrict(seed, 50)
+  }, 120000)
+})
+
+describe('confirmTickMode (the mode as it stands once the run holds the lock)', () => {
+  async function probeThenLose(loseState) {
+    const pair = createPair()
+    expectSame(await pair.step('first tick'))
+    expectSame(await pair.step('second tick'))
+    pair.library.A.movies['Gamma (2003)'] = movie('Gamma (2003)', 4)
+    const world = pair.candidate
+    serve(world, pair.library, {})
+    mockWorld = world
+    globalThis.__syncTickState = world.state
+    world.processor.calls.entries.length = 0
+    const probed = await fetchSyncTick({ allowSkip: true })
+    expect([probed.skipped, probed.mode]).toEqual([false, 'select'])
+    // Between the probe and the lock the tick state is lost (a reset, another run's record)
+    loseState(world)
+    const result = await syncAllServers(probed, {})
+    for (let i = 0; i < 5000 && getSyncLockHolder(); i++) await new Promise((resolve) => setImmediate(resolve))
+    world.state = globalThis.__syncTickState ?? null
+    return { pair, result, entries: world.processor.calls.entries.map(({ server, kind, request }) => [server, kind, request]) }
+  }
+
+  it('runs the tick over every title when the tick state was reset after the probe', async () => {
+    const { entries, result } = await probeThenLose(() => {
+      globalThis.__syncTickState = null
+    })
+    // Every server is asked for everything, and the change is written
+    expect(entries).toEqual(['A', 'B', 'C'].flatMap((id) => ['tv', 'movies'].map((kind) => [id, kind, { all: true }])))
+    expect(changed(result).movies).toEqual(['Gamma (2003)'])
+  })
+
+  it('runs the tick over every title when another run replaced the record after the probe', async () => {
+    const { entries } = await probeThenLose((world) => {
+      globalThis.__syncTickState = { ...world.state, lastRunId: 'another-run' }
+    })
+    expect(entries.length).toBe(6)
+    expect(entries.every(([, , request]) => request.all === true)).toBe(true)
   })
 })
