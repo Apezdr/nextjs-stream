@@ -17,7 +17,6 @@ import {
   MediaType,
   SyncStatus,
   type Availability,
-  type Caches,
   type MovieEntity,
   type PlanOutcome,
   type ResourceRequest,
@@ -40,11 +39,13 @@ interface MovieStepBase {
   payload: any
 }
 
-/** The metadata step's input (./metadata). */
+/**
+ * The metadata step's input (./metadata). No caches: its change key is on the
+ * payload's metadata URL.
+ */
 export interface MovieMetadataInput extends MovieStepBase {
   run: Pick<RunConfig, 'serverConfig'>
   availability: Availability
-  caches: Pick<Caches, 'metadataHashes'>
 }
 
 /**

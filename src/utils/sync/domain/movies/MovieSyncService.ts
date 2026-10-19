@@ -200,7 +200,7 @@ export class MovieSyncService {
       }
 
       await runStep(SyncOperation.Metadata, (movie, resources) =>
-        syncMovieMetadata({ originalTitle, movie, payload, run, availability, caches }, resources)
+        syncMovieMetadata({ originalTitle, movie, payload, run, availability }, resources)
       )
       const artwork = await runStep(SyncOperation.Assets, (movie, resources) =>
         syncMovieArtwork({ originalTitle, movie, payload, run, availability }, resources)

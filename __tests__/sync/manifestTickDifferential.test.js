@@ -441,7 +441,7 @@ beforeEach(() => {
     { id: 'C', priority: 3, baseURL: 'https://C.example', prefixPath: '', syncEndpoint: 'https://C-node.example' },
   ]
   delete globalThis.__syncDatabaseAdapter
-  // The Node.js server's metadata hash endpoint: not there, so every pass fetches metadata itself
+  // No request leaves a pass here: anything fetched answers 404
   global.fetch = jest.fn(async () => ({ ok: false, status: 404 }))
   for (const method of ['log', 'info', 'warn', 'error', 'debug']) jest.spyOn(console, method).mockImplementation(() => {})
 })

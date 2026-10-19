@@ -445,7 +445,7 @@ beforeEach(() => {
   delete globalThis.__dataMigrations
   delete globalThis.__newContentOutboxIndex
   mockDeliveryFailures.length = 0
-  // The Node.js server's hash endpoints: not there, so the pass runs without them.
+  // No request leaves a pass here: anything fetched answers 404.
   global.fetch = jest.fn(async () => ({ ok: false, status: 404 }))
   preTagCovers()
   for (const method of ['log', 'info', 'warn', 'error', 'debug']) jest.spyOn(console, method).mockImplementation(() => {})
@@ -541,61 +541,49 @@ describe('a full pass for one server', () => {
 
 // ---------------------------------------------------------------- title hashes
 
-describe('the title hashes a pass fetches from the server’s Node.js API: the movies’ only', () => {
-  const NODE = 'https://default-node.example'
-  const MOVIE_HASH = 'movie-metadata-hash-1'
-  const SHOW_HASH = 'show-hash-1'
-  const SHOW_CONTENT_HASH = 'show-content-hash-1'
-  const answer = (body) => ({ ok: true, status: 200, json: async () => body })
-  const entry = (hash, extra = {}) => ({ hash, lastModified: '2024-01-01T00:00:00.000Z', generated: '2024-01-01T00:00:00.000Z', ...extra })
-
-  // Each list answers only at its own URL, so a pass that asked for the
-  // movies' list at the TV URL gets the show's titles, which do not name the
-  // movie. The TV list is served, as the processor serves it, and never asked
-  // for: nothing reads it.
-  const hashEndpoints = () =>
-    jest.fn(async (url) => {
-      if (url === `${NODE}/api/metadata-hashes/movies`) {
-        return answer({ hash: 'all-movies', titles: { [MOVIE]: entry(MOVIE_HASH) } })
-      }
-      if (url === `${NODE}/api/metadata-hashes/tv`) {
-        return answer({ hash: 'all-tv', titles: { [SHOW]: entry(SHOW_HASH, { contentHash: SHOW_CONTENT_HASH }) } })
-      }
-      return { ok: false, status: 404 }
-    })
-
+describe('the movie metadata change key: the hash on the payload’s metadata URL, no hash list', () => {
   const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
-  const movieMetadataFetches = () =>
-    fetchMetadataMultiServer.mock.calls.filter(([, url, type]) => type === 'file' && url === moviePayload().urls.metadata)
-      .length
+  const movieMetadataFetches = (url = moviePayload().urls.metadata) =>
+    fetchMetadataMultiServer.mock.calls.filter(([, path, type]) => type === 'file' && path === url).length
+  const withMetadataUrl = (metadata) => ({ ...moviePayload(), urls: { ...moviePayload().urls, metadata } })
 
   beforeEach(() => {
-    global.fetch = hashEndpoints()
     fetchMetadataMultiServer.mockClear()
   })
 
-  it('asks the server’s Node.js URL for the movie list once, and never for the TV list', async () => {
+  it('asks the server’s Node.js API for no hash list', async () => {
     await runSync(oneServer())
 
-    const asked = global.fetch.mock.calls.map(([url]) => url).filter((url) => url.includes('/api/metadata-hashes/'))
-    expect(asked).toEqual([`${NODE}/api/metadata-hashes/movies`])
+    const asked = global.fetch.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('/api/metadata-hashes/'))
+    expect(asked).toEqual([])
   })
 
-  it('hands the movie list to the metadata step: a hash that matches the stored one skips the metadata fetch', async () => {
+  it('stores the URL’s hash as metadataHash, and a forced pass at the same URL skips the metadata fetch', async () => {
     await runSync(oneServer())
     const [movie] = docs('FlatMovies')
-    expect(movie).toMatchObject({ metadataHash: MOVIE_HASH, metadataSource: 'default' })
+    expect(movie).toMatchObject({ metadataHash: 'd1', metadataSource: 'default' })
     expect(movieMetadataFetches()).toBe(1)
 
-    // A forced pass runs every step; the metadata step finds the hash unchanged
+    // A forced pass runs every step; the metadata step finds the key unchanged
     fetchMetadataMultiServer.mockClear()
     await runSync(oneServer(), { forceSync: true })
     expect(movieMetadataFetches()).toBe(0)
 
-    // Without the list the same forced pass fetches the metadata
-    global.fetch = jest.fn(async () => ({ ok: false, status: 404 }))
-    await runSync(oneServer(), { forceSync: true })
-    expect(movieMetadataFetches()).toBe(1)
+    // A new hash on the URL is a new file: it is fetched, and its key stored
+    const changed = `${MOVIE_FOLDER}/metadata.json?hash=d2`
+    await runSync(oneServer({ movies: { [MOVIE]: withMetadataUrl(changed) } }))
+    expect(movieMetadataFetches(changed)).toBe(1)
+    expect(docs('FlatMovies')[0].metadataHash).toBe('d2')
+  })
+
+  it('fetches the metadata on every pass, and stores no hash, when the URL has none', async () => {
+    const bare = `${MOVIE_FOLDER}/metadata.json`
+    await runSync(oneServer({ movies: { [MOVIE]: withMetadataUrl(bare) } }))
+    expect(docs('FlatMovies')[0]).not.toHaveProperty('metadataHash')
+
+    fetchMetadataMultiServer.mockClear()
+    await runSync(oneServer({ movies: { [MOVIE]: withMetadataUrl(bare) } }), { forceSync: true })
+    expect(movieMetadataFetches(bare)).toBe(1)
   })
 
   it('stamps no title hash on any document: the gates are stamped, the hashes are not', async () => {
@@ -1075,10 +1063,12 @@ describe('what the admins’ sync notice counts as added', () => {
   })
 
   it('does not count a document a run only rewrote', async () => {
-    await runSync(oneServer())
+    // No hash on the metadata URL, so the forced pass fetches the metadata again
+    const movie = { ...moviePayload(), urls: { ...moviePayload().urls, metadata: `${MOVIE_FOLDER}/metadata.json` } }
+    await runSync(oneServer({ movies: { [MOVIE]: movie } }))
 
     // A forced pass runs every title in full and rewrites what differs
-    const forced = await runSync(oneServer(), { forceSync: true })
+    const forced = await runSync(oneServer({ movies: { [MOVIE]: movie } }), { forceSync: true })
 
     expect(forced.changedMedia.movies.length).toBeGreaterThan(0)
     expect(forced.changedMedia.episodes.length).toBe(2)
@@ -1153,7 +1143,6 @@ describe('the server config a pass refuses', () => {
       id: 'default',
       priority: 3,
       baseUrl: 'https://default.example',
-      nodeUrl: 'https://default-node.example',
       prefix: '',
       enabled: true,
       timeout: 30000,

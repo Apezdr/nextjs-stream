@@ -41,21 +41,23 @@ type EpisodeBuilderInput = Parameters<typeof planEpisode>[0]
 /** Never called: the typecheck reads it. */
 function movieSteps(pass: MoviePass, metadata: MetadataInput, artwork: ArtworkInput, video: VideoInput, retry: RetryInput) {
   // The movie pass holds all three parts.
-  void [pass.run.forceSync, pass.run.cleanup, pass.availability, pass.caches.metadataHashes, pass.caches.resourceManager]
+  void [pass.run.forceSync, pass.run.cleanup, pass.availability, pass.caches.resourceManager]
+  // @ts-expect-error The pass fetches no metadata hash list: the change key is on the payload's metadata URL.
+  void pass.caches.metadataHashes
 
   // No step reads forceSync (the gate is checked before the steps run) or the
   // cleanup config (field-absence cleanup plans apart).
 
-  // The metadata step: the server, the availability and the metadata hashes.
-  void [metadata.run.serverConfig, metadata.availability.fieldAvailability, metadata.caches.metadataHashes, metadata.payload]
+  // The metadata step: the server, the availability and the payload (its metadata URL carries the change key).
+  void [metadata.run.serverConfig, metadata.availability.fieldAvailability, metadata.payload]
   // @ts-expect-error The metadata step does not read forceSync.
   void metadata.run.forceSync
   // @ts-expect-error The metadata step does not read allEnabledServersProbed.
   void metadata.run.allEnabledServersProbed
   // @ts-expect-error The metadata step does not read the cleanup config.
   void metadata.run.cleanup
-  // @ts-expect-error The metadata step does not get the HTTP throttle.
-  void metadata.caches.resourceManager
+  // @ts-expect-error The metadata step is handed no caches.
+  void metadata.caches
 
   // The artwork step: the server, allEnabledServersProbed and the availability.
   void [artwork.run.serverConfig, artwork.run.allEnabledServersProbed, artwork.availability, artwork.payload]

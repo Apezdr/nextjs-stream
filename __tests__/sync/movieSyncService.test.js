@@ -181,6 +181,67 @@ describe('the metadata step', () => {
   })
 })
 
+describe('the metadata change key (the hash on the payload’s metadata URL)', () => {
+  const { metadataChangeKey } = require('@src/utils/sync/domain/movies/metadata')
+  const HEX = 'a'.repeat(32) + '0123456789abcdef'.repeat(2)
+
+  it.each([
+    ['present', `${FOLDER}/metadata.json?hash=${HEX}`, HEX],
+    ['absent', `${FOLDER}/metadata.json`, undefined],
+    ['empty', `${FOLDER}/metadata.json?hash=`, undefined],
+    ['after another parameter, percent-encoded', `${FOLDER}/metadata.json?v=2&hash=abc%2B1`, 'abc+1'],
+    ['on an absolute URL', `https://A.example${FOLDER}/metadata.json?hash=h1`, 'h1'],
+    // The folder name's own `&hash=` and `#` are encoded: part of the path, not the query
+    ['under an encoded folder name', `/movies/Caf%C3%A9%20%26hash%3Dx%20%232%20(2001)/metadata.json?hash=${HEX}`, HEX],
+    ['only in an encoded folder name', '/movies/Caf%C3%A9%20%3Fhash%3Dx%20(2001)/metadata.json', undefined],
+    ['in a parameter that only ends in hash', `${FOLDER}/metadata.json?myhash=h0&hash=h1`, 'h1'],
+    ['after a fragment', `${FOLDER}/metadata.json#hash=h1`, undefined],
+  ])('is read from a URL with the hash %s', (_label, url, key) => {
+    expect(metadataChangeKey(url)).toBe(key)
+  })
+
+  it.each([[undefined], [null], [''], [42]])('is undefined for a metadata path of %p', (path) => {
+    expect(metadataChangeKey(path)).toBeUndefined()
+  })
+
+  const ownMetadata = (metadataHash) => ({
+    originalTitle: KEY,
+    title: KEY,
+    metadata: { title: 'Film Title', overview: 'x' },
+    metadataSource: 'A',
+    metadataHash,
+    syncVersion: '2.1',
+  })
+  const step = (metadata, movie) => {
+    const payload = { urls: { metadata } }
+    return runStep(syncMovieMetadata, { originalTitle: KEY, movie, payload, ...partsFor(payload) })
+  }
+
+  it('skips the fetch when the URL’s hash is the stored one', async () => {
+    fetchMetadataMultiServer.mockClear()
+    const { result } = await step(`${FOLDER}/metadata.json?hash=${HEX}`, ownMetadata(HEX))
+    expect(result).toMatchObject({ status: 'skipped' })
+    expect(fetchMetadataMultiServer).not.toHaveBeenCalled()
+  })
+
+  it('fetches, and stores the new key, when the URL’s hash differs', async () => {
+    fetchMetadataMultiServer.mockClear()
+    fetchMetadataMultiServer.mockImplementation(async () => ({ title: 'Film Title', overview: 'x' }))
+    const { plan } = await step(`${FOLDER}/metadata.json?hash=${HEX}`, ownMetadata('an-older-key'))
+    expect(fetchMetadataMultiServer).toHaveBeenCalledTimes(1)
+    expect(plan.set.metadataHash).toBe(HEX)
+  })
+
+  it('fetches, and stores no key, when the URL has no hash, as for a movie the hash list did not name', async () => {
+    fetchMetadataMultiServer.mockClear()
+    fetchMetadataMultiServer.mockImplementation(async () => ({ title: 'Film Title', overview: 'y' }))
+    const { plan } = await step(`${FOLDER}/metadata.json`, ownMetadata(HEX))
+    expect(fetchMetadataMultiServer).toHaveBeenCalledTimes(1)
+    expect(plan.set.metadata).toEqual({ title: 'Film Title', overview: 'y' })
+    expect(plan.set).not.toHaveProperty('metadataHash')
+  })
+})
+
 describe('whether each step writes the movie (core/writePlan writesDocument)', () => {
   // True exactly when the step's plan stamps lastSynced: the service writes
   // the healed fields with such a step's write, and with no other.

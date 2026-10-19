@@ -42,7 +42,6 @@ import {
   type Availability,
   type Caches,
   type FieldAvailability,
-  type MovieMetadataHashes,
   type RunConfig,
   type ServerConfig,
   type SyncResult,
@@ -60,8 +59,6 @@ export interface ServerPassConfig {
   id: string
   baseURL?: string
   prefixPath?: string
-  syncEndpoint?: string
-  internalEndpoint?: string
   priority?: unknown
 }
 
@@ -184,10 +181,7 @@ export async function runServerPass(
       'Processing movies with new architecture'
     )
     const movieStart = Date.now()
-    const caches: Caches = {
-      metadataHashes: (await fetchMovieHashes(serverConfig)) ?? undefined,
-      resourceManager,
-    }
+    const caches: Caches = { resourceManager }
     syncLogger.info(
       `Processing ${movieTitles.length} movies with concurrency: ${resourceManager.config.syncConcurrency} ` +
         `(HTTP limit: ${resourceManager.config.httpConcurrency})`
@@ -312,8 +306,6 @@ function toServerConfig(config: ServerPassConfig): ServerConfig {
     id: config.id,
     priority: config.priority,
     baseUrl: config.baseURL, // file server URL (media files)
-    // Node.js server URL (API endpoints): the internal one when set
-    nodeUrl: config.internalEndpoint || config.syncEndpoint,
     prefix: config.prefixPath,
     enabled: true,
     timeout: 30000,
@@ -378,45 +370,6 @@ function failedResult(title: string, mediaType: MediaType, serverId: string, err
     timestamp: new Date(),
     changes: [],
     errors: [error instanceof Error ? error.message : String(error)],
-  }
-}
-
-/**
- * The file server's metadata hash for every movie, fetched once per pass: a
- * movie's metadata step skips the metadata.json fetch when the hash matches
- * the one it stored (metadataHash). Null when it cannot be had: the pass then
- * fetches each movie's metadata. (Shows have no such step, and nothing reads
- * the TV list, so it is not fetched.)
- */
-async function fetchMovieHashes(serverConfig: ServerConfig): Promise<MovieMetadataHashes | null> {
-  const kind = 'movies'
-  if (!serverConfig.nodeUrl) {
-    syncLogger.warn(`⚠️ No Node.js server URL for ${serverConfig.id}: no ${kind} hashes`)
-    return null
-  }
-  // The Node.js server's API, not the file server (baseUrl serves media files).
-  const url = `${serverConfig.nodeUrl}/api/metadata-hashes/${kind}`
-  syncLogger.info(`Fetching ${kind} metadata hashes from: ${url}`)
-  const controller = new AbortController()
-  const timeoutId = setTimeout(() => controller.abort(), 15000)
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: { Accept: 'application/json', 'Cache-Control': 'no-cache' },
-    })
-    clearTimeout(timeoutId)
-    if (!response.ok) {
-      syncLogger.warn(`⚠️ ${kind} metadata hashes endpoint returned status ${response.status}`)
-      return null
-    }
-    const hashes = await response.json()
-    const count = hashes?.titles ? Object.keys(hashes.titles).length : 0
-    syncLogger.info(`✅ ${kind} metadata hashes loaded: ${count} titles, overall=${hashes?.hash?.substring(0, 8)}...`)
-    return hashes
-  } catch (error) {
-    clearTimeout(timeoutId)
-    syncLogger.warn(`⚠️ Failed to fetch ${kind} metadata hashes: ${error instanceof Error ? error.message : String(error)}`)
-    return null
   }
 }
 
