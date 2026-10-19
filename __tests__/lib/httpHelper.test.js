@@ -242,14 +242,23 @@ describe('the cache log lines', () => {
     expect(lines().find((line) => line.startsWith('Cache STORE: '))).toBe(`Cache STORE: ${FILE} (json, 0 Bytes)`)
   })
 
-  it('a thrown HTTP error names the URL with its API key REDACTED', async () => {
-    mockGot.mockResolvedValue(reply(401))
+  it('a 503 on a feed URL logs no key: not in the retry warnings, not in the final line', async () => {
+    mockGot.mockResolvedValue(reply(503))
 
-    const error = await httpGet(FEED, { responseType: 'text', retry: { ...fast, limit: 0 } }).catch((e) => e)
-
-    expect(error.message).toBe(
-      'HTTP Error: 401 for URL: https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true'
+    const error = await httpGet(FEED, { responseType: 'text', retry: { ...fast, limit: 2, shouldRetry: backendClientRule } }).catch(
+      (e) => e
     )
-    expect(console.error.mock.calls.flat().join(' ')).not.toContain('s3cr3t')
+
+    // The thrown error is unchanged: its callers see the same error
+    expect(error.message).toBe(`HTTP Error: 503 for URL: ${FEED}`)
+    expect(mockGot).toHaveBeenCalledTimes(3)
+    const logged = [...console.warn.mock.calls, ...console.error.mock.calls, ...console.debug.mock.calls].flat().map(String)
+    expect(console.warn).toHaveBeenCalledTimes(2)
+    for (const line of logged) expect(line).not.toContain('s3cr3t')
+    const redacted = 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true'
+    expect(console.error.mock.calls[0][0]).toBe(
+      `Failed to fetch ${redacted} after 3 attempts: Error HTTP 503: HTTP Error: 503 for URL: ${redacted}`
+    )
+    expect(console.warn.mock.calls[0][0]).toContain(`HTTP Error: 503 for URL: ${redacted}`)
   })
 })

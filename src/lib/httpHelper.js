@@ -39,8 +39,7 @@ const calculateBackoff = (retry, baseDelay = 1000, maxDelay = 10000) => {
  * @returns {Error}
  */
 function httpStatusError(statusCode, url, headers, body) {
-  // The message travels to callers' logs: the URL in it is redacted
-  const error = new Error(`HTTP Error: ${statusCode} for URL: ${loggableUrl(url)}`);
+  const error = new Error(`HTTP Error: ${statusCode} for URL: ${url}`);
   error.statusCode = statusCode;
   error.response = { statusCode, headers, body };
   return error;
@@ -129,7 +128,7 @@ const cacheLog = {
   hit: (url, type, size) => console.debug(`Cache HIT: ${loggableUrl(url)} (${type}, ${formatBytes(size || 0)})`),
   miss: (url, reason) => console.debug(`Cache MISS: ${loggableUrl(url)} (${reason})`),
   store: (url, type, size) => console.debug(`Cache STORE: ${loggableUrl(url)} (${type}, ${formatBytes(size || 0)})`),
-  error: (url, error) => console.error(`Cache ERROR: ${loggableUrl(url)}: ${describeRequestError(error)}`)
+  error: (url, error) => console.error(`Cache ERROR: ${loggableUrl(url)}: ${describeRequestError(error, url)}`)
 };
 
 /**
@@ -290,7 +289,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
               try {
                 responseData = JSON.parse(response.body);
               } catch (parseError) {
-                throw new Error(`Invalid JSON response from ${loggableUrl(url)}`);
+                throw new Error(`Invalid JSON response from ${url}`);
               }
               break;
 
@@ -375,7 +374,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
             };
           }
         } catch (processingError) {
-          console.error(`Error processing response for ${loggableUrl(url)}: ${describeRequestError(processingError)}`);
+          console.error(`Error processing response for ${loggableUrl(url)}: ${describeRequestError(processingError, url)}`);
           debugStack(processingError);
           
           // Clean up response resources if there was an error processing the data
@@ -418,7 +417,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
           );
           return { data, headers: Object.fromEntries(fetchResponse.headers.entries()) };
         } catch (fetchError) {
-          console.error(`Fetch fallback failed for ${loggableUrl(url)}: ${describeRequestError(fetchError)}`);
+          console.error(`Fetch fallback failed for ${loggableUrl(url)}: ${describeRequestError(fetchError, url)}`);
           debugStack(fetchError);
           // If fetch fails too, continue with retry logic
         }
@@ -433,7 +432,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
         console.warn(
           `Retrying request to ${loggableUrl(url)} (attempt ${attempt + 1}/${limit}) after ${Math.round(
             delay
-          )}ms: ${describeRequestError(error)}`
+          )}ms: ${describeRequestError(error, url)}`
         );
         await sleep(delay);
         
@@ -465,7 +464,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
   } else {
     console.error(
       `Failed to fetch ${loggableUrl(url)} after ${attemptsMade} attempt${attemptsMade === 1 ? '' : 's'}: ` +
-        describeRequestError(lastError)
+        describeRequestError(lastError, url)
     );
     debugStack(lastError);
   }
@@ -508,14 +507,21 @@ export function loggableUrl(url) {
  * got's RequestError prints its options, timings and agents, about 2,000
  * lines a failure.
  *
+ * The message may name the request's URL (httpGet's own errors do, and keep
+ * it as it is for their callers): it is shown as loggableUrl shows it, and
+ * any other credential in the message is redacted too.
+ *
  * @param {unknown} error
+ * @param {string} [url] - The request's URL, replaced inside the message
  * @returns {string}
  */
-export function describeRequestError(error) {
+export function describeRequestError(error, url) {
   const name = error?.name || 'Error'
   const code = error?.code ? ` ${error.code}` : ''
   const status = error?.response?.statusCode ?? error?.statusCode
-  const message = redactSecrets(error?.message ?? error ?? '').replace(/\s+/g, ' ').trim()
+  let raw = String(error?.message ?? error ?? '')
+  if (typeof url === 'string' && url) raw = raw.split(url).join(loggableUrl(url))
+  const message = redactSecrets(raw).replace(/\s+/g, ' ').trim()
   const shown = message.length > 160 ? `${message.slice(0, 159)}…` : message
   return `${name}${code}${status ? ` HTTP ${status}` : ''}: ${shown}`
 }
