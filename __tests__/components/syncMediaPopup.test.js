@@ -388,7 +388,7 @@ describe('a completion that is not the sync the popup started', () => {
     // run ends at once with an id-stamped completion of its own
     await send(completion({ skipped: true, reason: 'orchestration_in_progress' }, { outcome: 'busy' }))
 
-    expect(screen.getByText('Another sync is still finishing; try again in a moment.')).toBeInTheDocument()
+    expect(screen.getByText('Another sync is still finishing; try again in a moment.', { selector: 'p:not([role="status"])' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Sync' })).toBeInTheDocument()
     expect(streams[0].closed).toBe(true)
     // The next tick's completion reaches nothing
@@ -401,7 +401,7 @@ describe('a completion that is not the sync the popup started', () => {
     await startSync()
     await send(completion(null, { outcome: 'failed', error: 'sync pool unavailable' }))
 
-    expect(screen.getByText('Sync encountered an error: sync pool unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Sync encountered an error: sync pool unavailable', { selector: 'p:not([role="status"])' })).toBeInTheDocument()
     expect(streams[0].closed).toBe(true)
     await send(completion(webhookTick, { operationId: TICK }))
     expect(screen.queryByText(/2 titles checked/)).not.toBeInTheDocument()
@@ -421,5 +421,58 @@ describe('a completion that is not the sync the popup started', () => {
 
     expect(screen.getByText(/1,086 titles checked/)).toBeInTheDocument()
     expect(screen.queryByText(/2 titles checked/)).not.toBeInTheDocument()
+  })
+})
+
+describe('for assistive technology', () => {
+  it('says in a polite live region when the report replaces "Syncing..."', async () => {
+    renderPopup()
+    const status = screen.getByRole('status')
+    expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(status).toHaveTextContent('')
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Sync' }))
+    })
+    await waitFor(() => expect(streams).toHaveLength(1))
+    expect(status).toHaveTextContent('Syncing…')
+
+    await serverEvents()
+    await send(completion(summary()))
+    expect(status).toHaveTextContent('Sync finished. The report is below.')
+  })
+
+  it('moves focus to the section a card’s link jumps to', async () => {
+    await startSync()
+    await serverEvents()
+    await send(
+      completion(
+        summary({ missingMedia: { default: { movies: ['Lost Write (2020)'], tv: [] } } })
+      )
+    )
+
+    const link = screen.getByRole('link', { name: '1 not in the library' })
+    expect(link).toHaveAttribute('href', '#sync-not-in-library-default')
+    const section = document.getElementById('sync-not-in-library-default')
+    expect(section).toHaveAttribute('tabindex', '-1')
+    fireEvent.click(link)
+    expect(section).toHaveFocus()
+  })
+
+  it('says whether the live error list is open, and hides the arrow from screen readers', async () => {
+    await startSync()
+    await send(warmup())
+    await send({ type: 'started', entityId: '__server_start__', serverId: 'default', data: { total: 2 } })
+    await send({ type: 'error', entityId: 'Broken (2001)', serverId: 'default', mediaType: 'movie', error: 'metadata fetch failed' })
+
+    const toggle = screen.getByRole('button', { name: '1 error' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle.querySelector('[aria-hidden="true"]')).toHaveTextContent('▼')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(document.getElementById(toggle.getAttribute('aria-controls'))).toHaveTextContent('metadata fetch failed')
+
+    // (Finished, so no transition is left pending)
+    await send(completion(summary()))
   })
 })

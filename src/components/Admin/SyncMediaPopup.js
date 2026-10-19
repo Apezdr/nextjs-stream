@@ -239,10 +239,14 @@ function ServerCard({ server, counts = null, passErrors = [], forced = false, li
           <span>{statusLabel}</span>
           {!counts && server.errorCount > 0 ? (
             <button
+              type="button"
               onClick={() => setErrorsExpanded(e => !e)}
-              className="text-red-600 font-medium hover:underline focus:outline-none"
+              aria-expanded={errorsExpanded}
+              aria-controls={sectionId('errors', server.id)}
+              className="text-red-600 font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
             >
-              {server.errorCount} error{server.errorCount !== 1 ? 's' : ''} {errorsExpanded ? '▲' : '▼'}
+              {server.errorCount} error{server.errorCount !== 1 ? 's' : ''}{' '}
+              <span aria-hidden="true">{errorsExpanded ? '▲' : '▼'}</span>
             </button>
           ) : null}
         </div>
@@ -276,7 +280,7 @@ function ServerCard({ server, counts = null, passErrors = [], forced = false, li
       ) : null}
 
       {errorsExpanded && server.errors.length > 0 ? (
-        <ul className="mt-2 max-h-40 overflow-y-auto space-y-1 border-t border-amber-200 pt-2">
+        <ul id={sectionId('errors', server.id)} className="mt-2 max-h-40 overflow-y-auto space-y-1 border-t border-amber-200 pt-2">
           {server.errors.map((err, i) => (
             <li key={i} className="bg-white border border-red-100 rounded p-1.5">
               <div className="flex items-center gap-1.5 mb-0.5 min-w-0">
@@ -330,9 +334,12 @@ function JumpLink({ target, children }) {
       href={`#${target}`}
       className="font-medium text-blue-700 underline hover:text-blue-900"
       onClick={(event) => {
-        // Scroll the dialog, not the page behind it, and leave the URL alone
+        // Scroll the dialog, not the page behind it, leave the URL alone, and
+        // move focus to the section (tabIndex -1), as following a link would
         event.preventDefault()
-        document.getElementById(target)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+        const section = document.getElementById(target)
+        section?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+        section?.focus({ preventScroll: true })
       }}
     >
       {children}
@@ -347,7 +354,7 @@ function JumpLink({ target, children }) {
 function CantPlaySection({ serverName, movies, tv }) {
   const id = sectionId('cant-play', serverName)
   return (
-    <section id={id} aria-labelledby={`${id}-heading`} className="mb-4 scroll-mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
+    <section id={id} tabIndex={-1} aria-labelledby={`${id}-heading`} className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 mb-4 scroll-mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
       <h4 id={`${id}-heading`} className="text-sm font-semibold text-gray-800">
         Can&apos;t play yet on {serverName}
       </h4>
@@ -396,7 +403,7 @@ function CantPlaySection({ serverName, movies, tv }) {
 function NotInLibrarySection({ serverName, movies, tv }) {
   const headingId = `${sectionId('not-in-library', serverName)}-heading`
   return (
-    <section id={sectionId('not-in-library', serverName)} aria-labelledby={headingId} className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs">
+    <section id={sectionId('not-in-library', serverName)} tabIndex={-1} aria-labelledby={headingId} className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 mb-4 scroll-mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs">
       <h4 id={headingId} className="text-sm font-semibold text-red-800">
         On {serverName} but not in the library
       </h4>
@@ -425,7 +432,7 @@ function NotInLibrarySection({ serverName, movies, tv }) {
 function NoVideoSection({ serverName, movies, tv }) {
   const headingId = `${sectionId('no-video', serverName)}-heading`
   return (
-    <section id={sectionId('no-video', serverName)} aria-labelledby={headingId} className="mb-4 scroll-mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
+    <section id={sectionId('no-video', serverName)} tabIndex={-1} aria-labelledby={headingId} className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 mb-4 scroll-mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
       <h4 id={headingId} className="text-sm font-semibold text-gray-800">
         No video file yet on {serverName}
       </h4>
@@ -831,8 +838,22 @@ export default function SyncMediaPopup({
   const runErrors = isComplete ? syncData.errors.filter((e) => !e.serverId) : []
   // Per server, links from its card to its "Can't play yet" and "No video
   // file yet" sections, when they list anything
+  // What the live region says: the sync's state, once it changes
+  const announcement = isSyncing
+    ? 'Syncing…'
+    : isComplete
+      ? 'Sync finished. The report is below.'
+      : syncError !== null
+        ? `Sync encountered an error: ${syncError}`
+        : (syncNotice ?? '')
   const reportLinks = (serverId) => {
     const links = []
+    // The real problem first: titles the server has that the sync could not save
+    const missing = syncData?.missingMedia?.[serverId]
+    const notInLibrary = (missing?.movies?.length ?? 0) + (missing?.tv?.length ?? 0)
+    if (notInLibrary > 0) {
+      links.push({ target: sectionId('not-in-library', serverId), label: `${formatCount(notInLibrary)} not in the library` })
+    }
     const cantPlay = syncData?.cantPlay?.[serverId]?.count ?? 0
     if (cantPlay > 0) {
       links.push({ target: sectionId('cant-play', serverId), label: `${formatCount(cantPlay)} can't play yet` })
@@ -887,6 +908,11 @@ export default function SyncMediaPopup({
                     >
                       Sync Media Files
                     </Dialog.Title>
+
+                    {/* Says when the report replaces "Syncing...", for screen readers */}
+                    <p className="sr-only" role="status" aria-live="polite">
+                      {announcement}
+                    </p>
 
                     <div className="mt-2">
                       <p className="text-sm text-gray-500">
