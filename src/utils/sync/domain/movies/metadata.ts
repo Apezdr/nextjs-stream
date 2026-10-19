@@ -8,8 +8,9 @@
  * document ends up with (core/title).
  *
  * The change key is the `hash` query parameter of the payload's metadata URL
- * (`urls.metadata`), the content hash of the metadata file
- * (metadataChangeKey). It is stored as `metadataHash`.
+ * (`urls.metadata`, metadataChangeKey): the content key the processor
+ * publishes for the movie's metadata.json, which moves only when that file's
+ * content changes. It is stored as `metadataHash`.
  */
 
 import {
@@ -38,9 +39,12 @@ const PATH_BASE = 'http://metadata-path.invalid'
 
 /**
  * The change key of a movie's metadata file: the `hash` query parameter of
- * its URL in the payload (`urls.metadata`), decoded. Undefined when the URL
- * has none, an empty one, or cannot be parsed: the step then fetches the
- * file and stores no hash.
+ * its URL in the payload (`urls.metadata`), decoded. The processor publishes
+ * it as a key of the metadata.json content (the sha256 of the content it
+ * stores for the title), so it moves only when that content changes: another
+ * file written into the folder leaves it as it is. Undefined when the URL has
+ * none, an empty one, or cannot be parsed: the step then fetches the file and
+ * stores no hash.
  */
 export function metadataChangeKey(metadataPath: unknown): string | undefined {
   if (typeof metadataPath !== 'string' || metadataPath.length === 0) return undefined

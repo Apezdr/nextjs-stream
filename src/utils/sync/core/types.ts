@@ -358,7 +358,9 @@ export interface MovieEntity extends BaseMediaEntity {
   mediaQuality?: MediaQuality
   
   // Change key of the metadata file stored with it: the `hash` parameter of
-  // the payload's urls.metadata (domain/movies/metadata, metadataChangeKey)
+  // the payload's urls.metadata, the processor's key of the metadata.json
+  // content, which moves only when that content changes
+  // (domain/movies/metadata, metadataChangeKey)
   metadataHash?: string
   
   // Asset URLs (IMPORTANT: backdrop and logo have NO "URL" suffix)
