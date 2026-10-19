@@ -30,7 +30,6 @@
 
 import { getSyncUrls, fileServerVersionTV, fileServerVersionMOVIES } from '@src/utils/config'
 import { getWebhookIdForServer } from '@src/utils/webhookServer'
-import { LIST_VERSION_KEY } from './listing'
 
 /** The manifest format this module reads (the processor's MANIFEST_FORMAT_VERSION). */
 export const MANIFEST_FORMAT = 2
@@ -96,14 +95,6 @@ class StatusError extends Error {
     super(`HTTP ${status}`)
     this.status = status
   }
-}
-
-/** What was logged once per process (the `version` folder). */
-const warned = new Set()
-function warnOnce(key, message) {
-  if (warned.has(key)) return
-  warned.add(key)
-  console.warn(message)
 }
 
 function concatBytes(chunks, size) {
@@ -213,8 +204,8 @@ async function requestHeaders(serverId) {
  * @property {number} version - The list version
  * @property {Map<string, {hash: string, seasons?: Map<string, string[]>}>} titles -
  *   Folder name → its hash and, for TV, each season key with its episode keys.
- *   A folder named `version` is left out: the payload's list version shadows
- *   it, so it has never been synced (lifted when the payload goes, Step P).
+ *   Every folder name is a title, one named `version` included (a processor
+ *   whose payload's list version shadowed such a folder never lists it).
  */
 
 /**
@@ -242,13 +233,6 @@ export function parseManifest(bytes, kind, etag) {
 
   const titles = new Map()
   for (const [name, record] of Object.entries(body.titles)) {
-    if (name === LIST_VERSION_KEY) {
-      warnOnce(
-        `version-folder:${kind}`,
-        `[SYNC] A ${kind} folder named "version" is not synced: the payload's list version shadows it (until Step P)`
-      )
-      continue
-    }
     if (!isPlainObject(record) || typeof record.hash !== 'string' || !TITLE_HASH.test(record.hash)) {
       throw new ProtocolError(`the manifest has no valid hash for ${JSON.stringify(name)}`)
     }

@@ -102,7 +102,7 @@ const twoServers = () => ({
 })
 
 describe('an all tick', () => {
-  it('asks every server for everything with {all: true} and keeps every title the manifests list, the version folder left out', async () => {
+  it('asks every server for everything with {all: true} and keeps every title the manifests list, a folder named `version` included', async () => {
     const libraries = twoServers()
     await settled(libraries)
     mockProcessor.calls.entries.length = 0
@@ -115,11 +115,11 @@ describe('an all tick', () => {
       ['B', 'tv', { all: true }],
       ['B', 'movies', { all: true }],
     ])
-    expect(Object.keys(inputs.fileServers.A.movies)).toEqual(['Film 1', 'Film 2'])
+    expect(Object.keys(inputs.fileServers.A.movies)).toEqual(['Film 1', 'Film 2', 'version'])
     expect(inputs.fileServers.A.movies['Film 2']).toEqual(film(2))
     expect(inputs.fileServers.B.tv).toEqual({ Show: show([1, 2]) })
     expect(inputs.fileServers.A.config).toEqual({ baseURL: 'https://A.example', prefixPath: '', syncEndpoint: 'https://A-node.example', priority: 1 })
-    expect([...inputs.listings.get('A').movies]).toEqual(['Film 1', 'Film 2'])
+    expect([...inputs.listings.get('A').movies]).toEqual(['Film 1', 'Film 2', 'version'])
     expect(inputs.hashes.movies.get('Film 1')).toEqual(new Map([['A', titleHash(film(1))], ['B', titleHash(film(1))]]))
     expect(inputs.allEnabledServersProbed).toBe(true)
     expect(inputs.fieldAvailability.movies['Film 1']['urls.mp4']).toEqual(['A', 'B'])
@@ -143,9 +143,9 @@ describe('a select tick', () => {
     expect(inputs.fileServers.B.movies).toEqual({ 'Film 1': { urls: { mp4: '/movies/film-1-remux.mkv' } } })
     expect(inputs.fieldAvailability.movies['Film 1']['urls.mp4']).toEqual(['A', 'B'])
     // Pre-tag and cleanup still see each server's whole library
-    expect([...inputs.listings.get('A').movies]).toEqual(['Film 1', 'Film 2'])
+    expect([...inputs.listings.get('A').movies]).toEqual(['Film 1', 'Film 2', 'version'])
     expect(tickPerfLine({ kind: 'select', selected: inputs.selected, manifests: inputs.manifests, perf: inputs.perf })).toMatch(
-      /^\[SYNC PERF\] tick=select selected tv=0\/1 movies=1\/2 \| A tv: manifest 304, 0 entries, 0\.0 KB received, 0\.0 KB parsed; movies: manifest 304, 1 entries, [\d.]+ KB received, [\d.]+ KB parsed \| B tv: manifest 304, 0 entries.*; movies: manifest 200, 1 entries/
+      /^\[SYNC PERF\] tick=select selected tv=0\/1 movies=1\/3 \| A tv: manifest 304, 0 entries, 0\.0 KB received, 0\.0 KB parsed; movies: manifest 304, 1 entries, [\d.]+ KB received, [\d.]+ KB parsed \| B tv: manifest 304, 0 entries.*; movies: manifest 200, 1 entries/
     )
   })
 
@@ -199,7 +199,7 @@ describe('a library that moved between the manifest and the entries (R-E)', () =
     expect(inputs.fileServers.A.movies).toEqual({ 'Film 2': film(22) })
     expect(inputs.hashes.movies.get('Film 2')).toEqual(new Map([['A', titleHash(film(22))]]))
     // The re-read is the listing (pre-tag sees Film 3) and the manifest the run remembers
-    expect([...inputs.listings.get('A').movies]).toEqual(['Film 1', 'Film 2', 'Film 3'])
+    expect([...inputs.listings.get('A').movies]).toEqual(['Film 1', 'Film 2', 'version', 'Film 3'])
     expect(inputs.manifests.get('A').movies.etag).toBe(mockProcessor.manifestOf('A', 'movies').etag)
     // Film 3 was not selected this tick: R2 takes it next tick
     expect(inputs.selected.movies.has('Film 3')).toBe(false)
@@ -267,7 +267,7 @@ describe('a library that moved between the manifest and the entries (R-E)', () =
     expect(inputs.selected.movies.has('Film 1')).toBe(false)
     // Nobody passes over it this tick, B included
     expect(inputs.fileServers.B.movies).toEqual({})
-    expect([...inputs.listings.get('A').movies]).toEqual(['Film 2'])
+    expect([...inputs.listings.get('A').movies]).toEqual(['Film 2', 'version'])
   })
 
   it('leaves the server out when a title comes missing that its manifest lists', async () => {

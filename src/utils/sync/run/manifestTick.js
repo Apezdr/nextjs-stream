@@ -191,8 +191,10 @@ async function readKindAnswer(server, kind, request, response, manifest, perf, d
       continue
     }
     if (!listed) {
-      // {all: true} sends every folder the library has, one named `version`
-      // included; only the manifest's titles are synced (and pre-tagged)
+      // {all: true} sends every folder the library has. A processor whose
+      // payload's list version shadowed a folder named `version` leaves it out
+      // of its manifest but may still send its line; only the manifest's
+      // titles are synced (and pre-tagged)
       if (request.all === true) continue
       return { ok: false, error: `${kind}: ${JSON.stringify(title)} is not in the manifest its entries come from` }
     }

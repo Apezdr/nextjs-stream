@@ -197,6 +197,31 @@ describe('listingOfManifests', () => {
     expect(listing.movies).toEqual(fromBody.movies)
     expect(listing.tv).toEqual(fromBody.tv)
   })
+
+  it('lists a folder named `version` like any other, beside integer-like ones, and pre-tag stamps it', async () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const { parseManifest } = require('@src/utils/sync/run/manifestSource')
+    const hash = '0123456789abcdef'
+    const bytes = (kind, titles) => new TextEncoder().encode(JSON.stringify({ format: 2, kind, version: 1.0001, titles }))
+    const movies = parseManifest(bytes('movies', { version: { hash }, 1234: { hash }, Film: { hash } }), 'movies', 'W/"m"')
+    const tv = parseManifest(
+      bytes('tv', { version: { hash, seasons: { 'Season 1': ['S01E01'] } }, 2012: { hash, seasons: { 'Season 1': ['S01E01'] } } }),
+      'tv',
+      'W/"t"'
+    )
+
+    const listing = listingOfManifests(tv, movies)
+
+    expect([...listing.movies].sort()).toEqual(['1234', 'Film', 'version'])
+    expect([...listing.tv.keys()].sort()).toEqual(['2012', 'version'])
+    expect(Object.fromEntries(listing.tv.get('version'))).toEqual({ 'Season 1': ['S01E01'] })
+    expect(warn).not.toHaveBeenCalled()
+
+    const writes = installDb()
+    await preTagSyncRunId(new Map([['A', listing]]), 'run-1')
+    expect(writes.updateMany.FlatMovies.filter.originalTitle.$in.sort()).toEqual(['1234', 'Film', 'version'])
+    expect(writes.updateMany.FlatTVShows.filter.originalTitle.$in.sort()).toEqual(['2012', 'version'])
+  })
 })
 
 describe('pre-tag from listings', () => {

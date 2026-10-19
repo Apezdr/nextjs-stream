@@ -20,14 +20,6 @@
  */
 
 /**
- * The key of the list version in a `GET /media/<kind>` body. It shadows a
- * folder of the same name, which has therefore never been synced; the manifest
- * reader (run/manifestSource) leaves that name out too, until Step P removes
- * the payload route.
- */
-export const LIST_VERSION_KEY = 'version'
-
-/**
  * The season number a listing's season key names ("Season 2" → 2), or null
  * when it names none. Read as pre-tag reads it (run/preTag).
  *

@@ -66,7 +66,7 @@ afterEach(() => {
 const tvManifest = (titles, extra = {}) => JSON.stringify({ format: 2, kind: 'tv', version: 1.0001, titles, ...extra })
 
 describe('fetchManifest', () => {
-  it('reads a format-2 manifest into Maps, keeping every folder name but the list version key', async () => {
+  it('reads a format-2 manifest into Maps, keeping every folder name, one named `version` included', async () => {
     const body =
       '{"format":2,"kind":"tv","version":1.0001,"titles":{' +
       `"Show":{"hash":"${H1}","seasons":{"Season 1":["S01E01","S01E02"],"Specials":[]}},` +
@@ -79,7 +79,8 @@ describe('fetchManifest', () => {
     expect(result).toMatchObject({ ok: true, status: 200, received: body.length, parsed: body.length })
     const { manifest } = result
     expect(manifest).toMatchObject({ etag: 'W/"tv-manifest-1"', format: 2, version: 1.0001 })
-    expect([...manifest.titles.keys()].sort()).toEqual(['2012', 'Show', '__proto__', 'constructor'])
+    expect([...manifest.titles.keys()].sort()).toEqual(['2012', 'Show', '__proto__', 'constructor', 'version'])
+    expect(manifest.titles.get('version')).toEqual({ hash: H1, seasons: new Map() })
     expect(manifest.titles.get('Show').hash).toBe(H1)
     expect(Object.fromEntries(manifest.titles.get('Show').seasons)).toEqual({ 'Season 1': ['S01E01', 'S01E02'], Specials: [] })
     expect(manifest.titles.get('__proto__').hash).toBe(H2)

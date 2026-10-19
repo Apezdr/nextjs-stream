@@ -340,7 +340,7 @@ function initialLibrary() {
   }
   put(A.movies, '__proto__', movie('__proto__'))
   A.movies['1234'] = movie('1234')
-  // The payload's list version shadows a folder named `version`: never synced
+  // A folder named `version` is a title like any other, beside an integer-like one
   A.movies.version = movie('version')
   A.tv[SHOW_ONE] = show(SHOW_ONE, { 1: 1, 2: 1 })
   A.tv[SHOW_TWO] = show(SHOW_TWO, { 1: 1, 2: 1, 3: 1 })
@@ -464,7 +464,7 @@ describe('the scripted sequence', () => {
     expect(entry.mode).toBe('all')
     expectSame(entry)
     expect(pair.reference.mongo.collection('Media', 'FlatMovies').docs.map((d) => d.originalTitle)).toContain('__proto__')
-    expect(pair.reference.mongo.collection('Media', 'FlatMovies').docs.map((d) => d.originalTitle)).not.toContain('version')
+    expect(pair.reference.mongo.collection('Media', 'FlatMovies').docs.map((d) => d.originalTitle)).toEqual(expect.arrayContaining(['version', '1234']))
     // (New shows have no document when pre-tag runs, so that pass is not
     // recorded complete, and the next tick runs, as it always did)
     entry = await pair.step('second tick')
@@ -687,6 +687,63 @@ describe('the cases the review named', () => {
   })
 })
 
+describe('a folder named `version`', () => {
+  async function settledPair() {
+    const pair = createPair()
+    expectSame(await pair.step('first tick'))
+    expectSame(await pair.step('second tick'))
+    return pair
+  }
+  const titles = (world, name) => world.mongo.collection('Media', name).docs.map((d) => d.originalTitle)
+
+  it('is selected, fetched, listed, pre-tagged and synced like any other movie, and deleted when it goes', async () => {
+    const pair = await settledPair()
+    expect(titles(pair.candidate, 'FlatMovies')).toEqual(expect.arrayContaining(['version', '1234']))
+
+    // A new file: only its entry is asked for, and the pass writes it
+    pair.library.A.movies.version = movie('version', 2)
+    let entry = await pair.step('version changed')
+    expect(entry.mode).toBe('select')
+    expect(entry.entries).toEqual([['A', 'movies', { titles: ['version'] }]])
+    expectSame(entry)
+    const doc = pair.candidate.mongo.collection('Media', 'FlatMovies').docs.find((d) => d.originalTitle === 'version')
+    expect(doc.videoURL).toContain('version.v2.mkv')
+
+    // Its new poster's blurhash takes a second pass (R3), which stamps its gate;
+    // pre-tag keeps it through the ticks that do not select it
+    expectSame(await pair.step('settled'))
+    const settled = pair.candidate.mongo.collection('Media', 'FlatMovies').docs.find((d) => d.originalTitle === 'version')
+    expect(settled.syncGates?.A).toEqual(expect.any(String))
+    entry = await pair.step('quiet')
+    expectSame(entry)
+    expect(titles(pair.candidate, 'FlatMovies')).toContain('version')
+
+    // Removed from its only server: post-sync cleanup deletes it, in both worlds
+    delete pair.library.A.movies.version
+    entry = await pair.step('version removed')
+    expectSame(entry)
+    expect(entry.deleted.candidate).toEqual(['FlatMovies version'])
+  })
+
+  it('is a show like any other beside an integer-like one, its seasons and episodes included', async () => {
+    const pair = await settledPair()
+    pair.library.A.tv.version = show('version', { 1: 1, 2: 1 })
+    pair.library.A.tv['2012'] = show('2012', { 1: 1 })
+
+    let entry = await pair.step('two shows added')
+    expectSame(entry)
+    expect(entry.entries.find(([id, kind]) => id === 'A' && kind === 'tv')[2].titles.sort()).toEqual(['2012', 'version'])
+    expect(titles(pair.candidate, 'FlatTVShows')).toEqual(expect.arrayContaining(['version', '2012']))
+    const { keyOf } = keysOf(pair.candidate)
+    const episodes = pair.candidate.mongo.collection('Media', 'FlatEpisodes').docs.map((d) => keyOf('FlatEpisodes', d))
+    expect(episodes).toEqual(expect.arrayContaining(['version|1|1', 'version|1|2', '2012|1|1']))
+
+    entry = await pair.step('settled')
+    expectSame(entry)
+    expect(entry.deleted.candidate).toEqual([])
+  })
+})
+
 describe('one file server', () => {
   it('skips the quiet ticks, and parses only the title that changed', async () => {
     const pair = createPair()
@@ -745,7 +802,7 @@ function randomChanges(random, pair) {
   for (let i = 0; i < count; i++) {
     const server = pick(SERVERS)
     const lib = library[server]
-    const movies = Object.keys(lib.movies).filter((title) => title !== 'version')
+    const movies = Object.keys(lib.movies)
     const shows = Object.keys(lib.tv)
     const roll = random()
     if (roll < 0.25 && movies.length > 0) {
