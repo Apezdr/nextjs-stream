@@ -2,6 +2,7 @@
 
 import { useEffect, useEffectEvent, useReducer } from 'react'
 import { buildURL } from '@src/utils'
+import { selectionParams } from './logSources'
 
 const PAGE_SIZE = 500
 const LIVE_INTERVAL_MS = 5000
@@ -9,16 +10,19 @@ const LIVE_INTERVAL_MS = 5000
 const MAX_ENTRIES = 5000
 
 const NO_ENTRIES = Object.freeze([])
+const NO_FACETS = Object.freeze({ total: null, levels: Object.freeze({}), categories: NO_ENTRIES })
+const NO_SPAN = Object.freeze({ from: null, to: null })
 
 /**
  * The newest page's URL for this server and these filters. It also keys the
  * log state: older pages and live lines extend it with `before` / `after`.
  */
-function newestPageUrl(serverId, { category, level, q }) {
-  const params = new URLSearchParams({ server: serverId, limit: String(PAGE_SIZE) })
-  if (category) params.set('category', category)
+function newestPageUrl(serverId, { sources, level, q, range }) {
+  const params = new URLSearchParams({ server: serverId, limit: String(PAGE_SIZE), ...selectionParams(sources) })
   if (level) params.set('level', level)
   if (q) params.set('q', q)
+  if (range.from) params.set('from', range.from)
+  if (range.to) params.set('to', range.to)
   return buildURL(`/api/authenticated/admin/logs?${params}`)
 }
 
@@ -38,7 +42,9 @@ const initialState = {
   older: null, // cursor for the page before the first entry; null at the start of the log
   newer: null, // cursor the live view reads on from
   scannedFrom: null, // how far back the reads looked, for "no matches since …"
-  categories: NO_ENTRIES,
+  facets: NO_FACETS, // line counts in the range: total, per level, per category (with its area)
+  span: NO_SPAN, // what the log covers
+  areas: NO_ENTRIES,
   loadingOlder: false,
   error: null,
   olderError: null,
@@ -49,7 +55,8 @@ const initialState = {
 
 function reducer(state, action) {
   if (action.type === 'start') {
-    return { ...initialState, key: action.key, status: 'loading', categories: state.categories }
+    // Keep the counts and areas until the new page arrives, so the filters don't flicker.
+    return { ...initialState, key: action.key, status: 'loading', facets: state.facets, span: state.span, areas: state.areas }
   }
   // A response for filters the page has since left.
   if (action.key !== state.key) return state
@@ -64,7 +71,9 @@ function reducer(state, action) {
         older: page.older,
         newer: page.newer,
         scannedFrom: page.scannedFrom,
-        categories: page.categories,
+        facets: page.facets,
+        span: page.span,
+        areas: page.areas,
       }
     case 'failed':
       return { ...state, status: 'error', error: action.error }
@@ -91,15 +100,17 @@ function reducer(state, action) {
           older: page.older,
           newer: page.newer,
           scannedFrom: page.scannedFrom,
-          categories: page.categories,
+          facets: page.facets,
+          span: page.span,
+          areas: page.areas,
           liveError: null,
           restarted: true,
         }
       }
       if (page.entries.length === 0) {
-        return page.newer === state.newer && state.liveError === null
-          ? state
-          : { ...state, newer: page.newer, liveError: null }
+        const unchanged =
+          page.newer === state.newer && state.liveError === null && page.facets.total === state.facets.total
+        return unchanged ? state : { ...state, newer: page.newer, facets: page.facets, span: page.span, liveError: null }
       }
       let entries = [...state.entries, ...page.entries]
       let older = state.older
@@ -113,7 +124,8 @@ function reducer(state, action) {
         entries,
         older,
         newer: page.newer,
-        categories: page.categories,
+        facets: page.facets,
+        span: page.span,
         liveError: null,
         skipped: state.skipped || page.truncated,
       }
@@ -130,7 +142,11 @@ function reducer(state, action) {
  * for the filters, older pages on request, and (while `live`) new lines every
  * few seconds from the last cursor.
  *
- * @param {{ serverId: string | null, filters: { category?: string, level?: string, q?: string }, live: boolean }} options
+ * @param {{
+ *   serverId: string | null,
+ *   filters: { sources: { mode: string, tokens: string[] }, level: string, q: string, range: { from: string | null, to: string | null } },
+ *   live: boolean,
+ * }} options
  */
 export function useProcessorLog({ serverId, filters, live }) {
   const key = serverId ? newestPageUrl(serverId, filters) : null

@@ -54,12 +54,16 @@ describe('GET /api/authenticated/admin/logs', () => {
     const page = { entries: [{ id: '2026-10-19.22:0', message: 'scan started' }], older: null, newer: '2026-10-19.22:120' }
     global.fetch.mockResolvedValue(upstream(200, page))
 
-    const res = await GET(request('server=default&limit=500&level=warn&q=tmdb%20404&after=2026-10-19.22%3A0&evil=1'))
+    const res = await GET(
+      request('server=default&limit=500&hide=area%3Ascan&level=warn&q=tmdb%20404&from=2026-10-19T21%3A00%3A00.000Z&after=2026-10-19.22%3A0&evil=1')
+    )
 
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual(page)
     const [url, init] = global.fetch.mock.calls[0]
-    expect(url).toBe('http://processor:3000/api/logs?limit=500&level=warn&q=tmdb+404&after=2026-10-19.22%3A0')
+    expect(url).toBe(
+      'http://processor:3000/api/logs?limit=500&hide=area%3Ascan&level=warn&q=tmdb+404&from=2026-10-19T21%3A00%3A00.000Z&after=2026-10-19.22%3A0'
+    )
     expect(init.headers.Authorization).toBe('Bearer t0k')
     expect(init.cache).toBe('no-store')
   })

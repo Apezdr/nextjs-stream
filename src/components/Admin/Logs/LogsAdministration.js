@@ -3,19 +3,35 @@
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
 import { ArrowDownIcon, ArrowPathIcon, ChevronRightIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/20/solid'
+import { toast } from 'react-toastify'
 import { buildURL } from '@src/utils'
 import { formatServerLabel } from '@src/utils/serverLabel'
 import { useProcessorLog } from './useProcessorLog'
+import { ALL_SOURCES, describeSelection, onlyCategory } from './logSources'
+import { splitMeta } from './logExport'
+import SourcesPicker from './SourcesPicker'
+import TimeRangePicker, { ALL_TIME, describeRange, isRelative, rangeFor } from './TimeRangePicker'
+import ExportMenu from './ExportMenu'
 
 const NO_SERVERS = Object.freeze([])
-const NO_FILTERS = Object.freeze({ category: '', level: '', q: '' })
+const INITIAL_FILTERS = Object.freeze({ sources: ALL_SOURCES, level: '', q: '', range: ALL_TIME })
 
+const LEVEL_ORDER = ['error', 'warn', 'info', 'http', 'verbose', 'debug', 'silly']
 const LEVEL_OPTIONS = [
   { value: '', label: 'All levels' },
   { value: 'error', label: 'Errors' },
   { value: 'warn', label: 'Warnings and errors' },
   { value: 'info', label: 'Info and above' },
 ]
+
+/** Lines at `level` or more severe ('' = every level), from the facet counts. */
+function linesAtLevel(levels, level) {
+  const maxRank = LEVEL_ORDER.indexOf(level)
+  return Object.entries(levels).reduce((sum, [name, count]) => {
+    const rank = LEVEL_ORDER.indexOf(name)
+    return !level || (rank !== -1 && rank <= maxRank) ? sum + count : sum
+  }, 0)
+}
 
 const LEVEL_STYLES = {
   error: { label: 'text-red-400', row: 'bg-red-500/10' },
@@ -42,15 +58,25 @@ async function fetchServers(url) {
   return response.json()
 }
 
+async function copyTraceId(traceId) {
+  try {
+    await navigator.clipboard.writeText(traceId)
+    toast.success('Trace ID copied')
+  } catch (error) {
+    toast.error(`Couldn't copy the trace ID: ${error.message}`)
+  }
+}
+
 const LogRow = memo(function LogRow({ entry, onCategory }) {
   const [open, setOpen] = useState(false)
   const style = LEVEL_STYLES[entry.level] ?? OTHER_LEVEL_STYLE
+  const { fields, traceId } = splitMeta(entry.meta)
 
   return (
     <li className={`px-3 py-0.5 hover:bg-white/5 ${style.row}`}>
       <div className="flex flex-wrap items-baseline gap-x-3">
         <span className="flex w-4 shrink-0 justify-center self-center">
-          {entry.meta && (
+          {fields && (
             <button
               type="button"
               onClick={() => setOpen((value) => !value)}
@@ -85,10 +111,20 @@ const LogRow = memo(function LogRow({ entry, onCategory }) {
         <span className="min-w-0 basis-full whitespace-pre-wrap break-words pl-7 text-gray-100 sm:basis-0 sm:flex-1 sm:pl-0">
           {entry.message}
         </span>
+        {traceId && (
+          <button
+            type="button"
+            onClick={() => copyTraceId(traceId)}
+            title={`Copy trace ID ${traceId} (find it in SigNoz)`}
+            className="shrink-0 rounded px-1 text-[10px] uppercase tracking-wide text-gray-600 hover:text-gray-300 focus:outline-none focus-visible:ring-1 focus-visible:ring-sky-400"
+          >
+            trace
+          </button>
+        )}
       </div>
       {open && (
         <pre className="my-1 ml-7 overflow-x-auto rounded bg-black/40 p-2 text-[11px] leading-relaxed text-gray-300">
-          {JSON.stringify(entry.meta, null, 2)}
+          {JSON.stringify(fields, null, 2)}
         </pre>
       )}
     </li>
@@ -168,7 +204,9 @@ function LogViewport({ log, filtered, onCategory }) {
                 </button>
               </>
             ) : (
-              <span>{empty ? (filtered ? 'No matching lines in the log.' : 'The log is empty.') : 'Start of the log'}</span>
+              <span>
+                {empty ? (filtered ? 'No matching lines in this range.' : 'Nothing logged in this range.') : 'Start of the range'}
+              </span>
             )}
             {olderError && <span className="text-red-400">{olderError}</span>}
           </div>
@@ -202,18 +240,22 @@ function LogViewport({ log, filtered, onCategory }) {
   )
 }
 
-function StatusLine({ log, live }) {
-  const { entries, liveError, skipped, restarted, status } = log
+function StatusLine({ log, live, searching }) {
+  const { entries, facets, span, liveError, skipped, restarted, status } = log
   if (status !== 'ready') return null
   const first = entries[0]?.time
   const last = entries.at(-1)?.time
+  // The counts don't apply the text search, so they only describe the whole match without one.
+  const ofTotal = !searching && facets.total !== null && facets.total > entries.length
 
   return (
     <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-600">
       <span>
-        {entries.length.toLocaleString()} {entries.length === 1 ? 'line' : 'lines'}
+        {entries.length.toLocaleString()}
+        {ofTotal && ` of ${facets.total.toLocaleString()}`} {entries.length === 1 && !ofTotal ? 'line' : 'lines'}
         {first && last && ` · ${formatTime(first)} – ${formatTime(last)}`}
       </span>
+      {span.from && <span>Log covers {formatTime(span.from)} – {formatTime(span.to)}</span>}
       <span className="inline-flex items-center gap-1.5">
         <span className={`h-2 w-2 rounded-full ${live ? 'animate-pulse bg-green-500' : 'bg-gray-400'}`} aria-hidden="true" />
         {live ? 'Live: checks for new lines every 5 seconds' : 'Live updates paused'}
@@ -225,12 +267,13 @@ function StatusLine({ log, live }) {
   )
 }
 
+const labelClass = 'mb-1 block text-xs font-medium text-gray-700'
 const selectClass =
   'block w-full rounded-md border-0 py-1.5 pl-3 pr-8 text-sm text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-indigo-600'
 
 export default function LogsAdministration() {
   const [serverId, setServerId] = useState(null)
-  const [filters, setFilters] = useState(NO_FILTERS)
+  const [filters, setFilters] = useState(INITIAL_FILTERS)
   const [draft, setDraft] = useState('')
   const [live, setLive] = useState(true)
 
@@ -240,23 +283,20 @@ export default function LogsAdministration() {
     { revalidateOnFocus: false }
   )
   const activeServerId = serverId ?? servers[0]?.id ?? null
-  const log = useProcessorLog({ serverId: activeServerId, filters, live })
+  const activeServer = servers.find((server) => server.id === activeServerId)
+  // A range with an end is in the past: nothing new can arrive in it.
+  const following = live && !filters.range.to
+  const log = useProcessorLog({ serverId: activeServerId, filters, live: following })
 
-  const filtered = Boolean(filters.category || filters.level || filters.q)
-  const categories =
-    filters.category && !log.categories.includes(filters.category)
-      ? [filters.category, ...log.categories]
-      : log.categories
+  const filtered = Boolean(filters.sources.tokens.length || filters.level || filters.q || filters.range.from || filters.range.to)
+  const counted = log.facets.total !== null
 
   const setFilter = (name, value) => setFilters((current) => ({ ...current, [name]: value }))
   // Stable, so the memoized rows don't all re-render on every update.
-  const showCategory = useCallback((category) => setFilters((current) => ({ ...current, category })), [])
-
-  function handleServerChange(event) {
-    setServerId(event.target.value)
-    // Categories are per processor.
-    setFilter('category', '')
-  }
+  const showOnlyCategory = useCallback(
+    (category) => setFilters((current) => ({ ...current, sources: onlyCategory(category) })),
+    []
+  )
 
   function handleSearch(event) {
     event.preventDefault()
@@ -268,23 +308,45 @@ export default function LogsAdministration() {
     setFilter('q', '')
   }
 
+  function refresh() {
+    // "Last hour" means the hour before now, so a refresh moves it.
+    if (isRelative(filters.range)) setFilter('range', rangeFor(filters.range.preset))
+    else log.reload()
+  }
+
+  const exportContext = {
+    serverId: activeServerId ?? 'server',
+    server: activeServer ? activeServer.displayName || formatServerLabel(activeServer.id) : '',
+    sources: describeSelection(filters.sources, log.areas),
+    level: LEVEL_OPTIONS.find((option) => option.value === filters.level)?.label ?? filters.level,
+    search: filters.q,
+    range: describeRange(filters.range),
+    timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+  }
+
   return (
     <div className="text-gray-900">
       <div className="mb-6">
         <h1 className="text-2xl font-bold">Logs</h1>
         <p className="mt-1 text-sm text-gray-600">
-          The media processor&apos;s own log, newest at the bottom. Older history is in SigNoz.
+          The media processor&apos;s own log, newest at the bottom. It starts over when the processor restarts; older
+          history is in SigNoz.
         </p>
       </div>
 
       {serversError && <p className="mb-4 text-sm text-red-600">{serversError.message}</p>}
 
-      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,14rem)_minmax(0,14rem)_minmax(0,12rem)_minmax(0,1fr)_auto]">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div>
-          <label htmlFor="log-server" className="mb-1 block text-xs font-medium text-gray-700">
+          <label htmlFor="log-server" className={labelClass}>
             Server
           </label>
-          <select id="log-server" value={activeServerId ?? ''} onChange={handleServerChange} className={selectClass}>
+          <select
+            id="log-server"
+            value={activeServerId ?? ''}
+            onChange={(event) => setServerId(event.target.value)}
+            className={selectClass}
+          >
             {servers.map((server) => (
               <option key={server.id} value={server.id}>
                 {server.displayName || formatServerLabel(server.id)}
@@ -294,26 +356,17 @@ export default function LogsAdministration() {
         </div>
 
         <div>
-          <label htmlFor="log-category" className="mb-1 block text-xs font-medium text-gray-700">
-            Category
-          </label>
-          <select
-            id="log-category"
-            value={filters.category}
-            onChange={(event) => setFilter('category', event.target.value)}
-            className={selectClass}
-          >
-            <option value="">All categories</option>
-            {categories.map((category) => (
-              <option key={category} value={category}>
-                {category}
-              </option>
-            ))}
-          </select>
+          <span className={labelClass}>Sources</span>
+          <SourcesPicker
+            selection={filters.sources}
+            areas={log.areas}
+            facetCategories={log.facets.categories}
+            onChange={(sources) => setFilter('sources', sources)}
+          />
         </div>
 
         <div>
-          <label htmlFor="log-level" className="mb-1 block text-xs font-medium text-gray-700">
+          <label htmlFor="log-level" className={labelClass}>
             Level
           </label>
           <select
@@ -325,13 +378,29 @@ export default function LogsAdministration() {
             {LEVEL_OPTIONS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
+                {counted && ` (${linesAtLevel(log.facets.levels, option.value).toLocaleString()})`}
               </option>
             ))}
           </select>
         </div>
 
-        <form onSubmit={handleSearch} role="search" className="sm:col-span-2 lg:col-span-1">
-          <label htmlFor="log-search" className="mb-1 block text-xs font-medium text-gray-700">
+        <div>
+          <label htmlFor="log-time" className={labelClass}>
+            Time
+          </label>
+          <TimeRangePicker
+            id="log-time"
+            range={filters.range}
+            span={log.span}
+            onChange={(range) => setFilter('range', range)}
+            selectClass={selectClass}
+          />
+        </div>
+      </div>
+
+      <div className="mb-4 mt-3 flex flex-wrap items-end gap-2">
+        <form onSubmit={handleSearch} role="search" className="min-w-[16rem] flex-1">
+          <label htmlFor="log-search" className="sr-only">
             Search
           </label>
           <div className="relative">
@@ -341,7 +410,7 @@ export default function LogsAdministration() {
               type="search"
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
-              placeholder="Text in a message or its fields, then Enter"
+              placeholder="Search messages and their fields, then Enter"
               maxLength={200}
               className="block w-full rounded-md border-0 py-1.5 pl-8 pr-8 text-sm text-gray-900 ring-1 ring-inset ring-gray-300 placeholder:text-gray-400 focus:ring-2 focus:ring-indigo-600 [&::-webkit-search-cancel-button]:hidden"
             />
@@ -358,30 +427,35 @@ export default function LogsAdministration() {
           </div>
         </form>
 
-        <div className="flex items-end gap-2 sm:col-span-2 lg:col-span-1">
-          <label className="inline-flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-gray-700 ring-1 ring-inset ring-gray-300 hover:bg-gray-50">
-            <input
-              type="checkbox"
-              checked={live}
-              onChange={(event) => setLive(event.target.checked)}
-              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
-            />
-            Live
-          </label>
-          <button
-            type="button"
-            onClick={log.reload}
-            disabled={!activeServerId || log.status === 'loading'}
-            className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60"
-          >
-            <ArrowPathIcon className={`h-4 w-4 ${log.status === 'loading' ? 'animate-spin' : ''}`} aria-hidden="true" />
-            Refresh
-          </button>
-        </div>
+        <label
+          title={filters.range.to ? 'Live needs a range that runs up to now' : undefined}
+          className={`inline-flex items-center gap-2 rounded-md px-2 py-1.5 text-sm font-medium text-gray-700 ring-1 ring-inset ring-gray-300 ${
+            filters.range.to ? 'cursor-not-allowed opacity-50' : 'cursor-pointer hover:bg-gray-50'
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={following}
+            disabled={Boolean(filters.range.to)}
+            onChange={(event) => setLive(event.target.checked)}
+            className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-600"
+          />
+          Live
+        </label>
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={!activeServerId || log.status === 'loading'}
+          className="inline-flex items-center gap-1.5 rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500 disabled:opacity-60"
+        >
+          <ArrowPathIcon className={`h-4 w-4 ${log.status === 'loading' ? 'animate-spin' : ''}`} aria-hidden="true" />
+          Refresh
+        </button>
+        <ExportMenu entries={log.entries} context={exportContext} />
       </div>
 
-      <LogViewport log={log} filtered={filtered} onCategory={showCategory} />
-      <StatusLine log={log} live={live} />
+      <LogViewport log={log} filtered={filtered} onCategory={showOnlyCategory} />
+      <StatusLine log={log} live={following} searching={Boolean(filters.q)} />
     </div>
   )
 }

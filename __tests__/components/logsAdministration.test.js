@@ -8,6 +8,16 @@
 
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 
+// Headless UI's anchored menus measure themselves; jsdom has no ResizeObserver.
+global.ResizeObserver ??= class {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+const mockToast = { success: jest.fn(), error: jest.fn() }
+jest.mock('react-toastify', () => ({ toast: mockToast }))
+
 jest.mock('swr', () => ({
   __esModule: true,
   default: () => ({ data: [{ id: 'default', displayName: 'Default' }], error: undefined }),
@@ -27,6 +37,13 @@ const entry = (n, fields = {}) => ({
   ...fields,
 })
 
+const AREAS = [
+  { id: 'scan', label: 'Library scan' },
+  { id: 'metadata', label: 'Metadata & images' },
+  { id: 'system', label: 'System' },
+  { id: 'other', label: 'Other' },
+]
+
 const page = (fields) => ({
   entries: [],
   older: null,
@@ -34,7 +51,17 @@ const page = (fields) => ({
   reset: false,
   truncated: false,
   scannedFrom: null,
-  categories: ['main', 'tmdb'],
+  facets: {
+    total: 420,
+    levels: { error: 3, warn: 17, info: 400 },
+    categories: [
+      { name: 'movie-scanner', area: 'scan', count: 390 },
+      { name: 'main', area: 'system', count: 25 },
+      { name: 'tmdb', area: 'metadata', count: 5 },
+    ],
+  },
+  span: { from: '2026-10-19T21:00:00.000Z', to: '2026-10-19T22:00:00.000Z' },
+  areas: AREAS,
   ...fields,
 })
 
@@ -76,7 +103,7 @@ describe('LogsAdministration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load older lines' }))
 
     await waitFor(() => expect(messages()).toEqual(['message 1', 'message 2', 'message 3', 'message 4']))
-    expect(screen.getByText('Start of the log')).toBeInTheDocument()
+    expect(screen.getByText('Start of the range')).toBeInTheDocument()
   })
 
   it('adds new lines from the last cursor while live, and stops asking when paused', async () => {
@@ -108,7 +135,7 @@ describe('LogsAdministration', () => {
     const urls = serveLogs({
       newest: (params) =>
         json(
-          params.get('category') === 'tmdb'
+          params.get('only') === 'tmdb'
             ? page({ entries: [entry(7, { category: 'tmdb', level: 'error', meta: { status: 404 } })] })
             : page({ entries: [entry(1), entry(2, { category: 'tmdb' })] })
         ),
@@ -120,11 +147,72 @@ describe('LogsAdministration', () => {
     fireEvent.click(screen.getByRole('button', { name: 'tmdb' }))
 
     await waitFor(() => expect(messages()).toEqual(['message 7']))
-    expect(urls.at(-1)).toBe('/api/authenticated/admin/logs?server=default&limit=500&category=tmdb')
-    expect(screen.getByRole('combobox', { name: 'Category' })).toHaveValue('tmdb')
+    expect(urls.at(-1)).toBe('/api/authenticated/admin/logs?server=default&limit=500&only=tmdb')
+    expect(screen.getByRole('button', { name: /Only tmdb/ })).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('button', { name: 'Show fields' }))
     expect(screen.getByText(/"status": 404/)).toBeInTheDocument()
+  })
+
+  it('hides an area from the Sources picker, which lists only what logged, with counts', async () => {
+    const urls = serveLogs({ newest: page({ entries: [entry(1)] }) })
+
+    render(<LogsAdministration />)
+    await waitFor(() => expect(messages()).toEqual(['message 1']))
+
+    fireEvent.click(screen.getByRole('button', { name: 'All sources' }))
+    expect(screen.getByText('390')).toBeInTheDocument()
+    expect(screen.queryByText('Other')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Library scan' }))
+
+    await waitFor(() => expect(urls.at(-1)).toBe('/api/authenticated/admin/logs?server=default&limit=500&hide=area%3Ascan'))
+    expect(screen.getByRole('button', { name: /Hiding Library scan/ })).toBeInTheDocument()
+  })
+
+  it('counts lines per level and limits the time range', async () => {
+    const urls = serveLogs({ newest: page({ entries: [entry(1)] }) })
+
+    render(<LogsAdministration />)
+    await waitFor(() => expect(messages()).toEqual(['message 1']))
+
+    expect(screen.getByRole('option', { name: 'Warnings and errors (20)' })).toBeInTheDocument()
+    expect(screen.getByText(/^Log covers /)).toBeInTheDocument()
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Time' }), { target: { value: '1h' } })
+    await waitFor(() => expect(urls.at(-1)).toMatch(/&from=\d{4}-\d{2}-\d{2}T\d{2}%3A\d{2}%3A[\d.]+Z$/))
+    expect(screen.getByRole('checkbox', { name: 'Live' })).toBeEnabled()
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Time' }), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByLabelText(/^From/), { target: { value: '2026-10-19T17:00' } })
+    fireEvent.change(screen.getByLabelText(/^To/), { target: { value: '2026-10-19T17:30' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }))
+
+    const from = encodeURIComponent(new Date('2026-10-19T17:00').toISOString())
+    const to = encodeURIComponent(new Date('2026-10-19T17:30').toISOString())
+    await waitFor(() => expect(urls.at(-1)).toBe(`/api/authenticated/admin/logs?server=default&limit=500&from=${from}&to=${to}`))
+    // A range that ends in the past gets no new lines.
+    expect(screen.getByRole('checkbox', { name: 'Live' })).toBeDisabled()
+  })
+
+  it('copies the shown lines as text, and keeps trace IDs out of the fields', async () => {
+    const writeText = jest.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    serveLogs({
+      newest: page({ entries: [entry(1, { level: 'warn', meta: { trace_id: 'abc123', span_id: 'def', trace_flags: 1 } })] }),
+    })
+
+    render(<LogsAdministration />)
+    await waitFor(() => expect(messages()).toEqual(['message 1']))
+    expect(screen.queryByRole('button', { name: 'Show fields' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^trace$/i }))
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith('abc123'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Export' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy as text' }))
+    await waitFor(() => expect(writeText).toHaveBeenLastCalledWith(expect.stringMatching(/WARN {2}\[main\] message 1\n$/)))
+    expect(mockToast.success).toHaveBeenLastCalledWith('Copied 1 line as text')
   })
 
   it('searches on submit, not on every keystroke', async () => {

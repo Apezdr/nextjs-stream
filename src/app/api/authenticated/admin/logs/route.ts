@@ -6,14 +6,14 @@
 // endpoint answered anyone). This route checks the admin, then forwards
 // their session token server to server and passes the processor's answer on.
 //
-//   GET ?server=<id>&limit=&category=&level=&q=&before=&after=
+//   GET ?server=<id>&limit=&only=&hide=&level=&q=&from=&to=&before=&after=
 // The processor validates every parameter; see its routes/logs.mjs.
 import { NextResponse } from 'next/server'
 import { isAdmin } from '@src/utils/routeAuth'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import { getAllServers } from '@src/utils/config'
 
-const FORWARDED_PARAMS = ['limit', 'category', 'level', 'q', 'before', 'after']
+const FORWARDED_PARAMS = ['limit', 'only', 'hide', 'level', 'q', 'from', 'to', 'before', 'after']
 const UPSTREAM_TIMEOUT_MS = 20_000
 
 export async function GET(request: Request) {
