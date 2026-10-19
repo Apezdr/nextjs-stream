@@ -204,8 +204,8 @@ async function requestHeaders(serverId) {
  * @property {number} version - The list version
  * @property {Map<string, {hash: string, seasons?: Map<string, string[]>}>} titles -
  *   Folder name → its hash and, for TV, each season key with its episode keys.
- *   Every folder name is a title, one named `version` included (a processor
- *   whose payload's list version shadowed such a folder never lists it).
+ *   Every folder name is a title, one named `version` included: every
+ *   processor that serves manifests lists it, and serves its entries line.
  */
 
 /**
