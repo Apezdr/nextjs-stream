@@ -213,7 +213,7 @@ function ServerCounts({ counts, forced }) {
   )
 }
 
-function ServerCard({ server, counts = null, passErrors = [], forced = false }) {
+function ServerCard({ server, counts = null, passErrors = [], forced = false, links = [] }) {
   const [errorsExpanded, setErrorsExpanded] = useState(false)
   const syncing = server.status === 'syncing'
   // While the pass runs: the live error events. Once it is done: its report.
@@ -296,6 +296,16 @@ function ServerCard({ server, counts = null, passErrors = [], forced = false }) 
 
       {!syncing && counts ? <ServerCounts counts={counts} forced={forced} /> : null}
 
+      {!syncing && links.length > 0 ? (
+        <ul className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1" aria-label={`More about ${server.id}`}>
+          {links.map((link) => (
+            <li key={link.target}>
+              <JumpLink target={link.target}>{link.label}</JumpLink>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
       {!syncing && passErrors.length > 0 ? (
         <div className="mt-1.5" role="alert">
           <h5 className="font-semibold text-red-800">The pass on {server.id} stopped early</h5>
@@ -310,11 +320,83 @@ function ServerCard({ server, counts = null, passErrors = [], forced = false }) 
   )
 }
 
+/** The id of a report section of one server, safe in an id and a fragment. */
+const sectionId = (kind, serverName) => `sync-${kind}-${String(serverName).replace(/[^A-Za-z0-9_-]/g, '-')}`
+
+/** A link from a server's card to one of its report sections further down. */
+function JumpLink({ target, children }) {
+  return (
+    <a
+      href={`#${target}`}
+      className="font-medium text-blue-700 underline hover:text-blue-900"
+      onClick={(event) => {
+        // Scroll the dialog, not the page behind it, and leave the URL alone
+        event.preventDefault()
+        document.getElementById(target)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+      }}
+    >
+      {children}
+    </a>
+  )
+}
+
+/**
+ * "Can't play yet on <server>": the library hides these although they have a
+ * video, in a format neither the player nor the transcoder takes (run/cantPlay).
+ */
+function CantPlaySection({ serverName, movies, tv }) {
+  const id = sectionId('cant-play', serverName)
+  return (
+    <section id={id} aria-labelledby={`${id}-heading`} className="mb-4 scroll-mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
+      <h4 id={`${id}-heading`} className="text-sm font-semibold text-gray-800">
+        Can&apos;t play yet on {serverName}
+      </h4>
+      <p className="mt-1 text-gray-600">
+        These titles have a video in a format the player and the transcoder don&apos;t support yet, so they&apos;re
+        hidden from the library.
+      </p>
+      {movies.length > 0 ? (
+        <>
+          <h5 className="mt-2 font-semibold text-gray-800">Movies</h5>
+          <ul className="list-disc ml-4 text-gray-700">
+            {movies.map((movie) => (
+              <li key={movie.title}>
+                <span className="font-medium">{movie.title}</span>: {movie.reason}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {tv.length > 0 ? (
+        <>
+          <h5 className="mt-2 font-semibold text-gray-800">TV episodes</h5>
+          <ul className="list-disc ml-4 text-gray-700">
+            {tv.map((season) => (
+              <li key={`${season.title}|${season.season}`}>
+                <span className="font-medium">
+                  {season.title}, Season {season.season}
+                </span>
+                <ul className="list-[circle] ml-4">
+                  {season.episodes.map((episode) => (
+                    <li key={episode.episode}>
+                      Episode {episode.episode}: {episode.reason}
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </section>
+  )
+}
+
 /** "On <server> but not in the library": a write failed (run/missingMedia). */
 function NotInLibrarySection({ serverName, movies, tv }) {
-  const headingId = `not-in-library-${serverName}`
+  const headingId = `${sectionId('not-in-library', serverName)}-heading`
   return (
-    <section aria-labelledby={headingId} className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs">
+    <section id={sectionId('not-in-library', serverName)} aria-labelledby={headingId} className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs">
       <h4 id={headingId} className="text-sm font-semibold text-red-800">
         On {serverName} but not in the library
       </h4>
@@ -341,9 +423,9 @@ function NotInLibrarySection({ serverName, movies, tv }) {
 
 /** "No video file yet on <server>": listed with artwork and metadata, but nothing to play (run/syncReport). */
 function NoVideoSection({ serverName, movies, tv }) {
-  const headingId = `no-video-${serverName}`
+  const headingId = `${sectionId('no-video', serverName)}-heading`
   return (
-    <section aria-labelledby={headingId} className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
+    <section id={sectionId('no-video', serverName)} aria-labelledby={headingId} className="mb-4 scroll-mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
       <h4 id={headingId} className="text-sm font-semibold text-gray-800">
         No video file yet on {serverName}
       </h4>
@@ -499,6 +581,7 @@ export default function SyncMediaPopup({
             data: {
               missingMedia: completeSummary.missingMedia || {},
               titleCounts: completeSummary.titleCounts || {},
+              cantPlay: completeSummary.cantPlay || {},
               errors: Array.isArray(completeSummary.errors) ? completeSummary.errors : [],
             },
             notReady: { noVideo: completeSummary.noVideo || {} },
@@ -727,6 +810,21 @@ export default function SyncMediaPopup({
     : []
   // Errors of the run itself, not of one server's pass
   const runErrors = isComplete ? syncData.errors.filter((e) => !e.serverId) : []
+  // Per server, links from its card to its "Can't play yet" and "No video
+  // file yet" sections, when they list anything
+  const reportLinks = (serverId) => {
+    const links = []
+    const cantPlay = syncData?.cantPlay?.[serverId]?.count ?? 0
+    if (cantPlay > 0) {
+      links.push({ target: sectionId('cant-play', serverId), label: `${formatCount(cantPlay)} can't play yet` })
+    }
+    const noVideo = syncNotReady?.noVideo?.[serverId]
+    const noVideoTitles = noVideo ? (noVideo.movies?.length ?? 0) + new Set((noVideo.tv ?? []).map((e) => e.title)).size : 0
+    if (noVideoTitles > 0) {
+      links.push({ target: sectionId('no-video', serverId), label: `${formatCount(noVideoTitles)} with no video file yet` })
+    }
+    return links
+  }
 
   return (
     <Transition.Root show={isOpen} as={Fragment}>
@@ -861,6 +959,7 @@ export default function SyncMediaPopup({
                               counts={syncData.titleCounts?.[server.id] ?? null}
                               passErrors={syncData.errors.filter((e) => e.serverId === server.id)}
                               forced={startedForced}
+                              links={reportLinks(server.id)}
                             />
                           ))}
                         </div>
@@ -887,6 +986,14 @@ export default function SyncMediaPopup({
                         ? Object.entries(syncData.missingMedia).map(([serverName, { tv = [], movies = [] }]) =>
                             tv.length > 0 || movies.length > 0 ? (
                               <NotInLibrarySection key={serverName} serverName={serverName} movies={movies} tv={tv} />
+                            ) : null
+                          )
+                        : null}
+
+                      {syncData !== null
+                        ? Object.entries(syncData.cantPlay).map(([serverName, { tv = [], movies = [] }]) =>
+                            tv.length > 0 || movies.length > 0 ? (
+                              <CantPlaySection key={serverName} serverName={serverName} movies={movies} tv={tv} />
                             ) : null
                           )
                         : null}

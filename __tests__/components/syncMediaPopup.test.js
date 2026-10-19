@@ -233,6 +233,84 @@ describe('the report of the sync the popup started', () => {
   })
 })
 
+describe('the titles that can’t play yet', () => {
+  const cantPlay = {
+    default: {
+      movies: [{ title: 'Old Rip (1999)', reason: 'unsupported format (.avi)' }],
+      tv: [
+        {
+          title: 'Old Show (1995)',
+          season: 1,
+          episodes: [
+            { episode: 1, reason: 'unsupported format (.avi)' },
+            { episode: 3, reason: 'unsupported format (.avi)' },
+          ],
+        },
+      ],
+      count: 98,
+    },
+  }
+  const noVideo = {
+    default: {
+      movies: [{ title: 'Not Yet (2024)', reason: 'no video file' }],
+      tv: [
+        { title: 'Some Show (2010)', season: 'Season 2', reason: 'no video file' },
+        { title: 'Some Show (2010)', season: null, reason: 'no video file' },
+      ],
+    },
+  }
+
+  it('are listed by server, as information, movies and then episodes by season', async () => {
+    await startSync()
+    await serverEvents()
+    await send(completion(summary({ cantPlay, noVideo })))
+
+    const heading = screen.getByRole('heading', { name: "Can't play yet on default", level: 4 })
+    const section = heading.closest('section')
+    expect(section).toHaveAttribute('id', 'sync-cant-play-default')
+    expect(section).toHaveClass('bg-gray-50')
+    expect(
+      within(section).getByText(
+        "These titles have a video in a format the player and the transcoder don't support yet, so they're hidden from the library."
+      )
+    ).toBeInTheDocument()
+    expect(within(section).getByText('Old Rip (1999)').closest('li')).toHaveTextContent('Old Rip (1999): unsupported format (.avi)')
+    const season = within(section).getByText('Old Show (1995), Season 1').closest('li')
+    expect(within(season).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'Episode 1: unsupported format (.avi)',
+      'Episode 3: unsupported format (.avi)',
+    ])
+  })
+
+  it('are counted on the server card, as a link to the section; so are the titles with no video file yet', async () => {
+    await startSync()
+    await serverEvents()
+    await send(completion(summary({ cantPlay, noVideo })))
+
+    const cantPlayLink = screen.getByRole('link', { name: "98 can't play yet" })
+    expect(cantPlayLink).toHaveAttribute('href', '#sync-cant-play-default')
+    expect(document.getElementById('sync-cant-play-default')).not.toBeNull()
+    // Two titles: a movie, and a show listed for itself and one season
+    const noVideoLink = screen.getByRole('link', { name: '2 with no video file yet' })
+    expect(noVideoLink).toHaveAttribute('href', '#sync-no-video-default')
+    expect(document.getElementById('sync-no-video-default')).toHaveTextContent('No video file yet on default')
+
+    const scrollIntoView = jest.fn()
+    document.getElementById('sync-cant-play-default').scrollIntoView = scrollIntoView
+    fireEvent.click(cantPlayLink)
+    expect(scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'start' })
+  })
+
+  it('shows no link when a server has nothing in either section', async () => {
+    await startSync()
+    await serverEvents()
+    await send(completion(summary()))
+
+    expect(screen.queryByRole('link', { name: /can't play yet|no video file yet/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: /Can't play yet/ })).not.toBeInTheDocument()
+  })
+})
+
 describe('a completion that is not the sync the popup started', () => {
   const webhookTick = summary({
     titleCounts: { default: { checked: 2, updated: 1, unchanged: 1, failed: 0, failures: [] } },

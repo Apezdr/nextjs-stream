@@ -462,6 +462,7 @@ export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}
     errors: [],
     missingMedia: {},
     noVideo: {},
+    cantPlay: {},
     titleCounts: {},
     changedMedia: { movies: [], shows: [], seasons: [], episodes: [] },
     watchHistoryValidation,

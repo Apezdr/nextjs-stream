@@ -1085,6 +1085,56 @@ describe('the report the admin’s sync popup shows', () => {
     }
   })
 
+  describe('the titles the library hides although they have a video (cantPlay)', () => {
+    const file = (folder, name, container, isPrimary) => ({
+      url: `${folder}/${encodeURIComponent(name)}`,
+      container,
+      isPrimary,
+    })
+    const aviMovie = () => {
+      const avi = file(MOVIE_FOLDER, 'Example Movie.avi', 'avi', true)
+      return { ...moviePayload(), fileNames: ['Example Movie.avi'], urls: { ...moviePayload().urls, mp4: avi.url, sources: [avi] } }
+    }
+    const aviEpisode = (n) => {
+      const avi = file(SEASON_FOLDER, `${SHOW} - ${key(n)}.avi`, 'avi', true)
+      const { jitEligible: _eligible, jitUrl: _jit, ...episode } = episodePayload(n)
+      return { ...episode, videoURL: avi.url, sources: [avi] }
+    }
+    const showWith = (episodes) => {
+      const show = showPayload(Object.keys(episodes).map(Number))
+      for (const [n, episode] of Object.entries(episodes)) show.seasons['Season 1'].episodes[key(Number(n))] = episode
+      return show
+    }
+
+    it('lists an avi-only movie and an avi-only episode, by season, under the server their video came from', async () => {
+      const result = await runSync(oneServer({ movies: { [MOVIE]: aviMovie() }, tv: { [SHOW]: showWith({ 1: aviEpisode(1), 2: episodePayload(2) }) } }))
+
+      expect(result.cantPlay).toEqual({
+        default: {
+          movies: [{ title: MOVIE, reason: 'unsupported format (.avi)' }],
+          tv: [{ title: SHOW, season: 1, episodes: [{ episode: 1, reason: 'unsupported format (.avi)' }] }],
+          count: 2,
+        },
+      })
+    })
+
+    it('does not list a movie whose primary video is an mp4 beside an avi', async () => {
+      const mp4 = file(MOVIE_FOLDER, 'Example Movie.mp4', 'mp4', true)
+      const avi = file(MOVIE_FOLDER, 'Example Movie.avi', 'avi', false)
+      const movie = { ...moviePayload(), fileNames: ['Example Movie.mp4', 'Example Movie.avi'], urls: { ...moviePayload().urls, mp4: mp4.url, sources: [mp4, avi] } }
+
+      const result = await runSync(oneServer({ movies: { [MOVIE]: movie }, tv: { [SHOW]: showPayload() } }))
+
+      expect(result.cantPlay).toEqual({})
+    })
+
+    it('is listed in full again when every title is skipped on its gate', async () => {
+      await runSync(oneServer({ movies: { [MOVIE]: aviMovie() } }))
+      // A second `all` run that skips every title still lists it
+      expect((await runSync(oneServer({ movies: { [MOVIE]: aviMovie() } }))).cantPlay.default.count).toBe(1)
+    })
+  })
+
   it('lists the titles with no video file yet under noVideo, with their reason', async () => {
     const noVideo = { ...moviePayload(), fileNames: ['poster.jpg', 'metadata.json'], urls: { poster: moviePayload().urls.poster } }
 

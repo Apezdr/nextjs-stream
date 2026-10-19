@@ -15,6 +15,7 @@ import {
 import { preTagSyncRunId } from './preTag'
 import { computeMissingMedia } from './missingMedia'
 import { createTitleCounts, noVideoTitles } from './syncReport'
+import { cantPlayTitles } from './cantPlay'
 import { buildTickInputs, settleApplied, tickPerfLine } from './manifestTick'
 import { getTickState, beginRun, resetTickState } from './tickState'
 import { SYNC_GATE_VERSION } from '@src/utils/sync/core/syncGate'
@@ -119,6 +120,9 @@ export async function syncAllServers(tick, options = {}) {
     // (run/syncReport noVideoTitles)
     missingMedia: {},
     noVideo: {},
+    // Per server (the server each video came from): what the library hides
+    // although it has a video. Filled on a tick over every title (run/cantPlay)
+    cantPlay: {},
     // Per server: titles checked, updated, unchanged and failed (run/syncReport createTitleCounts)
     titleCounts: {},
     errors: [],
@@ -410,6 +414,20 @@ export async function syncAllServers(tick, options = {}) {
       ? Object.fromEntries([...inputs.manifests].map(([serverId, kinds]) => [serverId, { tv: kinds.tv.etag, movies: kinds.movies.etag }]))
       : undefined,
   })
+
+  // On a tick over every title (every manual sync): what the library hides
+  // although it has a video, read after every pass. Informational: a failure
+  // is reported with the run's errors, after the record is written.
+  if (mode === 'all') {
+    try {
+      results.cantPlay = await cantPlayTitles(client.db('Media'))
+    } catch (error) {
+      results.errors.push({
+        error: `Could not list the titles that can't play yet: ${error.message}`,
+        phase: 'cant_play_report',
+      })
+    }
+  }
  } finally {
   results.added = written.addedCounts()
   // The "writing phase" of this orchestration ends here. Clear before any
