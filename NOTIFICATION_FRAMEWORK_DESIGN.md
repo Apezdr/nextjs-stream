@@ -380,6 +380,8 @@ db.Notifications.createIndex({ userId: 1, createdAt: -1 })
 db.Notifications.createIndex({ groupKey: 1, userId: 1 })
 ```
 
+`Media.Notifications` also carries the two retention TTL indexes (see Retention). Two indexes older builds left on prod, `userId_category_index` and `userId_priority_index`, are unused: no query reads them and no code creates them. `notificationDatabase.js` drops them once per database, under the flag `notifications-drop-unused-category-priority-indexes` in `app_config.migrations`. A database that never had them (a fresh install, or a re-run) is a no-op: the drop treats IndexNotFound (code 27) and NamespaceNotFound (code 26) as done. `userId_read_index`, `userId_createdAt_index` and both TTL indexes are never touched.
+
 The compound WatchHistory index is load-bearing — without it, Rule 2 degrades to a full scan.
 
 ---
