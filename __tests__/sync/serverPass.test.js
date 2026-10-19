@@ -1065,6 +1065,17 @@ describe('the report the admin’s sync popup shows', () => {
     expect(second.titleCounts.default).toEqual({ checked: 2, updated: 0, unchanged: 2, failed: 0, failures: [] })
   })
 
+  it('counts nothing as updated on a forced sync of a settled library: every write ran, none changed a document', async () => {
+    await runSync(oneServer())
+    await runSync(oneServer())
+
+    const forced = await runSync(oneServer(), { forceSync: true })
+
+    expect(forced.titleCounts.default).toEqual({ checked: 2, updated: 0, unchanged: 2, failed: 0, failures: [] })
+    // The writes did run: the changed-media list (cache invalidation) still names them
+    expect(forced.changedMedia.shows).toContain(SHOW)
+  })
+
   it('lists a failed title with its error', async () => {
     const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
     const movie = { ...moviePayload(), urls: { ...moviePayload().urls, metadata: `${MOVIE_FOLDER}/metadata.json?hash=d9` } }

@@ -356,6 +356,9 @@ export class MovieSyncService {
             // No document existed before this pass inserted one (counted for
             // the admins' sync notice).
             ...(existingMovie ? {} : { created: true }),
+            // The write changed the movie's data: "completed" only says a
+            // step wrote (the sync report's "updated" count, run/syncReport)
+            ...(documentChanged ? { documentChanged: true } : {}),
           }
         }
       }

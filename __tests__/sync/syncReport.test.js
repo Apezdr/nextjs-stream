@@ -83,9 +83,9 @@ describe('noVideoTitles', () => {
     expect(noVideoTitles(undefined)).toEqual({ movies: [], tv: [] })
   })
 })
-
 describe('createTitleCounts', () => {
-  const result = (status, errors = []) => ({ status, errors })
+  const result = (status, errors = [], metadata = undefined) => ({ status, errors, ...(metadata ? { metadata } : {}) })
+  const changed = () => result('completed', [], { documentChanged: true })
 
   it('puts every title checked in exactly one of updated, unchanged and failed', () => {
     const counts = createTitleCounts()
@@ -95,18 +95,27 @@ describe('createTitleCounts', () => {
     counts.record('movies', 'Nothing To Write', [result('skipped'), result('skipped')])
     // A movie with nothing to sync: no results
     counts.record('movies', 'Nothing To Sync', [])
-    counts.record('movies', 'Written', [result('skipped'), result('completed')])
+    counts.record('movies', 'Written', [result('skipped'), changed()])
     // A show whose show result was skipped and an episode written
-    counts.record('tv', 'A Show', [result('skipped'), result('completed')])
-    counts.record('tv', 'Broken Show', [result('completed'), result('failed', ['', 'episode metadata fetch failed'])])
+    counts.record('tv', 'A Show', [result('skipped'), changed()])
+    // A new document counts as updated
+    counts.record('movies', 'New', [result('completed', [], { created: true })])
+    counts.record('tv', 'Broken Show', [changed(), result('failed', ['', 'episode metadata fetch failed'])])
 
     expect(counts.counts()).toEqual({
-      checked: 6,
-      updated: 2,
+      checked: 7,
+      updated: 3,
       unchanged: 3,
       failed: 1,
       failures: [{ kind: 'tv', title: 'Broken Show', error: 'episode metadata fetch failed' }],
     })
+  })
+
+  it('counts a title whose writes ran but changed nothing as unchanged: "completed" alone is not a change', () => {
+    const counts = createTitleCounts()
+    counts.record('tv', 'Settled Show', [result('completed'), result('completed', [], { documentChanged: false })])
+    counts.record('movies', 'Settled Movie', [result('completed'), result('completed')])
+    expect(counts.counts()).toMatchObject({ checked: 2, updated: 0, unchanged: 2 })
   })
 
   it('names a failure without a message as such', () => {
@@ -117,7 +126,7 @@ describe('createTitleCounts', () => {
 
   it('hands out a copy, so later titles do not change a report already sent', () => {
     const counts = createTitleCounts()
-    counts.record('movies', 'First', [result('completed')])
+    counts.record('movies', 'First', [changed()])
     const first = counts.counts()
     counts.record('movies', 'Second', [result('failed', ['boom'])])
     expect(first).toEqual({ checked: 1, updated: 1, unchanged: 0, failed: 0, failures: [] })
