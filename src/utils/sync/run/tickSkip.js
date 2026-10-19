@@ -22,9 +22,12 @@
  *      pass is counted out by that pass, so it is caught only by the forget
  *      — a delete whose forget failed, or a path that does not forget, goes
  *      unnoticed until a pass runs for another reason;
- *   4. no document that pass covered lacks an enabled server's gate: an admin
- *      edit, a removal held back, a failed title or a pass that changed a
- *      document all leave a gate open, and only a pass closes it;
+ *   4. no document that pass covered lacks the gate of an enabled server that
+ *      lists it (in the manifests the tick state holds): an admin edit, a
+ *      removal held back, a failed title or a pass that changed a document
+ *      all leave a gate open, and only a pass closes it. A server's pass never
+ *      visits what it does not list, so that server's gate there is not open;
+ *      without every server's manifests the tick does not skip;
  *   5. this process's tick state (run/tickState) tracks that pass, and selects
  *      no title on its own (rules R1, R2 and R7 of run/selectTitles);
  *   6. every enabled server answers 304 for both manifests, to the ETags that
@@ -60,6 +63,7 @@ import { updateLastSynced } from './lastSynced'
 import { getAppliedPayloads, markPassRunning, setAppliedPayloads } from './appliedPayloads'
 import { getTickState, whyStateUnusable } from './tickState'
 import { stateRules } from './selectTitles'
+import { listingOfManifests, seasonNumberOfKey, episodeNumberOfKey } from './listing'
 import { probeServers, logProbeFailures, formatProbeStatuses, tickPerfLine, probePerf } from './manifestTick'
 
 /** The kinds each server publishes a manifest for. */
@@ -139,32 +143,116 @@ export async function countLeftForCleanup(db, syncRunId) {
   )
 }
 
+/** Whether a document lacks the server's gate: absent, null or empty. */
+const lacksGate = (doc, serverId) => {
+  const gate = doc?.syncGates?.[serverId]
+  return gate === undefined || gate === null || gate === ''
+}
+
+/** An episode's key in a listing, from its show's folder name and its numbers. */
+const episodeKey = (show, seasonNumber, episodeNumber) => JSON.stringify([show, seasonNumber, episodeNumber])
+
+/** Every episode a listing names, as episodeKey. */
+function listedEpisodes(listing) {
+  const keys = new Set()
+  for (const [show, seasons] of listing.tv) {
+    for (const [seasonKey, episodeKeys] of seasons) {
+      const seasonNumber = seasonNumberOfKey(seasonKey)
+      if (seasonNumber === null) continue
+      for (const key of episodeKeys) {
+        const episodeNumber = episodeNumberOfKey(key)
+        if (episodeNumber !== null) keys.add(episodeKey(show, seasonNumber, episodeNumber))
+      }
+    }
+  }
+  return keys
+}
+
 /**
  * Per server, how many documents the run covered lack that server's gate
- * (absent, null or empty), in each collection that carries gates. Only
- * non-zero entries are returned.
+ * (absent, null or empty) while that server lists them, in each collection
+ * that carries gates: a movie or a show its listing names, an episode its
+ * listing names under that show, season and episode number (read as pre-tag
+ * reads the keys). A server's pass never visits what it does not list, so a
+ * gate it has never stamped there is not open; an episode with no showId
+ * cannot be placed in any listing and counts as open. Only non-zero entries
+ * are returned, servers in `listings` order.
+ *
+ * The queries: the run's shows once (folder name and gates), then per server
+ * a count of its listed movies without its gate (originalTitle $in) and its
+ * listed shows' episodes without its gate (showId $in, projected to their
+ * numbers).
  *
  * @param {import('mongodb').Db} db
  * @param {string} syncRunId
- * @param {string[]} serverIds
+ * @param {Map<string, import('./listing').ServerListing>} listings - Every enabled server's listing
  * @returns {Promise<Object<string, Object<string, number>>>}
  */
-export async function countOpenGates(db, syncRunId, serverIds) {
-  const open = {}
-  for (const serverId of serverIds) {
-    const counts = await Promise.all(
-      GATED_TICK_COLLECTIONS.map((name) =>
-        db.collection(name).countDocuments({ syncRunId, [`syncGates.${serverId}`]: { $in: [null, ''] } })
+export async function countOpenGates(db, syncRunId, listings) {
+  const shows = await db
+    .collection('FlatTVShows')
+    .find({ syncRunId }, { projection: { originalTitle: 1, syncGates: 1 } })
+    .toArray()
+  const titleOfShow = new Map(shows.map((show) => [String(show._id), show.originalTitle]))
+
+  const perServer = await Promise.all(
+    [...listings].map(async ([serverId, listing]) => {
+      const lacking = { [`syncGates.${serverId}`]: { $in: [null, ''] } }
+      const listedShows = shows.filter((show) => listing.tv.has(show.originalTitle))
+      const [movies, episodes] = await Promise.all([
+        listing.movies.size > 0
+          ? db.collection('FlatMovies').countDocuments({ syncRunId, originalTitle: { $in: [...listing.movies] }, ...lacking })
+          : 0,
+        db
+          .collection('FlatEpisodes')
+          .find(
+            { syncRunId, $or: [{ showId: { $in: listedShows.map((show) => show._id) } }, { showId: null }], ...lacking },
+            { projection: { showId: 1, seasonNumber: 1, episodeNumber: 1 } }
+          )
+          .toArray(),
+      ])
+      const named = episodes.length > 0 ? listedEpisodes(listing) : new Set()
+      const openEpisodes = episodes.filter(
+        (episode) =>
+          episode.showId == null ||
+          named.has(episodeKey(titleOfShow.get(String(episode.showId)), episode.seasonNumber, episode.episodeNumber))
       )
-    )
-    GATED_TICK_COLLECTIONS.forEach((name, i) => {
-      if (counts[i] > 0) {
-        open[serverId] = open[serverId] || {}
-        open[serverId][name] = counts[i]
+      const counts = {
+        FlatMovies: movies,
+        FlatTVShows: listedShows.filter((show) => lacksGate(show, serverId)).length,
+        FlatEpisodes: openEpisodes.length,
       }
+      return [serverId, counts]
     })
+  )
+
+  const open = {}
+  for (const [serverId, counts] of perServer) {
+    for (const name of GATED_TICK_COLLECTIONS) {
+      if (counts[name] > 0) {
+        open[serverId] = open[serverId] || {}
+        open[serverId][name] = counts[name]
+      }
+    }
   }
   return open
+}
+
+/**
+ * Each server's listing from the manifests the tick state holds for it
+ * (run/tickState), for the servers it holds both manifests of.
+ *
+ * @param {import('./tickState').TickState|null} state
+ * @param {Array<{id: string}>} servers
+ * @returns {Map<string, import('./listing').ServerListing>}
+ */
+export function heldListings(state, servers) {
+  const listings = new Map()
+  for (const server of servers) {
+    const held = state?.manifests?.get(server.id)
+    if (held?.tv?.titles && held?.movies?.titles) listings.set(server.id, listingOfManifests(held.tv, held.movies))
+  }
+  return listings
 }
 
 /**
@@ -176,9 +264,12 @@ export async function countOpenGates(db, syncRunId, serverIds) {
  * @param {Object|null} args.record - The stored record of the last complete pass
  * @param {Array<{id: string, priority: number}>} args.servers - Enabled servers
  * @param {boolean} args.forceSync
+ * @param {Map<string, import('./listing').ServerListing>} [args.listings] - Each
+ *   server's listing from the manifests the tick state holds (heldListings): the
+ *   open gates are counted against them, so a tick never skips without them
  * @returns {Promise<string|null>}
  */
-export async function whyTickNotSkippable({ db, record, servers, forceSync }) {
+export async function whyTickNotSkippable({ db, record, servers, forceSync, listings }) {
   if (forceSync) return 'force sync requested'
   if (!record?.syncRunId) return 'no complete pass on record'
   if (record.state !== 'complete') return 'the last pass is still running or did not complete'
@@ -210,7 +301,9 @@ export async function whyTickNotSkippable({ db, record, servers, forceSync }) {
       Object.entries(leftovers).map(([name, n]) => `${name}=${n}`).join(' ') + ')'
   }
 
-  const open = await countOpenGates(db, record.syncRunId, servers.map((server) => server.id))
+  const unlisted = servers.find((server) => !listings?.has(server.id))
+  if (unlisted) return `no manifests held for ${unlisted.id} to read its gates against`
+  const open = await countOpenGates(db, record.syncRunId, new Map(servers.map((server) => [server.id, listings.get(server.id)])))
   if (Object.keys(open).length > 0) {
     return 'open gates (' +
       Object.entries(open)
@@ -318,7 +411,7 @@ export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}
   else if (stateProblem) blocker = stateProblem
   else {
     try {
-      blocker = await whyTickNotSkippable({ db, record, servers, forceSync: false })
+      blocker = await whyTickNotSkippable({ db, record, servers, forceSync: false, listings: heldListings(state, servers) })
     } catch (error) {
       blocker = `skip check failed: ${error.message}`
     }

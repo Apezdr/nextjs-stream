@@ -59,7 +59,9 @@ const readPath = (doc, path) => path.split('.').reduce((value, key) => (value ==
 /** Just the matching the skip check and the syncInfo helpers use. */
 function matches(doc, filter) {
   return Object.entries(filter).every(([path, condition]) => {
+    if (path === '$or') return condition.some((branch) => matches(doc, branch))
     const value = readPath(doc, path)
+    if (condition === null) return value == null
     if (condition && typeof condition === 'object' && '$in' in condition) {
       return condition.$in.some((candidate) => (candidate === null ? value == null : value === candidate))
     }
@@ -79,6 +81,7 @@ function memoryCollection(docs = []) {
   const collection = {
     docs: docs.map(stored),
     countDocuments: jest.fn(async (filter = {}) => collection.docs.filter((doc) => matches(doc, filter)).length),
+    find: jest.fn((filter = {}) => ({ toArray: async () => collection.docs.filter((doc) => matches(doc, filter)).map(stored) })),
     findOne: async (filter) => {
       const doc = collection.docs.find((d) => matches(d, filter))
       return doc ? stored(doc) : null
@@ -169,9 +172,18 @@ async function settleState(runId = RUN) {
 
 const WRITTEN = new Date('2026-10-16T12:00:00Z')
 
-async function install({ syncInfo = null } = {}) {
+/** What server2 serves in the two-server cases: Movie A, and Show A with episode 1 only. */
+const PART_OF_LIBRARY = {
+  movies: { 'Movie A': LIBRARY.movies['Movie A'] },
+  tv: { 'Show A': { seasons: { 'Season 1': { episodes: { S01E01: LIBRARY.tv['Show A'].seasons['Season 1'].episodes.S01E01 } } } } },
+}
+
+/** `libraries`: what each server serves (default: the default server LIBRARY, any other nothing). */
+async function install({ syncInfo = null, libraries = {} } = {}) {
   mockProcessor.reset()
-  for (const server of mockServers) mockProcessor.serve(server.id, server.id === 'default' ? LIBRARY : {})
+  for (const server of mockServers) {
+    mockProcessor.serve(server.id, libraries[server.id] ?? (server.id === 'default' ? LIBRARY : {}))
+  }
   mockCollections.FlatMovies = memoryCollection([
     { _id: 'm1', originalTitle: 'Movie A', syncRunId: RUN, syncGates: { default: gate(1) }, updatedAt: WRITTEN },
     { _id: 'm2', originalTitle: 'Movie B', syncRunId: RUN, syncGates: { default: gate(2) }, updatedAt: WRITTEN },
@@ -290,6 +302,33 @@ describe('a tick that would change nothing', () => {
   })
 })
 
+describe('a tick that would change nothing, with two servers', () => {
+  const twoServers = async (libraries) => {
+    mockServers = [{ id: 'default', priority: 1 }, { id: 'server2', priority: 2 }]
+    await install({ libraries })
+  }
+  const stampServer2 = (name, id) => {
+    const doc = mockCollections[name].docs.find((d) => d._id === id)
+    doc.syncGates = { ...doc.syncGates, server2: gate(10) }
+  }
+
+  it('is skipped when no document the second server lists lacks its gate (it lists nothing)', async () => {
+    await twoServers({ server2: {} })
+
+    const tick = await fetchSyncTick()
+
+    expect(tick.skipped).toBe(true)
+    expect(tick.result.servers).toEqual({ default: { tv: 304, movies: 304 }, server2: { tv: 304, movies: 304 } })
+  })
+
+  it('is skipped when the second server’s gate is on every movie, show and episode it lists, and on nothing else', async () => {
+    await twoServers({ server2: PART_OF_LIBRARY })
+    for (const [name, id] of [['FlatMovies', 'm1'], ['FlatTVShows', 's1'], ['FlatEpisodes', 'e1']]) stampServer2(name, id)
+
+    expect((await fetchSyncTick()).skipped).toBe(true)
+  })
+})
+
 describe('a tick that runs', () => {
   const expectPass = async (reasonPart, { mode = 'select', options } = {}) => {
     const tick = await fetchSyncTick(options)
@@ -394,10 +433,45 @@ describe('a tick that runs', () => {
     await expectPass('skip check failed: connection reset')
   })
 
-  it('when a document only one of two servers has lacks the other’s gate (fails safe)', async () => {
-    mockServers = [{ id: 'default', priority: 1 }, { id: 'server2', priority: 2 }]
-    await install()
-    await expectPass('server2: FlatMovies=2')
+  describe('with two servers', () => {
+    beforeEach(() => {
+      mockServers = [{ id: 'default', priority: 1 }, { id: 'server2', priority: 2 }]
+    })
+
+    it('when the second server lists every title and has no gate on any', async () => {
+      await install({ libraries: { server2: LIBRARY } })
+      await expectPass('open gates (server2: FlatMovies=2 FlatTVShows=1 FlatEpisodes=2)')
+    })
+
+    it.each([
+      ['a movie', 'FlatMovies', 'm1', 'server2: FlatMovies=1'],
+      ['a show', 'FlatTVShows', 's1', 'server2: FlatTVShows=1'],
+      ['an episode', 'FlatEpisodes', 'e1', 'server2: FlatEpisodes=1'],
+    ])('when %s the second server lists lacks its gate, the rest of what it lists carrying it', async (_label, name, id, reason) => {
+      await install({ libraries: { server2: PART_OF_LIBRARY } })
+      for (const [collection, docId] of [['FlatMovies', 'm1'], ['FlatTVShows', 's1'], ['FlatEpisodes', 'e1']]) {
+        if (collection === name && docId === id) continue
+        const doc = mockCollections[collection].docs.find((d) => d._id === docId)
+        doc.syncGates = { ...doc.syncGates, server2: gate(10) }
+      }
+      await expectPass(`open gates (${reason})`)
+    })
+
+    it('when an episode with no show id lacks a server’s gate: no listing can place it (fails safe)', async () => {
+      await install({ libraries: { server2: {} } })
+      mockCollections.FlatEpisodes.docs[1].showId = null
+      await expectPass('open gates (server2: FlatEpisodes=1)')
+    })
+
+    it('when the tick state holds no manifests for a server: there is no listing to read its gates against (fails safe)', async () => {
+      await install({ libraries: { server2: {} } })
+      getTickState().manifests.delete('server2')
+
+      const tick = await fetchSyncTick()
+
+      expect(tick.skipped).toBe(false)
+      expect(tick.reason).toBe('no manifests held for server2 to read its gates against')
+    })
   })
 
   it('when every manifest answers 304 but they are not the ones the last complete pass recorded', async () => {
