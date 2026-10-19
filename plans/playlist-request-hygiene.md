@@ -176,7 +176,7 @@ Callers unchanged. Removes 6 `createIndexes` round trips per playlist request.
 
 Sync-tick burst mitigation: yield-chunk the `collectFieldAvailability` loops
 (`[...admin]/route.js:931-953`, `await setImmediate` every ~50 titles), add a duration
-log around the full-library `JSON.parse` (`fetchAllServerData.js:151-154`), re-measure
+log around the full-library `JSON.parse` (`fetchAllServerData.js:151-154`, since deleted with the sync-verification tool), re-measure
 burst minutes in SigNoz, and only then decide on worker-thread offload.
 
 ## Out of scope / later
