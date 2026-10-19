@@ -53,6 +53,12 @@ const SYNC_LOCK_WATCHDOG_MS = (() => {
  *   pass's inputs (run/manifestTick buildTickInputs).
  * @param {Object} [options]
  * @param {boolean} [options.forceSync]
+ * @param {string|null} [options.operationId] - The route's id for this sync
+ *   operation, stamped on its warm-up and completion events (the admin popup
+ *   takes only its own operation's completion)
+ * @param {boolean} [options.startedByAdmin] - A sync an admin started: its
+ *   report also lists what the library hides although it has a video
+ *   (run/cantPlay), which the admin popup shows
  * @returns {Promise<Object>} Sync results
  */
 export async function syncAllServers(tick, options = {}) {
@@ -78,7 +84,7 @@ export async function syncAllServers(tick, options = {}) {
     console.warn(chalk.yellow(
       `⚠ Sync already in progress (run ${holder?.syncRunId ?? 'unknown'}); skipping this invocation`
     ))
-    return {
+    const busy = {
       syncRunId,
       skipped: true,
       reason: 'orchestration_in_progress',
@@ -86,6 +92,18 @@ export async function syncAllServers(tick, options = {}) {
       changedMedia: { movies: [], shows: [], seasons: [], episodes: [] },
       added: { movies: 0, shows: 0, episodes: 0 },
     }
+    // This operation's completion, so a client waiting on it does not take the
+    // next tick's: the previous run is still finishing (its cleanup or jobs)
+    try {
+      syncEventBus.emitComplete('__sync_complete__', MediaType.Movie, 'server-all', SyncOperation.Metadata, {
+        operationId: options.operationId ?? null,
+        outcome: 'busy',
+        summary: busy,
+      })
+    } catch (error) {
+      console.error(chalk.red(`emitComplete(busy) failed: ${error.message}`))
+    }
+    return busy
   }
   setCurrentSyncRunId(syncRunId)
 
@@ -121,7 +139,7 @@ export async function syncAllServers(tick, options = {}) {
     missingMedia: {},
     noVideo: {},
     // Per server (the server each video came from): what the library hides
-    // although it has a video. Filled on a tick over every title (run/cantPlay)
+    // although it has a video. Filled for a sync an admin started (run/cantPlay)
     cantPlay: {},
     // Per server: titles checked, updated, unchanged and failed (run/syncReport createTitleCounts)
     titleCounts: {},
@@ -162,7 +180,9 @@ export async function syncAllServers(tick, options = {}) {
 
   // Signal to SSE subscribers that sync is starting (warming up)
   try {
-    syncEventBus.emitStarted('__sync_warmup__', MediaType.Movie, 'server-all')
+    syncEventBus.emitStarted('__sync_warmup__', MediaType.Movie, 'server-all', undefined, {
+      operationId: options.operationId ?? null,
+    })
   } catch (error) {
     console.error(chalk.red(`emitStarted(warmup) failed: ${error.message}`))
   }
@@ -415,10 +435,12 @@ export async function syncAllServers(tick, options = {}) {
       : undefined,
   })
 
-  // On a tick over every title (every manual sync): what the library hides
-  // although it has a video, read after every pass. Informational: a failure
-  // is reported with the run's errors, after the record is written.
-  if (mode === 'all') {
+  // For a sync an admin started (always a tick over every title), the one the
+  // admin popup reports: what the library hides although it has a video,
+  // read after every pass. Not on webhook ticks, whichever their mode.
+  // Informational: a failure is reported with the run's errors, after the
+  // record is written.
+  if (options.startedByAdmin === true && mode === 'all') {
     try {
       results.cantPlay = await cantPlayTitles(client.db('Media'))
     } catch (error) {
@@ -456,7 +478,7 @@ export async function syncAllServers(tick, options = {}) {
       MediaType.Movie,
       'server-all',
       SyncOperation.Metadata,
-      { summary: results }
+      { summary: results, operationId: options.operationId ?? null, outcome: 'completed' }
     )
   } catch (error) {
     console.error(chalk.red(`emitComplete failed: ${error.message}`))

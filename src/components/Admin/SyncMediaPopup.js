@@ -462,24 +462,16 @@ function NoVideoSection({ serverName, movies, tv }) {
   )
 }
 
-/**
- * Whether a stream event belongs to the sync this popup started or joined,
- * which began at `startedAt` (the route's start time for it). The stream
- * replays the event history from the latest warm-up, which can be an earlier
- * tick's (a webhook tick's, completion and partial report included) when the
- * popup connects before this sync's own warm-up; every event of this sync is
- * stamped after its start. Without a start time only live events count.
- */
-function isEventOfRun(payload, startedAt) {
-  if (!startedAt) return !payload.replayed
-  const at = Date.parse(payload.timestamp)
-  return Number.isFinite(at) && at >= Date.parse(startedAt)
-}
+/** What the popup says when its sync ended without running (another was still finishing). */
+const BUSY_NOTICE = 'Another sync is still finishing; try again in a moment.'
 
-// Sync summary/outcome state — these five values are all part of a single sync
+/** What the popup says when the sync it joined ended at its manifests (a webhook tick that changed nothing). */
+const SKIPPED_NOTICE = 'Nothing changed on the file servers since the last sync.'
+
+// Sync summary/outcome state — these values are all part of a single sync
 // run's result and are reset together, so they live in one reducer rather than
-// five separate useState hooks.
-const INITIAL_SUMMARY = { data: null, notReady: null, duration: null, startTime: null, error: null }
+// separate useState hooks.
+const INITIAL_SUMMARY = { data: null, notReady: null, duration: null, startTime: null, error: null, notice: null }
 
 function summaryReducer(state, action) {
   switch (action.type) {
@@ -491,6 +483,8 @@ function summaryReducer(state, action) {
       return { ...state, startTime: action.startTime }
     case 'error':
       return { ...state, error: action.error }
+    case 'notice':
+      return { ...state, notice: action.notice }
     default:
       return state
   }
@@ -516,7 +510,7 @@ export default function SyncMediaPopup({
   const [isSyncing, startSyncTransition] = useTransition()
 
   const [summary, dispatchSummary] = useReducer(summaryReducer, INITIAL_SUMMARY)
-  const { data: syncData, notReady: syncNotReady, duration: syncDuration, startTime: syncstartTime, error: syncError } = summary
+  const { data: syncData, notReady: syncNotReady, duration: syncDuration, startTime: syncstartTime, error: syncError, notice: syncNotice } = summary
 
   const [progressCounts, setProgressCounts] = useState({ processed: 0, errors: 0 })
   const deferredCounts = useDeferredValue(progressCounts)
@@ -551,23 +545,38 @@ export default function SyncMediaPopup({
    * skipReplayed — when true, replayed events are ignored (state was already
    * pre-populated from the snapshot). Only __sync_complete__ is never skipped
    * so the popup closes correctly even if sync finished during connection setup.
+   *
+   * operationId — the sync this popup started or joined (the route's id for
+   * it). Its warm-up and completion carry it: only its completion ends the
+   * popup's wait, replayed or live, and a fresh sync's progress counts only
+   * from its own warm-up on. A joined sync's live events are its own: the
+   * route runs one sync at a time.
    */
-  const subscribeToStream = (streamUrl, { skipReplayed = false, startedAt = null } = {}) => {
+  const subscribeToStream = (streamUrl, { skipReplayed = false, operationId } = {}) => {
     return new Promise((resolve, reject) => {
-      const es = new EventSource(streamUrl)
+      if (!operationId) {
+        reject(new Error('The sync route answered without an operation id'))
+        return
+      }
+      const es = new EventSource(`${streamUrl}?operationId=${encodeURIComponent(operationId)}`)
       esRef.current = es
 
       // Set by this sync's completion: nothing after it changes the report
       let finished = false
+      // Whether the events now arriving are this sync's
+      let inRun = skipReplayed
       es.onmessage = (event) => {
         if (finished) return
         let payload
         try { payload = JSON.parse(event.data) } catch { return }
         if (payload.type === 'heartbeat') return
 
-        // Only this sync's events count: the stream replays history from the
-        // latest warm-up, which can be an earlier tick's, completion included
-        if (!isEventOfRun(payload, startedAt)) return
+        if (payload.entityId === '__sync_warmup__') {
+          inRun = payload.data?.operationId === operationId
+          return
+        }
+        const own = payload.data?.operationId === operationId
+        if (payload.entityId === '__sync_complete__' ? !own : !inRun) return
 
         // When joining mid-sync with a pre-populated snapshot, skip replayed
         // events — state is already correct from the snapshot. Always process
@@ -575,6 +584,22 @@ export default function SyncMediaPopup({
         if (skipReplayed && payload.replayed && payload.entityId !== '__sync_complete__') return
 
         if (payload.entityId === '__sync_complete__') {
+          finished = true
+          es.close()
+          if (payload.data?.outcome === 'busy') {
+            dispatchSummary({ type: 'notice', notice: BUSY_NOTICE })
+            resolve()
+            return
+          }
+          if (payload.data?.outcome === 'failed') {
+            dispatchSummary({ type: 'error', error: payload.data.error || 'the sync failed' })
+            resolve()
+            return
+          }
+          // A tick this popup joined that ended at its manifests: nothing to report
+          if (payload.data?.outcome === 'skipped') {
+            dispatchSummary({ type: 'notice', notice: SKIPPED_NOTICE })
+          }
           const completeSummary = payload.data?.summary || {}
           dispatchSummary({
             type: 'complete',
@@ -589,13 +614,9 @@ export default function SyncMediaPopup({
           })
           updateProcessedData('media')
           setLastSync(new Date())
-          finished = true
-          es.close()
           resolve()
           return
         }
-
-        if (payload.entityId === '__sync_warmup__') return
 
         if (payload.entityId === '__server_start__') {
           const sid = payload.serverId
@@ -735,7 +756,7 @@ export default function SyncMediaPopup({
             // skipReplayed=true because snapshot already represents state at
             // connect-time — replayed events would re-animate old entities and
             // hold the counter frozen until replay catches up to snapshot value.
-            await subscribeToStream(status.streamUrl, { skipReplayed: !!status.snapshot, startedAt: status.startTime ?? null })
+            await subscribeToStream(status.streamUrl, { skipReplayed: !!status.snapshot, operationId: status.operationId })
           } catch (err) {
             dispatchSummary({ type: 'error', error: err.message })
           }
@@ -762,18 +783,16 @@ export default function SyncMediaPopup({
           body: JSON.stringify({ forceSync: forceRefresh }),
         })
         const data = await response.json()
-        const { streamUrl, startTime: syncStart, alreadyRunning } = data
+        const { streamUrl, startTime: syncStart, alreadyRunning, operationId } = data
 
         if (syncStart) dispatchSummary({ type: 'startTime', startTime: syncStart })
 
         if (alreadyRunning) {
           // Sync was already in progress — fetch snapshot to pre-populate state,
           // same as the autoConnect path, so replay issues don't affect the counter.
-          let runningSince = null
           try {
             const statusRes = await fetch('/api/authenticated/admin/sync-status')
             const status = await statusRes.json()
-            runningSince = status.startTime ?? null
             if (status.startTime) dispatchSummary({ type: 'startTime', startTime: status.startTime })
             if (status.snapshot) {
               setServerStates(status.snapshot.servers || {})
@@ -787,10 +806,10 @@ export default function SyncMediaPopup({
           }
           // The sync this popup joined, not one it started: its options are unknown
           setStartedForced(false)
-          await subscribeToStream(streamUrl, { skipReplayed: true, startedAt: runningSince })
+          await subscribeToStream(streamUrl, { skipReplayed: true, operationId })
         } else {
           setStartedForced(forceRefresh)
-          await subscribeToStream(streamUrl, { startedAt: syncStart ?? null })
+          await subscribeToStream(streamUrl, { operationId })
         }
       } catch (err) {
         console.error('Sync failed:', err)
@@ -981,6 +1000,8 @@ export default function SyncMediaPopup({
                           Sync encountered an error: {syncError}
                         </p>
                       ) : null}
+
+                      {syncNotice !== null ? <p className="text-sm text-gray-700 mb-4">{syncNotice}</p> : null}
 
                       {syncData !== null
                         ? Object.entries(syncData.missingMedia).map(([serverName, { tv = [], movies = [] }]) =>

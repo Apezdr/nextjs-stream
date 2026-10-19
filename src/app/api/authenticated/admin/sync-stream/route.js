@@ -12,6 +12,9 @@
  * Heartbeat (every 15s):
  *   : heartbeat\n\n
  *
+ * ?operationId=<id> (the POST's or sync-status' id): replay starts at that
+ * operation's first event, and only its completion ends the stream.
+ *
  * Reconnect support:
  *   The client sends `Last-Event-ID` on reconnect; this handler replays
  *   missed events from syncEventBus.getRecentEvents().
@@ -28,6 +31,13 @@ export async function GET(request) {
   }
 
   const encoder = new TextEncoder()
+
+  // The sync operation the client follows (the POST's or sync-status'
+  // operationId): the stream replays from its first event and ends with its
+  // completion. Without one, from the latest warm-up to the first completion.
+  const operationId = new URL(request.url).searchParams.get('operationId')
+  const endsStream = (event) =>
+    event.entityId === '__sync_complete__' && (!operationId || event.data?.operationId === operationId)
 
   // Running counter shared by the closure — gives each SSE frame a unique id
   // so the browser can send Last-Event-ID on reconnect.
@@ -96,8 +106,8 @@ export async function GET(request) {
           updateTotals(event, type)
           enqueue({ ...event, totals: { ...totals } })
 
-          // The '__sync_complete__' sentinel signals end of sync
-          if (event.entityId === '__sync_complete__') {
+          // The followed operation's '__sync_complete__' signals end of sync
+          if (endsStream(event)) {
             // Immediately tear down so stale callbacks from a future sync
             // never attempt to enqueue on this dead controller.
             closed = true
@@ -126,9 +136,13 @@ export async function GET(request) {
           }
         }
       } else {
-        // Initial connect: replay from the most recent __sync_warmup__ so the
-        // client sees all server-start/progress events even if it connected late.
-        const warmupIdx = allHistory.findLastIndex(e => e.entityId === '__sync_warmup__')
+        // Initial connect: replay from the followed operation's first event
+        // (none yet: its events come live), or without one from the most
+        // recent __sync_warmup__, so the client sees all server-start/progress
+        // events even if it connected late.
+        const warmupIdx = operationId
+          ? allHistory.findIndex((e) => e.data?.operationId === operationId)
+          : allHistory.findLastIndex((e) => e.entityId === '__sync_warmup__')
         if (warmupIdx >= 0) {
           for (const event of allHistory.slice(warmupIdx)) {
             updateTotals(event, event.type)

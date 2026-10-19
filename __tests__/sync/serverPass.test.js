@@ -395,7 +395,10 @@ async function settled() {
  * (run/newContent); without it, the first run on the database starts it and
  * announces nothing. `tick` replaces the tick the run is handed.
  */
-async function runSync(fileServers, { baselineStarted = false, allEnabledServersProbed = true, forceSync = false, tick = null } = {}) {
+async function runSync(
+  fileServers,
+  { baselineStarted = false, allEnabledServersProbed = true, forceSync = false, tick = null, operationId = 'op-test', startedByAdmin = true } = {}
+) {
   if (baselineStarted) {
     const flags = mockCollection('app_config', 'migrations')
     if (!flags.docs.some((d) => d._id === 'new-content-baseline')) flags.docs.push({ _id: 'new-content-baseline' })
@@ -415,7 +418,11 @@ async function runSync(fileServers, { baselineStarted = false, allEnabledServers
   try {
     const probes = await probeServers(mockServers, null)
     const errors = [...probes].filter(([, probe]) => !probe.ok).map(([serverId, probe]) => ({ serverId, error: probe.error }))
-    const result = await syncAllServers(tick ?? { mode: 'all', servers: probes, errors: errors.length > 0 ? errors : undefined }, { forceSync })
+    const result = await syncAllServers(tick ?? { mode: 'all', servers: probes, errors: errors.length > 0 ? errors : undefined }, {
+      forceSync,
+      operationId,
+      startedByAdmin,
+    })
     await settled()
     return result
   } finally {
@@ -1139,6 +1146,11 @@ describe('the report the admin’s sync popup shows', () => {
       expect(result.cantPlay).toEqual({})
     })
 
+    it('is not read on a webhook tick, even one over every title', async () => {
+      const result = await runSync(oneServer({ movies: { [MOVIE]: aviMovie() } }), { startedByAdmin: false })
+      expect(result.cantPlay).toEqual({})
+    })
+
     it('is listed in full again when every title is skipped on its gate', async () => {
       await runSync(oneServer({ movies: { [MOVIE]: aviMovie() } }))
       // A second `all` run that skips every title still lists it
@@ -1159,6 +1171,38 @@ describe('the report the admin’s sync popup shows', () => {
       ],
     })
     expect(result).not.toHaveProperty('missingMp4')
+  })
+})
+
+// ---------------------------------------------------------------- the operation id
+
+describe('the operation id on the run’s warm-up and completion', () => {
+  const { syncEventBus } = require('@src/utils/sync/core/events')
+  const { tryAcquireSyncLock } = require('@src/utils/sync/run/runState')
+  const completions = (spy) => spy.mock.calls.filter(([entityId]) => entityId === '__sync_complete__').map((call) => call[4])
+
+  it('stamps both, and says the run completed', async () => {
+    const started = jest.spyOn(syncEventBus, 'emitStarted')
+    const completed = jest.spyOn(syncEventBus, 'emitComplete')
+
+    const result = await runSync(oneServer(), { operationId: 'op-admin' })
+
+    expect(started.mock.calls.find(([entityId]) => entityId === '__sync_warmup__')[4]).toEqual({ operationId: 'op-admin' })
+    expect(completions(completed)).toEqual([{ summary: result, operationId: 'op-admin', outcome: 'completed' }])
+  })
+
+  it('emits a completion that says another sync is still finishing when the lock is held', async () => {
+    const completed = jest.spyOn(syncEventBus, 'emitComplete')
+    // The previous run's cleanup and jobs still hold the orchestration lock
+    expect(tryAcquireSyncLock('previous-run')).toBe(true)
+    try {
+      const result = await syncAllServers({ mode: 'all', servers: new Map() }, { operationId: 'op-busy', startedByAdmin: true })
+
+      expect(result).toMatchObject({ skipped: true, reason: 'orchestration_in_progress' })
+      expect(completions(completed)).toEqual([{ operationId: 'op-busy', outcome: 'busy', summary: result }])
+    } finally {
+      releaseSyncLock('previous-run')
+    }
   })
 })
 

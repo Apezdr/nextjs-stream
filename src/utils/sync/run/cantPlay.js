@@ -7,10 +7,10 @@
  * predicate every list, rail, count and search applies) hides them, and
  * nothing else says so.
  *
- * Read from the library after every server's pass on an `all` tick (every
- * manual sync is one), so the list is complete whichever titles the passes
- * wrote. Each title is reported under the server its video came from
- * (`videoSource`).
+ * Read from the library after every server's pass of a sync an admin started
+ * (always a tick over every title; never a webhook tick), so the list is
+ * complete whichever titles the passes wrote. Each title is reported under the
+ * server its video came from (`videoSource`).
  */
 
 import { isWebVisible } from '@src/utils/mediaVisibility'

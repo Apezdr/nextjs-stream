@@ -34,8 +34,11 @@ jest.mock('@src/utils/sync/run/availability', () => ({
     return { movies: {}, tv: {} }
   },
 }))
-jest.mock('@src/utils/sync/core/events', () => ({ syncEventBus: { subscribe: () => () => {} } }))
-jest.mock('@src/utils/sync/core/types', () => ({ SyncEventType: {} }))
+const mockEmitComplete = jest.fn()
+jest.mock('@src/utils/sync/core/events', () => ({
+  syncEventBus: { subscribe: () => () => {}, emitComplete: (...args) => mockEmitComplete(...args) },
+}))
+jest.mock('@src/utils/sync/core/types', () => ({ SyncEventType: {}, MediaType: { Movie: 'movie' } }))
 jest.mock('@src/utils/sync_db', () => ({ getFileServerImportSettings: jest.fn(async () => ({})) }))
 jest.mock('@src/utils/cache/postSyncRevalidation', () => ({
   countChangedMedia: () => 0,
@@ -110,6 +113,7 @@ beforeEach(() => {
   mockSyncAllServers.mockReset()
   mockSyncAllServers.mockResolvedValue({ errors: [], changedMedia: { movies: [], shows: [], seasons: [], episodes: [] } })
   mockNotify.mockClear()
+  mockEmitComplete.mockClear()
   mockCreateDatabaseAdapter.mockClear()
   mockCollectFieldAvailability.mockClear()
   for (const method of ['log', 'info', 'warn', 'error']) jest.spyOn(console, method).mockImplementation(() => {})
@@ -127,7 +131,7 @@ it('ends a skipped tick before the pass, with no admin notification', async () =
   await untilIdle()
 
   expect(mockFetchSyncTick).toHaveBeenCalledTimes(1)
-  expect(mockFetchSyncTick).toHaveBeenCalledWith({ forceSync: false, allowSkip: true })
+  expect(mockFetchSyncTick).toHaveBeenCalledWith({ forceSync: false, allowSkip: true, operationId: expect.any(String) })
   expect(mockCollectFieldAvailability).not.toHaveBeenCalled()
   expect(mockCreateDatabaseAdapter).not.toHaveBeenCalled()
   expect(mockSyncAllServers).not.toHaveBeenCalled()
@@ -145,7 +149,7 @@ it('hands a tick that is not skipped to the run as it is', async () => {
 
   expect(mockSyncAllServers).toHaveBeenCalledTimes(1)
   // The run selects, fetches entries and builds its inputs from the tick, under its lock
-  expect(mockSyncAllServers).toHaveBeenCalledWith(tick, { forceSync: false })
+  expect(mockSyncAllServers).toHaveBeenCalledWith(tick, { forceSync: false, operationId: expect.any(String), startedByAdmin: false })
   expect(mockNotify).toHaveBeenCalledTimes(1)
   expect(console.error).not.toHaveBeenCalledWith('Sync operation failed:', expect.anything())
 })
@@ -177,7 +181,68 @@ it('never lets a sync started from the admin UI skip; the per-title gates still 
   await startSync({ webhook: false })
   await untilIdle()
 
-  expect(mockFetchSyncTick).toHaveBeenCalledWith({ forceSync: false, allowSkip: false })
+  expect(mockFetchSyncTick).toHaveBeenCalledWith({ forceSync: false, allowSkip: false, operationId: expect.any(String) })
   // Not forced: titles whose gates match are still skipped inside the pass
-  expect(mockSyncAllServers).toHaveBeenCalledWith(tick, { forceSync: false })
+  expect(mockSyncAllServers).toHaveBeenCalledWith(tick, { forceSync: false, operationId: expect.any(String), startedByAdmin: true })
+})
+
+describe('the sync operation id', () => {
+  const syncStatus = async () =>
+    (
+      await GET(new Request('http://127.0.0.1:3000/api/authenticated/admin/sync-status'), {
+        params: Promise.resolve({ admin: ['admin', 'sync-status'] }),
+      })
+    ).json()
+
+  it('is answered by the POST that starts a sync, by sync-status while it runs, and handed to the tick and the run', async () => {
+    let release
+    mockFetchSyncTick.mockImplementation(() => new Promise((resolve) => { release = () => resolve(runningTick('all')) }))
+
+    const started = await (await startSync({ webhook: false })).json()
+    expect(started).toMatchObject({ started: true, operationId: expect.any(String) })
+    expect((await syncStatus()).operationId).toBe(started.operationId)
+
+    // A second POST while it runs joins it: the running sync's id
+    const joined = await (await startSync({ webhook: false })).json()
+    expect(joined).toMatchObject({ alreadyRunning: true, operationId: started.operationId, startTime: started.startTime })
+
+    release()
+    await untilIdle()
+    expect(mockFetchSyncTick).toHaveBeenCalledWith(expect.objectContaining({ operationId: started.operationId }))
+    expect(mockSyncAllServers).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ operationId: started.operationId }))
+    expect((await syncStatus()).operationId).toBeNull()
+  })
+
+  it('is new for each sync', async () => {
+    mockFetchSyncTick.mockResolvedValue(runningTick('all'))
+    const first = await (await startSync({ webhook: false })).json()
+    await untilIdle()
+    const second = await (await startSync({ webhook: false })).json()
+    await untilIdle()
+    expect(second.operationId).not.toBe(first.operationId)
+  })
+
+  it('is stamped on a completion that says the sync failed, when the run throws before its own', async () => {
+    mockFetchSyncTick.mockResolvedValue(runningTick('all'))
+    mockCreateDatabaseAdapter.mockRejectedValueOnce(new Error('sync pool unavailable'))
+
+    const { operationId } = await (await startSync({ webhook: false })).json()
+    await untilIdle()
+
+    expect(mockSyncAllServers).not.toHaveBeenCalled()
+    expect(mockEmitComplete).toHaveBeenCalledTimes(1)
+    expect(mockEmitComplete).toHaveBeenCalledWith('__sync_complete__', 'movie', 'server-all', undefined, {
+      operationId,
+      outcome: 'failed',
+      error: 'sync pool unavailable',
+      summary: null,
+    })
+  })
+
+  it('emits no completion of its own when the run completed: the run stamps its own', async () => {
+    mockFetchSyncTick.mockResolvedValue(runningTick('all'))
+    await startSync({ webhook: false })
+    await untilIdle()
+    expect(mockEmitComplete).not.toHaveBeenCalled()
+  })
 })
