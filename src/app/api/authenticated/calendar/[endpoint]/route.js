@@ -1,5 +1,5 @@
 import { isAuthenticatedAndApproved } from '../../../../../utils/routeAuth'
-import { httpGet } from '@src/lib/httpHelper'
+import { describeRequestError, httpGet } from '@src/lib/httpHelper'
 
 const sonarrIcalLink = process.env.SONARR_ICAL_LINK
 const radarrIcalLink = process.env.RADARR_ICAL_LINK
@@ -47,7 +47,9 @@ export async function GET(req, props) {
       },
     })
   } catch (error) {
-    console.log(error)
+    // One line, never the error object: got's error prints its options, the
+    // feed URL with its API key among them
+    console.error(`[calendar] ${endpoint} feed failed: ${describeRequestError(error)}`)
     return new Response(JSON.stringify({ error: 'Failed to sync data' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
