@@ -39,7 +39,8 @@ const calculateBackoff = (retry, baseDelay = 1000, maxDelay = 10000) => {
  * @returns {Error}
  */
 function httpStatusError(statusCode, url, headers, body) {
-  const error = new Error(`HTTP Error: ${statusCode} for URL: ${url}`);
+  // The message travels to callers' logs: the URL in it is redacted
+  const error = new Error(`HTTP Error: ${statusCode} for URL: ${loggableUrl(url)}`);
   error.statusCode = statusCode;
   error.response = { statusCode, headers, body };
   return error;
@@ -121,13 +122,14 @@ function formatBytes(bytes, decimals = 2) {
 }
 
 /**
- * Cache logger for diagnostics
+ * Cache logger for diagnostics. The URL is the cache key: an *arr iCal feed's
+ * carries its API key, so every line shows it through loggableUrl.
  */
 const cacheLog = {
-  hit: (url, type, size) => console.debug(`Cache HIT: ${url} (${type}, ${formatBytes(size || 0)})`),
-  miss: (url, reason) => console.debug(`Cache MISS: ${url} (${reason})`),
-  store: (url, type, size) => console.debug(`Cache STORE: ${url} (${type}, ${formatBytes(size || 0)})`),
-  error: (url, error) => console.error(`Cache ERROR: ${url}`, error)
+  hit: (url, type, size) => console.debug(`Cache HIT: ${loggableUrl(url)} (${type}, ${formatBytes(size || 0)})`),
+  miss: (url, reason) => console.debug(`Cache MISS: ${loggableUrl(url)} (${reason})`),
+  store: (url, type, size) => console.debug(`Cache STORE: ${loggableUrl(url)} (${type}, ${formatBytes(size || 0)})`),
+  error: (url, error) => console.error(`Cache ERROR: ${loggableUrl(url)}: ${describeRequestError(error)}`)
 };
 
 /**
@@ -288,7 +290,7 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
               try {
                 responseData = JSON.parse(response.body);
               } catch (parseError) {
-                throw new Error(`Invalid JSON response from ${url}`);
+                throw new Error(`Invalid JSON response from ${loggableUrl(url)}`);
               }
               break;
 
@@ -470,38 +472,34 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
   throw lastError;
 }
 
-/** Query parameters whose value is a credential: logged as REDACTED. */
-const SECRET_PARAM = /^(api[-_]?key|apikey|key|token|access[-_]?token|auth|password|secret|signature|sig)$/i
+/** A query parameter whose value is a credential (an *arr iCal feed's `apikey`), with its value. */
+const SECRET_PARAM_IN_TEXT = /([?&](?:api[-_]?key|key|token|access[-_]?token|auth|password|secret|signature|sig)=)[^&#\s"'<>]*/gi
+
+/** The user:password of a URL. */
+const USERINFO_IN_TEXT = /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]*@/gi
 
 /**
- * A URL as a log line may show it: the query kept (a file's `hash` is how a
- * request is told apart), but a credential parameter's value (an *arr iCal
- * feed's `apikey`) and any user:password are replaced.
+ * Text as a log line or an error message may show it: every credential query
+ * parameter's value and every URL's user:password replaced by REDACTED, all
+ * else as it is (a file's `?hash=` included). The one redaction for anything
+ * that names a URL the sync or the calendar fetches.
+ *
+ * @param {unknown} text
+ * @returns {string}
+ */
+export function redactSecrets(text) {
+  return String(text ?? '').replace(SECRET_PARAM_IN_TEXT, '$1REDACTED').replace(USERINFO_IN_TEXT, '$1REDACTED@')
+}
+
+/**
+ * A URL as a log line may show it (redactSecrets): the query kept, a
+ * credential parameter's value and any user:password replaced.
  *
  * @param {string} url
  * @returns {string}
  */
 export function loggableUrl(url) {
-  let parsed
-  try {
-    parsed = new URL(url)
-  } catch {
-    return String(url)
-  }
-  let redacted = false
-  if (parsed.username || parsed.password) {
-    parsed.username = 'REDACTED'
-    parsed.password = ''
-    redacted = true
-  }
-  for (const name of [...parsed.searchParams.keys()]) {
-    if (SECRET_PARAM.test(name)) {
-      parsed.searchParams.set(name, 'REDACTED')
-      redacted = true
-    }
-  }
-  // Untouched when nothing is secret: the query exactly as it was sent
-  return redacted ? parsed.toString() : String(url)
+  return redactSecrets(url)
 }
 
 /**
@@ -517,7 +515,7 @@ export function describeRequestError(error) {
   const name = error?.name || 'Error'
   const code = error?.code ? ` ${error.code}` : ''
   const status = error?.response?.statusCode ?? error?.statusCode
-  const message = String(error?.message ?? error ?? '').replace(/\s+/g, ' ').trim()
+  const message = redactSecrets(error?.message ?? error ?? '').replace(/\s+/g, ' ').trim()
   const shown = message.length > 160 ? `${message.slice(0, 159)}…` : message
   return `${name}${code}${status ? ` HTTP ${status}` : ''}: ${shown}`
 }

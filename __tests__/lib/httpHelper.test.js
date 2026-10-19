@@ -191,3 +191,65 @@ describe('what a failed request logs', () => {
     expect(loggableUrl('https://user:pass@files.example/a.json')).not.toContain('pass')
   })
 })
+
+describe('the cache log lines', () => {
+  const FEED = 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=s3cr3t&unmonitored=true'
+  const FILE = 'https://files.example/movies/Caf%C3%A9%20(2001)/metadata.json?hash=0123abcd'
+  const lines = () => console.debug.mock.calls.map(([line]) => line)
+  const noKey = () => {
+    for (const line of lines()) expect(line).not.toContain('s3cr3t')
+  }
+
+  it('STORE: shows a feed URL with its API key REDACTED', async () => {
+    mockGot.mockResolvedValue(reply(200, 'BEGIN:VCALENDAR'))
+
+    await httpGet(FEED, { responseType: 'text', retry: fast })
+
+    expect(lines()).toContain(
+      'Cache STORE: https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true (text, 15 Bytes)'
+    )
+    noKey()
+  })
+
+  it('HIT: shows a feed URL with its API key REDACTED', async () => {
+    mockGetCache.mockResolvedValue({ data: 'BEGIN:VCALENDAR', etag: 'W/"ics"' })
+    mockGot.mockResolvedValue(reply(304))
+
+    await httpGet(FEED, { responseType: 'text', retry: fast }, true)
+
+    expect(lines().find((line) => line.startsWith('Cache HIT: '))).toContain('?apikey=REDACTED&unmonitored=true')
+    noKey()
+  })
+
+  it('MISS: shows a feed URL with its API key REDACTED', async () => {
+    // A cached buffer that is not one: a miss, then a fresh answer
+    mockGetCache.mockResolvedValue({ data: { _dataType: 'buffer', data: 42 }, etag: 'W/"b"' })
+    mockGot.mockResolvedValueOnce(reply(304)).mockResolvedValueOnce({ ...reply(200), rawBody: Buffer.from('abc') })
+
+    await httpGet(FEED, { responseType: 'buffer', retry: fast }, true)
+
+    expect(lines().find((line) => line.startsWith('Cache MISS: '))).toBe(
+      'Cache MISS: https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true (invalid buffer format in cache)'
+    )
+    noKey()
+  })
+
+  it('shows a file URL exactly as it was asked for, its hash included', async () => {
+    mockGot.mockResolvedValue(reply(200, '{"title":"Film"}'))
+
+    await httpGet(FILE, { retry: fast })
+
+    expect(lines().find((line) => line.startsWith('Cache STORE: '))).toBe(`Cache STORE: ${FILE} (json, 0 Bytes)`)
+  })
+
+  it('a thrown HTTP error names the URL with its API key REDACTED', async () => {
+    mockGot.mockResolvedValue(reply(401))
+
+    const error = await httpGet(FEED, { responseType: 'text', retry: { ...fast, limit: 0 } }).catch((e) => e)
+
+    expect(error.message).toBe(
+      'HTTP Error: 401 for URL: https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true'
+    )
+    expect(console.error.mock.calls.flat().join(' ')).not.toContain('s3cr3t')
+  })
+})
