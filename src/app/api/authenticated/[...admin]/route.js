@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import { buildURL } from '@src/utils'
 import { isAdmin, isAdminOrWebhook } from '../../../../utils/routeAuth'
 import {
@@ -22,7 +23,7 @@ import { syncAllServers, fetchSyncTick } from '@src/utils/sync/run/syncAllServer
 import { forgetAppliedPayloads } from '@src/utils/sync/run/appliedPayloads'
 import { validateWatchHistory } from '@src/utils/sync/run/validateWatchHistory'
 import { syncEventBus } from '@src/utils/sync/core/events'
-import { SyncEventType } from '@src/utils/sync/core/types'
+import { MediaType, SyncEventType } from '@src/utils/sync/core/types'
 import { createDatabaseAdapter } from '@src/utils/sync/infrastructure'
 import { NotificationManager } from '@src/utils/notifications/NotificationManager.js'
 import { revalidateTag } from 'next/cache'
@@ -322,6 +323,7 @@ export async function GET(request, props) {
       case 'sync-status':
         responseData = {
           active: activeSyncOperation !== null,
+          operationId: activeSyncOperation ? activeOperationId : null,
           startTime: activeSyncOperation ? startTime : null,
           streamUrl: activeSyncOperation ? '/api/authenticated/admin/sync-stream' : null,
           snapshot: syncSnapshot ? {
@@ -353,6 +355,11 @@ export async function GET(request, props) {
 // Track ongoing sync operations
 let startTime = null
 let activeSyncOperation = null
+// The id of the sync operation running now: the POST that starts or joins it
+// and sync-status answer it, and the run stamps it on its warm-up and
+// completion events, so a client takes the completion of its own sync and no
+// other (a webhook tick's, or one the stream replays)
+let activeOperationId = null
 let syncSubscribers = []
 
 // A sync "running" longer than this is presumed wedged (a full library sync
@@ -633,6 +640,9 @@ async function handleSyncOperation(request, webhookId) {
       return new Response(
         JSON.stringify({
           alreadyRunning: true,
+          // The running sync's id: the one whose completion the client waits for
+          operationId: activeOperationId,
+          startTime,
           streamUrl: '/api/authenticated/admin/sync-stream',
         }),
         {
@@ -662,6 +672,8 @@ async function handleSyncOperation(request, webhookId) {
   }
 
   startTime = new Date().toISOString()
+  const operationId = randomUUID()
+  activeOperationId = operationId
   startSnapshotTracking()
 
   // Fire and forget — response is delivered via SSE stream.
@@ -671,7 +683,7 @@ async function handleSyncOperation(request, webhookId) {
   // isAdminOrWebhook refuses an X-Webhook-ID it cannot validate, so a request
   // that got here carrying one was authenticated by it: a file server's tick.
   // Only such a tick may be skipped; a sync an admin starts always runs.
-  const thisOperation = handleSync(webhookId, request, { forceSync, startedByWebhook: Boolean(webhookId) })
+  const thisOperation = handleSync(webhookId, request, { forceSync, startedByWebhook: Boolean(webhookId), operationId })
   activeSyncOperation = thisOperation
   thisOperation
     .then(() => {
@@ -686,6 +698,7 @@ async function handleSyncOperation(request, webhookId) {
     .finally(() => {
       if (activeSyncOperation !== thisOperation) return
       activeSyncOperation = null
+      activeOperationId = null
       syncSubscribers = []
       stopSnapshotTracking()
     })
@@ -693,6 +706,7 @@ async function handleSyncOperation(request, webhookId) {
   return new Response(
     JSON.stringify({
       started: true,
+      operationId,
       startTime,
       streamUrl: '/api/authenticated/admin/sync-stream',
     }),
@@ -769,6 +783,28 @@ async function triggerPostSyncRevalidation(request, webhookId, changedMedia) {
 }
 
 /**
+ * The completion of a sync operation that threw before its run emitted one
+ * (the tick probe, the import settings, the database adapter, or the run
+ * itself): stamped with the operation's id, with outcome 'failed' and the
+ * error's message. Never throws.
+ *
+ * @param {string|null} operationId
+ * @param {unknown} error
+ */
+function emitOperationFailed(operationId, error) {
+  try {
+    syncEventBus.emitComplete('__sync_complete__', MediaType.Movie, 'server-all', undefined, {
+      operationId,
+      outcome: 'failed',
+      error: error instanceof Error ? error.message : String(error),
+      summary: null,
+    })
+  } catch (emitError) {
+    console.error(`emitComplete(failed) failed: ${emitError.message}`)
+  }
+}
+
+/**
  * Handles sync operation with improved error handling.
  * @param {string|null} webhookId - Webhook ID
  * @param {Request} request - Request object
@@ -788,7 +824,8 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     // conditionally, and end a tick that would change nothing here: no
     // entries, no fieldAvailability, no pass, no cleanup (see fetchSyncTick in
     // sync/run/tickSkip for the conditions and what a skip still does).
-    const tick = await fetchSyncTick({ forceSync, allowSkip: syncOptions.startedByWebhook === true })
+    const operationId = syncOptions.operationId ?? null
+    const tick = await fetchSyncTick({ forceSync, allowSkip: syncOptions.startedByWebhook === true, operationId })
     if (tick.skipped) {
       syncInProgress = false
       return tick.result
@@ -808,7 +845,12 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     // run builds the pass's inputs from the tick: fieldAvailability, each
     // server's listing, and whether every enabled server answered (the gate
     // for every removal; see syncAllServers' passInputs).
-    const result = await syncAllServers(tick, { forceSync })
+    const result = await syncAllServers(tick, {
+      forceSync,
+      operationId,
+      // Only a sync an admin started gets the popup's full report (run/cantPlay)
+      startedByAdmin: syncOptions.startedByWebhook !== true,
+    })
     
     // Mark sync as complete to prevent logging errors after completion
     syncInProgress = false;
@@ -860,6 +902,9 @@ async function handleSync(webhookId, request, syncOptions = {}) {
     console.error('Sync operation failed:', error)
     // Update the flag to indicate sync is no longer in progress
     syncInProgress = false;
+    // The run ends here without a completion of its own: one says it failed,
+    // so a client waiting on this operation does not take the next one's
+    emitOperationFailed(syncOptions.operationId ?? null, error)
     throw error;
   } finally {
     // Ensure the flag is always updated in case of any errors

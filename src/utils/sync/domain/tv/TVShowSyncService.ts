@@ -216,8 +216,14 @@ export class TVShowSyncService {
         showTitle, run, MediaType.TVShow, SyncOperation.Metadata,
         SyncStatus.Completed, [`Upserted TV show "${showTitle}"`, ...cleanupPlan.changes], [],
         // `created`: no document existed before this write (counted for the
-        // admins' sync notice).
-        { displayTitle: showEntity.title, ...(existing ? {} : { created: true }) }
+        // admins' sync notice). `documentChanged`: the write changed the
+        // show's data, as the season and episode results say of theirs (the
+        // sync report's "updated" count, run/syncReport).
+        {
+          displayTitle: showEntity.title,
+          ...(existing ? {} : { created: true }),
+          ...(showChanged ? { documentChanged: true } : {}),
+        }
       ))
 
       // The second read: the show as the write left it. The seasons and

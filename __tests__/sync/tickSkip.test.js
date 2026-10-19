@@ -255,16 +255,20 @@ describe('a tick that would change nothing', () => {
   })
 
   it('still records the sync time, revalidates watch history when due and closes the sync popup', async () => {
-    const { result } = await fetchSyncTick()
+    const { result } = await fetchSyncTick({ operationId: 'op-1' })
 
     expect(mockCollections.syncInfo.docs.find((d) => d._id === 'lastSyncTime')?.timestamp).toBeTruthy()
     // No validation has run in this process yet, so one is due
     expect(validateWatchHistoryAgainstDatabase).toHaveBeenCalledTimes(1)
     expect(result.watchHistoryValidation).toEqual({ markedValid: 1, markedInvalid: 0 })
     expect(migratePlaybackStatusIfNeeded).toHaveBeenCalledTimes(1)
-    expect(syncEventBus.emitStarted).toHaveBeenCalledWith('__sync_warmup__', expect.anything(), 'server-all')
+    // Both stamped with the operation's id, which the admin popup matches on
+    expect(syncEventBus.emitStarted).toHaveBeenCalledWith(
+      '__sync_warmup__', expect.anything(), 'server-all', undefined, { operationId: 'op-1' }
+    )
     expect(syncEventBus.emitComplete).toHaveBeenCalledWith(
-      '__sync_complete__', expect.anything(), 'server-all', expect.anything(), { summary: result }
+      '__sync_complete__', expect.anything(), 'server-all', expect.anything(),
+      { summary: result, operationId: 'op-1', outcome: 'skipped' }
     )
   })
 

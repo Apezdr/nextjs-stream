@@ -136,3 +136,58 @@ describe('httpGet status handling', () => {
     expect(mockGot).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('what a failed request logs', () => {
+  const { loggableUrl } = require('@src/lib/httpHelper')
+  const FILE = 'https://files.example/movies/Caf%C3%A9%20(2001)/metadata.json?hash=0123abcd'
+
+  /** got's RequestError carries options, timings and agents: thousands of lines when printed whole. */
+  const requestError = () =>
+    Object.assign(new Error("Timeout awaiting 'request' for 5000ms"), {
+      name: 'RequestError',
+      code: 'ETIMEDOUT',
+      options: { agent: { http2: { sessions: Array.from({ length: 50 }, (_, i) => ({ i, buffer: 'x'.repeat(200) })) } } },
+      timings: { start: 1, phases: { total: 5000 } },
+    })
+
+  it('is one line under 300 characters with the URL, the attempts, and the error’s name, code and message', async () => {
+    mockGot.mockRejectedValue(requestError())
+
+    const error = await httpGet(FILE, { retry: { ...fast, limit: 2 } }).catch((e) => e)
+
+    // The same error, after the same attempts
+    expect(error.code).toBe('ETIMEDOUT')
+    expect(mockGot).toHaveBeenCalledTimes(3)
+    expect(console.error).toHaveBeenCalledTimes(1)
+    const [line, ...rest] = console.error.mock.calls[0]
+    expect(rest).toEqual([])
+    expect(line).toBe(
+      `Failed to fetch ${FILE} after 3 attempts: RequestError ETIMEDOUT: Timeout awaiting 'request' for 5000ms`
+    )
+    expect(line.length).toBeLessThan(300)
+    // Each retry is one line too, naming the error
+    expect(console.warn.mock.calls.map(([warning, ...more]) => [warning.length < 300, more.length])).toEqual([
+      [true, 0],
+      [true, 0],
+    ])
+    expect(console.warn.mock.calls[0][0]).toContain('RequestError ETIMEDOUT')
+    // The stack only with DEBUG
+    expect(console.debug).not.toHaveBeenCalledWith(expect.stringContaining('Error:'))
+  })
+
+  it('names the HTTP status when there is one', async () => {
+    mockGot.mockResolvedValue(reply(503))
+
+    await httpGet(FILE, { retry: { ...fast, limit: 0 } }).catch(() => {})
+
+    expect(console.error.mock.calls[0][0]).toMatch(/after 1 attempt: \w+ HTTP 503: /)
+  })
+
+  it('keeps a file’s query as it is, and hides a credential in the URL', () => {
+    expect(loggableUrl(FILE)).toBe(FILE)
+    expect(loggableUrl('https://sonarr.example/feed/calendar/Sonarr.ics?apikey=s3cr3t&unmonitored=true')).toBe(
+      'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true'
+    )
+    expect(loggableUrl('https://user:pass@files.example/a.json')).not.toContain('pass')
+  })
+})

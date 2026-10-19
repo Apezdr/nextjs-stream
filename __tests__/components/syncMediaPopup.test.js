@@ -2,15 +2,18 @@
  * The admin's manual sync popup against a fake sync route and event stream:
  * what it says before the sync, the report it shows when the sync it started
  * completes (per server counts, the skipped ones explained, failures, the
- * titles not in the library and those with no video file yet), and that a
- * completion of another sync (a webhook tick's, replayed by the stream) does
- * not replace that report.
+ * titles not in the library and those with no video file yet), and that only
+ * the completion of its own sync operation (the route's operationId) ends its
+ * wait: never a webhook tick's, live or replayed.
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import SyncMediaPopup from '@src/components/Admin/SyncMediaPopup'
 
 const START = '2026-10-19T12:00:00.000Z'
 const at = (seconds) => new Date(Date.parse(START) + seconds * 1000).toISOString()
+/** The operation the popup's POST starts, and a webhook tick's. */
+const OP = 'op-admin'
+const TICK = 'op-tick'
 
 /** The EventSources the popup opens; a case pushes events through them. */
 let streams = []
@@ -42,17 +45,26 @@ const summary = (overrides = {}) => ({
   ...overrides,
 })
 
-const completion = (data, { timestamp = at(10), replayed = false } = {}) => ({
+const completion = (data, { operationId = OP, replayed = false, outcome = 'completed', timestamp = at(10), error } = {}) => ({
   type: 'complete',
   entityId: '__sync_complete__',
   serverId: 'server-all',
   timestamp,
   ...(replayed ? { replayed: true } : {}),
-  data: { summary: data },
+  data: { summary: data, operationId, outcome, ...(error ? { error } : {}) },
 })
 
-const serverEvents = async (serverId = 'default') => {
-  await send({ type: 'started', entityId: '__sync_warmup__', serverId: 'server-all', timestamp: at(1) })
+const warmup = (operationId = OP, { replayed = false } = {}) => ({
+  type: 'started',
+  entityId: '__sync_warmup__',
+  serverId: 'server-all',
+  timestamp: at(1),
+  ...(replayed ? { replayed: true } : {}),
+  data: { operationId },
+})
+
+const serverEvents = async (serverId = 'default', operationId = OP) => {
+  await send(warmup(operationId))
   await send({ type: 'started', entityId: '__server_start__', serverId, timestamp: at(1), data: { total: 1086 } })
   await send({ type: 'complete', entityId: '__server_complete__', serverId, timestamp: at(9) })
 }
@@ -75,15 +87,19 @@ async function startSync({ force = false } = {}) {
   await waitFor(() => expect(streams).toHaveLength(1))
 }
 
+/** The route's answers: the POST and sync-status. */
+let postAnswer
+let statusAnswer
 beforeEach(() => {
   streams = []
   updateProcessedData.mockClear()
   setLastSync.mockClear()
+  postAnswer = { started: true, operationId: OP, startTime: START, streamUrl: '/api/authenticated/admin/sync-stream' }
+  statusAnswer = { active: false, operationId: null, startTime: null, streamUrl: null, snapshot: null }
   global.EventSource = FakeEventSource
   global.fetch = jest.fn(async (url, options = {}) => {
-    if (url === '/api/authenticated/admin/sync' && options.method === 'POST') {
-      return { json: async () => ({ started: true, startTime: START, streamUrl: '/api/authenticated/admin/sync-stream' }) }
-    }
+    if (url === '/api/authenticated/admin/sync' && options.method === 'POST') return { json: async () => postAnswer }
+    if (url === '/api/authenticated/admin/sync-status') return { json: async () => statusAnswer }
     throw new Error(`unexpected fetch ${url}`)
   })
   jest.spyOn(console, 'error').mockImplementation(() => {})
@@ -271,7 +287,7 @@ describe('the titles that can’t play yet', () => {
     expect(section).toHaveClass('bg-gray-50')
     expect(
       within(section).getByText(
-        "These titles have a video in a format the player and the transcoder don't support yet, so they're hidden from the library."
+        "These titles have a video the player can't play and the transcoder doesn't serve yet, so they're hidden from the library. Each one says why."
       )
     ).toBeInTheDocument()
     expect(within(section).getByText('Old Rip (1999)').closest('li')).toHaveTextContent('Old Rip (1999): unsupported format (.avi)')
@@ -317,12 +333,21 @@ describe('a completion that is not the sync the popup started', () => {
     noVideo: { default: { movies: [{ title: 'Only In The Tick (2001)', reason: 'no video file' }], tv: [] } },
   })
 
-  it('is ignored when the stream replays an earlier webhook tick’s completion', async () => {
+  it('follows its own operation: the stream is asked for it by id', async () => {
     await startSync()
-    await send(completion(webhookTick, { timestamp: at(-60), replayed: true }))
+    expect(streams[0].url).toBe(`/api/authenticated/admin/sync-stream?operationId=${OP}`)
+    // (Finished, so no transition is left pending: React entangles them)
+    await send(completion(summary()))
+  })
+
+  it('is ignored when the stream replays an earlier webhook tick’s warm-up, progress and completion', async () => {
+    await startSync()
+    await send(warmup(TICK, { replayed: true }))
+    await send({ type: 'started', entityId: '__server_start__', serverId: 'tick-server', replayed: true, data: { total: 2 } })
+    await send(completion(webhookTick, { operationId: TICK, replayed: true }))
 
     expect(screen.getByRole('button', { name: 'Syncing...' })).toBeInTheDocument()
-    expect(screen.queryByText(/2 titles checked/)).not.toBeInTheDocument()
+    expect(screen.queryByText('tick-server')).not.toBeInTheDocument()
     expect(updateProcessedData).not.toHaveBeenCalled()
 
     await serverEvents()
@@ -334,9 +359,9 @@ describe('a completion that is not the sync the popup started', () => {
     expect(updateProcessedData).toHaveBeenCalledTimes(1)
   })
 
-  it('is ignored when it arrives live but finished before this sync started', async () => {
+  it('is ignored when a webhook tick’s completion arrives live, whatever its time', async () => {
     await startSync()
-    await send(completion(webhookTick, { timestamp: at(-1) }))
+    await send(completion(webhookTick, { operationId: TICK, timestamp: at(30) }))
 
     expect(screen.getByRole('button', { name: 'Syncing...' })).toBeInTheDocument()
     expect(streams[0].closed).toBe(false)
@@ -350,11 +375,104 @@ describe('a completion that is not the sync the popup started', () => {
     await startSync()
     await serverEvents()
     await send(completion(summary()))
-    // The popup closed its stream; a tick finishing later reaches it no more
     expect(streams[0].closed).toBe(true)
-    await send(completion(webhookTick, { timestamp: at(30) }))
+    await send(completion(webhookTick, { operationId: OP, timestamp: at(30) }))
 
     expect(screen.getByText(/1,086 titles checked/)).toBeInTheDocument()
     expect(screen.queryByText(/2 titles checked/)).not.toBeInTheDocument()
+  })
+
+  it('cannot end the wait of a sync that never ran: its own completion says another sync is still finishing', async () => {
+    await startSync()
+    // The orchestration lock is still held by the last run's cleanup: the
+    // run ends at once with an id-stamped completion of its own
+    await send(completion({ skipped: true, reason: 'orchestration_in_progress' }, { outcome: 'busy' }))
+
+    expect(screen.getByText('Another sync is still finishing; try again in a moment.', { selector: 'p:not([role="status"])' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Sync' })).toBeInTheDocument()
+    expect(streams[0].closed).toBe(true)
+    // The next tick's completion reaches nothing
+    await send(completion(webhookTick, { operationId: TICK }))
+    expect(screen.queryByText(/2 titles checked/)).not.toBeInTheDocument()
+    expect(updateProcessedData).not.toHaveBeenCalled()
+  })
+
+  it('cannot end the wait of a sync that threw: its own completion says it failed', async () => {
+    await startSync()
+    await send(completion(null, { outcome: 'failed', error: 'sync pool unavailable' }))
+
+    expect(screen.getByText('Sync encountered an error: sync pool unavailable', { selector: 'p:not([role="status"])' })).toBeInTheDocument()
+    expect(streams[0].closed).toBe(true)
+    await send(completion(webhookTick, { operationId: TICK }))
+    expect(screen.queryByText(/2 titles checked/)).not.toBeInTheDocument()
+  })
+
+  it('takes the joined sync’s replayed completion when it ended before sync-status answered', async () => {
+    // The POST joins a running sync, which ends before sync-status answers
+    postAnswer = { alreadyRunning: true, operationId: 'op-running', startTime: START, streamUrl: '/api/authenticated/admin/sync-stream' }
+    statusAnswer = { active: false, operationId: null, startTime: null, streamUrl: null, snapshot: null }
+    await startSync()
+    expect(streams[0].url).toBe('/api/authenticated/admin/sync-stream?operationId=op-running')
+
+    // A later tick's completion, then the joined sync's, replayed
+    await send(completion(webhookTick, { operationId: TICK }))
+    expect(screen.getByRole('button', { name: 'Syncing...' })).toBeInTheDocument()
+    await send(completion(summary(), { operationId: 'op-running', replayed: true }))
+
+    expect(screen.getByText(/1,086 titles checked/)).toBeInTheDocument()
+    expect(screen.queryByText(/2 titles checked/)).not.toBeInTheDocument()
+  })
+})
+
+describe('for assistive technology', () => {
+  it('says in a polite live region when the report replaces "Syncing..."', async () => {
+    renderPopup()
+    const status = screen.getByRole('status')
+    expect(status).toHaveAttribute('aria-live', 'polite')
+    expect(status).toHaveTextContent('')
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Sync' }))
+    })
+    await waitFor(() => expect(streams).toHaveLength(1))
+    expect(status).toHaveTextContent('Syncing…')
+
+    await serverEvents()
+    await send(completion(summary()))
+    expect(status).toHaveTextContent('Sync finished. The report is below.')
+  })
+
+  it('moves focus to the section a card’s link jumps to', async () => {
+    await startSync()
+    await serverEvents()
+    await send(
+      completion(
+        summary({ missingMedia: { default: { movies: ['Lost Write (2020)'], tv: [] } } })
+      )
+    )
+
+    const link = screen.getByRole('link', { name: '1 not in the library' })
+    expect(link).toHaveAttribute('href', '#sync-not-in-library-default')
+    const section = document.getElementById('sync-not-in-library-default')
+    expect(section).toHaveAttribute('tabindex', '-1')
+    fireEvent.click(link)
+    expect(section).toHaveFocus()
+  })
+
+  it('says whether the live error list is open, and hides the arrow from screen readers', async () => {
+    await startSync()
+    await send(warmup())
+    await send({ type: 'started', entityId: '__server_start__', serverId: 'default', data: { total: 2 } })
+    await send({ type: 'error', entityId: 'Broken (2001)', serverId: 'default', mediaType: 'movie', error: 'metadata fetch failed' })
+
+    const toggle = screen.getByRole('button', { name: '1 error' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle.querySelector('[aria-hidden="true"]')).toHaveTextContent('▼')
+    fireEvent.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(document.getElementById(toggle.getAttribute('aria-controls'))).toHaveTextContent('metadata fetch failed')
+
+    // (Finished, so no transition is left pending)
+    await send(completion(summary()))
   })
 })

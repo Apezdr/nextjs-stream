@@ -383,13 +383,15 @@ function whyStateDiffers(state, record, servers) {
  * @param {boolean} [options.allowSkip=true] - false for a sync an admin
  *   started from the UI: it always passes over every title (the per-title
  *   gates still apply), so the admin gets the whole report
+ * @param {string|null} [options.operationId] - The route's id for the sync
+ *   operation, stamped on a skipped tick's warm-up and completion events
  * @returns {Promise<
  *   { skipped: true, result: Object } |
  *   { skipped: false, mode: 'all'|'select', servers: Map<string, Object>, errors: Array|undefined, reason: string }
  * >} `servers` holds each enabled server's manifest probe (run/manifestTick);
  *   `errors` is undefined when every server answered, never an empty array.
  */
-export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}) {
+export async function fetchSyncTick({ forceSync = false, allowSkip = true, operationId = null } = {}) {
   const startedAt = Date.now()
   const servers = getAllServers()
   const client = await clientPromise
@@ -439,7 +441,7 @@ export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}
   console.info(tickPerfLine({ kind: 'skip', selected: none, manifests, perf: probePerf(probes) }))
 
   try {
-    syncEventBus.emitStarted('__sync_warmup__', MediaType.Movie, 'server-all')
+    syncEventBus.emitStarted('__sync_warmup__', MediaType.Movie, 'server-all', undefined, { operationId })
   } catch (error) {
     console.error(`emitStarted(warmup) failed: ${error.message}`)
   }
@@ -472,6 +474,8 @@ export async function fetchSyncTick({ forceSync = false, allowSkip = true } = {}
   try {
     syncEventBus.emitComplete('__sync_complete__', MediaType.Movie, 'server-all', SyncOperation.Metadata, {
       summary: result,
+      operationId,
+      outcome: 'skipped',
     })
   } catch (error) {
     console.error(`emitComplete failed: ${error.message}`)

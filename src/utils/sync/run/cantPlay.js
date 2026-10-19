@@ -1,25 +1,36 @@
 /**
  * The movies and episodes the library hides although they have a video: the
  * sync report's "Can't play yet on <server>" section
- * (components/Admin/SyncMediaPopup). Their primary video is in a format the
- * player cannot play and the transcoder does not take (an `.avi` today), so
+ * (components/Admin/SyncMediaPopup). Their primary video is one the player
+ * cannot play and the transcoder does not serve (a format it does not take, an
+ * `.avi` today; or a file the processor did not offer it, cantPlayReason), so
  * the library's visibility rule (utils/mediaVisibility isWebVisible, the one
  * predicate every list, rail, count and search applies) hides them, and
  * nothing else says so.
  *
- * Read from the library after every server's pass on an `all` tick (every
- * manual sync is one), so the list is complete whichever titles the passes
- * wrote. Each title is reported under the server its video came from
- * (`videoSource`).
+ * Read from the library after every server's pass of a sync an admin started
+ * (always a tick over every title; never a webhook tick), so the list is
+ * complete whichever titles the passes wrote. Each title is reported under the
+ * server its video came from (`videoSource`).
  */
 
 import { isWebVisible } from '@src/utils/mediaVisibility'
+import { SERVED_VIDEO_EXTENSIONS } from './syncReport'
 
 /** A document with a video: the only ones this report is about (the others are "no video file yet"). */
 const HAS_VIDEO = { videoURL: { $type: 'string', $ne: '' } }
 
-/** The fields isWebVisible reads, and the server the video came from. */
-const VISIBILITY_FIELDS = { videoURL: 1, primaryContainer: 1, jitUrl: 1, jitEligible: 1, jitServeOverride: 1, videoSource: 1 }
+/** The fields isWebVisible reads, the sources (their jitReason), and the server the video came from. */
+const VISIBILITY_FIELDS = {
+  videoURL: 1,
+  primaryContainer: 1,
+  jitUrl: 1,
+  jitEligible: 1,
+  jitServeOverride: 1,
+  videoSource: 1,
+  // For the primary source's jitReason (the reason only)
+  sources: 1,
+}
 
 /** Where a document with no `videoSource` is listed. */
 const UNKNOWN_SERVER = '(unknown server)'
@@ -33,10 +44,27 @@ function formatOf(doc) {
 }
 
 /**
+ * The processor's reasons a source is not recommended for the transcoder (its
+ * `jitReason`, components/media-scanner/domain/jit-eligibility.mjs), as the
+ * report says them.
+ */
+const JIT_REASONS = {
+  'container-unsupported': (format) => `unsupported format (${format})`,
+  'host-disabled': (format) => `the transcoder is turned off on this server (${format})`,
+  'probe-incomplete': (format) => `the file has not been fully probed yet (${format})`,
+}
+
+/** The primary source the document stores, if it stores its sources. */
+const primarySourceOf = (doc) => (Array.isArray(doc.sources) ? doc.sources.find((source) => source?.isPrimary) ?? null : null)
+
+/**
  * Why the library hides a document that has a video, or null when it does
  * not hide it (or it has no video). Whether it is hidden is isWebVisible's
- * answer, nothing else; the reason only names the format, and says so when an
- * admin turned the transcoder off for the title.
+ * answer, nothing else. The reason: an admin turned the transcoder off for the
+ * title; else the processor's `jitReason` for the primary source; else a
+ * transcoder-ready file with no transcoder address; else the format itself
+ * when the processor serves no such container; else that the file is not
+ * offered to the transcoder. Each names the format.
  *
  * @param {Object|null|undefined} doc - A movie or episode document
  * @returns {string|null}
@@ -48,9 +76,14 @@ export function cantPlayReason(doc) {
     (typeof doc.primaryContainer === 'string' && doc.primaryContainer !== '')
   if (!hasVideo || isWebVisible(doc)) return null
   const format = `.${formatOf(doc)}`
-  return doc.jitServeOverride === 'off'
-    ? `transcoding turned off for this title (${format})`
-    : `unsupported format (${format})`
+  if (doc.jitServeOverride === 'off') return `transcoding turned off for this title (${format})`
+  const jitReason = primarySourceOf(doc)?.jitReason
+  if (typeof jitReason === 'string' && jitReason) {
+    return JIT_REASONS[jitReason]?.(format) ?? `the transcoder does not take it: ${jitReason} (${format})`
+  }
+  if (doc.jitEligible === true && !doc.jitUrl) return `no transcoder address is configured (${format})`
+  if (!SERVED_VIDEO_EXTENSIONS.has(format)) return `unsupported format (${format})`
+  return `not offered to the transcoder (${format})`
 }
 
 /** The server's entry of `out`, created on first use. */

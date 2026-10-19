@@ -239,10 +239,14 @@ function ServerCard({ server, counts = null, passErrors = [], forced = false, li
           <span>{statusLabel}</span>
           {!counts && server.errorCount > 0 ? (
             <button
+              type="button"
               onClick={() => setErrorsExpanded(e => !e)}
-              className="text-red-600 font-medium hover:underline focus:outline-none"
+              aria-expanded={errorsExpanded}
+              aria-controls={sectionId('errors', server.id)}
+              className="text-red-600 font-medium hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
             >
-              {server.errorCount} error{server.errorCount !== 1 ? 's' : ''} {errorsExpanded ? '▲' : '▼'}
+              {server.errorCount} error{server.errorCount !== 1 ? 's' : ''}{' '}
+              <span aria-hidden="true">{errorsExpanded ? '▲' : '▼'}</span>
             </button>
           ) : null}
         </div>
@@ -276,7 +280,7 @@ function ServerCard({ server, counts = null, passErrors = [], forced = false, li
       ) : null}
 
       {errorsExpanded && server.errors.length > 0 ? (
-        <ul className="mt-2 max-h-40 overflow-y-auto space-y-1 border-t border-amber-200 pt-2">
+        <ul id={sectionId('errors', server.id)} className="mt-2 max-h-40 overflow-y-auto space-y-1 border-t border-amber-200 pt-2">
           {server.errors.map((err, i) => (
             <li key={i} className="bg-white border border-red-100 rounded p-1.5">
               <div className="flex items-center gap-1.5 mb-0.5 min-w-0">
@@ -330,9 +334,12 @@ function JumpLink({ target, children }) {
       href={`#${target}`}
       className="font-medium text-blue-700 underline hover:text-blue-900"
       onClick={(event) => {
-        // Scroll the dialog, not the page behind it, and leave the URL alone
+        // Scroll the dialog, not the page behind it, leave the URL alone, and
+        // move focus to the section (tabIndex -1), as following a link would
         event.preventDefault()
-        document.getElementById(target)?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+        const section = document.getElementById(target)
+        section?.scrollIntoView?.({ behavior: 'smooth', block: 'start' })
+        section?.focus({ preventScroll: true })
       }}
     >
       {children}
@@ -347,13 +354,13 @@ function JumpLink({ target, children }) {
 function CantPlaySection({ serverName, movies, tv }) {
   const id = sectionId('cant-play', serverName)
   return (
-    <section id={id} aria-labelledby={`${id}-heading`} className="mb-4 scroll-mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
+    <section id={id} tabIndex={-1} aria-labelledby={`${id}-heading`} className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 mb-4 scroll-mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
       <h4 id={`${id}-heading`} className="text-sm font-semibold text-gray-800">
         Can&apos;t play yet on {serverName}
       </h4>
       <p className="mt-1 text-gray-600">
-        These titles have a video in a format the player and the transcoder don&apos;t support yet, so they&apos;re
-        hidden from the library.
+        These titles have a video the player can&apos;t play and the transcoder doesn&apos;t serve yet, so
+        they&apos;re hidden from the library. Each one says why.
       </p>
       {movies.length > 0 ? (
         <>
@@ -396,7 +403,7 @@ function CantPlaySection({ serverName, movies, tv }) {
 function NotInLibrarySection({ serverName, movies, tv }) {
   const headingId = `${sectionId('not-in-library', serverName)}-heading`
   return (
-    <section id={sectionId('not-in-library', serverName)} aria-labelledby={headingId} className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs">
+    <section id={sectionId('not-in-library', serverName)} tabIndex={-1} aria-labelledby={headingId} className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 mb-4 scroll-mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs">
       <h4 id={headingId} className="text-sm font-semibold text-red-800">
         On {serverName} but not in the library
       </h4>
@@ -425,7 +432,7 @@ function NotInLibrarySection({ serverName, movies, tv }) {
 function NoVideoSection({ serverName, movies, tv }) {
   const headingId = `${sectionId('no-video', serverName)}-heading`
   return (
-    <section id={sectionId('no-video', serverName)} aria-labelledby={headingId} className="mb-4 scroll-mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
+    <section id={sectionId('no-video', serverName)} tabIndex={-1} aria-labelledby={headingId} className="focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 mb-4 scroll-mt-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
       <h4 id={headingId} className="text-sm font-semibold text-gray-800">
         No video file yet on {serverName}
       </h4>
@@ -462,24 +469,16 @@ function NoVideoSection({ serverName, movies, tv }) {
   )
 }
 
-/**
- * Whether a stream event belongs to the sync this popup started or joined,
- * which began at `startedAt` (the route's start time for it). The stream
- * replays the event history from the latest warm-up, which can be an earlier
- * tick's (a webhook tick's, completion and partial report included) when the
- * popup connects before this sync's own warm-up; every event of this sync is
- * stamped after its start. Without a start time only live events count.
- */
-function isEventOfRun(payload, startedAt) {
-  if (!startedAt) return !payload.replayed
-  const at = Date.parse(payload.timestamp)
-  return Number.isFinite(at) && at >= Date.parse(startedAt)
-}
+/** What the popup says when its sync ended without running (another was still finishing). */
+const BUSY_NOTICE = 'Another sync is still finishing; try again in a moment.'
 
-// Sync summary/outcome state — these five values are all part of a single sync
+/** What the popup says when the sync it joined ended at its manifests (a webhook tick that changed nothing). */
+const SKIPPED_NOTICE = 'Nothing changed on the file servers since the last sync.'
+
+// Sync summary/outcome state — these values are all part of a single sync
 // run's result and are reset together, so they live in one reducer rather than
-// five separate useState hooks.
-const INITIAL_SUMMARY = { data: null, notReady: null, duration: null, startTime: null, error: null }
+// separate useState hooks.
+const INITIAL_SUMMARY = { data: null, notReady: null, duration: null, startTime: null, error: null, notice: null }
 
 function summaryReducer(state, action) {
   switch (action.type) {
@@ -491,6 +490,8 @@ function summaryReducer(state, action) {
       return { ...state, startTime: action.startTime }
     case 'error':
       return { ...state, error: action.error }
+    case 'notice':
+      return { ...state, notice: action.notice }
     default:
       return state
   }
@@ -516,7 +517,7 @@ export default function SyncMediaPopup({
   const [isSyncing, startSyncTransition] = useTransition()
 
   const [summary, dispatchSummary] = useReducer(summaryReducer, INITIAL_SUMMARY)
-  const { data: syncData, notReady: syncNotReady, duration: syncDuration, startTime: syncstartTime, error: syncError } = summary
+  const { data: syncData, notReady: syncNotReady, duration: syncDuration, startTime: syncstartTime, error: syncError, notice: syncNotice } = summary
 
   const [progressCounts, setProgressCounts] = useState({ processed: 0, errors: 0 })
   const deferredCounts = useDeferredValue(progressCounts)
@@ -551,23 +552,38 @@ export default function SyncMediaPopup({
    * skipReplayed — when true, replayed events are ignored (state was already
    * pre-populated from the snapshot). Only __sync_complete__ is never skipped
    * so the popup closes correctly even if sync finished during connection setup.
+   *
+   * operationId — the sync this popup started or joined (the route's id for
+   * it). Its warm-up and completion carry it: only its completion ends the
+   * popup's wait, replayed or live, and a fresh sync's progress counts only
+   * from its own warm-up on. A joined sync's live events are its own: the
+   * route runs one sync at a time.
    */
-  const subscribeToStream = (streamUrl, { skipReplayed = false, startedAt = null } = {}) => {
+  const subscribeToStream = (streamUrl, { skipReplayed = false, operationId } = {}) => {
     return new Promise((resolve, reject) => {
-      const es = new EventSource(streamUrl)
+      if (!operationId) {
+        reject(new Error('The sync route answered without an operation id'))
+        return
+      }
+      const es = new EventSource(`${streamUrl}?operationId=${encodeURIComponent(operationId)}`)
       esRef.current = es
 
       // Set by this sync's completion: nothing after it changes the report
       let finished = false
+      // Whether the events now arriving are this sync's
+      let inRun = skipReplayed
       es.onmessage = (event) => {
         if (finished) return
         let payload
         try { payload = JSON.parse(event.data) } catch { return }
         if (payload.type === 'heartbeat') return
 
-        // Only this sync's events count: the stream replays history from the
-        // latest warm-up, which can be an earlier tick's, completion included
-        if (!isEventOfRun(payload, startedAt)) return
+        if (payload.entityId === '__sync_warmup__') {
+          inRun = payload.data?.operationId === operationId
+          return
+        }
+        const own = payload.data?.operationId === operationId
+        if (payload.entityId === '__sync_complete__' ? !own : !inRun) return
 
         // When joining mid-sync with a pre-populated snapshot, skip replayed
         // events — state is already correct from the snapshot. Always process
@@ -575,6 +591,22 @@ export default function SyncMediaPopup({
         if (skipReplayed && payload.replayed && payload.entityId !== '__sync_complete__') return
 
         if (payload.entityId === '__sync_complete__') {
+          finished = true
+          es.close()
+          if (payload.data?.outcome === 'busy') {
+            dispatchSummary({ type: 'notice', notice: BUSY_NOTICE })
+            resolve()
+            return
+          }
+          if (payload.data?.outcome === 'failed') {
+            dispatchSummary({ type: 'error', error: payload.data.error || 'the sync failed' })
+            resolve()
+            return
+          }
+          // A tick this popup joined that ended at its manifests: nothing to report
+          if (payload.data?.outcome === 'skipped') {
+            dispatchSummary({ type: 'notice', notice: SKIPPED_NOTICE })
+          }
           const completeSummary = payload.data?.summary || {}
           dispatchSummary({
             type: 'complete',
@@ -589,13 +621,9 @@ export default function SyncMediaPopup({
           })
           updateProcessedData('media')
           setLastSync(new Date())
-          finished = true
-          es.close()
           resolve()
           return
         }
-
-        if (payload.entityId === '__sync_warmup__') return
 
         if (payload.entityId === '__server_start__') {
           const sid = payload.serverId
@@ -735,7 +763,7 @@ export default function SyncMediaPopup({
             // skipReplayed=true because snapshot already represents state at
             // connect-time — replayed events would re-animate old entities and
             // hold the counter frozen until replay catches up to snapshot value.
-            await subscribeToStream(status.streamUrl, { skipReplayed: !!status.snapshot, startedAt: status.startTime ?? null })
+            await subscribeToStream(status.streamUrl, { skipReplayed: !!status.snapshot, operationId: status.operationId })
           } catch (err) {
             dispatchSummary({ type: 'error', error: err.message })
           }
@@ -762,18 +790,16 @@ export default function SyncMediaPopup({
           body: JSON.stringify({ forceSync: forceRefresh }),
         })
         const data = await response.json()
-        const { streamUrl, startTime: syncStart, alreadyRunning } = data
+        const { streamUrl, startTime: syncStart, alreadyRunning, operationId } = data
 
         if (syncStart) dispatchSummary({ type: 'startTime', startTime: syncStart })
 
         if (alreadyRunning) {
           // Sync was already in progress — fetch snapshot to pre-populate state,
           // same as the autoConnect path, so replay issues don't affect the counter.
-          let runningSince = null
           try {
             const statusRes = await fetch('/api/authenticated/admin/sync-status')
             const status = await statusRes.json()
-            runningSince = status.startTime ?? null
             if (status.startTime) dispatchSummary({ type: 'startTime', startTime: status.startTime })
             if (status.snapshot) {
               setServerStates(status.snapshot.servers || {})
@@ -787,10 +813,10 @@ export default function SyncMediaPopup({
           }
           // The sync this popup joined, not one it started: its options are unknown
           setStartedForced(false)
-          await subscribeToStream(streamUrl, { skipReplayed: true, startedAt: runningSince })
+          await subscribeToStream(streamUrl, { skipReplayed: true, operationId })
         } else {
           setStartedForced(forceRefresh)
-          await subscribeToStream(streamUrl, { startedAt: syncStart ?? null })
+          await subscribeToStream(streamUrl, { operationId })
         }
       } catch (err) {
         console.error('Sync failed:', err)
@@ -812,8 +838,22 @@ export default function SyncMediaPopup({
   const runErrors = isComplete ? syncData.errors.filter((e) => !e.serverId) : []
   // Per server, links from its card to its "Can't play yet" and "No video
   // file yet" sections, when they list anything
+  // What the live region says: the sync's state, once it changes
+  const announcement = isSyncing
+    ? 'Syncing…'
+    : isComplete
+      ? 'Sync finished. The report is below.'
+      : syncError !== null
+        ? `Sync encountered an error: ${syncError}`
+        : (syncNotice ?? '')
   const reportLinks = (serverId) => {
     const links = []
+    // The real problem first: titles the server has that the sync could not save
+    const missing = syncData?.missingMedia?.[serverId]
+    const notInLibrary = (missing?.movies?.length ?? 0) + (missing?.tv?.length ?? 0)
+    if (notInLibrary > 0) {
+      links.push({ target: sectionId('not-in-library', serverId), label: `${formatCount(notInLibrary)} not in the library` })
+    }
     const cantPlay = syncData?.cantPlay?.[serverId]?.count ?? 0
     if (cantPlay > 0) {
       links.push({ target: sectionId('cant-play', serverId), label: `${formatCount(cantPlay)} can't play yet` })
@@ -868,6 +908,11 @@ export default function SyncMediaPopup({
                     >
                       Sync Media Files
                     </Dialog.Title>
+
+                    {/* Says when the report replaces "Syncing...", for screen readers */}
+                    <p className="sr-only" role="status" aria-live="polite">
+                      {announcement}
+                    </p>
 
                     <div className="mt-2">
                       <p className="text-sm text-gray-500">
@@ -981,6 +1026,8 @@ export default function SyncMediaPopup({
                           Sync encountered an error: {syncError}
                         </p>
                       ) : null}
+
+                      {syncNotice !== null ? <p className="text-sm text-gray-700 mb-4">{syncNotice}</p> : null}
 
                       {syncData !== null
                         ? Object.entries(syncData.missingMedia).map(([serverName, { tv = [], movies = [] }]) =>

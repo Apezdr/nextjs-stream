@@ -373,7 +373,8 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
             };
           }
         } catch (processingError) {
-          console.error(`Error processing response for ${url}:`, processingError);
+          console.error(`Error processing response for ${loggableUrl(url)}: ${describeRequestError(processingError)}`);
+          debugStack(processingError);
           
           // Clean up response resources if there was an error processing the data
           cleanupResponse(response);
@@ -415,7 +416,8 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
           );
           return { data, headers: Object.fromEntries(fetchResponse.headers.entries()) };
         } catch (fetchError) {
-          console.error(`Fetch fallback failed for ${url}:`, fetchError);
+          console.error(`Fetch fallback failed for ${loggableUrl(url)}: ${describeRequestError(fetchError)}`);
+          debugStack(fetchError);
           // If fetch fails too, continue with retry logic
         }
       }
@@ -427,9 +429,9 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
       if (attempt < limit && shouldRetry(error, attempt)) {
         const delay = calculateBackoff(attempt, baseDelay, maxDelay);
         console.warn(
-          `Retrying request to ${url} (attempt ${attempt + 1}/${limit}) after ${Math.round(
+          `Retrying request to ${loggableUrl(url)} (attempt ${attempt + 1}/${limit}) after ${Math.round(
             delay
-          )}ms`
+          )}ms: ${describeRequestError(error)}`
         );
         await sleep(delay);
         
@@ -457,14 +459,72 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
   // A 404 is an answer the caller handles (a title TMDB doesn't have, an
   // optional file that isn't there), not a failure worth a stack trace
   if (lastError?.statusCode === 404) {
-    console.warn(`Not found (404): ${url}`);
+    console.warn(`Not found (404): ${loggableUrl(url)}`);
   } else {
     console.error(
-      `Failed to fetch ${url} after ${attemptsMade} attempt${attemptsMade === 1 ? '' : 's'}:`,
-      lastError
+      `Failed to fetch ${loggableUrl(url)} after ${attemptsMade} attempt${attemptsMade === 1 ? '' : 's'}: ` +
+        describeRequestError(lastError)
     );
+    debugStack(lastError);
   }
   throw lastError;
+}
+
+/** Query parameters whose value is a credential: logged as REDACTED. */
+const SECRET_PARAM = /^(api[-_]?key|apikey|key|token|access[-_]?token|auth|password|secret|signature|sig)$/i
+
+/**
+ * A URL as a log line may show it: the query kept (a file's `hash` is how a
+ * request is told apart), but a credential parameter's value (an *arr iCal
+ * feed's `apikey`) and any user:password are replaced.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+export function loggableUrl(url) {
+  let parsed
+  try {
+    parsed = new URL(url)
+  } catch {
+    return String(url)
+  }
+  let redacted = false
+  if (parsed.username || parsed.password) {
+    parsed.username = 'REDACTED'
+    parsed.password = ''
+    redacted = true
+  }
+  for (const name of [...parsed.searchParams.keys()]) {
+    if (SECRET_PARAM.test(name)) {
+      parsed.searchParams.set(name, 'REDACTED')
+      redacted = true
+    }
+  }
+  // Untouched when nothing is secret: the query exactly as it was sent
+  return redacted ? parsed.toString() : String(url)
+}
+
+/**
+ * One line about a failed request: its error's name, code, HTTP status and
+ * message (on one line, cut to 160 characters). Never the error object itself:
+ * got's RequestError prints its options, timings and agents, about 2,000
+ * lines a failure.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function describeRequestError(error) {
+  const name = error?.name || 'Error'
+  const code = error?.code ? ` ${error.code}` : ''
+  const status = error?.response?.statusCode ?? error?.statusCode
+  const message = String(error?.message ?? error ?? '').replace(/\s+/g, ' ').trim()
+  const shown = message.length > 160 ? `${message.slice(0, 159)}…` : message
+  return `${name}${code}${status ? ` HTTP ${status}` : ''}: ${shown}`
+}
+
+/** The stack of a failed request, only when DEBUG is set. */
+function debugStack(error) {
+  if (process.env.DEBUG && error?.stack) console.debug(error.stack)
 }
 
 /**

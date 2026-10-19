@@ -14,7 +14,7 @@ import { SyncStatus } from '../core/types'
  * The containers the processor serves (its SUPPORTED_CONTAINERS,
  * components/media-scanner/domain/jit-eligibility.mjs).
  */
-const SERVED_VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.webm'])
+export const SERVED_VIDEO_EXTENSIONS = new Set(['.mp4', '.m4v', '.mov', '.mkv', '.webm'])
 
 /** Video extensions outside those five: a file of one of these is a video the library cannot serve. */
 const OTHER_VIDEO_EXTENSIONS = new Set([
@@ -87,12 +87,18 @@ export function noVideoTitles(fileServer) {
   return { movies, tv }
 }
 
+/** Whether a result says its write changed the document's data (or created it). */
+const changedDocument = (result) =>
+  result?.status === SyncStatus.Completed && (result.metadata?.documentChanged === true || result.metadata?.created === true)
+
 /**
  * How one server's pass went, title by title (a movie, or a show with its
- * seasons and episodes): checked, updated (something was written), unchanged
- * (nothing written: its gate showed nothing had changed since the server's
- * last complete pass, or the pass found nothing to write) and failed (any
- * result failed). Every title checked is in exactly one of the other three.
+ * seasons and episodes): checked, updated (a result says its write changed
+ * a document's data: `documentChanged`, or `created`; "completed" alone only
+ * says the write ran), unchanged (nothing changed: its gate showed nothing
+ * had changed since the server's last complete pass, or the pass found
+ * nothing to change) and failed (any result failed). Every title checked is
+ * in exactly one of the other three.
  *
  * @returns {{
  *   record: (kind: 'movies'|'tv', title: string, results: Array<Object>) => void,
@@ -110,7 +116,7 @@ export function createTitleCounts() {
       if (failed) {
         counts.failed += 1
         failures.push({ kind, title, error: failed.errors?.find(Boolean) ?? 'failed without a message' })
-      } else if (results.some((result) => result?.status === SyncStatus.Completed)) {
+      } else if (results.some(changedDocument)) {
         counts.updated += 1
       } else {
         counts.unchanged += 1
