@@ -1290,7 +1290,7 @@ describe('the pass inputs the run builds under its lock', () => {
     // Cleanup (stood in for here) is handed no listing and the every-server
     // flag off: its own gates then delete nothing (postSyncCleanupDeleteGate)
     const { runPostSyncCleanup } = require('@src/utils/sync/run/postSync')
-    const [listings, , cleanupOptions] = runPostSyncCleanup.mock.calls.at(-1)
+    const [listings, cleanupOptions] = runPostSyncCleanup.mock.calls.at(-1)
     expect(listings.size).toBe(0)
     expect(cleanupOptions.allEnabledServersProbed).toBe(false)
     expect(result.flatSyncResults).toBeUndefined()

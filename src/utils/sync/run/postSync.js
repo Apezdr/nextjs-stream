@@ -4,19 +4,14 @@
  * Replaces the legacy 15-Map / per-orphan `deleteOne` pipeline (and the
  * worker_threads isolate that wrapped it) with bulk MongoDB operations:
  *   - Four projection-only `find()` calls to enumerate current DB state
- *   - One in-memory pass over `allFileServers` + `fieldAvailability` to
- *     compute orphan id arrays per collection
- *   - One `deleteMany()` per collection (split across $in shards for cascades)
+ *   - One `deleteMany({ syncRunId: { $ne } })` per collection (split across
+ *     $in shards for cascades): a document the run did not stamp is an orphan
  *
- * Total wall time is dominated by MongoDB roundtrips (~hundreds of ms);
- * the in-memory predicate pass is sub-100ms even at 16k entities. There
- * is no longer a justification for off-thread execution.
+ * Total wall time is dominated by MongoDB roundtrips (~hundreds of ms), so
+ * there is no justification for off-thread execution.
  *
  * After it, the run's own jobs (runAfterSyncJobs below): the WatchHistory
  * migration, the watch-history validation and the new-content notices.
- *
- * The legacy cleanup functions in videoAvailability.js are preserved as
- * @deprecated reference for predicate-equivalence review.
  */
 
 import { trace } from '@opentelemetry/api'
@@ -239,16 +234,13 @@ export async function runAfterSyncJobs({ syncRunId, incompleteReasons = [] }) {
  *   answering server's titles (run/listing). Used only for the top-level
  *   "no-server-data" safety guard — the cleanup predicate itself is the
  *   marker, not in-memory file-server state.
- * @param {Object} [_fieldAvailability] - Vestigial. Pre-marker cleanup used
- *   this for the per-record predicate. Kept in the signature for callers that
- *   still pass it; ignored by the marker-based path.
  * @param {Object} [options]
  * @param {string} [options.syncRunId] - The orchestration's syncRunId. The
  *   marker-based path requires this; if absent the cleanup is skipped.
  * @returns {Promise<Object>} { removed, errors, cache }
  */
  
-export async function runPostSyncCleanup(listings, _fieldAvailability, options = {}) {
+export async function runPostSyncCleanup(listings, options = {}) {
   const log = createLogger('FlatSync.PostSyncCleanup')
   const { syncRunId, preTagCoverage, runStartedAt, allEnabledServersProbed } = options
 
@@ -631,176 +623,7 @@ export async function runPostSyncCleanup(listings, _fieldAvailability, options =
   })
 }
 
-// ─── Deprecated predicate helpers (kept for review) ──────────────────────────
-//
-// Phase 2 of the marker-based cleanup rollout (2026-05-09) replaced the
-// in-memory predicate phase with four `deleteMany({ syncRunId: { $ne } })`
-// calls. The compute*Deletes / computeMarkerCoverage helpers below were the
-// in-memory predicates Phase 2 superseded. They're preserved here so
-// reviewers can diff the marker-based query against the original predicate
-// logic for parity confirmation, and so a fast revert path exists if the
-// marker pattern needs to be unwound.
-//
-// Each function now throws on call to surface forgotten callers loudly. The
-// real bodies live in block comments below the throws.
-
-/** @deprecated Replaced 2026-05-09 by the inline `Marker-based cleanup: orphan tally` log in runPostSyncCleanup. */
-function computeMarkerCoverage(/* docs, currentSyncRunId */) {
-  throw new Error('computeMarkerCoverage is deprecated; cleanup now reports orphan counts directly.')
-  /* LEGACY BODY (kept for review):
-   *
-   * const tally = (arr) => {
-   *   let current = 0, prior = 0, missing = 0
-   *   for (const d of arr) {
-   *     if (d.syncRunId === undefined || d.syncRunId === null) missing++
-   *     else if (d.syncRunId === currentSyncRunId) current++
-   *     else prior++
-   *   }
-   *   return { current, prior, missing, total: arr.length }
-   * }
-   * return {
-   *   movies: tally(docs.movies),
-   *   shows: tally(docs.shows),
-   *   seasons: tally(docs.seasons),
-   *   episodes: tally(docs.episodes),
-   * }
-   */
-}
-
-/** @deprecated Replaced 2026-05-09 by `deleteMany({ syncRunId: { $ne: currentRunId } })` on FlatMovies. */
-function computeMovieDeletes(/* movieDocs, serverMovieTitles, fieldAvailability */) {
-  throw new Error('computeMovieDeletes is deprecated; cleanup uses syncRunId markers now.')
-  /* LEGACY BODY (verified parity with videoAvailability.js:21-103):
-   *
-   * Movie delete predicate:
-   *   delete iff
-   *     (!found && (responsible missing OR empty))
-   *     OR
-   *     (found && responsible exists && responsible.length === 0)
-   *
-   * const ids = []
-   * for (const m of movieDocs) {
-   *   const found = serverMovieTitles.has(m.title)
-   *     || (m.originalTitle && serverMovieTitles.has(m.originalTitle))
-   *   const responsible = fieldAvailability?.movies?.[m.title]?.['urls.mp4']
-   *   const del = !found
-   *     ? (!responsible || responsible.length === 0)
-   *     : (Array.isArray(responsible) && responsible.length === 0)
-   *   if (del) ids.push(m._id)
-   * }
-   * return ids
-   */
-}
-
-/** @deprecated Replaced 2026-05-09 by `deleteMany({ syncRunId: { $ne: currentRunId } })` on FlatTVShows. */
-function computeShowDeletes(/* showDocs, serverShowTitles, showsWithValidVideoURLsByTitle, serversWithShowByTitle, fieldAvailability */) {
-  throw new Error('computeShowDeletes is deprecated; cleanup uses syncRunId markers now.')
-  /* LEGACY BODY (verified parity with videoAvailability.js:114-247):
-   *
-   * TV show delete predicate:
-   *   delete iff (!titleMatch || !hasValid)
-   *   then UNDO delete if fieldAvailability rescue applies (any responsible
-   *   server in the show-level field paths matches a server with this show).
-   *
-   * NOTE on byTitle vs byOriginalTitle parity gap:
-   *   `fieldAvailability.tv` is keyed by file-server originalTitle, but legacy
-   *   code looks up using `show.title` (DB title). Preserved here for parity.
-   *
-   * const ids = []
-   * for (const s of showDocs) {
-   *   const titleMatch = serverShowTitles.has(s.title)
-   *     || (s.originalTitle && serverShowTitles.has(s.originalTitle))
-   *   const hasValid = showsWithValidVideoURLsByTitle.has(s.title)
-   *     || (s.originalTitle && showsWithValidVideoURLsByTitle.has(s.originalTitle))
-   *   let del = !titleMatch || !hasValid
-   *   if (titleMatch && fieldAvailability?.tv?.[s.title]) {
-   *     const serversWithShow = serversWithShowByTitle.get(s.title)
-   *       ?? (s.originalTitle ? serversWithShowByTitle.get(s.originalTitle) : null)
-   *       ?? []
-   *     const showLevelFields = Object.keys(fieldAvailability.tv[s.title])
-   *       .filter((p) => !p.includes('seasons.') && !p.includes('episodes.'))
-   *     if (showLevelFields.length > 0) {
-   *       const isResponsibleForAnyField = showLevelFields.some((fp) => {
-   *         const arr = fieldAvailability.tv[s.title][fp] || []
-   *         return arr.length === 0 || serversWithShow.some((sid) => arr.includes(sid))
-   *       })
-   *       if (!isResponsibleForAnyField && serversWithShow.length > 0) del = false
-   *     }
-   *   }
-   *   if (del) ids.push(s._id)
-   * }
-   * return ids
-   */
-}
-
-/** @deprecated Replaced 2026-05-09 by `deleteMany({ syncRunId: { $ne: currentRunId } })` on FlatSeasons. */
-function computeSeasonDeletes(/* seasonDocs, serverSeasonKeys, fieldAvailability, showIdsDeletedSet, showIdToOriginalTitle, showIdToTitle */) {
-  throw new Error('computeSeasonDeletes is deprecated; cleanup uses syncRunId markers now.')
-  /* LEGACY BODY (verified parity with videoAvailability.js:257-385):
-   *
-   * Skips seasons whose show is already cascading.
-   *
-   * const ids = []
-   * for (const sn of seasonDocs) {
-   *   if (showIdsDeletedSet.has(sn.showId.toString())) continue
-   *   const origTitle = showIdToOriginalTitle.get(sn.showId.toString()) ?? sn.showTitle
-   *   const found = serverSeasonKeys.has(`${origTitle}|${sn.seasonNumber}`)
-   *   let del = !found
-   *   if (found) {
-   *     const showTitleForFA = showIdToTitle.get(sn.showId.toString()) ?? sn.showTitle
-   *     const fa = fieldAvailability?.tv?.[showTitleForFA]
-   *     if (fa) {
-   *       const path = `seasons.Season ${sn.seasonNumber}`
-   *       const seasonFields = Object.keys(fa).filter((p) => p.startsWith(path))
-   *       if (seasonFields.length > 0) {
-   *         const isResponsible = seasonFields.some((fp) => (fa[fp] || []).length === 0)
-   *         if (isResponsible) del = false
-   *       }
-   *     }
-   *   }
-   *   if (del) ids.push(sn._id)
-   * }
-   * return ids
-   */
-}
-
-/** @deprecated Replaced 2026-05-09 by `deleteMany({ syncRunId: { $ne: currentRunId } })` on FlatEpisodes. */
-function computeEpisodeDeletes(/* episodeDocs, serverEpisodeKeys, fieldAvailability, showIdsDeletedSet, seasonIdsDeletedSet, showIdToOriginalTitle, showIdToTitle */) {
-  throw new Error('computeEpisodeDeletes is deprecated; cleanup uses syncRunId markers now.')
-  /* LEGACY BODY (verified parity with videoAvailability.js:395-534):
-   *
-   * Skips episodes whose show or season is already cascading.
-   *
-   * const ids = []
-   * for (const e of episodeDocs) {
-   *   if (showIdsDeletedSet.has(e.showId.toString())) continue
-   *   if (seasonIdsDeletedSet.has(e.seasonId.toString())) continue
-   *   const origTitle = showIdToOriginalTitle.get(e.showId.toString()) ?? e.showTitle
-   *   const found = serverEpisodeKeys.has(`${origTitle}|${e.seasonNumber}|${e.episodeNumber}`)
-   *   let del = !found
-   *   if (found) {
-   *     const showTitleForFA = showIdToTitle.get(e.showId.toString()) ?? e.showTitle
-   *     const fa = fieldAvailability?.tv?.[showTitleForFA]
-   *     if (fa) {
-   *       const epPath = `seasons.Season ${e.seasonNumber}.episodes.S${
-   *         String(e.seasonNumber).padStart(2, '0')
-   *       }E${String(e.episodeNumber).padStart(2, '0')}`
-   *       const epFields = Object.keys(fa).filter((p) => p.startsWith(epPath))
-   *       if (epFields.length > 0) {
-   *         const isResponsible = epFields.some((fp) => (fa[fp] || []).length === 0)
-   *         if (isResponsible) del = false
-   *       }
-   *     }
-   *   }
-   *   if (del) ids.push(e._id)
-   * }
-   * return ids
-   */
-}
-
-// ─── Cache invalidation (lifted from videoAvailability.js, unchanged) ─────────
-// Preserved here so videoAvailability.js's `clearCacheEntries` can be marked
-// @deprecated alongside the rest. Behavior is byte-for-byte identical.
+// ─── Cache invalidation ───────────────────────────────────────────────────────
 
 async function clearCacheEntries(removedContent) {
   const log = createLogger('FlatSync.PostSyncCleanup.Cache')
