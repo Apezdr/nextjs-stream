@@ -1519,3 +1519,52 @@ describe('metadata an admin locked', () => {
     expect(db.season(1).title).toBe('Season One')
   })
 })
+
+// ---------------------------------------------------------------- gates after another server's change
+
+describe('a server\'s gates after another server\'s pass changed an episode', () => {
+  // A owns the episode, B only its Spanish subtitle. B's subtitle file changes;
+  // A's payload, and who reports what, stay exactly as they were.
+  const english = { English: { url: `${ROOT}/Season%201/S01E01.en.srt`, srcLang: 'en', lastModified: 'm1' } }
+  const spanish = (lastModified) => ({
+    Spanish: { url: `${ROOT}/Season%201/S01E01.es.srt`, srcLang: 'es', lastModified },
+  })
+  const payloadsAt = (lastModified) => ({
+    A: showPayload([[1, { subtitles: english }]]),
+    B: showPayload([[1, { subtitles: spanish(lastModified) }]]),
+  })
+
+  it('drops A\'s show gate with its episode gate, so A\'s next pass stamps the episode again, and both settle', async () => {
+    const db = makeDatabase()
+    await run(db, payloadsAt('m1'), ['A', 'B'])
+    await run(db, payloadsAt('m1'), ['A', 'B'])
+    expect(Object.keys(db.show().syncGates).sort()).toEqual(['A', 'B'])
+    expect(Object.keys(db.episode(1).syncGates).sort()).toEqual(['A', 'B'])
+
+    // A's pass is skipped; B's changes the episode
+    const changed = payloadsAt('m2')
+    expect(statuses(await pass(db, 'A', changed))).toEqual(['skipped'])
+    await pass(db, 'B', changed)
+    expect(db.episode(1).captionURLs.Spanish.lastModified).toBe('m2')
+    expect(db.episode(1).syncGates?.A).toBeUndefined()
+    // The claim was that A's show gate stays, so A skips the show for good
+    expect(db.show().syncGates?.A).toBeUndefined()
+
+    // A's next pass is not skipped, and stamps its episode gate again
+    expect(statuses(await pass(db, 'A', changed))).not.toEqual(['skipped'])
+    expect(db.episode(1).syncGates?.A).toMatch(/^g\d+:/)
+    expect(db.show().syncGates?.A).toMatch(/^g\d+:/)
+
+    // Settled: every server is skipped, and the documents are a fresh sync's
+    const before = settled(db)
+    for (const serverId of ['A', 'B']) {
+      expect(statuses(await pass(db, serverId, changed))).toEqual(['skipped'])
+    }
+    expect(Object.keys(db.show().syncGates).sort()).toEqual(['A', 'B'])
+    expect(Object.keys(db.episode(1).syncGates).sort()).toEqual(['A', 'B'])
+    expect(settled(db)).toEqual(before)
+    const fresh = makeDatabase()
+    await run(fresh, changed, ['A', 'B'])
+    expect(settled(db)).toEqual(settled(fresh))
+  })
+})
