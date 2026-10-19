@@ -76,7 +76,32 @@ const TTL_INDEXES = [READ_TTL_INDEX, UNREAD_NEW_CONTENT_TTL_INDEX];
 /** The backfill's flag in app_config.migrations (migrations/runOnce). */
 export const READ_AT_BACKFILL_MIGRATION = 'notifications-readAt-from-createdAt';
 
+/** The unused-index drop's flag in app_config.migrations (migrations/runOnce). */
+export const DROP_UNUSED_INDEXES_MIGRATION = 'notifications-drop-unused-category-priority-indexes';
+
+// Older builds left these two on prod databases. No query uses them (0 uses
+// since mongod's last start on 2026-10-17) and no code creates them.
+const UNUSED_INDEX_NAMES = ['userId_category_index', 'userId_priority_index'];
+
+// IndexNotFound, and NamespaceNotFound for a database whose collection does
+// not exist yet: there is nothing to drop, which is the goal reached.
+const NOTHING_TO_DROP_CODES = new Set([26, 27]);
+
 let indexesEnsured = null;
+
+/** Drops the unused indexes by name, leaving every other index alone. Idempotent. */
+async function dropUnusedIndexes(collection) {
+  const dropped = [];
+  for (const name of UNUSED_INDEX_NAMES) {
+    try {
+      await collection.dropIndex(name);
+      dropped.push(name);
+    } catch (err) {
+      if (!NOTHING_TO_DROP_CODES.has(err?.code)) throw err;
+    }
+  }
+  return { dropped };
+}
 
 /**
  * Every read notification without a `readAt` gets its `createdAt` (now, when
@@ -106,6 +131,13 @@ function ensureIndexes(client, collection) {
       if (backfill.applied) log.info({ ...backfill.result }, 'Gave read notifications without a readAt their createdAt');
     } catch (err) {
       log.error({ err, migration: READ_AT_BACKFILL_MIGRATION }, 'Could not backfill readAt on read notifications');
+    }
+
+    try {
+      const drop = await runMigrationOnce(client, DROP_UNUSED_INDEXES_MIGRATION, () => dropUnusedIndexes(collection));
+      if (drop.applied) log.info({ ...drop.result }, 'Dropped the unused Notifications indexes');
+    } catch (err) {
+      log.error({ err, migration: DROP_UNUSED_INDEXES_MIGRATION }, 'Could not drop the unused Notifications indexes');
     }
 
     const specs = [...NOTIFICATION_INDEXES, ...TTL_INDEXES];

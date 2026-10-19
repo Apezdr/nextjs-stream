@@ -49,6 +49,11 @@ const EXPECTED_SPECS = [
   ],
 ]
 
+/** The readAt backfill's flags (the index drop keeps its own). */
+function backfillFlags() {
+  return mockMigrations.flags.filter((f) => f._id === 'notifications-readAt-from-createdAt')
+}
+
 function freshModule() {
   let mod
   jest.isolateModules(() => {
@@ -71,6 +76,9 @@ beforeEach(() => {
     createIndex: jest.fn(async (_key, { name }) => {
       mockOrder.push(`index ${name}`)
       return name
+    }),
+    dropIndex: jest.fn(async (name) => {
+      mockOrder.push(`drop ${name}`)
     }),
     updateMany: jest.fn(async () => {
       mockOrder.push('backfill')
@@ -138,7 +146,7 @@ it('gives read notifications without a readAt their createdAt, before the indexe
   expect(filter).toEqual({ read: true, readAt: { $exists: false } })
   expect(update).toEqual([{ $set: { readAt: { $ifNull: ['$createdAt', '$$NOW'] } } }])
   expect(mockOrder.indexOf('backfill')).toBeLessThan(mockOrder.indexOf('index readAt_ttl_read'))
-  expect(mockMigrations.flags).toEqual([
+  expect(backfillFlags()).toEqual([
     expect.objectContaining({
       _id: 'notifications-readAt-from-createdAt',
       result: { readNotificationsWithoutReadAt: 12 },
@@ -158,7 +166,7 @@ it('builds the indexes when the backfill fails, answers the request, and backfil
   await expect(db.getUnreadNotificationCount(USER_ID)).resolves.toBe(3)
 
   expect(mockCollection.createIndex).toHaveBeenCalledTimes(4)
-  expect(mockMigrations.flags).toEqual([])
+  expect(backfillFlags()).toEqual([])
   expect(mockLog.error).toHaveBeenCalledWith(
     expect.objectContaining({ migration: 'notifications-readAt-from-createdAt' }),
     expect.any(String)
@@ -166,7 +174,7 @@ it('builds the indexes when the backfill fails, answers the request, and backfil
 
   await newProcess().getUnreadNotificationCount(USER_ID)
   expect(mockCollection.updateMany).toHaveBeenCalledTimes(2)
-  expect(mockMigrations.flags).toHaveLength(1)
+  expect(backfillFlags()).toHaveLength(1)
 })
 
 it('logs a conflict, answers the request and does not retry', async () => {
@@ -248,5 +256,63 @@ describe('insertNotificationsOnce (the new-content notices’ delivery)', () => 
     const db = freshModule()
 
     await expect(db.insertNotificationsOnce([doc(1), doc(2)])).rejects.toThrow('not primary')
+  })
+})
+
+describe('the unused category and priority indexes', () => {
+  const notFound = (code, codeName) => Object.assign(new Error(codeName), { code, codeName })
+
+  it('drops both once, before the indexes are ensured, and leaves the others alone', async () => {
+    const db = freshModule()
+
+    await db.getUnreadNotificationCount(USER_ID)
+    await db.getUnreadNotificationCount(USER_ID)
+
+    expect(mockCollection.dropIndex.mock.calls).toEqual([['userId_category_index'], ['userId_priority_index']])
+    expect(mockCollection.createIndex.mock.calls).toEqual(EXPECTED_SPECS)
+    expect(mockOrder.indexOf('drop userId_priority_index')).toBeLessThan(mockOrder.indexOf('index userId_read_index'))
+    expect(mockMigrations.flags.find((f) => f._id === db.DROP_UNUSED_INDEXES_MIGRATION).result).toEqual({
+      dropped: ['userId_category_index', 'userId_priority_index'],
+    })
+    expect(mockLog.error).not.toHaveBeenCalled()
+  })
+
+  it('does nothing when they are absent, whether the index or the collection is missing', async () => {
+    mockCollection.dropIndex = jest
+      .fn()
+      .mockRejectedValueOnce(notFound(27, 'IndexNotFound'))
+      .mockRejectedValueOnce(notFound(26, 'NamespaceNotFound'))
+    const db = freshModule()
+
+    await db.getUnreadNotificationCount(USER_ID)
+
+    expect(mockLog.error).not.toHaveBeenCalled()
+    expect(mockCollection.createIndex).toHaveBeenCalledTimes(4)
+    expect(mockMigrations.flags.find((f) => f._id === db.DROP_UNUSED_INDEXES_MIGRATION).result).toEqual({
+      dropped: [],
+    })
+  })
+
+  it('is not repeated by a later process once flagged', async () => {
+    await freshModule().getUnreadNotificationCount(USER_ID)
+    mockCollection.dropIndex.mockClear()
+
+    await newProcess().getUnreadNotificationCount(USER_ID)
+
+    expect(mockCollection.dropIndex).not.toHaveBeenCalled()
+  })
+
+  it('logs another failure, leaves no flag so the next process retries, and still ensures the indexes', async () => {
+    mockCollection.dropIndex = jest.fn().mockRejectedValue(notFound(13, 'Unauthorized'))
+    const db = freshModule()
+
+    await db.getUnreadNotificationCount(USER_ID)
+
+    expect(mockLog.error).toHaveBeenCalledWith(
+      expect.objectContaining({ migration: db.DROP_UNUSED_INDEXES_MIGRATION }),
+      expect.any(String)
+    )
+    expect(mockMigrations.flags.some((f) => f._id === db.DROP_UNUSED_INDEXES_MIGRATION)).toBe(false)
+    expect(mockCollection.createIndex).toHaveBeenCalledTimes(4)
   })
 })

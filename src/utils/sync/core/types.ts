@@ -10,8 +10,7 @@ import type { CleanupConfig } from './FieldAbsenceCleaner'
 // ==========================================
 
 export enum MediaTypesFieldAvailability {
-  Movie = 'movies',
-  TVShow = 'tv'
+  Movie = 'movies'
 }
 
 export enum MediaType {
@@ -31,7 +30,6 @@ export enum SyncOperation {
 
 export enum SyncStatus {
   Pending = 'pending',
-  InProgress = 'in_progress',
   Completed = 'completed',
   Failed = 'failed',
   Skipped = 'skipped'

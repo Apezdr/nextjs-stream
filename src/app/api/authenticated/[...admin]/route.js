@@ -24,7 +24,6 @@ import { validateWatchHistory } from '@src/utils/sync/run/validateWatchHistory'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { SyncEventType } from '@src/utils/sync/core/types'
 import { createDatabaseAdapter } from '@src/utils/sync/infrastructure'
-import { getSyncVerificationReport } from '@src/utils/sync_verification'
 import { NotificationManager } from '@src/utils/notifications/NotificationManager.js'
 import { revalidateTag } from 'next/cache'
 import {
@@ -329,50 +328,6 @@ export async function GET(request, props) {
             servers: syncSnapshot.servers,
             totals: syncSnapshot.totals,
           } : null,
-        }
-        break
-      case 'sync-verification':
-        {
-          // Get query parameter for comparison with file servers
-          const url = new URL(request.url);
-          const compareWithFileServers = url.searchParams.get('compare') !== 'false';
-          
-          responseData = await getSyncVerificationReport(compareWithFileServers);
-          
-          // Add extra context for better diagnostics
-          responseData.generatedAt = new Date().toISOString();
-          responseData.servers = getAllServers().map(server => server.id);
-          
-          // Reorganize response to highlight the most important information first
-          if (responseData.issueSummary) {
-            responseData = {
-              // Quick overview at the top
-              overview: {
-                totalIssues: responseData.totalIssues,
-                totalMedia: responseData.totalMedia,
-                issuePercentage: responseData.issuePercentage,
-                generatedAt: responseData.generatedAt,
-                servers: responseData.servers
-              },
-              // Top-level issue summary by category
-              topIssues: responseData.issueSummary.topIssues,
-              // Detailed breakdown by issue pattern
-              issuePatterns: responseData.issueSummary.byPattern,
-              // Original issue summary for full detail
-              issueSummary: {
-                total: responseData.issueSummary.total,
-                byCategory: responseData.issueSummary.byCategory
-              },
-              // Stats about overall content
-              stats: responseData.stats,
-              // Rest of the data
-              ...responseData
-            };
-            
-            // Remove duplicated data to clean up the response
-            delete responseData.issueSummary.topIssues;
-            delete responseData.issueSummary.byPattern;
-          }
         }
         break
       default: {

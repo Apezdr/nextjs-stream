@@ -83,7 +83,7 @@ beforeEach(() => {
 describe('runPostSyncCleanup', () => {
   it('deletes orphans on a run where every enabled server answered', async () => {
     const collections = install()
-    const result = await runPostSyncCleanup(listings, {}, options(true))
+    const result = await runPostSyncCleanup(listings, options(true))
 
     expect(collections.FlatMovies.deleteMany).toHaveBeenCalledTimes(1)
     expect(collections.FlatEpisodes.deleteMany).toHaveBeenCalledTimes(1)
@@ -93,7 +93,7 @@ describe('runPostSyncCleanup', () => {
 
   it('deletes nothing on a run where a server did not answer', async () => {
     const collections = install()
-    const result = await runPostSyncCleanup(listings, {}, options(false))
+    const result = await runPostSyncCleanup(listings, options(false))
 
     for (const name of Object.keys(collections)) {
       expect(collections[name].deleteMany).not.toHaveBeenCalled()
@@ -106,7 +106,7 @@ describe('runPostSyncCleanup', () => {
   it('leaves the watch-history validation to the run, which runs it after cleanup however cleanup ends', async () => {
     // (syncAllServers runs runAfterSyncJobs after cleanup: serverPass.test)
     install()
-    const result = await runPostSyncCleanup(listings, {}, options(false))
+    const result = await runPostSyncCleanup(listings, options(false))
 
     expect(validateWatchHistoryAgainstDatabase).not.toHaveBeenCalled()
     expect(result).not.toHaveProperty('watchHistoryValidation')
@@ -118,7 +118,7 @@ describe('runPostSyncCleanup', () => {
     mockDb.collections.FlatMovies = collection([{ _id: 'm1', title: 'Gone Film', originalTitle: 'Gone Film (2001)' }])
     mockDb.collections.FlatTVShows = collection([{ _id: 's1', title: 'Gone Show', originalTitle: 'Gone Show (2019)' }])
 
-    const result = await runPostSyncCleanup(listings, {}, options(true))
+    const result = await runPostSyncCleanup(listings, options(true))
 
     // (`removed` keeps naming display titles, for the Redis keys and the log)
     expect(result.removed.movies).toEqual(['Gone Film'])
@@ -135,7 +135,7 @@ describe('runPostSyncCleanup', () => {
     ['listings with no title', new Map([['main', { movies: new Set(), tv: new Map() }], ['other', { movies: new Set(), tv: new Map() }]])],
   ])('deletes nothing when the servers list no title (%s), even when every one answered', async (_name, empty) => {
     const collections = install()
-    await runPostSyncCleanup(empty, {}, options(true))
+    await runPostSyncCleanup(empty, options(true))
 
     for (const name of Object.keys(collections)) {
       expect(collections[name].deleteMany).not.toHaveBeenCalled()
@@ -145,7 +145,7 @@ describe('runPostSyncCleanup', () => {
   it('deletes nothing for a caller that does not say either way', async () => {
     // Fail-closed: only an explicit "every server answered" allows a delete.
     const collections = install()
-    await runPostSyncCleanup(listings, {}, options(undefined))
+    await runPostSyncCleanup(listings, options(undefined))
 
     for (const name of Object.keys(collections)) {
       expect(collections[name].deleteMany).not.toHaveBeenCalled()

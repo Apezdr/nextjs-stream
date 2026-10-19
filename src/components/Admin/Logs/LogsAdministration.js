@@ -4,7 +4,6 @@ import useSWR from 'swr';
 import { LazyLog, ScrollFollow } from '@melloware/react-logviewer';
 import DockerHubLastUpdated from '../DockerHubLastUpdated';
 import { buildURL } from '@src/utils';
-import SyncVerificationPanel from './SyncVerification';
 import { formatServerLabel } from '@src/utils/serverLabel';
 
 const fetchServers = async () => {
@@ -25,7 +24,6 @@ const fetchCategories = async ([serverEndpoint]) => {
 };
 
 export default function LogsAdministration() {
-  const [activeTab, setActiveTab] = useState('logs'); // 'logs' or 'syncVerification'
   const [selectedServers, setSelectedServers] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('');
   const [refreshKey, setRefreshKey] = useState(0); // State to trigger re-render of LazyLog
@@ -88,44 +86,11 @@ export default function LogsAdministration() {
     setRefreshKey((prevKey) => prevKey + 1); // Increment the key to force re-render
   };
 
-  // Tab switching
-  const handleTabChange = (tab) => {
-    setActiveTab(tab);
-  };
-
   return (
     <div className="text-black">
       <h1 className="block text-2xl font-bold mb-4">Log Administration</h1>
 
-      {/* Tab Navigation */}
-      <div className="border-b border-gray-200 mb-6">
-        <nav className="-mb-px flex space-x-8">
-          <button
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'logs'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-            onClick={() => handleTabChange('logs')}
-          >
-            Server Logs
-          </button>
-          <button
-            className={`py-2 px-1 border-b-2 font-medium text-sm ${
-              activeTab === 'syncVerification'
-                ? 'border-blue-500 text-blue-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-            }`}
-            onClick={() => handleTabChange('syncVerification')}
-          >
-            Sync Verification
-          </button>
-        </nav>
-      </div>
-
-      {/* Logs Tab Content */}
-      {activeTab === 'logs' && (
-        <>
+      <>
           <div className='flex flex-col md:flex-row justify-between items-center mb-4'>
             <div className="flex flex-col">
               {/* Server Selection */}
@@ -213,13 +178,7 @@ export default function LogsAdministration() {
               </p>
             )}
           </div>
-        </>
-      )}
-
-      {/* Sync Verification Tab Content */}
-      {activeTab === 'syncVerification' && (
-        <SyncVerificationPanel />
-      )}
+      </>
     </div>
   );
 }

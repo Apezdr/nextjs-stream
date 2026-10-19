@@ -39,7 +39,6 @@ jest.mock('@src/utils/sync/run/syncAllServers', () => ({}))
 jest.mock('@src/utils/sync/core/events', () => ({ syncEventBus: {} }))
 jest.mock('@src/utils/sync/core/types', () => ({ SyncEventType: {} }))
 jest.mock('@src/utils/sync/infrastructure', () => ({}))
-jest.mock('@src/utils/sync_verification', () => ({}))
 jest.mock('@src/utils/auth_utils', () => ({}))
 jest.mock('@src/utils/notifications/NotificationManager.js', () => ({ NotificationManager: {} }))
 jest.mock('@src/lib/logger', () => ({

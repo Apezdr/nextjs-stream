@@ -60,7 +60,6 @@ jest.mock('@src/utils/config', () => ({}))
 jest.mock('@src/utils/monitor_server_load', () => ({ monitorConfig: {} }))
 jest.mock('@src/utils/server_track_processes', () => ({}))
 jest.mock('@src/utils/backendAuth', () => ({ getBackendAuthHeaders: jest.fn(async () => ({})) }))
-jest.mock('@src/utils/sync_verification', () => ({}))
 jest.mock('@src/utils/auth_utils', () => ({}))
 jest.mock('@src/lib/logger', () => ({
   createLogger: jest.fn(() => ({ info: jest.fn(), warn: jest.fn(), error: jest.fn() })),

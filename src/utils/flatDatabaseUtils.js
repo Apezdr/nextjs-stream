@@ -2577,27 +2577,6 @@ export async function getFlatAvailableMoviesCount() {
   }
 }
 
-// Function to get the last updated timestamp for movies in the flat database
-export async function getFlatMoviesLastUpdatedTimestamp() {
-  try {
-    const client = await clientPromise
-    const result = await client
-      .db('Media')
-      .collection('FlatMovies')
-      .find({})
-      .sort({ mediaLastModified: -1 })
-      .limit(1)
-      .toArray()
-
-    return result.length > 0 && result[0].mediaLastModified
-      ? new Date(result[0].mediaLastModified).getTime()
-      : Date.now()
-  } catch (error) {
-    console.error('Error fetching last updated timestamp:', error)
-    return Date.now()
-  }
-}
-
 /**
  * Gets all TV shows for the TV list page using the flat database structure.
  * This function is optimized for the TVList component with minimal projection fields.
@@ -2870,53 +2849,6 @@ export async function countUniqueViewersByNormalizedId(normalizedVideoId, mediaI
       console.timeEnd('countUniqueViewersByNormalizedId:total')
     }
     return 0
-  }
-}
-
-/**
- * Get the last updated timestamp for TV shows in the flat database.
- * This function checks both TV shows and episodes to find the most recent update.
- *
- * @returns {Promise<number>} The timestamp of the most recent update.
- */
-export async function getFlatTVShowsLastUpdatedTimestamp() {
-  try {
-    const client = await clientPromise
-
-    // First, check the latest TV show update
-    const tvShowsResult = await client
-      .db('Media')
-      .collection('FlatTVShows')
-      .find({})
-      .sort({ mediaLastModified: -1 })
-      .limit(1)
-      .toArray()
-
-    // Then check the latest episode update
-    const episodesResult = await client
-      .db('Media')
-      .collection('FlatEpisodes')
-      .find({})
-      .sort({ mediaLastModified: -1 })
-      .limit(1)
-      .toArray()
-
-    // Compare both timestamps and return the most recent one
-    const tvShowTimestamp =
-      tvShowsResult.length > 0 && tvShowsResult[0].mediaLastModified
-        ? new Date(tvShowsResult[0].mediaLastModified).getTime()
-        : 0
-
-    const episodeTimestamp =
-      episodesResult.length > 0 && episodesResult[0].mediaLastModified
-        ? new Date(episodesResult[0].mediaLastModified).getTime()
-        : 0
-
-    // Return the most recent timestamp or current time if none found
-    return Math.max(tvShowTimestamp, episodeTimestamp) || Date.now()
-  } catch (error) {
-    console.error('Error fetching TV shows last updated timestamp:', error)
-    return Date.now()
   }
 }
 

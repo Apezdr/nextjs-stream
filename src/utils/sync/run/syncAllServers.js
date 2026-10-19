@@ -493,7 +493,6 @@ export async function syncAllServers(tick, options = {}) {
         console.log(chalk.bold.yellow('Performing post-sync cleanup (background)...'))
         const finalAvailabilityResults = await runPostSyncCleanup(
           listings,
-          fieldAvailability,
           {
             syncRunId,
             preTagCoverage: preTagResult,
