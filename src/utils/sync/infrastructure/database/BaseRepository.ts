@@ -7,7 +7,8 @@ import { MongoClient, Collection, UpdateResult, DeleteResult } from 'mongodb'
 import { BaseMediaEntity, MediaRepository, DatabaseError } from '../../core/types'
 import { isTopLevelFieldLocked } from '../../core/locks'
 import isEqual from 'lodash/isEqual'
- 
+import { isIndexConflict, reconcileIndex } from './indexReconcile'
+
 // @ts-ignore — sibling JS module with no .d.ts; it exports plain functions
 import { getCurrentSyncRunId } from '../../run/runState'
 
@@ -17,6 +18,39 @@ import { getCurrentSyncRunId } from '../../run/runState'
 // doc still falls through to the "no diff → no write" fast path; the marker
 // gets re-applied via the explicit add-on at every write site below.
 const DIFF_EXCLUDED_FIELDS = new Set(['_id', 'lastSynced', 'updatedAt', 'createdAt', 'syncRunId'])
+
+/** A transport error a repeated index call may get past (createIndexSafely). */
+function isTransientIndexError(error: any): boolean {
+  if (!error) return false
+  if (
+    typeof error.hasErrorLabel === 'function' &&
+    (error.hasErrorLabel('TransientTransactionError') || error.hasErrorLabel('RetryableWriteError'))
+  ) {
+    return true
+  }
+  return /connection .* closed|ECONNRESET|socket hang up|socket|network|pool (was )?(cleared|closed)|server is closed|MongoNetworkError/i.test(
+    error?.message || ''
+  )
+}
+
+/**
+ * One index call, tried up to 4 times on a transient transport drop, backing
+ * off (which also de-bursts the retry wave) between tries.
+ */
+async function withTransientRetry<R>(call: () => Promise<R>): Promise<R> {
+  const MAX_TRIES = 4
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await call()
+    } catch (error: any) {
+      if (attempt < MAX_TRIES && isTransientIndexError(error)) {
+        await new Promise((resolve) => setTimeout(resolve, 250 * attempt))
+        continue
+      }
+      throw error
+    }
+  }
+}
 
 export abstract class BaseRepository<T extends BaseMediaEntity> implements MediaRepository<T> {
   protected client: MongoClient
@@ -516,8 +550,9 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
   abstract createIndexes(): Promise<boolean>
 
   /**
-   * Safely create an index: ignore "already exists" conflicts, and RETRY
-   * transient transport errors.
+   * Safely create an index: reconcile an index that exists under its name or
+   * key with other options (./indexReconcile), and RETRY transient transport
+   * errors. An equivalent index under another name is accepted as it is.
    *
    * The pooled connection tearing down mid-build (`connection N to host:27017
    * closed`, `ECONNRESET`, `pool was cleared`) is endemic in this deployment.
@@ -530,39 +565,13 @@ export abstract class BaseRepository<T extends BaseMediaEntity> implements Media
    * `withTransientRetry` in sync/run/preTag.js.
    */
   protected async createIndexSafely(indexSpec: Record<string, any>, options?: Record<string, any>): Promise<void> {
-    const isAlreadyExists = (error: any): boolean =>
-      error?.code === 85 || error?.code === 86 ||
-      error?.codeName === 'IndexOptionsConflict' || error?.codeName === 'IndexKeySpecsConflict'
-
-    const isTransient = (error: any): boolean => {
-      if (!error) return false
-      if (
-        typeof error.hasErrorLabel === 'function' &&
-        (error.hasErrorLabel('TransientTransactionError') || error.hasErrorLabel('RetryableWriteError'))
-      ) {
-        return true
-      }
-      return /connection .* closed|ECONNRESET|socket hang up|socket|network|pool (was )?(cleared|closed)|server is closed|MongoNetworkError/i.test(
-        error?.message || ''
-      )
-    }
-
-    const MAX_TRIES = 4
-    for (let attempt = 1; ; attempt++) {
-      try {
-        await this.collection.createIndex(indexSpec, options)
-        return
-      } catch (error: any) {
-        // Already exists (possibly with different options/name) — not an error.
-        if (isAlreadyExists(error)) return
-        // Transient transport drop — back off (which also de-bursts the retry
-        // wave) and try again before giving up.
-        if (attempt < MAX_TRIES && isTransient(error)) {
-          await new Promise((resolve) => setTimeout(resolve, 250 * attempt))
-          continue
-        }
-        throw error
-      }
+    try {
+      await withTransientRetry(() => this.collection.createIndex(indexSpec, options))
+    } catch (error: any) {
+      // An index of this name or key exists with other options: compared, and
+      // replaced when it differs. Throws only when neither index could be had.
+      if (!isIndexConflict(error)) throw error
+      await reconcileIndex(this.collection as any, this.collectionName, indexSpec, options, withTransientRetry)
     }
   }
 
