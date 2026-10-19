@@ -17,7 +17,10 @@
  * kept, as before. When they differ, the existing index is dropped and the
  * requested one created, in one log line. When that create fails (a unique
  * index over duplicate values), the previous definition is created again and
- * the failure logged: the collection is never left without the index. Each
+ * the failure logged. After any drop the indexes are read again: when neither
+ * the requested index nor the one it replaced is there (a drop the server
+ * applied but whose answer was lost), the requested one is created, and when
+ * that fails the failure is reported, never a success with no index. Each
  * index is reconciled at most once per process, so a failed attempt is not
  * repeated on every sync.
  */
@@ -46,6 +49,8 @@ export type ReconcileOutcome =
   | 'unreadable'
   | 'kept'
   | 'already-attempted'
+  /** Neither the requested index nor the one it replaces was there after the drop: the requested one was created. */
+  | 'created'
 
 /** Whether createIndex refused because an index of that name or key exists with other options. */
 export function isIndexConflict(error: any): boolean {
@@ -135,10 +140,11 @@ function attemptedThisProcess(): Set<string> {
 
 /**
  * Bring an index that conflicted with the requested definition in line with
- * it (see the module comment). Throws only when the requested index could not
- * be created and the previous one could not be created again either: the
- * collection then has neither, and its repository's createIndexes reports the
- * failure, so the next sync tries again.
+ * it (see the module comment). After a drop, confirms that an index is there
+ * (confirmPresent). Throws when the collection is left with neither the
+ * requested index nor the one it replaces, or when that cannot be confirmed:
+ * its repository's createIndexes then reports the failure, so the next sync
+ * tries again.
  *
  * @param retry - Runs one database call with the caller's transient-error retries
  */
@@ -168,11 +174,33 @@ export async function reconcileIndex(
 
   const before = describe(existing.name, existing.key, existing)
   const after = describe(name, key, options)
+  const outcome = await replace(collection, collectionName, key, options, retry, existing, before, after, differences)
+  return confirmPresent(collection, collectionName, name, key, options, retry, existing, outcome)
+}
+
+/** Whether a dropIndex failed because the index is not there (a retried drop whose first answer was lost). */
+const isIndexNotFound = (error: any) => error?.code === 27 || error?.codeName === 'IndexNotFound'
+
+/** Drop the existing index and create the requested one, restoring the existing one when that fails. */
+async function replace(
+  collection: IndexedCollection,
+  collectionName: string,
+  key: Record<string, any>,
+  options: Record<string, any>,
+  retry: <R>(call: () => Promise<R>) => Promise<R>,
+  existing: Record<string, any>,
+  before: string,
+  after: string,
+  differences: string[]
+): Promise<ReconcileOutcome> {
   try {
     await retry(() => collection.dropIndex(existing.name))
   } catch (error) {
-    console.error(`[indexes] ${collectionName}: could not drop ${before} to create ${after} (${message(error)}); kept it`)
-    return 'kept'
+    // Not there: dropped already (the answer to the first try was lost)
+    if (!isIndexNotFound(error)) {
+      console.error(`[indexes] ${collectionName}: could not drop ${before} to create ${after} (${message(error)}); kept it`)
+      return 'kept'
+    }
   }
   try {
     await retry(() => collection.createIndex(key, options))
@@ -191,4 +219,41 @@ export async function reconcileIndex(
     console.error(`[indexes] ${collectionName}: could not create ${after} (${message(error)}); restored ${before}`)
     return 'restored'
   }
+}
+
+/**
+ * After a drop was tried, whatever its answer: the requested index, one of the
+ * same name or key, or the one it replaces must be there. A drop or a create
+ * the server applied but whose answer was lost can otherwise leave neither
+ * behind a reply that looked like success. When neither is there the
+ * requested index is created; when that fails the error is thrown, so the
+ * repository's createIndexes reports the failure and the next sync tries
+ * again. (The paths that drop nothing need no check: the conflict that led
+ * here is an index of that name or key, and it is still there.)
+ */
+async function confirmPresent(
+  collection: IndexedCollection,
+  collectionName: string,
+  name: string,
+  key: Record<string, any>,
+  options: Record<string, any>,
+  retry: <R>(call: () => Promise<R>) => Promise<R>,
+  existing: Record<string, any>,
+  outcome: ReconcileOutcome
+): Promise<ReconcileOutcome> {
+  const indexes = await retry(() => collection.indexes())
+  const present = indexes.some(
+    (index) => index.name === name || index.name === existing.name || sameIndexKey(index, key)
+  )
+  if (present) return outcome
+  try {
+    await retry(() => collection.createIndex(key, options))
+  } catch (error) {
+    console.error(
+      `[indexes] ${collectionName}: neither ${name} nor ${existing.name} is there, and creating ${name} failed (${message(error)})`
+    )
+    throw error
+  }
+  console.info(`[indexes] ${collectionName}: created ${describe(name, key, options)}: neither it nor ${existing.name} was there`)
+  return 'created'
 }

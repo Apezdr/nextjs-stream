@@ -39,7 +39,8 @@ const conflict = (code, message) => Object.assign(new Error(message), { code, co
  * duplicate values fails with E11000. `duplicates` names the unique indexes
  * the data cannot hold.
  */
-function indexedCollection(initial = [], { duplicates = [], failRestore = false } = {}) {
+function indexedCollection(initial = [], { duplicates = [], failRestore = false, loseDropReply: lose = false, dropError = 'lost', failCreateOf = null } = {}) {
+  let loseDropReply = lose
   let indexes = [{ v: 2, key: { _id: 1 }, name: '_id_' }, ...initial.map((index) => ({ v: 2, ...index }))]
   let creates = 0
   const collection = {
@@ -56,11 +57,20 @@ function indexedCollection(initial = [], { duplicates = [], failRestore = false 
       if (byKey) throw conflict(85, `Index already exists with a different name: ${byKey.name}`)
       if (wanted.unique && duplicates.includes(name)) throw Object.assign(new Error('E11000 duplicate key error'), { code: 11000 })
       if (failRestore && creates > 1) throw new Error('not primary')
+      if (name === failCreateOf) throw new Error('not primary')
       indexes.push({ v: 2, ...wanted })
       return name
     }),
     dropIndex: jest.fn(async (name) => {
+      if (!indexes.some((index) => index.name === name)) {
+        throw Object.assign(new Error(`index not found with name [${name}]`), { code: 27, codeName: 'IndexNotFound' })
+      }
       indexes = indexes.filter((index) => index.name !== name)
+      // The server dropped it; its answer does not arrive
+      if (loseDropReply) {
+        loseDropReply = false
+        throw new Error(`connection 3 to db.example:27017 closed (${dropError})`)
+      }
     }),
     named: (name) => indexes.find((index) => index.name === name),
   }
@@ -174,6 +184,45 @@ describe('a replacement that cannot be built', () => {
 
     await expect(reconcileIndex(collection, 'FlatEpisodes', key, options)).rejects.toThrow('not primary')
     expect(console.error).toHaveBeenCalledWith(expect.stringContaining('the collection has neither'))
+  })
+
+  describe('a drop the server applied but whose answer was lost', () => {
+    const stale = { key: { title: 1 }, name: 'title_index', unique: true }
+
+    it('is taken as dropped when the retry finds no index (IndexNotFound), and the code’s index is created', async () => {
+      const collection = indexedCollection([stale], { loseDropReply: true })
+
+      await expect(new MovieRepository(clientOver({ FlatMovies: collection })).createIndexes()).resolves.toBe(true)
+
+      expect(collection.dropIndex).toHaveBeenCalledTimes(2)
+      expect(collection.named('title_index')).toEqual({ v: 2, key: { title: 1 }, name: 'title_index' })
+      expect(console.info).toHaveBeenCalledWith(expect.stringContaining('[indexes] FlatMovies: replaced title_index'))
+    })
+
+    it('never reports success with neither index there: the code’s index is created', async () => {
+      // No retry: the lost answer is the only answer, and the step reports the index kept
+      const collection = indexedCollection([stale], { loseDropReply: true, dropError: 'not retried' })
+
+      expect(await reconcileIndex(collection, 'FlatMovies', { title: 1 }, { name: 'title_index' })).toBe('created')
+
+      expect(collection.named('title_index')).toEqual({ v: 2, key: { title: 1 }, name: 'title_index' })
+      expect(console.info).toHaveBeenCalledWith(expect.stringContaining('neither it nor title_index was there'))
+    })
+
+    it('reports the failure when the code’s index cannot be created then either', async () => {
+      const collection = indexedCollection([stale], { loseDropReply: true, failCreateOf: 'title_index' })
+
+      await expect(reconcileIndex(collection, 'FlatMovies', { title: 1 }, { name: 'title_index' })).rejects.toThrow('not primary')
+      expect(collection.indexes.mock.calls.length).toBe(2)
+      expect(console.error).toHaveBeenCalledWith(expect.stringContaining('neither title_index nor title_index is there'))
+    })
+
+    it('makes the repository’s createIndexes report the failure', async () => {
+      const collection = indexedCollection([stale], { loseDropReply: true, failCreateOf: 'title_index' })
+
+      await expect(new MovieRepository(clientOver({ FlatMovies: collection })).createIndexes()).resolves.toBe(false)
+      expect(collection.named('title_index')).toBeUndefined()
+    })
   })
 
   it('keeps the index when it cannot be dropped', async () => {
