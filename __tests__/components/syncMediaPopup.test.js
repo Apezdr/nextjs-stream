@@ -1,0 +1,273 @@
+/**
+ * The admin's manual sync popup against a fake sync route and event stream:
+ * what it says before the sync, the report it shows when the sync it started
+ * completes (per server counts, the skipped ones explained, failures, the
+ * titles not in the library and those with no video file yet), and that a
+ * completion of another sync (a webhook tick's, replayed by the stream) does
+ * not replace that report.
+ */
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import SyncMediaPopup from '@src/components/Admin/SyncMediaPopup'
+
+const START = '2026-10-19T12:00:00.000Z'
+const at = (seconds) => new Date(Date.parse(START) + seconds * 1000).toISOString()
+
+/** The EventSources the popup opens; a case pushes events through them. */
+let streams = []
+class FakeEventSource {
+  constructor(url) {
+    this.url = url
+    this.closed = false
+    streams.push(this)
+  }
+  close() {
+    this.closed = true
+  }
+}
+
+const send = async (payload) => {
+  const stream = streams[streams.length - 1]
+  await act(async () => {
+    stream.onmessage({ data: JSON.stringify(payload) })
+  })
+}
+
+const summary = (overrides = {}) => ({
+  syncRunId: 'run-1',
+  missingMedia: { default: { movies: [], tv: [] } },
+  noVideo: { default: { movies: [], tv: [] } },
+  titleCounts: { default: { checked: 1086, updated: 3, unchanged: 1083, failed: 0, failures: [] } },
+  errors: [],
+  duration: 9.85,
+  ...overrides,
+})
+
+const completion = (data, { timestamp = at(10), replayed = false } = {}) => ({
+  type: 'complete',
+  entityId: '__sync_complete__',
+  serverId: 'server-all',
+  timestamp,
+  ...(replayed ? { replayed: true } : {}),
+  data: { summary: data },
+})
+
+const serverEvents = async (serverId = 'default') => {
+  await send({ type: 'started', entityId: '__sync_warmup__', serverId: 'server-all', timestamp: at(1) })
+  await send({ type: 'started', entityId: '__server_start__', serverId, timestamp: at(1), data: { total: 1086 } })
+  await send({ type: 'complete', entityId: '__server_complete__', serverId, timestamp: at(9) })
+}
+
+const updateProcessedData = jest.fn()
+const setLastSync = jest.fn()
+
+function renderPopup() {
+  return render(
+    <SyncMediaPopup isOpen setIsOpen={jest.fn()} updateProcessedData={updateProcessedData} setLastSync={setLastSync} />
+  )
+}
+
+async function startSync({ force = false } = {}) {
+  renderPopup()
+  if (force) fireEvent.click(screen.getByRole('checkbox', { name: /force refresh/i }))
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Sync' }))
+  })
+  await waitFor(() => expect(streams).toHaveLength(1))
+}
+
+beforeEach(() => {
+  streams = []
+  updateProcessedData.mockClear()
+  setLastSync.mockClear()
+  global.EventSource = FakeEventSource
+  global.fetch = jest.fn(async (url, options = {}) => {
+    if (url === '/api/authenticated/admin/sync' && options.method === 'POST') {
+      return { json: async () => ({ started: true, startTime: START, streamUrl: '/api/authenticated/admin/sync-stream' }) }
+    }
+    throw new Error(`unexpected fetch ${url}`)
+  })
+  jest.spyOn(console, 'error').mockImplementation(() => {})
+})
+
+afterEach(() => {
+  delete global.EventSource
+  jest.restoreAllMocks()
+})
+
+describe('before the sync', () => {
+  it('says what a sync does and how long it takes', () => {
+    renderPopup()
+    expect(
+      screen.getByText(
+        'Checks every title on each file server and updates anything that changed. This usually takes about 10 seconds.'
+      )
+    ).toBeInTheDocument()
+  })
+})
+
+describe('the report of the sync the popup started', () => {
+  it('counts each server’s titles, with thousands separators, and explains the unchanged ones', async () => {
+    await startSync()
+    await serverEvents()
+    await send(completion(summary()))
+
+    expect(screen.getByRole('heading', { name: 'default', level: 4 })).toBeInTheDocument()
+    expect(screen.getByText('Done', { selector: 'span' })).toBeInTheDocument()
+    expect(screen.getByText(/1,086 titles checked: 3 updated, 1,083 unchanged,/)).toBeInTheDocument()
+    expect(screen.getByText('0 failed')).toBeInTheDocument()
+    expect(
+      screen.getByText('Unchanged titles were skipped: nothing on the server changed since the last sync.')
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/synced/)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Done' })).toBeInTheDocument()
+    expect(updateProcessedData).toHaveBeenCalledTimes(1)
+  })
+
+  it('says unchanged titles were checked in full after a forced sync', async () => {
+    await startSync({ force: true })
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ forceSync: true })
+    await serverEvents()
+    await send(completion(summary()))
+
+    expect(screen.getByText('Unchanged titles were checked in full and needed no update.')).toBeInTheDocument()
+  })
+
+  it('lists each failed title with its error, truncated, and says the server finished with failures', async () => {
+    const error = `episode metadata fetch failed: ${'x'.repeat(300)}`
+    await startSync()
+    await serverEvents()
+    await send(
+      completion(
+        summary({
+          titleCounts: {
+            default: {
+              checked: 2,
+              updated: 0,
+              unchanged: 1,
+              failed: 1,
+              failures: [{ kind: 'tv', title: 'Broken Show (2019)', error }],
+            },
+          },
+        })
+      )
+    )
+
+    expect(screen.getByText('Done, with failures', { selector: 'span' })).toBeInTheDocument()
+    expect(screen.getByText('1 failed')).toHaveClass('text-red-700')
+    const failed = screen.getByRole('heading', { name: 'Failed titles', level: 5 })
+    const item = within(failed.parentElement).getByRole('listitem')
+    expect(item).toHaveTextContent('Broken Show (2019):')
+    expect(item.textContent.length).toBeLessThan(200)
+    expect(item.textContent.endsWith('…')).toBe(true)
+  })
+
+  it('shows the titles a server has that are not in the library as a problem the next sync retries', async () => {
+    await startSync()
+    await serverEvents()
+    await send(
+      completion(
+        summary({
+          missingMedia: {
+            default: { movies: ['Lost Write (2020)'], tv: [{ showTitle: 'Lost Show (2018)', seasons: [] }] },
+          },
+        })
+      )
+    )
+
+    const heading = screen.getByRole('heading', { name: 'On default but not in the library', level: 4 })
+    const section = heading.closest('section')
+    expect(section).toHaveClass('bg-red-50')
+    expect(within(section).getByText('The sync could not save these titles. The next sync retries these.')).toBeInTheDocument()
+    expect(within(section).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'Lost Write (2020)',
+      'Lost Show (2018)',
+    ])
+  })
+
+  it('shows the titles with no video file yet, with their reasons, as information', async () => {
+    await startSync()
+    await serverEvents()
+    await send(
+      completion(
+        summary({
+          noVideo: {
+            default: {
+              movies: [
+                { title: 'Not Yet (2024)', reason: 'no video file' },
+                { title: 'Old Rip (1999)', reason: 'unsupported format (.avi)' },
+              ],
+              tv: [
+                { title: 'Some Show (2010)', season: 'Season 2', reason: 'no video file' },
+                { title: 'Empty Show (2011)', season: null, reason: 'no video file' },
+              ],
+            },
+          },
+        })
+      )
+    )
+
+    const heading = screen.getByRole('heading', { name: 'No video file yet on default', level: 4 })
+    const section = heading.closest('section')
+    expect(section).toHaveClass('bg-gray-50')
+    expect(
+      within(section).getByText(
+        'These folders have artwork and metadata but no playable video. They stay out of the library’s lists and search until a video arrives.'.replace('’', "'")
+      )
+    ).toBeInTheDocument()
+    expect(within(section).getAllByRole('listitem').map((li) => li.textContent)).toEqual([
+      'Not Yet (2024): no video file',
+      'Old Rip (1999): unsupported format (.avi)',
+      'Some Show (2010), Season 2: no video file',
+      'Empty Show (2011): no video file',
+    ])
+    expect(screen.queryByText(/mp4/i)).not.toBeInTheDocument()
+  })
+})
+
+describe('a completion that is not the sync the popup started', () => {
+  const webhookTick = summary({
+    titleCounts: { default: { checked: 2, updated: 1, unchanged: 1, failed: 0, failures: [] } },
+    noVideo: { default: { movies: [{ title: 'Only In The Tick (2001)', reason: 'no video file' }], tv: [] } },
+  })
+
+  it('is ignored when the stream replays an earlier webhook tick’s completion', async () => {
+    await startSync()
+    await send(completion(webhookTick, { timestamp: at(-60), replayed: true }))
+
+    expect(screen.getByRole('button', { name: 'Syncing...' })).toBeInTheDocument()
+    expect(screen.queryByText(/2 titles checked/)).not.toBeInTheDocument()
+    expect(updateProcessedData).not.toHaveBeenCalled()
+
+    await serverEvents()
+    await send(completion(summary()))
+
+    expect(screen.getByText(/1,086 titles checked/)).toBeInTheDocument()
+    expect(screen.queryByText(/2 titles checked/)).not.toBeInTheDocument()
+    expect(screen.queryByText('Only In The Tick (2001): no video file')).not.toBeInTheDocument()
+    expect(updateProcessedData).toHaveBeenCalledTimes(1)
+  })
+
+  it('is ignored when it arrives live but finished before this sync started', async () => {
+    await startSync()
+    await send(completion(webhookTick, { timestamp: at(-1) }))
+
+    expect(screen.getByRole('button', { name: 'Syncing...' })).toBeInTheDocument()
+    expect(streams[0].closed).toBe(false)
+
+    await send(completion(summary()))
+    expect(screen.getByText(/1,086 titles checked/)).toBeInTheDocument()
+    expect(streams[0].closed).toBe(true)
+  })
+
+  it('leaves the shown report alone when another completion arrives after it', async () => {
+    await startSync()
+    await serverEvents()
+    await send(completion(summary()))
+    // The popup closed its stream; a tick finishing later reaches it no more
+    expect(streams[0].closed).toBe(true)
+    await send(completion(webhookTick, { timestamp: at(30) }))
+
+    expect(screen.getByText(/1,086 titles checked/)).toBeInTheDocument()
+    expect(screen.queryByText(/2 titles checked/)).not.toBeInTheDocument()
+  })
+})

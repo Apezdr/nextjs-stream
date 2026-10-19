@@ -29,16 +29,16 @@ const SYNC_ICON = (
 function StatusDot({ status }) {
   if (status === 'syncing') {
     return (
-      <svg className="w-3 h-3 text-blue-500 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
+      <svg aria-hidden="true" className="w-3 h-3 text-blue-500 animate-spin shrink-0" fill="none" viewBox="0 0 24 24">
         <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
       </svg>
     )
   }
   if (status === 'complete') {
-    return <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
+    return <div aria-hidden="true" className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" />
   }
-  return <div className="w-2.5 h-2.5 rounded-full bg-gray-300 shrink-0" />
+  return <div aria-hidden="true" className="w-2.5 h-2.5 rounded-full bg-gray-300 shrink-0" />
 }
 
 function AnimatedTicker({
@@ -168,30 +168,76 @@ function AnimatedTicker({
   )
 }
 
-function ServerCard({ server }) {
-  const [errorsExpanded, setErrorsExpanded] = useState(false)
-  const hasErrors = server.errorCount > 0
+/** A count with a thousands separator. */
+const formatCount = (n) => Number(n || 0).toLocaleString('en-US')
 
-  const cardClass = server.status === 'syncing'
+/** `n` and the noun, singular for one. */
+const countOf = (n, singular, plural = `${singular}s`) => `${formatCount(n)} ${n === 1 ? singular : plural}`
+
+/** A message cut to `max` characters, with an ellipsis. */
+const truncate = (text, max = 160) => {
+  const value = String(text ?? '')
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value
+}
+
+/** What a server's pass did, title by title (the report's titleCounts). */
+function ServerCounts({ counts, forced }) {
+  const { checked, updated, unchanged, failed, failures = [] } = counts
+  return (
+    <div className="mt-1.5 space-y-1.5">
+      <p className="text-gray-700">
+        {countOf(checked, 'title')} checked: {formatCount(updated)} updated, {formatCount(unchanged)} unchanged,{' '}
+        <span className={failed > 0 ? 'font-semibold text-red-700' : undefined}>{formatCount(failed)} failed</span>
+      </p>
+      {unchanged > 0 ? (
+        <p className="text-gray-500">
+          {forced
+            ? 'Unchanged titles were checked in full and needed no update.'
+            : 'Unchanged titles were skipped: nothing on the server changed since the last sync.'}
+        </p>
+      ) : null}
+      {failures.length > 0 ? (
+        <div>
+          <h5 className="font-semibold text-red-800">Failed titles</h5>
+          <ul className="mt-1 max-h-40 overflow-y-auto space-y-1 list-disc ml-4">
+            {failures.map((failure) => (
+              <li key={`${failure.kind}:${failure.title}`} className="text-gray-800">
+                <span className="font-medium">{failure.title}</span>:{' '}
+                <span className="text-red-700 break-words">{truncate(failure.error)}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function ServerCard({ server, counts = null, passErrors = [], forced = false }) {
+  const [errorsExpanded, setErrorsExpanded] = useState(false)
+  const syncing = server.status === 'syncing'
+  // While the pass runs: the live error events. Once it is done: its report.
+  const failedCount = counts ? counts.failed + passErrors.length : server.errorCount
+  const hasErrors = failedCount > 0
+
+  const cardClass = syncing
     ? 'border-blue-200 bg-blue-50'
     : hasErrors
       ? 'border-amber-200 bg-amber-50'
       : 'border-green-200 bg-green-50'
 
-  const statusLabel = server.status === 'syncing'
-    ? 'Syncing'
-    : `Done · ${server.processed} synced`
+  const statusLabel = syncing ? 'Syncing' : hasErrors ? 'Done, with failures' : 'Done'
 
   return (
     <div className={`rounded-lg border p-2.5 text-xs transition-colors ${cardClass}`}>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <StatusDot status={server.status} />
-          <span className="font-semibold text-gray-800 truncate">{server.id}</span>
+          <h4 className="font-semibold text-gray-800 truncate">{server.id}</h4>
         </div>
         <div className="flex items-center gap-2 shrink-0 text-gray-500">
           <span>{statusLabel}</span>
-          {hasErrors ? (
+          {!counts && server.errorCount > 0 ? (
             <button
               onClick={() => setErrorsExpanded(e => !e)}
               className="text-red-600 font-medium hover:underline focus:outline-none"
@@ -247,8 +293,105 @@ function ServerCard({ server }) {
           ))}
         </ul>
       ) : null}
+
+      {!syncing && counts ? <ServerCounts counts={counts} forced={forced} /> : null}
+
+      {!syncing && passErrors.length > 0 ? (
+        <div className="mt-1.5" role="alert">
+          <h5 className="font-semibold text-red-800">The pass on {server.id} stopped early</h5>
+          <ul className="mt-1 list-disc ml-4 space-y-1">
+            {passErrors.map((passError, i) => (
+              <li key={i} className="text-red-700 break-words">{truncate(passError.error)}</li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
     </div>
   )
+}
+
+/** "On <server> but not in the library": a write failed (run/missingMedia). */
+function NotInLibrarySection({ serverName, movies, tv }) {
+  const headingId = `not-in-library-${serverName}`
+  return (
+    <section aria-labelledby={headingId} className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs">
+      <h4 id={headingId} className="text-sm font-semibold text-red-800">
+        On {serverName} but not in the library
+      </h4>
+      <p className="mt-1 text-red-800">The sync could not save these titles. The next sync retries these.</p>
+      {movies.length > 0 ? (
+        <>
+          <h5 className="mt-2 font-semibold text-gray-800">Movies</h5>
+          <ul className="list-disc ml-4 text-gray-800">
+            {movies.map((title) => <li key={title}>{title}</li>)}
+          </ul>
+        </>
+      ) : null}
+      {tv.length > 0 ? (
+        <>
+          <h5 className="mt-2 font-semibold text-gray-800">TV shows</h5>
+          <ul className="list-disc ml-4 text-gray-800">
+            {tv.map((show) => <li key={show.showTitle}>{show.showTitle}</li>)}
+          </ul>
+        </>
+      ) : null}
+    </section>
+  )
+}
+
+/** "No video file yet on <server>": listed with artwork and metadata, but nothing to play (run/syncReport). */
+function NoVideoSection({ serverName, movies, tv }) {
+  const headingId = `no-video-${serverName}`
+  return (
+    <section aria-labelledby={headingId} className="mb-4 rounded-lg border border-gray-200 bg-gray-50 p-3 text-xs">
+      <h4 id={headingId} className="text-sm font-semibold text-gray-800">
+        No video file yet on {serverName}
+      </h4>
+      <p className="mt-1 text-gray-600">
+        These folders have artwork and metadata but no playable video. They stay out of the library&apos;s lists and
+        search until a video arrives.
+      </p>
+      {movies.length > 0 ? (
+        <>
+          <h5 className="mt-2 font-semibold text-gray-800">Movies</h5>
+          <ul className="list-disc ml-4 text-gray-700">
+            {movies.map((movie) => (
+              <li key={movie.title}>
+                <span className="font-medium">{movie.title}</span>: {movie.reason}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+      {tv.length > 0 ? (
+        <>
+          <h5 className="mt-2 font-semibold text-gray-800">TV shows</h5>
+          <ul className="list-disc ml-4 text-gray-700">
+            {tv.map((entry) => (
+              <li key={`${entry.title}|${entry.season ?? ''}`}>
+                <span className="font-medium">{entry.season ? `${entry.title}, ${entry.season}` : entry.title}</span>:{' '}
+                {entry.reason}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </section>
+  )
+}
+
+/**
+ * Whether a stream event belongs to the sync this popup started or joined,
+ * which began at `startedAt` (the route's start time for it). The stream
+ * replays the event history from the latest warm-up, which can be an earlier
+ * tick's (a webhook tick's, completion and partial report included) when the
+ * popup connects before this sync's own warm-up; every event of this sync is
+ * stamped after its start. Without a start time only live events count.
+ */
+function isEventOfRun(payload, startedAt) {
+  if (!startedAt) return !payload.replayed
+  const at = Date.parse(payload.timestamp)
+  return Number.isFinite(at) && at >= Date.parse(startedAt)
 }
 
 // Sync summary/outcome state — these five values are all part of a single sync
@@ -311,6 +454,9 @@ export default function SyncMediaPopup({
   // strategies for every entity even when stored hashes match. Default off —
   // the typical sync should leverage the optimisation.
   const [forceRefresh, setForceRefresh] = useState(false)
+  // Whether the sync this popup started was a forced one: its unchanged titles
+  // were checked in full rather than skipped
+  const [startedForced, setStartedForced] = useState(false)
 
   useEffect(() => {
     return () => { esRef.current?.close() }
@@ -324,15 +470,22 @@ export default function SyncMediaPopup({
    * pre-populated from the snapshot). Only __sync_complete__ is never skipped
    * so the popup closes correctly even if sync finished during connection setup.
    */
-  const subscribeToStream = (streamUrl, { skipReplayed = false } = {}) => {
+  const subscribeToStream = (streamUrl, { skipReplayed = false, startedAt = null } = {}) => {
     return new Promise((resolve, reject) => {
       const es = new EventSource(streamUrl)
       esRef.current = es
 
+      // Set by this sync's completion: nothing after it changes the report
+      let finished = false
       es.onmessage = (event) => {
+        if (finished) return
         let payload
         try { payload = JSON.parse(event.data) } catch { return }
         if (payload.type === 'heartbeat') return
+
+        // Only this sync's events count: the stream replays history from the
+        // latest warm-up, which can be an earlier tick's, completion included
+        if (!isEventOfRun(payload, startedAt)) return
 
         // When joining mid-sync with a pre-populated snapshot, skip replayed
         // events — state is already correct from the snapshot. Always process
@@ -343,12 +496,17 @@ export default function SyncMediaPopup({
           const completeSummary = payload.data?.summary || {}
           dispatchSummary({
             type: 'complete',
-            data: { missingMedia: completeSummary.missingMedia || {} },
+            data: {
+              missingMedia: completeSummary.missingMedia || {},
+              titleCounts: completeSummary.titleCounts || {},
+              errors: Array.isArray(completeSummary.errors) ? completeSummary.errors : [],
+            },
             notReady: { noVideo: completeSummary.noVideo || {} },
             duration: completeSummary.duration ?? null,
           })
           updateProcessedData('media')
           setLastSync(new Date())
+          finished = true
           es.close()
           resolve()
           return
@@ -494,7 +652,7 @@ export default function SyncMediaPopup({
             // skipReplayed=true because snapshot already represents state at
             // connect-time — replayed events would re-animate old entities and
             // hold the counter frozen until replay catches up to snapshot value.
-            await subscribeToStream(status.streamUrl, { skipReplayed: !!status.snapshot })
+            await subscribeToStream(status.streamUrl, { skipReplayed: !!status.snapshot, startedAt: status.startTime ?? null })
           } catch (err) {
             dispatchSummary({ type: 'error', error: err.message })
           }
@@ -528,9 +686,11 @@ export default function SyncMediaPopup({
         if (alreadyRunning) {
           // Sync was already in progress — fetch snapshot to pre-populate state,
           // same as the autoConnect path, so replay issues don't affect the counter.
+          let runningSince = null
           try {
             const statusRes = await fetch('/api/authenticated/admin/sync-status')
             const status = await statusRes.json()
+            runningSince = status.startTime ?? null
             if (status.startTime) dispatchSummary({ type: 'startTime', startTime: status.startTime })
             if (status.snapshot) {
               setServerStates(status.snapshot.servers || {})
@@ -542,9 +702,12 @@ export default function SyncMediaPopup({
           } catch {
             // Snapshot fetch failed — proceed without it, replay will have to do
           }
-          await subscribeToStream(streamUrl, { skipReplayed: true })
+          // The sync this popup joined, not one it started: its options are unknown
+          setStartedForced(false)
+          await subscribeToStream(streamUrl, { skipReplayed: true, startedAt: runningSince })
         } else {
-          await subscribeToStream(streamUrl)
+          setStartedForced(forceRefresh)
+          await subscribeToStream(streamUrl, { startedAt: syncStart ?? null })
         }
       } catch (err) {
         console.error('Sync failed:', err)
@@ -554,6 +717,16 @@ export default function SyncMediaPopup({
   }
 
   const isComplete = !isSyncing && syncData !== null
+  // The servers of the finished sync: those the stream showed, and any the
+  // report counted that it did not
+  const reportServers = isComplete
+    ? [...new Set([...Object.keys(serverStates), ...Object.keys(syncData.titleCounts ?? {})])].map((id) => ({
+        ...(serverStates[id] ?? { id, errorCount: 0, errors: [] }),
+        status: 'complete',
+      }))
+    : []
+  // Errors of the run itself, not of one server's pass
+  const runErrors = isComplete ? syncData.errors.filter((e) => !e.serverId) : []
 
   return (
     <Transition.Root show={isOpen} as={Fragment}>
@@ -600,9 +773,8 @@ export default function SyncMediaPopup({
 
                     <div className="mt-2">
                       <p className="text-sm text-gray-500">
-                        Are you sure you want to sync the media files? This action
-                        will update your local media database with the latest files
-                        from the server.
+                        Checks every title on each file server and updates anything that changed. This usually
+                        takes about 10 seconds.
                       </p>
 
                       <hr className="my-4" />
@@ -679,12 +851,29 @@ export default function SyncMediaPopup({
                         </div>
                       ) : null}
 
-                      {isComplete && Object.keys(serverStates).length > 0 ? (
+                      {isComplete && reportServers.length > 0 ? (
                         <div className="mb-4 space-y-2">
-                          {Object.values(serverStates).map(server => (
-                            <ServerCard key={server.id} server={server} />
+                          {reportServers.map(server => (
+                            <ServerCard
+                              key={server.id}
+                              server={server}
+                              counts={syncData.titleCounts?.[server.id] ?? null}
+                              passErrors={syncData.errors.filter((e) => e.serverId === server.id)}
+                              forced={startedForced}
+                            />
                           ))}
                         </div>
+                      ) : null}
+
+                      {isComplete && runErrors.length > 0 ? (
+                        <section aria-labelledby="sync-run-errors" className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs" role="alert">
+                          <h4 id="sync-run-errors" className="text-sm font-semibold text-red-800">The sync reported errors</h4>
+                          <ul className="mt-1 list-disc ml-4 space-y-1 text-red-700">
+                            {runErrors.map((runError, i) => (
+                              <li key={i} className="break-words">{truncate(runError.error)}</li>
+                            ))}
+                          </ul>
+                        </section>
                       ) : null}
 
                       {syncError !== null ? (
@@ -693,135 +882,28 @@ export default function SyncMediaPopup({
                         </p>
                       ) : null}
 
-                      {syncData !== null ? (
-                        <>
-                          {Object.entries(syncData.missingMedia).map(
-                            ([serverName, { tv, movies }]) => {
-                              const hasTv = tv && tv.length > 0
-                              const hasMovies = movies && movies.length > 0
+                      {syncData !== null
+                        ? Object.entries(syncData.missingMedia).map(([serverName, { tv = [], movies = [] }]) =>
+                            tv.length > 0 || movies.length > 0 ? (
+                              <NotInLibrarySection key={serverName} serverName={serverName} movies={movies} tv={tv} />
+                            ) : null
+                          )
+                        : null}
 
-                              if (!hasTv && !hasMovies) return null
-
-                              return (
-                                <div className="mb-4" key={serverName}>
-                                  <h2 className="text-xs font-bold underline">
-                                    Missing Media from <span className="text-blue-600">{serverName}</span>
-                                  </h2>
-
-                                  {hasTv ? (
-                                    <div className="mt-2">
-                                      <h3 className="text-xs font-bold text-center">
-                                        Missing TV Shows
-                                      </h3>
-                                      <ul className="mt-1">
-                                        {tv.map((show, showIndex) => (
-                                          <li className="font-bold" key={showIndex}>
-                                            {show.showTitle}
-                                            <ul className="ml-4 font-normal">
-                                              {show.seasons.map((season, seasonIndex) => (
-                                                <li className="text-xs" key={seasonIndex}>
-                                                  {typeof season === 'string' ? (
-                                                    season
-                                                  ) : (
-                                                    <div>
-                                                      <span className="font-semibold">
-                                                        Season: {season.season}
-                                                      </span>
-                                                      <ul className="ml-8">
-                                                        {season.missingEpisodes.map((episode, episodeIndex) => (
-                                                          <li key={episodeIndex}>
-                                                            {typeof episode === 'string'
-                                                              ? episode
-                                                              : episode.episodeFileName}
-                                                          </li>
-                                                        ))}
-                                                      </ul>
-                                                    </div>
-                                                  )}
-                                                </li>
-                                              ))}
-                                            </ul>
-                                          </li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  ) : null}
-
-                                  {hasMovies ? (
-                                    <div className="mt-3">
-                                      <h3 className="text-xs font-bold text-center">
-                                        Missing Movies
-                                      </h3>
-                                      <ul className="list-disc ml-4">
-                                        {movies.map((movie, index) => (
-                                          <li key={index}>{movie}</li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              )
-                            }
-                          )}
-                        </>
-                      ) : null}
-
-                      {syncNotReady !== null ? (
-                        <>
-                          {Object.entries(syncNotReady.noVideo).map(
-                            ([serverName, { tv, movies }]) => {
-                              const hasTv = tv && tv.length > 0
-                              const hasMovies = movies && movies.length > 0
-
-                              if (!hasTv && !hasMovies) return null
-
-                              return (
-                                <div
-                                  key={serverName}
-                                  className="p-4 mb-4 rounded-lg border border-gray-500"
-                                >
-                                  <h2 className="text-xs font-bold underline text-red-800 text-center">
-                                    Missing MP4 Files on <span className="text-black">{serverName}</span>
-                                  </h2>
-
-                                  {hasMovies ? (
-                                    <div className="mt-2">
-                                      <h3 className="text-xs font-bold underline text-red-600 text-center">
-                                        Movies
-                                      </h3>
-                                      <ul className="text-red-600 text-xs list-disc ml-4 mt-1">
-                                        {movies.map((movie, index) => (
-                                          <li key={index}>{movie.title} ({movie.reason})</li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  ) : null}
-
-                                  {hasTv ? (
-                                    <div className="mt-4">
-                                      <h3 className="text-xs font-bold underline text-red-600 text-center">
-                                        TV Shows
-                                      </h3>
-                                      <ul className="text-red-600 text-xs list-disc ml-4 mt-1">
-                                        {tv.map((tvShow, index) => (
-                                          <li key={index}>{tvShow.season ? `${tvShow.title} - ${tvShow.season}` : tvShow.title} ({tvShow.reason})</li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              )
-                            }
-                          )}
-                        </>
-                      ) : null}
+                      {syncNotReady !== null
+                        ? Object.entries(syncNotReady.noVideo).map(([serverName, { tv = [], movies = [] }]) =>
+                            tv.length > 0 || movies.length > 0 ? (
+                              <NoVideoSection key={serverName} serverName={serverName} movies={movies} tv={tv} />
+                            ) : null
+                          )
+                        : null}
 
                       {syncstartTime !== null && syncDuration !== null ? (
                         <div className="mt-4 bg-gradient-to-r from-gray-50 to-gray-100 p-4 rounded-lg shadow-sm border border-gray-200">
                           <div className="space-y-3">
                             <div className="flex items-center justify-between p-3 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow duration-200">
                               <div className="flex items-center">
-                                <span className="text-xl mr-2">🕒</span>
+                                <span aria-hidden="true" className="text-xl mr-2">🕒</span>
                                 <span className="text-xs font-medium text-gray-600">Started</span>
                               </div>
                               <span className="text-xs font-semibold text-blue-600">
@@ -839,7 +921,7 @@ export default function SyncMediaPopup({
 
                             <div className="flex items-center justify-between p-3 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow duration-200">
                               <div className="flex items-center">
-                                <span className="text-xl mr-2">🏁</span>
+                                <span aria-hidden="true" className="text-xl mr-2">🏁</span>
                                 <span className="text-xs font-medium text-gray-600">Ended</span>
                               </div>
                               <span className="text-xs font-semibold text-blue-600">
@@ -857,7 +939,7 @@ export default function SyncMediaPopup({
 
                             <div className="flex items-center justify-between p-3 bg-white rounded-md shadow-sm hover:shadow-md transition-shadow duration-200">
                               <div className="flex items-center">
-                                <span className="text-xl mr-2">⏱️</span>
+                                <span aria-hidden="true" className="text-xl mr-2">⏱️</span>
                                 <span className="text-xs font-medium text-gray-600">Duration</span>
                               </div>
                               <span className="text-xs font-semibold text-blue-600">
