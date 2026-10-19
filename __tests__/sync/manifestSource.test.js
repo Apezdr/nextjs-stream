@@ -200,7 +200,9 @@ describe('fetchEntries', () => {
 
     const result = await fetchEntries(SERVER, 'movies', { titles: ['Film', 'Gone', 'Film'] }, { deadline: deadline() })
 
-    expect(result).toMatchObject({ ok: true, manifestETag: 'W/"tv-manifest-1"', libraryETag: 'W/"tv-1"' })
+    expect(result).toMatchObject({ ok: true, manifestETag: 'W/"tv-manifest-1"' })
+    // The processor still sends X-Library-ETag; nothing reads it
+    expect(result).not.toHaveProperty('libraryETag')
     expect(result.lines).toEqual(new Map([['Film', { hash: H1, entry: film }], ['Gone', { missing: true }]]))
     const bytes = body.join('').length
     expect(result.received).toBe(bytes)

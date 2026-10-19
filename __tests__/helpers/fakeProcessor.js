@@ -115,7 +115,6 @@ function createFakeProcessor({ version = 1.0001 } = {}) {
       ok: true,
       lines,
       manifestETag: manifestOf(target.id, kind).etag,
-      libraryETag: `W/"${kind}-library"`,
       received,
       parsed,
     }

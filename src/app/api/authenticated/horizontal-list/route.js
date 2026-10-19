@@ -92,7 +92,7 @@ function splitWindowByPosition(rows, { page, limit }) {
 function applyItemFieldFixups(item, type, shouldExposeAdditionalData) {
   // Only apply episode handling logic for recentlyWatched list type
   if (type === 'recentlyWatched') {
-    // Handle TV shows with episodeData (from getFlatTVShowsWithEpisodeData)
+    // Handle TV shows with episodeData
     if (item.type === 'tv' && item.episodeData) {
       // Extract season/episode numbers from episodeData to top level for clipVideoURL generation
       if (item.episodeData.seasonNumber && !item.seasonNumber) {

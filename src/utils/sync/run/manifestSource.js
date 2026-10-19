@@ -469,7 +469,7 @@ function createEntriesParser(requested) {
  * @param {number[]} [options.retryDelaysMs] - The waits before the 2nd and 3rd attempts (±25 %)
  * @returns {Promise<
  *   {ok: true, lines: Map<string, {hash: string, entry: Object}|{missing: true}>,
- *    manifestETag: string, libraryETag: string|null, received: number, parsed: number} |
+ *    manifestETag: string, received: number, parsed: number} |
  *   {ok: false, error: string}
  * >}
  */
@@ -518,7 +518,7 @@ export async function fetchEntries(
       }
       reader = null
       const { lines, parsed } = parser.finish()
-      return { ok: true, lines, manifestETag, libraryETag: response.headers.get('x-library-etag'), received, parsed }
+      return { ok: true, lines, manifestETag, received, parsed }
     } catch (error) {
       lastError = timer.reason ? new Error(timer.reason) : error
       if (deadline?.aborted || !isRetryable(error)) break
