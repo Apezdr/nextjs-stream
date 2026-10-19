@@ -89,7 +89,13 @@ const NOTHING_TO_DROP_CODES = new Set([26, 27]);
 
 let indexesEnsured = null;
 
-/** Drops the unused indexes by name, leaving every other index alone. Idempotent. */
+/**
+ * Drops the unused indexes by name, leaving every other index alone. Idempotent.
+ *
+ * @removeAtVersion 2026.10.0 Unused Notifications index drop for databases from
+ *   older builds; delete this function, UNUSED_INDEX_NAMES, its runMigrationOnce
+ *   call in ensureIndexes and its tests when the version reaches 2026.10.0.
+ */
 async function dropUnusedIndexes(collection) {
   const dropped = [];
   for (const name of UNUSED_INDEX_NAMES) {
@@ -109,6 +115,10 @@ async function dropUnusedIndexes(collection) {
  * one read long ago goes promptly. Read notifications that have a `readAt`
  * keep it: the owner chose to let the backlog read more than 30 days ago go
  * when the index is built. Idempotent.
+ *
+ * @removeAtVersion 2026.10.0 readAt backfill for read notifications from before
+ *   the read TTL index; delete this function, its runMigrationOnce call in
+ *   ensureIndexes and its tests when the version reaches 2026.10.0.
  */
 async function backfillReadAt(collection) {
   const result = await collection.updateMany(

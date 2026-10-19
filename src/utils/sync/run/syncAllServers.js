@@ -14,6 +14,8 @@ import {
 } from './runState'
 import { preTagSyncRunId } from './preTag'
 import { computeMissingMedia } from './missingMedia'
+import { createTitleCounts, noVideoTitles } from './syncReport'
+import { cantPlayTitles } from './cantPlay'
 import { buildTickInputs, settleApplied, tickPerfLine } from './manifestTick'
 import { getTickState, beginRun, resetTickState } from './tickState'
 import { SYNC_GATE_VERSION } from '@src/utils/sync/core/syncGate'
@@ -51,6 +53,12 @@ const SYNC_LOCK_WATCHDOG_MS = (() => {
  *   pass's inputs (run/manifestTick buildTickInputs).
  * @param {Object} [options]
  * @param {boolean} [options.forceSync]
+ * @param {string|null} [options.operationId] - The route's id for this sync
+ *   operation, stamped on its warm-up and completion events (the admin popup
+ *   takes only its own operation's completion)
+ * @param {boolean} [options.startedByAdmin] - A sync an admin started: its
+ *   report also lists what the library hides although it has a video
+ *   (run/cantPlay), which the admin popup shows
  * @returns {Promise<Object>} Sync results
  */
 export async function syncAllServers(tick, options = {}) {
@@ -76,7 +84,7 @@ export async function syncAllServers(tick, options = {}) {
     console.warn(chalk.yellow(
       `⚠ Sync already in progress (run ${holder?.syncRunId ?? 'unknown'}); skipping this invocation`
     ))
-    return {
+    const busy = {
       syncRunId,
       skipped: true,
       reason: 'orchestration_in_progress',
@@ -84,6 +92,18 @@ export async function syncAllServers(tick, options = {}) {
       changedMedia: { movies: [], shows: [], seasons: [], episodes: [] },
       added: { movies: 0, shows: 0, episodes: 0 },
     }
+    // This operation's completion, so a client waiting on it does not take the
+    // next tick's: the previous run is still finishing (its cleanup or jobs)
+    try {
+      syncEventBus.emitComplete('__sync_complete__', MediaType.Movie, 'server-all', SyncOperation.Metadata, {
+        operationId: options.operationId ?? null,
+        outcome: 'busy',
+        summary: busy,
+      })
+    } catch (error) {
+      console.error(chalk.red(`emitComplete(busy) failed: ${error.message}`))
+    }
+    return busy
   }
   setCurrentSyncRunId(syncRunId)
 
@@ -113,8 +133,16 @@ export async function syncAllServers(tick, options = {}) {
 
   const results = {
     syncRunId,
+    // Per server: what it lists that is not in the library after its pass
+    // (run/missingMedia), and the titles it lists with no video file yet
+    // (run/syncReport noVideoTitles)
     missingMedia: {},
-    missingMp4: {},
+    noVideo: {},
+    // Per server (the server each video came from): what the library hides
+    // although it has a video. Filled for a sync an admin started (run/cantPlay)
+    cantPlay: {},
+    // Per server: titles checked, updated, unchanged and failed (run/syncReport createTitleCounts)
+    titleCounts: {},
     errors: [],
     // Union (across servers) of entities re-synced this run, keyed by folder
     // name (originalTitle), as the media pages tag their caches. Drives the
@@ -152,7 +180,9 @@ export async function syncAllServers(tick, options = {}) {
 
   // Signal to SSE subscribers that sync is starting (warming up)
   try {
-    syncEventBus.emitStarted('__sync_warmup__', MediaType.Movie, 'server-all')
+    syncEventBus.emitStarted('__sync_warmup__', MediaType.Movie, 'server-all', undefined, {
+      operationId: options.operationId ?? null,
+    })
   } catch (error) {
     console.error(chalk.red(`emitStarted(warmup) failed: ${error.message}`))
   }
@@ -257,7 +287,8 @@ export async function syncAllServers(tick, options = {}) {
 
       // Initialize missing media tracking for this server
       results.missingMedia[serverId] = { movies: [], tv: [] }
-      results.missingMp4[serverId] = { movies: [], tv: [] }
+      results.noVideo[serverId] = { movies: [], tv: [] }
+      const titleCounts = createTitleCounts()
 
       // Compute how many entities this server will process so the UI can render
       // a real progress bar (movies + shows + seasons + episodes).
@@ -287,26 +318,24 @@ export async function syncAllServers(tick, options = {}) {
       })
 
       try {
-        // Run missing-media detection and the actual sync in parallel.
-        // Previously this used `buildEnhancedFlatDBStructure`, which loaded
-        // every Flat* record into 15 in-memory Maps (~414 MB old_space per
-        // cycle per SigNoz). The missing-media report only needs two
-        // projection-only finds + a Set diff — see computeMissingMedia.js.
-        const [missingMedia, syncResult] = await Promise.all([
-          computeMissingMedia(listings.get(serverId), fieldAvailability),
-          runServerPass(fileServer, serverConfig, fieldAvailability, {
-            forceSync: Boolean(options.forceSync),
-            // Authoritative-pass gate for field-absence cleanup: true only when
-            // every enabled file server answered this run (buildTickInputs).
-            // Threaded unchanged into RunConfig (and its cleanup).
-            allEnabledServersProbed,
-            written,
-            onTitleFinished: (kind, title, clean) => {
-              if (!finished[kind].has(title)) finished[kind].set(title, new Map())
-              finished[kind].get(title).set(serverId, clean)
-            },
-          }),
-        ])
+        const syncResult = await runServerPass(fileServer, serverConfig, fieldAvailability, {
+          forceSync: Boolean(options.forceSync),
+          // Authoritative-pass gate for field-absence cleanup: true only when
+          // every enabled file server answered this run (buildTickInputs).
+          // Threaded unchanged into RunConfig (and its cleanup).
+          allEnabledServersProbed,
+          written,
+          onTitleFinished: (kind, title, clean, titleResults) => {
+            if (!finished[kind].has(title)) finished[kind].set(title, new Map())
+            finished[kind].get(title).set(serverId, clean)
+            titleCounts.record(kind, title, titleResults)
+          },
+        })
+        results.titleCounts[serverId] = titleCounts.counts()
+        // What the server lists that is still not in the library, read after
+        // its pass, so a title the pass added is not reported: two
+        // projection-only finds and a Set diff (computeMissingMedia).
+        const missingMedia = await computeMissingMedia(listings.get(serverId), fieldAvailability)
 
         // Process missing movies
         if (missingMedia.missingMovies && missingMedia.missingMovies.length > 0) {
@@ -322,46 +351,8 @@ export async function syncAllServers(tick, options = {}) {
           results.missingMedia[serverId].tv = missingTV
         }
 
-        // Identify missing MP4 files from fileServer data
-        if (fileServer.movies) {
-          Object.keys(fileServer.movies).forEach((movieTitle) => {
-            if (!fileServer.movies[movieTitle].urls?.mp4) {
-              results.missingMp4[serverId].movies.push(movieTitle)
-            }
-          })
-        }
-
-        if (fileServer.tv) {
-          Object.keys(fileServer.tv).forEach((showTitle) => {
-            let hasValidEpisodes = false
-            const showData = fileServer.tv[showTitle]
-            if (!showData.seasons || Object.keys(showData.seasons).length === 0) {
-              results.missingMp4[serverId].tv.push(showTitle)
-              return
-            }
-            for (const seasonKey of Object.keys(showData.seasons)) {
-              const seasonData = showData.seasons[seasonKey]
-              if (!seasonData.episodes || Object.keys(seasonData.episodes).length === 0) {
-                results.missingMp4[serverId].tv.push(`${showTitle} - ${seasonKey}`)
-                continue
-              }
-              let validEpisodesFound = false
-              for (const episodeKey of Object.keys(seasonData.episodes)) {
-                if (seasonData.episodes[episodeKey].videoURL) {
-                  validEpisodesFound = true
-                  hasValidEpisodes = true
-                  break
-                }
-              }
-              if (!validEpisodesFound) {
-                results.missingMp4[serverId].tv.push(`${showTitle} - ${seasonKey}`)
-              }
-            }
-            if (!hasValidEpisodes && !results.missingMp4[serverId].tv.includes(showTitle)) {
-              results.missingMp4[serverId].tv.push(showTitle)
-            }
-          })
-        }
+        // The titles it lists with no video file yet, and why
+        results.noVideo[serverId] = noVideoTitles(fileServer)
 
         // Store the sync results for reference. (What the pass changed and
         // created is already in the run's record, `written`.)
@@ -371,6 +362,8 @@ export async function syncAllServers(tick, options = {}) {
         // Signal that this server finished successfully
         syncEventBus.emitComplete('__server_complete__', MediaType.Movie, serverId)
       } catch (error) {
+        // The titles the pass finished before it threw
+        results.titleCounts[serverId] = titleCounts.counts()
         // Signal server completion even on failure so the UI updates
         syncEventBus.emitComplete('__server_complete__', MediaType.Movie, serverId)
 
@@ -441,6 +434,22 @@ export async function syncAllServers(tick, options = {}) {
       ? Object.fromEntries([...inputs.manifests].map(([serverId, kinds]) => [serverId, { tv: kinds.tv.etag, movies: kinds.movies.etag }]))
       : undefined,
   })
+
+  // For a sync an admin started (always a tick over every title), the one the
+  // admin popup reports: what the library hides although it has a video,
+  // read after every pass. Not on webhook ticks, whichever their mode.
+  // Informational: a failure is reported with the run's errors, after the
+  // record is written.
+  if (options.startedByAdmin === true && mode === 'all') {
+    try {
+      results.cantPlay = await cantPlayTitles(client.db('Media'))
+    } catch (error) {
+      results.errors.push({
+        error: `Could not list the titles that can't play yet: ${error.message}`,
+        phase: 'cant_play_report',
+      })
+    }
+  }
  } finally {
   results.added = written.addedCounts()
   // The "writing phase" of this orchestration ends here. Clear before any
@@ -469,7 +478,7 @@ export async function syncAllServers(tick, options = {}) {
       MediaType.Movie,
       'server-all',
       SyncOperation.Metadata,
-      { summary: results }
+      { summary: results, operationId: options.operationId ?? null, outcome: 'completed' }
     )
   } catch (error) {
     console.error(chalk.red(`emitComplete failed: ${error.message}`))

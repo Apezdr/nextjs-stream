@@ -46,9 +46,10 @@ export class EpisodeRepository extends BaseRepository<EpisodeEntity> {
         // E11000 instead of silently duplicating. partialFilterExpression on showId
         // existence: episodes written before their parent show resolves carry no
         // showId, and a plain unique index would collapse every such doc onto one
-        // {null, season, ep} key. Built clean on the wiped (dropped) collections;
-        // createIndexSafely swallows IndexOptionsConflict if a non-unique same-key
-        // index still exists (i.e. a non-drop wipe leaves the upgrade a no-op).
+        // {null, season, ep} key. A non-unique same-key index left from an older
+        // version is replaced by this one (createIndexSafely, ./indexReconcile);
+        // while duplicates keep the unique build from succeeding, the old one is
+        // restored and the failure logged.
         this.createIndexSafely(
           { showId: 1, seasonNumber: 1, episodeNumber: 1 },
           { unique: true, partialFilterExpression: { showId: { $exists: true } } }

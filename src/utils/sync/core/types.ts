@@ -43,7 +43,6 @@ export interface ServerConfig {
   id: string
   priority: number
   baseUrl: string        // File server URL (for media files)
-  nodeUrl?: string       // Node.js server URL
   prefix?: string
   enabled: boolean
   timeout?: number
@@ -96,19 +95,8 @@ export interface Availability {
   fieldAvailability: FieldAvailability
 }
 
-/** The file server's metadata hash for every movie (GET /api/metadata-hashes/movies). */
-export interface MovieMetadataHashes {
-  hash: string
-  titles: Record<string, { hash: string; lastModified: string; generated: string }>
-}
-
-/** What a movie pass fetches or creates once and its steps share. */
+/** What a movie pass creates once and shares across its titles. */
 export interface Caches {
-  /**
-   * The metadata step skips a movie's metadata.json fetch when its hash
-   * matches the stored metadataHash.
-   */
-  metadataHashes?: MovieMetadataHashes
   /**
    * Throttles the prefetch step's plain reads (the movie artwork step's first
    * read of a blurhash, infrastructure/fileSystem/prefetch). Not around
@@ -369,7 +357,10 @@ export interface MovieEntity extends BaseMediaEntity {
   mediaLastModified?: Date  // When the media file was last modified
   mediaQuality?: MediaQuality
   
-  // Metadata hash for change detection (from /api/metadata-hashes/movies)
+  // Change key of the metadata file stored with it: the `hash` parameter of
+  // the payload's urls.metadata, the processor's key of the metadata.json
+  // content, which moves only when that content changes
+  // (domain/movies/metadata, metadataChangeKey)
   metadataHash?: string
   
   // Asset URLs (IMPORTANT: backdrop and logo have NO "URL" suffix)

@@ -121,13 +121,14 @@ function formatBytes(bytes, decimals = 2) {
 }
 
 /**
- * Cache logger for diagnostics
+ * Cache logger for diagnostics. The URL is the cache key: an *arr iCal feed's
+ * carries its API key, so every line shows it through loggableUrl.
  */
 const cacheLog = {
-  hit: (url, type, size) => console.debug(`Cache HIT: ${url} (${type}, ${formatBytes(size || 0)})`),
-  miss: (url, reason) => console.debug(`Cache MISS: ${url} (${reason})`),
-  store: (url, type, size) => console.debug(`Cache STORE: ${url} (${type}, ${formatBytes(size || 0)})`),
-  error: (url, error) => console.error(`Cache ERROR: ${url}`, error)
+  hit: (url, type, size) => console.debug(`Cache HIT: ${loggableUrl(url)} (${type}, ${formatBytes(size || 0)})`),
+  miss: (url, reason) => console.debug(`Cache MISS: ${loggableUrl(url)} (${reason})`),
+  store: (url, type, size) => console.debug(`Cache STORE: ${loggableUrl(url)} (${type}, ${formatBytes(size || 0)})`),
+  error: (url, error) => console.error(`Cache ERROR: ${loggableUrl(url)}: ${describeRequestError(error, url)}`)
 };
 
 /**
@@ -373,7 +374,8 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
             };
           }
         } catch (processingError) {
-          console.error(`Error processing response for ${url}:`, processingError);
+          console.error(`Error processing response for ${loggableUrl(url)}: ${describeRequestError(processingError, url)}`);
+          debugStack(processingError);
           
           // Clean up response resources if there was an error processing the data
           cleanupResponse(response);
@@ -415,7 +417,8 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
           );
           return { data, headers: Object.fromEntries(fetchResponse.headers.entries()) };
         } catch (fetchError) {
-          console.error(`Fetch fallback failed for ${url}:`, fetchError);
+          console.error(`Fetch fallback failed for ${loggableUrl(url)}: ${describeRequestError(fetchError, url)}`);
+          debugStack(fetchError);
           // If fetch fails too, continue with retry logic
         }
       }
@@ -427,9 +430,9 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
       if (attempt < limit && shouldRetry(error, attempt)) {
         const delay = calculateBackoff(attempt, baseDelay, maxDelay);
         console.warn(
-          `Retrying request to ${url} (attempt ${attempt + 1}/${limit}) after ${Math.round(
+          `Retrying request to ${loggableUrl(url)} (attempt ${attempt + 1}/${limit}) after ${Math.round(
             delay
-          )}ms`
+          )}ms: ${describeRequestError(error, url)}`
         );
         await sleep(delay);
         
@@ -457,14 +460,75 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
   // A 404 is an answer the caller handles (a title TMDB doesn't have, an
   // optional file that isn't there), not a failure worth a stack trace
   if (lastError?.statusCode === 404) {
-    console.warn(`Not found (404): ${url}`);
+    console.warn(`Not found (404): ${loggableUrl(url)}`);
   } else {
     console.error(
-      `Failed to fetch ${url} after ${attemptsMade} attempt${attemptsMade === 1 ? '' : 's'}:`,
-      lastError
+      `Failed to fetch ${loggableUrl(url)} after ${attemptsMade} attempt${attemptsMade === 1 ? '' : 's'}: ` +
+        describeRequestError(lastError, url)
     );
+    debugStack(lastError);
   }
   throw lastError;
+}
+
+/** A query parameter whose value is a credential (an *arr iCal feed's `apikey`), with its value. */
+const SECRET_PARAM_IN_TEXT = /([?&](?:api[-_]?key|key|token|access[-_]?token|auth|password|secret|signature|sig)=)[^&#\s"'<>]*/gi
+
+/** The user:password of a URL. */
+const USERINFO_IN_TEXT = /(\b[a-z][a-z0-9+.-]*:\/\/)[^\s/@:]+:[^\s/@]*@/gi
+
+/**
+ * Text as a log line or an error message may show it: every credential query
+ * parameter's value and every URL's user:password replaced by REDACTED, all
+ * else as it is (a file's `?hash=` included). The one redaction for anything
+ * that names a URL the sync or the calendar fetches.
+ *
+ * @param {unknown} text
+ * @returns {string}
+ */
+export function redactSecrets(text) {
+  return String(text ?? '').replace(SECRET_PARAM_IN_TEXT, '$1REDACTED').replace(USERINFO_IN_TEXT, '$1REDACTED@')
+}
+
+/**
+ * A URL as a log line may show it (redactSecrets): the query kept, a
+ * credential parameter's value and any user:password replaced.
+ *
+ * @param {string} url
+ * @returns {string}
+ */
+export function loggableUrl(url) {
+  return redactSecrets(url)
+}
+
+/**
+ * One line about a failed request: its error's name, code, HTTP status and
+ * message (on one line, cut to 160 characters). Never the error object itself:
+ * got's RequestError prints its options, timings and agents, about 2,000
+ * lines a failure.
+ *
+ * The message may name the request's URL (httpGet's own errors do, and keep
+ * it as it is for their callers): it is shown as loggableUrl shows it, and
+ * any other credential in the message is redacted too.
+ *
+ * @param {unknown} error
+ * @param {string} [url] - The request's URL, replaced inside the message
+ * @returns {string}
+ */
+export function describeRequestError(error, url) {
+  const name = error?.name || 'Error'
+  const code = error?.code ? ` ${error.code}` : ''
+  const status = error?.response?.statusCode ?? error?.statusCode
+  let raw = String(error?.message ?? error ?? '')
+  if (typeof url === 'string' && url) raw = raw.split(url).join(loggableUrl(url))
+  const message = redactSecrets(raw).replace(/\s+/g, ' ').trim()
+  const shown = message.length > 160 ? `${message.slice(0, 159)}…` : message
+  return `${name}${code}${status ? ` HTTP ${status}` : ''}: ${shown}`
+}
+
+/** The stack of a failed request, only when DEBUG is set. */
+function debugStack(error) {
+  if (process.env.DEBUG && error?.stack) console.debug(error.stack)
 }
 
 /**

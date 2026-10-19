@@ -6,6 +6,11 @@
  * metadata, its source, the schema version and the hash; it never names the
  * display title, which MovieSyncService derives once from the metadata the
  * document ends up with (core/title).
+ *
+ * The change key is the `hash` query parameter of the payload's metadata URL
+ * (`urls.metadata`, metadataChangeKey): the content key the processor
+ * publishes for the movie's metadata.json, which moves only when that file's
+ * content changes. It is stored as `metadataHash`.
  */
 
 import {
@@ -29,6 +34,27 @@ const METADATA_SCHEMA_VERSION = '2.1'
 /** The deferral a failed metadata step reports: the next pass fetches again. */
 const METADATA_FAILED = 'metadata'
 
+/** Resolves a relative metadata path, so only its query is read. Never fetched. */
+const PATH_BASE = 'http://metadata-path.invalid'
+
+/**
+ * The change key of a movie's metadata file: the `hash` query parameter of
+ * its URL in the payload (`urls.metadata`), decoded. The processor publishes
+ * it as a key of the metadata.json content (the sha256 of the content it
+ * stores for the title), so it moves only when that content changes: another
+ * file written into the folder leaves it as it is. Undefined when the URL has
+ * none, an empty one, or cannot be parsed: the step then fetches the file and
+ * stores no hash.
+ */
+export function metadataChangeKey(metadataPath: unknown): string | undefined {
+  if (typeof metadataPath !== 'string' || metadataPath.length === 0) return undefined
+  try {
+    return new URL(metadataPath, PATH_BASE).searchParams.get('hash') || undefined
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Sync a movie's metadata.
  *
@@ -42,7 +68,7 @@ const METADATA_FAILED = 'metadata'
  * names it in its plan's `needs` and does nothing else (./step).
  */
 export function syncMovieMetadata(
-  { originalTitle, movie, payload, run, availability, caches }: MovieMetadataInput,
+  { originalTitle, movie, payload, run, availability }: MovieMetadataInput,
   resources: Resources = new Resources()
 ): MovieStepOutcome {
   const startTime = Date.now()
@@ -70,7 +96,7 @@ export function syncMovieMetadata(
   // decision throw, it is made again below, where the step's catch meets it.)
   let read: MetadataRead | null = null
   try {
-    read = decideMetadataRead({ originalTitle, movie, payload, run, availability, caches })
+    read = decideMetadataRead({ originalTitle, movie, payload, run, availability })
   } catch {
     read = null
   }
@@ -93,8 +119,8 @@ export function syncMovieMetadata(
     })
 
     const changes: string[] = []
-    const { canUpdateMetadata, metadataHashInfo, currentMetadataHash, hashUnchanged, request } =
-      read ?? decideMetadataRead({ originalTitle, movie, payload, run, availability, caches })
+    const { canUpdateMetadata, metadataKey, currentMetadataHash, hashUnchanged, request } =
+      read ?? decideMetadataRead({ originalTitle, movie, payload, run, availability })
 
     if (!canUpdateMetadata) {
       syncLogger.debug(`⏭️ Server ${run.serverConfig.id} (priority ${run.serverConfig.priority}) does not have priority for metadata, skipping`)
@@ -108,15 +134,15 @@ export function syncMovieMetadata(
 
     // If we have both hashes and they match, skip metadata fetch (optimization)
     if (hashUnchanged) {
-      syncLogger.debug(`📝 Metadata hash unchanged for "${originalTitle}" (${metadataHashInfo?.hash}), skipping fetch`)
+      syncLogger.debug(`📝 Metadata hash unchanged for "${originalTitle}" (${metadataKey}), skipping fetch`)
       return outcome(title, SyncStatus.Skipped, [], [], {
         processingTime: Date.now() - startTime,
         reason: 'metadata hash unchanged',
       })
     }
 
-    if (metadataHashInfo?.hash) {
-      syncLogger.debug(`🔄 Metadata hash changed for "${originalTitle}": ${currentMetadataHash || 'none'} → ${metadataHashInfo.hash}`)
+    if (metadataKey) {
+      syncLogger.debug(`🔄 Metadata hash changed for "${originalTitle}": ${currentMetadataHash || 'none'} → ${metadataKey}`)
     }
 
     // The file as the prefetch step read it (null when the fetch failed). A
@@ -165,8 +191,8 @@ export function syncMovieMetadata(
 
     // Attach the metadata hash ONLY when the fetch succeeded — never stamp the
     // gate off a stub built from a failed fetch.
-    if (!metadataFetchFailed && metadataHashInfo?.hash) {
-      metadata._metadataHash = metadataHashInfo.hash
+    if (!metadataFetchFailed && metadataKey) {
+      metadata._metadataHash = metadataKey
     }
 
     // The step writes the movie whenever it got this far (lastSynced at least).
@@ -264,7 +290,8 @@ function hasExternalMetadata(movie: MovieEntity): boolean {
 /** What the metadata step decides before it reads anything. */
 interface MetadataRead {
   canUpdateMetadata: boolean
-  metadataHashInfo: { hash?: string } | undefined
+  /** The payload's change key for the metadata file (metadataChangeKey). */
+  metadataKey: string | undefined
   currentMetadataHash: string | undefined
   /** The stored metadata is this server's copy, and its hash is the file server's. */
   hashUnchanged: boolean
@@ -284,7 +311,6 @@ function decideMetadataRead({
   payload,
   run,
   availability,
-  caches,
 }: MovieMetadataInput): MetadataRead {
   // 🚀 CRITICAL FIX: Check priority FIRST before doing any work
   // This prevents lower-priority servers from wasting API calls
@@ -302,8 +328,10 @@ function decideMetadataRead({
     run.serverConfig
   )
 
-  // Check if we have metadata hash from the pass's caches for change detection
-  const metadataHashInfo = caches.metadataHashes?.titles?.[originalTitle]
+  // The change key the payload carries on the metadata URL, against the one
+  // stored with the metadata
+  const metadataPath = payload?.urls?.metadata
+  const metadataKey = metadataChangeKey(metadataPath)
   const currentMetadataHash = movie.metadataHash
 
   // Guard: only trust the hash skip when metadata is actually populated.
@@ -321,19 +349,17 @@ function decideMetadataRead({
   const storedMetadataIsFromThisServer = movie.metadataSource === run.serverConfig.id
 
   const hashUnchanged = Boolean(
-    metadataHashInfo?.hash &&
+    metadataKey &&
       currentMetadataHash &&
-      metadataHashInfo.hash === currentMetadataHash &&
+      metadataKey === currentMetadataHash &&
       metadataIsPopulated &&
       storedMetadataIsFromThisServer
   )
 
-  // Get metadata URL from fileserver data if available
-  const metadataPath = payload?.urls?.metadata
   const reads = Boolean(originalTitle && originalTitle.trim().length > 0) && canUpdateMetadata && !hashUnchanged
   return {
     canUpdateMetadata,
-    metadataHashInfo,
+    metadataKey,
     currentMetadataHash,
     hashUnchanged,
     request: reads && metadataPath ? { kind: 'metadata', serverId: run.serverConfig.id, path: metadataPath } : null,

@@ -395,7 +395,10 @@ async function settled() {
  * (run/newContent); without it, the first run on the database starts it and
  * announces nothing. `tick` replaces the tick the run is handed.
  */
-async function runSync(fileServers, { baselineStarted = false, allEnabledServersProbed = true, forceSync = false, tick = null } = {}) {
+async function runSync(
+  fileServers,
+  { baselineStarted = false, allEnabledServersProbed = true, forceSync = false, tick = null, operationId = 'op-test', startedByAdmin = true } = {}
+) {
   if (baselineStarted) {
     const flags = mockCollection('app_config', 'migrations')
     if (!flags.docs.some((d) => d._id === 'new-content-baseline')) flags.docs.push({ _id: 'new-content-baseline' })
@@ -415,7 +418,11 @@ async function runSync(fileServers, { baselineStarted = false, allEnabledServers
   try {
     const probes = await probeServers(mockServers, null)
     const errors = [...probes].filter(([, probe]) => !probe.ok).map(([serverId, probe]) => ({ serverId, error: probe.error }))
-    const result = await syncAllServers(tick ?? { mode: 'all', servers: probes, errors: errors.length > 0 ? errors : undefined }, { forceSync })
+    const result = await syncAllServers(tick ?? { mode: 'all', servers: probes, errors: errors.length > 0 ? errors : undefined }, {
+      forceSync,
+      operationId,
+      startedByAdmin,
+    })
     await settled()
     return result
   } finally {
@@ -445,7 +452,7 @@ beforeEach(() => {
   delete globalThis.__dataMigrations
   delete globalThis.__newContentOutboxIndex
   mockDeliveryFailures.length = 0
-  // The Node.js server's hash endpoints: not there, so the pass runs without them.
+  // No request leaves a pass here: anything fetched answers 404.
   global.fetch = jest.fn(async () => ({ ok: false, status: 404 }))
   preTagCovers()
   for (const method of ['log', 'info', 'warn', 'error', 'debug']) jest.spyOn(console, method).mockImplementation(() => {})
@@ -541,61 +548,49 @@ describe('a full pass for one server', () => {
 
 // ---------------------------------------------------------------- title hashes
 
-describe('the title hashes a pass fetches from the server’s Node.js API: the movies’ only', () => {
-  const NODE = 'https://default-node.example'
-  const MOVIE_HASH = 'movie-metadata-hash-1'
-  const SHOW_HASH = 'show-hash-1'
-  const SHOW_CONTENT_HASH = 'show-content-hash-1'
-  const answer = (body) => ({ ok: true, status: 200, json: async () => body })
-  const entry = (hash, extra = {}) => ({ hash, lastModified: '2024-01-01T00:00:00.000Z', generated: '2024-01-01T00:00:00.000Z', ...extra })
-
-  // Each list answers only at its own URL, so a pass that asked for the
-  // movies' list at the TV URL gets the show's titles, which do not name the
-  // movie. The TV list is served, as the processor serves it, and never asked
-  // for: nothing reads it.
-  const hashEndpoints = () =>
-    jest.fn(async (url) => {
-      if (url === `${NODE}/api/metadata-hashes/movies`) {
-        return answer({ hash: 'all-movies', titles: { [MOVIE]: entry(MOVIE_HASH) } })
-      }
-      if (url === `${NODE}/api/metadata-hashes/tv`) {
-        return answer({ hash: 'all-tv', titles: { [SHOW]: entry(SHOW_HASH, { contentHash: SHOW_CONTENT_HASH }) } })
-      }
-      return { ok: false, status: 404 }
-    })
-
+describe('the movie metadata change key: the hash on the payload’s metadata URL, no hash list', () => {
   const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
-  const movieMetadataFetches = () =>
-    fetchMetadataMultiServer.mock.calls.filter(([, url, type]) => type === 'file' && url === moviePayload().urls.metadata)
-      .length
+  const movieMetadataFetches = (url = moviePayload().urls.metadata) =>
+    fetchMetadataMultiServer.mock.calls.filter(([, path, type]) => type === 'file' && path === url).length
+  const withMetadataUrl = (metadata) => ({ ...moviePayload(), urls: { ...moviePayload().urls, metadata } })
 
   beforeEach(() => {
-    global.fetch = hashEndpoints()
     fetchMetadataMultiServer.mockClear()
   })
 
-  it('asks the server’s Node.js URL for the movie list once, and never for the TV list', async () => {
+  it('asks the server’s Node.js API for no hash list', async () => {
     await runSync(oneServer())
 
-    const asked = global.fetch.mock.calls.map(([url]) => url).filter((url) => url.includes('/api/metadata-hashes/'))
-    expect(asked).toEqual([`${NODE}/api/metadata-hashes/movies`])
+    const asked = global.fetch.mock.calls.map(([url]) => String(url)).filter((url) => url.includes('/api/metadata-hashes/'))
+    expect(asked).toEqual([])
   })
 
-  it('hands the movie list to the metadata step: a hash that matches the stored one skips the metadata fetch', async () => {
+  it('stores the URL’s hash as metadataHash, and a forced pass at the same URL skips the metadata fetch', async () => {
     await runSync(oneServer())
     const [movie] = docs('FlatMovies')
-    expect(movie).toMatchObject({ metadataHash: MOVIE_HASH, metadataSource: 'default' })
+    expect(movie).toMatchObject({ metadataHash: 'd1', metadataSource: 'default' })
     expect(movieMetadataFetches()).toBe(1)
 
-    // A forced pass runs every step; the metadata step finds the hash unchanged
+    // A forced pass runs every step; the metadata step finds the key unchanged
     fetchMetadataMultiServer.mockClear()
     await runSync(oneServer(), { forceSync: true })
     expect(movieMetadataFetches()).toBe(0)
 
-    // Without the list the same forced pass fetches the metadata
-    global.fetch = jest.fn(async () => ({ ok: false, status: 404 }))
-    await runSync(oneServer(), { forceSync: true })
-    expect(movieMetadataFetches()).toBe(1)
+    // A new hash on the URL is a new file: it is fetched, and its key stored
+    const changed = `${MOVIE_FOLDER}/metadata.json?hash=d2`
+    await runSync(oneServer({ movies: { [MOVIE]: withMetadataUrl(changed) } }))
+    expect(movieMetadataFetches(changed)).toBe(1)
+    expect(docs('FlatMovies')[0].metadataHash).toBe('d2')
+  })
+
+  it('fetches the metadata on every pass, and stores no hash, when the URL has none', async () => {
+    const bare = `${MOVIE_FOLDER}/metadata.json`
+    await runSync(oneServer({ movies: { [MOVIE]: withMetadataUrl(bare) } }))
+    expect(docs('FlatMovies')[0]).not.toHaveProperty('metadataHash')
+
+    fetchMetadataMultiServer.mockClear()
+    await runSync(oneServer({ movies: { [MOVIE]: withMetadataUrl(bare) } }), { forceSync: true })
+    expect(movieMetadataFetches(bare)).toBe(1)
   })
 
   it('stamps no title hash on any document: the gates are stamped, the hashes are not', async () => {
@@ -1065,6 +1060,152 @@ describe('the new-content notices', () => {
   })
 })
 
+// ---------------------------------------------------------------- the popup's report
+
+describe('the report the admin’s sync popup shows', () => {
+  it('counts each server’s titles as checked, updated, unchanged and failed', async () => {
+    const first = await runSync(oneServer())
+    expect(first.titleCounts.default).toEqual({ checked: 2, updated: 2, unchanged: 0, failed: 0, failures: [] })
+
+    // Nothing changed: both titles are skipped on their gates
+    const second = await runSync(oneServer())
+    expect(second.titleCounts.default).toEqual({ checked: 2, updated: 0, unchanged: 2, failed: 0, failures: [] })
+  })
+
+  it('counts nothing as updated on a forced sync of a settled library: every write ran, none changed a document', async () => {
+    await runSync(oneServer())
+    await runSync(oneServer())
+
+    const forced = await runSync(oneServer(), { forceSync: true })
+
+    expect(forced.titleCounts.default).toEqual({ checked: 2, updated: 0, unchanged: 2, failed: 0, failures: [] })
+    // The writes did run: the changed-media list (cache invalidation) still names them
+    expect(forced.changedMedia.shows).toContain(SHOW)
+  })
+
+  it('lists a failed title with its error', async () => {
+    const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
+    const movie = { ...moviePayload(), urls: { ...moviePayload().urls, metadata: `${MOVIE_FOLDER}/metadata.json?hash=d9` } }
+    await runSync(oneServer())
+    const real = fetchMetadataMultiServer.getMockImplementation()
+    fetchMetadataMultiServer.mockImplementation(async (serverId, url, type) => {
+      if (url === movie.urls.metadata) throw new Error('file server timed out')
+      return real(serverId, url, type)
+    })
+    try {
+      const result = await runSync(oneServer({ movies: { [MOVIE]: movie } }))
+      expect(result.titleCounts.default).toMatchObject({ checked: 2, failed: 1 })
+      expect(result.titleCounts.default.failures).toEqual([
+        { kind: 'movies', title: MOVIE, error: expect.stringContaining('metadata fetch failed') },
+      ])
+    } finally {
+      fetchMetadataMultiServer.mockImplementation(real)
+    }
+  })
+
+  describe('the titles the library hides although they have a video (cantPlay)', () => {
+    const file = (folder, name, container, isPrimary) => ({
+      url: `${folder}/${encodeURIComponent(name)}`,
+      container,
+      isPrimary,
+    })
+    const aviMovie = () => {
+      const avi = file(MOVIE_FOLDER, 'Example Movie.avi', 'avi', true)
+      return { ...moviePayload(), fileNames: ['Example Movie.avi'], urls: { ...moviePayload().urls, mp4: avi.url, sources: [avi] } }
+    }
+    const aviEpisode = (n) => {
+      const avi = file(SEASON_FOLDER, `${SHOW} - ${key(n)}.avi`, 'avi', true)
+      const { jitEligible: _eligible, jitUrl: _jit, ...episode } = episodePayload(n)
+      return { ...episode, videoURL: avi.url, sources: [avi] }
+    }
+    const showWith = (episodes) => {
+      const show = showPayload(Object.keys(episodes).map(Number))
+      for (const [n, episode] of Object.entries(episodes)) show.seasons['Season 1'].episodes[key(Number(n))] = episode
+      return show
+    }
+
+    it('lists an avi-only movie and an avi-only episode, by season, under the server their video came from', async () => {
+      const result = await runSync(oneServer({ movies: { [MOVIE]: aviMovie() }, tv: { [SHOW]: showWith({ 1: aviEpisode(1), 2: episodePayload(2) }) } }))
+
+      expect(result.cantPlay).toEqual({
+        default: {
+          movies: [{ title: MOVIE, reason: 'unsupported format (.avi)' }],
+          tv: [{ title: SHOW, season: 1, episodes: [{ episode: 1, reason: 'unsupported format (.avi)' }] }],
+          count: 2,
+        },
+      })
+    })
+
+    it('does not list a movie whose primary video is an mp4 beside an avi', async () => {
+      const mp4 = file(MOVIE_FOLDER, 'Example Movie.mp4', 'mp4', true)
+      const avi = file(MOVIE_FOLDER, 'Example Movie.avi', 'avi', false)
+      const movie = { ...moviePayload(), fileNames: ['Example Movie.mp4', 'Example Movie.avi'], urls: { ...moviePayload().urls, mp4: mp4.url, sources: [mp4, avi] } }
+
+      const result = await runSync(oneServer({ movies: { [MOVIE]: movie }, tv: { [SHOW]: showPayload() } }))
+
+      expect(result.cantPlay).toEqual({})
+    })
+
+    it('is not read on a webhook tick, even one over every title', async () => {
+      const result = await runSync(oneServer({ movies: { [MOVIE]: aviMovie() } }), { startedByAdmin: false })
+      expect(result.cantPlay).toEqual({})
+    })
+
+    it('is listed in full again when every title is skipped on its gate', async () => {
+      await runSync(oneServer({ movies: { [MOVIE]: aviMovie() } }))
+      // A second `all` run that skips every title still lists it
+      expect((await runSync(oneServer({ movies: { [MOVIE]: aviMovie() } }))).cantPlay.default.count).toBe(1)
+    })
+  })
+
+  it('lists the titles with no video file yet under noVideo, with their reason', async () => {
+    const noVideo = { ...moviePayload(), fileNames: ['poster.jpg', 'metadata.json'], urls: { poster: moviePayload().urls.poster } }
+
+    const result = await runSync(oneServer({ movies: { [MOVIE]: noVideo }, tv: { [SHOW]: showPayload([]) } }))
+
+    expect(result.noVideo.default).toEqual({
+      movies: [{ title: MOVIE, reason: 'no video file' }],
+      tv: [
+        { title: SHOW, season: 'Season 1', reason: 'no video file' },
+        { title: SHOW, season: null, reason: 'no video file' },
+      ],
+    })
+    expect(result).not.toHaveProperty('missingMp4')
+  })
+})
+
+// ---------------------------------------------------------------- the operation id
+
+describe('the operation id on the run’s warm-up and completion', () => {
+  const { syncEventBus } = require('@src/utils/sync/core/events')
+  const { tryAcquireSyncLock } = require('@src/utils/sync/run/runState')
+  const completions = (spy) => spy.mock.calls.filter(([entityId]) => entityId === '__sync_complete__').map((call) => call[4])
+
+  it('stamps both, and says the run completed', async () => {
+    const started = jest.spyOn(syncEventBus, 'emitStarted')
+    const completed = jest.spyOn(syncEventBus, 'emitComplete')
+
+    const result = await runSync(oneServer(), { operationId: 'op-admin' })
+
+    expect(started.mock.calls.find(([entityId]) => entityId === '__sync_warmup__')[4]).toEqual({ operationId: 'op-admin' })
+    expect(completions(completed)).toEqual([{ summary: result, operationId: 'op-admin', outcome: 'completed' }])
+  })
+
+  it('emits a completion that says another sync is still finishing when the lock is held', async () => {
+    const completed = jest.spyOn(syncEventBus, 'emitComplete')
+    // The previous run's cleanup and jobs still hold the orchestration lock
+    expect(tryAcquireSyncLock('previous-run')).toBe(true)
+    try {
+      const result = await syncAllServers({ mode: 'all', servers: new Map() }, { operationId: 'op-busy', startedByAdmin: true })
+
+      expect(result).toMatchObject({ skipped: true, reason: 'orchestration_in_progress' })
+      expect(completions(completed)).toEqual([{ operationId: 'op-busy', outcome: 'busy', summary: result }])
+    } finally {
+      releaseSyncLock('previous-run')
+    }
+  })
+})
+
 // ---------------------------------------------------------------- added
 
 describe('what the admins’ sync notice counts as added', () => {
@@ -1075,10 +1216,12 @@ describe('what the admins’ sync notice counts as added', () => {
   })
 
   it('does not count a document a run only rewrote', async () => {
-    await runSync(oneServer())
+    // No hash on the metadata URL, so the forced pass fetches the metadata again
+    const movie = { ...moviePayload(), urls: { ...moviePayload().urls, metadata: `${MOVIE_FOLDER}/metadata.json` } }
+    await runSync(oneServer({ movies: { [MOVIE]: movie } }))
 
     // A forced pass runs every title in full and rewrites what differs
-    const forced = await runSync(oneServer(), { forceSync: true })
+    const forced = await runSync(oneServer({ movies: { [MOVIE]: movie } }), { forceSync: true })
 
     expect(forced.changedMedia.movies.length).toBeGreaterThan(0)
     expect(forced.changedMedia.episodes.length).toBe(2)
@@ -1153,7 +1296,6 @@ describe('the server config a pass refuses', () => {
       id: 'default',
       priority: 3,
       baseUrl: 'https://default.example',
-      nodeUrl: 'https://default-node.example',
       prefix: '',
       enabled: true,
       timeout: 30000,

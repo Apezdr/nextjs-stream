@@ -409,9 +409,9 @@ function createPair() {
   }
 }
 
-/** A tick that selects nothing: no entry asked for, nothing parsed but manifests that changed (none). */
-function expectNothingSelected(entry) {
-  expect([entry.mode, entry.entries, entry.bytes.candidate]).toEqual(['select', [], { manifests: 0, entries: 0 }])
+/** A skipped tick: no entry asked for, nothing parsed (every manifest answered 304). */
+function expectSkipped(entry) {
+  expect([entry.mode, entry.reason, entry.entries, entry.bytes.candidate]).toEqual(['skip', undefined, [], { manifests: 0, entries: 0 }])
 }
 
 /**
@@ -441,7 +441,7 @@ beforeEach(() => {
     { id: 'C', priority: 3, baseURL: 'https://C.example', prefixPath: '', syncEndpoint: 'https://C-node.example' },
   ]
   delete globalThis.__syncDatabaseAdapter
-  // The Node.js server's metadata hash endpoint: not there, so every pass fetches metadata itself
+  // No request leaves a pass here: anything fetched answers 404
   global.fetch = jest.fn(async () => ({ ok: false, status: 404 }))
   for (const method of ['log', 'info', 'warn', 'error', 'debug']) jest.spyOn(console, method).mockImplementation(() => {})
 })
@@ -471,11 +471,11 @@ describe('the scripted sequence', () => {
     expect([entry.mode, entry.reason]).toEqual(['select', 'the last pass is still running or did not complete'])
     expectSame(entry)
 
-    // 2. Nothing changed. With three servers a movie only one has lacks the
-    //    others' gates, which T1 counts as open, so no tick skips (as before);
-    //    but nothing is selected, and no entry is asked for
+    // 2. Nothing changed. A movie only one of the three servers has lacks the
+    //    others' gates, but they do not list it, so those gates are not open:
+    //    the tick is skipped, and no entry is asked for
     entry = await pair.step('no change')
-    expectNothingSelected(entry)
+    expectSkipped(entry)
     expectSame(entry)
     expect(entry.changed.reference).toEqual(noChanges)
 
@@ -544,9 +544,9 @@ describe('the scripted sequence', () => {
       pair.reference.mongo.collection('Media', 'FlatEpisodes').docs.length
     )
 
-    // 11. Nothing changed again: nothing selected again
+    // 11. Nothing changed again: skipped again
     entry = await pair.step('quiet again')
-    expectNothingSelected(entry)
+    expectSkipped(entry)
     expectSame(entry)
 
   })
@@ -872,6 +872,7 @@ async function walk(seed, ticks) {
   walkTotals.candidateBytes += summary.candidateBytes
   walkTotals.chunks += 1
   for (const [mode, n] of Object.entries(summary.modes)) walkTotals.modes[mode] = (walkTotals.modes[mode] || 0) + n
+  return summary
 }
 
 describe('a seeded random walk (changes, failures, admin edits, out-of-band deletes, moves during a tick)', () => {
@@ -884,6 +885,16 @@ describe('a seeded random walk (changes, failures, admin edits, out-of-band dele
     // For the report: totals over the walk
     process.stdout.write(`[DIFFERENTIAL] ${JSON.stringify(walkTotals)}\n`)
   })
+})
+
+describe('a three-server walk skips its quiet ticks', () => {
+  // A gate counts as open only where a server that lists the title lacks it,
+  // so titles one server has no longer hold every tick open
+  it.each([[21], [22], [23], [24]])('seed %i: 50 ticks, the same in both worlds every tick, and the candidate skips', async (seed) => {
+    const summary = await walk(seed, 50)
+    process.stdout.write(`[WALK3 seed ${seed}] ${JSON.stringify({ all: 0, select: 0, skip: 0, ...summary.modes, differingInMoveStretches: summary.mismatches })}\n`)
+    expect(summary.modes.skip ?? 0).toBeGreaterThan(0)
+  }, 120_000)
 })
 
 // ---------------------------------------------------------------- the review's scenarios

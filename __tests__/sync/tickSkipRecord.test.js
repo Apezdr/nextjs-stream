@@ -30,6 +30,7 @@ jest.mock('@src/utils/sync/run/preTag', () => ({ preTagSyncRunId: jest.fn() }))
 jest.mock('@src/utils/sync/run/missingMedia', () => ({
   computeMissingMedia: jest.fn(async () => ({ missingMovies: [], missingTVShows: [] })),
 }))
+jest.mock('@src/utils/sync/run/cantPlay', () => ({ cantPlayTitles: jest.fn(async () => ({})) }))
 jest.mock('@src/utils/sync/core', () => ({ MediaType: { Movie: 'movie' }, SyncOperation: { Metadata: 'metadata' } }))
 jest.mock('@src/utils/sync/core/events', () => ({
   syncEventBus: { emitStarted: jest.fn(), emitComplete: jest.fn() },

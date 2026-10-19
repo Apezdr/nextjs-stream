@@ -28,6 +28,30 @@
 export const LIST_VERSION_KEY = 'version'
 
 /**
+ * The season number a listing's season key names ("Season 2" → 2), or null
+ * when it names none. Read as pre-tag reads it (run/preTag).
+ *
+ * @param {string} seasonKey
+ * @returns {number|null}
+ */
+export function seasonNumberOfKey(seasonKey) {
+  const match = /Season (\d+)/.exec(seasonKey)
+  return match ? parseInt(match[1], 10) : null
+}
+
+/**
+ * The episode number a listing's episode key ends in ("S01E02" → 2), or null.
+ * Read as pre-tag reads it (run/preTag).
+ *
+ * @param {string} episodeKey
+ * @returns {number|null}
+ */
+export function episodeNumberOfKey(episodeKey) {
+  const match = /E(\d+)$/i.exec(episodeKey)
+  return match ? parseInt(match[1], 10) : null
+}
+
+/**
  * The listing of one server from its two manifests (run/manifestSource), which
  * already hold every title with its season and episode keys.
  *

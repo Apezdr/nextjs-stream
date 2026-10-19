@@ -136,3 +136,129 @@ describe('httpGet status handling', () => {
     expect(mockGot).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('what a failed request logs', () => {
+  const { loggableUrl } = require('@src/lib/httpHelper')
+  const FILE = 'https://files.example/movies/Caf%C3%A9%20(2001)/metadata.json?hash=0123abcd'
+
+  /** got's RequestError carries options, timings and agents: thousands of lines when printed whole. */
+  const requestError = () =>
+    Object.assign(new Error("Timeout awaiting 'request' for 5000ms"), {
+      name: 'RequestError',
+      code: 'ETIMEDOUT',
+      options: { agent: { http2: { sessions: Array.from({ length: 50 }, (_, i) => ({ i, buffer: 'x'.repeat(200) })) } } },
+      timings: { start: 1, phases: { total: 5000 } },
+    })
+
+  it('is one line under 300 characters with the URL, the attempts, and the error’s name, code and message', async () => {
+    mockGot.mockRejectedValue(requestError())
+
+    const error = await httpGet(FILE, { retry: { ...fast, limit: 2 } }).catch((e) => e)
+
+    // The same error, after the same attempts
+    expect(error.code).toBe('ETIMEDOUT')
+    expect(mockGot).toHaveBeenCalledTimes(3)
+    expect(console.error).toHaveBeenCalledTimes(1)
+    const [line, ...rest] = console.error.mock.calls[0]
+    expect(rest).toEqual([])
+    expect(line).toBe(
+      `Failed to fetch ${FILE} after 3 attempts: RequestError ETIMEDOUT: Timeout awaiting 'request' for 5000ms`
+    )
+    expect(line.length).toBeLessThan(300)
+    // Each retry is one line too, naming the error
+    expect(console.warn.mock.calls.map(([warning, ...more]) => [warning.length < 300, more.length])).toEqual([
+      [true, 0],
+      [true, 0],
+    ])
+    expect(console.warn.mock.calls[0][0]).toContain('RequestError ETIMEDOUT')
+    // The stack only with DEBUG
+    expect(console.debug).not.toHaveBeenCalledWith(expect.stringContaining('Error:'))
+  })
+
+  it('names the HTTP status when there is one', async () => {
+    mockGot.mockResolvedValue(reply(503))
+
+    await httpGet(FILE, { retry: { ...fast, limit: 0 } }).catch(() => {})
+
+    expect(console.error.mock.calls[0][0]).toMatch(/after 1 attempt: \w+ HTTP 503: /)
+  })
+
+  it('keeps a file’s query as it is, and hides a credential in the URL', () => {
+    expect(loggableUrl(FILE)).toBe(FILE)
+    expect(loggableUrl('https://sonarr.example/feed/calendar/Sonarr.ics?apikey=s3cr3t&unmonitored=true')).toBe(
+      'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true'
+    )
+    expect(loggableUrl('https://user:pass@files.example/a.json')).not.toContain('pass')
+  })
+})
+
+describe('the cache log lines', () => {
+  const FEED = 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=s3cr3t&unmonitored=true'
+  const FILE = 'https://files.example/movies/Caf%C3%A9%20(2001)/metadata.json?hash=0123abcd'
+  const lines = () => console.debug.mock.calls.map(([line]) => line)
+  const noKey = () => {
+    for (const line of lines()) expect(line).not.toContain('s3cr3t')
+  }
+
+  it('STORE: shows a feed URL with its API key REDACTED', async () => {
+    mockGot.mockResolvedValue(reply(200, 'BEGIN:VCALENDAR'))
+
+    await httpGet(FEED, { responseType: 'text', retry: fast })
+
+    expect(lines()).toContain(
+      'Cache STORE: https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true (text, 15 Bytes)'
+    )
+    noKey()
+  })
+
+  it('HIT: shows a feed URL with its API key REDACTED', async () => {
+    mockGetCache.mockResolvedValue({ data: 'BEGIN:VCALENDAR', etag: 'W/"ics"' })
+    mockGot.mockResolvedValue(reply(304))
+
+    await httpGet(FEED, { responseType: 'text', retry: fast }, true)
+
+    expect(lines().find((line) => line.startsWith('Cache HIT: '))).toContain('?apikey=REDACTED&unmonitored=true')
+    noKey()
+  })
+
+  it('MISS: shows a feed URL with its API key REDACTED', async () => {
+    // A cached buffer that is not one: a miss, then a fresh answer
+    mockGetCache.mockResolvedValue({ data: { _dataType: 'buffer', data: 42 }, etag: 'W/"b"' })
+    mockGot.mockResolvedValueOnce(reply(304)).mockResolvedValueOnce({ ...reply(200), rawBody: Buffer.from('abc') })
+
+    await httpGet(FEED, { responseType: 'buffer', retry: fast }, true)
+
+    expect(lines().find((line) => line.startsWith('Cache MISS: '))).toBe(
+      'Cache MISS: https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true (invalid buffer format in cache)'
+    )
+    noKey()
+  })
+
+  it('shows a file URL exactly as it was asked for, its hash included', async () => {
+    mockGot.mockResolvedValue(reply(200, '{"title":"Film"}'))
+
+    await httpGet(FILE, { retry: fast })
+
+    expect(lines().find((line) => line.startsWith('Cache STORE: '))).toBe(`Cache STORE: ${FILE} (json, 0 Bytes)`)
+  })
+
+  it('a 503 on a feed URL logs no key: not in the retry warnings, not in the final line', async () => {
+    mockGot.mockResolvedValue(reply(503))
+
+    const error = await httpGet(FEED, { responseType: 'text', retry: { ...fast, limit: 2, shouldRetry: backendClientRule } }).catch(
+      (e) => e
+    )
+
+    // The thrown error is unchanged: its callers see the same error
+    expect(error.message).toBe(`HTTP Error: 503 for URL: ${FEED}`)
+    expect(mockGot).toHaveBeenCalledTimes(3)
+    const logged = [...console.warn.mock.calls, ...console.error.mock.calls, ...console.debug.mock.calls].flat().map(String)
+    expect(console.warn).toHaveBeenCalledTimes(2)
+    for (const line of logged) expect(line).not.toContain('s3cr3t')
+    const redacted = 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true'
+    expect(console.error.mock.calls[0][0]).toBe(
+      `Failed to fetch ${redacted} after 3 attempts: Error HTTP 503: HTTP Error: 503 for URL: ${redacted}`
+    )
+    expect(console.warn.mock.calls[0][0]).toContain(`HTTP Error: 503 for URL: ${redacted}`)
+  })
+})
