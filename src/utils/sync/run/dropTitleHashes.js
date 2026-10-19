@@ -76,6 +76,10 @@ export async function dropTitleHashes(db) {
  * dropTitleHashes, once per database. Throws when it fails (no flag is
  * written, so the next run tries again).
  *
+ * @removeAtVersion 2026.10.0 Title-hash cleanup for databases synced before
+ *   the skip gates; delete this file, its call in run/postSync runAfterSyncJobs
+ *   and its tests when the version reaches 2026.10.0.
+ *
  * @param {import('mongodb').MongoClient} client
  * @returns {Promise<{applied: boolean, result?: Object}>}
  */
