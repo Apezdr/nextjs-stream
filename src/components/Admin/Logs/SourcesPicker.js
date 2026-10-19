@@ -74,7 +74,7 @@ export default function SourcesPicker({ selection, areas, facetCategories, onCha
 
       <PopoverPanel
         anchor="bottom start"
-        className="z-20 max-h-[26rem] w-80 overflow-y-auto [--anchor-gap:4px] rounded-md bg-white py-2 text-sm shadow-lg ring-1 ring-black/10 focus:outline-none"
+        className="z-20 max-h-[26rem] w-[22rem] max-w-[calc(100vw-2rem)] overflow-y-auto [--anchor-gap:4px] rounded-md bg-white py-2 text-sm shadow-lg ring-1 ring-black/10 focus:outline-none"
       >
         <div className="flex items-center justify-between px-3 pb-2">
           <span className="text-xs font-medium uppercase tracking-wide text-gray-500">Lines in this range</span>
@@ -112,7 +112,7 @@ export default function SourcesPicker({ selection, areas, facetCategories, onCha
                     label={area.label}
                     onToggle={() => onChange(setAreaShown(selection, area, state !== 'all'))}
                   />
-                  <span className="min-w-0 flex-1 truncate font-medium text-gray-900">{area.label}</span>
+                  <span className="min-w-0 flex-1 font-medium text-gray-900">{area.label}</span>
                   <OnlyButton label={area.label} onClick={() => onChange(onlyArea(area))} />
                   <span className="w-16 text-right tabular-nums text-gray-500">{area.count.toLocaleString()}</span>
                 </div>
@@ -127,7 +127,7 @@ export default function SourcesPicker({ selection, areas, facetCategories, onCha
                             label={category.name}
                             onToggle={() => onChange(setCategoryShown(selection, area, category.name, !shown))}
                           />
-                          <span className="min-w-0 flex-1 truncate font-mono text-xs text-gray-700">{category.name}</span>
+                          <span className="min-w-0 flex-1 break-all font-mono text-xs text-gray-700">{category.name}</span>
                           <OnlyButton label={category.name} onClick={() => onChange(onlyCategory(category.name))} />
                           <span className="w-16 text-right tabular-nums text-gray-500">{category.count.toLocaleString()}</span>
                         </li>
