@@ -450,9 +450,9 @@ export default function SyncMediaPopup({
   // button — we know a sync is already running, so start in connecting state immediately.
   const [isConnecting, setIsConnecting] = useState(() => autoConnect)
 
-  // Force refresh bypasses the per-item hash-skip optimisation, re-running the
-  // strategies for every entity even when stored hashes match. Default off —
-  // the typical sync should leverage the optimisation.
+  // Force refresh passes every title in full, ignoring the per-server sync
+  // gates (forceSync). Default off: a typical sync skips the titles whose
+  // gates show nothing changed.
   const [forceRefresh, setForceRefresh] = useState(false)
   // Whether the sync this popup started was a forced one: its unchanged titles
   // were checked in full rather than skipped
@@ -790,8 +790,9 @@ export default function SyncMediaPopup({
                           <span>
                             <span className="font-medium text-gray-900">Force refresh</span>
                             <span className="block text-xs text-gray-500">
-                              Bypass hash-skip and re-run every entity. Slower, but picks up changes
-                              that wouldn&apos;t otherwise invalidate stored hashes (e.g. config-only changes).
+                              Passes every title in full, ignoring each server&apos;s sync gates (the check
+                              that skips a title when nothing on the server changed). Slower, but redoes titles
+                              whose files did not change, e.g. after a settings change.
                             </span>
                           </span>
                         </label>

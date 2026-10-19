@@ -103,6 +103,15 @@ describe('before the sync', () => {
       )
     ).toBeInTheDocument()
   })
+
+  it('says a forced sync passes every title in full, ignoring the sync gates', () => {
+    renderPopup()
+    const option = screen.getByRole('checkbox', { name: /force refresh/i })
+    expect(option.closest('label')).toHaveTextContent(
+      "Passes every title in full, ignoring each server's sync gates (the check that skips a title when nothing on the server changed)."
+    )
+    expect(option.closest('label')).not.toHaveTextContent(/hash/i)
+  })
 })
 
 describe('the report of the sync the popup started', () => {
