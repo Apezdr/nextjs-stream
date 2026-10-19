@@ -344,7 +344,7 @@ export default function SyncMediaPopup({
           dispatchSummary({
             type: 'complete',
             data: { missingMedia: completeSummary.missingMedia || {} },
-            notReady: { missingMp4: completeSummary.missingMp4 || {} },
+            notReady: { noVideo: completeSummary.noVideo || {} },
             duration: completeSummary.duration ?? null,
           })
           updateProcessedData('media')
@@ -768,7 +768,7 @@ export default function SyncMediaPopup({
 
                       {syncNotReady !== null ? (
                         <>
-                          {Object.entries(syncNotReady.missingMp4).map(
+                          {Object.entries(syncNotReady.noVideo).map(
                             ([serverName, { tv, movies }]) => {
                               const hasTv = tv && tv.length > 0
                               const hasMovies = movies && movies.length > 0
@@ -791,7 +791,7 @@ export default function SyncMediaPopup({
                                       </h3>
                                       <ul className="text-red-600 text-xs list-disc ml-4 mt-1">
                                         {movies.map((movie, index) => (
-                                          <li key={index}>{movie}</li>
+                                          <li key={index}>{movie.title} ({movie.reason})</li>
                                         ))}
                                       </ul>
                                     </div>
@@ -804,7 +804,7 @@ export default function SyncMediaPopup({
                                       </h3>
                                       <ul className="text-red-600 text-xs list-disc ml-4 mt-1">
                                         {tv.map((tvShow, index) => (
-                                          <li key={index}>{tvShow}</li>
+                                          <li key={index}>{tvShow.season ? `${tvShow.title} - ${tvShow.season}` : tvShow.title} ({tvShow.reason})</li>
                                         ))}
                                       </ul>
                                     </div>

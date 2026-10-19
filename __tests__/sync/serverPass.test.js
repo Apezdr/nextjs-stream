@@ -1053,6 +1053,54 @@ describe('the new-content notices', () => {
   })
 })
 
+// ---------------------------------------------------------------- the popup's report
+
+describe('the report the admin’s sync popup shows', () => {
+  it('counts each server’s titles as checked, updated, unchanged and failed', async () => {
+    const first = await runSync(oneServer())
+    expect(first.titleCounts.default).toEqual({ checked: 2, updated: 2, unchanged: 0, failed: 0, failures: [] })
+
+    // Nothing changed: both titles are skipped on their gates
+    const second = await runSync(oneServer())
+    expect(second.titleCounts.default).toEqual({ checked: 2, updated: 0, unchanged: 2, failed: 0, failures: [] })
+  })
+
+  it('lists a failed title with its error', async () => {
+    const { fetchMetadataMultiServer } = require('@src/utils/sync/infrastructure/fileSystem/fetchFile')
+    const movie = { ...moviePayload(), urls: { ...moviePayload().urls, metadata: `${MOVIE_FOLDER}/metadata.json?hash=d9` } }
+    await runSync(oneServer())
+    const real = fetchMetadataMultiServer.getMockImplementation()
+    fetchMetadataMultiServer.mockImplementation(async (serverId, url, type) => {
+      if (url === movie.urls.metadata) throw new Error('file server timed out')
+      return real(serverId, url, type)
+    })
+    try {
+      const result = await runSync(oneServer({ movies: { [MOVIE]: movie } }))
+      expect(result.titleCounts.default).toMatchObject({ checked: 2, failed: 1 })
+      expect(result.titleCounts.default.failures).toEqual([
+        { kind: 'movies', title: MOVIE, error: expect.stringContaining('metadata fetch failed') },
+      ])
+    } finally {
+      fetchMetadataMultiServer.mockImplementation(real)
+    }
+  })
+
+  it('lists the titles with no video file yet under noVideo, with their reason', async () => {
+    const noVideo = { ...moviePayload(), fileNames: ['poster.jpg', 'metadata.json'], urls: { poster: moviePayload().urls.poster } }
+
+    const result = await runSync(oneServer({ movies: { [MOVIE]: noVideo }, tv: { [SHOW]: showPayload([]) } }))
+
+    expect(result.noVideo.default).toEqual({
+      movies: [{ title: MOVIE, reason: 'no video file' }],
+      tv: [
+        { title: SHOW, season: 'Season 1', reason: 'no video file' },
+        { title: SHOW, season: null, reason: 'no video file' },
+      ],
+    })
+    expect(result).not.toHaveProperty('missingMp4')
+  })
+})
+
 // ---------------------------------------------------------------- added
 
 describe('what the admins’ sync notice counts as added', () => {

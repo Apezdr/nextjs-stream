@@ -77,8 +77,10 @@ export interface ServerPassOptions {
    * (movies: no failed result; TV: no failed result and no result with an
    * error message). A movie the pass has nothing to sync for is clean. A
    * title the pass never reaches (it threw first) is not reported at all.
+   * `results` is everything the pass returned for the title (none for a movie
+   * with nothing to sync).
    */
-  onTitleFinished?: (kind: 'movies' | 'tv', title: string, clean: boolean) => void
+  onTitleFinished?: (kind: 'movies' | 'tv', title: string, clean: boolean, results: SyncResult[]) => void
 }
 
 /** Whether a title's results add nothing to the pass's failures (see onTitleFinished). */
@@ -172,7 +174,7 @@ export async function runServerPass(
     // A movie with nothing to sync (no URL, metadata or poster) is done as is
     const synced = new Set(movieTitles)
     for (const title of Object.keys(fileServer?.movies ?? {})) {
-      if (!synced.has(title)) options.onTitleFinished('movies', title, true)
+      if (!synced.has(title)) options.onTitleFinished('movies', title, true, [])
     }
   }
   if (movieTitles.length > 0) {
@@ -195,7 +197,7 @@ export async function runServerPass(
       (titleResults, title) => {
         record(titleResults, title)
         progress.update(titleResults.some((r) => r.status === SyncStatus.Failed))
-        options.onTitleFinished?.('movies', title, finishedCleanly('movies', titleResults))
+        options.onTitleFinished?.('movies', title, finishedCleanly('movies', titleResults), titleResults)
       }
     )
     logSummary('Movie', movieResults, Date.now() - movieStart)
@@ -232,7 +234,7 @@ export async function runServerPass(
       (title, error) => failedResult(title, MediaType.TVShow, serverConfig.id, error),
       (titleResults, title) => {
         record(titleResults, title)
-        options.onTitleFinished?.('tv', title, finishedCleanly('tv', titleResults))
+        options.onTitleFinished?.('tv', title, finishedCleanly('tv', titleResults), titleResults)
       }
     )
     logSummary('TV', tvResults, performance.now() - tvStart)

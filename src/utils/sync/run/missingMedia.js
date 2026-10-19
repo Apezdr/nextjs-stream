@@ -1,27 +1,22 @@
 /**
- * Lightweight missing-media detector.
+ * What a server lists that is not in the library: the report's "On <server>
+ * but not in the library" section (components/Admin/SyncMediaPopup).
+ * syncAllServers reads it after the server's pass, so a title that pass added
+ * is not reported; one that is still missing means its write failed, and the
+ * next sync retries it.
  *
- * Replaces the missing-media portion of `buildEnhancedFlatDBStructure` for
- * the main-orchestration call path. The legacy function pulled every record
- * from FlatMovies / FlatTVShows / FlatSeasons / FlatEpisodes, built 15
- * lookup Maps, and held them on the heap for the duration of the sync —
- * SigNoz observed this as ~414 MB of `old_space` per cycle.
- *
- * For the missing-media report, all we actually need is two cheap
- * projection-only finds and an in-memory diff against `fileServer` keys.
- * Seasons/episodes branches of the legacy detector are dead at the call
- * site (sync.js only surfaces `missingMovies` and `missingTVShows`), so we
- * don't compute them.
- *
- * Predicate parity with `memoryUtils.js:197-274` (verified):
- *   - Movie is missing iff its file-server title is not in
- *     `db.FlatMovies.title ∪ db.FlatMovies.originalTitle`, with the same
- *     fieldAvailability rescue: a title with `fieldAvailability.movies[t]`
- *     present is only reported missing when its `urls.mp4` array has
- *     responsible servers.
- *   - TV show is missing iff its file-server title is not in
- *     `db.FlatTVShows.title ∪ db.FlatTVShows.originalTitle`, AND the file
- *     server reports at least one season for it (legacy skips empty shows).
+ * Two projection-only finds (folder names and display titles of every movie
+ * and show) and a Set diff against the server's listing (run/listing):
+ *   - a movie is missing when its folder name is in neither
+ *     `FlatMovies.title` nor `FlatMovies.originalTitle`, and, when
+ *     fieldAvailability has an entry for it, some server reports its primary
+ *     video (`urls.mp4`, the processor's name for the primary video of any
+ *     container): a folder no server has a video for is reported as having
+ *     no video file yet instead (run/syncReport noVideoTitles);
+ *   - a show is missing when its folder name is in neither
+ *     `FlatTVShows.title` nor `FlatTVShows.originalTitle` and the server
+ *     lists at least one season for it.
+ * Seasons and episodes are not reported.
  */
 
 import { createLogger, logError } from '@src/lib/logger'
@@ -76,9 +71,8 @@ export async function computeMissingMedia(listing, fieldAvailability) {
     }
 
     // ─── Missing movies ────────────────────────────────────────────────────
-    // Walks the file-server's movie titles and reports any not in the DB
-    // set, applying the same fieldAvailability rescue as legacy code at
-    // memoryUtils.js:217-225.
+    // Walks the server's movie folders and reports any not in the DB set,
+    // unless no server reports a primary video for it (see the module comment).
     const missingMovies = []
     for (const title of listing.movies) {
       if (dbMovieTitles.has(title)) continue
@@ -92,8 +86,7 @@ export async function computeMissingMedia(listing, fieldAvailability) {
     }
 
     // ─── Missing TV shows ──────────────────────────────────────────────────
-    // Legacy only reports a show when the file server lists at least one
-    // season for it (memoryUtils.js:267-274). Preserved here.
+    // Only a show the server lists at least one season for.
     const missingTVShows = []
     for (const [showTitle, seasons] of listing.tv) {
       if (dbShowTitles.has(showTitle)) continue
