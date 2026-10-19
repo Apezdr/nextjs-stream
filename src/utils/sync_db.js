@@ -22,25 +22,6 @@ async function getFileServerImportSettings() {
   return result ?? 'No fileServerImportSettings found'
 }
 
-// Set File Server Import Settings
-async function setFileServerImportSettings(settings) {
-  const client = await clientPromise
-  const result = await client
-    .db('app_config')
-    .collection('Settings')
-    .updateOne(
-      {
-        name: 'fileServerImportSettings',
-      },
-      {
-        $set: {
-          ...settings,
-        },
-      },
-      { upsert: true }
-    )
-}
-
 const autoSync = new AutoSyncManager()
 const autoCaptions = new AutoCaptionsManager()
 const jitServe = new JitServeSettingsManager()
@@ -111,4 +92,4 @@ async function getServerSettings() {
   }
 }
 
-export { getServerSettings, getFileServerImportSettings, setFileServerImportSettings }
+export { getServerSettings, getFileServerImportSettings }
