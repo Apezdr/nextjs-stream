@@ -14,11 +14,22 @@ import {
 } from './runState'
 import { preTagSyncRunId } from './preTag'
 import { computeMissingMedia } from './missingMedia'
+import { buildTickInputs, settleApplied, tickPerfLine } from './manifestTick'
+import { getTickState, beginRun, resetTickState } from './tickState'
+import { SYNC_GATE_VERSION } from '@src/utils/sync/core/syncGate'
+import { getAllServers } from '@src/utils/config'
 import { syncEventBus } from '@src/utils/sync/core/events'
 import { MediaType, SyncOperation } from '@src/utils/sync/core'
-import { startPassRecord, recordCompletePass, incompletePassReasons } from './tickSkip'
+import {
+  startPassRecord,
+  recordCompletePass,
+  incompletePassReasons,
+  confirmTickMode,
+  currentBootId,
+  serversFingerprint,
+} from './tickSkip'
 
-// The sync route fetches each tick's payloads through this, and skips the tick
+// The sync route probes each tick's manifests through this, and skips the tick
 // when nothing changed (see run/tickSkip.js).
 export { fetchSyncTick } from './tickSkip'
 
@@ -33,15 +44,16 @@ const SYNC_LOCK_WATCHDOG_MS = (() => {
 
 /**
  * Performs a multi-server sync operation.
- * @param {Object} fileServers - File server data
- * @param {Object} fieldAvailability - Field availability map
- * @param {Object} options - Additional sync options
- * @param {Object} [options.payloadETags] - Per server id, the ETags of the TV and
- *   movie payloads in `fileServers` (fetchSyncTick). When given and the pass
- *   completes for every server, they are recorded so the next tick can skip.
+ * @param {Object} tick - fetchSyncTick's answer for a tick that is not skipped:
+ *   its mode (`all` or `select`), every enabled server's manifest probe and
+ *   the servers that did not answer. Under the lock, after the running
+ *   marker, the run selects the titles, fetches their entries and builds the
+ *   pass's inputs (run/manifestTick buildTickInputs).
+ * @param {Object} [options]
+ * @param {boolean} [options.forceSync]
  * @returns {Promise<Object>} Sync results
  */
-export async function syncAllServers(fileServers, fieldAvailability, options = {}) {
+export async function syncAllServers(tick, options = {}) {
   const client = await clientPromise
   const startTime = Date.now()
   console.info(
@@ -87,6 +99,9 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       console.error(chalk.red(
         `❌ Sync lock watchdog fired after ${SYNC_LOCK_WATCHDOG_MS}ms — force-released run ${syncRunId}`
       ))
+      // The released run may keep writing, outside `applied`: the next tick
+      // passes over every title (run/tickState)
+      resetTickState()
     }
   }, SYNC_LOCK_WATCHDOG_MS)
   if (typeof lockWatchdog.unref === 'function') lockWatchdog.unref()
@@ -154,6 +169,27 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   // in scope at the background cleanup call below.
   let preTagResult = null
 
+  // The pass's inputs (run/manifestTick buildTickInputs), built inside the try
+  // below, after the running marker. Until then, and if building them fails,
+  // they say no server answered: no pass runs and cleanup deletes nothing.
+  // `listings` is what each answering server has, by key (run/listing):
+  // pre-tag, the missing-media report and cleanup's no-server-data guard read
+  // these, never the payloads.
+  let fileServers = {}
+  let allEnabledServersProbed = false
+  let fieldAvailability = { movies: {}, tv: {} }
+  let listings = new Map()
+  // The rest of what the inputs carry (the selection, the manifests used, the
+  // entry hashes), the tick state the run updates, and per kind, title and
+  // server, whether the server's pass finished the title cleanly
+  let inputs = null
+  let tickState = null
+  const finished = { tv: new Map(), movies: new Map() }
+
+  // Whether the tick may still pass over only some titles: decided before the
+  // marker, which changes the record the tick state is checked against
+  const mode = await confirmTickMode(client, tick)
+
  try {
   // No tick may be skipped on the strength of an earlier pass while this one
   // writes: the record of the last complete pass is replaced now by this
@@ -161,13 +197,42 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
   // completes (recordCompletePass below; see run/tickSkip.js).
   await startPassRecord(client, syncRunId)
 
+  try {
+    inputs = await buildTickInputs({
+      tick,
+      mode,
+      state: getTickState(),
+      db: client.db('Media'),
+      watchdogMs: SYNC_LOCK_WATCHDOG_MS,
+    })
+    ;({ fileServers, allEnabledServersProbed, fieldAvailability, listings } = inputs)
+    console.info(tickPerfLine({ kind: mode, selected: inputs.selected, manifests: inputs.manifests, perf: inputs.perf }))
+    // Before the first Flat* write (pre-tag): every selected title loses its
+    // `applied` entry, and the state now tracks this run (run/tickState)
+    tickState = beginRun({
+      syncRunId,
+      mode,
+      bootId: currentBootId(),
+      gateVersion: SYNC_GATE_VERSION,
+      serversFingerprint: serversFingerprint(getAllServers()),
+      manifests: inputs.manifests,
+      selected: {
+        tv: [...inputs.selected.tv.keys(), ...inputs.dropped.tv],
+        movies: [...inputs.selected.movies.keys(), ...inputs.dropped.movies],
+      },
+    })
+  } catch (inputError) {
+    console.error(chalk.red(`❌ Could not build the pass's inputs: ${inputError.message}`))
+    results.errors.push({ error: inputError.message, phase: 'pass_inputs', stack: inputError.stack })
+  }
+
   // Pre-tag every record currently present on a file server with the current
   // syncRunId. The per-write marker injection in the sync helpers only fires
   // for records that change; this catches the steady-state case where most
   // records are unchanged. By the time post-sync cleanup runs, anything
   // without the current marker is provably orphan.
   try {
-    preTagResult = await preTagSyncRunId(fileServers, syncRunId)
+    preTagResult = await preTagSyncRunId(listings, syncRunId)
   } catch (preTagError) {
     // preTagSyncRunId is fail-closed (returns a coverage report, does not throw),
     // so this only catches truly unexpected failures. Leaving preTagResult = null
@@ -228,14 +293,18 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
         // cycle per SigNoz). The missing-media report only needs two
         // projection-only finds + a Set diff — see computeMissingMedia.js.
         const [missingMedia, syncResult] = await Promise.all([
-          computeMissingMedia(fileServer, fieldAvailability),
+          computeMissingMedia(listings.get(serverId), fieldAvailability),
           runServerPass(fileServer, serverConfig, fieldAvailability, {
             forceSync: Boolean(options.forceSync),
             // Authoritative-pass gate for field-absence cleanup: true only when
-            // every enabled file server responded this run (computed in the route
-            // handler). Threaded unchanged into RunConfig (and its cleanup).
-            allEnabledServersProbed: options.allEnabledServersProbed === true,
+            // every enabled file server answered this run (buildTickInputs).
+            // Threaded unchanged into RunConfig (and its cleanup).
+            allEnabledServersProbed,
             written,
+            onTitleFinished: (kind, title, clean) => {
+              if (!finished[kind].has(title)) finished[kind].set(title, new Map())
+              finished[kind].get(title).set(serverId, clean)
+            },
           }),
         ])
 
@@ -337,6 +406,15 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     }
   }
 
+  // `applied` again for the selected titles every server finished cleanly
+  if (tickState && inputs) {
+    try {
+      settleApplied(tickState, inputs, finished, syncRunId)
+    } catch (error) {
+      results.errors.push({ error: error.message, phase: 'tick_state', stack: error.stack })
+    }
+  }
+
   try {
     await updateLastSynced(client)
   } catch (error) {
@@ -347,7 +425,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     results,
     preTagResult,
     fileServers,
-    allEnabledServersProbed: options.allEnabledServersProbed === true,
+    allEnabledServersProbed,
   })
 
   // If every server's pass completed, record the payloads it applied: the
@@ -358,8 +436,10 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
     results,
     preTagResult,
     fileServers,
-    allEnabledServersProbed: options.allEnabledServersProbed === true,
-    payloadETags: options.payloadETags,
+    allEnabledServersProbed,
+    manifestETags: inputs
+      ? Object.fromEntries([...inputs.manifests].map(([serverId, kinds]) => [serverId, { tv: kinds.tv.etag, movies: kinds.movies.etag }]))
+      : undefined,
   })
  } finally {
   results.added = written.addedCounts()
@@ -412,7 +492,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       try {
         console.log(chalk.bold.yellow('Performing post-sync cleanup (background)...'))
         const finalAvailabilityResults = await runPostSyncCleanup(
-          fileServers,
+          listings,
           fieldAvailability,
           {
             syncRunId,
@@ -420,7 +500,7 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
             runStartedAt: startTime,
             // Whether every enabled server answered. Cleanup deletes nothing on a
             // run where one did not (see the every-server gate there).
-            allEnabledServersProbed: options.allEnabledServersProbed === true,
+            allEnabledServersProbed,
           }
         )
         results.finalAvailabilityResults = finalAvailabilityResults
@@ -433,6 +513,9 @@ export async function syncAllServers(fileServers, fieldAvailability, options = {
       console.error(chalk.red(`❌ The run's after-sync jobs failed: ${error.message}`))
     } finally {
       clearTimeout(lockWatchdog)
+      // A run that lost its lock to the watchdog wrote until now: whatever the
+      // runs since then recorded, the next tick passes over every title
+      if (getSyncLockHolder()?.syncRunId !== syncRunId) resetTickState()
       releaseSyncLock(syncRunId)
     }
   })

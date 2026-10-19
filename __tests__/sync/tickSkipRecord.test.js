@@ -1,12 +1,12 @@
 /**
  * @jest-environment node
  *
- * The ETags a tick sends are those of the last COMPLETE pass. syncAllServers
+ * The manifest ETags a tick sends are those of the last COMPLETE pass. syncAllServers
  * replaces the record with its running marker when a pass starts, and turns
  * the marker into a complete record only when every enabled server answered,
  * pre-tag stamped every collection and every server's pass ran to the end
- * with nothing failed — so a failed or partial pass is retried with a full
- * fetch. A Flat* delete outside the sync removes the marker, and the pass can
+ * with nothing failed — so a failed or partial pass is followed by another
+ * pass. A Flat* delete outside the sync removes the marker, and the pass can
  * then not record itself.
  */
 
@@ -34,7 +34,14 @@ jest.mock('@src/utils/sync/core', () => ({ MediaType: { Movie: 'movie' }, SyncOp
 jest.mock('@src/utils/sync/core/events', () => ({
   syncEventBus: { emitStarted: jest.fn(), emitComplete: jest.fn() },
 }))
-jest.mock('@src/utils/fetchAllServerData', () => ({ fetchAllServerData: jest.fn() }))
+// The file servers' manifests and entries (run/manifestSource), faked
+const { createFakeProcessor } = require('../helpers/fakeProcessor')
+const mockProcessor = createFakeProcessor()
+jest.mock('@src/utils/sync/run/manifestSource', () => ({
+  ...jest.requireActual('@src/utils/sync/run/manifestSource'),
+  fetchManifest: (...args) => mockProcessor.fetchManifest(...args),
+  fetchEntries: (...args) => mockProcessor.fetchEntries(...args),
+}))
 jest.mock('@src/utils/watchHistory/migrate', () => ({ migratePlaybackStatusIfNeeded: jest.fn() }))
 jest.mock('@src/utils/sync/run/watchHistoryValidation', () => ({ validateWatchHistoryAgainstDatabase: jest.fn() }))
 
@@ -45,6 +52,8 @@ const { getSyncLockHolder, releaseSyncLock, tryAcquireSyncLock } = require('@src
 const { SYNC_GATE_VERSION } = require('@src/utils/sync/core/syncGate')
 const { runServerPass } = require('@src/utils/sync/run/serverPass')
 const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
+const { probeServers } = require('@src/utils/sync/run/manifestTick')
+const { getTickState } = require('@src/utils/sync/run/tickState')
 
 const stored = (value) => JSON.parse(JSON.stringify(value, (_key, v) => (v === undefined ? null : v)))
 const matches = (doc, filter) => Object.entries(filter).every(([key, value]) => doc[key] === value)
@@ -78,10 +87,11 @@ function memoryCollection(docs = []) {
   return collection
 }
 
-const ETAGS = {
-  default: { tv: 'W/"tv-2"', movies: '"movies-1"' },
-  server2: { tv: '"s2-tv-1"', movies: '"s2-movies-1"' },
-}
+/** The manifest ETags the servers serve now, as a complete pass records them. */
+const manifestETags = () =>
+  Object.fromEntries(
+    ['default', 'server2'].map((id) => [id, { tv: mockProcessor.manifestOf(id, 'tv').etag, movies: mockProcessor.manifestOf(id, 'movies').etag }])
+  )
 
 const fileServers = {
   default: { config: { priority: 1, baseURL: 'https://files.example' }, movies: { 'Movie A': {} }, tv: { 'Show A': {} } },
@@ -112,12 +122,18 @@ function preTagCovers({ ok = true } = {}) {
   })
 }
 
-async function runPass(options = {}) {
-  const result = await syncAllServers(fileServers, { movies: {}, tv: {} }, {
-    allEnabledServersProbed: true,
-    payloadETags: ETAGS,
-    ...options,
-  })
+/**
+ * One run on an `all` tick: both servers serve `fileServers`' libraries through
+ * their manifests and entries; with `allEnabledServersProbed: false` server2's
+ * are down. `tick` replaces the tick the run is handed.
+ */
+async function runPass({ allEnabledServersProbed = true, tick = null, ...options } = {}) {
+  mockProcessor.reset()
+  for (const [id, served] of Object.entries(fileServers)) mockProcessor.serve(id, served)
+  if (!allEnabledServersProbed) mockProcessor.server('server2').down = true
+  const probes = await probeServers(mockServers, null)
+  const errors = [...probes].filter(([, probe]) => !probe.ok).map(([serverId, probe]) => ({ serverId, error: probe.error }))
+  const result = await syncAllServers(tick ?? { mode: 'all', servers: probes, errors: errors.length > 0 ? errors : undefined }, options)
   // Let the background cleanup settle and release the orchestration lock
   await new Promise((resolve) => setImmediate(resolve))
   await new Promise((resolve) => setImmediate(resolve))
@@ -159,7 +175,8 @@ it('records the ETags a complete pass applied, with what the skip check compares
   expect(appliedRecord()).toEqual({
     _id: 'appliedPayloads',
     state: 'complete',
-    servers: ETAGS,
+    recordFormat: 2,
+    servers: manifestETags(),
     gateVersion: SYNC_GATE_VERSION,
     serversFingerprint: 'default:1,server2:2',
     bootId: currentBootId(),
@@ -229,8 +246,7 @@ describe('a pass that did not complete is not recorded, so the next tick fetches
     }, {}],
     ['not every enabled server answered', () => {}, { allEnabledServersProbed: false }],
     ['pre-tag did not cover every collection', () => preTagCovers({ ok: false }), {}],
-    ['a server sent no ETag for a payload', () => {}, { payloadETags: { ...ETAGS, server2: { tv: '"s2-tv-1"', movies: null } } }],
-    ['the caller passed no ETags', () => {}, { payloadETags: undefined }],
+    ['the pass inputs could not be built', () => {}, { tick: { mode: 'all', servers: new Map([['default', { ok: true, manifests: { tv: null, movies: null } }]]) } }],
   ])('when %s', async (_label, arrange, options) => {
     arrange()
 
@@ -274,7 +290,7 @@ describe('a run that no longer holds the sync lock neither marks nor records', (
       preTagResult: { ok: true, skipped: false },
       fileServers,
       allEnabledServersProbed: true,
-      payloadETags: ETAGS,
+      manifestETags: manifestETags(),
     })
 
     expect(recorded).toBe(false)
@@ -295,5 +311,34 @@ describe('a run that no longer holds the sync lock neither marks nor records', (
     // the lock check stops the record
     expect(result.errors).toEqual([])
     expect(appliedRecord()).toMatchObject({ state: 'running', syncRunId: result.syncRunId })
+    // It wrote while another run could hold the lock: no tick state survives
+    // it, so the next tick passes over every title
+    expect(getTickState()).toBeNull()
+  })
+
+  it('the watchdog that releases an overrunning run drops the tick state at once; the run settling keeps it dropped', async () => {
+    jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] })
+    try {
+      let finish = null
+      runServerPass.mockImplementation(async () => {
+        if (!finish) await new Promise((resolve) => { finish = resolve })
+        return cleanPass()
+      })
+      const running = runPass()
+      for (let i = 0; i < 1000 && !finish; i++) await new Promise((resolve) => setImmediate(resolve))
+      const run = getSyncLockHolder()?.syncRunId
+      expect(getTickState()?.lastRunId).toBe(run)
+
+      await jest.advanceTimersByTimeAsync(10 * 60 * 1000)
+
+      expect(getSyncLockHolder()).toBeNull()
+      expect(getTickState()).toBeNull()
+      finish()
+      await running
+      expect(getTickState()).toBeNull()
+      expect(appliedRecord()).toMatchObject({ state: 'running', syncRunId: run })
+    } finally {
+      jest.useRealTimers()
+    }
   })
 })

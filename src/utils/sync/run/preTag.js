@@ -130,11 +130,12 @@ function summarize(coverage) {
 }
 
 /**
- * @param {Object} allFileServers - { [serverId]: { movies, tv, ... } }
+ * @param {Map<string, import('./listing').ServerListing>} listings - Each
+ *   answering server's titles, seasons and episodes, by key (run/listing)
  * @param {string} syncRunId - The orchestration's syncRunId (already-set in syncContext).
  * @returns {Promise<PreTagResult>} Structured, fail-closed coverage report (never null).
  */
-export async function preTagSyncRunId(allFileServers, syncRunId) {
+export async function preTagSyncRunId(listings, syncRunId) {
   const log = createLogger('FlatSync.PreTag')
   const startedAt = Date.now()
 
@@ -153,21 +154,16 @@ export async function preTagSyncRunId(allFileServers, syncRunId) {
   const seasonNeeds = []   // { origTitle, seasonNumber }
   const episodeNeeds = []  // { origTitle, seasonNumber, episodeNumber }
 
-  for (const fs of Object.values(allFileServers || {})) {
-    if (fs?.movies) {
-      for (const t of Object.keys(fs.movies)) movieTitles.add(t)
-    }
-    if (!fs?.tv) continue
-    for (const [origTitle, showData] of Object.entries(fs.tv)) {
+  for (const listing of listings?.values() ?? []) {
+    for (const t of listing.movies) movieTitles.add(t)
+    for (const [origTitle, seasons] of listing.tv) {
       showOriginalTitles.add(origTitle)
-      if (!showData?.seasons) continue
-      for (const [seasonKey, seasonData] of Object.entries(showData.seasons)) {
+      for (const [seasonKey, episodeKeys] of seasons) {
         const sm = seasonKey.match(/Season (\d+)/)
         if (!sm) continue
         const seasonNumber = parseInt(sm[1], 10)
         seasonNeeds.push({ origTitle, seasonNumber })
-        if (!seasonData?.episodes) continue
-        for (const epKey of Object.keys(seasonData.episodes)) {
+        for (const epKey of episodeKeys) {
           const em = epKey.match(/E(\d+)$/i)
           if (!em) continue
           episodeNeeds.push({ origTitle, seasonNumber, episodeNumber: parseInt(em[1], 10) })
