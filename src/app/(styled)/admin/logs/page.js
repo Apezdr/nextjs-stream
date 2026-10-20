@@ -1,3 +1,4 @@
+import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { adminUserEmails } from '@src/utils/config'
@@ -14,7 +15,10 @@ async function LogsAdminPage() {
     <div className="flex flex-col justify-start min-h-[89vh] mt-8 mx-8">
       <main className="px-4 pb-8 lg:px-6 lg:flex-auto lg:py-20 bg-white md:rounded-lg w-full">
         <div className="mx-auto max-w-2xl space-y-16 sm:space-y-20 lg:mx-0 lg:max-w-none">
-          <LogsAdministration />
+          {/* LogsAdministration reads ?server= and ?q= with useSearchParams. */}
+          <Suspense fallback={null}>
+            <LogsAdministration />
+          </Suspense>
         </div>
       </main>
     </div>

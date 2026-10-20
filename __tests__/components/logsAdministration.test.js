@@ -18,10 +18,18 @@ global.ResizeObserver ??= class {
 const mockToast = { success: jest.fn(), error: jest.fn() }
 jest.mock('react-toastify', () => ({ toast: mockToast }))
 
+// The server list, or the selected server's alerts (AlertsPanel), by key.
+let mockAlerts = { processorId: 'proc-1', active: [], recent: [] }
 jest.mock('swr', () => ({
   __esModule: true,
-  default: () => ({ data: [{ id: 'default', displayName: 'Default' }], error: undefined }),
+  default: (key) =>
+    String(key).includes('/admin/alerts')
+      ? { data: mockAlerts, error: undefined, isLoading: false }
+      : { data: [{ id: 'default', displayName: 'Default' }], error: undefined },
 }))
+
+let mockSearchParams = new URLSearchParams()
+jest.mock('next/navigation', () => ({ useSearchParams: () => mockSearchParams }))
 
 jest.mock('@src/utils', () => ({ buildURL: (url) => url }))
 
@@ -86,6 +94,8 @@ const messages = () => within(screen.getByRole('log')).queryAllByText(/^message 
 
 afterEach(() => {
   jest.useRealTimers()
+  mockAlerts = { processorId: 'proc-1', active: [], recent: [] }
+  mockSearchParams = new URLSearchParams()
 })
 
 describe('LogsAdministration', () => {
@@ -237,5 +247,38 @@ describe('LogsAdministration', () => {
     expect(
       await screen.findByText("Couldn't load the log: The media processor refused the request (403): Admin privileges required")
     ).toBeInTheDocument()
+  })
+
+  it('opens on the server and search a notification links to', async () => {
+    mockSearchParams = new URLSearchParams({ server: 'default', q: '2bd18557f897' })
+    const urls = serveLogs({ newest: page({ entries: [entry(1)] }) })
+
+    render(<LogsAdministration />)
+
+    await waitFor(() => expect(urls[0]).toBe('/api/authenticated/admin/logs?server=default&limit=500&q=2bd18557f897'))
+    expect(screen.getByRole('searchbox', { name: 'Search' })).toHaveValue('2bd18557f897')
+  })
+
+  it("shows the server's firing alerts above the log, and their lines on request", async () => {
+    mockAlerts = {
+      processorId: 'proc-1',
+      active: [
+        { key: 'recurring:aaa', severity: 'warning', state: 'firing', title: 'session-cache: "Memory pressure" 20 times', fp: 'aaaaaaaaaaaa', firedAt: '2026-10-19T21:00:00.000Z' },
+        { key: 'heartbeat:library-scan', severity: 'critical', state: 'firing', title: 'No library scan has finished in 31 minutes', fp: null, firedAt: '2026-10-19T21:10:00.000Z' },
+      ],
+      recent: [],
+    }
+    const urls = serveLogs({ newest: page({ entries: [entry(1)] }) })
+
+    render(<LogsAdministration />)
+    await waitFor(() => expect(messages()).toEqual(['message 1']))
+
+    const panel = screen.getByRole('region', { name: 'Log alerts' })
+    expect(within(panel).getByText('2 active alerts')).toBeInTheDocument()
+    // Critical first.
+    expect(within(panel).getAllByRole('listitem')[0]).toHaveTextContent('No library scan has finished')
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Show lines' }))
+    await waitFor(() => expect(urls.at(-1)).toBe('/api/authenticated/admin/logs?server=default&limit=500&q=aaaaaaaaaaaa'))
   })
 })

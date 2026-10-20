@@ -11,7 +11,9 @@ export const NOTIFICATION_TYPES = {
   NEW_EPISODE: 'new_episode',
   NEW_MOVIE: 'new_movie',
   MAINTENANCE: 'maintenance',
-  CLIENT_ERROR: 'client_error'
+  CLIENT_ERROR: 'client_error',
+  // A media processor's log alert (src/utils/logAlerts/adminNotifier.js)
+  LOG_ALERT: 'log_alert'
 };
 
 export const NOTIFICATION_PRIORITIES = {
@@ -137,6 +139,8 @@ export const getNotificationIcon = (type) => {
       return '🔧';
     case NOTIFICATION_TYPES.CLIENT_ERROR:
       return '🚨';
+    case NOTIFICATION_TYPES.LOG_ALERT:
+      return '📟';
     default:
       return '🔔';
   }

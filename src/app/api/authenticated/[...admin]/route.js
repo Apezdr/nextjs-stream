@@ -19,6 +19,7 @@ import clientPromise from '@src/lib/mongodb'
 import { getServerLoadSnapshot, noteServerLoadDemand } from '@src/utils/monitor_server_load'
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
+import { handleLogAlert } from '@src/utils/logAlerts/receiveLogAlert'
 import { syncAllServers, fetchSyncTick } from '@src/utils/sync/run/syncAllServers'
 import { forgetAppliedPayloads } from '@src/utils/sync/run/appliedPayloads'
 import { validateWatchHistory } from '@src/utils/sync/run/validateWatchHistory'
@@ -734,6 +735,11 @@ export async function POST(request, props) {
     // Handle system status notification
     if (slugs[1] === 'system-status-notification') {
       return handleSystemStatusNotification(request, webhookId, serverId);
+    }
+
+    // A media processor's log alert (src/utils/logAlerts/receiveLogAlert.js)
+    if (slugs[1] === 'log-alert') {
+      return handleLogAlert(request, { webhookId, serverId });
     }
 
     // Handle post-sync media cache revalidation (fired internally by the sync)

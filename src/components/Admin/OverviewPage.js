@@ -13,6 +13,7 @@ import { buildURL, fetcher } from '@src/utils'
 import EnhancedServerStats from './Stats/EnhancedServerStats'
 import EnhancedServerProcesses from './Stats/EnhancedServerProcesses'
 import EnhancedTMDBStatus from './EnhancedTMDBStatus'
+import ProcessorAlertsCard from './ProcessorAlertsCard'
 import DashboardHeader from './DashboardHeader'
 import { MaterialCard, MaterialCardHeader, MaterialCardContent, MaterialButton } from './BaseComponents'
 
@@ -127,6 +128,9 @@ export default function AdminOverviewPage({
 
         {/* Main Dashboard Grid */}
         <div className="space-y-8">
+          {/* Each media processor's log alerts (its own alert manager) */}
+          <ProcessorAlertsCard />
+
           {/* System Status Section */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
             {/* Server Statistics */}

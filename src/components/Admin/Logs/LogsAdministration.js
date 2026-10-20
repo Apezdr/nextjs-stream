@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useLayoutEffect, useRef, useState } from 'react'
 import useSWR from 'swr'
+import { useSearchParams } from 'next/navigation'
 import { ArrowDownIcon, ArrowPathIcon, ChevronRightIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/20/solid'
 import { toast } from 'react-toastify'
 import { buildURL } from '@src/utils'
@@ -12,6 +13,7 @@ import { splitMeta } from './logExport'
 import SourcesPicker from './SourcesPicker'
 import TimeRangePicker, { ALL_TIME, describeRange, isRelative, rangeFor } from './TimeRangePicker'
 import ExportMenu from './ExportMenu'
+import AlertsPanel from './AlertsPanel'
 
 const NO_SERVERS = Object.freeze([])
 const INITIAL_FILTERS = Object.freeze({ sources: ALL_SOURCES, level: '', q: '', range: ALL_TIME })
@@ -272,9 +274,12 @@ const selectClass =
   'block w-full rounded-md border-0 py-1.5 pl-3 pr-8 text-sm text-gray-900 ring-1 ring-inset ring-gray-300 focus:ring-2 focus:ring-indigo-600'
 
 export default function LogsAdministration() {
-  const [serverId, setServerId] = useState(null)
-  const [filters, setFilters] = useState(INITIAL_FILTERS)
-  const [draft, setDraft] = useState('')
+  // ?server= and ?q= open the page on a server and a search: an alert
+  // notification links here with its fingerprint (src/utils/logAlerts).
+  const searchParams = useSearchParams()
+  const [serverId, setServerId] = useState(() => searchParams.get('server'))
+  const [filters, setFilters] = useState(() => ({ ...INITIAL_FILTERS, q: searchParams.get('q')?.trim() ?? '' }))
+  const [draft, setDraft] = useState(() => searchParams.get('q')?.trim() ?? '')
   const [live, setLive] = useState(true)
 
   const { data: servers = NO_SERVERS, error: serversError } = useSWR(
@@ -301,6 +306,12 @@ export default function LogsAdministration() {
   function handleSearch(event) {
     event.preventDefault()
     setFilter('q', draft.trim())
+  }
+
+  // An alert's lines: every source and level, the whole log, its fingerprint.
+  function showAlertLines(alert) {
+    setDraft(alert.fp)
+    setFilters({ ...INITIAL_FILTERS, q: alert.fp })
   }
 
   function clearSearch() {
@@ -335,6 +346,8 @@ export default function LogsAdministration() {
       </div>
 
       {serversError && <p className="mb-4 text-sm text-red-600">{serversError.message}</p>}
+
+      <AlertsPanel serverId={activeServerId} onShowLines={showAlertLines} />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div>
