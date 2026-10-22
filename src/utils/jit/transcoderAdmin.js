@@ -23,8 +23,11 @@ const log = createLogger('JIT.TranscoderAdmin')
 
 /** How long the server → transcoder-base map is reused. A transcoder rarely moves. */
 const DISCOVERY_TTL_MS = 5 * 60_000
-/** One answer serves every dashboard tab (and the health probe) for this long. */
-const FETCH_TTL_MS = 4_000
+/**
+ * One answer serves every dashboard tab (and the health probe) for this long. Under the card's
+ * 2 s poll, so each poll gets a fresh answer while concurrent tabs still share one call.
+ */
+const FETCH_TTL_MS = 1_500
 const FETCH_TIMEOUT_MS = 3_000
 
 let discovery = { at: 0, promise: null }

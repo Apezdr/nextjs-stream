@@ -91,6 +91,8 @@ export function shapeTranscoderDashboard(transcoders, titles, viewers, now = new
         ok: true,
         ms: t.result.ms,
         version: data.version ?? null,
+        // Absent on a transcoder older than the hardware report.
+        hardware: data.hardware ?? null,
         load: data.load ?? null,
         capacity: data.capacity ?? null,
         gpu: Array.isArray(data.gpu) ? data.gpu : [],
