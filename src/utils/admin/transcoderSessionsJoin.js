@@ -29,6 +29,8 @@ export function fileNameFromPathKey(pathKey) {
 
 function titleOf(doc) {
   if (!doc) return null
+  // Library durations are milliseconds.
+  const durationSec = Number.isFinite(doc.duration) && doc.duration > 0 ? Math.round(doc.duration / 1000) : null
   if (doc.kind === 'episode') {
     return {
       kind: 'episode',
@@ -36,9 +38,10 @@ function titleOf(doc) {
       season: doc.seasonNumber ?? null,
       episode: doc.episodeNumber ?? null,
       name: doc.title ?? null,
+      durationSec,
     }
   }
-  return { kind: 'movie', name: doc.title ?? doc.originalTitle ?? null }
+  return { kind: 'movie', name: doc.title ?? doc.originalTitle ?? null, durationSec }
 }
 
 const KIND_ORDER = { video: 0, direct: 1, audio: 2 }
@@ -97,6 +100,16 @@ export function shapeTranscoderDashboard(transcoders, titles, viewers, now = new
         capacity: data.capacity ?? null,
         gpu: Array.isArray(data.gpu) ? data.gpu : [],
         sessions,
+        // Newest first, each joined to its title like a session (absent on an older transcoder).
+        problems: (Array.isArray(data.recent_problems) ? data.recent_problems : []).map((p) => {
+          const nid = sessionVideoId(p.path_key)
+          return {
+            ...p,
+            age_ms: Math.max(0, now.getTime() - (p.at_unix_ms ?? now.getTime())),
+            title: titleOf(nid ? titles.get(nid) : null),
+            file: fileNameFromPathKey(p.path_key),
+          }
+        }),
       }
     }),
   }
