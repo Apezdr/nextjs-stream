@@ -18,9 +18,15 @@ import {
 } from '@src/utils/jit/serveSettings'
 import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
 
+// The queue ceiling reads the transcoder's admin API (behind its key), not the public /health.
+const mockLoad = jest.fn()
+jest.mock('@src/utils/jit/transcoderAdmin', () => ({
+  getTranscoderLoadForOrigin: (...args) => mockLoad(...args),
+}))
+
 const JIT = 'https://transcoder.example.com/stream/bW92aWVzL1gvWC5ta3Y/master.m3u8'
 
-const mockFetchOk = (body = { status: 'healthy', queued: 0 }) =>
+const mockFetchOk = (body = { status: 'healthy' }) =>
   jest.fn().mockResolvedValue({ ok: true, json: async () => body })
 
 describe('mediaVisibility', () => {
@@ -382,10 +388,11 @@ describe('admin runtime override (settings > env > default)', () => {
   test('runtime maxQueued overrides the env ceiling in the health check', async () => {
     delete process.env.JIT_SERVE_MAX_QUEUED
     _setJitServeSettingsForTests({ mode: null, maxQueued: 2 })
-    global.fetch = mockFetchOk({ status: 'healthy', queued: 5 })
+    global.fetch = mockFetchOk()
+    mockLoad.mockResolvedValue({ ok: true, queued: 5 })
     expect(await isTranscoderHealthy('https://t-override.example')).toBe(false)
     _resetHealthCacheForTests()
-    global.fetch = mockFetchOk({ status: 'healthy', queued: 1 })
+    mockLoad.mockResolvedValue({ ok: true, queued: 1 })
     expect(await isTranscoderHealthy('https://t-override.example')).toBe(true)
   })
 })
@@ -417,17 +424,40 @@ describe('isTranscoderHealthy', () => {
 
   test('queue ceiling sheds when configured and exceeded', async () => {
     process.env.JIT_SERVE_MAX_QUEUED = '2'
-    global.fetch = mockFetchOk({ status: 'healthy', queued: 5 })
+    global.fetch = mockFetchOk()
+    mockLoad.mockResolvedValue({ ok: true, queued: 5 })
     expect(await isTranscoderHealthy('https://t2.example')).toBe(false)
+    expect(mockLoad).toHaveBeenLastCalledWith('https://t2.example')
     _resetHealthCacheForTests()
-    global.fetch = mockFetchOk({ status: 'healthy', queued: 1 })
+    mockLoad.mockResolvedValue({ ok: true, queued: 1 })
     expect(await isTranscoderHealthy('https://t2.example')).toBe(true)
   })
 
-  test('no ceiling configured means liveness-only (queue ignored)', async () => {
+  test('a ceiling whose queue cannot be read sheds, and the player-facing probe names no variable', async () => {
+    _setJitServeSettingsForTests({ mode: 'prefer', maxQueued: 2 })
+    try {
+      global.fetch = mockFetchOk()
+      mockLoad.mockResolvedValue({ ok: false, detail: 'no key for this server: set JIT_TRANSCODER_WEBHOOK_ID' })
+      const media = {
+        jitUrl: 'https://t5.example/stream/bW92aWVzL1gvWC5ta3Y/master.m3u8',
+        jitEligible: true,
+        videoURL: 'https://files.example/movies/X/X.mkv',
+      }
+      await applyJitPreference(media)
+      expect(media.jitSkipReason).toBe('transcoder-unhealthy')
+      expect(media.jitSkipDetail.error).toBe('queue-unknown')
+      expect(JSON.stringify(media.jitSkipDetail)).not.toContain('WEBHOOK_ID')
+    } finally {
+      _setJitServeSettingsForTests(undefined)
+    }
+  })
+
+  test('no ceiling configured means liveness-only (the admin API is never asked)', async () => {
     delete process.env.JIT_SERVE_MAX_QUEUED
-    global.fetch = mockFetchOk({ status: 'healthy', queued: 99 })
+    global.fetch = mockFetchOk()
+    mockLoad.mockClear()
     expect(await isTranscoderHealthy('https://t3.example')).toBe(true)
+    expect(mockLoad).not.toHaveBeenCalled()
   })
 
   test('empty origin is unhealthy without probing', async () => {

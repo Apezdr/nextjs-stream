@@ -158,6 +158,19 @@ To implement the NextJS-Stream app, follow these steps:
    4. Trigger a sync operation or API call to a TMDB proxy route to observe internal network traffic
    5. Verify that server-to-server calls use the internal endpoint while client-facing URLs use the public endpoint
 
+   ## Transcoder admin API (optional)
+
+   The admin dashboard's **Transcoder** card shows what each file server's [jit-transcoder](https://github.com/Apezdr/jit-transcoder) is doing: encoder load, every live session joined to its title and viewer, its speed and buffer, and the GPU's busy, clock, power and temperature. The app reads it from the transcoder's `GET /admin/sessions`, which needs a key. The transcoder can run on any host the app can reach; nothing here assumes the two share a machine or a network.
+
+   Per file server, with that server's usual suffix (none for the default server, `_2`, `_3`, …):
+
+   | Variable | Default | Purpose |
+   |----------|---------|---------|
+   | `JIT_TRANSCODER_WEBHOOK_ID[_N]` | the server's `WEBHOOK_ID[_N]` | The key sent to that server's transcoder as `Authorization: Bearer`. Leave it unset to share one key across the stack, or set it to give the transcoder its own. Put the same value in the transcoder's `WEBHOOK_ID_1` (or any `WEBHOOK_ID_n` there). |
+   | `JIT_TRANSCODER_INTERNAL_URL[_N]` | the base players use | A private address for the transcoder, e.g. `http://jit-transcoder:3232` on the same Docker network. Unset, the app calls the base every title's `jitUrl` was minted from. |
+
+   A key only ever goes to the transcoder of the server it belongs to. When something is wrong the card says which variable to fix and stops polling until you press Retry. `JIT_SERVE_MAX_QUEUED` (the serve-time queue ceiling) also reads the queue through this API, so a ceiling needs the key configured; without it that transcoder is not served.
+
    ## Set up Admin users
 
    To set up an admin user (until roles are implemented proper) you can set up admin users through the environment variable `ADMIN_USER_EMAILS` there can be one or multiple, seperate multiple with a comma.
