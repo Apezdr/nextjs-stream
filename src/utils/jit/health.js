@@ -1,11 +1,13 @@
 /**
  * JIT transcoder liveness/capacity check for serve-time delivery decisions.
  *
- * The transcoder's GET /health returns
- *   { status, active_encoders, audio_encoders, queued, active_sessions, version, features }
+ * The transcoder's public GET /health returns { status, version, features }
  * (jit-transcoder src/server/routes/health.rs). "Healthy" here means: it
  * answered 200 within the timeout, and — when a queue ceiling is configured —
- * its encode queue is not backed up.
+ * its encode queue is not backed up. The queue lives behind the transcoder's
+ * admin key (`load.queued` on GET /admin/sessions, read via transcoderAdmin.js),
+ * so a ceiling needs that server's transcoder key configured; without it the
+ * ceiling cannot be checked and the transcoder is not served.
  *
  * `features` is the transcoder's capability list (e.g.
  * "master-video-range-filter-v1"). It rides on the same probe and the same
@@ -59,7 +61,7 @@ export function getLastHealthProbe(origin) {
 }
 
 /**
- * Max acceptable value of /health's `queued` before we shed to direct play.
+ * Max acceptable value of the transcoder's `load.queued` before we shed to direct play.
  * Precedence: admin runtime override > JIT_SERVE_MAX_QUEUED env > null
  * (capacity arm disabled, liveness-only).
  */
@@ -102,6 +104,7 @@ export async function isTranscoderHealthy(origin) {
   // media API route does not, which is why only the page ever went raw.
   let timedOut = false
   let foreignAbort = false
+  let queueDetail = null
   try {
     const controller = new AbortController()
     const timer = setTimeout(() => {
@@ -115,16 +118,29 @@ export async function isTranscoderHealthy(origin) {
       })
       probe.status = res.status
       if (res.ok) {
-        // One body read serves both the capability list and the queue
-        // ceiling. An unreadable body still leaves liveness to the status.
+        // The public body is liveness + the capability list. An unreadable
+        // body still leaves liveness to the status.
         const body = await res.json().catch(() => null)
         features = parseFeatures(body)
         const ceiling = await maxQueued()
         if (ceiling === null) {
           healthy = true
         } else {
-          probe.queued = body ? Number(body.queued ?? 0) : undefined
-          healthy = body ? Number(body.queued ?? 0) <= ceiling : true
+          // The queue is behind the transcoder's admin key (it says how many
+          // people are watching), so the ceiling reads it there. Unknown is
+          // not empty: a ceiling we cannot check sheds, and says why.
+          // Imported here so the serve path without a ceiling never loads it.
+          const { getTranscoderLoadForOrigin } = await import('./transcoderAdmin')
+          const load = await getTranscoderLoadForOrigin(origin)
+          if (load.ok) {
+            probe.queued = load.queued
+            healthy = load.queued <= ceiling
+          } else {
+            // The probe rides to every player as `jitSkipDetail`, so it gets a
+            // slug; the detail (which variable to fix) goes to the log only.
+            probe.error = 'queue-unknown'
+            queueDetail = load.detail
+          }
         }
       }
     } finally {
@@ -155,7 +171,10 @@ export async function isTranscoderHealthy(origin) {
   if (!healthy) {
     // This is the moment a title silently becomes a raw file for the next
     // UNHEALTHY_TTL_MS. Loud on purpose.
-    log.warn({ origin, ...probe }, 'transcoder health probe failed — serving raw for 10s')
+    log.warn(
+      { origin, ...probe, ...(queueDetail ? { queueDetail } : {}) },
+      'transcoder health probe failed — serving raw for 10s'
+    )
   }
 
   cache.set(origin, {

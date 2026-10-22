@@ -17,6 +17,7 @@ import { getFileServerImportSettings } from '@src/utils/sync_db'
 import { getAllServers } from '@src/utils/config'
 import clientPromise from '@src/lib/mongodb'
 import { getServerLoadSnapshot, noteServerLoadDemand } from '@src/utils/monitor_server_load'
+import { getTranscoderDashboard } from '@src/utils/admin/transcoderSessions'
 import { fetchProcesses } from '@src/utils/server_track_processes'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import { handleLogAlert } from '@src/utils/logAlerts/receiveLogAlert'
@@ -311,6 +312,12 @@ export async function GET(request, props) {
         // it stops a minute after the last poll.
         noteServerLoadDemand()
         responseData = getServerLoadSnapshot()
+        break
+
+      case 'transcoder-sessions':
+        // Each file server's transcoder: load, sessions joined to titles and viewers, GPU.
+        // Admin GET only: the transcoder keys never leave the server.
+        responseData = await getTranscoderDashboard()
         break
 
       case 'server-processes':

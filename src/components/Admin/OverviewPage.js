@@ -12,6 +12,7 @@ import CompactUserManagement from './CompactUserManagement'
 import { buildURL, fetcher } from '@src/utils'
 import EnhancedServerStats from './Stats/EnhancedServerStats'
 import EnhancedServerProcesses from './Stats/EnhancedServerProcesses'
+import TranscoderSessions from './Stats/TranscoderSessions'
 import EnhancedTMDBStatus from './EnhancedTMDBStatus'
 import ProcessorAlertsCard from './ProcessorAlertsCard'
 import DashboardHeader from './DashboardHeader'
@@ -168,6 +169,22 @@ export default function AdminOverviewPage({
 
           {/* Services Section */}
           <div className="space-y-6">
+            {/* Each file server's transcoder: load, live sessions, GPU */}
+            <MaterialCard elevation="medium">
+              <MaterialCardHeader
+                title="Transcoder"
+                subtitle="What is using each transcoder right now"
+                icon={
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                  </svg>
+                }
+              />
+              <MaterialCardContent padding="none">
+                <TranscoderSessions />
+              </MaterialCardContent>
+            </MaterialCard>
+
             {/* TMDB Server Status */}
             <EnhancedTMDBStatus />
 

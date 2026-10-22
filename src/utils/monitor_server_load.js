@@ -15,8 +15,10 @@ const {
 // admin_telemetry.sampler.duration (ms, attribute `job`). This process serves
 // every request, so SigNoz compares sampler versions on this directly: the
 // runtime event-loop metrics sample every 10 ms and cannot resolve a
-// sub-millisecond tick. Jobs: `tick` (CPU and memory, every 3 s, always on)
-// and `disk_io` (/proc/diskstats, only while the admin dashboard is open).
+// sub-millisecond tick. Jobs: `tick` (CPU and memory, every 3 s, always on),
+// `disk_io` (/proc/diskstats, only while the admin dashboard is open) and
+// `transcoder_sessions` (the Transcoder card's join and shaping, per call;
+// utils/admin/transcoderSessions.js).
 // Buckets are dense from 0.05 ms to 30 ms: the previous sampler measured
 // 3-6 ms per tick on the 72-CPU production host, this one aims under 1 ms, and
 // percentiles are only as precise as the bucket they land in.
@@ -260,4 +262,4 @@ if (CPU_ENABLED || MEMORY_ENABLED || DISK_ENABLED) {
   sampleTick();
 }
 
-module.exports = { getServerLoadSnapshot, noteServerLoadDemand, monitorConfig };
+module.exports = { getServerLoadSnapshot, noteServerLoadDemand, monitorConfig, recordSamplerDuration };
