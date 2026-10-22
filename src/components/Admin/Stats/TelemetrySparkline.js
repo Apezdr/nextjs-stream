@@ -17,8 +17,14 @@ export function buildSparklinePoints(values, { width = WIDTH, height = HEIGHT, m
     .join(' ')
 }
 
-/** The last minute of a 0-100 metric, from the server-load history. */
-export default function TelemetrySparkline({ values = [], maxValue = 100, label, className = 'text-sky-500' }) {
+/** A short history of a metric (the server-load card's last minute by default). */
+export default function TelemetrySparkline({
+  values = [],
+  maxValue = 100,
+  label,
+  className = 'text-sky-500',
+  caption = 'Last 60 seconds',
+}) {
   const points = buildSparklinePoints(values, { maxValue })
   if (!points) return null
 
@@ -40,7 +46,7 @@ export default function TelemetrySparkline({ values = [], maxValue = 100, label,
           vectorEffect="non-scaling-stroke"
         />
       </svg>
-      <p className="text-right text-[10px] text-gray-400">Last 60 seconds</p>
+      <p className="text-right text-[10px] text-gray-400">{caption}</p>
     </div>
   )
 }

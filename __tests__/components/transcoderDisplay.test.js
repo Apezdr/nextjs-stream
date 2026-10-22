@@ -8,6 +8,14 @@ import {
   bufferLabel,
   encoderLabel,
   shapeLabel,
+  formatClock,
+  positionLabel,
+  formatBytes,
+  engineLabel,
+  rungLabel,
+  problemLabel,
+  appendHistory,
+  formatAgo,
 } from '@src/components/Admin/Stats/transcoderDisplay'
 
 describe('gpuDisplayName', () => {
@@ -95,6 +103,61 @@ test('formatting helpers', () => {
   expect(formatAge(undefined)).toBe('—')
   expect([0.8, 1.1, 2, null].map(speedTone)).toEqual(['bad', 'warn', 'good', 'muted'])
   expect(bufferLabel({ head: -1, ahead: -1 })).toEqual({ text: 'starting', tone: 'warn' })
-  expect(bufferLabel({ head: 4, ahead: -3 })).toEqual({ text: '3 behind', tone: 'bad' })
-  expect(bufferLabel({ head: 10, ahead: 6 })).toEqual({ text: '6 ahead', tone: 'good' })
+  // An older transcoder without segment_secs: segments.
+  expect(bufferLabel({ head: 4, ahead: -3 })).toEqual({ text: '3 segments behind', tone: 'bad' })
+  expect(bufferLabel({ head: 10, ahead: 6 })).toEqual({ text: '6 segments ahead', tone: 'good' })
+  // With it: time, and under 12 s buffered is thin.
+  expect(bufferLabel({ head: 10, ahead: 4, segment_secs: 6.006 })).toEqual({ text: '24 s ahead', tone: 'good' })
+  expect(bufferLabel({ head: 10, ahead: 1, segment_secs: 6 })).toEqual({ text: '6 s ahead', tone: 'warn' })
+  expect(bufferLabel({ head: 10, ahead: 12, segment_secs: 6 })).toEqual({ text: '1m 12s ahead', tone: 'good' })
+  expect(bufferLabel({ head: 3, ahead: -2, segment_secs: 6 })).toEqual({ text: '12 s behind', tone: 'bad' })
+})
+
+test('the most recently served playhead is the one being watched; the others are parked', () => {
+  const p = (id, idle_ms) => ({ id, kind: 'video', videoId: 'a', path_key: 'ka', head: 10, ahead: 3, idle_ms, age_ms: 1, viewers: [{ name: 'Sam' }] })
+  const [g] = groupSessions([p(1, 66_000), p(2, 400)])
+  expect(g.playheads.map((x) => [x.id, x.role])).toEqual([[2, 'watching'], [1, 'parked']])
+  const [solo] = groupSessions([{ ...p(3, 10), viewers: [] }])
+  expect(solo.playheads[0].role).toBe('current')
+})
+
+test('position, clock, bytes, engines, rungs and problems read in plain words', () => {
+  expect(formatClock(45)).toBe('0:45')
+  expect(formatClock(754)).toBe('12:34')
+  expect(formatClock(3723)).toBe('1:02:03')
+  expect(positionLabel(754, 3130)).toEqual({ text: '12:34 of 52:10', percent: (100 * 754) / 3130 })
+  expect(positionLabel(754, null)).toEqual({ text: '12:34', percent: null })
+  expect(positionLabel(null, 100)).toBeNull()
+  expect(formatBytes(373_424 * 1024)).toBe('365 MiB')
+  expect(formatBytes(1.5 * 2 ** 30)).toBe('1.5 GiB')
+  expect(engineLabel('video', 'intel')).toBe('Quick Sync (video)')
+  expect(engineLabel('video', 'amd')).toBe('Video')
+  expect(engineLabel('video-enhance', 'intel')).toBe('Video processing')
+  expect(engineLabel('weird', 'intel')).toBe('weird')
+  expect(rungLabel({ height: 2160, codec: 'hevc', encoder: 'qsv', range: 'pq', trick_play: false })).toBe('2160p HEVC PQ · Quick Sync')
+  expect(rungLabel({ height: 144, codec: 'h264', encoder: 'software', range: 'sdr', trick_play: false })).toBe('144p H.264 · CPU')
+  expect(rungLabel({ height: 360, codec: 'h264', encoder: 'qsv', range: 'sdr', trick_play: true })).toBe('360p H.264 · Quick Sync · trick-play')
+  expect(problemLabel('signaled')).toMatch(/Killed by the system/)
+  expect(problemLabel('new-thing')).toBe('new-thing')
+  expect([45_000, 600_000, 3_600_000, -1].map(formatAgo)).toEqual(['45 s ago', '10 min ago', '1 h ago', '—'])
+})
+
+test('history keeps the last samples per transcoder and skips a repeated answer', () => {
+  const answer = (at, encoders, video) => ({
+    generatedAt: at,
+    transcoders: [
+      { ok: true, serverId: 'default', endpoint: 'http://t', load: { active_encoders: encoders }, gpu: [{ engines: [{ name: 'video', busy_percent: video }] }] },
+      { ok: false, serverId: 'server2', endpoint: 'http://u' },
+    ],
+  })
+  let h = appendHistory({}, answer('t1', 1, 10))
+  h = appendHistory(h, answer('t1', 1, 10))
+  h = appendHistory(h, answer('t2', 2, 30))
+  expect(h['default http://t']).toEqual([
+    { at: 't1', encoders: 1, video: 10 },
+    { at: 't2', encoders: 2, video: 30 },
+  ])
+  expect(h['server2 http://u']).toBeUndefined()
+  for (let i = 0; i < 100; i++) h = appendHistory(h, answer(`x${i}`, 0, 0), 90)
+  expect(h['default http://t']).toHaveLength(90)
 })

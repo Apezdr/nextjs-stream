@@ -240,7 +240,7 @@ function resolvePosterUrl(appOrigin, posterURL, posterPath, fallback = '') {
  * its device/browser icons — so the widget shows e.g. "Chrome · Desktop" with
  * platform "Windows" instead of just "desktop".
  */
-function getDeviceDescriptor(deviceInfo) {
+export function getDeviceDescriptor(deviceInfo) {
   const typeLabel = getDeviceTypeLabel(deviceInfo?.type)
   const userAgent = deviceInfo?.userAgent || ''
 
