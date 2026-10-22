@@ -1,11 +1,27 @@
 'use client'
 
 import useSWR from 'swr'
+import { PlayIcon, PauseIcon } from '@heroicons/react/20/solid'
 import { fetcher } from '@src/utils'
-import { StatusBadge, MaterialButton } from '../BaseComponents'
+import { MaterialButton } from '../BaseComponents'
+import GpuVendorMark from './GpuVendorMark'
+import {
+  gpuDisplayName,
+  pipelineChips,
+  groupSessions,
+  titleLines,
+  formatAge,
+  speedTone,
+  bufferLabel,
+  vendorLabel,
+  encoderLabel,
+  shapeLabel,
+} from './transcoderDisplay'
 
 const URL = '/api/authenticated/admin/transcoder-sessions'
-const POLL_MS = 5000
+// A transcoder answer costs it a map walk and a few sysfs reads, and the app two indexed
+// lookups, so 2 s is cheap; the GPU's busy and power figures then average over ~2 s.
+const POLL_MS = 2000
 
 /**
  * Reasons that will not fix themselves: polling stops until Retry, so a wrong key does not
@@ -35,174 +51,307 @@ function hostOf(url) {
   }
 }
 
-function titleLabel(s) {
-  const t = s.title
-  if (t?.kind === 'episode') {
-    const se = t.season != null && t.episode != null ? ` S${String(t.season).padStart(2, '0')}E${String(t.episode).padStart(2, '0')}` : ''
-    return `${t.show ?? 'Unknown show'}${se}`
+const TONE_TEXT = {
+  good: 'text-emerald-700',
+  warn: 'text-amber-700',
+  bad: 'text-red-700',
+  muted: 'text-gray-400',
+}
+
+function StatusPill({ t }) {
+  if (t.ok) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" aria-hidden="true" />
+        Connected · {t.ms} ms
+      </span>
+    )
   }
-  if (t?.kind === 'movie') return t.name ?? 'Unknown title'
-  return s.file ?? 'Not in the library'
-}
-
-function age(ms) {
-  if (!Number.isFinite(ms)) return '—'
-  const s = Math.round(ms / 1000)
-  if (s < 60) return `${s}s`
-  const m = Math.floor(s / 60)
-  return m < 60 ? `${m}m ${s % 60}s` : `${Math.floor(m / 60)}h ${m % 60}m`
-}
-
-function SpeedCell({ speed }) {
-  if (speed == null) return <span className="text-gray-400">—</span>
-  const tone = speed < 1 ? 'text-red-700 font-semibold' : speed < 1.2 ? 'text-amber-700' : 'text-emerald-700'
-  return <span className={tone}>{speed.toFixed(2)}×</span>
-}
-
-function BufferCell({ ahead, head }) {
-  if (head < 0) return <span className="text-amber-700">first segment</span>
-  const tone = ahead < 0 ? 'text-red-700 font-semibold' : ahead < 2 ? 'text-amber-700' : 'text-gray-700'
-  return <span className={tone}>{ahead < 0 ? `waiting ${-ahead}` : `${ahead} ahead`}</span>
-}
-
-function Stat({ label, value, sub, tone = 'text-gray-900' }) {
+  const config = CONFIG_REASONS.has(t.reason)
   return (
-    <div className="rounded-lg bg-gray-50 border border-gray-200 px-3 py-2 min-w-0">
-      <div className="text-xs text-gray-500 truncate">{label}</div>
-      <div className={`text-base font-semibold ${tone}`}>{value}</div>
-      {sub && <div className="text-xs text-gray-500 truncate">{sub}</div>}
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium border ${
+        config ? 'bg-red-50 border-red-200 text-red-800' : 'bg-amber-50 border-amber-200 text-amber-800'
+      }`}
+    >
+      <span className={`w-1.5 h-1.5 rounded-full ${config ? 'bg-red-500' : 'bg-amber-500'}`} aria-hidden="true" />
+      {config ? 'Needs setup' : 'Unreachable'}
+    </span>
+  )
+}
+
+function Meter({ percent, tone = 'bg-indigo-500' }) {
+  const p = Number.isFinite(percent) ? Math.min(100, Math.max(0, percent)) : 0
+  return (
+    <div className="h-1.5 w-full rounded-full bg-gray-200 overflow-hidden" aria-hidden="true">
+      <div className={`h-full rounded-full ${tone} transition-all duration-500`} style={{ width: `${p}%` }} />
     </div>
   )
 }
 
-function LoadStats({ load, capacity }) {
-  if (!load) return null
-  const videoCap = (capacity?.cpu_encoders ?? 0) + (capacity?.nvenc_encoders ?? 0)
-  const full = videoCap > 0 && load.active_encoders >= videoCap
+/** One segment per encoder slot, so "3 of 4" reads at a glance. */
+function SlotMeter({ used, total }) {
+  if (!total) return null
+  const full = used >= total
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-      <Stat
-        label="Video encoders"
-        value={videoCap ? `${load.active_encoders} / ${videoCap}` : load.active_encoders}
-        tone={full ? 'text-red-700' : 'text-gray-900'}
-        sub={full ? 'all slots in use' : null}
-      />
-      <Stat label="Waiting for a slot" value={load.queued} tone={load.queued > 0 ? 'text-red-700' : 'text-gray-900'} />
-      <Stat label="Cold starts waiting" value={load.cold_start_waiting} tone={load.cold_start_waiting > 0 ? 'text-amber-700' : 'text-gray-900'} />
-      <Stat label="GPU fan-outs" value={`${load.gpu_large_active} 4K · ${load.gpu_small_active} ≤1080p`} />
-      <Stat label="Copy (direct) sessions" value={load.direct_sessions} />
-      <Stat label="Audio encoders" value={capacity?.audio_encoders ? `${load.audio_encoders} / ${capacity.audio_encoders}` : load.audio_encoders} />
-    </div>
-  )
-}
-
-function GpuStats({ gpu }) {
-  if (!gpu?.length) return null
-  return (
-    <div className="space-y-2">
-      {gpu.map((g) => (
-        <div key={g.card} className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
-          <Stat
-            label={`GPU busy (${g.vendor}${g.pci ? ` ${g.pci}` : ''})`}
-            value={g.busy_percent == null ? '—' : `${g.busy_percent.toFixed(0)}%`}
-            sub={g.window_ms ? `over ${(g.window_ms / 1000).toFixed(1)} s` : 'measuring…'}
-            tone={g.busy_percent >= 90 ? 'text-red-700' : 'text-gray-900'}
-          />
-          <Stat label="Clock" value={g.freq_mhz == null ? '—' : `${g.freq_mhz} MHz`} sub={g.max_freq_mhz ? `of ${g.max_freq_mhz} MHz` : null} />
-          <Stat label="Power" value={g.power_w == null ? '—' : `${g.power_w.toFixed(1)} W`} sub={g.power_max_w ? `limit ${g.power_max_w.toFixed(0)} W` : null} />
-          <Stat label="Temperature" value={g.temp_c == null ? '—' : `${g.temp_c.toFixed(0)} °C`} />
-          <Stat label="Fan" value={g.fan_rpm == null ? '—' : `${g.fan_rpm} RPM`} />
-        </div>
+    <div className="flex gap-1" aria-hidden="true">
+      {Array.from({ length: total }, (_, i) => (
+        <div
+          key={i}
+          className={`h-2.5 flex-1 rounded-sm ${i < used ? (full ? 'bg-red-500' : 'bg-indigo-500') : 'bg-gray-200'}`}
+        />
       ))}
     </div>
   )
 }
 
-function SessionsTable({ sessions }) {
-  if (!sessions.length) {
-    return <p className="text-sm text-gray-500 py-2">Nothing is playing through this transcoder.</p>
-  }
+function Fact({ label, value, alert }) {
+  const quiet = value === 0 || value === '0'
   return (
-    <div className="overflow-x-auto -mx-4 sm:mx-0">
-      <table className="min-w-full text-sm">
-        <caption className="sr-only">Live transcoder sessions</caption>
-        <thead>
-          <tr className="text-left text-xs text-gray-500 border-b border-gray-200">
-            <th scope="col" className="py-2 px-4 sm:pl-0 font-medium">Title</th>
-            <th scope="col" className="py-2 px-2 font-medium">Watching</th>
-            <th scope="col" className="py-2 px-2 font-medium">Work</th>
-            <th scope="col" className="py-2 px-2 font-medium">State</th>
-            <th scope="col" className="py-2 px-2 font-medium">Speed</th>
-            <th scope="col" className="py-2 px-2 font-medium">Buffer</th>
-            <th scope="col" className="py-2 px-2 font-medium">Started by</th>
-            <th scope="col" className="py-2 px-2 font-medium">Age</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-100">
-          {sessions.map((s) => (
-            <tr key={s.id} className={s.kind === 'audio' ? 'text-gray-500' : 'text-gray-900'}>
-              <td className="py-2 px-4 sm:pl-0 max-w-[16rem]">
-                <div className="truncate" title={s.file ?? undefined}>{titleLabel(s)}</div>
-                {s.kind === 'video' && s.source_width && (
-                  <div className="text-xs text-gray-500">
-                    {s.source_width}×{s.source_height}
-                    {s.shape ? ` · ${s.shape}` : ''} · {s.outputs} rungs
-                  </div>
-                )}
-              </td>
-              <td className="py-2 px-2 whitespace-nowrap">
-                {s.viewers.length === 0 ? (
-                  <span className="text-gray-400">nobody</span>
-                ) : (
-                  s.viewers.map((v, i) => (
-                    <div key={i}>
-                      {v.name}
-                      {v.state === 'paused' ? <span className="text-gray-400"> (paused)</span> : null}
-                    </div>
-                  ))
-                )}
-              </td>
-              <td className="py-2 px-2 whitespace-nowrap">
-                {s.kind === 'video' ? 'video' : s.kind === 'direct' ? 'copy' : 'audio'} · {s.encoder}
-              </td>
-              <td className="py-2 px-2 whitespace-nowrap">{s.state}</td>
-              <td className="py-2 px-2 whitespace-nowrap"><SpeedCell speed={s.speed} /></td>
-              <td className="py-2 px-2 whitespace-nowrap"><BufferCell ahead={s.ahead} head={s.head} /></td>
-              <td className="py-2 px-2 whitespace-nowrap">{s.reason}</td>
-              <td className="py-2 px-2 whitespace-nowrap">{age(s.age_ms)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="flex items-baseline justify-between gap-2 text-sm">
+      <dt className="text-gray-500 truncate">{label}</dt>
+      <dd className={`font-medium tabular-nums ${alert && !quiet ? 'text-amber-700' : quiet ? 'text-gray-400' : 'text-gray-900'}`}>
+        {value}
+      </dd>
     </div>
   )
 }
 
-function TranscoderPanel({ t }) {
+function Panel({ title, aside, children }) {
   return (
-    <section className="space-y-3" aria-label={`Transcoder for ${t.serverLabel}`}>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <h3 className="text-sm font-semibold text-gray-900">{t.serverLabel}</h3>
-        <span className="text-xs text-gray-500 break-all">{hostOf(t.endpoint)}</span>
-        {t.internal && (
-          <StatusBadge status="info" variant="soft" size="small">internal URL</StatusBadge>
-        )}
-        {t.ok ? (
-          <>
-            <StatusBadge status="success" variant="soft" size="small">connected</StatusBadge>
-            <span className="text-xs text-gray-500">v{t.version} · {t.ms} ms</span>
-          </>
-        ) : (
-          <StatusBadge status={CONFIG_REASONS.has(t.reason) ? 'error' : 'warning'} variant="soft" size="small">
-            {t.reason}
-          </StatusBadge>
-        )}
+    <div className="rounded-xl border border-gray-200 bg-gray-50/60 p-4 space-y-3 min-w-0">
+      <div className="flex items-baseline justify-between gap-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">{title}</h4>
+        {aside && <span className="text-xs text-gray-400">{aside}</span>}
       </div>
+      {children}
+    </div>
+  )
+}
+
+function EncodingPanel({ load, capacity }) {
+  if (!load) return null
+  const videoCap = (capacity?.cpu_encoders ?? 0) + (capacity?.nvenc_encoders ?? 0)
+  return (
+    <Panel title="Encoding">
+      <div className="space-y-1.5">
+        <div className="flex items-baseline justify-between text-sm">
+          <span className="text-gray-700">Video encoders</span>
+          <span className="font-semibold tabular-nums text-gray-900">
+            {load.active_encoders}
+            {videoCap ? <span className="font-normal text-gray-500"> of {videoCap}</span> : null}
+          </span>
+        </div>
+        <SlotMeter used={load.active_encoders} total={videoCap} />
+      </div>
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
+        <Fact label="Waiting for a slot" value={load.queued} alert />
+        <Fact label="Cold starts waiting" value={load.cold_start_waiting} alert />
+        <Fact label="4K on the GPU" value={load.gpu_large_active} />
+        <Fact label="≤1080p on the GPU" value={load.gpu_small_active} />
+        <Fact label="Copy sessions" value={load.direct_sessions} />
+        <Fact
+          label="Audio encoders"
+          value={capacity?.audio_encoders ? `${load.audio_encoders} of ${capacity.audio_encoders}` : load.audio_encoders}
+        />
+      </dl>
+    </Panel>
+  )
+}
+
+function GpuMeterRow({ label, value, percent, tone }) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-baseline justify-between text-sm">
+        <span className="text-gray-700">{label}</span>
+        <span className="font-semibold tabular-nums text-gray-900">{value}</span>
+      </div>
+      <Meter percent={percent} tone={tone} />
+    </div>
+  )
+}
+
+function GpuPanel({ gpu }) {
+  return (
+    <Panel title="GPU" aside={gpu.window_ms ? `last ${(gpu.window_ms / 1000).toFixed(1)} s` : 'measuring…'}>
+      <GpuMeterRow
+        label="Busy"
+        value={gpu.busy_percent == null ? '—' : `${gpu.busy_percent.toFixed(0)}%`}
+        percent={gpu.busy_percent}
+        tone={gpu.busy_percent >= 90 ? 'bg-red-500' : 'bg-indigo-500'}
+      />
+      <GpuMeterRow
+        label="Clock"
+        value={
+          gpu.freq_mhz == null ? '—' : (
+            <>
+              {gpu.freq_mhz}
+              {gpu.max_freq_mhz ? <span className="font-normal text-gray-500"> / {gpu.max_freq_mhz}</span> : null} MHz
+            </>
+          )
+        }
+        percent={gpu.max_freq_mhz ? (100 * (gpu.freq_mhz ?? 0)) / gpu.max_freq_mhz : 0}
+        tone="bg-sky-500"
+      />
+      <GpuMeterRow
+        label="Power"
+        value={
+          gpu.power_w == null ? '—' : (
+            <>
+              {gpu.power_w.toFixed(0)}
+              {gpu.power_max_w ? <span className="font-normal text-gray-500"> / {gpu.power_max_w.toFixed(0)}</span> : null} W
+            </>
+          )
+        }
+        percent={gpu.power_max_w && gpu.power_w != null ? (100 * gpu.power_w) / gpu.power_max_w : 0}
+        tone="bg-amber-500"
+      />
+      <dl className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1 pt-1">
+        <Fact label="Temperature" value={gpu.temp_c == null ? '—' : `${gpu.temp_c.toFixed(0)} °C`} />
+        <Fact label="Fan" value={gpu.fan_rpm == null ? '—' : `${gpu.fan_rpm} RPM`} />
+      </dl>
+    </Panel>
+  )
+}
+
+function Viewers({ viewers }) {
+  if (!viewers.length) return <span className="text-gray-400">no one watching</span>
+  return (
+    <span className="flex flex-wrap gap-1">
+      {viewers.map((v, i) => (
+        <span key={i} className="inline-flex items-center gap-1 rounded-full bg-indigo-50 text-indigo-800 px-2 py-0.5 text-xs">
+          {v.state === 'paused' ? (
+            <PauseIcon className="w-3 h-3 text-indigo-400" aria-hidden="true" />
+          ) : (
+            <PlayIcon className="w-3 h-3 text-indigo-500" aria-hidden="true" />
+          )}
+          {v.name}
+          <span className="sr-only">{v.state === 'paused' ? ' (paused)' : ' (playing)'}</span>
+        </span>
+      ))}
+    </span>
+  )
+}
+
+function PlayheadLine({ p }) {
+  const buffer = bufferLabel(p)
+  const work =
+    p.kind === 'direct' ? 'Copy (original stream)' : `Transcode · ${encoderLabel(p.encoder)} · ${p.outputs} rungs`
+  const range = shapeLabel(p.shape)
+  return (
+    <div className="flex flex-wrap items-baseline gap-x-4 gap-y-0.5 text-xs text-gray-600">
+      <span>{work}</span>
+      {p.kind === 'video' && p.source_width ? (
+        <span className="text-gray-400">
+          from {p.source_width}×{p.source_height}
+          {range ? ` ${range}` : ''}
+        </span>
+      ) : null}
+      <span className={`font-medium tabular-nums ${TONE_TEXT[speedTone(p.speed)]}`}>
+        {p.speed == null ? p.state : `${p.speed.toFixed(2)}× realtime`}
+      </span>
+      <span className={`tabular-nums ${TONE_TEXT[buffer.tone]}`}>{buffer.text}</span>
+      <span className="text-gray-400">
+        {p.reason} · {formatAge(p.age_ms)}
+      </span>
+    </div>
+  )
+}
+
+function SessionGroup({ g }) {
+  const { title, subtitle } = titleLines(g.lead)
+  const audio = [...new Set(g.audio.map((a) => encoderLabel(a.encoder)))].join(', ')
+  return (
+    <li className="py-3 space-y-1.5">
+      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-gray-900 truncate" title={g.lead.file ?? undefined}>
+            {title}
+          </div>
+          {subtitle && <div className="text-xs text-gray-500 truncate">{subtitle}</div>}
+        </div>
+        <div className="text-xs">
+          <Viewers viewers={g.viewers} />
+        </div>
+      </div>
+      {g.playheads.map((p) => (
+        <PlayheadLine key={p.id} p={p} />
+      ))}
+      {g.audio.length > 0 && (
+        <div className="text-xs text-gray-400">
+          Audio · {audio} · {g.audio.length === 1 ? '1 rendition' : `${g.audio.length} renditions`}
+        </div>
+      )}
+    </li>
+  )
+}
+
+function NowPlaying({ sessions }) {
+  const groups = groupSessions(sessions)
+  return (
+    <div>
+      <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+        Now playing{groups.length ? ` · ${groups.length}` : ''}
+      </h4>
+      {groups.length === 0 ? (
+        <p className="text-sm text-gray-500 py-3">Idle: nothing is playing through this transcoder.</p>
+      ) : (
+        <ul className="divide-y divide-gray-100">
+          {groups.map((g) => (
+            <SessionGroup key={g.key} g={g} />
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+export function TranscoderPanel({ t }) {
+  const gpu = t.ok ? t.gpu?.[0] ?? null : null
+  const heading = gpu ? gpuDisplayName(gpu) : 'Transcoder'
+  const chips = t.ok ? pipelineChips(t.hardware) : []
+  return (
+    <section className="space-y-4" aria-label={`Transcoder for ${t.serverLabel}`}>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <GpuVendorMark vendor={gpu?.vendor} />
+          <div className="min-w-0">
+            <h3 className="text-base font-semibold text-gray-900 truncate" title={gpu?.name ?? undefined}>
+              {heading}
+            </h3>
+            <p className="text-xs text-gray-500 truncate">
+              {t.serverLabel} · {hostOf(t.endpoint)}
+              {t.internal ? ' (internal)' : ''}
+              {t.ok && t.version ? ` · v${t.version}` : ''}
+            </p>
+          </div>
+        </div>
+        <StatusPill t={t} />
+      </div>
+
+      {chips.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {chips.map((c) => (
+            <span key={c.label} className="inline-flex items-center gap-1 rounded-md bg-gray-100 px-2 py-1 text-xs text-gray-600">
+              <span className="text-gray-400">{c.label}</span>
+              <span className="font-medium text-gray-800">{c.value}</span>
+            </span>
+          ))}
+        </div>
+      )}
+
       {t.ok ? (
         <>
-          <LoadStats load={t.load} capacity={t.capacity} />
-          <GpuStats gpu={t.gpu} />
-          <SessionsTable sessions={t.sessions} />
+          <div className={`grid grid-cols-1 gap-4 ${gpu ? 'lg:grid-cols-2' : ''}`}>
+            <EncodingPanel load={t.load} capacity={t.capacity} />
+            {gpu && <GpuPanel gpu={gpu} />}
+          </div>
+          {t.gpu?.length > 1 && (
+            <p className="text-xs text-gray-500">
+              Also on this host: {t.gpu.slice(1).map((g) => `${gpuDisplayName(g)} (${vendorLabel(g.vendor)})`).join(', ')}
+            </p>
+          )}
+          <NowPlaying sessions={t.sessions} />
         </>
       ) : (
         <p className="text-sm text-gray-700 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 break-words">
@@ -223,11 +372,22 @@ export default function TranscoderSessions() {
     return <p className="p-4 text-sm text-red-700">Could not load transcoder status: {error.message}</p>
   }
   if (!data) {
-    return <div className="p-4 space-y-2 animate-pulse"><div className="h-4 bg-gray-200 rounded w-1/3" /><div className="h-16 bg-gray-100 rounded" /></div>
+    return (
+      <div className="p-4 space-y-3 animate-pulse" aria-hidden="true">
+        <div className="flex items-center gap-3">
+          <div className="w-12 h-12 rounded-xl bg-gray-200" />
+          <div className="h-4 bg-gray-200 rounded w-48" />
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="h-36 bg-gray-100 rounded-xl" />
+          <div className="h-36 bg-gray-100 rounded-xl" />
+        </div>
+      </div>
+    )
   }
   const list = data.transcoders ?? []
   return (
-    <div className="p-4 space-y-6">
+    <div className="p-4 sm:p-6 space-y-8">
       {halted(data) && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2">
           <p className="text-sm text-red-800">Paused: fix the configuration below, then retry.</p>
