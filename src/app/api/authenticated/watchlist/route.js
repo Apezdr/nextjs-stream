@@ -40,6 +40,7 @@ import {
   cleanExpiredComingSoon
 } from '@src/utils/watchlist/'
 import { ensureDefaultPlaylist, getPlaylistById } from '@src/utils/watchlist/database'
+import { REVISION, bumpRevisionAfterResponse } from '@src/utils/changes/revisions'
 
 /**
  * Rate limiting configuration
@@ -168,6 +169,15 @@ function applyRateLimit(req, operation = 'general') {
 }
 
 /**
+ * A successful playlist or watchlist write moves the playlists stamp in
+ * /api/authenticated/changes, so apps showing playlist rows refetch them.
+ */
+function bumpPlaylistsOnSuccess(response) {
+  if (response?.ok) bumpRevisionAfterResponse(REVISION.PLAYLISTS)
+  return response
+}
+
+/**
  * POST - Handle add, toggle, create playlist, and bulk operations
  */
 export async function POST(req) {
@@ -197,19 +207,19 @@ export async function POST(req) {
 
     switch (action) {
       case 'add':
-        return await handleAddToWatchlist(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleAddToWatchlist(req, body, authResult))
       case 'toggle':
-        return await handleToggleWatchlist(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleToggleWatchlist(req, body, authResult))
       case 'create-playlist':
-        return await handleCreatePlaylist(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleCreatePlaylist(req, body, authResult))
       case 'share-playlist':
-        return await handleSharePlaylist(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleSharePlaylist(req, body, authResult))
       case 'bulk-update':
-        return await handleBulkUpdateWatchlist(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleBulkUpdateWatchlist(req, body, authResult))
       case 'move-items':
-        return await handleMoveItemsToPlaylist(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleMoveItemsToPlaylist(req, body, authResult))
       case 'set-coming-soon':
-        return await handleSetComingSoon(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleSetComingSoon(req, body, authResult))
       default:
         return createErrorResponse(`Invalid action: ${action}`, 400)
     }
@@ -301,11 +311,11 @@ export async function PUT(req) {
 
     switch (action) {
       case 'update-playlist':
-        return await handleUpdatePlaylist(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleUpdatePlaylist(req, body, authResult))
       case 'update-playlist-sorting':
-        return await handleUpdatePlaylistSorting(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleUpdatePlaylistSorting(req, body, authResult))
       case 'update-playlist-order':
-        return await handleUpdatePlaylistOrder(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleUpdatePlaylistOrder(req, body, authResult))
       default:
         return createErrorResponse(`Invalid action: ${action}`, 400)
     }
@@ -344,15 +354,15 @@ export async function DELETE(req) {
   try {
     switch (action) {
       case 'remove':
-        return await handleRemoveFromWatchlist(req, authResult)
+        return bumpPlaylistsOnSuccess(await handleRemoveFromWatchlist(req, authResult))
       case 'bulk-remove': {
         const body = await req.json()
-        return await handleBulkRemoveFromWatchlist(req, body, authResult)
+        return bumpPlaylistsOnSuccess(await handleBulkRemoveFromWatchlist(req, body, authResult))
       }
       case 'delete-playlist':
-        return await handleDeletePlaylist(req, authResult)
+        return bumpPlaylistsOnSuccess(await handleDeletePlaylist(req, authResult))
       case 'remove-coming-soon':
-        return await handleRemoveComingSoon(req, authResult)
+        return bumpPlaylistsOnSuccess(await handleRemoveComingSoon(req, authResult))
       default:
         return createErrorResponse(`Invalid action: ${action}`, 400)
     }

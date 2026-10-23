@@ -1,5 +1,35 @@
 import { revalidateTag, updateTag } from 'next/cache'
 import { MEDIA_CACHE_TAGS } from './mediaPagesTags'
+import { REVISION, bumpRevisionAfterResponse, watchHistoryRevision } from '../changes/revisions'
+
+/** The tag every list window carries (horizontalListData.js). */
+export const MEDIA_LIST_TAG = 'media-library'
+
+/**
+ * The library changed: expire the cached list windows outright and bump the
+ * library revision behind /api/authenticated/changes. `expire: 0` rather than
+ * 'max': a client that /changes sends to refetch a row must get the new row,
+ * not one more stale-while-revalidate copy (and then never ask again).
+ */
+export function expireMediaLists() {
+  revalidateTag(MEDIA_LIST_TAG, { expire: 0 })
+  bumpRevisionAfterResponse(REVISION.LIBRARY)
+  return true
+}
+
+/**
+ * Revalidates a title's cache tags (getAll*CacheTags): its pages are marked
+ * stale ('max'), and the list windows are expired (expireMediaLists).
+ * @param {Iterable<string>} tags
+ */
+export function revalidateMediaPageTags(tags) {
+  let lists = false
+  for (const tag of tags) {
+    if (tag === MEDIA_LIST_TAG) lists = true
+    else revalidateTag(tag, 'max')
+  }
+  if (lists) expireMediaLists()
+}
 
 // Enhanced cache invalidation utilities with SWR support for landing page lists
 
@@ -100,6 +130,10 @@ export async function invalidateUserWatchHistoryCache(userId) {
     // Also invalidate general watch history updates
     revalidateTag('watch-history-updates', 'max')
 
+    // Every playback write, so another device's progress reaches a polling
+    // client's Watch History row within one /changes poll (owner, 2026-10-23)
+    bumpRevisionAfterResponse(watchHistoryRevision(userId))
+
     console.log(`[Cache] Expired watch history cache for user ${userId}`)
     return true
   } catch (error) {
@@ -133,13 +167,8 @@ export async function invalidateMovieDetailsCache(movieTitle) {
   if (!movieTitle) return false
   
   try {
-    const { movieDetailsTag, getAllMovieCacheTags } = await import('./mediaPagesTags')
-    const tags = getAllMovieCacheTags(movieTitle)
-    
-    // Revalidate all related tags with max profile for SWR
-    for (const tag of tags) {
-      revalidateTag(tag, 'max')
-    }
+    const { getAllMovieCacheTags } = await import('./mediaPagesTags')
+    revalidateMediaPageTags(getAllMovieCacheTags(movieTitle))
     // Any movie edit can change the banner (its artwork, visibility, or which
     // movies are the newest releases)
     expireBannerCache()
@@ -176,12 +205,7 @@ export async function invalidateTVShowDetailsCache(showTitle) {
   
   try {
     const { getAllTVShowCacheTags } = await import('./mediaPagesTags')
-    const tags = getAllTVShowCacheTags(showTitle)
-    
-    // Revalidate all related tags with max profile for SWR
-    for (const tag of tags) {
-      revalidateTag(tag, 'max')
-    }
+    revalidateMediaPageTags(getAllTVShowCacheTags(showTitle))
     
     console.log(`[Cache SWR] Invalidated TV show details cache for: ${showTitle}`)
     return true
@@ -206,12 +230,7 @@ export async function invalidateEpisodeDetailsCache(showTitle, seasonNum, episod
   
   try {
     const { getAllEpisodeCacheTags } = await import('./mediaPagesTags')
-    const tags = getAllEpisodeCacheTags(showTitle, seasonNum, episodeNum)
-    
-    // Revalidate all related tags with max profile for SWR
-    for (const tag of tags) {
-      revalidateTag(tag, 'max')
-    }
+    revalidateMediaPageTags(getAllEpisodeCacheTags(showTitle, seasonNum, episodeNum))
     
     console.log(`[Cache SWR] Invalidated episode details cache for: ${showTitle} S${seasonNum}E${episodeNum}`)
     return true
@@ -227,12 +246,7 @@ export async function invalidateSeasonDetailsCache(showTitle, seasonNum) {
 
   try {
     const { getAllSeasonCacheTags } = await import('./mediaPagesTags')
-    const tags = getAllSeasonCacheTags(showTitle, seasonNum)
-
-    // Revalidate all related tags with max profile for SWR
-    for (const tag of tags) {
-      revalidateTag(tag, 'max')
-    }
+    revalidateMediaPageTags(getAllSeasonCacheTags(showTitle, seasonNum))
 
     console.log(`[Cache SWR] Invalidated season details cache for: ${showTitle} S${seasonNum}`)
     return true

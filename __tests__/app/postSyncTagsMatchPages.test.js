@@ -280,6 +280,9 @@ describe.each(FOLDERS)('the folder %j (display title %j)', (folder, displayTitle
 describe('the tags a post-sync revalidation marks stale', () => {
   // Pinned for the record: the bucket tags are exactly what they were; only
   // the per-title tags changed, from the display title to the folder name.
+  // 'media-library' (every list window) is expired outright, once, after the
+  // page tags, so a client that /api/authenticated/changes sends to refetch a
+  // row gets the new one rather than a stale-while-revalidate copy.
   it('for one movie', async () => {
     const { calls } = await revalidatedBy([['Example Film (2001)', moviePass('Example Film (2001)', 'Example Film')]])
 
@@ -287,8 +290,8 @@ describe('the tags a post-sync revalidation marks stale', () => {
       ['movie-details-Example Film (2001)', 'max'],
       ['movie-details', 'max'],
       ['movies', 'max'],
-      ['media-library', 'max'],
       ['all', 'max'],
+      ['media-library', { expire: 0 }],
       ['banner', { expire: 0 }],
     ])
   })
@@ -301,8 +304,8 @@ describe('the tags a post-sync revalidation marks stale', () => {
       ['tv-show-Example Show (2019)', 'max'],
       ['tv-details', 'max'],
       ['tv', 'max'],
-      ['media-library', 'max'],
       ['all', 'max'],
+      ['media-library', { expire: 0 }],
     ])
   })
 
@@ -314,7 +317,6 @@ describe('the tags a post-sync revalidation marks stale', () => {
       ['tv-show-Example Show (2019)', 'max'],
       ['tv-details', 'max'],
       ['tv', 'max'],
-      ['media-library', 'max'],
       ['all', 'max'],
       // the season
       ['season-Example Show (2019)-1', 'max'],
@@ -322,6 +324,8 @@ describe('the tags a post-sync revalidation marks stale', () => {
       // the episode
       ['episode-Example Show (2019)-S1E2', 'max'],
       ['episode-details', 'max'],
+      // every list window
+      ['media-library', { expire: 0 }],
     ])
   })
 })
