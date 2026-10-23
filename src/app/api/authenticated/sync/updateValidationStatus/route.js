@@ -2,6 +2,7 @@ import { ObjectId } from 'mongodb'
 import isAuthenticated from '../../../../../utils/routeAuth'
 import { generateNormalizedVideoId } from '../../../../../utils/flatDatabaseUtils'
 import { updateValidationStatus } from '../../../../../utils/watchHistory/database'
+import { bumpRevisionAfterResponse, watchHistoryRevision } from '@src/utils/changes/revisions'
 
 /**
  * @param {*} req
@@ -29,6 +30,8 @@ export const POST = async (req) => {
     })
 
     console.log(`Updated validation status for video ${videoId}: isValid = ${isValid}`)
+    // An invalid entry leaves the Watch History row: move its /changes stamp
+    bumpRevisionAfterResponse(watchHistoryRevision(authResult.id))
 
     return new Response(JSON.stringify({ 
       message: 'Validation status updated',

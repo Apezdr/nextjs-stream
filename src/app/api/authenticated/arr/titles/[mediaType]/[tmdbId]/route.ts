@@ -21,6 +21,7 @@ import {
 import { serviceForMediaType, type ArrService } from '@src/lib/arr/types'
 import { createLogger } from '@src/lib/logger'
 import { setComingSoonStatus } from '@src/utils/watchlist/database'
+import { REVISION, bumpRevisionAfterResponse } from '@src/utils/changes/revisions'
 
 const log = createLogger('ArrTitleRoute')
 
@@ -69,6 +70,8 @@ export async function POST(request: Request, { params }: Context) {
           source: result.service,
         })
         comingSoon = true
+        // Playlist rows show the Coming Soon flag: move their /changes stamp
+        bumpRevisionAfterResponse(REVISION.PLAYLISTS)
       } catch (error) {
         log.error({ err: error, tmdbId: ref.tmdbId, mediaType: ref.mediaType }, 'Added, but not marked Coming Soon')
       }

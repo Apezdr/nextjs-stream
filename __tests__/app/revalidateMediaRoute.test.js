@@ -77,6 +77,19 @@ it('expires the banner when movies changed', async () => {
   expect(mockRevalidateTag).not.toHaveBeenCalledWith('movies', { expire: 0 })
 })
 
+it('expires the list windows outright and moves the library stamp for /changes', async () => {
+  const { REVISION, stamp } = require('@src/utils/changes/revisions')
+  const before = stamp(REVISION.LIBRARY)
+
+  await revalidate({ movies: [], shows: ['Severance'], seasons: [], episodes: [] })
+
+  // A client that /changes sends to refetch a row must get the new row,
+  // not one more stale-while-revalidate copy
+  expect(mockRevalidateTag).toHaveBeenCalledWith('media-library', { expire: 0 })
+  expect(mockRevalidateTag).not.toHaveBeenCalledWith('media-library', 'max')
+  expect(stamp(REVISION.LIBRARY)).not.toBe(before)
+})
+
 it('leaves the banner alone when only TV changed', async () => {
   const response = await revalidate({
     movies: [],

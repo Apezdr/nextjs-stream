@@ -28,14 +28,13 @@ import { syncEventBus } from '@src/utils/sync/core/events'
 import { MediaType, SyncEventType } from '@src/utils/sync/core/types'
 import { createDatabaseAdapter } from '@src/utils/sync/infrastructure'
 import { NotificationManager } from '@src/utils/notifications/NotificationManager.js'
-import { revalidateTag } from 'next/cache'
 import {
   getAllMovieCacheTags,
   getAllTVShowCacheTags,
   getAllSeasonCacheTags,
   getAllEpisodeCacheTags,
 } from '@src/utils/cache/mediaPagesTags'
-import { expireBannerCache } from '@src/utils/cache/invalidation'
+import { expireBannerCache, expireMediaLists, revalidateMediaPageTags } from '@src/utils/cache/invalidation'
 import { countChangedMedia, requestMediaRevalidation } from '@src/utils/cache/postSyncRevalidation'
 import { createLogger } from '@src/lib/logger'
 
@@ -580,9 +579,9 @@ async function handleRevalidateMedia(request) {
     }
   }
 
-  for (const tag of tags) {
-    revalidateTag(tag, 'max')
-  }
+  // Pages are marked stale; the list windows are expired outright and the
+  // library revision behind /api/authenticated/changes is bumped
+  revalidateMediaPageTags(tags)
 
   // The banner is a list of movies, polled every 4 s: expire it outright
   // rather than serving one more poll the old list (see expireBannerCache)
@@ -955,6 +954,10 @@ export async function DELETE(request, props) {
       // The next sync tick must be a full pass that rebuilds the catalog, not
       // a skip on the strength of the last one (sync/run/tickSkip).
       await forgetAppliedPayloads()
+      // Lists polled through /api/authenticated/changes go empty now, not on
+      // their cache's next refresh
+      expireMediaLists()
+      expireBannerCache()
       // Nothing is left for watch history to count on until that pass
       // (sync/run/validateWatchHistory; never throws). A wipe of an empty
       // catalog changed nothing it counts on.
