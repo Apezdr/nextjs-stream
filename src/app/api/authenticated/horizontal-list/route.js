@@ -17,6 +17,7 @@ import {
 } from '@src/utils/cache/horizontalListData'
 // ETag support for HTTP caching
 import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
+import { trimCardMetadata } from '@src/utils/cardMetadataFields'
 
 // Sorting functions
 const sortFunctions = {
@@ -417,11 +418,12 @@ export const GET = async (req) => {
       }
     }
 
-    // Build response data
+    // Build response data. Cards carry only the metadata fields a client reads
+    // (CARD_METADATA_FIELDS); every server-side reader above has already run.
     const responseData = {
-      currentItems: items,
-      previousItem: previousItem || null,
-      nextItem: nextItem || null,
+      currentItems: items.map(trimCardMetadata),
+      previousItem: trimCardMetadata(previousItem) || null,
+      nextItem: trimCardMetadata(nextItem) || null,
       playlist: playlistMeta
     }
 
