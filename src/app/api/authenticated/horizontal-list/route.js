@@ -224,12 +224,12 @@ export const GET = async (req) => {
     switch (type) {
       case 'movie': {
         const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
-        const rows = await getCachedMovieWindow(offset, windowCount, movieProjection)
+        const rows = await getCachedMovieWindow(offset, windowCount, movieProjection, sort, sortOrder)
         split = splitWindow(rows, { limit: itemsPerPage, wantPrev })
         break
       }
       case 'tv': {
-        const rows = await getCachedTVWindow(offset, windowCount)
+        const rows = await getCachedTVWindow(offset, windowCount, sort, sortOrder)
         split = splitWindow(rows, { limit: itemsPerPage, wantPrev })
         break
       }
@@ -359,8 +359,10 @@ export const GET = async (req) => {
       }
     }
 
-    // Sort within the page; playlist order is already applied by the database
-    const sorted = type === 'playlist' ? currentItems : currentItems.sort(sortList)
+    // Movies and TV come in the list's order from the database (listOrder) and
+    // playlists in their own; the other lists still sort within the page
+    const orderedByDatabase = type === 'playlist' || type === 'movie' || type === 'tv'
+    const sorted = orderedByDatabase ? currentItems : currentItems.sort(sortList)
 
     // Sanitize the whole window with the type-appropriate context
     const context = {

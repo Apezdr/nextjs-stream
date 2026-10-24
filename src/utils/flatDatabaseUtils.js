@@ -386,6 +386,11 @@ export async function getFlatPosters(
   // Absolute skip override supports windowed fetches that straddle page boundaries
   const skip = options.skip ?? page * limit
   const queryOptions = { projection: finalProjection } // Use the merged projection
+  // The list's order, applied before paging (mediaListUtils/listOrder.js)
+  if (options.order) {
+    queryOptions.sort = options.order.sort
+    if (options.order.collation) queryOptions.collation = options.order.collation
+  }
   if (limit > 0) {
     queryOptions.limit = limit
     queryOptions.skip = skip
@@ -2588,7 +2593,8 @@ export async function getFlatAvailableMoviesCount() {
  * @returns {Promise<Array>} Array of TV shows with fields needed by the TVList component
  */
 export async function getFlatTVList(options = {}) {
-  const { page = 0, limit = 0, sort = true, skip = null } = options
+  // `order`: the list's order, applied before paging (mediaListUtils/listOrder.js)
+  const { page = 0, limit = 0, order = null, skip = null } = options
 
   try {
     const client = await clientPromise
@@ -2606,27 +2612,23 @@ export async function getFlatTVList(options = {}) {
 
     // Setup query options with pagination
     const queryOptions = { projection }
+    if (order) {
+      queryOptions.sort = order.sort
+      if (order.collation) queryOptions.collation = order.collation
+    }
     if (limit > 0) {
       queryOptions.limit = limit
       // Absolute skip override supports windowed fetches that straddle page boundaries
       queryOptions.skip = skip ?? page * limit
     }
 
-    // Fetch TV shows from flat database
-    let tvShows = await client
+    // Fetch TV shows from flat database. The page used to be sorted here by
+    // last air date after paging, which ordered each page but not the list.
+    const tvShows = await client
       .db('Media')
       .collection('FlatTVShows')
       .find(visibleShowFilter(), queryOptions)
       .toArray()
-
-    // Sort by last air date if requested
-    if (sort) {
-      tvShows.sort((a, b) => {
-        const dateA = new Date(a.metadata?.last_air_date || 0)
-        const dateB = new Date(b.metadata?.last_air_date || 0)
-        return dateB - dateA // Descending order (newest first)
-      })
-    }
 
     // Batch-fetch seasons and episodes for the whole page in two queries
     // (replaces the previous per-show/per-season fan-out of 1 + 2×seasons queries per show)
