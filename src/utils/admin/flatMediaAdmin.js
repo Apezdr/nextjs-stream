@@ -16,6 +16,7 @@ import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 import { getFullImageUrl } from '@src/utils'
+import { escapeRegex } from '@src/utils/escapeRegex'
 
 const DB_NAME = 'Media'
 
@@ -35,11 +36,6 @@ const TV_SORTS = {
 
 function resolveSort(map, sort) {
   return map[sort] || map.title
-}
-
-/** Escape user input before embedding it in a RegExp. */
-function escapeRegex(str) {
-  return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 /** Extract a 4-digit year from a Date or date-string; null when unparseable. */

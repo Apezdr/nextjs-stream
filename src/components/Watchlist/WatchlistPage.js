@@ -1001,11 +1001,13 @@ export default function WatchlistPage({ user }) {
     try {
       // Dual search: Database + TMDB
       const [databaseResults, tmdbMoviesRaw, tmdbTVShowsRaw] = await Promise.all([
-        // Search internal database using existing endpoint
+        // Search internal database using existing endpoint. Its first page, as
+        // large as a page may be: the first 10 are listed, and all of them keep
+        // TMDB results already in the library out of the external list.
         fetch('/api/authenticated/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query })
+          body: JSON.stringify({ query, limit: 50 })
         }).then(res => res.ok ? res.json() : { results: [] }).catch(() => ({ results: [] })),
         
         // Search TMDB

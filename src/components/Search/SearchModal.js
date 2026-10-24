@@ -1,4 +1,4 @@
-import React, { Fragment, Activity, memo, useId, useMemo, useCallback } from 'react'
+import React, { Fragment, Activity, memo, useEffect, useId, useMemo, useCallback } from 'react'
 import { Dialog, DialogPanel, Transition, TransitionChild } from '@headlessui/react'
 import { Combobox, ComboboxInput, ComboboxOptions, ComboboxOption } from '@headlessui/react'
 import { ErrorBoundary } from 'react-error-boundary'
@@ -34,6 +34,22 @@ const SearchErrorFallback = ({ error, resetErrorBoundary }) => (
 )
 
 /**
+ * How close to the end of the loaded results the list asks for the next page:
+ * as soon as any of the last LOAD_MORE_THRESHOLD options is rendered, whether
+ * the list got there by scrolling, a scrollbar drag or the arrow keys (the
+ * virtual list renders only the options near the viewport).
+ */
+export const LOAD_MORE_THRESHOLD = 10
+
+/** Asks for the next page once it's on screen; renders nothing. */
+const LoadMoreWhenShown = ({ onShown }) => {
+  useEffect(() => {
+    onShown()
+  }, [onShown])
+  return null
+}
+
+/**
  * SearchModal with HeadlessUI v2 + React 19.2 best practices
  *
  * Features:
@@ -42,6 +58,8 @@ const SearchErrorFallback = ({ error, resetErrorBoundary }) => (
  * - React 19.2 ErrorBoundary pattern
  * - React 19.2 Activity component for smooth detail panel transitions
  * - Optimal performance for all list sizes
+ * - Results arrive a page at a time (useSearchPages); the list loads the next
+ *   page itself as it nears the end
  */
 const SearchModal = ({
   open,
@@ -49,8 +67,10 @@ const SearchModal = ({
   query,
   setQuery,
   isLoading,
-  searchResults,
-  recentlyAddedMedia,
+  results,
+  hasNextPage,
+  loadingMore,
+  onLoadMore,
 }) => {
   // React 18/19 best practice: SSR-safe ID generation
   const searchInputId = useId()
@@ -58,11 +78,9 @@ const SearchModal = ({
   // Stable callback reference
   const handleClose = useCallback(() => setOpen(false), [setOpen])
 
-  // Determine which data to display
-  const displayData = useMemo(
-    () => (query === '' ? recentlyAddedMedia : searchResults),
-    [query, recentlyAddedMedia, searchResults]
-  )
+  // Each result's position, so a rendered option knows whether it's near the end
+  const positions = useMemo(() => new Map(results.map((media, index) => [media, index])), [results])
+  const loadMoreFrom = results.length - LOAD_MORE_THRESHOLD
 
   return (
     <Transition
@@ -109,7 +127,7 @@ const SearchModal = ({
               {/* React 19.2: Error boundary for search functionality */}
               <ErrorBoundary FallbackComponent={SearchErrorFallback} onReset={handleClose}>
                 {/* HeadlessUI v2: Always use virtualization for optimal performance */}
-                <Combobox virtual={{ options: displayData }}>
+                <Combobox virtual={{ options: results }}>
                   {({ activeOption }) => (
                     <>
                       {/* Search input */}
@@ -133,7 +151,7 @@ const SearchModal = ({
 
                       {isLoading ? (
                         <Loading fullscreenClasses="" />
-                      ) : (query === '' || searchResults.length > 0) ? (
+                      ) : (query === '' || results.length > 0) ? (
                         /* Two-pane flex layout with fixed height */
                         <div className="flex divide-x divide-gray-100 h-[42rem] max-h-[80vh]">
                           {/* Left pane: Header + Options list */}
@@ -162,6 +180,9 @@ const SearchModal = ({
                                   value={media}
                                   className="-mx-2 flex cursor-default select-none items-center rounded-md p-2 h-16 data-[focus]:bg-gray-100 data-[focus]:text-gray-900 w-full max-w-full"
                                 >
+                                  {hasNextPage && positions.get(media) >= loadMoreFrom ? (
+                                    <LoadMoreWhenShown onShown={onLoadMore} />
+                                  ) : null}
                                   <Link
                                     href={buildURL(media.url)}
                                     className="flex items-center w-full min-w-0 group"
@@ -203,6 +224,11 @@ const SearchModal = ({
                                 </ComboboxOption>
                               )}
                             </ComboboxOptions>
+                            {loadingMore ? (
+                              <p role="status" className="px-6 pb-3 text-xs text-gray-400">
+                                Loading more…
+                              </p>
+                            ) : null}
                           </div>
 
                           <div className="hidden w-1/2 flex-none flex-col overflow-hidden sm:flex">
@@ -226,7 +252,7 @@ const SearchModal = ({
                                     contClassNamePoster=""
                                     check4kandHDR={true}
                                   />
-                                    {activeOption.metadata.tagline && (
+                                    {activeOption.metadata?.tagline && (
                                       <p className="text-sm italic text-gray-500">
                                         "{activeOption.metadata.tagline}"
                                       </p>
@@ -239,7 +265,7 @@ const SearchModal = ({
                                         Released: {new Date(activeOption.release_date).getDate()}
                                       </p>
                                     )}
-                                    {activeOption.metadata.overview && (
+                                    {activeOption.metadata?.overview && (
                                       <p className="text-sm leading-6 text-gray-500 line-clamp-4">
                                         {activeOption.metadata.overview}
                                       </p>
@@ -268,7 +294,7 @@ const SearchModal = ({
                                         Released: {new Date(activeOption.release_date).getDate()}
                                       </p>
                                     )}
-                                    {activeOption.metadata.overview && (
+                                    {activeOption.metadata?.overview && (
                                       <p className="text-sm leading-6 text-gray-500 line-clamp-4">
                                         {activeOption.metadata.overview}
                                       </p>
@@ -309,7 +335,7 @@ const SearchModal = ({
                         </div>
                       ) : null}
 
-                      {query !== '' && searchResults.length === 0 && !isLoading && (
+                      {query !== '' && results.length === 0 && !isLoading && (
                         <div className="px-6 py-14 text-center text-sm sm:px-14">
                           <UsersIcon className="mx-auto h-6 w-6 text-gray-400" aria-hidden="true" />
                           <p className="mt-4 font-semibold text-gray-900">
