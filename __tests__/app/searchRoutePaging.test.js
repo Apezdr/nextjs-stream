@@ -2,19 +2,22 @@
  * @jest-environment node
  *
  * POST /api/authenticated/search pages its results. A typed query used to send
- * every match at once ("the": 336 results, 3.8 MB) and ran the typed text as a
- * regular expression, so "(" answered 500. The query is now matched literally,
- * movies and shows are ordered in the database and paged, and the response
- * carries `total` and `hasNextPage`. Checked against MongoDB 8.3 with seeded
- * titles when written: each title once across the pages, hidden titles left
- * out, titles that start with the query first, then A-Z.
+ * every match at once ("the": 336 results, 3.8 MB), movies before shows, and
+ * ran the typed text as a regular expression, so "(" answered 500. The query
+ * is now matched literally; movies and shows are ranked together (best match
+ * first, then A-Z) and paged in the database; `types` limits them to movies
+ * or shows; the response carries `total` and `hasNextPage`. Checked against
+ * MongoDB 8.3 with seeded titles when written: each title once across the
+ * pages, hidden titles left out, ranks and filters as below.
  */
 
 const mockAggregate = jest.fn()
 jest.mock('@src/lib/mongodb', () => ({
   __esModule: true,
   default: Promise.resolve({
-    db: () => ({ collection: () => ({ aggregate: (pipeline) => ({ toArray: () => mockAggregate(pipeline) }) }) }),
+    db: () => ({
+      collection: (name) => ({ aggregate: (pipeline, options) => ({ toArray: () => mockAggregate(name, pipeline, options) }) }),
+    }),
   }),
 }))
 jest.mock('@src/utils/routeAuth', () => ({
@@ -32,14 +35,19 @@ jest.mock('@src/utils/auth_utils', () => ({
   sanitizeRecord: jest.fn(async (record) => record),
 }))
 
-const { POST, SEARCH_LIMIT_DEFAULT, SEARCH_LIMIT_MAX } = require('@src/app/api/authenticated/search/route')
+const { POST } = require('@src/app/api/authenticated/search/route')
+const { SEARCH_LIMIT_DEFAULT, SEARCH_LIMIT_MAX, matchRanks } = require('@src/utils/search/searchQuery')
+const { TITLE_COLLATION } = require('@src/utils/mediaListUtils/listOrder')
 
 const post = (body) =>
   POST(new Request('https://cinema.example/api/authenticated/search', { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) }))
 
 const page = (items, total) => [{ items, total: total === null ? [] : [{ count: total }] }]
+const call = (n = 0) => {
+  const [collection, pipeline, options] = mockAggregate.mock.calls[n]
+  return { collection, pipeline, options }
+}
 const stage = (pipeline, name) => pipeline.find((s) => name in s)?.[name]
-const facet = (pipeline) => stage(pipeline, '$facet').items
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -48,23 +56,56 @@ beforeEach(() => {
 })
 afterEach(() => jest.restoreAllMocks())
 
-it('matches the typed text literally, trimmed, in the match and the ranking', async () => {
+it('matches the typed text literally, trimmed, in movies and shows', async () => {
   await post({ query: '  (a+b).* ' })
 
-  const pipeline = mockAggregate.mock.calls[0][0]
+  const { collection, pipeline } = call()
   const escaped = '\\(a\\+b\\)\\.\\*'
+  expect(collection).toBe('FlatMovies')
   expect(pipeline[0].$match.$and[0]).toEqual({ title: { $regex: escaped, $options: 'i' } })
   const shows = stage(pipeline, '$unionWith')
   expect(shows.coll).toBe('FlatTVShows')
   expect(shows.pipeline[0].$match.$and[0]).toEqual({ title: { $regex: escaped, $options: 'i' } })
-  const ranking = pipeline.find((s) => s.$addFields?.startsWithQuery).$addFields.startsWithQuery
-  expect(ranking).toEqual({ $regexMatch: { input: '$title', regex: `^${escaped}`, options: 'i' } })
+  const branches = pipeline.find((s) => s.$addFields?.matchRank).$addFields.matchRank.$switch.branches
+  expect(branches.map((b) => b.case.$regexMatch.regex)).toEqual(matchRanks(escaped))
 })
 
-it('orders in the database: prefix matches first, then title, then _id', async () => {
+it('ranks the best match first, then A-Z as the lists sort titles, then _id', async () => {
   await post({ query: 'the' })
 
-  expect(stage(mockAggregate.mock.calls[0][0], '$sort')).toEqual({ startsWithQuery: -1, sortTitle: 1, _id: 1 })
+  const { pipeline, options } = call()
+  expect(stage(pipeline, '$sort')).toEqual({ matchRank: 1, title: 1, _id: 1 })
+  expect(options).toEqual({ collation: TITLE_COLLATION })
+})
+
+it('names the ranks from an exact title to a later word', () => {
+  const ranks = matchRanks('star').map((regex) => new RegExp(regex, 'i'))
+  const rank = (title) => {
+    const index = ranks.findIndex((r) => r.test(title))
+    return index === -1 ? ranks.length : index
+  }
+
+  expect(['Star', 'The Star', 'Star Wars', 'Stardust', 'Lone Star', 'The Last Starfighter', 'Mustard'].map(rank)).toEqual([
+    0, 0, 1, 2, 3, 4, 5,
+  ])
+})
+
+it('searches only movies or only shows when asked', async () => {
+  await post({ query: 'star', types: ['movie'] })
+  await post({ query: 'star', types: ['tv'] })
+
+  expect(call(0).collection).toBe('FlatMovies')
+  expect(stage(call(0).pipeline, '$unionWith')).toBeUndefined()
+  expect(call(1).collection).toBe('FlatTVShows')
+  expect(stage(call(1).pipeline, '$unionWith')).toBeUndefined()
+  expect(call(1).pipeline.find((s) => s.$addFields?.searchType).$addFields.searchType).toBe('tv')
+})
+
+it('refuses types that name nothing known', async () => {
+  for (const types of [[], ['music'], 'movie', [1]]) {
+    expect((await post({ query: 'star', types })).status).toBe(400)
+  }
+  expect(mockAggregate).not.toHaveBeenCalled()
 })
 
 it('pages with page and limit, 30 by default and at most 50', async () => {
@@ -75,7 +116,7 @@ it('pages with page and limit, 30 by default and at most 50', async () => {
   await post({ query: 'the', page: -3, limit: 500 })
   await post({ query: 'the', page: 'x', limit: 'y' })
 
-  const windows = mockAggregate.mock.calls.map(([pipeline]) => facet(pipeline).slice(0, 2))
+  const windows = mockAggregate.mock.calls.map(([, pipeline]) => stage(pipeline, '$facet').items.slice(0, 2))
   expect(windows).toEqual([
     [{ $skip: 0 }, { $limit: 30 }],
     [{ $skip: 100 }, { $limit: 50 }],
@@ -110,14 +151,16 @@ it('answers an empty page when nothing matches', async () => {
   expect(await (await post({ query: 'zzz' })).json()).toEqual({ results: [], total: 0, hasNextPage: false })
 })
 
-it('pages Recently Added for the empty query', async () => {
+it('pages Recently Added for the empty query, filtered like a search', async () => {
   mockRecentlyAdded.mockImplementation(async ({ countOnly }) => (countOnly ? 100 : [{ _id: 'r1' }]))
 
   const body = await (await post({ query: '   ', page: 1, limit: 50, isTVdevice: true })).json()
+  await post({ query: '', types: ['tv'] })
 
   expect(mockAggregate).not.toHaveBeenCalled()
-  expect(mockRecentlyAdded).toHaveBeenCalledWith({ page: 1, limit: 50, shouldExposeAdditionalData: true })
-  expect(mockRecentlyAdded).toHaveBeenCalledWith({ countOnly: true })
+  expect(mockRecentlyAdded).toHaveBeenCalledWith({ page: 1, limit: 50, shouldExposeAdditionalData: true, types: ['movie', 'tv'] })
+  expect(mockRecentlyAdded).toHaveBeenCalledWith({ countOnly: true, types: ['movie', 'tv'] })
+  expect(mockRecentlyAdded).toHaveBeenCalledWith({ countOnly: true, types: ['tv'] })
   expect(body).toEqual({ results: [{ _id: 'r1' }], total: 100, hasNextPage: false })
 })
 

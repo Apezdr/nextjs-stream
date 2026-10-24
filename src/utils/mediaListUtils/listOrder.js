@@ -18,7 +18,8 @@
  */
 export const LIST_SORT_KEYS = Object.freeze(['id', 'title', 'date'])
 
-const TITLE_COLLATION = Object.freeze({ locale: 'en', strength: 2, numericOrdering: true })
+/** Titles compared ignoring case, numbers in numeric order; search ranks ties in this order too. */
+export const TITLE_COLLATION = Object.freeze({ locale: 'en', strength: 2, numericOrdering: true })
 
 /**
  * The MongoDB sort (and collation, for title) for a list.

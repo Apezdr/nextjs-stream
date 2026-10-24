@@ -8,6 +8,7 @@
 
 import { act, renderHook, waitFor } from '@testing-library/react'
 import {
+  SEARCH_KINDS,
   SEARCH_PAGE_SIZE,
   SEARCH_TYPING_DELAY_MS,
   isPlaceholder,
@@ -26,8 +27,8 @@ beforeEach(() => {
   failures = 0
   jest.spyOn(console, 'error').mockImplementation(() => {})
   global.fetch = jest.fn(async (url, { body }) => {
-    const { query, page, limit } = JSON.parse(body)
-    requests.push({ query, page, limit })
+    const { query, types, page, limit } = JSON.parse(body)
+    requests.push({ query, types, page, limit })
     if (delays[query]) await new Promise((resolve) => setTimeout(resolve, delays[query]))
     if (failures > 0) {
       failures--
@@ -56,7 +57,7 @@ it('gives every result a slot once the first page arrives, the rest as placehold
 
   await waitFor(() => expect(result.current.options).toHaveLength(TOTAL))
   expect(SEARCH_PAGE_SIZE).toBe(50)
-  expect(requests).toEqual([{ query: '', page: 0, limit: 50 }])
+  expect(requests).toEqual([{ query: '', types: ['movie', 'tv'], page: 0, limit: 50 }])
   expect(result.current.total).toBe(TOTAL)
   expect(result.current.options.slice(0, 50).every((o) => !isPlaceholder(o))).toBe(true)
   expect(ids(result.current.options.slice(49, 51))).toEqual(['recent-49', 'slot 50 (page 1)'])
@@ -153,4 +154,19 @@ it('asks again for a later page that failed, the next time its rows ask', async 
   act(() => result.current.requestPage(1))
   await waitFor(() => expect(isPlaceholder(result.current.options[50])).toBe(false))
   expect(requests.map((r) => r.page)).toEqual([0, 1, 1])
+})
+
+it('limits the results to movies or shows, each choice with its own pages', async () => {
+  const { result, rerender } = renderHook(({ q, t }) => useSearchResults(q, t), { initialProps: { q: '', t: SEARCH_KINDS } })
+  await waitFor(() => expect(result.current.options).toHaveLength(TOTAL))
+
+  rerender({ q: '', t: ['tv'] })
+  expect(result.current.isLoading).toBe(true)
+  await waitFor(() => expect(result.current.options).toHaveLength(TOTAL))
+  expect(requests.at(-1)).toEqual({ query: '', types: ['tv'], page: 0, limit: 50 })
+
+  // Both again: what was loaded for both shows at once
+  rerender({ q: '', t: ['tv', 'movie'] })
+  expect(result.current.isLoading).toBe(false)
+  expect(requests).toHaveLength(2)
 })

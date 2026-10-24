@@ -14,7 +14,44 @@ import {
 import RetryImage from '@components/RetryImage'
 import Detailed from '@components/Poster/Detailed'
 import MediaPoster from '@components/MediaPoster'
-import { isPlaceholder } from './useSearchResults'
+import { SEARCH_KINDS, isPlaceholder } from './useSearchResults'
+
+const KIND_LABELS = { movie: 'Movies', tv: 'TV Shows' }
+
+/**
+ * Movies, TV Shows or both (the default). The last one left on can't be
+ * turned off, so there is always something to search; pressing one keeps the
+ * focus in the search box, so typing carries on.
+ */
+const KindFilter = ({ types, setTypes }) => (
+  <div role="group" aria-label="Show" className="flex items-center gap-2 border-b border-gray-100 px-4 py-2">
+    {SEARCH_KINDS.map((kind) => {
+      const on = types.includes(kind)
+      const onlyOne = on && types.length === 1
+      return (
+        <button
+          key={kind}
+          type="button"
+          aria-pressed={on}
+          aria-disabled={onlyOne || undefined}
+          title={onlyOne ? 'At least one stays on' : undefined}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => {
+            if (onlyOne) return
+            setTypes(SEARCH_KINDS.filter((k) => (k === kind ? !on : types.includes(k))))
+          }}
+          className={classNames(
+            'rounded-full px-3 py-1 text-xs font-semibold ring-1 ring-inset transition-colors',
+            on ? 'bg-indigo-600 text-white ring-indigo-600' : 'bg-white text-gray-600 ring-gray-300 hover:bg-gray-50',
+            onlyOne && 'cursor-not-allowed'
+          )}
+        >
+          {KIND_LABELS[kind]}
+        </button>
+      )
+    })}
+  </div>
+)
 
 /**
  * Error fallback component for search results
@@ -78,6 +115,8 @@ const SearchModal = ({
   setOpen,
   query,
   setQuery,
+  types,
+  setTypes,
   isLoading,
   failed,
   onRetry,
@@ -156,6 +195,7 @@ const SearchModal = ({
                           onClick={handleClose}
                         />
                       </div>
+                      <KindFilter types={types} setTypes={setTypes} />
 
                       {failed ? (
                         <div className="px-6 py-14 text-center text-sm sm:px-14" role="alert">

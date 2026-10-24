@@ -3,15 +3,17 @@ import { lazy, Suspense, useCallback, useState } from 'react'
 import { MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 import Count from './Count'
-import { useSearchResults } from './useSearchResults'
+import { SEARCH_KINDS, useSearchResults } from './useSearchResults'
 const SearchModal = lazy(() => import('./SearchModal'))
 
 export default function SearchInput() {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
+  // Movies, TV or both (the default); kept while the page is open
+  const [types, setTypes] = useState(SEARCH_KINDS)
 
   // Every result's slot, filled a page at a time: Recently Added while the query is empty
-  const { options, total, isLoading, failed, requestPage, retry } = useSearchResults(query)
+  const { options, total, isLoading, failed, requestPage, retry } = useSearchResults(query, types)
 
   // Open/close the search, resetting the query on close. Done in this action
   // handler (not an effect) so the search doesn't chain off it.
@@ -70,6 +72,8 @@ export default function SearchInput() {
           setOpen={handleSetOpen}
           query={query}
           setQuery={setQuery}
+          types={types}
+          setTypes={setTypes}
           isLoading={isLoading}
           failed={failed}
           onRetry={retry}
