@@ -90,7 +90,7 @@ const MovieDetailsComponent = ({ media }) => {
       <StickyTitleBar sentinelId={ACTIONS_ID} title={headline} subtitle={subtitle} {...progressProps} playHref={playHref} />
 
       <div className="mt-10 space-y-12 rounded-2xl bg-[#070b1d]/65 px-4 py-8 ring-1 ring-white/5 sm:mt-14 sm:px-6 lg:px-8">
-        {cast.length > 0 ? <CastRail cast={cast} /> : null}
+        {cast.length > 0 ? <CastRail cast={cast} id="cast" /> : null}
 
         <div className={classNames('grid gap-8', collection ? 'lg:grid-cols-2' : '')}>
           {collection ? (

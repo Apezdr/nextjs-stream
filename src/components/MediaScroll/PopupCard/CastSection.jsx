@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import VirtualizedCastGrid from '../VirtualizedCastGrid'
 
 /**
@@ -14,8 +15,11 @@ import VirtualizedCastGrid from '../VirtualizedCastGrid'
  * 
  * @param {Object} props - Component props
  * @param {Object|Array} props.cast - Cast data (object or array of cast members)
+ * @param {number} [props.castCount] - How many people the title has; /media sends the first 24
+ * @param {string|null} [props.href] - The title page's cast, for "See all N" when there are more
+ * @param {Function} [props.onNavigate] - Collapses the popup as the link navigates
  */
-const CastSection = ({ cast }) => {
+const CastSection = ({ cast, castCount, href = null, onNavigate }) => {
   // Don't render if no cast data
   if (!cast || Object.keys(cast).length === 0) {
     return null
@@ -24,10 +28,22 @@ const CastSection = ({ cast }) => {
   // Calculate if we need the gradient overlay
   const castArray = Array.isArray(cast) ? cast : Object.values(cast)
   const showGradient = castArray.length > 16
+  const more = href && castCount > castArray.length ? castCount : null
 
   return (
     <div className="p-4 relative h-[31rem]">
-      <h2 className="text-2xl text-gray-900 font-bold mb-4">Starring:</h2>
+      <div className="mb-4 flex items-baseline justify-between gap-4">
+        <h2 className="text-2xl text-gray-900 font-bold">Starring:</h2>
+        {more ? (
+          <Link
+            href={href}
+            onClick={onNavigate}
+            className="rounded text-sm font-medium text-blue-600 hover:text-blue-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+          >
+            See all {more}
+          </Link>
+        ) : null}
+      </div>
 
       {/* Virtualized Cast Grid */}
       <VirtualizedCastGrid cast={cast} />

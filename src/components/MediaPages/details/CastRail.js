@@ -80,7 +80,7 @@ function initials(name) {
  * @param {boolean} [props.bleed] - false keeps the scroller inside its box so the rail fits a grid cell
  * @param {'rail'|'grid'} [props.layout]
  */
-export default function CastRail({ cast, title = 'Cast', hideHeading = false, bleed = true, layout = 'rail' }) {
+export default function CastRail({ cast, title = 'Cast', hideHeading = false, bleed = true, layout = 'rail', id }) {
   const [expanded, setExpanded] = useState(false)
   const people = Array.isArray(cast) ? cast.filter((p) => p && p.name) : []
   if (people.length === 0) return null
@@ -101,7 +101,14 @@ export default function CastRail({ cast, title = 'Cast', hideHeading = false, bl
   ) : null
 
   return (
-    <section aria-labelledby={hideHeading ? undefined : headingId} aria-label={hideHeading ? title : undefined}>
+    // `id` is the anchor the popup's "See all N" links to; scroll-mt clears the
+    // 64 px nav and the sticky title bar under it.
+    <section
+      id={id}
+      className={id ? 'scroll-mt-28' : undefined}
+      aria-labelledby={hideHeading ? undefined : headingId}
+      aria-label={hideHeading ? title : undefined}
+    >
       {hideHeading ? null : (
         <div className="mb-4 flex items-baseline justify-between gap-4">
           <h2 id={headingId} className="text-lg font-semibold text-white">

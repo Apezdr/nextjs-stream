@@ -261,7 +261,14 @@ const PopupCard = (props) => {
         />
 
         {/* SECTION 3: Cast */}
-        <Suspense><CastSection cast={data?.cast} /></Suspense>
+        <Suspense>
+          <CastSection
+            cast={data?.cast}
+            castCount={data?.castCount}
+            href={link ? `/list/${type}/${link}#cast` : null}
+            onNavigate={handleNavigationWithLoading}
+          />
+        </Suspense>
       </div>
     </div>
   )

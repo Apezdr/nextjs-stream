@@ -165,7 +165,10 @@ const TVEpisodeDetailsComponent = ({ media }) => {
       <StickyTitleBar sentinelId={ACTIONS_ID} title={stickyTitle} subtitle={subtitle} {...progressProps} playHref={hrefs.play} />
 
       <div className="mt-10 grid gap-8 rounded-2xl bg-[#070b1d]/65 px-4 py-8 ring-1 ring-white/5 sm:mt-14 sm:px-6 lg:grid-cols-2 lg:px-8">
-        <CastTabs tabs={tabs} defaultTab="guests" />
+        {/* The anchor the popup's "See all N" links to (see CastRail) */}
+        <div id="cast" className="scroll-mt-28">
+          <CastTabs tabs={tabs} defaultTab="guests" />
+        </div>
         <DetailsPanel id="episode-details" title="Episode details" rows={facts} />
       </div>
 
