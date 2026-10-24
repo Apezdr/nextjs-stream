@@ -1,4 +1,4 @@
-import React, { Fragment, Activity, memo, useEffect, useId, useMemo, useCallback } from 'react'
+import React, { Fragment, Activity, memo, useEffect, useId, useCallback } from 'react'
 import { Dialog, DialogPanel, Transition, TransitionChild } from '@headlessui/react'
 import { Combobox, ComboboxInput, ComboboxOptions, ComboboxOption } from '@headlessui/react'
 import { ErrorBoundary } from 'react-error-boundary'
@@ -14,6 +14,7 @@ import {
 import RetryImage from '@components/RetryImage'
 import Detailed from '@components/Poster/Detailed'
 import MediaPoster from '@components/MediaPoster'
+import { isPlaceholder } from './useSearchResults'
 
 /**
  * Error fallback component for search results
@@ -34,19 +35,29 @@ const SearchErrorFallback = ({ error, resetErrorBoundary }) => (
 )
 
 /**
- * How close to the end of the loaded results the list asks for the next page:
- * as soon as any of the last LOAD_MORE_THRESHOLD options is rendered, whether
- * the list got there by scrolling, a scrollbar drag or the arrow keys (the
- * virtual list renders only the options near the viewport).
+ * How long a placeholder row stays on screen before it asks for its page. The
+ * virtual list renders only the rows near the viewport, so a row on screen
+ * means its page is wanted; the wait keeps a fast scroll or a scrollbar drag
+ * from fetching every page it passes.
  */
-export const LOAD_MORE_THRESHOLD = 10
+export const REQUEST_AFTER_SHOWN_MS = 150
 
-/** Asks for the next page once it's on screen; renders nothing. */
-const LoadMoreWhenShown = ({ onShown }) => {
+/** A result whose page hasn't arrived: a grey row that asks for its page once it has stayed in view. */
+const PlaceholderRow = ({ page, onRequestPage }) => {
   useEffect(() => {
-    onShown()
-  }, [onShown])
-  return null
+    const timer = setTimeout(() => onRequestPage(page), REQUEST_AFTER_SHOWN_MS)
+    return () => clearTimeout(timer)
+  }, [page, onRequestPage])
+
+  return (
+    <div className="flex items-center w-full min-w-0" aria-hidden="true">
+      <div className="flex-shrink-0 rounded-lg bg-gray-200 animate-pulse" style={{ width: '32px', height: '48px' }} />
+      <div className="ml-3 flex flex-col flex-1 gap-2">
+        <span className="h-3 w-2/3 rounded bg-gray-200 animate-pulse" />
+        <span className="h-2 w-1/4 rounded bg-gray-100 animate-pulse" />
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -58,8 +69,9 @@ const LoadMoreWhenShown = ({ onShown }) => {
  * - React 19.2 ErrorBoundary pattern
  * - React 19.2 Activity component for smooth detail panel transitions
  * - Optimal performance for all list sizes
- * - Results arrive a page at a time (useSearchPages); the list loads the next
- *   page itself as it nears the end
+ * - The list has a slot for every result (useSearchResults), so its scrollbar
+ *   stands for all of them; placeholder slots fill in a page at a time as they
+ *   come into view, and can't be focused or chosen
  */
 const SearchModal = ({
   open,
@@ -67,20 +79,16 @@ const SearchModal = ({
   query,
   setQuery,
   isLoading,
-  results,
-  hasNextPage,
-  loadingMore,
-  onLoadMore,
+  failed,
+  onRetry,
+  options,
+  onRequestPage,
 }) => {
   // React 18/19 best practice: SSR-safe ID generation
   const searchInputId = useId()
 
   // Stable callback reference
   const handleClose = useCallback(() => setOpen(false), [setOpen])
-
-  // Each result's position, so a rendered option knows whether it's near the end
-  const positions = useMemo(() => new Map(results.map((media, index) => [media, index])), [results])
-  const loadMoreFrom = results.length - LOAD_MORE_THRESHOLD
 
   return (
     <Transition
@@ -127,7 +135,7 @@ const SearchModal = ({
               {/* React 19.2: Error boundary for search functionality */}
               <ErrorBoundary FallbackComponent={SearchErrorFallback} onReset={handleClose}>
                 {/* HeadlessUI v2: Always use virtualization for optimal performance */}
-                <Combobox virtual={{ options: results }}>
+                <Combobox virtual={{ options, disabled: isPlaceholder }}>
                   {({ activeOption }) => (
                     <>
                       {/* Search input */}
@@ -149,9 +157,20 @@ const SearchModal = ({
                         />
                       </div>
 
-                      {isLoading ? (
+                      {failed ? (
+                        <div className="px-6 py-14 text-center text-sm sm:px-14" role="alert">
+                          <p className="font-semibold text-gray-900">Couldn't load search results</p>
+                          <button
+                            type="button"
+                            onClick={onRetry}
+                            className="mt-4 rounded-md bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm hover:bg-indigo-500"
+                          >
+                            Try again
+                          </button>
+                        </div>
+                      ) : isLoading ? (
                         <Loading fullscreenClasses="" />
-                      ) : (query === '' || results.length > 0) ? (
+                      ) : (query === '' || options.length > 0) ? (
                         /* Two-pane flex layout with fixed height */
                         <div className="flex divide-x divide-gray-100 h-[42rem] max-h-[80vh]">
                           {/* Left pane: Header + Options list */}
@@ -175,14 +194,20 @@ const SearchModal = ({
                               )}
                             >
                               {/* Render prop function - MUST be ONLY child of ComboboxOptions */}
-                              {({ option: media }) => (
+                              {({ option: media }) =>
+                                isPlaceholder(media) ? (
+                                  <ComboboxOption
+                                    value={media}
+                                    aria-label="Loading"
+                                    className="-mx-2 flex cursor-default select-none items-center rounded-md p-2 h-16 w-full max-w-full"
+                                  >
+                                    <PlaceholderRow page={media.page} onRequestPage={onRequestPage} />
+                                  </ComboboxOption>
+                                ) : (
                                 <ComboboxOption
                                   value={media}
                                   className="-mx-2 flex cursor-default select-none items-center rounded-md p-2 h-16 data-[focus]:bg-gray-100 data-[focus]:text-gray-900 w-full max-w-full"
                                 >
-                                  {hasNextPage && positions.get(media) >= loadMoreFrom ? (
-                                    <LoadMoreWhenShown onShown={onLoadMore} />
-                                  ) : null}
                                   <Link
                                     href={buildURL(media.url)}
                                     className="flex items-center w-full min-w-0 group"
@@ -222,13 +247,9 @@ const SearchModal = ({
                                     />
                                   </Link>
                                 </ComboboxOption>
-                              )}
+                                )
+                              }
                             </ComboboxOptions>
-                            {loadingMore ? (
-                              <p role="status" className="px-6 pb-3 text-xs text-gray-400">
-                                Loading more…
-                              </p>
-                            ) : null}
                           </div>
 
                           <div className="hidden w-1/2 flex-none flex-col overflow-hidden sm:flex">
@@ -335,7 +356,7 @@ const SearchModal = ({
                         </div>
                       ) : null}
 
-                      {query !== '' && results.length === 0 && !isLoading && (
+                      {query !== '' && options.length === 0 && !isLoading && !failed && (
                         <div className="px-6 py-14 text-center text-sm sm:px-14">
                           <UsersIcon className="mx-auto h-6 w-6 text-gray-400" aria-hidden="true" />
                           <p className="mt-4 font-semibold text-gray-900">

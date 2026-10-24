@@ -3,15 +3,15 @@ import { lazy, Suspense, useCallback, useState } from 'react'
 import { MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 import Count from './Count'
-import { useSearchPages } from './useSearchPages'
+import { useSearchResults } from './useSearchResults'
 const SearchModal = lazy(() => import('./SearchModal'))
 
 export default function SearchInput() {
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(false)
 
-  // Paged results for the query: Recently Added while it's empty (useSearchPages)
-  const { results, total, hasNextPage, loadingMore, loadMore, isLoading } = useSearchPages(query)
+  // Every result's slot, filled a page at a time: Recently Added while the query is empty
+  const { options, total, isLoading, failed, requestPage, retry } = useSearchResults(query)
 
   // Open/close the search, resetting the query on close. Done in this action
   // handler (not an effect) so the search doesn't chain off it.
@@ -45,7 +45,7 @@ export default function SearchInput() {
             'text-[8px] absolute top-[1.6rem] text-black border-none'
           )}
         >
-          {/* Every match, not just the pages loaded so far */}
+          {/* Every match, not only the pages loaded so far */}
           {open ? <Count data={total} /> : null}
         </span>
         {!open ? (
@@ -71,10 +71,10 @@ export default function SearchInput() {
           query={query}
           setQuery={setQuery}
           isLoading={isLoading}
-          results={results}
-          hasNextPage={hasNextPage}
-          loadingMore={loadingMore}
-          onLoadMore={loadMore}
+          failed={failed}
+          onRetry={retry}
+          options={options}
+          onRequestPage={requestPage}
         />
       </Suspense>
     </>
