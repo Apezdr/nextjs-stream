@@ -1,5 +1,6 @@
 'use server';
 
+import { connection } from 'next/server';
 import { getSession } from '@src/lib/cachedAuth';
 import { getProcessedSystemStatus } from '@src/utils/getProcessedSystemStatus';
 import StatusBannerClient from './StatusBannerClient';
@@ -9,6 +10,13 @@ import StatusBannerClient from './StatusBannerClient';
  * Only renders for authenticated users when there's a non-normal status
  */
 export default async function ServerStatusBanner() {
+  // Live status, at request time only. Partial prefetching prerenders the
+  // /list routes with the request's cookies, and the session check reads the
+  // current time (better-auth's expiry check), which a prerender may not:
+  // navigating to a title page raised "Blocking Route ... new Date()" in dev.
+  // The layout already gives the banner its own <Suspense>.
+  await connection();
+
   // Check authentication on server side
   const session = await getSession();
   
