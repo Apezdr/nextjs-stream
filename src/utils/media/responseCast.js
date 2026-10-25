@@ -70,3 +70,19 @@ export function limitResponseCast(media) {
   }
   return result
 }
+
+/**
+ * TMDB's details for a title (/api/authenticated/tmdb/comprehensive/movie|tv),
+ * which the web popup and the desktop app read for a title the library doesn't
+ * have, with the same cap. They carry TMDB's whole cast (587 people and 189 KB
+ * for a long-running show) and `recurring_cast` (81 more, 26 KB), which no
+ * client reads. The server's own reads of these details (the watchlist's
+ * mediaResolver) go to the processor directly and keep everything.
+ * @param {object|null} details
+ * @returns {object|null}
+ */
+export function limitTmdbDetailsCast(details) {
+  const result = limitResponseCast(details)
+  if (result && typeof result === 'object' && 'recurring_cast' in result) delete result.recurring_cast
+  return result
+}

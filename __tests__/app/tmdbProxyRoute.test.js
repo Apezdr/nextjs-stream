@@ -97,6 +97,35 @@ describe('GET', () => {
   })
 })
 
+describe("GET, a title's details", () => {
+  const person = (i) => ({ id: i, name: `Person ${i}`, character: `Role ${i}`, profile_path: `/p${i}.jpg`, roles: [] })
+  const people = (n) => Array.from({ length: n }, (_, i) => person(i))
+
+  it('sends the first 24 of the cast, the count, and no recurring cast, under the backend ETag', async () => {
+    mockFetchTmdbFromBackend.mockResolvedValue({
+      data: { id: 1399, name: 'A Long Show', cast: people(587), recurring_cast: people(81) },
+      headers: { etag: 'W/"abc"' },
+    })
+
+    const res = await get(['comprehensive', 'tv'])
+    const body = await res.json()
+    expect(body.cast).toHaveLength(24)
+    expect(body.cast[0]).toEqual({ id: 0, name: 'Person 0', character: 'Role 0', profile_path: '/p0.jpg' })
+    expect(body.castCount).toBe(587)
+    expect(body).not.toHaveProperty('recurring_cast')
+    expect(body.name).toBe('A Long Show')
+    expect(res.headers.get('etag')).toBe('W/"abc"')
+  })
+
+  it('leaves the other endpoints as the backend sent them', async () => {
+    const cast = { cast: people(30) }
+    mockFetchTmdbFromBackend.mockResolvedValue({ data: cast, headers: {} })
+
+    const res = await get(['cast', 'tv', '1399'])
+    expect(await res.json()).toEqual(cast)
+  })
+})
+
 describe('POST', () => {
   it('gives up on a 4xx after one request and passes it through', async () => {
     global.fetch.mockResolvedValue(answer(404, JSON.parse(NOT_FOUND)))

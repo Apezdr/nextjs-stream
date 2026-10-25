@@ -7,6 +7,10 @@ import {
   unwrapCachedEnvelope,
 } from '@src/utils/tmdb/backendClient'
 import { hasMatchingETag, createNotModifiedResponse } from '@src/utils/cache/etagHelpers'
+import { limitTmdbDetailsCast } from '@src/utils/media/responseCast'
+
+// A title's details: comprehensive/movie, comprehensive/tv
+const TITLE_DETAILS = /^comprehensive\/(movie|tv)$/
 
 /**
  * Dynamic TMDB proxy route
@@ -63,8 +67,12 @@ export async function GET(request, { params }) {
       return createNotModifiedResponse(backendETag)
     }
 
+    // A title's details go out with the first 24 of its cast and the count, as
+    // /media's do. The ETag still names them: the cut is the same every time
+    const body = TITLE_DETAILS.test(endpointPath) ? limitTmdbDetailsCast(data) : data
+
     return Response.json(
-      data,
+      body,
       backendETag
         ? { headers: { ETag: backendETag, 'Cache-Control': 'no-cache' } }
         : undefined

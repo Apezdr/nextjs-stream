@@ -9,6 +9,7 @@ const {
   CAST_MEMBER_FIELDS,
   RESPONSE_CAST_LIMIT,
   limitResponseCast,
+  limitTmdbDetailsCast,
 } = require('@src/utils/media/responseCast')
 
 const READERS = {
@@ -101,4 +102,18 @@ it('skips empty entries and does not change its input', () => {
 it('passes null and non-objects through', () => {
   expect(limitResponseCast(null)).toBeNull()
   expect(limitResponseCast(undefined)).toBeUndefined()
+})
+
+it("caps TMDB's details the same way and drops their recurring cast", () => {
+  const details = { id: 1399, name: 'Show', cast: members(587), recurring_cast: members(81), crew: [{ id: 1 }] }
+  const result = limitTmdbDetailsCast(details)
+
+  expect(result.cast).toHaveLength(24)
+  expect(result.castCount).toBe(587)
+  expect(result).not.toHaveProperty('recurring_cast')
+  expect(result.crew).toEqual([{ id: 1 }])
+  // The input is not changed
+  expect(details.cast).toHaveLength(587)
+  expect(details.recurring_cast).toHaveLength(81)
+  expect(limitTmdbDetailsCast(null)).toBeNull()
 })
