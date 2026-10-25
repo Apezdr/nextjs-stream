@@ -386,6 +386,11 @@ export async function getFlatPosters(
   // Absolute skip override supports windowed fetches that straddle page boundaries
   const skip = options.skip ?? page * limit
   const queryOptions = { projection: finalProjection } // Use the merged projection
+  // The list's order, applied before paging (mediaListUtils/listOrder.js)
+  if (options.order) {
+    queryOptions.sort = options.order.sort
+    if (options.order.collation) queryOptions.collation = options.order.collation
+  }
   if (limit > 0) {
     queryOptions.limit = limit
     queryOptions.skip = skip
@@ -1676,6 +1681,7 @@ export async function processFlatWatchedDetails(
  * @param {boolean} [params.shouldExposeAdditionalData=false] - Whether to expose additional data in the response ex. videoURL, duration
  * @param {string} [params.projection=null] - Projection profile name ('admin-overview', 'tv-device', 'standard', 'horizontal-list', 'full')
  * @param {Object} [params.contextHints={}] - Context hints for auto-selecting projection profile
+ * @param {Array<'movie'|'tv'>} [params.types] - Which kinds to include (search's Movies/TV filter); both by default
  * @returns {Promise<Array|number>} Recently added media or count.
  */
 export async function getFlatRecentlyAddedMedia({
@@ -1686,7 +1692,10 @@ export async function getFlatRecentlyAddedMedia({
   shouldExposeAdditionalData = false,
   projection = null,
   contextHints = {},
+  types = ['movie', 'tv'],
 }) {
+  const includeMovies = types.includes('movie')
+  const includeShows = types.includes('tv')
   try {
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatRecentlyAddedMedia:total')
@@ -1718,24 +1727,28 @@ export async function getFlatRecentlyAddedMedia({
 
       const [moviesCount, episodeGroupsCount] = await Promise.all([
         // Movies, capped at half the maximum.
-        db
-          .collection('FlatMovies')
-          .countDocuments(visibleMovieFilter(), { limit: MAX_RECENTLY_ADDED_ITEMS / 2 }),
+        includeMovies
+          ? db
+              .collection('FlatMovies')
+              .countDocuments(visibleMovieFilter(), { limit: MAX_RECENTLY_ADDED_ITEMS / 2 })
+          : 0,
 
         // Unique TV shows among the most recently-modified episodes, capped at half
         // the maximum. Uses the { mediaLastModified: -1, showId: 1 } index.
         // Visibility $match comes first so the $limit cap isn't biased by hidden rows.
-        db
-          .collection('FlatEpisodes')
-          .aggregate([
-            { $match: visibleEpisodeFilter() },
-            { $sort: RECENTLY_ADDED_SORT },
-            { $limit: 1000 }, // Look at the 1000 most recently added episodes
-            { $group: { _id: '$showId' } },
-            { $count: 'total' },
-          ])
-          .toArray()
-          .then((res) => Math.min(res[0]?.total || 0, MAX_RECENTLY_ADDED_ITEMS / 2)),
+        includeShows
+          ? db
+              .collection('FlatEpisodes')
+              .aggregate([
+                { $match: visibleEpisodeFilter() },
+                { $sort: RECENTLY_ADDED_SORT },
+                { $limit: 1000 }, // Look at the 1000 most recently added episodes
+                { $group: { _id: '$showId' } },
+                { $count: 'total' },
+              ])
+              .toArray()
+              .then((res) => Math.min(res[0]?.total || 0, MAX_RECENTLY_ADDED_ITEMS / 2))
+          : 0,
       ])
 
       if (Boolean(process.env.DEBUG) == true) {
@@ -1801,12 +1814,14 @@ export async function getFlatRecentlyAddedMedia({
     }
 
     // Get most recently added movies
-    const movies = await db
-      .collection('FlatMovies')
-      .find(visibleMovieFilter(), { projection: movieProjectionFields })
-      .sort(RECENTLY_ADDED_SORT)
-      .limit(poolSize)
-      .toArray()
+    const movies = includeMovies
+      ? await db
+          .collection('FlatMovies')
+          .find(visibleMovieFilter(), { projection: movieProjectionFields })
+          .sort(RECENTLY_ADDED_SORT)
+          .limit(poolSize)
+          .toArray()
+      : []
 
     if (Boolean(process.env.DEBUG) == true) {
       console.timeEnd('getFlatRecentlyAddedMedia:fetchMovies')
@@ -1816,7 +1831,9 @@ export async function getFlatRecentlyAddedMedia({
 
     // Get most recently added TV shows or episodes
     // First get the most recent episodes
-    const recentEpisodes = await db
+    const recentEpisodes = !includeShows
+      ? []
+      : await db
       .collection('FlatEpisodes')
       .aggregate([
         // Visibility first so the pool cap and grouping aren't biased by hidden rows
@@ -1842,7 +1859,9 @@ export async function getFlatRecentlyAddedMedia({
 
     // Get the corresponding TV shows with proper projection
     const tvShowIds = recentEpisodes.map((item) => item.showId)
-    const tvShowsFromDb = await db
+    const tvShowsFromDb = !includeShows
+      ? []
+      : await db
       .collection('FlatTVShows')
       .find(
         { _id: { $in: tvShowIds } },
@@ -2588,7 +2607,8 @@ export async function getFlatAvailableMoviesCount() {
  * @returns {Promise<Array>} Array of TV shows with fields needed by the TVList component
  */
 export async function getFlatTVList(options = {}) {
-  const { page = 0, limit = 0, sort = true, skip = null } = options
+  // `order`: the list's order, applied before paging (mediaListUtils/listOrder.js)
+  const { page = 0, limit = 0, order = null, skip = null } = options
 
   try {
     const client = await clientPromise
@@ -2606,27 +2626,23 @@ export async function getFlatTVList(options = {}) {
 
     // Setup query options with pagination
     const queryOptions = { projection }
+    if (order) {
+      queryOptions.sort = order.sort
+      if (order.collation) queryOptions.collation = order.collation
+    }
     if (limit > 0) {
       queryOptions.limit = limit
       // Absolute skip override supports windowed fetches that straddle page boundaries
       queryOptions.skip = skip ?? page * limit
     }
 
-    // Fetch TV shows from flat database
-    let tvShows = await client
+    // Fetch TV shows from flat database. The page used to be sorted here by
+    // last air date after paging, which ordered each page but not the list.
+    const tvShows = await client
       .db('Media')
       .collection('FlatTVShows')
       .find(visibleShowFilter(), queryOptions)
       .toArray()
-
-    // Sort by last air date if requested
-    if (sort) {
-      tvShows.sort((a, b) => {
-        const dateA = new Date(a.metadata?.last_air_date || 0)
-        const dateB = new Date(b.metadata?.last_air_date || 0)
-        return dateB - dateA // Descending order (newest first)
-      })
-    }
 
     // Batch-fetch seasons and episodes for the whole page in two queries
     // (replaces the previous per-show/per-season fan-out of 1 + 2×seasons queries per show)

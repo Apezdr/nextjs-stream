@@ -4,6 +4,7 @@ import {
   getFlatRecentlyAddedMedia,
   getFlatTVList
 } from '@src/utils/flatDatabaseUtils';
+import { listOrder } from '@src/utils/mediaListUtils/listOrder';
 
 /**
  * Serialize MongoDB objects to plain objects for client transfer
@@ -36,14 +37,18 @@ function serializeForClient(data) {
 /**
  * Cached movie window - 1 minute cache with media library tag.
  * Fetches `count` documents starting at absolute offset `offset`, letting the
- * route serve a page plus its boundary peek items from a single fetch.
+ * route serve a page plus its boundary peek items from a single fetch, in
+ * the list's order (`sort`: id | title | date, see mediaListUtils/listOrder.js).
  */
-export async function getCachedMovieWindow(offset, count, projection) {
+export async function getCachedMovieWindow(offset, count, projection, sort, sortOrder) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'movies')
 
-  const data = await getFlatPosters('movie', false, 0, count, projection, { skip: offset });
+  const data = await getFlatPosters('movie', false, 0, count, projection, {
+    skip: offset,
+    order: listOrder('movie', sort, sortOrder),
+  });
   return serializeForClient(data);
 }
 
@@ -52,14 +57,14 @@ export async function getCachedMovieWindow(offset, count, projection) {
  * Uses getFlatTVList which includes seasons/episodes with HDR data.
  * NOTE: deliberately takes no projection argument — the previous version
  * accepted one it never used, which only fragmented the cache key into
- * duplicate entries holding identical data.
+ * duplicate entries holding identical data. In the list's order, like movies.
  */
-export async function getCachedTVWindow(offset, count) {
+export async function getCachedTVWindow(offset, count, sort, sortOrder) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'tv')
 
-  const data = await getFlatTVList({ limit: count, sort: true, skip: offset });
+  const data = await getFlatTVList({ limit: count, skip: offset, order: listOrder('tv', sort, sortOrder) });
   return serializeForClient(data);
 }
 

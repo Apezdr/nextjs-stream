@@ -43,13 +43,14 @@ async function StaticMediaSections() {
       <Suspense>
         <HorizontalScrollContainer type="recentlyAdded" />
       </Suspense>
+      {/* A-Z, ordered in the database across every page (owner 2026-10-24) */}
       <h2 className="text-xl font-bold text-left mt-4 ml-4">Movies</h2>
       <Suspense>
-        <HorizontalScrollContainer type="movie" sort="id" sortOrder="asc" />
+        <HorizontalScrollContainer type="movie" sort="title" sortOrder="asc" />
       </Suspense>
       <h2 className="text-xl font-bold text-left mt-4 ml-4">TV</h2>
       <Suspense>
-        <HorizontalScrollContainer type="tv" sort="id" sortOrder="asc" />
+        <HorizontalScrollContainer type="tv" sort="title" sortOrder="asc" />
       </Suspense>
     </>
   )

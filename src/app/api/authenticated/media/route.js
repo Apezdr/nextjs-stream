@@ -8,6 +8,7 @@ import {
 import { playableSeasons } from '@src/utils/media/tvFacts'
 import { addWatchHistoryToItems } from '@src/utils/watchHistoryUtils'
 import { applyJitPreference } from '@src/utils/jit/preference'
+import { limitResponseCast } from '@src/utils/media/responseCast'
 
 // IDENTITY HIERARCHY — three layers, each with one job; never invent a fourth:
 //   originalTitle — the ROUTING key (unique folder name; how clients address media)
@@ -29,6 +30,10 @@ const NO_STORE_HEADERS = {
 const jsonResponse = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: NO_STORE_HEADERS })
 
+// Every media payload this route sends goes out with its cast cut to what a
+// client shows, plus the counts (utils/media/responseCast.js).
+const mediaResponse = (media) => jsonResponse(limitResponseCast(media))
+
 export async function POST(req) {
   const authResult = await isAuthenticatedAndApproved(req)
   if (authResult instanceof Response) {
@@ -47,7 +52,7 @@ export async function POST(req) {
     title: resolvedTitle,
   })
   await applyJitPreference(media)
-  return jsonResponse(media)
+  return mediaResponse(media)
 }
 
 export async function GET(req) {
@@ -245,7 +250,7 @@ export async function GET(req) {
           seasonNumber: mediaSeason,
           episodeNumber: mediaEpisode
         })
-        return jsonResponse(tvData)
+        return mediaResponse(tvData)
       } catch (tvError) {
         console.error('Error in sanitizeTVData:', tvError);
         // Return partial data if possible
@@ -266,7 +271,7 @@ export async function GET(req) {
     if (isCard) {
       try {
         const cardData = await sanitizeCardData(media, true)
-        return jsonResponse(cardData)
+        return mediaResponse(cardData)
       } catch (cardError) {
         console.error('Error in sanitizeCardData:', cardError);
         // Return partial data if possible
@@ -282,7 +287,7 @@ export async function GET(req) {
         }, 206) // Partial Content
       }
     }
-    return jsonResponse(media)
+    return mediaResponse(media)
   } catch (error) {
     console.error('Error in media API:', error);
     return jsonResponse({

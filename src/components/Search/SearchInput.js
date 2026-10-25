@@ -1,115 +1,22 @@
 'use client'
-import { lazy, Suspense, useCallback, useEffect, useState, useEffectEvent, useRef } from 'react'
-import useSWR from 'swr'
+import { lazy, Suspense, useCallback, useState } from 'react'
 import { MagnifyingGlassIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
-import debounce from 'lodash.debounce'
 import Count from './Count'
+import { SEARCH_KINDS, useSearchResults } from './useSearchResults'
 const SearchModal = lazy(() => import('./SearchModal'))
-
-// Stable empty reference so effects depending on the SWR result don't loop
-// while data is still undefined (a fresh `[]` literal would change identity
-// every render).
-const EMPTY_RESULTS = []
-
-// Fetch the "recently added" list shown when the search box is empty.
-const fetchRecentlyAdded = async () => {
-  const response = await fetch('/api/authenticated/search', {
-    method: 'POST',
-    body: JSON.stringify({ query: '' }),
-    headers: { 'Content-Type': 'application/json' },
-  })
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`)
-  }
-  const data = await response.json()
-  return data.results || []
-}
 
 export default function SearchInput() {
   const [query, setQuery] = useState('')
-  const [searchResults, setSearchResults] = useState([])
-  const [searchLoading, setSearchLoading] = useState(false)
   const [open, setOpen] = useState(false)
+  // Movies, TV or both (the default); kept while the page is open
+  const [types, setTypes] = useState(SEARCH_KINDS)
 
-  // Recently added media (shown when the query is empty) via SWR — handles
-  // caching and error retry/backoff, so no manual retry effect is needed.
-  const { data: recentlyAddedMedia = EMPTY_RESULTS, isLoading: recentLoading } = useSWR(
-    'search-recently-added',
-    fetchRecentlyAdded,
-    { revalidateOnFocus: false, errorRetryCount: 3 }
-  )
-
-  const isLoading = searchLoading || (!query && recentLoading)
-
-  // Ref to hold abort controller for cleanup
-  const abortControllerRef = useRef(null)
-  // Ref to hold debounced function
-  const debouncedFetchRef = useRef(null)
-
-  // React 19.2 useEffectEvent: Extract the "event" logic that uses latest state
-  // This function always sees the latest state but doesn't trigger re-renders
-  const onSearchQuery = useEffectEvent(async (searchQuery) => {
-    // Cancel any ongoing request
-    if (abortControllerRef.current) {
-      abortControllerRef.current.abort()
-    }
-
-    // Create new abort controller for this request
-    abortControllerRef.current = new AbortController()
-
-    setSearchLoading(true)
-    try {
-      const response = await fetch('/api/authenticated/search', {
-        method: 'POST',
-        body: JSON.stringify({ query: searchQuery }),
-        headers: { 'Content-Type': 'application/json' },
-        signal: abortControllerRef.current.signal
-      })
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`)
-      }
-
-      const data = await response.json()
-      setSearchResults(data.results || [])
-    } catch (error) {
-      // Ignore abort errors (they're expected when canceling)
-      if (error.name !== 'AbortError') {
-        console.error('Error fetching search data:', error)
-      }
-    } finally {
-      setSearchLoading(false)
-    }
-  })
-
-  // Initialize debounced function once - it calls the Effect Event
-  useEffect(() => {
-    debouncedFetchRef.current = debounce((searchQuery) => {
-      onSearchQuery(searchQuery)
-    }, 600)
-    
-    return () => {
-      // Cancel any pending debounced calls
-      debouncedFetchRef.current?.cancel()
-      // Abort any ongoing fetch
-      if (abortControllerRef.current) {
-        abortControllerRef.current.abort()
-      }
-    }
-  }, []) // onSearchQuery is from useEffectEvent, stable reference
-
-  // Trigger search when query changes
-  useEffect(() => {
-    if (query) {
-      debouncedFetchRef.current?.(query)
-    } else {
-      setSearchResults(recentlyAddedMedia)
-    }
-  }, [query, recentlyAddedMedia]) // ✅ Only reactive values, not functions
+  // Every result's slot, filled a page at a time: Recently Added while the query is empty
+  const { options, total, isLoading, failed, requestPage, retry } = useSearchResults(query, types)
 
   // Open/close the search, resetting the query on close. Done in this action
-  // handler (not an effect) so the search-trigger effect doesn't chain off it.
+  // handler (not an effect) so the search doesn't chain off it.
   const handleSetOpen = useCallback((nextOpen) => {
     setOpen(nextOpen)
     if (!nextOpen) {
@@ -140,7 +47,8 @@ export default function SearchInput() {
             'text-[8px] absolute top-[1.6rem] text-black border-none'
           )}
         >
-          {open ? <Count data={searchResults.length} /> : null}
+          {/* Every match, not only the pages loaded so far */}
+          {open ? <Count data={total} /> : null}
         </span>
         {!open ? (
           <input
@@ -164,9 +72,13 @@ export default function SearchInput() {
           setOpen={handleSetOpen}
           query={query}
           setQuery={setQuery}
+          types={types}
+          setTypes={setTypes}
           isLoading={isLoading}
-          searchResults={searchResults}
-          recentlyAddedMedia={recentlyAddedMedia}
+          failed={failed}
+          onRetry={retry}
+          options={options}
+          onRequestPage={requestPage}
         />
       </Suspense>
     </>

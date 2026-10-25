@@ -12,7 +12,7 @@ import { visibleShowFilter, visibleEpisodeFilter } from '@src/utils/mediaVisibil
 import {
   serializeForClient,
   validatePaginationParams,
-  buildSortQuery,
+  listPageOrder,
   buildGenreFilter,
   CONSTANTS
 } from './shared'
@@ -27,7 +27,7 @@ import {
  * @param {Object} options - Query options
  * @param {number} [options.page=1] - Page number (1-based)
  * @param {number} [options.limit=20] - Items per page
- * @param {string} [options.sortOrder='newest'] - Sort order ('newest' or 'oldest')
+ * @param {string} [options.sortOrder='newest'] - newest, oldest, title or added (shared.js listPageOrder)
  * @param {Array<string>} [options.genres=[]] - Genre names to filter by (AND logic)
  * @param {Array<string>} [options.hdrTypes=[]] - HDR types to filter by (OR logic)
  * @returns {Promise<Array>} Array of TV show objects with seasons/episodes
@@ -45,7 +45,9 @@ export async function getFilteredTVList({
     
     // Validate and normalize pagination params
     const { page: validPage, limit: validLimit, skip } = validatePaginationParams(page, limit);
-    
+    // The sort menu's order (shared.js listPageOrder)
+    const order = listPageOrder('tv', sortOrder);
+
     let tvShows;
     
     // If HDR filtering is requested, use aggregation to check episodes
@@ -98,18 +100,20 @@ export async function getFilteredTVList({
         },
         
         // Sort
-        { $sort: buildSortQuery(sortOrder, 'metadata.last_air_date') },
+        { $sort: order.sort },
         
         // Pagination
         { $skip: skip },
         { $limit: validLimit }
       ];
       
-      tvShows = await db.collection('FlatTVShows').aggregate(pipeline).toArray();
+      tvShows = await db
+        .collection('FlatTVShows')
+        .aggregate(pipeline, order.collation ? { collation: order.collation } : undefined)
+        .toArray();
     } else {
       // No HDR filtering - use simple find query ($and: visibility fragment has a top-level $or)
       const matchQuery = { $and: [buildGenreFilter(genres), visibleShowFilter()] };
-      const sortQuery = buildSortQuery(sortOrder, 'metadata.last_air_date');
       
       const tvShowProjection = {
         _id: 1,
@@ -123,8 +127,11 @@ export async function getFilteredTVList({
       
       tvShows = await db
         .collection('FlatTVShows')
-        .find(matchQuery, { projection: tvShowProjection })
-        .sort(sortQuery)
+        .find(matchQuery, {
+          projection: tvShowProjection,
+          sort: order.sort,
+          ...(order.collation && { collation: order.collation }),
+        })
         .skip(skip)
         .limit(validLimit)
         .toArray();

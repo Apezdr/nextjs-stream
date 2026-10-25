@@ -203,7 +203,7 @@ export default async function TVShowSeasonsList({ showTitle, show = null, userId
 
       {cast.length > 0 || facts.length > 0 ? (
         <div className="mt-10 space-y-12 rounded-2xl bg-[#070b1d]/65 px-4 py-8 ring-1 ring-white/5 sm:mt-14 sm:px-6 lg:px-8">
-          {cast.length > 0 ? <CastRail cast={cast} title="Cast" /> : null}
+          {cast.length > 0 ? <CastRail cast={cast} title="Cast" id="cast" /> : null}
           <DetailsPanel id="show-details" title="Show details" rows={facts} />
         </div>
       ) : null}

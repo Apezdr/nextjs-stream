@@ -12,7 +12,7 @@ import { visibleMovieFilter } from '@src/utils/mediaVisibility'
 import {
   serializeForClient,
   validatePaginationParams,
-  buildSortQuery,
+  listPageOrder,
   buildGenreFilter,
   buildHdrFilter,
   buildResolutionFilter,
@@ -27,7 +27,7 @@ import {
  * @param {Object} options - Query options
  * @param {number} [options.page=1] - Page number (1-based)
  * @param {number} [options.limit=20] - Items per page
- * @param {string} [options.sortOrder='newest'] - Sort order ('newest' or 'oldest')
+ * @param {string} [options.sortOrder='newest'] - newest, oldest, title or added (shared.js listPageOrder)
  * @param {Array<string>} [options.genres=[]] - Genre names to filter by (AND logic)
  * @param {Array<string>} [options.hdrTypes=[]] - HDR types to filter by (OR logic)
  * @returns {Promise<Array>} Array of movie objects matching filters
@@ -59,8 +59,8 @@ export async function getFilteredMovieList({
       ]
     };
 
-    // Build sort query
-    const sortQuery = buildSortQuery(sortOrder, 'metadata.release_date');
+    // The sort menu's order (shared.js listPageOrder)
+    const order = listPageOrder('movie', sortOrder);
     
     // Full projection initially - will optimize after validation
     const projection = {
@@ -86,8 +86,7 @@ export async function getFilteredMovieList({
     // Execute query with pagination
     const movies = await db
       .collection('FlatMovies')
-      .find(matchQuery, { projection })
-      .sort(sortQuery)
+      .find(matchQuery, { projection, sort: order.sort, ...(order.collation && { collation: order.collation }) })
       .skip(skip)
       .limit(validLimit)
       .toArray();
