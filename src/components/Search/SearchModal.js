@@ -79,6 +79,9 @@ const SearchErrorFallback = ({ error, resetErrorBoundary }) => (
  */
 export const REQUEST_AFTER_SHOWN_MS = 150
 
+/** The combobox's selection stays empty: choosing an option opens it through its link. */
+const keepNoSelection = () => {}
+
 /** A result whose page hasn't arrived: a grey row that asks for its page once it has stayed in view. */
 const PlaceholderRow = ({ page, onRequestPage }) => {
   useEffect(() => {
@@ -174,7 +177,15 @@ const SearchModal = ({
               {/* React 19.2: Error boundary for search functionality */}
               <ErrorBoundary FallbackComponent={SearchErrorFallback} onReset={handleClose}>
                 {/* HeadlessUI v2: Always use virtualization for optimal performance */}
-                <Combobox virtual={{ options, disabled: isPlaceholder }}>
+                {/*
+                  No selection is kept (value null; an option opens through its
+                  link). Headless UI rewrites the input from the selection
+                  whenever the combobox closes, which a click anywhere outside
+                  the input and list does (the filter, the detail pane): without
+                  a value and displayValue it wrote "", blanking the typed query
+                  until the next render put it back.
+                */}
+                <Combobox value={null} onChange={keepNoSelection} virtual={{ options, disabled: isPlaceholder }}>
                   {({ activeOption }) => (
                     <>
                       {/* Search input */}
@@ -188,6 +199,7 @@ const SearchModal = ({
                           placeholder="Search..."
                           id={searchInputId}
                           value={query}
+                          displayValue={() => query}
                           onChange={(event) => setQuery(event.target.value)}
                         />
                         <XMarkIcon
