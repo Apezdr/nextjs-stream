@@ -5,7 +5,7 @@ import { toast } from 'react-toastify'
 import { Radio, RadioGroup } from '@headlessui/react'
 import { ArrowsUpDownIcon } from '@heroicons/react/24/outline'
 import { classNames } from '@src/utils'
-import { formatForWatchlistWithInternalCheck } from '@src/utils/tmdb/client'
+import { formatForWatchlist } from '@src/utils/tmdb/client'
 import MoveToPlaylistModal from './MoveToPlaylistModal'
 import MobileSortSheet, { SORT_OPTIONS, sortLabel } from './MobileSortSheet'
 import MobileSelectionBar from './MobileSelectionBar'
@@ -144,14 +144,17 @@ export default function PlaylistControls({
     })
     
     try {
-      // Use enhanced formatting that checks for internal media first
-      const watchlistItem = await formatForWatchlistWithInternalCheck(tmdbItem)
+      // The server keys the item on its TMDB id and resolves it to library media
+      // when the library holds it (watchlist/mediaResolver.js), so the add sends
+      // the TMDB title as it is
+      const watchlistItem = formatForWatchlist(tmdbItem)
       if (currentPlaylist && currentPlaylist.id !== 'default') {
         watchlistItem.playlistId = currentPlaylist.id
       }
-      
+
       const result = await api.addToWatchlist(watchlistItem)
-      const itemType = watchlistItem.isExternal ? 'external' : 'internal'
+      // What it resolved to: the response marks a TMDB-only title isExternal
+      const itemType = result?.item?.isExternal ? 'external' : 'internal'
       toast.success(`Added "${tmdbItem.title || tmdbItem.name}" to watchlist (${itemType} media)`)
       
       // Clear optimistic state

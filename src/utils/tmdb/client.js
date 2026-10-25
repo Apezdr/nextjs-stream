@@ -316,65 +316,6 @@ export function formatForWatchlist(item) {
 }
 
 /**
- * Check if TMDB item exists in internal database and return internal media data
- * @param {number} tmdbId - TMDB ID
- * @param {string} mediaType - 'movie' or 'tv'
- * @returns {Promise<Object|null>} Internal media data if found, null otherwise
- */
-export async function findInternalMediaByTMDBId(tmdbId, mediaType) {
-  if (!tmdbId || !mediaType) return null
-  
-  try {
-    const response = await fetch('/api/authenticated/media/find-by-tmdb', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ tmdbId, mediaType }),
-      credentials: 'include' // Include session cookies for authentication
-    })
-    
-    if (!response.ok) {
-      if (response.status === 404) return null
-      throw new Error(`HTTP ${response.status}`)
-    }
-    
-    const data = await response.json()
-    return data.media || null
-  } catch (error) {
-    console.error('Error finding internal media by TMDB ID:', error)
-    return null
-  }
-}
-
-/**
- * Enhanced format function that checks for internal media first
- * @param {Object} item - TMDB media item
- * @returns {Promise<Object>} Formatted item for watchlist with proper internal/external detection
- */
-export async function formatForWatchlistWithInternalCheck(item) {
-  const mediaType = item.media_type || (item.title ? 'movie' : 'tv')
-  const tmdbId = item.id
-  
-  // Check if this TMDB item exists in our internal database
-  const internalMedia = await findInternalMediaByTMDBId(tmdbId, mediaType)
-  
-  if (internalMedia) {
-    // This is internal media - include both mediaId (primary) and tmdbId (fallback)
-    return {
-      mediaId: internalMedia.id || internalMedia._id,
-      tmdbId, // Keep TMDB ID as fallback
-      mediaType,
-      title: internalMedia.title || item.title || item.name,
-      isExternal: false
-    }
-  } else {
-    // This is external media - use original format (tmdbId only)
-    return formatForWatchlist(item)
-  }
-}
-
-/**
  * Get TMDB image URL (images from backend are already full URLs)
  * @param {string} path - Image path from TMDB
  * @param {string} [size='original'] - Image size (not used since backend returns full URLs)
