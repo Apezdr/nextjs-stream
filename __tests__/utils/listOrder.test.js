@@ -32,3 +32,19 @@ it("orders date by a movie's release date and a show's latest air date", () => {
 it('refuses an unknown key', () => {
   expect(() => listOrder('movie', 'popularity', 'desc')).toThrow('Unknown list sort "popularity"')
 })
+
+describe("the list pages' sort menu", () => {
+  const { CONSTANTS, listPageOrder } = require('@src/utils/mediaListUtils/shared')
+
+  it('offers newest, oldest, title and recently added', () => {
+    expect(CONSTANTS.VALID_SORT_OPTIONS).toEqual(['newest', 'oldest', 'title', 'added'])
+  })
+
+  it('uses the lists\' orders, newest first by default', () => {
+    expect(listPageOrder('movie', 'newest')).toEqual(listOrder('movie', 'date', 'desc'))
+    expect(listPageOrder('tv', 'oldest')).toEqual(listOrder('tv', 'date', 'asc'))
+    expect(listPageOrder('movie', 'title')).toEqual(listOrder('movie', 'title', 'asc'))
+    expect(listPageOrder('tv', 'added')).toEqual(listOrder('tv', 'id', 'desc'))
+    expect(listPageOrder('movie', 'whatever')).toEqual(listOrder('movie', 'date', 'desc'))
+  })
+})

@@ -2,6 +2,7 @@
  * Shared utilities for media list operations
  * Used by both movie and TV list query functions
  */
+import { listOrder } from './listOrder'
 
 /**
  * Serialize MongoDB objects to plain objects for client transfer
@@ -64,16 +65,29 @@ export function validatePaginationParams(page = 1, limit = 20) {
 }
 
 /**
- * Build MongoDB sort query object based on sort order
- * 
- * @param {string} sortOrder - Sort order ('newest' or 'oldest')
- * @param {string} dateField - Field to sort by (e.g., 'metadata.release_date')
- * @returns {Object} MongoDB sort query object
+ * The list pages' sort menu, in the orders the Movies and TV lists use
+ * (listOrder.js), so a sort means the same everywhere and pages never repeat
+ * or skip a title that shares its date with another:
+ *   newest / oldest  release date (a show's latest air date)
+ *   title            A-Z, ignoring case
+ *   added            recently added first
+ * Anything else is newest first, the page's default.
+ *
+ * @param {'movie'|'tv'} type
+ * @param {string} sortOrder - one of CONSTANTS.VALID_SORT_OPTIONS
+ * @returns {{ sort: object, collation?: object }}
  */
-export function buildSortQuery(sortOrder, dateField) {
-  return sortOrder === 'oldest' 
-    ? { [dateField]: 1 }  // Ascending (oldest first)
-    : { [dateField]: -1 }; // Descending (newest first)
+export function listPageOrder(type, sortOrder) {
+  switch (sortOrder) {
+    case 'oldest':
+      return listOrder(type, 'date', 'asc')
+    case 'title':
+      return listOrder(type, 'title', 'asc')
+    case 'added':
+      return listOrder(type, 'id', 'desc')
+    default:
+      return listOrder(type, 'date', 'desc')
+  }
 }
 
 /**
@@ -95,7 +109,7 @@ export const CONSTANTS = {
   DEFAULT_LIMIT: 20,
   MAX_LIMIT: 100,
   DEFAULT_SORT: 'newest',
-  VALID_SORT_OPTIONS: ['newest', 'oldest']
+  VALID_SORT_OPTIONS: ['newest', 'oldest', 'title', 'added']
 };
 
 /**

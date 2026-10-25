@@ -306,7 +306,7 @@ export default function TVListClient({ initialFilters, initialData }) {
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
           <div>
             <label htmlFor="sort-order" className="block text-sm font-medium text-gray-300 mb-1">
-              Sort by Last Air Date:
+              Sort by:
             </label>
             <select
               id="sort-order"
@@ -314,8 +314,10 @@ export default function TVListClient({ initialFilters, initialData }) {
               onChange={(e) => handleSortOrderChange(e.target.value)}
               className="rounded bg-gray-800 text-white border border-gray-600 px-3 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500"
             >
-              <option value="newest">Newest First</option>
-              <option value="oldest">Oldest First</option>
+              <option value="newest">Recently aired</option>
+              <option value="oldest">Least recently aired</option>
+              <option value="title">Title (A–Z)</option>
+              <option value="added">Recently added</option>
             </select>
           </div>
           
