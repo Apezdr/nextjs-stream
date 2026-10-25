@@ -1,4 +1,4 @@
-import { getSession } from '@src/lib/cachedAuth'
+import { getChromeSession } from '@src/lib/cachedAuth'
 import { Fragment, Suspense } from 'react'
 import dynamic from 'next/dynamic'
 import Nav from '@components/Navigation/Nav'
@@ -46,11 +46,12 @@ const BANNER_PLACEHOLDER = <div className="relative w-full h-[40vh] md:h-[79vh] 
  * each page runs its own session check before rendering anything.
  */
 async function SessionChrome() {
-  const session = await getSession()
-  const email = session?.user?.email
-  const profileImage = session?.user?.image
-  const isAdmin = session?.user?.role === 'admin'
-  const isApproved = session?.user?.approved !== false
+  // The prefetchable session read (getChromeSession): this only picks the chrome
+  const session = await getChromeSession()
+  const email = session?.email
+  const profileImage = session?.image
+  const isAdmin = session?.isAdmin === true
+  const isApproved = session?.approved !== false
 
   // Build admin nav items once if user is admin
   const adminNavItems = isAdmin
@@ -82,8 +83,8 @@ async function SessionChrome() {
 
 /** Footer - only for authenticated AND approved users */
 async function SessionFooter() {
-  const session = await getSession()
-  if (!session?.user?.email || session.user.approved === false) return null
+  const session = await getChromeSession()
+  if (!session?.email || !session.approved) return null
   return <TVAppsFooter />
 }
 

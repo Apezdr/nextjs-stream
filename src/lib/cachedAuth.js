@@ -1,4 +1,5 @@
 import { cache } from 'react'
+import { cacheLife } from 'next/cache'
 import { auth } from '@src/lib/auth'
 import { headers } from 'next/headers'
 
@@ -36,3 +37,38 @@ export const getSession = cache(async () => {
   sessionByRequest.set(requestHeaders, sessionPromise)
   return sessionPromise
 })
+
+/** How long the browser may reuse chrome rendered from getChromeSession(), in seconds (the prefetch floor). */
+const CHROME_STALE_SECONDS = 30
+
+/**
+ * The session as page chrome needs it (the nav bar, the TV apps notice, the
+ * footer), with a lifetime, so the chrome can ride a prefetch.
+ *
+ * Partial prefetching prerenders the /list routes with the request's cookies,
+ * and getSession() reads the current time inside better-auth's expiry check,
+ * which a prerender may not: navigating to a title page raised "Blocking Route
+ * ... unstable value new Date()" in dev. 'use cache: private', as the page
+ * gate's session does (guards/SessionGate.js): nothing is stored on the server
+ * and every request checks the session again; only the browser may reuse the
+ * result, for CHROME_STALE_SECONDS. It decides only what chrome to show: every
+ * page runs its own gate, and every API route checks live.
+ *
+ * Returns plain fields (a cached result has to serialize), or null when signed out.
+ */
+export async function getChromeSession() {
+  'use cache: private'
+  cacheLife({ stale: CHROME_STALE_SECONDS })
+
+  const session = await getSession()
+  if (!session?.user) return null
+  const { id, email, image, role, approved, preferences } = session.user
+  return {
+    id,
+    email: email ?? null,
+    image: image ?? null,
+    isAdmin: role === 'admin',
+    approved: approved !== false,
+    tvAppsNotificationDismissed: Boolean(preferences?.tvAppsNotificationDismissed),
+  }
+}

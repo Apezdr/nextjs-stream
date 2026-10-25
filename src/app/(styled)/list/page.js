@@ -1,5 +1,6 @@
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
+import { connection } from 'next/server'
 import { getSession } from '@src/lib/cachedAuth'
 import AuthGuard from '@components/MediaPages/DynamicPage/guards/AuthGuard'
 import LandingPage from '@components/LandingPage'
@@ -16,6 +17,12 @@ import LandingPageSkeleton from '@components/LandingPageSkeleton'
 // never receive LandingPage or any of its data. Do not hoist data fetching above
 // this gate.
 async function AuthedListContent() {
+  // At request time only. Partial prefetching prerenders /list with the
+  // request's cookies, and the session check and the rows under it (watch
+  // history) read the current time, which a prerender may not ("Blocking Route
+  // ... unstable value new Date()" in dev). The skeleton above stays the shell.
+  await connection()
+
   const session = await getSession()
 
   // Approved-user gate (previously handled by the withApprovedUser HOC).

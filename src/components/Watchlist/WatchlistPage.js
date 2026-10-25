@@ -17,6 +17,7 @@ import HomeRowsDialog from './HomeRowsDialog'
 import HomeRowsAdminDialog from './HomeRowsAdminDialog'
 import useOverlayState from './useOverlayState'
 import { moveItemToPosition } from './reorder'
+import { fetchLibraryMatches, notInPlaylist, splitTmdbResults, titleKey } from './searchLibraryMatches'
 import { searchMedia } from '@src/utils/tmdb/client'
 import { classNames, formatDate } from '@src/utils'
 
@@ -1001,13 +1002,12 @@ export default function WatchlistPage({ user }) {
     try {
       // Dual search: Database + TMDB
       const [databaseResults, tmdbMoviesRaw, tmdbTVShowsRaw] = await Promise.all([
-        // Search internal database using existing endpoint. Its first page, as
-        // large as a page may be: the first 10 are listed, and all of them keep
-        // TMDB results already in the library out of the external list.
+        // Search internal database using existing endpoint: its first 10 are
+        // listed as library titles (in-library below covers the TMDB results)
         fetch('/api/authenticated/search', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query, limit: 50 })
+          body: JSON.stringify({ query, limit: 10 })
         }).then(res => res.ok ? res.json() : { results: [] }).catch(() => ({ results: [] })),
         
         // Search TMDB
@@ -1030,29 +1030,10 @@ export default function WatchlistPage({ user }) {
         item.title?.toLowerCase().includes(query.toLowerCase())
       ).slice(0, 10)
 
-      // Create sets of existing items in current playlist for duplicate filtering
-      const existingTmdbIds = new Set(
-        currentItems.map(item => item.tmdbId).filter(Boolean)
-      )
-      const existingMediaIds = new Set(
-        currentItems.map(item => item.mediaId).filter(Boolean)
-      )
-      const existingTitleTypes = new Set(
-        currentItems.map(item => `${item.title?.toLowerCase()}-${item.mediaType}`)
-      )
+      // Results already in the current playlist aren't offered again
+      const keep = notInPlaylist(currentItems)
 
-      // Process database results - these are already internal media
-      // Build a map of ALL database results by TMDB ID (before filtering) to check against external TMDB
-      const allDatabaseTmdbIds = new Set(
-        (databaseResults.results || [])
-          .map(item => item.metadata?.id)
-          .filter(Boolean)
-      )
-      
       console.log(`[Search] Database returned ${databaseResults.results?.length || 0} results`)
-      console.log(`[Search] Database TMDB IDs:`, Array.from(allDatabaseTmdbIds).slice(0, 10))
-      console.log(`[Search] Existing playlist TMDB IDs:`, Array.from(existingTmdbIds))
-      console.log(`[Search] Existing playlist titles:`, Array.from(existingTitleTypes).slice(0, 10))
 
       const internalResults = (databaseResults.results || []).slice(0, 10).map(item => {
         return {
@@ -1066,63 +1047,36 @@ export default function WatchlistPage({ user }) {
           isInternalMedia: true,
           internalMediaId: item.id || item._id
         }
-      }).filter(item => {
-        // Filter out items already in current playlist
-        const tmdbId = item.id
-        const mediaId = item.internalMediaId
-        const titleType = `${item.title?.toLowerCase()}-${item.media_type}`
-        
-        return !existingTmdbIds.has(tmdbId) &&
-               !existingMediaIds.has(mediaId) &&
-               !existingTitleTypes.has(titleType)
-      })
+      }).filter(item => keep({
+        key: titleKey(item.media_type, item.id),
+        mediaId: item.internalMediaId,
+        title: item.title,
+        mediaType: item.media_type,
+      }))
 
-      // Process TMDB results and check which ones are NOT in our database.
-      // No per-type cap here — the full first page is shown and subsequent pages
-      // are appended on scroll (see loadMoreSearch).
+      // TMDB results, split by what the library holds. No per-type cap here —
+      // the full first page is shown and subsequent pages are appended on
+      // scroll (see loadMoreSearch).
       const allTmdbResults = [
         ...(tmdbMovies.results || []).map(item => ({ ...item, media_type: 'movie' })),
         ...(tmdbTVShows.results || []).map(item => ({ ...item, media_type: 'tv' }))
       ]
-      
-      console.log(`[Search] TMDB returned ${tmdbMovies.results?.length || 0} movies, ${tmdbTVShows.results?.length || 0} TV shows`)
-      console.log(`[Search] Combined TMDB results (first 10):`, allTmdbResults.slice(0, 10).map(item => ({
-        id: item.id,
-        title: item.title || item.name,
-        media_type: item.media_type
-      })))
+      const libraryMatches = await fetchLibraryMatches(allTmdbResults)
+      if (currentRequestId !== searchRequestIdRef.current) return
 
-      // Filter external TMDB results using the complete database ID set
-      const externalTmdbResults = allTmdbResults.filter(item => {
-        const titleType = `${(item.title || item.name)?.toLowerCase()}-${item.media_type}`
-        
-        // Debug first few items
-        if (allTmdbResults.indexOf(item) < 3) {
-          console.log(`[Search] Checking TMDB item:`, {
-            id: item.id,
-            title: item.title || item.name,
-            titleType,
-            inDatabase: allDatabaseTmdbIds.has(item.id),
-            inPlaylist: existingTmdbIds.has(item.id),
-            titleMatch: existingTitleTypes.has(titleType)
-          })
-        }
-        
-        // Filter out items already in our database (use allDatabaseTmdbIds, not filtered internalResults)
-        if (allDatabaseTmdbIds.has(item.id)) return false
-        
-        // Filter out items already in current playlist by TMDB ID
-        if (existingTmdbIds.has(item.id)) return false
-        
-        // Also check by title-type combination (use consistent format)
-        if (existingTitleTypes.has(titleType)) return false
-        
-        return true
+      // The library search's titles come first; a library title TMDB found
+      // that isn't among them joins them, and the rest are TMDB-only
+      const shownKeys = new Set(internalResults.map(item => titleKey(item.media_type, item.id)))
+      const { internal: libraryFromTmdb, external: externalTmdbResults } = splitTmdbResults({
+        tmdbResults: allTmdbResults,
+        libraryMatches,
+        keep,
+        shownKeys,
       })
 
       console.log(`[Search] Results #${currentRequestId}:`, {
         watchlist: watchlistResults.length,
-        tmdbInternal: internalResults.length,
+        tmdbInternal: internalResults.length + libraryFromTmdb.length,
         tmdbExternal: externalTmdbResults.length
       })
 
@@ -1137,8 +1091,8 @@ export default function WatchlistPage({ user }) {
           movieTotalPages: tmdbMovies.total_pages || 1,
           tvPage: tmdbTVShows.page || 1,
           tvTotalPages: tmdbTVShows.total_pages || 1,
-          dbTmdbIds: allDatabaseTmdbIds,
-          shownKeys: new Set(externalTmdbResults.map(r => `${r.media_type}-${r.id}`)),
+          // Every title listed so far, library or TMDB-only
+          shownKeys,
         }
         setHasMore(
           searchPagingRef.current.moviePage < searchPagingRef.current.movieTotalPages ||
@@ -1146,7 +1100,7 @@ export default function WatchlistPage({ user }) {
         )
         setSearchResults({
           watchlist: watchlistResults,
-          tmdbInternal: internalResults,
+          tmdbInternal: [...internalResults, ...libraryFromTmdb],
           tmdbExternal: externalTmdbResults
         })
       } else {
@@ -1166,11 +1120,12 @@ export default function WatchlistPage({ user }) {
     }
   }, [currentItems, setIsSearching, setSearchResults, setHasMore])
 
-  // Append the next page of "Add from TMDB" results when the dropdown is scrolled
-  // near its end. Pages the same query that produced the current list (via the
-  // paging cursor) and reuses the original database/playlist dedup so already-owned
-  // titles stay out. Because that dedup can empty a whole TMDB page, it keeps paging
-  // (bounded) until it gathers at least one new item or exhausts the result set.
+  // Append the next page of TMDB results when the dropdown is scrolled near its
+  // end. Pages the same query that produced the current list (via the paging
+  // cursor): library titles join "Available in Media Server", the rest "Add from
+  // TMDB", and titles already listed or in the playlist stay out. Because that
+  // can empty a whole TMDB page, it keeps paging (bounded) until it gathers at
+  // least one new item or exhausts the result set.
   const loadMoreSearch = useCallback(async () => {
     const paging = searchPagingRef.current
     if (!paging || !paging.query || loadingMoreRef.current) return
@@ -1184,15 +1139,17 @@ export default function WatchlistPage({ user }) {
     const requestId = paging.requestId
 
     try {
-      // Recompute the current-playlist dedup sets so items added since the initial
-      // search are still excluded.
-      const existingTmdbIds = new Set(currentItems.map(item => item.tmdbId).filter(Boolean))
-      const existingTitleTypes = new Set(
-        currentItems.map(item => `${item.title?.toLowerCase()}-${item.mediaType}`)
-      )
+      // From the current playlist, so items added since the initial search are
+      // still excluded
+      const keep = notInPlaylist(currentItems)
 
-      const collected = []
-      for (let i = 0; i < 5 && collected.length === 0 && stillHasMore(); i++) {
+      const collectedInternal = []
+      const collectedExternal = []
+      for (
+        let i = 0;
+        i < 5 && collectedInternal.length + collectedExternal.length === 0 && stillHasMore();
+        i++
+      ) {
         const movieHasMore = paging.moviePage < paging.movieTotalPages
         const tvHasMore = paging.tvPage < paging.tvTotalPages
         const nextMoviePage = movieHasMore ? paging.moviePage + 1 : paging.moviePage
@@ -1225,22 +1182,24 @@ export default function WatchlistPage({ user }) {
           ...((tvData.results) || []).map(item => ({ ...item, media_type: 'tv' })),
         ]
 
-        for (const item of rawResults) {
-          const key = `${item.media_type}-${item.id}`
-          if (paging.shownKeys.has(key)) continue
-          if (paging.dbTmdbIds.has(item.id)) continue
-          if (existingTmdbIds.has(item.id)) continue
-          const titleType = `${(item.title || item.name)?.toLowerCase()}-${item.media_type}`
-          if (existingTitleTypes.has(titleType)) continue
-          paging.shownKeys.add(key)
-          collected.push(item)
-        }
+        const libraryMatches = await fetchLibraryMatches(rawResults)
+        if (requestId !== searchRequestIdRef.current || paging !== searchPagingRef.current) return
+
+        const { internal, external } = splitTmdbResults({
+          tmdbResults: rawResults,
+          libraryMatches,
+          keep,
+          shownKeys: paging.shownKeys,
+        })
+        collectedInternal.push(...internal)
+        collectedExternal.push(...external)
       }
 
-      if (collected.length > 0) {
+      if (collectedInternal.length + collectedExternal.length > 0) {
         setSearchResults(prev => ({
           ...prev,
-          tmdbExternal: [...(prev.tmdbExternal || []), ...collected],
+          tmdbInternal: [...(prev.tmdbInternal || []), ...collectedInternal],
+          tmdbExternal: [...(prev.tmdbExternal || []), ...collectedExternal],
         }))
       }
       setHasMore(stillHasMore())
