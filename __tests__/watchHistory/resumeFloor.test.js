@@ -42,6 +42,8 @@ const collection = {
     return { matchedCount: 0, modifiedCount: 0 }
   }),
   countDocuments: jest.fn(async (filter) => (matches(store, filter) ? 1 : 0)),
+  // Quality-swap siblings; this file has one title and one file, so never any.
+  find: jest.fn(() => ({ sort: () => ({ toArray: async () => [] }) })),
   deleteMany: jest.fn(async () => ({ deletedCount: 0 })),
 }
 
@@ -79,6 +81,7 @@ jest.mock('mongodb', () => ({
 
 const { ObjectId } = require('mongodb')
 const { upsertPlayback, MIN_PERSISTED_POSITION_S } = require('@src/utils/watchHistory/database')
+const { generateNormalizedVideoId } = require('@src/utils/flatDatabaseUtils')
 
 const USER = new ObjectId()
 const VIDEO = 'https://transcoder.example.com/stream/bW92aWVzL1gvWC5ta3Y/master.m3u8'
@@ -128,13 +131,14 @@ describe('the resume floor', () => {
     expect(store.playbackTime).toBe(120)
   })
 
-  it('creates a first row even below the floor — there is nothing to protect', async () => {
+  it('a first write below the floor creates nothing — the start threshold holds it', async () => {
     await beat(0.4)
-    expect(store.playbackTime).toBe(0.4)
+    expect(store).toBeNull()
   })
 
   it('does not defend a stored position that is itself below the floor', async () => {
-    await beat(1.5)
+    // A row from before the start threshold existed.
+    store = { userId: USER, normalizedVideoId: generateNormalizedVideoId(VIDEO), playbackTime: 1.5 }
     await beat(0.4)
     expect(store.playbackTime).toBe(0.4)
   })

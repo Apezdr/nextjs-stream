@@ -203,6 +203,25 @@ describe('quality-swap merge', () => {
     expect(rows[0].playbackTime).toBe(7456)
   })
 
+  it('a write under the start threshold still moves the sibling — the title has a row', async () => {
+    const result = await upsertPlayback({ userId: USER, videoId: newRaw, playbackTime: 4.1, metadata: {} })
+
+    expect(result.outcome).toBe('updated')
+    expect(rows).toHaveLength(1)
+    expect(rows[0]._id).toBe('old')
+    expect(rows[0].normalizedVideoId).toBe(newNid)
+    expect(rows[0].playbackTime).toBe(4.1)
+  })
+
+  it('a write under the start threshold with no row and no sibling inserts nothing', async () => {
+    rows = []
+    const result = await upsertPlayback({ userId: USER, videoId: newRaw, playbackTime: 4.1, metadata: {} })
+
+    expect(result.outcome).toBe('held')
+    expect(rows).toHaveLength(0)
+    expect(collection.updateOne).toHaveBeenCalledWith(expect.anything(), expect.anything(), { upsert: false })
+  })
+
   it('pre-backfill duplicates collapse to the newest row', async () => {
     rows.push({ _id: 'older', userId: USER, normalizedVideoId: 'stale', videoId: 'x', mediaId: 'mid:swap', playbackTime: 10, lastUpdated: new Date('2026-01-01') })
     await upsertPlayback({ userId: USER, videoId: newRaw, playbackTime: 7500, metadata: {} })

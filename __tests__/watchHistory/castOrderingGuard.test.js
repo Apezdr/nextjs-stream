@@ -41,6 +41,8 @@ const collection = {
     return { matchedCount: 0, modifiedCount: 0 }
   }),
   countDocuments: jest.fn(async (filter) => (matches(store, filter) ? 1 : 0)),
+  // Quality-swap siblings; this file has one title and one file, so never any.
+  find: jest.fn(() => ({ sort: () => ({ toArray: async () => [] }) })),
   deleteMany: jest.fn(async () => ({ deletedCount: 0 })),
 }
 
@@ -107,6 +109,17 @@ describe('upsertPlaybackFromCast — ordering guard', () => {
     await expect(report(300)).resolves.toBe(true)
     expect(store.playbackTime).toBe(300)
     expect(store.lastWriter).toBe('cast')
+  })
+
+  it('creates nothing for a cast stopped under the start threshold', async () => {
+    await expect(report(4)).resolves.toBe(false)
+    expect(store).toBeNull()
+  })
+
+  it('still moves an existing row under the start threshold', async () => {
+    seed({ playbackTime: 600, lastWriter: 'cast', lastUpdated: new Date() })
+    await expect(report(4)).resolves.toBe(true)
+    expect(store.playbackTime).toBe(4)
   })
 
   it('moves a row it already owns forward', async () => {
