@@ -44,6 +44,28 @@ const log = createLogger('WatchHistory.Database')
 export const MIN_PERSISTED_POSITION_S = 2
 
 /**
+ * No row is born under this many seconds of media time.
+ *
+ * Opening the wrong title and backing out at once used to put it in Continue
+ * Watching on every device. Players start the moment they are ready, before
+ * the first frame is on screen, so by the time a viewer presses Back the title
+ * is 2 to 5 s in — and the exit flush (`final`) carried that position here,
+ * past the resume floor, which only ever protects a row that already exists.
+ *
+ * So under the threshold a write may update a row but never insert one. It is
+ * a rule about creating, not about positions: a viewer who seeks a long-held
+ * row back to the opening, or resumes a 9 s row at 7 s (the clients' 2 s
+ * resume cushion), still writes. A held write answers exactly as an applied
+ * one does; there is nothing for a client to handle.
+ *
+ * The TV and mobile apps hold their own writes under the same value
+ * (WATCH_START_THRESHOLD_S in their src/utils/watchStart.ts). This copy is the
+ * one every client meets, including the web player and app builds from before
+ * that gate.
+ */
+export const WATCH_START_THRESHOLD_S = 8
+
+/**
  * Whether a duplicate-key error came from the partial unique index on
  * {userId, mediaId} ('mid:…' rows only).
  */
@@ -102,7 +124,8 @@ async function rekeySiblingAndApply(collection, { userIdObj, mediaId, normalized
  * @param {Object} options.deviceInfo - Device information from User-Agent
  * @param {string} [options.ipAddress] - Server-observed client IP (proxy-aware)
  * @param {string} [options.localIp] - Optional device-reported local/LAN IP
- * @returns {Promise<Object>} Updated document
+ * @returns {Promise<Object>} the update result, plus `outcome`: 'created' |
+ *   'updated' | 'held' (under WATCH_START_THRESHOLD_S with no row to update)
  */
 export async function upsertPlayback({
   userId,
@@ -193,34 +216,61 @@ export async function upsertPlayback({
     }
 
     let result
-    try {
-      result = await collection.updateOne(filter, update, { upsert: true })
-    } catch (error) {
-      // Once the partial unique index {userId, mediaId} exists, a quality
-      // swap (same folder, new file → new nid, same mediaId) makes this
-      // upsert INSERT a second row for the same identity and violate it.
-      // Merge policy: move the existing row to the new nid and apply this
-      // write to it (see rekeySiblingAndApply); retry the plain upsert only
-      // if no sibling was found after all.
-      if (isMediaIdUniqueViolation(error) && resolved?.mediaId) {
+    let outcome
+    if (playbackTime < WATCH_START_THRESHOLD_S) {
+      // Apply the start threshold (see WATCH_START_THRESHOLD_S): update only.
+      // upsert: false is the whole rule, and it holds under races — a row
+      // created a moment ago is updated, a missing one is never inserted. A
+      // quality swap's sibling (same mediaId, old nid) is a row that exists,
+      // so it is moved and updated just as the insert path below would.
+      result = await collection.updateOne(filter, update, { upsert: false })
+      if (result.matchedCount === 0 && resolved?.mediaId) {
         result =
           (await rekeySiblingAndApply(collection, {
             userIdObj,
             mediaId: resolved.mediaId,
             normalizedVideoId,
             update,
-          })) ?? (await collection.updateOne(filter, update, { upsert: true }))
-      } else {
-        throw error
+          })) ?? result
       }
+      outcome = result.matchedCount > 0 ? 'updated' : 'held'
+    } else {
+      try {
+        result = await collection.updateOne(filter, update, { upsert: true })
+      } catch (error) {
+        // Once the partial unique index {userId, mediaId} exists, a quality
+        // swap (same folder, new file → new nid, same mediaId) makes this
+        // upsert INSERT a second row for the same identity and violate it.
+        // Merge policy: move the existing row to the new nid and apply this
+        // write to it (see rekeySiblingAndApply); retry the plain upsert only
+        // if no sibling was found after all.
+        if (isMediaIdUniqueViolation(error) && resolved?.mediaId) {
+          result =
+            (await rekeySiblingAndApply(collection, {
+              userIdObj,
+              mediaId: resolved.mediaId,
+              normalizedVideoId,
+              update,
+            })) ?? (await collection.updateOne(filter, update, { upsert: true }))
+        } else {
+          throw error
+        }
+      }
+      outcome = result.upsertedCount > 0 ? 'created' : 'updated'
     }
 
     log.debug(
-      { userId: userIdObj.toString(), normalizedVideoId, matched: result.matchedCount, upserted: result.upsertedCount },
+      {
+        userId: userIdObj.toString(),
+        normalizedVideoId,
+        matched: result.matchedCount,
+        upserted: result.upsertedCount,
+        outcome,
+      },
       'Playback upserted'
     )
 
-    return result
+    return { ...result, outcome }
   } catch (error) {
     log.error({ error, userId, videoId }, 'Failed to upsert playback')
     throw error
@@ -255,7 +305,8 @@ const CAST_STALE_GUARD_MS = 60 * 1000
  *
  * Otherwise the report is dropped and `false` comes back. That is a normal
  * outcome, not an error: the receiver never retries, so the next tick carries a
- * freshly read position rather than a stale one.
+ * freshly read position rather than a stale one. A report under
+ * WATCH_START_THRESHOLD_S for a title with no row is dropped the same way.
  *
  * @param {Object} options
  * @param {ObjectId} options.userId
@@ -334,6 +385,27 @@ export async function upsertPlaybackFromCast({
       'Cast playback rejected as stale'
     )
     return false
+  }
+
+  // The start threshold holds here too (see WATCH_START_THRESHOLD_S): a cast
+  // stopped as soon as it began must not put the title in Continue Watching.
+  // Only a quality swap's sibling, a row that already exists, takes it.
+  if (playbackTime < WATCH_START_THRESHOLD_S) {
+    const merged = resolved?.mediaId
+      ? await rekeySiblingAndApply(collection, {
+          userIdObj,
+          mediaId: resolved.mediaId,
+          normalizedVideoId,
+          update: { $set },
+        })
+      : null
+    if (!merged) {
+      log.debug(
+        { userId: userIdObj.toString(), normalizedVideoId, playbackTime },
+        'Cast playback held: under the start threshold with no row'
+      )
+    }
+    return Boolean(merged)
   }
 
   try {

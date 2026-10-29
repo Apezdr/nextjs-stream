@@ -117,11 +117,6 @@ export const POST = async (req) => {
 
     let result = null
     if (kindWritesPosition(effectiveKind)) {
-      log.info(
-        { userId: userId.toString(), videoId, playbackTime, kind: effectiveKind },
-        'Updating playback status'
-      )
-
       // Use new WatchHistory module for atomic, efficient upsert
       // This replaces the old nested array operations with simple document upserts
       // Result: 50x faster writes, zero lock contention
@@ -136,9 +131,12 @@ export const POST = async (req) => {
         isPaused: isPaused === true,
       })
 
+      // One line per write, after it, so it can say what the write did:
+      // 'created' | 'updated' | 'held' (kept from creating a row by the start
+      // threshold — the count that says whether WATCH_START_THRESHOLD_S is right).
       log.info(
-        { userId: userId.toString(), videoId, result },
-        'Playback status updated'
+        { userId: userId.toString(), videoId, playbackTime, kind: effectiveKind, outcome: result.outcome },
+        'Updating playback status'
       )
     } else {
       log.debug(
@@ -172,8 +170,9 @@ export const POST = async (req) => {
     }
 
     // Invalidate user's watch history cache to ensure fresh data on next page
-    // load. A keep-alive changed nothing durable, so it invalidates nothing.
-    if (result) {
+    // load. A keep-alive or a held write changed nothing durable, so it
+    // invalidates nothing. A held write still answers as an applied one.
+    if (result && result.outcome !== 'held') {
       await invalidateUserWatchHistoryCache(authResult.id)
     }
 
