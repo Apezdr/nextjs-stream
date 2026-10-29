@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { buildImgproxyTarget } from '@src/lib/imgproxy'
+import { isAllowedImageSource, reportRefusedImageSource } from '@src/lib/imageSources'
 import { AUTH_COOKIE_NAMES, stripAuthCookies } from '@src/lib/authCookies'
 
 const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN?.replace(/^\./, '')
@@ -26,14 +27,43 @@ const SELF_CACHED_API_PREFIXES = [
   '/api/authenticated/watchlist',
 ]
 
+// Next's built-in optimizer reads its parameters from the raw request, which
+// can differ from the URL this proxy is shown: Next renames nxtP- and
+// nxtI-prefixed query keys before the proxy runs, so `url=<a>&nxtPurl=<b>`
+// reaches the proxy as url=<b> while the optimizer would still fetch <a>.
+// Rewriting to a URL built only from the values checked here leaves the
+// optimizer nothing else to read. (imgproxy is safe already: its target is
+// built from these same values.)
+function toBuiltInOptimizer(request: NextRequest): NextResponse {
+  const checked = request.nextUrl.clone()
+  checked.search = ''
+  for (const name of ['url', 'w', 'q']) {
+    const value = request.nextUrl.searchParams.get(name)
+    if (value !== null) checked.searchParams.set(name, value)
+  }
+  return NextResponse.rewrite(checked)
+}
+
 export function proxy(request: NextRequest) {
-  // Optional imgproxy offload: when IMGPROXY_URL is set, hand image
-  // optimization to an external imgproxy container instead of the built-in
-  // sharp optimizer. A null target (not configured, local /public source,
-  // or malformed params) falls through to the built-in optimizer.
   if (request.nextUrl.pathname === '/_next/image') {
+    // Only known image sources are fetched (src/lib/imageSources.ts). This runs
+    // before both optimizers, so the same rule holds with or without imgproxy;
+    // a missing url= is left for Next to reject.
+    const src = request.nextUrl.searchParams.get('url')
+    if (src && !isAllowedImageSource(src)) {
+      reportRefusedImageSource(src)
+      return new NextResponse('"url" parameter is not allowed', {
+        status: 400,
+        headers: { 'Cache-Control': 'no-store' },
+      })
+    }
+
+    // Optional imgproxy offload: when IMGPROXY_URL is set, hand image
+    // optimization to an external imgproxy container instead of the built-in
+    // sharp optimizer. A null target (not configured, local /public source,
+    // or malformed params) falls through to the built-in optimizer.
     const target = buildImgproxyTarget(request.nextUrl.searchParams)
-    if (!target) return NextResponse.next()
+    if (!target) return toBuiltInOptimizer(request)
 
     if (target.mode === 'redirect') {
       return NextResponse.redirect(target.url, 307)
