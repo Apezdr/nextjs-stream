@@ -254,54 +254,12 @@ To implement the NextJS-Stream app, follow these steps:
 
    `Content-Type`: `application/json`
 
-6. Configure next.config.js:
-   Update your `next.config.js` file with the following configurations:
+6. Image sources (no `next.config.js` change needed):
+   The image optimizer (`/_next/image`) only fetches known sources: each `FILE_SERVER_URL` / `FILE_SERVER_URL_N` origin, each processor's `/frame/` endpoint, TMDB, Google and Discord avatars, YouTube trailer thumbnails and TheTVDB art. The check runs at request time, so the servers you configure in `.env.local` are picked up without a rebuild, with or without imgproxy.
 
-   **Disclaimer: It's recommended to only update the remotePatterns to match the server hosting the files for your media server.**
+   If your images come from anywhere else (for example custom artwork URLs entered in `/admin/media`), add those origins to `REMOTE_PATTERNS` in `.env.local`; see `.env.example`. A refused host is logged once as `[image-sources] refused a /_next/image source on <host>`.
 
-   ```javascript
-   const nextConfig = {
-     reactStrictMode: true,
-     experimental: {
-       reactCompiler: true,
-       esmExternals: false,
-     },
-     pageExtensions: ['ts', 'tsx', 'js', 'jsx', 'md', 'mdx'],
-     eslint: {
-       dirs: ['app', 'components', 'layouts', 'scripts'],
-       ignoreDuringBuilds: false,
-     },
-     images: {
-       minimumCacheTTL: 604800,
-       remotePatterns: [
-         {
-           protocol: 'https',
-           hostname: 'subdomain.your-domain.com',
-         },
-         {
-           protocol: 'https',
-           hostname: 'image.tmdb.org',
-         },
-         {
-           protocol: 'https',
-           hostname: 'm.media-amazon.com',
-         },
-         {
-           protocol: 'https',
-           hostname: 'iconape.com',
-         },
-         {
-           protocol: 'https',
-           hostname: 'www.freeiconspng.com',
-         },
-       ],
-     },
-   }
-
-   module.exports = nextConfig
-   ```
-
-   Replace 'subdomain.your-domain.com' with your actual server hostname (think in the context of a file host).
+   Without imgproxy, Next's built-in optimizer also refuses http sources, non-default ports and private (LAN) addresses, so a file server like that needs imgproxy (`IMGPROXY_URL`).
 
 7. Run the development server:
 

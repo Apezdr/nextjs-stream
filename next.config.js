@@ -121,36 +121,17 @@ const nextConfig = {
     // would behave differently). The default exists to defuse scriptable SVGs;
     // dangerouslyAllowSVG is off here, so only raster images are ever served.
     contentDispositionType: 'inline',
+    // Which hosts the optimizer may fetch is decided per request in src/proxy.ts
+    // (src/lib/imageSources.ts): file servers are configured at runtime, and a
+    // standalone build freezes this file at build time. This pattern only keeps
+    // the built-in optimizer on https.
     remotePatterns: [{
       protocol: 'https',
-      hostname: '**', // Allows all hosts
+      hostname: '**',
       port: '',
       pathname: '/**',
     }],
     qualities: IMAGE_QUALITIES,
-    // remotePatterns: process.env.REMOTE_PATTERNS
-    //   ? process.env.REMOTE_PATTERNS.split(',').map((pattern) => {
-    //       const [protocol, hostname] = pattern.trim().split('://')
-    //       return { protocol, hostname }
-    //     })
-    //   : [
-    //       {
-    //         protocol: 'https',
-    //         hostname: 'image.tmdb.org',
-    //       },
-    //       {
-    //         protocol: 'https',
-    //         hostname: 'm.media-amazon.com',
-    //       },
-    //       {
-    //         protocol: 'https',
-    //         hostname: 'iconape.com',
-    //       },
-    //       {
-    //         protocol: 'https',
-    //         hostname: 'www.freeiconspng.com',
-    //       },
-    //     ],
   },
   // CRITICAL: Include OpenTelemetry packages in standalone output
   // Without this, the OTEL packages won't be available at runtime
