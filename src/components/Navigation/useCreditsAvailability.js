@@ -20,6 +20,8 @@ export function useCreditsAvailability() {
     revalidateOnFocus: false,
     dedupingInterval: 60_000,
     keepPreviousData: true,
+    // A few retries for a passing failure; the next page asks again anyway
+    errorRetryCount: 3,
   })
   return data?.available === true
 }

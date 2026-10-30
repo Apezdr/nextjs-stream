@@ -87,6 +87,18 @@ it('marks inherited show entries as series credits on an episode, and keeps deri
   expect(screen.getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual(['Video', 'Artwork', 'Music & audio', 'Subtitles'])
 })
 
+it('lists a shared asset\'s inputs once, on the first entry that names it', () => {
+  const collage = { id: 'collage', kind: 'artwork', label: 'Collage', derivedFrom: [{ libraryPath: 'movies/A/poster.jpg', note: 'A poster' }, { libraryPath: 'movies/B/poster.jpg' }] }
+  panel([
+    { id: 'a', scope: 'library', assets: [collage], work: 'A poster credit' },
+    { id: 'b', scope: 'library', assets: [collage], work: 'B poster credit' },
+  ])
+  expect(screen.getAllByText('Derived from')).toHaveLength(1)
+  const first = screen.getByRole('article', { name: 'A poster credit' })
+  expect(within(first).getByText('A poster')).toBeInTheDocument()
+  expect(within(first).getByText('movies/B/poster.jpg')).toBeInTheDocument()
+})
+
 it('keeps authored order inside a group', () => {
   render(<CreditsPanel credits={resolveTitleCredits(fixtures.seriesShow())} />)
   const artwork = screen.getByRole('heading', { level: 3, name: 'Artwork' }).parentElement

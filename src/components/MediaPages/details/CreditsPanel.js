@@ -19,6 +19,7 @@ import { SectionHeading } from './Primitives'
 export default function CreditsPanel({ credits, id = 'credits', title = 'Credits & licenses' }) {
   const groups = groupEntries(credits?.entries)
   if (groups.length === 0) return null
+  const derived = derivedInputsByEntry(groups)
   return (
     <section id={id} aria-labelledby={`${id}-heading`}>
       <SectionHeading id={`${id}-heading`}>{title}</SectionHeading>
@@ -29,7 +30,7 @@ export default function CreditsPanel({ credits, id = 'credits', title = 'Credits
             <ul role="list" className="mt-3 divide-y divide-white/10">
               {group.entries.map((entry, index) => (
                 <li key={`${entry.scope}:${entry.id}:${index}`} className="py-5 first:pt-0 last:pb-0">
-                  <CreditEntry entry={entry} headingId={`${id}-${group.key}-${index}`} />
+                  <CreditEntry entry={entry} derivedFrom={derived.get(entry) ?? []} headingId={`${id}-${group.key}-${index}`} />
                 </li>
               ))}
             </ul>
@@ -78,14 +79,38 @@ export function groupEntries(entries) {
   })).filter((group) => group.entries.length > 0)
 }
 
+/**
+ * What each entry lists under "Derived from": the inputs of its assets, each
+ * asset's once, on the first entry (in display order) that names it. Several
+ * contributing works credited on one collage then list its inputs once, not
+ * once per work. Assets of different files may share an id, so an asset is
+ * told apart by its entry's scope too.
+ */
+export function derivedInputsByEntry(groups) {
+  const shown = new Set()
+  const byEntry = new Map()
+  for (const group of groups) {
+    for (const entry of group.entries) {
+      const inputs = []
+      for (const asset of entry.assets ?? []) {
+        const key = `${entry.scope}:${asset.id}`
+        if (!asset.derivedFrom?.length || shown.has(key)) continue
+        shown.add(key)
+        inputs.push(...asset.derivedFrom.map((input) => input.note || input.libraryPath))
+      }
+      byEntry.set(entry, inputs)
+    }
+  }
+  return byEntry
+}
+
 function assetName(asset) {
   return asset.label || KIND_LABELS[asset.kind] || asset.kind
 }
 
-function CreditEntry({ entry, headingId }) {
+function CreditEntry({ entry, derivedFrom, headingId }) {
   const assets = Array.isArray(entry.assets) ? entry.assets : []
   const heading = entry.work || assets.map(assetName).join(', ') || KIND_LABELS[entryKind(entry)]
-  const derivedFrom = assets.flatMap((asset) => asset.derivedFrom ?? []).map((input) => input.note || input.libraryPath)
   const conditions = [
     ...(entry.notices ?? []).map((text) => ({ label: 'Notice', text })),
     ...(entry.historicalNotices ?? []).map((text) => ({ label: 'Notice on the original work', text })),
