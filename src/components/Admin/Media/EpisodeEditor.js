@@ -8,6 +8,7 @@ import ActionError from './ActionError'
 import { TITLE_LOCK_HELP, useFieldLocks } from './useFieldLocks'
 import ImagePreview from './ImagePreview'
 import RawRecordButton from './RawRecordButton'
+import CreditsStatus from './CreditsStatus'
 import JitOverrideSelect from './JitOverrideSelect'
 
 const SCALAR_KEYS = ['title', 'videoURL', 'thumbnail', 'thumbnailBlurhash', 'chapterURL', 'hdr', 'duration', 'jitServeOverride']
@@ -157,6 +158,8 @@ export default function EpisodeEditor({ showId, seasonNumber, episode = null, is
               />
             </div>
           </div>
+
+          {!isNew && episode ? <CreditsStatus record={episode} scope="episode" /> : null}
 
           <div className="flex items-center gap-3">
             <button

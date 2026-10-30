@@ -13,6 +13,7 @@ import ActionRow from './details/ActionRow'
 import StickyTitleBar from './details/StickyTitleBar'
 import CastTabs from './details/CastTabs'
 import EpisodeNav from './details/EpisodeNav'
+import CreditsPanel from './details/CreditsPanel'
 
 /** The hero's action row; the sticky bar appears once this scrolls out. */
 const ACTIONS_ID = 'episode-hero-actions'
@@ -170,6 +171,11 @@ const TVEpisodeDetailsComponent = ({ media }) => {
           <CastTabs tabs={tabs} defaultTab="guests" />
         </div>
         <DetailsPanel id="episode-details" title="Episode details" rows={facts} />
+        {media.credits ? (
+          <div className="lg:col-span-2">
+            <CreditsPanel credits={media.credits} id="credits" />
+          </div>
+        ) : null}
       </div>
 
     </div>

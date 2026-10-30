@@ -16,6 +16,7 @@ import ImagePreview from './ImagePreview'
 import DeleteMediaButton from './DeleteMediaButton'
 import TmdbConfigButton from './TmdbConfigButton'
 import RawRecordButton from './RawRecordButton'
+import CreditsStatus from './CreditsStatus'
 import SeasonEditor from './SeasonEditor'
 import JitOverrideSelect from './JitOverrideSelect'
 
@@ -224,6 +225,12 @@ export default function TVShowEditor({ record = null, isNew = false, initialSeas
           <ActionError state={state} />
         </div>
       </form>
+
+      {!isNew && record ? (
+        <div className="mt-8">
+          <CreditsStatus record={record} />
+        </div>
+      ) : null}
 
       {!isNew && record?._id && (
         <section className="mt-10">

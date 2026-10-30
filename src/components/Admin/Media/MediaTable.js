@@ -90,6 +90,14 @@ export default function MediaTable({ type, items }) {
                       Hidden
                     </span>
                   )}
+                  {item.creditsError && (
+                    <span
+                      className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-800"
+                      title="The last credits sync failed; the last valid credits are kept. Open the title for the reason."
+                    >
+                      Credits error
+                    </span>
+                  )}
                   {item.lockedCount > 0 && (
                     <span className="inline-flex items-center gap-0.5 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-700">
                       <LockClosedIcon className="h-3 w-3" />

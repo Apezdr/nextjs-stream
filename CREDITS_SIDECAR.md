@@ -45,8 +45,10 @@ episode object inside a show's `seasons`, carries a `credits` value:
 The processor never parses the file: it lists it, checks its size, and hashes
 its bytes. It does not hash videos or any other file for this. A row the scan
 could not read (its directory listing failed) keeps its previous value, as
-every other field of that row does. A title whose stored value is an `error`
-is read again on the next scan.
+every other field of that row does. A title whose stored value is
+`unreadable` is read again on every scan (a permission fix moves no file
+time); `too-large` and `empty` are read again when the file is edited, which
+moves the folder's hash.
 
 The value is part of the entry, so the manifest hash moves when it does, and
 the frontend's tick selects the title (no separate hash). `MEDIA_PAYLOAD_VERSION`

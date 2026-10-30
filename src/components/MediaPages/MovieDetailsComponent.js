@@ -15,6 +15,7 @@ import ActionRow from './details/ActionRow'
 import StickyTitleBar from './details/StickyTitleBar'
 import CastRail from './details/CastRail'
 import CollectionCard from './details/CollectionCard'
+import CreditsPanel from './details/CreditsPanel'
 
 /** The hero's action row; the sticky bar appears once this scrolls out. */
 const ACTIONS_ID = 'movie-hero-actions'
@@ -106,6 +107,8 @@ const MovieDetailsComponent = ({ media }) => {
             ) : null}
           </DetailsPanel>
         </div>
+
+        <CreditsPanel credits={media.credits} id="credits" />
       </div>
     </div>
   )
