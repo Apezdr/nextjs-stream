@@ -24,7 +24,7 @@ import {
   type CreditsScope,
 } from './validate'
 
-export type CreditsEntryScope = 'title' | 'show' | 'episode'
+export type CreditsEntryScope = 'title' | 'show' | 'episode' | 'library'
 
 export interface ResolvedCreditsEntry extends Omit<CreditsEntry, 'assetIds' | 'replaces'> {
   scope: CreditsEntryScope
@@ -71,6 +71,27 @@ export function resolveEpisodeCredits(showCredits: unknown, episodeCredits: unkn
     }
     entries = entries.filter((entry, index) => index === at || !(entry.scope === 'show' && replaced.has(entry.id)))
     entries.splice(at, 1, resolved)
+  }
+  return finish(entries)
+}
+
+/**
+ * The library's credits, ready to show: each server's library file (in the
+ * order given: server priority), a file two servers share shown once. Null
+ * when there are none.
+ *
+ * @param stored - Each server's stored library credits: `credits` and `creditsHash`
+ */
+export function resolveLibraryCredits(stored: readonly { credits?: unknown; creditsHash?: unknown }[]): ResolvedCredits | null {
+  const seen = new Set<unknown>()
+  const entries: ResolvedCreditsEntry[] = []
+  for (const record of stored) {
+    if (record.creditsHash != null) {
+      if (seen.has(record.creditsHash)) continue
+      seen.add(record.creditsHash)
+    }
+    const document = readStored(record.credits, 'library')
+    if (document) entries.push(...document.entries.map((entry) => resolveEntry(entry, document, 'library')))
   }
   return finish(entries)
 }

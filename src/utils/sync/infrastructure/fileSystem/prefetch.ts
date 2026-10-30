@@ -23,7 +23,7 @@ import type { Resource, ResourceRequest, WritePlan } from '../../core/types'
 /** What the fetches of one title's builders share. */
 export interface PrefetchContext {
   /** For fetchMetadataMultiServer's debug log. */
-  mediaType: 'movie' | 'tv'
+  mediaType: 'movie' | 'tv' | 'library'
   /** The title's folder name, for the same log. */
   title: string
   /** The pass's HTTP throttle, for a direct read; without one it is not throttled. */

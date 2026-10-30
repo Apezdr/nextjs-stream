@@ -69,8 +69,13 @@ export interface CreditsDocument {
   suppress?: string[]
 }
 
-/** Where a sidecar sits: beside a movie's or show's metadata, or an episode's. */
-export type CreditsScope = 'title' | 'episode'
+/**
+ * Where a sidecar sits: beside a movie's or show's metadata, beside an
+ * episode's, or at the library root (shared assets such as the site's poster
+ * collage; its paths are relative to the root). Only an episode's may use
+ * `suppress` and `replaces`.
+ */
+export type CreditsScope = 'title' | 'episode' | 'library'
 
 /**
  * Why a file was rejected. Each is a failed input, never an absence: the
