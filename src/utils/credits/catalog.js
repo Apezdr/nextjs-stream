@@ -1,6 +1,6 @@
 /**
  * The credits catalog: what the "Credits & licenses" menu item and page show
- * (CREDITS_SIDECAR.md, section 8).
+ * (CREDITS_SIDECAR.md, sections 7 and 8).
  *
  *  - The library's credits: each enabled server's library-root file
  *    (run/libraryCredits), in server priority order, shared files once.

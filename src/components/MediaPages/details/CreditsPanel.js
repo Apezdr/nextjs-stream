@@ -3,7 +3,7 @@ import { SectionHeading } from './Primitives'
 
 /**
  * Credits & licenses: a title's (or an episode's) credits, as the API
- * resolves them (src/utils/credits/resolve, CREDITS_SIDECAR.md section 7).
+ * resolves them (src/utils/credits/resolve, CREDITS_SIDECAR.md section 8).
  *
  * Its own panel, below the synopsis and outside the hero. Entries are grouped
  * by kind (video, artwork, music and audio, subtitles, other) and keep their

@@ -4,7 +4,7 @@ import { getCreditsCatalog } from '@src/utils/credits/catalog'
 /**
  * GET /api/authenticated/credits
  *
- * What the "Credits & licenses" page shows (CREDITS_SIDECAR.md, section 8):
+ * What the "Credits & licenses" page shows (CREDITS_SIDECAR.md, section 7):
  *
  * {
  *   "library": { "schemaVersion": 1, "entries": [...] } | null,

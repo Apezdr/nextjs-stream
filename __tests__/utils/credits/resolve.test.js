@@ -1,7 +1,7 @@
 /**
  * @jest-environment node
  *
- * Credits as shown (CREDITS_SIDECAR.md, sections 4 and 6): entries carry
+ * Credits as shown (CREDITS_SIDECAR.md, sections 4 and 7): entries carry
  * the assets they name from their own file, and an episode inherits its
  * show's entries unless it suppresses or replaces one by id.
  */

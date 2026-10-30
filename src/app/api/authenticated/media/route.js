@@ -214,7 +214,7 @@ export async function GET(req) {
                     first_air_date: media.first_air_date,
                     airDate: media.metadata?.air_date, // Explicit air_date for TV seasons
                     // A season has no credits file of its own: the show's
-                    // (CREDITS_SIDECAR.md, section 6)
+                    // (CREDITS_SIDECAR.md, section 7)
                     credits: media.credits || fullShowData?.credits,
                   }
                 

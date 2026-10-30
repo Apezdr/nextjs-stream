@@ -22,6 +22,7 @@ legal compliance by itself.
 | Movie | `movies/<folder>/credits.json` | the movie folder |
 | Show | `tv/<folder>/credits.json` | the show folder |
 | Episode (optional) | `tv/<folder>/<season folder>/<NN>_credits.json` | the season folder |
+| Library (optional) | `credits.json` at the library root, beside `movies/` and `tv/` | the library root |
 
 `<NN>` is the episode number exactly as the episode's `<NN>_metadata.json` is
 named. The file is optional everywhere. It is found independently of
@@ -53,6 +54,21 @@ moves the folder's hash.
 The value is part of the entry, so the manifest hash moves when it does, and
 the frontend's tick selects the title (no separate hash). `MEDIA_PAYLOAD_VERSION`
 11 publishes it on every title once.
+
+**The library's file** is published in both manifests (`GET /media/movies/manifest`
+and `GET /media/tv/manifest`), beside the titles, in the same four states:
+
+```json
+{ "format": 2, "kind": "movies", "version": 1.0001,
+  "library": { "credits": { "url": "<prefix>/credits.json?hash=<h>", "hash": "<h>" } },
+  "titles": { } }
+```
+
+It is read on every scan tick (one listing of the root, at most one small
+read), stored by the processor, and changes both manifests' ETags only when
+it changes. A root the scan cannot list is `unreadable`, never `absent`. A
+processor that predates it sends no `library` key, and the manifest format
+stays 2 (deployed frontends ignore the key).
 
 ## 3. Schema version 1
 
@@ -216,7 +232,33 @@ the gate stays open.
 
 An admin lock on `credits` keeps it as stored.
 
-## 6. API
+## 6. Library scope
+
+The library file credits shared assets no title folder holds: the site's
+poster collage (`poster_collage.jpg` at the library root) and anything like
+it. It is a version 1 file like any other: its `path`s are relative to the
+library root, `derivedFrom` names the inputs (each poster in the collage),
+and each contributing work keeps its own entry, license, source, changes
+and exclusions; never one blanket entry for the whole asset. It may not use
+`suppress` or `replaces`.
+
+Each media server has its own library root, so each server's file is its
+own: it is stored per server (`Media.LibraryCredits`, `_id` = the server's
+id), owned by that server alone, and never ranked against another server's.
+The rules of section 5 apply with that server as the only claimant:
+
+- a new, valid file is stored with `creditsSource` and `creditsHash`;
+- a failure keeps the last valid credits and records `creditsStatus`; one
+  that may clear by itself is an error of the run, so the pass is not
+  recorded and the next tick runs again, and a rejected file waits for an
+  edit (which moves the manifests);
+- the credits are removed only on that server's own `absent`; a processor
+  without a `library` key never removes them.
+
+Shown, the enabled servers' library credits are listed in server priority
+order, a file two servers share once (`scope: "library"`).
+
+## 7. API
 
 `GET /api/authenticated/media` returns `credits` resolved for display on
 movies, shows and episodes (the TV branch and the default branch alike):
@@ -245,7 +287,45 @@ show, `show` or `episode` on an episode (section 4). `credits` is absent when
 there is nothing to show. `creditsSource`, `creditsHash` and `creditsStatus`
 are admin information and are left out.
 
-## 7. Showing credits
+`GET /api/authenticated/credits/availability` says whether to show the
+**Credits & licenses** menu item, and nothing more, so a client never reads
+the catalog to decide:
+
+```json
+{ "available": true, "library": true, "titles": 4 }
+```
+
+`GET /api/authenticated/credits` is what the menu item opens:
+
+```json
+{
+  "library": { "schemaVersion": 1, "entries": [ { "id": "...", "scope": "library", "assets": [], "work": "..." } ] },
+  "titles": [
+    { "type": "movie", "id": "<_id>", "title": "Example film", "originalTitle": "Example Film (2020)" },
+    { "type": "tv", "id": "<_id>", "title": "Example show", "originalTitle": "Example Show",
+      "hasCredits": false,
+      "episodes": [ { "seasonNumber": 1, "episodeNumber": 3, "title": "Example episode" } ] }
+  ]
+}
+```
+
+- `library` is the library's credits resolved for display (section 6), or
+  null. `titles` names, by display title, every movie and show the user may
+  see that has credits to show: its own, or (for a show) any of its
+  episodes' own. `hasCredits` says whether a show has its own; `episodes`
+  lists those with their own, so episode-only credits can be reached. The
+  credits themselves stay on each title's page.
+- Only what credits can be shown counts: a stored, valid file with at least
+  one entry. The last valid credits kept through a failed sync count; a
+  record that holds only a failure does not. Inherited credits are their
+  show's, so the show is listed.
+- Titles the lists hide (not web-visible) are left out. A user with limited
+  access sees no titles, so gets `titles: []` and a `titles` count of 0: the
+  library only.
+- Both answer 500 when the read fails. A client keeps what it last had and
+  never reads an error as "no credits".
+
+## 8. Showing credits
 
 - A panel of its own, **Credits & licenses**, below the synopsis and outside
   the hero. High-contrast text with room between entries.
@@ -261,13 +341,27 @@ are admin information and are left out.
   `rel="noopener noreferrer"`.
 - An unknown or missing value is left out, never replaced with a guess.
 
-## 8. Rollout
+**The menu item and its page.** Every client shows **Credits & licenses** in
+its existing account or settings menu when `availability.available` is true,
+and hides it otherwise (and while it has never had an answer). It opens a
+page with the library's credits in full, when there are any, then the list
+of titles, each linking to that title's credits panel; a show without
+credits of its own links to its credited episodes. Title credits are not
+repeated there. On the web: the account menu, `/list/credits`, and each
+title's panel at `#credits`. Admins see a failing library sync on that page;
+a title's sync state is in its admin editor.
+
+## 9. Rollout
 
 1. Deploy the processor (credits published) and the frontend (credits stored,
-   API and web panel) in either order: the frontend's `SYNC_GATE_VERSION` 4
-   makes its first pass after deploy a full one.
-2. Ship the native clients' panel (the TV app hand-off doc).
-3. Write the sidecars from the verified credits.
+   API, web panel, page and menu item) in either order: the frontend's
+   `SYNC_GATE_VERSION` 4 makes its first pass after deploy a full one.
+2. Ship the native clients' panel, menu item and page (the TV app hand-off
+   doc).
+3. Write the sidecars from the verified credits: the title and episode files,
+   checked against the private rights ledger's media hashes first, and the
+   library file only once the processor publishing it is deployed. The
+   ledger never goes inside the served library.
 4. Once the credits show in every client, remove the attribution blocks that
    were appended to overviews, and their manual overrides. Keep the synopsis,
    the full credits, the source records and the original video notices.

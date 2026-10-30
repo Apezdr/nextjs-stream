@@ -2,7 +2,7 @@
  * @jest-environment node
  *
  * The credits catalog behind the "Credits & licenses" menu item and page
- * (CREDITS_SIDECAR.md, section 8), over an in-memory Media database: the
+ * (CREDITS_SIDECAR.md, sections 7 and 8), over an in-memory Media database: the
  * library's credits, and the titles a user may see that have credits to show.
  */
 

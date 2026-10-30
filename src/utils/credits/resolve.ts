@@ -1,7 +1,7 @@
 /**
  * Credits as they are shown: a stored credits document (or, for an episode,
  * its show's and its own) turned into the list of entries a client renders
- * (CREDITS_SIDECAR.md, sections 4 and 6).
+ * (CREDITS_SIDECAR.md, sections 4, 6 and 7).
  *
  * Each entry's `assetIds` become the `assets` they name, from the file the
  * entry came from, and each entry gets a `scope`. An episode inherits its

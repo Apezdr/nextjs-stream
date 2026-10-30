@@ -1,5 +1,5 @@
 /**
- * The Credits & licenses panel (CREDITS_SIDECAR.md, section 7): its own
+ * The Credits & licenses panel (CREDITS_SIDECAR.md, section 8): its own
  * section, grouped by kind in authored order, every supplied field shown in
  * full, text rendered as text, links only for http(s) URLs, and the longer
  * conditions in a disclosure that stays in the page.

@@ -706,7 +706,7 @@ export function sanitizeTVData(media, options = {}) {
 
     // Credits & licenses, resolved for display (getFlatRequestedMedia): an
     // episode's are its show's with its own file applied. Absent when there
-    // are none (CREDITS_SIDECAR.md, section 6).
+    // are none (CREDITS_SIDECAR.md, section 7).
     if (media.credits) {
       tvData.credits = media.credits
     }

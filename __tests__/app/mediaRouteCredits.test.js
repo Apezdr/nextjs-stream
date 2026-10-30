@@ -2,7 +2,7 @@
  * @jest-environment node
  *
  * /api/authenticated/media sends `credits` resolved for display
- * (CREDITS_SIDECAR.md, section 6): on the TV-device shape (an explicit
+ * (CREDITS_SIDECAR.md, section 7): on the TV-device shape (an explicit
  * allowlist, sanitizeTVData) and the flat GET alike, for shows and episodes.
  * getFlatRequestedMedia resolves them (withDisplayCredits) and leaves the
  * sync's bookkeeping out.
