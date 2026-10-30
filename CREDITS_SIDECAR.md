@@ -64,9 +64,11 @@ and `GET /media/tv/manifest`), beside the titles, in the same four states:
   "titles": { } }
 ```
 
-It is read on every scan tick (one listing of the root, at most one small
-read), stored by the processor, and changes both manifests' ETags only when
-it changes. A root the scan cannot list is `unreadable`, never `absent`. A
+It is read on every scheduled scan tick (one listing of the root, at most one
+small read), stored by the processor, and changes both manifests' ETags only
+when it changes. A manual `POST /media/scan` does not read it: after adding
+or editing the file, wait for the next scheduled scan to publish it before
+expecting the frontend's sync to see it. A root the scan cannot list is `unreadable`, never `absent`. A
 processor that predates it sends no `library` key, and the manifest format
 stays 2 (deployed frontends ignore the key).
 
@@ -367,8 +369,10 @@ a title's sync state is in its admin editor.
    doc).
 3. Write the sidecars from the verified credits: the title and episode files,
    checked against the private rights ledger's media hashes first, and the
-   library file only once the processor publishing it is deployed. The
-   ledger never goes inside the served library.
+   library file only once the processor publishing it is deployed (then
+   confirm a scheduled scan published it: both manifests carry
+   `library.credits` with its hash). The ledger never goes inside the served
+   library.
 4. Once the credits show in every client, remove the attribution blocks that
    were appended to overviews, and their manual overrides. Keep the synopsis,
    the full credits, the source records and the original video notices.
