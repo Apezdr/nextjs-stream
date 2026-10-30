@@ -25,7 +25,8 @@ export enum SyncOperation {
   Assets = 'assets',      // posters, backdrops, logos
   Content = 'content',    // video URLs, captions, chapters
   Validation = 'validation',
-  Blurhash = 'blurhash'  // post-entity blurhash computation (poster + backdrop)
+  Blurhash = 'blurhash',  // post-entity blurhash computation (poster + backdrop)
+  Credits = 'credits'     // the credits sidecar (core/credits)
 }
 
 export enum SyncStatus {
@@ -148,8 +149,11 @@ export interface SyncResult {
  * them as Resources (core/resources).
  */
 export interface ResourceRequest {
-  /** What the file is. */
-  kind: 'metadata' | 'blurhash'
+  /**
+   * What the file is: a metadata file (JSON), a blurhash (text), or a credits
+   * sidecar (raw bytes, a Buffer: hashed before they are decoded, core/credits).
+   */
+  kind: 'metadata' | 'blurhash' | 'credits'
   /** The server to ask. */
   serverId: string
   /**

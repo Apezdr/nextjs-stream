@@ -757,7 +757,7 @@ describe('skipping an unchanged title', () => {
     const docs = []
     await run(docs, { A: withVideo() }, ['A'])
     const forced = await pass(docs, 'A', { A: withVideo() }, { forceSync: true })
-    expect(forced.map((r) => r.operation)).toEqual(['metadata', 'assets', 'content', 'blurhash'])
+    expect(forced.map((r) => r.operation)).toEqual(['metadata', 'assets', 'content', 'blurhash', 'credits'])
   })
 })
 

@@ -97,6 +97,8 @@ export async function listAdminMovies({ page = 1, pageSize = 25, search = '', so
     // never filter here)
     primaryContainer: 1,
     jitUrl: 1,
+    // The "Credits error" badge: the last credits sync failed
+    creditsStatus: 1,
     'metadata.poster_path': 1,
     'metadata.release_date': 1,
   }
@@ -122,6 +124,7 @@ export async function listAdminMovies({ page = 1, pageSize = 25, search = '', so
     hdr: m.hdr ?? null,
     manualEntry: Boolean(m.manualEntry),
     lockedCount: countLocks(m.lockedFields),
+    creditsError: Boolean(m.creditsStatus),
   }))
 
   return { items, total, page: safePage, pageSize: safeSize }
@@ -149,6 +152,8 @@ export async function listAdminTVShows({ page = 1, pageSize = 25, search = '', s
     updatedAt: 1,
     // Web-visibility signal for the admin "Hidden" badge (admin sees all)
     visibleEpisodeCount: 1,
+    // The "Credits error" badge (with the episodes' own, counted below)
+    creditsStatus: 1,
     'metadata.poster_path': 1,
     'metadata.first_air_date': 1,
     'metadata.last_air_date': 1,
@@ -175,13 +180,21 @@ export async function listAdminTVShows({ page = 1, pageSize = 25, search = '', s
             .collection('FlatEpisodes')
             .aggregate([
               { $match: { showId: { $in: showIds } } },
-              { $group: { _id: '$showId', count: { $sum: 1 } } },
+              {
+                $group: {
+                  _id: '$showId',
+                  count: { $sum: 1 },
+                  // Episodes whose last credits sync failed
+                  creditsErrors: { $sum: { $cond: [{ $ifNull: ['$creditsStatus', false] }, 1, 0] } },
+                },
+              },
             ])
             .toArray(),
         ])
 
   const seasonCountMap = new Map(seasonCounts.map((s) => [s._id.toString(), s.count]))
   const episodeCountMap = new Map(episodeCounts.map((e) => [e._id.toString(), e.count]))
+  const episodeCreditsErrorMap = new Map(episodeCounts.map((e) => [e._id.toString(), e.creditsErrors ?? 0]))
 
   const items = docs.map((s) => {
     const idStr = s._id.toString()
@@ -203,6 +216,7 @@ export async function listAdminTVShows({ page = 1, pageSize = 25, search = '', s
       visibleEpisodeCount: s.visibleEpisodeCount ?? null,
       manualEntry: Boolean(s.manualEntry),
       lockedCount: countLocks(s.lockedFields),
+      creditsError: Boolean(s.creditsStatus) || (episodeCreditsErrorMap.get(idStr) ?? 0) > 0,
     }
   })
 

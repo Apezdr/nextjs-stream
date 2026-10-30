@@ -112,9 +112,9 @@ describe('the stored movie', () => {
 
     for (const [stored, forceSync, expected] of [
       [gated, false, ['skipped']],
-      [storedWithoutType(), false, ['skipped', 'completed', 'skipped', 'skipped']],
-      [gated, true, ['skipped', 'completed', 'skipped', 'skipped']],
-      [null, false, ['skipped', 'completed', 'skipped', 'skipped']],
+      [storedWithoutType(), false, ['skipped', 'completed', 'skipped', 'skipped', 'skipped']],
+      [gated, true, ['skipped', 'completed', 'skipped', 'skipped', 'skipped']],
+      [null, false, ['skipped', 'completed', 'skipped', 'skipped', 'skipped']],
     ]) {
       const repository = repositoryOver(stored)
       const results = await syncOver(repository, payload, { forceSync })
@@ -146,6 +146,7 @@ describe('the fields normalization heals', () => {
       ['assets', 'skipped'],
       ['content', 'skipped'],
       ['blurhash', 'completed'],
+      ['credits', 'skipped'],
     ])
     const [written, existing, options] = repository.smartUpsert.mock.calls[0]
     expect(written).toEqual({

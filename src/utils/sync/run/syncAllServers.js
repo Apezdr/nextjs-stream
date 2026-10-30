@@ -3,6 +3,7 @@ import clientPromise from '@src/lib/mongodb'
 import chalk from 'chalk'
 import { updateLastSynced } from './lastSynced'
 import { runServerPass } from './serverPass'
+import { LIBRARY_CREDITS_COLLECTION, syncLibraryCredits } from './libraryCredits'
 import { runPostSyncCleanup, runAfterSyncJobs } from './postSync'
 import { createWrittenMedia } from './writtenMedia'
 import {
@@ -385,6 +386,24 @@ export async function syncAllServers(tick, options = {}) {
             hasFieldAvailability: !!fieldAvailability,
           },
         })
+      }
+
+      // The server's library credits: the credits file at its library root,
+      // published in its manifests (run/libraryCredits). A failure that may
+      // clear by itself is an error of the run, so the pass is not recorded
+      // as complete and the next tick runs again.
+      try {
+        const library = await syncLibraryCredits({
+          collection: client.db('Media').collection(LIBRARY_CREDITS_COLLECTION),
+          serverConfig,
+          manifests: inputs?.manifests?.get(serverId),
+          syncRunId,
+        })
+        if (library.retry) {
+          results.errors.push({ serverId, phase: 'library_credits', error: library.errors.join('; ') })
+        }
+      } catch (error) {
+        results.errors.push({ serverId, phase: 'library_credits', error: error.message, stack: error.stack })
       }
     } catch (error) {
       // Catch errors from outer try block (server processing)

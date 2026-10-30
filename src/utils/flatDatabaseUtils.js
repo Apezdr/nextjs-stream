@@ -11,6 +11,7 @@ import { countPlaybackForUser, findPlaybackForUser } from '@src/utils/watchHisto
 import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
 import { durationMsForItem } from '@src/utils/watchHistory/progress'
+import { resolveEpisodeCredits, resolveTitleCredits } from '@src/utils/credits/resolve'
 import {
   visibleMovieFilter,
   visibleEpisodeFilter,
@@ -2091,6 +2092,21 @@ async function findTVShowByTitleOrOriginal(db, searchTitle) {
 }
 
 /**
+ * A media document's credits as clients show them (CREDITS_SIDECAR.md,
+ * section 6): `credits` replaced by the resolved entries, or removed when
+ * there is nothing to show, and the sync's bookkeeping for them
+ * (creditsSource, creditsHash, creditsStatus, admin information) left out.
+ */
+export function withDisplayCredits(result, resolved) {
+  delete result.creditsSource
+  delete result.creditsHash
+  delete result.creditsStatus
+  if (resolved) result.credits = resolved
+  else delete result.credits
+  return result
+}
+
+/**
  * Gets requested media from the flat database structure.
  * This function is a replacement for getRequestedMedia but uses the flat database collections.
  *
@@ -2179,7 +2195,7 @@ export async function getFlatRequestedMedia({
         console.timeEnd('getFlatRequestedMedia:total')
       }
 
-      return result
+      return withDisplayCredits(result, resolveTitleCredits(movie.credits))
     } else if (type === 'tv') {
       if (Boolean(process.env.DEBUG) == true) {
         console.time('getFlatRequestedMedia:fetchTV')
@@ -2289,7 +2305,7 @@ export async function getFlatRequestedMedia({
           console.timeEnd('getFlatRequestedMedia:total')
         }
 
-        return result
+        return withDisplayCredits(result, resolveTitleCredits(tvShow.credits))
       }
       // Season specified
       else {
@@ -2451,6 +2467,10 @@ export async function getFlatRequestedMedia({
           if (foundByTitleFallback) {
             result.foundByTitleFallback = foundByTitleFallback
           }
+
+          // The show's credits with the episode's own file applied (suppress,
+          // replace, add): what the episode page and the TV app show.
+          withDisplayCredits(result, resolveEpisodeCredits(tvShow.credits, episodeData.credits))
 
           // Handle next episode info
           if (nextEpisode) {

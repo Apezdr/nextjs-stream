@@ -60,6 +60,14 @@ export class TVShowRepository extends BaseRepository<TVShowEntity> {
           'metadata.description': 'text'
         }),
 
+        // Documents with a credits file: the credits index and the menu's
+        // availability (src/utils/credits/catalog) read only these. Partial,
+        // so it holds the few that have one, not every document.
+        this.createIndexSafely(
+          { 'credits.schemaVersion': 1 },
+          { name: 'credits_index', partialFilterExpression: { 'credits.schemaVersion': { $exists: true } } }
+        ),
+
         // Sync-run marker — post-sync cleanup deletes by { syncRunId: { $ne } }.
         // Name must match prod's existing index to avoid IndexOptionsConflict.
         this.createIndexSafely({ syncRunId: 1 }, { name: 'sync_run_id_index' })

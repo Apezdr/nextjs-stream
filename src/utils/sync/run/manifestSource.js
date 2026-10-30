@@ -211,6 +211,8 @@ async function requestHeaders(serverId) {
  * @property {string} etag - As the server sent it (weak)
  * @property {number} format - MANIFEST_FORMAT
  * @property {number} version - The list version
+ * @property {Object} [library] - The library's own values (`credits`: the
+ *   library-root credits locator); absent from a processor that predates them
  * @property {Map<string, {hash: string, seasons?: Map<string, string[]>}>} titles -
  *   Folder name → its hash and, for TV, each season key with its episode keys.
  *   A folder named `version` is left out: the payload's list version shadows
@@ -272,7 +274,11 @@ export function parseManifest(bytes, kind, etag) {
   if (body.version !== EXPECTED_LIST_VERSIONS[kind]) {
     console.error(`${kind} data version mismatch: ${body.version} not equal to expected ${EXPECTED_LIST_VERSIONS[kind]} (manifest)`)
   }
-  return { etag, format: body.format, version: body.version, titles }
+  // The library's own values, beside the titles (a processor that predates
+  // them sends none): `library.credits` is the library-root credits file's
+  // locator (CREDITS_SIDECAR.md, Library scope), read by run/libraryCredits.
+  const library = isPlainObject(body.library) ? body.library : undefined
+  return { etag, format: body.format, version: body.version, titles, library }
 }
 
 /**

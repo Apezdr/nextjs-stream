@@ -33,6 +33,8 @@ const BUILDER_MODULES = [
   'src/utils/sync/domain/movies/video.ts',
   'src/utils/sync/domain/movies/videoPayload.ts',
   'src/utils/sync/domain/movies/step.ts',
+  'src/utils/sync/domain/movies/credits.ts',
+  'src/utils/sync/core/credits.ts',
   'src/utils/sync/domain/tv/showPlan.ts',
   'src/utils/sync/domain/tv/seasonPlan.ts',
   'src/utils/sync/domain/tv/episodePlan.ts',

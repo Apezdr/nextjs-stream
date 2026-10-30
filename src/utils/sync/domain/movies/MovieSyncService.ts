@@ -2,7 +2,7 @@
  * Movie sync service: one server's pass over one movie.
  *
  * The pass reads the stored movie once, and is skipped when this server's gate
- * on it still holds (core/syncGate). Otherwise it runs four steps, always in
+ * on it still holds (core/syncGate). Otherwise it runs five steps, always in
  * this order, each of which returns a write plan and a result:
  *
  *   1. metadata (./metadata): the metadata file of the server that owns it;
@@ -11,10 +11,12 @@
  *   3. video (./video): the video and the facts about its file, the content
  *      identity and delivery facts, captions and chapters;
  *   4. the blurhash retry (./artwork): a second attempt at a blurhash the
- *      artwork step's fetch did not get.
+ *      artwork step's fetch did not get;
+ *   5. credits (./credits): the credits sidecar of the server that owns it,
+ *      apart from the metadata (core/credits).
  *
  * The steps do no I/O. The files a step reads (the metadata file, the
- * blurhashes) it names in its plan's `needs`; each step is run through the
+ * blurhashes, the credits file) it names in its plan's `needs`; each step is run through the
  * prefetch step (infrastructure/fileSystem/prefetch), which fetches them and
  * calls it again with them, one step at a time, in step order.
  *
@@ -56,6 +58,7 @@ import isEqual from 'lodash/isEqual'
 import { syncMovieMetadata } from './metadata'
 import { syncMovieArtwork, retryMovieBlurhashes } from './artwork'
 import { syncMovieVideo } from './video'
+import { syncMovieCredits } from './credits'
 import type { MovieStepOutcome } from './step'
 
 const pinoLog = createLogger('Sync.Movie')
@@ -71,7 +74,7 @@ const MOVIE_CLEANABLE_FIELDS: CleanableField[] = [
 ]
 
 /** How many steps a pass runs (the event log's operation count). */
-const MOVIE_STEP_COUNT = 4
+const MOVIE_STEP_COUNT = 5
 
 /**
  * The value a movie's skip gate must hold, for one server, for that server's
@@ -210,6 +213,9 @@ export class MovieSyncService {
       )
       await runStep(SyncOperation.Blurhash, (_movie, resources) =>
         retryMovieBlurhashes({ originalTitle, run }, artwork?.retries ?? [], resources)
+      )
+      await runStep(SyncOperation.Credits, (movie, resources) =>
+        syncMovieCredits({ originalTitle, movie, payload, run, availability }, resources)
       )
 
       // ---- Field-absence cleanup: drop asset fields no enabled server

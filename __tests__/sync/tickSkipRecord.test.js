@@ -25,6 +25,10 @@ jest.mock('chalk', () => {
   return { __esModule: true, default: paint }
 })
 jest.mock('@src/utils/sync/run/serverPass', () => ({ runServerPass: jest.fn() }))
+jest.mock('@src/utils/sync/run/libraryCredits', () => ({
+  LIBRARY_CREDITS_COLLECTION: 'LibraryCredits',
+  syncLibraryCredits: jest.fn(async () => ({ action: 'unchanged', retry: false, errors: [], changes: [] })),
+}))
 jest.mock('@src/utils/sync/run/postSync', () => ({ runPostSyncCleanup: jest.fn(async () => ({})) }))
 jest.mock('@src/utils/sync/run/preTag', () => ({ preTagSyncRunId: jest.fn() }))
 jest.mock('@src/utils/sync/run/missingMedia', () => ({
@@ -52,6 +56,7 @@ const { forgetAppliedPayloads, markPassRunning } = require('@src/utils/sync/run/
 const { getSyncLockHolder, releaseSyncLock, tryAcquireSyncLock } = require('@src/utils/sync/run/runState')
 const { SYNC_GATE_VERSION } = require('@src/utils/sync/core/syncGate')
 const { runServerPass } = require('@src/utils/sync/run/serverPass')
+const { syncLibraryCredits } = require('@src/utils/sync/run/libraryCredits')
 const { preTagSyncRunId } = require('@src/utils/sync/run/preTag')
 const { probeServers } = require('@src/utils/sync/run/manifestTick')
 const { getTickState } = require('@src/utils/sync/run/tickState')
@@ -244,6 +249,9 @@ describe('a pass that did not complete is not recorded, so the next tick fetches
         if (serverConfig.id === 'default') throw new Error('Mongo went away')
         return cleanPass()
       })
+    }, {}],
+    ['a server\u2019s library credits failed in a way a retry may clear', () => {
+      syncLibraryCredits.mockImplementationOnce(async () => ({ action: 'failed', retry: true, errors: ['credits fetch-failed'], changes: [] }))
     }, {}],
     ['not every enabled server answered', () => {}, { allEnabledServersProbed: false }],
     ['pre-tag did not cover every collection', () => preTagCovers({ ok: false }), {}],

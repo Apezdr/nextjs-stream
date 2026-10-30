@@ -212,7 +212,10 @@ export async function GET(req) {
                     // Preserve first air date and air date for seasons
                     // helpful to see when the show started vs when the season started
                     first_air_date: media.first_air_date,
-                    airDate: media.metadata?.air_date // Explicit air_date for TV seasons
+                    airDate: media.metadata?.air_date, // Explicit air_date for TV seasons
+                    // A season has no credits file of its own: the show's
+                    // (CREDITS_SIDECAR.md, section 7)
+                    credits: media.credits || fullShowData?.credits,
                   }
                 
                 if (Boolean(process.env.DEBUG) == true) {

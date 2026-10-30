@@ -703,6 +703,13 @@ export function sanitizeTVData(media, options = {}) {
     if (media.metadata?.id) {
       tvData.tmdbId = media.metadata.id
     }
+
+    // Credits & licenses, resolved for display (getFlatRequestedMedia): an
+    // episode's are its show's with its own file applied. Absent when there
+    // are none (CREDITS_SIDECAR.md, section 7).
+    if (media.credits) {
+      tvData.credits = media.credits
+    }
     // Also check for tmdbId at top level (from some API responses)
     if (media.tmdbId && !tvData.tmdbId) {
       tvData.tmdbId = media.tmdbId

@@ -13,6 +13,7 @@ import CaptionsEditor from './CaptionsEditor'
 import DeleteMediaButton from './DeleteMediaButton'
 import TmdbConfigButton from './TmdbConfigButton'
 import RawRecordButton from './RawRecordButton'
+import CreditsStatus from './CreditsStatus'
 import JitOverrideSelect from './JitOverrideSelect'
 
 const SCALAR_KEYS = [
@@ -207,6 +208,12 @@ export default function MovieEditor({ record = null, isNew = false, ownership = 
           <ActionError state={state} />
         </div>
       </form>
+
+      {!isNew && record ? (
+        <div className="mt-8">
+          <CreditsStatus record={record} />
+        </div>
+      ) : null}
     </div>
   )
 }

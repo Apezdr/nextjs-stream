@@ -34,6 +34,7 @@ import ArtworkButton from './details/ArtworkButton'
 import PrimaryPlayButton from './details/PrimaryPlayButton'
 import SeasonTile from './details/SeasonTile'
 import CastRail from './details/CastRail'
+import CreditsPanel from './details/CreditsPanel'
 import ShowNextUpLine from './ShowNextUpLine'
 
 const EYEBROW = 'text-xs font-semibold uppercase tracking-[0.18em] text-white/60'
@@ -201,10 +202,11 @@ export default async function TVShowSeasonsList({ showTitle, show = null, userId
         )}
       </section>
 
-      {cast.length > 0 || facts.length > 0 ? (
+      {cast.length > 0 || facts.length > 0 || doc.credits ? (
         <div className="mt-10 space-y-12 rounded-2xl bg-[#070b1d]/65 px-4 py-8 ring-1 ring-white/5 sm:mt-14 sm:px-6 lg:px-8">
           {cast.length > 0 ? <CastRail cast={cast} title="Cast" id="cast" /> : null}
           <DetailsPanel id="show-details" title="Show details" rows={facts} />
+          <CreditsPanel credits={doc.credits} id="credits" />
         </div>
       ) : null}
     </div>

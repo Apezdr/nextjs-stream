@@ -3,7 +3,7 @@
  * server's payload (TVShowSyncService writes it).
  *
  * Pure: it does no I/O. The files it reads (the show's metadata file, the
- * poster's and backdrop's blurhashes) it reads from the resources the
+ * poster's and backdrop's blurhashes, its credits file) it reads from the resources the
  * prefetch step fetched for it (core/resources). A file it was not handed
  * reads as a failed fetch and is named in its plan's `needs`; the service
  * fetches those and calls it again (infrastructure/fileSystem/prefetch).
@@ -24,6 +24,7 @@ import { draftWritePlan, emptyWritePlan } from '../../core/writePlan'
 import { seedDiscovery, applyFirstSeen } from '../../core/discovery'
 import { resolveMediaId } from '../../core/deliveryFacts'
 import { readBlurhashFile } from './blurhashFile'
+import { applyCreditsOutcome, creditsReporters, planCredits } from '../../core/credits'
 
 /**
  * What planTVShow reads of the run, besides the availability: not forceSync
@@ -281,6 +282,26 @@ export function planTVShow(
   }
   applyBlurhashRule(canUpdatePoster, fileData.posterBlurhash, fileData.posterURL || fileData.poster, 'posterURL', 'posterBlurhash')
   applyBlurhashRule(canUpdateBackdrop, fileData.backdropBlurhash, fileData.backdropURL || fileData.backdrop, 'backdrop', 'backdropBlurhash')
+
+  // --- Credits: the show's credits sidecar (core/credits), apart from the
+  // metadata and its lock. A failure keeps the stored credits and holds the
+  // gate open; a removal needs every server that has the show to confirm it.
+  applyCreditsOutcome(
+    planCredits(
+      {
+        stored: entity as any,
+        reported: fileData.credits,
+        reporters: creditsReporters(availability.fieldAvailability, 'tv', showTitle),
+        scope: 'title',
+        run,
+        now,
+      },
+      (request) => resources.read(request)
+    ),
+    entity,
+    unset,
+    holdBack
+  )
 
   // Season count: the seasons any server has, counted once each. It used to
   // be each server's own count, written by every pass, so a show whose

@@ -107,6 +107,38 @@ describe('what it returns', () => {
     expect(setCache).toHaveBeenCalledWith(`default:file:${METADATA}`, { id: 7 }, '"e1"', 'Mon, 01 Jan 2024 00:00:00 GMT', 3600)
   })
 
+  describe('raw bytes (a credits file)', () => {
+    const CREDITS = '/media/movies/Some%20Movie%20(2020)/credits.json?hash=abc'
+    // Not UTF-8 on purpose: the bytes must come back exactly as sent
+    const RAW = Buffer.from([0x7b, 0x22, 0xe9, 0x22, 0x7d, 0xef, 0xbb, 0xbf])
+
+    it('come back as the very bytes the server sent, read as a buffer and cached as base64', async () => {
+      httpGet.mockResolvedValue({ data: RAW, headers: { etag: '"c1"' } })
+
+      const data = await fetchMetadataMultiServer('default', CREDITS, 'bytes', 'movie', 'A')
+
+      expect(Buffer.isBuffer(data) && data.equals(RAW)).toBe(true)
+      expect(httpGet).toHaveBeenCalledWith(`https://files.example${CREDITS}`, expect.objectContaining({ responseType: 'buffer' }))
+      expect(setCache).toHaveBeenCalledWith(`default:bytes:${CREDITS}`, RAW.toString('base64'), '"c1"', undefined, 3600)
+    })
+
+    it('come back from the cache as the same bytes on Not Modified, and after a failed request', async () => {
+      cached(`default:bytes:${CREDITS}`, { data: RAW.toString('base64'), etag: '"c1"' })
+      httpGet.mockResolvedValueOnce({ data: null, headers: {} })
+      const notModified = await fetchMetadataMultiServer('default', CREDITS, 'bytes', 'movie', 'A')
+      expect(Buffer.isBuffer(notModified) && notModified.equals(RAW)).toBe(true)
+
+      httpGet.mockRejectedValueOnce(new Error('ECONNRESET'))
+      const fallback = await fetchMetadataMultiServer('default', CREDITS, 'bytes', 'movie', 'A')
+      expect(Buffer.isBuffer(fallback) && fallback.equals(RAW)).toBe(true)
+    })
+
+    it('come back as null for an empty body with nothing cached', async () => {
+      httpGet.mockResolvedValue({ data: Buffer.alloc(0), headers: {} })
+      await expect(fetchMetadataMultiServer('default', CREDITS, 'bytes', 'movie', 'A')).resolves.toBeNull()
+    })
+  })
+
   it('the blurhash text trimmed, cached for a week', async () => {
     httpGet.mockResolvedValue({ data: '  LEHV6nWB2yk8\n', headers: {} })
 
