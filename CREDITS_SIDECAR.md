@@ -267,6 +267,14 @@ The rules of section 5 apply with that server as the only claimant:
 Shown, the enabled servers' library credits are listed in server priority
 order, a file two servers share once (`scope: "library"`).
 
+**The collage follows its credits.** When the library file has an asset with
+`"path": "poster_collage.jpg"`, the processor builds the collage from exactly
+the inputs its `derivedFrom` names, so a title added to the library never
+slips into a collage its credits do not cover. If the file cannot be read,
+names no inputs, or names one that is missing, the collage is not rebuilt and
+the existing one is kept. `POSTER_COLLAGE_ENABLED=false` on the processor
+stops rebuilding it altogether, freezing a verified collage.
+
 ## 7. API
 
 `GET /api/authenticated/media` returns `credits` resolved for display on
