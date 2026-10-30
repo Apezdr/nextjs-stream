@@ -40,7 +40,7 @@ episode object inside a show's `seasons`, carries a `credits` value:
 | --- | --- |
 | `{ "url": "<path>?hash=<h>", "hash": "<h>" }` | The file is there and was read. `h` is the SHA-256 (hex) of the file's bytes. |
 | `{ "absent": true }` | The folder listing has no such file: confirmed absence. |
-| `{ "error": "unreadable" \| "too-large" \| "empty" }` | The listing has the file, but it could not be read, is over 256 KiB, or has 0 bytes. Not an absence. |
+| `{ "error": "unreadable" \| "too-large" \| "empty" \| "not-a-file" }` | The listing has the name, but the file could not be read, is over 256 KiB, has 0 bytes, or is not a regular file (a folder). Not an absence. |
 | key missing | A processor that predates this contract. Says nothing either way. |
 
 The processor never parses the file: it lists it, checks its size, and hashes
@@ -48,8 +48,8 @@ its bytes. It does not hash videos or any other file for this. A row the scan
 could not read (its directory listing failed) keeps its previous value, as
 every other field of that row does. A title whose stored value is
 `unreadable` is read again on every scan (a permission fix moves no file
-time); `too-large` and `empty` are read again when the file is edited, which
-moves the folder's hash.
+time); `too-large`, `empty` and `not-a-file` are read again when the file is
+edited or replaced, which moves the folder's hash.
 
 The value is part of the entry, so the manifest hash moves when it does, and
 the frontend's tick selects the title (no separate hash). `MEDIA_PAYLOAD_VERSION`
@@ -212,15 +212,18 @@ never hands the credits to a lower-priority server.
   credits are the last valid ones, not a newly verified grant: `creditsHash`
   still names the file they came from.
   - **Retried** on the next pass (the gate stays open): a fetch that failed,
-    bytes whose SHA-256 is not the published hash, and a processor `error` of
-    `unreadable` (or one this build does not know).
+    UTF-8 bytes whose SHA-256 is not the published hash (the file changed
+    since the scan), and a processor `error` of `unreadable` (or one this
+    build does not know).
   - **Rejected** until the file changes (the gate may close; an edit moves
     the payload and reopens it): bytes that match the published hash but are
     not JSON, not the schema, of a schema version this build does not read, or
-    over 256 KiB; a url without a hash; a processor `error` of `too-large` or
-    `empty`. A rejection is not a pass error, so one bad file never stops the
-    sync from skipping unchanged ticks. A build that adds a schema version
-    raises `SYNC_GATE_VERSION`, so files it rejected before are read again.
+    over 256 KiB; bytes that are not UTF-8 (they can never match the hash
+    once decoded); a url without a hash; a processor `error` of `too-large`,
+    `empty` or `not-a-file`. A rejection is not a pass error, so one bad file never stops the
+    sync from skipping unchanged ticks. A build that makes valid any file it
+    rejected before (a schema version added, a limit raised, a rule relaxed)
+    raises `SYNC_GATE_VERSION`, so those files are read again.
 
 **Confirmed removal.** The credits fields are removed only when all of these
 hold: every enabled server answered this run; no server publishes a `url` or an
@@ -253,7 +256,8 @@ The rules of section 5 apply with that server as the only claimant:
   recorded and the next tick runs again, and a rejected file waits for an
   edit (which moves the manifests);
 - the credits are removed only on that server's own `absent`; a processor
-  without a `library` key never removes them.
+  without a `library` key changes nothing (not even a recorded failure). An
+  empty library root (an unmounted share) is `unreadable`, never `absent`.
 
 Shown, the enabled servers' library credits are listed in server priority
 order, a file two servers share once (`scope: "library"`).

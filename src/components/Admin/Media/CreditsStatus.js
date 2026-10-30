@@ -59,7 +59,7 @@ export default function CreditsStatus({ record, scope = 'title' }) {
 // Failures the sync retries on every pass; the others wait for the file to
 // change (CREDITS_SIDECAR.md, section 5).
 const RETRIED = new Set(['fetch-failed', 'hash-mismatch'])
-const PINNED_SERVER = new Set(['server:too-large', 'server:empty'])
+const PINNED_SERVER = new Set(['server:too-large', 'server:empty', 'server:not-a-file'])
 
 const REASONS = {
   'fetch-failed': 'the file could not be fetched from the file server',
@@ -68,10 +68,12 @@ const REASONS = {
   'unsupported-version': 'the file’s schemaVersion is not one this build reads',
   schema: 'the file does not follow the credits schema',
   'hash-mismatch': 'the file changed since the processor published it',
+  'not-utf8': 'the file is not saved as UTF-8',
   'malformed-locator': 'the processor published a credits URL without its hash',
   'server:unreadable': 'the processor could not read the file',
   'server:too-large': 'the processor found the file over 256 KiB',
   'server:empty': 'the processor found the file empty',
+  'server:not-a-file': 'the processor found a folder or other non-file named like the credits file',
 }
 
 function describeReason(reason) {

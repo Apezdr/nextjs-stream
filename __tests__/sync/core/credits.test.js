@@ -135,12 +135,28 @@ describe('a failure', () => {
   it.each([
     ['too-large', false],
     ['empty', false],
+    ['not-a-file', false],
     ['unreadable', true],
     ['something-new', true],
   ])('holds the gate open for a processor error %p only when it may clear by itself (%p)', (error, held) => {
     const outcome = failed(undefined, { error })
     expect(outcome.action).toBe(held ? 'failed' : 'rejected')
     expect(outcome.holdBack).toBe(held ? 'credits' : null)
+  })
+
+  it('rejects a file that is not UTF-8, which can never match its hash once decoded, without holding the gate', () => {
+    // An accented name saved as Latin-1: the processor hashes these bytes,
+    // the fetch decodes them as UTF-8 (as got does)
+    const bytes = Buffer.from(JSON.stringify(fixtures.mixedGrants()).replace('Example Studio', 'Studio Cr\u00e9ation'), 'latin1')
+    const hash = createHash('sha256').update(bytes).digest('hex')
+    const outcome = failed(ok(bytes.toString('utf8')), present(hash))
+    expect(outcome).toMatchObject({ action: 'rejected', holdBack: null, errors: [], set: { creditsStatus: { reason: 'not-utf8', hash } } })
+  })
+
+  it('accepts a UTF-8 file with a byte-order mark', () => {
+    const text = `\uFEFF${TEXT}`
+    const outcome = failed(ok(text), present(sha(text)))
+    expect(outcome).toMatchObject({ action: 'stored', set: { credits: fixtures.mixedGrants() } })
   })
 
   it('rejects a url without a hash, without holding the gate', () => {

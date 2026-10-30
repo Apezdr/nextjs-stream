@@ -92,6 +92,10 @@ export async function syncLibraryCredits({
     holders: [serverId],
   }
 
+  // A processor that predates library credits says nothing: nothing is
+  // written, kept or cleared on its behalf (not even a recorded failure).
+  if (reported === undefined) return { action: 'unchanged', retry: false, errors: [], changes: [] }
+
   const stored = await collection.findOne({ _id: serverId })
   const { outcome } = await buildWithResources(
     (resources) => {

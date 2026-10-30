@@ -23,8 +23,11 @@ export const CREDITS_MAX_BYTES = 262_144
 
 /**
  * The schema versions this build reads. A file of another version is recorded
- * as rejected and not read again until it changes (core/credits): adding a
- * version here must raise SYNC_GATE_VERSION, or files rejected before stay so.
+ * as rejected and not read again until it changes (core/credits). So any
+ * change that makes a file valid that was not (a version added here, a limit
+ * raised or a rule relaxed in credits.schema.json or below, a larger
+ * CREDITS_MAX_BYTES) must raise SYNC_GATE_VERSION, or the title files
+ * rejected before stay rejected until someone edits them.
  */
 export const SUPPORTED_CREDITS_SCHEMA_VERSIONS: readonly number[] = [1]
 
@@ -79,7 +82,8 @@ export type CreditsScope = 'title' | 'episode' | 'library'
 
 /**
  * Why a file was rejected. Each is a failed input, never an absence: the
- * stored credits stay and the next pass tries again.
+ * stored credits stay, and the file is read again when it changes
+ * (core/credits).
  */
 export type CreditsRejection = 'too-large' | 'invalid-json' | 'unsupported-version' | 'schema' | 'hash-mismatch'
 

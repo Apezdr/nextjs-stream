@@ -105,6 +105,13 @@ export interface CreditsOutcome {
   errors: string[]
 }
 
+/**
+ * Errors the processor publishes that only a change to the file clears (it
+ * reads them again when the folder changes): an empty or oversized file, or
+ * a listed name that is not a file.
+ */
+const PINNED_SERVER_ERRORS = new Set(['too-large', 'empty', 'not-a-file'])
+
 /** The longest `detail` stored: it is a diagnostic for admins, not a credit. */
 const MAX_DETAIL = 1000
 
@@ -221,9 +228,9 @@ export function planCredits(
 
     if (reported.state === 'error') {
       // Only an unreadable file may read on its own (a permission fixed); an
-      // empty or oversized one has to be edited. An error this build does not
-      // know is retried, to be safe.
-      const pinned = reported.error === 'too-large' || reported.error === 'empty'
+      // empty or oversized one, or one that is not a file, has to be changed.
+      // An error this build does not know is retried, to be safe.
+      const pinned = PINNED_SERVER_ERRORS.has(reported.error)
       return fail(`server:${reported.error}`, undefined, undefined, !pinned)
     }
     if (reported.state !== 'present') return fail('malformed-locator', undefined, undefined, false)
@@ -237,7 +244,15 @@ export function planCredits(
     // lasting about the file.
     const text = file.data
     if (createHash('sha256').update(text, 'utf8').digest('hex') !== reported.hash) {
-      return fail('hash-mismatch', 'the file changed since the processor published it, or is not UTF-8', reported.hash, true)
+      // The processor hashed the raw bytes; the fetch decoded them as UTF-8,
+      // which replaces every byte that is not UTF-8 with U+FFFD and so can
+      // never give the same hash back. Such a file is not UTF-8, whatever
+      // else changed: rejected, not retried. (A file that holds U+FFFD
+      // itself hashes the same, so it never gets here.)
+      if (text.includes('\uFFFD')) {
+        return fail('not-utf8', 'the file is not UTF-8 (save it as UTF-8)', reported.hash, false)
+      }
+      return fail('hash-mismatch', 'the file changed since the processor published it', reported.hash, true)
     }
     if (Buffer.byteLength(text, 'utf8') > CREDITS_MAX_BYTES) {
       return fail('too-large', `over ${CREDITS_MAX_BYTES} bytes`, reported.hash, false)

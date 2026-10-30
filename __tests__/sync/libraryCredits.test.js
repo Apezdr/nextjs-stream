@@ -136,6 +136,15 @@ it('keeps the credits when the processor reports an error or publishes no librar
   expect(older.docs.A.credits).toEqual(collage())
 })
 
+it('leaves a recorded failure alone when the processor publishes no library value', async () => {
+  const status = { state: 'error', reason: 'fetch-failed', serverId: 'A', since: NOW }
+  const collection = collectionOver({ A: { _id: 'A', credits: collage(), creditsSource: 'A', creditsHash: 'old', creditsStatus: status } })
+  expect(await run(collection, { movies: { titles: new Map() }, tv: { titles: new Map() } })).toMatchObject({ action: 'unchanged', retry: false })
+  expect(collection.findOne).not.toHaveBeenCalled()
+  expect(collection.updateOne).not.toHaveBeenCalled()
+  expect(collection.docs.A.creditsStatus).toEqual(status)
+})
+
 describe('libraryCreditsLocator', () => {
   it('reads the movies manifest, else the TV one, else nothing', () => {
     expect(libraryCreditsLocator({ movies: { library: { credits: { absent: true } } }, tv: { library: { credits: present() } } })).toEqual({ absent: true })
