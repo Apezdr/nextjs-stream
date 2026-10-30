@@ -71,14 +71,16 @@ const run = (collection, manifests) =>
 
 beforeEach(() => {
   jest.clearAllMocks()
-  fetchMetadataMultiServer.mockImplementation(async (_server, path, type) => (type === 'text' && path === `/credits.json?hash=${HASH}` ? TEXT : null))
+  fetchMetadataMultiServer.mockImplementation(async (_server, path, type) =>
+    type === 'bytes' && path === `/credits.json?hash=${HASH}` ? Buffer.from(TEXT, 'utf8') : null
+  )
 })
 
 it('stores a server\'s library file, stamped with the run', async () => {
   const collection = collectionOver()
   const result = await run(collection, manifestsWith(present()))
   expect(result).toMatchObject({ action: 'stored', retry: false })
-  expect(fetchMetadataMultiServer).toHaveBeenCalledWith('A', `/credits.json?hash=${HASH}`, 'text', 'library', 'library of A')
+  expect(fetchMetadataMultiServer).toHaveBeenCalledWith('A', `/credits.json?hash=${HASH}`, 'bytes', 'library', 'library of A')
   expect(collection.docs.A).toEqual({ _id: 'A', credits: collage(), creditsSource: 'A', creditsHash: HASH, serverId: 'A', lastSynced: NOW, syncRunId: 'run-1' })
 })
 
@@ -111,7 +113,7 @@ it('keeps the last valid credits and asks for a retry when the fetch fails', asy
 
 it('records a file it cannot use without asking for a retry', async () => {
   const bad = JSON.stringify({ ...collage(), suppress: ['x'] })
-  fetchMetadataMultiServer.mockResolvedValue(bad)
+  fetchMetadataMultiServer.mockResolvedValue(Buffer.from(bad, 'utf8'))
   const collection = collectionOver()
   expect(await run(collection, manifestsWith(present(sha(bad))))).toMatchObject({ action: 'rejected', retry: false })
   expect(collection.docs.A.creditsStatus).toMatchObject({ reason: 'schema' })

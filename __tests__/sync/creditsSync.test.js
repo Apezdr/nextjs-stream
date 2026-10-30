@@ -44,7 +44,7 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockFiles = {}
   fetchMetadataMultiServer.mockImplementation(async (_serverId, path, type) => {
-    if (type === 'text') return mockFiles[path] ?? null
+    if (type === 'bytes') return mockFiles[path] ? Buffer.from(mockFiles[path], 'utf8') : null
     if (type === 'blurhash') return `blurhash-of:${path}`
     return { name: 'From metadata.json', overview: 'The synopsis.' }
   })
@@ -56,7 +56,7 @@ const locator = (folder, text, file = 'credits.json') => {
   mockFiles[url] = text
   return { url, hash }
 }
-const textCalls = () => fetchMetadataMultiServer.mock.calls.filter(([, , type]) => type === 'text').map(([serverId, path]) => [serverId, path])
+const textCalls = () => fetchMetadataMultiServer.mock.calls.filter(([, , type]) => type === 'bytes').map(([serverId, path]) => [serverId, path])
 
 // ------------------------------------------------------------------ movies
 

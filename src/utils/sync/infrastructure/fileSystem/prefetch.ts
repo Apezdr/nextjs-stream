@@ -6,7 +6,7 @@
  * them here and calls it again with them. Metadata files and blurhashes are
  * read through fetchMetadataMultiServer (./fetchFile): its Redis cache,
  * conditional requests, retries and slot of the sync's one HTTP limiter. The
- * credits sidecars are read as text, the same way. The
+ * credits sidecars are read the same way, as raw bytes. The
  * movie artwork step's first read of a blurhash is the one plain request
  * (readBlurhashDirect), in a slot of the pass's throttle when there is one.
  *
@@ -48,11 +48,18 @@ export async function fetchResources(needs: readonly ResourceRequest[], context:
 }
 
 /** How fetchMetadataMultiServer reads each kind of file. */
-const FETCH_TYPE: Record<ResourceRequest['kind'], 'file' | 'blurhash' | 'text'> = {
+const FETCH_TYPE: Record<ResourceRequest['kind'], 'file' | 'blurhash' | 'bytes'> = {
   metadata: 'file',
   blurhash: 'blurhash',
-  // As text: the credits rule checks the file's size and hash before it parses it.
-  credits: 'text',
+  // As raw bytes: the credits rule hashes them before it decodes them.
+  credits: 'bytes',
+}
+
+/** Whether what came back is a file of this kind. */
+function cameBack(kind: ResourceRequest['kind'], data: unknown): boolean {
+  if (kind === 'metadata') return Boolean(data)
+  if (kind === 'credits') return Buffer.isBuffer(data) && data.length > 0
+  return typeof data === 'string' && data !== ''
 }
 
 const NOTHING_CAME_BACK: Record<ResourceRequest['kind'], string> = {
@@ -69,7 +76,7 @@ async function fetchResource(request: ResourceRequest, context: PrefetchContext)
       kind === 'blurhash' && direct
         ? await readBlurhashDirect(path, context.throttle)
         : await fetchMetadataMultiServer(serverId, path, FETCH_TYPE[kind], context.mediaType, context.title)
-    if (kind === 'metadata' ? !data : typeof data !== 'string' || data === '') {
+    if (!cameBack(kind, data)) {
       return { ...asked, ok: false, error: NOTHING_CAME_BACK[kind] }
     }
     return { ...asked, ok: true, data }

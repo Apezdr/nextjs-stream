@@ -142,8 +142,9 @@ stays 2 (deployed frontends ignore the key).
 The frontend validates every file before storing it. A file that fails any rule
 is a **failed input**, never an absence (section 5).
 
-1. At most 256 KiB, UTF-8 (a leading byte-order mark is ignored), valid JSON,
-   and its SHA-256 equals the `hash` the processor published.
+1. Its raw bytes' SHA-256 equals the `hash` the processor published (checked
+   first; bytes with another hash are not judged at all), then: at most
+   256 KiB, strict UTF-8 (a leading byte-order mark is ignored), valid JSON.
 2. `schemaVersion` is 1. Any other version is *unsupported*.
 3. The schema: no unknown keys anywhere (a misspelt `licenceUrl` would
    otherwise drop a notice without a word), types, enums, the id pattern, and
@@ -203,8 +204,10 @@ never hands the credits to a lower-priority server.
 
 - Its `hash` equals `creditsHash`, `creditsSource` is this server and there is
   no `creditsStatus`: nothing to do, nothing fetched.
-- Otherwise it fetches the URL through the sync's file fetcher (the server's own
-  host only), validates the bytes, and on success writes `credits`,
+- Otherwise it fetches the file's raw bytes through the sync's file fetcher
+  (the server's own host only; cached as the same bytes), checks their
+  SHA-256 against the published hash, then their size, then decodes them as
+  strict UTF-8 and validates them. On success it writes `credits`,
   `creditsSource`, `creditsHash` and removes `creditsStatus`.
 - Any failure keeps the stored `credits` and `creditsHash` as they are and
   records why in `creditsStatus` (its `since` is kept while the reason and
@@ -212,15 +215,15 @@ never hands the credits to a lower-priority server.
   credits are the last valid ones, not a newly verified grant: `creditsHash`
   still names the file they came from.
   - **Retried** on the next pass (the gate stays open): a fetch that failed,
-    UTF-8 bytes whose SHA-256 is not the published hash (the file changed
-    since the scan), and a processor `error` of `unreadable` (or one this
-    build does not know).
+    bytes whose SHA-256 is not the published hash (whatever they hold: they
+    are not the published file), and a processor `error` of `unreadable` (or
+    one this build does not know).
   - **Rejected** until the file changes (the gate may close; an edit moves
     the payload and reopens it): bytes that match the published hash but are
     not JSON, not the schema, of a schema version this build does not read, or
-    over 256 KiB; bytes that are not UTF-8 (they can never match the hash
-    once decoded); a url without a hash; a processor `error` of `too-large`,
-    `empty` or `not-a-file`. A rejection is not a pass error, so one bad file never stops the
+    over 256 KiB, or not UTF-8 (judged only once their hash matches); a url
+    without a hash; a processor `error` of `too-large`, `empty` or
+    `not-a-file`. A rejection is not a pass error, so one bad file never stops the
     sync from skipping unchanged ticks. A build that makes valid any file it
     rejected before (a schema version added, a limit raised, a rule relaxed)
     raises `SYNC_GATE_VERSION`, so those files are read again.

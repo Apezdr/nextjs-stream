@@ -151,7 +151,7 @@ export interface SyncResult {
 export interface ResourceRequest {
   /**
    * What the file is: a metadata file (JSON), a blurhash (text), or a credits
-   * sidecar (text: its bytes are checked before it is parsed, core/credits).
+   * sidecar (raw bytes, a Buffer: hashed before they are decoded, core/credits).
    */
   kind: 'metadata' | 'blurhash' | 'credits'
   /** The server to ask. */

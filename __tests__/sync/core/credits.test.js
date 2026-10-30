@@ -54,7 +54,8 @@ function plan(serverId, payloads, stored, { fetched, probed = true, now = NOW } 
   const resources = new Resources(request && fetched ? [{ ...request, ...fetched(request) }] : [])
   return { outcome: planCredits(input, (asked) => resources.read(asked)), request, needs: resources.needs }
 }
-const ok = (text = TEXT) => () => ({ ok: true, data: text })
+// The prefetch step hands the rule the file's raw bytes (a Buffer)
+const ok = (content = TEXT) => () => ({ ok: true, data: Buffer.isBuffer(content) ? content : Buffer.from(content, 'utf8') })
 const storedFrom = (serverId, hash = HASH) => ({ credits: fixtures.mixedGrants(), creditsSource: serverId, creditsHash: hash })
 
 describe('the owner\'s file', () => {
@@ -97,7 +98,7 @@ describe('the owner\'s file', () => {
       run: { serverConfig: mockServers.A, allEnabledServersProbed: true },
       now: NOW,
     })
-    const read = () => ({ kind: 'credits', serverId: 'A', path: 'x', ok: true, data: text })
+    const read = () => ({ kind: 'credits', serverId: 'A', path: 'x', ok: true, data: Buffer.from(text, 'utf8') })
     expect(planCredits(input('episode'), read).action).toBe('stored')
     expect(planCredits(input('title'), read)).toMatchObject({ action: 'rejected', set: { creditsStatus: { reason: 'schema' } } })
   })
@@ -144,20 +145,51 @@ describe('a failure', () => {
     expect(outcome.holdBack).toBe(held ? 'credits' : null)
   })
 
-  it('rejects a file that is not UTF-8, which can never match its hash once decoded, without holding the gate', () => {
-    // An accented name saved as Latin-1: the processor hashes these bytes,
-    // the fetch decodes them as UTF-8 (as got does)
-    const bytes = Buffer.from(JSON.stringify(fixtures.mixedGrants()).replace('Example Studio', 'Studio Cr\u00e9ation'), 'latin1')
-    const hash = createHash('sha256').update(bytes).digest('hex')
-    const outcome = failed(ok(bytes.toString('utf8')), present(hash))
-    expect(outcome).toMatchObject({ action: 'rejected', holdBack: null, errors: [], set: { creditsStatus: { reason: 'not-utf8', hash } } })
+  describe('bytes, hash and encoding, in that order', () => {
+    const shaBytes = (bytes) => createHash('sha256').update(bytes).digest('hex')
+    // An accented name saved as Latin-1: bytes that are not UTF-8
+    const latin1 = () => Buffer.from(JSON.stringify(fixtures.mixedGrants()).replace('Example Studio', 'Studio Cr\u00e9ation'), 'latin1')
+    // Valid UTF-8 JSON that holds a literal U+FFFD in a name
+    const withReplacementChar = () => Buffer.from(JSON.stringify(fixtures.mixedGrants()).replace('Example Studio', 'Contributor \uFFFD'), 'utf8')
+    const keptAndRetried = (outcome) => {
+      expect(outcome).toMatchObject({ action: 'failed', holdBack: 'credits', unset: [], set: { creditsStatus: { reason: 'hash-mismatch', hash: HASH } } })
+      expect(outcome.set).not.toHaveProperty('credits')
+      expect(outcome.set).not.toHaveProperty('creditsHash')
+    }
+
+    it('retries valid UTF-8 holding U+FFFD that is not the published file', () => {
+      keptAndRetried(failed(ok(withReplacementChar())))
+    })
+
+    it('retries bytes that are not UTF-8 and not the published file', () => {
+      keptAndRetried(failed(ok(latin1())))
+    })
+
+    it('rejects the published file when it is not UTF-8, keeping the stored credits', () => {
+      const bytes = latin1()
+      const outcome = failed(ok(bytes), present(shaBytes(bytes)))
+      expect(outcome).toMatchObject({ action: 'rejected', holdBack: null, errors: [], unset: [], set: { creditsStatus: { reason: 'not-utf8', hash: shaBytes(bytes) } } })
+      expect(outcome.set).not.toHaveProperty('credits')
+    })
+
+    it('stores the published file when it is valid UTF-8 holding U+FFFD', () => {
+      const bytes = withReplacementChar()
+      const outcome = failed(ok(bytes), present(shaBytes(bytes)))
+      expect(outcome).toMatchObject({ action: 'stored', holdBack: null, set: { creditsHash: shaBytes(bytes) } })
+      expect(outcome.set.credits.entries[0].author).toBe('Contributor \uFFFD')
+    })
+
+    it('hashes the bytes as they came: a byte-order mark is part of the published file', () => {
+      const bytes = Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), Buffer.from(TEXT, 'utf8')])
+      expect(failed(ok(bytes), present(shaBytes(bytes)))).toMatchObject({ action: 'stored' })
+      keptAndRetried(failed(ok(bytes)))
+    })
+
+    it('retries an answer that is not bytes', () => {
+      expect(failed(() => ({ ok: true, data: TEXT }))).toMatchObject({ action: 'failed', holdBack: 'credits', set: { creditsStatus: { reason: 'fetch-failed' } } })
+    })
   })
 
-  it('accepts a UTF-8 file with a byte-order mark', () => {
-    const text = `\uFEFF${TEXT}`
-    const outcome = failed(ok(text), present(sha(text)))
-    expect(outcome).toMatchObject({ action: 'stored', set: { credits: fixtures.mixedGrants() } })
-  })
 
   it('rejects a url without a hash, without holding the gate', () => {
     expect(failed(undefined, { url: FILE })).toMatchObject({ action: 'rejected', holdBack: null })

@@ -13,9 +13,9 @@
  *    is the highest-priority claimant, fail-closed (core/ownership): an error
  *    is a claim, so a failure on the owner never hands the credits to a
  *    lower-priority server.
- *  - The owner's pass fetches the file (unless its hash is the stored one),
- *    checks its hash and size and validates it (src/utils/credits/validate),
- *    and stores it. A failure keeps what is stored and records why in
+ *  - The owner's pass fetches the file's raw bytes (unless its hash is the
+ *    stored one), checks their hash, then their size and UTF-8, then
+ *    validates them (src/utils/credits/validate), and stores them. A failure keeps what is stored and records why in
  *    `creditsStatus`. One that may clear by itself (a fetch, bytes that are
  *    not the published ones, a file the processor could not read) holds the
  *    gate open; one in the published bytes waits for the file to change.
@@ -24,8 +24,8 @@
  *    enabled server answered. A processor that publishes no credits value
  *    never confirms an absence.
  *
- * Pure apart from hashing the fetched text: the file is read from the
- * resources the prefetch step fetched (core/resources).
+ * Pure apart from hashing and decoding the fetched bytes: the file is read
+ * from the resources the prefetch step fetched (core/resources).
  */
 
 import { createHash } from 'crypto'
@@ -238,24 +238,28 @@ export function planCredits(
 
     const file = read({ kind: 'credits', serverId, path: reported.url })
     if (!file || !file.ok) return fail('fetch-failed', file && !file.ok ? clip(file.error) : undefined, reported.hash, true)
-    if (typeof file.data !== 'string') return fail('fetch-failed', 'the file did not come back as text', reported.hash, true)
+    if (!(file.data instanceof Uint8Array)) return fail('fetch-failed', 'the file did not come back as bytes', reported.hash, true)
 
-    // The bytes first: only bytes that are the published ones say anything
-    // lasting about the file.
-    const text = file.data
-    if (createHash('sha256').update(text, 'utf8').digest('hex') !== reported.hash) {
-      // The processor hashed the raw bytes; the fetch decoded them as UTF-8,
-      // which replaces every byte that is not UTF-8 with U+FFFD and so can
-      // never give the same hash back. Such a file is not UTF-8, whatever
-      // else changed: rejected, not retried. (A file that holds U+FFFD
-      // itself hashes the same, so it never gets here.)
-      if (text.includes('\uFFFD')) {
-        return fail('not-utf8', 'the file is not UTF-8 (save it as UTF-8)', reported.hash, false)
-      }
-      return fail('hash-mismatch', 'the file changed since the processor published it', reported.hash, true)
+    // The raw bytes first: only the published bytes say anything lasting
+    // about the file. Bytes with another hash are not the published file
+    // (it changed since the scan, or a stale copy came back), whatever they
+    // hold: retried, never judged.
+    const bytes = file.data
+    if (createHash('sha256').update(bytes).digest('hex') !== reported.hash) {
+      return fail('hash-mismatch', 'the bytes that came back are not the ones the processor published', reported.hash, true)
     }
-    if (Buffer.byteLength(text, 'utf8') > CREDITS_MAX_BYTES) {
+    // The published file itself, from here on: whatever is wrong with it
+    // stays wrong until it is edited.
+    if (bytes.length > CREDITS_MAX_BYTES) {
       return fail('too-large', `over ${CREDITS_MAX_BYTES} bytes`, reported.hash, false)
+    }
+    let text: string
+    try {
+      // Strict: a byte sequence that is not UTF-8 is an error, never U+FFFD.
+      // A leading byte-order mark is dropped here (and by the validator).
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+    } catch {
+      return fail('not-utf8', 'the file is not UTF-8 (save it as UTF-8)', reported.hash, false)
     }
     const validation = validateCreditsText(text, scope)
     if (!validation.ok) return fail(validation.reason, clip(validation.errors.join('; ')), reported.hash, false)
