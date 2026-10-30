@@ -1,4 +1,5 @@
 import { Suspense, ViewTransition } from 'react'
+import { classNames } from '@src/utils'
 import { tvEpisodePosterName } from '@src/utils/viewTransitionNames'
 import { splitTitle, qualityChips, certificationOf, episodeFacts, episodeTypeLabel, formatDate } from '@src/utils/media/detailsFacts'
 import { tvHrefs, seasonLabel, blurDataURL } from '@src/utils/media/tvFacts'
@@ -12,6 +13,7 @@ import ArtworkButton from './details/ArtworkButton'
 import ActionRow from './details/ActionRow'
 import StickyTitleBar from './details/StickyTitleBar'
 import CastTabs from './details/CastTabs'
+import { usableCastTabs } from './details/usableCastTabs'
 import EpisodeNav from './details/EpisodeNav'
 import CreditsPanel from './details/CreditsPanel'
 
@@ -88,6 +90,9 @@ const TVEpisodeDetailsComponent = ({ media }) => {
     { id: 'guests', label: 'Guest stars', cast: media.guestStars || guest_stars || [] },
     { id: 'series', label: 'Series cast', cast: media.cast || [] },
   ]
+  // Two columns only when there is a cast to fill the first: without one the
+  // details panel takes the row, rather than sitting beside an empty column.
+  const hasCast = usableCastTabs(tabs).length > 0
 
   return (
     <div className="media-details-page relative mx-auto w-full max-w-6xl px-4 pb-16 sm:px-6 lg:px-8">
@@ -165,14 +170,21 @@ const TVEpisodeDetailsComponent = ({ media }) => {
 
       <StickyTitleBar sentinelId={ACTIONS_ID} title={stickyTitle} subtitle={subtitle} {...progressProps} playHref={hrefs.play} />
 
-      <div className="mt-10 grid gap-8 rounded-2xl bg-[#070b1d]/65 px-4 py-8 ring-1 ring-white/5 sm:mt-14 sm:px-6 lg:grid-cols-2 lg:px-8">
-        {/* The anchor the popup's "See all N" links to (see CastRail) */}
-        <div id="cast" className="scroll-mt-28">
-          <CastTabs tabs={tabs} defaultTab="guests" />
-        </div>
+      <div
+        className={classNames(
+          'mt-10 grid gap-8 rounded-2xl bg-[#070b1d]/65 px-4 py-8 ring-1 ring-white/5 sm:mt-14 sm:px-6 lg:px-8',
+          hasCast ? 'lg:grid-cols-2' : ''
+        )}
+      >
+        {hasCast ? (
+          // The anchor the popup's "See all N" links to (see CastRail)
+          <div id="cast" className="scroll-mt-28">
+            <CastTabs tabs={tabs} defaultTab="guests" />
+          </div>
+        ) : null}
         <DetailsPanel id="episode-details" title="Episode details" rows={facts} />
         {media.credits ? (
-          <div className="lg:col-span-2">
+          <div className={hasCast ? 'lg:col-span-2' : ''}>
             <CreditsPanel credits={media.credits} id="credits" />
           </div>
         ) : null}

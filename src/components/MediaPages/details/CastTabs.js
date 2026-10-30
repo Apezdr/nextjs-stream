@@ -3,8 +3,7 @@
 import { useState } from 'react'
 import { classNames } from '@src/utils'
 import CastRail from './CastRail'
-
-const validPeople = (cast) => (Array.isArray(cast) ? cast.filter((person) => person && person.name) : [])
+import { usableCastTabs } from './usableCastTabs'
 
 /**
  * "Guest stars · 12 | Series cast · 12": a tab strip over two cast rails on
@@ -19,10 +18,7 @@ const validPeople = (cast) => (Array.isArray(cast) ? cast.filter((person) => per
  */
 export default function CastTabs({ tabs, defaultTab = null }) {
   const [selected, setSelected] = useState(defaultTab)
-  const usable = (tabs || [])
-    .filter((tab) => tab && tab.id && tab.label)
-    .map((tab) => ({ ...tab, cast: validPeople(tab.cast) }))
-    .filter((tab) => tab.cast.length > 0)
+  const usable = usableCastTabs(tabs)
 
   if (usable.length === 0) return null
   if (usable.length === 1) return <CastRail cast={usable[0].cast} title={usable[0].label} bleed={false} layout="grid" />

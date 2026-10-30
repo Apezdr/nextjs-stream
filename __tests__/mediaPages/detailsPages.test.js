@@ -296,6 +296,22 @@ describe('TVEpisodeDetailsComponent', () => {
     expect(document.body.textContent).not.toMatch(/files\.example\.com/)
   })
 
+  it('sets the cast beside the details when the episode has one', () => {
+    const { container } = render(<TVEpisodeDetailsComponent media={withNeighbours} />)
+    const grid = screen.getByRole('heading', { name: 'Episode details' }).closest('section').parentElement
+    expect(container.querySelector('#cast')).not.toBeNull()
+    expect(grid).toHaveClass('lg:grid-cols-2')
+  })
+
+  it('gives the details the whole row when the episode has no cast, instead of an empty column beside them', () => {
+    const noCast = { ...withNeighbours, cast: [], guestStars: [], metadata: { ...withNeighbours.metadata, guest_stars: [] } }
+    const { container } = render(<TVEpisodeDetailsComponent media={noCast} />)
+    const grid = screen.getByRole('heading', { name: 'Episode details' }).closest('section').parentElement
+    expect(container.querySelector('#cast')).toBeNull()
+    expect(grid).not.toHaveClass('lg:grid-cols-2')
+    expect(grid.children).toHaveLength(1)
+  })
+
   it('renders the stand-in a limited-access viewer gets, with no counts or neighbours', () => {
     const { seasonEpisodeCount, previousEpisodeNumber, nextEpisodeNumber, thumbnail, ...bare } = withNeighbours
     render(<TVEpisodeDetailsComponent media={{ ...bare, hasNextEpisode: false }} />)
