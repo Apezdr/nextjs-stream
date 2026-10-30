@@ -33,12 +33,14 @@ const show = () => ({
   metadata: { overview: 'The synopsis, and only the synopsis.' },
   credits: showCredits,
 })
+// A season document carries no credits of its own (getFlatRequestedMedia's season result).
+const season = () => ({ _id: 'season-1', showId: 'show-1', title: 'A Show', originalTitle: 'A Show', type: 'tv', seasonNumber: 1, metadata: {} })
 const episode = () => ({ ...show(), seasonNumber: 1, episodeNumber: 1, videoURL: 'https://files.example/e1.mp4', credits: episodeCredits })
 
 const mockGetFlatRequestedMedia = jest.fn()
 jest.mock('@src/utils/flatDatabaseUtils', () => ({
   getFlatRequestedMedia: (...args) => mockGetFlatRequestedMedia(...args),
-  getFlatTVSeasonWithEpisodes: jest.fn(async () => null),
+  getFlatTVSeasonWithEpisodes: jest.fn(async () => ({ episodes: [{ episodeNumber: 1, title: 'Ep' }] })),
   getVisibleEpisodeCountBySeason: jest.fn(async () => new Map([[1, 10]])),
 }))
 
@@ -49,7 +51,9 @@ const get = async (query) => (await GET(new Request(`https://cinema.example/api/
 
 beforeEach(() => {
   jest.clearAllMocks()
-  mockGetFlatRequestedMedia.mockImplementation(async (request) => (request.episode ? episode() : show()))
+  mockGetFlatRequestedMedia.mockImplementation(async (request) =>
+    request.episode ? episode() : request.season ? season() : show()
+  )
 })
 
 it('carries a show\'s credits on the TV-device response', async () => {

@@ -143,7 +143,7 @@ function CreditEntry({ entry, headingId }) {
           <summary className="cursor-pointer rounded-lg px-3 py-2 text-sm font-medium text-blue-200 hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-300">
             Notices and conditions ({conditions.length})
           </summary>
-          <dl className="space-y-3 px-3 pb-3 text-sm">
+          <dl className="space-y-3 px-3 pb-3 pt-1 text-sm">
             {conditions.map((condition, index) => (
               <div key={index}>
                 <dt className="text-xs font-medium uppercase tracking-wide text-white/70">{condition.label}</dt>
