@@ -1,3 +1,5 @@
+import { useId } from 'react'
+
 /**
  * The sync's state of a title's (or an episode's) credits sidecar, for
  * admins: what is stored and where it came from, and, while the last attempt
@@ -7,18 +9,19 @@
  * and names the file they came from, so they are never read as a newly
  * verified file. Read-only: credits are edited in the sidecar, not here.
  *
- * @param {{ record: { credits?: object, creditsSource?: string, creditsHash?: string, creditsStatus?: object } | null, scope?: 'title'|'episode' }} props
+ * @param {{ record: { _id?: string, credits?: object, creditsSource?: string, creditsHash?: string, creditsStatus?: object } | null, scope?: 'title'|'episode'|'library' }} props
  */
 export default function CreditsStatus({ record, scope = 'title' }) {
+  const headingId = useId()
   const credits = record?.credits
   const status = record?.creditsStatus
   const entries = Array.isArray(credits?.entries) ? credits.entries.length : 0
-  const file = scope === 'episode' ? 'its <NN>_credits.json' : 'its credits.json'
+  const file = scope === 'episode' ? 'its <NN>_credits.json' : scope === 'library' ? 'a credits.json at the library root' : 'its credits.json'
 
   return (
-    <section aria-labelledby="credits-status-heading" className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
-      <h2 id="credits-status-heading" className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">
-        Credits &amp; licenses
+    <section aria-labelledby={headingId} className="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+      <h2 id={headingId} className="mb-4 text-sm font-semibold uppercase tracking-wide text-gray-500">
+        {scope === 'library' ? <>Library credits of server <span className="font-mono normal-case">{record?._id}</span></> : <>Credits &amp; licenses</>}
       </h2>
       {credits ? (
         <p className="text-sm text-gray-700">

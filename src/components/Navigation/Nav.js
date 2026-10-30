@@ -10,6 +10,7 @@ import { siteTitle } from '@src/utils/publicConfig'
 import Logo from '@src/app/logo'
 import { classNames } from '@src/utils'
 import useScroll from './useScroll'
+import { useCreditsAvailability } from './useCreditsAvailability'
 
 const SearchInput = lazy(() => import('@components/Search/SearchInput'))
 const SignOutButton = lazy(() => import('@components/SignOutButton'))
@@ -62,6 +63,8 @@ const getItemIcon = (item) => {
 }
 
 const Nav = ({ adminNavItems = [], profileImage = '' }) => {
+  // The account menu's "Credits & licenses" item, only when there is any to show
+  const showCredits = useCreditsAvailability()
   const [isDeviceLinkModalOpen, setIsDeviceLinkModalOpen] = useState(false)
   const pathname = usePathname()
   const isScrolled = useScroll(0) // Threshold set to 0; adjust if needed
@@ -250,6 +253,18 @@ const Nav = ({ adminNavItems = [], profileImage = '' }) => {
                               </Link>
                             )}
                           </MenuItem>
+                          {showCredits ? (
+                            <MenuItem>
+                              {({ focus }) => (
+                                <Link
+                                  href="/list/credits"
+                                  className={`block px-4 py-2 text-sm text-gray-700 hover:bg-gray-400 ${focus ? 'bg-gray-100' : ''}`}
+                                >
+                                  Credits &amp; licenses
+                                </Link>
+                              )}
+                            </MenuItem>
+                          ) : null}
                           <MenuItem>
                             {({ focus }) => (
                               <Link

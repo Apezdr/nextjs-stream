@@ -14,14 +14,14 @@ import { SectionHeading } from './Primitives'
  *
  * Server-renderable: no state, no effects.
  *
- * @param {{ credits: { entries: Array<object> } | null | undefined, id?: string }} props
+ * @param {{ credits: { entries: Array<object> } | null | undefined, id?: string, title?: string }} props
  */
-export default function CreditsPanel({ credits, id = 'credits' }) {
+export default function CreditsPanel({ credits, id = 'credits', title = 'Credits & licenses' }) {
   const groups = groupEntries(credits?.entries)
   if (groups.length === 0) return null
   return (
     <section id={id} aria-labelledby={`${id}-heading`}>
-      <SectionHeading id={`${id}-heading`}>Credits &amp; licenses</SectionHeading>
+      <SectionHeading id={`${id}-heading`}>{title}</SectionHeading>
       <div className="space-y-8 rounded-xl bg-black/45 p-5 ring-1 ring-white/15 sm:p-6">
         {groups.map((group) => (
           <div key={group.key}>

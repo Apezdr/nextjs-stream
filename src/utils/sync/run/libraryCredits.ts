@@ -27,8 +27,7 @@ import { CREDITS_DEFERRAL, planCredits, type CreditsOutcome, type StoredCredits 
 import { buildWithResources } from '../infrastructure/fileSystem/prefetch'
 import type { ServerConfig } from '../core/types'
 
-/** The collection, in the Media database. */
-export const LIBRARY_CREDITS_COLLECTION = 'LibraryCredits'
+export { LIBRARY_CREDITS_COLLECTION } from '@src/utils/credits/constants'
 
 /** What the run needs of the collection. */
 interface LibraryCreditsCollection {
