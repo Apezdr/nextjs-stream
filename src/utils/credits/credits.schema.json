@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Apezdr/nextjs-stream/CREDITS_SIDECAR.md#schema-v1",
+  "title": "Credits sidecar, schema version 1",
+  "description": "credits.json beside a movie's or show's metadata.json, or <NN>_credits.json beside an episode's <NN>_metadata.json. The rules this schema cannot state (unique ids, references that resolve, safe relative paths, http(s) links, at least one credit field per entry, file size) are in CREDITS_SIDECAR.md and enforced by src/utils/credits/validate.ts.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "assets", "entries"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "assets": {
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/asset" }
+    },
+    "entries": {
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/entry" }
+    },
+    "suppress": {
+      "description": "Episode sidecars only: ids of inherited show entries this episode does not show. Silence never hides one.",
+      "type": "array",
+      "maxItems": 200,
+      "items": { "$ref": "#/$defs/id" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+    },
+    "kind": {
+      "enum": ["film", "episode", "trailer", "poster", "backdrop", "logo", "thumbnail", "artwork", "music", "audio", "subtitles", "other"]
+    },
+    "relativePath": {
+      "description": "Relative to the folder that holds the sidecar. No leading slash, backslash, drive letter, scheme, '.' or '..' segment.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "libraryPath": {
+      "description": "Relative to the library root: begins with movies/ or tv/. Same character rules as relativePath.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024
+    },
+    "httpUrl": {
+      "description": "An absolute http: or https: URL with no user name or password.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "shortText": { "type": "string", "minLength": 1, "maxLength": 500 },
+    "mediumText": { "type": "string", "minLength": 1, "maxLength": 2000 },
+    "longText": { "type": "string", "minLength": 1, "maxLength": 8000 },
+    "textList": {
+      "type": "array",
+      "maxItems": 50,
+      "items": { "$ref": "#/$defs/longText" }
+    },
+    "asset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "kind": { "$ref": "#/$defs/kind" },
+        "path": { "$ref": "#/$defs/relativePath" },
+        "label": { "$ref": "#/$defs/shortText" },
+        "derivedFrom": {
+          "description": "Inputs this asset was made from, in another title or this one (a frame of an episode, the posters in a collage).",
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["libraryPath"],
+            "properties": {
+              "libraryPath": { "$ref": "#/$defs/libraryPath" },
+              "note": { "$ref": "#/$defs/mediumText" }
+            }
+          }
+        }
+      }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "assetIds"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "assetIds": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/id" }
+        },
+        "kind": { "$ref": "#/$defs/kind" },
+        "work": { "$ref": "#/$defs/shortText" },
+        "author": { "$ref": "#/$defs/mediumText" },
+        "authorUrl": { "$ref": "#/$defs/httpUrl" },
+        "attributionText": { "$ref": "#/$defs/longText" },
+        "copyrightNotice": { "$ref": "#/$defs/longText" },
+        "license": { "$ref": "#/$defs/shortText" },
+        "licenseUrl": { "$ref": "#/$defs/httpUrl" },
+        "sourceUrl": { "$ref": "#/$defs/httpUrl" },
+        "notices": { "$ref": "#/$defs/textList" },
+        "historicalNotices": { "$ref": "#/$defs/textList" },
+        "modification": { "$ref": "#/$defs/longText" },
+        "previousModifications": { "$ref": "#/$defs/textList" },
+        "exclusions": { "$ref": "#/$defs/textList" },
+        "evidenceId": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
+        },
+        "note": { "$ref": "#/$defs/longText" },
+        "replaces": {
+          "description": "Episode sidecars only: ids of inherited show entries this entry takes the place of.",
+          "type": "array",
+          "maxItems": 50,
+          "items": { "$ref": "#/$defs/id" }
+        }
+      }
+    }
+  }
+}

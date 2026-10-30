@@ -63,6 +63,12 @@ export interface MovieVideoInput extends MovieStepBase {
   availability: Availability
 }
 
+/** The credits step's input (./credits). */
+export interface MovieCreditsInput extends MovieStepBase {
+  run: Pick<RunConfig, 'serverConfig' | 'allEnabledServersProbed'>
+  availability: Availability
+}
+
 /** The blurhash retry's input (./artwork): it works from the artwork step's retries. */
 export interface MovieBlurhashRetryInput {
   originalTitle: string

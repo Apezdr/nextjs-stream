@@ -4,7 +4,7 @@
  * and the availability paths an episode's fields are ranked on.
  *
  * Pure: it does no I/O. The files it reads (the episode's metadata file, the
- * thumbnail's blurhash) it reads from the resources the prefetch step fetched
+ * thumbnail's blurhash, its credits file) it reads from the resources the prefetch step fetched
  * for it (core/resources). A file it was not handed reads as a failed fetch
  * and is named in its plan's `needs`; the service fetches those and calls it
  * again (infrastructure/fileSystem/prefetch). Its warnings go to the log the
@@ -31,6 +31,7 @@ import { effectiveMetadata } from '@src/utils/sync/core/metadataLock'
 import { planVideoFileFacts, sizeInBytes, videoFileChanged } from '@src/utils/sync/core/fileFacts'
 import { draftWritePlan, emptyWritePlan } from '@src/utils/sync/core/writePlan'
 import { readBlurhashFile } from './blurhashFile'
+import { applyCreditsOutcome, creditsReporters, planCredits } from '../../core/credits'
 
 /**
  * What planEpisode reads of the run, besides the availability: not forceSync
@@ -460,6 +461,27 @@ export function planEpisode(
       clearField('thumbnailBlurhashSource')
     }
   }
+
+  // --- Credits: the episode's own credits sidecar (core/credits); the show's
+  // are inherited when they are shown (src/utils/credits/resolve). Ranked
+  // across every season key the servers use; with no path to rank on, the
+  // rule finds no reporter and leaves the stored credits as they are. ---
+  applyCreditsOutcome(
+    planCredits(
+      {
+        stored: entity as any,
+        reported: fileData?.credits,
+        reporters: creditsReporters(availability.fieldAvailability, 'tv', showOriginalTitle, leafPrefixes),
+        scope: 'episode',
+        run,
+        now,
+      },
+      (request) => resources.read(request)
+    ),
+    entity as any,
+    unset,
+    holdBack
+  )
 
   // --- Title: the metadata's name when the episode has one, otherwise the
   // video owner's reading of the filename. ---

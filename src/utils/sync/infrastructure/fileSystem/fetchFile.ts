@@ -19,6 +19,7 @@ import { fileServerUrl } from './urls'
 const CACHE_TTL = {
   blurhash: 86400 * 7, // 7 days for blurhash data (rarely changes)
   file: 3600, // 1 hour for regular files
+  text: 3600, // 1 hour, as a file
   default: 3600, // Default 1 hour
 }
 
@@ -28,16 +29,17 @@ const CACHE_TTL = {
  *
  * What comes back:
  * - no URL: `{}`
- * - the file: the parsed JSON, or the blurhash text trimmed
+ * - the file: the parsed JSON, the blurhash text trimmed, or the text as it is
+ *   (`text`: a credits sidecar, whose bytes are checked before it is parsed)
  * - a blurhash cached less than a day ago: the cached one, without a request
  * - Not Modified, or a request that fails (an error, an empty body, a cache
  *   write that throws) while a copy is cached: the cached copy
- * - anything else that fails: `''` for a blurhash, null for a file
+ * - anything else that fails: `''` for a blurhash, null for a file or text
  *
  * @param serverId - The file server's id
  * @param metadataUrl - The file's path as the payload gives it, or the full URL
  *   built from it
- * @param type - 'file' (JSON) or 'blurhash' (text)
+ * @param type - 'file' (JSON), 'blurhash' (text, trimmed) or 'text' (as it is)
  * @param mediaType - For the debug log only
  * @param title - For the debug log only
  * @param headers - Request headers; the conditional ones are added from the cache
@@ -46,7 +48,7 @@ const CACHE_TTL = {
 export async function fetchMetadataMultiServer(
   serverId: string,
   metadataUrl: string | null | undefined,
-  type: 'file' | 'blurhash' = 'file',
+  type: 'file' | 'blurhash' | 'text' = 'file',
   mediaType?: string,
   title?: string,
   headers: Record<string, string> = {},
@@ -107,7 +109,7 @@ export async function fetchMetadataMultiServer(
         const requestOptions = {
           headers,
           timeout: timeoutMs,
-          responseType: type === 'blurhash' ? 'text' : 'json',
+          responseType: type === 'file' ? 'json' : 'text',
           http2: true,
           retry: { limit: 2, baseDelay: 300 },
         }
@@ -119,7 +121,9 @@ export async function fetchMetadataMultiServer(
         }
 
         // Process the data based on type
-        const processedData = type === 'blurhash' ? (data ? data.trim() : null) : data
+        // A cached text body comes back wrapped ({ _dataType: 'text', data })
+        const body = type !== 'file' && data && typeof data === 'object' && data._dataType === 'text' ? data.data : data
+        const processedData = type === 'blurhash' ? (body ? body.trim() : null) : body
 
         if (!processedData) {
           throw new Error('Empty or null response data')

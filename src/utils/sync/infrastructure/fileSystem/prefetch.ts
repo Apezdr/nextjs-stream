@@ -6,6 +6,7 @@
  * them here and calls it again with them. Metadata files and blurhashes are
  * read through fetchMetadataMultiServer (./fetchFile): its Redis cache,
  * conditional requests, retries and slot of the sync's one HTTP limiter. The
+ * credits sidecars are read as text, the same way. The
  * movie artwork step's first read of a blurhash is the one plain request
  * (readBlurhashDirect), in a slot of the pass's throttle when there is one.
  *
@@ -46,6 +47,20 @@ export async function fetchResources(needs: readonly ResourceRequest[], context:
   return fetched
 }
 
+/** How fetchMetadataMultiServer reads each kind of file. */
+const FETCH_TYPE: Record<ResourceRequest['kind'], 'file' | 'blurhash' | 'text'> = {
+  metadata: 'file',
+  blurhash: 'blurhash',
+  // As text: the credits rule checks the file's size and hash before it parses it.
+  credits: 'text',
+}
+
+const NOTHING_CAME_BACK: Record<ResourceRequest['kind'], string> = {
+  metadata: 'no metadata file came back',
+  blurhash: 'no blurhash came back',
+  credits: 'no credits file came back',
+}
+
 async function fetchResource(request: ResourceRequest, context: PrefetchContext): Promise<Resource> {
   const { kind, serverId, path, direct } = request
   const asked: ResourceRequest = direct ? { kind, serverId, path, direct } : { kind, serverId, path }
@@ -53,9 +68,9 @@ async function fetchResource(request: ResourceRequest, context: PrefetchContext)
     const data =
       kind === 'blurhash' && direct
         ? await readBlurhashDirect(path, context.throttle)
-        : await fetchMetadataMultiServer(serverId, path, kind === 'metadata' ? 'file' : 'blurhash', context.mediaType, context.title)
+        : await fetchMetadataMultiServer(serverId, path, FETCH_TYPE[kind], context.mediaType, context.title)
     if (kind === 'metadata' ? !data : typeof data !== 'string' || data === '') {
-      return { ...asked, ok: false, error: kind === 'metadata' ? 'no metadata file came back' : 'no blurhash came back' }
+      return { ...asked, ok: false, error: NOTHING_CAME_BACK[kind] }
     }
     return { ...asked, ok: true, data }
   } catch (error) {

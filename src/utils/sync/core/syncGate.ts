@@ -68,7 +68,8 @@ export const GATE_BOOKKEEPING_FIELDS: ReadonlySet<string> = new Set([
 
 // 2: a show's title and titleSource follow core/title.
 // 3: a movie's metadataHash is the `hash` on its payload's metadata URL.
-export const SYNC_GATE_VERSION = 3
+// 4: movies, shows and episodes store their credits sidecar (core/credits).
+export const SYNC_GATE_VERSION = 4
 
 /**
  * The value a server's gate must hold for its pass to be skipped.
