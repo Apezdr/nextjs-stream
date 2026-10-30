@@ -233,7 +233,17 @@ export function planCredits(
     reported.state === 'absent' &&
     reporters.absent.includes(serverId) &&
     reporters.holders.every((holder) => reporters.absent.includes(holder))
-  if (!confirmedAbsent) return outcome
+  if (!confirmedAbsent) {
+    // A recorded failure names an attempt. With every server answering and
+    // none claiming the credits, no attempt is being made: the status would
+    // only tell admins a sync is failing when none is. (With a server missing
+    // it stays: that server may be the owner whose failure it records.)
+    if (stored?.creditsStatus != null && run.allEnabledServersProbed === true) {
+      outcome.unset.push('creditsStatus')
+      outcome.changes.push('Cleared the credits failure: no server claims the credits now')
+    }
+    return outcome
+  }
   if (run.allEnabledServersProbed !== true) {
     outcome.holdBack = CREDITS_REMOVAL_DEFERRAL
     return outcome

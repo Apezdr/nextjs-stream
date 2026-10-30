@@ -201,6 +201,14 @@ describe('removal', () => {
     expect(plan('B', payloads, storedFrom('B')).outcome).toMatchObject({ action: 'unchanged', unset: [] })
   })
 
+  it('clears a recorded failure once no server claims the credits, and keeps the credits when the absence is not confirmed', () => {
+    const stored = { ...storedFrom('A'), creditsStatus: { state: 'error', reason: 'server:unreadable', serverId: 'A', since: NOW } }
+    const payloads = { A: withVideo({ absent: true }), B: withVideo() }
+    expect(plan('A', payloads, stored).outcome).toMatchObject({ action: 'unchanged', unset: ['creditsStatus'], holdBack: null })
+    // With a server missing, it may be the owner whose failure the status records.
+    expect(plan('A', payloads, stored, { probed: false }).outcome).toMatchObject({ unset: [] })
+  })
+
   it('does nothing when nothing is stored', () => {
     expect(plan('A', { A: withVideo({ absent: true }) }, null).outcome).toMatchObject({ action: 'unchanged', unset: [] })
   })

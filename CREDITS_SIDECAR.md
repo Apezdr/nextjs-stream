@@ -173,7 +173,7 @@ asset identity, never by a series-wide license:
 | `credits` | The last valid file, as validated (the episode's own file on an episode). |
 | `creditsSource` | The server it came from. |
 | `creditsHash` | The `hash` it was published under. |
-| `creditsStatus` | Only while the last attempt failed: `{ state: "error", reason, detail?, serverId, hash?, since }`. Removed by the next success. |
+| `creditsStatus` | Only while the last attempt failed: `{ state: "error", reason, detail?, serverId, hash?, since }`. Removed by the next success, or on a run every server answered in which none claims the credits. |
 
 **Ownership.** The servers that claim a title's credits are those that publish
 a `url` or an `error` for it. The owner is the highest-priority claimant (ties
