@@ -190,13 +190,21 @@ never hands the credits to a lower-priority server.
 - Otherwise it fetches the URL through the sync's file fetcher (the server's own
   host only), validates the bytes, and on success writes `credits`,
   `creditsSource`, `creditsHash` and removes `creditsStatus`.
-- A fetch that fails, a file that fails validation, or an `error` the server
-  published: the stored `credits` and `creditsHash` stay as they are,
-  `creditsStatus` records why (its `since` is kept while the reason and hash
-  stay the same, so a retry does not rewrite the document), and the plan is
-  incomplete: the gate stays open and the next pass tries again. The kept
+- Any failure keeps the stored `credits` and `creditsHash` as they are and
+  records why in `creditsStatus` (its `since` is kept while the reason and
+  hash stay the same, so a repeat does not rewrite the document). The kept
   credits are the last valid ones, not a newly verified grant: `creditsHash`
   still names the file they came from.
+  - **Retried** on the next pass (the gate stays open): a fetch that failed,
+    bytes whose SHA-256 is not the published hash, and a processor `error` of
+    `unreadable` (or one this build does not know).
+  - **Rejected** until the file changes (the gate may close; an edit moves
+    the payload and reopens it): bytes that match the published hash but are
+    not JSON, not the schema, of a schema version this build does not read, or
+    over 256 KiB; a url without a hash; a processor `error` of `too-large` or
+    `empty`. A rejection is not a pass error, so one bad file never stops the
+    sync from skipping unchanged ticks. A build that adds a schema version
+    raises `SYNC_GATE_VERSION`, so files it rejected before are read again.
 
 **Confirmed removal.** The credits fields are removed only when all of these
 hold: every enabled server answered this run; no server publishes a `url` or an

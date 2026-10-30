@@ -21,7 +21,11 @@ import schema from './credits.schema.json'
 /** The largest credits file read, in bytes, here and in the processor. */
 export const CREDITS_MAX_BYTES = 262_144
 
-/** The schema versions this build reads. */
+/**
+ * The schema versions this build reads. A file of another version is recorded
+ * as rejected and not read again until it changes (core/credits): adding a
+ * version here must raise SYNC_GATE_VERSION, or files rejected before stay so.
+ */
 export const SUPPORTED_CREDITS_SCHEMA_VERSIONS: readonly number[] = [1]
 
 export type CreditsKind =

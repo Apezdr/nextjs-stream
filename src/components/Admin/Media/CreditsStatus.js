@@ -39,7 +39,10 @@ export default function CreditsStatus({ record, scope = 'title' }) {
           {status.detail ? <p className="mt-1 whitespace-pre-line break-words font-mono text-xs">{status.detail}</p> : null}
           <p className="mt-2">
             Server <span className="font-mono">{status.serverId}</span>
-            {status.since ? <>, since {formatUtc(status.since)}</> : null}. The sync retries on every pass.
+            {status.since ? <>, since {formatUtc(status.since)}</> : null}.{' '}
+            {RETRIED.has(status.reason) || (status.reason?.startsWith('server:') && !PINNED_SERVER.has(status.reason))
+              ? 'The sync retries on every pass.'
+              : 'The file is read again once it changes.'}
             {credits
               ? ` The credits shown are the last valid ones${record.creditsHash ? ` (file ${record.creditsHash.slice(0, 12)})` : ''}, not the failed file.`
               : ' No credits are shown until a file is valid.'}
@@ -49,6 +52,11 @@ export default function CreditsStatus({ record, scope = 'title' }) {
     </section>
   )
 }
+
+// Failures the sync retries on every pass; the others wait for the file to
+// change (CREDITS_SIDECAR.md, section 5).
+const RETRIED = new Set(['fetch-failed', 'hash-mismatch'])
+const PINNED_SERVER = new Set(['server:too-large', 'server:empty'])
 
 const REASONS = {
   'fetch-failed': 'the file could not be fetched from the file server',

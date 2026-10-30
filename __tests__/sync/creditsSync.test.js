@@ -95,20 +95,34 @@ describe('a movie pass', () => {
     expect(written.syncGates?.A).toEqual(expect.any(String))
   })
 
-  it('keeps the stored credits and leaves the gate open when the file is not valid', async () => {
+  it('keeps the stored credits, records a rejected file and closes the gate until the file changes', async () => {
     const text = JSON.stringify({ ...fixtures.mixedGrants(), schemaVersion: 9 })
     const payload = { urls: {}, credits: locator(FOLDER, text) }
     const previous = { ...stored(), credits: fixtures.artworkByArtist(), creditsSource: 'A', creditsHash: 'old' }
     const repository = repositoryOver(previous)
     const results = await pass(repository, payload)
 
-    expect(results.find((r) => r.operation === 'credits')).toMatchObject({ status: 'failed' })
+    expect(results.find((r) => r.operation === 'credits')).toMatchObject({ status: 'completed', errors: [] })
     const [written, , options] = repository.smartUpsert.mock.calls[0]
     expect(written.credits).toEqual(fixtures.artworkByArtist())
     expect(written.creditsHash).toBe('old')
     expect(written.creditsStatus).toMatchObject({ state: 'error', reason: 'unsupported-version', serverId: 'A' })
-    expect(written.syncGates?.A).toBeUndefined()
+    // An edit moves the payload's hash, and with it the gate
+    expect(written.syncGates?.A).toEqual(expect.any(String))
     expect(options.unset).toEqual([])
+  })
+
+  it('keeps the stored credits and leaves the gate open when the fetch fails', async () => {
+    const payload = { urls: {}, credits: { url: `${FOLDER}/credits.json?hash=${'b'.repeat(64)}`, hash: 'b'.repeat(64) } }
+    const previous = { ...stored(), credits: fixtures.artworkByArtist(), creditsSource: 'A', creditsHash: 'old' }
+    const repository = repositoryOver(previous)
+    const results = await pass(repository, payload)
+
+    expect(results.find((r) => r.operation === 'credits')).toMatchObject({ status: 'failed' })
+    const [written] = repository.smartUpsert.mock.calls[0]
+    expect(written.credits).toEqual(fixtures.artworkByArtist())
+    expect(written.creditsStatus).toMatchObject({ reason: 'fetch-failed' })
+    expect(written.syncGates?.A).toBeUndefined()
   })
 
   it('still syncs the credits of a title whose metadata server has no metadata file', async () => {

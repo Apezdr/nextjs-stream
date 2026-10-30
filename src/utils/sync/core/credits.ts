@@ -14,9 +14,11 @@
  *    is a claim, so a failure on the owner never hands the credits to a
  *    lower-priority server.
  *  - The owner's pass fetches the file (unless its hash is the stored one),
- *    checks its size and hash and validates it (src/utils/credits/validate),
- *    and stores it. A failure keeps what is stored, records why in
- *    `creditsStatus`, and holds the gate open.
+ *    checks its hash and size and validates it (src/utils/credits/validate),
+ *    and stores it. A failure keeps what is stored and records why in
+ *    `creditsStatus`. One that may clear by itself (a fetch, bytes that are
+ *    not the published ones, a file the processor could not read) holds the
+ *    gate open; one in the published bytes waits for the file to change.
  *  - The credits are removed only when nobody claims them, every server that
  *    has the title says `absent`, this server is one of them, and every
  *    enabled server answered. A processor that publishes no credits value
@@ -90,8 +92,15 @@ export interface CreditsOutcome {
   unset: string[]
   /** Set when the pass must not stamp the gate: CREDITS_DEFERRAL or CREDITS_REMOVAL_DEFERRAL. */
   holdBack: string | null
-  /** 'stored', 'removed', 'failed' or 'unchanged', for the step's result. */
-  action: 'stored' | 'removed' | 'failed' | 'unchanged'
+  /**
+   * For the step's result. `failed`: an attempt that may work next time (a
+   * fetch, bytes that are not the published ones, a file the processor could
+   * not read), retried on the next pass. `rejected`: the published bytes
+   * themselves are not usable (not JSON, not the schema, a version this build
+   * does not read, too large or empty): recorded, and read again only when
+   * the file changes, which moves the payload and so reopens the gate.
+   */
+  action: 'stored' | 'removed' | 'failed' | 'rejected' | 'unchanged'
   changes: string[]
   errors: string[]
 }
@@ -179,7 +188,10 @@ export function planCredits(
   if (reporters.urls.length > 0 || reporters.errors.length > 0) {
     if (!ownsCredits(input)) return outcome
 
-    const fail = (reason: string, detail?: string, hash?: string): CreditsOutcome => {
+    // `retry`: the failure may clear without the file changing, so the gate
+    // stays open; otherwise the status is recorded and the gate may close, as
+    // an edit to the file reopens it.
+    const fail = (reason: string, detail: string | undefined, hash: string | undefined, retry: boolean): CreditsOutcome => {
       const previous = stored?.creditsStatus
       const same =
         previous?.state === 'error' &&
@@ -193,29 +205,45 @@ export function planCredits(
         if (hash) status.hash = hash
         outcome.set.creditsStatus = status
       }
-      outcome.holdBack = CREDITS_DEFERRAL
-      outcome.action = 'failed'
-      outcome.errors.push(`credits ${reason}${detail ? `: ${detail}` : ''}`)
+      if (retry) {
+        outcome.holdBack = CREDITS_DEFERRAL
+        outcome.action = 'failed'
+        outcome.errors.push(`credits ${reason}${detail ? `: ${detail}` : ''}`)
+      } else {
+        // Reported through creditsStatus (the admin editors and list badge),
+        // not as an error: an error keeps the pass from being recorded as
+        // complete, and these bytes will fail the same way until they change.
+        outcome.action = 'rejected'
+        if (!same) outcome.changes.push(`Recorded a credits file that cannot be used: ${reason}`)
+      }
       return outcome
     }
 
-    if (reported.state === 'error') return fail(`server:${reported.error}`)
-    if (reported.state !== 'present') return fail('malformed-locator')
+    if (reported.state === 'error') {
+      // Only an unreadable file may read on its own (a permission fixed); an
+      // empty or oversized one has to be edited. An error this build does not
+      // know is retried, to be safe.
+      const pinned = reported.error === 'too-large' || reported.error === 'empty'
+      return fail(`server:${reported.error}`, undefined, undefined, !pinned)
+    }
+    if (reported.state !== 'present') return fail('malformed-locator', undefined, undefined, false)
     if (unchanged(stored, serverId, reported.hash)) return outcome
 
     const file = read({ kind: 'credits', serverId, path: reported.url })
-    if (!file || !file.ok) return fail('fetch-failed', file && !file.ok ? clip(file.error) : undefined, reported.hash)
-    if (typeof file.data !== 'string') return fail('fetch-failed', 'the file did not come back as text', reported.hash)
+    if (!file || !file.ok) return fail('fetch-failed', file && !file.ok ? clip(file.error) : undefined, reported.hash, true)
+    if (typeof file.data !== 'string') return fail('fetch-failed', 'the file did not come back as text', reported.hash, true)
 
+    // The bytes first: only bytes that are the published ones say anything
+    // lasting about the file.
     const text = file.data
-    if (Buffer.byteLength(text, 'utf8') > CREDITS_MAX_BYTES) {
-      return fail('too-large', `over ${CREDITS_MAX_BYTES} bytes`, reported.hash)
-    }
     if (createHash('sha256').update(text, 'utf8').digest('hex') !== reported.hash) {
-      return fail('hash-mismatch', 'the file changed since the processor published it, or is not UTF-8', reported.hash)
+      return fail('hash-mismatch', 'the file changed since the processor published it, or is not UTF-8', reported.hash, true)
+    }
+    if (Buffer.byteLength(text, 'utf8') > CREDITS_MAX_BYTES) {
+      return fail('too-large', `over ${CREDITS_MAX_BYTES} bytes`, reported.hash, false)
     }
     const validation = validateCreditsText(text, scope)
-    if (!validation.ok) return fail(validation.reason, clip(validation.errors.join('; ')), reported.hash)
+    if (!validation.ok) return fail(validation.reason, clip(validation.errors.join('; ')), reported.hash, false)
 
     outcome.set.credits = validation.document
     outcome.set.creditsSource = serverId

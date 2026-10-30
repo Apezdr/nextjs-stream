@@ -4,9 +4,9 @@
  *
  * The fifth of the movie's steps (MovieSyncService). Its plan sets
  * `credits`, `creditsSource` and `creditsHash` when the owner's file is new
- * and valid, records `creditsStatus` (and holds the gate open) when it could
- * not be read or is not valid, and removes all four when every server that
- * has the movie confirms it has no credits file.
+ * and valid, records `creditsStatus` when it could not be read (holding the
+ * gate open) or is not usable (until it changes), and removes all four when
+ * every server that has the movie confirms it has no credits file.
  *
  * Reads the credits file from `resources`: a call made before it is fetched
  * names it in its plan's `needs` and does nothing else (./step).
@@ -46,10 +46,14 @@ export function syncMovieCredits(
     plan.deferrals.push(outcome.holdBack)
   }
 
+  // A rejected file is recorded, not failed: it is reported through
+  // creditsStatus, and an error here would keep every pass incomplete until
+  // someone edits the file (core/credits).
+  const recorded = Object.keys(outcome.set).length > 0 || outcome.unset.length > 0
   const status =
     outcome.action === 'failed'
       ? SyncStatus.Failed
-      : outcome.action === 'stored' || outcome.action === 'removed'
+      : outcome.action === 'stored' || outcome.action === 'removed' || (outcome.action === 'rejected' && recorded)
         ? SyncStatus.Completed
         : SyncStatus.Skipped
   return {

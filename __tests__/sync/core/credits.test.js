@@ -99,7 +99,7 @@ describe('the owner\'s file', () => {
     })
     const read = () => ({ kind: 'credits', serverId: 'A', path: 'x', ok: true, data: text })
     expect(planCredits(input('episode'), read).action).toBe('stored')
-    expect(planCredits(input('title'), read)).toMatchObject({ action: 'failed', set: { creditsStatus: { reason: 'schema' } } })
+    expect(planCredits(input('title'), read)).toMatchObject({ action: 'rejected', set: { creditsStatus: { reason: 'schema' } } })
   })
 })
 
@@ -126,9 +126,33 @@ describe('a failure', () => {
     ['an unsupported version', JSON.stringify({ ...fixtures.mixedGrants(), schemaVersion: 2 }), 'unsupported-version'],
     ['a schema error', JSON.stringify({ ...fixtures.mixedGrants(), extra: true }), 'schema'],
     ['a file over 256 KiB', JSON.stringify({ ...fixtures.mixedGrants(), pad: 'x'.repeat(262_144) }), 'too-large'],
-  ])('records %s with its own reason', (_name, text, reason) => {
+  ])('records %s as rejected, keeps the stored credits, and lets the gate close until the file changes', (_name, text, reason) => {
     const outcome = failed(ok(text), present(sha(text)))
-    expect(outcome).toMatchObject({ action: 'failed', holdBack: 'credits', set: { creditsStatus: { reason } } })
+    expect(outcome).toMatchObject({ action: 'rejected', holdBack: null, unset: [], errors: [], set: { creditsStatus: { reason, hash: sha(text) } } })
+    expect(outcome.set).not.toHaveProperty('credits')
+  })
+
+  it.each([
+    ['too-large', false],
+    ['empty', false],
+    ['unreadable', true],
+    ['something-new', true],
+  ])('holds the gate open for a processor error %p only when it may clear by itself (%p)', (error, held) => {
+    const outcome = failed(undefined, { error })
+    expect(outcome.action).toBe(held ? 'failed' : 'rejected')
+    expect(outcome.holdBack).toBe(held ? 'credits' : null)
+  })
+
+  it('rejects a url without a hash, without holding the gate', () => {
+    expect(failed(undefined, { url: FILE })).toMatchObject({ action: 'rejected', holdBack: null })
+  })
+
+  it('does not rewrite the document while the same rejection repeats', () => {
+    const text = JSON.stringify({ ...fixtures.mixedGrants(), extra: true })
+    const first = failed(ok(text), present(sha(text)))
+    const stored = { ...storedFrom('A', 'old'), creditsStatus: first.set.creditsStatus }
+    const again = plan('A', { A: withVideo(present(sha(text))) }, stored, { fetched: ok(text), now: LATER }).outcome
+    expect(again).toMatchObject({ action: 'rejected', holdBack: null, set: {}, unset: [], changes: [] })
   })
 
   it('keeps the stored credits when the processor could not read the file', () => {
