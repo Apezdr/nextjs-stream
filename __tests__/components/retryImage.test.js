@@ -138,6 +138,8 @@ test('a fill image loads under its blurhash, which fades into it and then goes',
   expect(blurLayer().style.opacity).toBe('')
   expect(screen.getByRole('img', { name: 'Poster' })).toBe(theImg())
 
+  // A slow image: it loads well after the blur went over it
+  act(() => jest.advanceTimersByTime(300))
   fireEvent.load(theImg())
   // No OffscreenCanvas here, so no dissolve mask: the blur fades (see retryImageDissolve.test.js)
   act(() => jest.advanceTimersByTime(0))

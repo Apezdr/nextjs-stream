@@ -31,7 +31,16 @@ beforeEach(() => {
   mockBuild.mockReset()
   URL.revokeObjectURL = jest.fn()
 })
-afterEach(() => jest.useRealTimers())
+afterEach(() => {
+  jest.useRealTimers()
+  jest.restoreAllMocks()
+})
+
+/** A slow image: it loads well after the blur went over it, so the blur was seen. */
+function loadAfterBlurSeen(img) {
+  act(() => jest.advanceTimersByTime(300))
+  fireEvent.load(img())
+}
 
 function renderPoster() {
   const utils = render(<RetryImage src={SRC} alt="Poster" fill placeholder="blur" blurDataURL={BLUR} className="object-cover" />)
@@ -45,7 +54,7 @@ test('the blur waits over the loaded image for its mask, then dissolves off it a
   mockBuild.mockReturnValue(new Promise((r) => (resolve = r)))
   const { blurLayer, img } = renderPoster()
 
-  fireEvent.load(img())
+  loadAfterBlurSeen(img)
   // Seeded by the image's URL, shaped by its blurhash
   expect(mockBuild).toHaveBeenCalledWith(SRC, BLUR)
   // Still whole while the mask is made
@@ -72,7 +81,7 @@ test('a mask that is late gives way to the plain fade, and is thrown away when i
   mockBuild.mockReturnValue(new Promise((r) => (resolve = r)))
   const { blurLayer, img } = renderPoster()
 
-  fireEvent.load(img())
+  loadAfterBlurSeen(img)
   act(() => jest.advanceTimersByTime(200))
 
   expect(blurLayer().style.opacity).toBe('0')
@@ -90,8 +99,54 @@ test('a mask that cannot be made gives way to the plain fade', async () => {
   mockBuild.mockRejectedValue(new Error('no canvas'))
   const { blurLayer, img } = renderPoster()
 
-  fireEvent.load(img())
+  loadAfterBlurSeen(img)
   await act(async () => {})
 
   expect(blurLayer().style.opacity).toBe('0')
+})
+
+describe('only when the blur was seen', () => {
+  const order = (container) => Array.from(container.firstChild ? container.childNodes : []).map((n) => n.tagName)
+
+  test('the server HTML puts the blur behind the image, so a cached image paints over it before any script runs', () => {
+    const { renderToString } = require('react-dom/server')
+    const html = renderToString(<RetryImage src={SRC} alt="Poster" fill placeholder="blur" blurDataURL={BLUR} />)
+    expect(html.indexOf('<span')).toBeGreaterThanOrEqual(0)
+    expect(html.indexOf('<span')).toBeLessThan(html.indexOf('<img'))
+  })
+
+  test('an image already there when it mounts shows at once: no crossfade, no mask', () => {
+    jest.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(true)
+    jest.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(400)
+    const { container, blurLayer, img } = renderPoster()
+
+    // The blur stays behind the image, which covers it
+    expect(order(container)).toEqual(['SPAN', 'IMG'])
+
+    fireEvent.load(img())
+    expect(blurLayer()).toBeNull()
+    expect(mockBuild).not.toHaveBeenCalled()
+  })
+
+  test('an image still loading after a moment gets the blur over it, without remounting the image', () => {
+    const { container, img } = renderPoster()
+    const image = img()
+    // Behind at first: a quick image paints straight over it
+    expect(order(container)).toEqual(['SPAN', 'IMG'])
+
+    act(() => jest.advanceTimersByTime(150))
+
+    expect(order(container)).toEqual(['IMG', 'SPAN'])
+    expect(img()).toBe(image)
+  })
+
+  test('a load while the blur is still behind drops it at once, never covering the image', () => {
+    const { blurLayer, img } = renderPoster()
+    act(() => jest.advanceTimersByTime(50))
+
+    fireEvent.load(img())
+
+    expect(blurLayer()).toBeNull()
+    expect(mockBuild).not.toHaveBeenCalled()
+  })
 })

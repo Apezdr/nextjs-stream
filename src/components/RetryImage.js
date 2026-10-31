@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { flushSync } from 'react-dom'
 import Image from 'next/image'
 import { classNames } from '@src/utils'
@@ -24,6 +24,16 @@ export const FADE_MS = 400
  * be holding the image back.
  */
 const MASK_WAIT_MS = 200
+/**
+ * How long the blur waits BEHIND a loading image before it covers it. An
+ * image that arrives sooner (cached, or nearly) just paints over the blur, no
+ * effect: a 500 ms crossfade over an image that was all but there reads as an
+ * effect for its own sake, and covering it at once flashed the blur for a few
+ * frames before the image. One that takes longer is covered while it is still
+ * blank (the optimizer serves AVIF, painted whole, not in bands) and
+ * crossfades in.
+ */
+const QUICK_LOAD_MS = 150
 
 /**
  * What stands in for the image: its blurhash, frosted glass, or nothing.
@@ -100,12 +110,15 @@ function StandIn({ kind, blur, alt, decorative = false, fading = false, mask = n
  * than a URL) has no address to bust and is not retried.
  *
  * The stand-in (StandIn) holds the slot whenever the image cannot:
- * - A `fill` image with a blurhash loads under its blur, which dissolves away
- *   along a heightmap of the image's own once it has loaded (imageDissolve),
- *   instead of being painted over in bands as the image decodes. Where a mask
- *   cannot be made in time (MASK_WAIT_MS), or the viewer prefers less motion,
- *   the blur fades instead (FADE_MS). A fixed-size image keeps next/image's
- *   own blur: it has no box of its own to lay a second layer in.
+ * - A `fill` image with a blurhash crossfades out of its blur only when the
+ *   blur was actually seen. The blur starts BEHIND the image (server HTML and
+ *   first render), so an image the browser already has paints over it at
+ *   once, before any script runs. An image still loading after QUICK_LOAD_MS
+ *   gets the blur moved over it, and when it lands the blur dissolves along a
+ *   heightmap of the image's own (imageDissolve), or
+ *   fades it (FADE_MS) where no mask can be made in time (MASK_WAIT_MS) or the
+ *   viewer prefers less motion. A fixed-size image keeps next/image's own
+ *   blur: it has no box of its own to lay a second layer in.
  * - From the first failure, not the last: a failed <img> drops next/image's
  *   blur and paints its alt text, so the retries go on underneath, invisible,
  *   and a retry that loads takes the slot back.
@@ -137,6 +150,12 @@ const RetryImage = ({
   const [mask, setMask] = useState(null)
   // No mask in time (or none possible): the blur fades instead
   const [plainFade, setPlainFade] = useState(false)
+  // Still loading after QUICK_LOAD_MS: the blur went over it
+  const [cover, setCover] = useState(false)
+  // It loaded while the blur was still behind it: the blur just goes
+  const [instant, setInstant] = useState(false)
+  // The stand-in while it sits behind the image: the <img> is its next sibling
+  const behindRef = useRef(null)
   const [lastSrc, setLastSrc] = useState(() => src)
 
   // Derive state reset from prop changes
@@ -149,16 +168,30 @@ const RetryImage = ({
     setFaded(false)
     setMask(null)
     setPlainFade(false)
+    setCover(false)
+    setInstant(false)
   }
 
   const blur = props.placeholder === 'blur' && props.blurDataURL ? props.blurDataURL : null
   const fill = Boolean(props.fill)
   // A fill image with a blurhash loads under its blur, and the blur goes off it
   const fadesFromBlur = fill && Boolean(blur)
-  // A first-try load dissolves; a retry that loaded fades its stand-in off
-  const wantsDissolve = fadesFromBlur && attempt === 0
-  // How the stand-in leaves a loaded image; null while it waits for a mask
-  const fadeMode = !loaded ? null : !wantsDissolve ? 'fade' : mask ? 'dissolve' : plainFade ? 'fade' : null
+  // A first-try load that the blur was seen over dissolves; a retry that
+  // loaded fades its stand-in off
+  const wantsDissolve = fadesFromBlur && attempt === 0 && !instant
+  // How the stand-in leaves a loaded image: at once, faded, dissolved; null
+  // while it waits for a mask
+  const fadeMode = !loaded ? null : instant ? 'instant' : !wantsDissolve ? 'fade' : mask ? 'dissolve' : plainFade ? 'fade' : null
+
+  // Still loading after QUICK_LOAD_MS: the blur moves over the image. Already
+  // there (complete, sized): the blur stays behind it and goes on load.
+  useEffect(() => {
+    if (!fadesFromBlur || attempt > 0 || loaded || cover) return
+    const img = behindRef.current?.nextElementSibling
+    if (img?.tagName === 'IMG' && img.complete && img.naturalWidth > 0) return
+    const timeout = setTimeout(() => setCover(true), QUICK_LOAD_MS)
+    return () => clearTimeout(timeout)
+  }, [fadesFromBlur, attempt, loaded, cover, currentSrc])
 
   useEffect(() => {
     if (attempt > 0 && attempt <= retryCount) {
@@ -235,6 +268,8 @@ const RetryImage = ({
   }
 
   const handleLoad = (event) => {
+    // The blur was still behind it: the image is already showing, no crossfade
+    if (fadesFromBlur && attempt === 0 && !cover) setInstant(true)
     setLoaded(true)
     onLoad?.(event)
   }
@@ -252,20 +287,40 @@ const RetryImage = ({
 
   // The <img> retries out of sight behind the stand-in until one attempt loads
   const retrying = attempt > 0 && !loaded
+  // Where the stand-in sits: behind the image until it has been loading for
+  // QUICK_LOAD_MS (so a cached image shows at once), over it from then on
+  const behind = fadesFromBlur && attempt === 0 && !cover
   // The blur covers a loading image, and a loaded one while its mask is made
   const covering = retrying || (fadesFromBlur && fadeMode === null)
   // Only a fill image fades: a fixed-size stand-in sits in the flow, and the
   // loaded <img> beside it would double the height until it went
-  const fadingOut = fadeMode !== null && !faded && fill && (fadesFromBlur || attempt > 0)
+  const fadingOut = fadeMode !== null && fadeMode !== 'instant' && !faded && fill && (fadesFromBlur || attempt > 0)
   // A stand-in fading off a retry that loaded keeps the look it had while failing
   const failingLook = retrying || (fadingOut && attempt > 0)
 
   const { ref, style, placeholder, ...imageProps } = props
+  const standIn =
+    covering || fadingOut ? (
+      <StandIn
+        key="stand-in"
+        {...props}
+        ref={retrying ? ref : behind ? behindRef : undefined}
+        kind={standInKind({ blur, whenFailed, failing: failingLook })}
+        blur={blur}
+        alt={alt}
+        decorative={!retrying}
+        fading={fadingOut && fadeMode === 'fade'}
+        mask={fadingOut && fadeMode === 'dissolve' ? mask : null}
+      />
+    ) : null
   return (
     <>
+      {behind ? standIn : null}
       {/* The caller's props first, so they cannot replace the retry handlers.
-          Always the first child, so it is never remounted. */}
+          Keyed, as is the stand-in: moving the stand-in from behind to over it
+          moves a node, it never remounts the image. */}
       <Image
+        key="image"
         {...imageProps}
         // The stand-in draws the blur that fades; next/image's own would be
         // painted over by the image, not faded
@@ -279,18 +334,7 @@ const RetryImage = ({
         onError={handleError}
         onLoad={handleLoad}
       />
-      {covering || fadingOut ? (
-        <StandIn
-          {...props}
-          ref={retrying ? ref : undefined}
-          kind={standInKind({ blur, whenFailed, failing: failingLook })}
-          blur={blur}
-          alt={alt}
-          decorative={!retrying}
-          fading={fadingOut && fadeMode === 'fade'}
-          mask={fadingOut && fadeMode === 'dissolve' ? mask : null}
-        />
-      ) : null}
+      {behind ? null : standIn}
     </>
   )
 }
