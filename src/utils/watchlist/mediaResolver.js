@@ -15,6 +15,9 @@ import { fetchTmdbFromBackend } from '@src/utils/tmdb/backendClient'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
 import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
 import { titleKey } from './playlistMerge.js'
+import { createLogger, logError } from '@src/lib/logger'
+
+const log = createLogger('MediaResolver')
 
 // A title's key in every map and set here: TMDB ids repeat across media types
 // (movie 1399 and show 1399 are different titles), so the type is part of it.
@@ -31,7 +34,7 @@ async function batchResolveMediaInternal(items, options = {}) {
     precomputedAvailability = new Set(precomputedAvailability)
   }
   
-  console.log(`[batchResolveMediaInternal] Called with ${items.length} items:`, items.map(i => `${i.mediaType}/${i.tmdbId}`))
+  log.debug({ itemCount: items.length }, 'Resolving media batch')
   
   const results = new Map()
   const uniqueItems = new Map()
@@ -246,7 +249,7 @@ async function batchResolveMediaInternal(items, options = {}) {
   const externalItems = itemsArray.filter(item => !foundKeys.has(keyOf(item.mediaType, item.tmdbId)))
   
   if (externalItems.length > 0) {
-    console.log(`[batchResolveMediaInternal] Fetching ${externalItems.length} external items from TMDB API`)
+    log.debug({ externalCount: externalItems.length }, 'Fetching external items from TMDB')
     
     // Use cached TMDB fetching per item to avoid duplicate API calls within the same request
     const tmdbPromises = externalItems.map(item => getCachedTMDBDetails(parseInt(item.tmdbId), item.mediaType, authHeaders))
@@ -353,10 +356,10 @@ async function batchResolveMediaInternal(items, options = {}) {
       } else if (result.status === 'rejected' && isTmdbNotFound(result.reason)) {
         // TMDB has no such title (the media processor's 404): label it rather
         // than leave it unresolved, where it showed as "Unknown Title"
-        console.warn(`[batchResolveMediaInternal] ${item.mediaType} ${item.tmdbId} is no longer on TMDB`)
+        log.warn({ mediaType: item.mediaType, tmdbId: item.tmdbId }, 'Title is no longer on TMDB')
         results.set(keyOf(item.mediaType, tmdbId), missingFromTmdbMedia(tmdbId, item.mediaType))
       } else {
-        console.error(`Failed to fetch TMDB data for ${item.mediaType} ${item.tmdbId}:`, result.reason)
+        logError(log, result.reason, { context: 'Failed to fetch TMDB data', mediaType: item.mediaType, tmdbId: item.tmdbId })
       }
     })
   }
@@ -369,7 +372,7 @@ async function batchResolveMediaInternal(items, options = {}) {
  * Accepts optional authHeaders for server-to-server authentication
  */
 const getCachedTMDBDetails = cache(async function getCachedTMDBDetails(tmdbId, mediaType, authHeaders = null) {
-  console.log(`[getCachedTMDBDetails] Fetching TMDB data for ${mediaType}/${tmdbId}`, authHeaders ? '(with auth)' : '(no auth)')
+  log.debug({ mediaType, tmdbId, withAuth: !!authHeaders }, 'Fetching TMDB data')
 
   try {
     // Direct backend call (Redis + ETag revalidation inside) — avoids the
@@ -382,22 +385,15 @@ const getCachedTMDBDetails = cache(async function getCachedTMDBDetails(tmdbId, m
     )
 
     if (!tmdbData) {
-      console.log(`[getCachedTMDBDetails] No data returned from TMDB for ${mediaType}/${tmdbId}`)
+      log.debug({ mediaType, tmdbId }, 'No data returned from TMDB')
       return null
     }
-    
-    console.log(`[getCachedTMDBDetails] Successfully fetched TMDB data for ${mediaType}/${tmdbId}:`, {
-      title: tmdbData.title || tmdbData.name,
-      hasOverview: !!tmdbData.overview,
-      hasCast: !!(tmdbData.cast?.length),
-      castCount: tmdbData.cast?.length || 0
-    })
     
     return tmdbData
   } catch (error) {
     // A title TMDB doesn't have is labeled by the caller, not an error
     if (!isTmdbNotFound(error)) {
-      console.error(`[getCachedTMDBDetails] Error fetching TMDB data for ${mediaType} ${tmdbId}:`, error)
+      logError(log, error, { context: 'Error fetching TMDB data', mediaType, tmdbId })
     }
     throw error
   }

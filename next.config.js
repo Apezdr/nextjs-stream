@@ -133,38 +133,27 @@ const nextConfig = {
     }],
     qualities: IMAGE_QUALITIES,
   },
-  // CRITICAL: Include OpenTelemetry packages in standalone output
-  // Without this, the OTEL packages won't be available at runtime
-  outputFileTracingIncludes: {
-    '*': [
-      // Core OpenTelemetry packages
-      './node_modules/@opentelemetry/**/*',
-      './node_modules/@vercel/**/*',
-      // Instrumentation file (should be src/ since you're using src folder)
-      './src/instrumentation.ts',
-    ],
-  },
-
-  // Packages that should not be bundled (they need to be required at runtime)
+  // Every OpenTelemetry package src/instrumentation.ts loads stays a runtime
+  // require from node_modules, so the app, the SDK and the instrumentations
+  // share one copy of each (the API's globals, the require hooks that patch
+  // mongodb and pino). The standalone build traces these requires, so they
+  // reach .next/standalone/node_modules without an outputFileTracingIncludes.
+  // mongodb and pino are on Next's own list.
   serverExternalPackages: [
-    '@opentelemetry/sdk-node',
-    '@opentelemetry/auto-instrumentations-node',
-    '@opentelemetry/exporter-trace-otlp-http',
-    '@opentelemetry/exporter-metrics-otlp-http',
+    '@opentelemetry/api',
+    '@opentelemetry/api-logs',
+    '@opentelemetry/core',
     '@opentelemetry/exporter-logs-otlp-http',
-    '@opentelemetry/resources',
-    '@opentelemetry/semantic-conventions',
-    '@opentelemetry/sdk-trace-base',
-    '@opentelemetry/sdk-trace-node',
-    '@opentelemetry/sdk-metrics',
-    '@opentelemetry/sdk-logs',
-    '@opentelemetry/instrumentation-http',
-    '@opentelemetry/instrumentation-fetch',
+    '@opentelemetry/exporter-metrics-otlp-http',
+    '@opentelemetry/instrumentation',
+    '@opentelemetry/instrumentation-mongodb',
     '@opentelemetry/instrumentation-pino',
     '@opentelemetry/instrumentation-runtime-node',
-    '@opentelemetry/api',
+    '@opentelemetry/resources',
+    '@opentelemetry/sdk-logs',
+    '@opentelemetry/sdk-metrics',
+    '@opentelemetry/semantic-conventions',
     '@vercel/otel',
-    'pino',
   ],
   // The Cast receiver URL registered in the Google Cast Developer Console is
   // https://<host>/receiver, but the receiver must be a STATIC page: a CAF

@@ -3,6 +3,9 @@ import got from 'got';
 import { getCache, setCache } from './cache';
 import crypto from 'crypto';
 import { Readable } from 'stream';
+import { createLogger } from './logger';
+
+const log = createLogger('HttpHelper');
 
 /**
  * Sleep for a specified duration
@@ -125,10 +128,10 @@ function formatBytes(bytes, decimals = 2) {
  * carries its API key, so every line shows it through loggableUrl.
  */
 const cacheLog = {
-  hit: (url, type, size) => console.debug(`Cache HIT: ${loggableUrl(url)} (${type}, ${formatBytes(size || 0)})`),
-  miss: (url, reason) => console.debug(`Cache MISS: ${loggableUrl(url)} (${reason})`),
-  store: (url, type, size) => console.debug(`Cache STORE: ${loggableUrl(url)} (${type}, ${formatBytes(size || 0)})`),
-  error: (url, error) => console.error(`Cache ERROR: ${loggableUrl(url)}: ${describeRequestError(error, url)}`)
+  hit: (url, type, size) => log.debug({ url: loggableUrl(url), type, size: formatBytes(size || 0) }, 'Cache hit'),
+  miss: (url, reason) => log.debug({ url: loggableUrl(url), reason }, 'Cache miss'),
+  store: (url, type, size) => log.debug({ url: loggableUrl(url), type, size: formatBytes(size || 0) }, 'Cache store'),
+  error: (url, error) => log.error({ url: loggableUrl(url), error: describeRequestError(error, url) }, 'Cache error')
 };
 
 /**

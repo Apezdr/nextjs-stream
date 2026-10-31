@@ -18,6 +18,9 @@ import { ensurePlaylistVisibilityIndexes } from './playlistVisibilityIndexes.js'
 import { getSession } from '@src/lib/cachedAuth.js'
 import { userQueries } from '@src/lib/userQueries'
 import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
+import { createLogger, logError } from '@src/lib/logger'
+
+const log = createLogger('Watchlist')
 
 /**
  * Helper function to check if an input is a valid MongoDB ObjectId
@@ -405,7 +408,7 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
 
   // Diagnostic logging to track cache effectiveness
   const callId = Math.random().toString(36).substring(7)
-  console.log(`[getUserWatchlist ENTRY] callId=${callId}, playlistId=${playlistId || 'default'}, page=${page}, limit=${limit}, mediaType=${mediaType || 'all'}, internalOnly=${internalOnly}`)
+  log.debug({ callId, playlistId: playlistId || 'default', page, limit, mediaType: mediaType || 'all', internalOnly }, 'getUserWatchlist entry')
 
   try {
     await ensureWatchlistIndexes()
@@ -590,7 +593,7 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
     // stored details, so a renamed title moves on the next load.
     await storeSortDetails(collection, watchlistItems, resolvedMedia)
 
-    console.log(`[getUserWatchlist EXIT] callId=${callId}, returned ${enhancedItems.length} items for playlistId=${actualPlaylistId}`)
+    log.debug({ callId, returned: enhancedItems.length, playlistId: actualPlaylistId }, 'getUserWatchlist exit')
     return enhancedItems
   } catch (error) {
     console.error('Error fetching user watchlist:', error)
@@ -2530,13 +2533,12 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
       const itemsToFetch = externalItems.filter(item => !externalTmdbData.has(titleKey(item)))
 
       if (preResolvedItems.length > 0) {
-        console.log(`[getMinimalCardDataForPlaylist] Reusing pre-resolved TMDB data for ${preResolvedItems.length} external items`)
+        log.debug({ count: preResolvedItems.length }, 'Reusing pre-resolved TMDB data for external items')
       }
 
       if (itemsToFetch.length > 0) {
         try {
-          console.log(`[getMinimalCardDataForPlaylist] Fetching TMDB data for ${itemsToFetch.length} external items:`,
-            itemsToFetch.map(item => `${item.mediaType}/${item.tmdbId}`).join(', '))
+          log.debug({ count: itemsToFetch.length }, 'Fetching TMDB data for external items')
 
           const tmdbResults = await batchResolveMedia(
             itemsToFetch.map(item => ({
@@ -2552,15 +2554,17 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
           // Log TMDB fetch success/failure
           const successCount = tmdbResults.size
           const failureCount = itemsToFetch.length - successCount
-          console.log(`[getMinimalCardDataForPlaylist] TMDB fetch results: ${successCount} success, ${failureCount} failures`)
+          log.debug({ successCount, failureCount }, 'TMDB fetch results')
 
           if (failureCount > 0) {
             const failedItems = itemsToFetch.filter(item => !externalTmdbData.has(titleKey(item)))
-            console.warn(`[getMinimalCardDataForPlaylist] Failed to fetch TMDB data for items:`,
-              failedItems.map(item => `${item.mediaType}/${item.tmdbId}`).join(', '))
+            log.warn({
+              failedCount: failedItems.length,
+              failed: failedItems.map(item => `${item.mediaType}/${item.tmdbId}`)
+            }, 'Failed to fetch TMDB data for items')
           }
         } catch (error) {
-          console.error('[getMinimalCardDataForPlaylist] Error fetching TMDB data for external items:', error)
+          logError(log, error, { context: 'Error fetching TMDB data for external items' })
           // Continue with empty data - fallback to 'Unknown Title' / placeholder images
         }
       }
@@ -2702,7 +2706,11 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
     }
 
     if (process.env.DEBUG === 'true') {
-      console.log(`[getMinimalCardDataForPlaylist] Returned ${results.length} minimal card items (${results.filter(r => r.isAvailable).length} available, ${results.filter(r => !r.isAvailable).length} TMDB-only)`)
+      log.debug({
+        count: results.length,
+        available: results.filter(r => r.isAvailable).length,
+        tmdbOnly: results.filter(r => !r.isAvailable).length
+      }, 'Returned minimal card items')
     }
 
     return results

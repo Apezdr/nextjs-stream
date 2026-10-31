@@ -47,14 +47,15 @@ ENV NODE_ENV=production
 # ============================================================================
 # OpenTelemetry Configuration for SigNoz Integration
 # ============================================================================
-# These can be overridden at runtime via docker-compose or docker run
-ENV OTEL_ENABLED="false"
+# These can be overridden at runtime via docker-compose or docker run.
+# OTEL_SDK_DISABLED=true turns all of it off (src/instrumentation.ts).
 ENV OTEL_SERVICE_NAME="nextjs-stream"
 ENV OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
 ENV OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
 
-# Resource attributes for better trace identification in SigNoz
-ENV OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,service.version=latest,service.namespace=nextjs-stream"
+# Resource attributes for better trace identification in SigNoz.
+# service.version comes from APP_VERSION below; setting it here would override it.
+ENV OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,service.namespace=nextjs-stream"
 
 # Distributed tracing propagators
 ENV OTEL_PROPAGATORS="tracecontext,baggage"
@@ -78,21 +79,25 @@ COPY --from=builder /app/public ./public
 
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing
+# The standalone output already holds the OpenTelemetry packages: they are
+# serverExternalPackages, so the build traces them into its node_modules.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
-# ============================================================================
-# Copy OpenTelemetry instrumentation files
-# These are needed for the instrumentation to work with standalone output
-# ============================================================================
-COPY --from=builder /app/src/instrumentation.ts ./src/instrumentation.ts
-COPY --from=builder /app/node_modules/@vercel ./node_modules/@vercel
-COPY --from=builder /app/node_modules/@opentelemetry ./node_modules/@opentelemetry
-COPY --from=builder /app/node_modules/pino ./node_modules/pino
-# If you have the lib/tracing.ts utilities, they'll be bundled automatically
-# ============================================================================
-
 RUN dotenvx ext prebuild
+
+# Which build this is: build.ps1 passes the image's Docker Hub tag and the
+# commit it was built from. The app reports them as service.version and
+# vcs.ref.head.revision (src/instrumentation.ts). Declared after the COPY
+# layers, so a new version doesn't invalidate them. A plain `docker build`
+# leaves them empty, and the app then reports no version.
+ARG APP_VERSION=""
+ARG GIT_COMMIT=""
+LABEL org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.source="https://github.com/Apezdr/nextjs-stream"
+ENV APP_VERSION="${APP_VERSION}" \
+    GIT_COMMIT="${GIT_COMMIT}"
 
 #USER nextjs
 

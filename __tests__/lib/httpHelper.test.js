@@ -18,6 +18,19 @@ jest.mock('@src/lib/cache', () => ({
   setCache: (...args) => mockSetCache(...args),
 }))
 
+// The cache lines go through the app's pino logger: capture its records
+const mockLogDebug = jest.fn()
+const mockLogError = jest.fn()
+jest.mock('@src/lib/logger', () => ({
+  createLogger: () => ({
+    debug: (...args) => mockLogDebug(...args),
+    error: (...args) => mockLogError(...args),
+    warn: jest.fn(),
+    info: jest.fn(),
+  }),
+  logError: jest.fn(),
+}))
+
 const { httpGet } = require('@src/lib/httpHelper')
 // backendClient's rule: network errors, 429, 503 and 504
 const { isRetryableBackendError: backendClientRule } = require('@src/utils/tmdb/backendClient')
@@ -195,9 +208,10 @@ describe('what a failed request logs', () => {
 describe('the cache log lines', () => {
   const FEED = 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=s3cr3t&unmonitored=true'
   const FILE = 'https://files.example/movies/Caf%C3%A9%20(2001)/metadata.json?hash=0123abcd'
-  const lines = () => console.debug.mock.calls.map(([line]) => line)
+  // One record per call: the message and its fields
+  const records = () => mockLogDebug.mock.calls.map(([fields, msg]) => ({ msg, ...fields }))
   const noKey = () => {
-    for (const line of lines()) expect(line).not.toContain('s3cr3t')
+    for (const record of records()) expect(JSON.stringify(record)).not.toContain('s3cr3t')
   }
 
   it('STORE: shows a feed URL with its API key REDACTED', async () => {
@@ -205,9 +219,12 @@ describe('the cache log lines', () => {
 
     await httpGet(FEED, { responseType: 'text', retry: fast })
 
-    expect(lines()).toContain(
-      'Cache STORE: https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true (text, 15 Bytes)'
-    )
+    expect(records()).toContainEqual({
+      msg: 'Cache store',
+      url: 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true',
+      type: 'text',
+      size: '15 Bytes',
+    })
     noKey()
   })
 
@@ -217,7 +234,7 @@ describe('the cache log lines', () => {
 
     await httpGet(FEED, { responseType: 'text', retry: fast }, true)
 
-    expect(lines().find((line) => line.startsWith('Cache HIT: '))).toContain('?apikey=REDACTED&unmonitored=true')
+    expect(records().find((record) => record.msg === 'Cache hit').url).toContain('?apikey=REDACTED&unmonitored=true')
     noKey()
   })
 
@@ -228,9 +245,11 @@ describe('the cache log lines', () => {
 
     await httpGet(FEED, { responseType: 'buffer', retry: fast }, true)
 
-    expect(lines().find((line) => line.startsWith('Cache MISS: '))).toBe(
-      'Cache MISS: https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true (invalid buffer format in cache)'
-    )
+    expect(records().find((record) => record.msg === 'Cache miss')).toEqual({
+      msg: 'Cache miss',
+      url: 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true',
+      reason: 'invalid buffer format in cache',
+    })
     noKey()
   })
 
@@ -239,7 +258,12 @@ describe('the cache log lines', () => {
 
     await httpGet(FILE, { retry: fast })
 
-    expect(lines().find((line) => line.startsWith('Cache STORE: '))).toBe(`Cache STORE: ${FILE} (json, 0 Bytes)`)
+    expect(records().find((record) => record.msg === 'Cache store')).toEqual({
+      msg: 'Cache store',
+      url: FILE,
+      type: 'json',
+      size: '0 Bytes',
+    })
   })
 
   it('a 503 on a feed URL logs no key: not in the retry warnings, not in the final line', async () => {
@@ -252,7 +276,9 @@ describe('the cache log lines', () => {
     // The thrown error is unchanged: its callers see the same error
     expect(error.message).toBe(`HTTP Error: 503 for URL: ${FEED}`)
     expect(mockGot).toHaveBeenCalledTimes(3)
-    const logged = [...console.warn.mock.calls, ...console.error.mock.calls, ...console.debug.mock.calls].flat().map(String)
+    const logged = [...console.warn.mock.calls, ...console.error.mock.calls, ...mockLogDebug.mock.calls, ...mockLogError.mock.calls]
+      .flat()
+      .map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry)))
     expect(console.warn).toHaveBeenCalledTimes(2)
     for (const line of logged) expect(line).not.toContain('s3cr3t')
     const redacted = 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true'
