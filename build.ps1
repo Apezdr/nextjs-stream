@@ -13,6 +13,10 @@
 #   - local main has commits origin/main lacks. An image built then would
 #     miss them, the way 2026.10.29 missed the deployed but unpushed
 #     watch-threshold commits.
+#   - :latest is already that commit. A new version should mean a change:
+#     2026.10.31-3 and -4 were two images of one commit, each a Docker Hub tag
+#     and a SigNoz deployment marker for nothing. -Force rebuilds it anyway,
+#     for a patched base image, say.
 #
 # Usage:
 #   .\build.ps1                  # build origin/main, push :<tag> and :latest
@@ -20,12 +24,14 @@
 #   .\build.ps1 -NoPush          # build and tag :<tag> locally only (:latest stays put)
 #   .\build.ps1 -Ref my-branch -NoPush   # try another commit (it can't be pushed)
 #   .\build.ps1 -Tag 2026.11.01-4        # use this tag instead of picking one
+#   .\build.ps1 -Force           # rebuild and push the commit :latest already is
 
 param(
     [string]$Ref = 'origin/main',
     [string]$Tag,
     [switch]$NoPush,
-    [switch]$DryRun
+    [switch]$DryRun,
+    [switch]$Force
 )
 
 $repo = 'membersolo/nextjs-stream'
@@ -44,6 +50,23 @@ function Invoke-Git {
     return $output
 }
 
+# The commit and version a published tag was built from: its OCI labels, read
+# from the registry without pulling the image. $null when the tag doesn't exist
+# yet or predates the labels.
+function Get-PublishedBuild([string]$ref) {
+    $answer = docker buildx imagetools inspect $ref --format '{{json .Image}}' 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        if ("$answer" -match 'not found') { return $null }
+        Fail "Could not read $ref from the registry ($answer). -Force skips this check."
+    }
+    $image = ($answer | Out-String) | ConvertFrom-Json
+    # A multi-platform tag answers with one image per platform
+    if (-not $image.config) { $image = @($image.PSObject.Properties.Value)[0] }
+    $labels = $image.config.Labels
+    if (-not $labels -or -not $labels.'org.opencontainers.image.revision') { return $null }
+    return @{ commit = $labels.'org.opencontainers.image.revision'; version = $labels.'org.opencontainers.image.version' }
+}
+
 # --- Which commit -------------------------------------------------------------
 Write-Host "Fetching origin..." -ForegroundColor Cyan
 Invoke-Git fetch origin --quiet | Out-Null
@@ -59,6 +82,12 @@ if ($LASTEXITCODE -eq 0 -and $hasMain) { $unpushed = [int](Invoke-Git rev-list -
 if (-not $NoPush) {
     if (-not $onMain) { Fail "$Ref ($short) is not on origin/main. Only main ships; use -NoPush to try it." }
     if ($unpushed -gt 0) { Fail "Local main has $unpushed commit(s) origin/main lacks. Push them first, or the image will miss them." }
+    if (-not $Force) {
+        $published = Get-PublishedBuild "${repo}:latest"
+        if ($published -and $published.commit -eq $commit) {
+            Fail "${repo}:latest ($($published.version)) is already $short, so there is nothing new to ship. -Force rebuilds it anyway (for a patched base image, say)."
+        }
+    }
 }
 
 # --- Which tag ----------------------------------------------------------------
