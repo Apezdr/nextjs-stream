@@ -1,6 +1,9 @@
 import { revalidateTag, updateTag } from 'next/cache'
 import { MEDIA_CACHE_TAGS } from './mediaPagesTags'
 import { REVISION, bumpRevisionAfterResponse, watchHistoryRevision } from '../changes/revisions'
+import { createLogger } from '@src/lib/logger'
+
+const log = createLogger('Cache')
 
 /** The tag every list window carries (horizontalListData.js). */
 export const MEDIA_LIST_TAG = 'media-library'
@@ -134,7 +137,7 @@ export async function invalidateUserWatchHistoryCache(userId) {
     // client's Watch History row within one /changes poll (owner, 2026-10-23)
     bumpRevisionAfterResponse(watchHistoryRevision(userId))
 
-    console.log(`[Cache] Expired watch history cache for user ${userId}`)
+    log.debug({ userId }, 'Expired watch history cache')
     return true
   } catch (error) {
     console.error('[Cache SWR] Failed to invalidate watch history cache:', error)
