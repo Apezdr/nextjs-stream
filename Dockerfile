@@ -47,8 +47,8 @@ ENV NODE_ENV=production
 # ============================================================================
 # OpenTelemetry Configuration for SigNoz Integration
 # ============================================================================
-# These can be overridden at runtime via docker-compose or docker run
-ENV OTEL_ENABLED="false"
+# These can be overridden at runtime via docker-compose or docker run.
+# OTEL_SDK_DISABLED=true turns all of it off (src/instrumentation.ts).
 ENV OTEL_SERVICE_NAME="nextjs-stream"
 ENV OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
 ENV OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
@@ -78,19 +78,10 @@ COPY --from=builder /app/public ./public
 
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing
+# The standalone output already holds the OpenTelemetry packages: they are
+# serverExternalPackages, so the build traces them into its node_modules.
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-# ============================================================================
-# Copy OpenTelemetry instrumentation files
-# These are needed for the instrumentation to work with standalone output
-# ============================================================================
-COPY --from=builder /app/src/instrumentation.ts ./src/instrumentation.ts
-COPY --from=builder /app/node_modules/@vercel ./node_modules/@vercel
-COPY --from=builder /app/node_modules/@opentelemetry ./node_modules/@opentelemetry
-COPY --from=builder /app/node_modules/pino ./node_modules/pino
-# If you have the lib/tracing.ts utilities, they'll be bundled automatically
-# ============================================================================
 
 RUN dotenvx ext prebuild
 
