@@ -78,6 +78,31 @@
           "path": "${workspaceFolder}"
         }
       ]
+    },
+    {
+      // Builds origin/main with build.ps1 and pushes :<tag> and :latest to
+      // Docker Hub. The script prints the commit and tag first, and refuses a
+      // commit that isn't on origin/main, a local main with unpushed commits,
+      // or the commit :latest already carries (build.ps1 -Force rebuilds it).
+      // Needs the PowerShell extension; a temporary console per run, so nothing
+      // from one run is left in the next.
+      "name": "Docker: build and push (build.ps1)",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${workspaceFolder}/build.ps1",
+      "cwd": "${workspaceFolder}",
+      "createTemporaryIntegratedConsole": true
+    },
+    {
+      // The same plan, nothing built or pushed: shows the tag and commit a real
+      // run would use.
+      "name": "Docker: dry run (build.ps1 -DryRun)",
+      "type": "PowerShell",
+      "request": "launch",
+      "script": "${workspaceFolder}/build.ps1",
+      "args": ["-DryRun"],
+      "cwd": "${workspaceFolder}",
+      "createTemporaryIntegratedConsole": true
     }
   ],
   "compounds": [

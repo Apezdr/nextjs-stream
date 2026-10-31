@@ -457,7 +457,7 @@ This approach ensures your watchlist always reflects the current state of your m
 `build.ps1` builds the image from a clean checkout of `origin/main` and pushes it to Docker Hub.
 - **Tag:** the date, plus `-2`, `-3` for later builds that day.
 - **Inside the image:** the tag and the commit, as `APP_VERSION` and `GIT_COMMIT`. The app reports them to OpenTelemetry as `service.version` and `vcs.ref.head.revision`.
-- **Refused:** a push from a commit not on `origin/main`, or while local `main` has unpushed commits.
+- **Refused:** a push from a commit not on `origin/main`, or while local `main` has unpushed commits. Also a push of the commit `:latest` already carries, so a new version always means a change; `-Force` rebuilds it anyway, e.g. for a patched base image.
 - **Trying a build first:** `.\build.ps1 -DryRun` prints the plan, and `-NoPush` builds without pushing.
 
 A plain `docker build .` still works; that image just reports no version.
