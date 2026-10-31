@@ -14,7 +14,7 @@
  * migration, the watch-history validation and the new-content notices.
  */
 
-import { trace } from '@opentelemetry/api'
+import { SpanStatusCode, trace } from '@opentelemetry/api'
 import clientPromise from '@src/lib/mongodb'
 import { createLogger, logError } from '@src/lib/logger'
 import { migratePlaybackStatusIfNeeded } from '@src/utils/watchHistory/migrate'
@@ -615,6 +615,9 @@ export async function runPostSyncCleanup(listings, options = {}) {
     } catch (error) {
       logError(log, error, { context: 'post_sync_cleanup' })
       span.recordException(error)
+      // An exception event alone leaves the status Unset: SigNoz counts a
+      // failed span only by its ERROR status
+      span.setStatus({ code: SpanStatusCode.ERROR, message: error?.message })
       throw error
     } finally {
       inFlight = false
