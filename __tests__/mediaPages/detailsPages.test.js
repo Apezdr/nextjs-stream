@@ -321,5 +321,9 @@ describe('TVEpisodeDetailsComponent', () => {
     expect(screen.queryByText(/undefined|NaN/)).toBeNull()
     const panel = screen.getByRole('heading', { name: 'Episode details' }).closest('section')
     expect(within(panel).queryByText(/ of /)).toBeNull()
+    // No still: the hero frame holds frosted glass, not an empty box
+    const still = screen.getByRole('button', { name: 'View artwork for 3 Body Problem · Countdown' })
+    expect(still.querySelector('img')).toBeNull()
+    expect(still.querySelector('span.backdrop-blur-xl')).not.toBeNull()
   })
 })

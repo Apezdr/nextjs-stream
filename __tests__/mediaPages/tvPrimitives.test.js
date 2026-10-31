@@ -338,10 +338,16 @@ describe('EpisodeNav', () => {
     expect(within(previous).getByText('1h 4m')).toBeInTheDocument()
     expect(previous.querySelector('img')).toHaveAttribute('src', 'https://files.example.com/S01E01.jpg')
 
-    // No title falls back to the number; no still leaves a blank frame; no runtime, no line
+    // No title falls back to the number; no still leaves a pane of frosted glass, the
+    // same surface a still that fails to load leaves; no runtime, no line
     const next = screen.getByRole('link', { name: 'Next episode: Episode 3, Episode 3' })
     expect(next).toHaveAttribute('href', '/list/tv/Preacher/1/3')
     expect(next.querySelector('img')).toBeNull()
+    const glass = next.querySelector('span.backdrop-blur-xl')
+    expect(glass).toHaveAttribute('aria-hidden', 'true')
+    expect(glass.style.backgroundImage).toContain('radial-gradient')
+    // A card with a still has no glass
+    expect(previous.querySelector('span.backdrop-blur-xl')).toBeNull()
     expect(screen.getByRole('link', { name: 'All 1 episode' })).toBeInTheDocument()
   })
 
