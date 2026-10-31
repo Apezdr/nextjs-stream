@@ -49,7 +49,14 @@ import { LoggerProvider } from '@opentelemetry/sdk-logs'
 import { MeterProvider } from '@opentelemetry/sdk-metrics'
 import { register } from '@src/instrumentation'
 
-const ENV_KEYS = ['OTEL_PROPAGATORS', 'OTEL_RESOURCE_ATTRIBUTES', 'OTEL_SDK_DISABLED', 'OTEL_SERVICE_NAME']
+const ENV_KEYS = [
+  'APP_VERSION',
+  'GIT_COMMIT',
+  'OTEL_PROPAGATORS',
+  'OTEL_RESOURCE_ATTRIBUTES',
+  'OTEL_SDK_DISABLED',
+  'OTEL_SERVICE_NAME',
+]
 const savedEnv = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]))
 
 function registeredConfig() {
@@ -137,6 +144,37 @@ describe('resource', () => {
     expect(mockExportedLogs[0].resource.attributes).toMatchObject(expected)
     expect(mockExportedMetrics.at(-1).resource.attributes).toMatchObject(expected)
     expect(registeredConfig().serviceName).toBe('nextjs-stream-test')
+  })
+
+  it('reports the build the image was made from on all three signals', async () => {
+    process.env.APP_VERSION = '2026.10.31-3'
+    process.env.GIT_COMMIT = '1b3e138a4f0c2d5e6b7a8c9d0e1f2a3b4c5d6e7f'
+
+    register()
+
+    logs.getLogger('test').emit({ body: 'hello' })
+    await logs.getLoggerProvider().forceFlush()
+    metrics.getMeter('test').createCounter('test.count').add(1)
+    await metrics.getMeterProvider().forceFlush()
+
+    const build = {
+      'service.version': '2026.10.31-3',
+      'vcs.ref.head.revision': '1b3e138a4f0c2d5e6b7a8c9d0e1f2a3b4c5d6e7f',
+    }
+    expect(registeredConfig().attributes).toEqual(build)
+    expect(mockExportedLogs[0].resource.attributes).toMatchObject(build)
+    expect(mockExportedMetrics.at(-1).resource.attributes).toMatchObject(build)
+  })
+
+  it('reports no version when the build set none', async () => {
+    register()
+
+    metrics.getMeter('test').createCounter('test.count').add(1)
+    await metrics.getMeterProvider().forceFlush()
+
+    expect(registeredConfig().attributes).toEqual({})
+    expect(mockExportedMetrics.at(-1).resource.attributes).not.toHaveProperty('service.version')
+    expect(mockExportedMetrics.at(-1).resource.attributes).not.toHaveProperty('vcs.ref.head.revision')
   })
 })
 

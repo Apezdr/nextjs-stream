@@ -452,6 +452,18 @@ This approach ensures your watchlist always reflects the current state of your m
 
 ## Deployment Note
 
+### Docker image
+
+`build.ps1` builds the image from a clean checkout of `origin/main` and pushes it to Docker Hub.
+- **Tag:** the date, plus `-2`, `-3` for later builds that day.
+- **Inside the image:** the tag and the commit, as `APP_VERSION` and `GIT_COMMIT`. The app reports them to OpenTelemetry as `service.version` and `vcs.ref.head.revision`.
+- **Refused:** a push from a commit not on `origin/main`, or while local `main` has unpushed commits.
+- **Trying a build first:** `.\build.ps1 -DryRun` prints the plan, and `-NoPush` builds without pushing.
+
+A plain `docker build .` still works; that image just reports no version.
+
+### Vercel
+
 While it is possible to host this app on Vercel, please be aware that the image optimization costs may prevent practical usage at scale. If you choose to deploy on Vercel, it's recommended to use the `unoptimized` flag for `next/image` to avoid these costs at the expense of placeholder images being unavailable.
 
 **Ref:**

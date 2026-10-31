@@ -11,22 +11,34 @@ import { RuntimeNodeInstrumentation } from '@opentelemetry/instrumentation-runti
 import { detectResources, envDetector, resourceFromAttributes } from '@opentelemetry/resources'
 import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs'
 import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
-import { ATTR_SERVICE_NAME } from '@opentelemetry/semantic-conventions'
+import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions'
 
 declare global {
   // Prevent double-init in dev / hot reload
   var __otelStarted: boolean | undefined
 }
 
+// Which build is running: the image's Docker Hub tag and the commit it was
+// built from, baked in by build.ps1 (Dockerfile ARG APP_VERSION, GIT_COMMIT).
+// SigNoz marks a deployment each time service.version changes. Unset (a dev
+// server, a plain `docker build`), no version is reported.
+function buildAttributes(): Attributes {
+  const attributes: Attributes = {}
+  if (process.env.APP_VERSION) attributes[ATTR_SERVICE_VERSION] = process.env.APP_VERSION
+  if (process.env.GIT_COMMIT) attributes['vcs.ref.head.revision'] = process.env.GIT_COMMIT
+  return attributes
+}
+
 // Logs and metrics carry the resource @vercel/otel gives traces: service.name,
 // node.env and process.runtime.name, with OTEL_RESOURCE_ATTRIBUTES
-// (service.namespace, service.version, deployment.environment) merged over
-// them by the same env detector. Without it, SigNoz showed the pino logs and
-// the runtime metrics with service.name alone.
+// (service.namespace, deployment.environment) merged over them by the same env
+// detector. Without it, SigNoz showed the pino logs and the runtime metrics
+// with service.name alone.
 function buildResource(serviceName: string) {
   const attributes: Attributes = {
     [ATTR_SERVICE_NAME]: serviceName,
     'process.runtime.name': 'nodejs',
+    ...buildAttributes(),
   }
   if (process.env.NODE_ENV) attributes['node.env'] = process.env.NODE_ENV
   return resourceFromAttributes(attributes).merge(detectResources({ detectors: [envDetector] }))
@@ -134,6 +146,7 @@ export function register() {
 
   registerOTel({
     serviceName,
+    attributes: buildAttributes(),
     // Use "auto" to let @vercel/otel configure the best exporter based on environment variables
     // This will automatically use OTEL_EXPORTER_OTLP_ENDPOINT and other OTEL env vars
     traceExporter: 'auto',

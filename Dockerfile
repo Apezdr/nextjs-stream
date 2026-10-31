@@ -53,8 +53,9 @@ ENV OTEL_SERVICE_NAME="nextjs-stream"
 ENV OTEL_EXPORTER_OTLP_ENDPOINT="http://otel-collector:4318"
 ENV OTEL_EXPORTER_OTLP_PROTOCOL="http/protobuf"
 
-# Resource attributes for better trace identification in SigNoz
-ENV OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,service.version=latest,service.namespace=nextjs-stream"
+# Resource attributes for better trace identification in SigNoz.
+# service.version comes from APP_VERSION below; setting it here would override it.
+ENV OTEL_RESOURCE_ATTRIBUTES="deployment.environment=production,service.namespace=nextjs-stream"
 
 # Distributed tracing propagators
 ENV OTEL_PROPAGATORS="tracecontext,baggage"
@@ -84,6 +85,19 @@ COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
 RUN dotenvx ext prebuild
+
+# Which build this is: build.ps1 passes the image's Docker Hub tag and the
+# commit it was built from. The app reports them as service.version and
+# vcs.ref.head.revision (src/instrumentation.ts). Declared after the COPY
+# layers, so a new version doesn't invalidate them. A plain `docker build`
+# leaves them empty, and the app then reports no version.
+ARG APP_VERSION=""
+ARG GIT_COMMIT=""
+LABEL org.opencontainers.image.version="${APP_VERSION}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.source="https://github.com/Apezdr/nextjs-stream"
+ENV APP_VERSION="${APP_VERSION}" \
+    GIT_COMMIT="${GIT_COMMIT}"
 
 #USER nextjs
 
