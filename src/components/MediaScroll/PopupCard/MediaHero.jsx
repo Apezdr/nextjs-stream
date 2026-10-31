@@ -48,6 +48,10 @@ const MediaHero = ({
   viewTransitionName,
 }) => {
   const [logoLoaded, setLogoLoaded] = useState(false)
+  // The URL RetryImage gave up on, per layer (it reports once, after its
+  // retries). Keyed by URL: the popup's fetch can swap a layer's source, and a
+  // new one deserves its own attempts.
+  const [failedSrc, setFailedSrc] = useState({})
 
   // Extract image configuration
   const {
@@ -59,10 +63,42 @@ const MediaHero = ({
     thumbnailSrc,
     thumbnailBlur,
     hasLogo,
+    hasBackdrop,
+    hasPoster,
+    hasThumbnail,
   } = imageConfig
 
   // Extract visibility flags
-  const { shouldShowPoster, shouldShowBackdrop, shouldShowThumbnail } = visibilityFlags
+  const { shouldShowBackdrop, shouldShowThumbnail } = visibilityFlags
+
+  const failed = {
+    thumbnail: Boolean(thumbnailSrc) && failedSrc.thumbnail === thumbnailSrc,
+    backdrop: Boolean(backdropSrc) && failedSrc.backdrop === backdropSrc,
+    poster: Boolean(posterSrc) && failedSrc.poster === posterSrc,
+  }
+  const srcOf = { thumbnail: thumbnailSrc, backdrop: backdropSrc, poster: posterSrc }
+
+  // The layers fall through, best first: thumbnail, backdrop, poster. The
+  // poster is the last resort, so it also shows once everything above it has
+  // failed. (A failed thumbnail already keeps the backdrop up: the backdrop
+  // leaves only when the thumbnail loads.)
+  const shouldShowPoster =
+    visibilityFlags.shouldShowPoster ||
+    (!shouldPlay && hasPoster && (!hasBackdrop || failed.backdrop) && (!hasThumbnail || failed.thumbnail))
+
+  // A failed layer steps aside when a working one sits under it; only the
+  // last one standing shows its blurhash or the frosted glass
+  const backdropBelow = shouldShowBackdrop && !failed.backdrop
+  const posterBelow = hasPoster && !failed.poster
+  const thumbnailWhenFailed = backdropBelow || posterBelow ? 'hide' : 'frost'
+  const backdropWhenFailed = posterBelow ? 'hide' : 'frost'
+
+  // A failed image counts as settled: the clip waits for the image to be seen,
+  // and with none to see it should not wait forever
+  const handleLayerError = (layer) => () => {
+    setFailedSrc((prev) => ({ ...prev, [layer]: srcOf[layer] }))
+    handleImageLoad()
+  }
 
   // Handle logo image loading
   const handleLogoLoad = useCallback(() => {
@@ -71,7 +107,9 @@ const MediaHero = ({
 
   const hero = (
     <div
-      className="relative overflow-hidden"
+      // Dark under the art, so a blurhash or the frosted glass reads as it does
+      // on the pages, rather than as white on the popup's white body
+      className="relative overflow-hidden rounded-t-lg bg-[#0f1633]"
       style={{
         height: imagePosition.height,
         width: imagePosition.expandedWidth,
@@ -80,6 +118,7 @@ const MediaHero = ({
       {/* Logo if present (z-[50]) */}
       {hasLogo && (
         <RetryImage
+          whenFailed="hide"
           quality={25}
           fill
           loading="eager"
@@ -140,6 +179,7 @@ const MediaHero = ({
                 playbackState.afterVideo ? 'filter brightness-50' : ''
               )}
               onLoad={handleImageLoad}
+              onError={handleLayerError('poster')}
             />
           </motion.div>
         )}
@@ -167,7 +207,9 @@ const MediaHero = ({
                 "rounded-t-lg object-cover",
                 playbackState.afterVideo || (!isLoading && !videoURL) ? 'filter brightness-50' : ''
               )}
+              whenFailed={backdropWhenFailed}
               onLoad={handleImageLoad}
+              onError={handleLayerError('backdrop')}
             />
           </motion.div>
         )}
@@ -195,10 +237,12 @@ const MediaHero = ({
                 "rounded-t-lg object-cover",
                 playbackState.afterVideo ? 'filter brightness-50' : ''
               )}
+              whenFailed={thumbnailWhenFailed}
               onLoad={() => {
                 dispatch({ type: 'SET_THUMBNAIL_LOADED' })
                 handleImageLoad()
               }}
+              onError={handleLayerError('thumbnail')}
             />
           </motion.div>
         )}

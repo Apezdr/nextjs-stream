@@ -185,6 +185,7 @@ const BannerContent = ({
             currentMedia?.title ? (
               <ViewTransition name={movieLogoName(currentMedia.title)}>
                 <RetryImage
+                  whenFailed="hide"
                   src={logo}
                   alt="Logo Image"
                   width={300}
@@ -196,6 +197,7 @@ const BannerContent = ({
               </ViewTransition>
             ) : (
               <RetryImage
+                whenFailed="hide"
                 src={logo}
                 alt="Logo Image"
                 width={300}

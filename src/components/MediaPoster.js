@@ -15,7 +15,7 @@ function MediaPoster({
   className = 'max-w-full',
   alt = 'Poster',
   contClassName = 'max-w-sm mx-auto',
-  size = { w: 600, h: 600 },
+  size = { w: 600, h: 900 },
   quality = 100,
   hideGenres = false,
   imagePriority = false,
@@ -51,6 +51,13 @@ function MediaPoster({
   const { res_width, is4k, is1080p } = getResolutionLabel(_media?.dimensions ?? null)
 
   let hdr = _media?.hdr ? _media.hdr : false
+
+  // The box is a poster's shape, 2:3, before anything has loaded: the blur
+  // fills it and fades into the poster, which lands in the same box instead of
+  // resizing it. A poster a few pixels off 2:3 is cropped by object-cover
+  // rather than nudging the grid. `size.w` caps the box and sets the
+  // resolution asked for.
+  const placeholder = posterBlurhash ? { placeholder: 'blur', blurDataURL: `data:image/png;base64,${posterBlurhash}` } : {}
 
   return (
     <div
@@ -93,39 +100,23 @@ function MediaPoster({
         </div>
       )}
       {(() => {
-        const image = posterBlurhash ? (
-          <RetryImage
-            src={posterURL}
-            alt={alt ?? _media.title}
-            quality={quality}
-            width={size.w}
-            height={size.h}
-            loading={loadingType}
-            placeholder="blur"
-            blurDataURL={`data:image/png;base64,${posterBlurhash}`}
-            className={classNames(className, 'object-cover group-hover:opacity-75')}
-            priority={imagePriority}
-          />
-        ) : posterURL ? (
-          <RetryImage
-            src={posterURL}
-            alt={alt ?? _media.title}
-            quality={quality}
-            width={size.w}
-            height={size.h}
-            className={classNames(className, 'object-cover group-hover:opacity-75')}
-            priority={imagePriority}
-          />
-        ) : (
-          <RetryImage
-            src={'/sorry-image-not-available.jpg'}
-            alt={alt ?? _media.title}
-            quality={quality}
-            width={size.w}
-            height={size.h}
-            className={classNames(className, 'object-cover group-hover:opacity-75')}
-            priority={imagePriority}
-          />
+        const image = (
+          // `size.w` wide, as the <img> was, so a container sized to its
+          // content (the TV list's) still has a width to size to; the
+          // caller's max-w class caps it, as it capped the <img>
+          <div className={classNames('relative aspect-[2/3] overflow-hidden', className)} style={{ width: size.w }}>
+            <RetryImage
+              src={posterURL}
+              alt={alt ?? _media.title}
+              quality={quality}
+              fill
+              sizes={`${size.w}px`}
+              loading={loadingType}
+              priority={imagePriority}
+              {...placeholder}
+              className="object-cover group-hover:opacity-75"
+            />
+          </div>
         )
 
         return viewTransitionName ? (
@@ -139,6 +130,7 @@ function MediaPoster({
           <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
             {is4k ? (
               <RetryImage
+                whenFailed="hide"
                 src={HD4kBanner}
                 className="h-4 w-auto"
                 alt={'4k Banner'}
@@ -154,7 +146,7 @@ function MediaPoster({
           {hdr ? (
             <div className="select-none bg-transparent text-gray-600 transition-opacity duration-700 text-xs h-4">
             {isHdr10Label(hdr) ? (
-            <RetryImage src={hdr10PlusLogo} alt={`${hdr} Logo`} className="h-4 w-auto" loading="lazy" />
+            <RetryImage whenFailed="hide" src={hdr10PlusLogo} alt={`${hdr} Logo`} className="h-4 w-auto" loading="lazy" />
             ) : (
             <>{hdr}</>
             )}
