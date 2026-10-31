@@ -2,6 +2,22 @@ import { useMemo } from 'react'
 import { getFullImageUrl } from '@src/utils'
 
 /**
+ * The episode thumbnail the card already shows, when it has one: a rail
+ * episode card's poster is the episode's own thumbnail, with that image's
+ * blurhash (episodeCardImage), and `thumbnail` names it. The popup opens on
+ * that pair instead of the show's backdrop while its own fetch is in flight,
+ * and keeps it after (the fetch returns the same URL), so the image never
+ * changes under the viewer.
+ *
+ * Not for a trailer card, whose `thumbnail` can be the show poster standing in.
+ *
+ * @param {{ thumbnail?: string|null, posterURL?: string|null, isTrailer?: boolean }} props
+ * @returns {string|null}
+ */
+export const railThumbnailOf = (props) =>
+  !props.isTrailer && props.thumbnail && props.thumbnail === props.posterURL ? props.thumbnail : null
+
+/**
  * Custom hook to manage media assets (images, logos) and their visibility
  * 
  * This hook encapsulates the logic for:
@@ -17,6 +33,8 @@ import { getFullImageUrl } from '@src/utils'
 export const useMediaAssets = (data, props, playbackState) => {
   const { shouldPlay, isThumbnailLoaded, showBackdrop, delayBackdropHide } = playbackState
 
+  const railThumbnail = railThumbnailOf(props)
+
   // Memoize computed image sources and blurhashes
   const imageConfig = useMemo(() => {
     const logoSrc = data?.logo || data?.logo_path || props.metadata?.logo_path
@@ -24,8 +42,9 @@ export const useMediaAssets = (data, props, playbackState) => {
     const posterBlur = data?.posterBlurhash || props.posterBlurhash
     const backdropSrc = props.backdrop ?? data?.backdrop ?? (data?.backdrop_path ? getFullImageUrl(data?.backdrop_path, 'w500') : null)
     const backdropBlur = props.backdropBlurhash ?? data?.backdropBlurhash
-    const thumbnailSrc = data?.thumbnail
-    const thumbnailBlur = data?.blurhash?.thumbnail || data?.thumbnailBlurhash
+    const thumbnailSrc = railThumbnail ?? data?.thumbnail
+    // The card's blurhash is its poster's, which is this thumbnail's
+    const thumbnailBlur = (railThumbnail ? props.posterBlurhash : null) || data?.blurhash?.thumbnail || data?.thumbnailBlurhash
     
     return {
       logoSrc,
@@ -54,6 +73,7 @@ export const useMediaAssets = (data, props, playbackState) => {
     props.metadata?.logo_path,
     props.posterURL,
     props.posterBlurhash,
+    railThumbnail,
     props.backdrop,
     props.backdropBlurhash,
   ])

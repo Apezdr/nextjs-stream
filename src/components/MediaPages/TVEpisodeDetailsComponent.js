@@ -148,7 +148,13 @@ const TVEpisodeDetailsComponent = ({ media }) => {
           </ViewTransition>
           {media.normalizedVideoId ? (
             <Suspense fallback={null}>
-              <WatchedByLine normalizedVideoId={media.normalizedVideoId} mediaId={media.mediaId || null} className="mt-2 justify-end" />
+              <WatchedByLine
+                normalizedVideoId={media.normalizedVideoId}
+                mediaId={media.mediaId || null}
+                durationMs={durationMs}
+                title={showTitle ? `${showTitle} · ${code} · ${episodeTitle}` : episodeTitle}
+                className="mt-2 justify-end"
+              />
             </Suspense>
           ) : null}
         </div>

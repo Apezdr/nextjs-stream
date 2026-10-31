@@ -57,3 +57,17 @@
 .animate-ticker-out-fast {
   animation: ticker-out 0.35s cubic-bezier(0.4, 0, 0.6, 1);
 }
+/* Steps a RetryImage stand-in through its dissolve mask strip
+   (components/imageDissolve.js): one frame of the strip per step. The first
+   and last frame's positions come from the element (dissolveMaskLayout), as
+   they depend on the frame's height and the gutters between frames */
+@keyframes image-dissolve {
+  from {
+    -webkit-mask-position: 0 var(--dissolve-from);
+    mask-position: 0 var(--dissolve-from);
+  }
+  to {
+    -webkit-mask-position: 0 var(--dissolve-to);
+    mask-position: 0 var(--dissolve-to);
+  }
+}

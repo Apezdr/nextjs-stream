@@ -100,25 +100,26 @@ export function VideoMetadata({
               switch (mediaMetadata.rating) {
                 case 'G':
                   return (
-                    <RetryImage src={GeneralAudiencesBadge} alt="Rated G" className="max-h-20 w-auto" />
+                    <RetryImage whenFailed="hide" src={GeneralAudiencesBadge} alt="Rated G" className="max-h-20 w-auto" />
                   )
                 case 'PG':
                   return (
-                    <RetryImage src={ParentalGuidanceBadge} alt="Rated PG" className="max-h-20 w-auto" />
+                    <RetryImage whenFailed="hide" src={ParentalGuidanceBadge} alt="Rated PG" className="max-h-20 w-auto" />
                   )
                 case 'PG-13':
                   return (
                     <RetryImage
+                      whenFailed="hide"
                       src={ParensStronglyCautionedBadge}
                       alt="Rated PG-13"
                       className="max-h-20 w-auto"
                     />
                   )
                 case 'R':
-                  return <RetryImage src={RestrictedBadge} alt="Rated R" className="max-h-20 w-auto" />
+                  return <RetryImage whenFailed="hide" src={RestrictedBadge} alt="Rated R" className="max-h-20 w-auto" />
                 case 'NC-17':
                   return (
-                    <RetryImage src={No17AndUnderBadge} alt="Rated NC-17" className="max-h-20 w-auto" />
+                    <RetryImage whenFailed="hide" src={No17AndUnderBadge} alt="Rated NC-17" className="max-h-20 w-auto" />
                   )
                 default:
                   return `Rated ${mediaMetadata.rating}`

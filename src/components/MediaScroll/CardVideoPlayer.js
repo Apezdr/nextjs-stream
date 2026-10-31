@@ -18,6 +18,15 @@ import '@components/VideoPreview/preview.css'
 const VOLUME_KEY = 'videoVolumeCard'
 const MUTED_KEY = 'videoMutedCard'
 
+/**
+ * How a preview that errors is retried: a remount each time, the first at
+ * once (a 416 "Range Not Satisfiable" wedges the element, and one remount
+ * cures it), the next ones after these waits, and then it gives up. A dead URL
+ * (its server down, a 4xx/5xx) used to be remounted on every error with no
+ * limit: ~1,100 requests in 2 s, each logging a MediaError.
+ */
+const RETRY_DELAYS_MS = [0, 1000, 3000]
+
 // <Av1DecodeCheck> in ClientProviders starts this at page load, so the answer
 // is in before this module, which the hover card loads lazily, mounts its
 // first preview. Starting it here as well (it only ever runs once) keeps the
@@ -95,7 +104,7 @@ function MuteControl({ muted, volume, onToggleMute, onVolumeChange }) {
   )
 }
 
-/** Direct-file preview branch â€” a plain <video> with the 416-remount guard. */
+/** Direct-file preview branch: a plain <video> with the 416-remount guard, bounded (RETRY_DELAYS_MS). */
 function FilePreview({
   videoURL,
   shouldPlay,
@@ -111,6 +120,16 @@ function FilePreview({
   const videoRef = useVideoElementTeardown()
   const readyNotifiedRef = useRef(false)
   const [instanceKey, setInstanceKey] = useState(0)
+  // Errors since the clip last played (or since this URL came in); past
+  // RETRY_DELAYS_MS the preview gives up and renders nothing
+  const [failures, setFailures] = useState(0)
+  const lastErrorRef = useRef(null)
+  const [failuresURL, setFailuresURL] = useState(videoURL)
+  if (videoURL !== failuresURL) {
+    setFailuresURL(videoURL)
+    setFailures(0)
+  }
+  const gaveUp = failures > RETRY_DELAYS_MS.length
 
   // Whether to list the AV1 clip ahead of the plain one. Read once, when the
   // preview mounts, and never raised afterwards: a <video> keeps the source
@@ -196,18 +215,39 @@ function FilePreview({
     // error is one to act on.
     if (event.target !== event.currentTarget) return
     const video = videoRef.current
-    const error = video?.error
-    console.error('Card video player error:', error)
+    lastErrorRef.current = video?.error ?? null
     // The browser took the AV1 clip and then could not play it. Give up on AV1
-    // for this page load rather than fail the same way on every preview.
+    // for this page load rather than fail the same way on every preview. The
+    // plain clip is a different file, so its first try is not a retry.
     if (isAv1ClipSource(video?.currentSrc)) {
       markAv1PlaybackFailed()
       setOfferAv1(false)
+      setInstanceKey((key) => key + 1)
+      return
     }
     // "416 Range Not Satisfiable" leaves the element wedged; a full remount is
     // the reliable cure (long-standing workaround carried over from vidstack).
-    setInstanceKey((key) => key + 1)
-  }, [videoRef])
+    // The first one at once; later ones wait (the effect below), then stop.
+    const next = failures + 1
+    setFailures(next)
+    if (next === 1) setInstanceKey((key) => key + 1)
+  }, [videoRef, failures])
+
+  // The waited-for retries
+  useEffect(() => {
+    if (failures < 2 || failures > RETRY_DELAYS_MS.length) return
+    const timeout = setTimeout(() => setInstanceKey((key) => key + 1), RETRY_DELAYS_MS[failures - 1])
+    return () => clearTimeout(timeout)
+  }, [failures])
+
+  // Out of retries: one line for the console (a dead preview is handled, so
+  // not an error), and a clip that was showing hands back to its parent as if
+  // it had ended, so the card shows its image again instead of a dead frame
+  useEffect(() => {
+    if (!gaveUp) return
+    console.warn(`Card video preview unavailable after ${RETRY_DELAYS_MS.length} retries:`, lastErrorRef.current)
+    if (readyNotifiedRef.current) callbacksRef.current.onVideoEnd?.(null)
+  }, [gaveUp])
 
   // An AV1 URL that fails to load (400 from a processor that cannot make AV1)
   // needs nothing from us: the browser moves on to the next <source>. When the
@@ -221,6 +261,8 @@ function FilePreview({
     setInstanceKey((key) => key + 1)
   }, [])
 
+  if (gaveUp) return null
+
   return (
     <video
       key={elementKey}
@@ -230,6 +272,8 @@ function FilePreview({
       preload="auto"
       className="absolute inset-0 h-full w-full object-cover"
       onCanPlay={() => {
+        // It plays: a later wedge gets its retries again
+        if (failures) setFailures(0)
         if (readyNotifiedRef.current) return
         readyNotifiedRef.current = true
         const { onVideoReady: notify } = callbacksRef.current

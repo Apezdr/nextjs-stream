@@ -1,7 +1,7 @@
 import { EyeIcon } from '@heroicons/react/20/solid'
 import { classNames } from '@src/utils'
 import { countUniqueViewersByNormalizedId } from '@src/utils/flatDatabaseUtils'
-import { FactRow } from './details/Primitives'
+import WatchedByButton from './details/WatchedByButton'
 
 /**
  * "Watched by N people" — distinct viewers across every identity the title
@@ -22,40 +22,30 @@ export default async function ViewCount({ normalizedVideoId, mediaId = null }) {
 }
 
 /**
- * The same count as a row of the details panel, or nothing when no one has
- * watched it yet (a "0 people" row says less than its absence).
- */
-export async function WatchedByRow({ normalizedVideoId, mediaId = null }) {
-  const uniqueWatches = await countUniqueViewersByNormalizedId(normalizedVideoId, mediaId)
-
-  if (!uniqueWatches) return null
-
-  return (
-    <FactRow label="Watched by">
-      <span className="inline-flex items-center gap-1.5">
-        <EyeIcon className="size-4 text-white/50" aria-hidden="true" />
-        {uniqueWatches} {uniqueWatches === 1 ? 'person' : 'people'}
-      </span>
-    </FactRow>
-  )
-}
-
-/**
- * The same count as one muted line, for under the episode page's still.
- * Block-level (`flex`), so `justify-end` in `className` right-aligns it.
- * Nothing when no one has watched it yet.
+ * The same count as one muted line, for under the artwork: the episode
+ * page's still and the movie page's poster. Block-level (`flex`), so
+ * `justify-end` in `className` right-aligns it. For an admin the count opens
+ * the list of who watched (WatchedByButton). Nothing when no one has watched
+ * it yet (a "0 people" line says less than its absence).
  *
- * @param {{ normalizedVideoId: string, mediaId?: string|null, className?: string }} props
+ * @param {{ normalizedVideoId: string, mediaId?: string|null, durationMs?: number|null, title: string, className?: string, wordsClassName?: string }} props
  */
-export async function WatchedByLine({ normalizedVideoId, mediaId = null, className = '' }) {
+export async function WatchedByLine({ normalizedVideoId, mediaId = null, durationMs = null, title, className = '', wordsClassName = '' }) {
   const uniqueWatches = await countUniqueViewersByNormalizedId(normalizedVideoId, mediaId)
 
   if (!uniqueWatches) return null
 
   return (
-    <p className={classNames('flex items-center gap-1.5 text-sm text-white/55', className)}>
-      <EyeIcon className="size-4" aria-hidden="true" />
-      Watched by {uniqueWatches} {uniqueWatches === 1 ? 'person' : 'people'}
-    </p>
+    // A div, not a p: the admin dialog mounts inside it
+    <div className={classNames('flex text-sm text-white/55', className)}>
+      <WatchedByButton
+        count={uniqueWatches}
+        normalizedVideoId={normalizedVideoId}
+        mediaId={mediaId}
+        durationMs={durationMs}
+        title={title}
+        wordsClassName={wordsClassName}
+      />
+    </div>
   )
 }

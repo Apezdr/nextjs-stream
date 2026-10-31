@@ -9,7 +9,8 @@ import { cache } from 'react'
 function Detailed({
   tvShow,
   posterOnly = false,
-  size = { w: 600, h: 600 },
+  // A poster's own shape, 2:3; MediaPoster sizes its box from it
+  size = { w: 600, h: 900 },
   contClassName = 'w-max',
   contClassNamePoster = 'max-w-sm',
   quality = 100,
@@ -121,6 +122,7 @@ function Detailed({
         >
           {networkImage ? (
             <RetryImage
+              whenFailed="hide"
               src={networkImage}
               width={96}
               height={16}
@@ -193,6 +195,7 @@ function Detailed({
                   {has4k && (
                     <div className="select-none bg-transparent h-4">
                       <RetryImage
+                        whenFailed="hide"
                         src={HD4kBanner}
                         className="h-4 w-auto"
                         alt="4K Banner"
@@ -205,6 +208,7 @@ function Detailed({
                     <>
                       {hasHDR10 ? (
                         <RetryImage
+                          whenFailed="hide"
                           src={hdr10PlusLogo}
                           alt="HDR10 Logo"
                           className="h-4 w-auto"

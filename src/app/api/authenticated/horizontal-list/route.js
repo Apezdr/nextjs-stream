@@ -2,6 +2,7 @@
 import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { sanitizeCardData, sanitizeCardItems } from '@src/utils/auth_utils'
+import { episodeCardImage } from '@src/utils/media/episodeCardImage'
 import { getFlatRecommendations } from '@src/utils/flatRecommendations'
 import { getFullImageUrl } from '@src/utils'
 import { addWatchHistoryToItemsBounded } from '@src/utils/watchHistoryUtils'
@@ -86,6 +87,19 @@ function splitWindowByPosition(rows, { page, limit }) {
 }
 
 /**
+ * The card shows the episode's own image: its thumbnail, with that image's
+ * blurhash (episodeCardImage), and `thumbnail` names it, so the popup the card
+ * opens can start on it before its own fetch lands.
+ */
+function showEpisodeImage(item, episode) {
+  const image = episodeCardImage(episode, item)
+  item.posterURL = image.posterURL
+  item.posterBlurhash = image.posterBlurhash
+  item.thumbnail = image.thumbnail
+  item.thumbnailBlurhash = image.posterBlurhash
+}
+
+/**
  * Normalizes item fields ahead of sanitization: hoists episode data onto TV
  * items from recentlyWatched, and exposes movie videoURL/duration for TV
  * devices. Applied to the whole window (page items and boundary peeks alike).
@@ -103,15 +117,8 @@ function applyItemFieldFixups(item, type, shouldExposeAdditionalData) {
         item.episodeNumber = item.episodeData.episodeNumber
       }
 
-      // Use episode thumbnail as the posterURL for TV episodes
-      if (item.episodeData.thumbnail) {
-        item.posterURL = item.episodeData.thumbnail
-        item.thumbnail = item.episodeData.thumbnail
-      }
-
-      if (item.episodeData.thumbnailBlurhash) {
-        item.thumbnailBlurhash = item.episodeData.thumbnailBlurhash
-      }
+      // Use episode thumbnail as the posterURL for TV episodes, its blurhash with it
+      if (item.episodeData.thumbnail) showEpisodeImage(item, item.episodeData)
     }
     // Handle TV shows with episode property (from other sources like recentlyWatched)
     else if (item.type === 'tv' && item.episode) {
@@ -123,15 +130,10 @@ function applyItemFieldFixups(item, type, shouldExposeAdditionalData) {
            item.posterURL)
       }
 
-      // Use episode thumbnail as the posterURL for TV episodes
-      if (item.episode.thumbnail) {
-        item.posterURL = item.episode.thumbnail
-        item.thumbnail = item.episode.thumbnail
-      }
-
-      if (item.episode.thumbnailBlurhash) {
-        item.thumbnailBlurhash = item.episode.thumbnailBlurhash
-      }
+      // Use episode thumbnail as the posterURL for TV episodes, its blurhash
+      // with it. The poster stand-in above is the show's image, not the
+      // episode's: the card keeps it, and no `thumbnail` claims otherwise.
+      if (item.episode.thumbnail && item.episode.thumbnail !== item.posterURL) showEpisodeImage(item, item.episode)
 
       // Make sure episodeNumber is included at the top level
       if (!item.episodeNumber && item.episode.episodeNumber) {

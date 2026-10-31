@@ -67,6 +67,8 @@ const Card = ({
   releaseDate,
   // Support for new blurhash structure
   blurhash = null,
+  // An episode card's own image: its poster is this thumbnail (episodeCardImage)
+  thumbnail = null,
   link,
   logo,
   listType,
@@ -100,7 +102,6 @@ const Card = ({
     width: 0,
     height: 0,
   })
-  const [imageError, setImageError] = useState(false)
   const [MAX_EXPANDED_WIDTH, setMaxExpandedWidth] = useState(600)
 
   // Grouped interaction/popup state machine
@@ -223,27 +224,11 @@ const Card = ({
     const imageHeight = 288
     const imageWidth = collapsedWidth
     
-    // Calculate optimal dimensions for Next.js Image optimization
-    let optimizedWidth, optimizedHeight
-    if (isEpisodeThumbnail) {
-      // Episode thumbnails: 16:9 aspect ratio
-      // For a 288px height container, optimal 16:9 image width would be ~512px
-      optimizedHeight = 288
-      optimizedWidth = Math.round(288 * (16 / 9)) // 512px
-    } else {
-      // Standard posters: 2:3 aspect ratio
-      // Use container dimensions for optimization
-      optimizedHeight = imageHeight
-      optimizedWidth = imageWidth
-    }
-
     return {
       effectivePosterBlurhash,
       isEpisodeThumbnail,
       imageHeight,
       imageWidth,
-      optimizedWidth,
-      optimizedHeight
     }
   }, [blurhash, posterBlurhash, seasonNumber, episodeNumber, collapsedWidth])
 
@@ -253,8 +238,6 @@ const Card = ({
     isEpisodeThumbnail, 
     imageHeight, 
     imageWidth, 
-    optimizedWidth, 
-    optimizedHeight 
   } = imageConfig
   
   const handleImageLoad = useCallback(({ target }) => {
@@ -263,10 +246,6 @@ const Card = ({
     setImageDimensions({ width: naturalWidth, height: naturalHeight })
     // Store rendered dimensions for position calculations
     dispatchInteraction({ type: 'SET_IMAGE_POSITION', value: { width: naturalWidth, height: naturalHeight } })
-  }, [])
-
-  const handleImageError = useCallback(() => {
-    setImageError(true)
   }, [])
 
   const calculateImagePosition = useCallback(() => {
@@ -416,7 +395,7 @@ const Card = ({
     hoverTimeoutRef.current = setTimeout(() => {
       handleExpand()
     }, 1000)
-  }, [isAnimating, isExpanded, handleExpand, isTouchDevice, mediaId, seasonNumber, episodeNumber, type, isAvailable, title, backdrop, logo, posterURL, isEpisodeThumbnail, optimizedWidth])
+  }, [isAnimating, isExpanded, handleExpand, isTouchDevice, mediaId, seasonNumber, episodeNumber, type, isAvailable, title, backdrop, logo, posterURL, isEpisodeThumbnail])
 
   const handleMouseLeave = useCallback(() => {
     if (hoverTimeoutRef.current) {
@@ -568,6 +547,7 @@ const Card = ({
             <div className="relative w-full h-full">
               {logo && (
                 <RetryImage
+                  whenFailed="hide"
                   quality={50}
                   width={Math.floor(imageWidth * 0.7)}
                   height={56}
@@ -642,8 +622,9 @@ const Card = ({
               <RetryImage
                 ref={imageRef}
                 quality={90}
-                width={optimizedWidth}
-                height={optimizedHeight}
+                // Fills the card's fixed box, so the blur fades into the poster
+                // (RetryImage) instead of being painted over
+                fill
                 src={posterURL}
                 placeholder={effectivePosterBlurhash ? 'blur' : 'empty'}
                 blurDataURL={effectivePosterBlurhash ? `data:image/png;base64,${effectivePosterBlurhash}` : undefined}
@@ -662,8 +643,6 @@ const Card = ({
                     : "(max-width: 640px) 128px, (max-width: 1024px) 144px, 192px"  // Responsive for posters
                 }
                 onLoad={handleImageLoad}
-                onError={handleImageError}
-                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
               />
               {showProgressBar && (
                 <ProgressBar
@@ -672,14 +651,6 @@ const Card = ({
                   label={progress.completed ? 'Watched' : `${Math.round(progress.progressPercent)}% watched`}
                   className="absolute z-20 bottom-0 left-0 right-0 h-1.5 rounded-b-lg"
                 />
-              )}
-              {imageError && (
-                <div 
-                  className="absolute inset-0 flex items-center justify-center bg-gray-200 rounded-lg"
-                  style={{ width: `${imageWidth}px`, height: `${imageHeight}px` }}
-                >
-                  <span className="text-red-500 text-xs text-center px-2">Image failed to load</span>
-                </div>
               )}
             </div>
           </button>
@@ -726,6 +697,8 @@ const Card = ({
             media={media}
             posterURL={posterURL}
             posterBlurhash={effectivePosterBlurhash}
+            thumbnail={thumbnail}
+            isTrailer={isTrailer}
             backdrop={backdrop}
             backdropBlurhash={blurhash?.backdrop || backdropBlurhash}
             videoURL={videoURL}

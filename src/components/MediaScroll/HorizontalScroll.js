@@ -418,6 +418,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
                         type={item.type}
                         posterURL={item.posterURL}
                         posterBlurhash={item.posterBlurhash}
+                        thumbnail={item.thumbnail}
                         backdrop={item.backdrop}
                         backdropBlurhash={item.backdropBlurhash}
                         videoURL={videoURL}

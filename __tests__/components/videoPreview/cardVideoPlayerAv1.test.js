@@ -290,6 +290,90 @@ describe('when AV1 is offered', () => {
   })
 })
 
+describe('a clip that keeps failing (its server down, a 4xx/5xx)', () => {
+  // It used to be remounted on every error with no limit: ~1,100 requests in 2 s
+  beforeEach(async () => {
+    await browserAnswers({ supported: false, smooth: false })
+    jest.useFakeTimers()
+  })
+
+  /** Fail the element on screen; return the one after it (or null). */
+  const failAndWait = (container, ms = 0) => {
+    fireEvent.error(getVideo(container))
+    act(() => jest.advanceTimersByTime(ms))
+    return getVideo(container)
+  }
+
+  it('is retried at once, then after a wait, then gives up and stops asking', () => {
+    const warn = jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const { container } = render(<CardVideoPlayer videoURL={CLIP} shouldPlay />)
+    const first = getVideo(container)
+
+    // The 416 cure: the first remount is immediate
+    const second = failAndWait(container)
+    expect(second).not.toBe(first)
+
+    // The next one waits a second...
+    fireEvent.error(second)
+    expect(getVideo(container)).toBe(second)
+    act(() => jest.advanceTimersByTime(1000))
+    const third = getVideo(container)
+    expect(third).not.toBe(second)
+
+    // ...the one after three...
+    const fourth = failAndWait(container, 3000)
+    expect(fourth).not.toBe(third)
+
+    // ...and then no more: nothing left to request, one line for the console
+    fireEvent.error(fourth)
+    act(() => jest.advanceTimersByTime(60_000))
+    expect(getVideo(container)).toBeNull()
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(console.error).not.toHaveBeenCalled()
+  })
+
+  it('hands back to its parent when it gives up after it had been showing', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const onVideoEnd = jest.fn()
+    const { container } = render(<CardVideoPlayer videoURL={CLIP} shouldPlay onVideoEnd={onVideoEnd} />)
+    fireEvent.canPlay(getVideo(container))
+
+    failAndWait(container)
+    failAndWait(container, 1000)
+    failAndWait(container, 3000)
+    failAndWait(container)
+
+    expect(getVideo(container)).toBeNull()
+    expect(onVideoEnd).toHaveBeenCalledTimes(1)
+  })
+
+  it('gets its retries back once it plays again', () => {
+    const { container } = render(<CardVideoPlayer videoURL={CLIP} shouldPlay />)
+    failAndWait(container)
+    const recovered = failAndWait(container, 1000)
+
+    fireEvent.canPlay(recovered)
+
+    // A later wedge is cured at once again
+    fireEvent.error(recovered)
+    expect(getVideo(container)).not.toBe(recovered)
+  })
+
+  it('starts over for a new clip', () => {
+    jest.spyOn(console, 'warn').mockImplementation(() => {})
+    const { container, rerender } = render(<CardVideoPlayer videoURL={CLIP} shouldPlay />)
+    failAndWait(container)
+    failAndWait(container, 1000)
+    failAndWait(container, 3000)
+    failAndWait(container)
+    expect(getVideo(container)).toBeNull()
+
+    rerender(<CardVideoPlayer videoURL={OTHER_CLIP} shouldPlay />)
+
+    expect(getVideo(container)).toHaveAttribute('src', OTHER_CLIP)
+  })
+})
+
 describe('without AV1, exactly as before', () => {
   it('remounts with the same src after an error (the 416 cure)', async () => {
     await browserAnswers({ supported: false, smooth: false })

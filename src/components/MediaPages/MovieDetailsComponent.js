@@ -7,7 +7,7 @@ import { displayTitleOf, splitTitle, yearOf, qualityChips, certificationOf, movi
 import { durationMsFrom, formatRuntime } from '@components/WatchProgress/progress'
 import WatchProgressPanel from '@components/WatchProgress/WatchProgressPanel'
 import AdminEditButton from '@components/MediaPages/AdminEditButton'
-import { WatchedByRow } from './ViewCount'
+import { WatchedByLine } from './ViewCount'
 import { Breadcrumb, MetaLine, DetailsPanel } from './details/Primitives'
 import HeroPoster from './details/HeroPoster'
 import ArtworkButton from './details/ArtworkButton'
@@ -60,11 +60,26 @@ const MovieDetailsComponent = ({ media }) => {
       </div>
 
       <header className="mt-6 grid grid-cols-[120px_minmax(0,1fr)] gap-x-5 gap-y-6 sm:mt-10 sm:grid-cols-[170px_minmax(0,1fr)] sm:gap-x-8 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <ViewTransition name={moviePosterName(media.title)}>
-          <ArtworkButton title={title} tmdbId={metadata?.id ?? null} type="movie" inUse={artworkInUse(media)} className="sm:row-span-2">
-            <HeroPoster src={posterURL} alt={`${title} poster`} blurhash={posterBlurhash} />
-          </ArtworkButton>
-        </ViewTransition>
+        <div className="self-start sm:row-span-2">
+          <ViewTransition name={moviePosterName(media.title)}>
+            <ArtworkButton title={title} tmdbId={metadata?.id ?? null} type="movie" inUse={artworkInUse(media)}>
+              <HeroPoster src={posterURL} alt={`${title} poster`} blurhash={posterBlurhash} />
+            </ArtworkButton>
+          </ViewTransition>
+          {/* Under the artwork, as on the episode page; the phone's 120px column keeps just the eye and the count */}
+          {media.normalizedVideoId ? (
+            <Suspense fallback={null}>
+              <WatchedByLine
+                normalizedVideoId={media.normalizedVideoId}
+                mediaId={media.mediaId || null}
+                durationMs={durationMs}
+                title={title}
+                className="mt-2"
+                wordsClassName="sr-only sm:not-sr-only"
+              />
+            </Suspense>
+          ) : null}
+        </div>
 
         <div className="min-w-0">
           {genreNames.length > 0 ? (
@@ -99,13 +114,7 @@ const MovieDetailsComponent = ({ media }) => {
               <CollectionCard collection={collection} currentOriginalTitle={media.originalTitle || null} />
             </Suspense>
           ) : null}
-          <DetailsPanel id="movie-details" title="Movie details" rows={facts}>
-            {media.normalizedVideoId ? (
-              <Suspense fallback={null}>
-                <WatchedByRow normalizedVideoId={media.normalizedVideoId} mediaId={media.mediaId || null} />
-              </Suspense>
-            ) : null}
-          </DetailsPanel>
+          <DetailsPanel id="movie-details" title="Movie details" rows={facts} />
         </div>
 
         <CreditsPanel credits={media.credits} id="credits" />

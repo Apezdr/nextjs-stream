@@ -48,14 +48,8 @@ jest.mock('@components/MediaPages/details/CollectionCard', () => ({
 jest.mock('@components/MediaPages/ViewCount', () => ({
   __esModule: true,
   default: () => null,
-  WatchedByRow: ({ normalizedVideoId }) => (
-    <>
-      <dt>Watched by</dt>
-      <dd data-testid="watched-by">{normalizedVideoId}</dd>
-    </>
-  ),
-  WatchedByLine: ({ normalizedVideoId, className }) => (
-    <p data-testid="watched-by-line" className={className}>
+  WatchedByLine: ({ normalizedVideoId, title, className }) => (
+    <p data-testid="watched-by-line" data-title={title} className={className}>
       Watched by 1 person ({normalizedVideoId})
     </p>
   ),
@@ -195,10 +189,16 @@ describe('MovieDetailsComponent', () => {
     // Collection card gets the identity it needs to mark the current film
     expect(screen.getByTestId('collection-card')).toHaveTextContent('The Hobbit Collection / The Hobbit An Unexpected Journey')
 
-    // Details panel: catalog facts, file facts, source host and watched-by row
+    // Watched-by sits under the poster, as on the episode page, not in the details panel
+    const watchedBy = screen.getByTestId('watched-by-line')
+    expect(watchedBy).toHaveTextContent('6a63359ffa2aa04e')
+    expect(watchedBy).toHaveAttribute('data-title', 'The Hobbit: An Unexpected Journey')
+    expect(watchedBy.parentElement).toContainElement(screen.getByAltText('The Hobbit: An Unexpected Journey poster'))
+
+    // Details panel: catalog facts, file facts and source host
     const panel = screen.getByRole('heading', { name: 'Movie details' }).closest('section')
     const rows = within(panel).getAllByRole('term').map((dt) => dt.textContent)
-    expect(rows).toEqual(['Language', 'Studio', 'Country', 'Released', 'TMDB score', 'Links', 'Resolution', 'Video', 'Dynamic range', 'Audio', 'Subtitles', 'File', 'Added', 'Watched by'])
+    expect(rows).toEqual(['Language', 'Studio', 'Country', 'Released', 'TMDB score', 'Links', 'Resolution', 'Video', 'Dynamic range', 'Audio', 'Subtitles', 'File', 'Added'])
     const tmdbLink = within(panel).getByRole('link', { name: 'TMDB' })
     expect(tmdbLink).toHaveAttribute('href', 'https://www.themoviedb.org/movie/49051')
     expect(tmdbLink).toHaveAttribute('target', '_blank')
@@ -206,7 +206,6 @@ describe('MovieDetailsComponent', () => {
     expect(within(panel).getByText('HEVC (H.265) · 10-bit')).toBeInTheDocument()
     expect(within(panel).getByText('MKV · 56.81 GB')).toBeInTheDocument()
     expect(within(panel).queryByText(/adamdrumm|example.com/)).not.toBeInTheDocument()
-    expect(screen.getByTestId('watched-by')).toHaveTextContent('6a63359ffa2aa04e')
   })
 
   it('renders a bare document without crashing', () => {
@@ -261,7 +260,7 @@ describe('TVEpisodeDetailsComponent', () => {
     expect(screen.getByAltText('Countdown still')).toHaveAttribute('src', withNeighbours.thumbnail)
     // The still is the way into the episode's stills
     expect(screen.getByRole('button', { name: 'View artwork for 3 Body Problem · Countdown' })).toContainElement(screen.getByAltText('Countdown still'))
-    expect(screen.getByTestId('watched-by-line')).toBeInTheDocument()
+    expect(screen.getByTestId('watched-by-line')).toHaveAttribute('data-title', '3 Body Problem · S01E01 · Countdown')
 
     // Primary says what it plays
     expect(screen.getAllByRole('link', { name: /^play episode$/i })[0]).toHaveAttribute('href', '/list/tv/3%20Body%20Problem/1/1/play')
@@ -322,5 +321,9 @@ describe('TVEpisodeDetailsComponent', () => {
     expect(screen.queryByText(/undefined|NaN/)).toBeNull()
     const panel = screen.getByRole('heading', { name: 'Episode details' }).closest('section')
     expect(within(panel).queryByText(/ of /)).toBeNull()
+    // No still: the hero frame holds frosted glass, not an empty box
+    const still = screen.getByRole('button', { name: 'View artwork for 3 Body Problem · Countdown' })
+    expect(still.querySelector('img')).toBeNull()
+    expect(still.querySelector('span.backdrop-blur-xl')).not.toBeNull()
   })
 })
