@@ -475,6 +475,11 @@ export function sanitizeCardData(item, popup = false, context = {}) {
       // Cast information
       if (cast) sanitized.cast = cast
 
+      // An episode card's own image, when its poster is that thumbnail
+      // (episodeCardImage): the popup the card opens starts on it, with the
+      // card's blurhash, before its own fetch lands
+      if (item?.thumbnail) sanitized.thumbnail = item.thumbnail
+
       // General properties
       if (item?.hdr) sanitized.hdr = item?.hdr
     } catch (nonCriticalError) {
@@ -488,7 +493,6 @@ export function sanitizeCardData(item, popup = false, context = {}) {
     if (popup) {
       try {
         if (metadata?.trailer_url) sanitized.trailer_url = metadata?.trailer_url
-        if (item?.thumbnail) sanitized.thumbnail = item?.thumbnail
         
         // Use thumbnailBlurhash directly from the database
         if (item?.thumbnailBlurhash) {

@@ -67,6 +67,8 @@ const Card = ({
   releaseDate,
   // Support for new blurhash structure
   blurhash = null,
+  // An episode card's own image: its poster is this thumbnail (episodeCardImage)
+  thumbnail = null,
   link,
   logo,
   listType,
@@ -695,6 +697,8 @@ const Card = ({
             media={media}
             posterURL={posterURL}
             posterBlurhash={effectivePosterBlurhash}
+            thumbnail={thumbnail}
+            isTrailer={isTrailer}
             backdrop={backdrop}
             backdropBlurhash={blurhash?.backdrop || backdropBlurhash}
             videoURL={videoURL}

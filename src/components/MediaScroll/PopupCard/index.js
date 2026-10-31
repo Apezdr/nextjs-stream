@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import useSWR from 'swr'
 import { classNames, fetcher } from '@src/utils'
 import { usePopupPlayback } from './hooks/usePopupPlayback'
-import { useMediaAssets } from './hooks/useMediaAssets'
+import { useMediaAssets, railThumbnailOf } from './hooks/useMediaAssets'
 import { getApiEndpoint } from './utils/popupHelpers'
 import MediaHero from './MediaHero'
 import InfoSection from './InfoSection'
@@ -87,7 +87,7 @@ const PopupCard = (props) => {
   const videoURL = data?.clipVideoURL || data?.trailer_url
 
   // 3. Custom Hooks for State Management
-  const playback = usePopupPlayback(hasVideo, videoURL, data)
+  const playback = usePopupPlayback(hasVideo, videoURL, railThumbnailOf(props) ?? data?.thumbnail ?? null)
   const { shouldPlay, state, dispatch, handleImageLoad } = playback
 
   const { imageConfig, visibilityFlags } = useMediaAssets(data, props, {

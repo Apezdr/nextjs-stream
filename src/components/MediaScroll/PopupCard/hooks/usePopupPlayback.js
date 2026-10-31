@@ -11,10 +11,12 @@ import { useState, useReducer, useEffect, useCallback } from 'react'
  * 
  * @param {boolean} hasVideo - Whether video content is available
  * @param {string} videoURL - The video URL
- * @param {Object} data - The fetched media data
+ * @param {string|null} thumbnailSrc - The episode thumbnail the hero shows. The
+ *   rail's when the card had one, so the popup's fetch landing with the same
+ *   URL does not reset the thumbnail state a second time.
  * @returns {Object} Playback state and handlers
  */
-export const usePopupPlayback = (hasVideo, videoURL, data) => {
+export const usePopupPlayback = (hasVideo, videoURL, thumbnailSrc) => {
   const [imageLoaded, setImageLoaded] = useState(false)
   
   // Reducer to manage complex video playback state
@@ -67,15 +69,15 @@ export const usePopupPlayback = (hasVideo, videoURL, data) => {
   // Derive shouldPlay from state instead of using an effect
   const shouldPlay = (!state.hideVideo || !state.afterVideo) && imageLoaded && state.videoReady
 
-  // Reset states when video URL or data changes
+  // Reset states when the video URL or the thumbnail changes
   useEffect(() => {
     dispatch({ type: 'RESET_FOR_NEW_VIDEO', hasVideo })
-  }, [videoURL, data?.thumbnail, hasVideo])
+  }, [videoURL, thumbnailSrc, hasVideo])
 
   // Show backdrop immediately - no delay needed with proper preloading
   useEffect(() => {
     dispatch({ type: 'SET_SHOW_BACKDROP' })
-  }, [data?.thumbnail])
+  }, [thumbnailSrc])
 
   // Delay backdrop hide when video starts playing
   useEffect(() => {

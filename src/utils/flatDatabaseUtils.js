@@ -11,6 +11,7 @@ import { countPlaybackForUser, findPlaybackForUser } from '@src/utils/watchHisto
 import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
 import { durationMsForItem } from '@src/utils/watchHistory/progress'
+import { episodeCardImage } from '@src/utils/media/episodeCardImage'
 import { resolveEpisodeCredits, resolveTitleCredits } from '@src/utils/credits/resolve'
 import {
   visibleMovieFilter,
@@ -1404,6 +1405,9 @@ export async function processFlatWatchedDetails(
         // The episodeMap from getFlatRecentlyWatchedForUser contains episode objects with joined show/season data
         // Structure: { ...show, episode: episodeData, seasons: [{ ...season, episodes: [episode] }] }
         if (episodeDetails.episode && episodeDetails.seasons) {
+          // The card shows the episode's thumbnail when it has one, with that
+          // image's blurhash, not the show poster's
+          const cardImage = episodeCardImage(episodeDetails.episode, episodeDetails)
           // Create the TV show object in the format expected by sanitizeRecord
           const detailedTVShow = {
             _id: episodeDetails._id?.toString() || episodeDetails.id,
@@ -1414,10 +1418,7 @@ export async function processFlatWatchedDetails(
             showTitleFormatted: `${episodeDetails.title} S${episodeDetails.episode.seasonNumber?.toString().padStart(2, '0') || '01'}E${episodeDetails.episode.episodeNumber?.toString().padStart(2, '0') || '01'}`,
             seasonNumber: episodeDetails.episode.seasonNumber,
             seasons: episodeDetails.seasons,
-            posterURL:
-              episodeDetails.episode.thumbnail ||
-              episodeDetails.posterURL ||
-              '/sorry-image-not-available.jpg',
+            posterURL: cardImage.posterURL || '/sorry-image-not-available.jpg',
             backdrop: episodeDetails.backdrop || null,
             metadata: episodeDetails.metadata || {},
             episode: {
@@ -1434,8 +1435,7 @@ export async function processFlatWatchedDetails(
 
           // Include additional optional properties if they exist
           if (episodeDetails.logo) detailedTVShow.logo = episodeDetails.logo
-          if (episodeDetails.posterBlurhash)
-            detailedTVShow.posterBlurhash = episodeDetails.posterBlurhash
+          if (cardImage.posterBlurhash) detailedTVShow.posterBlurhash = cardImage.posterBlurhash
           if (episodeDetails.episode.thumbnailBlurhash)
             detailedTVShow.thumbnailBlurhash = episodeDetails.episode.thumbnailBlurhash
           if (episodeDetails.episode.thumbnailSource)
@@ -1583,15 +1583,14 @@ export async function processFlatWatchedDetails(
             }
           }
 
-          // Use episode thumbnail if available, otherwise fall back to show poster
-          const posterURL =
-            episodeData?.thumbnail ||
-            matchedShow.posterURL ||
-            getFullImageUrl(matchedShow.metadata?.poster_path) ||
-            '/sorry-image-not-available.jpg'
-
-          const posterBlurhash =
-            episodeData?.thumbnailBlurhash || matchedShow.posterBlurhash || null
+          // Use episode thumbnail if available, otherwise fall back to show
+          // poster, each with its own blurhash
+          const cardImage = episodeCardImage(episodeData, {
+            posterURL: matchedShow.posterURL || getFullImageUrl(matchedShow.metadata?.poster_path),
+            posterBlurhash: matchedShow.posterBlurhash,
+          })
+          const posterURL = cardImage.posterURL || '/sorry-image-not-available.jpg'
+          const posterBlurhash = cardImage.posterURL ? cardImage.posterBlurhash : null
 
           const tvExternalRecord = {
             _id:
