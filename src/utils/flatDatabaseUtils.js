@@ -2805,14 +2805,35 @@ export async function getFlatAvailableTVShowsCount() {
 }
 
 /**
- * Count unique users who have watched a specific media by its normalized video
- * id and/or its durable content identity ('mid:…').
+ * The WatchHistory filter for "everyone who has watched this title": rows
+ * under its normalized video id or its durable content identity ('mid:…'),
+ * valid entries only. The count and the admin viewer list both read it, so
+ * the dialog lists exactly the people the "Watched by N" line counts.
  *
  * Rows written before a rename/re-encode carry a stale normalizedVideoId but
- * (once stamped) the same mediaId, so the count matches EITHER identity. When
- * the caller does not supply the mediaId, it is resolved internally from the
- * catalog by nid (cached, fail-open — a null resolution degrades to today's
- * nid-only count). Rows without mediaId behave exactly as before.
+ * (once stamped) the same mediaId, so the filter matches EITHER identity. When
+ * the caller does not supply the mediaId, it is resolved from the catalog by
+ * nid (cached, fail-open — a null resolution degrades to a nid-only match).
+ *
+ * @param {string} normalizedVideoId
+ * @param {string|null} mediaId
+ * @returns {Promise<Object>} a $match stage body
+ */
+async function viewerMatchFor(normalizedVideoId, mediaId) {
+  let contentId = isDurableMediaId(mediaId) ? mediaId : null
+  if (!contentId && normalizedVideoId) {
+    const resolved = await resolveMediaIdForNid(normalizedVideoId)
+    contentId = resolved?.mediaId ?? null
+  }
+  return {
+    $or: [{ normalizedVideoId }, ...(contentId ? [{ mediaId: contentId }] : [])],
+    isValid: { $ne: false },
+  }
+}
+
+/**
+ * Count unique users who have watched a specific media by its normalized video
+ * id and/or its durable content identity ('mid:…'); see viewerMatchFor.
  *
  * @param {string} normalizedVideoId - The normalized video ID to search for
  * @param {string|null} [mediaId=null] - Optional durable content identity of the media doc
@@ -2827,14 +2848,6 @@ export async function countUniqueViewersByNormalizedId(normalizedVideoId, mediaI
 
     const client = await clientPromise
 
-    // Resolve the durable identity when not supplied so viewers counted under
-    // a prior URL/nid (quality swaps, renames) are still included.
-    let contentId = isDurableMediaId(mediaId) ? mediaId : null
-    if (!contentId && normalizedVideoId) {
-      const resolved = await resolveMediaIdForNid(normalizedVideoId)
-      contentId = resolved?.mediaId ?? null
-    }
-
     // Query WatchHistory collection - much faster, no array operations or locks
     // Each document = one user+video pair, so simple distinct query on userId
     const result = await client
@@ -2842,15 +2855,7 @@ export async function countUniqueViewersByNormalizedId(normalizedVideoId, mediaI
       .collection('WatchHistory')
       .aggregate([
         // Match videos by either identity, valid entries only
-        {
-          $match: {
-            $or: [
-              { normalizedVideoId: normalizedVideoId },
-              ...(contentId ? [{ mediaId: contentId }] : []),
-            ],
-            isValid: { $ne: false }, // Only count valid entries
-          },
-        },
+        { $match: await viewerMatchFor(normalizedVideoId, mediaId) },
         // Count distinct users
         {
           $group: {
@@ -2886,6 +2891,56 @@ export async function countUniqueViewersByNormalizedId(normalizedVideoId, mediaI
     }
     return 0
   }
+}
+
+/**
+ * Who has watched a title, for the admin "Watched by" dialog: the people
+ * countUniqueViewersByNormalizedId counts, one entry each, most recent first.
+ * A viewer with rows under both identities (a pre-swap nid and the durable
+ * mediaId) appears once, at their latest row.
+ *
+ * Throws on a database error; the caller is an admin route that reports it,
+ * unlike the count, which a cached page renders.
+ *
+ * @param {string} normalizedVideoId
+ * @param {string|null} [mediaId=null]
+ * @returns {Promise<Array<{ userId: string, name: string|null, image: string|null, playbackTime: number|null, lastUpdated: Date|null, deviceType: string|null }>>}
+ */
+export async function listViewersByNormalizedId(normalizedVideoId, mediaId = null) {
+  const client = await clientPromise
+  const rows = await client
+    .db('Media')
+    .collection('WatchHistory')
+    .aggregate([
+      { $match: await viewerMatchFor(normalizedVideoId, mediaId) },
+      { $sort: { lastUpdated: -1 } },
+      {
+        $group: {
+          _id: '$userId',
+          playbackTime: { $first: '$playbackTime' },
+          lastUpdated: { $first: '$lastUpdated' },
+          deviceType: { $first: '$deviceInfo.type' },
+        },
+      },
+      { $sort: { lastUpdated: -1 } },
+    ])
+    .toArray()
+  if (rows.length === 0) return []
+
+  const users = await userQueries.find({ _id: { $in: rows.map((row) => row._id) } }, { name: 1, image: 1 })
+  const usersById = new Map(users.map((user) => [String(user._id), user]))
+
+  return rows.map((row) => {
+    const user = usersById.get(String(row._id))
+    return {
+      userId: String(row._id),
+      name: user?.name ?? null,
+      image: user?.image ?? null,
+      playbackTime: Number.isFinite(row.playbackTime) ? row.playbackTime : null,
+      lastUpdated: row.lastUpdated ?? null,
+      deviceType: row.deviceType ?? null,
+    }
+  })
 }
 
 /**
