@@ -254,3 +254,14 @@ describe('SigNoz database keys', () => {
     expect(span.setAttribute.mock.calls).toEqual([['db.name', 'Media']])
   })
 })
+
+describe('span processors', () => {
+  it("registers the credential scrubber and the request SERVER-span map (src/lib/telemetrySpans.ts)", () => {
+    register()
+    const { credentialQueryProcessor, serverSpanProcessor } = require('@src/lib/telemetrySpans')
+
+    expect(registeredConfig().spanProcessors).toEqual(
+      expect.arrayContaining(['auto', credentialQueryProcessor, serverSpanProcessor])
+    )
+  })
+})

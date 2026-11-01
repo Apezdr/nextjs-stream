@@ -12,6 +12,7 @@ import { detectResources, envDetector, resourceFromAttributes } from '@opentelem
 import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs'
 import { MeterProvider, PeriodicExportingMetricReader } from '@opentelemetry/sdk-metrics'
 import { ATTR_SERVICE_NAME, ATTR_SERVICE_VERSION } from '@opentelemetry/semantic-conventions'
+import { credentialQueryProcessor, serverSpanProcessor } from '@src/lib/telemetrySpans'
 
 declare global {
   // Prevent double-init in dev / hot reload
@@ -151,7 +152,7 @@ export function register() {
     // This will automatically use OTEL_EXPORTER_OTLP_ENDPOINT and other OTEL env vars
     traceExporter: 'auto',
     propagators,
-    spanProcessors: ['auto', signozDbKeysProcessor],
+    spanProcessors: ['auto', signozDbKeysProcessor, credentialQueryProcessor, serverSpanProcessor],
     instrumentations: [
       'fetch',
       new MongoDBInstrumentation({
