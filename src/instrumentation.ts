@@ -125,7 +125,21 @@ function startOtelMetrics(serviceName: string) {
   metrics.setGlobalMeterProvider(meterProvider)
 }
 
+// Every user's role brought in line with ADMIN_USER_EMAILS as the server
+// starts (src/lib/adminRoleReconcile.ts): a removed address otherwise stayed an
+// admin for as long as its session kept rolling. Node only (it uses the
+// database), and not awaited: the server shouldn't wait on Mongo to start.
+// Next skips register() during `next build`.
+function reconcileAdminRolesAtStart() {
+  if (process.env.NEXT_RUNTIME === 'nodejs') {
+    import('@src/lib/adminRoleReconcile')
+      .then(({ reconcileAdminRolesOnce }) => reconcileAdminRolesOnce())
+      .catch((error) => console.error('Admin role reconcile did not load:', error))
+  }
+}
+
 export function register() {
+  reconcileAdminRolesAtStart()
   if (globalThis.__otelStarted) return
   // OTEL_SDK_DISABLED=true turns every signal off. @vercel/otel only checks it
   // for traces; without this the logs and metrics below would still export.

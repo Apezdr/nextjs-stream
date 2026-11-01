@@ -113,6 +113,22 @@ const ClockIcon = () => {
   )
 }
 
+// better-auth's codes for a refused social sign-in (src/lib/auth.ts), in words.
+// A Map: the code comes from the URL, and a plain object would answer
+// ?error=constructor with a function.
+const SIGN_IN_ERROR_HELP = new Map([
+  [
+    'account_not_linked',
+    'An account here already uses this email, and the provider you just used has not verified it. Sign in with the provider you used before, or verify the email with this provider and try again.',
+  ],
+  [
+    'unverified_admin_email',
+    'The provider you used has not verified this email address. Verify it with the provider, then sign in again.',
+  ],
+  ['banned', 'This account has been suspended. Contact the site administrator.'],
+  ['state_not_found', 'The sign-in took too long or was opened in another browser. Start it again.'],
+])
+
 const AuthError = () => {
   const searchParams = useSearchParams()
   const router = useRouter()
@@ -120,7 +136,9 @@ const AuthError = () => {
   const [hoveredButton, setHoveredButton] = useState(null)
   const [{ isChecking, result: checkResult }, dispatchCheck] = useReducer(checkReducer, initialCheck)
 
-  const paramError = searchParams.get('error')
+  // A sign-in callback that lost its state comes back as ?state=state_not_found
+  // with no error; without this the page rendered nothing
+  const paramError = searchParams.get('error') || searchParams.get('state') || null
   const error = paramError !== 'APPROVAL_PENDING' ? paramError : ''
   const pendingApproval = paramError === 'APPROVAL_PENDING'
 
@@ -228,7 +246,7 @@ const AuthError = () => {
               lineHeight: 1.6,
             }}
           >
-            An error occurred during authentication:
+            {SIGN_IN_ERROR_HELP.get(error) ?? 'An error occurred during authentication:'}
           </p>
           <pre
             className="p-4 rounded-lg border max-w-full overflow-auto"

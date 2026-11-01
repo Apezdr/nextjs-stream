@@ -1,7 +1,7 @@
 // src/lib/auth.ts
 import { betterAuth } from 'better-auth'
 import { mongodbAdapter } from 'better-auth/adapters/mongodb'
-import { createAuthMiddleware } from 'better-auth/api'
+import { APIError, createAuthMiddleware } from 'better-auth/api'
 import { admin } from 'better-auth/plugins'
 import { bearer } from 'better-auth/plugins'
 import { deviceAuthorization } from 'better-auth/plugins'
@@ -12,11 +12,18 @@ import { userQueries } from './userQueries'
 import { gatedAuthTrustedOrigins } from '@src/utils/gatedAuthOrigins'
 import { USER_ADDITIONAL_FIELDS } from './authUserFields'
 import { recordAuthHandlerCaller } from './requestCaller'
+import {
+  adminEmailsFromEnv,
+  adminRoleUpdate,
+  refusesNewUser,
+  roleForNewUser,
+  SOCIAL_SIGN_IN_PATHS,
+  UNVERIFIED_ADMIN_EMAIL,
+} from './adminRoleSync'
+import { createLogger } from './logger'
 
-const adminEmails = (process.env.ADMIN_USER_EMAILS || '')
-  .split(',')
-  .map((e) => e.trim())
-  .filter(Boolean)
+const adminEmails = adminEmailsFromEnv()
+const roleLog = createLogger('Auth.AdminRoles')
 
 const authDb = mongoClient.db(process.env.MONGODB_AUTH_DB || 'Users')
 
@@ -69,9 +76,20 @@ export const auth = betterAuth({
   account: {
     accountLinking: {
       enabled: true,
-      // Trust both providers for automatic account linking on same email
-      trustedProviders: ['google', 'discord'],
+      // No provider is trusted. A trusted provider links to an existing account
+      // by email WITHOUT having verified the email: Discord reports `verified`
+      // per account, and Google's email_verified claim can be false too, so an
+      // unverified copy of someone's address (an admin's is on the privacy
+      // page) would sign in as them. Untrusted, a provider still links when it
+      // reports the email verified, and gets "account not linked" otherwise.
+      trustedProviders: [],
     },
+  },
+
+  // Sign-in errors (account_not_linked, a refused sign-up) land on the app's
+  // error page, which explains them, not better-auth's bare one
+  onAPIError: {
+    errorURL: '/auth/error',
   },
 
   session: {
@@ -88,8 +106,12 @@ export const auth = betterAuth({
     user: {
       create: {
         before: async (user) => {
+          // A listed address the provider didn't verify gets no account (adminRoleSync.ts)
+          if (refusesNewUser(user, adminEmails)) {
+            throw new APIError('FORBIDDEN', { message: UNVERIFIED_ADMIN_EMAIL })
+          }
           const approved = getDefaultApprovalStatus()
-          const role = adminEmails.includes(user.email) ? 'admin' : 'user'
+          const role = roleForNewUser(user, adminEmails)
           // Admins are always approved
           return {
             data: {
@@ -109,37 +131,30 @@ export const auth = betterAuth({
       // These requests never pass through getSession(), so the hook names the caller
       recordAuthHandlerCaller(ctx.context as Parameters<typeof recordAuthHandlerCaller>[0])
 
-      // Sync role from ADMIN_USER_EMAILS on every social sign-in.
-      // Handles emails added/removed from the env var after account creation.
-      if (ctx.path !== '/sign-in/social' && ctx.path !== '/callback/social') return
+      // Every social sign-in syncs the role with ADMIN_USER_EMAILS, both ways,
+      // and approves an admin (adminRoleSync.ts). Written straight to the user:
+      // the admin plugin's setRole needs an admin's session, which a sign-in
+      // doesn't have. Every session lookup reads the role from the user
+      // document (no cookie cache), so the change applies at once.
+      if (!SOCIAL_SIGN_IN_PATHS.has(ctx.path)) return
 
-      const newSession = (ctx.context as any)?.newSession
-      if (!newSession?.user?.email) return
+      // The session the sign-in just made: ctx.context.session is null here
+      const signedIn = (ctx.context as any)?.newSession?.user
+      if (!signedIn?.id) return
 
-      const email: string = newSession.user.email
-      const shouldBeAdmin = adminEmails.includes(email)
-      const isAdmin = newSession.user.role === 'admin'
-
-      if (shouldBeAdmin !== isAdmin) {
-        try {
-          await (auth.api as any).setRole({
-            body: {
-              userId: newSession.user.id,
-              role: shouldBeAdmin ? 'admin' : 'user',
-            },
-          })
-        } catch (err) {
-          console.error('Failed to sync admin role on sign-in:', err)
-        }
-      }
-
-      // Ensure admins are always approved
-      if (shouldBeAdmin && !newSession.user.approved) {
-        try {
-          await userQueries.updateById(newSession.user.id, { approved: true })
-        } catch (err) {
-          console.error('Failed to set admin approval on sign-in:', err)
-        }
+      try {
+        // Read again: newSession holds the user as loaded before the sign-in,
+        // so on the sign-in that first verifies the address, emailVerified
+        // there is still false
+        const user = await userQueries.findById(signedIn.id, { email: 1, role: 1, approved: 1, emailVerified: 1 })
+        if (!user) return
+        const update = adminRoleUpdate(user, adminEmails)
+        if (!update) return
+        await userQueries.updateById(signedIn.id, update)
+        // The user's id, never the email
+        roleLog.info({ userId: String(signedIn.id), ...update }, 'Admin role synced with ADMIN_USER_EMAILS at sign-in')
+      } catch (err) {
+        roleLog.error({ userId: String(signedIn.id), error: (err as Error)?.message }, 'Admin role sync at sign-in failed')
       }
     }),
   },
