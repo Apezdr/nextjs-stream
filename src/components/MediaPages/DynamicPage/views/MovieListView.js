@@ -27,7 +27,6 @@ async function MovieListContent({ initialFilters, userId }) {
     <MovieListClient
       initialFilters={initialFilters}
       initialData={initialData}
-      userId={userId}
     />
   )
 }

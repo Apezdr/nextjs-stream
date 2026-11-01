@@ -25,7 +25,7 @@ export default function NoEpisodesFound({ onRetry, showTitle, seasonNumber, seas
       const result = await onRetry({ showTitle, seasonNumber });
       
       // Check if refresh was successful and episodes were found
-      if (result.success && result.data && result.data.episodes && result.data.episodes.length > 0) {
+      if (result.success && result.hasEpisodes) {
         // Episodes found - refresh the page to show the updated content
         router.refresh();
         // No need to reset loading state as component will remount with episodes
@@ -45,6 +45,8 @@ export default function NoEpisodesFound({ onRetry, showTitle, seasonNumber, seas
         setIsLoading(false); // Reset loading state to allow trying again
       }
     } catch (error) {
+      // The action redirected (sign-in, approval): the router has already navigated
+      if (error?.digest?.startsWith('NEXT_REDIRECT')) return;
       console.error('Error refreshing episodes:', error);
       // Reset loading state on error so the user can try again
       setIsLoading(false);

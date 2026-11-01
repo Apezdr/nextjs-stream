@@ -159,7 +159,7 @@ HdrTypeButton.displayName = 'HdrTypeButton';
  * 
  * Client is source of truth for filters, server is source of truth for data
  */
-export default function MovieListClient({ initialFilters, initialData, userId }) {
+export default function MovieListClient({ initialFilters, initialData }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -204,10 +204,10 @@ export default function MovieListClient({ initialFilters, initialData, userId })
       const requestId = ++requestIdRef.current;
       
       startTransition(async () => {
+        // The action reads the user from the session, not from here
         const nextData = await getMovieListData({
           ...filters,
-          page,
-          userId
+          page
         });
         
         // Only apply if this is still the latest request
@@ -222,7 +222,7 @@ export default function MovieListClient({ initialFilters, initialData, userId })
         clearTimeout(fetchDebounceRef.current);
       }
     };
-  }, [filters, page, initialFilters, userId]);
+  }, [filters, page, initialFilters]);
   
   /**
    * Sync URL cosmetically for sharing (debounced, write-only)
