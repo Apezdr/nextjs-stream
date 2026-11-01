@@ -1,5 +1,6 @@
 import { getSession } from '@src/lib/cachedAuth'
-import { getServer, getWebhookIdForServer, getDefaultServer } from '@src/utils/config'
+import { getServer, getDefaultServer } from '@src/utils/config'
+import { getWebhookIdForServer } from '@src/utils/webhookServer'
 
 export const GET = async (req, props) => {
   const session = await getSession()

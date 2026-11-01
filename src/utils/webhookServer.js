@@ -1,4 +1,9 @@
-"use server";
+// Server-only, and deliberately NOT "use server": that directive made every
+// export here a Server Action, an endpoint the server runs for whoever sends
+// its action ID, and getAllWebhookConfigs() returns every webhook ID in full.
+// These are plain server utilities; server-only fails the build if a client
+// module ever imports this file.
+import 'server-only'
 
 function getWebhookEnvKeys() {
   const keys = Object.keys(process.env).filter(
@@ -74,10 +79,11 @@ export async function getWebhookServerMapping() {
 /**
  * Validates a webhook ID and returns server information
  * @param {string} webhookId - The webhook ID to validate
- * @returns {Promise<{isValid: boolean, serverId: string|null}>} Validation result
+ * @returns {Promise<{isValid: boolean, serverId: string|null, isWildcard: boolean, credential: string|null}>}
+ *   Validation result; `credential` is the env setting that matched (WEBHOOK_ID_2), never the ID
  */
 export async function validateWebhookId(webhookId) {
-  if (!webhookId) return { isValid: false, serverId: null };
+  if (!webhookId) return { isValid: false, serverId: null, isWildcard: false, credential: null };
 
   const webhookConfigs = await getAllWebhookConfigs();
   const matchedConfig = webhookConfigs.find((config) => config.webhookId === webhookId);
@@ -86,6 +92,7 @@ export async function validateWebhookId(webhookId) {
     isValid: !!matchedConfig,
     serverId: matchedConfig?.serverId || null,
     isWildcard: matchedConfig?.isWildcard || false,
+    credential: matchedConfig?.envKey || null,
   };
 }
 

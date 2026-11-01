@@ -1,12 +1,7 @@
 // Create URL handlers for all servers
 import { createURLHandler, createMultiServerURLHandler } from './url_utils'
-// Import webhook functions
-import {
-  getAllWebhookConfigs,
-  getWebhookServerMapping,
-  getServerWebhookMapping,
-  getWebhookIdForServer,
-} from './webhookServer'
+// Webhook IDs live in ./webhookServer, which is server-only: client components
+// import this file (for siteTitle), so it must not import that one.
 import { formatServerLabel, normalizeServerDisplayName } from './serverLabel'
 /**
  * @typedef {Object} SyncPaths
@@ -294,11 +289,3 @@ export const fileServerURLWithPrefixPath = (path) => urlHandlers.get(defaultServ
 // Version Format: 1.0000 (Major.Minor)
 export const fileServerVersionTV = 1.0001
 export const fileServerVersionMOVIES = 1.0001
-
-// Export webhook server mapping functions
-export {
-  getAllWebhookConfigs,
-  getWebhookServerMapping,
-  getServerWebhookMapping,
-  getWebhookIdForServer,
-}

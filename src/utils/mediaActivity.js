@@ -1,6 +1,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { userQueries } from '@src/lib/userQueries'
 import { validateWebhookId } from '@src/utils/webhookServer'
+import { recordKeyCaller } from '@src/lib/requestCaller'
 import { detectBrowserType, getDeviceTypeLabel } from '@src/utils/deviceDetection'
 import { DEFAULT_ACTIVE_WINDOW_SECONDS, PAUSED_WINDOW_SECONDS } from '@src/utils/playbackPresence/database'
 import { UAParser } from 'ua-parser-js'
@@ -63,11 +64,13 @@ export async function validateMediaActivityRequest(request) {
   const activityApiKeys = [process.env.MEDIA_ACTIVITY_API_KEY].filter(Boolean)
 
   if (activityApiKeys.includes(token)) {
+    recordKeyCaller('api-key', token, 'MEDIA_ACTIVITY_API_KEY')
     return { isValid: true, source: 'media-activity-api-key' }
   }
 
   const webhookValidation = await validateWebhookId(token)
   if (webhookValidation.isValid) {
+    recordKeyCaller('webhook', token, webhookValidation.credential, webhookValidation.serverId)
     return { isValid: true, source: 'webhook', serverId: webhookValidation.serverId }
   }
 

@@ -1,8 +1,11 @@
-'use server'
+// Server-only, not 'use server': that made getServerSettings(), which returns
+// every webhook ID, a Server Action anyone holding its action ID could call
+// with no admin check. The admin settings page and the admin API call these.
+import 'server-only'
 
 import clientPromise from '@src/lib/mongodb'
+import { getAllWebhookConfigs } from '@src/utils/webhookServer'
 import {
-  getAllWebhookConfigs,
   fileServerPrefixPath,
   fileServerURLWithPrefixPath,
   getAllServers,

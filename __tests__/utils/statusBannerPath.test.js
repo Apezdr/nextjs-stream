@@ -16,8 +16,8 @@ jest.mock('@src/utils/config', () => ({
     { id: 'default', displayName: 'Living Room NAS', syncEndpoint: 'http://default.test/node' },
     { id: 'server2', displayName: 'Offsite Library', syncEndpoint: 'http://server2.test/node' },
   ],
-  getWebhookIdForServer: async () => null,
 }))
+jest.mock('@src/utils/webhookServer', () => ({ getWebhookIdForServer: async () => null }))
 jest.mock('@src/lib/httpHelper', () => ({
   httpGet: async () => ({ data: { status: 'normal' }, headers: {} }),
 }))

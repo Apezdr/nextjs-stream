@@ -26,6 +26,7 @@ import { createPlaybackDeviceInfo } from '@src/utils/deviceDetection'
 import { getClientIP, checkRateLimit, createRateLimitHeaders } from '@src/utils/rateLimiter'
 import { invalidateUserWatchHistoryCache } from '@src/utils/cache/invalidation'
 import { createLogger } from '@src/lib/logger'
+import { recordUserCaller } from '@src/lib/requestCaller'
 
 // No `runtime`/`dynamic` segment config: cacheComponents rejects both, and a
 // POST handler is uncached and Node-runtime by default regardless.
@@ -64,6 +65,8 @@ export async function POST(req) {
   const verified = verifyCastPlaybackToken(token)
   if (!verified.ok) return json(401, { ok: false, code: verified.code })
   const { claims } = verified
+  // The receiver has no session; the signed token names whose playback this is
+  recordUserCaller(claims.u)
 
   if (
     !videoId ||

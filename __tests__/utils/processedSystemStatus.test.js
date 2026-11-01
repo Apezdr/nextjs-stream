@@ -15,8 +15,8 @@ jest.mock('@src/utils/config', () => ({
     { id: 'default', syncEndpoint: 'http://default.test/node' },
     { id: 'server2', syncEndpoint: 'http://server2.test/node' },
   ],
-  getWebhookIdForServer: async () => null,
 }))
+jest.mock('@src/utils/webhookServer', () => ({ getWebhookIdForServer: async () => null }))
 jest.mock('@src/lib/httpHelper', () => ({ httpGet: (...args) => mockHttpGet(...args) }))
 // admin_utils' own imports, so its real getSystemStatusMessage can load.
 jest.mock('@src/lib/cache', () => ({ getCache: jest.fn(), setCache: jest.fn() }))

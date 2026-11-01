@@ -1,6 +1,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { httpGet } from '@src/lib/httpHelper'
-import { getServer, getWebhookIdForServer } from '@src/utils/config'
+import { getServer } from '@src/utils/config'
+import { getWebhookIdForServer } from '@src/utils/webhookServer'
 import { getSession } from '@src/lib/cachedAuth'
 import { srtToVtt } from '@src/lib/captions/srtToVtt'
 import { checkAndRecordTrigger } from '@src/lib/captions/rateLimit'

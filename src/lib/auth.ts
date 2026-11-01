@@ -11,6 +11,7 @@ import { getDefaultApprovalStatus } from '@src/utils/autoApproval'
 import { userQueries } from './userQueries'
 import { gatedAuthTrustedOrigins } from '@src/utils/gatedAuthOrigins'
 import { USER_ADDITIONAL_FIELDS } from './authUserFields'
+import { recordAuthHandlerCaller } from './requestCaller'
 
 const adminEmails = (process.env.ADMIN_USER_EMAILS || '')
   .split(',')
@@ -105,6 +106,9 @@ export const auth = betterAuth({
 
   hooks: {
     after: createAuthMiddleware(async (ctx) => {
+      // These requests never pass through getSession(), so the hook names the caller
+      recordAuthHandlerCaller(ctx.context as Parameters<typeof recordAuthHandlerCaller>[0])
+
       // Sync role from ADMIN_USER_EMAILS on every social sign-in.
       // Handles emails added/removed from the env var after account creation.
       if (ctx.path !== '/sign-in/social' && ctx.path !== '/callback/social') return

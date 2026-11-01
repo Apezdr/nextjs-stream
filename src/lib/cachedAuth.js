@@ -2,6 +2,7 @@ import { cache } from 'react'
 import { cacheLife } from 'next/cache'
 import { auth } from '@src/lib/auth'
 import { headers } from 'next/headers'
+import { recordUserCaller } from '@src/lib/requestCaller'
 
 /**
  * Request-scoped session store. React's cache() only memoizes during RSC
@@ -33,7 +34,12 @@ export const getSession = cache(async () => {
     return memoized
   }
 
-  const sessionPromise = auth.api.getSession({ headers: requestHeaders })
+  // The request's span records who is signed in (user.id, never the email),
+  // once per request: every session lookup in a request shares this promise
+  const sessionPromise = auth.api.getSession({ headers: requestHeaders }).then((session) => {
+    recordUserCaller(session?.user?.id)
+    return session
+  })
   sessionByRequest.set(requestHeaders, sessionPromise)
   return sessionPromise
 })

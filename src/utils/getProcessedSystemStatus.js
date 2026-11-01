@@ -1,4 +1,5 @@
-import { getAllServers, getWebhookIdForServer } from '@src/utils/config'
+import { getAllServers } from '@src/utils/config'
+import { getWebhookIdForServer } from '@src/utils/webhookServer'
 import { httpGet } from '@src/lib/httpHelper'
 import { getLatestSystemStatus, getSystemStatusMessage } from '@src/utils/admin_utils'
 import { formatServerLabel } from '@src/utils/serverLabel'

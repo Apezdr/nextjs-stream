@@ -4,6 +4,7 @@ import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { validateWebhookId } from './webhookServer'
 import { getSession } from '@src/lib/cachedAuth'
+import { recordKeyCaller } from '@src/lib/requestCaller'
 import { userQueries } from '@src/lib/userQueries'
 
 function unauthorizedResponse(message = 'You must be signed in.') {
@@ -62,6 +63,7 @@ export async function isAdminOrWebhook(req) {
     const validationResult = await validateWebhookId(webhookId)
     if (validationResult.isValid) {
       req.webhookServerId = validationResult.serverId
+      recordKeyCaller('webhook', webhookId, validationResult.credential, validationResult.serverId)
       return true
     }
     return new Response(
@@ -78,6 +80,7 @@ export async function isValidWebhook(req) {
     const validationResult = await validateWebhookId(webhookId)
     if (validationResult.isValid) {
       req.webhookServerId = validationResult.serverId
+      recordKeyCaller('webhook', webhookId, validationResult.credential, validationResult.serverId)
       return true
     }
   }
