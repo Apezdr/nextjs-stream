@@ -194,29 +194,46 @@ async function getOwnerNameMap(ownerIds = []) {
  * Supports both internal media (in library) and external media (TMDB only)
  */
 
-/**
- * The titles the library has but the viewer's scope leaves out, as a $nor for
- * a Watchlist query: they are left out of the viewer's lists and counts as if
- * never added, whoever added them. A title the library doesn't have
- * (TMDB-only) isn't the library's to hide, so it stays. From the scope's
- * index (libraryAccess.ts), worked out in memory once per scope: no read of
- * the playlist and no lookup per call, bounded by the size of the library.
- * Null when nothing is left out (always, for the whole library).
- */
-async function outOfScopeTitles(access) {
-  const index = await libraryScopeIndex(access)
-  if (!index) return null
-  // Items store the TMDB id as a number, some older ones as a string
-  const clause = (mediaType, ids) =>
-    ids.length > 0 ? [{ mediaType, tmdbId: { $in: [...ids, ...ids.map(String)] } }] : []
-  const nor = [...clause('movie', index.hiddenTmdbIds.movie), ...clause('tv', index.hiddenTmdbIds.tv)]
-  return nor.length > 0 ? nor : null
+// The hidden TMDB ids of a scope's index as sets, once per index
+const hiddenSetsByIndex = new WeakMap()
+function hiddenSetsOf(index) {
+  let sets = hiddenSetsByIndex.get(index)
+  if (!sets) {
+    sets = { movie: new Set(index.hiddenTmdbIds.movie), tv: new Set(index.hiddenTmdbIds.tv) }
+    hiddenSetsByIndex.set(index, sets)
+  }
+  return sets
 }
 
-/** A playlist's item count as the viewer sees it. */
+/**
+ * The items matching `filter` that the viewer's scope hides: library titles
+ * outside it, left out of the viewer's lists and counts as if never added,
+ * whoever added them. A title the library doesn't have (TMDB-only) isn't the
+ * library's to hide, so it stays. Worked out in memory against the scope's
+ * index (libraryAccess.ts) over the playlist's own items, read once with
+ * their type and TMDB id only: what this reads and the $nin it returns grow
+ * with the playlist, never with the library.
+ *
+ * Null for the whole library, with no read: its queries stay as they were.
+ * Otherwise { total, hiddenIds }, so a count needs no query of its own.
+ */
+async function hiddenItems(collection, filter, access) {
+  const index = await libraryScopeIndex(access)
+  if (!index) return null
+  const sets = hiddenSetsOf(index)
+  const items = await collection.find(filter, { projection: { _id: 1, mediaType: 1, tmdbId: 1 } }).toArray()
+  // Items store the TMDB id as a number, some older ones as a string
+  const hiddenIds = items
+    .filter((item) => sets[item.mediaType]?.has(parseInt(item.tmdbId)))
+    .map((item) => item._id)
+  return { total: items.length, hiddenIds }
+}
+
+/** A playlist's item count as the viewer sees it: the query it always was for the whole library. */
 async function visibleItemCount(watchlistCollection, playlistId, access) {
-  const hidden = await outOfScopeTitles(access)
-  return watchlistCollection.countDocuments({ playlistId, ...(hidden ? { $nor: hidden } : {}) })
+  const scoped = await hiddenItems(watchlistCollection, { playlistId }, access)
+  if (!scoped) return watchlistCollection.countDocuments({ playlistId })
+  return scoped.total - scoped.hiddenIds.length
 }
 
 /**
@@ -230,7 +247,7 @@ async function visibleItemCount(watchlistCollection, playlistId, access) {
  * @param {boolean} [options.internalOnly=false] - Only count/return items currently in library (uses TMDB ID lookup)
  * @param {string} [options.userId] - Optional user ID to skip auth() call
  * @param {import('@src/lib/roles/libraryScope').LibraryAccess} options.access - The viewer's library access:
- *   a title the library has outside it is left out (outOfScopeTitles)
+ *   a title the library has outside it is left out (hiddenItems)
  * @returns {Promise<Array|number>} Watchlist items or count
  */
 // The app creates the Watchlist collection's indexes itself, on first use, the
@@ -367,7 +384,7 @@ async function backfillSortDetails(collection, filter) {
   if (unresolved.length === 0) return
 
   // Sort keys only, stored on the items: resolved against the whole library,
-  // since an item outside a viewer's scope never reaches them (outOfScopeTitles)
+  // since an item outside a viewer's scope never reaches them (hiddenItems)
   const resolvedMedia = await batchResolveMedia(
     unresolved.map((item) => ({ tmdbId: item.tmdbId, mediaType: item.mediaType })),
     { access: FULL_LIBRARY }
@@ -430,8 +447,8 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
     if (mediaType) filter.mediaType = mediaType
 
     // Titles outside the viewer's scope, before anything is counted or paged
-    const hidden = await outOfScopeTitles(access)
-    if (hidden) filter.$nor = hidden
+    const scoped = await hiddenItems(collection, filter, access)
+    if (scoped?.hiddenIds.length > 0) filter._id = { $nin: scoped.hiddenIds }
 
     // Declared out here because batchResolveMedia reads it below. Declared
     // inside the block, it threw a ReferenceError for any internalOnly list
@@ -497,7 +514,8 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
 
     // Count only query (after applying internalOnly filter if needed)
     if (countOnly) {
-      return await collection.countDocuments(filter)
+      // A scoped viewer's count comes from the items already read
+      return scoped ? scoped.total - scoped.hiddenIds.length : await collection.countDocuments(filter)
     }
 
     // Get playlist for sorting preferences

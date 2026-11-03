@@ -30,6 +30,15 @@ function mockNotificationsCollection() {
   }
 }
 const mockWatchlistCounts = []
+const mockWatchlistReads = []
+// A playlist: two library titles the scope hides (by TMDB id, one stored as a
+// string), one it holds, and one the library doesn't have (TMDB-only)
+const mockItems = [
+  { _id: 'w1', mediaType: 'movie', tmdbId: 77 },
+  { _id: 'w2', mediaType: 'tv', tmdbId: '88' },
+  { _id: 'w3', mediaType: 'movie', tmdbId: 11 },
+  { _id: 'w4', mediaType: 'tv', tmdbId: 999 },
+]
 const mockPlaylists = [{ _id: { toString: () => 'p1', equals: () => true }, name: 'Mine', ownerId: { toString: () => 'u1', equals: () => true } }]
 jest.mock('@src/lib/mongodb', () => ({
   __esModule: true,
@@ -43,9 +52,18 @@ jest.mock('@src/lib/mongodb', () => ({
         }
         if (name === 'Watchlist') {
           return {
+            createIndex: async () => 'index',
             countDocuments: async (query) => {
               mockWatchlistCounts.push(query)
               return 0
+            },
+            find: (query, options) => {
+              mockWatchlistReads.push({ query, options })
+              return { toArray: async () => mockItems }
+            },
+            aggregate: (pipeline) => {
+              mockWatchlistReads.push({ pipeline })
+              return { toArray: async () => [] }
             },
           }
         }
@@ -65,7 +83,7 @@ const mockIndex = {
   showIds: [],
   movieKeys: new Set(['In Scope (2001)']),
   showKeys: new Set(),
-  hiddenTmdbIds: { movie: [77], tv: [88] },
+  hiddenTmdbIds: { movie: [77, 12], tv: [88] },
 }
 jest.mock('@src/lib/roles/libraryAccess', () => ({
   libraryScopeIndex: async (access) => (access.scope === null ? null : mockIndex),
@@ -74,7 +92,7 @@ jest.mock('@src/lib/roles/libraryAccess', () => ({
 const { ObjectId } = require('mongodb')
 const { FULL_LIBRARY } = require('@src/lib/roles/libraryScope')
 const { getUserNotifications, getUnreadNotificationCount } = require('@src/utils/notifications/notificationDatabase')
-const { getUserPlaylists, getPlaylistById } = require('@src/utils/watchlist/database')
+const { getUserPlaylists, getPlaylistById, getUserWatchlist } = require('@src/utils/watchlist/database')
 
 const USER_ID = '64b7f0c2a1b2c3d4e5f60718'
 const SCOPED = { id: 'scope-test', scope: { movieRatingCap: null, tvRatingCap: null, titles: [] }, showIds: [] }
@@ -127,23 +145,43 @@ describe('notifications', () => {
   })
 })
 
-describe('playlist item counts', () => {
-  it('the whole library counts every item, as before', async () => {
+describe('playlists', () => {
+  beforeEach(() => {
+    mockWatchlistReads.length = 0
+  })
+
+  it('the whole library counts every item with the query it always had, and reads no items', async () => {
     await getUserPlaylists(USER_ID, true, true, FULL_LIBRARY)
     await getPlaylistById('64b7f0c2a1b2c3d4e5f60719', { user: { id: USER_ID }, access: FULL_LIBRARY })
     expect(mockWatchlistCounts).toEqual([{ playlistId: mockPlaylists[0]._id }, { playlistId: mockPlaylists[0]._id }])
+    expect(mockWatchlistReads).toEqual([])
   })
 
-  it('a scoped viewer’s counts leave out the library titles their scope hides, by TMDB id', async () => {
+  it('the whole library lists and counts a playlist with the queries it always had', async () => {
+    const playlistId = '64b7f0c2a1b2c3d4e5f60719'
+    expect(await getUserWatchlist({ access: FULL_LIBRARY, userId: USER_ID, playlistId, countOnly: true })).toBe(0)
+    expect(mockWatchlistCounts).toEqual([{ playlistId: new ObjectId(playlistId) }])
+    await getUserWatchlist({ access: FULL_LIBRARY, userId: USER_ID, playlistId, sortBy: 'dateAdded' })
+    expect(mockWatchlistReads.map((read) => read.pipeline?.[0])).toEqual([{ $match: { playlistId: new ObjectId(playlistId) } }])
+  })
+
+  it('a scoped viewer: the playlist’s own items are filtered in memory, TMDB-only ones kept, counts derived from them', async () => {
     await getUserPlaylists(USER_ID, true, true, SCOPED)
     await getPlaylistById('64b7f0c2a1b2c3d4e5f60719', { user: { id: USER_ID }, access: SCOPED })
-    const nor = [
-      { mediaType: 'movie', tmdbId: { $in: [77, '77'] } },
-      { mediaType: 'tv', tmdbId: { $in: [88, '88'] } },
-    ]
-    expect(mockWatchlistCounts).toEqual([
-      { playlistId: mockPlaylists[0]._id, $nor: nor },
-      { playlistId: mockPlaylists[0]._id, $nor: nor },
+    // No count query: two items of four are hidden, from the one read of the items
+    expect(mockWatchlistCounts).toEqual([])
+    expect(mockWatchlistReads).toEqual([
+      { query: { playlistId: mockPlaylists[0]._id }, options: { projection: { _id: 1, mediaType: 1, tmdbId: 1 } } },
+      { query: { playlistId: mockPlaylists[0]._id }, options: { projection: { _id: 1, mediaType: 1, tmdbId: 1 } } },
     ])
+
+    const playlistId = '64b7f0c2a1b2c3d4e5f60719'
+    expect(await getUserWatchlist({ access: SCOPED, userId: USER_ID, playlistId, countOnly: true })).toBe(2)
+    mockWatchlistReads.length = 0
+    await getUserWatchlist({ access: SCOPED, userId: USER_ID, playlistId, sortBy: 'dateAdded' })
+    // The page query leaves out the hidden items by their own ids: bounded by the playlist, not the library
+    expect(mockWatchlistReads.at(-1).pipeline[0]).toEqual({
+      $match: { playlistId: new ObjectId(playlistId), _id: { $nin: ['w1', 'w2'] } },
+    })
   })
 })
