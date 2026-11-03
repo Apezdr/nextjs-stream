@@ -3,6 +3,7 @@
 import { adminGate } from '@src/lib/roles/gates'
 import { RoleInputError } from '@src/lib/roles/capability'
 import { deleteRole, saveRole, setUserRoles } from '@src/lib/roles/store'
+import { searchScopeTitles } from '@src/utils/admin/scopeTitleSearch'
 
 // Admin-only, like every action here: each is its own POST endpoint, so each
 // checks its caller. A refusal the admin can fix comes back as { ok: false,
@@ -32,4 +33,10 @@ export async function deleteRoleAction(roleId) {
 export async function setUserRolesAction({ userID, roleIds }) {
   await adminGate.action()
   return outcome(async () => ({ roles: await setUserRoles(userID, roleIds) }))
+}
+
+/** The role editor's title picker: library titles matching the query, with their library keys. */
+export async function searchScopeTitlesAction(query) {
+  await adminGate.action()
+  return { ok: true, titles: await searchScopeTitles(typeof query === 'string' ? query : '') }
 }

@@ -12,10 +12,12 @@ import { CAPABILITIES } from '@src/lib/roles/registry'
 const mockSaveRole = jest.fn()
 const mockDeleteRole = jest.fn()
 const mockSetUserRoles = jest.fn()
+const mockSearchTitles = jest.fn()
 jest.mock('@src/utils/actions/roles', () => ({
   saveRoleAction: (...args) => mockSaveRole(...args),
   deleteRoleAction: (...args) => mockDeleteRole(...args),
   setUserRolesAction: (...args) => mockSetUserRoles(...args),
+  searchScopeTitlesAction: (...args) => mockSearchTitles(...args),
 }))
 const mockRefresh = jest.fn()
 jest.mock('next/navigation', () => ({ useRouter: () => ({ refresh: mockRefresh }) }))
@@ -72,6 +74,7 @@ test('a new role takes each capability’s own settings, and saves exactly those
     name: 'HD requester',
     description: '',
     grants: { 'arr.request': { radarr: [4], sonarr: [], manual: true, anyTitle: false } },
+    scope: null,
   })
   // The list describes it through the capability's own describer.
   expect(await screen.findByText(/Radarr: HD-1080p · picks releases by hand/)).toBeInTheDocument()
@@ -108,4 +111,40 @@ test('the Users page picker saves a user’s roles, and puts them back if refuse
   await click(await screen.findByRole('option', { name: 'Media manager' }))
   await waitFor(() => expect(toast.error).toHaveBeenCalledWith('One of those roles no longer exists.'))
   expect(screen.getByRole('button', { name: 'Roles for Robin' })).toHaveTextContent(/^HD requester$/)
+})
+
+test('a role can limit the library: rating caps and titles picked from a search, saved by their library key', async () => {
+  mockSaveRole.mockImplementation(async (draft) => ({ ok: true, role: { ...draft, id: 'r2' } }))
+  mockSearchTitles.mockResolvedValue({
+    ok: true,
+    titles: [{ mediaType: 'movie', originalTitle: 'Home Video (2001)', title: 'Home Video', year: '2001', rating: null }],
+  })
+  render(<RolesAdmin roles={[]} holders={{}} capabilities={capabilities} editorData={editorData} />)
+
+  await click(screen.getByRole('button', { name: 'New role' }))
+  fireEvent.change(screen.getByPlaceholderText('e.g. HD requester'), { target: { value: 'Kids' } })
+  await click(screen.getByRole('checkbox', { name: /Limit the library/ }))
+  fireEvent.change(screen.getByRole('combobox', { name: 'Movies rated' }), { target: { value: 'PG' } })
+  fireEvent.change(screen.getByRole('textbox', { name: 'Find a title to pick' }), { target: { value: 'home' } })
+  await click(screen.getByRole('button', { name: 'Search' }))
+  await click(await screen.findByRole('button', { name: 'Pick' }))
+  expect(screen.getByRole('button', { name: 'Picked' })).toBeDisabled()
+
+  await click(screen.getByRole('button', { name: 'Save role' }))
+
+  await waitFor(() => expect(mockSaveRole).toHaveBeenCalled())
+  expect(mockSearchTitles).toHaveBeenCalledWith('home')
+  expect(mockSaveRole.mock.calls[0][0]).toEqual({
+    id: null,
+    name: 'Kids',
+    description: '',
+    grants: {},
+    scope: {
+      movieRatingCap: 'PG',
+      tvRatingCap: null,
+      titles: [{ mediaType: 'movie', originalTitle: 'Home Video (2001)', access: 'play' }],
+    },
+  })
+  // The card says what its holders see
+  expect(await screen.findByText(/movies up to PG · 1 picked title/)).toBeInTheDocument()
 })

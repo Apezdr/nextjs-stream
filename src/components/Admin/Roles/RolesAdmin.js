@@ -7,6 +7,7 @@ import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
 import { deleteRoleAction, saveRoleAction } from '@src/utils/actions/roles'
 import { CAPABILITY_EDITORS } from './capabilityEditors'
+import LibraryScopeEditor, { describeLibraryScope } from './LibraryScopeEditor'
 
 const inputClass =
   'block w-full rounded-xl border-0 bg-slate-950/60 px-3 py-2 text-sm text-white ring-1 ring-inset ring-white/15 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-indigo-500'
@@ -16,7 +17,7 @@ const primaryButton =
 const quietButton =
   'inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-medium text-slate-300 hover:bg-white/10 hover:text-white disabled:opacity-50'
 
-const blankRole = () => ({ id: null, name: '', description: '', grants: {} })
+const blankRole = () => ({ id: null, name: '', description: '', grants: {}, scope: null })
 
 function RoleEditor({ draft, setDraft, capabilities, editorData, saving, error, onSave, onCancel }) {
   const toggleCapability = (capability, on) =>
@@ -92,6 +93,11 @@ function RoleEditor({ draft, setDraft, capabilities, editorData, saving, error, 
             </div>
           )
         })}
+      </div>
+
+      <div className="space-y-3">
+        <p className="text-sm font-medium text-slate-200">Library</p>
+        <LibraryScopeEditor value={draft.scope} onChange={(scope) => setDraft((previous) => ({ ...previous, scope }))} />
       </div>
 
       {error && (
@@ -170,8 +176,8 @@ export default function RolesAdmin({ roles: initialRoles, holders, capabilities,
             Roles
           </h1>
           <p className="max-w-2xl text-sm text-slate-300/90">
-            Let people do more without making them admins. Give roles to users on the Users page; someone with several
-            roles gets everything each one allows. Admins can always do everything.
+            Let people do more without making them admins, or limit the library they see. Give roles to users on the
+            Users page; someone with several roles gets everything each one allows. Admins can always do everything.
           </p>
         </div>
         {!draft && (
@@ -220,7 +226,7 @@ export default function RolesAdmin({ roles: initialRoles, holders, capabilities,
                   <div className="flex gap-1">
                     <button
                       type="button"
-                      onClick={() => setDraft({ ...role, grants: { ...role.grants } })}
+                      onClick={() => setDraft({ ...role, grants: { ...role.grants }, scope: role.scope ?? null })}
                       className={quietButton}
                       aria-label={`Edit ${role.name}`}
                     >
@@ -246,6 +252,12 @@ export default function RolesAdmin({ roles: initialRoles, holders, capabilities,
                       )}
                     </li>
                   ))}
+                  {role.scope && (
+                    <li className="text-sm text-slate-200">
+                      <span className="font-medium">Library</span>
+                      <span className="text-slate-400"> · {describeLibraryScope(role.scope)}</span>
+                    </li>
+                  )}
                 </ul>
               </li>
             )
