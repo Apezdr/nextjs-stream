@@ -7,7 +7,9 @@ module.exports = [
             "**/node_modules/**",
             "**/.next/**",
             "**/out/**",
-            "**/dist/**"
+            "**/dist/**",
+            // Agents' git worktrees: other checkouts, which `npm run lint` must not rewrite
+            ".claude/**"
         ]
     },
     js.configs.recommended,

@@ -16,6 +16,10 @@ playwright-session.json
 # Ignore node_modules
 node_modules
 
+# Claude Code settings and agents' git worktrees (.claude/worktrees), each a
+# full checkout with its own node_modules and .next: never part of the image
+.claude
+
 # Ignore local Next.js build/dev output — gets regenerated inside the builder
 # stage and otherwise leaks the 1+ GB .next/dev cache into the image.
 .next

@@ -2,7 +2,16 @@
  * For a detailed explanation regarding each configuration property, visit:
  * https://jestjs.io/docs/configuration
  */
+const path = require('path')
 const nextJest = require('next/jest')
+
+// A folder of this checkout as an ignore pattern. Not `<rootDir>/…`: Jest
+// pastes <rootDir> in unescaped, so where the checkout's path has a segment
+// starting with '.' (an agent's git worktree under .claude/worktrees) the
+// separator before it reads as a regex escape and the pattern never matches.
+// Jest turns each '/' back into the platform's separator.
+const ownFolder = (...segments) =>
+  `${path.join(__dirname, ...segments).replaceAll('\\', '/').replace(/[$()*+.?[\\\]^{|}]/g, '\\$&')}/`
 
 /** @type {import('jest').Config} */
 const createJestConfig = nextJest({
@@ -109,6 +118,8 @@ const config = {
 
   // An array of regexp pattern strings, matched against all module paths before considered 'visible' to the module loader
   // modulePathIgnorePatterns: [],
+  // Agents' git worktrees: their copies of the modules and tests aren't this checkout's
+  modulePathIgnorePatterns: [ownFolder('.claude')],
 
   // Activates notifications for test results
   // notify: false,
@@ -182,9 +193,11 @@ const config = {
   // ],
   testPathIgnorePatterns: [
     // Playwright specs; they run against a production build, not under jest
-    '<rootDir>/e2e/',
+    ownFolder('e2e'),
     // Modules the tests share (fakes, fixtures); not test files themselves
-    '<rootDir>/__tests__/helpers/',
+    ownFolder('__tests__', 'helpers'),
+    // Agents' git worktrees, each with its own copy of the tests
+    ownFolder('.claude'),
   ],
 
   // The regexp pattern or array of patterns that Jest uses to detect test files
