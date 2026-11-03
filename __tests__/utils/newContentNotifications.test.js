@@ -172,11 +172,11 @@ describe('MediaNotificationOrchestrator new-content delivery', () => {
     expect(MediaNotificationOrchestrator.composeNewContentNotices({ movies: [], episodes: [] }, OPTIONS)).toEqual([])
   })
 
-  it('sends to approved accounts without limited access, chosen in one place', async () => {
+  it('sends to approved accounts, chosen in one place, with what their library scope is decided by', async () => {
     await MediaNotificationOrchestrator.deliverNewContentNotices([{ title: 'n' }], DELIVERY)
 
-    expect(userQueries.find).toHaveBeenCalledWith({ approved: true, limitedAccess: { $ne: true } }, { _id: 1 })
-    expect(NEW_CONTENT_RECIPIENTS_FILTER).toEqual({ approved: true, limitedAccess: { $ne: true } })
+    expect(userQueries.find).toHaveBeenCalledWith({ approved: true }, { _id: 1, role: 1, roles: 1 })
+    expect(NEW_CONTENT_RECIPIENTS_FILTER).toEqual({ approved: true })
   })
 
   it('gives every notice one notification per recipient, under ids the same on every attempt', async () => {

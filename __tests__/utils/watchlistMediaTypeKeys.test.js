@@ -48,6 +48,7 @@ jest.mock('@src/utils/watchlist/mediaResolver.js', () => ({
 }))
 
 const { bulkGetComingSoonStatus, cleanExpiredComingSoon, getMinimalCardDataForPlaylist } = require('@src/utils/watchlist/database')
+const { FULL_LIBRARY } = require('@src/lib/roles/libraryScope')
 
 // Game of Thrones is show 1399; movie 1399 is a different title.
 const show = { _id: 'show-doc', type: 'tvShow', title: 'Game of Thrones', originalTitle: 'Game of Thrones', metadata: { id: 1399 } }
@@ -76,7 +77,7 @@ test('a movie and a show sharing a TMDB number each get their own card', async (
     new Map([['movie:1399', { tmdbId: 1399, mediaType: 'movie', title: 'The Film', posterURL: '/film.jpg' }]])
   )
 
-  const cards = await getMinimalCardDataForPlaylist([watchlistItem('movie'), watchlistItem('tv')])
+  const cards = await getMinimalCardDataForPlaylist([watchlistItem('movie'), watchlistItem('tv')], null, true, { access: FULL_LIBRARY })
 
   const film = cards.find((card) => card.watchlistId === 'w-movie')
   const series = cards.find((card) => card.watchlistId === 'w-tv')
@@ -94,10 +95,10 @@ test('custom order and date order follow each card’s own watchlist item', asyn
     watchlistItem('tv', { dateAdded: new Date('2026-10-01') }),
   ]
 
-  const custom = await getMinimalCardDataForPlaylist(items, { sortBy: 'custom', customOrder: ['w-tv', 'w-movie'] })
+  const custom = await getMinimalCardDataForPlaylist(items, { sortBy: 'custom', customOrder: ['w-tv', 'w-movie'] }, true, { access: FULL_LIBRARY })
   expect(custom.map((card) => card.watchlistId)).toEqual(['w-tv', 'w-movie'])
 
-  const newestFirst = await getMinimalCardDataForPlaylist(items, { sortBy: 'dateAdded', sortOrder: 'desc' })
+  const newestFirst = await getMinimalCardDataForPlaylist(items, { sortBy: 'dateAdded', sortOrder: 'desc' }, true, { access: FULL_LIBRARY })
   expect(newestFirst.map((card) => card.watchlistId)).toEqual(['w-movie', 'w-tv'])
 })
 

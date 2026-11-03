@@ -1,4 +1,5 @@
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { fetchFlatBannerMedia } from '@src/utils/cache/bannerData'
 import { generateClipVideoURL } from '@src/utils/auth_utils'
 // ETag support for HTTP caching
@@ -15,7 +16,8 @@ export const GET = async (req) => {
   const url = new URL(req.url)
   const isTVdevice = url.searchParams.get('isTVdevice') === 'true'
 
-  const mediaResult = await fetchFlatBannerMedia()
+  // The caller's part of the library (one cached banner per scope)
+  const mediaResult = await fetchFlatBannerMedia(await libraryAccessFor(authResult))
   if (mediaResult.error && mediaResult.details && mediaResult.status) {
     return new Response(JSON.stringify({ error: mediaResult.error, details: mediaResult.details }), {
       status: mediaResult.status,

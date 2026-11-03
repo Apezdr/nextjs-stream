@@ -4,13 +4,13 @@ import PlayerPageSkeleton from '@src/components/MediaPlayer/PlayerPageSkeleton'
 import { getSession } from '@src/lib/cachedAuth'
 import {
   AuthGuard,
-  handleLimitedAccess,
   MediaNotFound,
   TVEpisodePlayerView,
 } from '@src/components/MediaPages/DynamicPage'
 import { getCachedMediaWithRedirect, applyPlayerDelivery } from '@src/utils/cache/mediaFetching'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
-import { hasLimitedAccess, isAwaitingApproval } from '@src/lib/roles/rules'
+import { isAwaitingApproval } from '@src/lib/roles/rules'
+import { libraryAccessOrPublic, pageLibraryAccess } from '@src/lib/roles/session'
 
 function buildParsedParams(title, season, episode) {
   return {
@@ -32,23 +32,23 @@ function buildParsedParams(title, season, episode) {
   }
 }
 
-async function fetchEpisode(title, season, episode) {
+async function fetchEpisode(title, season, episode, access) {
   const parsedParams = buildParsedParams(title, season, episode)
-  const result = await getCachedMediaWithRedirect(parsedParams)
+  const result = await getCachedMediaWithRedirect(parsedParams, access)
   return { parsedParams, result }
 }
 
 export async function generateMetadata({ params }, parent) {
   const { title, season, episode } = await params
-  const { parsedParams, result } = await fetchEpisode(title, season, episode)
+  const { parsedParams, result } = await fetchEpisode(title, season, episode, await pageLibraryAccess())
   if (result.redirectUrl) redirect(result.redirectUrl)
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
 
 // Everything that decides what this viewer may see runs here, exactly as it did
 // when this was the page component: the session, the approved-account gate, the
-// limited-access swap, the redirect, the serve-time delivery decision. The only
-// change is where it sits: inside the page's Suspense boundary (below), so the
+// viewer's library scope (a show outside it is not found), the redirect, the
+// serve-time delivery decision. The only change is where it sits: inside the page's Suspense boundary (below), so the
 // route has a prerendered shell.
 async function TVEpisodePlayer({ params, searchParams }) {
   const { title, season, episode } = await params
@@ -56,30 +56,17 @@ async function TVEpisodePlayer({ params, searchParams }) {
   const session = await getSession()
 
   // Approved-account gate, before anything is fetched. This page would
-  // otherwise render the player for an unapproved account (hasFullAccess only
-  // trims the UI). The tv/ layout used to run this check for every page
-  // beneath it; each page now runs its own. See the layout's comment.
+  // otherwise render the player for an unapproved account. The tv/ layout used
+  // to run this check for every page beneath it; each page now runs its own. See the layout's comment.
   if (isAwaitingApproval(session?.user)) {
     redirect('/auth/error?error=APPROVAL_PENDING')
   }
 
-  const { parsedParams, result: initialResult } = await fetchEpisode(title, season, episode)
+  // A signed-out visitor gets AuthGuard's sign-in teaser (libraryAccessOrPublic)
+  const access = await libraryAccessOrPublic()
+  const { parsedParams, result: initialResult } = await fetchEpisode(title, season, episode, access)
 
   let result = initialResult
-
-  if (session?.user?.limitedAccess && parsedParams.hasTitle) {
-    const trailerMedia = await handleLimitedAccess(session, parsedParams)
-    if (trailerMedia) {
-      if (result.media) {
-        trailerMedia.showTitle = trailerMedia.showTitle ?? result.media.showTitle ?? parsedParams.mediaTitle
-        trailerMedia.seasonNumber = trailerMedia.seasonNumber ?? result.media.seasonNumber ?? parsedParams.mediaSeason
-        trailerMedia.episodeNumber = trailerMedia.episodeNumber ?? result.media.episodeNumber ?? parsedParams.mediaEpisode
-        trailerMedia.season_number = trailerMedia.season_number ?? result.media.season_number ?? parsedParams.mediaSeason
-        trailerMedia.episode_number = trailerMedia.episode_number ?? result.media.episode_number ?? parsedParams.mediaEpisode
-      }
-      result = { media: trailerMedia, redirectUrl: null, notFoundType: null }
-    }
-  }
 
   if (result.redirectUrl) {
     redirect(result.redirectUrl)
@@ -90,8 +77,6 @@ async function TVEpisodePlayer({ params, searchParams }) {
   result = await applyPlayerDelivery(result, parsedParams)
 
   const { media, notFoundType } = result
-  const hasFullAccess =
-    !isAwaitingApproval(session?.user) && !hasLimitedAccess(session?.user)
 
   return (
     <AuthGuard session={session} parsedParams={parsedParams} media={media}>
@@ -101,6 +86,7 @@ async function TVEpisodePlayer({ params, searchParams }) {
           mediaTitle={parsedParams.mediaTitle}
           mediaSeason={parsedParams.mediaSeason}
           mediaEpisode={parsedParams.mediaEpisode}
+          access={access}
         />
       ) : (
         <TVEpisodePlayerView
@@ -108,7 +94,6 @@ async function TVEpisodePlayer({ params, searchParams }) {
           session={session}
           searchParams={_searchParams}
           parsedParams={parsedParams}
-          hasFullAccess={hasFullAccess}
         />
       )}
     </AuthGuard>

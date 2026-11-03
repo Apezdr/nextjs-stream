@@ -6,10 +6,7 @@ import {
   ShieldCheckIcon,
   ShieldExclamationIcon,
 } from '@heroicons/react/24/outline'
-import {
-  updateUserApprovedFlag,
-  updateUserLimitedAccessFlag,
-} from '@src/utils/actions/admin_users'
+import { updateUserApprovedFlag } from '@src/utils/actions/admin_users'
 import { memo, useMemo, useState } from 'react'
 import UserRolesPicker from './UserRolesPicker'
 
@@ -39,22 +36,23 @@ function StatusPill({ approved }) {
   )
 }
 
-function AccessPill({ limitedAccess }) {
+// Limited: the user holds a role with a library scope (give or take it in Roles)
+function AccessPill({ limited }) {
   return (
     <span
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset',
-        limitedAccess
+        limited
           ? 'bg-rose-500/10 text-rose-300 ring-rose-400/20'
           : 'bg-sky-500/10 text-sky-300 ring-sky-400/20'
       )}
     >
-      {limitedAccess ? (
+      {limited ? (
         <ShieldExclamationIcon className="h-3.5 w-3.5" />
       ) : (
         <ShieldCheckIcon className="h-3.5 w-3.5" />
       )}
-      {limitedAccess ? 'Limited' : 'Full Access'}
+      {limited ? 'Limited library' : 'Full library'}
     </span>
   )
 }
@@ -121,6 +119,10 @@ function UserListRecords({
   const [loadingStates, setLoadingStates] = useState(data ? data.map(() => false) : [])
 
   const rows = useMemo(() => data || [], [data])
+  const limitingRoleIds = useMemo(
+    () => new Set(roleOptions.filter((role) => role.limitsLibrary).map((role) => role.id)),
+    [roleOptions]
+  )
 
   const setRowLoading = (index, isLoading) => {
     setLoadingStates((prev) => prev.map((loading, i) => (i === index ? isLoading : loading)))
@@ -130,16 +132,6 @@ function UserListRecords({
     setRowLoading(index, true)
     try {
       await updateUserApprovedFlag({ userID, approved })
-      await updateProcessedData()
-    } finally {
-      setRowLoading(index, false)
-    }
-  }
-
-  const handleLimitedAccessClick = async (index, userID, limitedAccess) => {
-    setRowLoading(index, true)
-    try {
-      await updateUserLimitedAccessFlag({ userID, limitedAccess })
       await updateProcessedData()
     } finally {
       setRowLoading(index, false)
@@ -202,7 +194,7 @@ function UserListRecords({
                   </td>
 
                   <td className="px-6 py-5">
-                    <AccessPill limitedAccess={item.limitedAccess} />
+                    <AccessPill limited={(item.roles ?? []).some((id) => limitingRoleIds.has(id))} />
                   </td>
 
                   <td className="px-6 py-5">
@@ -238,26 +230,6 @@ function UserListRecords({
                           onClick={() => handleApproveClick(index, item.id, false)}
                         >
                           Reject
-                        </ActionButton>
-                      )}
-
-                      {isApproved && !item.limitedAccess && (
-                        <ActionButton
-                          variant="warning"
-                          disabled={isLoading}
-                          onClick={() => handleLimitedAccessClick(index, item.id, true)}
-                        >
-                          Limit Access
-                        </ActionButton>
-                      )}
-
-                      {item.limitedAccess && (
-                        <ActionButton
-                          variant="success"
-                          disabled={isLoading}
-                          onClick={() => handleLimitedAccessClick(index, item.id, false)}
-                        >
-                          Lift Limit
                         </ActionButton>
                       )}
 

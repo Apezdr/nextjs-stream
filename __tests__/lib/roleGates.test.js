@@ -20,13 +20,12 @@ jest.mock('@src/utils/webhookServer', () => ({ validateWebhookId: (...args) => m
 const mockRecordKeyCaller = jest.fn()
 jest.mock('@src/lib/requestCaller', () => ({ recordKeyCaller: (...args) => mockRecordKeyCaller(...args) }))
 
-const { isAdminUser, isAwaitingApproval, hasLimitedAccess } = require('@src/lib/roles/rules')
-const { signedInGate, approvedGate, fullAccessGate, adminGate, isValidWebhook, adminOrWebhook } = require('@src/lib/roles/gates')
+const { isAdminUser, isAwaitingApproval } = require('@src/lib/roles/rules')
+const { signedInGate, approvedGate, adminGate, isValidWebhook, adminOrWebhook } = require('@src/lib/roles/gates')
 
 const ADMIN = { id: 'a1', role: 'admin', approved: true }
 const MEMBER = { id: 'u1', role: 'user', approved: true }
 const PENDING = { id: 'p1', role: 'user', approved: false }
-const LIMITED = { id: 'l1', role: 'user', approved: true, limitedAccess: true }
 
 const signedInAs = (user) => mockGetSession.mockResolvedValue(user ? { user } : null)
 const bodyOf = async (response) => ({ status: response.status, body: await response.json() })
@@ -53,11 +52,6 @@ describe('rules', () => {
     expect(isAwaitingApproval(undefined)).toBe(false)
   })
 
-  it('only an explicit limitedAccess: true is limited', () => {
-    expect(hasLimitedAccess(LIMITED)).toBe(true)
-    expect(hasLimitedAccess(MEMBER)).toBe(false)
-    expect(hasLimitedAccess(null)).toBe(false)
-  })
 })
 
 describe('route()', () => {
@@ -70,7 +64,7 @@ describe('route()', () => {
 
   it('answers a signed-out caller 401 AUTH_REQUIRED', async () => {
     signedInAs(null)
-    for (const gate of [signedInGate, approvedGate, fullAccessGate]) {
+    for (const gate of [signedInGate, approvedGate]) {
       expect(await bodyOf(await gate.route())).toEqual({
         status: 401,
         body: { success: false, error: 'Unauthorized', message: 'You must be signed in.', code: 'AUTH_REQUIRED' },
@@ -84,18 +78,6 @@ describe('route()', () => {
       status: 403,
       body: { success: false, error: 'Unauthorized', message: 'Account approval required.', code: 'APPROVAL_PENDING' },
     })
-  })
-
-  it('full access needs approval too, then refuses a limited account 403 LIMITED_ACCESS', async () => {
-    signedInAs(PENDING)
-    expect((await bodyOf(await fullAccessGate.route())).body.code).toBe('APPROVAL_PENDING')
-    signedInAs(LIMITED)
-    expect(await bodyOf(await fullAccessGate.route())).toEqual({
-      status: 403,
-      body: { success: false, error: 'Unauthorized', message: 'Full access required.', code: 'LIMITED_ACCESS' },
-    })
-    signedInAs(MEMBER)
-    expect(await fullAccessGate.route()).toBe(MEMBER)
   })
 
   it('answers a non-admin and a signed-out caller alike on an admin route', async () => {

@@ -43,13 +43,14 @@ it('asks the cached movie window for the list order', async () => {
   const response = await get('type=movie&sort=title&sortOrder=asc&page=1&limit=20')
 
   expect(response.status).toBe(200)
-  expect(mockMovieWindow).toHaveBeenCalledWith(19, 22, {}, 'title', 'asc')
+  // The caller holds no role: the whole library, one shared key
+  expect(mockMovieWindow).toHaveBeenCalledWith({ id: 'all', scope: null, showIds: null }, 19, 22, {}, 'title', 'asc')
 })
 
 it('asks the cached TV window for the list order', async () => {
   await get('type=tv&sort=date&sortOrder=desc&page=0&limit=20')
 
-  expect(mockTVWindow).toHaveBeenCalledWith(0, 21, 'date', 'desc')
+  expect(mockTVWindow).toHaveBeenCalledWith({ id: 'all', scope: null, showIds: null }, 0, 21, 'date', 'desc')
 })
 
 it('keeps the order the database gave, not a page-local sort', async () => {

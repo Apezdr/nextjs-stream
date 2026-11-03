@@ -16,8 +16,9 @@ import SeasonPageSkeleton from '@src/components/MediaPages/details/SeasonPageSke
  * @param {Object} props.media - Season media object
  * @param {Object} props.parsedParams - Parsed URL parameters
  * @param {string} [props.userId] - Current user id (for watch-history personalization)
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} props.access - The viewer's library access
  */
-export default function TVSeasonView({ media, parsedParams, userId }) {
+export default function TVSeasonView({ media, parsedParams, userId, access }) {
   const { mediaTitle, mediaSeason } = parsedParams
 
   return (
@@ -29,6 +30,7 @@ export default function TVSeasonView({ media, parsedParams, userId }) {
           originalTitle={media?.originalTitle}
           seasonNumber={mediaSeason}
           userId={userId}
+          access={access}
         />
       </div>
     </Suspense>

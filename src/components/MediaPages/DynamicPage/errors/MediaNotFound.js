@@ -74,14 +74,14 @@ async function buildAvailableSeasonsData(contextualMedia) {
 /**
  * Get appropriate poster for not found errors
  */
-async function getPosterForError(notFoundType, contextualMedia, mediaTitle, mediaSeason) {
+async function getPosterForError(notFoundType, contextualMedia, mediaTitle, access) {
   let posterSrc = '/Confused-Pup.png'
   let posterAltText = 'Not found'
   
   if (notFoundType === 'episode' && contextualMedia) {
     // For episode errors, try to get the season poster first
     try {
-      const seasonMedia = await fetchContextualMediaForError(mediaTitle)
+      const seasonMedia = await fetchContextualMediaForError(mediaTitle, access)
       if (seasonMedia?.posterURL) {
         posterSrc = seasonMedia.posterURL
       } else if (contextualMedia?.posterURL) {
@@ -154,12 +154,14 @@ function getErrorConfig(notFoundType, mediaTitle, mediaSeason, mediaEpisode) {
  * @param {string} props.mediaTitle - Media title (URL encoded)
  * @param {string} [props.mediaSeason] - Season number
  * @param {string} [props.mediaEpisode] - Episode number
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} props.access - The viewer's library access, for the show's context
  */
 export default async function MediaNotFound({ 
   notFoundType, 
   mediaTitle, 
   mediaSeason,
-  mediaEpisode 
+  mediaEpisode,
+  access,
 }) {
   const errorConfig = getErrorConfig(notFoundType, mediaTitle, mediaSeason, mediaEpisode)
   
@@ -170,7 +172,7 @@ export default async function MediaNotFound({
   
   if (notFoundType === 'season' || notFoundType === 'episode') {
     try {
-      contextualMedia = await fetchContextualMediaForError(decodeURIComponent(mediaTitle))
+      contextualMedia = await fetchContextualMediaForError(decodeURIComponent(mediaTitle), access)
       
       if (contextualMedia?.seasons) {
         availableSeasons = await buildAvailableSeasonsData(contextualMedia)
@@ -187,7 +189,7 @@ export default async function MediaNotFound({
     notFoundType, 
     contextualMedia, 
     mediaTitle, 
-    mediaSeason
+    access
   )
   
   return (

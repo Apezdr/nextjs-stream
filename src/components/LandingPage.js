@@ -12,7 +12,7 @@ import { LandingPagePopupProvider } from '@src/contexts/LandingPagePopupContext'
 const ReleaseCalendar = dynamic(() => import('./Calendar/ReleaseCalendar'))
 
 // Cacheable welcome section - static content that can be prerendered
-async function WelcomeSection({ userName }) {
+async function WelcomeSection({ userName, access }) {
   "use cache"
   cacheLife('navigation') // Static UI elements - 5min client, 1hr server, 1 day expire
 
@@ -24,7 +24,7 @@ async function WelcomeSection({ userName }) {
             Welcome {userName.split(' ')[0]},
           </h2>
           <h2 className="text-xl font-bold tracking-tight text-white pb-8 xl:pb-0 px-4 xl:px-0">
-            <AsyncMediaCounts suffix={` Available TV Shows & Movies`} showDuration={true} />
+            <AsyncMediaCounts suffix={` Available TV Shows & Movies`} showDuration={true} access={access} />
           </h2>
         </li>
       </ul>
@@ -32,8 +32,8 @@ async function WelcomeSection({ userName }) {
   )
 }
 
-// Cacheable static media section - doesn't need user data and can be prerendered
-async function StaticMediaSections() {
+// Cacheable media sections: no user data, keyed by the viewer's library access only
+async function StaticMediaSections({ access }) {
   "use cache"
   cacheLife('mediaLists') // Media library lists - 1min client/server, 5min expire
 
@@ -41,16 +41,16 @@ async function StaticMediaSections() {
     <>
       <h2 className="text-xl font-bold text-left mt-4 ml-4">Recently Added</h2>
       <Suspense>
-        <HorizontalScrollContainer type="recentlyAdded" />
+        <HorizontalScrollContainer type="recentlyAdded" access={access} />
       </Suspense>
       {/* A-Z, ordered in the database across every page (owner 2026-10-24) */}
       <h2 className="text-xl font-bold text-left mt-4 ml-4">Movies</h2>
       <Suspense>
-        <HorizontalScrollContainer type="movie" sort="title" sortOrder="asc" />
+        <HorizontalScrollContainer type="movie" sort="title" sortOrder="asc" access={access} />
       </Suspense>
       <h2 className="text-xl font-bold text-left mt-4 ml-4">TV</h2>
       <Suspense>
-        <HorizontalScrollContainer type="tv" sort="title" sortOrder="asc" />
+        <HorizontalScrollContainer type="tv" sort="title" sortOrder="asc" access={access} />
       </Suspense>
     </>
   )
@@ -70,12 +70,12 @@ async function CalendarSection({ calendarConfig }) {
 }
 
 // User-dependent sections that need user data and can't be cached
-async function UserDependentSections({ userId }) {
+async function UserDependentSections({ userId, access }) {
   return (
     <>
       <h2 className="text-xl font-bold text-left mt-4 ml-4">Watch History</h2>
       <Suspense>
-        <HorizontalScrollContainer type="recentlyWatched" userId={userId} />
+        <HorizontalScrollContainer type="recentlyWatched" userId={userId} access={access} />
       </Suspense>
     </>
   )
@@ -83,7 +83,7 @@ async function UserDependentSections({ userId }) {
 
 // User-specific content with private per-user caching
 // IMPORTANT: Uses "use cache: private" because data is personalized per-user
-async function UserSpecificSections({ userId }) {
+async function UserSpecificSections({ userId, access }) {
   "use cache: private"
   cacheLife('userContent') // Per-user cache: 1min client, 15min server, 1hr expire
 
@@ -123,7 +123,7 @@ async function UserSpecificSections({ userId }) {
         <div key={p.id}>
           <h2 className="text-xl font-bold text-left mt-4 ml-4">{p.name}</h2>
           <Suspense>
-            <HorizontalScrollContainer type="playlist" playlistId={p.id} userId={userId} />
+            <HorizontalScrollContainer type="playlist" playlistId={p.id} userId={userId} access={access} />
           </Suspense>
         </div>
       )) : null}
@@ -131,8 +131,13 @@ async function UserSpecificSections({ userId }) {
   )
 }
 
+/**
+ * @param {{ user: { id: string, name: string, email: string }, access: import('@src/lib/roles/libraryScope').LibraryAccess, calendarConfig?: Object }} props
+ *   access: the viewer's library access; every row and count shows only that part of the library
+ */
 export default async function LandingPage({
-  user = { id: null, name: '', email: '' },
+  user,
+  access,
   calendarConfig = { hasAnyCalendar: false },
 }) {
   const { id, name } = user
@@ -142,19 +147,19 @@ export default async function LandingPage({
       <Suspense>
         <SyncClientWithServerWatched />
       </Suspense>
-      <WelcomeSection userName={name} />
+      <WelcomeSection userName={name} access={access} />
       
       {/* Wrap scrollable content with popup context provider */}
       <LandingPagePopupProvider>
         <div className="flex flex-col w-full mt-10">
           {/* User-dependent sections (Watch History) */}
           <Suspense>
-            <UserDependentSections userId={id} />
+            <UserDependentSections userId={id} access={access} />
           </Suspense>
           
           {/* User-specific content wrapped in Suspense for partial prerendering */}
           <Suspense>
-            <UserSpecificSections userId={id} />
+            <UserSpecificSections userId={id} access={access} />
           </Suspense>
           
           {/* <RecommendationSectionTitle />*/}
@@ -162,7 +167,7 @@ export default async function LandingPage({
           <HorizontalScrollContainer type="recommendations" />  */}
           
           {/* Static media sections (can be prerendered) */}
-          <StaticMediaSections />
+          <StaticMediaSections access={access} />
           
           {/* Calendar section (client component, cannot be cached) */}
           <CalendarSection calendarConfig={calendarConfig} />

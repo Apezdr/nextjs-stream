@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
-import { fullAccessGate } from '@src/lib/roles/gates'
+import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils';
 
 /**
@@ -11,8 +12,9 @@ import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils';
  */
 export async function GET(request) {
   try {
-    // Verify authentication and full access (supports both web sessions and sessionId)
-    const authResult = await fullAccessGate.route();
+    // Signed in and approved; which shows they may pick from is their library
+    // scope (a show outside it is not found)
+    const authResult = await approvedGate.route();
     if (authResult instanceof Response) {
       return authResult;
     }
@@ -28,6 +30,7 @@ export async function GET(request) {
 
     // Get season data with episodes using the existing flatDatabaseUtils function
     const seasonData = await getFlatTVSeasonWithEpisodes({
+      access: await libraryAccessFor(authResult),
       showTitle: title,
       seasonNumber: season,
     });

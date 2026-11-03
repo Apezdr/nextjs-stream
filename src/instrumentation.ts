@@ -133,6 +133,8 @@ function startOtelMetrics(serviceName: string) {
 // - Every user's role brought in line with ADMIN_USER_EMAILS
 //   (src/lib/adminRoleReconcile.ts): a removed address otherwise stayed an
 //   admin for as long as its session kept rolling
+// - Users with the retired limitedAccess flag moved onto the Preview role, an
+//   empty library scope (src/lib/roles/limitedAccessMigration.ts)
 function authStartupTasks() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
     import('@src/lib/authDataPrep')
@@ -141,6 +143,9 @@ function authStartupTasks() {
     import('@src/lib/adminRoleReconcile')
       .then(({ reconcileAdminRolesOnce }) => reconcileAdminRolesOnce())
       .catch((error) => console.error('Admin role reconcile did not load:', error))
+    import('@src/lib/roles/limitedAccessMigration')
+      .then(({ migrateLimitedAccessOnce }) => migrateLimitedAccessOnce())
+      .catch((error) => console.error('limitedAccess migration did not load:', error))
   }
 }
 

@@ -1,4 +1,6 @@
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
+import { scopeMovieFilter, scopeShowFilter } from '@src/utils/mediaVisibility'
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 
@@ -44,8 +46,11 @@ export async function POST(req) {
     // Search for media with matching TMDB ID
     const tmdbIdInt = parseInt(tmdbId)
     
+    // A title outside the caller's scope is not the library's, as far as they can tell
+    const access = await libraryAccessFor(authResult)
     const media = await db.collection(collection).findOne({
-      'metadata.id': tmdbIdInt
+      'metadata.id': tmdbIdInt,
+      ...(mediaType === 'movie' ? scopeMovieFilter(access) : scopeShowFilter(access))
     }, {
       projection: {
         _id: 1,

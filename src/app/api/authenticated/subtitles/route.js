@@ -1,10 +1,12 @@
 import clientPromise from '../../../../lib/mongodb'
 import { httpGet } from '@src/lib/httpHelper'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
+import { libraryAccessOrPublic } from '@src/lib/roles/session'
 
 // This route is used to fetch subtitles for a specific media item
 // It is not protected by authentication because it is used by the media player
-// from many different devices
+// from many different devices. A signed-in caller is still held to their
+// library scope (libraryAccessOrPublic): a title outside it is not found.
 export const GET = async (req) => {
   const searchParams = req.nextUrl.searchParams
   const name = searchParams.get('name')
@@ -24,6 +26,7 @@ export const GET = async (req) => {
   try {
     // Use the getFlatRequestedMedia function to fetch media from flat database structure
     const media = await getFlatRequestedMedia({
+      access: await libraryAccessOrPublic(),
       type: type,
       title: decodeURIComponent(name),
       season: season,

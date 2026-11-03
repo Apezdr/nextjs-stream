@@ -9,7 +9,8 @@ async function UserAdminPage() {
   await adminGate.page()
   const allUsers = await getAllUsers()
   const processedUserData = processUserData(allUsers)
-  const roleOptions = (await listRoles()).map(({ id, name }) => ({ id, name }))
+  // limitsLibrary: the role carries a library scope (src/lib/roles/libraryScope.ts)
+  const roleOptions = (await listRoles()).map(({ id, name, scope }) => ({ id, name, limitsLibrary: scope !== null }))
 
 
   return (

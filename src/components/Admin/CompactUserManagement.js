@@ -91,7 +91,6 @@ const UserCard = ({ user, headers }) => {
   const getStatus = () => {
     if (user.approved === 'true' || user.approved === true) return 'active'
     if (user.approved === 'false' || user.approved === false) return 'unapproved'
-    if (user.limitedAccess === true) return 'limited'
     return 'active'
   }
 

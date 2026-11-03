@@ -19,9 +19,10 @@ export const getCachedCollectionDetails = cache(async (collectionId) => {
   return getCollectionDetails(collectionId)
 })
 
-export const getCachedOwnedMovies = cache(async (collectionId) => {
+// access: the viewer's LibraryAccess (one object per request, so cache() still dedupes)
+export const getCachedOwnedMovies = cache(async (collectionId, access) => {
   console.log(`[CACHE] Fetching owned movies for collection ${collectionId}`)
-  return getFlatMoviesByCollectionId(collectionId)
+  return getFlatMoviesByCollectionId(collectionId, access)
 })
 
 export const getCachedEnhancedCollectionDetails = cache(async (collectionId) => {

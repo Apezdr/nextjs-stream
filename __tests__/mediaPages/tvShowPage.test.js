@@ -140,8 +140,11 @@ const episodes = [
   episode(4, 1, 'Masada'),
 ]
 
+// The viewer's library access, as SessionGate hands it down (the whole library)
+const FULL = { id: 'all', scope: null, showIds: null }
+
 async function renderShow(props = {}) {
-  const ui = await TVShowSeasonsList({ showTitle: 'Preacher', show: preacher, userId: 'u1', ...props })
+  const ui = await TVShowSeasonsList({ showTitle: 'Preacher', show: preacher, userId: 'u1', access: FULL, ...props })
   return render(ui)
 }
 
@@ -158,7 +161,7 @@ describe('TVShowSeasonsList', () => {
 
     // The route already fetched the show; nothing is refetched
     expect(getFlatRequestedMedia).not.toHaveBeenCalled()
-    expect(getFlatShowEpisodesForProgress).toHaveBeenCalledWith('show1')
+    expect(getFlatShowEpisodesForProgress).toHaveBeenCalledWith('show1', FULL)
 
     expect(screen.getByRole('link', { name: 'TV' })).toHaveAttribute('href', '/list/tv')
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Preacher')
@@ -215,7 +218,7 @@ describe('TVShowSeasonsList', () => {
     getFlatShowEpisodesForProgress.mockResolvedValue([])
     await renderShow({ show: null })
 
-    expect(getFlatRequestedMedia).toHaveBeenCalledWith({ type: 'tv', title: 'Preacher' })
+    expect(getFlatRequestedMedia).toHaveBeenCalledWith({ access: FULL, type: 'tv', title: 'Preacher' })
     expect(screen.getByText('No seasons in your library yet.')).toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /S1 · E1/ })).toBeNull()
   })

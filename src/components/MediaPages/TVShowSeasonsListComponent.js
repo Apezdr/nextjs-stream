@@ -71,14 +71,15 @@ function ShowNotFound({ title }) {
  * @param {string} props.showTitle - already decoded by the route
  * @param {Object|null} [props.show] - the show document when the route fetched it
  * @param {string|null} [props.userId] - the viewer, for next-up and season status
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} props.access - the viewer's library access
  */
-export default async function TVShowSeasonsList({ showTitle, show = null, userId = null }) {
-  const doc = isShowDoc(show) ? show : await getFlatRequestedMedia({ type: 'tv', title: showTitle })
+export default async function TVShowSeasonsList({ showTitle, show = null, userId = null, access }) {
+  const doc = isShowDoc(show) ? show : await getFlatRequestedMedia({ access, type: 'tv', title: showTitle })
   if (!doc) return <ShowNotFound title={showTitle} />
 
   const m = doc.metadata || {}
   const display = showTitleOf(doc)
-  const rawEpisodes = doc._id ? await getFlatShowEpisodesForProgress(doc._id) : []
+  const rawEpisodes = doc._id ? await getFlatShowEpisodesForProgress(doc._id, access) : []
   const episodes = await joinEpisodeWatchHistory(rawEpisodes, userId)
   const nextUp = pickNextUp(episodes)
   const ep = nextUp?.episode || null

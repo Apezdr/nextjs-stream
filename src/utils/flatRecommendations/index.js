@@ -5,10 +5,14 @@ import { mediaLinkParam } from '@src/utils/media/urlParser'
 import { sanitizeRecord } from '@src/utils/auth_utils'
 import { findPlaybackForUser, getAllPlaybackEntries } from '@src/utils/watchHistory/database'
 import {
-  visibleMovieFilter,
-  visibleEpisodeFilter,
-  visibleShowFilter
+  libraryMovieFilter,
+  libraryEpisodeFilter,
+  libraryShowFilter
 } from '@src/utils/mediaVisibility'
+import { assertLibraryAccess } from '@src/lib/roles/libraryScope'
+
+// Every function here takes the viewer's LibraryAccess last: a title outside
+// it is never recommended (libraryScope.ts).
 
 // Import utility functions
 import {
@@ -47,7 +51,8 @@ import {
  * @param {number} limit - The number of items to return per page
  * @returns {Promise<Object>} Object containing hasWatched flag, recommended items, and genre info
  */
-export async function getFlatGenreBasedRecommendations(userId, page = 0, limit = 30, shouldExposeAdditionalData = false, offset = null) {
+export async function getFlatGenreBasedRecommendations(userId, page = 0, limit = 30, shouldExposeAdditionalData = false, offset = null, access) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -191,7 +196,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
           '_id': { $nin: Array.from(watchedMovieIds).map(id => new ObjectId(id)) },
           'metadata.genres.id': { $in: sortedGenres }
         },
-        visibleMovieFilter()
+        libraryMovieFilter(access)
       ]
     }
 
@@ -221,7 +226,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
       // For each season, get its episodes
       for (const season of showSeasons) {
         season.episodes = await db.collection('FlatEpisodes')
-          .find({ $and: [{ seasonId: season._id }, visibleEpisodeFilter()] })
+          .find({ $and: [{ seasonId: season._id }, libraryEpisodeFilter(access)] })
           .sort({ episodeNumber: 1 })
           .toArray();
       }
@@ -258,7 +263,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
             '_id': { $nin: Array.from(watchedTVShowIds).map(id => new ObjectId(id)) },
             'metadata.genres.id': { $in: sortedGenres }
           },
-          visibleShowFilter()
+          libraryShowFilter(access)
         ]
       }
       
@@ -284,7 +289,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
         // Get episodes for the first season
         const firstSeason = showSeasons[0];
         firstSeason.episodes = await db.collection('FlatEpisodes')
-          .find({ $and: [{ seasonId: firstSeason._id }, visibleEpisodeFilter()] })
+          .find({ $and: [{ seasonId: firstSeason._id }, libraryEpisodeFilter(access)] })
           .sort({ episodeNumber: 1 })
           .toArray();
           
@@ -345,7 +350,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
       const remainingItems = limit - recommendations.length
       
       // Fetch random movies and TV shows
-      const randomRecommendations = await getFlatRandomRecommendations(page, remainingItems, shouldExposeAdditionalData)
+      const randomRecommendations = await getFlatRandomRecommendations(page, remainingItems, shouldExposeAdditionalData, null, access)
       
       // Add random recommendations to the list
       recommendations = [...recommendations, ...randomRecommendations]
@@ -404,7 +409,8 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
  * @param {number} limit - The number of items to return per page
  * @returns {Promise<Array>} Array of popular content items
  */
-export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExposeAdditionalData = false, offset = null) {
+export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExposeAdditionalData = false, offset = null, access) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -443,9 +449,9 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
     // (movies feed the rail directly, so hide non-web-visible ones here)
     const [movies, episodes] = await Promise.all([
       db.collection('FlatMovies')
-        .find({ $and: [{ videoURL: { $in: allVideoIds } }, visibleMovieFilter()] })
+        .find({ $and: [{ videoURL: { $in: allVideoIds } }, libraryMovieFilter(access)] })
         .toArray(),
-      db.collection('FlatEpisodes').find({ videoURL: { $in: allVideoIds } }).toArray()
+      db.collection('FlatEpisodes').find({ $and: [{ videoURL: { $in: allVideoIds } }, libraryEpisodeFilter(access)] }).toArray()
     ])
 
     if (movies.length === 0 && episodes.length === 0) {
@@ -562,7 +568,7 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
         
         // Get episodes for the first season
         firstSeason.episodes = await db.collection('FlatEpisodes')
-          .find({ $and: [{ seasonId: firstSeason._id }, visibleEpisodeFilter()] })
+          .find({ $and: [{ seasonId: firstSeason._id }, libraryEpisodeFilter(access)] })
           .sort({ episodeNumber: 1 })
           .toArray();
           
@@ -641,7 +647,7 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
       const fetchLimit = Math.min(500, Math.max(100, limit * 5))
       
       // Get random recommendations with pagination
-      const randomRecommendations = await getFlatRandomRecommendations(page, fetchLimit, shouldExposeAdditionalData)
+      const randomRecommendations = await getFlatRandomRecommendations(page, fetchLimit, shouldExposeAdditionalData, null, access)
       
       // Add random recommendations to the list, but only if they're not already included
       const randomWithIds = randomRecommendations.map(item => ({
@@ -677,15 +683,16 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
  * @param {number} limit - The number of items to return per page
  * @returns {Promise<Array>} Array of random content items
  */
-export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldExposeAdditionalData = false, offset = null) {
+export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldExposeAdditionalData = false, offset = null, access) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise
     const db = client.db('Media')
     
     // Get total counts first to know how many items are available
     const [totalMovies, totalTVShows] = await Promise.all([
-      db.collection('FlatMovies').countDocuments(visibleMovieFilter()),
-      db.collection('FlatTVShows').countDocuments(visibleShowFilter())
+      db.collection('FlatMovies').countDocuments(libraryMovieFilter(access)),
+      db.collection('FlatTVShows').countDocuments(libraryShowFilter(access))
     ])
     
     console.log(`Total available: ${totalMovies} movies and ${totalTVShows} TV shows`)
@@ -696,13 +703,13 @@ export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldE
     // Fetch random movies and TV shows with skip for pagination
     const [randomMovies, randomTVShows] = await Promise.all([
       db.collection('FlatMovies')
-        .find(visibleMovieFilter())
+        .find(libraryMovieFilter(access))
         .sort({ title: 1 }) // Consistent sort for pagination
         .skip(page * Math.ceil(limit / 2))
         .limit(fetchLimit)
         .toArray(),
       db.collection('FlatTVShows')
-        .find(visibleShowFilter())
+        .find(libraryShowFilter(access))
         .sort({ title: 1 }) // Consistent sort for pagination
         .skip(page * Math.ceil(limit / 2))
         .limit(fetchLimit)
@@ -729,7 +736,7 @@ export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldE
       // Get episodes for the first season
       const firstSeason = showSeasons[0];
       firstSeason.episodes = await db.collection('FlatEpisodes')
-        .find({ $and: [{ seasonId: firstSeason._id }, visibleEpisodeFilter()] })
+        .find({ $and: [{ seasonId: firstSeason._id }, libraryEpisodeFilter(access)] })
         .sort({ episodeNumber: 1 })
         .toArray();
         
@@ -848,7 +855,8 @@ async function getFlatLatestWatchTimestamp(userId) {
  * @param {boolean} shouldExposeAdditionalData - Whether to expose additional data in the response ex. videoURL, duration
  * @returns {Promise<Object>} Object containing recommendations data
  */
-export async function getFlatRecommendations(userId, page = 0, limit = 30, countOnly = false, shouldExposeAdditionalData = false, offset = null) {
+export async function getFlatRecommendations(userId, page = 0, limit = 30, countOnly = false, shouldExposeAdditionalData = false, offset = null, access) {
+  assertLibraryAccess(access)
   try {
     // Get the latest watch timestamp for this user (for logging purposes only)
     const latestWatchTimestamp = await getFlatLatestWatchTimestamp(userId)
@@ -860,7 +868,7 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
     const context = { dateContext: 'recommendations' }
     
     // Get recommendations based on user's watch history
-    const recommendations = await getFlatGenreBasedRecommendations(userId, page, limit, shouldExposeAdditionalData, offset)
+    const recommendations = await getFlatGenreBasedRecommendations(userId, page, limit, shouldExposeAdditionalData, offset, access)
 
     // If user has no watch history or we couldn't find genre-based recommendations,
     // fall back to most popular content
@@ -868,7 +876,7 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
     let hasWatched = recommendations.hasWatched
 
     if (!hasWatched || items.length === 0) {
-      items = await getFlatMostPopularContent(page, limit, shouldExposeAdditionalData, offset)
+      items = await getFlatMostPopularContent(page, limit, shouldExposeAdditionalData, offset, access)
       hasWatched = false
     }
 
@@ -879,8 +887,8 @@ export async function getFlatRecommendations(userId, page = 0, limit = 30, count
     // Get total counts to know how many pages are available
     // (show count uses the show fragment — the movie fragment here would zero TV totals)
     const [totalMovies, totalTVShows] = await Promise.all([
-      db.collection('FlatMovies').countDocuments(visibleMovieFilter()),
-      db.collection('FlatTVShows').countDocuments(visibleShowFilter())
+      db.collection('FlatMovies').countDocuments(libraryMovieFilter(access)),
+      db.collection('FlatTVShows').countDocuments(libraryShowFilter(access))
     ])
     
     // Calculate total pages based on the total number of items and limit

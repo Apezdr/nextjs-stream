@@ -1,4 +1,5 @@
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { getFlatMoviesByCollectionId, mergeCollectionWithOwnership } from '@src/utils/flatDatabaseUtils'
 import { getCollectionDetails } from '@src/utils/tmdb/client'
 
@@ -50,7 +51,8 @@ export async function GET(request, { params }) {
     // Step 1: Fetch local owned movies
     let ownedMovies = []
     try {
-      ownedMovies = await getFlatMoviesByCollectionId(collectionIdInt)
+      // The films the caller's library scope holds, and no others
+      ownedMovies = await getFlatMoviesByCollectionId(collectionIdInt, await libraryAccessFor(authResult))
       console.log(`[ENHANCED_COLLECTION] Found ${ownedMovies.length} owned movies for collection ${collectionIdInt}`)
     } catch (error) {
       console.warn(`[ENHANCED_COLLECTION] Failed to fetch owned movies: ${error.message}`)
@@ -137,7 +139,8 @@ export async function GET(request, { params }) {
 
     return Response.json(responseData, {
       headers: {
-        'Cache-Control': 'public, max-age=3600, stale-while-revalidate=86400', // 1 hour cache, 24 hour stale
+        // private: which films are owned depends on the caller's library scope
+        'Cache-Control': 'private, max-age=3600, stale-while-revalidate=86400', // 1 hour cache, 24 hour stale
         'X-Collection-Enhanced': 'true',
         'X-Enhancement-Stats': JSON.stringify(finalCollection.enhancementStats)
       }

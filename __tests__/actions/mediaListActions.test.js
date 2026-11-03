@@ -24,6 +24,11 @@ jest.mock('@src/utils/cache/mediaListData', () => ({
 }))
 const mockSeason = jest.fn()
 jest.mock('@src/utils/flatDatabaseUtils', () => ({ getFlatTVSeasonWithEpisodes: (...args) => mockSeason(...args) }))
+// The caller's library access, as libraryAccessFor resolves it from their roles
+const FULL = { id: 'all', scope: null, showIds: null }
+const SCOPED = { id: 'scope-kids', scope: { movieRatingCap: 'PG', tvRatingCap: null, titles: [] }, showIds: [] }
+const mockAccessFor = jest.fn((user) => (user.roles?.length ? SCOPED : FULL))
+jest.mock('@src/lib/roles/libraryAccess', () => ({ libraryAccessFor: (...args) => mockAccessFor(...args) }))
 
 const { getMovieListData, getTVListData } = require('@src/utils/actions/mediaListActions')
 const { refreshEpisodes } = require('@src/utils/actions/refreshEpisodes')
@@ -53,11 +58,12 @@ describe.each([
     expect(cached).not.toHaveBeenCalled()
   })
 
-  it('serves a limited-access account, as the list page does', async () => {
-    mockGetSession.mockResolvedValue({ user: { id: 'me', limitedAccess: true } })
+  it("lists only the caller's library scope, from their session, never from the request", async () => {
+    mockGetSession.mockResolvedValue({ user: { id: 'me', roles: ['kids'] } })
 
-    await action({})
-    expect(cached).toHaveBeenCalledWith(expect.objectContaining({ userId: 'me' }))
+    await action({ access: FULL })
+    expect(mockAccessFor).toHaveBeenCalledWith(expect.objectContaining({ id: 'me', roles: ['kids'] }))
+    expect(cached).toHaveBeenCalledWith(expect.objectContaining({ userId: 'me', access: SCOPED }))
   })
 
   it("reads the signed-in user's own watch history, whatever userId the caller sends", async () => {
@@ -72,6 +78,7 @@ describe.each([
       hdrTypes: [],
       resolutions: [],
       userId: 'me',
+      access: FULL,
     })
   })
 
@@ -87,6 +94,7 @@ describe.each([
       hdrTypes: ['HDR10'],
       resolutions: [],
       userId: 'me',
+      access: FULL,
     })
   })
 })
@@ -108,7 +116,7 @@ describe('refreshEpisodes', () => {
     const result = await refreshEpisodes({ showTitle: '100% Wolf', seasonNumber: '2' })
 
     // The title as given: the season page already decoded it once
-    expect(mockSeason).toHaveBeenCalledWith({ showTitle: '100% Wolf', seasonNumber: 2 })
+    expect(mockSeason).toHaveBeenCalledWith({ access: FULL, showTitle: '100% Wolf', seasonNumber: 2 })
     expect(result).toEqual({ success: true, hasEpisodes: true })
   })
 

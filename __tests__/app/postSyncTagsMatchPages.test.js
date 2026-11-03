@@ -48,7 +48,7 @@ jest.mock('@src/components/MediaPages/details/EpisodePageSkeleton', () => ({ __e
 jest.mock('@src/utils/cache/mediaFetching', () => ({
   getCachedMediaWithRedirect: jest.fn(async () => ({ media: {}, redirectUrl: null, notFoundType: null })),
 }))
-jest.mock('@src/utils/media/mediaFetcher', () => ({ fetchTrailerMedia: jest.fn() }))
+jest.mock('@src/lib/roles/session', () => ({ pageLibraryAccess: jest.fn() }))
 jest.mock('@src/utils/media/metadataBuilder', () => ({ buildMediaMetadata: jest.fn() }))
 jest.mock('@src/components/MediaPages/MovieDetailsComponent', () => ({ __esModule: true, default: () => null }))
 jest.mock('@src/components/MediaPages/TVEpisodeDetailsComponent', () => ({ __esModule: true, default: () => null }))
@@ -175,7 +175,10 @@ async function pageTitleTags(kind, ...urlArgs) {
   const { route, Page, url } = PAGES[kind]
   const params = paramsFor(route, url(...urlArgs))
   const gate = Page({ params: Promise.resolve(params) }).props.children
-  const content = gate.props.children({ session: { user: { id: 'viewer-1', limitedAccess: false } }, params })
+  const content = gate.props.children({
+    session: { user: { id: 'viewer-1' }, access: { id: 'all', scope: null, showIds: null } },
+    params,
+  })
   mockCacheTag.mockClear()
   await content.type(content.props)
   return mockCacheTag.mock.calls

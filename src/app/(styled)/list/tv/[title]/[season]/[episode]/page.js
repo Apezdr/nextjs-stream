@@ -8,9 +8,9 @@ import {
 } from '@src/components/MediaPages/DynamicPage'
 import EpisodePageSkeleton from '@src/components/MediaPages/details/EpisodePageSkeleton'
 import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
-import { fetchTrailerMedia } from '@src/utils/media/mediaFetcher'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
 import { episodeDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTags'
+import { pageLibraryAccess } from '@src/lib/roles/session'
 
 function buildParsedParams(title, season, episode) {
   return {
@@ -32,13 +32,13 @@ function buildParsedParams(title, season, episode) {
   }
 }
 
-async function fetchEpisode(title, season, episode) {
+async function fetchEpisode(title, season, episode, access) {
   const parsedParams = buildParsedParams(title, season, episode)
-  const result = await getCachedMediaWithRedirect(parsedParams)
+  const result = await getCachedMediaWithRedirect(parsedParams, access)
   return { parsedParams, result }
 }
 
-async function TVEpisodeContent({ title, season, episode, isLimitedAccess }) {
+async function TVEpisodeContent({ title, season, episode, access }) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag(
@@ -49,22 +49,7 @@ async function TVEpisodeContent({ title, season, episode, isLimitedAccess }) {
   )
 
   const parsedParams = buildParsedParams(title, season, episode)
-  let result = await getCachedMediaWithRedirect(parsedParams)
-
-  if (isLimitedAccess && parsedParams.hasTitle) {
-    const trailerMedia = await fetchTrailerMedia(parsedParams.mediaType, parsedParams.mediaTitle)
-    if (trailerMedia) {
-      // Trailer fetch is show-level — preserve episode navigation context
-      if (result.media) {
-        trailerMedia.showTitle = trailerMedia.showTitle ?? result.media.showTitle ?? parsedParams.mediaTitle
-        trailerMedia.seasonNumber = trailerMedia.seasonNumber ?? result.media.seasonNumber ?? parsedParams.mediaSeason
-        trailerMedia.episodeNumber = trailerMedia.episodeNumber ?? result.media.episodeNumber ?? parsedParams.mediaEpisode
-        trailerMedia.season_number = trailerMedia.season_number ?? result.media.season_number ?? parsedParams.mediaSeason
-        trailerMedia.episode_number = trailerMedia.episode_number ?? result.media.episode_number ?? parsedParams.mediaEpisode
-      }
-      result = { media: trailerMedia, redirectUrl: null, notFoundType: null }
-    }
-  }
+  const result = await getCachedMediaWithRedirect(parsedParams, access)
 
   if (result.redirectUrl) {
     redirect(result.redirectUrl)
@@ -75,6 +60,7 @@ async function TVEpisodeContent({ title, season, episode, isLimitedAccess }) {
       <MediaNotFound
         notFoundType={result.notFoundType}
         mediaTitle={parsedParams.mediaTitle}
+        access={access}
         mediaSeason={parsedParams.mediaSeason}
         mediaEpisode={parsedParams.mediaEpisode}
       />
@@ -86,7 +72,7 @@ async function TVEpisodeContent({ title, season, episode, isLimitedAccess }) {
 
 export async function generateMetadata({ params }, parent) {
   const { title, season, episode } = await params
-  const { parsedParams, result } = await fetchEpisode(title, season, episode)
+  const { parsedParams, result } = await fetchEpisode(title, season, episode, await pageLibraryAccess())
   if (result.redirectUrl) redirect(result.redirectUrl)
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
@@ -110,7 +96,7 @@ export default function TVEpisodePage({ params }) {
             title={title}
             season={season}
             episode={episode}
-            isLimitedAccess={!!session.user.limitedAccess}
+            access={session.access}
           />
         )}
       </SessionGate>

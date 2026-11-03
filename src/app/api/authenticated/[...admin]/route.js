@@ -6,6 +6,7 @@ import {
   getLastSynced,
 } from '@src/utils/admin_database'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
+import { FULL_LIBRARY } from '@src/lib/roles/libraryScope'
 import { getActivePresenceForUsers } from '@src/utils/playbackPresence/database'
 import { attachPresenceToVideos } from '@src/utils/playbackPresence/attach'
 import { ObjectId } from 'mongodb'
@@ -133,6 +134,8 @@ export async function GET(request, props) {
             
             // Fetch data for this specific user with pagination using admin-overview projection
             const watchedMedia = await getFlatRecentlyWatchedForUser({
+              // Admins see every title a user watched
+              access: FULL_LIBRARY,
               userId: userId,
               page: page,
               limit: limit,
@@ -143,6 +146,8 @@ export async function GET(request, props) {
             
             // Get total count for pagination info
             const totalCount = await getFlatRecentlyWatchedForUser({
+              // Admins see every title a user watched
+              access: FULL_LIBRARY,
               userId: userId,
               countOnly: true,
               projection: 'admin-overview',
@@ -196,6 +201,8 @@ export async function GET(request, props) {
               try {
                 // Use flat database function to get recently watched items with admin-overview projection
                 const watchedMedia = await getFlatRecentlyWatchedForUser({
+              // Admins see every title a user watched
+              access: FULL_LIBRARY,
                   client,
                   userId: user._id,
                   page: 0,
@@ -207,6 +214,8 @@ export async function GET(request, props) {
 
                 // Get total count for accurate "+X more" calculation
                 const totalCount = await getFlatRecentlyWatchedForUser({
+              // Admins see every title a user watched
+              access: FULL_LIBRARY,
                   client,
                   userId: user._id,
                   countOnly: true,

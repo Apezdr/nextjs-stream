@@ -1,12 +1,15 @@
 import { httpGet } from '@src/lib/httpHelper'
 import { fetchFlatRandomBannerMedia } from '@src/utils/flatDatabaseUtils'
+import { FULL_LIBRARY } from '@src/lib/roles/libraryScope'
 
-// Used by chromecast to fetch a random banner media
+// Used by chromecast to fetch a random banner media. Public: the Cast receiver
+// has no session, so there is no viewer to scope by. It sends a backdrop image
+// and nothing else (no title, no URL), from the whole library.
 export const GET = async (req) => {
   try {
     // Fetch random banner media info (flat collections; same {error,status} /
     // backdrop contract as the retired legacy helper)
-    const mediaResult = await fetchFlatRandomBannerMedia()
+    const mediaResult = await fetchFlatRandomBannerMedia(FULL_LIBRARY)
     if (mediaResult.error) {
       return new Response(JSON.stringify({ error: mediaResult.error }), {
         status: mediaResult.status,

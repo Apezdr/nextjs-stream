@@ -10,12 +10,11 @@
 import { createHash } from 'crypto';
 import { MediaAdditionAnalyzer } from './analyzers/MediaAdditionAnalyzer.js';
 import { NewContentNotificationGenerator } from './generators/NewContentNotificationGenerator.js';
-import { NotificationManager } from './NotificationManager.js';
 import { insertNotificationsOnce } from './notificationDatabase.js';
 import { findNewContentRecipients } from './recipients.js';
-import clientPromise from '@src/lib/mongodb';
+import { noticesInScope } from './scope.js';
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess';
 import { ObjectId } from 'mongodb';
-import { userQueries } from '@src/lib/userQueries';
 
 /**
  * A notification's `_id`, the same every time the same queued delivery is
@@ -62,334 +61,27 @@ export class MediaNotificationOrchestrator {
    */
   static async deliverNewContentNotices(notices, deliveryId) {
     const recipients = await findNewContentRecipients();
+    // Each recipient gets the notices their library scope holds
+    // (notifications/scope.js), worked out once per scope, not per user. A
+    // notice keeps its place in the batch, so its ids stay the same on a retry.
+    const indexed = notices.map((notice, noticeIndex) => ({ ...notice, noticeIndex }));
+    const byScope = new Map();
+    for (const user of recipients) {
+      const access = await libraryAccessFor(user);
+      if (!byScope.has(access.id)) byScope.set(access.id, { access, users: [] });
+      byScope.get(access.id).users.push(user);
+    }
     const docs = [];
-    notices.forEach((notice, noticeIndex) => {
-      for (const user of recipients) {
-        const userId = user._id.toString();
-        docs.push({ ...notice, _id: newContentNotificationId(deliveryId, noticeIndex, userId), userId });
+    for (const { access, users } of byScope.values()) {
+      const held = await noticesInScope(indexed, access);
+      for (const { noticeIndex, ...notice } of held) {
+        for (const user of users) {
+          const userId = user._id.toString();
+          docs.push({ ...notice, _id: newContentNotificationId(deliveryId, noticeIndex, userId), userId });
+        }
       }
-    });
+    }
     const { inserted, alreadyThere } = await insertNotificationsOnce(docs);
     return { recipients: recipients.length, notices: notices.length, inserted, alreadyThere };
-  }
-
-  /**
-   * Deliver notifications to users with deduplication
-   * @param {Array} notifications - Generated notifications
-   * @param {Object} options - Delivery options
-   * @returns {Promise<Object>} Delivery results
-   */
-  static async deliverNotifications(notifications, options = {}) {
-    const {
-      targetAllUsers = true,
-      specificUsers = [],
-      checkDuplicates = true,
-      duplicateWindow = 24 * 60 * 60 * 1000 // 24 hours
-    } = options;
-
-    const results = {
-      delivered: [],
-      skipped: [],
-      errors: []
-    };
-
-    try {
-      // Get target users
-      const targetUsers = await this.getTargetUsers(targetAllUsers, specificUsers);
-      
-      if (targetUsers.length === 0) {
-        console.log('No target users found for notifications');
-        return results;
-      }
-
-      console.log(`Delivering notifications to ${targetUsers.length} users`);
-
-      // Process each notification
-      for (const notification of notifications) {
-        try {
-          // Check for duplicates if enabled
-          if (checkDuplicates) {
-            const duplicateResults = await this.checkForDuplicates(
-              notification,
-              targetUsers,
-              duplicateWindow
-            );
-            
-            // Only deliver to users who haven't received this notification recently
-            const usersToNotify = duplicateResults.newUsers;
-            
-            if (usersToNotify.length === 0) {
-              results.skipped.push({
-                notification: notification.title,
-                reason: 'duplicate_content',
-                skippedUsers: targetUsers.length
-              });
-              continue;
-            }
-
-            // Update target users to only include non-duplicate recipients
-            const finalTargetUsers = targetUsers.filter(user => 
-              usersToNotify.includes(user._id.toString())
-            );
-
-            if (finalTargetUsers.length > 0) {
-              await this.deliverToUsers(notification, finalTargetUsers);
-              results.delivered.push({
-                notification: notification.title,
-                recipients: finalTargetUsers.length,
-                skippedDuplicates: targetUsers.length - finalTargetUsers.length
-              });
-            }
-          } else {
-            // Deliver to all target users without duplicate checking
-            await this.deliverToUsers(notification, targetUsers);
-            results.delivered.push({
-              notification: notification.title,
-              recipients: targetUsers.length
-            });
-          }
-        } catch (error) {
-          console.error(`Error delivering notification "${notification.title}":`, error);
-          results.errors.push({
-            notification: notification.title,
-            error: error.message
-          });
-        }
-      }
-
-      return results;
-    } catch (error) {
-      console.error('Error in notification delivery process:', error);
-      results.errors.push({
-        type: 'delivery_error',
-        error: error.message
-      });
-      return results;
-    }
-  }
-
-  /**
-   * Get target users for notifications
-   * @param {boolean} targetAllUsers - Whether to target all users
-   * @param {Array} specificUsers - Specific user IDs to target
-   * @returns {Promise<Array>} Array of user objects
-   */
-  static async getTargetUsers(targetAllUsers = true, specificUsers = []) {
-    try {
-      let query = {};
-      
-      if (!targetAllUsers && specificUsers.length > 0) {
-        query = { _id: { $in: specificUsers.map(id => new ObjectId(id)) } };
-      }
-
-      // Get all users or specific users from user collection
-      const users = await userQueries.find(query);
-      
-      console.log(`Found ${users.length} target users for notifications`);
-      return users;
-    } catch (error) {
-      console.error('Error getting target users:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Check for duplicate notifications
-   * @param {Object} notification - Notification to check
-   * @param {Array} users - Users to check for
-   * @param {number} timeWindow - Time window in milliseconds
-   * @returns {Promise<Object>} Duplicate check results
-   */
-  static async checkForDuplicates(notification, users, timeWindow) {
-    try {
-      const results = {
-        newUsers: [],
-        duplicateUsers: []
-      };
-
-      if (!notification.contentHash) {
-        // If no content hash, consider all users as new
-        results.newUsers = users.map(user => user._id.toString());
-        return results;
-      }
-
-      const cutoffTime = new Date(Date.now() - timeWindow);
-      
-      // Check which users have received similar content recently
-      const recentNotifications = await NotificationManager.getNotificationsByContentHash(
-        notification.contentHash,
-        cutoffTime
-      );
-
-      const usersWithRecentNotifications = new Set(
-        recentNotifications.map(notif => notif.userId.toString())
-      );
-
-      // Categorize users
-      users.forEach(user => {
-        const userId = user._id.toString();
-        if (usersWithRecentNotifications.has(userId)) {
-          results.duplicateUsers.push(userId);
-        } else {
-          results.newUsers.push(userId);
-        }
-      });
-
-      return results;
-    } catch (error) {
-      console.error('Error checking for duplicates:', error);
-      // On error, assume all users are new to avoid blocking notifications
-      return {
-        newUsers: users.map(user => user._id.toString()),
-        duplicateUsers: []
-      };
-    }
-  }
-
-  /**
-   * Deliver notification to specific users
-   * @param {Object} notification - Notification object
-   * @param {Array} users - Users to deliver to
-   * @returns {Promise<void>}
-   */
-  static async deliverToUsers(notification, users) {
-    try {
-      // Create notification for each user
-      const promises = users.map(user => 
-        NotificationManager.createNotification(user._id, notification)
-      );
-
-      await Promise.allSettled(promises);
-    } catch (error) {
-      console.error('Error delivering notification to users:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * Generate and deliver weekly digest notifications
-   * Called via cron job or scheduled task
-   * @param {Object} options - Generation options
-   * @returns {Promise<Object>} Results
-   */
-  static async generateWeeklyDigest(options = {}) {
-    const {
-      weekStart = null,
-      includeEmptyDigests = false
-    } = options;
-
-    const results = {
-      digest: null,
-      delivered: 0,
-      errors: []
-    };
-
-    try {
-      const actualWeekStart = weekStart || this.getWeekStart();
-      const weekEnd = new Date(actualWeekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
-
-      console.log(`Generating weekly digest for week starting ${actualWeekStart.toISOString()}`);
-
-      // Get all content added during the week
-      const weeklyContent = await this.getWeeklyContent(actualWeekStart, weekEnd);
-
-      if (!includeEmptyDigests && 
-          weeklyContent.movies.length === 0 && 
-          weeklyContent.episodes.length === 0) {
-        console.log('No new content for weekly digest, skipping');
-        return results;
-      }
-
-      // Generate digest notification
-      results.digest = NewContentNotificationGenerator.generateWeeklyDigest({
-        ...weeklyContent,
-        weekStart: actualWeekStart
-      });
-
-      // Deliver to all users
-      const deliveryResults = await this.deliverNotifications([results.digest], {
-        checkDuplicates: true,
-        duplicateWindow: 8 * 24 * 60 * 60 * 1000 // 8 days to prevent duplicate weekly digests
-      });
-
-      results.delivered = deliveryResults.delivered.length;
-      results.errors = deliveryResults.errors;
-
-      console.log(`Weekly digest delivered to ${results.delivered} users`);
-      return results;
-    } catch (error) {
-      console.error('Error generating weekly digest:', error);
-      results.errors.push({
-        type: 'weekly_digest_error',
-        error: error.message
-      });
-      return results;
-    }
-  }
-
-  /**
-   * Get content added during a specific week
-   * @param {Date} weekStart - Start of the week
-   * @param {Date} weekEnd - End of the week
-   * @returns {Promise<Object>} Weekly content data
-   */
-  static async getWeeklyContent(weekStart, weekEnd) {
-    try {
-      const client = await clientPromise;
-      const db = client.db('Media');
-
-      // Get movies added during the week
-      const movies = await db.collection('FlatMovies')
-        .find({
-          createdAt: {
-            $gte: weekStart,
-            $lt: weekEnd
-          }
-        })
-        .toArray();
-
-      // Get episodes added during the week
-      const episodes = await db.collection('FlatEpisodes')
-        .find({
-          createdAt: {
-            $gte: weekStart,
-            $lt: weekEnd
-          }
-        })
-        .toArray();
-
-      return {
-        movies: movies.map(movie => ({
-          id: movie._id,
-          title: movie.title,
-          createdAt: movie.createdAt,
-          genre: movie.metadata?.genres?.[0]?.name,
-          rating: movie.metadata?.vote_average
-        })),
-        episodes: episodes.map(episode => ({
-          id: episode._id,
-          showTitle: episode.showTitle,
-          seasonNumber: episode.seasonNumber,
-          episodeNumber: episode.episodeNumber,
-          title: episode.title,
-          createdAt: episode.createdAt
-        }))
-      };
-    } catch (error) {
-      console.error('Error getting weekly content:', error);
-      return { movies: [], episodes: [] };
-    }
-  }
-
-  /**
-   * Get start of current week (Sunday)
-   * @returns {Date} Start of week
-   */
-  static getWeekStart() {
-    const now = new Date();
-    const weekStart = new Date(now);
-    weekStart.setDate(now.getDate() - now.getDay());
-    weekStart.setHours(0, 0, 0, 0);
-    return weekStart;
   }
 }

@@ -54,6 +54,7 @@ jest.mock('@src/utils/watchlist/mediaResolver.js', () => ({
 }))
 
 const { getUserWatchlist } = require('@src/utils/watchlist/database')
+const { FULL_LIBRARY } = require('@src/lib/roles/libraryScope')
 
 const doc = (tmdbId, fields = {}) => ({
   _id: new ObjectId(),
@@ -67,7 +68,7 @@ const doc = (tmdbId, fields = {}) => ({
 const media = (tmdbId, title, releaseDate) => ({ tmdbId, mediaType: 'movie', title, releaseDate, isInternal: true })
 // Keyed as batchResolveMedia keys them: by type and TMDB id
 const lookups = (...entries) => new Map(entries.map((entry) => [`${entry.mediaType}:${entry.tmdbId}`, entry]))
-const list = (options = {}) => getUserWatchlist({ playlistId: PLAYLIST_ID, userId: 'user-1', ...options })
+const list = (options = {}) => getUserWatchlist({ access: FULL_LIBRARY, playlistId: PLAYLIST_ID, userId: 'user-1', ...options })
 const kinds = () => mockCalls.map(([kind]) => kind)
 
 beforeEach(() => {

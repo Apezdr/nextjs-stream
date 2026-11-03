@@ -5,7 +5,7 @@ export function processUserData(jsonResponse) {
   const users = jsonResponse
 
   // Prepare headers for the user table
-  const userHeaders = ['Name', 'Email', 'Image', 'Limited Access', 'Approved', 'Actions']
+  const userHeaders = ['Name', 'Email', 'Image', 'Approved', 'Actions']
 
   // Transform data for users
   const userData = users.map((user) => ({
@@ -13,7 +13,6 @@ export function processUserData(jsonResponse) {
     name: user.name,
     email: user.email,
     imageUrl: user.image, // Add image URL
-    limitedAccess: user.limitedAccess ? true : false, // If the user is approved to view content
     approved: user.approved.toString(), // If the user is approved to view content
     roles: Array.isArray(user.roles) ? user.roles.map(String) : [], // Role ids (src/lib/roles)
   }))

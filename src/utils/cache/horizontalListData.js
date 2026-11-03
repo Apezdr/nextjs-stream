@@ -39,13 +39,16 @@ function serializeForClient(data) {
  * Fetches `count` documents starting at absolute offset `offset`, letting the
  * route serve a page plus its boundary peek items from a single fetch, in
  * the list's order (`sort`: id | title | date, see mediaListUtils/listOrder.js).
+ * Every window takes the viewer's LibraryAccess first: it is part of the
+ * cache key, so viewers with the same scope share entries.
  */
-export async function getCachedMovieWindow(offset, count, projection, sort, sortOrder) {
+export async function getCachedMovieWindow(access, offset, count, projection, sort, sortOrder) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'movies')
 
   const data = await getFlatPosters('movie', false, 0, count, projection, {
+    access,
     skip: offset,
     order: listOrder('movie', sort, sortOrder),
   });
@@ -59,24 +62,25 @@ export async function getCachedMovieWindow(offset, count, projection, sort, sort
  * accepted one it never used, which only fragmented the cache key into
  * duplicate entries holding identical data. In the list's order, like movies.
  */
-export async function getCachedTVWindow(offset, count, sort, sortOrder) {
+export async function getCachedTVWindow(access, offset, count, sort, sortOrder) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'tv')
 
-  const data = await getFlatTVList({ limit: count, skip: offset, order: listOrder('tv', sort, sortOrder) });
+  const data = await getFlatTVList({ access, limit: count, skip: offset, order: listOrder('tv', sort, sortOrder) });
   return serializeForClient(data);
 }
 
 /**
  * Cached recently added window - 1 minute cache with media library tag
  */
-export async function getCachedRecentlyAddedWindow(offset, count, shouldExposeAdditionalData) {
+export async function getCachedRecentlyAddedWindow(access, offset, count, shouldExposeAdditionalData) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'recently-added')
 
   const data = await getFlatRecentlyAddedMedia({
+    access,
     offset,
     limit: count,
     shouldExposeAdditionalData
@@ -89,14 +93,14 @@ export async function getCachedRecentlyAddedWindow(offset, count, shouldExposeAd
  * Returns the two collections separately so the route can split each window
  * into page items and boundary peeks before concatenating.
  */
-export async function getCachedAllMediaWindow(offset, count, movieProjection, tvProjection) {
+export async function getCachedAllMediaWindow(access, offset, count, movieProjection, tvProjection) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'all')
 
   const [movies, tv] = await Promise.all([
-    getFlatPosters('movie', false, 0, count, movieProjection, { skip: offset }),
-    getFlatPosters('tv', false, 0, count, tvProjection, { skip: offset }),
+    getFlatPosters('movie', false, 0, count, movieProjection, { access, skip: offset }),
+    getFlatPosters('tv', false, 0, count, tvProjection, { access, skip: offset }),
   ]);
 
   return serializeForClient({ movies, tv });

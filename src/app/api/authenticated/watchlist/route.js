@@ -1,4 +1,5 @@
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { isAdminUser } from '@src/lib/roles/rules'
 import { checkRateLimit, createRateLimitHeaders, RATE_LIMITS } from '@src/utils/rateLimiter'
 // ETag support for HTTP caching
@@ -401,7 +402,7 @@ async function handleAddToWatchlist(req, body, user) {
         if (!mergedBody.mediaType) {
           return createErrorResponse('mediaType is required when resolving tmdbId from mediaId', 400, { mediaId: mediaIdCandidate }, 'Bad Request', 'MISSING_MEDIA_TYPE')
         }
-        const resolvedTmdbId = await findTMDBIdByMediaId(mediaIdCandidate, mergedBody.mediaType)
+        const resolvedTmdbId = await findTMDBIdByMediaId(mediaIdCandidate, mergedBody.mediaType, await libraryAccessFor(user))
         if (resolvedTmdbId) {
           mergedBody.tmdbId = resolvedTmdbId
         } else {
@@ -421,7 +422,8 @@ async function handleAddToWatchlist(req, body, user) {
     // Add to watchlist with playlist context
     const addedItem = await addToWatchlist({
       ...validatedItem,
-      playlistId
+      playlistId,
+      access: await libraryAccessFor(user)
     })
     
     return createSuccessResponse({
@@ -483,7 +485,7 @@ async function handleToggleWatchlist(req, body, user) {
       if (!completeItemData.mediaType) {
         return createErrorResponse('mediaType is required when resolving tmdbId from mediaId', 400, { mediaId: completeItemData.mediaId }, 'Bad Request', 'MISSING_MEDIA_TYPE')
       }
-      const resolvedTmdbId = await findTMDBIdByMediaId(completeItemData.mediaId, completeItemData.mediaType)
+      const resolvedTmdbId = await findTMDBIdByMediaId(completeItemData.mediaId, completeItemData.mediaType, await libraryAccessFor(user))
       if (resolvedTmdbId) {
         completeItemData.tmdbId = resolvedTmdbId
       } else {
@@ -504,7 +506,8 @@ async function handleToggleWatchlist(req, body, user) {
     // Toggle watchlist status with playlist context
     const result = await toggleWatchlist({
       ...validatedItem,
-      playlistId
+      playlistId,
+      access: await libraryAccessFor(user)
     })
     
     if (!result.success) {
@@ -566,7 +569,7 @@ async function handleGetWatchlist(req, user) {
     validateWatchlistQuery(queryParams)
 
     // Get watchlist
-    const watchlistData = await getUserWatchlist(queryParams)
+    const watchlistData = await getUserWatchlist({ ...queryParams, userId: user.id, access: await libraryAccessFor(user) })
     
     if (countOnly) {
       return createSuccessResponse({
@@ -924,6 +927,8 @@ async function handleGetPlaylistItems(req, user) {
 
     // Get playlist items with sort parameters
     const items = await getUserWatchlist({
+      access: await libraryAccessFor(user),
+      userId: user.id,
       page,
       limit,
       playlistId,

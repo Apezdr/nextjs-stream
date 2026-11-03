@@ -15,6 +15,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
+import { FULL_LIBRARY } from '@src/lib/roles/libraryScope'
 import { getFullImageUrl } from '@src/utils'
 import { escapeRegex } from '@src/utils/escapeRegex'
 
@@ -231,7 +232,8 @@ export async function listAdminTVShows({ page = 1, pageSize = 25, search = '', s
  */
 export async function getAdminMovie(id) {
   if (!id) throw new Error('getAdminMovie: id is required')
-  return getFlatRequestedMedia({ type: 'movie', id })
+  // The editor is the admin's: the whole library
+  return getFlatRequestedMedia({ access: FULL_LIBRARY, type: 'movie', id })
 }
 
 /**
@@ -243,7 +245,7 @@ export async function getAdminMovie(id) {
 export async function getAdminTVShow(id) {
   if (!id) throw new Error('getAdminTVShow: id is required')
 
-  const show = await getFlatRequestedMedia({ type: 'tv', id })
+  const show = await getFlatRequestedMedia({ access: FULL_LIBRARY, type: 'tv', id })
   if (!show) return null
 
   const client = await clientPromise

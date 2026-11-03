@@ -28,6 +28,7 @@
  */
 
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 import { applyJitPreference } from '@src/utils/jit/preference'
 import { fetchDirectInfo, parseStreamUrl } from '@src/utils/jit/directInfo'
@@ -85,7 +86,9 @@ export async function GET(request) {
 
   let media
   try {
+    // A title outside the caller's scope is not found, like a missing one
     media = await getFlatRequestedMedia({
+      access: await libraryAccessFor(authResult),
       type: mediaType,
       title: resolvedTitle,
       id: preferOriginalTitle ? null : mediaId ? decodeURIComponent(mediaId) : null,

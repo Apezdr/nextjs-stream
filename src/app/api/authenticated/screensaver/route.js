@@ -1,5 +1,6 @@
 import { getFullImageUrl } from '@src/utils'
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { fetchFlatRandomBannerMedia } from '@src/utils/flatDatabaseUtils'
 import { httpGet } from '@src/lib/httpHelper'
 import sharp from 'sharp'
@@ -706,7 +707,8 @@ export const GET = async (req) => {
     }
 
     // User is authenticated, proceed with fetching random banner media info
-    const mediaResult = await fetchFlatRandomBannerMedia()
+    // A title from the caller's part of the library only
+    const mediaResult = await fetchFlatRandomBannerMedia(await libraryAccessFor(authResult))
     if (mediaResult.error) {
       return new Response(JSON.stringify({ error: mediaResult.error }), {
         status: mediaResult.status,

@@ -15,24 +15,26 @@ import { MEDIA_CACHE_TAGS } from './mediaPagesTags'
  *
  * A failed query throws out of here, and a cache entry that throws is not
  * stored. The result is plain JSON: what the banner route sends, and nothing a
- * cache entry cannot hold.
+ * cache entry cannot hold. Keyed by the viewer's LibraryAccess: one entry per
+ * scope, shared by everyone holding it.
  */
-async function getCachedBannerMovies() {
+async function getCachedBannerMovies(access) {
   'use cache'
   cacheLife('banner')
   cacheTag(MEDIA_CACHE_TAGS.BANNER, 'movies')
 
-  return JSON.parse(JSON.stringify(await queryBannerMovies()))
+  return JSON.parse(JSON.stringify(await queryBannerMovies(access)))
 }
 
 /**
  * Fetch the latest movies for the banner.
  *
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access.
  * @returns {Promise<Array|Object>} An array of the latest 8 movie objects or an error object.
  */
-export async function fetchFlatBannerMedia() {
+export async function fetchFlatBannerMedia(access) {
   try {
-    const media = await getCachedBannerMovies()
+    const media = await getCachedBannerMovies(access)
 
     if (media.length === 0) {
       return { error: 'No media found for banner', status: 404 }

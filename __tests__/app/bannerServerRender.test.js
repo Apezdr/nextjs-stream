@@ -11,6 +11,8 @@ jest.mock('@src/lib/roles/gates', () => ({
 }))
 
 const mockFetchFlatBannerMedia = jest.fn()
+// The signed-in viewer's library access (the whole library)
+jest.mock('@src/lib/roles/session', () => ({ viewerLibraryAccess: async () => ({ id: 'all', scope: null, showIds: null }) }))
 jest.mock('@src/utils/cache/bannerData', () => ({
   fetchFlatBannerMedia: (...args) => mockFetchFlatBannerMedia(...args),
 }))

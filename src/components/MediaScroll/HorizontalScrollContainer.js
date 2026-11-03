@@ -33,20 +33,22 @@ async function DynamicMediaContent({
   sortOrder = 'desc',
   playlistId = null,
   userId = null, // Accept userId as prop instead of calling auth()
+  access, // the viewer's LibraryAccess: every count is of their part of the library
 }) {
   let items = 0
 
   switch (type) {
     case 'movie':
       // Use cached function for request-level deduplication
-      items = await getCachedPosters('movie', true)
+      items = await getCachedPosters('movie', true, 1, 15, {}, { access })
       break
     case 'tv':
-      items = await getCachedPosters('tv', true)
+      items = await getCachedPosters('tv', true, 1, 15, {}, { access })
       break
     case 'recentlyWatched': {
       const limit = 50
       items = await getCachedRecentlyWatched({
+        access,
         userId: userId,
         countOnly: true,
         limit: limit,
@@ -55,13 +57,13 @@ async function DynamicMediaContent({
     }
     case 'recentlyAdded': {
       const limit = 32
-      items = await getCachedRecentlyAdded({ limit: limit, countOnly: true })
+      items = await getCachedRecentlyAdded({ access, limit: limit, countOnly: true })
       break
     }
     case 'recommendations': {
       const limit = 30
       // Fetch count from recommendations using cached function
-      const recommendationsData = await getCachedRecommendations(userId, 0, limit, true)
+      const recommendationsData = await getCachedRecommendations(userId, 0, limit, true, false, null, access)
       items = recommendationsData.count || 0
       break
     }
@@ -73,12 +75,14 @@ async function DynamicMediaContent({
         const [visibilityResult, allItemsResult, filteredItemsResult] = await Promise.allSettled([
           getCachedPlaylistVisibility(userId, playlistId),
           getCachedWatchlist({
+            access,
             playlistId,
             countOnly: true,
             internalOnly: false,
             userId: userId,
           }),
           getCachedWatchlist({
+            access,
             playlistId,
             countOnly: true,
             internalOnly: true,
@@ -108,8 +112,8 @@ async function DynamicMediaContent({
     default: {
       // CRITICAL FIX: Run movie and TV queries in parallel (async-parallel pattern)
       const [moviePostersResult, tvPostersResult] = await Promise.all([
-        getCachedPosters('movie', true),
-        getCachedPosters('tv', true)
+        getCachedPosters('movie', true, 1, 15, {}, { access }),
+        getCachedPosters('tv', true, 1, 15, {}, { access })
       ])
       items = moviePostersResult + tvPostersResult
       break
@@ -148,6 +152,7 @@ export default function HorizontalScrollContainer({
   sortOrder = 'desc',
   playlistId = null,
   userId = null, // Accept userId as prop (primitive, not full user object)
+  access, // the viewer's LibraryAccess
 }) {
   return (
     <div className="my-8 w-full">
@@ -159,6 +164,7 @@ export default function HorizontalScrollContainer({
           sortOrder={sortOrder}
           playlistId={playlistId}
           userId={userId}
+          access={access}
         />
       </Suspense>
     </div>

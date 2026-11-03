@@ -1,5 +1,12 @@
 import { approvedGate } from '@src/lib/roles/gates'
 import { describeRequestError, httpGet } from '@src/lib/httpHelper'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
+import { isFullLibrary } from '@src/lib/roles/libraryScope'
+
+// What a scoped user gets: Sonarr's and Radarr's feeds name the library's
+// titles by their own names, which can't be matched to a library scope, so a
+// user held to one sees an empty calendar rather than titles outside it.
+const EMPTY_CALENDAR = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//nextjs-stream//library scope//EN', 'END:VCALENDAR', ''].join('\r\n')
 
 const sonarrIcalLink = process.env.SONARR_ICAL_LINK
 const radarrIcalLink = process.env.RADARR_ICAL_LINK
@@ -33,11 +40,13 @@ export async function GET(req, props) {
         })
     }
 
-    const { data: iCalData } = await httpGet(icalLink, {
+    const iCalData = !isFullLibrary(await libraryAccessFor(authResult))
+      ? EMPTY_CALENDAR
+      : (await httpGet(icalLink, {
       responseType: 'text',
       timeout: 10000,
       retry: { limit: 3, baseDelay: 1000 },
-    })
+    })).data
 
     return new Response(iCalData, {
       status: 200,

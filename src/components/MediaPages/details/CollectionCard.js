@@ -14,14 +14,15 @@ import { SectionHeading } from './Primitives'
  * Async server component: it reads the owned siblings from the flat catalog
  * inside the page's cached subtree.
  *
- * @param {{ collection: { id: number, name: string, poster_path?: string|null, backdrop_path?: string|null }, currentOriginalTitle: string|null }} props
+ * @param {{ collection: { id: number, name: string, poster_path?: string|null, backdrop_path?: string|null }, currentOriginalTitle: string|null, access: Object }} props
+ *   access: the viewer's LibraryAccess; siblings outside it are left out
  */
-export default async function CollectionCard({ collection, currentOriginalTitle }) {
+export default async function CollectionCard({ collection, currentOriginalTitle, access }) {
   if (!collection?.id) return null
 
   let siblings = []
   try {
-    const owned = await getFlatMoviesByCollectionId(collection.id)
+    const owned = await getFlatMoviesByCollectionId(collection.id, access)
     siblings = (owned || [])
       .filter((m) => m?.originalTitle)
       .sort((a, b) => releaseTime(a) - releaseTime(b))

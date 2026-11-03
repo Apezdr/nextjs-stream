@@ -8,7 +8,8 @@
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
-import { visibleShowFilter, visibleEpisodeFilter } from '@src/utils/mediaVisibility'
+import { libraryShowFilter, libraryEpisodeFilter } from '@src/utils/mediaVisibility'
+import { assertLibraryAccess } from '@src/lib/roles/libraryScope'
 import {
   serializeForClient,
   validatePaginationParams,
@@ -33,12 +34,14 @@ import {
  * @returns {Promise<Array>} Array of TV show objects with seasons/episodes
  */
 export async function getFilteredTVList({
+  access,
   page = CONSTANTS.DEFAULT_PAGE,
   limit = CONSTANTS.DEFAULT_LIMIT,
   sortOrder = CONSTANTS.DEFAULT_SORT,
   genres = [],
   hdrTypes = []
 }) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise;
     const db = client.db('Media');
@@ -62,7 +65,7 @@ export async function getFilteredTVList({
       // Use aggregation pipeline to filter by episodes with HDR
       const pipeline = [
         // Web-visibility first so later stages only see visible shows
-        { $match: visibleShowFilter() },
+        { $match: libraryShowFilter(access) },
 
         // Match TV shows by genre if specified
         ...(genres.length > 0 ? [{ $match: buildGenreFilter(genres) }] : []),
@@ -74,7 +77,7 @@ export async function getFilteredTVList({
             localField: '_id',
             foreignField: 'showId',
             // Hidden episodes must not satisfy the HDR match below
-            pipeline: [{ $match: visibleEpisodeFilter() }],
+            pipeline: [{ $match: libraryEpisodeFilter(access) }],
             as: 'episodes'
           }
         },
@@ -113,7 +116,7 @@ export async function getFilteredTVList({
         .toArray();
     } else {
       // No HDR filtering - use simple find query ($and: visibility fragment has a top-level $or)
-      const matchQuery = { $and: [buildGenreFilter(genres), visibleShowFilter()] };
+      const matchQuery = { $and: [buildGenreFilter(genres), libraryShowFilter(access)] };
       
       const tvShowProjection = {
         _id: 1,
@@ -163,7 +166,7 @@ export async function getFilteredTVList({
             const episodes = await db
               .collection('FlatEpisodes')
               .find(
-                { $and: [{ seasonId: season._id }, visibleEpisodeFilter()] },
+                { $and: [{ seasonId: season._id }, libraryEpisodeFilter(access)] },
                 {
                   projection: {
                     _id: 1,
@@ -227,9 +230,11 @@ export async function getFilteredTVList({
  * @returns {Promise<number>} Total count of matching TV shows
  */
 export async function getFilteredTVCount({
+  access,
   genres = [],
   hdrTypes = []
 }) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise;
     const db = client.db('Media');
@@ -245,7 +250,7 @@ export async function getFilteredTVCount({
       // Use aggregation pipeline to count
       const pipeline = [
         // Web-visibility first so later stages only see visible shows
-        { $match: visibleShowFilter() },
+        { $match: libraryShowFilter(access) },
 
         // Match TV shows by genre if specified
         ...(genres.length > 0 ? [{ $match: buildGenreFilter(genres) }] : []),
@@ -257,7 +262,7 @@ export async function getFilteredTVCount({
             localField: '_id',
             foreignField: 'showId',
             // Hidden episodes must not satisfy the HDR match below
-            pipeline: [{ $match: visibleEpisodeFilter() }],
+            pipeline: [{ $match: libraryEpisodeFilter(access) }],
             as: 'episodes'
           }
         },
@@ -277,7 +282,7 @@ export async function getFilteredTVCount({
       return result.length > 0 ? result[0].total : 0;
     } else {
       // No HDR filtering - use simple count (must stay in lockstep with getFilteredTVList)
-      const matchQuery = { $and: [buildGenreFilter(genres), visibleShowFilter()] };
+      const matchQuery = { $and: [buildGenreFilter(genres), libraryShowFilter(access)] };
       return await db.collection('FlatTVShows').countDocuments(matchQuery);
     }
   } catch (error) {
@@ -293,9 +298,11 @@ export async function getFilteredTVCount({
  * NOTE: HDR types are extracted from pre-computed 'availableHdrTypes' field.
  * If this field doesn't exist, will return empty array for HDR types.
  * 
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access
  * @returns {Promise<Object>} Object with availableGenres and availableHdrTypes arrays
  */
-export async function getTVFilterOptions() {
+export async function getTVFilterOptions(access) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise;
     const db = client.db('Media');
@@ -305,7 +312,7 @@ export async function getTVFilterOptions() {
       .collection('FlatTVShows')
       .aggregate([
         // Filter chips should not advertise values only hidden titles have
-        { $match: visibleShowFilter() },
+        { $match: libraryShowFilter(access) },
         { $unwind: '$metadata.genres' },
         { $group: { _id: '$metadata.genres.name' } },
         { $sort: { _id: 1 } }
@@ -319,7 +326,7 @@ export async function getTVFilterOptions() {
     const hdrResults = await db
       .collection('FlatTVShows')
       .aggregate([
-        { $match: visibleShowFilter() },
+        { $match: libraryShowFilter(access) },
         { $match: { availableHdrTypes: { $exists: true, $ne: [] } } },
         { $unwind: '$availableHdrTypes' },
         { $group: { _id: '$availableHdrTypes' } },
@@ -335,7 +342,7 @@ export async function getTVFilterOptions() {
       const episodeHdrResults = await db
         .collection('FlatEpisodes')
         .aggregate([
-          { $match: visibleEpisodeFilter() },
+          { $match: libraryEpisodeFilter(access) },
           { $match: { hdr: { $exists: true, $nin: [null, false, ''] } } },
           { $group: { _id: '$hdr' } },
           { $sort: { _id: 1 } }

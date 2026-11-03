@@ -35,9 +35,11 @@ import {
  * Cached media fetching with redirect handling
  * Uses Next.js "use cache" to cache across requests (not just within a request)
  * 
- * This replaces fetchMediaWithRedirect when you want cross-request caching
+ * Keyed by the viewer's LibraryAccess with the params: a title outside the
+ * scope is not found (notFoundType set, nothing else), exactly like a missing
+ * one, and viewers with the same scope share entries.
  */
-export async function getCachedMediaWithRedirect(parsedParams) {
+export async function getCachedMediaWithRedirect(parsedParams, access) {
   'use cache'
   cacheLife('mediaLists') // 1 min stale, revalidates in background
   
@@ -67,6 +69,7 @@ export async function getCachedMediaWithRedirect(parsedParams) {
   // Handle movie fetching
   if (mediaType === 'movie' && mediaTitle) {
     const media = await getFlatRequestedMedia({
+      access,
       type: mediaType,
       title: mediaTitle,
     })
@@ -89,6 +92,7 @@ export async function getCachedMediaWithRedirect(parsedParams) {
   if (mediaType === 'tv' && mediaTitle) {
     // Step 1: Check if the show exists (base level)
     const baseShow = await getFlatRequestedMedia({
+      access,
       type: mediaType,
       title: mediaTitle,
     })
@@ -111,6 +115,7 @@ export async function getCachedMediaWithRedirect(parsedParams) {
     // Step 2: If season or episode requested, fetch that specific level
     if (mediaSeason || mediaEpisode) {
       const media = await getFlatRequestedMedia({
+      access,
         type: mediaType,
         title: mediaTitle,
         season: mediaSeason,
@@ -126,6 +131,7 @@ export async function getCachedMediaWithRedirect(parsedParams) {
         } else if (mediaSeason && mediaEpisode) {
           // Check if season exists but episode doesn't
           const seasonOnly = await getFlatRequestedMedia({
+      access,
             type: mediaType,
             title: mediaTitle,
             season: mediaSeason,

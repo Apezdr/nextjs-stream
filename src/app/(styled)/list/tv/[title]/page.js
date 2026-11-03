@@ -8,9 +8,9 @@ import {
 } from '@src/components/MediaPages/DynamicPage'
 import ShowPageSkeleton from '@src/components/MediaPages/details/ShowPageSkeleton'
 import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
-import { fetchTrailerMedia } from '@src/utils/media/mediaFetcher'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
 import { tvShowDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTags'
+import { pageLibraryAccess } from '@src/lib/roles/session'
 
 function buildParsedParams(title) {
   return {
@@ -32,9 +32,9 @@ function buildParsedParams(title) {
   }
 }
 
-async function fetchShow(title) {
+async function fetchShow(title, access) {
   const parsedParams = buildParsedParams(title)
-  const result = await getCachedMediaWithRedirect(parsedParams)
+  const result = await getCachedMediaWithRedirect(parsedParams, access)
   return { parsedParams, result }
 }
 
@@ -42,13 +42,13 @@ async function fetchShow(title) {
  * Cached subtree — owns the data fetch and the rendered output. The page
  * renders it behind SessionGate, inside a Suspense boundary whose fallback is
  * the page skeleton, so the skeleton paints at once (it is the route's
- * prerendered shell) while this resolves, or returns instantly when warm. Cache is keyed by `{ title, isLimitedAccess, userId }`: the page
+ * prerendered shell) while this resolves, or returns instantly when warm. Cache is keyed by `{ title, access, userId }` (the viewer's library access): the page
  * shows the viewer's next-up episode and per-season progress, so every
  * viewer has their own entry, tagged with their watch history so a playback
  * write expires it. Nothing inside may read the session — the viewer is
  * known only through the `userId` argument.
  */
-async function TVShowContent({ title, isLimitedAccess, userId }) {
+async function TVShowContent({ title, access, userId }) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag(
@@ -60,14 +60,7 @@ async function TVShowContent({ title, isLimitedAccess, userId }) {
   )
 
   const parsedParams = buildParsedParams(title)
-  let result = await getCachedMediaWithRedirect(parsedParams)
-
-  if (isLimitedAccess && parsedParams.hasTitle) {
-    const trailerMedia = await fetchTrailerMedia(parsedParams.mediaType, parsedParams.mediaTitle)
-    if (trailerMedia) {
-      result = { media: trailerMedia, redirectUrl: null, notFoundType: null }
-    }
-  }
+  const result = await getCachedMediaWithRedirect(parsedParams, access)
 
   if (result.redirectUrl) {
     redirect(result.redirectUrl)
@@ -78,16 +71,17 @@ async function TVShowContent({ title, isLimitedAccess, userId }) {
       <MediaNotFound
         notFoundType={result.notFoundType}
         mediaTitle={parsedParams.mediaTitle}
+        access={access}
       />
     )
   }
 
-  return <TVShowView parsedParams={parsedParams} media={result.media} userId={userId} />
+  return <TVShowView parsedParams={parsedParams} media={result.media} userId={userId} access={access} />
 }
 
 export async function generateMetadata({ params }, parent) {
   const { title } = await params
-  const { parsedParams, result } = await fetchShow(title)
+  const { parsedParams, result } = await fetchShow(title, await pageLibraryAccess())
   if (result.redirectUrl) redirect(result.redirectUrl)
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
@@ -103,7 +97,7 @@ export default function TVShowPage({ params }) {
         {({ session, params: { title } }) => (
           <TVShowContent
             title={title}
-            isLimitedAccess={!!session.user.limitedAccess}
+            access={session.access}
             userId={session.user.id}
           />
         )}

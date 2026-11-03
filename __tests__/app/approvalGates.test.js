@@ -25,6 +25,9 @@ jest.mock('next/cache', () => ({ cacheLife: jest.fn() }))
 
 const mockGetSession = jest.fn()
 jest.mock('@src/lib/cachedAuth', () => ({ getSession: () => mockGetSession() }))
+// The viewer's library access, as libraryAccessFor resolves it (no roles: the whole library)
+const mockAccessFor = jest.fn(async () => ({ id: 'all', scope: null, showIds: null }))
+jest.mock('@src/lib/roles/libraryAccess', () => ({ libraryAccessFor: (...args) => mockAccessFor(...args) }))
 
 jest.mock('@src/components/MediaPages/DynamicPage/guards/AuthGuard', () => ({
   __esModule: true,
@@ -69,15 +72,16 @@ describe('SessionGate', () => {
   it('builds the content for an approved account, with the session and the resolved params', async () => {
     mockGetSession.mockResolvedValue({
       session: { token: 'secret', expiresAt: new Date() },
-      user: { id: 'u1', approved: true, limitedAccess: undefined, email: 'someone@example.com', createdAt: new Date() },
+      user: { id: 'u1', approved: true, email: 'someone@example.com', createdAt: new Date() },
     })
     const children = jest.fn(() => 'content')
 
     const result = await SessionGate({ params: Promise.resolve({ title: 'Preacher' }), callbackUrl, children })
 
-    // Only what the gate needs crosses the cache boundary: no token, no email, no Dates
+    // Only what the gate needs crosses the cache boundary: no token, no email, no
+    // Dates; and the viewer's library access (no roles: the whole library)
     expect(children).toHaveBeenCalledWith({
-      session: { user: { id: 'u1', approved: true, limitedAccess: false } },
+      session: { user: { id: 'u1', approved: true }, access: { id: 'all', scope: null, showIds: null } },
       params: { title: 'Preacher' },
     })
     expect(result.props.children).toBe('content')

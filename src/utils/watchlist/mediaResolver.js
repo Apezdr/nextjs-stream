@@ -13,7 +13,8 @@ import { getFullImageUrl } from '@src/utils'
 import { isTmdbNotFound, missingFromTmdbMedia } from './tmdbMissing.js'
 import { fetchTmdbFromBackend } from '@src/utils/tmdb/backendClient'
 import { mediaLinkKey } from '@src/utils/media/urlParser'
-import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
+import { libraryMovieFilter, libraryShowFilter } from '@src/utils/mediaVisibility'
+import { assertLibraryAccess } from '@src/lib/roles/libraryScope'
 import { titleKey } from './playlistMerge.js'
 import { createLogger, logError } from '@src/lib/logger'
 
@@ -28,6 +29,10 @@ const keyOf = (mediaType, tmdbId) => titleKey({ mediaType, tmdbId })
  */
 async function batchResolveMediaInternal(items, options = {}) {
   let { precomputedAvailability = null, authHeaders = null } = options
+  // The viewer's library access: a title outside it resolves as if the library
+  // didn't have it (a TMDB-only card, nothing that plays)
+  const { access } = options
+  assertLibraryAccess(access)
   
   // Convert Array back to Set if needed (from JSON deserialization)
   if (precomputedAvailability && Array.isArray(precomputedAvailability)) {
@@ -80,7 +85,7 @@ async function batchResolveMediaInternal(items, options = {}) {
       ;[movies, tvShows] = await Promise.all([
         availableMovieIds.length > 0
           ? db.collection('FlatMovies').find(
-              { $and: [{ 'metadata.id': { $in: availableMovieIds } }, visibleMovieFilter()] },
+              { $and: [{ 'metadata.id': { $in: availableMovieIds } }, libraryMovieFilter(access)] },
               {
                 projection: {
                   _id: 1,
@@ -104,7 +109,7 @@ async function batchResolveMediaInternal(items, options = {}) {
         
         availableTvIds.length > 0
           ? db.collection('FlatTVShows').find(
-              { $and: [{ 'metadata.id': { $in: availableTvIds } }, visibleShowFilter()] },
+              { $and: [{ 'metadata.id': { $in: availableTvIds } }, libraryShowFilter(access)] },
               {
                 projection: {
                   _id: 1,
@@ -136,7 +141,7 @@ async function batchResolveMediaInternal(items, options = {}) {
     ;[movies, tvShows] = await Promise.all([
       movieTmdbIds.length > 0
         ? db.collection('FlatMovies').find(
-            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, visibleMovieFilter()] },
+            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, libraryMovieFilter(access)] },
             {
               projection: {
                 _id: 1,
@@ -160,7 +165,7 @@ async function batchResolveMediaInternal(items, options = {}) {
       
       tvTmdbIds.length > 0
         ? db.collection('FlatTVShows').find(
-            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, visibleShowFilter()] },
+            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, libraryShowFilter(access)] },
             {
               projection: {
                 _id: 1,
@@ -411,10 +416,10 @@ const batchResolveMediaCached = cache(async function batchResolveMediaCached(ite
 /**
  * Public API - convenience wrapper that handles JSON serialization
  * @param {Array} items - Array of {tmdbId, mediaType} objects  
- * @param {Object} options - Optional parameters; `precomputedAvailability` is a Set of titleKey()s ("movie:603") known to be in the library
+ * @param {Object} options - `access` (required): the viewer's LibraryAccess. `precomputedAvailability` is a Set of titleKey()s ("movie:603") known to be in the library
  * @returns {Promise<Map>} Map of titleKey ("movie:603", "tv:1399") -> media data. Keyed by type too: TMDB ids repeat across media types
  */
-export async function batchResolveMedia(items, options = {}) {
+export async function batchResolveMedia(items, options) {
   // Convert Set to Array for JSON serialization
   const serializedOptions = { ...options }
   if (options.precomputedAvailability instanceof Set) {

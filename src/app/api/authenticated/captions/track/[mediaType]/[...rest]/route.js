@@ -3,6 +3,8 @@ import { httpGet } from '@src/lib/httpHelper'
 import { getServer } from '@src/utils/config'
 import { getWebhookIdForServer } from '@src/utils/webhookServer'
 import { getSession } from '@src/lib/cachedAuth'
+import { libraryAccessOrPublic } from '@src/lib/roles/session'
+import { scopeMatcher } from '@src/lib/roles/libraryScope'
 import { srtToVtt } from '@src/lib/captions/srtToVtt'
 import { checkAndRecordTrigger } from '@src/lib/captions/rateLimit'
 
@@ -27,7 +29,10 @@ export const GET = async (req, props) => {
   originalTitle = decodeURIComponent(originalTitle)
   lang = decodeURIComponent(lang)
 
-  const lookup = await resolveAutoCaptionContext({ mediaType, originalTitle, lang, season, episode })
+  // A signed-in caller is held to their library scope: a title outside it is
+  // not found (an existing track needs no session, like the file it comes from)
+  const access = await libraryAccessOrPublic()
+  const lookup = await resolveAutoCaptionContext({ mediaType, originalTitle, lang, season, episode, access })
   if (!lookup) return jsonError(404, 'Media not found')
 
   const { entry, serverId } = lookup
@@ -118,20 +123,21 @@ async function fetchAndConvertSrt(srtUrl) {
   }
 }
 
-async function resolveAutoCaptionContext({ mediaType, originalTitle, lang, season, episode }) {
+async function resolveAutoCaptionContext({ mediaType, originalTitle, lang, season, episode, access }) {
+  const inScope = scopeMatcher(access)
   const client = await clientPromise
   const db = client.db('Media')
 
   if (mediaType === 'movie') {
     const movie = await db.collection('FlatMovies').findOne({ originalTitle })
-    if (!movie) return null
+    if (!movie || !inScope.movie(movie)) return null
     const entry = findAutoCaptionEntry(movie.captionURLs, lang)
     const serverId = entry?.sourceServerId || movie.videoSource || null
     return { entry, serverId }
   }
 
   const show = await db.collection('FlatTVShows').findOne({ originalTitle })
-  if (!show) return null
+  if (!show || !inScope.show(show)) return null
 
   const ep = await db.collection('FlatEpisodes').findOne({
     showId: show._id,

@@ -25,7 +25,6 @@ export async function POST(req: Request) {
         name: user.name,
         image: user.image,
         approved: user.approved,
-        limitedAccess: user.limitedAccess,
         role: user.role,
       },
     })

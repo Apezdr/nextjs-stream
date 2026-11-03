@@ -18,13 +18,14 @@ import ShowPageSkeleton from '@src/components/MediaPages/details/ShowPageSkeleto
  * @param {Object} props.parsedParams - Parsed URL parameters (mediaTitle is already decoded)
  * @param {Object|null} [props.media] - The show document, when the route fetched it
  * @param {string|null} [props.userId] - The viewer, for next-up and season status
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} props.access - The viewer's library access
  */
-export default function TVShowView({ parsedParams, media = null, userId = null }) {
+export default function TVShowView({ parsedParams, media = null, userId = null, access }) {
   return (
     // The boundary sits outside the padding wrapper, as in the season and episode views: the skeleton brings its own
     <Suspense fallback={<ShowPageSkeleton />}>
       <div className="pt-16 w-full">
-        <TVShowSeasonsList showTitle={parsedParams.mediaTitle} show={media} userId={userId} />
+        <TVShowSeasonsList showTitle={parsedParams.mediaTitle} show={media} userId={userId} access={access} />
       </div>
     </Suspense>
   )

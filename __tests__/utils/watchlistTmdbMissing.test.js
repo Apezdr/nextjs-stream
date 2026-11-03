@@ -22,6 +22,7 @@ jest.mock('@src/utils/watchlist/mediaResolver.js', () => ({
 
 const { getMinimalCardDataForPlaylist } = require('@src/utils/watchlist/database')
 const { missingFromTmdbMedia } = require('@src/utils/watchlist/tmdbMissing')
+const { FULL_LIBRARY } = require('@src/lib/roles/libraryScope')
 
 const item = (tmdbId, stored = {}) => ({
   _id: `item-${tmdbId}`,
@@ -49,7 +50,7 @@ it('keeps what the item stored, and labels an item with nothing stored', async (
   const cards = await getMinimalCardDataForPlaylist([
     item(1, { title: 'Severance', posterURL: 'https://image.tmdb.org/t/p/w500/sev.jpg' }),
     item(2),
-  ])
+  ], null, true, { access: FULL_LIBRARY })
 
   expect(cards.find((card) => card.tmdbId === 1)).toMatchObject({
     title: 'Severance',
@@ -66,6 +67,6 @@ it('keeps what the item stored, and labels an item with nothing stored', async (
 it('still says "Unknown Title" when the lookup failed for another reason', async () => {
   mockBatchResolveMedia.mockResolvedValue(new Map())
 
-  const [card] = await getMinimalCardDataForPlaylist([item(3)])
+  const [card] = await getMinimalCardDataForPlaylist([item(3)], null, true, { access: FULL_LIBRARY })
   expect(card.title).toBe('Unknown Title')
 })

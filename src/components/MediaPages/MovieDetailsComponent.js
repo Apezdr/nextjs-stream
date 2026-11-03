@@ -23,7 +23,8 @@ const ACTIONS_ID = 'movie-hero-actions'
 /**
  * The movie info page.
  *
- * Renders inside a `'use cache'` subtree shared by every viewer, so nothing
+ * Renders inside a `'use cache'` subtree shared by every viewer with the same
+ * library access (`access`, which the collection strip reads), so nothing
  * here may read per-user state: the primary button's label, the resume
  * block and the sticky bar read the viewer's position on the client, and
  * the admin edit link decides its own visibility after hydration.
@@ -32,7 +33,7 @@ const ACTIONS_ID = 'movie-hero-actions'
  * it (`body:has(...)`) to lift the fixed backdrop's cover so the hero shows
  * the art at ~40% with a scrim toward the text edge.
  */
-const MovieDetailsComponent = ({ media }) => {
+const MovieDetailsComponent = ({ media, access }) => {
   if (!media) {
     return <div className="text-center py-4">Loading...</div>
   }
@@ -111,7 +112,7 @@ const MovieDetailsComponent = ({ media }) => {
         <div className={classNames('grid gap-8', collection ? 'lg:grid-cols-2' : '')}>
           {collection ? (
             <Suspense fallback={<div className="h-52 animate-pulse rounded-xl bg-white/5" />}>
-              <CollectionCard collection={collection} currentOriginalTitle={media.originalTitle || null} />
+              <CollectionCard collection={collection} currentOriginalTitle={media.originalTitle || null} access={access} />
             </Suspense>
           ) : null}
           <DetailsPanel id="movie-details" title="Movie details" rows={facts} />

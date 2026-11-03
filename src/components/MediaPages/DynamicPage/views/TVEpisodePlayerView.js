@@ -23,9 +23,8 @@ import { getResumePositionForMedia } from '@src/utils/watchHistoryServerUtils'
  * @param {Object} props.session - NextAuth session
  * @param {Object} props.searchParams - URL search parameters (includes start time)
  * @param {Object} props.parsedParams - Parsed URL parameters
- * @param {boolean} props.hasFullAccess - Whether user has full access (approved and not limited)
  */
-export default async function TVEpisodePlayerView({ media, session, searchParams, parsedParams, hasFullAccess }) {
+export default async function TVEpisodePlayerView({ media, session, searchParams, parsedParams }) {
   const { mediaTitle, mediaSeason, mediaEpisode } = parsedParams
   
   // Validate video URL
@@ -60,23 +59,20 @@ export default async function TVEpisodePlayerView({ media, session, searchParams
               session={session}
               isValidVideoURL={isValidVideoURL}
               savedPlaybackTime={savedPlaybackTime}
-              hasFullAccess={hasFullAccess}
             />
           </Suspense>
         </div>
         
-        {/* Episode list for easier navigation - only shown to approved users with full access */}
-        {hasFullAccess && (
-          <Suspense fallback={<Loading />}>
-            <div className="w-full md:py-12">
-              <EpisodeListComponent
-                mediaTitle={decodeURIComponent(mediaTitle)}
-                mediaSeason={mediaSeason}
-                mediaEpisode={mediaEpisode}
-              />
-            </div>
-          </Suspense>
-        )}
+        {/* Episode list for easier navigation (the episode picker route scopes it) */}
+        <Suspense fallback={<Loading />}>
+          <div className="w-full md:py-12">
+            <EpisodeListComponent
+              mediaTitle={decodeURIComponent(mediaTitle)}
+              mediaSeason={mediaSeason}
+              mediaEpisode={mediaEpisode}
+            />
+          </div>
+        </Suspense>
       </>
     </PlaybackCoordinatorProvider>
   )

@@ -29,6 +29,7 @@ jest.mock('@src/utils/tmdb/backendClient', () => ({
 }))
 
 const { batchResolveMedia } = require('@src/utils/watchlist/mediaResolver')
+const { FULL_LIBRARY } = require('@src/lib/roles/libraryScope')
 
 beforeEach(() => {
   mockLibrary.movies = []
@@ -46,7 +47,7 @@ test('the show from the library and the movie from TMDB, each under its own key'
   const resolved = await batchResolveMedia([
     { tmdbId: 1399, mediaType: 'movie' },
     { tmdbId: 1399, mediaType: 'tv' },
-  ])
+  ], { access: FULL_LIBRARY })
 
   expect(resolved.get('tv:1399')).toMatchObject({ mediaType: 'tv', title: 'Game of Thrones', isInternal: true })
   expect(resolved.get('movie:1399')).toMatchObject({ mediaType: 'movie', title: 'The Film', isExternal: true })
@@ -65,7 +66,7 @@ test('precomputed availability is per type: a show in the library doesn’t make
       { tmdbId: 1399, mediaType: 'movie' },
       { tmdbId: 1399, mediaType: 'tv' },
     ],
-    { precomputedAvailability: new Set(['tv:1399']) }
+    { access: FULL_LIBRARY, precomputedAvailability: new Set(['tv:1399']) }
   )
 
   expect(resolved.get('movie:1399')).toMatchObject({ title: 'The Film', isExternal: true })

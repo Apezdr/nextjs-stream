@@ -7,6 +7,11 @@
 import { render, screen, within } from '@testing-library/react'
 
 jest.mock('@src/utils/credits/catalog', () => ({ getCreditsCatalog: jest.fn(), getLibraryCreditsRecords: jest.fn(async () => []) }))
+const FULL = { id: 'all', scope: null, showIds: null }
+const SCOPED = { id: 'scope-kids', scope: { movieRatingCap: 'PG', tvRatingCap: null, titles: [] }, showIds: [] }
+jest.mock('@src/lib/roles/libraryAccess', () => ({
+  libraryAccessFor: jest.fn(async (user) => (user.roles?.length ? SCOPED : FULL)),
+}))
 const { getCreditsCatalog, getLibraryCreditsRecords } = require('@src/utils/credits/catalog')
 const CreditsCatalogPage = require('@components/Credits/CreditsCatalogPage').default
 const { resolveLibraryCredits } = require('@src/utils/credits/resolve')
@@ -27,7 +32,7 @@ const library = resolveLibraryCredits([
 
 beforeEach(() => jest.clearAllMocks())
 
-const renderPage = async (catalog, user = { limitedAccess: false }) => {
+const renderPage = async (catalog, user = { id: 'u1' }) => {
   getCreditsCatalog.mockResolvedValue(catalog)
   render(await CreditsCatalogPage({ user }))
 }
@@ -59,9 +64,9 @@ it('has no library section without library credits', async () => {
   expect(screen.getByRole('region', { name: 'Titles with credits' })).toBeInTheDocument()
 })
 
-it('asks for no titles for a user with limited access', async () => {
-  await renderPage({ library, titles: [] }, { limitedAccess: true })
-  expect(getCreditsCatalog).toHaveBeenCalledWith({ includeTitles: false })
+it("asks for the titles of a scoped user's library only", async () => {
+  await renderPage({ library, titles: [] }, { id: 'u2', roles: ['kids'] })
+  expect(getCreditsCatalog).toHaveBeenCalledWith(SCOPED)
   expect(screen.queryByRole('region', { name: 'Titles with credits' })).toBeNull()
 })
 

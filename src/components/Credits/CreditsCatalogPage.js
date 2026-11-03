@@ -4,7 +4,8 @@ import CreditsStatus from '@components/Admin/Media/CreditsStatus'
 import { getCreditsCatalog, getLibraryCreditsRecords } from '@src/utils/credits/catalog'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
 import { tvHrefs } from '@src/utils/media/tvFacts'
-import { hasLimitedAccess, isAdminUser } from '@src/lib/roles/rules'
+import { isAdminUser } from '@src/lib/roles/rules'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 
 /**
  * The "Credits & licenses" page (CREDITS_SIDECAR.md, section 8): the
@@ -16,12 +17,14 @@ import { hasLimitedAccess, isAdminUser } from '@src/lib/roles/rules'
  * An admin also sees each server's library credits sync: a failure keeps the
  * last valid credits on the page, and says so only here.
  *
- * @param {{ user: { limitedAccess?: boolean, role?: string } }} props
+ * Only titles in the user's library scope are listed.
+ *
+ * @param {{ user: { id: string, role?: string, roles?: string[] } }} props
  */
 export default async function CreditsCatalogPage({ user }) {
   const isAdmin = isAdminUser(user)
   const [{ library, titles }, records] = await Promise.all([
-    getCreditsCatalog({ includeTitles: !hasLimitedAccess(user) }),
+    getCreditsCatalog(await libraryAccessFor(user)),
     isAdmin ? getLibraryCreditsRecords() : [],
   ])
   return <CreditsCatalog library={library} titles={titles} failing={records.filter((record) => record.creditsStatus)} />

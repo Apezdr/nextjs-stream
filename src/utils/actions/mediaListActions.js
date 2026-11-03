@@ -18,6 +18,7 @@
 'use server'
 
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import {
   getCachedMovieListData,
   getCachedTVListData,
@@ -29,8 +30,9 @@ const strings = (value) => (Array.isArray(value) ? value.filter((item) => typeof
  * The filter fields the list pages send, and nothing else: they are the cached
  * fetch's arguments, so its cache key too. Same keys, same order as the
  * page's own call (MovieListView/TVListView), so the two share cache entries.
+ * `access` is the caller's library access, resolved from their session.
  */
-function listOptions({ page, sortOrder, genres, hdrTypes, resolutions } = {}, userId) {
+function listOptions({ page, sortOrder, genres, hdrTypes, resolutions } = {}, userId, access) {
   return {
     page: Number.parseInt(page, 10) || undefined,
     sortOrder: typeof sortOrder === 'string' ? sortOrder : undefined,
@@ -38,15 +40,16 @@ function listOptions({ page, sortOrder, genres, hdrTypes, resolutions } = {}, us
     hdrTypes: strings(hdrTypes),
     resolutions: strings(resolutions),
     userId,
+    access,
   }
 }
 
 export async function getMovieListData(options = {}) {
   const user = await approvedGate.action('/list/movie')
-  return getCachedMovieListData(listOptions(options, user.id))
+  return getCachedMovieListData(listOptions(options, user.id, await libraryAccessFor(user)))
 }
 
 export async function getTVListData(options = {}) {
   const user = await approvedGate.action('/list/tv')
-  return getCachedTVListData(listOptions(options, user.id))
+  return getCachedTVListData(listOptions(options, user.id, await libraryAccessFor(user)))
 }

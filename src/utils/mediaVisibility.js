@@ -23,6 +23,9 @@
  *  - Missing both signals → hidden (fail-closed).
  */
 
+import { ObjectId } from 'mongodb'
+import { MOVIE_RATINGS, TV_RATINGS, isFullLibrary, ratingsUpTo } from '@src/lib/roles/libraryScope'
+
 /**
  * Containers the web player's media element actually loads. The @videojs/react
  * <Video> element is a native <video> (m4v/mov resolve to video/mp4, webm to
@@ -137,3 +140,75 @@ export function isShowWebVisible(doc) {
 }
 
 export { BROWSER_PLAYABLE_CONTAINERS }
+
+/*
+ * Library scope (src/lib/roles/libraryScope.ts): what one viewer may see.
+ * Visibility above is the same for everyone (the sync counts with it); scope
+ * is per viewer, so each fragment below takes the viewer's LibraryAccess,
+ * which the page, route or action that knows the viewer passes down. Every
+ * read that sends titles to a viewer filters with library*Filter (visible AND
+ * in scope) or, for one document or an in-memory join, with
+ * scopeMatcher(access). __tests__/lib/libraryScopeGuard.test.js holds every
+ * Flat* read outside the sync and the admin pages to that.
+ *
+ * The whole library (an admin, a user with no scoped role) adds nothing, so
+ * those queries keep exactly their old shape.
+ */
+
+const titlesOf = (scope, mediaType) =>
+  scope.titles.filter((title) => title.mediaType === mediaType).map((title) => title.originalTitle)
+
+/** The movies a scope holds: rated at or under its cap, or hand-picked. Unrated ones only when hand-picked. */
+export function movieScopeFragment(scope) {
+  return {
+    $or: [
+      { 'metadata.rating': { $in: ratingsUpTo(scope.movieRatingCap, MOVIE_RATINGS) } },
+      { originalTitle: { $in: titlesOf(scope, 'movie') } },
+    ],
+  }
+}
+
+/** The shows a scope holds, by the same rule. */
+export function showScopeFragment(scope) {
+  return {
+    $or: [
+      { 'metadata.rating': { $in: ratingsUpTo(scope.tvRatingCap, TV_RATINGS) } },
+      { originalTitle: { $in: titlesOf(scope, 'tv') } },
+    ],
+  }
+}
+
+/** Mongo fragment: the viewer's movies. {} for the whole library. */
+export function scopeMovieFilter(access) {
+  return isFullLibrary(access) ? {} : movieScopeFragment(access.scope)
+}
+
+/** Mongo fragment: the viewer's shows. {} for the whole library. */
+export function scopeShowFilter(access) {
+  return isFullLibrary(access) ? {} : showScopeFragment(access.scope)
+}
+
+/** Mongo fragment for FlatSeasons and FlatEpisodes: those of the viewer's shows. {} for the whole library. */
+export function scopeEpisodeFilter(access) {
+  if (isFullLibrary(access)) return {}
+  return { showId: { $in: access.showIds.map((id) => new ObjectId(id)) } }
+}
+
+// Visible AND in scope, as one key ($and), so it spreads into a query beside
+// the caller's own conditions without replacing them.
+const both = (visible, scoped) => (Object.keys(scoped).length === 0 ? visible : { $and: [visible, scoped] })
+
+/** The movies a viewer's lists show: visible and in their scope. */
+export function libraryMovieFilter(access) {
+  return both(visibleMovieFilter(), scopeMovieFilter(access))
+}
+
+/** The shows a viewer's lists show. */
+export function libraryShowFilter(access) {
+  return both(visibleShowFilter(), scopeShowFilter(access))
+}
+
+/** The episodes a viewer's lists show: visible, and of a show in their scope. */
+export function libraryEpisodeFilter(access) {
+  return both(visibleEpisodeFilter(), scopeEpisodeFilter(access))
+}

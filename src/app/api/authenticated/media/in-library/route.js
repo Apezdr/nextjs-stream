@@ -1,4 +1,5 @@
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { LIBRARY_LOOKUP_MAX, findLibraryTitlesByTmdbId } from '@src/utils/media/libraryByTmdbId'
 
 const json = (body, status = 200) =>
@@ -38,7 +39,7 @@ export const POST = async (req) => {
   if (items.length === 0) return json({ items: [] })
 
   try {
-    return json({ items: await findLibraryTitlesByTmdbId(items) })
+    return json({ items: await findLibraryTitlesByTmdbId(items, await libraryAccessFor(authResult)) })
   } catch (error) {
     console.error('Error looking up library titles by TMDB id:', error)
     return json({ error: 'Internal Server Error' }, 500)

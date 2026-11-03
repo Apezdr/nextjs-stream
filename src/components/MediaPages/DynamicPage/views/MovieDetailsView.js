@@ -16,13 +16,13 @@ import { movieDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTa
 /**
  * Cached Movie Details - Inner component with caching
  */
-async function CachedMovieDetails({ media }) {
+async function CachedMovieDetails({ media, access }) {
   'use cache'
   cacheLife('mediaLists') // 2 minute stale, revalidates in background
   // The per-title tag by folder name, as the page and every invalidation key it
   cacheTag('media-library', 'movies', MEDIA_CACHE_TAGS.MOVIE_DETAILS, movieDetailsTag(media.originalTitle || media.title))
   
-  return <MovieDetailsComponent media={media} />
+  return <MovieDetailsComponent media={media} access={access} />
 }
 
 /**
@@ -30,12 +30,13 @@ async function CachedMovieDetails({ media }) {
  *
  * @param {Object} props
  * @param {Object} props.media - Movie media object
+ * @param {Object} props.access - The viewer's LibraryAccess (the collection strip is scoped by it)
  */
-export default function MovieDetailsView({ media }) {
+export default function MovieDetailsView({ media, access }) {
   return (
     <Suspense fallback={<MoviePageSkeleton />}>
       <div className="pt-16 w-full">
-        <CachedMovieDetails media={media} />
+        <CachedMovieDetails media={media} access={access} />
       </div>
     </Suspense>
   )

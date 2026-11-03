@@ -1,4 +1,5 @@
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { getServer, multiServerHandler, nodeJSURL } from '@src/utils/config'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 
@@ -24,7 +25,9 @@ export const GET = async (req) => {
 
   try {
     // Use the getFlatRequestedMedia function to fetch media from flat database structure
+    // A title outside the caller's scope is not found, like a missing one
     const media = await getFlatRequestedMedia({
+      access: await libraryAccessFor(authResult),
       type: type,
       title: decodeURIComponent(name),
       season: season,

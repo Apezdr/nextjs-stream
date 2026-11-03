@@ -1,4 +1,5 @@
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import {
   getFlatAvailableMoviesCount,
   getFlatAvailableTVShowsCount
@@ -30,9 +31,11 @@ export async function GET(req) {
     }
     
     // Default behavior - get counts and durations in parallel
+    // Counts of the caller's part of the library
+    const access = await libraryAccessFor(authResult)
     const [movieData, tvData] = await Promise.all([
-      getFlatAvailableMoviesCount(),
-      getFlatAvailableTVShowsCount()
+      getFlatAvailableMoviesCount(access),
+      getFlatAvailableTVShowsCount(access)
     ])
     
     // Calculate hours from milliseconds

@@ -14,10 +14,13 @@ import { durationMsForItem } from '@src/utils/watchHistory/progress'
 import { episodeCardImage } from '@src/utils/media/episodeCardImage'
 import { resolveEpisodeCredits, resolveTitleCredits } from '@src/utils/credits/resolve'
 import {
-  visibleMovieFilter,
-  visibleEpisodeFilter,
-  visibleShowFilter,
+  libraryMovieFilter,
+  libraryEpisodeFilter,
+  libraryShowFilter,
+  scopeMovieFilter,
+  scopeShowFilter,
 } from '@src/utils/mediaVisibility'
+import { assertLibraryAccess, scopeMatcher } from '@src/lib/roles/libraryScope'
 
 /**
  * Projection profiles for different use cases to optimize data transfer
@@ -343,7 +346,7 @@ function isDurableMediaId(id) {
  * @param {number} [page=1] - The page number for pagination (1-based).
  * @param {number} [limit=0] - The number of items per page.
  * @param {object} [customProjection={}] - Optional custom projection object to merge with default.
- * @param {object} [options={}] - Optional settings. `options.skip` overrides page-based skip with an absolute document offset (used for windowed fetches spanning page boundaries).
+ * @param {object} options - `options.access`: the viewer's LibraryAccess (required). `options.skip` overrides page-based skip with an absolute document offset (used for windowed fetches spanning page boundaries).
  * @returns {Promise} Resolves to an array of poster objects or the count of records.
  */
 export async function getFlatPosters(
@@ -352,8 +355,9 @@ export async function getFlatPosters(
   page = 1,
   limit = 15,
   customProjection = {},
-  options = {}
+  options
 ) {
+  assertLibraryAccess(options?.access)
   const client = await clientPromise
   const collection = type === 'movie' ? 'FlatMovies' : 'FlatTVShows'
 
@@ -377,9 +381,10 @@ export async function getFlatPosters(
   // Merge default projection with custom projection
   const finalProjection = { ...defaultProjection, ...customProjection }
 
-  // Web-visibility fragment per collection; count and list must stay in lockstep
+  // Visible and in the viewer's scope; count and list must stay in lockstep
   // or pagination shows phantom pages.
-  const visibilityFilter = type === 'movie' ? visibleMovieFilter() : visibleShowFilter()
+  const visibilityFilter =
+    type === 'movie' ? libraryMovieFilter(options.access) : libraryShowFilter(options.access)
 
   if (countOnly) {
     return await client.db('Media').collection(collection).countDocuments(visibilityFilter)
@@ -525,9 +530,11 @@ export async function addCustomUrlToFlatMedia(mediaArray, type, preserveAddition
  * @param {boolean} [params.shouldExposeAdditionalData=false] - Whether to include additional fields for TV device mode.
  * @param {object|null} [params.projection=null] - Optional custom projection to override defaults.
  * @param {object} [params.contextHints={}] - Optional context hints for projection selection.
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} params.access - The viewer's library access: titles outside it are left out.
  * @returns {Promise<Array|number>} The recently watched media details or the document count.
  */
 export async function getFlatRecentlyWatchedForUser({
+  access,
   client = null,
   userId,
   page = 0,
@@ -538,6 +545,7 @@ export async function getFlatRecentlyWatchedForUser({
   projection = null,
   contextHints = {},
 }) {
+  assertLibraryAccess(access)
   try {
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatRecentlyWatchedForUser:total')
@@ -753,11 +761,12 @@ export async function getFlatRecentlyWatchedForUser({
                         : []),
                     ],
                   },
-                  visibleMovieFilter(),
+                  libraryMovieFilter(access),
                 ],
               },
-              // Match YouTube trailer URLs stored on the movie metadata
-              { 'metadata.trailer_url': { $in: videoIds } },
+              // Match YouTube trailer URLs stored on the movie metadata (in
+              // the viewer's scope, like every arm)
+              { 'metadata.trailer_url': { $in: videoIds }, ...scopeMovieFilter(access) },
             ],
           },
           { projection: movieProjection }
@@ -779,7 +788,7 @@ export async function getFlatRecentlyWatchedForUser({
                     : []),
                 ],
               },
-              visibleEpisodeFilter(),
+              libraryEpisodeFilter(access),
             ],
           },
           { projection: episodeProjection }
@@ -800,7 +809,7 @@ export async function getFlatRecentlyWatchedForUser({
                       episodeNumber: lookup.episodeNumber,
                     })),
                   },
-                  visibleEpisodeFilter(),
+                  libraryEpisodeFilter(access),
                 ],
               },
               { projection: episodeProjection }
@@ -813,6 +822,7 @@ export async function getFlatRecentlyWatchedForUser({
         .find(
           {
             'metadata.trailer_url': { $in: videoIds },
+            ...scopeShowFilter(access),
           },
           { projection: showProjection }
         )
@@ -823,7 +833,7 @@ export async function getFlatRecentlyWatchedForUser({
             .db('Media')
             .collection('FlatMovies')
             .find(
-              { _id: { $in: movieMediaIds }, ...visibleMovieFilter() },
+              { _id: { $in: movieMediaIds }, ...libraryMovieFilter(access) },
               { projection: movieProjection }
             )
             .toArray()
@@ -833,7 +843,7 @@ export async function getFlatRecentlyWatchedForUser({
         ? _client
             .db('Media')
             .collection('FlatTVShows')
-            .find({ _id: { $in: tvShowMediaIds } }, { projection: showProjection })
+            .find({ _id: { $in: tvShowMediaIds }, ...scopeShowFilter(access) }, { projection: showProjection })
             .toArray()
         : [],
     ])
@@ -1682,9 +1692,11 @@ export async function processFlatWatchedDetails(
  * @param {string} [params.projection=null] - Projection profile name ('admin-overview', 'tv-device', 'standard', 'horizontal-list', 'full')
  * @param {Object} [params.contextHints={}] - Context hints for auto-selecting projection profile
  * @param {Array<'movie'|'tv'>} [params.types] - Which kinds to include (search's Movies/TV filter); both by default
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} params.access - The viewer's library access.
  * @returns {Promise<Array|number>} Recently added media or count.
  */
 export async function getFlatRecentlyAddedMedia({
+  access,
   page = 0,
   limit = 15,
   offset = null,
@@ -1694,6 +1706,7 @@ export async function getFlatRecentlyAddedMedia({
   contextHints = {},
   types = ['movie', 'tv'],
 }) {
+  assertLibraryAccess(access)
   const includeMovies = types.includes('movie')
   const includeShows = types.includes('tv')
   try {
@@ -1730,7 +1743,7 @@ export async function getFlatRecentlyAddedMedia({
         includeMovies
           ? db
               .collection('FlatMovies')
-              .countDocuments(visibleMovieFilter(), { limit: MAX_RECENTLY_ADDED_ITEMS / 2 })
+              .countDocuments(libraryMovieFilter(access), { limit: MAX_RECENTLY_ADDED_ITEMS / 2 })
           : 0,
 
         // Unique TV shows among the most recently-modified episodes, capped at half
@@ -1740,7 +1753,7 @@ export async function getFlatRecentlyAddedMedia({
           ? db
               .collection('FlatEpisodes')
               .aggregate([
-                { $match: visibleEpisodeFilter() },
+                { $match: libraryEpisodeFilter(access) },
                 { $sort: RECENTLY_ADDED_SORT },
                 { $limit: 1000 }, // Look at the 1000 most recently added episodes
                 { $group: { _id: '$showId' } },
@@ -1817,7 +1830,7 @@ export async function getFlatRecentlyAddedMedia({
     const movies = includeMovies
       ? await db
           .collection('FlatMovies')
-          .find(visibleMovieFilter(), { projection: movieProjectionFields })
+          .find(libraryMovieFilter(access), { projection: movieProjectionFields })
           .sort(RECENTLY_ADDED_SORT)
           .limit(poolSize)
           .toArray()
@@ -1837,7 +1850,7 @@ export async function getFlatRecentlyAddedMedia({
       .collection('FlatEpisodes')
       .aggregate([
         // Visibility first so the pool cap and grouping aren't biased by hidden rows
-        { $match: visibleEpisodeFilter() },
+        { $match: libraryEpisodeFilter(access) },
         { $sort: RECENTLY_ADDED_SORT },
         { $limit: poolSize * 2 }, // Get more than needed to account for grouping
         {
@@ -1982,14 +1995,16 @@ const BANNER_FIELDS = {
  * movie has none. Throws when the query fails. Callers go through the cached
  * fetchFlatBannerMedia (src/utils/cache/bannerData.js), not this.
  *
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access.
  * @returns {Promise<Array<Object>>}
  */
-export async function queryBannerMovies() {
+export async function queryBannerMovies(access) {
+  assertLibraryAccess(access)
   const client = await clientPromise
   const media = await client
     .db('Media')
     .collection('FlatMovies') // Use FlatMovies collection
-    .find(visibleMovieFilter(), { projection: BANNER_FIELDS })
+    .find(libraryMovieFilter(access), { projection: BANNER_FIELDS })
     .sort({ 'metadata.release_date': -1 }) // Sort by release date descending
     .limit(8) // Limit to 8 movies
     .toArray()
@@ -2012,9 +2027,11 @@ export async function queryBannerMovies() {
  * Fetch a random banner media from flat database structure.
  * Uses the "bias method" with indexed skip/limit instead of $sample to avoid COLLSCAN.
  *
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access.
  * @returns {Promise<Object>} A randomly selected banner media.
  */
-export const fetchFlatRandomBannerMedia = async () => {
+export const fetchFlatRandomBannerMedia = async (access) => {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise
     const db = client.db('Media')
@@ -2033,7 +2050,7 @@ export const fetchFlatRandomBannerMedia = async () => {
 
     // Web-visibility fragment per collection; count and find must use the same
     // filter or the random offset can point past the filtered set.
-    const visibilityFilter = type === 'movie' ? visibleMovieFilter() : visibleShowFilter()
+    const visibilityFilter = type === 'movie' ? libraryMovieFilter(access) : libraryShowFilter(access)
 
     // Get the total count of documents (use an indexed field for efficiency)
     const totalCount = await collection.countDocuments(visibilityFilter)
@@ -2115,15 +2132,19 @@ export function withDisplayCredits(result, resolved) {
  * @param {string} [params.id] - The ID of the media (alternative to title).
  * @param {string} [params.season] - The season number (for TV shows).
  * @param {string} [params.episode] - The episode number (for TV shows with season).
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} params.access - The viewer's library access:
+ *   a title outside it is not found, exactly like a missing one.
  * @returns {Promise<Object|null>} The requested media or null if not found.
  */
 export async function getFlatRequestedMedia({
+  access,
   type,
   title = null,
   season = null,
   episode = null,
   id = null,
 }) {
+  const inScope = scopeMatcher(access)
   try {
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatRequestedMedia:total')
@@ -2168,7 +2189,7 @@ export async function getFlatRequestedMedia({
         }
       }
 
-      if (!movie) {
+      if (!movie || !inScope.movie(movie)) {
         if (Boolean(process.env.DEBUG) == true) {
           console.timeEnd('getFlatRequestedMedia:fetchMovie')
           console.timeEnd('getFlatRequestedMedia:total')
@@ -2225,7 +2246,8 @@ export async function getFlatRequestedMedia({
         tvShow = await db.collection('FlatTVShows').findOne({ _id: new ObjectId(id) })
       }
 
-      if (!tvShow) {
+      // Its seasons and episodes follow the show
+      if (!tvShow || !inScope.show(tvShow)) {
         if (Boolean(process.env.DEBUG) == true) {
           console.timeEnd('getFlatRequestedMedia:fetchTV')
           console.timeEnd('getFlatRequestedMedia:total')
@@ -2382,7 +2404,7 @@ export async function getFlatRequestedMedia({
                 showId: tvShow._id,
                 seasonId: seasonData._id,
                 episodeNumber: { $gt: episodeNumber },
-                ...visibleEpisodeFilter(),
+                ...libraryEpisodeFilter(access),
               },
               {
                 sort: { episodeNumber: 1 },
@@ -2405,7 +2427,7 @@ export async function getFlatRequestedMedia({
                 showId: tvShow._id,
                 seasonId: seasonData._id,
                 episodeNumber: { $lt: episodeNumber },
-                ...visibleEpisodeFilter(),
+                ...libraryEpisodeFilter(access),
               },
               {
                 sort: { episodeNumber: -1 },
@@ -2414,7 +2436,7 @@ export async function getFlatRequestedMedia({
             ),
             db.collection('FlatEpisodes').countDocuments({
               seasonId: seasonData._id,
-              ...visibleEpisodeFilter(),
+              ...libraryEpisodeFilter(access),
             }),
           ])
 
@@ -2564,37 +2586,17 @@ export async function getFlatRequestedMedia({
   }
 }
 
-// Helper function to get trailer media
-export async function getTrailerMedia(type, title) {
-  // Get the media and extract trailer information
-  const media = await getFlatRequestedMedia({
-    type: type,
-    title: decodeURIComponent(title),
-  })
-
-  if (media && media.metadata?.trailer_url) {
-    // Create a new object with trailer information
-    // Don't override normalizedVideoId - let it be generated from the actual videoURL (YouTube)
-    // so each different trailer gets a unique WatchHistory entry
-    return {
-      ...media,
-      videoURL: media.metadata.trailer_url,
-      isTrailer: true,
-    }
-  }
-
-  return null
-}
-
 // Function to get the count and total duration of available movies in the flat database
-export async function getFlatAvailableMoviesCount() {
+/** @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access. */
+export async function getFlatAvailableMoviesCount(access) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise
     const result = await client
       .db('Media')
       .collection('FlatMovies')
       .aggregate([
-        { $match: visibleMovieFilter() },
+        { $match: libraryMovieFilter(access) },
         {
           $group: {
             _id: null,
@@ -2625,9 +2627,11 @@ export async function getFlatAvailableMoviesCount() {
  * @param {boolean} [options.sort=true] - Whether to sort by last air date
  * @returns {Promise<Array>} Array of TV shows with fields needed by the TVList component
  */
-export async function getFlatTVList(options = {}) {
-  // `order`: the list's order, applied before paging (mediaListUtils/listOrder.js)
-  const { page = 0, limit = 0, order = null, skip = null } = options
+export async function getFlatTVList(options) {
+  // `order`: the list's order, applied before paging (mediaListUtils/listOrder.js);
+  // `access`: the viewer's LibraryAccess (required)
+  const { access, page = 0, limit = 0, order = null, skip = null } = options
+  assertLibraryAccess(access)
 
   try {
     const client = await clientPromise
@@ -2660,7 +2664,7 @@ export async function getFlatTVList(options = {}) {
     const tvShows = await client
       .db('Media')
       .collection('FlatTVShows')
-      .find(visibleShowFilter(), queryOptions)
+      .find(libraryShowFilter(access), queryOptions)
       .toArray()
 
     // Batch-fetch seasons and episodes for the whole page in two queries
@@ -2681,7 +2685,7 @@ export async function getFlatTVList(options = {}) {
           .db('Media')
           .collection('FlatEpisodes')
           .find(
-            { seasonId: { $in: seasonIds }, ...visibleEpisodeFilter() },
+            { seasonId: { $in: seasonIds }, ...libraryEpisodeFilter(access) },
             {
               projection: {
                 _id: 1,
@@ -2764,9 +2768,11 @@ export async function getFlatTVList(options = {}) {
 /**
  * Get the count and total duration of available TV episodes in the flat database.
  *
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access.
  * @returns {Promise<Object>} Object containing count and totalDuration.
  */
-export async function getFlatAvailableTVShowsCount() {
+export async function getFlatAvailableTVShowsCount(access) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise
 
@@ -2775,7 +2781,7 @@ export async function getFlatAvailableTVShowsCount() {
       .db('Media')
       .collection('FlatEpisodes')
       .aggregate([
-        { $match: visibleEpisodeFilter() },
+        { $match: libraryEpisodeFilter(access) },
         {
           $group: {
             _id: null,
@@ -2790,7 +2796,7 @@ export async function getFlatAvailableTVShowsCount() {
     const showCount = await client
       .db('Media')
       .collection('FlatTVShows')
-      .countDocuments(visibleShowFilter())
+      .countDocuments(libraryShowFilter(access))
 
     return {
       count: showCount,
@@ -2949,15 +2955,17 @@ export async function listViewersByNormalizedId(normalizedVideoId, mediaId = nul
  * counted (`mediaVisibility.js`).
  *
  * @param {string|ObjectId} showId - the FlatTVShows _id
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access.
  * @returns {Promise<Map<number, number>>} seasonNumber → visible episode count
  */
-export async function getVisibleEpisodeCountBySeason(showId) {
+export async function getVisibleEpisodeCountBySeason(showId, access) {
+  assertLibraryAccess(access)
   const client = await clientPromise
   const db = client.db('Media')
   const rows = await db
     .collection('FlatEpisodes')
     .aggregate([
-      { $match: { showId: new ObjectId(showId), ...visibleEpisodeFilter() } },
+      { $match: { showId: new ObjectId(showId), ...libraryEpisodeFilter(access) } },
       { $group: { _id: '$seasonNumber', n: { $sum: 1 } } },
     ])
     .toArray()
@@ -2971,9 +2979,11 @@ export async function getVisibleEpisodeCountBySeason(showId) {
  * @param {Object} params - Parameters for fetching the season.
  * @param {string} params.showTitle - The title of the TV show. (not originalTitle)
  * @param {number} params.seasonNumber - The season number.
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} params.access - The viewer's library access.
  * @returns {Promise<Object|null>} The season with its episodes or null if not found.
  */
-export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
+export async function getFlatTVSeasonWithEpisodes({ access, showTitle, seasonNumber }) {
+  assertLibraryAccess(access)
   try {
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatTVSeasonWithEpisodes:total')
@@ -2984,6 +2994,7 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
 
     // First, get the TV show
     const tvShow = await getFlatRequestedMedia({
+      access,
       type: 'tv',
       title: showTitle,
     })
@@ -3009,6 +3020,7 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
     // not the display title (two shows can share a display title and the title
     // fallback would resolve an arbitrary one).
     const season = await getFlatRequestedMedia({
+      access,
       type: 'tv',
       title: tvShow.originalTitle || tvShow.title,
       season: `Season ${seasonNumber}`,
@@ -3029,11 +3041,11 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
         .collection('FlatEpisodes')
         .find({
           seasonId: new ObjectId(matchingSeason._id),
-          ...visibleEpisodeFilter(),
+          ...libraryEpisodeFilter(access),
         })
         .sort({ episodeNumber: 1 })
         .toArray(),
-      getVisibleEpisodeCountBySeason(tvShow._id),
+      getVisibleEpisodeCountBySeason(tvShow._id, access),
     ])
 
     if (Boolean(process.env.DEBUG) == true) {
@@ -3108,10 +3120,12 @@ export async function getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber }) {
  * explain on the largest show: no SORT stage, keys examined = docs returned).
  *
  * @param {string|ObjectId} showId - the FlatTVShows _id
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access.
  * @returns {Promise<Array<{ _id: string, seasonId: string, seasonNumber: number, episodeNumber: number, title: string|null, mediaId: string|null, videoURL: string|null, jitUrl: string|null, normalizedVideoId: string|null, duration: number|null, dimensions: string|null, hdr: string|null, metadata: { runtime?: number, name?: string } }>>} empty for a show without visible episodes
  * @throws {Error} when `showId` is not a valid ObjectId
  */
-export async function getFlatShowEpisodesForProgress(showId) {
+export async function getFlatShowEpisodesForProgress(showId, access) {
+  assertLibraryAccess(access)
   const id =
     showId instanceof ObjectId
       ? showId
@@ -3128,7 +3142,7 @@ export async function getFlatShowEpisodesForProgress(showId) {
   const docs = await db
     .collection('FlatEpisodes')
     .find(
-      { showId: id, ...visibleEpisodeFilter() },
+      { showId: id, ...libraryEpisodeFilter(access) },
       {
         projection: {
           _id: 1,
@@ -3183,13 +3197,16 @@ export async function getFlatShowEpisodesForProgress(showId) {
  * @param {string} [params.type='all'] - Media type filter: 'movie', 'tv', 'all'.
  * @param {boolean} [params.includeCounts=true] - Whether to include content counts per genre.
  * @param {boolean} [params.countOnly=false] - Whether to only return the total genre count.
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} params.access - The viewer's library access.
  * @returns {Promise<Array|Object|number>} Available genres with metadata or count.
  */
 export async function getFlatAvailableGenres({
+  access,
   type = 'all',
   includeCounts = true,
   countOnly = false,
-} = {}) {
+}) {
+  assertLibraryAccess(access)
   try {
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatAvailableGenres:total')
@@ -3213,7 +3230,7 @@ export async function getFlatAvailableGenres({
     // Web-visibility fragment per collection (shows carry none of the movie/episode
     // signals, so they get the show-level fragment).
     const visibilityFilterFor = (collection) =>
-      collection.type === 'movie' ? visibleMovieFilter() : visibleShowFilter()
+      collection.type === 'movie' ? libraryMovieFilter(access) : libraryShowFilter(access)
 
     if (countOnly) {
       // Get unique genre count across all specified collections
@@ -3334,12 +3351,12 @@ export async function getFlatAvailableGenres({
     // Same visibility fragments as the genre pipelines above, so the summary
     // counts agree with the per-genre counts in this response.
     if (type === 'all' || type === 'movie') {
-      mediaTypeCounts.movies = await db.collection('FlatMovies').countDocuments(visibleMovieFilter())
+      mediaTypeCounts.movies = await db.collection('FlatMovies').countDocuments(libraryMovieFilter(access))
     }
     if (type === 'all' || type === 'tv') {
       mediaTypeCounts.tvShows = await db
         .collection('FlatTVShows')
-        .countDocuments(visibleShowFilter())
+        .countDocuments(libraryShowFilter(access))
     }
     mediaTypeCounts.total = mediaTypeCounts.movies + mediaTypeCounts.tvShows
 
@@ -3377,9 +3394,11 @@ export async function getFlatAvailableGenres({
  * @param {boolean} [params.shouldExposeAdditionalData=false] - Whether to expose additional data for TV devices.
  * @param {string} [params.userId] - User ID for TV show episode data.
  * @param {boolean} [params.countOnly=false] - Whether to only return the count of matching items.
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} params.access - The viewer's library access.
  * @returns {Promise<Array|number>} Filtered content or count.
  */
 export async function getFlatContentByGenres({
+  access,
   genres,
   type = 'all',
   page = 0,
@@ -3389,7 +3408,8 @@ export async function getFlatContentByGenres({
   shouldExposeAdditionalData = false,
   userId = null,
   countOnly = false,
-} = {}) {
+}) {
+  assertLibraryAccess(access)
   try {
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatContentByGenres:total')
@@ -3414,8 +3434,8 @@ export async function getFlatContentByGenres({
     // Per-collection web-visibility composed with the genre filter via $and (the
     // fragments carry a top-level $or). Count and list branches must use the
     // identical query or clients paginate phantom pages.
-    const movieGenreQuery = { $and: [genreQuery, visibleMovieFilter()] }
-    const tvGenreQuery = { $and: [genreQuery, visibleShowFilter()] }
+    const movieGenreQuery = { $and: [genreQuery, libraryMovieFilter(access)] }
+    const tvGenreQuery = { $and: [genreQuery, libraryShowFilter(access)] }
 
     if (countOnly) {
       let totalCount = 0
@@ -3621,9 +3641,11 @@ export async function getFlatContentByGenres({
  * @param {Object} params - Parameters for the function.
  * @param {string} [params.type='all'] - Media type filter: 'movie', 'tv', 'all'.
  * @param {Array<string>} [params.genres] - Specific genres to get statistics for.
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} params.access - The viewer's library access.
  * @returns {Promise<Object>} Genre statistics and metadata.
  */
-export async function getFlatGenreStatistics({ type = 'all', genres = null } = {}) {
+export async function getFlatGenreStatistics({ access, type = 'all', genres = null }) {
+  assertLibraryAccess(access)
   try {
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatGenreStatistics:total')
@@ -3634,7 +3656,7 @@ export async function getFlatGenreStatistics({ type = 'all', genres = null } = {
     const db = client.db('Media')
 
     // Get available genres with counts
-    const genreData = await getFlatAvailableGenres({ type, includeCounts: true })
+    const genreData = await getFlatAvailableGenres({ access, type, includeCounts: true })
 
     // Filter to specific genres if requested
     let filteredGenres = genreData.availableGenres
@@ -3677,9 +3699,11 @@ export async function getFlatGenreStatistics({ type = 'all', genres = null } = {
  * Get movies that belong to a specific TMDB collection from the flat database.
  *
  * @param {number} collectionId - The TMDB collection ID
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access.
  * @returns {Promise<Array>} Array of movies in the collection
  */
-export async function getFlatMoviesByCollectionId(collectionId) {
+export async function getFlatMoviesByCollectionId(collectionId, access) {
+  assertLibraryAccess(access)
   try {
     if (Boolean(process.env.DEBUG) == true) {
       console.time('getFlatMoviesByCollectionId:total')
@@ -3695,7 +3719,7 @@ export async function getFlatMoviesByCollectionId(collectionId) {
       .collection('FlatMovies')
       .find({
         'metadata.belongs_to_collection.id': parseInt(collectionId),
-        ...visibleMovieFilter(),
+        ...libraryMovieFilter(access),
       })
       .toArray()
 

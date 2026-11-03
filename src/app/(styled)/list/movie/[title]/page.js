@@ -8,9 +8,9 @@ import {
 } from '@src/components/MediaPages/DynamicPage'
 import MoviePageSkeleton from '@src/components/MediaPages/details/MoviePageSkeleton'
 import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
-import { fetchTrailerMedia } from '@src/utils/media/mediaFetcher'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
 import { movieDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTags'
+import { pageLibraryAccess } from '@src/lib/roles/session'
 
 function buildParsedParams(title) {
   return {
@@ -32,9 +32,9 @@ function buildParsedParams(title) {
   }
 }
 
-async function fetchMovie(title) {
+async function fetchMovie(title, access) {
   const parsedParams = buildParsedParams(title)
-  const result = await getCachedMediaWithRedirect(parsedParams)
+  const result = await getCachedMediaWithRedirect(parsedParams, access)
   return { parsedParams, result }
 }
 
@@ -42,10 +42,11 @@ async function fetchMovie(title) {
  * Cached subtree — owns the data fetch and the rendered output. The page
  * renders it behind SessionGate, inside a Suspense boundary whose fallback is
  * the page skeleton, so the skeleton paints at once (it is the route's
- * prerendered shell) while this resolves, or returns instantly when warm. Cache is keyed by `{ title, isLimitedAccess }`, so non-limited
- * users share a single cache entry per movie.
+ * prerendered shell) while this resolves, or returns instantly when warm. Cache is keyed by
+ * `{ title, access }`: viewers with the same library scope share one entry per movie,
+ * and a movie outside the scope renders as not found.
  */
-async function MovieDetailContent({ title, isLimitedAccess }) {
+async function MovieDetailContent({ title, access }) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag(
@@ -56,14 +57,7 @@ async function MovieDetailContent({ title, isLimitedAccess }) {
   )
 
   const parsedParams = buildParsedParams(title)
-  let result = await getCachedMediaWithRedirect(parsedParams)
-
-  if (isLimitedAccess && parsedParams.hasTitle) {
-    const trailerMedia = await fetchTrailerMedia(parsedParams.mediaType, parsedParams.mediaTitle)
-    if (trailerMedia) {
-      result = { media: trailerMedia, redirectUrl: null, notFoundType: null }
-    }
-  }
+  const result = await getCachedMediaWithRedirect(parsedParams, access)
 
   if (result.redirectUrl) {
     redirect(result.redirectUrl)
@@ -74,16 +68,17 @@ async function MovieDetailContent({ title, isLimitedAccess }) {
       <MediaNotFound
         notFoundType={result.notFoundType}
         mediaTitle={parsedParams.mediaTitle}
+        access={access}
       />
     )
   }
 
-  return <MovieDetailsView media={result.media} />
+  return <MovieDetailsView media={result.media} access={access} />
 }
 
 export async function generateMetadata({ params }, parent) {
   const { title } = await params
-  const { parsedParams, result } = await fetchMovie(title)
+  const { parsedParams, result } = await fetchMovie(title, await pageLibraryAccess())
   if (result.redirectUrl) redirect(result.redirectUrl)
   return buildMediaMetadata(result.media, parsedParams, await parent)
 }
@@ -97,7 +92,7 @@ export default function MovieDetailPage({ params }) {
     <Suspense fallback={<MoviePageSkeleton />}>
       <SessionGate params={params} callbackUrl={({ title }) => `/list/movie/${title}`}>
         {({ session, params: { title } }) => (
-          <MovieDetailContent title={title} isLimitedAccess={!!session.user.limitedAccess} />
+          <MovieDetailContent title={title} access={session.access} />
         )}
       </SessionGate>
     </Suspense>

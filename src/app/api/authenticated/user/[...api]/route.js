@@ -1,18 +1,25 @@
 import { getSession } from '@src/lib/cachedAuth'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { isValidWebhook, signedInGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
+import { userQueries } from '@src/lib/userQueries'
 
-async function getUserID(request, isWebhook) {
+// Who the data is for: the user a file server names with its webhook ID, or
+// the signed-in user. Their roles decide their library scope.
+async function getViewer(request, isWebhook) {
   if (isWebhook) {
-    return request.headers.get('X-Webhook-User-ID')
-  } else {
-    const session = await getSession()
-    return session?.user?.id
+    const id = request.headers.get('X-Webhook-User-ID')
+    if (!id) return null
+    const user = await userQueries.findById(id, { _id: 1, role: 1, roles: 1 })
+    return user ? { id, role: user.role, roles: user.roles } : null
   }
+  const session = await getSession()
+  return session?.user ?? null
 }
 
 async function handleRequest(request, params, isWebhook) {
-  const userID = await getUserID(request, isWebhook)
+  const viewer = await getViewer(request, isWebhook)
+  const userID = viewer?.id
 
   if (!userID) {
     return new Response(JSON.stringify({ error: 'User ID not found' }), {
@@ -31,7 +38,9 @@ async function handleRequest(request, params, isWebhook) {
     const limit = request?.query?.limit || 15
     // Flat collections replace the deprecated nested Movies/TV read path.
     // Same sanitizeRecord output shape (or null when no history) as before.
+    // Only titles in the user's library scope
     const recentlyWatched = await getFlatRecentlyWatchedForUser({
+      access: await libraryAccessFor(viewer),
       userId: userID,
       page: page,
       limit: limit,

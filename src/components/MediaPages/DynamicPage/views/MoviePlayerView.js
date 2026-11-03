@@ -22,9 +22,8 @@ import { getResumePositionForMedia } from '@src/utils/watchHistoryServerUtils'
  * @param {Object} props.session - NextAuth session
  * @param {Object} props.searchParams - URL search parameters (includes start time)
  * @param {Object} props.parsedParams - Parsed URL parameters
- * @param {boolean} props.hasFullAccess - Whether user has full access (approved and not limited)
  */
-export default async function MoviePlayerView({ media, session, searchParams, parsedParams, hasFullAccess }) {
+export default async function MoviePlayerView({ media, session, searchParams, parsedParams }) {
   // Validate video URL
   const isValidVideoURL = media?.videoURL && await validateVideoURL(media.videoURL)
   
@@ -52,7 +51,6 @@ export default async function MoviePlayerView({ media, session, searchParams, pa
               session={session}
               isValidVideoURL={isValidVideoURL}
               savedPlaybackTime={savedPlaybackTime}
-              hasFullAccess={hasFullAccess}
             />
           </div>
         </PlaybackCoordinatorProvider>

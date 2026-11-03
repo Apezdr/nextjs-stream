@@ -16,13 +16,13 @@ import { redirect } from 'next/navigation'
 import { getSession } from '@src/lib/cachedAuth'
 import { recordKeyCaller } from '@src/lib/requestCaller'
 import { validateWebhookId } from '@src/utils/webhookServer'
-import { hasLimitedAccess, isAdminUser, isAwaitingApproval, type AccessUser } from './rules'
+import { isAdminUser, isAwaitingApproval, type AccessUser } from './rules'
 
 /** A signed-in user as better-auth's session returns it. */
 export type SessionUser = AccessUser & { id: string; [field: string]: any }
 
 /** Why a gate turned someone away. */
-type Refusal = 'signed-out' | 'approval-pending' | 'limited-access' | 'not-admin'
+type Refusal = 'signed-out' | 'approval-pending' | 'not-admin'
 
 export interface Gate {
   route(): Promise<SessionUser | Response>
@@ -48,8 +48,6 @@ const ROUTE_REFUSALS: Record<Refusal, () => Response> = {
       message: 'Account approval required.',
       code: 'APPROVAL_PENDING',
     }),
-  'limited-access': () =>
-    jsonResponse(403, { success: false, error: 'Unauthorized', message: 'Full access required.', code: 'LIMITED_ACCESS' }),
   'not-admin': () => jsonResponse(401, { success: false, error: 'Unauthorized', message: 'Admin access required.' }),
 }
 
@@ -70,7 +68,7 @@ function redirectAway(refusal: Refusal, callbackUrl?: string): never {
  */
 function refuseAction(refusal: Refusal, callbackUrl?: string): never {
   if (refusal === 'signed-out' || refusal === 'approval-pending') redirectAway(refusal, callbackUrl)
-  throw new Error(refusal === 'not-admin' ? 'Admin access required.' : 'Full access required.')
+  throw new Error('Admin access required.')
 }
 
 /** A gate from its rule: why the user (null when signed out) is refused, or null to let them in. */
@@ -109,13 +107,6 @@ export const signedInGate = defineGate((user) => (user ? null : 'signed-out'))
 export const approvedGate = defineGate((user) => {
   if (!user) return 'signed-out'
   return isAwaitingApproval(user) ? 'approval-pending' : null
-})
-
-/** Signed in, approved, and not held to limited access. */
-export const fullAccessGate = defineGate((user) => {
-  if (!user) return 'signed-out'
-  if (isAwaitingApproval(user)) return 'approval-pending'
-  return hasLimitedAccess(user) ? 'limited-access' : null
 })
 
 /** An admin. Signed out counts as not an admin: admin routes have always answered both alike. */

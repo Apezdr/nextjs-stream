@@ -36,7 +36,6 @@ export async function GET(req: Request) {
         name: user.name,
         image: user.image,
         approved: user.approved,
-        limitedAccess: user.limitedAccess,
         role: user.role,
       },
     })

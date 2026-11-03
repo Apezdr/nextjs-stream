@@ -3,7 +3,8 @@
  *
  * The role store: every grant is checked by its own capability on the way in
  * and on the way out, names are unique, a role someone holds can't be
- * deleted, and a user can only be given roles that exist.
+ * deleted, and a user can only be given roles that exist. A role may carry a
+ * library scope instead of (or beside) its grants.
  */
 import { ObjectId } from 'mongodb'
 
@@ -36,14 +37,15 @@ beforeEach(() => {
 
 test('a role is saved with its grants checked by their capability', async () => {
   const role = await store.saveRole({ name: '  HD requester ', description: 'Friends', grants: { 'arr.request': REQUEST } })
-  expect(role).toEqual({ id: '64b7f0c2a1b2c3d4e5f60718', name: 'HD requester', description: 'Friends', grants: { 'arr.request': REQUEST } })
+  expect(role).toEqual({ id: '64b7f0c2a1b2c3d4e5f60718', name: 'HD requester', description: 'Friends', grants: { 'arr.request': REQUEST }, scope: null })
   expect(mockCollection.insertOne.mock.calls[0][0]).toMatchObject({ name: 'HD requester', grants: { 'arr.request': REQUEST } })
 })
 
 test.each([
   [{ name: '', grants: { 'arr.manage': {} } }, 'Give the role a name'],
   [{ name: 'x'.repeat(61), grants: { 'arr.manage': {} } }, 'Give the role a name'],
-  [{ name: 'Empty', grants: {} }, 'at least one capability'],
+  [{ name: 'Empty', grants: {} }, 'at least one capability, or limit its library'],
+  [{ name: 'Bad scope', grants: {}, scope: { movieRatingCap: 'TV-MA' } }, 'movie rating cap'],
   [{ name: 'Typo', grants: { 'arr.requests': {} } }, 'no capability called "arr.requests"'],
   [{ name: 'Bad', grants: { 'arr.request': { radarr: 'some' } } }, 'Radarr quality profiles'],
 ])('refused: %j', async (input, message) => {
@@ -96,4 +98,31 @@ test('a user can only be given roles that exist, each once', async () => {
     'One of those roles no longer exists.'
   )
   expect((await failure(store.setUserRoles('user-1', 'admin'))).message).toBe('Roles must be a list of role ids.')
+})
+
+test('a role may only limit the library: an empty scope, its holders seeing nothing yet', async () => {
+  const role = await store.saveRole({ name: 'Preview', grants: {}, scope: { titles: [] } })
+  expect(role.scope).toEqual({ movieRatingCap: null, tvRatingCap: null, titles: [] })
+  expect(mockCollection.insertOne.mock.calls[0][0]).toMatchObject({ grants: {}, scope: role.scope })
+})
+
+test('a scope is checked on the way in, and stored normalized', async () => {
+  const titles = [
+    { mediaType: 'tv', originalTitle: 'B', access: 'play' },
+    { mediaType: 'movie', originalTitle: 'A', access: 'play' },
+  ]
+  const role = await store.saveRole({ name: 'Kids', grants: { 'arr.manage': {} }, scope: { movieRatingCap: 'PG', titles } })
+  expect(role.scope).toEqual({ movieRatingCap: 'PG', tvRatingCap: null, titles: [titles[1], titles[0]] })
+  await store.saveRole({ id: '64b7f0c2a1b2c3d4e5f60718', name: 'Kids', grants: { 'arr.manage': {} }, scope: null })
+  expect(mockCollection.updateOne.mock.calls[0][1].$set.scope).toBeNull()
+})
+
+test('a stored scope that no longer parses holds nothing: a broken scope never opens the library', async () => {
+  mockRoles.push(
+    { _id: new ObjectId(), name: 'Broken', grants: {}, scope: { movieRatingCap: 'XXX' } },
+    { _id: new ObjectId(), name: 'Plain', grants: { 'arr.manage': {} } }
+  )
+  const [broken, plain] = await store.listRoles()
+  expect(broken.scope).toEqual({ movieRatingCap: null, tvRatingCap: null, titles: [] })
+  expect(plain.scope).toBeNull()
 })

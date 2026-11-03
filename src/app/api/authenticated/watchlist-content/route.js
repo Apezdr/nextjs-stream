@@ -2,6 +2,7 @@
 import { cache } from 'react'
 import { approvedGate } from '@src/lib/roles/gates'
 import { isAdminUser } from '@src/lib/roles/rules'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import {
   getUserWatchlist,
   getUserPlaylists,
@@ -81,6 +82,8 @@ export const GET = async (req) => {
   if (authResult instanceof Response) {
     return authResult // Stop execution if not authenticated
   }
+  // Every playlist item and count shows only the caller's library scope
+  const access = await libraryAccessFor(authResult)
 
   // Parse query parameters
   const { searchParams } = new URL(req.url)
@@ -150,6 +153,7 @@ export const GET = async (req) => {
             try {
               // Get total count
               const totalCount = await getUserWatchlist({
+                access,
                 playlistId: playlist.id,
                 countOnly: true,
                 userId: authResult?.id
@@ -157,6 +161,7 @@ export const GET = async (req) => {
 
               // Get available count (items in library)
               const availableCount = await getUserWatchlist({
+                access,
                 playlistId: playlist.id,
                 countOnly: true,
                 internalOnly: true,
@@ -165,6 +170,7 @@ export const GET = async (req) => {
 
               // Get counts by type
               const movieCount = await getUserWatchlist({
+                access,
                 playlistId: playlist.id,
                 mediaType: 'movie',
                 countOnly: true,
@@ -172,6 +178,7 @@ export const GET = async (req) => {
               })
 
               const tvCount = await getUserWatchlist({
+                access,
                 playlistId: playlist.id,
                 mediaType: 'tv',
                 countOnly: true,
@@ -310,6 +317,7 @@ export const GET = async (req) => {
 
         // Get main content items
         const contentResult = await getCachedWatchlistContent({
+          access,
           playlistId,
           page,
           limit,
@@ -322,6 +330,7 @@ export const GET = async (req) => {
         
         // Get total count for pagination
         const totalCount = await getUserWatchlist({
+          access,
           playlistId,
           mediaType,
           countOnly: true,
@@ -341,6 +350,7 @@ export const GET = async (req) => {
         const [prevPageResult, nextPageResult] = await Promise.all([
           currentPage > 0
             ? getCachedWatchlistContent({
+                access,
                 playlistId,
                 offset: currentPage * limit - 1,
                 limit: 1,
@@ -351,6 +361,7 @@ export const GET = async (req) => {
             : Promise.resolve(null),
           currentPage < totalPages - 1
             ? getCachedWatchlistContent({
+                access,
                 playlistId,
                 offset: (currentPage + 1) * limit,
                 limit: 1,
@@ -377,7 +388,7 @@ export const GET = async (req) => {
             items,
             playlistInfo,
             !shouldHideUnavailable,  // includeUnavailable (inverted)
-            { authHeaders, itemsArePreResolved: true }  // items are getUserWatchlist output
+            { access, authHeaders, itemsArePreResolved: true }  // items are getUserWatchlist output
           )
           
           // Apply TV device handling for episodes and movies
@@ -436,7 +447,7 @@ export const GET = async (req) => {
             prevPageResult,
             playlistInfo,
             !shouldHideUnavailable,
-            { authHeaders, itemsArePreResolved: true }
+            { access, authHeaders, itemsArePreResolved: true }
           )
           
           if (prevCardItems.length > 0) {
@@ -453,7 +464,7 @@ export const GET = async (req) => {
             nextPageResult,
             playlistInfo,
             !shouldHideUnavailable,
-            { authHeaders, itemsArePreResolved: true }
+            { access, authHeaders, itemsArePreResolved: true }
           )
           
           if (nextCardItems.length > 0) {

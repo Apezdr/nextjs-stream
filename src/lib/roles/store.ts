@@ -1,12 +1,15 @@
 // src/lib/roles/store.ts
 // Roles: named sets of capability grants, made by admins and given to users
 // (the user's `roles` field, written only by the server). Grants are checked
-// by each capability's own parse(), on the way in and on the way out.
+// by each capability's own parse(), on the way in and on the way out. A role
+// may also carry a library scope (libraryScope.ts), which limits the titles
+// its holders see instead of letting them do more.
 import 'server-only'
 import { ObjectId } from 'mongodb'
 import clientPromise from '@src/lib/mongodb'
 import { userQueries } from '@src/lib/userQueries'
 import { RoleInputError } from './capability'
+import { EMPTY_SCOPE, parseScope, type LibraryScope } from './libraryScope'
 import { capabilityByKey } from './registry'
 
 export interface Role {
@@ -15,6 +18,8 @@ export interface Role {
   description: string
   /** Capability key -> its settings. */
   grants: Record<string, unknown>
+  /** The part of the library its holders see (libraryScope.ts); null: the role doesn't limit the library. */
+  scope: LibraryScope | null
 }
 
 export interface RoleInput {
@@ -22,6 +27,7 @@ export interface RoleInput {
   name: unknown
   description?: unknown
   grants: unknown
+  scope?: unknown
 }
 
 const MAX_NAME = 60
@@ -51,6 +57,16 @@ export function parseGrants(input: unknown): Record<string, unknown> {
   return grants
 }
 
+/** A role's scope as stored. One that no longer parses holds nothing: a broken scope never opens the library. */
+function storedScope(stored: unknown): LibraryScope | null {
+  if (stored === null || stored === undefined) return null
+  try {
+    return parseScope(stored)
+  } catch {
+    return EMPTY_SCOPE
+  }
+}
+
 function toRole(document: Record<string, any>): Role {
   // A grant for a capability that no longer exists, or that no longer parses,
   // grants nothing, rather than failing every permission check.
@@ -69,6 +85,7 @@ function toRole(document: Record<string, any>): Role {
     name: typeof document.name === 'string' ? document.name : '',
     description: typeof document.description === 'string' ? document.description : '',
     grants,
+    scope: storedScope(document.scope),
   }
 }
 
@@ -103,7 +120,10 @@ export async function saveRole(input: RoleInput): Promise<Role> {
     throw new RoleInputError(`Keep the description under ${MAX_DESCRIPTION} characters.`)
   }
   const grants = parseGrants(input.grants)
-  if (Object.keys(grants).length === 0) throw new RoleInputError('Give the role at least one capability.')
+  const scope = input.scope === null || input.scope === undefined ? null : parseScope(input.scope)
+  if (Object.keys(grants).length === 0 && !scope) {
+    throw new RoleInputError('Give the role at least one capability, or limit its library.')
+  }
 
   const collection = await rolesCollection()
   await ensureIndex(collection)
@@ -111,14 +131,14 @@ export async function saveRole(input: RoleInput): Promise<Role> {
   try {
     if (input.id) {
       const _id = parseRoleId(input.id)
-      const result = await collection.updateOne({ _id }, { $set: { name, description, grants, updatedAt: now } })
+      const result = await collection.updateOne({ _id }, { $set: { name, description, grants, scope, updatedAt: now } })
       if (result.matchedCount === 0) throw new RoleInputError('That role no longer exists.')
       forgetRoles()
-      return { id: _id.toString(), name, description, grants }
+      return { id: _id.toString(), name, description, grants, scope }
     }
-    const result = await collection.insertOne({ name, description, grants, createdAt: now, updatedAt: now })
+    const result = await collection.insertOne({ name, description, grants, scope, createdAt: now, updatedAt: now })
     forgetRoles()
-    return { id: result.insertedId.toString(), name, description, grants }
+    return { id: result.insertedId.toString(), name, description, grants, scope }
   } catch (error) {
     if ((error as { code?: number })?.code === 11000) throw new RoleInputError('A role with that name already exists.')
     throw error

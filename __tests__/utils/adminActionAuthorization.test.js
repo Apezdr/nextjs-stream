@@ -92,7 +92,7 @@ function settingsForm() {
   form.set('enabled', 'false')
   return form
 }
-const userChange = { userID: 'user-1', approved: true, limitedAccess: true }
+const userChange = { userID: 'user-1', approved: true }
 const mediaPayload = {
   id: VALID_ID,
   showId: VALID_ID,
@@ -136,7 +136,6 @@ test('finds every admin action it is meant to cover', () => {
       'updateJitServeSettings',
       'updateSyncAggressiveness',
       'updateUserApprovedFlag',
-      'updateUserLimitedAccessFlag',
     ])
   )
   expect(editorActions.length).toBeGreaterThanOrEqual(10)

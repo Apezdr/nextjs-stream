@@ -1,5 +1,6 @@
 import { cache } from 'react'
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import {
   getFlatAvailableGenres,
   getFlatContentByGenres,
@@ -68,6 +69,8 @@ export const GET = async (req) => {
   if (authResult instanceof Response) {
     return authResult // Stop execution if not authenticated
   }
+  // Genres, counts and content of the caller's part of the library only
+  const access = await libraryAccessFor(authResult)
 
   // Parse query parameters
   const { searchParams } = new URL(req.url)
@@ -93,6 +96,7 @@ export const GET = async (req) => {
         }
 
         const genreData = await getFlatAvailableGenres({
+          access,
           type,
           includeCounts,
           countOnly: false
@@ -164,6 +168,7 @@ export const GET = async (req) => {
 
         // Get main content - we need totalPages first to determine if we need next page
         const contentResult = await getCachedGenreContent({
+          access,
           genres,
           type,
           page,
@@ -186,6 +191,7 @@ export const GET = async (req) => {
           // Previous page last item: reverse sort order and fetch first item (which is the last in normal order)
           currentPage > 0
             ? getCachedGenreContent({
+                access,
                 genres,
                 type,
                 page: currentPage - 1,
@@ -200,6 +206,7 @@ export const GET = async (req) => {
           // Next page first item: normal sort order, limit 1
           currentPage < totalPages - 1
             ? getCachedGenreContent({
+                access,
                 genres,
                 type,
                 page: currentPage + 1,
@@ -327,6 +334,7 @@ export const GET = async (req) => {
         }
 
         const statistics = await getFlatGenreStatistics({
+          access,
           type,
           genres: genreFilter
         })

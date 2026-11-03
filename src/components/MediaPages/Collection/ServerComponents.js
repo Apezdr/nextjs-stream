@@ -9,7 +9,7 @@ import { mergeCollectionWithOwnership } from '@src/utils/flatDatabaseUtils'
 // Break down into small, independent server components for better streaming
 
 // *** TRUE STREAMING: Header fetches its own data independently ***
-export async function CollectionHeaderServerComponent({ collectionId }) {
+export async function CollectionHeaderServerComponent({ collectionId, access }) {
   console.log(`[STREAMING] Loading collection header for ${collectionId}`)
   
   // *** CRITICAL: Fetch data independently for true streaming ***
@@ -19,7 +19,7 @@ export async function CollectionHeaderServerComponent({ collectionId }) {
   
   try {
     const [ownedMoviesResult, tmdbResult] = await Promise.allSettled([
-      getCachedOwnedMovies(collectionId),
+      getCachedOwnedMovies(collectionId, access),
       getCachedCollectionDetails(collectionId)
     ])
     
@@ -170,13 +170,13 @@ export async function CollectionHeaderServerComponent({ collectionId }) {
 }
 
 // Collection Summary Strip Server Component - rich metadata like original
-export async function CollectionSummaryStripServerComponent({ collectionId }) {
+export async function CollectionSummaryStripServerComponent({ collectionId, access }) {
   console.log(`[STREAMING] Loading collection summary strip for ${collectionId}`)
   
   try {
     // OPTIMIZED: Fetch data using the enhanced endpoint that already has aggregated director data
     const [ownedMoviesResult, enhancedResult] = await Promise.allSettled([
-      getCachedOwnedMovies(collectionId),
+      getCachedOwnedMovies(collectionId, access),
       getCachedEnhancedCollectionDetails(collectionId)
     ])
     
@@ -292,7 +292,7 @@ export async function CollectionSummaryStripServerComponent({ collectionId }) {
 }
 
 // Progressive stats component - can error independently
-export async function CollectionStatsServerComponent({ collectionId }) {
+export async function CollectionStatsServerComponent({ collectionId, access }) {
   console.log(`[STREAMING] Loading collection stats for ${collectionId}`)
   
   // *** VERCEL BEST PRACTICE: error-handling-server ***
@@ -304,7 +304,7 @@ export async function CollectionStatsServerComponent({ collectionId }) {
   try {
     // Fetch stats independently - cached from main page data
     const [ownedMoviesResult, tmdbResult] = await Promise.allSettled([
-      getCachedOwnedMovies(collectionId),
+      getCachedOwnedMovies(collectionId, access),
       getCachedCollectionDetails(collectionId)
     ])
     
@@ -388,13 +388,13 @@ export async function CollectionStatsServerComponent({ collectionId }) {
 }
 
 // Progressive movies component - main content that streams in
-export async function CollectionMoviesServerComponent({ collectionId, defaultFilter = 'all', defaultSort = 'release_date' }) {
+export async function CollectionMoviesServerComponent({ collectionId, access, defaultFilter = 'all', defaultSort = 'release_date' }) {
   try {
     console.log(`[STREAMING] Loading movies for collection ${collectionId}`)
     
     // Use cached data from main page
     const [ownedMoviesResult, tmdbResult] = await Promise.allSettled([
-      getCachedOwnedMovies(collectionId),
+      getCachedOwnedMovies(collectionId, access),
       getCachedCollectionDetails(collectionId)
     ])
     

@@ -9,6 +9,7 @@ import { withApprovedUser } from '@components/HOC/ApprovedUser'
 import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import { getSession } from '@src/lib/cachedAuth'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { AuthGuard } from '@components/MediaPages/DynamicPage'
 import { getCachedCollectionDetails } from './cachedFetchers'
 import { CollectionPageSkeleton } from '@components/MediaPages/Collection/Skeletons'
@@ -99,6 +100,9 @@ async function CollectionPage({ params, searchParams }) {
   
   const { CollectionSectionErrorBoundary } = await import('@components/MediaPages/Collection/ClientErrorBoundary')
 
+  // The collection's films the viewer's library scope holds, and no others
+  const access = session?.user ? await libraryAccessFor(session.user) : null
+
   return (
     <AuthGuard
       session={session}
@@ -114,7 +118,7 @@ async function CollectionPage({ params, searchParams }) {
               fallback={<CollectionHeaderSkeleton />}
               sectionName="Collection Header"
             >
-              <CollectionHeaderServerComponent collectionId={collectionId} />
+              <CollectionHeaderServerComponent collectionId={collectionId} access={access} />
             </CollectionSectionErrorBoundary>
           </Suspense>
 
@@ -124,7 +128,7 @@ async function CollectionPage({ params, searchParams }) {
               fallback={<CollectionSummarySkeleton />}
               sectionName="Collection Metadata"
             >
-              <CollectionSummaryStripServerComponent collectionId={collectionId} />
+              <CollectionSummaryStripServerComponent collectionId={collectionId} access={access} />
             </CollectionSectionErrorBoundary>
           </Suspense>
 
@@ -157,6 +161,7 @@ async function CollectionPage({ params, searchParams }) {
             >
               <CollectionMoviesServerComponent
                 collectionId={collectionId}
+                access={access}
                 defaultFilter="all"
                 defaultSort="release_date"
               />

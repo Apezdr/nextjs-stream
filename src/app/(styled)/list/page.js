@@ -6,6 +6,7 @@ import AuthGuard from '@components/MediaPages/DynamicPage/guards/AuthGuard'
 import LandingPage from '@components/LandingPage'
 import LandingPageSkeleton from '@components/LandingPageSkeleton'
 import { isAwaitingApproval } from '@src/lib/roles/rules'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 
 // Dynamic, authenticated content. The session is read HERE — inside the page's
 // Suspense boundary — instead of at the top of the page/layout/HOC. That lets the
@@ -36,6 +37,8 @@ async function AuthedListContent() {
     radarr: !!process.env.RADARR_ICAL_LINK,
   }
   calendarConfig.hasAnyCalendar = calendarConfig.sonarr || calendarConfig.radarr
+  // Every row, count and section below shows only the viewer's library scope
+  const access = session?.user ? await libraryAccessFor(session.user) : null
 
   return (
     <AuthGuard session={session} callbackUrl="/list" variant="skeleton">
@@ -46,6 +49,7 @@ async function AuthedListContent() {
             name: session.user.name,
             email: session.user.email,
           }}
+          access={access}
           calendarConfig={calendarConfig}
         />
       )}

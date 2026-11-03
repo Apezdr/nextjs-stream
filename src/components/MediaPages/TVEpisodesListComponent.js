@@ -61,9 +61,10 @@ function SeasonNotFound({ showTitle, seasonNumber }) {
  * @param {string} [props.originalTitle] - the show's filesystem key, when the route knows it
  * @param {string|number} props.seasonNumber
  * @param {string|null} [props.userId] - the viewer, for next-up and row progress
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} props.access - the viewer's library access
  */
-export default async function TVEpisodesListComponent({ showTitle, originalTitle, seasonNumber, userId = null }) {
-  const season = await getFlatTVSeasonWithEpisodes({ showTitle, seasonNumber: parseInt(seasonNumber, 10) })
+export default async function TVEpisodesListComponent({ showTitle, originalTitle, seasonNumber, userId = null, access }) {
+  const season = await getFlatTVSeasonWithEpisodes({ access, showTitle, seasonNumber: parseInt(seasonNumber, 10) })
   if (!season) return <SeasonNotFound showTitle={showTitle} seasonNumber={seasonNumber} />
   if (!season.episodes || season.episodes.length === 0) {
     return <NoEpisodesFound onRetry={refreshEpisodes} showTitle={showTitle} seasonNumber={seasonNumber} season={season} />

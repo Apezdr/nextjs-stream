@@ -48,7 +48,6 @@ async function VideoPlayer({
   isValidVideoURL: preflightedIsValid = undefined,
   session,
   savedPlaybackTime = null,
-  hasFullAccess = true,
 }) {
   // Check if user is an admin
   const isAdmin = isAdminUser(session?.user)
@@ -264,8 +263,7 @@ async function VideoPlayer({
   // name on the file server); mediaTitle is only the route slug
   const lookupTitle = media?.originalTitle ?? media?.title ?? mediaTitle
 
-  // Only provide captions to users with full access (approved and not limited)
-  let captions = (hasFullAccess && media?.captionURLs) ? media?.captionURLs : null
+  let captions = media?.captionURLs ? media.captionURLs : null
 
   if (captions) {
     const updatedCaptions = {}

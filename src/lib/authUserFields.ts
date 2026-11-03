@@ -4,8 +4,8 @@
 //
 // `input` decides who may write a field. better-auth's POST
 // /api/auth/update-user (and sign-up) accept every field whose `input` isn't
-// false, straight from the request body. `approved` and `limitedAccess` are
-// the admin's decisions, so only the server writes them: the create hook in
+// false, straight from the request body. `approved` and `roles` are the
+// admin's decisions, so only the server writes them: the create hook in
 // auth.ts and the admin actions (src/utils/actions/admin_users.js), which go
 // to the database directly. With `input: true`, any signed-in user could
 // approve themselves.
@@ -18,13 +18,8 @@ export const USER_ADDITIONAL_FIELDS = {
     defaultValue: false,
     input: false,
   },
-  limitedAccess: {
-    type: 'boolean',
-    required: false,
-    defaultValue: false,
-    input: false,
-  },
-  // Role ids (src/lib/roles), given by admins from the Users page.
+  // Role ids (src/lib/roles), given by admins from the Users page. Which
+  // titles a user sees comes from the library scopes on these roles.
   roles: {
     type: 'string[]',
     required: false,

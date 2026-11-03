@@ -21,6 +21,7 @@ function normalizeOptions(options = {}) {
     hdrTypes: Array.isArray(options.hdrTypes) ? options.hdrTypes : [],
     resolutions: Array.isArray(options.resolutions) ? options.resolutions : [],
     userId: options.userId,
+    access: options.access,
   }
 }
 
@@ -35,17 +36,19 @@ function attachWatchHistory(items, watchMap) {
   }))
 }
 
-export async function getCachedMovieListData(options = {}) {
+// options.access: the viewer's LibraryAccess, part of the cache key with the
+// filters (and the userId, for the watch history joined onto the page)
+export async function getCachedMovieListData(options) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'movies', 'movie-list', `user-watch-history-${options.userId}`)
 
-  const { page, sortOrder, genres, hdrTypes, resolutions, userId } = normalizeOptions(options)
+  const { page, sortOrder, genres, hdrTypes, resolutions, userId, access } = normalizeOptions(options)
 
   const [items, totalCount, filterOptions, watchMap] = await Promise.all([
-    getFilteredMovieList({ page, limit: CONSTANTS.DEFAULT_LIMIT, sortOrder, genres, hdrTypes, resolutions }),
-    getFilteredMovieCount({ genres, hdrTypes, resolutions }),
-    getMovieFilterOptions(),
+    getFilteredMovieList({ access, page, limit: CONSTANTS.DEFAULT_LIMIT, sortOrder, genres, hdrTypes, resolutions }),
+    getFilteredMovieCount({ access, genres, hdrTypes, resolutions }),
+    getMovieFilterOptions(access),
     getCurrentUserWatchHistory(userId),
   ])
 
@@ -61,17 +64,17 @@ export async function getCachedMovieListData(options = {}) {
   }
 }
 
-export async function getCachedTVListData(options = {}) {
+export async function getCachedTVListData(options) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'tv', 'tv-list', `user-watch-history-${options.userId}`)
 
-  const { page, sortOrder, genres, hdrTypes, resolutions, userId } = normalizeOptions(options)
+  const { page, sortOrder, genres, hdrTypes, resolutions, userId, access } = normalizeOptions(options)
 
   const [items, totalCount, filterOptions, watchMap] = await Promise.all([
-    getFilteredTVList({ page, limit: CONSTANTS.DEFAULT_LIMIT, sortOrder, genres, hdrTypes, resolutions }),
-    getFilteredTVCount({ genres, hdrTypes, resolutions }),
-    getTVFilterOptions(),
+    getFilteredTVList({ access, page, limit: CONSTANTS.DEFAULT_LIMIT, sortOrder, genres, hdrTypes, resolutions }),
+    getFilteredTVCount({ access, genres, hdrTypes, resolutions }),
+    getTVFilterOptions(access),
     getCurrentUserWatchHistory(userId),
   ])
 

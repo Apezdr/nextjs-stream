@@ -3,9 +3,10 @@
  *
  * Who may write the extra user fields. better-auth's POST
  * /api/auth/update-user passes the request body through parseUserInput,
- * which accepts every field whose `input` isn't false. `approved` and
- * `limitedAccess` were `input: true`, so any signed-in user could approve
- * themselves; now only the server writes them.
+ * which accepts every field whose `input` isn't false. `approved` (and the
+ * retired `limitedAccess`) were `input: true`, so any signed-in user could
+ * approve themselves; now only the server writes `approved` and `roles`, which
+ * carry the library scopes.
  *
  * Runs better-auth's own parseUserInput. Jest doesn't transform its ESM
  * build, so a small Node ESM process does the call.
@@ -32,7 +33,7 @@ function parseUserInput(body, action) {
   return JSON.parse(output.trim().split('\n').pop())
 }
 
-test.each([[{ approved: true }], [{ limitedAccess: false, approved: true }], [{ limitedAccess: true }]])(
+test.each([[{ approved: true }], [{ roles: [] }], [{ roles: ['64b7f0c2a1b2c3d4e5f60718'], approved: true }]])(
   'update-user refuses %j',
   (body) => {
     expect(parseUserInput(body, 'update').error).toMatch(/is not allowed to be set/)
@@ -46,8 +47,7 @@ test('a user may still update their own preferences', () => {
 })
 
 test('sign-up input can’t set them either: the defaults apply, and the create hook decides', () => {
-  expect(parseUserInput({ approved: true, limitedAccess: true }, 'create').ok).toMatchObject({
-    approved: false,
-    limitedAccess: false,
-  })
+  expect(parseUserInput({ approved: true }, 'create').ok).toMatchObject({ approved: false })
+  // Refused, or dropped: either way sign-up can't hand itself a role
+  expect(parseUserInput({ roles: ['64b7f0c2a1b2c3d4e5f60718'] }, 'create').ok?.roles).toBeUndefined()
 })

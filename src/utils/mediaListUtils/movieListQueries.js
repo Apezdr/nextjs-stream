@@ -8,7 +8,8 @@
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
-import { visibleMovieFilter } from '@src/utils/mediaVisibility'
+import { libraryMovieFilter } from '@src/utils/mediaVisibility'
+import { assertLibraryAccess } from '@src/lib/roles/libraryScope'
 import {
   serializeForClient,
   validatePaginationParams,
@@ -33,6 +34,7 @@ import {
  * @returns {Promise<Array>} Array of movie objects matching filters
  */
 export async function getFilteredMovieList({
+  access,
   page = CONSTANTS.DEFAULT_PAGE,
   limit = CONSTANTS.DEFAULT_LIMIT,
   sortOrder = CONSTANTS.DEFAULT_SORT,
@@ -40,6 +42,7 @@ export async function getFilteredMovieList({
   hdrTypes = [],
   resolutions = []
 }) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise;
     const db = client.db('Media');
@@ -55,7 +58,7 @@ export async function getFilteredMovieList({
           ...buildHdrFilter(hdrTypes),
           ...buildResolutionFilter(resolutions)
         },
-        visibleMovieFilter()
+        libraryMovieFilter(access)
       ]
     };
 
@@ -135,10 +138,12 @@ export async function getFilteredMovieList({
  * @returns {Promise<number>} Total count of matching movies
  */
 export async function getFilteredMovieCount({
+  access,
   genres = [],
   hdrTypes = [],
   resolutions = []
 }) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise;
     const db = client.db('Media');
@@ -151,7 +156,7 @@ export async function getFilteredMovieCount({
           ...buildHdrFilter(hdrTypes),
           ...buildResolutionFilter(resolutions)
         },
-        visibleMovieFilter()
+        libraryMovieFilter(access)
       ]
     };
 
@@ -172,9 +177,11 @@ export async function getFilteredMovieCount({
  * Returns unique genres and HDR types available in the entire movie library
  * Used to populate filter dropdowns/buttons
  * 
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access
  * @returns {Promise<Object>} Object with availableGenres and availableHdrTypes arrays
  */
-export async function getMovieFilterOptions() {
+export async function getMovieFilterOptions(access) {
+  assertLibraryAccess(access)
   try {
     const client = await clientPromise;
     const db = client.db('Media');
@@ -184,7 +191,7 @@ export async function getMovieFilterOptions() {
       .collection('FlatMovies')
       .aggregate([
         // Filter chips should not advertise values only hidden titles have
-        { $match: visibleMovieFilter() },
+        { $match: libraryMovieFilter(access) },
         { $unwind: '$metadata.genres' },
         { $group: { _id: '$metadata.genres.name' } },
         { $sort: { _id: 1 } }
@@ -197,7 +204,7 @@ export async function getMovieFilterOptions() {
     const hdrResults = await db
       .collection('FlatMovies')
       .aggregate([
-        { $match: visibleMovieFilter() },
+        { $match: libraryMovieFilter(access) },
         { $match: { hdr: { $exists: true, $nin: [null, false] } } },
         { $group: { _id: '$hdr' } },
         { $sort: { _id: 1 } }
@@ -223,7 +230,7 @@ export async function getMovieFilterOptions() {
     const resolutionResults = await db
       .collection('FlatMovies')
       .aggregate([
-        { $match: visibleMovieFilter() },
+        { $match: libraryMovieFilter(access) },
         { $match: { dimensions: { $exists: true, $ne: null } } },
         { $group: { _id: '$dimensions' } }
       ])

@@ -1,5 +1,6 @@
 // src/app/api/authenticated/horizontal-list/route.js
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { sanitizeCardData, sanitizeCardItems } from '@src/utils/auth_utils'
 import { episodeCardImage } from '@src/utils/media/episodeCardImage'
@@ -218,6 +219,8 @@ export const GET = async (req) => {
   const windowCount = itemsPerPage + 1 + (wantPrev ? 1 : 0)
 
   const sortList = (a, b) => sortFunctions[sort](a, b, sortOrder)
+  // Every row shows only the caller's library scope; the cached windows are keyed on it
+  const access = await libraryAccessFor(authResult)
 
   try {
     let playlistInfo = null
@@ -226,18 +229,19 @@ export const GET = async (req) => {
     switch (type) {
       case 'movie': {
         const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
-        const rows = await getCachedMovieWindow(offset, windowCount, movieProjection, sort, sortOrder)
+        const rows = await getCachedMovieWindow(access, offset, windowCount, movieProjection, sort, sortOrder)
         split = splitWindow(rows, { limit: itemsPerPage, wantPrev })
         break
       }
       case 'tv': {
-        const rows = await getCachedTVWindow(offset, windowCount, sort, sortOrder)
+        const rows = await getCachedTVWindow(access, offset, windowCount, sort, sortOrder)
         split = splitWindow(rows, { limit: itemsPerPage, wantPrev })
         break
       }
       case 'recentlyWatched': {
         // User-specific data - uncached due to dynamic API restrictions
         const rows = await getFlatRecentlyWatchedForUser({
+          access,
           userId: authResult?.id,
           offset,
           limit: windowCount,
@@ -251,7 +255,7 @@ export const GET = async (req) => {
         break
       }
       case 'recentlyAdded': {
-        const rows = await getCachedRecentlyAddedWindow(offset, windowCount, shouldExposeAdditionalData)
+        const rows = await getCachedRecentlyAddedWindow(access, offset, windowCount, shouldExposeAdditionalData)
         split = splitWindow(rows, { limit: itemsPerPage, wantPrev })
         break
       }
@@ -264,7 +268,8 @@ export const GET = async (req) => {
           windowCount,
           false, // countOnly
           shouldExposeAdditionalData,
-          offset
+          offset,
+          access
         )
         split = splitWindow(recommendations?.items || [], { limit: itemsPerPage, wantPrev })
         break
@@ -297,6 +302,7 @@ export const GET = async (req) => {
 
         // Get watchlist items based on user preference
         const watchlistItems = await getUserWatchlist({
+          access,
           offset,
           limit: windowCount,
           playlistId: playlistIdParam,
@@ -312,6 +318,7 @@ export const GET = async (req) => {
           playlistInfo,
           !hideUnavailable,  // Include unavailable items unless user wants to hide them
           {
+            access,
             itemsArePreResolved: true,
             authHeaders: await getBackendAuthHeaders(req)
           }
@@ -324,6 +331,7 @@ export const GET = async (req) => {
         const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
         const tvProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
         const { movies, tv } = await getCachedAllMediaWindow(
+          access,
           offset,
           windowCount,
           movieProjection,

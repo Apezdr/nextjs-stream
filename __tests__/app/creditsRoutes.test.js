@@ -2,13 +2,18 @@
  * @jest-environment node
  *
  * GET /api/authenticated/credits and /credits/availability: an approved user
- * gets the catalog for their access level, a user with limited access never
- * gets titles, and a failed read is a 500, never "no credits".
+ * gets the catalog for their library access (the titles in their scope), and
+ * a failed read is a 500, never "no credits".
  */
 
-const mockUser = { current: { id: 'u1', limitedAccess: false } }
+const mockUser = { current: { id: 'u1' } }
 jest.mock('@src/lib/roles/gates', () => ({
   approvedGate: { route: jest.fn(async () => mockUser.current) },
+}))
+const FULL = { id: 'all', scope: null, showIds: null }
+const SCOPED = { id: 'scope-kids', scope: { movieRatingCap: 'PG', tvRatingCap: null, titles: [] }, showIds: [] }
+jest.mock('@src/lib/roles/libraryAccess', () => ({
+  libraryAccessFor: jest.fn(async (user) => (user.roles?.length ? SCOPED : FULL)),
 }))
 jest.mock('@src/utils/credits/catalog', () => ({
   getCreditsCatalog: jest.fn(),
@@ -25,7 +30,7 @@ const request = (path) => new Request(`https://cinema.example/api/authenticated/
 beforeEach(() => {
   jest.clearAllMocks()
   jest.spyOn(console, 'error').mockImplementation(() => {})
-  mockUser.current = { id: 'u1', limitedAccess: false }
+  mockUser.current = { id: 'u1' }
 })
 
 it('answers the availability for a full-access user', async () => {
@@ -33,15 +38,15 @@ it('answers the availability for a full-access user', async () => {
   const response = await availabilityRoute.GET(request('credits/availability'))
   expect(response.status).toBe(200)
   expect(await response.json()).toEqual({ available: true, library: true, titles: 3 })
-  expect(getCreditsAvailability).toHaveBeenCalledWith({ includeTitles: true })
+  expect(getCreditsAvailability).toHaveBeenCalledWith(FULL)
   expect(response.headers.get('cache-control')).toBe('private, no-store')
 })
 
-it('asks for no titles for a user with limited access', async () => {
-  mockUser.current = { id: 'u2', limitedAccess: true }
+it("asks for the titles of a scoped user's library only", async () => {
+  mockUser.current = { id: 'u2', roles: ['kids'] }
   getCreditsCatalog.mockResolvedValue({ library: null, titles: [] })
   await catalogRoute.GET(request('credits'))
-  expect(getCreditsCatalog).toHaveBeenCalledWith({ includeTitles: false })
+  expect(getCreditsCatalog).toHaveBeenCalledWith(SCOPED)
 })
 
 it('answers the catalog', async () => {

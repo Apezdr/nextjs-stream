@@ -1,17 +1,17 @@
 import { NextResponse } from 'next/server';
 import clientPromise from '@src/lib/mongodb';
-import { getSession } from '@src/lib/cachedAuth';
+import { adminGate } from '@src/lib/roles/gates';
 
 /**
- * Debug endpoint to check notification data and user ID formats
+ * Debug endpoint to check notification data and user ID formats. Admins only:
+ * it reads other users' notifications, which name titles their library scopes
+ * may not hold.
  */
 export async function GET(request) {
   try {
-    const session = await getSession()
-    
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const admin = await adminGate.route()
+    if (admin instanceof Response) return admin
+    const session = { user: admin }
 
     const client = await clientPromise;
     const db = client.db('Media');

@@ -1,4 +1,6 @@
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
+import { noticesInScope } from '@src/utils/notifications/scope'
 import {
   getUserNotifications,
   getUnreadNotificationCount
@@ -38,6 +40,10 @@ export async function GET(request) {
       category,
       priority
     });
+
+    // Only notices about titles in the reader's library scope (one delivered
+    // before their scope changed may name one outside it)
+    result.notifications = await noticesInScope(result.notifications, await libraryAccessFor(authResult));
 
     // Enrich notifications with fresh media data if requested
     if (enrich && result.notifications && result.notifications.length > 0) {

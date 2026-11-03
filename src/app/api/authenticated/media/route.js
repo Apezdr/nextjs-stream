@@ -1,5 +1,6 @@
 import { sanitizeCardData, sanitizeTVData } from '@src/utils/auth_utils'
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import {
   getFlatRequestedMedia,
   getFlatTVSeasonWithEpisodes,
@@ -47,7 +48,9 @@ export async function POST(req) {
   const resolvedTitle = mediaOriginalTitle
     ? decodeURIComponent(mediaOriginalTitle)
     : (mediaTitle ? decodeURIComponent(mediaTitle) : null)
+  // A title outside the caller's scope is not found, like a missing one
   const media = await getFlatRequestedMedia({
+    access: await libraryAccessFor(authResult),
     type: mediaType,
     title: resolvedTitle,
   })
@@ -88,7 +91,10 @@ export async function GET(req) {
       ? decodeURIComponent(mediaOriginalTitle)
       : (mediaTitle ? decodeURIComponent(mediaTitle) : null)
 
+    // A title outside the caller's scope is not found (404), like a missing one
+    const access = await libraryAccessFor(authResult)
     const mediaRequest = {
+      access,
       type: mediaType,
       title: resolvedTitle,
       id: preferOriginalTitle ? null : (mediaId ? decodeURIComponent(mediaId) : null),
@@ -140,6 +146,7 @@ export async function GET(req) {
           try {
             // First, get the full show data (without season/episode) to get all seasons info
             const fullShowRequest = {
+              access,
               type: mediaType,
               title: resolvedTitle,
               id: preferOriginalTitle ? null : (mediaId ? decodeURIComponent(mediaId) : null),
@@ -159,7 +166,7 @@ export async function GET(req) {
             // `seasons` keeps every doc (each now carrying visibleEpisodeCount);
             // `availableSeasons` / `totalSeasons` count only playable ones.
             const visibleCountBySeason = fullShowData?._id
-              ? await getVisibleEpisodeCountBySeason(fullShowData._id)
+              ? await getVisibleEpisodeCountBySeason(fullShowData._id, access)
               : new Map()
             const seasonsWithCounts = (fullShowData?.seasons || media.seasons || []).map((season) => ({
               ...season,
@@ -172,6 +179,7 @@ export async function GET(req) {
               // For season requests, also fetch episode list
               if (mediaSeason && !mediaEpisode) {
                 const seasonWithEpisodes = await getFlatTVSeasonWithEpisodes({
+                  access,
                   // Resolve by the unique originalTitle to avoid display-title collisions
                   showTitle: fullShowData?.originalTitle || media.originalTitle || fullShowData?.title || media.title,
                   seasonNumber: parseInt(mediaSeason.replace('Season ', ''))

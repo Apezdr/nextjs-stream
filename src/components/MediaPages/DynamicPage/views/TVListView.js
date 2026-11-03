@@ -17,12 +17,12 @@ import MediaListGridSkeleton from '@components/MediaPages/MediaListGridSkeleton'
 import { getCachedTVListData } from '@src/utils/cache/mediaListData'
 import { parseSearchParamsToFilters } from '@src/utils/mediaListUtils/shared'
 
-async function TVListContent({ initialFilters, userId }) {
+async function TVListContent({ initialFilters, userId, access }) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'tv', 'tv-list', `user-watch-history-${userId}`)
 
-  const initialData = await getCachedTVListData({ ...initialFilters, userId })
+  const initialData = await getCachedTVListData({ ...initialFilters, userId, access })
   return (
     <TVListClient
       initialFilters={initialFilters}
@@ -34,6 +34,8 @@ async function TVListContent({ initialFilters, userId }) {
 export default function TVListView({ searchParams = {}, session }) {
   const initialFilters = parseSearchParamsToFilters(searchParams)
   const userId = session?.user?.id
+  // From SessionGate: the list, its filters and its count show only this part of the library
+  const access = session?.access
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-24 bg-[#060916e8]">
@@ -41,7 +43,7 @@ export default function TVListView({ searchParams = {}, session }) {
       <div className="h-auto flex items-center justify-center py-32 lg:py-0 px-4 xl:px-0 sm:mt-20">
         <ul className="grid grid-cols-1 gap-x-4 gap-y-8 sm:gap-x-6 sm:grid-cols-2 xl:grid-cols-4 xl:gap-x-8">
           <li>
-            <AsyncMediaListHeader mediaType="tv" label="Available TV Programs" />
+            <AsyncMediaListHeader access={access} mediaType="tv" label="Available TV Programs" />
             <div className="flex flex-row gap-x-4 mt-4 justify-center">
               <Link href="/list" className="self-center">
                 <button
@@ -68,7 +70,7 @@ export default function TVListView({ searchParams = {}, session }) {
             </div>
           </li>
           <Suspense fallback={<MediaListGridSkeleton />}>
-            <TVListContent initialFilters={initialFilters} userId={userId} />
+            <TVListContent initialFilters={initialFilters} userId={userId} access={access} />
           </Suspense>
         </ul>
       </div>

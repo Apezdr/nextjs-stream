@@ -45,14 +45,16 @@ export default function UserAdmin({ processedUserData, roleOptions = [] }) {
 
   const stats = useMemo(() => {
     const users = _processedUserData?.data || []
+    // Held to part of the library: holding a role with a library scope
+    const limiting = new Set(roleOptions.filter((role) => role.limitsLibrary).map((role) => role.id))
 
     return {
       total: users.length,
       approved: users.filter((u) => u.approved === 'true').length,
-      limited: users.filter((u) => u.limitedAccess === true).length,
+      limited: users.filter((u) => (u.roles ?? []).some((id) => limiting.has(id))).length,
       pending: users.filter((u) => u.approved !== 'true').length,
     }
-  }, [_processedUserData])
+  }, [_processedUserData, roleOptions])
 
   return (
     <section className="space-y-6">
@@ -66,14 +68,14 @@ export default function UserAdmin({ processedUserData, roleOptions = [] }) {
               User Management
             </h1>
             <p className="max-w-xl text-sm text-slate-300/90">
-              Review access, approve new users, and manage limited-access accounts from one place.
+              Review access, approve new users, and give roles, including the ones that limit the library, from one place.
             </p>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <StatCard label="Total Users" value={stats.total} icon={UsersIcon} accent="blue" />
             <StatCard label="Approved" value={stats.approved} icon={CheckBadgeIcon} accent="emerald" />
-            <StatCard label="Limited Access" value={stats.limited} icon={NoSymbolIcon} accent="rose" />
+            <StatCard label="Limited Library" value={stats.limited} icon={NoSymbolIcon} accent="rose" />
             <StatCard label="Pending" value={stats.pending} icon={ClockIcon} accent="amber" />
           </div>
         </div>

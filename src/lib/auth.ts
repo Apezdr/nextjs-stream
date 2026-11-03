@@ -107,7 +107,7 @@ export const auth = betterAuth({
   },
 
   user: {
-    // approved / limitedAccess are server-written only: see authUserFields.ts
+    // approved / roles are server-written only: see authUserFields.ts
     additionalFields: USER_ADDITIONAL_FIELDS,
   },
 
@@ -130,7 +130,6 @@ export const auth = betterAuth({
             data: {
               ...user,
               approved: role === 'admin' ? true : approved,
-              limitedAccess: false,
               role,
             },
           }

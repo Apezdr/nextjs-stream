@@ -19,6 +19,10 @@
  * - no session          -> the sign-in page (AuthGuard)
  * Do not hoist data fetching above this gate.
  *
+ * The session it hands to `children` carries `access`, the viewer's library
+ * access (src/lib/roles/libraryAccess.ts): pass it to every fetch, and key
+ * every cached subtree on it, never on the user.
+ *
  * Server component.
  *
  * @param {Object} props
@@ -27,7 +31,7 @@
  *   to. The params arrive still URL-encoded (the pages decode them), so build
  *   the path from them as they are: encoding them again turns %20 into %2520,
  *   and sign-in lands on a title that doesn't exist.
- * @param {(ctx: { session: Object, params: Object }) => React.ReactNode} props.children
+ * @param {(ctx: { session: { user: Object, access: Object }, params: Object }) => React.ReactNode} props.children
  */
 
 import { redirect } from 'next/navigation'
@@ -35,6 +39,7 @@ import { cacheLife } from 'next/cache'
 import { getSession } from '@src/lib/cachedAuth'
 import AuthGuard from './AuthGuard'
 import { isAwaitingApproval } from '@src/lib/roles/rules'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 
 /**
  * How long the BROWSER may reuse a gated page it has already been sent, in
@@ -54,13 +59,13 @@ const GATE_STALE_SECONDS = 30
  *   again against the database.
  * - Only the browser's router may keep the rendered result, in memory, for
  *   GATE_STALE_SECONDS, and only for the person it was rendered for.
- * So the most a revoked or newly limited account can do is re-show, for up to
+ * So the most a revoked or newly scoped account can do is re-show, for up to
  * 30 seconds, an info page its own browser had already received. Before this
  * a fully prefetched page was reusable for 5 minutes (staleTimes.static).
  * Playback and every API route still check live and are not touched by this.
  *
  * Returns plain data (no Dates, no provider objects): a cached result has to
- * serialize, and the gate only needs these fields.
+ * serialize, and the gate only needs these fields and the library access.
  */
 async function getGateSession() {
   'use cache: private'
@@ -68,8 +73,8 @@ async function getGateSession() {
 
   const session = await getSession()
   if (!session?.user) return null
-  const { id, approved, limitedAccess } = session.user
-  return { user: { id, approved, limitedAccess: !!limitedAccess } }
+  const { id, approved } = session.user
+  return { user: { id, approved }, access: await libraryAccessFor(session.user) }
 }
 
 export default async function SessionGate({ params, callbackUrl, children }) {

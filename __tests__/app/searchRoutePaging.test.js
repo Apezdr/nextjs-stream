@@ -156,9 +156,11 @@ it('pages Recently Added for the empty query, filtered like a search', async () 
   await post({ query: '', types: ['tv'] })
 
   expect(mockAggregate).not.toHaveBeenCalled()
-  expect(mockRecentlyAdded).toHaveBeenCalledWith({ page: 1, limit: 50, shouldExposeAdditionalData: true, types: ['movie', 'tv'] })
-  expect(mockRecentlyAdded).toHaveBeenCalledWith({ countOnly: true, types: ['movie', 'tv'] })
-  expect(mockRecentlyAdded).toHaveBeenCalledWith({ countOnly: true, types: ['tv'] })
+  // The caller holds no role: the whole library
+  const access = { id: 'all', scope: null, showIds: null }
+  expect(mockRecentlyAdded).toHaveBeenCalledWith({ access, page: 1, limit: 50, shouldExposeAdditionalData: true, types: ['movie', 'tv'] })
+  expect(mockRecentlyAdded).toHaveBeenCalledWith({ access, countOnly: true, types: ['movie', 'tv'] })
+  expect(mockRecentlyAdded).toHaveBeenCalledWith({ access, countOnly: true, types: ['tv'] })
   expect(body).toEqual({ results: [{ _id: 'r1' }], total: 100, hasNextPage: false })
 })
 

@@ -1,8 +1,9 @@
 import clientPromise from '@src/lib/mongodb'
 import { addCustomUrlToFlatMedia, getFlatRecentlyAddedMedia } from '@src/utils/flatDatabaseUtils'
-import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
+import { libraryMovieFilter, libraryShowFilter } from '@src/utils/mediaVisibility'
 import { movieProjectionFields, tvShowProjectionFields, sanitizeRecord } from '@src/utils/auth_utils'
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
 import { escapeRegex } from '@src/utils/escapeRegex'
 import { TITLE_COLLATION } from '@src/utils/mediaListUtils/listOrder'
 import { SEARCH_TYPES, matchRanks, pageParams, searchTypes } from '@src/utils/search/searchQuery'
@@ -36,9 +37,11 @@ export const POST = async (req) => {
 
   try {
     const typed = query.trim()
+    // Only the caller's part of the library is searched
+    const access = await libraryAccessFor(authResult)
     const { results, total } = typed
-      ? await searchTitles(typed, types, page, limit, Boolean(isTVdevice))
-      : await recentlyAdded(types, page, limit, Boolean(isTVdevice))
+      ? await searchTitles(typed, types, page, limit, Boolean(isTVdevice), access)
+      : await recentlyAdded(types, page, limit, Boolean(isTVdevice), access)
     return json({ results, total, hasNextPage: (page + 1) * limit < total })
   } catch (error) {
     console.error('Error during search:', error)
@@ -47,8 +50,8 @@ export const POST = async (req) => {
 }
 
 const SIDES = {
-  movie: { collection: 'FlatMovies', filter: visibleMovieFilter, projection: movieProjectionFields },
-  tv: { collection: 'FlatTVShows', filter: visibleShowFilter, projection: tvShowProjectionFields },
+  movie: { collection: 'FlatMovies', filter: libraryMovieFilter, projection: movieProjectionFields },
+  tv: { collection: 'FlatTVShows', filter: libraryShowFilter, projection: tvShowProjectionFields },
 }
 
 /**
@@ -57,14 +60,14 @@ const SIDES = {
  * ranked in one aggregation (best match first, then A-Z, then _id), so
  * movies and shows sit side by side and the pages never repeat or skip one.
  */
-async function searchTitles(query, types, page, limit, isTVdevice) {
+async function searchTitles(query, types, page, limit, isTVdevice, access) {
   const client = await clientPromise
   const db = client.db('Media')
   const pattern = escapeRegex(query)
 
   const titles = (type) => [
     // $and because the visibility fragments carry a top-level $or
-    { $match: { $and: [{ title: { $regex: pattern, $options: 'i' } }, SIDES[type].filter()] } },
+    { $match: { $and: [{ title: { $regex: pattern, $options: 'i' } }, SIDES[type].filter(access)] } },
     { $project: SIDES[type].projection },
     { $addFields: { searchType: type } },
   ]
@@ -114,10 +117,10 @@ async function searchTitles(query, types, page, limit, isTVdevice) {
 }
 
 /** The empty query: one page of Recently Added, which the library caps at 100 titles. */
-async function recentlyAdded(types, page, limit, isTVdevice) {
+async function recentlyAdded(types, page, limit, isTVdevice, access) {
   const [results, total] = await Promise.all([
-    getFlatRecentlyAddedMedia({ page, limit, shouldExposeAdditionalData: isTVdevice, types }),
-    getFlatRecentlyAddedMedia({ countOnly: true, types }),
+    getFlatRecentlyAddedMedia({ access, page, limit, shouldExposeAdditionalData: isTVdevice, types }),
+    getFlatRecentlyAddedMedia({ access, countOnly: true, types }),
   ])
   return { results, total }
 }

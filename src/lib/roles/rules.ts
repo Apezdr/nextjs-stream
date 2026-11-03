@@ -8,7 +8,6 @@
 export interface AccessUser {
   role?: string | null
   approved?: boolean | null
-  limitedAccess?: boolean | null
 }
 
 type MaybeUser = AccessUser | null | undefined
@@ -22,5 +21,5 @@ export const isAdminUser = (user: MaybeUser): boolean => user?.role === 'admin'
 /** Waiting for an admin's approval. Only an explicit false counts: a user without the field is approved. */
 export const isAwaitingApproval = (user: MaybeUser): boolean => user?.approved === false
 
-/** Held to limited access: no playback, and no titles in the credits lists. */
-export const hasLimitedAccess = (user: MaybeUser): boolean => user?.limitedAccess === true
+// Which titles a user sees is their library scope, from their roles:
+// libraryScope.ts and libraryAccess.ts.

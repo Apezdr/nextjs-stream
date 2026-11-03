@@ -23,8 +23,14 @@ const library = () => ({
   assets: [{ id: 'collage', kind: 'artwork', path: 'poster_collage.jpg' }],
   entries: [{ id: 'collage-1', assetIds: ['collage'], work: 'A poster', license: 'CC BY 3.0' }],
 })
-const FULL = { includeTitles: true }
-const LIMITED = { includeTitles: false }
+const { FULL_LIBRARY: FULL, EMPTY_SCOPE } = require('@src/lib/roles/libraryScope')
+// Library accesses as libraryAccessFor builds them (src/lib/roles/libraryAccess.ts)
+const NOTHING = { id: 'scope-nothing', scope: EMPTY_SCOPE, showIds: [] }
+const PICKED_T = {
+  id: 'scope-picked',
+  scope: { movieRatingCap: null, tvRatingCap: null, titles: [{ mediaType: 'movie', originalTitle: 'T', access: 'play' }] },
+  showIds: [],
+}
 
 beforeEach(() => {
   for (const name of ['FlatMovies', 'FlatTVShows', 'FlatEpisodes', 'LibraryCredits']) col(name).docs.length = 0
@@ -90,16 +96,21 @@ it('counts last valid credits kept through a failed sync', async () => {
   expect(await getCreditsAvailability(FULL)).toEqual({ available: true, library: false, titles: 1 })
 })
 
-it('shows only the library to a user with limited access, with no count of titles', async () => {
-  col('FlatMovies').docs.push({ _id: 'm1', title: 'T', originalTitle: 'T', credits: fixtures.mixedGrants(), ...PLAYABLE })
-  expect(await getCreditsAvailability(LIMITED)).toEqual({ available: false, library: false, titles: 0 })
+it('names only the titles in the user’s library scope, and keeps a catalog per scope', async () => {
+  col('FlatMovies').docs.push(
+    { _id: 'm1', title: 'T', originalTitle: 'T', credits: fixtures.mixedGrants(), ...PLAYABLE },
+    { _id: 'm2', title: 'U', originalTitle: 'U', credits: fixtures.mixedGrants(), ...PLAYABLE }
+  )
+  expect(await getCreditsAvailability(NOTHING)).toEqual({ available: false, library: false, titles: 0 })
+  expect((await getCreditsCatalog(PICKED_T)).titles.map((title) => title.originalTitle)).toEqual(['T'])
+  expect((await getCreditsCatalog(FULL)).titles.map((title) => title.originalTitle)).toEqual(['T', 'U'])
 
   col('LibraryCredits').docs.push({ _id: 'A', credits: library(), creditsHash: 'h' })
   clearCreditsCatalogCache()
-  const catalog = await getCreditsCatalog(LIMITED)
+  const catalog = await getCreditsCatalog(NOTHING)
   expect(catalog.titles).toEqual([])
   expect(catalog.library.entries.map((entry) => entry.id)).toEqual(['collage-1'])
-  expect(await getCreditsAvailability(LIMITED)).toEqual({ available: true, library: true, titles: 0 })
+  expect(await getCreditsAvailability(NOTHING)).toEqual({ available: true, library: true, titles: 0 })
 })
 
 it('takes the library of enabled servers only, in priority order', async () => {

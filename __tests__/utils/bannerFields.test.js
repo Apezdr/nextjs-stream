@@ -47,6 +47,7 @@ jest.mock('@src/utils/watchHistory/database', () => ({}))
 jest.mock('@src/utils/watchHistory/mediaIdResolver', () => ({}))
 
 const { fetchFlatBannerMedia } = require('@src/utils/cache/bannerData')
+const { FULL_LIBRARY } = require('@src/lib/roles/libraryScope')
 
 // What the readers use (see BANNER_FIELDS in flatDatabaseUtils.js; the query is cached in cache/bannerData.js)
 const WEB_BANNER_FIELDS = [
@@ -87,7 +88,7 @@ beforeEach(() => {
 
 it('asks only for the fields the banner readers use', async () => {
   mockDocs.push({ _id: { toString: () => 'abc' }, title: 'First' })
-  await fetchFlatBannerMedia()
+  await fetchFlatBannerMedia(FULL_LIBRARY)
 
   const { projection } = mockFindArgs[1]
   for (const field of [...WEB_BANNER_FIELDS, ...TV_APP_FIELDS, ...DERIVATION_FIELDS]) {
@@ -102,7 +103,7 @@ it('asks only for the fields the banner readers use', async () => {
 
 it('returns string ids and fills a missing backdrop from TMDB', async () => {
   mockDocs.push({ _id: { toString: () => 'abc' }, title: 'First', metadata: { backdrop_path: '/bd.jpg' } })
-  const [item] = await fetchFlatBannerMedia()
+  const [item] = await fetchFlatBannerMedia(FULL_LIBRARY)
 
   expect(item.id).toBe('abc')
   expect(item).not.toHaveProperty('_id')
@@ -112,7 +113,7 @@ it('returns string ids and fills a missing backdrop from TMDB', async () => {
 describe('caching', () => {
   it('caches under the banner and movies tags, with the banner lifetime', async () => {
     mockDocs.push({ _id: { toString: () => 'abc' }, title: 'First' })
-    await fetchFlatBannerMedia()
+    await fetchFlatBannerMedia(FULL_LIBRARY)
 
     // expireBannerCache expires 'banner'; movie-wide invalidations mark 'movies'
     expect(mockCacheTag).toHaveBeenCalledWith('banner', 'movies')
@@ -125,14 +126,14 @@ describe('caching', () => {
       title: 'First',
       backdropFocal: { x: 0.4, y: 0.3, updatedAt: new Date('2026-09-01T00:00:00Z') },
     })
-    const [item] = await fetchFlatBannerMedia()
+    const [item] = await fetchFlatBannerMedia(FULL_LIBRARY)
     expect(item.backdropFocal.updatedAt).toBe('2026-09-01T00:00:00.000Z')
   })
 
   it('reports a failed query as an error object instead of caching it', async () => {
     // The cached function throws, and a cache entry that throws is not stored
     mockQueryError = new Error('connection reset')
-    await expect(fetchFlatBannerMedia()).resolves.toMatchObject({
+    await expect(fetchFlatBannerMedia(FULL_LIBRARY)).resolves.toMatchObject({
       error: 'Failed to fetch banner media',
       details: 'connection reset',
       status: 500,
@@ -140,6 +141,6 @@ describe('caching', () => {
   })
 
   it('still reports an empty library as a 404', async () => {
-    await expect(fetchFlatBannerMedia()).resolves.toMatchObject({ status: 404 })
+    await expect(fetchFlatBannerMedia(FULL_LIBRARY)).resolves.toMatchObject({ status: 404 })
   })
 })

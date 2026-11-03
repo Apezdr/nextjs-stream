@@ -1,6 +1,7 @@
 'use server';
 
 import { approvedGate } from '@src/lib/roles/gates';
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess';
 import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils';
 
 /**
@@ -19,12 +20,14 @@ export async function refreshEpisodes({ showTitle, seasonNumber } = {}) {
   const validTitle = typeof showTitle === 'string' && showTitle.length > 0;
   const validSeason = /^\d{1,4}$/.test(String(seasonNumber));
   // Back to this season after signing in
-  await approvedGate.action(
+  const user = await approvedGate.action(
     validTitle && validSeason ? `/list/tv/${encodeURIComponent(showTitle)}/${seasonNumber}` : '/list/tv'
   );
   if (!validTitle || !validSeason) return { success: false, hasEpisodes: false };
   try {
+    // A show outside the caller's library scope has no episodes, as far as they can tell
     const refreshedSeason = await getFlatTVSeasonWithEpisodes({
+      access: await libraryAccessFor(user),
       showTitle,
       seasonNumber: parseInt(seasonNumber, 10)
     });

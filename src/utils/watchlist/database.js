@@ -18,7 +18,13 @@ import { ensurePlaylistVisibilityIndexes } from './playlistVisibilityIndexes.js'
 import { getSession } from '@src/lib/cachedAuth.js'
 import { userQueries } from '@src/lib/userQueries'
 import { isAdminUser } from '@src/lib/roles/rules'
-import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
+import {
+  libraryMovieFilter,
+  libraryShowFilter,
+  scopeMovieFilter,
+  scopeShowFilter,
+} from '@src/utils/mediaVisibility'
+import { FULL_LIBRARY, assertLibraryAccess, isFullLibrary } from '@src/lib/roles/libraryScope'
 import { createLogger, logError } from '@src/lib/logger'
 
 const log = createLogger('Watchlist')
@@ -188,38 +194,47 @@ async function getOwnerNameMap(ownerIds = []) {
  */
 
 /**
- * Cached helper: Check library availability for TMDB IDs
- * Returns Set of available TMDB IDs
- * @param {Array<number>} movieTmdbIds - Movie TMDB IDs to check
- * @param {Array<number>} tvTmdbIds - TV TMDB IDs to check
- * @returns {Promise<Set<number>>} Set of available TMDB IDs
+ * A playlist's titles that the library has but the viewer's scope leaves out
+ * (libraryScope.ts), as a $nor for the Watchlist query: they are left out of
+ * the viewer's lists and counts as if never added, whoever added them. A title
+ * the library doesn't have (TMDB-only) isn't the library's to hide, so it
+ * stays. Null when nothing is left out (always, for the whole library).
  */
-const checkLibraryAvailability = cache(async (movieTmdbIds, tvTmdbIds) => {
-  const client = await clientPromise
-  const db = client.db('Media')
-  
-  // "Available" means in the library AND web-visible — hidden titles degrade
-  // to the external/unavailable card (must agree with every availability site)
-  const [movieMatches, tvMatches] = await Promise.all([
-    movieTmdbIds.length > 0
-      ? db.collection('FlatMovies').find(
-          { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, visibleMovieFilter()] },
-          { projection: { 'metadata.id': 1 } }
-        ).toArray()
-      : Promise.resolve([]),
-    tvTmdbIds.length > 0
-      ? db.collection('FlatTVShows').find(
-          { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, visibleShowFilter()] },
-          { projection: { 'metadata.id': 1 } }
-        ).toArray()
-      : Promise.resolve([])
+async function outOfScopeTitles(db, collection, filter, access) {
+  if (isFullLibrary(access)) return null
+  const items = await collection.find(filter, { projection: { tmdbId: 1, mediaType: 1 } }).toArray()
+  const idsOf = (mediaType) => [
+    ...new Set(
+      items
+        .filter((item) => item.mediaType === mediaType && item.tmdbId != null)
+        .map((item) => parseInt(item.tmdbId))
+        .filter(Number.isFinite)
+    ),
+  ]
+  const movieIds = idsOf('movie')
+  const tvIds = idsOf('tv')
+  const [movies, shows] = await Promise.all([
+    movieIds.length > 0
+      ? db
+          .collection('FlatMovies')
+          .find({ 'metadata.id': { $in: movieIds }, $nor: [scopeMovieFilter(access)] }, { projection: { 'metadata.id': 1 } })
+          .toArray()
+      : [],
+    tvIds.length > 0
+      ? db
+          .collection('FlatTVShows')
+          .find({ 'metadata.id': { $in: tvIds }, $nor: [scopeShowFilter(access)] }, { projection: { 'metadata.id': 1 } })
+          .toArray()
+      : [],
   ])
-
-  return new Set([
-    ...movieMatches.map(m => m.metadata?.id).filter(Boolean),
-    ...tvMatches.map(t => t.metadata?.id).filter(Boolean)
-  ])
-})
+  // Items store the TMDB id as a number, some older ones as a string
+  const clause = (mediaType, docs) => {
+    const ids = docs.map((doc) => doc.metadata?.id).filter((id) => id != null)
+    return ids.length > 0 ? [{ mediaType, tmdbId: { $in: [...ids, ...ids.map(String)] } }] : []
+  }
+  const nor = [...clause('movie', movies), ...clause('tv', shows)]
+  return nor.length > 0 ? nor : null
+}
 
 /**
  * Get user's watchlist with pagination and filtering
@@ -231,6 +246,8 @@ const checkLibraryAvailability = cache(async (movieTmdbIds, tvTmdbIds) => {
  * @param {boolean} [options.countOnly=false] - Return only count
  * @param {boolean} [options.internalOnly=false] - Only count/return items currently in library (uses TMDB ID lookup)
  * @param {string} [options.userId] - Optional user ID to skip auth() call
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} options.access - The viewer's library access:
+ *   a title the library has outside it is left out (outOfScopeTitles)
  * @returns {Promise<Array|number>} Watchlist items or count
  */
 // The app creates the Watchlist collection's indexes itself, on first use, the
@@ -366,13 +383,17 @@ async function backfillSortDetails(collection, filter) {
     .toArray()
   if (unresolved.length === 0) return
 
+  // Sort keys only, stored on the items: resolved against the whole library,
+  // since an item outside a viewer's scope never reaches them (outOfScopeTitles)
   const resolvedMedia = await batchResolveMedia(
-    unresolved.map((item) => ({ tmdbId: item.tmdbId, mediaType: item.mediaType }))
+    unresolved.map((item) => ({ tmdbId: item.tmdbId, mediaType: item.mediaType })),
+    { access: FULL_LIBRARY }
   )
   await storeSortDetails(collection, unresolved, resolvedMedia)
 }
 
 export const getUserWatchlist = cache(async function getUserWatchlist({
+  access,
   page = 0,
   limit = 20,
   offset = null,
@@ -383,7 +404,8 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
   sortOrder,
   internalOnly = false,
   userId = null,
-} = {}) {
+}) {
+  assertLibraryAccess(access)
   let userObjectId
   
   if (userId) {
@@ -424,6 +446,10 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
 
     if (mediaType) filter.mediaType = mediaType
 
+    // Titles outside the viewer's scope, before anything is counted or paged
+    const hidden = await outOfScopeTitles(db, collection, filter, access)
+    if (hidden) filter.$nor = hidden
+
     // Declared out here because batchResolveMedia reads it below. Declared
     // inside the block, it threw a ReferenceError for any internalOnly list
     // with something to show.
@@ -454,13 +480,13 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
       const [movieMatches, tvMatches] = await Promise.all([
         movieTmdbIds.length > 0
           ? db.collection('FlatMovies').find(
-              { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, visibleMovieFilter()] },
+              { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, libraryMovieFilter(access)] },
               { projection: { 'metadata.id': 1 } }
             ).toArray()
           : Promise.resolve([]),
         tvTmdbIds.length > 0
           ? db.collection('FlatTVShows').find(
-              { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, visibleShowFilter()] },
+              { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, libraryShowFilter(access)] },
               { projection: { 'metadata.id': 1 } }
             ).toArray()
           : Promise.resolve([])
@@ -533,6 +559,7 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
 
     // Resolve media data in batch - pass pre-computed availability to eliminate duplicate queries
     const resolvedMedia = await batchResolveMedia(itemsToResolve, {
+      access,
       precomputedAvailability: internalOnly ? availableTitleKeys : null
     })
 
@@ -604,6 +631,7 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
  * @param {Object} [item.tmdbData] - TMDB metadata for external items
  * @param {string} [item.playlistId] - Playlist ID (null for default playlist)
  * @param {string} [item.posterURL] - Poster URL (for external media)
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} item.access - The adder's library access, for the response
  * @returns {Promise<Object>} Created watchlist item
  */
 export async function addToWatchlist({
@@ -617,7 +645,9 @@ export async function addToWatchlist({
   posterURL = null,
   notes = null,
   rating = null,
+  access,
 }) {
+  assertLibraryAccess(access)
   const session = await getSession()
 
   if (!session?.user?.id) {
@@ -711,7 +741,7 @@ export async function addToWatchlist({
     // falls back to what the request carried; the item is already saved.
     let mediaData = null
     try {
-      const resolvedMedia = await batchResolveMedia([{ tmdbId: numericTmdbId, mediaType }])
+      const resolvedMedia = await batchResolveMedia([{ tmdbId: numericTmdbId, mediaType }], { access })
       mediaData = asResolvedMedia(resolvedMedia.get(titleKey({ mediaType, tmdbId: numericTmdbId })))
       await storeSortDetails(
         collection,
@@ -923,9 +953,11 @@ export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
  * This is a transitional function to help migrate from mediaId to tmdbId
  * @param {string} mediaId - Media ID
  * @param {string} mediaType - Media type ('movie' or 'tv')
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The caller's library access: a title outside it is not found
  * @returns {Promise<number|null>} TMDB ID if found, null otherwise
  */
-export async function findTMDBIdByMediaId(mediaId, mediaType) {
+export async function findTMDBIdByMediaId(mediaId, mediaType, access) {
+  assertLibraryAccess(access)
   if (!mediaId || !isValidObjectId(mediaId)) {
     return null
   }
@@ -937,7 +969,10 @@ export async function findTMDBIdByMediaId(mediaId, mediaType) {
 
     const media = await db
       .collection(collection)
-      .findOne({ _id: new ObjectId(mediaId) }, { projection: { 'metadata.id': 1 } })
+      .findOne(
+        { _id: new ObjectId(mediaId), ...(mediaType === 'movie' ? scopeMovieFilter(access) : scopeShowFilter(access)) },
+        { projection: { 'metadata.id': 1 } }
+      )
 
     return media?.metadata?.id || null
   } catch (error) {
@@ -2337,10 +2372,12 @@ export async function listAllComingSoon({
 
 /**
  * Clean up "Coming Soon" entries for items that are now available in library
- * This is a maintenance function to remove stale coming soon entries
+ * This is a maintenance function to remove stale coming soon entries. It has
+ * no viewer: what counts as available is the whole library (FULL_LIBRARY)
  * @returns {Promise<number>} Number of entries removed
  */
 export async function cleanExpiredComingSoon() {
+  const access = FULL_LIBRARY
   await ensureComingSoonIndexes()
 
   const client = await clientPromise
@@ -2369,7 +2406,7 @@ export async function cleanExpiredComingSoon() {
       ? db
           .collection('FlatMovies')
           .find(
-            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, visibleMovieFilter()] },
+            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, libraryMovieFilter(access)] },
             { projection: { 'metadata.id': 1 } }
           )
           .toArray()
@@ -2378,7 +2415,7 @@ export async function cleanExpiredComingSoon() {
       ? db
           .collection('FlatTVShows')
           .find(
-            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, visibleShowFilter()] },
+            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, libraryShowFilter(access)] },
             { projection: { 'metadata.id': 1 } }
           )
           .toArray()
@@ -2411,11 +2448,14 @@ export async function cleanExpiredComingSoon() {
  * @param {Array} watchlistItems - Watchlist items with mediaIds
  * @param {Object} [playlist=null] - Playlist object with sorting preferences
  * @param {boolean} [includeUnavailable=true] - Whether to include unavailable (TMDB-only) items
- * @param {Object} [options={}] - Additional options
+ * @param {Object} options - Additional options
  * @param {Object} [options.authHeaders] - Authentication headers for server-to-server TMDB calls
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} options.access - The viewer's library access (required)
  * @returns {Promise<Array>} Minimal card data optimized for horizontal list performance
  */
-export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = null, includeUnavailable = true, options = {}) {
+export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = null, includeUnavailable = true, options) {
+  const { access } = options
+  assertLibraryAccess(access)
   // itemsArePreResolved: set by callers whose watchlistItems are getUserWatchlist
   // output — those items already carry the batchResolveMedia fields (isExternal,
   // title, posterURL, blurhashes, tmdbMetadata, ...) spread onto them, so external
@@ -2471,7 +2511,7 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
         db
           .collection('FlatMovies')
           .find(
-            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, visibleMovieFilter()] },
+            { $and: [{ 'metadata.id': { $in: movieTmdbIds } }, libraryMovieFilter(access)] },
             { projection: minimalProjection }
           )
           .toArray()
@@ -2485,7 +2525,7 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
         db
           .collection('FlatTVShows')
           .find(
-            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, visibleShowFilter()] },
+            { $and: [{ 'metadata.id': { $in: tvTmdbIds } }, libraryShowFilter(access)] },
             { projection: minimalProjection }
           )
           .toArray()
@@ -2537,7 +2577,7 @@ export async function getMinimalCardDataForPlaylist(watchlistItems, playlist = n
               tmdbId: parseInt(item.tmdbId),
               mediaType: item.mediaType
             })),
-            { authHeaders }  // Forward auth headers for authentication
+            { access, authHeaders }  // Forward auth headers for authentication
           )
           for (const [key, mediaData] of tmdbResults) {
             externalTmdbData.set(key, mediaData)

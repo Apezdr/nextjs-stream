@@ -5,22 +5,21 @@
  *  - The library's credits: each enabled server's library-root file
  *    (run/libraryCredits), in server priority order, shared files once.
  *  - The credited titles: every movie, show and episode with credits it can
- *    show, among the titles the lists show (src/utils/mediaVisibility). A
+ *    show, among the titles the viewer's lists show (src/utils/mediaVisibility:
+ *    visible, and in the viewer's library scope). A
  *    show is listed when it has credits of its own or any of its episodes
  *    does, with those episodes named, so episode-only credits can be found.
  *    Only titles: the credits themselves stay on the title pages.
  *
- * A user with limited access sees no titles anywhere, so they get the
- * library's credits only: no title, and no count of titles.
- *
  * Read on every menu render, so it is kept in memory for a short while (the
- * same for every user of one access level). A failed read is never kept and
+ * same for every viewer with one library scope: keyed by its id). A failed read is never kept and
  * never reads as "no credits": it throws.
  */
 
 import clientPromise from '@src/lib/mongodb'
 import { getAllServers } from '@src/utils/config'
-import { visibleEpisodeFilter, visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
+import { libraryEpisodeFilter, libraryMovieFilter, libraryShowFilter } from '@src/utils/mediaVisibility'
+import { assertLibraryAccess } from '@src/lib/roles/libraryScope'
 import { LIBRARY_CREDITS_COLLECTION } from './constants'
 import { resolveEpisodeCredits, resolveLibraryCredits, resolveTitleCredits } from './resolve'
 
@@ -33,19 +32,20 @@ const HAS_CREDITS = { 'credits.schemaVersion': 1 }
 const cache = new Map()
 
 /**
- * The catalog for a user's access level.
+ * The catalog for a viewer: the library's credits, and their titles.
  *
- * @param {{ includeTitles: boolean }} access - false for a user with limited access
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - the viewer's library access
  * @returns {Promise<{ library: object|null, titles: Array<object> }>}
  */
-export async function getCreditsCatalog({ includeTitles }) {
-  const key = includeTitles ? 'full' : 'library'
+export async function getCreditsCatalog(access) {
+  assertLibraryAccess(access)
+  const key = access.id
   const held = cache.get(key)
   if (held && (held.pending || Date.now() - held.at < CATALOG_TTL_MS)) return held.pending ?? held.value
 
   const pending = (async () => {
     const db = (await clientPromise).db('Media')
-    const [library, titles] = await Promise.all([loadLibraryCredits(db), includeTitles ? loadCreditedTitles(db) : []])
+    const [library, titles] = await Promise.all([loadLibraryCredits(db), loadCreditedTitles(db, access)])
     return { library, titles }
   })()
   cache.set(key, { pending })
@@ -63,7 +63,7 @@ export async function getCreditsCatalog({ includeTitles }) {
  * Whether the menu item shows, and why, without any title: cheap enough for
  * every page.
  *
- * @param {{ includeTitles: boolean }} access
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - the viewer's library access
  * @returns {Promise<{ available: boolean, library: boolean, titles: number }>}
  */
 export async function getCreditsAvailability(access) {
@@ -106,19 +106,19 @@ async function loadLibraryCredits(db) {
 }
 
 /**
- * Every visible movie and show with credits to show, by display title: a
- * show with its credited episodes (their own files; inherited credits are
- * the show's, found on the show).
+ * Every movie and show the viewer's lists show with credits to show, by
+ * display title: a show with its credited episodes (their own files;
+ * inherited credits are the show's, found on the show).
  */
-async function loadCreditedTitles(db) {
+async function loadCreditedTitles(db, access) {
   const titleProjection = { projection: { title: 1, originalTitle: 1, credits: 1 } }
   const [movies, shows, episodes] = await Promise.all([
-    db.collection('FlatMovies').find({ $and: [HAS_CREDITS, visibleMovieFilter()] }, titleProjection).toArray(),
-    db.collection('FlatTVShows').find({ $and: [HAS_CREDITS, visibleShowFilter()] }, titleProjection).toArray(),
+    db.collection('FlatMovies').find({ $and: [HAS_CREDITS, libraryMovieFilter(access)] }, titleProjection).toArray(),
+    db.collection('FlatTVShows').find({ $and: [HAS_CREDITS, libraryShowFilter(access)] }, titleProjection).toArray(),
     db
       .collection('FlatEpisodes')
       .find(
-        { $and: [HAS_CREDITS, visibleEpisodeFilter()] },
+        { $and: [HAS_CREDITS, libraryEpisodeFilter(access)] },
         { projection: { showId: 1, seasonNumber: 1, episodeNumber: 1, title: 1, credits: 1 } }
       )
       .toArray(),
@@ -145,7 +145,7 @@ async function loadCreditedTitles(db) {
   if (missing.length > 0) {
     const more = await db
       .collection('FlatTVShows')
-      .find({ $and: [{ _id: { $in: missing } }, visibleShowFilter()] }, { projection: { title: 1, originalTitle: 1 } })
+      .find({ $and: [{ _id: { $in: missing } }, libraryShowFilter(access)] }, { projection: { title: 1, originalTitle: 1 } })
       .toArray()
     for (const show of more) showsById.set(String(show._id), show)
   }
