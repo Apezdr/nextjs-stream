@@ -46,6 +46,9 @@ const ADMIN_EMAILS = (process.env.ADMIN_USER_EMAILS || '')
   .filter(Boolean)
 
 // Migration modes
+// The Preview role's fixed id (PREVIEW_ROLE_ID in src/lib/roles/limitedAccessMigration.ts)
+const PREVIEW_ROLE_ID = '5c0fe55c0fe55c0fe55c0fe5'
+
 const DRY_RUN = process.env.MIGRATION_DRY_RUN === 'true'
 const VERIFY_ONLY = process.env.MIGRATION_VERIFY_ONLY === 'true'
 
@@ -107,7 +110,11 @@ async function run() {
         role,
         // Preserved additional fields (mapped to additionalFields in auth config)
         approved: isAdmin ? true : (typeof u.approved === 'boolean' ? u.approved : false),
-        limitedAccess: typeof u.limitedAccess === 'boolean' ? u.limitedAccess : false,
+        // A limited account (the retired limitedAccess flag) holds the Preview
+        // role, an empty library scope: src/lib/roles/limitedAccessMigration.ts
+        // makes the role at the server's next start (until then the unknown
+        // role id hides every title, src/lib/roles/libraryAccess.ts)
+        ...(u.limitedAccess === true ? { roles: [PREVIEW_ROLE_ID] } : {}),
         // FIXED: Keep preferences as object (not JSON string) to match better-auth config type: 'object'
         preferences: u.preferences || {},
       }
