@@ -15,6 +15,8 @@
 
 let mockCollection
 let mockMigrations
+// The reader's library access: the whole library, which adds nothing to the queries
+const FULL = { id: 'all', scope: null, showIds: null }
 const mockLog = { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() }
 const mockOrder = []
 
@@ -101,9 +103,9 @@ beforeEach(() => {
 it('creates exactly the four indexes, once per process', async () => {
   const db = freshModule()
 
-  await Promise.all([db.getUnreadNotificationCount(USER_ID), db.getUnreadNotificationCount(USER_ID)])
+  await Promise.all([db.getUnreadNotificationCount(USER_ID, FULL), db.getUnreadNotificationCount(USER_ID, FULL)])
   await db.createNotification({ userId: USER_ID, title: 'New episode' })
-  await db.getUnreadNotificationCount(USER_ID)
+  await db.getUnreadNotificationCount(USER_ID, FULL)
 
   expect(mockCollection.createIndex).toHaveBeenCalledTimes(4)
   expect(mockCollection.createIndex.mock.calls).toEqual(EXPECTED_SPECS)
@@ -119,7 +121,7 @@ it('creates exactly the four indexes, once per process', async () => {
 })
 
 it('keeps the expiry to read notifications, and to unread ones of the new-content type', async () => {
-  await freshModule().getUnreadNotificationCount(USER_ID)
+  await freshModule().getUnreadNotificationCount(USER_ID, FULL)
   const options = (name) => mockCollection.createIndex.mock.calls.find(([, o]) => o.name === name)[1]
   const readTtl = options('readAt_ttl_read')
   const unreadTtl = options('createdAt_ttl_unread_new_content')
@@ -137,7 +139,7 @@ it('keeps the expiry to read notifications, and to unread ones of the new-conten
 it('gives read notifications without a readAt their createdAt, before the indexes, once per database', async () => {
   const db = freshModule()
 
-  await db.getUnreadNotificationCount(USER_ID)
+  await db.getUnreadNotificationCount(USER_ID, FULL)
 
   expect(mockCollection.updateMany).toHaveBeenCalledTimes(1)
   const [filter, update] = mockCollection.updateMany.mock.calls[0]
@@ -154,7 +156,7 @@ it('gives read notifications without a readAt their createdAt, before the indexe
   ])
 
   // The next process finds the flag: no second backfill, the indexes are still ensured
-  await newProcess().getUnreadNotificationCount(USER_ID)
+  await newProcess().getUnreadNotificationCount(USER_ID, FULL)
   expect(mockCollection.updateMany).toHaveBeenCalledTimes(1)
   expect(mockCollection.createIndex.mock.calls.filter(([key]) => 'readAt' in key)).toHaveLength(2)
 })
@@ -163,7 +165,7 @@ it('builds the indexes when the backfill fails, answers the request, and backfil
   mockCollection.updateMany.mockRejectedValueOnce(new Error('not primary'))
   const db = freshModule()
 
-  await expect(db.getUnreadNotificationCount(USER_ID)).resolves.toBe(3)
+  await expect(db.getUnreadNotificationCount(USER_ID, FULL)).resolves.toBe(3)
 
   expect(mockCollection.createIndex).toHaveBeenCalledTimes(4)
   expect(backfillFlags()).toEqual([])
@@ -172,7 +174,7 @@ it('builds the indexes when the backfill fails, answers the request, and backfil
     expect.any(String)
   )
 
-  await newProcess().getUnreadNotificationCount(USER_ID)
+  await newProcess().getUnreadNotificationCount(USER_ID, FULL)
   expect(mockCollection.updateMany).toHaveBeenCalledTimes(2)
   expect(backfillFlags()).toHaveLength(1)
 })
@@ -188,8 +190,8 @@ it('logs a conflict, answers the request and does not retry', async () => {
   })
   const db = freshModule()
 
-  await expect(db.getUnreadNotificationCount(USER_ID)).resolves.toBe(3)
-  await expect(db.getUnreadNotificationCount(USER_ID)).resolves.toBe(3)
+  await expect(db.getUnreadNotificationCount(USER_ID, FULL)).resolves.toBe(3)
+  await expect(db.getUnreadNotificationCount(USER_ID, FULL)).resolves.toBe(3)
 
   expect(mockCollection.createIndex).toHaveBeenCalledTimes(4)
   expect(mockLog.error).toHaveBeenCalledTimes(1)
@@ -208,7 +210,7 @@ describe('every path that marks a notification read sets readAt (the TTL counts 
     ['all', (db) => db.markAllNotificationsAsRead(USER_ID), 'updateMany'],
   ])('marking %s read', async (_label, mark, method) => {
     const db = freshModule()
-    await db.getUnreadNotificationCount(USER_ID) // the ensure, out of the way
+    await db.getUnreadNotificationCount(USER_ID, FULL) // the ensure, out of the way
     mockCollection.updateMany.mockClear()
 
     await mark(db)
@@ -265,8 +267,8 @@ describe('the unused category and priority indexes', () => {
   it('drops both once, before the indexes are ensured, and leaves the others alone', async () => {
     const db = freshModule()
 
-    await db.getUnreadNotificationCount(USER_ID)
-    await db.getUnreadNotificationCount(USER_ID)
+    await db.getUnreadNotificationCount(USER_ID, FULL)
+    await db.getUnreadNotificationCount(USER_ID, FULL)
 
     expect(mockCollection.dropIndex.mock.calls).toEqual([['userId_category_index'], ['userId_priority_index']])
     expect(mockCollection.createIndex.mock.calls).toEqual(EXPECTED_SPECS)
@@ -284,7 +286,7 @@ describe('the unused category and priority indexes', () => {
       .mockRejectedValueOnce(notFound(26, 'NamespaceNotFound'))
     const db = freshModule()
 
-    await db.getUnreadNotificationCount(USER_ID)
+    await db.getUnreadNotificationCount(USER_ID, FULL)
 
     expect(mockLog.error).not.toHaveBeenCalled()
     expect(mockCollection.createIndex).toHaveBeenCalledTimes(4)
@@ -294,10 +296,10 @@ describe('the unused category and priority indexes', () => {
   })
 
   it('is not repeated by a later process once flagged', async () => {
-    await freshModule().getUnreadNotificationCount(USER_ID)
+    await freshModule().getUnreadNotificationCount(USER_ID, FULL)
     mockCollection.dropIndex.mockClear()
 
-    await newProcess().getUnreadNotificationCount(USER_ID)
+    await newProcess().getUnreadNotificationCount(USER_ID, FULL)
 
     expect(mockCollection.dropIndex).not.toHaveBeenCalled()
   })
@@ -306,7 +308,7 @@ describe('the unused category and priority indexes', () => {
     mockCollection.dropIndex = jest.fn().mockRejectedValue(notFound(13, 'Unauthorized'))
     const db = freshModule()
 
-    await db.getUnreadNotificationCount(USER_ID)
+    await db.getUnreadNotificationCount(USER_ID, FULL)
 
     expect(mockLog.error).toHaveBeenCalledWith(
       expect.objectContaining({ migration: db.DROP_UNUSED_INDEXES_MIGRATION }),

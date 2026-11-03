@@ -5,6 +5,7 @@ import {
   getFlatTVList
 } from '@src/utils/flatDatabaseUtils';
 import { listOrder } from '@src/utils/mediaListUtils/listOrder';
+import { libraryAccessById } from '@src/lib/roles/libraryAccess';
 
 /**
  * Serialize MongoDB objects to plain objects for client transfer
@@ -39,13 +40,15 @@ function serializeForClient(data) {
  * Fetches `count` documents starting at absolute offset `offset`, letting the
  * route serve a page plus its boundary peek items from a single fetch, in
  * the list's order (`sort`: id | title | date, see mediaListUtils/listOrder.js).
- * Every window takes the viewer's LibraryAccess first: it is part of the
- * cache key, so viewers with the same scope share entries.
+ * Every window takes the viewer's scope id first (LibraryAccess.id), the
+ * cache key, so viewers with the same scope share entries; the access is
+ * resolved again inside (libraryAccessById).
  */
-export async function getCachedMovieWindow(access, offset, count, projection, sort, sortOrder) {
+export async function getCachedMovieWindow(scopeId, offset, count, projection, sort, sortOrder) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'movies')
+  const access = await libraryAccessById(scopeId)
 
   const data = await getFlatPosters('movie', false, 0, count, projection, {
     access,
@@ -62,10 +65,11 @@ export async function getCachedMovieWindow(access, offset, count, projection, so
  * accepted one it never used, which only fragmented the cache key into
  * duplicate entries holding identical data. In the list's order, like movies.
  */
-export async function getCachedTVWindow(access, offset, count, sort, sortOrder) {
+export async function getCachedTVWindow(scopeId, offset, count, sort, sortOrder) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'tv')
+  const access = await libraryAccessById(scopeId)
 
   const data = await getFlatTVList({ access, limit: count, skip: offset, order: listOrder('tv', sort, sortOrder) });
   return serializeForClient(data);
@@ -74,10 +78,11 @@ export async function getCachedTVWindow(access, offset, count, sort, sortOrder) 
 /**
  * Cached recently added window - 1 minute cache with media library tag
  */
-export async function getCachedRecentlyAddedWindow(access, offset, count, shouldExposeAdditionalData) {
+export async function getCachedRecentlyAddedWindow(scopeId, offset, count, shouldExposeAdditionalData) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'recently-added')
+  const access = await libraryAccessById(scopeId)
 
   const data = await getFlatRecentlyAddedMedia({
     access,
@@ -93,10 +98,11 @@ export async function getCachedRecentlyAddedWindow(access, offset, count, should
  * Returns the two collections separately so the route can split each window
  * into page items and boundary peeks before concatenating.
  */
-export async function getCachedAllMediaWindow(access, offset, count, movieProjection, tvProjection) {
+export async function getCachedAllMediaWindow(scopeId, offset, count, movieProjection, tvProjection) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'all')
+  const access = await libraryAccessById(scopeId)
 
   const [movies, tv] = await Promise.all([
     getFlatPosters('movie', false, 0, count, movieProjection, { access, skip: offset }),

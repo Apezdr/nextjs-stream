@@ -11,6 +11,7 @@ import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
 import { tvShowDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTags'
 import { pageLibraryAccess } from '@src/lib/roles/session'
+import { libraryAccessById } from '@src/lib/roles/libraryAccess'
 
 function buildParsedParams(title) {
   return {
@@ -34,7 +35,7 @@ function buildParsedParams(title) {
 
 async function fetchShow(title, access) {
   const parsedParams = buildParsedParams(title)
-  const result = await getCachedMediaWithRedirect(parsedParams, access)
+  const result = await getCachedMediaWithRedirect(parsedParams, access.id)
   return { parsedParams, result }
 }
 
@@ -42,13 +43,13 @@ async function fetchShow(title, access) {
  * Cached subtree — owns the data fetch and the rendered output. The page
  * renders it behind SessionGate, inside a Suspense boundary whose fallback is
  * the page skeleton, so the skeleton paints at once (it is the route's
- * prerendered shell) while this resolves, or returns instantly when warm. Cache is keyed by `{ title, access, userId }` (the viewer's library access): the page
+ * prerendered shell) while this resolves, or returns instantly when warm. Cache is keyed by `{ title, scopeId, userId }` (scopeId: the viewer's LibraryAccess.id): the page
  * shows the viewer's next-up episode and per-season progress, so every
  * viewer has their own entry, tagged with their watch history so a playback
  * write expires it. Nothing inside may read the session — the viewer is
  * known only through the `userId` argument.
  */
-async function TVShowContent({ title, access, userId }) {
+async function TVShowContent({ title, scopeId, userId }) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag(
@@ -60,7 +61,8 @@ async function TVShowContent({ title, access, userId }) {
   )
 
   const parsedParams = buildParsedParams(title)
-  const result = await getCachedMediaWithRedirect(parsedParams, access)
+  const access = await libraryAccessById(scopeId)
+  const result = await getCachedMediaWithRedirect(parsedParams, scopeId)
 
   if (result.redirectUrl) {
     redirect(result.redirectUrl)
@@ -97,7 +99,7 @@ export default function TVShowPage({ params }) {
         {({ session, params: { title } }) => (
           <TVShowContent
             title={title}
-            access={session.access}
+            scopeId={session.access.id}
             userId={session.user.id}
           />
         )}

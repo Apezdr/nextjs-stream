@@ -1,5 +1,7 @@
-import { getVideosWatched } from '@src/utils/auth_database'
 import { signedInGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
+import { findPlaybackForUser } from '@src/utils/watchHistory/database'
+import { watchRowsInScope } from '@src/utils/watchHistory/scopeRows'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
 import { computeWatchProgress } from '@src/utils/watchHistory/progress'
@@ -24,8 +26,8 @@ export async function GET(req) {
     )
   }
 
-  // Get all watch history (this is cached in getVideosWatched)
-  const watchedMedia = await getVideosWatched()
+  // The user's own rows
+  const watchedMedia = (await findPlaybackForUser(authResult.id)) ?? []
   
   // Normalize the requested videoId for matching
   const normalizedVideoId = generateNormalizedVideoId(videoId)
@@ -54,6 +56,13 @@ export async function GET(req) {
           (a, b) => new Date(b.lastUpdated || 0).getTime() - new Date(a.lastUpdated || 0).getTime()
         )[0] || null
     }
+  }
+
+  // A title outside the user's library scope has no position to give: the
+  // check reads that one row's title, nothing more
+  if (playbackData) {
+    const [kept] = await watchRowsInScope([playbackData], await libraryAccessFor(authResult))
+    playbackData = kept ?? null
   }
 
   if (!playbackData) {

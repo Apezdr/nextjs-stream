@@ -34,7 +34,7 @@ function buildParsedParams(title, season, episode) {
 
 async function fetchEpisode(title, season, episode, access) {
   const parsedParams = buildParsedParams(title, season, episode)
-  const result = await getCachedMediaWithRedirect(parsedParams, access)
+  const result = await getCachedMediaWithRedirect(parsedParams, access.id)
   return { parsedParams, result }
 }
 

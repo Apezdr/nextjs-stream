@@ -2,13 +2,13 @@ import { cacheLife, cacheTag } from 'next/cache'
 import { getCachedMediaCounts } from '@src/utils/cache/mediaCounts'
 import { formatDuration } from '@src/utils/formatDuration'
 
-// access: the viewer's LibraryAccess, part of the cache key
-export default async function AsyncMediaCounts({ suffix = '', showDuration = false, access }) {
+// scopeId: the viewer's LibraryAccess.id, part of the cache key
+export default async function AsyncMediaCounts({ suffix = '', showDuration = false, scopeId }) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'media-counts')
 
-  const { count, totalMilliseconds } = await getCachedMediaCounts('all', access)
+  const { count, totalMilliseconds } = await getCachedMediaCounts('all', scopeId)
 
   return (
     <span>

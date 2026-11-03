@@ -78,6 +78,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
 
     // Find movies and episodes using flat database structure
     const [watchedMovies, watchedEpisodes] = await Promise.all([
+      // library-scope: the user's own watched titles, for their genre profile; never sent
       db.collection('FlatMovies')
         .find({ videoURL: { $in: videoIds } })
         .toArray(),
@@ -93,6 +94,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
     const showIds = [...new Set(watchedEpisodes.map(episode => episode.showId.toString()))];
     
     // Fetch all shows at once
+    // library-scope: the shows of the user's own watched episodes, for the profile; never sent
     const tvShows = await db.collection('FlatTVShows')
       .find({ _id: { $in: showIds.map(id => new ObjectId(id)) } })
       .toArray();
@@ -180,6 +182,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
 
     // Get total counts to know how many items are available
     const [totalMovies, totalTVShows] = await Promise.all([
+      // library-scope: totals for the log line only
       db.collection('FlatMovies').countDocuments({}),
       db.collection('FlatTVShows').countDocuments({})
     ])
@@ -483,6 +486,7 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
     
     // Fetch all TV shows and seasons at once
     const [tvShows, seasons] = await Promise.all([
+      // library-scope: the shows and seasons of episodes already held to the scope above
       db.collection('FlatTVShows').find({ _id: { $in: showIds.map(id => new ObjectId(id)) } }).toArray(),
       db.collection('FlatSeasons').find({ showId: { $in: showIds.map(id => new ObjectId(id)) } }).toArray()
     ]);
@@ -633,6 +637,7 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
     
     // Get total counts to know how many items are available
     const [totalMovies, totalTVShows] = await Promise.all([
+      // library-scope: totals for the log line only
       db.collection('FlatMovies').countDocuments({}),
       db.collection('FlatTVShows').countDocuments({})
     ])

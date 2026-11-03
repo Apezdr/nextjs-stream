@@ -3,6 +3,7 @@ import {
   getFlatAvailableMoviesCount,
   getFlatAvailableTVShowsCount,
 } from '@src/utils/flatDatabaseUtils'
+import { libraryAccessById } from '@src/lib/roles/libraryAccess'
 
 async function fetchMovieCounts(access) {
   const data = await getFlatAvailableMoviesCount(access)
@@ -20,10 +21,11 @@ async function fetchTVCounts(access) {
   }
 }
 
-/** Counts of what the viewer's lists show, by their LibraryAccess (part of the cache key). */
-export async function getCachedMediaCounts(mediaType, access) {
+/** Counts of what the viewer's lists show, keyed by their scope id (LibraryAccess.id). */
+export async function getCachedMediaCounts(mediaType, scopeId) {
   'use cache'
   cacheLife('mediaLists')
+  const access = await libraryAccessById(scopeId)
 
   if (mediaType === 'movies') {
     cacheTag('media-library', 'movies', 'movie-count')

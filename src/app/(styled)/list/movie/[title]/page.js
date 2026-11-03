@@ -11,6 +11,7 @@ import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
 import { movieDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTags'
 import { pageLibraryAccess } from '@src/lib/roles/session'
+import { libraryAccessById } from '@src/lib/roles/libraryAccess'
 
 function buildParsedParams(title) {
   return {
@@ -34,7 +35,7 @@ function buildParsedParams(title) {
 
 async function fetchMovie(title, access) {
   const parsedParams = buildParsedParams(title)
-  const result = await getCachedMediaWithRedirect(parsedParams, access)
+  const result = await getCachedMediaWithRedirect(parsedParams, access.id)
   return { parsedParams, result }
 }
 
@@ -43,10 +44,10 @@ async function fetchMovie(title, access) {
  * renders it behind SessionGate, inside a Suspense boundary whose fallback is
  * the page skeleton, so the skeleton paints at once (it is the route's
  * prerendered shell) while this resolves, or returns instantly when warm. Cache is keyed by
- * `{ title, access }`: viewers with the same library scope share one entry per movie,
+ * `{ title, scopeId }` (the viewer's LibraryAccess.id): viewers with the same library scope share one entry per movie,
  * and a movie outside the scope renders as not found.
  */
-async function MovieDetailContent({ title, access }) {
+async function MovieDetailContent({ title, scopeId }) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag(
@@ -57,7 +58,8 @@ async function MovieDetailContent({ title, access }) {
   )
 
   const parsedParams = buildParsedParams(title)
-  const result = await getCachedMediaWithRedirect(parsedParams, access)
+  const access = await libraryAccessById(scopeId)
+  const result = await getCachedMediaWithRedirect(parsedParams, scopeId)
 
   if (result.redirectUrl) {
     redirect(result.redirectUrl)
@@ -73,7 +75,7 @@ async function MovieDetailContent({ title, access }) {
     )
   }
 
-  return <MovieDetailsView media={result.media} access={access} />
+  return <MovieDetailsView media={result.media} scopeId={scopeId} />
 }
 
 export async function generateMetadata({ params }, parent) {
@@ -92,7 +94,7 @@ export default function MovieDetailPage({ params }) {
     <Suspense fallback={<MoviePageSkeleton />}>
       <SessionGate params={params} callbackUrl={({ title }) => `/list/movie/${title}`}>
         {({ session, params: { title } }) => (
-          <MovieDetailContent title={title} access={session.access} />
+          <MovieDetailContent title={title} scopeId={session.access.id} />
         )}
       </SessionGate>
     </Suspense>

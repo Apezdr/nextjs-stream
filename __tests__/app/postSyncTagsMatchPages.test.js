@@ -393,7 +393,7 @@ describe.each(FOLDERS)('an admin create under the folder %j (display title %j)',
 
 /** The per-title tags of the cached component a view renders: <Suspense><div><Cached media /></div></Suspense>. */
 async function viewTitleTags(View, media) {
-  const cached = View({ media }).props.children.props.children
+  const cached = View({ media, scopeId: 'all' }).props.children.props.children
   mockCacheTag.mockClear()
   await cached.type(cached.props)
   return mockCacheTag.mock.calls.flat().filter((tag) => !BUCKETS.has(tag))

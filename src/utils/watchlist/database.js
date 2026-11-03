@@ -24,7 +24,8 @@ import {
   scopeMovieFilter,
   scopeShowFilter,
 } from '@src/utils/mediaVisibility'
-import { FULL_LIBRARY, assertLibraryAccess, isFullLibrary } from '@src/lib/roles/libraryScope'
+import { FULL_LIBRARY, assertLibraryAccess } from '@src/lib/roles/libraryScope'
+import { libraryScopeIndex } from '@src/lib/roles/libraryAccess'
 import { createLogger, logError } from '@src/lib/logger'
 
 const log = createLogger('Watchlist')
@@ -194,46 +195,28 @@ async function getOwnerNameMap(ownerIds = []) {
  */
 
 /**
- * A playlist's titles that the library has but the viewer's scope leaves out
- * (libraryScope.ts), as a $nor for the Watchlist query: they are left out of
- * the viewer's lists and counts as if never added, whoever added them. A title
- * the library doesn't have (TMDB-only) isn't the library's to hide, so it
- * stays. Null when nothing is left out (always, for the whole library).
+ * The titles the library has but the viewer's scope leaves out, as a $nor for
+ * a Watchlist query: they are left out of the viewer's lists and counts as if
+ * never added, whoever added them. A title the library doesn't have
+ * (TMDB-only) isn't the library's to hide, so it stays. From the scope's
+ * index (libraryAccess.ts), worked out in memory once per scope: no read of
+ * the playlist and no lookup per call, bounded by the size of the library.
+ * Null when nothing is left out (always, for the whole library).
  */
-async function outOfScopeTitles(db, collection, filter, access) {
-  if (isFullLibrary(access)) return null
-  const items = await collection.find(filter, { projection: { tmdbId: 1, mediaType: 1 } }).toArray()
-  const idsOf = (mediaType) => [
-    ...new Set(
-      items
-        .filter((item) => item.mediaType === mediaType && item.tmdbId != null)
-        .map((item) => parseInt(item.tmdbId))
-        .filter(Number.isFinite)
-    ),
-  ]
-  const movieIds = idsOf('movie')
-  const tvIds = idsOf('tv')
-  const [movies, shows] = await Promise.all([
-    movieIds.length > 0
-      ? db
-          .collection('FlatMovies')
-          .find({ 'metadata.id': { $in: movieIds }, $nor: [scopeMovieFilter(access)] }, { projection: { 'metadata.id': 1 } })
-          .toArray()
-      : [],
-    tvIds.length > 0
-      ? db
-          .collection('FlatTVShows')
-          .find({ 'metadata.id': { $in: tvIds }, $nor: [scopeShowFilter(access)] }, { projection: { 'metadata.id': 1 } })
-          .toArray()
-      : [],
-  ])
+async function outOfScopeTitles(access) {
+  const index = await libraryScopeIndex(access)
+  if (!index) return null
   // Items store the TMDB id as a number, some older ones as a string
-  const clause = (mediaType, docs) => {
-    const ids = docs.map((doc) => doc.metadata?.id).filter((id) => id != null)
-    return ids.length > 0 ? [{ mediaType, tmdbId: { $in: [...ids, ...ids.map(String)] } }] : []
-  }
-  const nor = [...clause('movie', movies), ...clause('tv', shows)]
+  const clause = (mediaType, ids) =>
+    ids.length > 0 ? [{ mediaType, tmdbId: { $in: [...ids, ...ids.map(String)] } }] : []
+  const nor = [...clause('movie', index.hiddenTmdbIds.movie), ...clause('tv', index.hiddenTmdbIds.tv)]
   return nor.length > 0 ? nor : null
+}
+
+/** A playlist's item count as the viewer sees it. */
+async function visibleItemCount(watchlistCollection, playlistId, access) {
+  const hidden = await outOfScopeTitles(access)
+  return watchlistCollection.countDocuments({ playlistId, ...(hidden ? { $nor: hidden } : {}) })
 }
 
 /**
@@ -447,7 +430,7 @@ export const getUserWatchlist = cache(async function getUserWatchlist({
     if (mediaType) filter.mediaType = mediaType
 
     // Titles outside the viewer's scope, before anything is counted or paged
-    const hidden = await outOfScopeTitles(db, collection, filter, access)
+    const hidden = await outOfScopeTitles(access)
     if (hidden) filter.$nor = hidden
 
     // Declared out here because batchResolveMedia reads it below. Declared
@@ -1353,13 +1336,17 @@ export async function createPlaylist({
  * @param {string} userId - User ID (required for caching)
  * @param {boolean} [includeShared=true] - Include shared playlists
  * @param {boolean} [includePublic=true] - Include public playlists
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The viewer's library access: each
+ *   playlist's itemCount counts only what they can see
  * @returns {Promise<Array>} User's playlists
  */
 export const getUserPlaylists = cache(async function getUserPlaylists(
-  userId, 
-  includeShared = true, 
-  includePublic = true
+  userId,
+  includeShared = true,
+  includePublic = true,
+  access
 ) {
+  assertLibraryAccess(access)
   const session = await getSession()
   const isGlobalAdmin = isAdminUser(session?.user)
 
@@ -1411,10 +1398,9 @@ export const getUserPlaylists = cache(async function getUserPlaylists(
         const sanitized = sanitizePlaylistDoc(playlist)
 
         // Count ALL items in the playlist (regardless of who added them)
-        // This supports collaborative playlists where multiple users can add items
-        const itemCount = await watchlistCollection.countDocuments({
-          playlistId: playlist._id,
-        })
+        // This supports collaborative playlists where multiple users can add items;
+        // the viewer's library scope leaves out what it hides
+        const itemCount = await visibleItemCount(watchlistCollection, playlist._id, access)
 
         // Determine relationship type for categorization
         const isOwner = playlist.ownerId?.equals(userObjectId) || false
@@ -1465,9 +1451,12 @@ export const getUserPlaylists = cache(async function getUserPlaylists(
 /**
  * Get a single playlist by ID (includes public playlists and those shared with user)
  * @param {string} playlistId - Playlist ID
+ * @param {{ user?: Object, access: import('@src/lib/roles/libraryScope').LibraryAccess }} options - access: the viewer's
+ *   library access, for the itemCount
  * @returns {Promise<Object|null>} Playlist or null if not found/not accessible
  */
-export async function getPlaylistById(playlistId, { user = null } = {}) {
+export async function getPlaylistById(playlistId, { user = null, access } = {}) {
+  assertLibraryAccess(access)
   // Prefer the already-authenticated user from the calling route (saves a
   // session lookup); fall back to getSession() for callers without one.
   const requestUser = user ?? (await getSession())?.user
@@ -1522,10 +1511,9 @@ export async function getPlaylistById(playlistId, { user = null } = {}) {
 
     // Get item count for this playlist
     // Count ALL items in the playlist (regardless of who added them)
-    // This supports collaborative playlists where multiple users can add items
-    const itemCount = await watchlistCollection.countDocuments({
-      playlistId: playlist._id,
-    })
+    // This supports collaborative playlists where multiple users can add items;
+    // the viewer's library scope leaves out what it hides
+    const itemCount = await visibleItemCount(watchlistCollection, playlist._id, access)
 
     // Determine relationship type for categorization
     const isOwner = playlist.ownerId?.equals(userObjectId) || false

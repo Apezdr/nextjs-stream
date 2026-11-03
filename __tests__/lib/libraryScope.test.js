@@ -17,6 +17,7 @@ const {
   parseScope,
   ratingsUpTo,
   scopeMatcher,
+  scopeRule,
   unionScopes,
 } = require('@src/lib/roles/libraryScope')
 const { RoleInputError } = require('@src/lib/roles/capability')
@@ -90,9 +91,10 @@ it('a cap holds its rating and every one under it, in MPAA and US TV order', () 
   expect(ratingsUpTo(null, MOVIE_RATINGS)).toEqual([])
 })
 
-describe('scopeMatcher', () => {
-  const access = scoped({ movieRatingCap: 'PG', tvRatingCap: 'TV-PG', titles: [picked('movie', 'Unrated Pick'), picked('tv', 'Picked Show')] }, [SHOW_A])
-  const inScope = scopeMatcher(access)
+describe('scopeRule and scopeMatcher', () => {
+  const scope = { movieRatingCap: 'PG', tvRatingCap: 'TV-PG', titles: [picked('movie', 'Unrated Pick'), picked('tv', 'Picked Show')] }
+  const rule = scopeRule(scope)
+  const inScope = scopeMatcher(scoped(scope, [SHOW_A]))
 
   it('holds a movie under the cap, or picked; an unrated one only when picked', () => {
     expect(inScope.movie({ originalTitle: 'Kids Film', metadata: { rating: 'G' } })).toBe(true)
@@ -101,13 +103,18 @@ describe('scopeMatcher', () => {
     expect(inScope.movie({ originalTitle: 'No Rating', metadata: {} })).toBe(false)
     expect(inScope.movie({ originalTitle: 'Unrated Pick', metadata: { rating: 'NR' } })).toBe(true)
     // A pick is by library key and type: a show of the same name is not the movie
-    expect(inScope.show({ originalTitle: 'Unrated Pick', metadata: {} })).toBe(false)
+    expect(rule.show({ originalTitle: 'Unrated Pick', metadata: {} })).toBe(false)
   })
 
-  it('holds a show under the TV cap, or picked; its seasons and episodes follow it', () => {
-    expect(inScope.show({ originalTitle: 'Show', metadata: { rating: 'TV-G' } })).toBe(true)
-    expect(inScope.show({ originalTitle: 'Show', metadata: { rating: 'TV-MA' } })).toBe(false)
-    expect(inScope.show({ originalTitle: 'Picked Show', metadata: { rating: 'TV-MA' } })).toBe(true)
+  it('the rule holds a show under the TV cap, or picked', () => {
+    expect(rule.show({ originalTitle: 'Show', metadata: { rating: 'TV-G' } })).toBe(true)
+    expect(rule.show({ originalTitle: 'Show', metadata: { rating: 'TV-MA' } })).toBe(false)
+    expect(rule.show({ originalTitle: 'Picked Show', metadata: { rating: 'TV-MA' } })).toBe(true)
+  })
+
+  it('the matcher holds a show by the scope’s resolved show ids, and its seasons and episodes with it', () => {
+    expect(inScope.show({ _id: new ObjectId(SHOW_A) })).toBe(true)
+    expect(inScope.show({ _id: SHOW_B, metadata: { rating: 'TV-Y' } })).toBe(false)
     expect(inScope.ofShow({ showId: new ObjectId(SHOW_A) })).toBe(true)
     expect(inScope.ofShow({ showId: SHOW_B })).toBe(false)
     expect(inScope.ofShow({})).toBe(false)
@@ -139,23 +146,30 @@ describe('the Mongo fragments', () => {
     expect(scopeEpisodeFilter(FULL_LIBRARY)).toEqual({})
   })
 
-  it('a scope is bounded $in lists: the ratings under the cap, the picked keys, the shows', () => {
+  it('a scope is bounded $in lists: the ratings under the cap and the picked keys for movies, the resolved ids for shows', () => {
     const access = scoped({ movieRatingCap: 'PG', tvRatingCap: null, titles: [picked('movie', 'A'), picked('tv', 'S')] }, [SHOW_A])
     expect(scopeMovieFilter(access)).toEqual({
-      $or: [{ 'metadata.rating': { $in: ['G', 'PG'] } }, { originalTitle: { $in: ['A'] } }],
+      $and: [{ $or: [{ 'metadata.rating': { $in: ['G', 'PG'] } }, { originalTitle: { $in: ['A'] } }] }],
     })
-    expect(scopeShowFilter(access)).toEqual({
-      $or: [{ 'metadata.rating': { $in: [] } }, { originalTitle: { $in: ['S'] } }],
-    })
-    expect(scopeEpisodeFilter(access)).toEqual({ showId: { $in: [new ObjectId(SHOW_A)] } })
-    // Visible AND in scope, as one key that spreads beside a caller's own conditions
-    expect(libraryMovieFilter(access)).toEqual({ $and: [visibleMovieFilter(), scopeMovieFilter(access)] })
+    // Shows by _id (indexed), seasons and episodes by showId
+    expect(scopeShowFilter(access)).toEqual({ $and: [{ _id: { $in: [new ObjectId(SHOW_A)] } }] })
+    expect(scopeEpisodeFilter(access)).toEqual({ $and: [{ showId: { $in: [new ObjectId(SHOW_A)] } }] })
+    expect(libraryMovieFilter(access)).toEqual({ $and: [visibleMovieFilter(), ...scopeMovieFilter(access).$and] })
     expect(Object.keys(libraryEpisodeFilter(access))).toEqual(['$and'])
+  })
+
+  it('every fragment is one $and key: spread beside a caller’s own _id or $or, it replaces neither', () => {
+    const access = scoped(EMPTY_SCOPE, [SHOW_A])
+    const query = { _id: new ObjectId(SHOW_B), $or: [{ a: 1 }], ...scopeShowFilter(access) }
+    expect(query._id).toEqual(new ObjectId(SHOW_B))
+    expect(query.$or).toEqual([{ a: 1 }])
+    expect(query.$and).toEqual([{ _id: { $in: [new ObjectId(SHOW_A)] } }])
   })
 
   it('an empty scope matches nothing', () => {
     const access = scoped(EMPTY_SCOPE)
-    expect(scopeMovieFilter(access)).toEqual({ $or: [{ 'metadata.rating': { $in: [] } }, { originalTitle: { $in: [] } }] })
-    expect(scopeEpisodeFilter(access)).toEqual({ showId: { $in: [] } })
+    expect(scopeMovieFilter(access)).toEqual({ $and: [{ $or: [{ 'metadata.rating': { $in: [] } }, { originalTitle: { $in: [] } }] }] })
+    expect(scopeShowFilter(access)).toEqual({ $and: [{ _id: { $in: [] } }] })
+    expect(scopeEpisodeFilter(access)).toEqual({ $and: [{ showId: { $in: [] } }] })
   })
 })

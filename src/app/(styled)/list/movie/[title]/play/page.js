@@ -35,7 +35,7 @@ function buildPlayerParsedParams(title) {
 
 async function fetchMovieForPlayer(title, access) {
   const parsedParams = buildPlayerParsedParams(title)
-  const result = await getCachedMediaWithRedirect(parsedParams, access)
+  const result = await getCachedMediaWithRedirect(parsedParams, access.id)
   return { parsedParams, result }
 }
 

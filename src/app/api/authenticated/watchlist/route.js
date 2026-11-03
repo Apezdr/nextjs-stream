@@ -843,7 +843,8 @@ async function handleGetPlaylists(req, user) {
     const includeShared = url.searchParams.get('includeShared') !== 'false'
 
     // Get all accessible playlists for this user
-    const allPlaylists = await getUserPlaylists(user.id, includeShared, true)
+    // Item counts are of what the caller's library scope lets them see
+    const allPlaylists = await getUserPlaylists(user.id, includeShared, true, await libraryAccessFor(user))
 
     return createSuccessResponse({
       success: true,
@@ -880,7 +881,7 @@ async function handleGetPlaylistById(req, user) {
     validateObjectId(playlistId, 'playlistId')
 
     // Get playlist by ID (includes public playlists)
-    const playlist = await getPlaylistById(playlistId, { user })
+    const playlist = await getPlaylistById(playlistId, { user, access: await libraryAccessFor(user) })
     
     if (!playlist) {
       return createErrorResponse('Playlist not found or not accessible', 404)
@@ -926,8 +927,9 @@ async function handleGetPlaylistItems(req, user) {
     }
 
     // Get playlist items with sort parameters
+    const access = await libraryAccessFor(user)
     const items = await getUserWatchlist({
-      access: await libraryAccessFor(user),
+      access,
       userId: user.id,
       page,
       limit,
@@ -941,7 +943,7 @@ async function handleGetPlaylistItems(req, user) {
     let playlistInfo
     if (playlistId === 'default') {
       // For 'default' playlistId, find the user's default playlist
-      const playlists = await getUserPlaylists(user.id)
+      const playlists = await getUserPlaylists(user.id, true, true, access)
       playlistInfo = playlists.find(p => p.isDefault === true)
       
       // If no default playlist found, create one
@@ -950,7 +952,7 @@ async function handleGetPlaylistItems(req, user) {
       }
     } else {
       // For specific playlist IDs, use getPlaylistById which includes public playlists
-      playlistInfo = await getPlaylistById(playlistId, { user })
+      playlistInfo = await getPlaylistById(playlistId, { user, access })
       
       if (!playlistInfo) {
         return createErrorResponse('Playlist not found or not accessible', 404)

@@ -1,6 +1,5 @@
 import { approvedGate } from '@src/lib/roles/gates'
 import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
-import { noticesInScope } from '@src/utils/notifications/scope'
 import {
   getUserNotifications,
   getUnreadNotificationCount
@@ -32,18 +31,17 @@ export async function GET(request) {
     const priority = searchParams.get('priority') || null;
     const enrich = searchParams.get('enrich') !== 'false'; // Default to true
 
-    // Get notifications
+    // Get notifications: only notices about titles in the reader's library
+    // scope, in the page and in every count (one delivered before their scope
+    // changed may name one outside it)
     const result = await getUserNotifications(authResult.id, {
+      access: await libraryAccessFor(authResult),
       page,
       limit,
       unreadOnly,
       category,
       priority
     });
-
-    // Only notices about titles in the reader's library scope (one delivered
-    // before their scope changed may name one outside it)
-    result.notifications = await noticesInScope(result.notifications, await libraryAccessFor(authResult));
 
     // Enrich notifications with fresh media data if requested
     if (enrich && result.notifications && result.notifications.length > 0) {
@@ -104,7 +102,8 @@ export async function HEAD(request) {
     const countOnly = searchParams.get('count') === 'true';
 
     if (countOnly) {
-      const unreadCount = await getUnreadNotificationCount(session.user.id);
+      // What the reader's library scope lets them see (the whole library: as before)
+      const unreadCount = await getUnreadNotificationCount(session.user.id, await libraryAccessFor(session.user));
       // A HEAD answer carries nothing but the count, so the count is what its
       // ETag covers
       const etag = generateETag(`unread:${unreadCount}`);

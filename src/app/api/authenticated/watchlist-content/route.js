@@ -124,7 +124,7 @@ export const GET = async (req) => {
         const viewerIsAdmin = isAdminUser(authResult)
 
         // Get all user playlists
-        const playlists = await getUserPlaylists(authResult?.id)
+        const playlists = await getUserPlaylists(authResult?.id, true, true, access)
         
         // For admin users, append owner name to playlists they don't own
         if (viewerIsAdmin && playlists?.length > 0) {
@@ -294,7 +294,7 @@ export const GET = async (req) => {
         // The route's authenticated user is threaded through so neither
         // helper re-runs a session lookup.
         const [playlistInfoResult, visibilityResult] = await Promise.allSettled([
-          getPlaylistById(playlistId, { user: authResult }),
+          getPlaylistById(playlistId, { user: authResult, access }),
           getPlaylistVisibility(authResult?.id, playlistId)
         ])
         

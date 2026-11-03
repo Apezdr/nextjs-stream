@@ -61,9 +61,10 @@ describe.each([
   it("lists only the caller's library scope, from their session, never from the request", async () => {
     mockGetSession.mockResolvedValue({ user: { id: 'me', roles: ['kids'] } })
 
-    await action({ access: FULL })
+    await action({ access: FULL, scopeId: 'all' })
     expect(mockAccessFor).toHaveBeenCalledWith(expect.objectContaining({ id: 'me', roles: ['kids'] }))
-    expect(cached).toHaveBeenCalledWith(expect.objectContaining({ userId: 'me', access: SCOPED }))
+    // Keyed by the scope's id alone: the cached fetch resolves the access inside
+    expect(cached).toHaveBeenCalledWith(expect.objectContaining({ userId: 'me', scopeId: 'scope-kids' }))
   })
 
   it("reads the signed-in user's own watch history, whatever userId the caller sends", async () => {
@@ -78,7 +79,7 @@ describe.each([
       hdrTypes: [],
       resolutions: [],
       userId: 'me',
-      access: FULL,
+      scopeId: 'all',
     })
   })
 
@@ -94,7 +95,7 @@ describe.each([
       hdrTypes: ['HDR10'],
       resolutions: [],
       userId: 'me',
-      access: FULL,
+      scopeId: 'all',
     })
   })
 })

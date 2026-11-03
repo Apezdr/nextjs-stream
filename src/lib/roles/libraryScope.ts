@@ -122,9 +122,10 @@ export function ratingsUpTo<R extends string>(cap: R | null, ladder: readonly R[
 
 /**
  * What one viewer may see of the library, as data: passed down from the page,
- * route or action that knows the viewer to every function that reads titles,
- * and the key of every cache those functions fill. Plain JSON, so it can be a
- * 'use cache' argument.
+ * route or action that knows the viewer to every function that reads titles.
+ * Across a 'use cache' boundary only its id goes, as the cache key (the scope
+ * can hold thousands of picks and show ids); libraryAccessById(id) resolves it
+ * again inside (libraryAccess.ts).
  * - id: 'all' for the whole library, else one id per effective scope, so
  *   viewers with the same scope share cache entries
  * - scope: null for the whole library
@@ -156,6 +157,7 @@ export function isFullLibrary(access: LibraryAccess): boolean {
 }
 
 interface MediaDoc {
+  _id?: unknown
   originalTitle?: unknown
   metadata?: { rating?: unknown } | null
 }
@@ -164,9 +166,32 @@ interface EpisodeDoc {
   showId?: unknown
 }
 
+/**
+ * A scope's rule, title by title: rated at or under the cap for its type, or
+ * picked. Used where the titles are classified (libraryAccess.ts works out a
+ * scope's shows with it) and for movies everywhere; a show is matched by the
+ * resolved show ids instead (scopeMatcher), so queries and checks agree.
+ */
+export function scopeRule(scope: LibraryScope) {
+  const movieRatings = new Set<string>(ratingsUpTo(scope.movieRatingCap, MOVIE_RATINGS))
+  const tvRatings = new Set<string>(ratingsUpTo(scope.tvRatingCap, TV_RATINGS))
+  const picked = new Set(scope.titles.map(titleKey))
+  const matches = (doc: MediaDoc | null | undefined, mediaType: ScopeMediaType, ratings: Set<string>) => {
+    if (!doc) return false
+    const rating = doc.metadata?.rating
+    if (typeof rating === 'string' && ratings.has(rating)) return true
+    return typeof doc.originalTitle === 'string' && picked.has(titleKey({ mediaType, originalTitle: doc.originalTitle }))
+  }
+  return {
+    movie: (doc: MediaDoc | null | undefined) => matches(doc, 'movie', movieRatings),
+    show: (doc: MediaDoc | null | undefined) => matches(doc, 'tv', tvRatings),
+  }
+}
+
 /** In-memory checks of fetched documents against an access, built once per access. */
 export interface ScopeMatcher {
   movie(doc: MediaDoc | null | undefined): boolean
+  /** A show: one of the access's resolved show ids (by _id). */
   show(doc: MediaDoc | null | undefined): boolean
   /** A season or an episode: in scope when its show is (by showId). */
   ofShow(doc: EpisodeDoc | null | undefined): boolean
@@ -178,22 +203,14 @@ const ALL: ScopeMatcher = { movie: (doc) => !!doc, show: (doc) => !!doc, ofShow:
 
 export function scopeMatcher(access: LibraryAccess): ScopeMatcher {
   if (isFullLibrary(access)) return ALL
-  const scope = access.scope as LibraryScope
-  const movieRatings = new Set<string>(ratingsUpTo(scope.movieRatingCap, MOVIE_RATINGS))
-  const tvRatings = new Set<string>(ratingsUpTo(scope.tvRatingCap, TV_RATINGS))
-  const picked = new Set(scope.titles.map(titleKey))
+  const rule = scopeRule(access.scope as LibraryScope)
   const shows = new Set(access.showIds)
-  const matches = (doc: MediaDoc | null | undefined, mediaType: ScopeMediaType, ratings: Set<string>) => {
-    if (!doc) return false
-    const rating = doc.metadata?.rating
-    if (typeof rating === 'string' && ratings.has(rating)) return true
-    return typeof doc.originalTitle === 'string' && picked.has(titleKey({ mediaType, originalTitle: doc.originalTitle }))
-  }
+  const hasShow = (id: unknown) => id != null && shows.has(String(id))
   return {
-    movie: (doc) => matches(doc, 'movie', movieRatings),
-    show: (doc) => matches(doc, 'tv', tvRatings),
-    ofShow: (doc) => !!doc && doc.showId != null && shows.has(String(doc.showId)),
-    showId: (id) => id != null && shows.has(String(id)),
+    movie: rule.movie,
+    show: (doc) => !!doc && hasShow(doc._id),
+    ofShow: (doc) => !!doc && hasShow(doc.showId),
+    showId: hasShow,
   }
 }
 

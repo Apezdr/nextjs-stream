@@ -10,6 +10,7 @@ import {
   getFilteredTVCount,
 } from '@src/utils/mediaListUtils/tvListQueries'
 import { CONSTANTS } from '@src/utils/mediaListUtils/shared'
+import { libraryAccessById } from '@src/lib/roles/libraryAccess'
 import { getCurrentUserWatchHistory } from '@src/utils/watchHistoryServerUtils'
 import { resolveWatchEntry, buildWatchHistoryObject } from '@src/utils/watchHistory/resolve'
 
@@ -21,7 +22,7 @@ function normalizeOptions(options = {}) {
     hdrTypes: Array.isArray(options.hdrTypes) ? options.hdrTypes : [],
     resolutions: Array.isArray(options.resolutions) ? options.resolutions : [],
     userId: options.userId,
-    access: options.access,
+    scopeId: options.scopeId,
   }
 }
 
@@ -36,14 +37,16 @@ function attachWatchHistory(items, watchMap) {
   }))
 }
 
-// options.access: the viewer's LibraryAccess, part of the cache key with the
-// filters (and the userId, for the watch history joined onto the page)
+// options.scopeId: the viewer's scope id (LibraryAccess.id), part of the cache
+// key with the filters (and the userId, for the watch history joined onto the
+// page); the access is resolved again inside
 export async function getCachedMovieListData(options) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag('media-library', 'movies', 'movie-list', `user-watch-history-${options.userId}`)
 
-  const { page, sortOrder, genres, hdrTypes, resolutions, userId, access } = normalizeOptions(options)
+  const { page, sortOrder, genres, hdrTypes, resolutions, userId, scopeId } = normalizeOptions(options)
+  const access = await libraryAccessById(scopeId)
 
   const [items, totalCount, filterOptions, watchMap] = await Promise.all([
     getFilteredMovieList({ access, page, limit: CONSTANTS.DEFAULT_LIMIT, sortOrder, genres, hdrTypes, resolutions }),
@@ -69,7 +72,8 @@ export async function getCachedTVListData(options) {
   cacheLife('mediaLists')
   cacheTag('media-library', 'tv', 'tv-list', `user-watch-history-${options.userId}`)
 
-  const { page, sortOrder, genres, hdrTypes, resolutions, userId, access } = normalizeOptions(options)
+  const { page, sortOrder, genres, hdrTypes, resolutions, userId, scopeId } = normalizeOptions(options)
+  const access = await libraryAccessById(scopeId)
 
   const [items, totalCount, filterOptions, watchMap] = await Promise.all([
     getFilteredTVList({ access, page, limit: CONSTANTS.DEFAULT_LIMIT, sortOrder, genres, hdrTypes, resolutions }),

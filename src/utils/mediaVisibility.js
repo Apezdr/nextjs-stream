@@ -24,7 +24,7 @@
  */
 
 import { ObjectId } from 'mongodb'
-import { MOVIE_RATINGS, TV_RATINGS, isFullLibrary, ratingsUpTo } from '@src/lib/roles/libraryScope'
+import { MOVIE_RATINGS, isFullLibrary, ratingsUpTo } from '@src/lib/roles/libraryScope'
 
 /**
  * Containers the web player's media element actually loads. The @videojs/react
@@ -168,35 +168,33 @@ export function movieScopeFragment(scope) {
   }
 }
 
-/** The shows a scope holds, by the same rule. */
-export function showScopeFragment(scope) {
-  return {
-    $or: [
-      { 'metadata.rating': { $in: ratingsUpTo(scope.tvRatingCap, TV_RATINGS) } },
-      { originalTitle: { $in: titlesOf(scope, 'tv') } },
-    ],
-  }
-}
+// Every scope fragment is one $and key, so it spreads into a query beside the
+// caller's own conditions (an _id, an $or) without replacing any of them.
+const alone = (condition) => ({ $and: [condition] })
 
 /** Mongo fragment: the viewer's movies. {} for the whole library. */
 export function scopeMovieFilter(access) {
-  return isFullLibrary(access) ? {} : movieScopeFragment(access.scope)
+  return isFullLibrary(access) ? {} : alone(movieScopeFragment(access.scope))
 }
 
-/** Mongo fragment: the viewer's shows. {} for the whole library. */
+/**
+ * Mongo fragment: the viewer's shows, by the show ids their scope resolved to
+ * (libraryAccess.ts works them out by the same rule), so it rides the _id
+ * index. {} for the whole library.
+ */
 export function scopeShowFilter(access) {
-  return isFullLibrary(access) ? {} : showScopeFragment(access.scope)
+  if (isFullLibrary(access)) return {}
+  return alone({ _id: { $in: access.showIds.map((id) => new ObjectId(id)) } })
 }
 
 /** Mongo fragment for FlatSeasons and FlatEpisodes: those of the viewer's shows. {} for the whole library. */
 export function scopeEpisodeFilter(access) {
   if (isFullLibrary(access)) return {}
-  return { showId: { $in: access.showIds.map((id) => new ObjectId(id)) } }
+  return alone({ showId: { $in: access.showIds.map((id) => new ObjectId(id)) } })
 }
 
-// Visible AND in scope, as one key ($and), so it spreads into a query beside
-// the caller's own conditions without replacing them.
-const both = (visible, scoped) => (Object.keys(scoped).length === 0 ? visible : { $and: [visible, scoped] })
+// Visible AND in scope, as one $and key, for the same reason
+const both = (visible, scoped) => (Object.keys(scoped).length === 0 ? visible : { $and: [visible, ...scoped.$and] })
 
 /** The movies a viewer's lists show: visible and in their scope. */
 export function libraryMovieFilter(access) {

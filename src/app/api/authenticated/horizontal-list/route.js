@@ -219,7 +219,7 @@ export const GET = async (req) => {
   const windowCount = itemsPerPage + 1 + (wantPrev ? 1 : 0)
 
   const sortList = (a, b) => sortFunctions[sort](a, b, sortOrder)
-  // Every row shows only the caller's library scope; the cached windows are keyed on it
+  // Every row shows only the caller's library scope; the cached windows are keyed on its id
   const access = await libraryAccessFor(authResult)
 
   try {
@@ -229,12 +229,12 @@ export const GET = async (req) => {
     switch (type) {
       case 'movie': {
         const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
-        const rows = await getCachedMovieWindow(access, offset, windowCount, movieProjection, sort, sortOrder)
+        const rows = await getCachedMovieWindow(access.id, offset, windowCount, movieProjection, sort, sortOrder)
         split = splitWindow(rows, { limit: itemsPerPage, wantPrev })
         break
       }
       case 'tv': {
-        const rows = await getCachedTVWindow(access, offset, windowCount, sort, sortOrder)
+        const rows = await getCachedTVWindow(access.id, offset, windowCount, sort, sortOrder)
         split = splitWindow(rows, { limit: itemsPerPage, wantPrev })
         break
       }
@@ -255,7 +255,7 @@ export const GET = async (req) => {
         break
       }
       case 'recentlyAdded': {
-        const rows = await getCachedRecentlyAddedWindow(access, offset, windowCount, shouldExposeAdditionalData)
+        const rows = await getCachedRecentlyAddedWindow(access.id, offset, windowCount, shouldExposeAdditionalData)
         split = splitWindow(rows, { limit: itemsPerPage, wantPrev })
         break
       }
@@ -284,7 +284,7 @@ export const GET = async (req) => {
         // The route's authenticated user is threaded through so neither
         // helper re-runs a session lookup.
         const [playlistInfoResult, visibilityResult] = await Promise.allSettled([
-          getPlaylistById(playlistIdParam, { user: authResult }),
+          getPlaylistById(playlistIdParam, { user: authResult, access }),
           getPlaylistVisibility(authResult?.id, playlistIdParam)
         ])
 
@@ -331,7 +331,7 @@ export const GET = async (req) => {
         const movieProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
         const tvProjection = shouldExposeAdditionalData ? { videoURL: 1, duration: 1 } : {}
         const { movies, tv } = await getCachedAllMediaWindow(
-          access,
+          access.id,
           offset,
           windowCount,
           movieProjection,

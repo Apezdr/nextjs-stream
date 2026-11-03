@@ -8,14 +8,19 @@
  * - Outside the sync, nothing calls the visibility fragments
  *   (visibleMovieFilter and co.) directly: those are the same for everyone,
  *   and a viewer's read uses library*Filter(access), visible AND in scope.
- * - Every file outside the sync and the admin surfaces that reads a Flat*
- *   collection uses a scope primitive (library*Filter, scope*Filter,
- *   scopeMatcher), or is listed below with the reason it needs none.
+ * - Read by read: every Flat* collection that a file outside the sync and the
+ *   admin surfaces names in code has a scope primitive (library*Filter,
+ *   scope*Filter, scopeMatcher and its inScope checks) near it, or a
+ *   `// library-scope: <why>` note saying where its scope is applied (the
+ *   caller checks the show, the query was built above). A file that reads for
+ *   no viewer at all is listed below, with why.
+ * - No 'use cache' function takes a LibraryAccess: across a cache boundary
+ *   only its id goes (the cache key), resolved again inside.
  * - The shared readers refuse to run without a LibraryAccess: a read that
  *   lost its viewer fails, it never widens to the whole library.
  *
- * A new reader fails the second check until it filters by the scope, or
- * until it is listed here with a reason someone can check.
+ * What the readers do with a restricted access, query by query, is in
+ * libraryScopeQueries.test.js.
  */
 const fs = require('fs')
 const path = require('path')
@@ -33,7 +38,7 @@ const EXEMPT_DIRS = [
   'src/app/api/authenticated/[...admin]/',
 ]
 
-/** Files that read Flat* collections for no viewer, or only what was already scoped. */
+/** Files that read Flat* collections for no viewer, or only what was already scoped, and why. */
 const NO_VIEWER = {
   'src/utils/mediaActivity.js':
     'the now-playing feed for the service key of the media-activity routes (the owner’s own displays); no viewer session',
@@ -42,17 +47,23 @@ const NO_VIEWER = {
   'src/utils/watchHistory/mediaIdResolver.js':
     'maps a stream URL to its mediaId and runtime for the watch-history write path; sends no title',
   'src/utils/notifications/utils/MediaDataEnricher.js':
-    'enriches notifications the route has already cut to the reader’s scope (notifications/scope.js)',
+    'enriches notifications the reader’s scope already cut (notificationDatabase.js, notifications/scope.js)',
   'src/lib/arr/catalog.ts':
-    'Radarr/Sonarr requests (arr.request, given by admins) check what the library holds; open question in the library-scopes work',
+    'owner’s decision: a Radarr/Sonarr request (arr.request or arr.manage, given by an admin) sees whether the ' +
+    'library already holds a title and which title holds its folder, whatever the requester’s library scope',
 }
 
-// Called, or handed on as a function (search's per-type table)
-const SCOPE_PRIMITIVE = /\b(library(Movie|Show|Episode)Filter|scope(Movie|Show|Episode)Filter|scopeMatcher|(movie|show)ScopeFragment)\b/
+// Named near the read: called, or handed on as a function (search's per-type table)
+const SCOPE_NEAR =
+  /\b(library(Movie|Show|Episode)Filter|scope(Movie|Show|Episode)Filter|scopeMatcher|(movie|show)ScopeFragment)\b|\binScope\.|library-scope:/
 const FLAT_COLLECTION = /['"`]Flat(Movies|TVShows|Seasons|Episodes)['"`]/
 const VISIBILITY_CALL = /\bvisible(Movie|Show|Episode)Filter\s*\(/
+/** How far around a read its scope may be applied: a query built a little above, a filter just below. */
+const BEFORE = 30
+const AFTER = 12
 
 const stripComments = (source) => source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/.*$/gm, '$1')
+const isCommentLine = (line) => /^\s*(\*|\/\/|\/\*)/.test(line)
 
 function sourceFiles(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -62,11 +73,21 @@ function sourceFiles(dir) {
   })
 }
 
-const files = sourceFiles(SRC).map((file) => ({
-  rel: path.relative(ROOT, file).split(path.sep).join('/'),
-  code: stripComments(fs.readFileSync(file, 'utf8')),
-}))
+const files = sourceFiles(SRC).map((file) => {
+  const raw = fs.readFileSync(file, 'utf8')
+  return { rel: path.relative(ROOT, file).split(path.sep).join('/'), raw, code: stripComments(raw) }
+})
 const exempt = (rel) => EXEMPT_DIRS.some((dir) => rel.startsWith(dir))
+
+/** file:line of each Flat* read in code with no scope primitive or note around it. */
+function unscopedReads({ rel, raw }) {
+  const lines = raw.split('\n')
+  return lines.flatMap((line, index) => {
+    if (isCommentLine(line) || !FLAT_COLLECTION.test(line)) return []
+    const around = lines.slice(Math.max(0, index - BEFORE), index + AFTER + 1).join('\n')
+    return SCOPE_NEAR.test(around) ? [] : [`${rel}:${index + 1}`]
+  })
+}
 
 describe('the static guard', () => {
   it('finds the readers it is meant to watch', () => {
@@ -82,16 +103,27 @@ describe('the static guard', () => {
 
   it('nothing outside the sync calls a visibility fragment directly: viewer reads use library*Filter(access)', () => {
     const direct = files
-      .filter(({ rel, code }) => !rel.startsWith('src/utils/sync/') && rel !== 'src/utils/mediaVisibility.js' && VISIBILITY_CALL.test(code))
+      .filter(
+        ({ rel, code }) =>
+          !rel.startsWith('src/utils/sync/') && rel !== 'src/utils/mediaVisibility.js' && VISIBILITY_CALL.test(code)
+      )
       .map(({ rel }) => rel)
     expect(direct).toEqual([])
   })
 
-  it('every Flat* reader outside the sync and the admin surfaces filters by the viewer’s scope, or says why not', () => {
-    const unscoped = files
-      .filter(({ rel, code }) => !exempt(rel) && !(rel in NO_VIEWER) && FLAT_COLLECTION.test(code) && !SCOPE_PRIMITIVE.test(code))
-      .map(({ rel }) => rel)
+  it('every Flat* read outside the sync and the admin surfaces is held to the scope where it is made, or says where', () => {
+    const unscoped = files.filter(({ rel }) => !exempt(rel) && !(rel in NO_VIEWER)).flatMap(unscopedReads)
     expect(unscoped).toEqual([])
+  })
+
+  it('catches a read whose filter was dropped, even in a file that filters elsewhere', () => {
+    const filler = Array.from({ length: BEFORE + 5 }, (_, n) => `const filler${n} = ${n}`)
+    const raw = [
+      "const kept = await db.collection('FlatMovies').find(libraryMovieFilter(access)).toArray()",
+      ...filler,
+      "const dropped = await db.collection('FlatMovies').find({}).toArray()",
+    ].join('\n')
+    expect(unscopedReads({ rel: 'x.js', raw })).toEqual([`x.js:${filler.length + 2}`])
   })
 
   it('every listed exception still exists and still reads a Flat* collection', () => {
@@ -99,6 +131,20 @@ describe('the static guard', () => {
       const file = files.find((entry) => entry.rel === rel)
       expect(file && FLAT_COLLECTION.test(file.code) ? rel : `${rel} (gone, or reads nothing)`).toBe(rel)
     }
+  })
+
+  it('no \'use cache\' function takes a LibraryAccess: it is handed the scope id', () => {
+    const signature = /(?:function\s*\w*\s*\(([^)]*)\)|\(([^)]*)\)\s*=>)\s*\{\s*['"]use cache['"]/g
+    const offenders = []
+    for (const { rel, code } of files) {
+      for (const match of code.matchAll(signature)) {
+        if (/\baccess\b/.test(match[1] ?? match[2] ?? '')) offenders.push(rel)
+      }
+    }
+    expect(offenders).toEqual([])
+    // and the check sees one when there is one
+    const sample = "async function Cached({ title, access }) {\n  'use cache'\n}"
+    expect([...sample.matchAll(signature)].map((match) => match[1])).toEqual(['{ title, access }'])
   })
 })
 
@@ -125,9 +171,10 @@ describe('the readers refuse to run without the viewer’s access', () => {
   const tv = require('@src/utils/mediaListUtils/tvListQueries')
   const { getCreditsCatalog } = require('@src/utils/credits/catalog')
   const { getFlatRecommendations } = require('@src/utils/flatRecommendations')
-  const { getUserWatchlist, getMinimalCardDataForPlaylist, findTMDBIdByMediaId } = require('@src/utils/watchlist/database')
+  const watchlist = require('@src/utils/watchlist/database')
   const { batchResolveMedia } = require('@src/utils/watchlist/mediaResolver')
   const { findLibraryTitlesByTmdbId } = require('@src/utils/media/libraryByTmdbId')
+  const notifications = require('@src/utils/notifications/notificationDatabase')
 
   it.each([
     ['getFlatPosters', () => db.getFlatPosters('movie', false, 1, 15, {}, {})],
@@ -154,11 +201,15 @@ describe('the readers refuse to run without the viewer’s access', () => {
     ['getTVFilterOptions', () => tv.getTVFilterOptions()],
     ['getCreditsCatalog', () => getCreditsCatalog()],
     ['getFlatRecommendations', () => getFlatRecommendations(VALID_ID)],
-    ['getUserWatchlist', () => getUserWatchlist({ userId: VALID_ID })],
-    ['getMinimalCardDataForPlaylist', () => getMinimalCardDataForPlaylist([{ tmdbId: 1, mediaType: 'movie' }], null, true, {})],
-    ['findTMDBIdByMediaId', () => findTMDBIdByMediaId(VALID_ID, 'movie')],
+    ['getUserWatchlist', () => watchlist.getUserWatchlist({ userId: VALID_ID })],
+    ['getUserPlaylists', () => watchlist.getUserPlaylists(VALID_ID)],
+    ['getPlaylistById', () => watchlist.getPlaylistById(VALID_ID, { user: { id: VALID_ID } })],
+    ['getMinimalCardDataForPlaylist', () => watchlist.getMinimalCardDataForPlaylist([{ tmdbId: 1, mediaType: 'movie' }], null, true, {})],
+    ['findTMDBIdByMediaId', () => watchlist.findTMDBIdByMediaId(VALID_ID, 'movie')],
     ['batchResolveMedia', () => batchResolveMedia([{ tmdbId: 1, mediaType: 'movie' }], {})],
     ['findLibraryTitlesByTmdbId', () => findLibraryTitlesByTmdbId([{ tmdbId: 1, mediaType: 'movie' }])],
+    ['getUserNotifications', () => notifications.getUserNotifications(VALID_ID, {})],
+    ['getUnreadNotificationCount', () => notifications.getUnreadNotificationCount(VALID_ID)],
   ])('%s', async (_name, call) => {
     await expect(Promise.resolve().then(call)).rejects.toThrow(REFUSAL)
   })

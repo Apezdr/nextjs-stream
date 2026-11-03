@@ -11,6 +11,7 @@ import { getCachedMediaWithRedirect } from '@src/utils/cache/mediaFetching'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
 import { episodeDetailsTag, MEDIA_CACHE_TAGS } from '@src/utils/cache/mediaPagesTags'
 import { pageLibraryAccess } from '@src/lib/roles/session'
+import { libraryAccessById } from '@src/lib/roles/libraryAccess'
 
 function buildParsedParams(title, season, episode) {
   return {
@@ -34,11 +35,11 @@ function buildParsedParams(title, season, episode) {
 
 async function fetchEpisode(title, season, episode, access) {
   const parsedParams = buildParsedParams(title, season, episode)
-  const result = await getCachedMediaWithRedirect(parsedParams, access)
+  const result = await getCachedMediaWithRedirect(parsedParams, access.id)
   return { parsedParams, result }
 }
 
-async function TVEpisodeContent({ title, season, episode, access }) {
+async function TVEpisodeContent({ title, season, episode, scopeId }) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag(
@@ -49,7 +50,8 @@ async function TVEpisodeContent({ title, season, episode, access }) {
   )
 
   const parsedParams = buildParsedParams(title, season, episode)
-  const result = await getCachedMediaWithRedirect(parsedParams, access)
+  const access = await libraryAccessById(scopeId)
+  const result = await getCachedMediaWithRedirect(parsedParams, scopeId)
 
   if (result.redirectUrl) {
     redirect(result.redirectUrl)
@@ -96,7 +98,7 @@ export default function TVEpisodePage({ params }) {
             title={title}
             season={season}
             episode={episode}
-            access={session.access}
+            scopeId={session.access.id}
           />
         )}
       </SessionGate>

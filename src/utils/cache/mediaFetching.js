@@ -2,6 +2,7 @@ import { cacheLife, cacheTag } from 'next/cache'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 import { applyJitPreference } from '@src/utils/jit/preference'
 import { shouldRedirect, buildRedirectUrl, logRedirect } from '@src/utils/media/redirectHandler'
+import { libraryAccessById } from '@src/lib/roles/libraryAccess'
 
 /**
  * Per-request delivery decision for PLAYER pages, applied AFTER the cached
@@ -35,13 +36,14 @@ import {
  * Cached media fetching with redirect handling
  * Uses Next.js "use cache" to cache across requests (not just within a request)
  * 
- * Keyed by the viewer's LibraryAccess with the params: a title outside the
- * scope is not found (notFoundType set, nothing else), exactly like a missing
- * one, and viewers with the same scope share entries.
+ * Keyed by the viewer's scope id (LibraryAccess.id) with the params: a title
+ * outside the scope is not found (notFoundType set, nothing else), exactly
+ * like a missing one, and viewers with the same scope share entries.
  */
-export async function getCachedMediaWithRedirect(parsedParams, access) {
+export async function getCachedMediaWithRedirect(parsedParams, scopeId) {
   'use cache'
   cacheLife('mediaLists') // 1 min stale, revalidates in background
+  const access = await libraryAccessById(scopeId)
   
   const { mediaType, mediaTitle, mediaSeason, mediaEpisode, isPlayerPage } = parsedParams
   

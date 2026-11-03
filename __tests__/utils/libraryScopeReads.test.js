@@ -13,7 +13,17 @@ const { createMemoryMongo } = require('../helpers/memoryMongo')
 const mockMongo = createMemoryMongo()
 jest.mock('@src/lib/mongodb', () => ({ __esModule: true, default: Promise.resolve(mockMongo.client) }))
 const mockAccessFor = jest.fn()
-jest.mock('@src/lib/roles/libraryAccess', () => ({ libraryAccessFor: (...args) => mockAccessFor(...args) }))
+// What the KIDS scope below holds, as libraryAccess.ts indexes it from the catalog
+const mockKidsIndex = {
+  showIds: ['64b7f0c2a1b2c3d4e5f60701'],
+  movieKeys: new Set(['Cartoon (1995)', 'Home Video (2001)']),
+  showKeys: new Set(['Puppets']),
+  hiddenTmdbIds: { movie: [], tv: [] },
+}
+jest.mock('@src/lib/roles/libraryAccess', () => ({
+  libraryAccessFor: (...args) => mockAccessFor(...args),
+  libraryScopeIndex: async (access) => (access.scope === null ? null : mockKidsIndex),
+}))
 const mockInsert = jest.fn(async (docs) => ({ inserted: docs.length, alreadyThere: 0 }))
 jest.mock('@src/utils/notifications/notificationDatabase.js', () => ({ insertNotificationsOnce: (...args) => mockInsert(...args) }))
 const mockRecipients = jest.fn()
@@ -168,7 +178,7 @@ describe('new-content notices', () => {
     expect(byUser('bbbbbbbbbbbbbbbbbbbbbbbb')).toEqual([single.title])
     expect(docs.every((doc) => !('noticeIndex' in doc))).toBe(true)
     expect(result).toEqual({ recipients: 3, notices: 2, inserted: 5, alreadyThere: 0 })
-    // One lookup for the one scope that needed it
-    expect(find).toHaveBeenCalledTimes(1)
+    // Checked in memory against the scope's index: no library read at all
+    expect(find).not.toHaveBeenCalled()
   })
 })

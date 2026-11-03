@@ -8,11 +8,12 @@ import AsyncMediaCounts from './AsyncMediaCounts'
 import { getCachedUserPlaylistSections } from '@src/utils/cache/userPlaylistSections'
 import { getUserPlaylists, listVisiblePlaylists } from '@src/utils/watchlist/database'
 import { LandingPagePopupProvider } from '@src/contexts/LandingPagePopupContext'
+import { libraryAccessById } from '@src/lib/roles/libraryAccess'
 
 const ReleaseCalendar = dynamic(() => import('./Calendar/ReleaseCalendar'))
 
 // Cacheable welcome section - static content that can be prerendered
-async function WelcomeSection({ userName, access }) {
+async function WelcomeSection({ userName, scopeId }) {
   "use cache"
   cacheLife('navigation') // Static UI elements - 5min client, 1hr server, 1 day expire
 
@@ -24,7 +25,7 @@ async function WelcomeSection({ userName, access }) {
             Welcome {userName.split(' ')[0]},
           </h2>
           <h2 className="text-xl font-bold tracking-tight text-white pb-8 xl:pb-0 px-4 xl:px-0">
-            <AsyncMediaCounts suffix={` Available TV Shows & Movies`} showDuration={true} access={access} />
+            <AsyncMediaCounts suffix={` Available TV Shows & Movies`} showDuration={true} scopeId={scopeId} />
           </h2>
         </li>
       </ul>
@@ -32,10 +33,11 @@ async function WelcomeSection({ userName, access }) {
   )
 }
 
-// Cacheable media sections: no user data, keyed by the viewer's library access only
-async function StaticMediaSections({ access }) {
+// Cacheable media sections: no user data, keyed by the viewer's scope id only
+async function StaticMediaSections({ scopeId }) {
   "use cache"
   cacheLife('mediaLists') // Media library lists - 1min client/server, 5min expire
+  const access = await libraryAccessById(scopeId)
 
   return (
     <>
@@ -83,9 +85,10 @@ async function UserDependentSections({ userId, access }) {
 
 // User-specific content with private per-user caching
 // IMPORTANT: Uses "use cache: private" because data is personalized per-user
-async function UserSpecificSections({ userId, access }) {
+async function UserSpecificSections({ userId, scopeId }) {
   "use cache: private"
   cacheLife('userContent') // Per-user cache: 1min client, 15min server, 1hr expire
+  const access = await libraryAccessById(scopeId)
 
   // Load the person's home screen rows (their chosen playlists) using private cache
   let appRows = []
@@ -93,7 +96,7 @@ async function UserSpecificSections({ userId, access }) {
     if (userId) {
       // Pass userId as primitive parameter to enable proper caching
       const [allPlaylists, visibilityPrefs] = await Promise.all([
-        getUserPlaylists(userId, true, true),
+        getUserPlaylists(userId, true, true, access),
         listVisiblePlaylists(userId),
       ])
 
@@ -133,7 +136,8 @@ async function UserSpecificSections({ userId, access }) {
 
 /**
  * @param {{ user: { id: string, name: string, email: string }, access: import('@src/lib/roles/libraryScope').LibraryAccess, calendarConfig?: Object }} props
- *   access: the viewer's library access; every row and count shows only that part of the library
+ *   access: the viewer's library access; every row and count shows only that part of the library.
+ *   The cached sections are handed its id alone (their cache key) and resolve it inside
  */
 export default async function LandingPage({
   user,
@@ -147,7 +151,7 @@ export default async function LandingPage({
       <Suspense>
         <SyncClientWithServerWatched />
       </Suspense>
-      <WelcomeSection userName={name} access={access} />
+      <WelcomeSection userName={name} scopeId={access.id} />
       
       {/* Wrap scrollable content with popup context provider */}
       <LandingPagePopupProvider>
@@ -159,7 +163,7 @@ export default async function LandingPage({
           
           {/* User-specific content wrapped in Suspense for partial prerendering */}
           <Suspense>
-            <UserSpecificSections userId={id} access={access} />
+            <UserSpecificSections userId={id} scopeId={access.id} />
           </Suspense>
           
           {/* <RecommendationSectionTitle />*/}
@@ -167,7 +171,7 @@ export default async function LandingPage({
           <HorizontalScrollContainer type="recommendations" />  */}
           
           {/* Static media sections (can be prerendered) */}
-          <StaticMediaSections access={access} />
+          <StaticMediaSections scopeId={access.id} />
           
           {/* Calendar section (client component, cannot be cached) */}
           <CalendarSection calendarConfig={calendarConfig} />

@@ -1,5 +1,7 @@
-import { getVideosWatched } from '@src/utils/auth_database'
 import { approvedGate } from '@src/lib/roles/gates'
+import { libraryAccessFor } from '@src/lib/roles/libraryAccess'
+import { findPlaybackForUser } from '@src/utils/watchHistory/database'
+import { watchRowsInScope } from '@src/utils/watchHistory/scopeRows'
 // ETag support for HTTP caching
 import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
 
@@ -15,7 +17,8 @@ export async function GET(req) {
   const daysParam = searchParams.get('days') // e.g., "30" for last 30 days
   const limit = parseInt(searchParams.get('limit') || '0')
 
-  const watchedMedia = await getVideosWatched()
+  // The user's own rows; the library scope is checked on the ones returned only
+  const watchedMedia = (await findPlaybackForUser(authResult.id)) ?? []
 
   // Filter by recent days if requested (backward compatible - no params returns all)
   let filtered = watchedMedia
@@ -37,8 +40,9 @@ export async function GET(req) {
     return dateB - dateA
   })
 
-  // Apply limit if requested
-  const result = limit > 0 ? sorted.slice(0, limit) : sorted
+  // Apply limit if requested, then leave out the titles outside the user's
+  // library scope (and their video URLs with them)
+  const result = await watchRowsInScope(limit > 0 ? sorted.slice(0, limit) : sorted, await libraryAccessFor(authResult))
 
   // Generate ETag from response data
   const responseString = JSON.stringify(result)

@@ -4,6 +4,8 @@ import { createLogger } from '@src/lib/logger';
 import { userQueries } from '@src/lib/userQueries';
 import { getAllWatchHistoryUserIds } from '@src/utils/watchHistory/database';
 import { runMigrationOnce } from '@src/utils/migrations/runOnce';
+import { assertLibraryAccess } from '@src/lib/roles/libraryScope';
+import { hiddenNoticeIds } from './scope.js';
 
 /**
  * Database operations for notifications
@@ -282,13 +284,17 @@ export async function getNotifications(query = {}, options = {}) {
 /**
  * Get notifications for a user with pagination
  * @param {ObjectId|string} userId - The user ID as ObjectId
- * @param {Object} options - Query options
+ * @param {Object} options - Query options; `access` (required): the reader's
+ *   library access. A notice their scope hides is left out of the page and of
+ *   every count (notifications/scope.js)
  * @returns {Promise<Object>} Notifications and metadata
  */
-export async function getUserNotifications(userId, options = {}) {
+export async function getUserNotifications(userId, options) {
+  assertLibraryAccess(options?.access);
   const collection = await notificationsCollection();
 
   const {
+    access,
     page = 1,
     limit = 20,
     unreadOnly = false,
@@ -299,6 +305,10 @@ export async function getUserNotifications(userId, options = {}) {
   // Build query with ObjectId userId
   const userObjectId = new ObjectId(userId);
   const query = { userId: userObjectId };
+  // The whole library adds nothing to the queries
+  const hidden = await hiddenNoticeIds(collection, userObjectId, access);
+  const visible = hidden && hidden.length > 0 ? { _id: { $nin: hidden } } : {};
+  Object.assign(query, visible);
   if (unreadOnly) query.read = false;
   if (category) query.category = category;
   if (priority) query.priority = priority;
@@ -315,7 +325,7 @@ export async function getUserNotifications(userId, options = {}) {
       .limit(limit)
       .toArray(),
     collection.countDocuments(query),
-    collection.countDocuments({ userId: userObjectId, read: false })
+    collection.countDocuments({ userId: userObjectId, read: false, ...visible })
   ]);
 
   return {
@@ -464,12 +474,20 @@ export async function replaceNotificationByGroup(userId, groupKey, newNotificati
 /**
  * Get unread notification count for a user
  * @param {ObjectId|string} userId - The user ID
+ * @param {import('@src/lib/roles/libraryScope').LibraryAccess} access - The reader's library access
  * @returns {Promise<number>} Unread count
  */
-export async function getUnreadNotificationCount(userId) {
+export async function getUnreadNotificationCount(userId, access) {
+  assertLibraryAccess(access);
   const collection = await notificationsCollection();
-
-  return await collection.countDocuments({ userId: new ObjectId(userId), read: false });
+  const userObjectId = new ObjectId(userId);
+  // Only the notices the reader's scope lets them see (none hidden for the whole library)
+  const hidden = await hiddenNoticeIds(collection, userObjectId, access);
+  return await collection.countDocuments({
+    userId: userObjectId,
+    read: false,
+    ...(hidden && hidden.length > 0 ? { _id: { $nin: hidden } } : {}),
+  });
 }
 
 /**

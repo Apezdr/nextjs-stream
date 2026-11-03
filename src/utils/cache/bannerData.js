@@ -1,6 +1,7 @@
 import { cacheLife, cacheTag } from 'next/cache'
 import { queryBannerMovies } from '@src/utils/flatDatabaseUtils'
 import { MEDIA_CACHE_TAGS } from './mediaPagesTags'
+import { libraryAccessById } from '@src/lib/roles/libraryAccess'
 
 /**
  * The banner's movies, cached in memory and shared by every banner poll, the
@@ -15,13 +16,14 @@ import { MEDIA_CACHE_TAGS } from './mediaPagesTags'
  *
  * A failed query throws out of here, and a cache entry that throws is not
  * stored. The result is plain JSON: what the banner route sends, and nothing a
- * cache entry cannot hold. Keyed by the viewer's LibraryAccess: one entry per
+ * cache entry cannot hold. Keyed by the viewer's scope id: one entry per
  * scope, shared by everyone holding it.
  */
-async function getCachedBannerMovies(access) {
+async function getCachedBannerMovies(scopeId) {
   'use cache'
   cacheLife('banner')
   cacheTag(MEDIA_CACHE_TAGS.BANNER, 'movies')
+  const access = await libraryAccessById(scopeId)
 
   return JSON.parse(JSON.stringify(await queryBannerMovies(access)))
 }
@@ -34,7 +36,7 @@ async function getCachedBannerMovies(access) {
  */
 export async function fetchFlatBannerMedia(access) {
   try {
-    const media = await getCachedBannerMovies(access)
+    const media = await getCachedBannerMovies(access.id)
 
     if (media.length === 0) {
       return { error: 'No media found for banner', status: 404 }

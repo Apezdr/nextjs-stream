@@ -23,12 +23,12 @@ function HeaderCountFallback() {
   )
 }
 
-async function MediaCountFragment({ mediaType, access }) {
+async function MediaCountFragment({ mediaType, scopeId }) {
   'use cache'
   cacheLife('mediaLists')
   cacheTag(...TAGS_BY_TYPE[mediaType])
 
-  const { count, totalMilliseconds } = await getCachedMediaCounts(mediaType, access)
+  const { count, totalMilliseconds } = await getCachedMediaCounts(mediaType, scopeId)
 
   return (
     <>
@@ -42,12 +42,12 @@ async function MediaCountFragment({ mediaType, access }) {
   )
 }
 
-// access: the viewer's LibraryAccess, which the count is of
-export default function AsyncMediaListHeader({ mediaType, label, access }) {
+// scopeId: the viewer's LibraryAccess.id, whose part of the library is counted
+export default function AsyncMediaListHeader({ mediaType, label, scopeId }) {
   return (
     <h2 className={HEADING_CLASS}>
       <Suspense fallback={<HeaderCountFallback />}>
-        <MediaCountFragment mediaType={mediaType} access={access} />
+        <MediaCountFragment mediaType={mediaType} scopeId={scopeId} />
       </Suspense>{' '}
       {label}
     </h2>

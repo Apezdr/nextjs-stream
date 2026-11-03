@@ -17,6 +17,7 @@ import {
   libraryMovieFilter,
   libraryEpisodeFilter,
   libraryShowFilter,
+  scopeEpisodeFilter,
   scopeMovieFilter,
   scopeShowFilter,
 } from '@src/utils/mediaVisibility'
@@ -359,6 +360,7 @@ export async function getFlatPosters(
 ) {
   assertLibraryAccess(options?.access)
   const client = await clientPromise
+  // library-scope: filtered below by library*Filter(options.access)
   const collection = type === 'movie' ? 'FlatMovies' : 'FlatTVShows'
 
   // Define default projections for fields to include
@@ -742,6 +744,7 @@ export async function getFlatRecentlyWatchedForUser({
     ] = await Promise.all([
       _client
         .db('Media')
+        // library-scope: every arm below is held to libraryMovieFilter / scopeMovieFilter
         .collection('FlatMovies')
         .find(
           {
@@ -939,14 +942,14 @@ export async function getFlatRecentlyWatchedForUser({
           ? _client
               .db('Media')
               .collection('FlatSeasons')
-              .find({ _id: { $in: seasonIds } }, { projection: seasonProjection })
+              .find({ _id: { $in: seasonIds }, ...scopeEpisodeFilter(access) }, { projection: seasonProjection })
               .toArray()
           : [],
         showIds.length > 0
           ? _client
               .db('Media')
               .collection('FlatTVShows')
-              .find({ _id: { $in: showIds } }, { projection: showProjection })
+              .find({ _id: { $in: showIds }, ...scopeShowFilter(access) }, { projection: showProjection })
               .toArray()
           : [],
       ])
@@ -1877,7 +1880,7 @@ export async function getFlatRecentlyAddedMedia({
       : await db
       .collection('FlatTVShows')
       .find(
-        { _id: { $in: tvShowIds } },
+        { _id: { $in: tvShowIds }, ...scopeShowFilter(access) },
         { projection: showProjection }
       )
       .toArray()
@@ -2095,6 +2098,7 @@ export const fetchFlatRandomBannerMedia = async (access) => {
  */
 async function findTVShowByTitleOrOriginal(db, searchTitle) {
   // originalTitle is the unique routing key — try it FIRST (the canonical URL).
+  // library-scope: getFlatRequestedMedia checks the show it returns (inScope.show)
   let tvShow = await db.collection('FlatTVShows').findOne({ originalTitle: searchTitle })
   if (tvShow) return tvShow
 
@@ -2288,6 +2292,7 @@ export async function getFlatRequestedMedia({
 
           // First fetch all episodes with guest stars
           const episodes = await db
+            // library-scope: the guest stars of a show already checked in scope
             .collection('FlatEpisodes')
             .find({
               showId: new ObjectId(result.id),
@@ -2331,6 +2336,7 @@ export async function getFlatRequestedMedia({
       // Season specified
       else {
         const seasonNumber = parseInt(season.replace('Season ', ''))
+        // library-scope: a season of a show already checked in scope
         const seasonData = await db.collection('FlatSeasons').findOne({
           showId: tvShow._id,
           seasonNumber: seasonNumber,
@@ -2379,6 +2385,7 @@ export async function getFlatRequestedMedia({
         // Episode specified
         else {
           const episodeNumber = parseInt(episode.replace('Episode ', ''))
+          // library-scope: an episode of a show already checked in scope
           const episodeData = await db.collection('FlatEpisodes').findOne({
             showId: tvShow._id,
             seasonId: seasonData._id,
@@ -3501,6 +3508,7 @@ export async function getFlatContentByGenres({
       movieSort[sortConfig.field] = finalSortDirection
 
       const movies = await db
+        // library-scope: movieGenreQuery holds libraryMovieFilter(access) (above)
         .collection('FlatMovies')
         .find(movieGenreQuery, { projection: movieProjection })
         .sort(movieSort)
@@ -3560,6 +3568,7 @@ export async function getFlatContentByGenres({
       {
         // Standard TV show retrieval with minimal projection
         tvShows = await db
+          // library-scope: tvGenreQuery holds libraryShowFilter(access) (above)
           .collection('FlatTVShows')
           .find(tvGenreQuery, { projection: tvProjection })
           .sort(tvSort)
