@@ -7,7 +7,9 @@ import { findPlaybackForUser, getAllPlaybackEntries } from '@src/utils/watchHist
 import {
   libraryMovieFilter,
   libraryEpisodeFilter,
-  libraryShowFilter
+  libraryShowFilter,
+  scopeEpisodeFilter,
+  scopeShowFilter
 } from '@src/utils/mediaVisibility'
 import { assertLibraryAccess } from '@src/lib/roles/libraryScope'
 
@@ -219,7 +221,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
     for (const [showId, showData] of watchedTVShows) {
       // First get all seasons for this show
       const showSeasons = await db.collection('FlatSeasons')
-        .find({ showId: new ObjectId(showId) })
+        .find({ showId: new ObjectId(showId), ...scopeEpisodeFilter(access) })
         .sort({ seasonNumber: 1 })
         .toArray();
         
@@ -279,7 +281,7 @@ export async function getFlatGenreBasedRecommendations(userId, page = 0, limit =
       for (const show of newTVShows) {
         // Get all seasons for this show
         const showSeasons = await db.collection('FlatSeasons')
-          .find({ showId: show._id })
+          .find({ showId: show._id, ...scopeEpisodeFilter(access) })
           .sort({ seasonNumber: 1 })
           .toArray();
           
@@ -486,9 +488,8 @@ export async function getFlatMostPopularContent(page = 0, limit = 30, shouldExpo
     
     // Fetch all TV shows and seasons at once
     const [tvShows, seasons] = await Promise.all([
-      // library-scope: the shows and seasons of episodes already held to the scope above
-      db.collection('FlatTVShows').find({ _id: { $in: showIds.map(id => new ObjectId(id)) } }).toArray(),
-      db.collection('FlatSeasons').find({ showId: { $in: showIds.map(id => new ObjectId(id)) } }).toArray()
+      db.collection('FlatTVShows').find({ _id: { $in: showIds.map(id => new ObjectId(id)) }, ...scopeShowFilter(access) }).toArray(),
+      db.collection('FlatSeasons').find({ showId: { $in: showIds.map(id => new ObjectId(id)) }, ...scopeEpisodeFilter(access) }).toArray()
     ]);
     
     // Create maps for quick lookups
@@ -728,7 +729,7 @@ export async function getFlatRandomRecommendations(page = 0, limit = 30, shouldE
     for (const show of randomTVShows) {
       // Get all seasons for this show
       const showSeasons = await db.collection('FlatSeasons')
-        .find({ showId: show._id })
+        .find({ showId: show._id, ...scopeEpisodeFilter(access) })
         .sort({ seasonNumber: 1 })
         .toArray();
         

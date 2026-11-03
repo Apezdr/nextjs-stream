@@ -2681,7 +2681,7 @@ export async function getFlatTVList(options) {
       ? await client
           .db('Media')
           .collection('FlatSeasons')
-          .find({ showId: { $in: showIds } })
+          .find({ showId: { $in: showIds }, ...scopeEpisodeFilter(access) })
           .sort({ showId: 1, seasonNumber: 1 })
           .toArray()
       : []

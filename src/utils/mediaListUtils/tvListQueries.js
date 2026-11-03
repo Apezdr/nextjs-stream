@@ -8,7 +8,7 @@
 import clientPromise from '@src/lib/mongodb'
 import { getFullImageUrl } from '@src/utils'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
-import { libraryShowFilter, libraryEpisodeFilter } from '@src/utils/mediaVisibility'
+import { libraryShowFilter, libraryEpisodeFilter, scopeEpisodeFilter } from '@src/utils/mediaVisibility'
 import { assertLibraryAccess } from '@src/lib/roles/libraryScope'
 import {
   serializeForClient,
@@ -155,7 +155,7 @@ export async function getFilteredTVList({
         // Fetch seasons for this TV show
         const seasons = await db
           .collection('FlatSeasons')
-          .find({ showId: tvShow._id })
+          .find({ showId: tvShow._id, ...scopeEpisodeFilter(access) })
           .sort({ seasonNumber: 1 })
           .toArray();
         
