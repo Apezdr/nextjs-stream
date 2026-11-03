@@ -24,9 +24,6 @@
       ],
       "@src/*": [
         "./src/*"
-      ],
-      "contentlayer/generated": [
-        "./.contentlayer/generated"
       ]
     },
     "plugins": [
@@ -43,9 +40,6 @@
     "**/*.ts",
     "**/*.tsx",
     "**/*.jsx",
-    "**/*.json",
-    ".contentlayer/generated",
-    ".contentlayer/generated/**/*.json",
     ".next/types/**/*.ts",
     "__tests__/**/*.jsx",
     ".next\\dev/types/**/*.ts",

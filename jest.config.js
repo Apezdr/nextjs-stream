@@ -95,18 +95,8 @@ const config = {
   // ],
 
   // A map from regular expressions to module names or to arrays of module names that allow to stub out resources with a single module
+  // next/jest maps CSS, CSS modules, images and server-only ahead of these
   moduleNameMapper: {
-    // Handle CSS imports (with CSS modules)
-    // https://jestjs.io/docs/webpack#mocking-css-modules
-    '^.+\\.module\\.(css|sass|scss)$': 'identity-obj-proxy',
-
-    // Handle CSS imports (without CSS modules)
-    '^.+\\.(css|sass|scss)$': '<rootDir>/__mocks__/styleMock.js',
-
-    // Handle image imports
-    // https://jestjs.io/docs/webpack#handling-static-assets
-    '^.+\\.(png|jpg|jpeg|gif|webp|avif|ico|bmp|svg)$/i': `<rootDir>/__mocks__/fileMock.js`,
-
     // Handle module aliases
     '^@components/(.*)$': '<rootDir>/src/components/$1',
     '^@src/(.*)$': '<rootDir>/src/$1',
@@ -115,8 +105,6 @@ const config = {
     '@next/font/(.*)': `<rootDir>/__mocks__/nextFontMock.js`,
     // Handle next/font
     'next/font/(.*)': `<rootDir>/__mocks__/nextFontMock.js`,
-    // Disable server-only
-    'server-only': `<rootDir>/__mocks__/empty.js`,
   },
 
   // An array of regexp pattern strings, matched against all module paths before considered 'visible' to the module loader
@@ -197,8 +185,6 @@ const config = {
     '<rootDir>/e2e/',
     // Modules the tests share (fakes, fixtures); not test files themselves
     '<rootDir>/__tests__/helpers/',
-    '[/\\\\]node_modules[/\\\\].+[^esm]\\.(js|jsx|mjs|cjs|ts|tsx)$',
-    '^.+\\.module\\.(css|sass|scss)$',
   ],
 
   // The regexp pattern or array of patterns that Jest uses to detect test files
@@ -212,21 +198,13 @@ const config = {
 
   // A map from regular expressions to paths to transformers
   // transform: undefined,
-  transform: {
-    // Use babel-jest to transpile tests with the next/babel preset
-    // https://jestjs.io/docs/configuration#transform-objectstring-pathtotransformer--pathtotransformer-object
-    '^.+\\.(js|jsx|ts|tsx)$': ['babel-jest', { presets: ['next/babel'] }],
-  },
+  // (next/jest compiles with SWC)
 
   // An array of regexp pattern strings that are matched against all source file paths, matched files will skip transformation
   // transformIgnorePatterns: [
   //   "/node_modules/",
   //   "\\.pnp\\.[^\\/]+$"
   // ],
-  transformIgnorePatterns: [
-    '/node_modules/(?!(@fullcalendar|ical.js|framer-motion)/)',
-    '^.+\\.module\\.(css|sass|scss)$',
-  ],
 
   // An array of regexp pattern strings that are matched against all modules before the module loader will automatically return a mock for them
   // unmockedModulePathPatterns: undefined,

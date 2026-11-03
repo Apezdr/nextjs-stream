@@ -124,9 +124,7 @@ body.playing #backdrop-cover {
  *
  * The breakpoint lives here rather than as `hidden sm:block` on the element:
  * globals.css is emitted after `@tailwind utilities`, so this rule's
- * `display: flex` would beat both `hidden` and `sm:block` at equal specificity.
- * (The player box is `aspect-video w-full` — 219px tall on a 390px phone — so
- * the stack genuinely has no room below sm.) */
+ * `display: flex` would beat both `hidden` and `sm:block` at equal specificity. */
 .media-rail {
   display: none;
   position: absolute;

@@ -1,7 +1,3 @@
- 
-const dotenv = require('dotenv')
-dotenv.config()
-
 // Shared with buildNextOptimizedImageUrl and buildImgproxyTarget, both of
 // which build /_next/image URLs that never pass through <Image>'s prop
 // validation. See src/utils/imageQualities.js.

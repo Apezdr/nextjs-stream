@@ -9,14 +9,14 @@ import {
   useEffect,
   Fragment,
   useSyncExternalStore,
+  useId,
 } from 'react'
 import useSWR, { useSWRConfig, preload } from 'swr'
 import { classNames, fetcher } from '@src/utils'
 import { ChevronDoubleLeftIcon, ChevronDoubleRightIcon } from '@heroicons/react/20/solid'
 import Card from './Card'
 import { motion, AnimatePresence } from 'framer-motion'
-import { v7 as uuidv7 } from 'uuid'
-import debounce from 'lodash.debounce'
+import debounce from 'lodash/debounce'
 import { useSwipeable } from 'react-swipeable'
 import SkeletonList from './SkeletonList'
 import { useItemsPerPage } from '@src/hooks/useItemsPerPage'
@@ -115,7 +115,7 @@ const HorizontalScroll = memo(({ numberOfItems, listType, sort = 'id', sortOrder
   const { expandedCardId, expandCard, collapseCard } = useLandingPagePopup()
   const [direction, setDirection] = useState(0) // Track direction
   const [isAnimating, setIsAnimating] = useState(false) // Track animation state
-  const [uniqueId] = useState(() => uuidv7()) // Unique ID for this instance (use state instead of ref)
+  const uniqueId = useId() // Unique ID for this instance
   const containerRef = useRef(null)
   const cardsContainerRef = useRef(null)
   const cardRef = useRef(null)

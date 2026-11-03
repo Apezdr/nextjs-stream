@@ -38,7 +38,7 @@ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 
 # Verify installation
-node --version  # Should be v18 or higher
+node --version  # Should be v20.12 or higher (the script loads .env.local with process.loadEnvFile)
 npm --version
 ```
 
@@ -67,8 +67,7 @@ cat > package.json << 'EOF'
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "mongodb": "^6.0.0",
-    "dotenv": "^16.0.0"
+    "mongodb": "^6.0.0"
   }
 }
 EOF

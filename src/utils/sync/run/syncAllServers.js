@@ -1,6 +1,6 @@
 import { ObjectId } from 'mongodb'
 import clientPromise from '@src/lib/mongodb'
-import chalk from 'chalk'
+import { styleText } from 'node:util'
 import { updateLastSynced } from './lastSynced'
 import { runServerPass } from './serverPass'
 import { LIBRARY_CREDITS_COLLECTION, syncLibraryCredits } from './libraryCredits'
@@ -66,7 +66,7 @@ export async function syncAllServers(tick, options = {}) {
   const client = await clientPromise
   const startTime = Date.now()
   console.info(
-    chalk.bold.dim(`⋄⋄ Starting Multi-Server Sync ⋄⋄ [${new Date(startTime).toISOString()}]`)
+    styleText(['bold', 'dim'], `⋄⋄ Starting Multi-Server Sync ⋄⋄ [${new Date(startTime).toISOString()}]`)
   )
 
   // One id per orchestration. Every Flat* write that flows through the sync
@@ -82,7 +82,7 @@ export async function syncAllServers(tick, options = {}) {
   // is released in the background cleanup's finally below (watchdog backstop).
   if (!tryAcquireSyncLock(syncRunId)) {
     const holder = getSyncLockHolder()
-    console.warn(chalk.yellow(
+    console.warn(styleText('yellow',
       `⚠ Sync already in progress (run ${holder?.syncRunId ?? 'unknown'}); skipping this invocation`
     ))
     const busy = {
@@ -102,7 +102,7 @@ export async function syncAllServers(tick, options = {}) {
         summary: busy,
       })
     } catch (error) {
-      console.error(chalk.red(`emitComplete(busy) failed: ${error.message}`))
+      console.error(styleText('red', `emitComplete(busy) failed: ${error.message}`))
     }
     return busy
   }
@@ -117,7 +117,7 @@ export async function syncAllServers(tick, options = {}) {
   // re-check in runPostSyncCleanup.
   const lockWatchdog = setTimeout(() => {
     if (releaseSyncLock(syncRunId)) {
-      console.error(chalk.red(
+      console.error(styleText('red',
         `❌ Sync lock watchdog fired after ${SYNC_LOCK_WATCHDOG_MS}ms — force-released run ${syncRunId}`
       ))
       // The released run may keep writing, outside `applied`: the next tick
@@ -185,7 +185,7 @@ export async function syncAllServers(tick, options = {}) {
       operationId: options.operationId ?? null,
     })
   } catch (error) {
-    console.error(chalk.red(`emitStarted(warmup) failed: ${error.message}`))
+    console.error(styleText('red', `emitStarted(warmup) failed: ${error.message}`))
   }
 
   // Why this run was not complete (every enabled server answered, pre-tag
@@ -253,7 +253,7 @@ export async function syncAllServers(tick, options = {}) {
       },
     })
   } catch (inputError) {
-    console.error(chalk.red(`❌ Could not build the pass's inputs: ${inputError.message}`))
+    console.error(styleText('red', `❌ Could not build the pass's inputs: ${inputError.message}`))
     results.errors.push({ error: inputError.message, phase: 'pass_inputs', stack: inputError.stack })
   }
 
@@ -268,7 +268,7 @@ export async function syncAllServers(tick, options = {}) {
     // preTagSyncRunId is fail-closed (returns a coverage report, does not throw),
     // so this only catches truly unexpected failures. Leaving preTagResult = null
     // makes cleanup treat the missing coverage contract as fail-closed (no deletes).
-    console.error(chalk.red(`❌ Pre-tag step failed: ${preTagError.message}`))
+    console.error(styleText('red', `❌ Pre-tag step failed: ${preTagError.message}`))
     results.errors.push({
       error: preTagError.message,
       phase: 'pre_tag',
@@ -278,7 +278,7 @@ export async function syncAllServers(tick, options = {}) {
 
   // Process each server sequentially to avoid overwhelming the system
   for (const [serverId, fileServer] of Object.entries(fileServers || {})) {
-    console.info(chalk.bold.cyan(`\nProcessing server: ${serverId}`))
+    console.info(styleText(['bold', 'cyan'], `\nProcessing server: ${serverId}`))
 
     try {
       const serverConfig = {
@@ -368,11 +368,11 @@ export async function syncAllServers(tick, options = {}) {
         // Signal server completion even on failure so the UI updates
         syncEventBus.emitComplete('__server_complete__', MediaType.Movie, serverId)
 
-        console.error(chalk.red(`❌ Error identifying missing media for server ${serverId}:`))
-        console.error(chalk.red(`   Error Type: ${error.constructor.name}`))
-        console.error(chalk.red(`   Message: ${error.message}`))
+        console.error(styleText('red', `❌ Error identifying missing media for server ${serverId}:`))
+        console.error(styleText('red', `   Error Type: ${error.constructor.name}`))
+        console.error(styleText('red', `   Message: ${error.message}`))
         if (error.stack) {
-          console.error(chalk.dim(`   Stack: ${error.stack}`))
+          console.error(styleText('dim', `   Stack: ${error.stack}`))
         }
 
         results.errors.push({
@@ -407,8 +407,8 @@ export async function syncAllServers(tick, options = {}) {
       }
     } catch (error) {
       // Catch errors from outer try block (server processing)
-      console.error(chalk.red(`❌ Error processing server ${serverId}:`))
-      console.error(chalk.red(`   Error: ${error.message}`))
+      console.error(styleText('red', `❌ Error processing server ${serverId}:`))
+      console.error(styleText('red', `   Error: ${error.message}`))
       results.errors.push({
         serverId,
         error: error.message,
@@ -481,7 +481,7 @@ export async function syncAllServers(tick, options = {}) {
   const endTime = Date.now()
   const duration = (endTime - startTime) / 1000
   console.info(
-    chalk.bold.dim(
+    styleText(['bold', 'dim'],
       `⋄⋄ Finished Multi-Server Sync ⋄⋄ [${new Date(endTime).toISOString()}] (Total Runtime: ${duration.toFixed(2)}s)`
     )
   )
@@ -500,7 +500,7 @@ export async function syncAllServers(tick, options = {}) {
       { summary: results, operationId: options.operationId ?? null, outcome: 'completed' }
     )
   } catch (error) {
-    console.error(chalk.red(`emitComplete failed: ${error.message}`))
+    console.error(styleText('red', `emitComplete failed: ${error.message}`))
   }
 
   // Run post-sync cleanup in the background — does not block __sync_complete__ above.
@@ -518,7 +518,7 @@ export async function syncAllServers(tick, options = {}) {
   Promise.resolve().then(async () => {
     try {
       try {
-        console.log(chalk.bold.yellow('Performing post-sync cleanup (background)...'))
+        console.log(styleText(['bold', 'yellow'], 'Performing post-sync cleanup (background)...'))
         const finalAvailabilityResults = await runPostSyncCleanup(
           listings,
           {
@@ -531,13 +531,13 @@ export async function syncAllServers(tick, options = {}) {
           }
         )
         results.finalAvailabilityResults = finalAvailabilityResults
-        console.log(chalk.bold.yellow('Post-sync cleanup complete'))
+        console.log(styleText(['bold', 'yellow'], 'Post-sync cleanup complete'))
       } catch (error) {
-        console.error(chalk.red(`❌ Post-sync cleanup failed: ${error.message}`))
+        console.error(styleText('red', `❌ Post-sync cleanup failed: ${error.message}`))
       }
       results.afterSync = await runAfterSyncJobs({ syncRunId, incompleteReasons })
     } catch (error) {
-      console.error(chalk.red(`❌ The run's after-sync jobs failed: ${error.message}`))
+      console.error(styleText('red', `❌ The run's after-sync jobs failed: ${error.message}`))
     } finally {
       clearTimeout(lockWatchdog)
       // A run that lost its lock to the watchdog wrote until now: whatever the

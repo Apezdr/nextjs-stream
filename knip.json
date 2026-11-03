@@ -27,9 +27,5 @@
   "ignore": [
     "**/__mocks__/**"
   ],
-  "ignoreDependencies": [
-    "sharp",
-    "@eslint/js"
-  ],
   "ignoreExportsUsedInFile": true
 }

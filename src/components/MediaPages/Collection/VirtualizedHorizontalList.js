@@ -14,8 +14,8 @@ import React, {
 } from 'react'
 import { motion, AnimatePresence, useMotionValue, useSpring } from 'framer-motion'
 import { useSwipeable } from 'react-swipeable'
-import throttle from 'lodash.throttle'
-import debounce from 'lodash.debounce'
+import throttle from 'lodash/throttle'
+import debounce from 'lodash/debounce'
 import useScrollPersistence from './useScrollPersistence'
 
 /**

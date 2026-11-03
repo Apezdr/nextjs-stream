@@ -3,9 +3,14 @@ import { memo, useState } from 'react'
 import { Dialog } from '@headlessui/react'
 import { QuestionMarkCircleIcon, XMarkIcon } from '@heroicons/react/24/outline' // Optional: For icons
 import NodeJSDocumentation from './ServerInfo/NodeJSDocumentation'
-import PropTypes from 'prop-types'
 import { formatServerLabel } from '@src/utils/serverLabel'
 
+/**
+ * @param {object} props
+ * @param {Array<{ id: string, baseURL: string, prefixPath?: string, syncEndpoint: string,
+ *   paths?: { sync?: { tv?: string, movies?: string } } }>} props.servers
+ * @param {string} [props.organizrURL]
+ */
 function ServerList({ servers, organizrURL }) {
   const [isOpen, setIsOpen] = useState(false)
   const [modalContent, setModalContent] = useState({ label: '', info: '' })
@@ -197,24 +202,6 @@ function ServerList({ servers, organizrURL }) {
       </Dialog>
     </div>
   )
-}
-
-ServerList.propTypes = {
-  servers: PropTypes.arrayOf(
-    PropTypes.shape({
-      id: PropTypes.string.isRequired,
-      baseURL: PropTypes.string.isRequired,
-      prefixPath: PropTypes.string,
-      syncEndpoint: PropTypes.string.isRequired,
-      paths: PropTypes.shape({
-        sync: PropTypes.shape({
-          tv: PropTypes.string,
-          movies: PropTypes.string,
-        }),
-      }),
-    })
-  ).isRequired,
-  organizrURL: PropTypes.string,
 }
 
 export default memo(ServerList)

@@ -1,4 +1,3 @@
-import fetch from 'node-fetch'
 //import isAuthenticated from '../../../../utils/routeAuth'
 import clientPromise from '../../../../lib/mongodb'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'

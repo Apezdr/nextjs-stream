@@ -1,6 +1,5 @@
 const js = require("@eslint/js");
 const nextConfig = require("eslint-config-next");
-const globals = require("globals");
 
 module.exports = [
     {
@@ -23,11 +22,6 @@ module.exports = [
         languageOptions: {
             ecmaVersion: "latest",
             sourceType: "module",
-            globals: {
-                ...globals.browser,
-                ...globals.node,
-                ...globals.es2021,
-            },
         },
         rules: {
             "no-unused-vars": "off",

@@ -6,11 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Core Development
 - `npm run dev` - Start development server on port 3232
-- `npm run dev-turbo` - Start development server with Turbopack on port 3232
 - `npm run build` - Build the application for production
 - `npm run start` - Start production server
-- `npm run lint` - Run ESLint with auto-fix on app, components, lib, layouts, and scripts directories
-- `npm run analyze` - Build with bundle analysis enabled
+- `npm run lint` - Run `eslint --fix` over the whole repo (it rewrites files; to check only your changes, run `npx eslint <files>`)
+- `npm run analyze` - Open Next's bundle analyzer (`next analyze`; client bundles only, no app build)
 
 ### Testing
 - `npm test` - Run Jest tests
@@ -277,10 +276,9 @@ const { plan } = await buildWithResources((resources) => planPoster(input, resou
 - Log errors appropriately without exposing sensitive data
 
 ## Linting and Code Quality
-- ESLint runs on app, components, lib, layouts, and scripts directories
-- Prettier configuration available
+- ESLint (`eslint.config.js`) covers the whole repo
 - TypeScript strict mode enabled with custom path mappings
-- Pre-commit hooks ensure code quality
+- No pre-commit hooks run: lint and test before committing
 
 ## Troubleshooting Sync Issues
 

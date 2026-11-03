@@ -42,7 +42,7 @@ export default function SubtitleMainArea({
           </div>
           
           <div className="p-4">
-                <div className="aspect-video bg-black relative rounded overflow-hidden">
+                <div className="bg-black relative rounded overflow-hidden">
                   {/* Render video element from children */}
                   {children}
                   

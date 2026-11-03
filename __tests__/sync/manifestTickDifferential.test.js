@@ -71,10 +71,6 @@ jest.mock('@src/utils/sync/core/ResourceManager', () => ({
   getResourceManager: () => ({}),
 }))
 jest.mock('p-limit', () => () => (fn) => fn())
-jest.mock('chalk', () => {
-  const paint = new Proxy((text) => text, { get: () => paint })
-  return { __esModule: true, default: paint }
-})
 jest.mock('@src/lib/logger', () => ({
   createLogger: (component) => {
     if (component === 'FlatSync.NewArch.TV' && mockThrowTvPhaseOf && mockThrowTvPhaseOf === mockPassingServer) {

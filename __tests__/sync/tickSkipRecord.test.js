@@ -20,10 +20,6 @@ jest.mock('@src/lib/mongodb', () => ({
   }),
 }))
 jest.mock('@src/utils/config', () => ({ getAllServers: () => mockServers }))
-jest.mock('chalk', () => {
-  const paint = new Proxy((text) => text, { get: () => paint })
-  return { __esModule: true, default: paint }
-})
 jest.mock('@src/utils/sync/run/serverPass', () => ({ runServerPass: jest.fn() }))
 jest.mock('@src/utils/sync/run/libraryCredits', () => ({
   LIBRARY_CREDITS_COLLECTION: 'LibraryCredits',

@@ -52,10 +52,6 @@ jest.mock('@src/utils/config', () => ({
     getHandler: (id) => ({ createFullURL: (path) => `https://${id}.example${path}` }),
   },
 }))
-jest.mock('chalk', () => {
-  const paint = new Proxy((text) => text, { get: () => paint })
-  return { __esModule: true, default: paint }
-})
 jest.mock('@src/utils/sync/run/manifestSource', () => ({
   ...jest.requireActual('@src/utils/sync/run/manifestSource'),
   fetchManifest: (...args) => mockProcessor.fetchManifest(...args),

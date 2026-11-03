@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react';
-import throttle from 'lodash.throttle';
+import throttle from 'lodash/throttle';
 
 const useScroll = (threshold = 0, throttleMs = 600) => {
   const [isScrolled, setIsScrolled] = useState(false);

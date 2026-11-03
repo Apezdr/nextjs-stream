@@ -27,9 +27,9 @@ const path = require('path')
 
 // Load .env.local
 try {
-  require('dotenv').config({ path: path.join(__dirname, '..', '.env.local') })
+  process.loadEnvFile(path.join(__dirname, '..', '.env.local'))
 } catch {
-  // dotenv may not be installed; ensure env vars are set manually
+  // No .env.local: the variables must be set in the environment
 }
 
 const MONGODB_URI = process.env.MONGODB_URI

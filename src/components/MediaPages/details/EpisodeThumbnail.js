@@ -29,9 +29,6 @@ export default function EpisodeThumbnail({
   children = null,
 }) {
   const placeholder = blurDataURL ? { placeholder: 'blur', blurDataURL } : {}
-  // aspect-[16/9], not aspect-video: @tailwindcss/aspect-ratio replaces the
-  // core aspectRatio theme, so the named utilities (video, square) emit no
-  // CSS in this project and the frame would collapse to zero height.
   return (
     <div className={classNames('relative aspect-[16/9] overflow-hidden rounded-lg bg-white/5 ring-1 ring-white/10', className)}>
       {src ? (

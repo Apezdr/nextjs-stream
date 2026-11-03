@@ -12,10 +12,10 @@ import { classNames } from '@src/utils'
  * The popup is a top-layer popover that the menu positions next to its button
  * with inline styles. `.player-drawer` (player.css) overrides them with
  * !important to dock it instead, at offsets measured from the player container
- * while open. The player is `aspect-video max-h-dvh`, not the viewport, so a
- * viewport dock would miss it on any window that isn't 16:9. The drawer covers
- * the right end of the control bar while open, as players' drawers do; the
- * close button, Escape or a click on the video dismisses it.
+ * while open, so it stays on the player's box wherever the page puts or
+ * scrolls it. The drawer covers the right end of the control bar while open,
+ * as players' drawers do; the close button, Escape or a click on the video
+ * dismisses it.
  */
 
 /** CSS variables that dock the drawer to the player's box while it is open. */

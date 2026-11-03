@@ -2,7 +2,6 @@
 
 import FullCalendar from '@fullcalendar/react'
 import dayGridPlugin from '@fullcalendar/daygrid'
-import listPlugin from '@fullcalendar/list'
 import Loading from '@src/app/loading'
 import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence'
 import { useState, useEffect, useRef, useCallback } from 'react'
@@ -236,7 +235,7 @@ export default function ReleaseCalendar({
             >
               <FullCalendar
                 ref={calendarRef}
-                plugins={[dayGridPlugin, listPlugin]}
+                plugins={[dayGridPlugin]}
                 initialView={initialView}
                 weekends={true}
                 events={events}

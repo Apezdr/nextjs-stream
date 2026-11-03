@@ -1,6 +1,6 @@
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
-import { nanoid } from 'nanoid'
+import { randomBytes } from 'node:crypto'
 import { userQueries } from '@src/lib/userQueries'
 
 /**
@@ -149,7 +149,8 @@ export async function createDeletionVerificationToken(deletionRequestId, email) 
   const client = await clientPromise
   const db = client.db('Users')
   
-  const token = nanoid(32)
+  // 32 URL-safe characters, 192 bits
+  const token = randomBytes(24).toString('base64url')
   const verificationToken = {
     _id: new ObjectId(),
     deletionRequestId,

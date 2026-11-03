@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useSyncExternalStore } from 'react'
-import throttle from 'lodash.throttle'
+import throttle from 'lodash/throttle'
 
 // Global state for items per page calculation
 let globalItemsPerPage = null
