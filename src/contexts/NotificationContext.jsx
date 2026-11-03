@@ -5,6 +5,7 @@ import { authClient } from '@src/lib/auth-client';
 import useSWR from 'swr';
 import useSWRMutation from 'swr/mutation';
 import { fetcher } from '@src/utils';
+import { isAwaitingApproval } from '@src/lib/roles/rules';
 
 const NotificationContext = createContext();
 
@@ -43,7 +44,7 @@ export function NotificationProvider({ children }) {
     isLoading,
     mutate
   } = useSWR(
-    !isPending && session?.user && session.user.approved !== false
+    !isPending && session?.user && !isAwaitingApproval(session.user)
       ? `/api/authenticated/notifications?limit=10`
       : null,
     fetcher,
@@ -125,7 +126,7 @@ export function NotificationProvider({ children }) {
   );
 
   const markAsRead = useCallback(async (notificationId) => {
-    if (isPending || !session?.user || session.user.approved === false) {
+    if (isPending || !session?.user || isAwaitingApproval(session.user)) {
       return false;
     }
 
@@ -139,7 +140,7 @@ export function NotificationProvider({ children }) {
   }, [isPending, session, triggerMarkAsRead]);
 
   const markAllAsRead = useCallback(async () => {
-    if (isPending || !session?.user || session.user.approved === false) {
+    if (isPending || !session?.user || isAwaitingApproval(session.user)) {
       return false;
     }
 
@@ -153,7 +154,7 @@ export function NotificationProvider({ children }) {
   }, [isPending, session, triggerMarkAllAsRead]);
 
   const dismissNotification = useCallback(async (notificationId) => {
-    if (isPending || !session?.user || session.user.approved === false) {
+    if (isPending || !session?.user || isAwaitingApproval(session.user)) {
       return false;
     }
 
@@ -172,7 +173,7 @@ export function NotificationProvider({ children }) {
   }, [mutate]);
 
   // Always provide context with appropriate values based on auth status
-  const isAuthenticated = !isPending && !!session?.user && session.user.approved !== false;
+  const isAuthenticated = !isPending && !!session?.user && !isAwaitingApproval(session.user);
   const isMutatingAny = isMarkingAsRead || isMarkingAllAsRead || isDismissing;
   
   const contextValue = {

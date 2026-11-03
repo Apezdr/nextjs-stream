@@ -43,7 +43,7 @@ import { ObjectId } from 'mongodb'
 import isEqual from 'lodash/isEqual'
 import { revalidatePath } from 'next/cache'
 import clientPromise from '@src/lib/mongodb'
-import { isAdmin } from '@src/utils/routeAuth'
+import { adminGate } from '@src/lib/roles/gates'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { forgetAppliedPayloads } from '@src/utils/sync/run/appliedPayloads'
 import { validateWatchHistory } from '@src/utils/sync/run/validateWatchHistory'
@@ -64,8 +64,7 @@ const fail = (message) => ({ status: 'error', message })
 // admin page's check does not cover it. The refusal is returned, not thrown,
 // so the editors show it through useActionState like any other error.
 async function refuseNonAdmin() {
-  const user = await isAdmin()
-  return user instanceof Response ? fail('Admin access required.') : null
+  return (await adminGate.check()) ? null : fail('Admin access required.')
 }
 
 // ─── Small utilities ─────────────────────────────────────────────────────────

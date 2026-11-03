@@ -1,8 +1,7 @@
-import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
-import { adminUserEmails, siteTitle } from '@src/utils/config'
+import { siteTitle } from '@src/utils/config'
 import IdentityReport from '@components/Admin/Identity/IdentityReport'
-import { getSession } from '@src/lib/cachedAuth'
+import { adminGate } from '@src/lib/roles/gates'
 
 export const metadata = {
   title: `Title Matching - Admin - ${siteTitle}`,
@@ -10,11 +9,8 @@ export const metadata = {
 }
 
 async function IdentityAdminPage() {
-  const session = await getSession()
+  await adminGate.page()
 
-  if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
-    return redirect('/', 'replace')
-  }
 
   // The report brings the dashboard's own light surface (min-h-screen bg-gray-50),
   // the same as the admin overview page, so no wrapper here.

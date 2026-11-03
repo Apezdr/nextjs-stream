@@ -7,10 +7,10 @@
  *
  * It sits outside /api/authenticated/ on purpose. That prefix means "a
  * better-auth session or bearer token" everywhere else in this codebase, and
- * teaching isAuthenticatedAndApproved to also accept a cast token would widen
- * every route that helper guards — including the admin ones — to a credential
- * that travels through a television. A different credential gets a different
- * path.
+ * teaching the session gates (src/lib/roles/gates.ts) to also accept a cast
+ * token would widen every route they guard — including the admin ones — to a
+ * credential that travels through a television. A different credential gets a
+ * different path.
  *
  * updatePlayback is not reused for the same reason, plus it trusts the body for
  * both videoId and mediaMetadata. Here neither is trusted: the identity of the

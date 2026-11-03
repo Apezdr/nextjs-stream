@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { isAdmin } from '@src/utils/routeAuth'
+import { adminGate } from '@src/lib/roles/gates'
 import { 
   getDeletionRequests,
   cancelDeletionRequest,
@@ -20,7 +20,7 @@ import {
 export async function GET(request) {
   try {
     // Authenticate admin
-    const admin = await isAdmin(request)
+    const admin = await adminGate.route()
     if (admin instanceof Response) {
       return admin
     }
@@ -97,7 +97,7 @@ export async function GET(request) {
 export async function POST(request) {
   try {
     // Authenticate admin
-    const admin = await isAdmin(request)
+    const admin = await adminGate.route()
     if (admin instanceof Response) {
       return admin
     }
@@ -338,7 +338,7 @@ async function handleGetAuditLogs(requestId) {
 export async function DELETE(request) {
   try {
     // Authenticate admin
-    const admin = await isAdmin(request)
+    const admin = await adminGate.route()
     if (admin instanceof Response) {
       return admin
     }

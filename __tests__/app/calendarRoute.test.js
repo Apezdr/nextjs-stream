@@ -17,7 +17,7 @@ jest.mock('@src/lib/httpHelper', () => ({
   ...jest.requireActual('@src/lib/httpHelper'),
   httpGet: (...args) => mockHttpGet(...args),
 }))
-jest.mock('@src/utils/routeAuth', () => ({ isAuthenticatedAndApproved: jest.fn(async () => ({ id: 'user-1' })) }))
+jest.mock('@src/lib/roles/gates', () => ({ approvedGate: { route: jest.fn(async () => ({ id: 'user-1' })) } }))
 
 const { GET } = require('@src/app/api/authenticated/calendar/[endpoint]/route')
 

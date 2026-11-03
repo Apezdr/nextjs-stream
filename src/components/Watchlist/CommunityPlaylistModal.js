@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { toast } from 'react-toastify'
 import { classNames } from '@src/utils'
+import { isAdminUser } from '@src/lib/roles/rules'
 
 export default function CommunityPlaylistModal({
   isOpen,
@@ -17,7 +18,7 @@ export default function CommunityPlaylistModal({
   const [selectedTab, setSelectedTab] = useState('promote') // 'promote' or 'manage'
 
   // Check if user is Application Admin
-  const isApplicationAdmin = session?.user?.role === 'admin' || session?.user?.isAdmin || user?.permissions?.includes('Admin')
+  const isApplicationAdmin = isAdminUser(user)
 
   useEffect(() => {
     if (isOpen && isApplicationAdmin) {

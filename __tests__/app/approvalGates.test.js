@@ -112,7 +112,8 @@ describe('every page under list/tv and list/movie has an approval gate', () => {
   it.each(pages.map((p) => [path.relative(listDir, p).replace(/\\/g, '/'), p]))('%s', (_name, file) => {
     const source = fs.readFileSync(file, 'utf8')
     const usesGate = /<SessionGate[\s>]/.test(source)
-    const redirectsInline = /approved === false/.test(source) && source.includes("redirect('/auth/error?error=APPROVAL_PENDING')")
+    const redirectsInline =
+      /isAwaitingApproval\(/.test(source) && source.includes("redirect('/auth/error?error=APPROVAL_PENDING')")
     const usesWrapper = /export default withApprovedUser\(/.test(source)
     expect(usesGate || redirectsInline || usesWrapper).toBe(true)
   })

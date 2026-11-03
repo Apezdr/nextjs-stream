@@ -1,7 +1,5 @@
-'use server'
-
 import { getProcessedSystemStatus } from '@src/utils/getProcessedSystemStatus'
-import isAuthenticated from '@src/utils/routeAuth'
+import { signedInGate } from '@src/lib/roles/gates'
 // Use shared ETag helpers for consistency across all endpoints
 import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
 import { connection } from 'next/server'
@@ -13,7 +11,7 @@ const DEFAULTS = {
 export async function GET(request) {
   await connection();
   // auth
-  const auth = await isAuthenticated(request)
+  const auth = await signedInGate.route()
   if (auth instanceof Response) return auth
 
   try {

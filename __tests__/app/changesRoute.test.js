@@ -8,7 +8,7 @@
  */
 jest.mock('next/server', () => ({ after: (callback) => callback() }))
 const mockAuth = jest.fn(async () => ({ id: 'u1' }))
-jest.mock('@src/utils/routeAuth', () => ({ isAuthenticatedAndApproved: (...args) => mockAuth(...args) }))
+jest.mock('@src/lib/roles/gates', () => ({ approvedGate: { route: (...args) => mockAuth(...args) } }))
 
 const { GET } = require('@src/app/api/authenticated/changes/route')
 const { REVISION, bumpRevision, homeRowsRevision, watchHistoryRevision } = require('@src/utils/changes/revisions')

@@ -1,4 +1,4 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth';
+import { approvedGate } from '@src/lib/roles/gates'
 import {
   getUserNotifications,
   getUnreadNotificationCount
@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
 import { getSession } from '@src/lib/cachedAuth';
 // Use shared ETag helpers for consistency across all endpoints
 import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers';
+import { isAwaitingApproval } from '@src/lib/roles/rules';
 
 /**
  * GET /api/authenticated/notifications
@@ -16,7 +17,7 @@ import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHe
 export async function GET(request) {
   try {
     // Check authentication and approval (supports both web sessions and sessionId)
-    const authResult = await isAuthenticatedAndApproved(request);
+    const authResult = await approvedGate.route();
     if (authResult instanceof Response) {
       return authResult;
     }
@@ -89,7 +90,7 @@ export async function HEAD(request) {
       return new NextResponse(null, { status: 401 });
     }
     
-    if (session.user.approved === false) {
+    if (isAwaitingApproval(session.user)) {
       return new NextResponse(null, { status: 403 });
     }
 

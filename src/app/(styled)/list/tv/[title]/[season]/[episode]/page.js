@@ -102,7 +102,7 @@ export default function TVEpisodePage({ params }) {
       <SessionGate
         params={params}
         callbackUrl={({ title, season, episode }) =>
-          `/list/tv/${encodeURIComponent(title)}/${encodeURIComponent(season)}/${encodeURIComponent(episode)}`
+          `/list/tv/${title}/${season}/${episode}`
         }
       >
         {({ session, params: { title, season, episode } }) => (

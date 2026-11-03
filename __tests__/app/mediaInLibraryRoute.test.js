@@ -16,7 +16,7 @@ jest.mock('@src/lib/mongodb', () => ({
     db: () => ({ collection: (name) => ({ find: (query, options) => ({ toArray: () => mockFind(name, query, options) }) }) }),
   }),
 }))
-jest.mock('@src/utils/routeAuth', () => ({ isAuthenticatedAndApproved: jest.fn(async () => ({ id: 'user-1' })) }))
+jest.mock('@src/lib/roles/gates', () => ({ approvedGate: { route: jest.fn(async () => ({ id: 'user-1' })) } }))
 
 const { POST } = require('@src/app/api/authenticated/media/in-library/route')
 const { visibleMovieFilter, visibleShowFilter } = require('@src/utils/mediaVisibility')

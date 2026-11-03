@@ -1,15 +1,16 @@
-import isAuthenticated, { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
+import { isAdminUser } from '@src/lib/roles/rules'
 import { getServer } from '@src/utils/config'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 
 export async function POST(req) {
   // Ensure user is authenticated and has admin rights
-  const authResult = await isAuthenticatedAndApproved(req) // second param = requireAdmin
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult // Return the unauthorized response if not admin
   }
 
-  if (authResult.role !== 'admin') {
+  if (!isAdminUser(authResult)) {
     return new Response(
       JSON.stringify({
         success: false,

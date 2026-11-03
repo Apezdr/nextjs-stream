@@ -1,5 +1,5 @@
 import { ObjectId } from 'mongodb'
-import isAuthenticated from '../../../../../utils/routeAuth'
+import { signedInGate } from '@src/lib/roles/gates'
 import { generateNormalizedVideoId } from '../../../../../utils/flatDatabaseUtils'
 import { updateValidationStatus } from '../../../../../utils/watchHistory/database'
 import { bumpRevisionAfterResponse, watchHistoryRevision } from '@src/utils/changes/revisions'
@@ -12,7 +12,7 @@ import { bumpRevisionAfterResponse, watchHistoryRevision } from '@src/utils/chan
  * If the user is not authenticated, returns a 401 Unauthorized response.
  */
 export const POST = async (req) => {
-  const authResult = await isAuthenticated(req)
+  const authResult = await signedInGate.route()
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }

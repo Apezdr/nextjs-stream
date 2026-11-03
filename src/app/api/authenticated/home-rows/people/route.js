@@ -1,8 +1,8 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
+import { isAdminUser } from '@src/lib/roles/rules'
 import {
   addPlaylistToHomeScreens,
   HomeRowsError,
-  isGlobalAdminUser,
   listHomeRowPeople,
   listPeopleWithRowCounts,
   removePlaylistFromHomeScreens,
@@ -68,9 +68,9 @@ export async function POST(req) {
 }
 
 async function requireAdmin(req) {
-  const user = await isAuthenticatedAndApproved(req)
+  const user = await approvedGate.route()
   if (user instanceof Response) return user
-  if (!isGlobalAdminUser(user)) return Response.json({ error: 'Admins only' }, { status: 403 })
+  if (!isAdminUser(user)) return Response.json({ error: 'Admins only' }, { status: 403 })
   return user
 }
 

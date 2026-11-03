@@ -7,9 +7,8 @@
  * items rather than whole pages, so both were the wrong item.
  */
 
-jest.mock('@src/utils/routeAuth', () => ({
-  isAuthenticatedAndApproved: jest.fn(async () => ({ id: 'user-1' })),
-  isAdmin: jest.fn(async () => false),
+jest.mock('@src/lib/roles/gates', () => ({
+  approvedGate: { route: jest.fn(async () => ({ id: 'user-1' })) },
 }))
 jest.mock('@src/utils/backendAuth', () => ({ getBackendAuthHeaders: jest.fn(async () => ({})) }))
 jest.mock('@src/utils/auth_utils', () => ({ sanitizeCardItems: (items) => items }))

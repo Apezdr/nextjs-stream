@@ -14,6 +14,7 @@ import useOverlayState from './useOverlayState'
 import ArrDialog from '@components/Arr/ArrDialog'
 import ArrStatusChip, { describeArrStatus } from '@components/Arr/ArrStatusChip'
 import { arrAllowsMediaType, arrServiceName, isArrMediaType } from '@components/Arr/arrApi'
+import { isAdminUser } from '@src/lib/roles/rules'
 
 export default function WatchlistCard({
   item,
@@ -57,7 +58,7 @@ export default function WatchlistCard({
   const { navigate, isNavigating: globalIsNavigating, targetUrl } = useNavigation()
   
   // Check if user is admin
-  const isAdmin = user?.role === 'admin' || user?.permissions?.includes('Admin')
+  const isAdmin = isAdminUser(user)
 
   // Send the title to Radarr (movies) or Sonarr (shows), or manage it there,
   // for users whose roles allow it. Hidden once the status check says the

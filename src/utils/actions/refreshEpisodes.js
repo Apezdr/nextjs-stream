@@ -1,6 +1,6 @@
 'use server';
 
-import { requireApprovedViewer } from '@src/lib/actionViewer';
+import { approvedGate } from '@src/lib/roles/gates';
 import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils';
 
 /**
@@ -19,7 +19,7 @@ export async function refreshEpisodes({ showTitle, seasonNumber } = {}) {
   const validTitle = typeof showTitle === 'string' && showTitle.length > 0;
   const validSeason = /^\d{1,4}$/.test(String(seasonNumber));
   // Back to this season after signing in
-  await requireApprovedViewer(
+  await approvedGate.action(
     validTitle && validSeason ? `/list/tv/${encodeURIComponent(showTitle)}/${seasonNumber}` : '/list/tv'
   );
   if (!validTitle || !validSeason) return { success: false, hasEpisodes: false };

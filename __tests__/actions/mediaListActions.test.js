@@ -3,7 +3,7 @@
  *
  * The media pages' data actions are public POST endpoints (the list pages'
  * client chunks carry their IDs). Each checks its caller as the pages'
- * SessionGate does (src/lib/actionViewer.ts) and reads the user from the
+ * SessionGate does (approvedGate.action, src/lib/roles/gates.ts) and reads the user from the
  * session: getMovieListData/getTVListData used to take userId from the
  * request, so anyone could page the library and read any user's watch
  * history; refreshEpisodes handed out full episode documents.

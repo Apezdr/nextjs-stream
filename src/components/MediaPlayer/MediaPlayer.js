@@ -5,6 +5,7 @@ import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
 import Media_Poster from '../MediaPoster'
 import { getServer } from '@src/utils/config'
 import { Suspense } from 'react'
+import { isAdminUser, isAwaitingApproval } from '@src/lib/roles/rules'
 
 async function validateVideoURL(url, updateValidationStatus = null) {
   try {
@@ -50,7 +51,7 @@ async function VideoPlayer({
   hasFullAccess = true,
 }) {
   // Check if user is an admin
-  const isAdmin = session?.user?.role === 'admin'
+  const isAdmin = isAdminUser(session?.user)
   const { videoURL, metadata } = media
   
   // Conditionally import the SubtitleEditor component only for admin users
@@ -293,9 +294,9 @@ async function VideoPlayer({
   // it travels through the Cast channel to a television whose debug overlay and
   // developer console can both read it. A signed-out or unapproved viewer gets
   // null, so their cast plays and records nothing, matching what the web path
-  // already does. The `approved !== false` test mirrors isAuthenticatedAndApproved.
+  // already does: the same approval rule as approvedGate.
   const castPlaybackToken =
-    session?.user?.id && session.user.approved !== false && videoURL
+    session?.user?.id && !isAwaitingApproval(session.user) && videoURL
       ? mintCastPlaybackToken({
           userId: session.user.id,
           normalizedVideoId: generateNormalizedVideoId(videoURL),

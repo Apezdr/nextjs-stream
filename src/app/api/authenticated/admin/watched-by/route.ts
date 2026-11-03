@@ -5,14 +5,14 @@
 //
 //   GET ?normalizedVideoId=<nid>[&mediaId=mid:…]
 import { NextResponse } from 'next/server'
-import { isAdmin } from '@src/utils/routeAuth'
+import { adminGate } from '@src/lib/roles/gates'
 import { listViewersByNormalizedId } from '@src/utils/flatDatabaseUtils'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('API.Admin.WatchedBy')
 
 export async function GET(request: Request) {
-  const admin = await isAdmin()
+  const admin = await adminGate.route()
   if (admin instanceof Response) return admin
 
   const params = new URL(request.url).searchParams

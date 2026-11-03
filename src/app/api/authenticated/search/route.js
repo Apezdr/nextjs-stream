@@ -2,7 +2,7 @@ import clientPromise from '@src/lib/mongodb'
 import { addCustomUrlToFlatMedia, getFlatRecentlyAddedMedia } from '@src/utils/flatDatabaseUtils'
 import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
 import { movieProjectionFields, tvShowProjectionFields, sanitizeRecord } from '@src/utils/auth_utils'
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { escapeRegex } from '@src/utils/escapeRegex'
 import { TITLE_COLLATION } from '@src/utils/mediaListUtils/listOrder'
 import { SEARCH_TYPES, matchRanks, pageParams, searchTypes } from '@src/utils/search/searchQuery'
@@ -13,7 +13,7 @@ const json = (body, status = 200) =>
 // Paging, the Movies/TV filter and the ranking: utils/search/searchQuery.js
 
 export const POST = async (req) => {
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }

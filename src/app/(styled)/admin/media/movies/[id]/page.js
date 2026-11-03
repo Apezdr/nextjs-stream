@@ -1,10 +1,10 @@
-import { redirect, notFound } from 'next/navigation'
+import { notFound } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
-import { getSession } from '@src/lib/cachedAuth'
-import { adminUserEmails, getAllServers, getDefaultServer } from '@src/utils/config'
+import { getAllServers, getDefaultServer } from '@src/utils/config'
 import { formatServerLabel } from '@src/utils/serverLabel'
 import { getAdminMovie } from '@src/utils/admin/flatMediaAdmin'
 import MovieEditor from '@components/Admin/Media/MovieEditor'
+import { adminGate } from '@src/lib/roles/gates'
 
 /**
  * Determine which server hosts this movie and where a TMDB-config override
@@ -38,10 +38,7 @@ function computeMovieOwnership(record) {
 }
 
 async function MovieEditorPage({ params }) {
-  const session = await getSession()
-  if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
-    return redirect('/', 'replace')
-  }
+  await adminGate.page()
 
   const { id } = await params
   const isNew = id === 'new'

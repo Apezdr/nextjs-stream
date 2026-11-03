@@ -1,4 +1,4 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { LIBRARY_LOOKUP_MAX, findLibraryTitlesByTmdbId } from '@src/utils/media/libraryByTmdbId'
 
 const json = (body, status = 200) =>
@@ -19,7 +19,7 @@ const isTitle = (item) =>
  * so a library title is offered as library media, not as a TMDB-only one.
  */
 export const POST = async (req) => {
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) return authResult
 
   let body

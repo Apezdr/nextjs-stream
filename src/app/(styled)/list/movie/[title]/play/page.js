@@ -10,6 +10,7 @@ import {
 } from '@src/components/MediaPages/DynamicPage'
 import { getCachedMediaWithRedirect, applyPlayerDelivery } from '@src/utils/cache/mediaFetching'
 import { buildMediaMetadata } from '@src/utils/media/metadataBuilder'
+import { hasLimitedAccess, isAwaitingApproval } from '@src/lib/roles/rules'
 
 function buildPlayerParsedParams(title) {
   const decoded = decodeURIComponent(title)
@@ -59,7 +60,7 @@ async function MoviePlayer({ params, searchParams }) {
   // otherwise render the player for an unapproved account (hasFullAccess only
   // trims the UI). The movie/ layout used to run this check for every page
   // beneath it; each page now runs its own. See the layout's comment.
-  if (session?.user && session.user.approved === false) {
+  if (isAwaitingApproval(session?.user)) {
     redirect('/auth/error?error=APPROVAL_PENDING')
   }
 
@@ -84,7 +85,7 @@ async function MoviePlayer({ params, searchParams }) {
 
   const { media, notFoundType } = result
   const hasFullAccess =
-    session?.user?.approved !== false && session?.user?.limitedAccess !== true
+    !isAwaitingApproval(session?.user) && !hasLimitedAccess(session?.user)
 
   return (
     <AuthGuard session={session} parsedParams={parsedParams} media={media}>

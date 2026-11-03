@@ -1,11 +1,11 @@
 import { getVideosWatched } from '@src/utils/auth_database'
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 // ETag support for HTTP caching
 import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
 
 export async function GET(req) {
   // Authenticate the user (using direct auth() call - no HTTP fetch overhead)
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult // Return unauthorized response if not authenticated
   }

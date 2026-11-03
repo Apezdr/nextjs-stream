@@ -10,7 +10,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { isAdmin } from '@src/utils/routeAuth'
+import { adminGate } from '@src/lib/roles/gates'
 import {
   getClientErrorGroups,
   getClientErrorReports,
@@ -23,7 +23,7 @@ const log = createLogger('API.Admin.ClientErrors')
 
 export async function GET(request) {
   try {
-    const admin = await isAdmin(request)
+    const admin = await adminGate.route()
     if (admin instanceof Response) {
       return admin
     }
@@ -72,7 +72,7 @@ export async function GET(request) {
 
 export async function DELETE(request) {
   try {
-    const admin = await isAdmin(request)
+    const admin = await adminGate.route()
     if (admin instanceof Response) {
       return admin
     }

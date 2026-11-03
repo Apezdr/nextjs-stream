@@ -1,16 +1,11 @@
-import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
-import { getSession } from '@src/lib/cachedAuth'
-import { adminUserEmails } from '@src/utils/config'
 import { listAdminTVShows } from '@src/utils/admin/flatMediaAdmin'
 import MediaToolbar from '@components/Admin/Media/MediaToolbar'
 import MediaTable from '@components/Admin/Media/MediaTable'
+import { adminGate } from '@src/lib/roles/gates'
 
 async function TVAdminPage({ searchParams }) {
-  const session = await getSession()
-  if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
-    return redirect('/', 'replace')
-  }
+  await adminGate.page()
 
   const sp = (await searchParams) || {}
   const q = typeof sp.q === 'string' ? sp.q : ''

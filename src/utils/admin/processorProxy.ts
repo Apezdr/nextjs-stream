@@ -9,7 +9,7 @@
 // pairing key isn't admin access, and letting a peer read a server's log will
 // be an explicit grant.
 import { NextResponse } from 'next/server'
-import { isAdmin } from '@src/utils/routeAuth'
+import { adminGate } from '@src/lib/roles/gates'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import { getAllServers } from '@src/utils/config'
 
@@ -24,7 +24,7 @@ export async function proxyToProcessor(
   request: Request,
   { path, forward = [] }: { path: string; forward?: string[] }
 ): Promise<Response> {
-  const admin = await isAdmin()
+  const admin = await adminGate.route()
   if (admin instanceof Response) return admin
 
   const params = new URL(request.url).searchParams

@@ -1,6 +1,6 @@
 import { getSession } from '@src/lib/cachedAuth'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
-import isAuthenticated, { isValidWebhook } from '@src/utils/routeAuth'
+import { isValidWebhook, signedInGate } from '@src/lib/roles/gates'
 
 async function getUserID(request, isWebhook) {
   if (isWebhook) {
@@ -55,7 +55,7 @@ async function handleRequest(request, params, isWebhook) {
 
 export async function GET(request, props) {
   const params = await props.params;
-  const authResult = await isAuthenticated(request)
+  const authResult = await signedInGate.route()
   if (authResult instanceof Response) {
     return authResult
   }

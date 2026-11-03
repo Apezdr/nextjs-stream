@@ -8,8 +8,8 @@
  */
 
 const mockUser = { current: null }
-jest.mock('@src/utils/routeAuth', () => ({
-  isAuthenticatedAndApproved: jest.fn(async () => mockUser.current),
+jest.mock('@src/lib/roles/gates', () => ({
+  approvedGate: { route: jest.fn(async () => mockUser.current) },
 }))
 
 const mockRevalidateTag = jest.fn()
@@ -27,7 +27,6 @@ jest.mock('@src/utils/watchlist/homeRows', () => {
   const actual = jest.requireActual('@src/utils/watchlist/homeRows')
   return {
     HomeRowsError: actual.HomeRowsError,
-    isGlobalAdminUser: actual.isGlobalAdminUser,
     getHomeRows: (...args) => mockHomeRows.getHomeRows(...args),
     saveHomeRows: (...args) => mockHomeRows.saveHomeRows(...args),
     listHomeRowPeople: (...args) => mockHomeRows.listHomeRowPeople(...args),

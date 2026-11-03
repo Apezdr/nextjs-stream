@@ -7,8 +7,8 @@
  */
 
 const mockUser = { current: { id: 'u1', limitedAccess: false } }
-jest.mock('@src/utils/routeAuth', () => ({
-  isAuthenticatedAndApproved: jest.fn(async () => mockUser.current),
+jest.mock('@src/lib/roles/gates', () => ({
+  approvedGate: { route: jest.fn(async () => mockUser.current) },
 }))
 jest.mock('@src/utils/credits/catalog', () => ({
   getCreditsCatalog: jest.fn(),
@@ -16,7 +16,7 @@ jest.mock('@src/utils/credits/catalog', () => ({
 }))
 
 const { getCreditsCatalog, getCreditsAvailability } = require('@src/utils/credits/catalog')
-const { isAuthenticatedAndApproved } = require('@src/utils/routeAuth')
+const { approvedGate } = require('@src/lib/roles/gates')
 const catalogRoute = require('@src/app/api/authenticated/credits/route')
 const availabilityRoute = require('@src/app/api/authenticated/credits/availability/route')
 
@@ -58,7 +58,7 @@ it('answers 500 when the read fails, never an empty answer', async () => {
 })
 
 it('passes an unauthenticated answer through', async () => {
-  isAuthenticatedAndApproved.mockResolvedValueOnce(new Response(null, { status: 401 }))
+  approvedGate.route.mockResolvedValueOnce(new Response(null, { status: 401 }))
   expect((await availabilityRoute.GET(request('credits/availability'))).status).toBe(401)
   expect(getCreditsAvailability).not.toHaveBeenCalled()
 })

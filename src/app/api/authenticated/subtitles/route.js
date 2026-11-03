@@ -1,4 +1,3 @@
-//import isAuthenticated from '../../../../utils/routeAuth'
 import clientPromise from '../../../../lib/mongodb'
 import { httpGet } from '@src/lib/httpHelper'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
@@ -7,11 +6,6 @@ import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 // It is not protected by authentication because it is used by the media player
 // from many different devices
 export const GET = async (req) => {
-  /* const authResult = await isAuthenticated(req)
-  if (authResult instanceof Response) {
-    return authResult // Stop execution and return the unauthorized response
-  } */
-
   const searchParams = req.nextUrl.searchParams
   const name = searchParams.get('name')
   const language = searchParams.get('language')

@@ -10,9 +10,8 @@ const mockGetStatus = jest.fn()
 jest.mock('@src/utils/getProcessedSystemStatus', () => ({
   getProcessedSystemStatus: (...args) => mockGetStatus(...args),
 }))
-jest.mock('@src/utils/routeAuth', () => ({
-  __esModule: true,
-  default: async () => ({ id: 'user-1' }),
+jest.mock('@src/lib/roles/gates', () => ({
+  signedInGate: { route: async () => ({ id: 'user-1' }) },
 }))
 jest.mock('next/server', () => ({ connection: async () => {} }))
 

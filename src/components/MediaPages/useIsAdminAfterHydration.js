@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from 'react'
 import { authClient } from '@src/lib/auth-client'
+import { isAdminUser } from '@src/lib/roles/rules'
 
 // Client-only mount flag, the same pattern GeneralLayout uses: the server
 // snapshot is `false`, so SSR and the hydration render agree on "nothing".
@@ -26,5 +27,5 @@ const subscribeNever = () => () => {}
 export default function useIsAdminAfterHydration() {
   const { data: session } = authClient.useSession()
   const hydrated = useSyncExternalStore(subscribeNever, () => true, () => false)
-  return hydrated && session?.user?.role === 'admin'
+  return hydrated && isAdminUser(session?.user)
 }

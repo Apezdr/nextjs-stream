@@ -1,4 +1,4 @@
-'use server'
+import 'server-only'
 
 import { cache } from 'react'
 import clientPromise from '@src/lib/mongodb'
@@ -17,6 +17,7 @@ import { planPlaylistMerge } from './playlistMerge.js'
 import { ensurePlaylistVisibilityIndexes } from './playlistVisibilityIndexes.js'
 import { getSession } from '@src/lib/cachedAuth.js'
 import { userQueries } from '@src/lib/userQueries'
+import { isAdminUser } from '@src/lib/roles/rules'
 import { visibleMovieFilter, visibleShowFilter } from '@src/utils/mediaVisibility'
 import { createLogger, logError } from '@src/lib/logger'
 
@@ -122,15 +123,6 @@ function isAdminPermission(permission) {
 function getGlobalPermission(playlist) {
   const permission = playlist?.globalPermission
   return ['view', 'add', 'edit', 'admin'].includes(permission) ? permission : null
-}
-
-function isGlobalAdminUser(user) {
-  if (!user) return false
-  return (
-    user.role === 'admin' ||
-    user.role === 'Admin' ||
-    (Array.isArray(user.permissions) && user.permissions.includes('Admin'))
-  )
 }
 
 // Who may do what with a playlist. Each takes a playlist that has been through
@@ -642,7 +634,7 @@ export async function addToWatchlist({
     const collection = db.collection('Watchlist')
     const playlistsCollection = db.collection('Playlists')
     const userObjectId = new ObjectId(session.user.id)
-    const isGlobalAdmin = isGlobalAdminUser(session?.user)
+    const isGlobalAdmin = isAdminUser(session?.user)
 
     // Ensure valid playlist ID
     let actualPlaylistId = playlistId
@@ -816,7 +808,7 @@ async function findRemovableItems(db, itemObjectIds, user) {
   ]
   if (otherAddersPlaylistIds.length === 0) return items
 
-  const isGlobalAdmin = isGlobalAdminUser(user)
+  const isGlobalAdmin = isAdminUser(user)
   const playlists = await db
     .collection('Playlists')
     .find({ _id: { $in: otherAddersPlaylistIds.map((id) => new ObjectId(id)) } })
@@ -880,7 +872,7 @@ export const checkWatchlistStatus = cache(async function checkWatchlistStatus(
       const playlist = normalizePlaylistIdentityFields(
         await db.collection('Playlists').findOne({ _id: new ObjectId(playlistId) })
       )
-      if (!canViewPlaylist(playlist, userObjectId, isGlobalAdminUser(session.user))) {
+      if (!canViewPlaylist(playlist, userObjectId, isAdminUser(session.user))) {
         return null
       }
     }
@@ -1063,7 +1055,7 @@ export async function moveItemsToPlaylist(itemIds, targetPlaylistId) {
       if (!target) {
         throw new Error('Playlist not found')
       }
-      if (!canAddToPlaylist(target, userObjectId, isGlobalAdminUser(session.user))) {
+      if (!canAddToPlaylist(target, userObjectId, isAdminUser(session.user))) {
         throw new Error('Insufficient permission to add items to this playlist')
       }
     }
@@ -1334,7 +1326,7 @@ export const getUserPlaylists = cache(async function getUserPlaylists(
   includePublic = true
 ) {
   const session = await getSession()
-  const isGlobalAdmin = isGlobalAdminUser(session?.user)
+  const isGlobalAdmin = isAdminUser(session?.user)
 
   let userObjectId
   
@@ -1458,7 +1450,7 @@ export async function getPlaylistById(playlistId, { user = null } = {}) {
 
     const userId = requestUser.id
     const userObjectId = new ObjectId(userId)
-    const isGlobalAdmin = isGlobalAdminUser(requestUser)
+    const isGlobalAdmin = isAdminUser(requestUser)
 
     // Find playlist that is either:
     // 1. Owned by user
@@ -1553,7 +1545,7 @@ export async function updatePlaylist(playlistId, updates) {
   }
 
   const userObjectId = new ObjectId(session.user.id)
-  const isGlobalAdmin = isGlobalAdminUser(session?.user)
+  const isGlobalAdmin = isAdminUser(session?.user)
 
   try {
     const client = await clientPromise
@@ -1679,7 +1671,7 @@ export async function deletePlaylist(playlistId) {
     const client = await clientPromise
     const db = client.db('Media')
     const userObjectId = new ObjectId(session.user.id)
-    const isGlobalAdmin = isGlobalAdminUser(session?.user)
+    const isGlobalAdmin = isAdminUser(session?.user)
 
     // Owner or global admin can delete playlist (never allow deleting default)
     const playlistDoc = await db.collection('Playlists').findOne(
@@ -1747,7 +1739,7 @@ export async function sharePlaylist(playlistId, collaborators = [], globalPermis
     const client = await clientPromise
     const db = client.db('Media')
     const userObjectId = new ObjectId(session.user.id)
-    const isGlobalAdmin = isGlobalAdminUser(session?.user)
+    const isGlobalAdmin = isAdminUser(session?.user)
 
     const playlistRaw = await db.collection('Playlists').findOne({ _id: new ObjectId(playlistId) })
     const playlist = normalizePlaylistIdentityFields(playlistRaw)
@@ -1852,7 +1844,7 @@ export async function updatePlaylistSorting(playlistId, sortBy, sortOrder) {
     const db = client.db('Media')
     const collection = db.collection('Playlists')
     const userObjectId = new ObjectId(session.user.id)
-    const isGlobalAdmin = isGlobalAdminUser(session?.user)
+    const isGlobalAdmin = isAdminUser(session?.user)
 
     const playlistRaw = await collection.findOne({ _id: new ObjectId(playlistId) })
     const playlist = normalizePlaylistIdentityFields(playlistRaw)
@@ -1909,7 +1901,7 @@ export async function updatePlaylistCustomOrder(playlistId, itemIds) {
     const db = client.db('Media')
     const collection = db.collection('Playlists')
     const userObjectId = new ObjectId(session.user.id)
-    const isGlobalAdmin = isGlobalAdminUser(session?.user)
+    const isGlobalAdmin = isAdminUser(session?.user)
 
     const playlistRaw = await collection.findOne({ _id: new ObjectId(playlistId) })
     const playlist = normalizePlaylistIdentityFields(playlistRaw)

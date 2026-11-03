@@ -7,9 +7,9 @@
  */
 
 const mockIsAdmin = jest.fn()
-jest.mock('@src/utils/routeAuth', () => ({
-  isAdmin: (...args) => mockIsAdmin(...args),
-  isAdminOrWebhook: jest.fn(),
+jest.mock('@src/lib/roles/gates', () => ({
+  adminGate: { route: (...args) => mockIsAdmin(...args) },
+  adminOrWebhook: jest.fn(),
 }))
 
 const mockDb = jest.fn()

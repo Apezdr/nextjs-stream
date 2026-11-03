@@ -24,7 +24,7 @@ jest.mock('@src/utils/config', () => ({
 jest.mock('@src/lib/logger', () => ({ createLogger: () => ({ warn: jest.fn(), info: jest.fn(), error: jest.fn() }) }))
 
 const mockIsAdmin = jest.fn()
-jest.mock('@src/utils/routeAuth', () => ({ isAdmin: (req) => mockIsAdmin(req) }))
+jest.mock('@src/lib/roles/gates', () => ({ adminGate: { route: (req) => mockIsAdmin(req) } }))
 jest.mock('@src/utils/backendAuth', () => ({ getBackendAuthHeaders: async () => ({ Authorization: 'Bearer t0k' }) }))
 jest.mock('next/server', () => ({
   NextResponse: { json: (body, init = {}) => ({ status: init.status ?? 200, json: async () => body }) },

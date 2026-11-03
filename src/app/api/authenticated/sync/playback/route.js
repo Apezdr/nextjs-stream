@@ -1,5 +1,5 @@
 import { getVideosWatched } from '@src/utils/auth_database'
-import { isAuthenticatedServer } from '@src/utils/routeAuth'
+import { signedInGate } from '@src/lib/roles/gates'
 import { generateNormalizedVideoId } from '@src/utils/flatDatabaseUtils'
 import { resolveMediaIdForNid } from '@src/utils/watchHistory/mediaIdResolver'
 import { computeWatchProgress } from '@src/utils/watchHistory/progress'
@@ -9,7 +9,7 @@ import { computeWatchProgress } from '@src/utils/watchHistory/progress'
  * Used when video player loads and the video isn't in recent sync cache
  */
 export async function GET(req) {
-  const authResult = await isAuthenticatedServer()
+  const authResult = await signedInGate.route()
   if (authResult instanceof Response) {
     return authResult
   }

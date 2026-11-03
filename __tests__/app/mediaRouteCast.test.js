@@ -7,10 +7,8 @@
  * episode's guest stars) was 907 people and 382 KB.
  */
 
-jest.mock('@src/utils/routeAuth', () => ({
-  __esModule: true,
-  default: jest.fn(async () => ({ id: 'user-1' })),
-  isAuthenticatedAndApproved: jest.fn(async () => ({ id: 'user-1' })),
+jest.mock('@src/lib/roles/gates', () => ({
+  approvedGate: { route: jest.fn(async () => ({ id: 'user-1' })) },
 }))
 jest.mock('@src/utils/jit/preference', () => ({ applyJitPreference: jest.fn(async () => {}) }))
 jest.mock('@src/utils/watchHistoryUtils', () => ({ addWatchHistoryToItems: jest.fn(async (items) => items) }))

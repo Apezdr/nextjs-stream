@@ -20,12 +20,12 @@
  *   missed events from syncEventBus.getRecentEvents().
  */
 
-import { isAdmin } from '../../../../../utils/routeAuth'
+import { adminGate } from '@src/lib/roles/gates'
 import { syncEventBus } from '../../../../../utils/sync/core/events'
 import { SyncEventType } from '../../../../../utils/sync/core/types'
 
 export async function GET(request) {
-  const authResult = await isAdmin(request)
+  const authResult = await adminGate.route()
   if (authResult instanceof Response) {
     return authResult
   }

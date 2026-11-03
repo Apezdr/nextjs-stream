@@ -1,4 +1,4 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 
@@ -8,7 +8,7 @@ import { ObjectId } from 'mongodb'
  */
 export async function POST(req) {
   // Check authentication
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult
   }

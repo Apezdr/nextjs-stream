@@ -13,7 +13,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { isAdmin } from '@src/utils/routeAuth'
+import { adminGate } from '@src/lib/roles/gates'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import clientPromise from '@src/lib/mongodb'
 import { enrichIdentityReport } from '@src/utils/admin/identityReportEnrich'
@@ -52,7 +52,7 @@ async function lookupCatalogByFolder({ movies, tv }) {
 }
 
 async function proxy(request, params, method) {
-  const admin = await isAdmin(request)
+  const admin = await adminGate.route()
   if (admin instanceof Response) return admin
 
   const { endpoint } = await params

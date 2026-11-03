@@ -3,6 +3,7 @@ import { cacheLife } from 'next/cache'
 import { auth } from '@src/lib/auth'
 import { headers } from 'next/headers'
 import { recordUserCaller } from '@src/lib/requestCaller'
+import { isAdminUser, isAwaitingApproval } from '@src/lib/roles/rules'
 
 /**
  * Request-scoped session store. React's cache() only memoizes during RSC
@@ -68,13 +69,13 @@ export async function getChromeSession() {
 
   const session = await getSession()
   if (!session?.user) return null
-  const { id, email, image, role, approved, preferences } = session.user
+  const { id, email, image, preferences } = session.user
   return {
     id,
     email: email ?? null,
     image: image ?? null,
-    isAdmin: role === 'admin',
-    approved: approved !== false,
+    isAdmin: isAdminUser(session.user),
+    approved: !isAwaitingApproval(session.user),
     tvAppsNotificationDismissed: Boolean(preferences?.tvAppsNotificationDismissed),
   }
 }

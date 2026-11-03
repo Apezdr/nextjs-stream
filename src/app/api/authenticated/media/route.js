@@ -1,5 +1,5 @@
 import { sanitizeCardData, sanitizeTVData } from '@src/utils/auth_utils'
-import isAuthenticated, { isAuthenticatedAndApproved } from '../../../../utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import {
   getFlatRequestedMedia,
   getFlatTVSeasonWithEpisodes,
@@ -35,7 +35,7 @@ const jsonResponse = (data, status = 200) =>
 const mediaResponse = (media) => jsonResponse(limitResponseCast(media))
 
 export async function POST(req) {
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult
   }
@@ -57,7 +57,7 @@ export async function POST(req) {
 
 export async function GET(req) {
   try {
-    const authResult = await isAuthenticatedAndApproved(req)
+    const authResult = await approvedGate.route()
     if (authResult instanceof Response) {
       return authResult
     }

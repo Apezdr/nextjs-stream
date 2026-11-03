@@ -20,6 +20,7 @@ import { moveItemToPosition } from './reorder'
 import { fetchLibraryMatches, notInPlaylist, splitTmdbResults, titleKey } from './searchLibraryMatches'
 import { searchMedia } from '@src/utils/tmdb/client'
 import { classNames, formatDate } from '@src/utils'
+import { isAdminUser } from '@src/lib/roles/rules'
 
 // Custom hook for API calls using React 19 patterns
 function useWatchlistAPI() {
@@ -490,8 +491,8 @@ export default function WatchlistPage({ user }) {
       return false
     }
     
-    // Check if user is admin (check both role and admin flag)
-    if (user.role === 'admin' || user.role === 'Admin' || user.permissions?.includes('Admin')) {
+    // Check if user is admin
+    if (isAdminUser(user)) {
       console.log('[canEditPlaylist] User is admin, returning true')
       return true
     }
@@ -546,7 +547,7 @@ export default function WatchlistPage({ user }) {
 
     if (!user) return false
 
-    if (user.role === 'admin' || user.role === 'Admin' || user.permissions?.includes('Admin')) {
+    if (isAdminUser(user)) {
       return true
     }
 
@@ -583,14 +584,7 @@ export default function WatchlistPage({ user }) {
   ])
 
   // Admin detection for showing admin tools
-  const isAdmin = useMemo(() => {
-    if (!user) return false
-    return (
-      user.role === 'admin' ||
-      user.role === 'Admin' ||
-      (Array.isArray(user.permissions) && user.permissions.includes('Admin'))
-    )
-  }, [user])
+  const isAdmin = isAdminUser(user)
   
   // Helper function to sort items locally for optimistic updates
   const sortItemsLocally = useCallback((items, sortBy, sortOrder) => {

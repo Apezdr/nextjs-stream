@@ -1,7 +1,7 @@
-import { adminUserEmails } from '@src/utils/config'
 import { Fragment, Suspense } from 'react'
 import Nav from '@components/Navigation/Nav'
 import { getSession } from '@src/lib/cachedAuth'
+import { isAdminUser, isAwaitingApproval } from '@src/lib/roles/rules'
 
 /**
  * The navigation bar: the one part of this layout that depends on who is
@@ -15,8 +15,8 @@ async function SessionNav() {
   const session = await getSession()
   const email = session?.user?.email
   const profileImage = session?.user?.image
-  const isApproved = session?.user?.approved !== false
-  const adminNavItems = adminUserEmails.includes(email)
+  const isApproved = !isAwaitingApproval(session?.user)
+  const adminNavItems = isAdminUser(session?.user)
     ? [
         {
           href: '/admin',

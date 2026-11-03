@@ -12,7 +12,7 @@
  */
 
 import { NextResponse } from 'next/server'
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import rateLimiter, { createRateLimitHeaders } from '@src/utils/rateLimiter'
 import { validateClientErrorReport } from '@src/utils/clientErrorReports/validation'
 import { insertClientErrorReport } from '@src/utils/clientErrorReports/database'
@@ -28,7 +28,7 @@ const MAX_BODY_CHARS = 100 * 1024
 
 export async function POST(request) {
   try {
-    const authResult = await isAuthenticatedAndApproved(request)
+    const authResult = await approvedGate.route()
     if (authResult instanceof Response) {
       return authResult
     }

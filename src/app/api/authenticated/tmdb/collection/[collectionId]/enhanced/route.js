@@ -1,4 +1,4 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { getFlatMoviesByCollectionId, mergeCollectionWithOwnership } from '@src/utils/flatDatabaseUtils'
 import { getCollectionDetails } from '@src/utils/tmdb/client'
 
@@ -22,7 +22,7 @@ import { getCollectionDetails } from '@src/utils/tmdb/client'
 export async function GET(request, { params }) {
   try {
     // Check authentication
-    const authResult = await isAuthenticatedAndApproved(request)
+    const authResult = await approvedGate.route()
     if (authResult instanceof Response) {
       return authResult
     }

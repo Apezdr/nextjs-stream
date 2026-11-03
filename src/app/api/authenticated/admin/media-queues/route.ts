@@ -7,7 +7,7 @@
 //   GET                     every queue (answers shared briefly across tabs)
 //   GET ?refresh=<service>  that one queue, asked again now (a card's refresh button)
 import { NextResponse } from 'next/server'
-import { isAdmin } from '@src/utils/routeAuth'
+import { adminGate } from '@src/lib/roles/gates'
 import { getMediaQueues, refreshMediaQueue } from '@src/lib/mediaQueues/getMediaQueues'
 import { MEDIA_QUEUE_SERVICES, type MediaQueueService } from '@src/lib/mediaQueues/types'
 import { createLogger } from '@src/lib/logger'
@@ -20,7 +20,7 @@ const isService = (value: string): value is MediaQueueService =>
 export async function GET(request: Request) {
   // Authorize before any upstream request: those carry the services' API keys
   // and must never run for an anonymous caller.
-  const admin = await isAdmin()
+  const admin = await adminGate.route()
   if (admin instanceof Response) return admin
 
   const refresh = new URL(request.url).searchParams.get('refresh')

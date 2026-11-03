@@ -15,6 +15,7 @@
 import { ObjectId } from 'mongodb'
 import clientPromise from '@src/lib/mongodb'
 import { userQueries } from '@src/lib/userQueries'
+import { isAdminUser } from '@src/lib/roles/rules'
 import { ensurePlaylistVisibilityIndexes } from './playlistVisibilityIndexes.js'
 
 export const MAX_HOME_ROWS = 50
@@ -33,16 +34,6 @@ const OBJECT_ID = /^[0-9a-f]{24}$/i
 const isId = (value) => typeof value === 'string' && OBJECT_ID.test(value)
 // Ids arrive as ObjectIds or strings depending on the document's age
 const sameId = (a, b) => a != null && b != null && String(a) === String(b)
-
-// Same test as database.js and the watchlist route
-export function isGlobalAdminUser(user) {
-  if (!user) return false
-  return (
-    user.role === 'admin' ||
-    user.role === 'Admin' ||
-    (Array.isArray(user.permissions) && user.permissions.includes('Admin'))
-  )
-}
 
 /**
  * How a person stands with a playlist: 'yours' (they own it), 'shared' (they
@@ -140,7 +131,7 @@ async function loadPerson(userId) {
     objectId: new ObjectId(String(user._id)),
     name: displayName(user),
     email: user.email || '',
-    isAdmin: isGlobalAdminUser(user),
+    isAdmin: isAdminUser(user),
   }
 }
 
@@ -276,7 +267,7 @@ async function audience(playlistId) {
   if (!playlist) throw new HomeRowsError('Playlist not found', 404)
   const people = users.map((user) => {
     const userId = String(user._id)
-    const relation = playlistRelation(playlist, userId, isGlobalAdminUser(user))
+    const relation = playlistRelation(playlist, userId, isAdminUser(user))
     return { user, userId, relation, canOpen: relation !== null }
   })
   return { playlist, people }
@@ -302,7 +293,7 @@ async function rowNumbers(visibility, playlists, targetPlaylistId, people) {
 
   const numbers = new Map()
   for (const [userId, userPrefs] of prefsByUser) {
-    const isAdmin = isGlobalAdminUser(personById.get(userId)?.user)
+    const isAdmin = isAdminUser(personById.get(userId)?.user)
     const visible = userPrefs.filter((pref) => playlistRelation(playlistById.get(String(pref.playlistId)), userId, isAdmin) !== null)
     const ordered = homeScreenOrder(visible, (pref) => playlistById.get(String(pref.playlistId)))
     const index = ordered.findIndex((pref) => sameId(pref.playlistId, targetPlaylistId))
@@ -380,7 +371,7 @@ export async function listPeopleWithRowCounts() {
     ? await playlists.find({ _id: { $in: referenced } }, { projection: PLAYLIST_FIELDS }).toArray()
     : []
   const playlistById = new Map(docs.map((doc) => [String(doc._id), doc]))
-  const adminById = new Map(users.map((user) => [String(user._id), isGlobalAdminUser(user)]))
+  const adminById = new Map(users.map((user) => [String(user._id), isAdminUser(user)]))
 
   const rowCounts = new Map()
   for (const pref of prefs) {

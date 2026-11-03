@@ -1,5 +1,5 @@
 import { cache } from 'react'
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import {
   getFlatAvailableGenres,
   getFlatContentByGenres,
@@ -64,7 +64,7 @@ const sortFunctions = {
 // API Route handler
 export const GET = async (req) => {
   // Check authentication and approval (supports both web sessions and mobile JWT tokens)
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult // Stop execution if not authenticated
   }

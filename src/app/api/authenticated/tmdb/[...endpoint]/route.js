@@ -1,4 +1,4 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import {
   backendErrorResponse,
@@ -31,7 +31,7 @@ export async function GET(request, { params }) {
   
   try {
     // Check authentication
-    const authResult = await isAuthenticatedAndApproved(request)
+    const authResult = await approvedGate.route()
     if (authResult instanceof Response) {
       return authResult
     }
@@ -108,7 +108,7 @@ export async function POST(request, { params }) {
 
   try {
     // Check authentication
-    const authResult = await isAuthenticatedAndApproved(request)
+    const authResult = await approvedGate.route()
     if (authResult instanceof Response) {
       return authResult
     }

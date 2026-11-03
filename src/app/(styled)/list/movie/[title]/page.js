@@ -95,7 +95,7 @@ export default function MovieDetailPage({ params }) {
   return (
     // The page's own frame as the fallback (and so as this route's shell)
     <Suspense fallback={<MoviePageSkeleton />}>
-      <SessionGate params={params} callbackUrl={({ title }) => `/list/movie/${encodeURIComponent(title)}`}>
+      <SessionGate params={params} callbackUrl={({ title }) => `/list/movie/${title}`}>
         {({ session, params: { title } }) => (
           <MovieDetailContent title={title} isLimitedAccess={!!session.user.limitedAccess} />
         )}

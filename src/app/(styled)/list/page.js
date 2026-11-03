@@ -5,6 +5,7 @@ import { getSession } from '@src/lib/cachedAuth'
 import AuthGuard from '@components/MediaPages/DynamicPage/guards/AuthGuard'
 import LandingPage from '@components/LandingPage'
 import LandingPageSkeleton from '@components/LandingPageSkeleton'
+import { isAwaitingApproval } from '@src/lib/roles/rules'
 
 // Dynamic, authenticated content. The session is read HERE — inside the page's
 // Suspense boundary — instead of at the top of the page/layout/HOC. That lets the
@@ -26,7 +27,7 @@ async function AuthedListContent() {
   const session = await getSession()
 
   // Approved-user gate (previously handled by the withApprovedUser HOC).
-  if (session?.user && session.user.approved === false) {
+  if (isAwaitingApproval(session?.user)) {
     redirect('/auth/error?error=APPROVAL_PENDING')
   }
 

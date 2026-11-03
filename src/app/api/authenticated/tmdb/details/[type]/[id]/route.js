@@ -1,5 +1,5 @@
 import { tmdbNodeServerURL } from '@src/utils/config'
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { httpGet } from '@src/lib/httpHelper'
 import { getBackendAuthHeaders } from '@src/utils/backendAuth'
 import { backendErrorResponse, isRetryableBackendError } from '@src/utils/tmdb/backendClient'
@@ -14,7 +14,7 @@ import { backendErrorResponse, isRetryableBackendError } from '@src/utils/tmdb/b
 export async function GET(request, { params }) {
   try {
     // Check authentication
-    const authResult = await isAuthenticatedAndApproved(request)
+    const authResult = await approvedGate.route()
     if (authResult instanceof Response) {
       return authResult
     }

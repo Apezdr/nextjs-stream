@@ -1,12 +1,11 @@
 import Link from 'next/link'
-import { redirect } from 'next/navigation'
 import { FilmIcon, TvIcon } from '@heroicons/react/24/outline'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
-import { getSession } from '@src/lib/cachedAuth'
-import { adminUserEmails, organizrURL } from '@src/utils/config'
+import { organizrURL } from '@src/utils/config'
 import { getLastSynced } from '@src/utils/admin_database'
 import { listAdminMovies, listAdminTVShows } from '@src/utils/admin/flatMediaAdmin'
 import SyncButton from '@components/Admin/Media/SyncButton'
+import { adminGate } from '@src/lib/roles/gates'
 
 function formatLastSync(timestamp) {
   if (!timestamp || Number.isNaN(Date.parse(timestamp))) return "Sync hasn't been run yet"
@@ -21,10 +20,7 @@ function formatLastSync(timestamp) {
 }
 
 async function MediaOverviewPage() {
-  const session = await getSession()
-  if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
-    return redirect('/', 'replace')
-  }
+  await adminGate.page()
 
   const [movieList, tvList, lastSyncTime] = await Promise.all([
     listAdminMovies({ page: 1, pageSize: 1 }),

@@ -1,5 +1,6 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
-import { getHomeRows, saveHomeRows, HomeRowsError, isGlobalAdminUser } from '@src/utils/watchlist/homeRows'
+import { approvedGate } from '@src/lib/roles/gates'
+import { getHomeRows, saveHomeRows, HomeRowsError } from '@src/utils/watchlist/homeRows'
+import { isAdminUser } from '@src/lib/roles/rules'
 import { invalidateHomeRows } from '@src/utils/watchlist/homeRowsCache'
 
 /**
@@ -11,7 +12,7 @@ import { invalidateHomeRows } from '@src/utils/watchlist/homeRowsCache'
  *      replaces the rows, in order
  */
 export async function GET(req) {
-  const user = await isAuthenticatedAndApproved(req)
+  const user = await approvedGate.route()
   if (user instanceof Response) return user
 
   const target = targetUser(user, new URL(req.url).searchParams.get('userId'))
@@ -25,7 +26,7 @@ export async function GET(req) {
 }
 
 export async function PUT(req) {
-  const user = await isAuthenticatedAndApproved(req)
+  const user = await approvedGate.route()
   if (user instanceof Response) return user
 
   let body
@@ -50,7 +51,7 @@ export async function PUT(req) {
 // Your own rows, or someone else's if you're an admin
 function targetUser(user, requestedId) {
   if (!requestedId || requestedId === user.id) return user.id
-  if (!isGlobalAdminUser(user)) {
+  if (!isAdminUser(user)) {
     return Response.json({ error: "Only an admin can see or change someone else's home screen rows" }, { status: 403 })
   }
   return requestedId

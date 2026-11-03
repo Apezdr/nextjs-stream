@@ -1,5 +1,6 @@
 import { getSession } from '@src/lib/cachedAuth'
 import { isGatedAuthUrl } from '@src/utils/gatedAuthOrigins'
+import { isAdminUser } from '@src/lib/roles/rules'
 
 // Forward-auth gate for reverse-proxied apps (Organizr today, others later).
 // Admin-only for now; broaden the check here if non-admin roles need in later.
@@ -7,7 +8,7 @@ export async function GET(req) {
   const session = await getSession()
   const user = session?.user
 
-  if (user && user.role === 'admin') {
+  if (isAdminUser(user)) {
     return new Response(null, {
       status: 200,
       headers: { 'X-Auth-Verified-User': user.email },

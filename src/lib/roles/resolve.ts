@@ -7,6 +7,7 @@ import 'server-only'
 import type { Capability } from './capability'
 import { CAPABILITIES } from './registry'
 import { listRoles } from './store'
+import { isAdminUser } from './rules'
 
 export interface RoleHolder {
   id: string
@@ -27,7 +28,7 @@ export interface Permissions {
 
 export async function permissionsFor(user: RoleHolder): Promise<Permissions> {
   const identity = { userId: user.id, userName: user.name || user.email || 'User' }
-  if (user.role === 'admin') {
+  if (isAdminUser(user)) {
     return {
       ...identity,
       admin: true,

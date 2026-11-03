@@ -6,7 +6,7 @@
  * names the image only when it is the episode's own.
  */
 
-jest.mock('@src/utils/routeAuth', () => ({ isAuthenticatedAndApproved: jest.fn(async () => ({ id: 'user-1' })) }))
+jest.mock('@src/lib/roles/gates', () => ({ approvedGate: { route: jest.fn(async () => ({ id: 'user-1' })) } }))
 const mockRecentlyWatched = jest.fn()
 jest.mock('@src/utils/flatDatabaseUtils', () => ({ getFlatRecentlyWatchedForUser: (...args) => mockRecentlyWatched(...args) }))
 jest.mock('@src/utils/flatRecommendations', () => ({ getFlatRecommendations: jest.fn() }))

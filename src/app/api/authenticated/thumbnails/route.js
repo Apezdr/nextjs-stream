@@ -1,10 +1,10 @@
-import isAuthenticated, { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { getServer, multiServerHandler, nodeJSURL } from '@src/utils/config'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 
 // This route is used to fetch spritesheet vtt file for a specific media item
 export const GET = async (req) => {
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }

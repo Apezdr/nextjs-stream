@@ -22,8 +22,8 @@ jest.mock('@src/utils/jit/health', () => ({
 }))
 
 // The caller is an admin here; adminActionAuthorization.test.js covers refusals.
-jest.mock('@src/utils/routeAuth', () => ({
-  requireAdminAction: jest.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }),
+jest.mock('@src/lib/roles/gates', () => ({
+  adminGate: { action: jest.fn().mockResolvedValue({ id: 'admin-1', role: 'admin' }) },
 }))
 
 import { revalidatePath } from 'next/cache'

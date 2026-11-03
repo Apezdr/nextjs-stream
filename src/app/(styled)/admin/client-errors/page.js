@@ -1,8 +1,7 @@
-import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
-import { adminUserEmails, siteTitle } from '@src/utils/config'
+import { siteTitle } from '@src/utils/config'
 import ClientErrorsAdmin from '@components/Admin/ClientErrors/ClientErrorsAdmin'
-import { getSession } from '@src/lib/cachedAuth'
+import { adminGate } from '@src/lib/roles/gates'
 
 export const metadata = {
   title: `Client Errors - Admin - ${siteTitle}`,
@@ -10,11 +9,8 @@ export const metadata = {
 }
 
 async function ClientErrorsAdminPage() {
-  const session = await getSession()
+  await adminGate.page()
 
-  if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
-    return redirect('/', 'replace')
-  }
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:p-8">

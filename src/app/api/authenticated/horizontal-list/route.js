@@ -1,5 +1,5 @@
 // src/app/api/authenticated/horizontal-list/route.js
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { getFlatRecentlyWatchedForUser } from '@src/utils/flatDatabaseUtils'
 import { sanitizeCardData, sanitizeCardItems } from '@src/utils/auth_utils'
 import { episodeCardImage } from '@src/utils/media/episodeCardImage'
@@ -169,7 +169,7 @@ function applyItemFieldFixups(item, type, shouldExposeAdditionalData) {
 // API Route handler
 export const GET = async (req) => {
   // Check authentication and approval (supports both web sessions and sessionId)
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult // Stop execution if not authenticated
   }

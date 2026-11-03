@@ -1,5 +1,5 @@
 import { ObjectId } from 'mongodb'
-import { isAuthenticatedAndApproved } from '../../../../../utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { upsertPlayback, upsertPlaybackFromCast } from '@src/utils/watchHistory/database'
 import { extractPlaybackMetadata } from '@src/utils/watchHistory/metadata'
 import { normalizePlaybackKind, kindWritesPosition } from '@src/utils/watchHistory/writeKinds'
@@ -26,7 +26,7 @@ function isValidClientIp(value) {
 }
 
 export const POST = async (req) => {
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }

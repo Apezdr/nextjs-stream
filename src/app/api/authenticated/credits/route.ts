@@ -1,5 +1,6 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { getCreditsCatalog } from '@src/utils/credits/catalog'
+import { hasLimitedAccess } from '@src/lib/roles/rules'
 
 /**
  * GET /api/authenticated/credits
@@ -24,11 +25,11 @@ import { getCreditsCatalog } from '@src/utils/credits/catalog'
  * never an empty catalog.
  */
 export async function GET(req: Request) {
-  const user = await isAuthenticatedAndApproved(req)
+  const user = await approvedGate.route()
   if (user instanceof Response) return user
 
   try {
-    const catalog = await getCreditsCatalog({ includeTitles: (user as any).limitedAccess !== true })
+    const catalog = await getCreditsCatalog({ includeTitles: !hasLimitedAccess(user) })
     return Response.json(catalog, { headers: { 'Cache-Control': 'private, no-store' } })
   } catch (error) {
     console.error('[credits] catalog read failed:', error instanceof Error ? error.message : error)

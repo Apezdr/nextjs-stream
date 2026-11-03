@@ -1,10 +1,10 @@
 'use server'
 
 import { userQueries } from '@src/lib/userQueries'
-import { requireAdminAction } from '@src/utils/routeAuth'
+import { adminGate } from '@src/lib/roles/gates'
 
 export async function updateUserLimitedAccessFlag({ limitedAccess = false, userID }) {
-  await requireAdminAction()
+  await adminGate.action()
   if (userID) {
     const users = await userQueries.updateById(userID, { limitedAccess })
     return users
@@ -13,7 +13,7 @@ export async function updateUserLimitedAccessFlag({ limitedAccess = false, userI
 }
 
 export async function updateUserApprovedFlag({ approved = false, userID }) {
-  await requireAdminAction()
+  await adminGate.action()
   if (userID) {
     const users = await userQueries.updateById(userID, { approved })
     return users

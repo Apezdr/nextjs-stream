@@ -1,16 +1,11 @@
 import { Suspense } from 'react'
-import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
-import { adminUserEmails } from '@src/utils/config'
 import LogsAdministration from '@components/Admin/Logs/LogsAdministration'
-import { getSession } from '@src/lib/cachedAuth'
+import { adminGate } from '@src/lib/roles/gates'
 
 async function LogsAdminPage() {
-  const session = await getSession()
+  await adminGate.page()
 
-  if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
-    return redirect('/', 'replace')
-  }
   return (
     <div className="flex flex-col justify-start min-h-[89vh] mt-8 mx-8">
       <main className="px-4 pb-8 lg:px-6 lg:flex-auto lg:py-20 bg-white md:rounded-lg w-full">

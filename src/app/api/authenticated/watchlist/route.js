@@ -1,4 +1,5 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
+import { isAdminUser } from '@src/lib/roles/rules'
 import { checkRateLimit, createRateLimitHeaders, RATE_LIMITS } from '@src/utils/rateLimiter'
 // ETag support for HTTP caching
 import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHeaders } from '@src/utils/cache/etagHelpers'
@@ -186,7 +187,7 @@ export async function POST(req) {
   // Check authentication
   let authResult
   try {
-    authResult = await isAuthenticatedAndApproved(req)
+    authResult = await approvedGate.route()
   } catch (e) {
     return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
   }
@@ -241,7 +242,7 @@ export async function GET(req) {
   // Check authentication
   let authResult
   try {
-    authResult = await isAuthenticatedAndApproved(req)
+    authResult = await approvedGate.route()
   } catch (e) {
     return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
   }
@@ -291,7 +292,7 @@ export async function PUT(req) {
   // Check authentication
   let authResult
   try {
-    authResult = await isAuthenticatedAndApproved(req)
+    authResult = await approvedGate.route()
   } catch (e) {
     return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
   }
@@ -337,7 +338,7 @@ export async function DELETE(req) {
   // Check authentication
   let authResult
   try {
-    authResult = await isAuthenticatedAndApproved(req)
+    authResult = await approvedGate.route()
   } catch (e) {
     return createErrorResponse('Authentication failed', 500, e?.message, 'Internal Server Error', 'AUTH_ERROR')
   }
@@ -1432,12 +1433,6 @@ async function handleUpdatePlaylistOrder(req, body, user) {
 }
 
 // ===== ADMIN: USER LIST =====
-
-function isAdminUser(user) {
-  return user?.role === 'admin'
-    || user?.role === 'Admin'
-    || Array.isArray(user?.permissions) && user.permissions.includes('Admin')
-}
 
 /**
  * GET handler: playlist-visibility-list-users (admin only)

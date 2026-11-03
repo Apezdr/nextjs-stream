@@ -23,7 +23,10 @@
  *
  * @param {Object} props
  * @param {Promise<Object>} [props.params] - the page's params promise, awaited here
- * @param {(params: Object) => string} props.callbackUrl - where sign-in returns to
+ * @param {(params: Object) => string} props.callbackUrl - where sign-in returns
+ *   to. The params arrive still URL-encoded (the pages decode them), so build
+ *   the path from them as they are: encoding them again turns %20 into %2520,
+ *   and sign-in lands on a title that doesn't exist.
  * @param {(ctx: { session: Object, params: Object }) => React.ReactNode} props.children
  */
 
@@ -31,6 +34,7 @@ import { redirect } from 'next/navigation'
 import { cacheLife } from 'next/cache'
 import { getSession } from '@src/lib/cachedAuth'
 import AuthGuard from './AuthGuard'
+import { isAwaitingApproval } from '@src/lib/roles/rules'
 
 /**
  * How long the BROWSER may reuse a gated page it has already been sent, in
@@ -72,7 +76,7 @@ export default async function SessionGate({ params, callbackUrl, children }) {
   const resolvedParams = params ? await params : {}
   const session = await getGateSession()
 
-  if (session?.user && session.user.approved === false) {
+  if (isAwaitingApproval(session?.user)) {
     redirect('/auth/error?error=APPROVAL_PENDING')
   }
 

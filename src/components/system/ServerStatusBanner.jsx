@@ -1,5 +1,3 @@
-'use server';
-
 import { connection } from 'next/server';
 import { getSession } from '@src/lib/cachedAuth';
 import { getProcessedSystemStatus } from '@src/utils/getProcessedSystemStatus';

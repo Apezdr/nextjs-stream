@@ -1,4 +1,4 @@
-import isAuthenticated, { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import {
   getFlatAvailableMoviesCount,
   getFlatAvailableTVShowsCount
@@ -8,7 +8,7 @@ import { hasWatchHistory } from '@src/utils/flatRecentlyWatchedChecker'
 export async function GET(req) {
   try {
     // Check authentication and approval (supports both web sessions and sessionId)
-    const authResult = await isAuthenticatedAndApproved(req)
+    const authResult = await approvedGate.route()
     if (authResult instanceof Response) {
       return authResult
     }

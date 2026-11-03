@@ -1,12 +1,11 @@
-import { redirect } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
-import { adminUserEmails, siteTitle } from '@src/utils/config'
-import { getSession } from '@src/lib/cachedAuth'
+import { siteTitle } from '@src/utils/config'
 import RolesAdmin from '@components/Admin/Roles/RolesAdmin'
 import { summarize } from '@src/lib/roles/capability'
 import { capabilityEditorData } from '@src/lib/roles/editorData'
 import { CAPABILITIES } from '@src/lib/roles/registry'
 import { holdersByRole, listRoles } from '@src/lib/roles/store'
+import { adminGate } from '@src/lib/roles/gates'
 
 export const metadata = {
   title: `Roles - Admin - ${siteTitle}`,
@@ -14,11 +13,8 @@ export const metadata = {
 }
 
 async function RolesAdminPage() {
-  const session = await getSession()
+  await adminGate.page()
 
-  if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
-    return redirect('/', 'replace')
-  }
 
   const [roles, holders, editorData] = await Promise.all([listRoles(), holdersByRole(), capabilityEditorData()])
 

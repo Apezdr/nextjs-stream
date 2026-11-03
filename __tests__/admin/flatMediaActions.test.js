@@ -43,8 +43,8 @@ jest.mock('mongodb', () => {
 
 jest.mock('next/cache', () => ({ revalidatePath: jest.fn() }))
 
-jest.mock('@src/utils/routeAuth', () => ({
-  isAdmin: jest.fn().mockResolvedValue({ email: 'admin@example.com' }),
+jest.mock('@src/lib/roles/gates', () => ({
+  adminGate: { check: jest.fn().mockResolvedValue({ email: 'admin@example.com' }) },
 }))
 
 jest.mock('@src/lib/mongodb', () => ({

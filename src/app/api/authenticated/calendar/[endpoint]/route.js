@@ -1,4 +1,4 @@
-import { isAuthenticatedAndApproved } from '../../../../../utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { describeRequestError, httpGet } from '@src/lib/httpHelper'
 
 const sonarrIcalLink = process.env.SONARR_ICAL_LINK
@@ -6,7 +6,7 @@ const radarrIcalLink = process.env.RADARR_ICAL_LINK
 
 export async function GET(req, props) {
   const params = await props.params;
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult
   }

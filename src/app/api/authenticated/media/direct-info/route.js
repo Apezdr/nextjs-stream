@@ -27,7 +27,7 @@
  *   504 — derivation still running; ask again (NOT "nothing offered")
  */
 
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { getFlatRequestedMedia } from '@src/utils/flatDatabaseUtils'
 import { applyJitPreference } from '@src/utils/jit/preference'
 import { fetchDirectInfo, parseStreamUrl } from '@src/utils/jit/directInfo'
@@ -49,7 +49,7 @@ const json = (data, status = 200, extraHeaders = {}) =>
   })
 
 export async function GET(request) {
-  const authResult = await isAuthenticatedAndApproved(request)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult
   }

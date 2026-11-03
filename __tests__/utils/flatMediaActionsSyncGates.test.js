@@ -8,7 +8,7 @@
  * and the edit's effect on the sync never happens.
  */
 
-jest.mock('@src/utils/routeAuth', () => ({ isAdmin: jest.fn(async () => ({ id: 'admin' })) }))
+jest.mock('@src/lib/roles/gates', () => ({ adminGate: { check: jest.fn(async () => ({ id: 'admin' })) } }))
 jest.mock('next/cache', () => ({ revalidatePath: jest.fn() }))
 jest.mock('@src/utils/flatDatabaseUtils', () => ({ generateNormalizedVideoId: jest.fn(() => 'nid') }))
 jest.mock('@src/utils/cache/invalidation', () => ({

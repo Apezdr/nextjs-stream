@@ -36,6 +36,7 @@ import { hardNavigate } from '@src/utils/hardNavigate'
 import Logo from '../../logo'
 import MinimalServerStats from '@components/Admin/Stats/MinimalServerStats'
 import { MinimalizedServerProcesses } from '@components/Admin/Stats/ServerProcesses'
+import { isAdminUser } from '@src/lib/roles/rules'
 
 const navigation = [
   { name: 'Dashboard', href: '/admin', icon: HomeIcon },
@@ -144,7 +145,7 @@ export default function AdminLayout({ children }) {
 
   const hydrated = useHydrated()
   const { data: session, isPending } = authClient.useSession()
-  const isAdmin = !isPending && session?.user?.role === 'admin'
+  const isAdmin = !isPending && isAdminUser(session?.user)
   const user = session?.user ?? false
 
   // Derive expanded items from pathname to avoid setState in effect

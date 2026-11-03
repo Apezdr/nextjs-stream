@@ -1,15 +1,11 @@
-import { redirect, notFound } from 'next/navigation'
+import { notFound } from 'next/navigation'
 import { withApprovedUser } from '@components/HOC/ApprovedUser'
-import { getSession } from '@src/lib/cachedAuth'
-import { adminUserEmails } from '@src/utils/config'
 import { getAdminTVShow } from '@src/utils/admin/flatMediaAdmin'
 import TVShowEditor from '@components/Admin/Media/TVShowEditor'
+import { adminGate } from '@src/lib/roles/gates'
 
 async function TVShowEditorPage({ params, searchParams }) {
-  const session = await getSession()
-  if ((session && session.user && !adminUserEmails.includes(session.user.email)) || !session) {
-    return redirect('/', 'replace')
-  }
+  await adminGate.page()
 
   const { id } = await params
   const isNew = id === 'new'

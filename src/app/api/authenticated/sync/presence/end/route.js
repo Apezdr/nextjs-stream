@@ -1,11 +1,11 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { endPresenceSession } from '@src/utils/playbackPresence/database'
 import { createLogger } from '@src/lib/logger'
 
 const log = createLogger('API.PresenceEnd')
 
 export const POST = async (req) => {
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult
   }

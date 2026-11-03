@@ -6,7 +6,7 @@
  * clients don't refetch playlist rows for nothing.
  */
 jest.mock('next/server', () => ({ after: (callback) => callback() }))
-jest.mock('@src/utils/routeAuth', () => ({ isAuthenticatedAndApproved: jest.fn(async () => ({ id: 'u1' })) }))
+jest.mock('@src/lib/roles/gates', () => ({ approvedGate: { route: jest.fn(async () => ({ id: 'u1' })) } }))
 const mockUpdatePlaylistSorting = jest.fn()
 jest.mock('@src/utils/watchlist/', () => ({
   validateObjectId: () => true,

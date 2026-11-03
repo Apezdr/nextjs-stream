@@ -89,10 +89,10 @@ jest.mock('@src/utils/sync/run/appliedPayloads', () => ({ forgetAppliedPayloads:
 jest.mock('@src/utils/sync/run/validateWatchHistory', () => ({ validateWatchHistory: jest.fn() }))
 
 // The route's other dependencies play no part in revalidate-media.
-jest.mock('@src/utils/routeAuth', () => ({
+jest.mock('@src/lib/roles/gates', () => ({
   // An admin: the actions go ahead
-  isAdmin: jest.fn(async () => ({ id: 'admin' })),
-  isAdminOrWebhook: jest.fn(async () => true),
+  adminGate: { route: jest.fn(async () => ({ id: 'admin' })), check: jest.fn(async () => ({ id: 'admin' })) },
+  adminOrWebhook: jest.fn(async () => true),
 }))
 jest.mock('@src/utils', () => ({ buildURL: jest.fn() }))
 jest.mock('@src/utils/admin_database', () => ({}))

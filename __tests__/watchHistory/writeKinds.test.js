@@ -93,10 +93,8 @@ jest.mock('mongodb', () => ({
 }))
 
 // Route-level collaborators that are not under test here.
-jest.mock('../../src/utils/routeAuth', () => ({
-  __esModule: true,
-  default: jest.fn(),
-  isAuthenticatedAndApproved: jest.fn(async () => ({ id: '507f1f77bcf86cd799439011' })),
+jest.mock('@src/lib/roles/gates', () => ({
+  approvedGate: { route: jest.fn(async () => ({ id: '507f1f77bcf86cd799439011' })) },
 }))
 jest.mock('@src/utils/deviceDetection', () => ({
   __esModule: true,

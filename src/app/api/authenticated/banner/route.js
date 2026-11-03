@@ -1,4 +1,4 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { fetchFlatBannerMedia } from '@src/utils/cache/bannerData'
 import { generateClipVideoURL } from '@src/utils/auth_utils'
 // ETag support for HTTP caching
@@ -6,7 +6,7 @@ import { generateETag, hasMatchingETag, createNotModifiedResponse, createCacheHe
 
 // /api/authenticated/banner
 export const GET = async (req) => {
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }

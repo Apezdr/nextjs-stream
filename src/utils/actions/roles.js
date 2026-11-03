@@ -1,6 +1,6 @@
 'use server'
 
-import { requireAdminAction } from '@src/utils/routeAuth'
+import { adminGate } from '@src/lib/roles/gates'
 import { RoleInputError } from '@src/lib/roles/capability'
 import { deleteRole, saveRole, setUserRoles } from '@src/lib/roles/store'
 
@@ -17,12 +17,12 @@ async function outcome(work) {
 }
 
 export async function saveRoleAction(input) {
-  await requireAdminAction()
+  await adminGate.action()
   return outcome(async () => ({ role: await saveRole(input) }))
 }
 
 export async function deleteRoleAction(roleId) {
-  await requireAdminAction()
+  await adminGate.action()
   return outcome(async () => {
     await deleteRole(roleId)
     return {}
@@ -30,6 +30,6 @@ export async function deleteRoleAction(roleId) {
 }
 
 export async function setUserRolesAction({ userID, roleIds }) {
-  await requireAdminAction()
+  await adminGate.action()
   return outcome(async () => ({ roles: await setUserRoles(userID, roleIds) }))
 }

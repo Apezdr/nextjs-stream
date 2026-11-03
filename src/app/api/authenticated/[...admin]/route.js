@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { buildURL } from '@src/utils'
-import { isAdmin, isAdminOrWebhook } from '../../../../utils/routeAuth'
+import { adminGate, adminOrWebhook } from '@src/lib/roles/gates'
 import {
   getAllUsers,
   getLastSynced,
@@ -75,7 +75,7 @@ const getDockerHubDigest = async (repo) => {
 
 export async function GET(request, props) {
   const params = await props.params
-  const authResult = await isAdmin(request)
+  const authResult = await adminGate.route()
   if (authResult instanceof Response) {
     return authResult
   }
@@ -686,7 +686,7 @@ async function handleSyncOperation(request, webhookId) {
   // The settlement handlers compare identity before touching module state:
   // after a stale takeover, the abandoned run may still settle eventually and
   // must not clear the CURRENT run's handle or subscribers.
-  // isAdminOrWebhook refuses an X-Webhook-ID it cannot validate, so a request
+  // adminOrWebhook refuses an X-Webhook-ID it cannot validate, so a request
   // that got here carrying one was authenticated by it: a file server's tick.
   // Only such a tick may be skipped; a sync an admin starts always runs.
   const thisOperation = handleSync(webhookId, request, { forceSync, startedByWebhook: Boolean(webhookId), operationId })
@@ -725,7 +725,7 @@ async function handleSyncOperation(request, webhookId) {
 
 export async function POST(request, props) {
   const params = await props.params
-  const authResult = await isAdminOrWebhook(request)
+  const authResult = await adminOrWebhook(request)
   if (authResult instanceof Response) {
     return authResult
   }
@@ -927,7 +927,7 @@ export async function DELETE(request, props) {
   const params = await props.params
   // Sync webhooks are accepted by POST operations, but must never inherit
   // authority to erase the entire media catalog.
-  const authResult = await isAdmin(request)
+  const authResult = await adminGate.route()
   if (authResult instanceof Response) {
     return authResult
   }

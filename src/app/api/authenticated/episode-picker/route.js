@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { isAuthenticatedWithFullAccess } from '@src/utils/routeAuth';
+import { fullAccessGate } from '@src/lib/roles/gates'
 import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils';
 
 /**
@@ -12,7 +12,7 @@ import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils';
 export async function GET(request) {
   try {
     // Verify authentication and full access (supports both web sessions and sessionId)
-    const authResult = await isAuthenticatedWithFullAccess(request);
+    const authResult = await fullAccessGate.route();
     if (authResult instanceof Response) {
       return authResult;
     }

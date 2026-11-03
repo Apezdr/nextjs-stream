@@ -7,6 +7,7 @@ import { getNotificationIcon, getNotificationColor } from '@src/utils/notificati
 import { authClient } from '@src/lib/auth-client';
 import { classNames } from '@src/utils';
 import { useRouter } from 'next/navigation';
+import { isAdminUser } from '@src/lib/roles/rules';
 
 /**
  * Individual notification item component
@@ -107,7 +108,7 @@ export default function NotificationItem({ notification, onClose }) {
     notification.type === 'sync_complete';
 
   // Check if current user is admin (basic check)
-  const isUserAdmin = session?.user?.role === 'admin';
+  const isUserAdmin = isAdminUser(session?.user);
 
   const colorClasses = getNotificationColor(notification.priority);
   const icon = getNotificationIcon(notification.type);

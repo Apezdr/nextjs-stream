@@ -4,6 +4,7 @@ import CreditsStatus from '@components/Admin/Media/CreditsStatus'
 import { getCreditsCatalog, getLibraryCreditsRecords } from '@src/utils/credits/catalog'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
 import { tvHrefs } from '@src/utils/media/tvFacts'
+import { hasLimitedAccess, isAdminUser } from '@src/lib/roles/rules'
 
 /**
  * The "Credits & licenses" page (CREDITS_SIDECAR.md, section 8): the
@@ -18,9 +19,9 @@ import { tvHrefs } from '@src/utils/media/tvFacts'
  * @param {{ user: { limitedAccess?: boolean, role?: string } }} props
  */
 export default async function CreditsCatalogPage({ user }) {
-  const isAdmin = user?.role === 'admin'
+  const isAdmin = isAdminUser(user)
   const [{ library, titles }, records] = await Promise.all([
-    getCreditsCatalog({ includeTitles: user?.limitedAccess !== true }),
+    getCreditsCatalog({ includeTitles: !hasLimitedAccess(user) }),
     isAdmin ? getLibraryCreditsRecords() : [],
   ])
   return <CreditsCatalog library={library} titles={titles} failing={records.filter((record) => record.creditsStatus)} />

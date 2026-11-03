@@ -13,9 +13,9 @@ jest.mock('next/cache', () => ({
   updateTag: jest.fn(),
 }))
 
-jest.mock('@src/utils/routeAuth', () => ({
-  isAdmin: jest.fn(),
-  isAdminOrWebhook: jest.fn(async () => true),
+jest.mock('@src/lib/roles/gates', () => ({
+  adminGate: { route: jest.fn() },
+  adminOrWebhook: jest.fn(async () => true),
 }))
 
 // The route's other dependencies play no part in revalidate-media.

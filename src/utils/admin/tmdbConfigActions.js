@@ -23,7 +23,7 @@
  */
 
 import { getSession } from '@src/lib/cachedAuth'
-import { adminUserEmails } from '@src/utils/config'
+import { isAdminUser } from '@src/lib/roles/rules'
 import { sanitizeIdentitySource } from '@src/utils/admin/identitySource'
 
 const BACKEND_URL =
@@ -34,7 +34,7 @@ const fail = (message) => ({ status: 'error', message })
 /** Admin gate + Bearer header from the current session, or an error result. */
 async function authorizedHeaders() {
   const session = await getSession()
-  if (!session?.user || !adminUserEmails.includes(session.user.email)) {
+  if (!isAdminUser(session?.user)) {
     return { error: fail('Not authorized.') }
   }
   const token = session?.session?.token

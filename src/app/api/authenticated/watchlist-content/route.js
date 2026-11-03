@@ -1,6 +1,7 @@
 // src/app/api/authenticated/watchlist-content/route.js
 import { cache } from 'react'
-import { isAuthenticatedAndApproved, isAdmin } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
+import { isAdminUser } from '@src/lib/roles/rules'
 import {
   getUserWatchlist,
   getUserPlaylists,
@@ -76,7 +77,7 @@ const getCachedWatchlistContent = cache(async (params) => {
 // API Route handler
 export const GET = async (req) => {
   // Check authentication (supports both web sessions and mobile JWT tokens)
-  const authResult = await isAuthenticatedAndApproved(req)
+  const authResult = await approvedGate.route()
   if (authResult instanceof Response) {
     return authResult // Stop execution if not authenticated
   }
@@ -117,14 +118,13 @@ export const GET = async (req) => {
         }
 
         // Check if current user is an admin
-        const userIsAdmin = await isAdmin(req)
-        const isAdminUser = userIsAdmin && typeof userIsAdmin === 'object'
+        const viewerIsAdmin = isAdminUser(authResult)
 
         // Get all user playlists
         const playlists = await getUserPlaylists(authResult?.id)
         
         // For admin users, append owner name to playlists they don't own
-        if (isAdminUser && playlists?.length > 0) {
+        if (viewerIsAdmin && playlists?.length > 0) {
           playlists.forEach(playlist => {
             if (!playlist.isOwner && playlist.ownerName) {
               playlist.name = `${playlist.name} (${playlist.ownerName})`
@@ -206,7 +206,7 @@ export const GET = async (req) => {
           const enrichedPlaylists = await Promise.all(countPromises)
           
           // For admin users, append owner name to enriched playlists they don't own
-          if (isAdminUser && enrichedPlaylists?.length > 0) {
+          if (viewerIsAdmin && enrichedPlaylists?.length > 0) {
             enrichedPlaylists.forEach(playlist => {
               // Only append if not already appended (in case it was done earlier)
               if (!playlist.isOwner && playlist.ownerName && !playlist.name.includes(`(${playlist.ownerName})`)) {

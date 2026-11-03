@@ -14,9 +14,9 @@ const mockNotify = jest.fn(async () => [])
 const mockCreateDatabaseAdapter = jest.fn(async () => ({}))
 const mockCollectFieldAvailability = jest.fn()
 
-jest.mock('@src/utils/routeAuth', () => ({
-  isAdmin: jest.fn(async () => ({ id: 'admin-1' })),
-  isAdminOrWebhook: jest.fn(async () => true),
+jest.mock('@src/lib/roles/gates', () => ({
+  adminGate: { route: jest.fn(async () => ({ id: 'admin-1' })) },
+  adminOrWebhook: jest.fn(async () => true),
 }))
 jest.mock('@src/utils/sync/run/syncAllServers', () => ({
   fetchSyncTick: (...args) => mockFetchSyncTick(...args),

@@ -14,7 +14,7 @@ jest.mock('next/headers', () => ({ headers: jest.fn(async () => new Headers({ co
 jest.mock('next/cache', () => ({ cacheLife: jest.fn() }))
 const mockGetSession = jest.fn()
 jest.mock('@src/lib/auth', () => ({ auth: { api: { getSession: (...args) => mockGetSession(...args) } } }))
-// Loaded by routeAuth and mediaActivity, never queried by the paths under test
+// Loaded by the modules under test, never queried by the paths under test
 jest.mock('@src/lib/mongodb', () => ({ __esModule: true, default: new Promise(() => {}) }))
 jest.mock('@src/lib/userQueries', () => ({ userQueries: {} }))
 
@@ -159,7 +159,7 @@ describe('where callers are recorded', () => {
   it('a webhook check records the setting that matched, never the ID', async () => {
     process.env.WEBHOOK_ID_2 = WEBHOOK_KEY
     process.env.NODE_SERVER_URL_2 = 'http://server2.test'
-    const { isValidWebhook } = require('@src/utils/routeAuth')
+    const { isValidWebhook } = require('@src/lib/roles/gates')
     const req = { headers: new Headers({ 'X-Webhook-ID': WEBHOOK_KEY }) }
 
     expect(await isValidWebhook(req)).toBe(true)
@@ -174,7 +174,7 @@ describe('where callers are recorded', () => {
 
   it('a refused webhook ID records nothing', async () => {
     process.env.WEBHOOK_ID = WEBHOOK_KEY
-    const { isValidWebhook } = require('@src/utils/routeAuth')
+    const { isValidWebhook } = require('@src/lib/roles/gates')
 
     expect(await isValidWebhook({ headers: new Headers({ 'X-Webhook-ID': 'not-a-key' }) })).toBe(false)
     expect(span.setAttributes).not.toHaveBeenCalled()
@@ -182,9 +182,9 @@ describe('where callers are recorded', () => {
 
   it('the admin-or-webhook check records the webhook too', async () => {
     process.env.WEBHOOK_ID = WEBHOOK_KEY
-    const { isAdminOrWebhook } = require('@src/utils/routeAuth')
+    const { adminOrWebhook } = require('@src/lib/roles/gates')
 
-    expect(await isAdminOrWebhook({ headers: new Headers({ 'X-Webhook-ID': WEBHOOK_KEY }) })).toBe(true)
+    expect(await adminOrWebhook({ headers: new Headers({ 'X-Webhook-ID': WEBHOOK_KEY }) })).toBe(true)
     expect(span.setAttributes).toHaveBeenCalledWith({
       'nextjs_stream.caller.type': 'webhook',
       'nextjs_stream.caller.credential': 'WEBHOOK_ID',
@@ -195,7 +195,7 @@ describe('where callers are recorded', () => {
 
   it('a wildcard webhook ID (no file server of its own) records no server', async () => {
     process.env.WEBHOOK_ID_3 = WEBHOOK_KEY
-    const { isValidWebhook } = require('@src/utils/routeAuth')
+    const { isValidWebhook } = require('@src/lib/roles/gates')
 
     expect(await isValidWebhook({ headers: new Headers({ 'X-Webhook-ID': WEBHOOK_KEY }) })).toBe(true)
     expect(span.setAttributes).toHaveBeenCalledWith({

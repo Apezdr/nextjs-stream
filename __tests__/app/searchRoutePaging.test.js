@@ -20,10 +20,8 @@ jest.mock('@src/lib/mongodb', () => ({
     }),
   }),
 }))
-jest.mock('@src/utils/routeAuth', () => ({
-  __esModule: true,
-  default: jest.fn(async () => ({ id: 'user-1' })),
-  isAuthenticatedAndApproved: jest.fn(async () => ({ id: 'user-1' })),
+jest.mock('@src/lib/roles/gates', () => ({
+  approvedGate: { route: jest.fn(async () => ({ id: 'user-1' })) },
 }))
 const mockRecentlyAdded = jest.fn()
 jest.mock('@src/utils/flatDatabaseUtils', () => ({

@@ -99,7 +99,7 @@ export default function TVShowPage({ params }) {
   return (
     // The page's own frame as the fallback (and so as this route's shell)
     <Suspense fallback={<ShowPageSkeleton />}>
-      <SessionGate params={params} callbackUrl={({ title }) => `/list/tv/${encodeURIComponent(title)}`}>
+      <SessionGate params={params} callbackUrl={({ title }) => `/list/tv/${title}`}>
         {({ session, params: { title } }) => (
           <TVShowContent
             title={title}

@@ -10,14 +10,14 @@
  * directly to get proper Cache Components caching, since `'use server'`
  * exports go through the action transport even when called from server code.
  *
- * Each checks its caller (requireApprovedViewer) and reads the user from the
+ * Each checks its caller (approvedGate.action) and reads the user from the
  * session. They used to take `userId` from the caller: anyone, signed in or
  * not, could page through the library and read any user's watch history.
  */
 
 'use server'
 
-import { requireApprovedViewer } from '@src/lib/actionViewer'
+import { approvedGate } from '@src/lib/roles/gates'
 import {
   getCachedMovieListData,
   getCachedTVListData,
@@ -42,11 +42,11 @@ function listOptions({ page, sortOrder, genres, hdrTypes, resolutions } = {}, us
 }
 
 export async function getMovieListData(options = {}) {
-  const user = await requireApprovedViewer('/list/movie')
+  const user = await approvedGate.action('/list/movie')
   return getCachedMovieListData(listOptions(options, user.id))
 }
 
 export async function getTVListData(options = {}) {
-  const user = await requireApprovedViewer('/list/tv')
+  const user = await approvedGate.action('/list/tv')
   return getCachedTVListData(listOptions(options, user.id))
 }

@@ -1,10 +1,11 @@
 'use client'
 
 import useSWR from 'swr'
+import { isAdminUser } from '@src/lib/roles/rules'
 
 /** Only an admin or a user holding a role can have any capability: nobody else needs to ask. */
 export const mayHoldGrants = (user) =>
-  user?.role === 'admin' || (Array.isArray(user?.roles) && user.roles.length > 0)
+  isAdminUser(user) || (Array.isArray(user?.roles) && user.roles.length > 0)
 
 async function fetchPermissions(url) {
   const response = await fetch(url)

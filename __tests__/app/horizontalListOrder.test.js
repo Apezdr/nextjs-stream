@@ -7,7 +7,7 @@
  * hand, so page 2 of an A-Z list didn't follow page 1.
  */
 
-jest.mock('@src/utils/routeAuth', () => ({ isAuthenticatedAndApproved: jest.fn(async () => ({ id: 'user-1' })) }))
+jest.mock('@src/lib/roles/gates', () => ({ approvedGate: { route: jest.fn(async () => ({ id: 'user-1' })) } }))
 jest.mock('@src/utils/flatDatabaseUtils', () => ({ getFlatRecentlyWatchedForUser: jest.fn() }))
 jest.mock('@src/utils/flatRecommendations', () => ({ getFlatRecommendations: jest.fn() }))
 jest.mock('@src/utils/watchHistoryUtils', () => ({ addWatchHistoryToItemsBounded: jest.fn(async (items) => items) }))

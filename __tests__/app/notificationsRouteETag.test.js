@@ -9,8 +9,8 @@
  * response like every other polled route.
  */
 
-jest.mock('@src/utils/routeAuth', () => ({
-  isAuthenticatedAndApproved: jest.fn(async () => ({ id: 'user-1' })),
+jest.mock('@src/lib/roles/gates', () => ({
+  approvedGate: { route: jest.fn(async () => ({ id: 'user-1' })) },
 }))
 
 const mockGetUserNotifications = jest.fn()

@@ -8,7 +8,7 @@
  */
 
 const mockIsAdmin = jest.fn()
-jest.mock('@src/utils/routeAuth', () => ({ isAdmin: (req) => mockIsAdmin(req) }))
+jest.mock('@src/lib/roles/gates', () => ({ adminGate: { route: (req) => mockIsAdmin(req) } }))
 
 const mockAuthHeaders = jest.fn()
 jest.mock('@src/utils/backendAuth', () => ({ getBackendAuthHeaders: (req) => mockAuthHeaders(req) }))

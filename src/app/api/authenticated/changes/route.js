@@ -1,4 +1,4 @@
-import { isAuthenticatedAndApproved } from '@src/utils/routeAuth'
+import { approvedGate } from '@src/lib/roles/gates'
 import { horizontalListChanges } from '../horizontal-list/changes'
 import { watchlistContentChanges } from '../watchlist-content/changes'
 import { bannerChanges } from '../banner/changes'
@@ -24,7 +24,7 @@ import { homeRowsChanges } from '../home-rows/changes'
  * on); the revisions behind them are in src/utils/changes/revisions.js.
  */
 export async function GET(req) {
-  const user = await isAuthenticatedAndApproved(req)
+  const user = await approvedGate.route()
   if (user instanceof Response) return user
 
   return Response.json(

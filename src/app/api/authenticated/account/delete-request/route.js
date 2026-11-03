@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import isAuthenticated from '@src/utils/routeAuth'
+import { signedInGate } from '@src/lib/roles/gates'
 import { 
   createAuthenticatedDeletionRequest,
   cancelDeletionRequest,
@@ -18,7 +18,7 @@ import {
 export async function POST(request) {
   try {
     // Authenticate user
-    const user = await isAuthenticated(request)
+    const user = await signedInGate.route()
     if (user instanceof Response) {
       return user
     }
@@ -96,7 +96,7 @@ export async function POST(request) {
 export async function GET(request) {
   try {
     // Authenticate user
-    const user = await isAuthenticated(request)
+    const user = await signedInGate.route()
     if (user instanceof Response) {
       return user
     }
@@ -152,7 +152,7 @@ export async function GET(request) {
 export async function DELETE(request) {
   try {
     // Authenticate user
-    const user = await isAuthenticated(request)
+    const user = await signedInGate.route()
     if (user instanceof Response) {
       return user
     }

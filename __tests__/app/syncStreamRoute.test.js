@@ -7,7 +7,7 @@
  * webhook tick's completion passes through.
  */
 
-jest.mock('@src/utils/routeAuth', () => ({ isAdmin: jest.fn(async () => ({ id: 'admin-1' })) }))
+jest.mock('@src/lib/roles/gates', () => ({ adminGate: { route: jest.fn(async () => ({ id: 'admin-1' })) } }))
 
 const { GET } = require('@src/app/api/authenticated/admin/sync-stream/route')
 const { syncEventBus } = require('@src/utils/sync/core/events')
