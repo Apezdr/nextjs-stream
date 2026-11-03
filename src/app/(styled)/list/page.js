@@ -45,7 +45,6 @@ async function AuthedListContent() {
             id: session.user.id,
             name: session.user.name,
             email: session.user.email,
-            limitedAccess: session.user.limitedAccess,
           }}
           calendarConfig={calendarConfig}
         />

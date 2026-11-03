@@ -132,15 +132,11 @@ async function UserSpecificSections({ userId }) {
 }
 
 export default async function LandingPage({
-  user = { id: null, name: '', email: '', limitedAccess: false },
+  user = { id: null, name: '', email: '' },
   calendarConfig = { hasAnyCalendar: false },
 }) {
   const { id, name } = user
 
-  /* if (limitedAccess) {
-    redirect('/list/movie/Big Buck Bunny')
-  } */
-  
   return (
     <div className="flex min-h-screen flex-col items-center justify-between xl:py-24 bg-[#060916e8]">
       <Suspense>
