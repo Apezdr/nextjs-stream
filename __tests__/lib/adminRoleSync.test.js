@@ -171,8 +171,9 @@ describe('the sign-in wiring', () => {
 
     expect(dist('routes/callback.mjs')).toContain('createAuthEndpoint("/callback/:id"')
     expect(dist('routes/sign-in.mjs')).toContain('createAuthEndpoint("/sign-in/social"')
-    // A hook's ctx.path is the endpoint's route pattern, not the request path
-    expect(dist('to-auth-endpoints.mjs')).toMatch(/path: endpoint\.path/)
+    // A hook's ctx.path is the endpoint's route pattern, not the request path,
+    // and ctx.context.session starts null on every call
+    expect(dist('dispatch.mjs')).toMatch(/session: input\.context\.session \?\? null\s+\},\s+path: endpoint\.path,/)
     expect([...SOCIAL_SIGN_IN_PATHS].sort()).toEqual(['/callback/:id', '/sign-in/social'])
   })
 
@@ -197,29 +198,46 @@ describe('the sign-in wiring', () => {
     const source = read('src', 'lib', 'auth.ts')
 
     expect(source).toMatch(
-      /if \(refusesNewUser\(user, adminEmails\)\) \{\n\s+throw new APIError\('FORBIDDEN', \{ message: UNVERIFIED_ADMIN_EMAIL \}\)/
+      /if \(refusesNewUser\(user, adminEmails\)\) \{[\s\S]{0,120}throw new APIError\('FORBIDDEN', \{\s+code: UNVERIFIED_ADMIN_EMAIL,/
     )
     expect(source).toMatch(/onAPIError: \{\n\s+errorURL: '\/auth\/error',/)
-    // better-auth turns a refused sign-up's message into the error code by joining it with _
-    expect(read('node_modules', 'better-auth', 'dist', 'api', 'routes', 'callback.mjs')).toMatch(
-      /redirectOnError\(result\.error\.split\(" "\)\.join\("_"\)\)/
-    )
+    const callback = read('node_modules', 'better-auth', 'dist', 'api', 'routes', 'callback.mjs')
+    // A thrown APIError with a code redirects to errorURL?error=<code>
+    expect(callback).toMatch(/if \(isAPIError\(e\) && e\.body\?\.code\) redirectOnError\(e\.body\.code, e\.body\.message\)/)
+    // A returned error (account not linked) becomes its words joined with _
+    expect(callback).toMatch(/redirectOnError\(result\.error\.split\(" "\)\.join\("_"\)\)/)
     expect(read('src', 'app', '(styled)', 'auth', 'error', 'page.js')).toMatch(/'unverified_admin_email',/)
+    expect(read('src', 'app', '(styled)', 'auth', 'error', 'page.js')).toMatch(/'account_not_linked',/)
   })
 
   it('links a sign-in to an existing account only when its provider verified the email', () => {
     // better-auth skips the emailVerified check for a trusted provider; an
     // upgrade that changes that rule fails here
     const linkAccount = read('node_modules', 'better-auth', 'dist', 'oauth2', 'link-account.mjs')
-    expect(linkAccount).toMatch(/trustedProviders\.includes\(account\.providerId\)\) && !userInfo\.emailVerified/)
+    expect(linkAccount).toMatch(
+      /const isTrustedProvider = opts\.isTrustedProvider \|\| opts\.trustProviderByName !== false && c\.context\.trustedProviders\.includes\(account\.providerId\);/
+    )
+    // ...and, since 1.6.11, only to a local user whose own email is verified
+    expect(linkAccount).toMatch(
+      /!isTrustedProvider && !userInfo\.emailVerified \|\| requireLocalEmailVerified && !dbUser\.user\.emailVerified/
+    )
 
     expect(read('src', 'lib', 'auth.ts')).toMatch(/trustedProviders: \[\],/)
   })
 
-  it('instrumentation.ts reconciles the roles at each server start, on Node only', () => {
+  it('instrumentation.ts prepares the auth data and reconciles the roles at each server start, on Node only', () => {
     const source = read('src', 'instrumentation.ts')
 
-    expect(source).toMatch(/if \(process\.env\.NEXT_RUNTIME === 'nodejs'\) \{\n\s+import\('@src\/lib\/adminRoleReconcile'\)/)
-    expect(source).toMatch(/export function register\(\) \{\n {2}reconcileAdminRolesAtStart\(\)/)
+    expect(source).toMatch(/if \(process\.env\.NEXT_RUNTIME === 'nodejs'\) \{\n\s+import\('@src\/lib\/authDataPrep'\)/)
+    expect(source).toMatch(/import\('@src\/lib\/adminRoleReconcile'\)/)
+    expect(source).toMatch(/export function register\(\) \{\n {2}authStartupTasks\(\)/)
+  })
+
+  it('auth.ts allows only known device clients, gives /device room to claim, and reads trusted proxies from the env', () => {
+    const source = read('src', 'lib', 'auth.ts')
+
+    expect(source).toMatch(/validateClient: \(clientId: string\) => isKnownDeviceClient\(clientId\)/)
+    expect(source).toMatch(/'\/device': \{ window: 15 \* 60, max: 20 \}/)
+    expect(source).toMatch(/trustedProxies: trustedProxiesFromEnv\(\)/)
   })
 })

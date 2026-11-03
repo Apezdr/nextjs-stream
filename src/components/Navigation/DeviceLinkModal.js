@@ -1,65 +1,20 @@
 'use client'
-import { useState, useReducer } from 'react'
+import { useState } from 'react'
 import { Dialog, DialogPanel, DialogTitle } from '@headlessui/react'
 import { XMarkIcon } from '@heroicons/react/24/outline'
-import { authClient } from '@src/lib/auth-client'
+import { useDeviceApproval } from '@src/hooks/useDeviceApproval'
 
-// Request lifecycle (loading) and outcome (success/denied/error) move together, so they share
-// one reducer; userCode stays a standalone controlled-input state.
-const initialState = { loading: false, success: false, denied: false, error: null }
-
-function reducer(state, action) {
-  switch (action.type) {
-    case 'start':
-      return { ...state, loading: true, error: null }
-    case 'approved':
-      return { ...state, loading: false, success: true }
-    case 'denied':
-      return { ...state, loading: false, denied: true }
-    case 'error':
-      return { ...state, loading: false, error: action.error }
-    case 'validationError':
-      return { ...state, error: action.error }
-    case 'reset':
-      return initialState
-    default:
-      return state
-  }
-}
-
+// Continue claims the code and loads which app is asking; Approve comes after
+// (src/hooks/useDeviceApproval.js). userCode stays a standalone controlled input.
 export default function DeviceLinkModal({ isOpen, onClose }) {
   const [userCode, setUserCode] = useState('')
-  const [{ loading, success, denied, error }, dispatch] = useReducer(reducer, initialState)
-
-  const handleApprove = async () => {
-    if (!userCode.trim()) {
-      dispatch({ type: 'validationError', error: 'Please enter the code shown on your device.' })
-      return
-    }
-    dispatch({ type: 'start' })
-    try {
-      const { error: err } = await authClient.device.approve({ userCode: userCode.trim() })
-      if (err) throw new Error(err.error_description ?? 'Failed to approve device')
-      dispatch({ type: 'approved' })
-    } catch (err) {
-      dispatch({ type: 'error', error: err instanceof Error ? err.message : 'An error occurred' })
-    }
-  }
-
-  const handleDeny = async () => {
-    dispatch({ type: 'start' })
-    try {
-      await authClient.device.deny({ userCode: userCode.trim() })
-      dispatch({ type: 'denied' })
-    } catch (err) {
-      dispatch({ type: 'error', error: err instanceof Error ? err.message : 'An error occurred' })
-    }
-  }
+  const { phase, request, error, review, approve, deny, reset } = useDeviceApproval()
+  const busy = phase === 'reviewing' || phase === 'approving' || phase === 'denying'
 
   const handleClose = () => {
     // Reset state when closing
     setUserCode('')
-    dispatch({ type: 'reset' })
+    reset()
     onClose()
   }
 
@@ -89,7 +44,7 @@ export default function DeviceLinkModal({ isOpen, onClose }) {
             </div>
 
             {/* Success state */}
-            {success && (
+            {phase === 'approved' && (
               <div className="text-center py-4">
                 <div className="text-5xl mb-3 text-green-600">✓</div>
                 <h3 className="text-lg font-semibold text-green-600 mb-2">Device Approved!</h3>
@@ -106,7 +61,7 @@ export default function DeviceLinkModal({ isOpen, onClose }) {
             )}
 
             {/* Denied state */}
-            {denied && (
+            {phase === 'denied' && (
               <div className="text-center py-4">
                 <div className="text-5xl mb-3 text-red-600">✕</div>
                 <h3 className="text-lg font-semibold text-red-600 mb-2">Request Denied</h3>
@@ -122,27 +77,46 @@ export default function DeviceLinkModal({ isOpen, onClose }) {
               </div>
             )}
 
-            {/* Input form (default state) */}
-            {!success && !denied && (
+            {/* Code entry, then the request as the server recorded it */}
+            {phase !== 'approved' && phase !== 'denied' && (
               <div className="space-y-4">
-                <p className="text-gray-600 text-sm">
-                  Enter the code shown on your device
-                </p>
+                {request ? (
+                  <div className="space-y-2 rounded-lg border border-gray-200 p-4">
+                    <p className="text-gray-800 text-sm">
+                      <span className="font-semibold">
+                        {request.clientName ?? `An app this server doesn't recognize (${request.clientId})`}
+                      </span>{' '}
+                      is asking to sign in to your account.
+                    </p>
+                    <p className="text-center text-2xl font-mono tracking-widest text-gray-900">{request.userCode}</p>
+                    {request.scope && <p className="text-gray-600 text-sm">Access requested: {request.scope}</p>}
+                    <p className="text-red-700 text-xs">
+                      Approve only if this code is showing right now on a device you have. If you didn&apos;t start
+                      this, deny it.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-gray-600 text-sm">
+                      Enter the code shown on your device
+                    </p>
 
-                {/* Code input */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Device Code
-                  </label>
-                  <input
-                    type="text"
-                    value={userCode}
-                    onChange={(e) => setUserCode(e.target.value.toUpperCase())}
-                    placeholder="ABCDEFGH"
-                    maxLength={9}
-                    className="text-gray-900 w-full px-4 py-2 text-center text-2xl font-mono tracking-widest border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
+                    {/* Code input */}
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Device Code
+                      </label>
+                      <input
+                        type="text"
+                        value={userCode}
+                        onChange={(e) => setUserCode(e.target.value.toUpperCase())}
+                        placeholder="ABCDEFGH"
+                        maxLength={9}
+                        className="text-gray-900 w-full px-4 py-2 text-center text-2xl font-mono tracking-widest border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                      />
+                    </div>
+                  </>
+                )}
 
                 {/* Error message */}
                 {error && (
@@ -153,20 +127,32 @@ export default function DeviceLinkModal({ isOpen, onClose }) {
 
                 {/* Action buttons */}
                 <div className="flex gap-3 pt-2">
-                  <button
-                    onClick={handleApprove}
-                    disabled={loading || !userCode.trim()}
-                    className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition"
-                  >
-                    {loading ? 'Approving…' : 'Approve'}
-                  </button>
-                  <button
-                    onClick={handleDeny}
-                    disabled={loading}
-                    className="flex-1 px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition"
-                  >
-                    Deny
-                  </button>
+                  {request ? (
+                    <>
+                      <button
+                        onClick={approve}
+                        disabled={busy || !request.clientName}
+                        className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition"
+                      >
+                        {phase === 'approving' ? 'Approving…' : 'Approve'}
+                      </button>
+                      <button
+                        onClick={deny}
+                        disabled={busy}
+                        className="flex-1 px-4 py-2 bg-gray-200 text-gray-900 rounded-lg hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition"
+                      >
+                        {phase === 'denying' ? 'Denying…' : 'Deny'}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      onClick={() => review(userCode)}
+                      disabled={busy || !userCode.trim()}
+                      className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium transition"
+                    >
+                      {phase === 'reviewing' ? 'Checking…' : 'Continue'}
+                    </button>
+                  )}
                 </div>
 
                 {/* Close button */}

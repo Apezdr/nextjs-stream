@@ -1,9 +1,10 @@
 'use client'
 // src/app/(styled)/device/device-auth-client.tsx
 // Handles the interactive parts of the RFC 8628 device authorization page.
-import { useState, useReducer } from 'react'
+import { useState } from 'react'
 import { authClient } from '@src/lib/auth-client'
 import { normalizeAuthCallbackURL } from '@src/utils/authCallbackUrl'
+import { useDeviceApproval } from '@src/hooks/useDeviceApproval'
 import { useRouter } from 'next/navigation'
 
 interface DeviceAuthClientProps {
@@ -12,56 +13,8 @@ interface DeviceAuthClientProps {
   user: { name: string; email: string; image: string } | null
 }
 
-// The approve/deny request lifecycle (in-flight flags + outcome + error) transitions
-// together, so it lives in one reducer; userCode stays a standalone controlled-input state.
-interface DeviceState {
-  approving: boolean
-  denying: boolean
-  success: boolean
-  denied: boolean
-  error: string | null
-}
-
-type DeviceAction =
-  | { type: 'approveStart' }
-  | { type: 'denyStart' }
-  | { type: 'approved' }
-  | { type: 'denied' }
-  | { type: 'error'; error: string }
-  | { type: 'validationError'; error: string }
-  | { type: 'clearError' }
-  | { type: 'reset' }
-
-const initialDeviceState: DeviceState = {
-  approving: false,
-  denying: false,
-  success: false,
-  denied: false,
-  error: null,
-}
-
-function deviceReducer(state: DeviceState, action: DeviceAction): DeviceState {
-  switch (action.type) {
-    case 'approveStart':
-      return { ...state, approving: true, error: null }
-    case 'denyStart':
-      return { ...state, denying: true, error: null }
-    case 'approved':
-      return { ...state, approving: false, success: true }
-    case 'denied':
-      return { ...state, denying: false, denied: true }
-    case 'error':
-      return { ...state, approving: false, denying: false, error: action.error }
-    case 'validationError':
-      return { ...state, error: action.error }
-    case 'clearError':
-      return { ...state, error: null }
-    case 'reset':
-      return initialDeviceState
-    default:
-      return state
-  }
-}
+// Validate device code format (exactly 8 uppercase alphanumeric characters, e.g. "ABCDEFGH")
+const isValidCodeFormat = (code: string): boolean => /^[A-Z0-9]{8}$/.test(code.trim())
 
 export default function DeviceAuthClient({
   userCode: initialUserCode,
@@ -69,60 +22,20 @@ export default function DeviceAuthClient({
   user,
 }: DeviceAuthClientProps) {
   const [userCode, setUserCode] = useState(initialUserCode ?? '')
-  const [{ approving, denying, success, denied, error }, dispatch] = useReducer(
-    deviceReducer,
-    initialDeviceState
-  )
+  // Continue claims the code and loads which app is asking; Approve comes after
+  // (src/hooks/useDeviceApproval.js)
+  const { phase, request, error, review, approve, deny, reset } = useDeviceApproval()
   const router = useRouter()
+  const success = phase === 'approved'
+  const denied = phase === 'denied'
+  const reviewing = phase === 'reviewing'
+  const approving = phase === 'approving'
+  const denying = phase === 'denying'
 
-  // Map technical error messages to user-friendly messages
-  const mapErrorMessage = (message: string): string => {
-    const errorMap: Record<string, string> = {
-      'Invalid user code': 'Invalid/expired device code',
-      'User code has expired': 'Device code has expired',
-      'User code not found': 'Invalid/expired device code',
-      'Failed to approve device': 'Failed to approve device request',
-      'Failed to deny device': 'Failed to deny device request',
-    }
-    
-    return errorMap[message] || message
-  }
-
-  // Validate device code format (exactly 8 uppercase alphanumeric characters)
-  const isValidCodeFormat = (code: string): boolean => {
-    const trimmedCode = code.trim()
-    if (!trimmedCode) return false
-    // Match exactly 8 uppercase alphanumeric characters
-    // Example: "ABCDEFGH"
-    return /^[A-Z0-9]{8}$/.test(trimmedCode)
-  }
-
-  const handleApprove = async () => {
-    if (!userCode.trim()) {
-      dispatch({ type: 'validationError', error: 'Please enter the code shown on your device.' })
-      return
-    }
-    dispatch({ type: 'approveStart' })
-    try {
-      const { error: err } = await authClient.device.approve({ userCode: userCode.trim() })
-      if (err) throw new Error(err.error_description ?? 'Failed to approve device')
-      dispatch({ type: 'approved' })
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An error occurred'
-      dispatch({ type: 'error', error: mapErrorMessage(errorMessage) })
-    }
-  }
-
-  const handleDeny = async () => {
-    dispatch({ type: 'denyStart' })
-    try {
-      const { error: err } = await authClient.device.deny({ userCode: userCode.trim() })
-      if (err) throw new Error(err.error_description ?? 'Failed to deny device')
-      dispatch({ type: 'denied' })
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : 'An error occurred'
-      dispatch({ type: 'error', error: mapErrorMessage(errorMessage) })
-    }
+  const startOver = () => {
+    reset()
+    setUserCode('')
+    router.push('/device')
   }
 
   const handleSignIn = (provider: string) => {
@@ -153,14 +66,7 @@ export default function DeviceAuthClient({
         <p style={styles.successText}>
           The device request was denied.
         </p>
-        <button
-          onClick={() => {
-            dispatch({ type: 'reset' })
-            setUserCode('')
-            router.push('/device')
-          }}
-          style={{ ...styles.button, ...styles.approveButton, marginTop: '16px' }}
-        >
+        <button onClick={startOver} style={{ ...styles.button, ...styles.approveButton, marginTop: '16px' }}>
           Enter New Code
         </button>
       </div>
@@ -199,24 +105,39 @@ export default function DeviceAuthClient({
         </div>
       )}
 
-      {/* Allow manual code entry if not pre-filled from QR */}
-      {!initialUserCode && (
-        <div style={styles.codeInputWrapper}>
-          <label style={styles.codeLabel}>Enter the code shown on your device</label>
-          <input
-            type="text"
-            value={userCode}
-            onChange={(e) => setUserCode(e.target.value.toUpperCase())}
-            placeholder="ABCDEFGH"
-            style={styles.codeInput}
-            maxLength={8}
-          />
+      {request ? (
+        // The request as the server recorded it: approve only your own app's
+        <div style={styles.requestCard}>
+          <p style={styles.approveText}>
+            <strong>{request.clientName ?? `An app this server doesn't recognize (${request.clientId})`}</strong>{' '}
+            is asking to sign in to your account.
+          </p>
+          <p style={styles.requestCode}>{request.userCode}</p>
+          {request.scope && <p style={styles.requestScope}>Access requested: {request.scope}</p>}
+          <p style={styles.requestWarning}>
+            Approve only if this code is showing right now on a device you have. If you didn&apos;t start this, deny it.
+          </p>
         </div>
+      ) : (
+        // Allow manual code entry if not pre-filled from QR
+        !initialUserCode && (
+          <div style={styles.codeInputWrapper}>
+            <label style={styles.codeLabel}>Enter the code shown on your device</label>
+            <input
+              type="text"
+              value={userCode}
+              onChange={(e) => setUserCode(e.target.value.toUpperCase())}
+              placeholder="ABCDEFGH"
+              style={styles.codeInput}
+              maxLength={8}
+            />
+          </div>
+        )
       )}
 
-      {initialUserCode && (
+      {!request && initialUserCode && (
         <p style={styles.approveText}>
-          Do you want to sign in to your device with this account?
+          Sign in to your device with this account? Check the request first.
         </p>
       )}
 
@@ -224,41 +145,42 @@ export default function DeviceAuthClient({
 
       <div style={styles.buttonContainer}>
         {error === 'Device code has expired' ? (
-            <button
-              onClick={() => {
-                dispatch({ type: 'clearError' })
-                setUserCode('')
-                router.push('/device')
-              }}
-              style={{ ...styles.button, ...styles.approveButton }}
-            >
-              Enter New Code
-            </button>
-        ) : (
+          <button onClick={startOver} style={{ ...styles.button, ...styles.approveButton }}>
+            Enter New Code
+          </button>
+        ) : request ? (
           <>
+            <button
+              onClick={approve}
+              disabled={approving || denying || !request.clientName}
+              style={{
+                ...styles.button,
+                ...styles.approveButton,
+                ...((approving || denying || !request.clientName) ? styles.buttonDisabled : {})
+              }}
+            >
+              {approving ? 'Approving…' : 'Approve Device'}
+            </button>
+            <button
+              onClick={deny}
+              disabled={approving || denying}
+              style={{ ...styles.button, ...styles.denyButton, ...((approving || denying) ? styles.buttonDisabled : {}) }}
+            >
+              {denying ? 'Denying…' : 'Deny'}
+            </button>
+          </>
+        ) : (
           <button
-            onClick={handleApprove}
-            disabled={approving || denying || !isValidCodeFormat(userCode)}
+            onClick={() => review(userCode)}
+            disabled={reviewing || !isValidCodeFormat(userCode)}
             style={{
               ...styles.button,
               ...styles.approveButton,
-              ...((approving || denying || !isValidCodeFormat(userCode)) ? styles.buttonDisabled : {})
+              ...((reviewing || !isValidCodeFormat(userCode)) ? styles.buttonDisabled : {})
             }}
           >
-            {approving ? 'Approving…' : 'Approve Device'}
+            {reviewing ? 'Checking…' : 'Continue'}
           </button>
-          <button
-            onClick={handleDeny}
-            disabled={approving || denying || !isValidCodeFormat(userCode)}
-            style={{
-              ...styles.button,
-              ...styles.denyButton,
-              ...((approving || denying || !isValidCodeFormat(userCode)) ? styles.buttonDisabled : {})
-            }}
-          >
-            {denying ? 'Denying…' : 'Deny'}
-          </button>
-          </>
         )}
       </div>
     </div>
@@ -271,6 +193,10 @@ const styles = {
   userName: { fontSize: '18px', fontWeight: 'bold', color: '#333', margin: '0 0 4px 0' },
   userEmail: { fontSize: '14px', color: '#666', margin: '0' },
   approveText: { fontSize: '16px', color: '#333', marginBottom: '24px', lineHeight: '1.5' },
+  requestCard: { textAlign: 'left' as const, marginBottom: '16px', padding: '16px', border: '1px solid #e2e8f0', borderRadius: '8px' },
+  requestCode: { fontSize: '24px', letterSpacing: '4px', fontFamily: 'monospace', textAlign: 'center' as const, color: '#111', margin: '0 0 12px 0' },
+  requestScope: { fontSize: '14px', color: '#555', margin: '0 0 12px 0' },
+  requestWarning: { fontSize: '13px', color: '#9b2c2c', margin: '0', lineHeight: '1.4' },
   loginText: { fontSize: '16px', color: '#333', marginBottom: '24px', lineHeight: '1.5' },
   codeInputWrapper: { marginBottom: '24px', textAlign: 'left' as const },
   codeLabel: { display: 'block', fontSize: '14px', color: '#555', marginBottom: '8px', fontWeight: '500' },

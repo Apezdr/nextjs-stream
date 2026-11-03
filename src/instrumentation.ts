@@ -125,13 +125,19 @@ function startOtelMetrics(serviceName: string) {
   metrics.setGlobalMeterProvider(meterProvider)
 }
 
-// Every user's role brought in line with ADMIN_USER_EMAILS as the server
-// starts (src/lib/adminRoleReconcile.ts): a removed address otherwise stayed an
-// admin for as long as its session kept rolling. Node only (it uses the
-// database), and not awaited: the server shouldn't wait on Mongo to start.
-// Next skips register() during `next build`.
-function reconcileAdminRolesAtStart() {
+// Auth work the server does as it starts, each once per process and retried
+// until Mongo answers. Node only (they use the database), and not awaited:
+// the server shouldn't wait on Mongo to start. Next skips register() during
+// `next build`.
+// - The auth data as better-auth 1.7 needs it (src/lib/authDataPrep.ts)
+// - Every user's role brought in line with ADMIN_USER_EMAILS
+//   (src/lib/adminRoleReconcile.ts): a removed address otherwise stayed an
+//   admin for as long as its session kept rolling
+function authStartupTasks() {
   if (process.env.NEXT_RUNTIME === 'nodejs') {
+    import('@src/lib/authDataPrep')
+      .then(({ prepareAuthDataOnce }) => prepareAuthDataOnce())
+      .catch((error) => console.error('Auth data preparation did not load:', error))
     import('@src/lib/adminRoleReconcile')
       .then(({ reconcileAdminRolesOnce }) => reconcileAdminRolesOnce())
       .catch((error) => console.error('Admin role reconcile did not load:', error))
@@ -139,7 +145,7 @@ function reconcileAdminRolesAtStart() {
 }
 
 export function register() {
-  reconcileAdminRolesAtStart()
+  authStartupTasks()
   if (globalThis.__otelStarted) return
   // OTEL_SDK_DISABLED=true turns every signal off. @vercel/otel only checks it
   // for traces; without this the logs and metrics below would still export.

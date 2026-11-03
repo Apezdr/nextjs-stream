@@ -84,5 +84,8 @@ export function refusesNewUser(user: SignedInUser, adminEmails: Set<string>): bo
   return isAdminEmail(user.email, adminEmails) && !user.emailVerified
 }
 
-/** The error code a refused sign-up reaches /auth/error with (better-auth joins the message with _). */
-export const UNVERIFIED_ADMIN_EMAIL = 'unverified admin email'
+/**
+ * The error code a refused sign-up reaches /auth/error with: better-auth's
+ * OAuth callback redirects with an APIError's body.code as ?error=.
+ */
+export const UNVERIFIED_ADMIN_EMAIL = 'unverified_admin_email'

@@ -21,6 +21,7 @@ import {
   UNVERIFIED_ADMIN_EMAIL,
 } from './adminRoleSync'
 import { createLogger } from './logger'
+import { isKnownDeviceClient } from './deviceClients'
 
 const adminEmails = adminEmailsFromEnv()
 const roleLog = createLogger('Auth.AdminRoles')
@@ -44,6 +45,14 @@ export const auth = betterAuth({
       enabled: !!process.env.AUTH_COOKIE_DOMAIN,
       // better-auth expects the root domain WITHOUT a leading dot (e.g. "example.com")
       domain: process.env.AUTH_COOKIE_DOMAIN?.replace(/^\./, ''),
+    },
+    // Rate limits key on the client IP. better-auth trusts X-Forwarded-For only
+    // when it holds a single address, which one proxy in front (Caddy, nginx)
+    // gives; behind a chain (Cloudflare in front of it) it resolves no IP and
+    // every client shares one bucket, so the TV app's sign-in polling hits 429.
+    // There, list the proxies' addresses or CIDRs (never a broad private range).
+    ipAddress: {
+      trustedProxies: trustedProxiesFromEnv(),
     },
   },
 
@@ -108,7 +117,11 @@ export const auth = betterAuth({
         before: async (user) => {
           // A listed address the provider didn't verify gets no account (adminRoleSync.ts)
           if (refusesNewUser(user, adminEmails)) {
-            throw new APIError('FORBIDDEN', { message: UNVERIFIED_ADMIN_EMAIL })
+            // With a code, the OAuth callback redirects to /auth/error?error=<code>
+            throw new APIError('FORBIDDEN', {
+              code: UNVERIFIED_ADMIN_EMAIL,
+              message: 'The sign-in provider has not verified this email address.',
+            })
           }
           const approved = getDefaultApprovalStatus()
           const role = roleForNewUser(user, adminEmails)
@@ -172,9 +185,31 @@ export const auth = betterAuth({
       expiresIn: '30m',      // device code window; user must approve within this time
       interval: '5s',        // minimum TV polling interval
       userCodeLength: 8,     // user-friendly code length (8 chars, no hyphens)
+      // Only our own apps may start a device sign-in (src/lib/deviceClients.ts)
+      validateClient: (clientId: string) => isKnownDeviceClient(clientId),
     }),
   ],
+
+  rateLimit: {
+    customRules: {
+      // GET /device claims a code for the signed-in approver and returns its
+      // client, once per code (both approval screens). The plugin's own limit,
+      // 5 per 30 minutes per IP, is tight for a household approving a few
+      // devices or retyping a code; codes are 8 random characters, so 20 per
+      // 15 minutes still makes guessing someone else's pending code hopeless.
+      '/device': { window: 15 * 60, max: 20 },
+    },
+  },
 })
+
+/** BETTER_AUTH_TRUSTED_PROXIES: comma-separated proxy addresses or CIDRs, or undefined. */
+function trustedProxiesFromEnv(): string[] | undefined {
+  const proxies = (process.env.BETTER_AUTH_TRUSTED_PROXIES || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+  return proxies.length > 0 ? proxies : undefined
+}
 
 export type Session = typeof auth.$Infer.Session
 export type User = typeof auth.$Infer.Session.user

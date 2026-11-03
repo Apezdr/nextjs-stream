@@ -1,6 +1,7 @@
 import { userQueries } from '@src/lib/userQueries'
 import { createLogger } from '@src/lib/logger'
 import { adminEmailsFromEnv } from '@src/lib/adminRoleSync'
+import { runStartupTaskOnce, type Schedule } from '@src/lib/startupTask'
 
 /**
  * Every user's role brought in line with ADMIN_USER_EMAILS, by the rules in
@@ -44,30 +45,14 @@ export async function reconcileAdminRoles(adminEmails: Set<string> = adminEmails
 }
 
 const STARTED = Symbol.for('nextjs_stream.adminRoleReconcileStarted')
-const FIRST_RETRY_MS = 5_000
-const MAX_RETRY_MS = 5 * 60_000
 
-/**
- * Once per process (register() can run again in development), retried with
- * backoff until a run succeeds: Mongo can still be starting when the server
- * does. Never throws.
- */
-export function reconcileAdminRolesOnce(
-  run: () => Promise<unknown> = reconcileAdminRoles,
-  schedule: (retry: () => void, ms: number) => void = (retry, ms) => {
-    // Never what keeps the process alive
-    setTimeout(retry, ms).unref?.()
-  }
-): void {
-  const store = globalThis as typeof globalThis & { [STARTED]?: boolean }
-  if (store[STARTED]) return
-  store[STARTED] = true
-
-  const attempt = (delayMs: number) => {
-    run().catch((error) => {
-      log.error({ error: error?.message, retryInMs: delayMs }, 'Reconciling admin roles with ADMIN_USER_EMAILS failed')
-      schedule(() => attempt(Math.min(delayMs * 2, MAX_RETRY_MS)), delayMs)
-    })
-  }
-  attempt(FIRST_RETRY_MS)
+/** Once per process, retried until it succeeds (startupTask.ts). Never throws. */
+export function reconcileAdminRolesOnce(run: () => Promise<unknown> = reconcileAdminRoles, schedule?: Schedule): void {
+  runStartupTaskOnce(
+    STARTED,
+    run,
+    (error, retryInMs) =>
+      log.error({ error: (error as Error)?.message, retryInMs }, 'Reconciling admin roles with ADMIN_USER_EMAILS failed'),
+    schedule
+  )
 }
