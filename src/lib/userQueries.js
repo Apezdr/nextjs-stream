@@ -4,12 +4,18 @@
  * Centralized user collection queries for Better Auth integration.
  * Handles ObjectId/string conversion automatically and provides consistent
  * query patterns across the application.
+ *
+ * Every write here also drops the user's cached sessions in Redis
+ * (authSessionStore.forgetUserSessions): better-auth caches each session with
+ * its user, and refreshes that copy only for writes made through better-auth.
+ * Write users only through these helpers, never through collection().
  * 
  * @module lib/userQueries
  */
 
 import { ObjectId } from 'mongodb'
 import { mongoClient } from './mongodb'
+import { forgetUserSessions } from './authSessionStore'
 
 /**
  * Get the Users database instance
@@ -173,11 +179,13 @@ export const userQueries = {
    */
   updateById: async (userId, update, options = {}) => {
     const db = getUsersDb()
-    return db.collection('user').updateOne(
+    const result = await db.collection('user').updateOne(
       { _id: normalizeUserId(userId) },
       { $set: update },
       options
     )
+    await forgetUserSessions(userId)
+    return result
   },
 
   /**
@@ -196,11 +204,30 @@ export const userQueries = {
    */
   updateByIdCustom: async (userId, updateOperation, options = {}) => {
     const db = getUsersDb()
-    return db.collection('user').updateOne(
+    const result = await db.collection('user').updateOne(
       { _id: normalizeUserId(userId) },
       updateOperation,
       options
     )
+    await forgetUserSessions(userId)
+    return result
+  },
+
+  /**
+   * Update every user matching a filter, then drop the cached sessions of each
+   * user it matched
+   *
+   * @param {Object} filter - MongoDB filter
+   * @param {Object|Object[]} update - Update document or pipeline
+   * @param {Object} [options={}] - Additional update options
+   * @returns {Promise<Object>} MongoDB update result
+   */
+  updateMany: async (filter, update, options = {}) => {
+    const users = getUsersDb().collection('user')
+    const matched = await users.find(filter, { projection: { _id: 1 } }).toArray()
+    const result = await users.updateMany(filter, update, options)
+    await forgetUserSessions(matched.map((user) => user._id))
+    return result
   },
 
   /**
@@ -217,14 +244,16 @@ export const userQueries = {
    */
   deleteById: async (userId) => {
     const db = getUsersDb()
-    return db.collection('user').deleteOne(
+    const result = await db.collection('user').deleteOne(
       { _id: normalizeUserId(userId) }
     )
+    await forgetUserSessions(userId)
+    return result
   },
 
   /**
-   * Get direct access to the user collection
-   * Use this for complex queries not covered by helper methods
+   * Get direct access to the user collection, for reads not covered by the
+   * helpers. Writes go through the helpers, which drop cached sessions
    * 
    * @returns {Collection} MongoDB collection object
    * 

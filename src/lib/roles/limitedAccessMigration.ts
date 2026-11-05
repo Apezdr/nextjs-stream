@@ -119,14 +119,14 @@ export async function migrateLimitedAccess() {
     const role = await previewRoleId()
     roleCreated = role.created
     // One write per user: the role is added and the flag removed together
-    const result = await users.updateMany({ limitedAccess: true }, [
+    const result = await userQueries.updateMany({ limitedAccess: true }, [
       { $set: { roles: rolesWithPreview(role.id) } },
       { $unset: 'limitedAccess' },
     ])
     moved = result.modifiedCount
   }
   // Everyone else's flag (false, or anything not true) goes too
-  const cleared = (await users.updateMany({ limitedAccess: { $exists: true } }, { $unset: { limitedAccess: '' } }))
+  const cleared = (await userQueries.updateMany({ limitedAccess: { $exists: true } }, { $unset: { limitedAccess: '' } }))
     .modifiedCount
 
   const result = { moved, cleared, roleCreated }

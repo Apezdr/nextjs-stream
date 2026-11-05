@@ -25,11 +25,10 @@ export async function reconcileAdminRoles(adminEmails: Set<string> = adminEmails
   if (withCapitals > 0) {
     log.warn({ entries: withCapitals }, 'ADMIN_USER_EMAILS has entries with capitals, which better-auth accounts never match')
   }
-  const users = userQueries.collection()
-
   // A listed address the provider verified (better-auth's boolean, or a
   // migrated account's Date); $nin [null, false] also skips a missing field
-  const promoted = await users.updateMany(
+  // Through userQueries, which drops the changed users' cached sessions
+  const promoted = await userQueries.updateMany(
     {
       email: { $in: listed },
       emailVerified: { $nin: [null, false] },
@@ -37,7 +36,7 @@ export async function reconcileAdminRoles(adminEmails: Set<string> = adminEmails
     },
     { $set: { role: 'admin', approved: true } }
   )
-  const demoted = await users.updateMany({ role: 'admin', email: { $nin: listed } }, { $set: { role: 'user' } })
+  const demoted = await userQueries.updateMany({ role: 'admin', email: { $nin: listed } }, { $set: { role: 'user' } })
 
   const result = { promoted: promoted.modifiedCount, demoted: demoted.modifiedCount }
   if (result.promoted || result.demoted) log.info(result, 'Admin roles reconciled with ADMIN_USER_EMAILS')

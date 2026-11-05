@@ -11,7 +11,10 @@
 
 const mockUsers = { countDocuments: jest.fn(), updateMany: jest.fn() }
 const mockRoles = { findOne: jest.fn(), insertOne: jest.fn() }
-jest.mock('@src/lib/userQueries', () => ({ userQueries: { collection: () => mockUsers } }))
+// Reads go through collection(), writes through updateMany (which drops cached sessions)
+jest.mock('@src/lib/userQueries', () => ({
+  userQueries: { collection: () => mockUsers, updateMany: (...args) => mockUsers.updateMany(...args) },
+}))
 jest.mock('@src/lib/mongodb', () => ({
   __esModule: true,
   default: Promise.resolve({ db: () => ({ collection: () => mockRoles }) }),

@@ -2,6 +2,7 @@ import clientPromise from '@src/lib/mongodb'
 import { ObjectId } from 'mongodb'
 import { randomBytes } from 'node:crypto'
 import { userQueries } from '@src/lib/userQueries'
+import { forgetUserSessions } from '@src/lib/authSessionStore'
 
 /**
  * Account deletion utility functions
@@ -331,7 +332,9 @@ export async function cancelDeletionRequest(deletionRequestId, performedBy, reas
 export async function executeAccountDeletion(deletionRequestId, performedBy) {
   const client = await clientPromise
   const session = client.startSession()
-  
+  // Whose cached sessions to drop once the deletion commits (see below)
+  let deletedUserId = null
+
   try {
     await session.withTransaction(async () => {
       const usersDb = client.db('Users')
@@ -353,6 +356,7 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
       
       const userId = deletionRequest.userId
       const userEmail = deletionRequest.email
+      deletedUserId = userId
       
       // Delete user data across all collections
       const deletionResults = await deleteUserDataAcrossCollections(userId, userEmail, session)
@@ -382,6 +386,10 @@ export async function executeAccountDeletion(deletionRequestId, performedBy) {
       
     return { success: true, deletionResults }
     })
+    // After the commit, not inside the transaction: a request racing the
+    // deletion could otherwise cache the not-yet-deleted session again, and
+    // the deleted account would stay signed in until that entry expired
+    if (deletedUserId) await forgetUserSessions(deletedUserId)
   } finally {
     await session.endSession()
   }
@@ -402,7 +410,8 @@ async function deleteUserDataAcrossCollections(userId, userEmail, session) {
   const results = {}
   
   // Delete from user collection
-  // Note: Using collection() directly because we need session support
+  // Note: Using collection() directly because we need session support. The
+  // caller drops the user's cached sessions after the transaction commits
   const userResult = await userQueries.collection().deleteOne(
     { _id: userQueries.toUserId(userId) },
     { session }

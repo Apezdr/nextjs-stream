@@ -22,6 +22,8 @@ import {
 } from './adminRoleSync'
 import { createLogger } from './logger'
 import { isKnownDeviceClient } from './deviceClients'
+import { isRedisConfigured } from './redisClient'
+import { authSecondaryStorage } from './authSessionStore'
 
 const adminEmails = adminEmailsFromEnv()
 const roleLog = createLogger('Auth.AdminRoles')
@@ -30,6 +32,14 @@ const authDb = mongoClient.db(process.env.MONGODB_AUTH_DB || 'Users')
 
 export const auth = betterAuth({
   database: mongodbAdapter(authDb, { client: mongoClient, transaction: process.env.MONGODB_TRANSACTIONS === 'true' }),
+
+  // With Redis configured, sessions are read from it first, and the sign-in rate
+  // limits count there (authSessionStore.ts). Mongo stays the record: sessions
+  // and verification values are written to both (storeSessionInDatabase,
+  // verification.storeInDatabase below), so better-auth reads Mongo whenever
+  // Redis is off or missing a key. Without either of those, a Redis outage
+  // would end every session, and OAuth sign-in would fail at the callback.
+  ...(isRedisConfigured() ? { secondaryStorage: authSecondaryStorage } : {}),
 
   secret: process.env.BETTER_AUTH_SECRET,
   baseURL: process.env.BETTER_AUTH_URL,
@@ -104,6 +114,11 @@ export const auth = betterAuth({
   session: {
     expiresIn: 60 * 60 * 24 * 30, // 30 days
     updateAge: 60 * 60 * 24,       // refresh daily
+    storeSessionInDatabase: true,
+  },
+
+  verification: {
+    storeInDatabase: true,
   },
 
   user: {

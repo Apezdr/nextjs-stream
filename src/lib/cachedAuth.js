@@ -4,6 +4,7 @@ import { auth } from '@src/lib/auth'
 import { headers } from 'next/headers'
 import { recordUserCaller } from '@src/lib/requestCaller'
 import { isAdminUser, isAwaitingApproval } from '@src/lib/roles/rules'
+import { rememberSession } from '@src/lib/authSessionStore'
 
 /**
  * Request-scoped session store. React's cache() only memoizes during RSC
@@ -39,6 +40,9 @@ export const getSession = cache(async () => {
   // once per request: every session lookup in a request shares this promise
   const sessionPromise = auth.api.getSession({ headers: requestHeaders }).then((session) => {
     recordUserCaller(session?.user?.id)
+    // A session better-auth read from Mongo goes into Redis for the next
+    // request (it never does that itself). Not awaited, and it never throws
+    void rememberSession(session)
     return session
   })
   sessionByRequest.set(requestHeaders, sessionPromise)

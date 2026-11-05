@@ -12,7 +12,8 @@ const { join } = require('node:path')
 
 const mockUpdateMany = jest.fn(async () => ({ modifiedCount: 0 }))
 jest.mock('@src/lib/userQueries', () => ({
-  userQueries: { collection: () => ({ updateMany: (...args) => mockUpdateMany(...args) }) },
+  // Bulk role writes go through userQueries.updateMany, which drops the users' cached sessions
+  userQueries: { updateMany: (...args) => mockUpdateMany(...args) },
 }))
 const mockLog = { info: jest.fn(), warn: jest.fn(), error: jest.fn() }
 jest.mock('@src/lib/logger', () => ({ createLogger: () => mockLog }))
@@ -190,8 +191,11 @@ describe('the sign-in wiring', () => {
     expect(source).toMatch(/const role = roleForNewUser\(user, adminEmails\)/)
     expect(source).not.toMatch(/setRole\(/)
     expect(source).not.toMatch(/callback\/social/)
-    // The role is read from the user document on every lookup only while there is no cache
-    expect(source).not.toMatch(/cookieCache|secondaryStorage/)
+    // The session cached at sign-in (Redis) holds the user from before this
+    // write: userQueries.updateById drops that user's cached sessions, so the
+    // next lookup reads the synced role from Mongo. A cookie cache would keep it
+    expect(source).not.toMatch(/cookieCache/)
+    expect(read('src', 'lib', 'userQueries.js')).toMatch(/updateById: async[\s\S]{0,300}await forgetUserSessions\(userId\)/)
   })
 
   it('auth.ts refuses a sign-up for a listed, unverified address, with a code /auth/error explains', () => {
