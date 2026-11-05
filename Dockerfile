@@ -119,5 +119,8 @@ ENTRYPOINT ["/sbin/tini", "-g", "--"]
 
 # server.js is created by next build from the standalone output
 # https://nextjs.org/docs/pages/api-reference/config/next-config-js/output
-ENV HOSTNAME="0.0.0.0"
+# "::" listens on IPv6 and IPv4 both. With 0.0.0.0, a Docker network that has
+# IPv6 enabled resets every IPv6 connection to the published port. On a host
+# whose kernel has IPv6 turned off, set HOSTNAME=0.0.0.0 instead.
+ENV HOSTNAME="::"
 CMD ["dotenvx", "run", "--", "node", "server.js"]
