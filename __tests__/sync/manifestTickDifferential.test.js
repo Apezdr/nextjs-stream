@@ -92,7 +92,6 @@ jest.mock('@opentelemetry/api', () => {
   const span = new Proxy({}, { get: () => () => {} })
   return { trace: { getTracer: () => ({ startActiveSpan: (_name, fn) => fn(span) }) } }
 })
-jest.mock('@src/lib/redisClient', () => ({ getRedisClient: async () => null }))
 jest.mock('@src/utils/cache/postSyncRevalidation', () => ({ requestMediaRevalidation: jest.fn(async () => {}) }))
 jest.mock('@src/lib/httpHelper', () => ({ httpGet: jest.fn(async (url) => ({ data: `blurhash-of:${url}`, headers: {} })) }))
 jest.mock('@src/utils/flatDatabaseUtils', () => ({ generateNormalizedVideoId: (url) => `nid:${url}` }))

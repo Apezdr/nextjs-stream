@@ -12,7 +12,6 @@ process.env.SONARR_ICAL_LINK = 'https://sonarr.example/feed/calendar/Sonarr.ics?
 const mockHttpGet = jest.fn()
 // got is an ES module jest does not transform; the route's fetch is stood in for below
 jest.mock('got', () => ({ __esModule: true, default: jest.fn() }))
-jest.mock('@src/lib/cache', () => ({ getCache: jest.fn(), setCache: jest.fn() }))
 jest.mock('@src/lib/httpHelper', () => ({
   ...jest.requireActual('@src/lib/httpHelper'),
   httpGet: (...args) => mockHttpGet(...args),

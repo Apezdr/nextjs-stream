@@ -70,24 +70,6 @@ export function backendErrorResponse(error, endpointPath) {
 }
 
 /**
- * httpHelper caches JSON/text responses wrapped as `{ _dataType, _isBuffer, data }`.
- * On a cache hit that envelope can reach us instead of the bare body. Unwrap it
- * before returning; a no-op for already-unwrapped fresh bodies.
- */
-export function unwrapCachedEnvelope(payload) {
-  if (
-    payload &&
-    typeof payload === 'object' &&
-    !Array.isArray(payload) &&
-    (payload._dataType === 'json' || payload._dataType === 'text') &&
-    'data' in payload
-  ) {
-    return payload.data
-  }
-  return payload
-}
-
-/**
  * Fetch a TMDB endpoint from the backend media processor.
  *
  * @param {string} endpointPath - Path after /api/tmdb/, e.g. 'comprehensive/movie'

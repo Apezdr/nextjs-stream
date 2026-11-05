@@ -8,6 +8,9 @@ import { createLogger } from './logger'
 // Redis is off, failing, or slower than the call's budget.
 const CONNECT_TIMEOUT_MS = 1000
 const COOL_DOWN_MS = 30_000
+// A call that ran out of budget: shorter, since one slow call (a save, a
+// stall) shouldn't take Redis away from everything for long
+const SLOW_COOL_DOWN_MS = 5_000
 const DEFAULT_BUDGET_MS = 250
 
 const log = createLogger('Redis')
@@ -29,9 +32,9 @@ export function isRedisConfigured() {
 }
 
 /** Redis is unreachable or misbehaving: drop the client and stay off for the cool-down. */
-function goOff(reason, failed) {
-  if (Date.now() >= offUntil) log.warn({ reason }, `Redis unavailable; going without it for ${COOL_DOWN_MS / 1000} s`)
-  offUntil = Date.now() + COOL_DOWN_MS
+function goOff(reason, failed, coolDownMs = COOL_DOWN_MS) {
+  if (Date.now() >= offUntil) log.warn({ reason }, `Redis unavailable; going without it for ${coolDownMs / 1000} s`)
+  offUntil = Math.max(offUntil, Date.now() + coolDownMs)
   if (failed && client === failed) client = null
   try {
     failed?.destroy()
@@ -87,8 +90,9 @@ export async function getRedisClient() {
 /**
  * Runs one Redis call. Answers `fallback` instead of throwing or waiting when
  * Redis is off, the call fails, or connect plus call take longer than
- * `budgetMs`; a slow call also starts the cool-down, so the next requests don't
- * each wait out the budget too.
+ * `budgetMs`. A slow call also replaces the client (its socket may be dead)
+ * and starts a short cool-down, so the next requests don't each wait out the
+ * budget too.
  *
  * @template T
  * @param {(redis: import('redis').RedisClientType) => Promise<T>} run
@@ -113,7 +117,7 @@ export async function withRedis(run, { budgetMs = DEFAULT_BUDGET_MS, fallback = 
       }),
     ])
     if (outcome === timedOut) {
-      goOff(`no answer within ${budgetMs} ms`, null)
+      goOff(`no answer within ${budgetMs} ms`, client, SLOW_COOL_DOWN_MS)
       return fallback
     }
     return outcome
