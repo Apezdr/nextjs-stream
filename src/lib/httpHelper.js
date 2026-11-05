@@ -1,11 +1,5 @@
 // httpGet.js
 import got from 'got';
-import { getCache, setCache } from './cache';
-import crypto from 'crypto';
-import { Readable } from 'stream';
-import { createLogger } from './logger';
-
-const log = createLogger('HttpHelper');
 
 /**
  * Sleep for a specified duration
@@ -49,93 +43,7 @@ function httpStatusError(statusCode, url, headers, body) {
 }
 
 /**
- * Ensures a value is a proper Buffer object, handling various serialized forms
- * @param {any} data - The data to convert to Buffer
- * @param {boolean} [logErrors=false] - Whether to log conversion errors
- * @returns {Buffer|null} - The converted Buffer or null if conversion failed
- */
-function ensureBuffer(data, logErrors = false) {
-  // If it's already a Buffer, return it directly
-  if (Buffer.isBuffer(data)) return data;
-  
-  try {
-    // Case 1: Handle serialized Buffer from JSON with type and data properties
-    if (data && data.type === 'Buffer' && Array.isArray(data.data)) {
-      return Buffer.from(data.data);
-    }
-    
-    // Case 2: Handle ArrayBuffer-like objects
-    if (data && typeof data === 'object' && data.buffer instanceof ArrayBuffer) {
-      return Buffer.from(
-        data.buffer, 
-        data.byteOffset || 0, 
-        data.byteLength
-      );
-    }
-    
-    // Case 3: Handle serialized Buffer object with _dataType and data properties (our custom format)
-    if (data && typeof data === 'object' && data._dataType === 'buffer') {
-      if (Buffer.isBuffer(data.data)) {
-        return data.data;
-      } else if (data.data && data.data.type === 'Buffer' && Array.isArray(data.data.data)) {
-        return Buffer.from(data.data.data);
-      }
-    }
-    
-    // Case 4: Handle plain objects that might be serialized Buffers
-    if (data && typeof data === 'object') {
-      // Try to detect if this is a serialized Buffer by checking string form
-      const serialized = JSON.stringify(data);
-      if (serialized.includes('"type":"Buffer"') && serialized.includes('"data":[')) {
-        try {
-          const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-          return Buffer.from(parsed.data || []);
-        } catch (e) {
-          if (logErrors) console.error('Failed to parse serialized Buffer:', e);
-        }
-      }
-    }
-    
-    // Case 5: If data is an array of numbers, treat as Buffer data
-    if (Array.isArray(data) && data.every(item => typeof item === 'number')) {
-      return Buffer.from(data);
-    }
-  } catch (error) {
-    if (logErrors) console.error('Error converting to Buffer:', error);
-  }
-  
-  // If we can't convert it, return null
-  return null;
-}
-
-/**
- * Formats byte size to human readable string
- * @param {number} bytes - Size in bytes
- * @returns {string} - Formatted size
- */
-function formatBytes(bytes, decimals = 2) {
-  if (bytes === 0) return '0 Bytes';
-  
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(decimals)) + ' ' + sizes[i];
-}
-
-/**
- * Cache logger for diagnostics. The URL is the cache key: an *arr iCal feed's
- * carries its API key, so every line shows it through loggableUrl.
- */
-const cacheLog = {
-  hit: (url, type, size) => log.debug({ url: loggableUrl(url), type, size: formatBytes(size || 0) }, 'Cache hit'),
-  miss: (url, reason) => log.debug({ url: loggableUrl(url), reason }, 'Cache miss'),
-  store: (url, type, size) => log.debug({ url: loggableUrl(url), type, size: formatBytes(size || 0) }, 'Cache store'),
-  error: (url, error) => log.error({ url: loggableUrl(url), error: describeRequestError(error, url) }, 'Cache error')
-};
-
-/**
- * Performs an HTTP GET request with HTTP/2 support, retry, and conditional caching.
+ * Performs an HTTP GET request with HTTP/2 support and retry.
  * @param {string} url - The URL to fetch.
  * @param {Object} [options={}] - Additional options for the request.
  * @param {Object} [options.headers={}] - HTTP headers to include in the request.
@@ -146,11 +54,12 @@ const cacheLog = {
  * @param {number} [options.retry.baseDelay=1000] - Base delay for exponential backoff in milliseconds
  * @param {number} [options.retry.maxDelay=10000] - Maximum delay between retries in milliseconds
  * @param {function} [options.retry.shouldRetry] - Custom function to determine if a request should be retried
- * @param {boolean} [returnCacheDataIfAvailable=false] - Return cached data if available
- * @returns {Promise<{ data: Object|string|Buffer|ReadableStream|null, headers: Object, meta?: Object }>}
+ * @returns {Promise<{ data: Object|string|Buffer|ReadableStream|null, headers: Object }>} `data` is
+ *   null on a 304, which only a caller that sent its own If-None-Match or
+ *   If-Modified-Since can get (fetchFile does, from its own cache)
  * @throws {Error} - Throws an error if all retry attempts fail
  */
-export async function httpGet(url, options = {}, returnCacheDataIfAvailable = false) {
+export async function httpGet(url, options = {}) {
   const {
     headers = {},
     timeout = 5000,
@@ -175,15 +84,6 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
       return statusCode >= 500 || statusCode === 429 || statusCode === 408;
     },
   } = retry;
-
-  // 1) Check the cache for existing ETag and Last-Modified
-  const cachedEntry = await getCache(url);
-  if (cachedEntry?.etag) {
-    headers['If-None-Match'] = cachedEntry.etag;
-  }
-  if (cachedEntry?.lastModified) {
-    headers['If-Modified-Since'] = cachedEntry.lastModified;
-  }
 
   const requestOptions = {
     headers,
@@ -221,68 +121,10 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
       const { statusCode, headers: responseHeaders } = response;
 
       if (statusCode === 304) {
-        // 2) Handle 304 Not Modified by returning cached data
-        if (cachedEntry) {
-          // Make sure to clean up the response before returning
-          cleanupResponse(response);
-          
-          // Handle cached data properly based on response type
-          if (returnCacheDataIfAvailable) {
-            // If this is a buffer response, ensure we return a proper Buffer
-            if (responseType === 'buffer') {
-              const cachedBuffer = ensureBuffer(cachedEntry.data, true);
-              
-              if (cachedBuffer) {
-                cacheLog.hit(url, 'buffer', cachedBuffer.length);
-                return { 
-                  data: cachedBuffer, 
-                  headers: responseHeaders,
-                  meta: { source: 'cache', originalType: 'buffer' }
-                };
-              } else {
-                // If we couldn't convert to Buffer, log it and treat as cache miss
-                cacheLog.miss(url, 'invalid buffer format in cache');
-                // Continue with the next attempt to get fresh data, asked for
-                // without the conditional headers: with them the server answers
-                // 304 again and every remaining attempt ends up back here
-                delete headers['If-None-Match'];
-                delete headers['If-Modified-Since'];
-                continue;
-              }
-            }
-            
-            // For other types, return the cached data directly.
-            cacheLog.hit(url, responseType,
-              typeof cachedEntry.data === 'string' ? cachedEntry.data.length : undefined);
-
-            // Stored entries are wrapped as { _dataType, _isBuffer, data }. Return the
-            // inner payload so a cache hit matches the shape of a fresh response
-            // (which returns the bare body) — otherwise callers receive the envelope.
-            let hitData = cachedEntry.data;
-            if (hitData && typeof hitData === 'object' && '_dataType' in hitData && 'data' in hitData) {
-              hitData = hitData.data;
-            }
-
-            return {
-              data: hitData,
-              headers: responseHeaders,
-              meta: { source: 'cache', originalType: responseType }
-            };
-          } else {
-            return { data: null, headers: responseHeaders };
-          }
-        }
-
-        // Not modified, and nothing cached here to serve: the conditional
-        // headers were the caller's own (the sync's fetchFile keeps a cached
-        // copy of its own and expects data: null, as above)
         cleanupResponse(response);
         return { data: null, headers: responseHeaders };
       }
 
-      // Only a 2xx is a result. This used to read `2xx || !cachedEntry`, so with
-      // nothing cached yet any status passed: an error body was cached for an
-      // hour and handed back as though it were the payload.
       if (statusCode >= 200 && statusCode < 300) {
         let responseData;
 
@@ -300,36 +142,9 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
               responseData = response.body;
               break;
 
-            case 'buffer': {
+            case 'buffer':
               responseData = Buffer.from(response.rawBody);
-              
-              // Create a hash for integrity verification
-              const hash = crypto.createHash('md5').update(responseData).digest('hex');
-              
-              // Store with the buffer data and type metadata
-              await setCache(
-                url,
-                {
-                  _dataType: 'buffer',
-                  _hash: hash,
-                  _byteLength: responseData.byteLength,
-                  data: responseData
-                },
-                responseHeaders.etag || null,
-                responseHeaders['last-modified'] || null
-              );
-              
-              cacheLog.store(url, 'buffer', responseData.byteLength);
-              
-              // Clean up the response
-              cleanupResponse(response);
-              
-              return { 
-                data: responseData, 
-                headers: responseHeaders,
-                meta: { source: 'fresh', originalType: 'buffer' }
-              };
-            }
+              break;
 
             case 'stream':
               responseData = response;
@@ -340,42 +155,9 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
               throw new Error(`Unsupported response type: ${responseType}`);
           }
 
-          // 3) Update the cache with new data and validation tokens
-          // For non-buffer, non-stream responses
-          if (responseType !== 'buffer' && responseType !== 'stream') {
-            // Store with metadata about the type
-            await setCache(
-              url,
-              {
-                _dataType: responseType,
-                _isBuffer: false,
-                data: responseData
-              },
-              responseHeaders.etag || null,
-              responseHeaders['last-modified'] || null
-            );
-            
-            cacheLog.store(url, responseType, 
-              typeof responseData === 'string' ? responseData.length : undefined);
-            
-            // Clean up the response
-            cleanupResponse(response);
-            
-            return { 
-              data: responseData, 
-              headers: responseHeaders,
-              meta: { source: 'fresh', originalType: responseType }
-            };
-          }
-          
-          // For stream responses, we don't cache and return directly
-          if (responseType === 'stream') {
-            return { 
-              data: responseData, 
-              headers: responseHeaders,
-              meta: { source: 'fresh', originalType: 'stream' }
-            };
-          }
+          // A stream belongs to the caller now: it is not cleaned up here
+          if (responseType !== 'stream') cleanupResponse(response);
+          return { data: responseData, headers: responseHeaders };
         } catch (processingError) {
           console.error(`Error processing response for ${loggableUrl(url)}: ${describeRequestError(processingError, url)}`);
           debugStack(processingError);
@@ -412,12 +194,6 @@ export async function httpGet(url, options = {}, returnCacheDataIfAvailable = fa
             return fetchResponse;
           }
           const data = await fetchResponse.json();
-          await setCache(
-            url,
-            data,
-            fetchResponse.headers.get('etag') || null,
-            fetchResponse.headers.get('last-modified') || null
-          );
           return { data, headers: Object.fromEntries(fetchResponse.headers.entries()) };
         } catch (fetchError) {
           console.error(`Fetch fallback failed for ${loggableUrl(url)}: ${describeRequestError(fetchError, url)}`);
@@ -574,118 +350,4 @@ function cleanupResponse(response) {
   } catch (error) {
     console.error('Error cleaning up response:', error);
   }
-}
-
-/**
- * Fetches an image as an ArrayBuffer with retry support.
- * @param {string} url - The URL of the image to fetch.
- * @param {Object} [options={}] - Additional options for the request.
- * @returns {Promise<ArrayBuffer>} - The image data as an ArrayBuffer.
- */
-export async function fetchImageAsBuffer(url, options = {}) {
-  const response = await httpGet(url, {
-    ...options,
-    responseType: 'buffer',
-    headers: {
-      ...options.headers,
-      Accept: 'image/*',
-    },
-  }, true); // Always return cached data if available for images
-
-  if (response.data === null) {
-    // Handle cached data appropriately by retrieving it directly
-    const cachedEntry = await getCache(url);
-    if (cachedEntry?.data) {
-      // Try multiple methods to extract buffer from cached data
-      const buffer = ensureBuffer(cachedEntry.data, true);
-      
-      if (buffer) {
-        return buffer;
-      } else if (cachedEntry.data.buffer) {
-        return Buffer.from(
-          cachedEntry.data.buffer, 
-          cachedEntry.data.byteOffset || 0, 
-          cachedEntry.data.byteLength
-        );
-      } else {
-        throw new Error('Could not convert cached data to Buffer.');
-      }
-    } else {
-      throw new Error('No cached data available for image.');
-    }
-  }
-
-  // If response.data is already a Buffer, return it directly
-  if (Buffer.isBuffer(response.data)) {
-    return response.data;
-  }
-  
-  // Otherwise, try to convert to Buffer
-  const buffer = ensureBuffer(response.data, true);
-  if (buffer) {
-    return buffer;
-  }
-  
-  // Last resort - try to convert using buffer slice if available
-  if (response.data.buffer) {
-    return Buffer.from(
-      response.data.buffer,
-      response.data.byteOffset || 0,
-      response.data.byteLength
-    );
-  }
-  
-  throw new Error('Could not convert response data to Buffer');
-}
-
-/**
- * Creates a readable stream for downloading an image with retry support.
- * @param {string} url - The URL of the image to stream.
- * @param {Object} [options={}] - Additional options for the request.
- * @returns {Promise<ReadableStream>} - A readable stream of the image data.
- */
-export async function createImageStream(url, options = {}) {
-  const response = await httpGet(url, {
-    ...options,
-    responseType: 'stream',
-    headers: {
-      ...options.headers,
-      Accept: 'image/*',
-    },
-  }, true); // Always return cached data if available for images
-
-  if (response.data === null) {
-    // Handle cached data by retrieving it directly and converting to stream
-    const cachedEntry = await getCache(url);
-    if (cachedEntry?.data) {
-      // Try to convert the cached data to a buffer first
-      const buffer = ensureBuffer(cachedEntry.data, true);
-      
-      if (buffer) {
-        // Create a stream from the buffer
-        return Readable.from(buffer);
-      } else if (typeof cachedEntry.data === 'string') {
-        // If it's a string, convert to buffer first
-        return Readable.from(Buffer.from(cachedEntry.data));
-      } else if (cachedEntry.data._dataType === 'buffer' && cachedEntry.data.data) {
-        // Handle our wrapped buffer format
-        const nestedBuffer = ensureBuffer(cachedEntry.data.data, true);
-        if (nestedBuffer) {
-          return Readable.from(nestedBuffer);
-        }
-      }
-      
-      // Last resort - try direct conversion
-      try {
-        const buffer = Buffer.from(cachedEntry.data);
-        return Readable.from(buffer);
-      } catch (error) {
-        throw new Error(`Failed to create stream from cached data: ${error.message}`);
-      }
-    } else {
-      throw new Error('No cached data available for image.');
-    }
-  }
-
-  return response.data;
 }

@@ -11,26 +11,6 @@
 const mockGot = jest.fn()
 jest.mock('got', () => ({ __esModule: true, default: (...args) => mockGot(...args) }))
 
-const mockGetCache = jest.fn()
-const mockSetCache = jest.fn()
-jest.mock('@src/lib/cache', () => ({
-  getCache: (...args) => mockGetCache(...args),
-  setCache: (...args) => mockSetCache(...args),
-}))
-
-// The cache lines go through the app's pino logger: capture its records
-const mockLogDebug = jest.fn()
-const mockLogError = jest.fn()
-jest.mock('@src/lib/logger', () => ({
-  createLogger: () => ({
-    debug: (...args) => mockLogDebug(...args),
-    error: (...args) => mockLogError(...args),
-    warn: jest.fn(),
-    info: jest.fn(),
-  }),
-  logError: jest.fn(),
-}))
-
 const { httpGet } = require('@src/lib/httpHelper')
 // backendClient's rule: network errors, 429, 503 and 504
 const { isRetryableBackendError: backendClientRule } = require('@src/utils/tmdb/backendClient')
@@ -41,8 +21,6 @@ const fast = { baseDelay: 1, maxDelay: 1 }
 
 beforeEach(() => {
   jest.clearAllMocks()
-  mockGetCache.mockResolvedValue(null)
-  mockSetCache.mockResolvedValue(undefined)
   jest.spyOn(Math, 'random').mockReturnValue(0) // no backoff jitter
   jest.spyOn(console, 'warn').mockImplementation(() => {})
   jest.spyOn(console, 'error').mockImplementation(() => {})
@@ -52,14 +30,13 @@ beforeEach(() => {
 afterEach(() => jest.restoreAllMocks())
 
 describe('httpGet status handling', () => {
-  it('throws a 4xx on a first fetch, with its status, and caches nothing', async () => {
+  it('throws a 4xx on a first fetch, with its status', async () => {
     mockGot.mockResolvedValue(reply(400, '{"error":"TMDB API request failed"}', { etag: 'W/"e"' }))
 
     await expect(httpGet(URL, { retry: fast })).rejects.toMatchObject({
       statusCode: 400,
       response: { statusCode: 400 },
     })
-    expect(mockSetCache).not.toHaveBeenCalled()
     expect(mockGot).toHaveBeenCalledTimes(1)
   })
 
@@ -119,29 +96,26 @@ describe('httpGet status handling', () => {
     expect(mockGot).toHaveBeenCalledTimes(2)
   })
 
-  it('caches a 2xx with its ETag and returns the body', async () => {
+  it('returns a 2xx body as it came, and sends the request as the caller built it', async () => {
     mockGot.mockResolvedValue(reply(200, '{"name":"Show"}', { etag: 'W/"ok"' }))
 
     const result = await httpGet(URL, { retry: fast })
-    expect(result.data).toEqual({ name: 'Show' })
-    expect(mockSetCache).toHaveBeenCalledWith(
-      URL,
-      expect.objectContaining({ data: { name: 'Show' } }),
-      'W/"ok"',
-      null
-    )
+    expect(result).toEqual({ data: { name: 'Show' }, headers: { etag: 'W/"ok"' } })
+    // No validators of its own: a second fetch is a full one
+    const sent = mockGot.mock.calls[0][1].headers
+    expect(sent['If-None-Match']).toBeUndefined()
+    expect(sent['If-Modified-Since']).toBeUndefined()
   })
 
-  it('serves the cached payload on a 304 when asked to', async () => {
-    mockGetCache.mockResolvedValue({ data: { _dataType: 'json', _isBuffer: false, data: { name: 'Show' } }, etag: 'W/"ok"' })
-    mockGot.mockResolvedValue(reply(304))
+  it('returns a buffer body as a Buffer', async () => {
+    mockGot.mockResolvedValue({ ...reply(200), rawBody: Buffer.from('jpeg bytes') })
 
-    const result = await httpGet(URL, { retry: fast }, true)
-    expect(result.data).toEqual({ name: 'Show' })
-    expect(mockGot.mock.calls[0][1].headers['If-None-Match']).toBe('W/"ok"')
+    const { data } = await httpGet(URL, { responseType: 'buffer', retry: fast })
+    expect(Buffer.isBuffer(data)).toBe(true)
+    expect(data.toString()).toBe('jpeg bytes')
   })
 
-  it("answers a 304 with data: null when nothing is cached here (the caller's own If-None-Match)", async () => {
+  it("answers a 304 with data: null: only the caller's own If-None-Match can bring one", async () => {
     mockGot.mockResolvedValue(reply(304))
 
     const result = await httpGet(URL, { headers: { 'If-None-Match': 'W/"theirs"' }, retry: fast })
@@ -205,66 +179,8 @@ describe('what a failed request logs', () => {
   })
 })
 
-describe('the cache log lines', () => {
+describe('a feed URL that carries its API key', () => {
   const FEED = 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=s3cr3t&unmonitored=true'
-  const FILE = 'https://files.example/movies/Caf%C3%A9%20(2001)/metadata.json?hash=0123abcd'
-  // One record per call: the message and its fields
-  const records = () => mockLogDebug.mock.calls.map(([fields, msg]) => ({ msg, ...fields }))
-  const noKey = () => {
-    for (const record of records()) expect(JSON.stringify(record)).not.toContain('s3cr3t')
-  }
-
-  it('STORE: shows a feed URL with its API key REDACTED', async () => {
-    mockGot.mockResolvedValue(reply(200, 'BEGIN:VCALENDAR'))
-
-    await httpGet(FEED, { responseType: 'text', retry: fast })
-
-    expect(records()).toContainEqual({
-      msg: 'Cache store',
-      url: 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true',
-      type: 'text',
-      size: '15 Bytes',
-    })
-    noKey()
-  })
-
-  it('HIT: shows a feed URL with its API key REDACTED', async () => {
-    mockGetCache.mockResolvedValue({ data: 'BEGIN:VCALENDAR', etag: 'W/"ics"' })
-    mockGot.mockResolvedValue(reply(304))
-
-    await httpGet(FEED, { responseType: 'text', retry: fast }, true)
-
-    expect(records().find((record) => record.msg === 'Cache hit').url).toContain('?apikey=REDACTED&unmonitored=true')
-    noKey()
-  })
-
-  it('MISS: shows a feed URL with its API key REDACTED', async () => {
-    // A cached buffer that is not one: a miss, then a fresh answer
-    mockGetCache.mockResolvedValue({ data: { _dataType: 'buffer', data: 42 }, etag: 'W/"b"' })
-    mockGot.mockResolvedValueOnce(reply(304)).mockResolvedValueOnce({ ...reply(200), rawBody: Buffer.from('abc') })
-
-    await httpGet(FEED, { responseType: 'buffer', retry: fast }, true)
-
-    expect(records().find((record) => record.msg === 'Cache miss')).toEqual({
-      msg: 'Cache miss',
-      url: 'https://sonarr.example/feed/calendar/Sonarr.ics?apikey=REDACTED&unmonitored=true',
-      reason: 'invalid buffer format in cache',
-    })
-    noKey()
-  })
-
-  it('shows a file URL exactly as it was asked for, its hash included', async () => {
-    mockGot.mockResolvedValue(reply(200, '{"title":"Film"}'))
-
-    await httpGet(FILE, { retry: fast })
-
-    expect(records().find((record) => record.msg === 'Cache store')).toEqual({
-      msg: 'Cache store',
-      url: FILE,
-      type: 'json',
-      size: '0 Bytes',
-    })
-  })
 
   it('a 503 on a feed URL logs no key: not in the retry warnings, not in the final line', async () => {
     mockGot.mockResolvedValue(reply(503))
@@ -276,7 +192,7 @@ describe('the cache log lines', () => {
     // The thrown error is unchanged: its callers see the same error
     expect(error.message).toBe(`HTTP Error: 503 for URL: ${FEED}`)
     expect(mockGot).toHaveBeenCalledTimes(3)
-    const logged = [...console.warn.mock.calls, ...console.error.mock.calls, ...mockLogDebug.mock.calls, ...mockLogError.mock.calls]
+    const logged = [...console.warn.mock.calls, ...console.error.mock.calls]
       .flat()
       .map((entry) => (typeof entry === 'string' ? entry : JSON.stringify(entry)))
     expect(console.warn).toHaveBeenCalledTimes(2)

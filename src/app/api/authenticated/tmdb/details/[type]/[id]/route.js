@@ -65,9 +65,8 @@ export async function GET(request, { params }) {
           maxDelay: 5000,
           shouldRetry: isRetryableBackendError,
         },
-      },
-      true
-    ) // Enable cache for details - they don't change often
+      }
+    )
 
     return Response.json(response.data)
   } catch (error) {

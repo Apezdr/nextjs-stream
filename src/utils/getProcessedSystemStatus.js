@@ -83,14 +83,10 @@ async function fetchOneStatus(server) {
   // Using internalEndpoint for server-to-server requests; falls back to syncEndpoint if unset.
   const { data, headers: resp } = await httpGet(
     endpoint,
-    { ...DEFAULTS.HTTP_GET, headers, http2: useHttp2 },
-    true // allow 304 caching
+    { ...DEFAULTS.HTTP_GET, headers, http2: useHttp2 }
   )
 
-  // Normalize the response data structure to handle both cached and fresh responses
-  const responseData = data?.data || data
-
-  return buildStatus(server, responseData, resp)
+  return buildStatus(server, data, resp)
 }
 
 let cachedStatus = null // { value, expiresAt }

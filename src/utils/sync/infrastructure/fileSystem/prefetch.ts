@@ -147,8 +147,7 @@ export async function readBlurhashDirect(
         headers: {
           Accept: 'text/plain, */*',
         },
-      },
-      true // returnCacheDataIfAvailable - return cached data on 304
+      }
     )
 
     // Check Content-Type header - should be text/plain, not text/html (error page)
@@ -157,14 +156,7 @@ export async function readBlurhashDirect(
       throw new HtmlPageError(contentType)
     }
 
-    // Extract data from wrapper if it's a cached response with _dataType
-    // httpHelper stores text as: { _dataType: 'text', _isBuffer: false, data: actualText }
-    let blurhashData = response.data
-    if (blurhashData && typeof blurhashData === 'object' && blurhashData._dataType === 'text') {
-      blurhashData = blurhashData.data
-    }
-
-    const trimmedData = blurhashData ? blurhashData.trim() : null
+    const trimmedData = response.data ? response.data.trim() : null
 
     if (!trimmedData) {
       return null

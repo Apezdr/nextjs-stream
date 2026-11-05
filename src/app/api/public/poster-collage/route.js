@@ -34,7 +34,7 @@ export const GET = async (req) => {
         minTimeout: 1000,
         maxTimeout: 5000
       }
-    }, true)
+    })
 
     // Convert Buffer to ArrayBuffer for Response constructor
     const arrayBuffer = buffer.buffer.slice(

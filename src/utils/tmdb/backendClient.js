@@ -143,13 +143,8 @@ export async function fetchTmdbFromBackend(endpointPath, params = {}, options = 
         maxDelay: 5000,
         shouldRetry: isRetryableBackendError,
       },
-    },
-    // Always serve the Redis-cached body on a 304. This must be unconditional:
-    // httpGet stores body+ETag for every 2xx regardless of this flag, so once
-    // the backend starts answering 304 a caller that passed `false` here would
-    // receive `data: null`.
-    true
+    }
   )
 
-  return { data: unwrapCachedEnvelope(response.data), headers: response.headers ?? {} }
+  return { data: response.data, headers: response.headers ?? {} }
 }

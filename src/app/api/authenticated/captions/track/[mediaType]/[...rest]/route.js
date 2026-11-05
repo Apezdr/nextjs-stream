@@ -103,7 +103,7 @@ export const GET = async (req, props) => {
 
 async function fetchAndConvertSrt(srtUrl) {
   try {
-    const { data } = await httpGet(srtUrl, { responseType: 'text' }, true)
+    const { data } = await httpGet(srtUrl, { responseType: 'text' })
     const subtitleContent = data?.data ?? data
     if (!subtitleContent || typeof subtitleContent !== 'string') {
       return jsonError(502, 'Failed to fetch subtitle content')

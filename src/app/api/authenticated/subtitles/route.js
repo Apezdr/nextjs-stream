@@ -80,7 +80,7 @@ export const GET = async (req) => {
     try {
       const { data } = await httpGet(subtitleUrl, {
         responseType: 'text',
-      }, true)
+      })
 
       // Normalize the response data structure to handle both cached and fresh responses
       const subtitleContent = data?.data || data;

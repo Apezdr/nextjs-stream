@@ -94,9 +94,8 @@ export async function GET(request) {
             return statusCode >= 500 || statusCode === 429
           },
         },
-      },
-      false
-    ) // Don't cache health checks for real-time status
+      }
+    )
 
     return Response.json(response.data)
   } catch (error) {

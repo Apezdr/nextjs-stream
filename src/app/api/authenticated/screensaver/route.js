@@ -44,7 +44,7 @@ async function analyzeImageContrast(logoUrl, backdropUrl) {
           minTimeout: 1000,
           maxTimeout: 3000
         }
-      }, true),
+      }),
       httpGet(backdropUrl, {
         responseType: 'buffer',
         headers: {
@@ -57,12 +57,11 @@ async function analyzeImageContrast(logoUrl, backdropUrl) {
           minTimeout: 1000,
           maxTimeout: 3000
         }
-      }, true)
+      })
     ])
-    
-    // Normalize the response data structure to handle both cached and fresh responses
-    const logoData = logoResponse.data?.data || logoResponse.data;
-    const backdropData = backdropResponse.data?.data || backdropResponse.data;
+
+    const logoData = logoResponse.data;
+    const backdropData = backdropResponse.data;
     
     // Check if we successfully fetched both images
     if (!logoData || !backdropData) {
@@ -156,11 +155,6 @@ async function analyzeImageContrast(logoUrl, backdropUrl) {
       backdropHasContrastingRegions: hasContrastingRegions,
       regionLuminances: regionLuminances,
       contrastThreshold,
-      // Add metadata about the image sources
-      imageSources: {
-        logo: logoResponse.meta?.source || 'unknown',
-        backdrop: backdropResponse.meta?.source || 'unknown'
-      }
     }
   } catch (error) {
     console.error('Error analyzing image contrast:', error)

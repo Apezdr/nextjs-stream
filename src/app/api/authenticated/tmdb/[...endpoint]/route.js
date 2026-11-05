@@ -4,7 +4,6 @@ import {
   backendErrorResponse,
   fetchTmdbFromBackend,
   isRetryableBackendError,
-  unwrapCachedEnvelope,
 } from '@src/utils/tmdb/backendClient'
 import { hasMatchingETag, createNotModifiedResponse } from '@src/utils/cache/etagHelpers'
 import { limitTmdbDetailsCast } from '@src/utils/media/responseCast'
@@ -49,12 +48,6 @@ export async function GET(request, { params }) {
       params[key] = value
     })
 
-    // Shared transport: Redis body+ETag cache with If-None-Match revalidation
-    // against the backend, cached body served on 304. Serve-from-cache is
-    // unconditional inside fetchTmdbFromBackend — httpGet stores every 2xx
-    // regardless, so a non-serving caller would receive `data: null` once the
-    // backend starts answering 304 (previously a latent bug here for the
-    // endpoints outside the old shouldCache list).
     const { data, headers: backendHeaders } = await fetchTmdbFromBackend(endpointPath, params, {
       authHeaders: await getBackendAuthHeaders(request),
     })
@@ -175,7 +168,7 @@ export async function POST(request, { params }) {
         }
 
         const data = await response.json()
-        return Response.json(unwrapCachedEnvelope(data))
+        return Response.json(data)
       } catch (error) {
         // No status to judge: the backend unreachable, a timeout, a bad JSON body
         lastError = error

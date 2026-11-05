@@ -132,8 +132,7 @@ export async function fetchMetadataMultiServer(
         }
 
         // Process the data based on type
-        // A cached text body comes back wrapped ({ _dataType: 'text', data })
-        const body = type === 'blurhash' && data && typeof data === 'object' && data._dataType === 'text' ? data.data : data
+        const body = data
         const processedData =
           type === 'blurhash'
             ? body ? body.trim() : null

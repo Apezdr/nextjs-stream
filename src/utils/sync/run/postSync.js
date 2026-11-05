@@ -567,15 +567,6 @@ export async function runPostSyncCleanup(listings, options = {}) {
         'Marker-based cleanup complete'
       )
 
-      // ─── Phase 6: Cache invalidation (unchanged from legacy semantics) ──────
-      let cacheResults = null
-      if (
-        removed.movies.length || removed.tvShows.length
-        || removed.tvSeasons.length || removed.tvEpisodes.length
-      ) {
-        cacheResults = await clearCacheEntries(removed)
-      }
-
       // Deleted movies and shows would otherwise live on in the page caches
       // and the /list banner until those expire. Cleanup runs detached from
       // any request, where revalidateTag is a no-op, so it asks the
@@ -610,7 +601,6 @@ export async function runPostSyncCleanup(listings, options = {}) {
       return {
         removed,
         errors: { movies: [], tvShows: [], tvSeasons: [], tvEpisodes: [] },
-        cache: cacheResults,
       }
     } catch (error) {
       logError(log, error, { context: 'post_sync_cleanup' })
@@ -624,92 +614,4 @@ export async function runPostSyncCleanup(listings, options = {}) {
       span.end()
     }
   })
-}
-
-// ─── Cache invalidation ───────────────────────────────────────────────────────
-
-async function clearCacheEntries(removedContent) {
-  const log = createLogger('FlatSync.PostSyncCleanup.Cache')
-  const { getRedisClient } = await import('@src/lib/redisClient')
-  const redisClient = await getRedisClient()
-  if (!redisClient) {
-    log.info('Redis not configured. Skipping cache clearing.')
-    return { cleared: 0, errors: 0 }
-  }
-
-  const results = { cleared: 0, errors: 0, details: [] }
-
-  const dropPattern = async (pattern) => {
-    const keys = await redisClient.keys(pattern)
-    if (keys.length > 0) {
-      await redisClient.del(keys)
-      results.cleared += keys.length
-    }
-  }
-
-  try {
-    for (const movieTitle of removedContent.movies) {
-      try {
-        await dropPattern(`movie:${movieTitle}*`)
-        await dropPattern(`metadata:movie:${movieTitle}*`)
-        await dropPattern(`blurhash:movie:${movieTitle}*`)
-        await dropPattern(`poster:movie:${movieTitle}*`)
-        await dropPattern(`backdrop:movie:${movieTitle}*`)
-      } catch (error) {
-        logError(log, error, { movieTitle, context: 'clear_cache_movie' })
-        results.errors++
-      }
-    }
-
-    for (const showTitle of removedContent.tvShows) {
-      try {
-        await dropPattern(`tv:${showTitle}*`)
-        await dropPattern(`metadata:tv:${showTitle}*`)
-        await dropPattern(`blurhash:tv:${showTitle}*`)
-        await dropPattern(`poster:tv:${showTitle}*`)
-        await dropPattern(`backdrop:tv:${showTitle}*`)
-        await dropPattern(`season:${showTitle}*`)
-        await dropPattern(`episode:${showTitle}*`)
-      } catch (error) {
-        logError(log, error, { showTitle, context: 'clear_cache_tv_show' })
-        results.errors++
-      }
-    }
-
-    for (const seasonTitle of removedContent.tvSeasons || []) {
-      try {
-        const m = seasonTitle.match(/^(.+) Season (\d+)$/)
-        if (!m) continue
-        const [, showTitle, seasonNumber] = m
-        await dropPattern(`season:${showTitle}:${seasonNumber}*`)
-        await dropPattern(`metadata:season:${showTitle}:${seasonNumber}*`)
-        await dropPattern(`blurhash:season:${showTitle}:${seasonNumber}*`)
-        await dropPattern(`poster:season:${showTitle}:${seasonNumber}*`)
-      } catch (error) {
-        logError(log, error, { seasonTitle, context: 'clear_cache_season' })
-        results.errors++
-      }
-    }
-
-    for (const episodeTitle of removedContent.tvEpisodes || []) {
-      try {
-        const m = episodeTitle.match(/^(.+) S(\d+)E(\d+)$/)
-        if (!m) continue
-        const [, showTitle, seasonNumber, episodeNumber] = m
-        await dropPattern(`episode:${showTitle}:${seasonNumber}:${episodeNumber}*`)
-        await dropPattern(`metadata:episode:${showTitle}:${seasonNumber}:${episodeNumber}*`)
-        await dropPattern(`blurhash:episode:${showTitle}:${seasonNumber}:${episodeNumber}*`)
-        await dropPattern(`thumbnail:episode:${showTitle}:${seasonNumber}:${episodeNumber}*`)
-      } catch (error) {
-        logError(log, error, { episodeTitle, context: 'clear_cache_episode' })
-        results.errors++
-      }
-    }
-
-    log.info({ cleared: results.cleared, errors: results.errors }, 'Cache clearing complete')
-    return results
-  } catch (error) {
-    logError(log, error, { context: 'cache_clearing' })
-    return { cleared: 0, errors: 1, details: [error.message] }
-  }
 }
