@@ -26,6 +26,10 @@ jest.mock('@src/lib/auth-client', () => {
 })
 
 const user = { name: 'Test User', email: 'user@example.com', image: '' }
+const knownClients = [
+  ['mobile-app', 'The TV and mobile app'],
+  ['nextjs-stream-windows', 'The Windows app'],
+]
 const originalResizeObserver = global.ResizeObserver
 const pending = (overrides = {}) => ({
   data: { user_code: 'ABCDEFGH', status: 'pending', client_id: 'mobile-app', ...overrides },
@@ -52,7 +56,8 @@ beforeEach(() => {
   authClient.device.deny.mockResolvedValue({ error: null })
 })
 
-test('QR sign-in claims the code, names the app asking, then approves', async () => {
+test.each(knownClients)('QR sign-in claims the code, names %s, then approves', async (clientId, name) => {
+  authClient.device.mockResolvedValue(pending({ client_id: clientId }))
   render(await DevicePage({ searchParams: Promise.resolve({ user_code: 'ABCDEFGH' }) }))
 
   expect(screen.getByRole('heading', { name: 'Sign in to your device' })).toBeInTheDocument()
@@ -61,7 +66,7 @@ test('QR sign-in claims the code, names the app asking, then approves', async ()
 
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
-  expect(await screen.findByText('The TV and mobile app')).toBeInTheDocument()
+  expect(await screen.findByText(name)).toBeInTheDocument()
   expect(screen.getByText(/is asking to sign in to your account/)).toBeInTheDocument()
   expect(screen.getByText(/Approve only if this code is showing right now on a device you have/)).toBeInTheDocument()
   expect(authClient.device).toHaveBeenCalledWith({ query: { user_code: 'ABCDEFGH' } })
@@ -131,7 +136,8 @@ test('an expired code says so and offers a new one', async () => {
   expect(screen.getByRole('button', { name: 'Enter New Code' })).toBeInTheDocument()
 })
 
-test('the device-link dialog claims the code, names the app, then links the device', async () => {
+test.each(knownClients)('the device-link dialog claims the code, names %s, then links the device', async (clientId, name) => {
+  authClient.device.mockResolvedValue(pending({ client_id: clientId }))
   render(<DeviceLinkModal isOpen onClose={jest.fn()} />)
 
   expect(screen.getByRole('heading', { name: 'Link your device' })).toBeInTheDocument()
@@ -140,7 +146,7 @@ test('the device-link dialog claims the code, names the app, then links the devi
   fireEvent.change(screen.getByRole('textbox'), { target: { value: 'abcdefgh' } })
   fireEvent.click(screen.getByRole('button', { name: 'Continue' }))
 
-  expect(await screen.findByText('The TV and mobile app')).toBeInTheDocument()
+  expect(await screen.findByText(name)).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
 
   expect(await screen.findByText('Your device has been linked to your account.')).toBeInTheDocument()
