@@ -150,6 +150,7 @@ function ActivePlayerBody({
   mediaKey,
   castReceiverId,
   castToken,
+  playbackUserId,
   isAdmin,
   adminProps,
 }) {
@@ -283,6 +284,7 @@ function ActivePlayerBody({
               clearStartParam={explicitStart !== null}
               mediaMetadata={playbackMetadata}
               castAdopted={castingThisTitle}
+              userId={playbackUserId}
             />
           ) : null}
           {clipStartTime || clipEndTime ? (

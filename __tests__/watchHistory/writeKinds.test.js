@@ -124,7 +124,8 @@ const TV_META = { mediaType: 'tv', mediaId: 'abc', showId: 'show1', seasonNumber
 const post = (body) =>
   POST(new Request('http://localhost/api/authenticated/sync/updatePlayback', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'user-agent': 'test' },
+    // A browser save names the user its page was rendered for (playbackUser.ts)
+    headers: { 'Content-Type': 'application/json', 'user-agent': 'test', 'X-Playback-User': '507f1f77bcf86cd799439011' },
     body: JSON.stringify(body),
   }))
 

@@ -18,8 +18,9 @@ import EpisodeActionDialog from './details/EpisodeActionDialog'
  * @param {Array<{ seasonNumber: number, title?: string|null }>} props.seasons - seasons the selector offers
  * @param {number} props.current - this season's number
  * @param {string} props.routeKey - the show's already-encoded route key
+ * @param {string|null} [props.userId] - the user the page was rendered for, whom Mark watched names
  */
-export default function SeasonEpisodeList({ episodes, seasons, current, routeKey }) {
+export default function SeasonEpisodeList({ episodes, seasons, current, routeKey, userId = null }) {
   const [view, setView] = useStoredView()
   const [active, setActive] = useState(null)
   const router = useRouter()
@@ -49,7 +50,13 @@ export default function SeasonEpisodeList({ episodes, seasons, current, routeKey
           ))}
         </ul>
       )}
-      <EpisodeActionDialog open={Boolean(active)} episode={active} onClose={() => setActive(null)} onMarked={() => router.refresh()} />
+      <EpisodeActionDialog
+        open={Boolean(active)}
+        episode={active}
+        onClose={() => setActive(null)}
+        onMarked={() => router.refresh()}
+        userId={userId}
+      />
     </>
   )
 }

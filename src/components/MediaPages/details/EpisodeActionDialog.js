@@ -13,14 +13,14 @@ import { SECONDARY_CLASSES } from './Primitives'
  * dialog for another episode remounts it with fresh `pending` state — no
  * effect resets anything.
  */
-function DialogBody({ episode, completed, onClose, onMarked }) {
+function DialogBody({ episode, completed, onClose, onMarked, userId }) {
   const [pending, setPending] = useState(false)
   const playable = Boolean(episode.videoURL && episode.hrefs?.play)
 
   const handleMark = async () => {
     setPending(true)
     try {
-      await markWatched(episode)
+      await markWatched(episode, { userId })
       toast.success('Marked as watched')
       onMarked?.(episode)
       onClose()
@@ -80,10 +80,11 @@ function DialogBody({ episode, completed, onClose, onMarked }) {
  * Mark watched posts the finished position through markWatched, which also
  * primes the local mirror, so the row behind the dialog flips to "Watched"
  * the moment it closes; `onMarked` lets the page refresh its server data.
+ * `userId` is the user the page was rendered for, whom the write names.
  *
- * @param {{ open: boolean, episode: import('./EpisodeRow').EpisodeRowData|null, onClose: () => void, onMarked?: ((episode: Object) => void)|null }} props
+ * @param {{ open: boolean, episode: import('./EpisodeRow').EpisodeRowData|null, onClose: () => void, onMarked?: ((episode: Object) => void)|null, userId?: string|null }} props
  */
-export default function EpisodeActionDialog({ open, episode, onClose, onMarked = null }) {
+export default function EpisodeActionDialog({ open, episode, onClose, onMarked = null, userId = null }) {
   const progress = useLiveProgress({
     watchHistory: episode?.watchHistory ?? null,
     mediaId: episode?.mediaId ?? null,
@@ -99,7 +100,14 @@ export default function EpisodeActionDialog({ open, episode, onClose, onMarked =
       <DialogBackdrop className="fixed inset-0 bg-black/60 backdrop-blur-sm" />
       <div className="fixed inset-0 flex items-center justify-center p-4">
         <DialogPanel className="w-full max-w-sm rounded-2xl bg-[#0f1633] p-6 ring-1 ring-white/10 shadow-2xl">
-          <DialogBody key={episode._id} episode={episode} completed={progress.completed} onClose={onClose} onMarked={onMarked} />
+          <DialogBody
+            key={episode._id}
+            episode={episode}
+            completed={progress.completed}
+            onClose={onClose}
+            onMarked={onMarked}
+            userId={userId}
+          />
         </DialogPanel>
       </div>
     </Dialog>

@@ -318,6 +318,10 @@ async function VideoPlayer({
       <MainVideoPlayer
         videoURL={videoURL}
         castToken={castPlaybackToken}
+        // The user this page is rendered for: every playback save names them,
+        // and the server refuses one sent once the cookie is someone else's
+        // (a "View as" Stop, a sign-in in another tab; src/lib/playbackUser.ts)
+        playbackUserId={session?.user?.id ?? null}
         poster={poster}
         titleLabel={mediaPlayerTitleLabel}
         title={title}

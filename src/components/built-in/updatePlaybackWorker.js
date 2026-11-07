@@ -1,5 +1,5 @@
 self.addEventListener('message', (e) => {
-  const { videoURL, currentTime, mediaMetadata, isPaused, localIp, sessionId, kind } = e.data
+  const { videoURL, currentTime, mediaMetadata, isPaused, localIp, sessionId, kind, headers } = e.data
 
   // Workers need absolute URLs - construct from self.location.origin
   const apiUrl = `${self.location.origin}/api/authenticated/sync/updatePlayback`
@@ -13,7 +13,10 @@ self.addEventListener('message', (e) => {
 
   fetch(apiUrl, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    // From the tracker (playbackWriteHeaders): JSON, and the user the page was
+    // rendered for, which the server checks against the session
+    // (src/lib/playbackUser.ts). Without it the write is refused.
+    headers: { 'Content-Type': 'application/json', ...(headers || {}) },
     body: JSON.stringify({
       videoId: videoURL,
       ...(carriesPosition ? { playbackTime: currentTime } : {}),

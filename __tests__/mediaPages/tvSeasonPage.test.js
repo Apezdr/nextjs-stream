@@ -7,7 +7,7 @@
  * season selector, the view toggle and the action dialog.
  */
 
-import { render, screen, within, fireEvent } from '@testing-library/react'
+import { act, render, screen, within, fireEvent } from '@testing-library/react'
 
 jest.mock('react', () => ({
   ...jest.requireActual('react'),
@@ -207,6 +207,15 @@ describe('TVEpisodesListComponent', () => {
 
     fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
     expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('marks an episode watched as the user the page was rendered for', async () => {
+    const { markWatched } = require('@components/WatchProgress/markWatched')
+    await renderSeason()
+    fireEvent.click(screen.getAllByRole('button', { name: 'Episode actions' })[1])
+    const dialog = await screen.findByRole('dialog')
+    await act(async () => fireEvent.click(within(dialog).getByRole('button', { name: 'Mark watched' })))
+    expect(markWatched).toHaveBeenCalledWith(expect.objectContaining({ episodeNumber: 2 }), { userId: 'u1' })
   })
 
   it('switches seasons through the selector', async () => {

@@ -6,6 +6,7 @@ import usePlaybackReady from '@components/MediaPlayer/usePlaybackReady';
 import throttle from 'lodash/throttle';
 import { usePathname } from 'next/navigation';
 import { getPlaybackStorageKey } from '@src/utils/playbackStorageKey';
+import { playbackWriteHeaders } from '@src/lib/playbackUser';
 
 // Presence ping cadence while paused and foregrounded. Coarser than the 1s
 // playing heartbeat on purpose — see plans/media-activity-presence.md.
@@ -62,7 +63,11 @@ export default function WithPlayBackTracker({
   mediaId = null,
   // True while a Cast receiver is playing THIS title and the transport bridge
   // is mirroring it. The position on screen then belongs to the television.
-  castAdopted = false
+  castAdopted = false,
+  // The user this page was rendered for. Every write names them, and the
+  // server refuses one whose session is someone else's by the time it goes:
+  // a "View as" Stop, or a sign-in in another tab (src/lib/playbackUser.ts).
+  userId = null
 }) {
   const store = Player.usePlayer();
   // localStorage progress key: stable identity when available, else videoURL.
@@ -86,7 +91,7 @@ export default function WithPlayBackTracker({
   // the resume seek reports the player booting, not a viewing position.
   const hasAppliedStartRef = useRef(false);
   const localIpRef = useRef(null);
-  const latestRef = useRef({ store: null, videoURL: null, mediaMetadata: null, castAdopted: false });
+  const latestRef = useRef({ store: null, videoURL: null, mediaMetadata: null, castAdopted: false, userId: null });
   const sessionIdRef = useRef(null);
   if (sessionIdRef.current === null) {
     sessionIdRef.current = generateSessionId();
@@ -267,6 +272,7 @@ export default function WithPlayBackTracker({
           isPaused: pausedRef.current,
           localIp: localIpRef.current,
           sessionId: sessionIdRef.current,
+          headers: playbackWriteHeaders(userId),
         });
       } else {
         nextUpdateTimeRef.current = currentTime;
@@ -288,7 +294,7 @@ export default function WithPlayBackTracker({
       unsubscribe();
       throttledUpdateServer.cancel();
     };
-  }, [store, storageKey, videoURL, canTrack, mediaMetadata, castAdopted]);
+  }, [store, storageKey, videoURL, canTrack, mediaMetadata, castAdopted, userId]);
 
   // Send a heartbeat whenever the paused state changes so the live activity
   // view keeps showing the session (as paused) instead of dropping it.
@@ -306,8 +312,9 @@ export default function WithPlayBackTracker({
       isPaused: paused === true,
       localIp: localIpRef.current,
       sessionId: sessionIdRef.current,
+      headers: playbackWriteHeaders(userId),
     });
-  }, [paused, canTrack, store, videoURL, mediaMetadata, castAdopted]);
+  }, [paused, canTrack, store, videoURL, mediaMetadata, castAdopted, userId]);
 
   // Keep presence alive at a low frequency while paused and foregrounded.
   // The currentTime-driven heartbeat stops when playback pauses.
@@ -345,15 +352,16 @@ export default function WithPlayBackTracker({
         isPaused: true,
         localIp: localIpRef.current,
         sessionId: sessionIdRef.current,
+        headers: playbackWriteHeaders(userId),
       });
     }, PAUSED_HEARTBEAT_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [canTrack, store, videoURL, mediaMetadata, castAdopted]);
+  }, [canTrack, store, videoURL, mediaMetadata, castAdopted, userId]);
 
   // Latest values for the unload path below, which is bound once per mount.
   useEffect(() => {
-    latestRef.current = { store, videoURL, mediaMetadata, castAdopted };
+    latestRef.current = { store, videoURL, mediaMetadata, castAdopted, userId };
   });
 
   // Best-effort explicit "stopped watching" signal. keepalive lets the
@@ -364,11 +372,16 @@ export default function WithPlayBackTracker({
   // pending when the tab went away, and lodash's trailing call is cancelled
   // in the heartbeat effect's cleanup — without this, the last second of
   // every session was lost while the TV app kept its last 30.
+  //
+  // Both name the user the page was rendered for. They go out as the page
+  // leaves, and a "View as" Stop is exactly that: by then the cookie is the
+  // admin's, and the server refuses them rather than land the user's position
+  // in the admin's history.
   useEffect(() => {
     let flushed = false;
     const flushFinal = () => {
       if (flushed) return;
-      const { store: s, videoURL: url, mediaMetadata: meta, castAdopted: adopted } = latestRef.current;
+      const { store: s, videoURL: url, mediaMetadata: meta, castAdopted: adopted, userId: user } = latestRef.current;
       // The television owns the position while adopted; nothing to flush.
       if (adopted || !s || !url) return;
       // Never flush a position the saved point was not applied to yet: a
@@ -386,7 +399,7 @@ export default function WithPlayBackTracker({
       try {
         fetch('/api/authenticated/sync/updatePlayback', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: playbackWriteHeaders(user),
           body: JSON.stringify({
             videoId: url,
             playbackTime: currentTime,
@@ -408,7 +421,7 @@ export default function WithPlayBackTracker({
       try {
         fetch(PRESENCE_END_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: playbackWriteHeaders(latestRef.current.userId),
           body: JSON.stringify({ sessionId }),
           keepalive: true,
         }).catch(() => {});

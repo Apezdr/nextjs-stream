@@ -3,6 +3,10 @@ import { signedInGate } from '@src/lib/roles/gates'
 import { generateNormalizedVideoId } from '../../../../../utils/flatDatabaseUtils'
 import { updateValidationStatus } from '../../../../../utils/watchHistory/database'
 import { bumpRevisionAfterResponse, watchHistoryRevision } from '@src/utils/changes/revisions'
+import { refusePlaybackUserMismatch } from '@src/lib/playbackUser'
+import { createLogger } from '@src/lib/logger'
+
+const log = createLogger('API.UpdateValidationStatus')
 
 /**
  * @param {*} req
@@ -16,6 +20,11 @@ export const POST = async (req) => {
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }
+
+  // A watch-history write: a cookie one names the user its page was rendered
+  // for, as every playback write does (playbackUser.ts). The TV app's is Bearer.
+  const mismatch = refusePlaybackUserMismatch(req, authResult.id, log)
+  if (mismatch) return mismatch
 
   try {
     const body = await req.json()

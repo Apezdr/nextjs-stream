@@ -202,7 +202,7 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
       </header>
 
       <section aria-labelledby="episodes-heading" className="mt-10 sm:mt-14">
-        <SeasonEpisodeList episodes={rows} seasons={selectorSeasons} current={n} routeKey={routeKey} />
+        <SeasonEpisodeList episodes={rows} seasons={selectorSeasons} current={n} routeKey={routeKey} userId={userId} />
       </section>
     </div>
   )

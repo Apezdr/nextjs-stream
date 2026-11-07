@@ -1,6 +1,7 @@
 import { approvedGate } from '@src/lib/roles/gates'
 import { endPresenceSession } from '@src/utils/playbackPresence/database'
 import { createLogger } from '@src/lib/logger'
+import { refusePlaybackUserMismatch } from '@src/lib/playbackUser'
 
 const log = createLogger('API.PresenceEnd')
 
@@ -9,6 +10,10 @@ export const POST = async (req) => {
   if (authResult instanceof Response) {
     return authResult
   }
+
+  // Only the account the player's page was rendered for (playbackUser.ts)
+  const mismatch = refusePlaybackUserMismatch(req, authResult.id, log)
+  if (mismatch) return mismatch
 
   try {
     const body = await req.json()

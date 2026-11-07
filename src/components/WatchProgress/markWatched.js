@@ -7,7 +7,9 @@
  * complete. The body mirrors what the web player sends (mediaMetadata with
  * the document `_id`; the server resolves its own durable `mid:`).
  * `isPaused: true` and no sessionId keep it from opening a presence
- * heartbeat.
+ * heartbeat. Like every browser playback write it names the user the page
+ * was rendered for, and the server refuses it when the session has become
+ * someone else's (a sign-in in another tab: src/lib/playbackUser.ts).
  *
  * On success the localStorage mirror is primed under the same keys
  * SyncClientWithServerWatched writes (the 'mid:' mediaId and the raw
@@ -18,6 +20,7 @@
  */
 
 import { mutate } from 'swr'
+import { playbackWriteHeaders } from '@src/lib/playbackUser'
 
 /** The SWR key useWatchPosition reads this title's position under. */
 export const PLAYBACK_POSITION_KEY = (videoURL) => `/api/authenticated/sync/playback?videoId=${encodeURIComponent(videoURL)}`
@@ -45,10 +48,16 @@ function writeMirror(key, value) {
  * @param {string|null} [episode.showId]
  * @param {number} [episode.seasonNumber]
  * @param {number} [episode.episodeNumber]
+ * @param {Object} page
+ * @param {string|null} page.userId - the user the page was rendered for
  * @returns {Promise<{ playbackTime: number }>} the position written, in seconds
- * @throws {Error} 'This episode has no playable file' | 'Runtime unknown' | 'Mark watched failed (<status>)'
+ * @throws {Error} 'This episode has no playable file' | 'Runtime unknown' |
+ *   'This page was opened for another account. Reload it.' | 'Mark watched failed (<status>)'
  */
-export async function markWatched({ _id = null, mediaId = null, videoURL, durationMs, showId = null, seasonNumber, episodeNumber }) {
+export async function markWatched(
+  { _id = null, mediaId = null, videoURL, durationMs, showId = null, seasonNumber, episodeNumber },
+  { userId = null } = {}
+) {
   if (!videoURL) throw new Error('This episode has no playable file')
   if (!(durationMs > 0)) throw new Error('Runtime unknown')
 
@@ -57,7 +66,7 @@ export async function markWatched({ _id = null, mediaId = null, videoURL, durati
   const res = await fetch(UPDATE_ENDPOINT, {
     method: 'POST',
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json' },
+    headers: playbackWriteHeaders(userId),
     body: JSON.stringify({
       videoId: videoURL,
       playbackTime,
@@ -73,6 +82,8 @@ export async function markWatched({ _id = null, mediaId = null, videoURL, durati
     }),
   })
 
+  // Signed in as someone else since this page was rendered: reloading shows their page
+  if (res.status === 409) throw new Error('This page was opened for another account. Reload it.')
   if (!res.ok) throw new Error(`Mark watched failed (${res.status})`)
 
   const entry = JSON.stringify({ playbackTime, lastUpdated: new Date().toISOString() })

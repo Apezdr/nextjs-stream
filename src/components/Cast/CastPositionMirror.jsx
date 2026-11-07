@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
+import { playbackWriteHeaders } from '@src/lib/playbackUser'
 import useCastSession from './useCastSession'
 import { getRemote, readFinalRemotePosition } from './castSdk'
 
@@ -29,6 +30,11 @@ import { getRemote, readFinalRemotePosition } from './castSdk'
  *
  * Never queues, never retries — a failed report is dropped and the next tick
  * carries a freshly read position. Same rule as the receiver, same reason.
+ *
+ * Each report names the user this document was rendered for (the layout hands
+ * it in), and the server refuses one once the browser's session is someone
+ * else's (src/lib/playbackUser.ts). A document rendered for no one reports
+ * nothing.
  */
 
 const TICK_MS = 15000
@@ -37,10 +43,10 @@ const MIN_POSITION_S = 2
 /** Movement smaller than this with no pause flip is not worth a write. */
 const MIN_DELTA_S = 1
 
-function postPosition({ videoId, playbackTime, isPaused, keepalive = false }) {
+function postPosition({ videoId, playbackTime, isPaused, keepalive = false, userId }) {
   return fetch('/api/authenticated/sync/updatePlayback', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: playbackWriteHeaders(userId),
     cache: 'no-store',
     keepalive,
     body: JSON.stringify({
@@ -66,7 +72,7 @@ function writeLocalPosition(videoId, playbackTime) {
   }
 }
 
-export default function CastPositionMirror() {
+export default function CastPositionMirror({ userId = null }) {
   const { active, ending, mediaLoaded, contentUrl, contentId } = useCastSession()
   const videoId = contentUrl || contentId || null
 
@@ -77,7 +83,7 @@ export default function CastPositionMirror() {
 
   // The periodic mirror.
   useEffect(() => {
-    if (!active || !mediaLoaded || !videoId) return undefined
+    if (!userId || !active || !mediaLoaded || !videoId) return undefined
 
     hadSessionRef.current = true
 
@@ -94,13 +100,13 @@ export default function CastPositionMirror() {
 
       lastSentRef.current = { time, isPaused }
       writeLocalPosition(videoId, time)
-      postPosition({ videoId, playbackTime: time, isPaused })
+      postPosition({ videoId, playbackTime: time, isPaused, userId })
     }
 
     tick()
     const interval = setInterval(tick, TICK_MS)
     return () => clearInterval(interval)
-  }, [active, mediaLoaded, videoId])
+  }, [active, mediaLoaded, videoId, userId])
 
   // The final flush. By the time React sees the session end, teardown has
   // already zeroed the RemotePlayer, so the position comes from the recorder in
@@ -126,8 +132,9 @@ export default function CastPositionMirror() {
       playbackTime: final.time,
       isPaused: true,
       keepalive: true,
+      userId,
     })
-  }, [active, ending])
+  }, [active, ending, userId])
 
   return null
 }

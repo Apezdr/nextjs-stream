@@ -12,6 +12,8 @@ import TVLayout from '@components/HOC/TVLayout'
 import GeneralLayout from '@components/HOC/GeneralLayout'
 import MovieLayout from '@components/HOC/MovieLayout'
 import CastBootstrap from '@components/Cast/CastBootstrap'
+import CastPositionMirror from '@components/Cast/CastPositionMirror'
+import { getSession } from '@src/lib/cachedAuth'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -68,6 +70,19 @@ async function CastBootstrapFromEnv() {
   return <CastBootstrap receiverId={process.env.CHROMECAST_RECEIVER_ID || null} />
 }
 
+/**
+ * The Cast position mirror, for the user this document is rendered for: its
+ * reports name them, and the server refuses one once the browser's session
+ * is someone else's (src/lib/playbackUser.ts). The layout stays across client
+ * navigations, so this is the document's user until the next full load.
+ */
+async function CastPositionMirrorForSession() {
+  // Request time only, like the View-as banner: the session check reads the clock
+  await connection()
+  const session = await getSession()
+  return <CastPositionMirror userId={session?.user?.id ?? null} />
+}
+
 export default function styledLayout({ children }) {
   return (
     // Safety net only: a page that suspends with no boundary of its own lands
@@ -77,6 +92,11 @@ export default function styledLayout({ children }) {
         castBootstrap={
           <Suspense>
             <CastBootstrapFromEnv />
+          </Suspense>
+        }
+        castMirror={
+          <Suspense>
+            <CastPositionMirrorForSession />
           </Suspense>
         }
       >

@@ -30,9 +30,11 @@ beforeEach(() => {
   global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
 })
 
+const PAGE = { userId: 'u1' }
+
 describe('markWatched', () => {
   it('posts a seek to the runtime through updatePlayback, mirroring the player metadata', async () => {
-    const result = await markWatched(episode)
+    const result = await markWatched(episode, PAGE)
 
     expect(result).toEqual({ playbackTime: 3841 })
     expect(global.fetch).toHaveBeenCalledTimes(1)
@@ -40,7 +42,8 @@ describe('markWatched', () => {
     expect(url).toBe('/api/authenticated/sync/updatePlayback')
     expect(init.method).toBe('POST')
     expect(init.credentials).toBe('include')
-    expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
+    // ...naming the user the page was rendered for, whom the server checks the session against
+    expect(init.headers).toEqual({ 'Content-Type': 'application/json', 'X-Playback-User': 'u1' })
 
     const body = sentBody()
     expect(body.videoId).toBe(VIDEO_URL)
@@ -90,6 +93,18 @@ describe('markWatched', () => {
 
     expect(window.localStorage.getItem(VIDEO_URL)).not.toBeNull()
     expect(window.localStorage.length).toBe(1)
+  })
+
+  it('says to reload when the session has become another account’s since the page was rendered', async () => {
+    global.fetch.mockResolvedValue({ ok: false, status: 409, json: async () => ({ error: 'USER_MISMATCH' }) })
+    await expect(markWatched(episode, PAGE)).rejects.toThrow('This page was opened for another account. Reload it.')
+    expect(window.localStorage.length).toBe(0)
+    expect(mutate).not.toHaveBeenCalled()
+  })
+
+  it('a page rendered for no one names no one (the server refuses it)', async () => {
+    await markWatched(episode)
+    expect(global.fetch.mock.calls[0][1].headers).toEqual({ 'Content-Type': 'application/json' })
   })
 
   it('throws the status number alone on a failed write, touching nothing locally', async () => {

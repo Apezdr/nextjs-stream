@@ -516,7 +516,7 @@ describe('EpisodeActionDialog', () => {
   it('offers Resume and Mark watched, then marks, notifies and closes', async () => {
     const onClose = jest.fn()
     const onMarked = jest.fn()
-    render(<EpisodeActionDialog open episode={pilot} onClose={onClose} onMarked={onMarked} />)
+    render(<EpisodeActionDialog open episode={pilot} onClose={onClose} onMarked={onMarked} userId="u1" />)
 
     expect(screen.getByText('Episode 1 · Pilot')).toBeInTheDocument()
     expect(screen.getByText('Choose an episode action.')).toBeInTheDocument()
@@ -526,7 +526,8 @@ describe('EpisodeActionDialog', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Mark watched' }))
     })
     await waitFor(() => expect(onClose).toHaveBeenCalled())
-    expect(markWatched).toHaveBeenCalledWith(pilot)
+    // As the user the page was rendered for (src/lib/playbackUser.ts)
+    expect(markWatched).toHaveBeenCalledWith(pilot, { userId: 'u1' })
     expect(toast.success).toHaveBeenCalledWith('Marked as watched')
     expect(onMarked).toHaveBeenCalledWith(pilot)
   })

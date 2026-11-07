@@ -9,6 +9,7 @@ import { getClientIP } from '@src/utils/rateLimiter'
 import { invalidateUserWatchHistoryCache } from '@src/utils/cache/invalidation'
 import { upsertPresenceHeartbeat, isRepeatPausedPing } from '@src/utils/playbackPresence/database'
 import { createLogger } from '@src/lib/logger'
+import { refusePlaybackUserMismatch } from '@src/lib/playbackUser'
 
 const log = createLogger('API.UpdatePlayback')
 
@@ -30,6 +31,12 @@ export const POST = async (req) => {
   if (authResult instanceof Response) {
     return authResult // Stop execution and return the unauthorized response
   }
+
+  // A browser's save lands on the account its page was rendered for, or
+  // nowhere: after a "View as" Stop or a sign-in in another tab, the cookie
+  // is someone else's (playbackUser.ts). Bearer clients are exempt.
+  const mismatch = refusePlaybackUserMismatch(req, authResult.id, log)
+  if (mismatch) return mismatch
 
   try {
     const body = await req.json()
