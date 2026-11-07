@@ -53,8 +53,8 @@ jest.mock('@src/utils/flatDatabaseUtils', () => ({
   getFlatTVSeasonWithEpisodes: jest.fn(),
 }))
 
-jest.mock('@src/utils/actions/refreshEpisodes', () => ({
-  refreshEpisodes: jest.fn(),
+jest.mock('@components/MediaPages/mediaListApi', () => ({
+  fetchSeasonHasEpisodes: jest.fn(),
 }))
 
 const mockHistory = {}

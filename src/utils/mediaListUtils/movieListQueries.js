@@ -2,7 +2,8 @@
  * Movie List Query Functions
  * 
  * Dedicated database query functions for movie list view with server-side
- * filtering, sorting, and pagination. These are called by Server Actions.
+ * filtering, sorting, and pagination. Called through the cached list
+ * fetchers (src/utils/cache/mediaListData.js).
  */
 
 import clientPromise from '@src/lib/mongodb'

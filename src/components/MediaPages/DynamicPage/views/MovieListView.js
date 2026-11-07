@@ -4,7 +4,7 @@
  * Displays browseable list of all movies with server-side filtering and pagination.
  * Route: /list/movie or /list
  *
- * REFACTORED: Now uses Server Actions for filtering/pagination instead of client-side filtering
+ * Filtering and paging fetch from the server (GET /api/authenticated/media-list), not client-side
  */
 
 import { Suspense } from 'react'

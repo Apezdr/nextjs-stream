@@ -4,7 +4,7 @@
  * Displays browseable list of all TV shows with server-side filtering and pagination.
  * Route: /list/tv
  *
- * REFACTORED: Now uses Server Actions for filtering/pagination instead of client-side filtering
+ * Filtering and paging fetch from the server (GET /api/authenticated/media-list), not client-side
  */
 
 import { Suspense } from 'react'

@@ -20,7 +20,7 @@ import { ShareIcon } from '@heroicons/react/20/solid'
 import IntentPrefetchLink from '@components/MediaPages/IntentPrefetchLink'
 import SkeletonCard from '@components/SkeletonCard'
 import Loading from '@src/app/loading'
-import { getTVListData } from '@src/utils/actions/mediaListActions'
+import { fetchTVListData } from '@components/MediaPages/mediaListApi'
 import { tvPosterName } from '@src/utils/viewTransitionNames'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
 
@@ -151,13 +151,14 @@ export default function TVListClient({ initialFilters, initialData }) {
       const requestId = ++requestIdRef.current;
       
       startTransition(async () => {
-        const nextData = await getTVListData({
+        // A GET (mediaListApi.js); the route reads the user from the session
+        const nextData = await fetchTVListData({
           ...filters,
           page
         });
-        
-        // Only apply if this is still the latest request
-        if (requestId === requestIdRef.current) {
+
+        // Only apply if this is still the latest request (null: the page is leaving for sign-in)
+        if (nextData && requestId === requestIdRef.current) {
           setData(nextData);
         }
       });

@@ -8,7 +8,6 @@ import { ViewTransition } from 'react'
 import Link from 'next/link'
 import { ChevronRightIcon, InformationCircleIcon } from '@heroicons/react/20/solid'
 import { getFlatTVSeasonWithEpisodes } from '@src/utils/flatDatabaseUtils'
-import { refreshEpisodes } from '@src/utils/actions/refreshEpisodes'
 import { isDurableMediaId } from '@src/utils/watchHistory/resolve'
 import { joinEpisodeWatchHistory, plainWatchHistory } from '@src/utils/watchHistory/joinEpisodes'
 import { durationMsFrom } from '@components/WatchProgress/progress'
@@ -67,7 +66,7 @@ export default async function TVEpisodesListComponent({ showTitle, originalTitle
   const season = await getFlatTVSeasonWithEpisodes({ access, showTitle, seasonNumber: parseInt(seasonNumber, 10) })
   if (!season) return <SeasonNotFound showTitle={showTitle} seasonNumber={seasonNumber} />
   if (!season.episodes || season.episodes.length === 0) {
-    return <NoEpisodesFound onRetry={refreshEpisodes} showTitle={showTitle} seasonNumber={seasonNumber} season={season} />
+    return <NoEpisodesFound showTitle={showTitle} seasonNumber={seasonNumber} season={season} />
   }
 
   const n = season.seasonNumber

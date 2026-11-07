@@ -22,7 +22,7 @@ import IntentPrefetchLink from '@components/MediaPages/IntentPrefetchLink'
 import SkeletonCard from '@components/SkeletonCard'
 import Loading from '@src/app/loading'
 import { ShareIcon } from '@heroicons/react/20/solid'
-import { getMovieListData } from '@src/utils/actions/mediaListActions'
+import { fetchMovieListData } from '@components/MediaPages/mediaListApi'
 import { moviePosterName } from '@src/utils/viewTransitionNames'
 import { mediaLinkParam } from '@src/utils/media/urlParser'
 
@@ -204,14 +204,14 @@ export default function MovieListClient({ initialFilters, initialData }) {
       const requestId = ++requestIdRef.current;
       
       startTransition(async () => {
-        // The action reads the user from the session, not from here
-        const nextData = await getMovieListData({
+        // A GET (mediaListApi.js); the route reads the user from the session, not from here
+        const nextData = await fetchMovieListData({
           ...filters,
           page
         });
-        
-        // Only apply if this is still the latest request
-        if (requestId === requestIdRef.current) {
+
+        // Only apply if this is still the latest request (null: the page is leaving for sign-in)
+        if (nextData && requestId === requestIdRef.current) {
           setData(nextData);
         }
       });

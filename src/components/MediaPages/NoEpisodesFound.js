@@ -6,24 +6,28 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import PageContentAnimatePresence from '@components/HOC/PageContentAnimatePresence';
 import SyncClientWithServerWatched from '@components/SyncClientWithServerWatched';
+import { fetchSeasonHasEpisodes } from '@components/MediaPages/mediaListApi';
 
 const variants = {
   hidden: { opacity: 0, x: 0, y: -20 },
   enter: { opacity: 1, x: 0, y: 0 },
 };
 
-export default function NoEpisodesFound({ onRetry, showTitle, seasonNumber, season = {} }) {
+export default function NoEpisodesFound({ showTitle, seasonNumber, season = {} }) {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
-  
+
   // Use passed season data or create placeholders
   const seasonMetadata = season?.metadata ?? {};
-  
+
   const handleRetry = async () => {
     setIsLoading(true);
     try {
-      const result = await onRetry({ showTitle, seasonNumber });
-      
+      // A GET (mediaListApi.js): yes or no, never the episodes themselves
+      const result = await fetchSeasonHasEpisodes({ showTitle, seasonNumber });
+      // Sent to sign-in or the approval page: the page is leaving
+      if (!result) return;
+
       // Check if refresh was successful and episodes were found
       if (result.success && result.hasEpisodes) {
         // Episodes found - refresh the page to show the updated content
@@ -45,8 +49,6 @@ export default function NoEpisodesFound({ onRetry, showTitle, seasonNumber, seas
         setIsLoading(false); // Reset loading state to allow trying again
       }
     } catch (error) {
-      // The action redirected (sign-in, approval): the router has already navigated
-      if (error?.digest?.startsWith('NEXT_REDIRECT')) return;
       console.error('Error refreshing episodes:', error);
       // Reset loading state on error so the user can try again
       setIsLoading(false);
