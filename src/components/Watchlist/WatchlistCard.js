@@ -519,7 +519,7 @@ export default function WatchlistCard({
                           </button>
                         </>
                       )}
-                      {/* Admin-only: Radarr/Sonarr */}
+                      {/* Radarr/Sonarr, for users whose roles allow it */}
                       {showArrAction && (
                         <>
                           <div className="border-t border-gray-600 my-1"></div>
@@ -801,7 +801,7 @@ export default function WatchlistCard({
                 </button>
               </>
             )}
-            {/* Admin-only: Radarr/Sonarr */}
+            {/* Radarr/Sonarr, for users whose roles allow it */}
             {showArrAction && (
               <>
                 <div className="border-t border-gray-600 my-1"></div>

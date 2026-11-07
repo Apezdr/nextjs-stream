@@ -110,15 +110,18 @@ export default function ItemActionSheet({
             </div>
           </div>
         )}
-        {/* Admin-only: Radarr/Sonarr for any title; Coming Soon only for unavailable ones */}
-        {isAdmin && (arrActionLabel || !item.isAvailable) && (
+        {/* Radarr/Sonarr for anyone whose roles allow it (the card decides, as
+            in its desktop menu: arrActionLabel is null otherwise); Coming Soon
+            is admin-only, and only for unavailable titles */}
+        {(arrActionLabel || (isAdmin && !item.isAvailable)) && (
           <div className="mt-1 border-t border-gray-700 pt-1">
             {arrActionLabel && (
               <SheetAction onClick={onOpenArr} tone="accent" icon={<ArrowDownTrayIcon className={iconClass} />}>
                 {arrActionLabel}
               </SheetAction>
             )}
-            {!item.isAvailable &&
+            {isAdmin &&
+              !item.isAvailable &&
               (item.comingSoon ? (
                 <SheetAction onClick={onRemoveComingSoon} tone="warning" icon={<XCircleIcon className={iconClass} />}>
                   Remove &quot;Coming Soon&quot;
