@@ -14,12 +14,14 @@ jest.mock('@src/utils/actions/roles', () => ({ setUserRolesAction: jest.fn() }))
 const mockStartViewAs = jest.fn()
 const mockStopViewAs = jest.fn()
 const mockSignOut = jest.fn()
+const mockSetWrites = jest.fn()
 const mockUnsubscribe = jest.fn()
 const mockReloadOnSwitch = jest.fn(() => mockUnsubscribe)
 jest.mock('@src/components/ViewAs/viewAsClient', () => ({
   startViewAs: (...args) => mockStartViewAs(...args),
   stopViewAs: (...args) => mockStopViewAs(...args),
   signOutOfViewAs: (...args) => mockSignOut(...args),
+  setViewAsWrites: (...args) => mockSetWrites(...args),
   reloadOnViewAsSwitch: (...args) => mockReloadOnSwitch(...args),
 }))
 let mockPathname = '/list'
@@ -97,7 +99,19 @@ describe('the banner', () => {
   it('comes from the live session: shown while viewing as, with the user’s name', async () => {
     mockGetSession.mockResolvedValue(VIEW_AS)
     render(await ViewAsBanner())
-    expect(screen.getByRole('status')).toHaveTextContent(/^Viewing as Member\s*·\s*Stop$/)
+    expect(screen.getByRole('status')).toHaveTextContent(/^Viewing as Member\s*·\s*Read-only\s*·\s*Writes on\s*Stop$/)
+    // Read-only: every view starts so
+    expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('turns red, “Writing as”, while the session has writes on', async () => {
+    mockGetSession.mockResolvedValue({ ...VIEW_AS, session: { ...VIEW_AS.session, viewAsWrites: true } })
+    render(await ViewAsBanner())
+    const bar = screen.getByRole('status')
+    expect(bar).toHaveTextContent(/^Writing as Member/)
+    expect(bar.className).toMatch(/bg-red-600/)
+    expect(bar.className).not.toMatch(/bg-amber-400/)
+    expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'true')
   })
 
   it('falls back to the email when the user has no name', async () => {
@@ -140,6 +154,43 @@ describe('the banner', () => {
     expect(toast.error).toHaveBeenCalledWith('This view-as session has already ended.')
     await click(screen.getByRole('button', { name: 'Sign out' }))
     expect(mockSignOut).toHaveBeenCalledTimes(1)
+  })
+
+  it('turning writes on asks first, in the page (never window.confirm), and only then switches', async () => {
+    const confirmSpy = jest.spyOn(window, 'confirm').mockImplementation(() => true)
+    mockSetWrites.mockResolvedValue({ ok: true })
+    render(<ViewAsBannerClient viewingAs="Member" />)
+    await click(screen.getByRole('switch'))
+    expect(mockSetWrites).not.toHaveBeenCalled()
+    expect(confirmSpy).not.toHaveBeenCalled()
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('Write as Member?')
+    expect(dialog).toHaveTextContent(/Sign-in, account and device changes stay blocked/)
+
+    await click(screen.getByRole('button', { name: 'Allow writes' }))
+    expect(mockSetWrites).toHaveBeenCalledWith(true)
+    // The page reloads with the session's new setting; until then the switch waits
+    expect(screen.getByRole('switch')).toBeDisabled()
+    confirmSpy.mockRestore()
+  })
+
+  it('cancelling leaves it read-only', async () => {
+    render(<ViewAsBannerClient viewingAs="Member" />)
+    await click(screen.getByRole('switch'))
+    await click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(mockSetWrites).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'false')
+  })
+
+  it('turning writes off needs no asking, and a refusal is said', async () => {
+    mockSetWrites.mockResolvedValue({ ok: false, error: 'The admin viewing as this user is no longer an admin.', status: 403 })
+    render(<ViewAsBannerClient viewingAs="Member" writesOn />)
+    await click(screen.getByRole('switch'))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(mockSetWrites).toHaveBeenCalledWith(false)
+    expect(toast.error).toHaveBeenCalledWith('Couldn’t turn writes off: The admin viewing as this user is no longer an admin.')
+    expect(screen.getByRole('switch')).not.toBeDisabled()
   })
 
   it('follows another tab’s start or stop (viewAsClient reloads this one)', () => {

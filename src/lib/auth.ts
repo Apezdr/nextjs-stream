@@ -10,7 +10,7 @@ import { mongoClient } from './mongodb'
 import { getDefaultApprovalStatus } from '@src/utils/autoApproval'
 import { userQueries } from './userQueries'
 import { gatedAuthTrustedOrigins } from '@src/utils/gatedAuthOrigins'
-import { USER_ADDITIONAL_FIELDS } from './authUserFields'
+import { SESSION_ADDITIONAL_FIELDS, USER_ADDITIONAL_FIELDS } from './authUserFields'
 import { recordAuthHandlerCaller } from './requestCaller'
 import {
   adminEmailsFromEnv,
@@ -118,6 +118,8 @@ export const auth = betterAuth({
     expiresIn: 60 * 60 * 24 * 30, // 30 days
     updateAge: 60 * 60 * 24,       // refresh daily
     storeSessionInDatabase: true,
+    // viewAsWrites, the "View as" bar's switch: server-written only (authUserFields.ts)
+    additionalFields: SESSION_ADDITIONAL_FIELDS,
   },
 
   verification: {

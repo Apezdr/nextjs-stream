@@ -23,16 +23,25 @@ export const isAwaitingApproval = (user: MaybeUser): boolean => user?.approved =
 
 /** A session as better-auth returns it, as far as "View as" reads it. */
 interface MaybeImpersonatedSession {
-  session?: { impersonatedBy?: string | null } | null
+  session?: { impersonatedBy?: string | null; viewAsWrites?: boolean | null } | null
 }
 
 /**
  * An admin is viewing the app as this session's user ("View as"): better-auth's
  * admin plugin opened the session with impersonatedBy set to the admin's id.
- * Such a session only reads; the proxy refuses its writes (viewAsGuard.ts).
+ * Such a session only reads, unless the admin turns writes on; the proxy
+ * refuses its writes (viewAsGuard.ts).
  */
 export const isImpersonating = (session: MaybeImpersonatedSession | null | undefined): boolean =>
   Boolean(session?.session?.impersonatedBy)
+
+/**
+ * A view-as session whose admin turned writes on (the bar's switch): its
+ * writes to the user's app data land on the user's account. Read from the
+ * session itself, where only the switch's endpoint sets it (viewAsWrites.ts).
+ */
+export const isViewAsWritesOn = (session: MaybeImpersonatedSession | null | undefined): boolean =>
+  isImpersonating(session) && session?.session?.viewAsWrites === true
 
 /**
  * Whether the Users page offers "View as" for a user: anyone but the viewer

@@ -14,7 +14,15 @@
 // Only requests that may write pay for the lookup: a method other than GET or
 // HEAD, or one of the few GETs that write, and only when they carry a session
 // (a session cookie or a Bearer token). Everything else passes untouched.
-import { isImpersonating } from '@src/lib/roles/rules'
+//
+// The admin can turn writes on (the bar's switch, VIEW_AS_WRITES_SWITCH),
+// to act as the user: fix their watchlist, mark something watched. The
+// setting is on the session (viewAsWrites), so it comes with the lookup this
+// already makes and ends with the session. With it on, the user's app-data
+// writes pass, Server Actions among them, and each one is logged; what could
+// change the account itself or hand the session on stays refused
+// (isAlwaysRefused).
+import { isImpersonating, isViewAsWritesOn } from '@src/lib/roles/rules'
 
 /** What a refused API request gets, as JSON with status 403. */
 export const VIEW_AS_REFUSAL = {
@@ -22,7 +30,7 @@ export const VIEW_AS_REFUSAL = {
   message: 'Read-only while viewing as another user.',
 } as const
 
-/** The way out: the only writes a view-as session may still make. */
+/** The way out: with the switch below, the only writes a read-only view-as session may still make. */
 export const VIEW_AS_EXITS: readonly string[] = ['/api/auth/admin/stop-impersonating', '/api/auth/sign-out']
 
 /**
@@ -49,6 +57,23 @@ export const READ_ONLY_POSTS: readonly string[] = [
  */
 export const WRITING_GETS: readonly string[] = ['/api/auth/device', '/api/auth/account-info', '/api/auth/mobile-redirect']
 
+/**
+ * The bar's switch (src/app/api/authenticated/view-as/writes): a plain POST
+ * that turns writes on or off. It passes while read-only, or writes could
+ * never be turned on; the endpoint makes its own checks.
+ */
+export const VIEW_AS_WRITES_SWITCH = '/api/authenticated/view-as/writes'
+
+/**
+ * Refused even with writes on, besides WRITING_GETS: better-auth's own
+ * endpoints (all but the way out), which change the account, its sign-ins
+ * and sessions, approve a device, or hand the session to another client (a TV
+ * approved while viewing as would get an ordinary 30-day session as the user,
+ * not a view-as one); and this app's own account endpoints (a deletion
+ * request).
+ */
+export const ALWAYS_REFUSED_PREFIXES: readonly string[] = ['/api/auth/', '/api/authenticated/account/']
+
 /** The request as the guard reads it. */
 export interface GuardedRequest {
   method: string
@@ -58,6 +83,20 @@ export interface GuardedRequest {
 
 /** A session lookup: better-auth's getSession, for the headers the route will see. */
 export type SessionLookup = (headers: Headers) => Promise<unknown>
+
+/** A view-as session, as far as the guard reads it. */
+export interface ViewAsSession {
+  session?: { impersonatedBy?: string | null; viewAsWrites?: boolean | null } | null
+  user?: { id?: unknown } | null
+}
+
+/** What the proxy is told along the way. */
+export interface GuardHooks {
+  /** The lookup threw; the write was refused (503). */
+  onLookupError?: (error: unknown) => void
+  /** A view-as session's write was let through because writes are on. */
+  onWriteLetThrough?: (request: GuardedRequest, session: ViewAsSession) => void
+}
 
 /**
  * Decoded, lower case, no repeated or trailing slashes, so a list entry also
@@ -84,15 +123,22 @@ export const isServerAction = (request: GuardedRequest): boolean =>
 
 /**
  * Whether the request may write, and so is checked. A Server Action is always
- * checked, whatever page it posts to; READ_ONLY_POSTS are plain API POSTs.
+ * checked, whatever page it posts to; READ_ONLY_POSTS and the switch are plain
+ * API POSTs.
  */
 export function mayWrite(request: GuardedRequest): boolean {
   const method = request.method.toUpperCase()
   const path = normalized(request.pathname)
   if (method === 'GET' || method === 'HEAD') return WRITING.has(path)
   if (EXITS.has(path)) return false
-  if (method === 'POST' && READ_ONLY.has(path) && !isServerAction(request)) return false
+  if (method === 'POST' && !isServerAction(request) && (READ_ONLY.has(path) || path === VIEW_AS_WRITES_SWITCH)) return false
   return true
+}
+
+/** A write a view-as session may never make, writes on or not. */
+export function isAlwaysRefused(request: GuardedRequest): boolean {
+  const path = normalized(request.pathname)
+  return WRITING.has(path) || path === '/api/auth' || ALWAYS_REFUSED_PREFIXES.some((prefix) => path.startsWith(prefix))
 }
 
 /**
@@ -137,20 +183,26 @@ const LOOKUP_FAILED = {
 /**
  * The refusal for a write made with a view-as session, or null to let the
  * request through. A lookup that fails refuses the write (503) rather than
- * guess: the route would have looked the same session up next.
+ * guess: the route would have looked the same session up next. With writes
+ * on, a write passes unless it is always refused, and the proxy is told.
  */
 export async function refuseViewAsWrite(
   request: GuardedRequest,
   lookup: SessionLookup,
-  onLookupError?: (error: unknown) => void,
+  hooks: GuardHooks = {},
 ): Promise<Response | null> {
   if (!mayWrite(request) || !carriesSession(request.headers)) return null
-  let session: unknown
+  let session: ViewAsSession | null
   try {
-    session = await lookup(request.headers)
+    session = (await lookup(request.headers)) as ViewAsSession | null
   } catch (error) {
-    onLookupError?.(error)
+    hooks.onLookupError?.(error)
     return isServerAction(request) ? actionRefusal(503, LOOKUP_FAILED.message) : json(503, { ...LOOKUP_FAILED })
   }
-  return isImpersonating(session as Parameters<typeof isImpersonating>[0]) ? viewAsRefusal(request) : null
+  if (!isImpersonating(session)) return null
+  if (isViewAsWritesOn(session) && !isAlwaysRefused(request)) {
+    hooks.onWriteLetThrough?.(request, session as ViewAsSession)
+    return null
+  }
+  return viewAsRefusal(request)
 }

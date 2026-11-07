@@ -7,6 +7,10 @@
  * before any of them runs, from the session itself, and only looks the
  * session up for a request that may write and carries one. The guards at the
  * end fail when a new write path could get around that one check.
+ *
+ * With writes on (the bar's switch, kept on the session as viewAsWrites), the
+ * user's app-data writes pass, each one logged, and what could change the
+ * account or hand the session on is still refused.
  */
 const fs = require('fs')
 const path = require('path')
@@ -19,19 +23,28 @@ jest.mock('@src/utils/config', () => ({
 const mockGetSession = jest.fn()
 jest.mock('@src/lib/auth', () => ({ auth: { api: { getSession: (...args) => mockGetSession(...args) } } }))
 const mockLogError = jest.fn()
+const mockLogInfo = jest.fn()
 jest.mock('@src/lib/logger', () => ({
-  createLogger: () => ({ error: (...args) => mockLogError(...args), warn: jest.fn(), info: jest.fn(), debug: jest.fn() }),
+  createLogger: () => ({
+    error: (...args) => mockLogError(...args),
+    warn: jest.fn(),
+    info: (...args) => mockLogInfo(...args),
+    debug: jest.fn(),
+  }),
 }))
 
 const { NextRequest } = require('next/server')
 const { proxy, config } = require('@src/proxy')
-const { isImpersonating, canViewAs } = require('@src/lib/roles/rules')
+const { isImpersonating, isViewAsWritesOn, canViewAs } = require('@src/lib/roles/rules')
 const {
   VIEW_AS_REFUSAL,
   VIEW_AS_EXITS,
   READ_ONLY_POSTS,
   WRITING_GETS,
+  VIEW_AS_WRITES_SWITCH,
+  ALWAYS_REFUSED_PREFIXES,
   mayWrite,
+  isAlwaysRefused,
   carriesSession,
 } = require('@src/lib/viewAsGuard')
 
@@ -40,7 +53,31 @@ const read = (...segments) => fs.readFileSync(path.join(ROOT, ...segments), 'utf
 
 const COOKIE = 'nextjs-stream.session_token=tok.sig; theme=dark'
 const VIEW_AS = { session: { token: 'tok', userId: 'u1', impersonatedBy: 'a1' }, user: { id: 'u1', role: 'user' } }
+const WRITING = {
+  session: { ...VIEW_AS.session, viewAsWrites: true },
+  user: { id: 'u1', role: 'user', email: 'u1@example.com' },
+}
 const OWN = { session: { token: 'tok', userId: 'u1' }, user: { id: 'u1', role: 'user' } }
+
+// better-auth's endpoints that change the user, their sign-ins or sessions,
+// approve a device, or open a session: refused while viewing as, writes on or off
+const AUTH_WRITES = [
+  '/api/auth/update-user',
+  '/api/auth/update-session',
+  '/api/auth/change-email',
+  '/api/auth/change-password',
+  '/api/auth/link-social',
+  '/api/auth/unlink-account',
+  '/api/auth/delete-user',
+  '/api/auth/revoke-session',
+  '/api/auth/revoke-sessions',
+  '/api/auth/revoke-other-sessions',
+  '/api/auth/device/approve',
+  '/api/auth/device/deny',
+  '/api/auth/device/token',
+  '/api/auth/sign-in/social',
+  '/api/auth/admin/impersonate-user',
+]
 
 const request = (pathname, { method = 'POST', headers = { cookie: COOKIE } } = {}) =>
   new NextRequest(`https://app.example${pathname}`, { method, headers })
@@ -49,6 +86,20 @@ const passes = (response) => response.headers.get('x-middleware-next') === '1'
 beforeEach(() => {
   mockGetSession.mockReset()
   mockLogError.mockReset()
+  mockLogInfo.mockReset()
+})
+
+describe('isViewAsWritesOn', () => {
+  it('is a view-as session whose switch is on, and only that', () => {
+    expect(isViewAsWritesOn(WRITING)).toBe(true)
+    expect(isViewAsWritesOn(VIEW_AS)).toBe(false)
+    expect(isViewAsWritesOn({ session: { ...VIEW_AS.session, viewAsWrites: false } })).toBe(false)
+    // Only true itself, and only on a view-as session
+    expect(isViewAsWritesOn({ session: { ...VIEW_AS.session, viewAsWrites: 'true' } })).toBe(false)
+    expect(isViewAsWritesOn({ session: { token: 'tok', viewAsWrites: true } })).toBe(false)
+    expect(isViewAsWritesOn({ session: { impersonatedBy: 'a1' }, user: { viewAsWrites: true } })).toBe(false)
+    expect(isViewAsWritesOn(null)).toBe(false)
+  })
 })
 
 describe('isImpersonating', () => {
@@ -157,24 +208,19 @@ describe('the proxy, for a view-as session', () => {
   })
 
   it('refuses better-auth’s endpoints that change the user or their sessions', async () => {
-    const endpoints = [
-      '/api/auth/update-user',
-      '/api/auth/change-email',
-      '/api/auth/link-social',
-      '/api/auth/unlink-account',
-      '/api/auth/delete-user',
-      '/api/auth/revoke-session',
-      '/api/auth/revoke-sessions',
-      '/api/auth/revoke-other-sessions',
-      '/api/auth/device/approve',
-      '/api/auth/device/deny',
-      '/api/auth/sign-in/social',
-      '/api/auth/admin/impersonate-user',
-    ]
-    for (const endpoint of endpoints) {
+    for (const endpoint of AUTH_WRITES) {
       const response = await proxy(request(endpoint))
       expect([endpoint, response.status]).toEqual([endpoint, 403])
     }
+  })
+
+  it('lets the writes switch through while read-only, without a lookup (the endpoint checks for itself)', async () => {
+    expect(passes(await proxy(request(VIEW_AS_WRITES_SWITCH)))).toBe(true)
+    expect(passes(await proxy(request(`${VIEW_AS_WRITES_SWITCH}/`)))).toBe(true)
+    expect(mockGetSession).not.toHaveBeenCalled()
+    // Only as a plain POST: an action posted to it, or another method, is checked
+    expect((await proxy(request(VIEW_AS_WRITES_SWITCH, { headers: { cookie: COOKIE, 'next-action': 'x' } }))).status).toBe(403)
+    expect((await proxy(request(VIEW_AS_WRITES_SWITCH, { method: 'PUT' }))).status).toBe(403)
   })
 
   it('refuses the GETs that write or hand the session on', async () => {
@@ -209,6 +255,89 @@ describe('the proxy, for a view-as session', () => {
     const [{ headers }] = mockGetSession.mock.calls[0]
     expect(headers.get('authorization')).toBe('Bearer tok')
     expect(headers.get('cookie')).toBe('theme=dark')
+  })
+})
+
+describe('the proxy, for a view-as session with writes on', () => {
+  beforeEach(() => mockGetSession.mockResolvedValue(WRITING))
+
+  // The user's app data: playback and watched marks, watchlists and playlists,
+  // notifications, Radarr/Sonarr requests, and Server Actions (posted to a page)
+  const APP_WRITES = [
+    ['POST', '/api/authenticated/sync/updatePlayback', {}],
+    ['POST', '/api/authenticated/sync/presence/end', {}],
+    ['POST', '/api/authenticated/watchlist', {}],
+    ['PUT', '/api/authenticated/watchlist', {}],
+    ['DELETE', '/api/authenticated/watchlist', {}],
+    ['POST', '/api/authenticated/notifications', {}],
+    ['POST', '/api/authenticated/arr/titles/movie/603/search', {}],
+    ['POST', '/api/authenticated/user/preferences', {}],
+    ['POST', '/list/movie', { 'next-action': '7f00ab' }],
+  ]
+
+  it('lets the user’s app-data writes through, Server Actions too, with one lookup each', async () => {
+    for (const [method, pathname, extra] of APP_WRITES) {
+      mockGetSession.mockClear()
+      const response = await proxy(request(pathname, { method, headers: { cookie: COOKIE, ...extra } }))
+      expect([method, pathname, passes(response)]).toEqual([method, pathname, true])
+      // The setting comes with the lookup the guard already makes: nothing more is read
+      expect(mockGetSession).toHaveBeenCalledTimes(1)
+    }
+  })
+
+  it('logs every write it lets through: method, path, both users’ ids, never an email', async () => {
+    await proxy(request('/api/authenticated/watchlist', { method: 'DELETE' }))
+    await proxy(request('/list/movie', { headers: { cookie: COOKIE, 'next-action': '7f00ab' } }))
+    expect(mockLogInfo).toHaveBeenCalledTimes(2)
+    expect(mockLogInfo).toHaveBeenNthCalledWith(
+      1,
+      { method: 'DELETE', path: '/api/authenticated/watchlist', serverAction: false, adminId: 'a1', targetUserId: 'u1' },
+      'View as: write let through'
+    )
+    expect(mockLogInfo.mock.calls[1][0]).toMatchObject({ method: 'POST', path: '/list/movie', serverAction: true })
+    expect(JSON.stringify(mockLogInfo.mock.calls)).not.toMatch(/@example\.com/)
+  })
+
+  it('still refuses every better-auth endpoint but the way out: device approvals, account and session changes', async () => {
+    // A TV approved while viewing as would get an ordinary 30-day session as
+    // the user, not a view-as one: the device endpoints stay refused
+    for (const endpoint of [...AUTH_WRITES, '/api/auth/some-future-endpoint', '/api/auth/']) {
+      const response = await proxy(request(endpoint))
+      expect([endpoint, response.status]).toEqual([endpoint, 403])
+    }
+    expect(mockLogInfo).not.toHaveBeenCalled()
+  })
+
+  it('still refuses the GETs that write or hand the session to another client (the TV app’s token)', async () => {
+    for (const endpoint of ['/api/auth/device?user_code=ABCDEFGH', '/api/auth/account-info', '/api/auth/mobile-redirect']) {
+      const response = await proxy(request(endpoint, { method: 'GET' }))
+      expect([endpoint, response.status]).toEqual([endpoint, 403])
+      expect(await response.json()).toEqual(VIEW_AS_REFUSAL)
+    }
+  })
+
+  it('still refuses this app’s own account endpoints: a deletion request, or cancelling one', async () => {
+    for (const method of ['POST', 'DELETE']) {
+      expect((await proxy(request('/api/authenticated/account/delete-request', { method }))).status).toBe(403)
+    }
+  })
+
+  it('however the path is spelled', async () => {
+    for (const endpoint of ['/api/auth/Device/Approve', '//api/auth//delete-user/', '/api/auth/revoke%2Dsessions', '/API/AUTHENTICATED/account/delete-request']) {
+      const response = await proxy(request(endpoint))
+      expect([endpoint, response.status]).toEqual([endpoint, 403])
+    }
+  })
+
+  it('lets the way out and the switch through, without a lookup', async () => {
+    for (const path of [...VIEW_AS_EXITS, VIEW_AS_WRITES_SWITCH]) expect(passes(await proxy(request(path)))).toBe(true)
+    expect(mockGetSession).not.toHaveBeenCalled()
+  })
+
+  it('a session with writes on that is not a view-as one is just the user’s own', async () => {
+    mockGetSession.mockResolvedValue({ session: { token: 'tok', viewAsWrites: true }, user: { id: 'u1' } })
+    expect(passes(await proxy(request('/api/auth/update-user')))).toBe(true)
+    expect(mockLogInfo).not.toHaveBeenCalled()
   })
 })
 
@@ -303,6 +432,18 @@ describe('guards: every write goes through the proxy’s check', () => {
       '/api/authenticated/search',
     ])
     expect([...WRITING_GETS].sort()).toEqual(['/api/auth/account-info', '/api/auth/device', '/api/auth/mobile-redirect'])
+    // The bar's switch, which passes while read-only, and what writes on never lets through
+    expect(VIEW_AS_WRITES_SWITCH).toBe('/api/authenticated/view-as/writes')
+    expect([...ALWAYS_REFUSED_PREFIXES].sort()).toEqual(['/api/auth/', '/api/authenticated/account/'])
+    for (const getter of WRITING_GETS) expect(isAlwaysRefused({ method: 'GET', pathname: getter, headers: new Headers() })).toBe(true)
+  })
+
+  it('the switch’s route is where the guard expects it, and checks the session itself', () => {
+    const files = Object.fromEntries(routeFiles().map((file) => [urlOf(file), file]))
+    const source = fs.readFileSync(files[VIEW_AS_WRITES_SWITCH], 'utf8')
+    expect(source).toMatch(/if \(!isImpersonating\(session\)\) \{/)
+    expect(source).toMatch(/userQueries\.findById\(session\.session\.impersonatedBy/)
+    expect(source).toMatch(/if \(!isAdminUser\(admin\)\) \{/)
   })
 
   it('a read-only POST’s route writes nothing itself', () => {
@@ -335,11 +476,17 @@ describe('guards: every write goes through the proxy’s check', () => {
     ])
   })
 
-  it('the play page mints no Cast token for a view-as session', () => {
+  it('the play page mints no Cast token for a view-as session, unless writes were on when it rendered', () => {
     const source = read('src', 'components', 'MediaPlayer', 'MediaPlayer.js')
     expect(source).toMatch(
-      /const castPlaybackToken =\s+session\?\.user\?\.id && !isAwaitingApproval\(session\.user\) && !isImpersonating\(session\) && videoURL/
+      /const castPlaybackToken =\s+session\?\.user\?\.id && !isAwaitingApproval\(session\.user\) && \(!isImpersonating\(session\) \|\| isViewAsWritesOn\(session\)\) && videoURL/
     )
+    // ...from the full session the play page reads (getSession, never the
+    // gate's trimmed copy, which has no session.impersonatedBy)
+    for (const page of [['movie', '[title]'], ['tv', '[title]', '[season]', '[episode]']]) {
+      const pageSource = read('src', 'app', '(styled)', 'list', ...page, 'play', 'page.js')
+      expect(pageSource).toMatch(/const session = await getSession\(\)/)
+    }
     // ...and nothing else mints one
     const all = []
     const walk = (dir) => {

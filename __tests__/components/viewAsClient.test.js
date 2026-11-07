@@ -48,7 +48,13 @@ global.localStorage = {
   removeItem: (key) => stored.delete(key),
 }
 
-const { startViewAs, stopViewAs, signOutOfViewAs, reloadOnViewAsSwitch } = require('@src/components/ViewAs/viewAsClient')
+const {
+  startViewAs,
+  stopViewAs,
+  signOutOfViewAs,
+  setViewAsWrites,
+  reloadOnViewAsSwitch,
+} = require('@src/components/ViewAs/viewAsClient')
 
 beforeEach(() => {
   jest.clearAllMocks()
@@ -93,6 +99,47 @@ it('another tab’s start or stop reloads this one, until it unsubscribes', () =
   unsubscribe()
   anotherTabSwitches()
   expect(reload).toHaveBeenCalledTimes(1)
+})
+
+describe('the writes switch', () => {
+  beforeEach(() => {
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ viewAsWrites: true }) })
+  })
+
+  it('asks the server, then reloads this tab and tells the others; the positions stay (same user)', async () => {
+    expect(await setViewAsWrites(true)).toEqual({ ok: true })
+    const [url, init] = global.fetch.mock.calls[0]
+    expect(url).toBe('/api/authenticated/view-as/writes')
+    expect(init.method).toBe('POST')
+    expect(init.headers).toEqual({ 'Content-Type': 'application/json' })
+    expect(JSON.parse(init.body)).toEqual({ enabled: true })
+    expect(reload).toHaveBeenCalledTimes(1)
+    expect(posted).toEqual([['nextjs-stream.view-as', 'switched']])
+    expect(stored.size).toBe(3)
+    expect(assign).not.toHaveBeenCalled()
+  })
+
+  it('sends only a boolean', async () => {
+    await setViewAsWrites('yes')
+    expect(JSON.parse(global.fetch.mock.calls[0][1].body)).toEqual({ enabled: false })
+  })
+
+  it('a refusal changes nothing and says the server’s reason', async () => {
+    global.fetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      json: async () => ({ error: 'ADMIN_REQUIRED', message: 'The admin viewing as this user is no longer an admin.' }),
+    })
+    expect(await setViewAsWrites(true)).toEqual({
+      ok: false,
+      error: 'The admin viewing as this user is no longer an admin.',
+      status: 403,
+    })
+    global.fetch.mockRejectedValue(new TypeError('Failed to fetch'))
+    expect(await setViewAsWrites(false)).toEqual({ ok: false, error: 'Failed to fetch', status: null })
+    expect(reload).not.toHaveBeenCalled()
+    expect(posted).toHaveLength(0)
+  })
 })
 
 it('signing out ends the view-as session and goes to sign-in', async () => {

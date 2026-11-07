@@ -10,6 +10,9 @@
 // - /admin/stop-impersonating: session is the view-as session it ended;
 //   newSession is the admin's own, put back
 // ctx.path is the endpoint's route pattern, not the request's path.
+//
+// With writes on (the bar's switch), each switch and each write the guard
+// lets through are logged here too, from the switch's endpoint and the proxy.
 
 /** The paths audited, as a hook's ctx.path reports them. */
 export const VIEW_AS_START_PATH = '/admin/impersonate-user'
@@ -82,6 +85,58 @@ export function auditViewAs(ctx: ViewAsHookContext, log: AuditLog): void {
       return
     }
     log.info({ adminId: adminId ?? idOf(newSession?.user?.id), targetUserId: idOf(session?.user?.id) }, 'View as: stopped')
+  } catch {
+    // The audit never fails the request it records
+  }
+}
+
+/** A view-as session as the guard and the switch read it. */
+interface ViewAsSession {
+  session?: { impersonatedBy?: string | null } | null
+  user?: { id?: unknown } | null
+}
+
+/** Logs the bar's switch turning writes on or off. Never throws. */
+export function auditViewAsWritesSwitch(session: ViewAsSession | null | undefined, writes: boolean, log: AuditLog): void {
+  try {
+    log.info(
+      { adminId: idOf(session?.session?.impersonatedBy), targetUserId: idOf(session?.user?.id), writes },
+      writes ? 'View as: writes on' : 'View as: writes off'
+    )
+  } catch {
+    // The audit never fails the request it records
+  }
+}
+
+/** Logs a refused switch, with why. Never throws. */
+export function auditViewAsWritesRefused(session: ViewAsSession | null | undefined, reason: string, log: AuditLog): void {
+  try {
+    log.warn(
+      { adminId: idOf(session?.session?.impersonatedBy), userId: idOf(session?.user?.id), reason },
+      'View as: writes switch refused'
+    )
+  } catch {
+    // The audit never fails the request it records
+  }
+}
+
+/** Logs a write the guard let through because writes are on. Never throws. */
+export function auditViewAsWrite(
+  request: { method: string; pathname: string; headers: Headers },
+  session: ViewAsSession | null | undefined,
+  log: AuditLog
+): void {
+  try {
+    log.info(
+      {
+        method: request.method.toUpperCase(),
+        path: request.pathname,
+        serverAction: request.headers.has('next-action'),
+        adminId: idOf(session?.session?.impersonatedBy),
+        targetUserId: idOf(session?.user?.id),
+      },
+      'View as: write let through'
+    )
   } catch {
     // The audit never fails the request it records
   }

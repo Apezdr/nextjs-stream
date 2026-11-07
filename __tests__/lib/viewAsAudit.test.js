@@ -10,7 +10,14 @@
 const fs = require('fs')
 const path = require('path')
 
-const { auditViewAs, VIEW_AS_START_PATH, VIEW_AS_STOP_PATH } = require('@src/lib/viewAsAudit')
+const {
+  auditViewAs,
+  auditViewAsWrite,
+  auditViewAsWritesSwitch,
+  auditViewAsWritesRefused,
+  VIEW_AS_START_PATH,
+  VIEW_AS_STOP_PATH,
+} = require('@src/lib/viewAsAudit')
 const { holdViewAsExpiry } = require('@src/lib/viewAsSession')
 
 const read = (...segments) => fs.readFileSync(path.join(__dirname, '..', '..', ...segments), 'utf8')
@@ -102,6 +109,41 @@ describe('auditViewAs', () => {
   })
 })
 
+describe('writes on: the switch and each write let through', () => {
+  const WRITING = { ...VIEW_AS, session: { ...VIEW_AS.session, viewAsWrites: true } }
+
+  it('logs the switch, on or off, with both ids', () => {
+    const log = fakeLog()
+    auditViewAsWritesSwitch(WRITING, true, log)
+    auditViewAsWritesSwitch(VIEW_AS, false, log)
+    expect(log.info.mock.calls).toEqual([
+      [{ adminId: 'a1', targetUserId: 'u1', writes: true }, 'View as: writes on'],
+      [{ adminId: 'a1', targetUserId: 'u1', writes: false }, 'View as: writes off'],
+    ])
+    auditViewAsWritesRefused(VIEW_AS, 'not an admin any more', log)
+    expect(log.warn).toHaveBeenCalledWith({ adminId: 'a1', userId: 'u1', reason: 'not an admin any more' }, 'View as: writes switch refused')
+  })
+
+  it('logs a write: method, path, whether it is a Server Action, both ids', () => {
+    const log = fakeLog()
+    auditViewAsWrite({ method: 'put', pathname: '/api/authenticated/watchlist', headers: new Headers() }, WRITING, log)
+    auditViewAsWrite({ method: 'POST', pathname: '/list', headers: new Headers({ 'next-action': 'x' }) }, WRITING, log)
+    expect(log.info.mock.calls).toEqual([
+      [{ method: 'PUT', path: '/api/authenticated/watchlist', serverAction: false, adminId: 'a1', targetUserId: 'u1' }, 'View as: write let through'],
+      [{ method: 'POST', path: '/list', serverAction: true, adminId: 'a1', targetUserId: 'u1' }, 'View as: write let through'],
+    ])
+    expect(JSON.stringify(log.info.mock.calls)).not.toMatch(/@example\.com|User One/)
+  })
+
+  it('never throws', () => {
+    const throwing = { info: () => { throw new Error('pino broke') }, warn: () => { throw new Error('pino broke') } }
+    expect(() => auditViewAsWritesSwitch(WRITING, true, throwing)).not.toThrow()
+    expect(() => auditViewAsWritesRefused(null, 'x', throwing)).not.toThrow()
+    expect(() => auditViewAsWrite({ method: 'POST', pathname: '/x', headers: new Headers() }, null, throwing)).not.toThrow()
+    expect(() => auditViewAsWrite(null, WRITING, fakeLog())).not.toThrow()
+  })
+})
+
 describe('the hour (holdViewAsExpiry)', () => {
   const inMinutes = (minutes) => new Date(Date.now() + minutes * 60_000)
   const found = (session) => ({ context: { session: { session, user: { id: 'u1' } } } })
@@ -116,6 +158,13 @@ describe('the hour (holdViewAsExpiry)', () => {
     expect(holdViewAsExpiry(update, found({ impersonatedBy: 'a1', expiresAt: expiresAt.toISOString() })).data.expiresAt).toEqual(
       expiresAt
     )
+  })
+
+  it('with writes on, too: the switch’s update leaves the expiry alone, and a refresh is still held', () => {
+    const expiresAt = inMinutes(40)
+    const writing = found({ impersonatedBy: 'a1', viewAsWrites: true, expiresAt })
+    expect(holdViewAsExpiry({ viewAsWrites: true }, writing)).toBeUndefined()
+    expect(holdViewAsExpiry({ expiresAt: inMinutes(30 * 24 * 60) }, writing).data.expiresAt).toEqual(expiresAt)
   })
 
   it('leaves every other update alone', () => {

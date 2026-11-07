@@ -4,6 +4,7 @@ import { buildImgproxyTarget } from '@src/lib/imgproxy'
 import { isAllowedImageSource, reportRefusedImageSource } from '@src/lib/imageSources'
 import { AUTH_COOKIE_NAMES, stripAuthCookies } from '@src/lib/authCookies'
 import { refuseViewAsWrite } from '@src/lib/viewAsGuard'
+import { auditViewAsWrite } from '@src/lib/viewAsAudit'
 import { createLogger } from '@src/lib/logger'
 
 const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN?.replace(/^\./, '')
@@ -128,10 +129,15 @@ export async function proxy(request: NextRequest) {
   // better-auth's own endpoints) stop here, before any of them runs. The
   // session is looked up from the same headers the route would read, and only
   // for a request that may write and carries a session (viewAsGuard.ts).
+  // With writes on, the user's app-data writes pass, each one logged.
   const refusal = await refuseViewAsWrite(
     { method: request.method, pathname: request.nextUrl.pathname, headers: forwarded ?? request.headers },
     lookupSession,
-    (error) => viewAsLog.error({ error: (error as Error)?.message }, 'View-as check could not look up the session; the write was refused'),
+    {
+      onLookupError: (error) =>
+        viewAsLog.error({ error: (error as Error)?.message }, 'View-as check could not look up the session; the write was refused'),
+      onWriteLetThrough: (guarded, session) => auditViewAsWrite(guarded, session, viewAsLog),
+    },
   )
   if (refusal) return refusal
 

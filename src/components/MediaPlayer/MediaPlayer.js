@@ -5,7 +5,7 @@ import { generateNormalizedVideoId } from '@src/utils/videoIdentity'
 import Media_Poster from '../MediaPoster'
 import { getServer } from '@src/utils/config'
 import { Suspense } from 'react'
-import { isAdminUser, isAwaitingApproval, isImpersonating } from '@src/lib/roles/rules'
+import { isAdminUser, isAwaitingApproval, isImpersonating, isViewAsWritesOn } from '@src/lib/roles/rules'
 
 async function validateVideoURL(url, updateValidationStatus = null) {
   try {
@@ -294,11 +294,13 @@ async function VideoPlayer({
   // null, so their cast plays and records nothing, matching what the web path
   // already does: the same approval rule as approvedGate.
   //
-  // Nor does an admin viewing as the user (View as): the receiver reports with
-  // the token alone, no session, so the proxy that keeps a view-as session from
-  // writing would never see those reports land on the user's watch history.
+  // Nor does an admin viewing as the user (View as), unless writes were on when
+  // this page rendered: the receiver reports with the token alone, no session,
+  // so the proxy that keeps a read-only view-as session from writing would
+  // never see those reports land on the user's watch history. (A token minted
+  // with writes on keeps reporting until it expires, after writes go off.)
   const castPlaybackToken =
-    session?.user?.id && !isAwaitingApproval(session.user) && !isImpersonating(session) && videoURL
+    session?.user?.id && !isAwaitingApproval(session.user) && (!isImpersonating(session) || isViewAsWritesOn(session)) && videoURL
       ? mintCastPlaybackToken({
           userId: session.user.id,
           normalizedVideoId: generateNormalizedVideoId(videoURL),

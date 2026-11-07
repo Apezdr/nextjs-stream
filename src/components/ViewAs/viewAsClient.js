@@ -1,8 +1,9 @@
 'use client'
 
-// Starting and stopping "View as" from the browser: better-auth's admin
-// plugin swaps the session cookie (impersonate-user parks the admin's own
-// session in its admin_session cookie; stop-impersonating puts it back).
+// Starting and stopping "View as" from the browser, and its writes switch:
+// better-auth's admin plugin swaps the session cookie (impersonate-user parks
+// the admin's own session in its admin_session cookie; stop-impersonating
+// puts it back).
 //
 // Both end in a full-page navigation, never a router push. Everything the
 // client router holds was rendered for the previous user: the cached
@@ -48,14 +49,18 @@ export function navigateFully(href) {
   window.location.assign(href)
 }
 
-function switched(href) {
-  // The last user's positions would stay behind as this browser's resume points
-  clearPlaybackMirror()
+function tellOtherTabs() {
   try {
     viewAsChannel()?.postMessage('switched')
   } catch {
     // Other tabs then show the change on their next full load
   }
+}
+
+function switched(href) {
+  // The last user's positions would stay behind as this browser's resume points
+  clearPlaybackMirror()
+  tellOtherTabs()
   navigateFully(href)
 }
 
@@ -82,6 +87,35 @@ export async function stopViewAs() {
     return failure(error, 'The server could not be reached.')
   }
   switched(VIEW_AS_RETURN)
+  return { ok: true }
+}
+
+/** The bar's switch (src/app/api/authenticated/view-as/writes). */
+export const VIEW_AS_WRITES_URL = '/api/authenticated/view-as/writes'
+
+/**
+ * Turns writes on or off for this view-as session; the server keeps the
+ * setting with the session. Then this tab reloads, and the others too: every
+ * page was rendered for the old setting (the bar's colour, whether the watch
+ * page minted a Cast token). Resolves { ok: true } as the page reloads, or
+ * { ok: false, error, status }.
+ */
+export async function setViewAsWrites(enabled) {
+  try {
+    const response = await fetch(VIEW_AS_WRITES_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled === true }),
+    })
+    if (!response.ok) {
+      const body = await response.json().catch(() => null)
+      return failure({ message: body?.message, status: response.status }, 'The server refused.')
+    }
+  } catch (error) {
+    return failure(error, 'The server could not be reached.')
+  }
+  tellOtherTabs()
+  window.location.reload()
   return { ok: true }
 }
 
