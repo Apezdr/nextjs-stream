@@ -16,8 +16,15 @@
 // the admin's chrome while acting as the user (or the banner after a stop)
 // would mislead. Nothing reads the message but a reload; what each tab shows
 // still comes from its session.
+//
+// A cast in progress ends at every switch, in this tab before the session
+// changes and in the others before they reload. It would outlive the switch
+// otherwise: after Stop the admin's new page mirrors the cast's position into
+// the admin's own history, and a receiver started with writes on goes on
+// reporting to the user with its own token after writes go off.
 import { authClient } from '@src/lib/auth-client'
 import { clearPlaybackMirror } from '@components/SyncClientWithServerWatched'
+import { endCastSession, getContext } from '@components/Cast/castSdk'
 
 /** Where "View as" lands: the library home, as the user sees it. */
 export const VIEW_AS_LANDING = '/list'
@@ -25,6 +32,21 @@ export const VIEW_AS_LANDING = '/list'
 export const VIEW_AS_RETURN = '/admin/users'
 
 const CHANNEL_NAME = 'nextjs-stream.view-as'
+
+/** How long a casting tab waits after ending the cast before it reloads, so the stop reaches the receiver. */
+export const CAST_STOP_GRACE_MS = 1000
+
+/** Ends this tab's cast, if it has one. Returns whether it had. */
+function endCasting() {
+  try {
+    if (!getContext()?.getCurrentSession?.()) return false
+    endCastSession()
+    return true
+  } catch {
+    // No Cast SDK on this page: nothing to end
+    return false
+  }
+}
 
 // One channel per tab: a message never comes back to the object that posted
 // it, so the tab that switched doesn't reload itself mid-navigation
@@ -39,7 +61,10 @@ function viewAsChannel() {
 export function reloadOnViewAsSwitch() {
   const tabs = viewAsChannel()
   if (!tabs) return () => {}
-  const listener = () => window.location.reload()
+  const listener = () => {
+    if (endCasting()) setTimeout(() => window.location.reload(), CAST_STOP_GRACE_MS)
+    else window.location.reload()
+  }
   tabs.addEventListener('message', listener)
   return () => tabs.removeEventListener('message', listener)
 }
@@ -68,6 +93,7 @@ const failure = (error, fallback) => ({ ok: false, error: error?.message || fall
 
 /** Starts viewing as the user. Resolves { ok: true } as the page leaves, or { ok: false, error }. */
 export async function startViewAs(userId) {
+  endCasting()
   try {
     const { error } = await authClient.admin.impersonateUser({ userId })
     if (error) return failure(error, 'The server refused.')
@@ -80,6 +106,7 @@ export async function startViewAs(userId) {
 
 /** Stops viewing as, back to the admin's own session on the Users page. */
 export async function stopViewAs() {
+  endCasting()
   try {
     const { error } = await authClient.admin.stopImpersonating()
     if (error) return failure(error, 'The server refused.')
@@ -101,6 +128,7 @@ export const VIEW_AS_WRITES_URL = '/api/authenticated/view-as/writes'
  * { ok: false, error, status }.
  */
 export async function setViewAsWrites(enabled) {
+  endCasting()
   try {
     const response = await fetch(VIEW_AS_WRITES_URL, {
       method: 'POST',
@@ -124,6 +152,7 @@ export async function setViewAsWrites(enabled) {
  * or was revoked, so there is nothing to go back to). Ends the view-as session.
  */
 export async function signOutOfViewAs() {
+  endCasting()
   try {
     const { error } = await authClient.signOut()
     if (error) return failure(error, 'The server refused.')

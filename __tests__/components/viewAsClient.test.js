@@ -4,7 +4,8 @@
  * Starting and stopping "View as" in the browser: better-auth's admin client
  * swaps the session, then a full-page navigation (never a router push) loads
  * a new document for it, the last user's mirrored positions are dropped, and
- * this browser's other tabs are told so they reload.
+ * this browser's other tabs are told so they reload. A cast in progress ends
+ * at every switch, before the session changes.
  */
 const mockImpersonate = jest.fn()
 const mockStop = jest.fn()
@@ -14,6 +15,13 @@ jest.mock('@src/lib/auth-client', () => ({
     admin: { impersonateUser: (...args) => mockImpersonate(...args), stopImpersonating: (...args) => mockStop(...args) },
     signOut: (...args) => mockSignOut(...args),
   },
+}))
+// The Cast SDK: a current session means this tab is casting
+let mockCurrentSession = null
+const mockEndCastSession = jest.fn()
+jest.mock('@components/Cast/castSdk', () => ({
+  getContext: () => ({ getCurrentSession: () => mockCurrentSession }),
+  endCastSession: (...args) => mockEndCastSession(...args),
 }))
 
 const posted = []
@@ -54,10 +62,12 @@ const {
   signOutOfViewAs,
   setViewAsWrites,
   reloadOnViewAsSwitch,
+  CAST_STOP_GRACE_MS,
 } = require('@src/components/ViewAs/viewAsClient')
 
 beforeEach(() => {
   jest.clearAllMocks()
+  mockCurrentSession = null
   posted.length = 0
   stored.clear()
   stored.set('mid:movie:1', '{"playbackTime":12}')
@@ -146,4 +156,51 @@ it('signing out ends the view-as session and goes to sign-in', async () => {
   mockSignOut.mockResolvedValue({ data: { success: true }, error: null })
   expect(await signOutOfViewAs()).toEqual({ ok: true })
   expect(assign).toHaveBeenCalledWith('/auth/signin')
+})
+
+describe('a cast in progress', () => {
+  beforeEach(() => {
+    mockCurrentSession = { sessionId: 'cast-1' }
+    global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) })
+    mockImpersonate.mockResolvedValue({ data: { session: {} }, error: null })
+    mockStop.mockResolvedValue({ data: {}, error: null })
+    mockSignOut.mockResolvedValue({ data: { success: true }, error: null })
+  })
+
+  it('ends before the session changes: start, stop, the writes switch and signing out', async () => {
+    const calls = [
+      [() => startViewAs('u1'), mockImpersonate],
+      [() => stopViewAs(), mockStop],
+      [() => setViewAsWrites(true), global.fetch],
+      [() => signOutOfViewAs(), mockSignOut],
+    ]
+    for (const [run, server] of calls) {
+      mockEndCastSession.mockClear()
+      await run()
+      expect(mockEndCastSession).toHaveBeenCalledTimes(1)
+      // The cast ends first, while the session is still the one it was started under
+      expect(mockEndCastSession.mock.invocationCallOrder[0]).toBeLessThan(server.mock.invocationCallOrder.at(-1))
+    }
+  })
+
+  it('a tab that isn’t casting ends nothing', async () => {
+    mockCurrentSession = null
+    await startViewAs('u1')
+    expect(mockEndCastSession).not.toHaveBeenCalled()
+  })
+
+  it('another tab’s switch ends this tab’s cast, then reloads once the stop has had time to reach the receiver', () => {
+    jest.useFakeTimers()
+    try {
+      const unsubscribe = reloadOnViewAsSwitch()
+      anotherTabSwitches()
+      expect(mockEndCastSession).toHaveBeenCalledTimes(1)
+      expect(reload).not.toHaveBeenCalled()
+      jest.advanceTimersByTime(CAST_STOP_GRACE_MS)
+      expect(reload).toHaveBeenCalledTimes(1)
+      unsubscribe()
+    } finally {
+      jest.useRealTimers()
+    }
+  })
 })
