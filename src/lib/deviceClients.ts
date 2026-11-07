@@ -11,6 +11,7 @@
 export const DEVICE_CLIENTS: Readonly<Record<string, string>> = Object.freeze({
   // nextjs-stream-tv-mobile, AuthProvider.tsx: client.device.code({ client_id: 'mobile-app' })
   'mobile-app': 'The TV and mobile app',
+  'nextjs-stream-windows': 'The Windows app',
 })
 
 export function isKnownDeviceClient(clientId: unknown): boolean {
