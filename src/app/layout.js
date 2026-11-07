@@ -1,7 +1,9 @@
 import { Inter } from 'next/font/google'
+import { Suspense } from 'react'
 import './global.css'
 import './tailwind.css'
 import { siteDescription, siteTitle, fileServerURLWithPrefixPath } from '@src/utils/config'
+import ViewAsBanner from '@components/ViewAs/ViewAsBanner'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -51,6 +53,12 @@ export default function RootLayout({ children }) {
           </div>
         )}
         {children}
+        {/* "Viewing as <name> · Stop" on every page while an admin views the app
+            as a user; it reads the session at request time, so it waits in
+            its own boundary and the rest of the page never waits for it */}
+        <Suspense>
+          <ViewAsBanner />
+        </Suspense>
       </body>
     </html>
   )

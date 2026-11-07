@@ -15,6 +15,7 @@ export function processUserData(jsonResponse) {
     imageUrl: user.image, // Add image URL
     approved: user.approved.toString(), // If the user is approved to view content
     roles: Array.isArray(user.roles) ? user.roles.map(String) : [], // Role ids (src/lib/roles)
+    role: user.role ?? null, // better-auth's: 'admin' rows get no "View as" (canViewAs)
   }))
 
   return {

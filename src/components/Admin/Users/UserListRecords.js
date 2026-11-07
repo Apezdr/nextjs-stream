@@ -5,8 +5,12 @@ import {
   XMarkIcon,
   ShieldCheckIcon,
   ShieldExclamationIcon,
+  EyeIcon,
 } from '@heroicons/react/24/outline'
+import { toast } from 'react-toastify'
 import { updateUserApprovedFlag } from '@src/utils/actions/admin_users'
+import { canViewAs } from '@src/lib/roles/rules'
+import { startViewAs } from '@components/ViewAs/viewAsClient'
 import { memo, useMemo, useState } from 'react'
 import UserRolesPicker from './UserRolesPicker'
 
@@ -80,7 +84,7 @@ function AvatarCell({ name, imageUrl }) {
   )
 }
 
-function ActionButton({ children, onClick, variant = 'default', disabled = false, primary = false }) {
+function ActionButton({ children, onClick, variant = 'default', disabled = false, primary = false, title }) {
   const styles = {
     default:
       'border-white/10 bg-white/5 text-slate-300 hover:bg-white/10 hover:border-white/20',
@@ -92,6 +96,8 @@ function ActionButton({ children, onClick, variant = 'default', disabled = false
       : 'border-rose-500/20 bg-rose-500/10 text-rose-300/80 hover:bg-rose-500/15',
     warning:
       'border-amber-500/20 bg-amber-500/10 text-amber-300/80 hover:bg-amber-500/15',
+    view:
+      'border-sky-500/25 bg-sky-500/10 text-sky-200 hover:bg-sky-500/20 hover:border-sky-400/40',
   }
 
   return (
@@ -99,8 +105,9 @@ function ActionButton({ children, onClick, variant = 'default', disabled = false
       type="button"
       disabled={disabled}
       onClick={onClick}
+      title={title}
       className={cn(
-        'rounded-xl border px-3.5 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex items-center gap-1.5 rounded-xl border px-3.5 py-2 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-50',
         styles[variant]
       )}
     >
@@ -115,6 +122,7 @@ function UserListRecords({
   data,
   updateProcessedData,
   roleOptions = [],
+  viewerId,
 }) {
   const [loadingStates, setLoadingStates] = useState(data ? data.map(() => false) : [])
 
@@ -136,6 +144,16 @@ function UserListRecords({
     } finally {
       setRowLoading(index, false)
     }
+  }
+
+  // View as: the app as this user sees it, read-only, until Stop. On success
+  // the page leaves (a full navigation), so the row stays busy
+  const handleViewAsClick = async (index, user) => {
+    setRowLoading(index, true)
+    const result = await startViewAs(user.id)
+    if (result.ok) return
+    toast.error(`Couldn’t view as ${user.name || user.email}: ${result.error}`)
+    setRowLoading(index, false)
   }
 
   return (
@@ -212,6 +230,18 @@ function UserListRecords({
 
                   <td className="px-6 py-5">
                     <div className="flex flex-wrap justify-end gap-2">
+                      {canViewAs(viewerId, item) && (
+                        <ActionButton
+                          variant="view"
+                          disabled={isLoading}
+                          title={`See the app as ${item.name || item.email} sees it, read-only`}
+                          onClick={() => handleViewAsClick(index, item)}
+                        >
+                          <EyeIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                          View as
+                        </ActionButton>
+                      )}
+
                       {isPending && (
                         <ActionButton
                           variant="success"

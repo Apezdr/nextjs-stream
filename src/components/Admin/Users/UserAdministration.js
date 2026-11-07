@@ -33,7 +33,7 @@ function StatCard({ label, value, icon: Icon, accent = 'blue' }) {
   )
 }
 
-export default function UserAdmin({ processedUserData, roleOptions = [] }) {
+export default function UserAdmin({ processedUserData, roleOptions = [], viewerId }) {
   const [_processedUserData, setProcessedUserData] = useState(() => processedUserData)
 
   async function updateProcessedData() {
@@ -87,6 +87,7 @@ export default function UserAdmin({ processedUserData, roleOptions = [] }) {
         data={_processedUserData.data}
         updateProcessedData={updateProcessedData}
         roleOptions={roleOptions}
+        viewerId={viewerId}
       />
     </section>
   )

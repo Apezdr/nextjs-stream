@@ -109,6 +109,30 @@ export default function SyncClientWithServerWatched({ once = false }) {
   return null // This component doesn't render anything
 }
 
+// A mirrored watch-history entry: video URLs start with http:// or https://,
+// durable identities with 'mid:'
+const isMirrorKey = (key) =>
+  Boolean(key) && (key.startsWith('http://') || key.startsWith('https://') || key.startsWith('mid:'))
+
+/**
+ * Drops every mirrored position. The keys name a title, not a user, so when
+ * who is signed in changes ("View as" starts or stops) the last user's
+ * positions would otherwise stay behind as this browser's resume points. The
+ * server copy is untouched; the next sync mirrors the new user's back.
+ */
+export function clearPlaybackMirror() {
+  try {
+    const keys = []
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i)
+      if (isMirrorKey(key)) keys.push(key)
+    }
+    keys.forEach((key) => localStorage.removeItem(key))
+  } catch {
+    // Storage unavailable: nothing was mirrored
+  }
+}
+
 /**
  * Clean up old localStorage entries to prevent unlimited growth
  * Removes entries older than RETENTION_DAYS or keeps only MAX_CACHED_VIDEOS most recent
@@ -116,12 +140,11 @@ export default function SyncClientWithServerWatched({ once = false }) {
 function cleanupOldEntries() {
   const cutoffDate = Date.now() - (RETENTION_DAYS * 24 * 60 * 60 * 1000)
   const entries = []
-  
+
   // Collect all watch history entries from localStorage
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i)
-    // Video URLs start with http:// or https://; durable identities with 'mid:'
-    if (key && (key.startsWith('http://') || key.startsWith('https://') || key.startsWith('mid:'))) {
+    if (isMirrorKey(key)) {
       try {
         const data = JSON.parse(localStorage.getItem(key))
         if (data.lastUpdated) {
