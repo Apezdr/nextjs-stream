@@ -52,6 +52,7 @@ const {
   PLAYBACK_USER_HEADER,
   PLAYBACK_USER_MISMATCH,
   PLAYBACK_USER_REQUIRED,
+  MISSING_USER_WARN_EVERY_MS,
   playbackWriteHeaders,
   refusePlaybackUserMismatch,
 } = require('@src/lib/playbackUser')
@@ -132,6 +133,27 @@ describe('the check (refusePlaybackUserMismatch)', () => {
       { userId: ADMIN, expectedUserId: USER, path: '/api/authenticated/sync/updatePlayback' },
       expect.any(String)
     )
+  })
+
+  it('warns about writes that name no one at most once a minute per user (a tab left open across a deploy)', () => {
+    jest.useFakeTimers()
+    try {
+      const log = { warn: jest.fn() }
+      const missing = (userId) => refusePlaybackUserMismatch({ headers: new Headers({ cookie: COOKIE }) }, userId, log)
+      for (let second = 0; second < 30; second++) {
+        expect(missing('stale-tab-user').status).toBe(400)
+        jest.advanceTimersByTime(1000)
+      }
+      expect(log.warn).toHaveBeenCalledTimes(1)
+      // Another user's stale tab is its own warning
+      missing('another-user')
+      expect(log.warn).toHaveBeenCalledTimes(2)
+      jest.advanceTimersByTime(MISSING_USER_WARN_EVERY_MS)
+      missing('stale-tab-user')
+      expect(log.warn).toHaveBeenCalledTimes(3)
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it('the browser builds the header from the same module', () => {

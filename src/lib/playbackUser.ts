@@ -60,10 +60,26 @@ export interface PlaybackUserLog {
 const json = (status: number, body: Record<string, unknown>) =>
   new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 
+// A tab left open across a deploy runs the old code, whose saves name no one:
+// each is refused, about once a second while it plays, until the page reloads.
+// One warning per user a minute says so without flooding the log.
+export const MISSING_USER_WARN_EVERY_MS = 60_000
+const lastMissingUserWarn = new Map<string, number>()
+
+function warnsAgain(userId: string, now: number) {
+  const last = lastMissingUserWarn.get(userId)
+  if (last !== undefined && now - last < MISSING_USER_WARN_EVERY_MS) return false
+  // Bounded: a flood of users can't grow it
+  if (lastMissingUserWarn.size >= 10_000) lastMissingUserWarn.clear()
+  lastMissingUserWarn.set(userId, now)
+  return true
+}
+
 /**
  * For a playback write route, after its gate: the refusal for a cookie write
  * from another account's page (or one that names none), or null to go on.
- * Logged with both ids, never an email.
+ * Logged with both ids, never an email; one that names no one at most once a
+ * minute per user.
  */
 export function refusePlaybackUserMismatch(
   request: { headers: Headers; url?: string },
@@ -75,7 +91,7 @@ export function refusePlaybackUserMismatch(
   const userId = sessionUserId === null || sessionUserId === undefined ? '' : String(sessionUserId)
   const path = request.url ? new URL(request.url).pathname : null
   if (!expectedUserId) {
-    log?.warn({ userId, path }, 'Playback write refused: it names no user')
+    if (log && warnsAgain(userId, Date.now())) log.warn({ userId, path }, 'Playback write refused: it names no user')
     return json(400, { ...PLAYBACK_USER_REQUIRED })
   }
   if (expectedUserId !== userId) {
