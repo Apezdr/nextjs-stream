@@ -68,12 +68,16 @@ export default function ViewAsBannerClient({ viewingAs }) {
   const button =
     'shrink-0 rounded-full bg-black/80 font-semibold text-amber-100 outline-none ring-black transition hover:bg-black focus-visible:ring-2 disabled:cursor-wait disabled:opacity-60'
 
+  // z-[45]: over the page's own fixed bars (the watchlist's selection bar is
+  // z-40), under dialogs and bottom sheets (z-50). An open dialog makes the
+  // rest of the page inert anyway, so the bar couldn't be used over one, and
+  // on a phone it would hide a sheet's last action.
   return (
     <div
       role="status"
       style={style}
       className={[
-        'fixed left-1/2 z-[60] flex max-w-[92vw] -translate-x-1/2 items-center rounded-full border border-amber-200/60 bg-amber-400 text-black shadow-lg shadow-black/40',
+        'fixed left-1/2 z-[45] flex max-w-[92vw] -translate-x-1/2 items-center rounded-full border border-amber-200/60 bg-amber-400 text-black shadow-lg shadow-black/40',
         compact
           ? 'gap-2 py-1 pl-3 pr-1 text-xs opacity-80 transition-opacity hover:opacity-100 focus-within:opacity-100'
           : 'gap-3 py-1.5 pl-4 pr-1.5 text-sm',
