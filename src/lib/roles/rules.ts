@@ -37,7 +37,7 @@ export const isImpersonating = (session: MaybeImpersonatedSession | null | undef
 
 /**
  * A view-as session whose admin turned writes on (the bar's switch): its
- * writes to the user's app data land on the user's account. Read from the
+ * writes land on the user's account, whatever they are. Read from the
  * session itself, where only the switch's endpoint sets it (viewAsWrites.ts).
  */
 export const isViewAsWritesOn = (session: MaybeImpersonatedSession | null | undefined): boolean =>

@@ -8,9 +8,9 @@
  * session up for a request that may write and carries one. The guards at the
  * end fail when a new write path could get around that one check.
  *
- * With writes on (the bar's switch, kept on the session as viewAsWrites), the
- * user's app-data writes pass, each one logged, and what could change the
- * account or hand the session on is still refused.
+ * With writes on (the bar's switch, kept on the session as viewAsWrites),
+ * every write passes, account and sign-in endpoints too, each one logged: an
+ * admin has access to everything (owner's decision, 2026-11-07).
  */
 const fs = require('fs')
 const path = require('path')
@@ -42,9 +42,7 @@ const {
   READ_ONLY_POSTS,
   WRITING_GETS,
   VIEW_AS_WRITES_SWITCH,
-  ALWAYS_REFUSED_PREFIXES,
   mayWrite,
-  isAlwaysRefused,
   carriesSession,
 } = require('@src/lib/viewAsGuard')
 
@@ -60,7 +58,8 @@ const WRITING = {
 const OWN = { session: { token: 'tok', userId: 'u1' }, user: { id: 'u1', role: 'user' } }
 
 // better-auth's endpoints that change the user, their sign-ins or sessions,
-// approve a device, or open a session: refused while viewing as, writes on or off
+// approve a device, or open a session: refused while read-only, let through
+// (and logged) with writes on
 const AUTH_WRITES = [
   '/api/auth/update-user',
   '/api/auth/update-session',
@@ -298,34 +297,29 @@ describe('the proxy, for a view-as session with writes on', () => {
     expect(JSON.stringify(mockLogInfo.mock.calls)).not.toMatch(/@example\.com/)
   })
 
-  it('still refuses every better-auth endpoint but the way out: device approvals, account and session changes', async () => {
-    // A TV approved while viewing as would get an ordinary 30-day session as
-    // the user, not a view-as one: the device endpoints stay refused
-    for (const endpoint of [...AUTH_WRITES, '/api/auth/some-future-endpoint', '/api/auth/']) {
-      const response = await proxy(request(endpoint))
-      expect([endpoint, response.status]).toEqual([endpoint, 403])
-    }
-    expect(mockLogInfo).not.toHaveBeenCalled()
-  })
-
-  it('still refuses the GETs that write or hand the session to another client (the TV app’s token)', async () => {
-    for (const endpoint of ['/api/auth/device?user_code=ABCDEFGH', '/api/auth/account-info', '/api/auth/mobile-redirect']) {
-      const response = await proxy(request(endpoint, { method: 'GET' }))
-      expect([endpoint, response.status]).toEqual([endpoint, 403])
-      expect(await response.json()).toEqual(VIEW_AS_REFUSAL)
+  it('lets better-auth’s endpoints through too, device approvals, account and session changes among them, each logged', async () => {
+    // Owner's decision: an admin has access to everything, and so does a view
+    // as someone with writes on. A TV approved this way gets an ordinary
+    // session as the user, not a view-as one; the log says who did it.
+    for (const endpoint of [...AUTH_WRITES, '/api/auth/some-future-endpoint']) {
+      mockLogInfo.mockClear()
+      expect([endpoint, passes(await proxy(request(endpoint)))]).toEqual([endpoint, true])
+      expect(mockLogInfo).toHaveBeenCalledWith(
+        expect.objectContaining({ path: endpoint, adminId: 'a1', targetUserId: 'u1' }),
+        'View as: write let through'
+      )
     }
   })
 
-  it('still refuses this app’s own account endpoints: a deletion request, or cancelling one', async () => {
+  it('lets the GETs that write or hand the session on through too', async () => {
+    for (const endpoint of ['/api/auth/device', '/api/auth/account-info', '/api/auth/mobile-redirect']) {
+      expect([endpoint, passes(await proxy(request(endpoint, { method: 'GET' })))]).toEqual([endpoint, true])
+    }
+  })
+
+  it('lets this app’s own account endpoints through too: a deletion request, or cancelling one', async () => {
     for (const method of ['POST', 'DELETE']) {
-      expect((await proxy(request('/api/authenticated/account/delete-request', { method }))).status).toBe(403)
-    }
-  })
-
-  it('however the path is spelled', async () => {
-    for (const endpoint of ['/api/auth/Device/Approve', '//api/auth//delete-user/', '/api/auth/revoke%2Dsessions', '/API/AUTHENTICATED/account/delete-request']) {
-      const response = await proxy(request(endpoint))
-      expect([endpoint, response.status]).toEqual([endpoint, 403])
+      expect(passes(await proxy(request('/api/authenticated/account/delete-request', { method })))).toBe(true)
     }
   })
 
@@ -432,10 +426,8 @@ describe('guards: every write goes through the proxy’s check', () => {
       '/api/authenticated/search',
     ])
     expect([...WRITING_GETS].sort()).toEqual(['/api/auth/account-info', '/api/auth/device', '/api/auth/mobile-redirect'])
-    // The bar's switch, which passes while read-only, and what writes on never lets through
+    // The bar's switch, which passes while read-only
     expect(VIEW_AS_WRITES_SWITCH).toBe('/api/authenticated/view-as/writes')
-    expect([...ALWAYS_REFUSED_PREFIXES].sort()).toEqual(['/api/auth/', '/api/authenticated/account/'])
-    for (const getter of WRITING_GETS) expect(isAlwaysRefused({ method: 'GET', pathname: getter, headers: new Headers() })).toBe(true)
   })
 
   it('the switch’s route is where the guard expects it, and checks the session itself', () => {

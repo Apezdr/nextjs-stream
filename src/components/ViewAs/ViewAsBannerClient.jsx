@@ -46,8 +46,8 @@ function ConfirmWrites({ open, viewingAs, onConfirm, onCancel }) {
         <DialogPanel className="w-full max-w-sm rounded-2xl bg-[#0f1633] p-6 shadow-2xl ring-1 ring-white/10">
           <DialogTitle className="text-lg font-semibold text-white">Write as {viewingAs}?</DialogTitle>
           <p className="mt-2 text-sm text-white/75">
-            What you do from now on lands on {viewingAs}’s account: watch progress and watched marks, watchlists and
-            playlists, notifications, and Radarr or Sonarr requests. Sign-in, account and device changes stay blocked.
+            Everything you do from now on lands on {viewingAs}’s account: watch progress and watched marks, watchlists
+            and playlists, notifications, Radarr or Sonarr requests, and account, sign-in and device changes too.
           </p>
           <p className="mt-2 text-sm text-white/75">It lasts until you turn it off or stop viewing as.</p>
           <div className="mt-5 flex justify-end gap-3">

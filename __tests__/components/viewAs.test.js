@@ -165,7 +165,7 @@ describe('the banner', () => {
     expect(confirmSpy).not.toHaveBeenCalled()
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveTextContent('Write as Member?')
-    expect(dialog).toHaveTextContent(/Sign-in, account and device changes stay blocked/)
+    expect(dialog).toHaveTextContent(/account, sign-in and device changes too/)
 
     await click(screen.getByRole('button', { name: 'Allow writes' }))
     expect(mockSetWrites).toHaveBeenCalledWith(true)

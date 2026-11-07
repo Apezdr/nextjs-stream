@@ -129,7 +129,7 @@ export async function proxy(request: NextRequest) {
   // better-auth's own endpoints) stop here, before any of them runs. The
   // session is looked up from the same headers the route would read, and only
   // for a request that may write and carries a session (viewAsGuard.ts).
-  // With writes on, the user's app-data writes pass, each one logged.
+  // With writes on, every write passes, each one logged.
   const refusal = await refuseViewAsWrite(
     { method: request.method, pathname: request.nextUrl.pathname, headers: forwarded ?? request.headers },
     lookupSession,
