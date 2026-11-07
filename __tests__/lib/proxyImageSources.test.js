@@ -72,36 +72,36 @@ describe('proxy /_next/image source check', () => {
   })
 
   it('refuses an unknown host with the built-in optimizer', async () => {
-    const response = proxy(imageRequest(EVIL))
+    const response = await proxy(imageRequest(EVIL))
     expect(response.status).toBe(400)
     expect(response.headers.get('cache-control')).toBe('no-store')
     expect(await response.text()).toBe('"url" parameter is not allowed')
   })
 
-  it('refuses an unknown host before it reaches imgproxy', () => {
+  it('refuses an unknown host before it reaches imgproxy', async () => {
     process.env.IMGPROXY_URL = 'http://imgproxy:8080'
-    const response = proxy(imageRequest(EVIL))
+    const response = await proxy(imageRequest(EVIL))
     expect(response.status).toBe(400)
     expect(response.headers.get('x-middleware-rewrite')).toBeNull()
   })
 
-  it('hands the built-in optimizer only the checked url, w and q', () => {
+  it('hands the built-in optimizer only the checked url, w and q', async () => {
     const request = new NextRequest(`https://app.example/_next/image?${new URLSearchParams({ url: TMDB, w: '640', q: '75', extra: '1' })}`)
-    const rewrite = new URL(proxy(request).headers.get('x-middleware-rewrite'))
+    const rewrite = new URL((await proxy(request)).headers.get('x-middleware-rewrite'))
     expect(rewrite.pathname).toBe('/_next/image')
     expect([...rewrite.searchParams]).toEqual([['url', TMDB], ['w', '640'], ['q', '75']])
   })
 
-  it('passes a known source to imgproxy when it is configured', () => {
+  it('passes a known source to imgproxy when it is configured', async () => {
     process.env.IMGPROXY_URL = 'http://imgproxy:8080'
-    const response = proxy(imageRequest('https://files.example.com/movies/x/poster.jpg'))
+    const response = await proxy(imageRequest('https://files.example.com/movies/x/poster.jpg'))
     expect(response.headers.get('x-middleware-rewrite')).toMatch(/^http:\/\/imgproxy:8080\/insecure\/rs:fit:640:0\/q:75\//)
   })
 
-  it('passes app-relative sources and leaves a missing url= for Next to reject', () => {
-    const local = new URL(proxy(imageRequest('/sorry-image-not-available.jpg')).headers.get('x-middleware-rewrite'))
+  it('passes app-relative sources and leaves a missing url= for Next to reject', async () => {
+    const local = new URL((await proxy(imageRequest('/sorry-image-not-available.jpg'))).headers.get('x-middleware-rewrite'))
     expect(local.searchParams.get('url')).toBe('/sorry-image-not-available.jpg')
-    const noUrl = new URL(proxy(new NextRequest('https://app.example/_next/image?w=640&q=75')).headers.get('x-middleware-rewrite'))
+    const noUrl = new URL((await proxy(new NextRequest('https://app.example/_next/image?w=640&q=75'))).headers.get('x-middleware-rewrite'))
     expect(noUrl.searchParams.has('url')).toBe(false)
   })
 

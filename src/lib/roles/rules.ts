@@ -21,5 +21,26 @@ export const isAdminUser = (user: MaybeUser): boolean => user?.role === 'admin'
 /** Waiting for an admin's approval. Only an explicit false counts: a user without the field is approved. */
 export const isAwaitingApproval = (user: MaybeUser): boolean => user?.approved === false
 
+/** A session as better-auth returns it, as far as "View as" reads it. */
+interface MaybeImpersonatedSession {
+  session?: { impersonatedBy?: string | null } | null
+}
+
+/**
+ * An admin is viewing the app as this session's user ("View as"): better-auth's
+ * admin plugin opened the session with impersonatedBy set to the admin's id.
+ * Such a session only reads; the proxy refuses its writes (viewAsGuard.ts).
+ */
+export const isImpersonating = (session: MaybeImpersonatedSession | null | undefined): boolean =>
+  Boolean(session?.session?.impersonatedBy)
+
+/**
+ * Whether the Users page offers "View as" for a user: anyone but the viewer
+ * and admins, whom better-auth refuses to impersonate. A pending user is
+ * offered, to see what a pending account sees.
+ */
+export const canViewAs = (viewerId: unknown, target: (AccessUser & { id?: unknown }) | null | undefined): boolean =>
+  Boolean(target?.id) && String(target?.id) !== String(viewerId ?? '') && !isAdminUser(target)
+
 // Which titles a user sees is their library scope, from their roles:
 // libraryScope.ts and libraryAccess.ts.

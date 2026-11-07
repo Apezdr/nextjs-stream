@@ -3,8 +3,22 @@ import type { NextRequest } from 'next/server'
 import { buildImgproxyTarget } from '@src/lib/imgproxy'
 import { isAllowedImageSource, reportRefusedImageSource } from '@src/lib/imageSources'
 import { AUTH_COOKIE_NAMES, stripAuthCookies } from '@src/lib/authCookies'
+import { refuseViewAsWrite } from '@src/lib/viewAsGuard'
+import { createLogger } from '@src/lib/logger'
 
 const COOKIE_DOMAIN = process.env.AUTH_COOKIE_DOMAIN?.replace(/^\./, '')
+
+const viewAsLog = createLogger('Auth.ViewAs')
+
+/**
+ * The session lookup every route makes (better-auth's getSession), without
+ * its daily refresh: the guard only reads. Loaded on first use, so a request
+ * that can't write never loads auth here.
+ */
+async function lookupSession(headers: Headers) {
+  const { auth } = await import('@src/lib/auth')
+  return auth.api.getSession({ headers, query: { disableRefresh: true } })
+}
 
 // Authenticated API routes that manage their own caching (ETag + no-cache
 // revalidation chains, public caption caching, SSE streams). Headers set in
@@ -44,7 +58,7 @@ function toBuiltInOptimizer(request: NextRequest): NextResponse {
   return NextResponse.rewrite(checked)
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   if (request.nextUrl.pathname === '/_next/image') {
     // Only known image sources are fetched (src/lib/imageSources.ts). This runs
     // before both optimizers, so the same rule holds with or without imgproxy;
@@ -96,21 +110,32 @@ export function proxy(request: NextRequest) {
   // browser sessions (which send no Authorization header) are untouched.
   const authorization = request.headers.get('authorization')
   const cookieHeader = request.headers.get('cookie')
-  let response: NextResponse
+  // The headers the route will see
+  let forwarded: Headers | null = null
 
   if (
     cookieHeader &&
     authorization?.slice(0, 7).toLowerCase() === 'bearer ' &&
     AUTH_COOKIE_NAMES.some((name) => cookieHeader.includes(name))
   ) {
-    const headers = new Headers(request.headers)
+    forwarded = new Headers(request.headers)
     const remaining = stripAuthCookies(cookieHeader)
-    if (remaining) headers.set('cookie', remaining)
-    else headers.delete('cookie')
-    response = NextResponse.next({ request: { headers } })
-  } else {
-    response = NextResponse.next()
+    if (remaining) forwarded.set('cookie', remaining)
+    else forwarded.delete('cookie')
   }
+
+  // A "View as" session only reads: its writes (API routes, Server Actions,
+  // better-auth's own endpoints) stop here, before any of them runs. The
+  // session is looked up from the same headers the route would read, and only
+  // for a request that may write and carries a session (viewAsGuard.ts).
+  const refusal = await refuseViewAsWrite(
+    { method: request.method, pathname: request.nextUrl.pathname, headers: forwarded ?? request.headers },
+    lookupSession,
+    (error) => viewAsLog.error({ error: (error as Error)?.message }, 'View-as check could not look up the session; the write was refused'),
+  )
+  if (refusal) return refusal
+
+  const response = forwarded ? NextResponse.next({ request: { headers: forwarded } }) : NextResponse.next()
 
   // Default the authenticated API surface to no-store. Most of these routes
   // return bare `new Response(JSON.stringify(...))` with no Cache-Control at

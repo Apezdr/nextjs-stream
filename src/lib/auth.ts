@@ -24,9 +24,12 @@ import { createLogger } from './logger'
 import { isKnownDeviceClient } from './deviceClients'
 import { isRedisConfigured } from './redisClient'
 import { authSecondaryStorage } from './authSessionStore'
+import { auditViewAs, VIEW_AS_START_PATH, VIEW_AS_STOP_PATH } from './viewAsAudit'
+import { holdViewAsExpiry } from './viewAsSession'
 
 const adminEmails = adminEmailsFromEnv()
 const roleLog = createLogger('Auth.AdminRoles')
+const viewAsLog = createLogger('Auth.ViewAs')
 
 const authDb = mongoClient.db(process.env.MONGODB_AUTH_DB || 'Users')
 
@@ -151,12 +154,25 @@ export const auth = betterAuth({
         },
       },
     },
+    session: {
+      update: {
+        // A "View as" session keeps its hour, even on a refresh a Bearer
+        // request would otherwise make (viewAsSession.ts)
+        before: async (session, ctx) => holdViewAsExpiry(session, ctx as Parameters<typeof holdViewAsExpiry>[1]),
+      },
+    },
   },
 
   hooks: {
     after: createAuthMiddleware(async (ctx) => {
       // These requests never pass through getSession(), so the hook names the caller
       recordAuthHandlerCaller(ctx.context as Parameters<typeof recordAuthHandlerCaller>[0])
+
+      // Every "View as" start and stop, with both users' ids (viewAsAudit.ts)
+      if (ctx.path === VIEW_AS_START_PATH || ctx.path === VIEW_AS_STOP_PATH) {
+        auditViewAs(ctx as Parameters<typeof auditViewAs>[0], viewAsLog)
+        return
+      }
 
       // Every social sign-in syncs the role with ADMIN_USER_EMAILS, both ways,
       // and approves an admin (adminRoleSync.ts). Written straight to the user:
@@ -190,6 +206,13 @@ export const auth = betterAuth({
     admin({
       defaultRole: 'user',
       adminRole: 'admin',
+      // "View as" (the Users page) opens a session as the user, read-only
+      // (src/lib/viewAsGuard.ts). It ends after an hour, better-auth's default,
+      // stated here so it doesn't move with an upgrade. No request extends
+      // it: the browser holds it with the dont_remember cookie, and the
+      // session update hook above holds it for a Bearer request; Stop ends it
+      // sooner and puts the admin's own session back.
+      impersonationSessionDuration: 60 * 60,
     }),
     bearer(),
     deviceAuthorization({

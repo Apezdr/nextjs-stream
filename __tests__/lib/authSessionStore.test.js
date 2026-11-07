@@ -196,6 +196,50 @@ describe('the session cache', () => {
   })
 })
 
+describe('a "View as" session (better-auth impersonation)', () => {
+  // impersonate-user opens it like any session (createSession, an hour long,
+  // impersonatedBy: the admin's id); stop-impersonating deletes it
+  const viewAs = (token) => {
+    const entry = lookup(token, 'u8')
+    entry.session.impersonatedBy = 'a1'
+    entry.session.expiresAt = new Date(Date.now() + 60 * 60 * 1000)
+    return entry
+  }
+
+  it('is cached, read and, on Stop, dropped with a tombstone like any other', async () => {
+    const entry = viewAs('view1')
+    // better-auth's createSession mirror: the user's list, then the entry
+    await authSecondaryStorage.set(
+      'active-sessions-u8',
+      JSON.stringify([{ token: 'view1', expiresAt: entry.session.expiresAt.getTime() }]),
+      3600
+    )
+    await authSecondaryStorage.set('view1', JSON.stringify(entry), 3600)
+    expect(mockTtls.get('view1')).toBe(SESSION_CACHE_TTL_SECONDS)
+    // Read back with impersonatedBy, which is what the proxy's check reads
+    expect(JSON.parse(await authSecondaryStorage.get('view1')).session.impersonatedBy).toBe('a1')
+
+    // better-auth's deleteSession on Stop: the list without it, then the entry
+    await authSecondaryStorage.delete('active-sessions-u8')
+    await authSecondaryStorage.delete('view1')
+    expect(mockStore.has('view1')).toBe(false)
+    expect(mockStore.has('revoked:view1')).toBe(true)
+    // A request that read it from Mongo just before can't copy it back
+    await rememberSession(entry)
+    await authSecondaryStorage.set('view1', JSON.stringify(entry), 3600)
+    expect(mockStore.has('view1')).toBe(false)
+  })
+
+  it('read from Mongo after its entry expired, is copied in for no longer than it has left', async () => {
+    const entry = viewAs('view2')
+    entry.session.expiresAt = new Date(Date.now() + 5 * 60 * 1000) // five minutes left of its hour
+    await authSecondaryStorage.get('view2') // the miss
+    await rememberSession(entry)
+    expect(JSON.parse(mockStore.get('view2')).session.impersonatedBy).toBe('a1')
+    expect(mockTtls.get('view2')).toBeLessThanOrEqual(5 * 60)
+  })
+})
+
 describe('a request racing a sign-out or a user write', () => {
   it('can’t copy in a session it read from Mongo before the user was written', async () => {
     const stale = await missThenRead('tok5', 'u5', { approved: true }) // read before the write
